@@ -607,7 +607,9 @@ test.describe("onboarding v2 — the wizard agrees with the canonical new-client
     await wizard.getByRole("button", { name: "Get started" }).click();
     await wizard.getByRole("button", { name: "Continue" }).click();
     await wizard.getByRole("button", { name: "Continue" }).click();
-    await expect(wizard.getByRole("heading", { name: "Your booking page is live" })).toBeVisible();
+    await expect(wizard.getByRole("heading", { name: "Get your booking page ready" })).toBeVisible();
+    // The page is not live in this state, so the word must be absent: a presence check cannot catch a contradiction.
+    await expect(wizard.getByText("Your booking page is live")).toHaveCount(0);
     await expect(wizard.getByText(/not ready for new clients yet/i)).toBeVisible();
     await expect(wizard.getByText("No live treatment consent form.")).toBeVisible();
     await expect(wizard.getByText("✓ Done")).toHaveCount(0);
@@ -619,8 +621,9 @@ test.describe("onboarding v2 — the wizard agrees with the canonical new-client
 
     // The pinned setup card agrees: the booking row is still open and links to the missing piece.
     await wizard.getByRole("button", { name: "Close setup" }).click();
-    const row = page.getByRole("listitem").filter({ hasText: "Your booking page is live" });
+    const row = page.getByRole("listitem").filter({ hasText: "Get your booking page ready" });
     await expect(row.getByRole("link", { name: "Set up" })).toHaveAttribute("href", "/settings/consent");
+    await expect(page.getByText("Your booking page is live")).toHaveCount(0);
 
     // Adding the live form makes the same studio ready, with no other change.
     await sql(
@@ -633,5 +636,6 @@ test.describe("onboarding v2 — the wizard agrees with the canonical new-client
     const readyRow = page.getByRole("listitem").filter({ hasText: "Your booking page is live" });
     await expect(readyRow).toBeVisible();
     await expect(readyRow.getByRole("link", { name: "Set up" })).toHaveCount(0);
+    await expect(page.getByText("Get your booking page ready")).toHaveCount(0);
   });
 });

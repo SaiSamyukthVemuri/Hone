@@ -195,15 +195,20 @@ function isDataStepDone(
   }
 }
 
+// "live" belongs to the done state only. A step that is not done must not call the page live, in the wizard heading or on the
+// dashboard row, so the title changes with the status here, in the one place both read it from.
+const NOT_DONE_BOOKING_TITLE = "Get your booking page ready";
+
 // The booking step while it is NOT done: say what is missing (a proven fact, as the canonical readiness words it) and point
 // at it, or say plainly that the check could not be made. A step that is not done never keeps the "your page is live" CTA.
 function unfinishedBookingStep(
   def: OnboardingStepDef,
   s: OnboardingSignals,
-): Pick<OnboardingStepState, "blurb" | "cta" | "resolvedHref"> {
+): Pick<OnboardingStepState, "title" | "blurb" | "cta" | "resolvedHref"> {
   const r = s.bookingReadiness;
   if (r.state === "blocked") {
     return {
+      title: NOT_DONE_BOOKING_TITLE,
       blurb: `Your booking page is not ready for new clients yet. ${r.next?.label ?? ""}`.trim(),
       cta: r.next ? { label: "Open setup", href: r.next.href } : def.cta,
       resolvedHref: r.next?.href ?? def.cta?.href ?? null,
@@ -211,13 +216,14 @@ function unfinishedBookingStep(
   }
   if (r.state === "unknown") {
     return {
+      title: NOT_DONE_BOOKING_TITLE,
       blurb: "We could not check your booking setup just now. Reload to try again.",
       cta: null,
       resolvedHref: null,
     };
   }
   // ready by the canonical check but the page itself is not yet addressable (no slug, no service or no open day)
-  return { blurb: def.blurb, cta: def.cta, resolvedHref: def.cta?.href ?? null };
+  return { title: NOT_DONE_BOOKING_TITLE, blurb: def.blurb, cta: def.cta, resolvedHref: def.cta?.href ?? null };
 }
 
 function stepStatus(
@@ -268,7 +274,13 @@ export function buildOnboardingModel(
   const requiredComplete = REQUIRED_STEP_KEYS.every((k) =>
     isDataStepDone(k, signals),
   );
-  const isComplete = requiredComplete && !!persisted.completedAt;
+  // A studio that has ALREADY completed onboarding must not flicker back to the progress card because the readiness read failed
+  // once. An UNKNOWN booking readiness (a failed read, never a proven blocker) therefore keeps a completed studio complete, while
+  // the data it can still see must hold (`isPubliclyBookable`: a slug, a service and an open day). A real BLOCKED state, such as a consent
+  // form removed, still reopens it. `requiredComplete` itself stays strict, so completion and the celebration are never
+  // granted on an unknown.
+  const bookingUnread = signals.bookingReadiness.state === "unknown" && signals.isPubliclyBookable;
+  const isComplete = (requiredComplete || bookingUnread) && !!persisted.completedAt;
   const shouldCelebrate = requiredComplete && !persisted.celebratedAt;
 
   // Resume pointer. Honour the persisted position ONLY while that step is still

@@ -70,6 +70,9 @@ describe("the wizard is ready only when a new client can book", () => {
     expect(isBookableByNewClient(ORDINARY_TREATMENT as never)).toBe(false);
     const step = bookingStep(e);
     expect(step.status).toBe("todo");
+    // Not done never says "live": the title and the blurb must not contradict each other.
+    expect(step.title).toBe("Get your booking page ready");
+    expect(step.title).not.toMatch(/live/i);
     expect(step.blurb).toMatch(/consultation service/i);
     expect(step.cta?.label).toBe("Open setup");
   });
@@ -82,6 +85,7 @@ describe("the wizard is ready only when a new client can book", () => {
 
   it("control: with a consultation, an open day and a live consent form, both agree the studio is ready", () => {
     const e = evidence({});
+    expect(bookingStep(e).title).toBe("Your booking page is live");
     expect(buildOnboardingModel(wizardSignals(e), FRESH).requiredComplete).toBe(true);
     expect(computeNewClientReadiness(e)).toEqual({ status: "ready" });
   });
@@ -98,6 +102,7 @@ describe("the wizard is ready only when a new client can book", () => {
     expect(model.requiredComplete).toBe(false);
     const step = model.steps.find((x) => x.key === "booking")!;
     expect(step.status).toBe("todo");
+    expect(step.title).toBe("Get your booking page ready");
     expect(step.blurb).toMatch(/could not check/i);
     expect(step.blurb).not.toMatch(/consent/i);
     expect(step.cta).toBeNull();
@@ -147,6 +152,35 @@ describe("the wizard is ready only when a new client can book", () => {
     // Both the completion and the celebration gates read the live model, so they inherit the rule; neither restates it.
     expect(actions.match(/model\.requiredComplete/g)?.length).toBe(2);
     expect(actions).not.toMatch(/isPubliclyBookable/);
+  });
+});
+
+describe("a studio that already completed onboarding", () => {
+  const DONE: OnboardingPersisted = { ...FRESH, currentStep: "done", completedSteps: ["welcome", "done"], completedAt: "2026-11-01T00:00:00Z", celebratedAt: "2026-11-01T00:00:00Z" };
+
+  it("stays complete when the readiness read fails (unknown): no flicker back to the progress card", () => {
+    const e = evidence({ treatmentConsent: { ok: false } });
+    const model = buildOnboardingModel(wizardSignals(e), DONE);
+    expect(model.requiredComplete).toBe(false); // the strict gate is unchanged: nothing new is granted on an unknown
+    expect(model.isComplete).toBe(true);
+  });
+  it("shows the progress card again when a real blocker appears (a consent form removed)", () => {
+    const e = evidence({ treatmentConsent: { ok: true, ready: false } });
+    expect(buildOnboardingModel(wizardSignals(e), DONE).isComplete).toBe(false);
+  });
+  it("an unknown never completes a studio that has not completed, and never celebrates", () => {
+    const e = evidence({ treatmentConsent: { ok: false } });
+    const model = buildOnboardingModel(wizardSignals(e), FRESH);
+    expect(model.isComplete).toBe(false);
+    expect(model.shouldCelebrate).toBe(false);
+  });
+  it("an unknown does not keep a studio complete when the page is no longer bookable by what the wizard can see", () => {
+    // The services read failed: the canonical verdict is unknown (nothing proven missing), and the wizard sees no service.
+    const e = evidence({ services: { ok: false } });
+    const signals = wizardSignals(e);
+    expect(signals.bookingReadiness).toEqual({ state: "unknown" });
+    expect(signals.isPubliclyBookable).toBe(false);
+    expect(buildOnboardingModel(signals, DONE).isComplete).toBe(false);
   });
 });
 
