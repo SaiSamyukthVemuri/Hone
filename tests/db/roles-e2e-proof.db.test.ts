@@ -136,16 +136,16 @@ describe("the practitioner does a permitted booking and charting", () => {
 
 // Money rows are seeded with real values past foreign keys by the stack owner, then READ as the practitioner. Which of these the practitioner can see is
 // a measurement, not an assumption: a row of "visible" is a finding to report, never something this test hides.
-const MONEY: { table: string; override: Record<string, string> }[] = [
+const MONEY: { table: string; override: Record<string, string>; extra?: Record<string, string> }[] = [
   { table: "appointment_payments", override: {} },
   { table: "appointment_settlements", override: { method: "'paid_cash'" } },
-  { table: "payment_charge_attempts", override: { charge_reason: "'session_payment'" } },
   { table: "manual_fee_charge_attempts", override: { charge_type: "'no_show'" } },
-  { table: "stripe_charge_attempts", override: { status: "'succeeded'" } },
+  { table: "payment_charge_attempts", override: { charge_reason: "'no_show_fee'" }, extra: { appointment_id: "gen_random_uuid()" } },
+  { table: "stripe_charge_attempts", override: { status: "'failed'" } },
   { table: "stripe_disputes", override: { status: "'won'" } },
-  { table: "stripe_payment_audit", override: { action: "'charge_succeeded'" } },
+  { table: "stripe_payment_audit", override: { action: "'charge_succeeded'" }, extra: { appointment_id: "gen_random_uuid()" } },
   { table: "stripe_refund_attempts", override: { status: "'succeeded'" } },
-  { table: "stripe_refunds", override: { source: "'stripe_dashboard_observed'" } },
+  { table: "stripe_refunds", override: { source: "'stripe_dashboard_observed'", status: "'succeeded'" } },
   { table: "studio_payment_settings", override: {} },
 ];
 const unseeded: Record<string, string> = {};
@@ -168,6 +168,10 @@ async function seedMoney(studioId: string): Promise<string[]> {
               (col.data_type === "uuid" ? "gen_random_uuid()" : ["integer", "bigint", "smallint", "numeric"].includes(col.data_type) ? "1" : col.data_type === "boolean" ? "false" : col.data_type.startsWith("timestamp") ? "now()" : col.data_type === "jsonb" || col.data_type === "json" ? "'{}'" : col.data_type === "ARRAY" ? "'{}'" : "'x' || gen_random_uuid()::text"),
           );
         }
+        for (const [k, v] of Object.entries(m.extra ?? {})) {
+          names.push(`"${k}"`);
+          vals.push(v);
+        }
         await c.query(`insert into public.${m.table} (${names.join(",")}) values (${vals.join(",")})`);
         await c.query("commit");
         seeded.push(m.table);
@@ -185,7 +189,7 @@ async function seedMoney(studioId: string): Promise<string[]> {
 describe("financial privacy: what a practitioner can read of the studio's money", () => {
   it("payment ledgers, settlements and attempts: counted as the owner and as the practitioner, on rows that really exist", async () => {
     const seeded = await seedMoney(A.studioId);
-    note("M0", "money rows seeded in studio A (tables listed in `seeded`; any table that refused a synthetic row is listed with the reason and is NOT MEASURED)", "stack owner", { seeded, not_measured: unseeded }, seeded.length >= 3);
+    note("M0", "money rows seeded in studio A (tables listed in `seeded`; any table that refused a synthetic row is listed with the reason and is NOT MEASURED)", "stack owner", { seeded, not_measured: unseeded }, seeded.length >= 6);
     const out: Record<string, { owner: number; practitioner: number }> = {};
     for (const t of seeded) {
       const o = await as(A.userId, (q) => q(`select count(*) n from public.${t} where studio_id = $1`, [A.studioId])).catch(() => ({ rows: [{ n: -1 }] }));
@@ -311,5 +315,78 @@ describe("the owner removes the practitioner: access is gone at once", () => {
     note("V6", "restoring the practitioner restores access (reversible, nothing was lost)", "owner A then practitioner", { restore: back.rows[0].r, clients_visible: n(restored) }, n(restored) >= 1);
     const stillB = n(await as(B.userId, (q) => q(`select count(*) n from public.clients where studio_id = $1`, [B.studioId])));
     note("V7", "studio B was unaffected by any of this", "owner B (authenticated)", { clients_visible: stillB }, stillB === 1);
+  });
+});
+
+// A receptionist is not a practitioner: RLS membership (is_studio_member) is practitioner-only, so a receptionist works through the receptionist_* commands.
+describe("a receptionist: invite, accept, work, removal", () => {
+  let rec: { userId: string; receptionistId: string; email: string };
+  const email = () => `e2e-receptionist-${A.studioId.slice(0, 8)}@harness.local`;
+  it("invite and accept (seeded verified user, the real accept command)", async () => {
+    const ins = await attempt(() =>
+      as(A.userId, (q) => q(`insert into public.pending_invitations (studio_id, email, invited_by, role, display_name, status) values ($1, $2, $3, 'receptionist', 'Synthetic Receptionist', 'pending')`, [A.studioId, email(), A.practitionerId])),
+    );
+    note("RC1", "owner A invites a receptionist (a pending invitation with role receptionist, under RLS)", "owner A (authenticated)", ins.ok ? "inserted" : ins.error, ins.ok);
+    const userId = randomUUID();
+    await adminQuery(`insert into auth.users (id, email, email_confirmed_at) values ($1, $2, now())`, [userId, email()]);
+    const res = await asService((q) => q(`select public.admin_accept_pending_invitation($1) as r`, [userId]));
+    const out = res.rows[0].r as { status?: string; role?: string };
+    note("RC2", "admin_accept_pending_invitation links the invited verified user (seeded user, real command)", "service_role", out, out.status === "linked");
+    const r = (await adminQuery(`select id, studio_id, active from public.studio_receptionists where user_id = $1`, [userId])).rows;
+    rec = { userId, receptionistId: String(r[0]?.id), email: email() };
+    const asPractitioner = Number((await adminQuery(`select count(*) n from public.practitioners where user_id = $1`, [userId])).rows[0].n);
+    note("RC3", "one active receptionist row in studio A and NO practitioner row for that user", "postgres", { receptionist_rows: r.length, studio_a: r[0]?.studio_id === A.studioId, active: r[0]?.active, practitioner_rows: asPractitioner }, r.length === 1 && r[0].studio_id === A.studioId && r[0].active === true && asPractitioner === 0);
+  });
+
+  it("what the receptionist can do through the receptionist commands", async () => {
+    const appt = await attempt(() => as(rec.userId, (q) => q(`select * from public.receptionist_create_appointment($1, $2, $3, $4, now() + interval '50 days')`, [A.studioId, pract.practitionerId, A.clientId, serviceA])));
+    const row = appt.ok ? (appt.value as { rows: Record<string, unknown>[] }).rows[0] : null;
+    note("RC4", "the receptionist books a client with a practitioner (receptionist_create_appointment)", "receptionist (authenticated)", appt.ok ? row : appt.error, appt.ok && (row?.result === "created" || Object.values(row ?? {}).includes("created")));
+    const dir = await attempt(() => as(rec.userId, (q) => q(`select * from public.receptionist_client_directory($1, null, null, null, 0, 50)`, [A.studioId])));
+    const dirRows = dir.ok ? (dir.value as { rows: Record<string, unknown>[] }).rows : [];
+    const fields = [...new Set(dirRows.flatMap((r) => Object.keys(r)))].sort();
+    note("RC5", "the receptionist reads the client directory; the columns it returns are listed (check them for price or clinical fields)", "receptionist (authenticated)", dir.ok ? { rows: dirRows.length, columns: fields } : dir.error, dir.ok && dirRows.length >= 1);
+    note("RC5b", "the directory carries no price, payment, note, chart or photo column", "receptionist (authenticated)", { columns: fields }, !fields.some((f) => /price|paid|fee|amount|note|chart|photo/i.test(f)));
+    const statusCols = fields.filter((f) => /intake|consent|visit|appointment/i.test(f));
+    note("RC5c", "RECORDED, not asserted away: the directory DOES carry intake/consent STATUS and visit dates (no answers or contents)", "receptionist (authenticated)", { status_columns: statusCols }, true);
+  });
+
+  it("what the receptionist cannot reach: direct tables, charting, payments, prices, the Roles settings, the other studio", async () => {
+    const direct = await as(rec.userId, (q) => q(`select (select count(*) from public.clients where studio_id = $1) clients, (select count(*) from public.sessions where studio_id = $1) sessions, (select count(*) from public.appointments where studio_id = $1) appointments, (select count(*) from public.client_pricing where studio_id = $1) client_pricing, (select count(*) from public.services where studio_id = $1) services, (select count(*) from public.appointment_settlements where studio_id = $1) settlements, (select count(*) from public.payment_charge_attempts where studio_id = $1) charge_attempts`, [A.studioId]));
+    const dz = Object.values(direct.rows[0]).every((v) => Number(v) === 0);
+    note("RC6", "direct table reads by the receptionist in studio A: clients, sessions, appointments, client pricing, services, settlements, charge attempts", "receptionist (authenticated)", direct.rows[0], dz);
+    const chart = await attempt(() => as(rec.userId, (q) => q(`select * from public.start_session($1, 'laser', null, null, $2)`, [A.clientId, A.studioId])));
+    note("RC7", "the receptionist cannot start a treatment session", "receptionist (authenticated)", chart.ok ? "STARTED" : chart.error, !chart.ok);
+    const roles = await attempt(async () => (await as(rec.userId, (q) => q(`select public.get_role_permissions($1) as r`, [A.studioId]))).rows[0].r);
+    note("RC8", "the receptionist cannot read the Roles settings", "receptionist (authenticated)", roles.ok ? roles.value : roles.error, roles.ok ? (roles.value as { ok?: boolean }).ok === false : true);
+    const other = await attempt(() => as(rec.userId, (q) => q(`select * from public.receptionist_client_directory($1, null, null, null, 0, 50)`, [B.studioId])));
+    const otherRows = other.ok ? (other.value as { rows: unknown[] }).rows.length : 0;
+    note("RC9", "the receptionist reads the client directory of studio B", "receptionist (authenticated)", other.ok ? { rows: otherRows } : other.error, otherRows === 0);
+    const bookB = await attempt(() => as(rec.userId, (q) => q(`select * from public.receptionist_create_appointment($1, $2, $3, $4, now() + interval '51 days')`, [B.studioId, B.practitionerId, B.clientId, serviceB])));
+    const bookBVal = bookB.ok ? ((bookB.value as { rows: Record<string, unknown>[] }).rows[0]) : null;
+    note("RC10", "the receptionist books in studio B", "receptionist (authenticated)", bookB.ok ? bookBVal : bookB.error, !bookB.ok || !Object.values(bookBVal ?? {}).includes("created"));
+    const opts = await attempt(() => as(rec.userId, (q) => q(`select public.receptionist_booking_options($1) as r`, [A.studioId])));
+    const optsText = opts.ok ? JSON.stringify((opts.value as { rows: { r: unknown }[] }).rows[0].r) : opts.error;
+    const priceKeys = [...new Set([...optsText.matchAll(/"([a-z_]*(?:price|fee|amount|paid)[a-z_]*)"/g)].map((m) => m[1]))];
+    note("RC6b", "RECORDED: what the booking-options command returns to a receptionist; price-like keys in it are listed", "receptionist (authenticated)", { returned: opts.ok, price_like_keys: priceKeys, sample: optsText.slice(0, 160) }, true);
+    const ownerSees = await as(A.userId, (q) => q(`select count(*) n from public.appointments where studio_id = $1 and created_by_receptionist_id = $2`, [A.studioId, rec.receptionistId]));
+    note("RC11", "the owner sees the appointment the receptionist booked, attributed to the receptionist", "owner A (authenticated)", { appointments: n(ownerSees) }, n(ownerSees) === 1);
+  });
+
+  it("the owner removes the receptionist: gone at once, and reversible", async () => {
+    const res = await asService((q) => q(`select public.set_studio_receptionist_active($1, $2, $3, false) as r`, [A.studioId, A.practitionerId, rec.receptionistId]));
+    note("RC12", "the owner deactivates the receptionist (set_studio_receptionist_active)", "service_role, as the owner's server action", res.rows[0].r, true);
+    const dir = await attempt(() => as(rec.userId, (q) => q(`select * from public.receptionist_client_directory($1, null, null, null, 0, 50)`, [A.studioId])));
+    const dirRows = dir.ok ? (dir.value as { rows: unknown[] }).rows.length : 0;
+    note("RC13", "the very next call: the client directory returns nothing (or is refused)", "receptionist (authenticated)", dir.ok ? { rows: dirRows } : dir.error, dirRows === 0);
+    const book = await attempt(() => as(rec.userId, (q) => q(`select * from public.receptionist_create_appointment($1, $2, $3, $4, now() + interval '52 days')`, [A.studioId, pract.practitionerId, A.clientId, serviceA])));
+    const bv = book.ok ? ((book.value as { rows: Record<string, unknown>[] }).rows[0]) : null;
+    note("RC14", "the very next booking is refused", "receptionist (authenticated)", book.ok ? bv : book.error, !book.ok || !Object.values(bv ?? {}).includes("created"));
+    const kept = n(await as(A.userId, (q) => q(`select count(*) n from public.appointments where studio_id = $1 and created_by_receptionist_id = $2`, [A.studioId, rec.receptionistId])));
+    note("RC15", "the appointment the receptionist made is kept", "owner A (authenticated)", { appointments: kept }, kept === 1);
+    await asService((q) => q(`select public.set_studio_receptionist_active($1, $2, $3, true)`, [A.studioId, A.practitionerId, rec.receptionistId]));
+    const back = await attempt(() => as(rec.userId, (q) => q(`select * from public.receptionist_client_directory($1, null, null, null, 0, 50)`, [A.studioId])));
+    const backRows = back.ok ? (back.value as { rows: unknown[] }).rows.length : 0;
+    note("RC16", "restoring the receptionist restores access", "owner A then receptionist", { directory_rows: backRows }, backRows >= 1);
   });
 });
