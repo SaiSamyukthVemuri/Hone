@@ -2,6 +2,8 @@ import { createClient } from "@/lib/supabase/server";
 import { serviceSelect, type ProfileReadOptions } from "@/lib/clients/profile-pricing";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { isMissingColumnError } from "@/lib/db/missing-column";
+import { clientDisplayName } from "@/lib/clients/identity";
+import { preferredNameColumn } from "@/lib/clients/preferred-name-read";
 import type {
   Appointment,
   Service,
@@ -237,12 +239,16 @@ export async function getAppointmentsForRange(
   endIso: string,
 ): Promise<AppointmentWithPractitionerColor[]> {
   const supabase = await createClient();
-  const BASE =
-    "*, practitioner:practitioners!appointments_practitioner_same_studio_fk(id, color, display_name), client:clients(id, name), ";
+  // HON-58 (G1): the calendar shows the DISPLAY name (preferred, else stored), computed HERE on the server. The client
+  // embed names its columns (never `*`, never the legal identity table), and `preferred_name` is read with the same
+  // missing-column fallback as the other surfaces, so a database without the column behaves exactly as before.
+  const baseFor = (withPreferred: boolean) =>
+    `*, practitioner:practitioners!appointments_practitioner_same_studio_fk(id, color, display_name), client:clients(id, ${preferredNameColumn(withPreferred)}name), `;
+  let includePreferred = true;
   const runSelect = (serviceEmbed: string, afterId: string | null) => {
     let query = supabase
       .from("appointments")
-      .select(`${BASE}${serviceEmbed}`)
+      .select(`${baseFor(includePreferred)}${serviceEmbed}`)
       .eq("studio_id", studioId)
       .gte("starts_at", startIso)
       .lt("starts_at", endIso);
@@ -264,6 +270,10 @@ export async function getAppointmentsForRange(
   let serviceEmbed = "service:services(id, name, modality, calendar_color)";
   for (;;) {
     let { data, error } = await runSelect(serviceEmbed, afterId);
+    if (error && includePreferred && isMissingColumnError(error, "preferred_name")) {
+      includePreferred = false;
+      ({ data, error } = await runSelect(serviceEmbed, afterId));
+    }
     if (error && isMissingColumnError(error, "calendar_color")) {
       serviceEmbed = "service:services(id, name, modality)";
       ({ data, error } = await runSelect(serviceEmbed, afterId));
@@ -288,8 +298,8 @@ export async function getAppointmentsForRange(
       | { id: string; color: string; display_name?: string | null }[]
       | null;
     client:
-      | { id: string; name: string }
-      | { id: string; name: string }[]
+      | { id: string; name: string; preferred_name?: string | null }
+      | { id: string; name: string; preferred_name?: string | null }[]
       | null;
     service:
       | { id: string; name: string; modality: string | null; calendar_color?: string | null }
@@ -303,9 +313,12 @@ export async function getAppointmentsForRange(
     const p = Array.isArray(row.practitioner)
       ? row.practitioner[0] ?? null
       : row.practitioner;
-    const c = Array.isArray(row.client)
+    const rawC = Array.isArray(row.client)
       ? row.client[0] ?? null
       : row.client;
+    // The ONE string every calendar surface shows. Only `{ id, name }` leaves this function: the preferred and stored
+    // names are not both passed on, so no client component can fall back to the stored name by accident.
+    const c = rawC ? { id: rawC.id, name: clientDisplayName(rawC) } : null;
     const rawS = Array.isArray(row.service)
       ? row.service[0] ?? null
       : row.service;
