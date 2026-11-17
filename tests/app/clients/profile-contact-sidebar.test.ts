@@ -68,3 +68,31 @@ describe("the profile header name", () => {
     expect(aside).toMatch(/className="[^"]*\bmd:order-none\b[^"]*"/);
   });
 });
+
+describe("every paragraph on a profile tab that prints the client's name breaks an unbroken long word (HON-69)", () => {
+  // Photos measured the Overview and Billing tabs scrolling sideways at 390 with a 105-character single word: the consent paragraph ("Forms <name> has
+  // signed...") ran 684px. The same name is printed by the payment-card (Billing) and portal-messages paragraphs. Each must carry the rule the header has.
+  const ON_PROFILE_TABS = ["components/consent-signatures-card.tsx", "components/payment-method-card.tsx", "components/portal-messages-card.tsx"];
+  // Components that print {clientName} but are dialogs or other pages, not profile tabs (they are not in the page this PR measures).
+  const NOT_A_PROFILE_TAB = ["components/quick-checkout-modal.tsx", "components/waitlist/decline-follow-up-section.tsx", "components/appointment/postcare-section.tsx", "components/client-form.tsx"];
+  const paragraphsPrintingName = (src: string) => [...src.matchAll(/<p\b[^>]*>(?:(?!<\/p>)[\s\S])*?\{clientName\}(?:(?!<\/p>)[\s\S])*?<\/p>/g)].map((m) => m[0]);
+
+  it("the scan sees paragraphs in each pinned component (not vacuous)", () => {
+    for (const f of ON_PROFILE_TABS) expect(paragraphsPrintingName(readFileSync(f, "utf8")).length, f).toBeGreaterThan(0);
+  });
+  it("each such paragraph has min-w-0 and [overflow-wrap:anywhere]", () => {
+    for (const f of ON_PROFILE_TABS) {
+      for (const p of paragraphsPrintingName(readFileSync(f, "utf8"))) {
+        expect(p, f).toContain("[overflow-wrap:anywhere]");
+        expect(p, f).toContain("min-w-0");
+      }
+    }
+  });
+  it("no OTHER component prints {clientName} in a paragraph without being listed, so a new one cannot slip in unwrapped", async () => {
+    const { readdirSync } = await import("node:fs");
+    const all = ["components", "components/appointment", "components/waitlist"].flatMap((d) => readdirSync(d).filter((x) => x.endsWith(".tsx")).map((x) => `${d}/${x}`));
+    const printing = all.filter((f) => paragraphsPrintingName(readFileSync(f, "utf8")).length > 0);
+    const unlisted = printing.filter((f) => !ON_PROFILE_TABS.includes(f) && !NOT_A_PROFILE_TAB.includes(f));
+    expect(unlisted).toEqual([]);
+  });
+});

@@ -58,7 +58,7 @@ export function ConsentSignaturesCard({
           <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
             Consent forms
           </h2>
-          <p className="mt-1 text-xs text-neutral-500">
+          <p className="mt-1 min-w-0 [overflow-wrap:anywhere] text-xs text-neutral-500">
             Forms {clientName} has signed in the secure client portal.
             Edit the studio&rsquo;s templates in Settings &rarr; Consent forms.
           </p>
@@ -67,7 +67,7 @@ export function ConsentSignaturesCard({
 
       {summary.total > 0 &&
         (summary.needsAttention === 0 ? (
-          <p className="rounded-md bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
+          <p className="min-w-0 [overflow-wrap:anywhere] rounded-md bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
             All {summary.total} consent form{summary.total === 1 ? "" : "s"} up to
             date for {clientName}.
           </p>
