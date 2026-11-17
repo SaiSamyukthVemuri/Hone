@@ -536,7 +536,7 @@ function cumulativeChargeRefundEvidence(event: Stripe.Event, ctx: WebhookCtx, at
 
 // HON-49 (0358): record the refunds a signed charge.refunded event lists, through the ONE command that writes them. The evidence comes from
 // the signed event's charge only (lib/billing/refund-history.ts; the identity fields come from the signed event's own charge, never from the stored attempt). A database error is
-// thrown so the event is retried; a refusal or an incomplete list is returned for the caller to alert on, and nothing is written.
+// thrown so the event is retried, except a missing command (42883 / PGRST202), which reads as not sent; a refusal or an incomplete list is returned for the caller to alert on, and nothing is written.
 async function recordChargeRefundHistory(event: Stripe.Event, ctx: WebhookCtx, attemptId: string, charge: Stripe.Charge):
   Promise<{ sent: boolean; result: string | null }> {
   const evidence = buildChargeRefundHistoryEvidence({ id: event.id, created: event.created }, charge);
@@ -550,7 +550,13 @@ async function recordChargeRefundHistory(event: Stripe.Event, ctx: WebhookCtx, a
     p_livemode: ctx.livemode,
     p_object: evidence,
   });
-  if (error) throw new Error(`charge_refunded_history_failed:${dbErrorCode(error) ?? ""}`);
+  if (error) {
+    // The command does not exist (a deploy before migration 0358, or after its rollback): behave exactly as before this change, never stall
+    // charge.refunded deliveries. Postgres 42883 = undefined function; PostgREST PGRST202 = function not found in the schema cache.
+    const code = String((error as { code?: unknown }).code ?? "");
+    if (code === "42883" || code === "PGRST202") return { sent: false, result: null };
+    throw new Error(`charge_refunded_history_failed:${dbErrorCode(error) ?? ""}`);
+  }
   const row = (Array.isArray(data) ? data[0] : data) as { result?: string } | null;
   return { sent: true, result: typeof row?.result === "string" ? row.result : null };
 }

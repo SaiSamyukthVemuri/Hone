@@ -125,7 +125,8 @@ function orMatches(row: Record<string, unknown>, expr: string): boolean {
     if (op !== "is" && op !== "eq") {
       throw new Error(`unsupported or-operator: ${term}`);
     }
-    return row[col] === val;
+    // PostgREST spells a number as text inside an OR group (refunds_inflight_count.eq.0), so an `eq` compares the text of a numeric column.
+    return row[col] === val || (op === "eq" && typeof row[col] === "number" && String(row[col]) === raw);
   });
 }
 
@@ -304,6 +305,9 @@ function seedRow(over: Record<string, unknown> = {}) {
     stripe_refund_status: null,
     stripe_refund_event_created: null,
     stripe_refund_event_id: null,
+    // HON-49 (0358): a real row always carries the refund history summary; never established, nothing in flight.
+    refunds_succeeded_cents: null,
+    refunds_inflight_count: 0,
     receipt_status: null,
     receipt_sent_at: null,
     receipt_email_to: null,
@@ -480,6 +484,33 @@ describe("M: the refund's admissible receipt set, state by state", () => {
 
     expect(res.ok).toBe(true);
     expect(db.stripeRefunds).toHaveLength(1);
+  });
+
+  // HON-49 (0358): a refund history that shows money already back (or going back) refuses this whole-charge refund with the same plain wording,
+  // and no Stripe refund is created. A never-established history (null) and an established zero do not block.
+  it.each([
+    ["a recorded partial refund (2000 back)", { refunds_succeeded_cents: 2000, refunds_inflight_count: 0 }],
+    ["a pending refund in flight", { refunds_succeeded_cents: null, refunds_inflight_count: 1 }],
+    ["a recorded refund and another in flight", { refunds_succeeded_cents: 1000, refunds_inflight_count: 1 }],
+  ])("M5d %s REFUSES the refund and creates none", async (_label, summary) => {
+    seedRow(summary);
+    const res = await refund();
+    expect(res).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+    if (!res.ok) expect(res.message).toMatch(/A refund outcome is already recorded for this payment\. The studio owner must review it/);
+    expect(db.stripeRefunds).toHaveLength(0);
+  });
+  it("M5e an established history with nothing refunded (0, none in flight) permits the refund", async () => {
+    seedRow({ refunds_succeeded_cents: 0, refunds_inflight_count: 0 });
+    expect((await refund()).ok).toBe(true);
+    expect(db.stripeRefunds).toHaveLength(1);
+  });
+  it("M5f the claim itself rechecks the history: a summary recorded AFTER the read stops the refund before Stripe is called", async () => {
+    // The read sees a clean row; the row changes before the conditional UPDATE. The model applies the claim's own predicates.
+    seedRow({ refunds_succeeded_cents: null, refunds_inflight_count: 0 });
+    db.beforeClaim = () => { Object.assign(db.row, { refunds_succeeded_cents: 2000 }); };
+    const res = await refund();
+    expect(res.ok).toBe(false);
+    expect(db.stripeRefunds).toHaveLength(0);
   });
 
   it("M5c an unrecognised receipt state is REFUSED, not admitted", async () => {

@@ -1447,7 +1447,7 @@ describe("P1-B: the account arm records the Account's country", () => {
 // recordOpsAlert never throws and a mocked throw would prove nothing.
 // ===========================================================================
 describe("W-O1 governed refund refusal through the route, real alert writer", () => {
-  function prepareCharge(refunds: unknown, refundStatus: string | null = "pending_stripe") {
+  function prepareCharge(refunds: unknown, refundStatus: string | null = "pending_stripe", history?: ReadResult) {
     const row = {
       id: "attempt-1", studio_id: "studio-1", client_id: "client-1", charge_reason: "session_payment",
       status: "succeeded", stripe_livemode: false, stripe_account_id: "acct_test_1",
@@ -1466,7 +1466,7 @@ describe("W-O1 governed refund refusal through the route, real alert writer", ()
     ADMIN.current = makeAdmin({
       studio_payment_settings: [{ data: { studio_id: "studio-1" }, error: null }],
       payment_charge_attempts: [{ data: row, error: null }],
-    }, { claim_stripe_event: CLAIM_OK });
+    }, { claim_stripe_event: CLAIM_OK, ...(history ? { record_charge_refund_history: history } : {}) });
   }
   const oneRefund = (status: string) => ({ object: "list", has_more: false, data: [{ object: "refund", id: "re_1",
     amount: 5000, currency: "cad", charge: "ch_1", payment_intent: "pi_1", status }] });
@@ -1477,6 +1477,29 @@ describe("W-O1 governed refund refusal through the route, real alert writer", ()
     ["the default payload with no refund object (refused before the command)", undefined, "charge_refunded_cumulative_evidence_refused"],
     ["a pending refund (refused by the bound command)", oneRefund("pending"), "stripe_webhook_bound_command_refused"],
   ] as const;
+
+  // HON-49 (0358): a FULL refund whose history write is refused still takes the older receipt path, but the refusal is kept durably: a critical
+  // alert, and when that alert cannot be kept the route answers 500 and releases the claim (so the event is retried), exactly like the other refusals.
+  it("a full refund whose history is REFUSED keeps a durable critical alert (charge_refunded_history_refused) and is acknowledged", async () => {
+    prepareCharge(oneRefund("succeeded"), null, { data: [{ result: "identity_mismatch" }], error: null });
+    expect((await callRoute()).status).toBe(200);
+    expect(ADMIN.current!.opsRows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: "charge_refunded_history_refused", severity: "critical" }),
+    ]));
+  });
+  it("a full refund whose history is refused and whose alert CANNOT be kept: 500, claim released, nothing completed", async () => {
+    prepareCharge(oneRefund("succeeded"), null, { data: [{ result: "identity_mismatch" }], error: null });
+    failInsert();
+    expect((await callRoute()).status).toBe(500);
+    expect(completionWrites()).toEqual([]);
+    expect(names(ADMIN.current!.rpcCalls)).toContain("release_stripe_event_claim_with_error");
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("mark_stripe_event_processed");
+  });
+  it("a full refund whose history is recorded raises no history refusal alert", async () => {
+    prepareCharge(oneRefund("succeeded"), null, { data: [{ result: "recorded" }], error: null });
+    expect((await callRoute()).status).toBe(200);
+    expect(ADMIN.current!.opsRows.filter((r) => r.event === "charge_refunded_history_refused")).toEqual([]);
+  });
 
   it.each(refusals)("alert row written for %s: the refusal is final (200), nothing completed", async (_l, refunds, alert) => {
     prepareCharge(refunds);
@@ -1668,6 +1691,19 @@ describe("HON-49: a partial refund signed by Stripe is recorded in the refund hi
       startDatabase(1, { data: [{ result }], error: null });
       const res = await callRoute(partial("evt_partial_refused", [{ id: "re_1", amount: 2000 }]));
       expect(res.status).toBe(200);
+      expect(alerts("charge_refunded_partial_out_of_band")).toEqual([expect.objectContaining({ severity: "critical" })]);
+      expect(alerts("charge_refunded_partial_recorded")).toEqual([]);
+      expect(ADMIN.current!.updateCalls).toEqual([]);
+    });
+  }
+
+  // A deploy before 0358, or a 0358 rollback: the command does not exist. The webhook must behave exactly as it did before this change.
+  for (const code of ["42883", "PGRST202"]) {
+    it(`the history command is missing (${code}): today's critical alert and no write, acknowledged, never a retry loop`, async () => {
+      startDatabase(1, { data: null, error: { code, message: "function record_charge_refund_history does not exist" } as never });
+      const res = await callRoute(partial(`evt_partial_missing_${code}`, [{ id: "re_1", amount: 2000 }]));
+      expect(res.status).toBe(200);
+      expect(historyCalls()).toHaveLength(1);
       expect(alerts("charge_refunded_partial_out_of_band")).toEqual([expect.objectContaining({ severity: "critical" })]);
       expect(alerts("charge_refunded_partial_recorded")).toEqual([]);
       expect(ADMIN.current!.updateCalls).toEqual([]);
