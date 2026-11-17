@@ -114,6 +114,29 @@ describe("the command wrappers", () => {
   });
 });
 
+describe("the contact choice on the answers action (validation only, HON-7)", () => {
+  it("is optional, checked before the command, and never reaches it", () => {
+    expect(answers).toMatch(/contact\?: ContactChoiceInput/);
+    const check = answers.indexOf("resolveContactChoice(contact, null)");
+    const command = answers.indexOf("declineWithAnswers({");
+    expect(check).toBeGreaterThan(answers.indexOf("validateNoTimesWork"));
+    expect(check).toBeGreaterThan(-1);
+    expect(check).toBeLessThan(command);
+    // The command receives the two answers and the capability only: no number of any kind.
+    const call = answers.slice(command, answers.indexOf("});", command));
+    expect(call).not.toMatch(/contact|phone|e164/i);
+  });
+  it("refuses with a class-only notice and echoes no number", () => {
+    expect(answers).toMatch(/"contact_invalid"/);
+    expect(answers).not.toMatch(/console\.|JSON\.stringify\(contact|contact\.contactPhone/);
+  });
+  it("no page, form or component sends or imports it: the screen is unchanged", () => {
+    for (const f of ["app/features/waitlist-invitation/NoTimesWorkForm.tsx", "app/features/waitlist-invitation/InvitationScreen.tsx", "app/invitation/[token]/InvitationContainer.tsx", "app/invitation/[token]/page.tsx"]) {
+      expect(read(f)).not.toMatch(/decline-contact-phone|contactPhone|useOnFile/);
+    }
+  });
+});
+
 describe("the server actions", () => {
   it("are off unless the flag is exactly '1', and off writes nothing", () => {
     expect(read("lib/waitlist/decline-answers-gate.ts")).toMatch(/process\.env\.WAITLIST_DECLINE_ANSWERS === "1"/);
