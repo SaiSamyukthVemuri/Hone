@@ -15,7 +15,6 @@
 export const SESSION_START_REFUSALS = [
   "assigned_elsewhere",
   "other_client",
-  "other_studio",
   "appointment_missing",
   // The PAGE's own lookup failed (transient DB/schema-cache error). Distinct
   // from "missing": a real appointment must never be offered an UNLINKED
@@ -73,11 +72,6 @@ export function sessionStartRefusalCopy(
         title: "This appointment is for a different client",
         body: "Open the appointment from that client's record to start its chart.",
       };
-    case "other_studio":
-      return {
-        title: "This appointment is not in your current studio",
-        body: "Switch to the studio the appointment belongs to, then start the chart from there.",
-      };
     case "check_failed":
       return {
         title: "This appointment could not be checked just now",
@@ -98,4 +92,34 @@ export function sessionStartRefusalHref(
 ): string {
   const q = new URLSearchParams({ appointment_id: appointmentId, refused: code });
   return `/clients/${encodeURIComponent(clientId)}/sessions/new?${q.toString()}`;
+}
+
+type AssigneeEmbed = { display_name?: string | null; active?: boolean | null };
+
+/** What the appointment lookup returns, as far as the decision needs it. */
+export type StartAppointmentLookup = {
+  studio_id: string;
+  client_id: string;
+  practitioner_id: string | null;
+  practitioner?: AssigneeEmbed | AssigneeEmbed[] | null;
+};
+
+/**
+ * The ONE decision, shared by the action and the page, so they cannot disagree. A missing appointment, one that is not visible to this person, and one in
+ * ANOTHER studio are the SAME answer ("appointment_missing"): the code, the copy and the page are identical, so the response cannot tell a person whether
+ * an appointment id exists in a studio they are not working in. Only an appointment in THIS studio may say more: it is another client's, or it is assigned
+ * to a colleague (and then, and only then, the colleague's name is shown).
+ */
+export function classifyAppointmentForStart(
+  appt: StartAppointmentLookup | null,
+  ctx: { studioId: string; clientId: string; practitionerId: string },
+): { refusal: SessionStartRefusal | null; assignedName: string | null; assigneeInactive: boolean } {
+  if (!appt || appt.studio_id !== ctx.studioId) return { refusal: "appointment_missing", assignedName: null, assigneeInactive: false };
+  if (appt.client_id !== ctx.clientId) return { refusal: "other_client", assignedName: null, assigneeInactive: false };
+  if (appt.practitioner_id && appt.practitioner_id !== ctx.practitionerId) {
+    const joined = appt.practitioner;
+    const assignee = Array.isArray(joined) ? joined[0] : joined;
+    return { refusal: "assigned_elsewhere", assignedName: assignee?.display_name ?? null, assigneeInactive: assignee?.active === false };
+  }
+  return { refusal: null, assignedName: null, assigneeInactive: false };
 }

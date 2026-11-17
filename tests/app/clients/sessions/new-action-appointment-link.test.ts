@@ -27,6 +27,8 @@ const ACTION_PATH = path.resolve(
 );
 const SOURCE = readFileSync(ACTION_PATH, "utf8");
 
+const REFUSAL_SRC = readFileSync(path.resolve(__dirname, "../../../../lib/sessions/session-start-refusal.ts"), "utf8");
+
 describe("startSessionAction lineage + safety contract for appointment_id", () => {
   it("reads appointment_id from formData", () => {
     expect(SOURCE).toMatch(
@@ -86,14 +88,16 @@ describe("startSessionAction lineage + safety contract for appointment_id", () =
     // The action MUST compare appt.studio_id to studio.id and reject
     // mismatches; trusting the form value would let a tampered POST
     // bind a session to another studio's appointment.
-    expect(SOURCE).toMatch(/appt\.studio_id\s*!==\s*studio\.id/);
+    expect(SOURCE).toMatch(/classifyAppointmentForStart\(appt as StartAppointmentLookup \| null, \{ studioId: studio\.id,/);
+    expect(REFUSAL_SRC).toMatch(/appt\.studio_id !== ctx\.studioId/);
   });
 
   it("validates client_id lineage server-side", () => {
     // Same studio, different client is also a reject: a session is
     // per-client, and a cross-client link would corrupt two clients'
     // treatment timelines.
-    expect(SOURCE).toMatch(/appt\.client_id\s*!==\s*clientId/);
+    expect(SOURCE).toMatch(/clientId, practitionerId: practitioner\.id/);
+    expect(REFUSAL_SRC).toMatch(/appt\.client_id !== ctx\.clientId/);
   });
 
   it("validates practitioner_id lineage server-side (non-null case)", () => {
@@ -105,9 +109,7 @@ describe("startSessionAction lineage + safety contract for appointment_id", () =
     // against the server-resolved practitioner.id is a hard reject so
     // a tampered form value cannot bind a session to another
     // practitioner's appointment within the same studio + client.
-    expect(SOURCE).toMatch(
-      /if \(appt\.practitioner_id && appt\.practitioner_id !== practitioner\.id\)/,
-    );
+    expect(REFUSAL_SRC).toMatch(/appt\.practitioner_id && appt\.practitioner_id !== ctx\.practitionerId/);
   });
 
   it("answers a practitioner mismatch with the stable refusal, not a thrown error", () => {
@@ -115,9 +117,7 @@ describe("startSessionAction lineage + safety contract for appointment_id", () =
     // opening one) and used to be thrown, which surfaced the generic error
     // boundary. It now redirects to the new-session page with a stable refusal
     // code that the page renders; the refusal is no weaker.
-    expect(SOURCE).toMatch(
-      /if \(appt\.practitioner_id && appt\.practitioner_id !== practitioner\.id\) \{\s*redirect\(sessionStartRefusalHref\(clientId, appointmentIdRaw, "assigned_elsewhere"\)\);\s*\}/,
-    );
+    expect(SOURCE).toMatch(/if \(decided\.refusal\) \{\s*redirect\(sessionStartRefusalHref\(clientId, appointmentIdRaw, decided\.refusal\)\);/);
     expect(SOURCE).not.toMatch(/throw new Error\("Appointment is assigned to a different practitioner\."\)/);
     // The command's raised copy is pinned in ONE place, which the action uses
     // to recognise the same refusal coming back from start_session.

@@ -108,7 +108,7 @@ describe("appointment lineage is refused before the command runs", () => {
   // instead of being thrown into the generic error boundary. Nothing is written and the command is never called.
   const refusedHref = (code: string) => `REDIRECT:/clients/client/sessions/new?appointment_id=${B}&refused=${code}`;
   it.each([
-    ["another studio", { studio_id: "other-studio" }, "other_studio"],
+    ["another studio", { studio_id: "other-studio" }, "appointment_missing"],
     ["another client", { client_id: "other-client" }, "other_client"],
     ["another practitioner", { practitioner_id: "other-practitioner" }, "assigned_elsewhere"],
   ] as const)("an appointment for %s", async (_name, patch, code) => {
@@ -126,6 +126,21 @@ describe("appointment lineage is refused before the command runs", () => {
     await expect(startSessionAction(form())).rejects.toThrow(refusedHref("appointment_missing"));
     expect(runtime.rpc).not.toHaveBeenCalled();
     expectNoSideEffects();
+  });
+
+  it("another studio's appointment, an unseen one and a nonexistent one redirect to the IDENTICAL url (no existence oracle)", async () => {
+    appointment = { ...appointment, studio_id: "other-studio" };
+    let foreign = "";
+    await startSessionAction(form()).catch((e: Error) => { foreign = e.message; });
+    runtime.from.mockImplementation(() => {
+      const chain = { select: vi.fn(() => chain), eq: vi.fn(() => chain), maybeSingle: vi.fn(async () => ({ data: null, error: null })) };
+      return chain;
+    });
+    let missing = "";
+    await startSessionAction(form()).catch((e: Error) => { missing = e.message; });
+    expect(foreign).toBe(missing);
+    expect(foreign).toBe(refusedHref("appointment_missing"));
+    expect(foreign).not.toMatch(/other-studio|other_studio/);
   });
 
   it("a failed lookup is NOT a refusal: it still throws, so an unreadable appointment is never turned into an unlinked chart", async () => {

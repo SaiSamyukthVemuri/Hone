@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   SESSION_START_REFUSALS,
   parseSessionStartRefusal,
+  classifyAppointmentForStart,
   sessionStartRefusalCopy,
   sessionStartRefusalHref,
 } from "@/lib/sessions/session-start-refusal";
@@ -64,8 +65,7 @@ describe("session-start refusals (a booking assigned to a colleague is SAID, not
     // not pre-filtered to the selected studio), checks the studio itself, and
     // compares against the SIGNED-IN practitioner.
     expect(PAGE).not.toMatch(/\.eq\("studio_id", studio\.id\)/);
-    expect(PAGE).toMatch(/\} else if \(appt\.studio_id !== studio\.id\) \{\s*refusal = "other_studio";/);
-    expect(PAGE).toMatch(/appt\.practitioner_id !== practitioner\.id/);
+    expect(PAGE).toMatch(/classifyAppointmentForStart\(appt as StartAppointmentLookup \| null, \{ studioId: studio\.id, clientId: id, practitionerId: practitioner\.id \}\)/);
     // The refusal is derived from the CURRENT row, never from the URL's `refused` code.
     expect(PAGE).not.toMatch(/parseSessionStartRefusal\(/);
     expect(PAGE).not.toMatch(/sp\.refused/);
@@ -89,14 +89,56 @@ describe("session-start refusals (a booking assigned to a colleague is SAID, not
     expect(PAGE).toMatch(/href=\{`\/calendar\/\$\{appointmentId\}`\}/);
     expect(PAGE).not.toMatch(/canReassign/);
     // EVERY lineage failure is shown before the picker, matching the action's refusals.
-    expect(PAGE).toMatch(/\} else if \(!appt\) \{[\s\S]{0,300}refusal = "appointment_missing";/);
-    expect(PAGE).toMatch(/\} else if \(appt\.client_id !== id\) \{\s*refusal = "other_client";/);
+    // (decided by the ONE shared classifier; its unit tests above prove each code)
+    expect(PAGE).toMatch(/refusal = decided\.refusal;/);
     // A missing or foreign appointment never gets a dead /calendar/<id> link.
     expect(PAGE).toMatch(
-      /const appointmentLinkable =\s*!!appointmentId && refusal !== "appointment_missing" && refusal !== "other_studio";/,
+      /const appointmentLinkable =\s*!!appointmentId && refusal !== "appointment_missing";/,
     );
     expect(PAGE).toMatch(/\{appointmentLinkable \? \(\s*<Link href=\{`\/calendar\/\$\{appointmentId\}`\}/);
     // The copy's "start a session without an appointment" recovery is a real link.
     expect(PAGE).toMatch(/offerUnlinkedStart && \([\s\S]{0,300}href=\{`\/clients\/\$\{id\}\/sessions\/new`\}/);
+  });
+});
+
+describe("no existence oracle: another studio's or an unseen appointment answers EXACTLY like a nonexistent id", () => {
+  const ctx = { studioId: "studio", clientId: "client", practitionerId: "me" };
+  const same = { studio_id: "studio", client_id: "client", practitioner_id: "colleague", practitioner: { display_name: "Colleague Name", active: true } };
+
+  it("a nonexistent/unseen appointment, and one in ANOTHER studio, give the identical decision (code, no name)", () => {
+    const missing = classifyAppointmentForStart(null, ctx);
+    const otherStudio = classifyAppointmentForStart({ ...same, studio_id: "someone-elses-studio" }, ctx);
+    expect(otherStudio).toEqual(missing);
+    expect(missing).toEqual({ refusal: "appointment_missing", assignedName: null, assigneeInactive: false });
+  });
+
+  it("the other studio's practitioner name and ids never reach the decision, even when the row carries them", () => {
+    const d = classifyAppointmentForStart({ ...same, studio_id: "someone-elses-studio", client_id: "other-client" }, ctx);
+    expect(JSON.stringify(d)).not.toMatch(/Colleague Name|someone-elses-studio|other-client|colleague/);
+  });
+
+  it("the copy for both is the same words, with no name and no time", () => {
+    const a = sessionStartRefusalCopy(classifyAppointmentForStart(null, ctx).refusal!, null);
+    const b = sessionStartRefusalCopy(classifyAppointmentForStart({ ...same, studio_id: "x" }, ctx).refusal!, null);
+    expect(b).toEqual(a);
+    expect(JSON.stringify(a)).not.toMatch(/\d{1,2}:\d{2}|Colleague/);
+  });
+
+  it("the redirect (action side) is byte-identical for nonexistent, not-visible and other-studio ids", () => {
+    const href = (id: string) => sessionStartRefusalHref("client", id, classifyAppointmentForStart(null, ctx).refusal!);
+    const other = (id: string) => sessionStartRefusalHref("client", id, classifyAppointmentForStart({ ...same, studio_id: "x" }, ctx).refusal!);
+    expect(other("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")).toBe(href("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"));
+  });
+
+  it("only an appointment in THIS studio may say more: another client's, or a colleague's (the name appears only then)", () => {
+    expect(classifyAppointmentForStart({ ...same, client_id: "other" }, ctx).refusal).toBe("other_client");
+    const d = classifyAppointmentForStart(same, ctx);
+    expect(d.refusal).toBe("assigned_elsewhere");
+    expect(d.assignedName).toBe("Colleague Name");
+  });
+
+  it("'other_studio' no longer exists as a code or a copy branch", () => {
+    expect((SESSION_START_REFUSALS as readonly string[]).includes("other_studio")).toBe(false);
+    expect(parseSessionStartRefusal("other_studio")).toBeNull();
   });
 });

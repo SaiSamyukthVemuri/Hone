@@ -8,7 +8,9 @@ import {
 } from "@/lib/sessions/session-command-errors";
 import {
   ASSIGNED_ELSEWHERE_RAISED,
+  classifyAppointmentForStart,
   sessionStartRefusalHref,
+  type StartAppointmentLookup,
 } from "@/lib/sessions/session-start-refusal";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
@@ -161,37 +163,12 @@ export async function startSessionAction(formData: FormData): Promise<void> {
     // thrown, which put the generic error boundary in front of the person.
     // The refusals themselves are unchanged and still happen BEFORE anything is
     // written; start_session (0181) re-enforces them at the database boundary.
-    if (!appt) {
-      redirect(sessionStartRefusalHref(clientId, appointmentIdRaw, "appointment_missing"));
+    // ONE decision shared with the new-session page. A missing, not-visible or other-studio appointment is the SAME refusal (no existence oracle).
+    const decided = classifyAppointmentForStart(appt as StartAppointmentLookup | null, { studioId: studio.id, clientId, practitionerId: practitioner.id });
+    if (decided.refusal) {
+      redirect(sessionStartRefusalHref(clientId, appointmentIdRaw, decided.refusal));
     }
-    if (appt.studio_id !== studio.id) {
-      // Studio mismatch is a hard reject: a tampered form value cannot
-      // bind a session to another studio's appointment. RLS would
-      // already have refused the lookup, but the check is defence in
-      // depth.
-      redirect(sessionStartRefusalHref(clientId, appointmentIdRaw, "other_studio"));
-    }
-    if (appt.client_id !== clientId) {
-      // Same studio, different client. Refuse: a session is per-client,
-      // and linking it to another client's appointment would corrupt
-      // both clients' treatment timelines.
-      redirect(sessionStartRefusalHref(clientId, appointmentIdRaw, "other_client"));
-    }
-    // PR #156 patch. Practitioner lineage: refuse a session-to-
-    // appointment link when the appointment is assigned to a
-    // different practitioner. The appointments table currently
-    // allows practitioner_id to be non-null on every active booking
-    // surface (public booking + calendar create both stamp the
-    // practitioner), but historically a few legacy rows may carry
-    // null; we treat null as "unassigned, anyone in the studio may
-    // chart" rather than reject outright. Same-studio + same-client
-    // is preserved as the absolute floor. The session itself still
-    // records the current practitioner via the server-resolved
-    // practitioner.id on the insert below; this check is about which
-    // appointment the session links TO, not who performed it.
-    if (appt.practitioner_id && appt.practitioner_id !== practitioner.id) {
-      redirect(sessionStartRefusalHref(clientId, appointmentIdRaw, "assigned_elsewhere"));
-    }
+    if (!appt) throw new Error("unreachable: a missing appointment was refused above");
     appointmentId = appt.id;
     appointmentStatus = (appt.status as string | null) ?? null;
     appointmentEndsAt = (appt.ends_at as string | null) ?? null;

@@ -22,6 +22,8 @@ import { createClient } from "@/lib/supabase/server";
 import {
   type SessionStartRefusal,
   sessionStartRefusalCopy,
+  classifyAppointmentForStart,
+  type StartAppointmentLookup,
 } from "@/lib/sessions/session-start-refusal";
 import { ModalityPicker } from "./ModalityPicker";
 import { SectionLabel } from "@/components/ui/section-label";
@@ -67,7 +69,7 @@ export default async function NewSessionPage({
   // offering a chart the action would now refuse. The lookup is the same one
   // the action makes (RLS-scoped to the practitioner's memberships, NOT
   // pre-filtered to the selected studio), so an appointment in the person's
-  // OTHER studio reads as other_studio rather than as missing.
+  // OTHER studio is answered exactly like a missing one (see classifyAppointmentForStart: no existence oracle).
   let refusal: SessionStartRefusal | null = null;
   let assignedName: string | null = null;
   let assigneeInactive = false;
@@ -89,30 +91,17 @@ export default async function NewSessionPage({
       // The action would still refuse or accept on its own.
       console.error(JSON.stringify({ event: "session_new_appointment_precheck_failed", code: apptErr.code ?? null }));
       refusal = "check_failed";
-    } else if (!appt) {
-      // Deleted, nonexistent, or not visible to this practitioner at all.
-      refusal = "appointment_missing";
-    } else if (appt.studio_id !== studio.id) {
-      refusal = "other_studio";
-    } else if (appt.client_id !== id) {
-      refusal = "other_client";
-    } else if (appt.practitioner_id && appt.practitioner_id !== practitioner.id) {
-      refusal = "assigned_elsewhere";
-      const joined = appt.practitioner as
-        | { display_name?: string | null; active?: boolean | null }
-        | { display_name?: string | null; active?: boolean | null }[]
-        | null;
-      const assignee = Array.isArray(joined) ? joined[0] : joined;
-      assignedName = assignee?.display_name ?? null;
-      // A deactivated practitioner keeps their appointments (team removal
-      // preserves them) but can no longer sign in to chart them.
-      assigneeInactive = assignee?.active === false;
+    } else {
+      const decided = classifyAppointmentForStart(appt as StartAppointmentLookup | null, { studioId: studio.id, clientId: id, practitionerId: practitioner.id });
+      refusal = decided.refusal;
+      assignedName = decided.assignedName;
+      assigneeInactive = decided.assigneeInactive;
     }
   }
   // Only a refusal about an appointment that EXISTS in this studio can link to
   // it; a missing or foreign one would 404 on /calendar/<id>.
   const appointmentLinkable =
-    !!appointmentId && refusal !== "appointment_missing" && refusal !== "other_studio";
+    !!appointmentId && refusal !== "appointment_missing";
   const refusalCopy = refusal ? sessionStartRefusalCopy(refusal, assignedName, { assigneeInactive }) : null;
   // Starting WITHOUT the appointment link is the recovery that always exists
   // when the booking cannot be charted from here (it is gone, or its assignee
