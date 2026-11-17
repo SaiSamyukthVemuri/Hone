@@ -6,6 +6,16 @@ test("owner configures 48-hour and same-day fees, enables separately, and cannot
   page,
 }) => {
   const seed = await seedE2eStudio();
+  const jurisdiction = await sql<{ out_result: string }>(
+    `select * from public.set_studio_payment_jurisdiction($1,'CA','cad',$2,$3,false,$4)`,
+    [
+      seed.studioId,
+      "fixture:cancellation-tiers",
+      "Synthetic verified payment currency",
+      `fixture:${seed.runId}`,
+    ],
+  );
+  expect(jurisdiction[0]?.out_result).toBe("initialized");
   await sql(
     `update public.studios set cancellation_policy_text=$2, no_show_policy_text='' where id=$1`,
     [seed.studioId, "Less than 48 hours: 50%. Same-day cancellations: 100%."],
