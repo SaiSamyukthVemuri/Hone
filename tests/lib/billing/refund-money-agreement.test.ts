@@ -103,11 +103,9 @@ describe("the refund panel and the owner's balance agree on every refund-column 
     expect(balance).toMatchObject({ kind: "owed", cardKeptCents: 0 });
   });
 
-  it("CONTROL: the check can fail (a deliberately wrong panel reading is caught)", () => {
+  it("a recorded refund of 2000 leaves 3000 refundable on the panel and 3000 kept on the balance", () => {
     const { display, balance } = bothViews({ refundStatus: "succeeded", providerRefundStatus: null, refundAmountCents: 2000, stripeRefundId: "re_1" });
     expect(display.remainingRefundableCents).toBe(3000);
     expect(balance).toMatchObject({ kind: "owed", cardKeptCents: 3000 });
-    // A reading that said 5000 would not equal what the balance kept.
-    expect(5000).not.toBe(balance.kind === "owed" ? balance.cardKeptCents : null);
   });
 });

@@ -1589,6 +1589,14 @@ describe("PINNED TODAY (HON-49): a partial refund recorded in Stripe is not reco
     amount_cents: 5000, currency: "cad", charged_at: null, refund_status: null,
     refund_amount_cents: null, refunded_at: null, stripe_refund_id: null,
   });
+  // One fake database for a whole test, with enough queued reads for `deliveries` webhook calls, so everything the route did is
+  // visible together (a fresh fake per call would hide the earlier calls).
+  function startDatabase(deliveries: number) {
+    ADMIN.current = makeAdmin({
+      studio_payment_settings: Array.from({ length: deliveries }, () => ({ data: { studio_id: "studio-1" }, error: null })),
+      payment_charge_attempts: Array.from({ length: deliveries }, () => ({ data: attemptRow(), error: null })),
+    }, { claim_stripe_event: CLAIM_OK });
+  }
   function partial(eventId: string, refunds: Array<{ id: string; amount: number }>) {
     const refunded = refunds.reduce((n, r) => n + r.amount, 0);
     const event = {
@@ -1603,33 +1611,36 @@ describe("PINNED TODAY (HON-49): a partial refund recorded in Stripe is not reco
     };
     const webhooks = new Stripe("sk_test_synthetic_no_network").webhooks;
     CONSTRUCT_EVENT.mockImplementation((body, header, secret) => webhooks.constructEvent(body, header, secret));
-    ADMIN.current = makeAdmin({
-      studio_payment_settings: [{ data: { studio_id: "studio-1" }, error: null }],
-      payment_charge_attempts: [{ data: attemptRow(), error: null }],
-    }, { claim_stripe_event: CLAIM_OK });
     const payload = JSON.stringify(event);
     return post(payload, webhooks.generateTestHeaderString({ payload, secret: "whsec_test" }));
   }
   const alerts = () => ADMIN.current!.opsRows.filter((r) => r.event === "charge_refunded_partial_out_of_band");
+  // The only database commands a partial refund may run: claim the event, then mark it processed. Any other command (a different
+  // one that writes the row, for example) fails the exact-list checks below.
+  const ONLY_CLAIM_AND_MARK = ["claim_stripe_event", "mark_stripe_event_processed"];
 
-  it("one signed partial refund (2000 of 5000): critical alert, no row change, no reconcile command, acknowledged", async () => {
+  it("one signed partial refund (2000 of 5000): critical alert, no row change, only claim and mark commands, acknowledged", async () => {
+    startDatabase(1);
     const res = await callRoute(partial("evt_partial_1", [{ id: "re_1", amount: 2000 }]));
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ok: true });
     expect(alerts()).toEqual([expect.objectContaining({ severity: "critical" })]);
     expect(ADMIN.current!.updateCalls).toEqual([]);
-    expect(names(ADMIN.current!.rpcCalls)).not.toContain("reconcile_bound_payment_event");
-    expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
+    expect(names(ADMIN.current!.rpcCalls)).toEqual(ONLY_CLAIM_AND_MARK);
   });
 
-  it("a second partial (3000 of 5000 in all) is treated the same: still no row change, a second alert", async () => {
-    await callRoute(partial("evt_partial_1", [{ id: "re_1", amount: 2000 }]));
-    const first = alerts().length;
+  it("a second partial (3000 of 5000 in all) is treated the same: no row change, two critical alerts in all, only claim and mark commands each time", async () => {
+    startDatabase(2);
+    expect((await callRoute(partial("evt_partial_1", [{ id: "re_1", amount: 2000 }]))).status).toBe(200);
+    expect(alerts()).toHaveLength(1);
     const res = await callRoute(partial("evt_partial_2", [{ id: "re_1", amount: 2000 }, { id: "re_2", amount: 1000 }]));
     expect(res.status).toBe(200);
-    expect(first).toBe(1);
+    expect(alerts()).toEqual([
+      expect.objectContaining({ severity: "critical", stripe_event_id: "evt_partial_1" }),
+      expect.objectContaining({ severity: "critical", stripe_event_id: "evt_partial_2" }),
+    ]);
     expect(ADMIN.current!.updateCalls).toEqual([]);
-    expect(names(ADMIN.current!.rpcCalls)).not.toContain("reconcile_bound_payment_event");
+    expect(names(ADMIN.current!.rpcCalls)).toEqual([...ONLY_CLAIM_AND_MARK, ...ONLY_CLAIM_AND_MARK]);
   });
 
   it("with the row untouched, the panel and the balance both still say the whole charge is refundable and kept", async () => {
