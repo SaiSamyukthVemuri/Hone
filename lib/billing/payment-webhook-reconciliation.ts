@@ -598,6 +598,8 @@ async function reconcileBoundEvent(event: Stripe.Event, ctx: WebhookCtx, attempt
         ? "Stripe could not charge the saved card." : null,
       event_created: event.created,
       evidence_kind: evidenceKind,
+      // The authenticated kind always describes a COMPLETE list (the read refuses anything else); the command requires the claim for a single full refund.
+      ...(evidenceKind === "signed_event_with_authenticated_list" ? { charge_refund_list_complete: true } : {}),
     },
   });
   const outcome = (Array.isArray(data) ? data[0] : data) as { result?: string } | null;

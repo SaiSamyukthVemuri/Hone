@@ -1960,7 +1960,7 @@ describe("HON-49: the authenticated refund-list read when the signed payload has
     expect(REFUNDS_LIST).toHaveBeenCalledTimes(1);
     expect(obj(historyCalls()[0])).toMatchObject({ evidence_kind: "signed_event_with_authenticated_list" });
     expect(reconcileCalls()).toHaveLength(1);
-    expect(obj(reconcileCalls()[0])).toMatchObject({ evidence_kind: "signed_event_with_authenticated_list", refund_id: "re_1", refund_amount_cents: 5000 });
+    expect(obj(reconcileCalls()[0])).toMatchObject({ evidence_kind: "signed_event_with_authenticated_list", charge_refund_list_complete: true, refund_id: "re_1", refund_amount_cents: 5000 });
   });
   it("FULL refund Hone started (row pending), cumulative (2000 + 3000), payload has no list: the 0240 command gets both components with the authenticated kind", async () => {
     REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000), fr("re_2", 3000)]));
