@@ -88,3 +88,16 @@ describe("source guards", () => {
     expect(body).toMatch(/readCompleteChargeRefundList\(\{ chargeId: charge\.id, stripeAccount: ctx\.stripeAccountId \?\? "" \}\)/);
   });
 });
+
+// One provider account belongs to exactly one studio. The refund read and every lookup trust this: an event's connected account resolves to ONE studio.
+describe("one provider account, one studio (schema)", () => {
+  const sql = readFileSync("supabase/migrations/0032_stripe_connect_phase_1.sql", "utf8");
+  it("studio_payment_settings: studio_id is the primary key and stripe_account_id is UNIQUE", () => {
+    const table = sql.slice(sql.indexOf("create table public.studio_payment_settings"));
+    expect(table).toMatch(/studio_id\s+uuid primary key references public\.studios\(id\)/);
+    expect(table.slice(0, 600)).toMatch(/stripe_account_id\s+text unique/);
+  });
+  it("payment rows are tied to that identity root by a composite foreign key (studio, account, mode)", () => {
+    expect(sql).toMatch(/foreign key \(studio_id, stripe_account_id, stripe_livemode\)\s+references public\.studio_payment_settings \(studio_id, stripe_account_id, stripe_livemode\)/);
+  });
+});

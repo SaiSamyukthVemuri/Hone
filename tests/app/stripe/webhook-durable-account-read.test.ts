@@ -2086,6 +2086,31 @@ describe("HON-49: the authenticated refund-list read when the signed payload has
     expect(ADMIN.current!.updateCalls).toEqual([]);
   });
 
+  it("the history answers already_recorded (a retry) and the full-refund command STILL runs and completes the refund", async () => {
+    REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 5000)]));
+    setup(1, { history: { data: [{ result: "already_recorded", out_attempt_id: "attempt-1", out_studio_id: "studio-1", out_succeeded_cents: 5000, out_inflight_count: 0 }], error: null } });
+    expect((await send({ id: "evt_retry_full", refundedCents: 5000, list: "absent" })).status).toBe(200);
+    expect(historyCalls()).toHaveLength(1);
+    expect(reconcileCalls()).toHaveLength(1);
+    expect(obj(reconcileCalls()[0])).toMatchObject({ evidence_kind: "signed_event_with_authenticated_list", refund_amount_cents: 5000 });
+    expect(alertsOf("charge_refunded_history_refused")).toEqual([]);
+  });
+
+  it("the SAME event read twice across a retry with DIFFERENT answers: first AHEAD (then the database fails), second BEHIND (refused); nothing wrong is recorded", async () => {
+    REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000), fr("re_2", 1000)])).mockResolvedValueOnce(page([fr("re_2", 1000)]));
+    setup(2, { history: { data: null, error: { code: "XX000", message: "synthetic database failure" } as never } });
+    const first = await send({ id: "evt_two_reads", refundedCents: 2000, list: "absent" });
+    expect(first.status).toBeGreaterThanOrEqual(500);
+    expect((obj(historyCalls()[0]).components as unknown[])).toHaveLength(2);
+    expect(names(ADMIN.current!.rpcCalls)).toContain("release_stripe_event_claim_with_error");
+    const second = await send({ id: "evt_two_reads", refundedCents: 2000, list: "absent" });
+    expect(second.status).toBe(200);
+    expect(REFUNDS_LIST).toHaveBeenCalledTimes(2);
+    expect(historyCalls()).toHaveLength(1); // the behind list never reached the command
+    expect(unavailable()).toEqual([expect.objectContaining({ severity: "critical" })]);
+    expect(ADMIN.current!.updateCalls).toEqual([]);
+  });
+
   describe("connected-account isolation", () => {
     it("the read uses the event's connected account, never one named inside the charge", async () => {
       REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000)]));
