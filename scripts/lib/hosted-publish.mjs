@@ -1,5 +1,4 @@
-// HON-8 D4: the hosted contract-publication runner's logic. DESIGN: machines/HON8-D4-HOSTED-RUNNER-DESIGN.md (v2), reviewed by
-// Insurance (C1-C8) and Privacy (F1-F7). Every effect is injected, so the refusals and the crash behaviour are tested against fakes
+// HON-8 D4: the hosted contract-publication runner's logic. DESIGN: machines/HON8-D4-HOSTED-RUNNER-DESIGN.md (v2). Every effect is injected, so the refusals and the crash behaviour are tested against fakes
 // and the module itself holds no key, no URL and no ledger path. NOTHING HERE RUNS UNLESS THE OPERATOR RUNS THE CLI ON THEIR OWN MACHINE.
 //
 // The only network operations are `select` reads and `.rpc("sync_machine_profile_contract")`. There is no raw table write.
@@ -44,7 +43,7 @@ export function redact(text, key, target = {}) {
     .replace(/((?:authorization|apikey)["']?\s*[:=]\s*["']?)(?:bearer\s+)?[^\s"',}]+/gi, "$1[redacted]");
 }
 
-/** F1, C3, F3: everything that must be true BEFORE any key is read or any network call is made. */
+/** Everything that must be true BEFORE any key is read or any network call is made. */
 export function startupRefusals({ env, execArgv, stdinTTY, stdoutTTY, vpsMarker }) {
   const why = [];
   for (const v of PROXY_VARS) if (env[v] !== undefined && env[v] !== "") why.push(`${v} is set (a proxy could carry the key elsewhere)`);
@@ -63,7 +62,7 @@ export function parseHostedUrl(url) {
   return m[1];
 }
 
-/** C2: the key's project ref claim if it is a JWT with one; null otherwise. The payload is never returned or printed. */
+/** The key's project ref claim if it is a JWT with one; null otherwise. The payload is never returned or printed. */
 export function keyRefClaim(key) {
   const parts = String(key).split(".");
   if (parts.length !== 3) return null;
@@ -99,7 +98,7 @@ export function checkToken({ tokenText, expectTokenSha256, plan, planSha256, hea
   if (!COMMIT_RE.test(String(t.catalogue_commit)) || t.catalogue_commit !== head) refuse("token catalogue_commit is not this checkout's HEAD");
   if (!clean) refuse("the checkout is not clean (modified or untracked files)");
   if (!ancestor) refuse(`HEAD is not an ancestor of origin/${productionBranch}: this is not the reviewed, merged commit`);
-  // Sam's separate read-only results, bound into the token (Privacy BB1). The runner cannot read these from the target; it holds him to them.
+  // Sam's separate read-only results, bound into the token. The runner cannot read these from the target; it holds him to them.
   if (t.hosted_migration_max !== declaredMigrationMax) refuse(`token hosted_migration_max (${t.hosted_migration_max}) is not the repo's declared ${declaredMigrationMax}`);
   if (!Number.isInteger(t.expected_existing_rows) || t.expected_existing_rows < 0) refuse("token expected_existing_rows must be a whole number of planned rows already published");
   const planned = plannedSet(plan);
@@ -126,7 +125,7 @@ export const projectPlanRow = (row) => projectContract({ channels_max: row.p_cha
 /**
  * The operator's ledger on the real filesystem. `createExclusive` is the SINGLE-USE claim: an exclusive create (O_EXCL, flag wx) at the FINAL
  * name, so of two runs of the same token started at the same moment exactly one wins and the other gets EEXIST. A write-then-rename would
- * silently replace an existing intent (Insurance G1, Codex P2, Privacy BB4). `writeAtomic` (temp file then rename) stays for the receipt,
+ * silently replace an existing intent (two runs of one token must not both claim it). `writeAtomic` (temp file then rename) stays for the receipt,
  * which is MEANT to be replaced (started stub, then the finished receipt).
  */
 export function makeFsLedger(dir) {
@@ -190,26 +189,26 @@ export async function runHosted(d) {
       sysRef: d.systemRef(), urlRef, productionBranch: d.productionBranch, declaredMigrationMax: d.declaredMigrationMax(),
     });
 
-    // F3: a person, not a process. Wrong answer = exit, no retry, no skip flag.
+    // A person, not a process. Wrong answer = exit, no retry, no skip flag.
     const a1 = (await d.prompt(`Type the first 12 characters of the plan sha256: `)).trim();
     const a2 = (await d.prompt(`Type the last 4 characters of the project ref: `)).trim();
     if (a1 !== planSha256.slice(0, 12) || a2 !== token.project_ref.slice(-4)) refuse("the confirmation did not match");
 
-    // A used token: any intent or receipt in the ledger, or a committed receipt (C1, F2).
+    // A used token: any intent or receipt in the ledger, or a committed receipt.
     const names = ledgerNames(tokenSha256);
     if (d.ledger.exists(names.intent) || d.ledger.exists(names.receipt) || d.committedReceiptExists(tokenSha256)) {
       refuse("this token has been used or started (an intent record or receipt exists); a started token is cleared only by a person");
     }
 
     const client = d.client({ url: hostedUrl, key });
-    // THE FINGERPRINT NEEDS NO NEW EXPOSURE (Privacy BB1, Insurance G3). The migrations schema is not reachable through the API and must not be
+    // THE FINGERPRINT NEEDS NO NEW EXPOSURE. The migrations schema is not reachable through the API and must not be
     // exposed for this. What the runner CAN read: the sync function is present on the target, and how many of the planned rows already exist.
     // The migration head is a value Sam read separately (his read-only check) and bound into the token; it is compared with the repo's declared
-    // head but NOT read by the runner, and project kind is asserted by the token, not proven (BB2, G2). Both are said plainly in the receipt.
+    // head but NOT read by the runner, and project kind is asserted by the token, not proven. Both are said plainly in the receipt.
     const fp = await client.fingerprint();
     if (!fp.rpcExists) refuse(`the ${RPC} function is not present on the target`);
 
-    // Existing rows, read-only first (design 8.1-8.2).
+    // Existing rows, read-only first.
     const before = [];
     let existingCount = 0;
     for (const row of plan.publish) {
@@ -224,12 +223,12 @@ export async function runHosted(d) {
       refuse(`${existingCount} of the planned rows already exist but the token expects ${token.expected_existing_rows}: the target is not in the state Sam approved`);
     }
 
-    // EXPIRY IS RECHECKED NOW, not only at the start (Codex P2): the prompt, the fingerprint and the reads above take time, and an approval that has
+    // EXPIRY IS RECHECKED NOW, not only at the start: the prompt, the fingerprint and the reads above take time, and an approval that has
     // run out must not start a run. Refusing here leaves the token unclaimed (no intent written yet).
     const expiresAtMs = Date.parse(token.expires_at);
     if (d.now() >= expiresAtMs) refuse("the token expired before the first hosted write; nothing was written");
 
-    // WRITE-AHEAD INTENT, claimed EXCLUSIVELY at its final name before the first write (G1): of two runs of one token, one wins; the other is refused.
+    // WRITE-AHEAD INTENT, claimed EXCLUSIVELY at its final name before the first write: of two runs of one token, one wins; the other is refused.
     // A crash after this burns the token. The receipt stub, which is meant to be replaced, is written atomically.
     const startedAt = new Date(d.now()).toISOString();
     try {
@@ -248,7 +247,7 @@ export async function runHosted(d) {
       approver_role: "owner",
       token_sha256: tokenSha256,
       key_binding: keyBinding,
-      // PLAIN STATEMENT (BB2, G2): not a control the runner performed.
+      // PLAIN STATEMENT: not a control the runner performed.
       target_binding: "project kind and the migration head are ASSERTED by the token (the approver's separate read-only check), not proven by this runner; the target is bound only by the token's ref, the URL, supabase/.temp/project-ref and the key's ref claim when it has one",
       token_declared: { hosted_migration_max: token.hosted_migration_max, expected_existing_rows: token.expected_existing_rows },
       runtime: d.runtimeVersions(),
@@ -276,7 +275,7 @@ export async function runHosted(d) {
       } catch (e) { return `unreadable: ${redactErr(e)}`; }
     };
 
-    // A FAILED RPC IS NOT "NOT ATTEMPTED" (Codex P2): the request was sent, and a lost answer may still have committed. It is recorded as an
+    // A FAILED RPC IS NOT "NOT ATTEMPTED": the request was sent, and a lost answer may still have committed. It is recorded as an
     // attempt with an UNCERTAIN outcome, and read back to learn what actually happened. Only the rows after it were never attempted.
     let failure = null;
     // A SECOND recheck immediately before the first RPC: the intent claim and receipt stub sit between the check above and the first write. If the
@@ -300,7 +299,7 @@ export async function runHosted(d) {
         receipt.attempted_uncertain.push({ id, error: failure, read_back: await readBack(row) });
       }
     }
-    // Read-back, byte for byte (design 8.4), for every row that completed. A read-back that FAILS is finalized into the receipt, never lost (Codex P2).
+    // Read-back, byte for byte, for every row that completed. A read-back that FAILS is finalized into the receipt, never lost.
     const mismatches = [];
     const unreadable = [];
     for (const row of plan.publish) {
@@ -340,7 +339,7 @@ export function makeHostedClient({ url, key, fetchImpl = fetch, checkUrl = parse
     return res.json();
   };
   return {
-    // NO NEW EXPOSURE (Privacy BB1): nothing here reads the migrations schema, which the API does not expose. The fingerprint is whether the sync
+    // NO NEW EXPOSURE: nothing here reads the migrations schema, which the API does not expose. The fingerprint is whether the sync
     // function is present on the target (the API's own OpenAPI document). The migration head and the count of already-published rows are bound
     // into the approval token from Sam's separate read-only check; the runner compares the row count itself (before any write) and holds the
     // head to the repo's declared value. Project kind is NOT read: it is asserted by the token.

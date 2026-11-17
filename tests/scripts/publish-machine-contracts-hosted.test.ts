@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 // HON-8 D4: the hosted publication runner, against FAKES. Nothing here reaches a network, a key or a real ledger. Design:
-// machines/HON8-D4-HOSTED-RUNNER-DESIGN.md v2; tests answer Insurance C1-C8 and Privacy F1-F7.
+// machines/HON8-D4-HOSTED-RUNNER-DESIGN.md v2.
 
 const lib = await import("../../scripts/lib/hosted-publish.mjs");
 const { runHosted, sha256, redact, Refusal, projectPlanRow, plannedSet, makeHostedClient, makeFsLedger, KEY_VAR, URL_VAR } = lib;
@@ -89,7 +89,7 @@ describe("control: a fully valid run publishes, reads back, and writes a finishe
   });
 });
 
-describe("startup refusals: every one happens before any network call, ledger write, or key use (F1, F3, C3)", () => {
+describe("startup refusals: every one happens before any network call, ledger write, or key use", () => {
   const cases: Array<[string, (d: any) => void, RegExp]> = [
     ["HTTPS_PROXY", (d) => { d.env.HTTPS_PROXY = "http://p"; }, /HTTPS_PROXY/],
     ["lowercase http_proxy", (d) => { d.env.http_proxy = "http://p"; }, /http_proxy/],
@@ -133,7 +133,7 @@ describe("startup refusals: every one happens before any network call, ledger wr
   });
 });
 
-describe("token and inputs: every refusal, before any write (C4, C5, C6, F4)", () => {
+describe("token and inputs: every refusal, before any write", () => {
   const cases: Array<[string, (x: ReturnType<typeof deps>) => void, RegExp]> = [
     ["no --expect-token-sha256", ({ d }) => { d.expectTokenSha256 = undefined; }, /expect-token-sha256/],
     ["a different token sha256", ({ d }) => { d.expectTokenSha256 = "b".repeat(64); }, /not the one quoted/],
@@ -171,7 +171,7 @@ describe("token and inputs: every refusal, before any write (C4, C5, C6, F4)", (
   });
 });
 
-describe("hosted fingerprint (F4, BB1): no migration-schema read; the target is held to what Sam bound into the token", () => {
+describe("hosted fingerprint: no migration-schema read; the target is held to what Sam bound into the token", () => {
   const noWrite = (x: any) => expect(x.calls.filter((c: string) => c.startsWith("rpc:") || c.startsWith("ledger:"))).toEqual([]);
   it("a missing RPC refuses before any intent or write", async () => {
     const x = deps();
@@ -215,7 +215,7 @@ describe("hosted fingerprint (F4, BB1): no migration-schema read; the target is 
   });
 });
 
-describe("single use, write-ahead intent, and partial runs (C1, C6, F2)", () => {
+describe("single use, write-ahead intent, and partial runs", () => {
   it("the intent record exists BEFORE the first RPC", async () => {
     const { d, calls } = deps();
     await runHosted(d);
@@ -290,7 +290,7 @@ describe("single use, write-ahead intent, and partial runs (C1, C6, F2)", () => 
   });
 });
 
-describe("exclusive intent claim (G1, Codex P2 #3, BB4) and uncertain outcomes (Codex P2 #2, #1)", () => {
+describe("exclusive intent claim and uncertain outcomes", () => {
   it("two runs of one token over a REAL ledger directory: exactly one publishes, the other is refused", async () => {
     const dir = mkdtempSync(join(tmpdir(), "ledger-race-"));
     try {
@@ -357,7 +357,7 @@ describe("exclusive intent claim (G1, Codex P2 #3, BB4) and uncertain outcomes (
   });
 });
 
-describe("approval expiry is rechecked before the first hosted write (Codex P2)", () => {
+describe("approval expiry is rechecked before the first hosted write", () => {
   const EXP = Date.parse("2026-11-10T20:00:00Z");
   it("an approval that runs out during the prompt/reads is refused with no intent and no write", async () => {
     const x = deps();
@@ -390,7 +390,7 @@ describe("approval expiry is rechecked before the first hosted write (Codex P2)"
   });
 });
 
-describe("receipt durability (C7)", () => {
+describe("receipt durability", () => {
   it("a receipt-write failure after publishing prints the body and exits non-zero", async () => {
     const x = deps();
     let n = 0;
@@ -402,7 +402,7 @@ describe("receipt durability (C7)", () => {
   });
 });
 
-describe("the key never leaves the process (F1)", () => {
+describe("the key never leaves the process", () => {
   it("is removed from the environment object once read", async () => {
     const x = deps();
     await runHosted(x.d);
@@ -443,7 +443,7 @@ describe("the key never leaves the process (F1)", () => {
 describe("source guards", () => {
   const lib = readFileSync(join(root, "scripts/lib/hosted-publish.mjs"), "utf8");
   const cli = readFileSync(join(root, "scripts/publish-machine-contracts-hosted.mjs"), "utf8");
-  it("the CLI never passes the URL-check seam, and the lib never reads the migrations schema (BB3, BB1)", () => {
+  it("the CLI never passes the URL-check seam, and the lib never reads the migrations schema", () => {
     expect(cli).not.toMatch(/checkUrl/);
     expect(lib).not.toMatch(/Accept-Profile|supabase_migrations|schema_migrations/);
     expect(lib).not.toMatch(/projectKind/);
