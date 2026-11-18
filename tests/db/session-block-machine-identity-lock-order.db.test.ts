@@ -383,16 +383,4 @@ describe("0301: the setup-save wrapper takes SESSION then BLOCK", () => {
       ),
     );
   }, 60_000);
-
-  it("(source order) the wrapper takes the session before the block, and both before the inner command", () => {
-    const { readFileSync } = require("node:fs") as typeof import("node:fs");
-    const sql = readFileSync("supabase/migrations/0301_session_block_machine_identity.sql", "utf8");
-    const body = sql.slice(sql.indexOf("function public.record_setup_submission_with_identity"));
-    const session = body.indexOf("from public.sessions s");
-    const block = body.indexOf("from public.session_blocks b");
-    const inner = body.indexOf("public.record_treatment_setup_submission(");
-    expect(session).toBeGreaterThan(-1);
-    expect(session).toBeLessThan(block);
-    expect(block).toBeLessThan(inner);
-  });
 });

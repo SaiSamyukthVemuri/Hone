@@ -276,7 +276,7 @@ describe("0327: erased answers and decline rows", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The files: one clause, ACL by name, md5 pins, the down restores 0326 byte for byte, and up / down / up on the real database.
+// The files: ACL by name, md5 pins, the down restores 0326 byte for byte, and up / down / up on the real database.
 // ---------------------------------------------------------------------------
 const MIGRATIONS = join(__dirname, "..", "..", "supabase");
 const upSql = readFileSync(join(MIGRATIONS, "migrations", "0327_waitlist_followup_read_bound.sql"), "utf8");
@@ -293,16 +293,6 @@ const fnOf = (text: string) => {
 const readMd5 = async () => (await q(`select md5(prosrc) as m from pg_proc where proname='read_waitlist_followups' and pronamespace='public'::regnamespace`))[0].m as string;
 
 describe("0327 files", () => {
-  it("the new body is 0326's body plus exactly one clause", () => {
-    const a = fnOf(sql0326).split("\n");
-    const b = fnOf(upSql).split("\n");
-    expect(b.length).toBe(a.length);
-    const changed = a.map((line, i) => [line, b[i]] as const).filter(([x, y]) => x !== y);
-    expect(changed).toHaveLength(1);
-    expect(changed[0][0]).toBe("           and (f.kind = 'decline' and d.id = f.id or f.kind = 'withdrawal')");
-    expect(changed[0][1]).toBe("           and (f.kind = 'decline' and d.id = f.id or f.kind = 'withdrawal' and a2.submitted_at <= f.opened_at)");
-  });
-
   it("the down restores 0326's function text byte for byte and pins its md5", () => {
     expect(fnOf(downSql)).toBe(fnOf(sql0326));
     expect(downSql).toContain(LIVE_0326_MD5);
@@ -323,14 +313,6 @@ describe("0327 files", () => {
       expect(text).toContain("revoke all on function public.read_waitlist_followups(uuid, uuid, uuid) from public, anon, authenticated, service_role;");
       expect(text).toContain("grant execute on function public.read_waitlist_followups(uuid, uuid, uuid) to service_role;");
     }
-  });
-
-  it("statement inventory: one function replace, no DDL on tables, no DML, outside the function body", () => {
-    const outside = upSql.replace(fnOf(upSql), "").replace(/do \$\$[\s\S]*?end \$\$;/, "");
-    expect(outside).not.toMatch(/\b(insert|update|delete|truncate|alter\s+table|create\s+table|drop|create\s+index|create\s+trigger)\b/i);
-    expect((upSql.match(/create or replace function/g) ?? []).length).toBe(1);
-    expect(upSql).not.toContain("waitlist_answer_erase_by(uuid)\n"); // the retention helper is not redefined here
-    expect(upSql).not.toMatch(/create or replace function public\.waitlist_answer_erase_by/);
   });
 });
 

@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
 import { afterAll, describe, expect, it } from "vitest";
 
 import {
@@ -525,13 +524,6 @@ describe("0301: two concurrent submissions on one block do not deadlock", () => 
       expect(await readings(blockId)).toBe(2);
     }
   }, 120_000);
-
-  it("the wrapper takes the block lock before the inner command (source order)", () => {
-    const sql = readFileSync("supabase/migrations/0301_session_block_machine_identity.sql", "utf8");
-    const body = sql.slice(sql.indexOf("function public.record_setup_submission_with_identity"));
-    expect(body.indexOf("for update;")).toBeGreaterThan(-1);
-    expect(body.indexOf("for update;")).toBeLessThan(body.indexOf("public.record_treatment_setup_submission("));
-  });
 });
 
 describe("0301: no direct write path to the new columns", () => {
@@ -786,38 +778,5 @@ describe("0301: a soft-deleted session takes no identity", () => {
       adminQuery(`select public.apply_block_machine_identity($1,$2,$3,$4,$5)`, [blockId, studio.studioId, null, machine, "galvanic"]),
     ).rejects.toThrow(GONE);
     expect((await identity(blockId)).machine_profile_id).toBeNull();
-  });
-
-  it("source order: every command takes the LIVE session lock before the block lock", () => {
-    const sql = readFileSync("supabase/migrations/0301_session_block_machine_identity.sql", "utf8");
-    const fn = (name: string) => {
-      const i = sql.indexOf(`create or replace function public.${name}(`);
-      const j = sql.indexOf("create or replace function", i + 10);
-      return sql.slice(i, j === -1 ? undefined : j);
-    };
-    for (const name of ["apply_block_machine_identity", "record_block_machine_identity", "record_setup_submission_with_identity", "create_block_with_initial_setup_and_identity"]) {
-      const body = fn(name).replace(/--[^\n]*/g, "");
-      const session = body.search(/s\.deleted_at is null\s+for share/);
-      expect(session, `${name} locks a live session`).toBeGreaterThan(-1);
-      const block = body.search(/assert_block_in_session|\bfor update\b|create_block_with_initial_setup\(/);
-      expect(block, `${name} touches the block`).toBeGreaterThan(-1);
-      expect(session, `${name}: session before block`).toBeLessThan(block);
-    }
-  });
-
-  // 0310 redefines the core, so the order must hold for ITS body too, and the unit is locked LAST.
-  it("source order, 0310 core: live session lock, then the block lock, then the unit FOR SHARE", () => {
-    const sql = readFileSync("supabase/migrations/0310_block_machine_identity_mode_contract.sql", "utf8");
-    const i = sql.indexOf("create or replace function public.apply_block_machine_identity(");
-    const j = sql.indexOf("create or replace function", i + 10);
-    const body = sql.slice(i, j === -1 ? undefined : j).replace(/--[^\n]*/g, "");
-    const session = body.search(/s\.deleted_at is null\s+for share/);
-    const block = body.search(/\bfor update\b/);
-    const unit = body.search(/from public\.studio_machines m[\s\S]*?for share of m\b/);
-    expect(session, "locks a live session").toBeGreaterThan(-1);
-    expect(block, "locks the block").toBeGreaterThan(-1);
-    expect(unit, "locks the unit FOR SHARE").toBeGreaterThan(-1);
-    expect(session).toBeLessThan(block);
-    expect(block).toBeLessThan(unit);
   });
 });

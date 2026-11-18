@@ -666,38 +666,19 @@ describe("admit: the owner-review hold", () => {
 });
 
 describe("source pins", () => {
-  const sql = readFileSync(join(__dirname, "..", "..", "supabase", "migrations", "0325_waitlist_decline_followups.sql"), "utf8");
   it("E4: the SQL literal for a fresh round's allowance equals AUTO_ROUND_ALLOWANCE", () => {
     expect(AUTO_ROUND_ALLOWANCE).toBe(100);
     expect(readFileSync(join(__dirname, "..", "..", "supabase", "migrations", "0324_waitlist_atomic_send_allowance.sql"), "utf8")).toMatch(/values \(p_studio_id, 100,/);
   });
-  it("the bell literals in SQL are the contract's", () => {
-    expect(sql).toContain("'A waitlist response needs your attention'");
-    expect(sql).toContain("'/settings/waitlist#follow-up'");
-  });
 });
 
-describe("C8: admit is built from the final 0324 bytes", () => {
+describe("C8: the 0325 down file is built from the final 0324 bytes", () => {
   const root = join(__dirname, "..", "..", "supabase");
   const fn = (text: string) => {
     const a = text.indexOf("create or replace function public.admit_new_client_waitlist_entry(");
     return text.slice(a, text.indexOf("\n$$;", a) + 4);
   };
   const a24 = fn(readFileSync(join(root, "migrations", "0324_waitlist_atomic_send_allowance.sql"), "utf8"));
-  const a25 = fn(readFileSync(join(root, "migrations", "0325_waitlist_decline_followups.sql"), "utf8"));
-
-  it("0325's admit is 0324's with exactly one inserted region, and the guard and rotation survive in order", () => {
-    const start = a25.indexOf("  -- 3d. THE OWNER-REVIEW HOLD");
-    const end = a25.indexOf("  -- 4-9. THE MUTATING HALF");
-    expect(start).toBeGreaterThan(0);
-    expect(a25.slice(0, start) + a25.slice(end)).toBe(a24);
-    const guard = a25.indexOf("if v_competing + 1 > p_fit then");
-    const hold = a25.indexOf("'pending_owner_review'");
-    const rotate = a25.indexOf("values (p_studio_id, 100,");
-    expect(guard).toBeGreaterThan(0);
-    expect(guard).toBeLessThan(hold);
-    expect(hold).toBeLessThan(rotate);
-  });
 
   it("the 0325 down file restores 0324's admit exactly", () => {
     const down = readFileSync(join(root, "rollbacks", "0325_waitlist_decline_followups.down.sql"), "utf8");

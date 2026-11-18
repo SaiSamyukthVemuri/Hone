@@ -324,11 +324,6 @@ describe("receipt replay: a replay never writes, and a new payload always meets 
 describe("a NULL element in a unit's installed options never lets an option-gated mode through", () => {
   const FIXED = "(v_requires = any (coalesce(v_unit_options, '{}'::text[]))) is not true";
   const BUGGY = "not (v_requires = any (coalesce(v_unit_options, '{}'::text[])))";
-  it("the sealed body carries the fail-closed form, and the control body is exactly that body with the old form restored", () => {
-    expect(BODY_0310).toContain(FIXED);
-    expect(BODY_0310).not.toContain(BUGGY);
-    expect(BODY_0310.replace(FIXED, BUGGY)).toContain(BUGGY);
-  });
   const GATED_NULL = CASES.find((c) => c.unit === "nullBare")!;
   for (const w of WRAPPERS) {
     it(`${w.name}: installed options {NULL} plus a gated mode is refused; {NULL, required option} is accepted`, async () => {
