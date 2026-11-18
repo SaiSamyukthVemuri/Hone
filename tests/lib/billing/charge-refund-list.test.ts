@@ -102,25 +102,25 @@ describe("one provider account, one studio (schema)", () => {
   });
 });
 
-// The fake provider is reachable from this read ONLY through the guard, and the real client is the default.
-describe("the fake provider is chosen only through the guard", () => {
+// The fake provider is reachable from this read ONLY through the one existing client seam, and the real client is the default.
+describe("the fake provider is chosen only through the existing client seam", () => {
   const src = readFileSync("lib/billing/charge-refund-list.ts", "utf8").split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
-  it("reads the fake flag only through isE2eFakeStripeEnabled(), never HONE_E2E_FAKE_STRIPE or HONE_E2E_RUN_ID itself", () => {
+  it("takes its client only from getSessionPaymentStripe(): it never names the fake, the guard, the flag, the environment or getStripe itself", () => {
+    expect(src).toMatch(/const stripe = getSessionPaymentStripe\(\)/);
+    expect(src).not.toMatch(/createFakeStripe|isE2eFakeStripeEnabled|assertFakeStripeNotRequestedInDeployment|getStripe\b/);
     expect(src).not.toMatch(/HONE_E2E_/);
     expect(src).not.toMatch(/process\.env/);
-    expect(src).toMatch(/isE2eFakeStripeEnabled\(\)\s*\?\s*createFakeStripe\(\)\s*:\s*getStripe\(\)/);
   });
-  it("calls assertFakeStripeNotRequestedInDeployment() before the fake branch, as the charge seam does", () => {
-    const assertAt = src.indexOf("assertFakeStripeNotRequestedInDeployment()");
-    const branchAt = src.indexOf("isE2eFakeStripeEnabled() ?");
-    expect(assertAt).toBeGreaterThan(-1);
-    expect(branchAt).toBeGreaterThan(assertAt);
+  it("the seam fails loud when the fake flag is set in a deployment, before it picks the fake", () => {
+    const seam = readFileSync("lib/stripe/session-payment-stripe.ts", "utf8").split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
+    expect(seam.indexOf("assertFakeStripeNotRequestedInDeployment()")).toBeGreaterThan(-1);
+    expect(seam.indexOf("isE2eFakeStripeEnabled()")).toBeGreaterThan(seam.indexOf("assertFakeStripeNotRequestedInDeployment()"));
   });
-  it("no other server code selects the fake client: only this module, the charge seam and the fake itself (every tracked file outside tests, e2e and docs)", () => {
+  it("no other server code selects the fake client: only the seam and the fake itself (every tracked file outside tests, e2e and docs)", () => {
     const out = execSync(
       "git grep -l createFakeStripe -- . ':!tests' ':!e2e' ':!e2e-payment' ':!e2e-google' ':!e2e-mobile' ':!docs' ':!openwiki' || true",
       { encoding: "utf8" },
     ).split("\n").filter(Boolean).sort();
-    expect(out).toEqual(["lib/billing/charge-refund-list.ts", "lib/stripe/e2e-fake-stripe.ts", "lib/stripe/session-payment-stripe.ts"]);
+    expect(out).toEqual(["lib/stripe/e2e-fake-stripe.ts", "lib/stripe/session-payment-stripe.ts"]);
   });
 });

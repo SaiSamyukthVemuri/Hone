@@ -556,7 +556,7 @@ async function recordChargeRefundHistory(event: Stripe.Event, ctx: WebhookCtx, a
     // charge.refunded deliveries. Postgres 42883 = undefined function; PostgREST PGRST202 = function not found in the schema cache.
     const code = String((error as { code?: unknown }).code ?? "");
     if (code === "42883" || code === "PGRST202") return { sent: false, result: null };
-    throw new Error(`charge_refunded_history_failed:${dbErrorCode(error) ?? ""}`);
+    throw new Error(`charge_refunded_history_failed:${dbErrorCode(error)}`);
   }
   const row = (Array.isArray(data) ? data[0] : data) as { result?: string } | null;
   return { sent: true, result: typeof row?.result === "string" ? row.result : null };
