@@ -485,8 +485,8 @@ describe("L18 Phase 4 — command-bound table direct DML guard", () => {
         // (linked session, payment, manual fee, postcare, reschedule
         // successor). It reads only; it is not a session_block/entry command,
         // touches none of this guard's six command-bound tables, and is
-        // reviewed by tests/migrations/0173-appointment-repair-commands.test.ts
-        // plus tests/db/appointment-repair-commands.db.test.ts. Excluded by
+        // exercised by tests/db/appointment-repair-commands.db.test.ts and
+        // tests/db/appointment-repair-postcare-in-flight.db.test.ts. Excluded by
         // exact name so any OTHER new block-ish command still trips this guard.
         c !== "appointment_has_blocking_dependents" &&
         // MPX-03 (0223). `create_block_with_initial_setup` writes a treatment

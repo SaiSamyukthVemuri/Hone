@@ -6,6 +6,7 @@ import { generateCancellationToken } from "@/lib/booking/tokens";
 import { generateIntakeLinkUrl } from "@/lib/intake/queries";
 import { buildTreatmentTimeLine } from "@/lib/treatment-time/format";
 import { loadTreatmentTimeNameFields } from "@/lib/treatment-time/client-first-name";
+import { loadCommunicationName, loadCommunicationNameForAppointment } from "@/lib/clients/communication-name-loader";
 import { isMissingColumnError } from "@/lib/db/missing-column";
 import type { ClientIdentityFields } from "@/lib/clients/identity";
 import { isE2eFakeResendEnabled } from "./e2e-fake-resend";
@@ -482,6 +483,25 @@ export function logEmailFailure(opts: {
   })();
 }
 
+/** The communication name for a client email, loaded at the send boundary through the CALLER's existing admin client (no new service-role
+ * call site). With no reader given there is nothing to read and the stored name comes back at once. Never throws. */
+async function communicationNameAtSendBoundary(nameReader: unknown, studioId: string, clientId: string | null | undefined, storedName: string): Promise<string> {
+  if (!nameReader) return storedName;
+  try {
+    return await loadCommunicationName(nameReader, studioId, clientId, storedName);
+  } catch {
+    return storedName;
+  }
+}
+async function communicationNameForAppointmentAtSendBoundary(nameReader: unknown, studioId: string, appointmentId: string, storedName: string | null): Promise<string | null> {
+  if (!nameReader) return storedName;
+  try {
+    return await loadCommunicationNameForAppointment(nameReader, studioId, appointmentId, storedName);
+  } catch {
+    return storedName;
+  }
+}
+
 export async function sendBookingConfirmationToClient(params: {
   appointment: AnyAppointment;
   service: Pick<
@@ -497,6 +517,8 @@ export async function sendBookingConfirmationToClient(params: {
   intakeUrl: string | null;
   treatmentTimeLine: string | null;
   appBaseUrl: string;
+  /** The caller's existing admin client, used ONLY to read the client's preferred name. Absent: the stored name is used and nothing is read. */
+  nameReader?: unknown;
 }): Promise<EmailSendResult> {
   if (!params.clientEmail) {
     return { ok: false, error: "no_recipient", retryable: false };
@@ -529,6 +551,9 @@ export async function sendBookingConfirmationToClient(params: {
     bookingReference: emailBookingReference(params.appointment.id),
   });
 
+  // HON-58: the invite names the attendee by the name they go by (the communication name), loaded here at the send boundary.
+  // A failed or slow read, a missing column or no preferred name leaves the stored name; the send never depends on the read.
+  const attendeeName = await communicationNameAtSendBoundary(params.nameReader, params.studio.id, params.appointment.client_id, params.clientName);
   const ics = buildIcs({
     uid: params.appointment.id,
     start,
@@ -540,7 +565,7 @@ export async function sendBookingConfirmationToClient(params: {
       : `${serviceName} at ${params.studio.name}.`,
     organizerName: params.studio.name,
     organizerEmail: params.studio.owner_email,
-    attendeeName: params.clientName,
+    attendeeName,
     attendeeEmail: params.clientEmail,
   });
 
@@ -570,13 +595,15 @@ export async function sendBookingNotificationToPractitioner(params: {
   // the caller (the public booking action) so this helper does not
   // need to know about the canonical option set.
   referralSourceLabel: string | null;
+  /** The caller's existing admin client, used ONLY to read the client's preferred name. Absent: the stored name is used and nothing is read. */
+  nameReader?: unknown;
 }) {
   if (!params.practitionerEmail) return;
   const start = new Date(params.appointment.starts_at);
   const end = new Date(params.appointment.ends_at);
   const { subject, html, text } = buildPractitionerNotificationEmail({
     practitionerName: params.practitionerName,
-    clientName: params.clientName,
+    clientName: await communicationNameAtSendBoundary(params.nameReader, params.studio.id, params.appointment.client_id, params.clientName),
     clientEmail: params.clientEmail,
     clientPhone: params.clientPhone,
     studioName: params.studio.name,
@@ -614,12 +641,14 @@ export async function sendCancellationEmail(params: {
   rebookUrl?: string;
   // Per-event subject reference (tests/lib/email/email-subject-sweep.test.ts).
   appointmentId: string;
+  /** The caller's existing admin client, used ONLY to read the client's preferred name. Absent: the stored name is used and nothing is read. */
+  nameReader?: unknown;
 }): Promise<EmailSendResult> {
   if (!params.to) return { ok: false, error: "no_recipient", retryable: false };
   const { subject, html, text } = buildCancellationEmail({
     bookingReference: emailBookingReference(params.appointmentId),
     recipientName: params.recipientName,
-    clientName: params.clientName,
+    clientName: await communicationNameForAppointmentAtSendBoundary(params.nameReader, params.studio.id, params.appointmentId, params.clientName),
     studioName: params.studio.name,
     serviceName: params.serviceName,
     durationMinutes: params.durationMinutes,
