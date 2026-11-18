@@ -12,6 +12,7 @@ const pur = MACHINE_CATALOGUE.find((p) => p.profileId === "dectro-apilus:xcell-p
 function allButFrequency(): MachineProfile {
   const p = structuredClone(pur);
   p.openQuestions = [];
+  p.frequency = { kind: "unverified", note: "not established" };
   p.modes[0]!.verification = "manufacturer-documented";
   for (const { field } of modeFields(p.modes[0]!)) { field.verification = "manufacturer-documented"; delete field.unverified; }
   return p;
@@ -38,8 +39,11 @@ describe("the slice gate refuses an unverified frequency directly", () => {
     expect(sliceViolations(p)).toEqual([]);
   });
 
-  it("the real xCell Pur entry is refused for the frequency as well as for its other evidence", () => {
-    expect(sliceViolations(pur).map((v) => v.reason)).toContain("frequency is unverified");
+  it("the real xCell Pur entry passes, because its frequency is evidenced; without it the gate would refuse", () => {
+    expect(sliceViolations(pur, { acceptDeviceConfirmed: true })).toEqual([]);
+    const without = structuredClone(pur);
+    without.frequency = { kind: "unverified", note: "x" };
+    expect(sliceViolations(without, { acceptDeviceConfirmed: true }).map((v) => v.reason)).toContain("frequency is unverified");
   });
 });
 
@@ -47,7 +51,8 @@ describe("tightening the gate changes nothing that is offered or published today
   it("every ACTIVE mode of every catalogue profile still passes the gate cleanly", () => {
     for (const p of MACHINE_CATALOGUE) {
       const active = new Set(p.modes.filter((m) => m.availability === "active").map((m) => m.key));
-      const refused = sliceViolations(p).filter((v) => active.has(v.modeKey));
+      // The xCell Pur is the one profile whose fields are device-confirmed; it passes the gate only with the explicit option.
+      const refused = sliceViolations(p, { acceptDeviceConfirmed: p.profileId === "dectro-apilus:xcell-pur" }).filter((v) => active.has(v.modeKey));
       expect(refused, `${p.profileId}@${p.version}`).toEqual([]);
     }
   });
@@ -61,5 +66,6 @@ describe("tightening the gate changes nothing that is offered or published today
   it("the plan publishes exactly the rows it did before (pinned in xcell-unchanged-guard)", () => {
     const rows = planContractPublication().publish.filter((r) => r.p_machine_profile_id !== "dectro-apilus:xcell-pur");
     expect(rows.length).toBe(10);
+    expect(planContractPublication().publish.length).toBe(11);
   });
 });

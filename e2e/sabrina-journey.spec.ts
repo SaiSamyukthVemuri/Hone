@@ -84,7 +84,7 @@ test.describe("A. invite and accept (HON-44)", () => {
   // getResendTransport(), so the fake transport and its capture ledger never see it (the server logged
   // team_invitation_email_failed:provider_error:validation_error against the lane's dummy key). Written down as the exact
   // contract; blocked until the invitation send goes through the shared transport.
-  test.fixme("J1b the invitation email is recorded by the captured transport, exactly once (blocked: invitation send bypasses the fake transport)", async () => {
+  test.fixme("J1b the invitation email is recorded by the captured transport, exactly once (blocked until the invitation-transport fix, #1608, is on the base: un-fixme then)", async () => {
     const mark = markResendLedger();
     const email = `success+j-cap-${run}@harness.local`;
     await inviteViaTeamPage(ownerPage, email, `Journey Captured ${run}`);
@@ -134,7 +134,11 @@ test.describe("B. staff books, the practitioner charts (HON-45)", () => {
     await sql("update public.appointments set starts_at = now() - interval '3 hours', ends_at = now() - interval '2 hours' where id=$1 and studio_id=$2", [appointmentId, seed.studioId]);
   });
 
-  test("J4 the assigned practitioner opens the appointment and charts it; starting the chart completes a past appointment (PR #180) and takes no payment", async () => {
+  // EXPLICIT COMPLETION (decided 18 Nov, shipped in the explicit-completion change): charting leaves a past confirmed appointment
+  // CONFIRMED and surfaces it as "Finish visit"; the practitioner's separate Finish completes it, with no postcare (this studio is
+  // on manual postcare) and no payment. J4/J5 assert that contract. They are NOT proven until that change is on the base and
+  // this spec has been run against it; before then the old auto-complete behaviour makes J4 red, which is the point.
+  test("J4 the assigned practitioner charts the appointment: it stays CONFIRMED, is surfaced as not finished, and nothing is paid", async () => {
     await inviteePage.goto(`/calendar/${appointmentId}`);
     await expect(inviteePage.getByText(client.name).first()).toBeVisible({ timeout: T });
     await chartOneBlock(inviteePage, client.clientId, appointmentId, LOT);
@@ -142,21 +146,32 @@ test.describe("B. staff books, the practitioner charts (HON-45)", () => {
     sessionId = /sessions\/([0-9a-f-]{36})/.exec(url)![1];
     await expect(inviteePage.getByTestId("finish-appointment")).toBeVisible({ timeout: T });
     await expect(inviteePage.getByTestId("finish-charting-status")).toHaveText("Charting recorded", { timeout: T });
-    // FINDING (run 2, 18 Nov) vs the HON-45 plan, which assumed "charting is not completing": for a PAST confirmed appointment,
-    // starting the chart AUTO-COMPLETES it (documented contract, PR #180, sessions/new/actions.ts). The spec follows the shipped
-    // contract and records the question for OPS: is "chart => completed" the intended HON-45 outcome? Payment stays separate.
-    expect((await getAppointmentPostcareState(appointmentId)).status).toBe("completed");
+    // Charting is not completing: the appointment is still open, and completion is offered as its own act.
+    expect((await getAppointmentPostcareState(appointmentId)).status).toBe("confirmed");
+    expect((await getAppointmentAuditActions(appointmentId)).filter((a) => a === "marked_complete")).toHaveLength(0);
+    await expect(inviteePage.getByTestId("finish-completion-status")).toHaveText("Ready to mark completed", { timeout: T });
     expect(await paymentFootprint(seed.studioId, appointmentId, sessionId)).toEqual({ appointmentPaymentRows: 0, chargeAttempts: 0, pricePaidCents: null });
+    // The charted-but-unfinished visit is visible to the owner on the dashboard, so it cannot stay open unseen.
+    await ownerPage.goto("/dashboard");
+    await expect(ownerPage.getByText("Not finished").first()).toBeVisible({ timeout: T });
   });
 
-  test("J5 completion is recorded once and is stable across reloads; finishing needed no charge", async () => {
+  test("J5 Finish completes once, sends no postcare and takes no payment; reload changes nothing", async () => {
+    const mark = markResendLedger();
+    await inviteePage.getByTestId("mark-appointment-complete").click();
+    await inviteePage.getByTestId("confirm-dialog-confirm").click();
+    await expect.poll(async () => (await getAppointmentPostcareState(appointmentId)).status, { timeout: T }).toBe("completed");
     expect((await getAppointmentAuditActions(appointmentId)).filter((a) => a === "marked_complete")).toHaveLength(1);
     for (let i = 0; i < 2; i++) {
       await inviteePage.reload();
       await expect(inviteePage.getByTestId("finish-completion-status")).toHaveText("Completed", { timeout: T });
     }
-    expect((await getAppointmentPostcareState(appointmentId)).status).toBe("completed");
+    // Finish wrote completion ONLY: this studio is on manual postcare, so nothing was claimed or sent, and nothing was charged.
+    expect((await getAppointmentPostcareState(appointmentId)).sentAt).toBeNull();
+    expect(await ledgerFor(mark, client.email, 0, 1_500)).toHaveLength(0);
     expect(await paymentFootprint(seed.studioId, appointmentId, sessionId)).toEqual({ appointmentPaymentRows: 0, chargeAttempts: 0, pricePaidCents: null });
+    // Send postcare and Charge are still separate, labelled actions after Finish.
+    await expect(inviteePage.getByRole("button", { name: "Send postcare", exact: true })).toBeVisible({ timeout: T });
   });
 
   test("J6 postcare goes through the captured transport once; completion does not depend on it", async () => {

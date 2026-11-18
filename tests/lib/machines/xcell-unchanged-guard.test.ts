@@ -7,7 +7,7 @@ import { planContractPublication } from "../../../lib/machines/contract-publicat
 // to the exact bytes it has on production (7936f5b2a), so any edit to its fields, modes, evidence or availability fails here.
 // If an xCell change is ever wanted on purpose, that is a separate decision and this hash is updated in that change, not in HON-8's.
 //
-// HON-71 (18 Nov 2026), a DELIBERATE and reviewed change to this guard: a separate, blocked `dectro-apilus:xcell-pur` profile now exists
+// HON-71 (18 Nov 2026), a DELIBERATE and reviewed change to this guard: a separate `dectro-apilus:xcell-pur` profile now exists (blocked when it landed, ENABLED by the evidence change)
 // beside the xCell entry (lib/machines/xcell-pur.ts). The guard therefore expects TWO profiles matching /xcell/i instead of one. The xCell
 // entry itself is still pinned to the same hash, byte for byte: it was selected by its exact id, not by position, and not changed.
 const XCELL_ENTRY_SHA256 = "96702e7aeae76762f4536e71740de5e1c39403c87e7f44b521f060216f518dce";
@@ -19,11 +19,11 @@ describe("xCell catalogue entry is unchanged by HON-8", () => {
     expect(xcell.map((p) => [p.profileId, p.version, p.availability])).toEqual([["dectro-apilus:xcell", 1, "blocked"]]);
   });
 
-  it("there are exactly two profiles matching /xcell/i: the unchanged entry and the separate xCell Pur profile (HON-71, blocked until its evidence lands)", () => {
+  it("there are exactly two profiles matching /xcell/i: the unchanged entry and the separate xCell Pur profile (HON-71, enabled on device-observed evidence)", () => {
     expect(
       MACHINE_CATALOGUE.filter((p) => /xcell/i.test(p.profileId)).map((p) => [p.profileId, p.version, p.availability]),
     ).toEqual([
-      ["dectro-apilus:xcell-pur", 1, "blocked"],
+      ["dectro-apilus:xcell-pur", 1, "active"],
       ["dectro-apilus:xcell", 1, "blocked"],
     ]);
   });
