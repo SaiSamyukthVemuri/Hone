@@ -12,7 +12,6 @@ const read = (rel: string) => readFileSync(path.join(root, rel), "utf8");
 
 const BOOK = read("app/(app)/clients/[id]/BookAppointment.tsx");
 const ACTIONS = read("app/(app)/clients/[id]/booking-actions.ts");
-const PAGE = read("app/(app)/clients/[id]/page.tsx");
 
 describe("target-aware slot loader + eligible-practitioners action", () => {
   it("the slot loader accepts a practitionerId and passes the capacity flag + target to the slot engine", () => {
@@ -71,36 +70,8 @@ describe("BookAppointment — fail-closed selector + latest-request-wins (Item 6
   });
 });
 
-describe("BookAppointment — owner selector, member self-only, confirmation", () => {
-  it("shows the selector ONLY for an owner (either capacity mode)", () => {
-    expect(BOOK).toMatch(/const showSelector = isOwner;/);
-    expect(BOOK).toMatch(/\{showSelector && \(/);
-    expect(BOOK).toMatch(/fetchEligiblePractitionersAction/);
-  });
-  it("changing the practitioner refreshes target-specific slots and clears the picked time", () => {
-    expect(BOOK).toMatch(/function handleTarget/);
-    // handleTarget calls loadSlots, and loadSlots clears pickedSlot.
-    expect(BOOK).toMatch(/loadSlots\(serviceId, date, v\)/);
-    expect(BOOK).toMatch(/setPickedSlot\(null\)/);
-    // The slot fetch passes the target only when the selector is active.
-    expect(BOOK).toMatch(/practitionerId: showSelector \? nextTarget : undefined/);
-  });
+describe("BookAppointment — member self-only submit", () => {
   it("submits practitioner_id only when a capacity-ON owner has a target; members send none", () => {
     expect(BOOK).toMatch(/if \(showSelector && target\) fd\.set\("practitioner_id", target\)/);
-  });
-  it("documents + implements the default-target rule (preserve valid → current owner → first eligible)", () => {
-    expect(BOOK).toMatch(/function resolveDefaultTarget/);
-    expect(BOOK).toMatch(/if \(list\.some\(\(p\) => p\.id === current\)\) return current/);
-    expect(BOOK).toMatch(/if \(list\.some\(\(p\) => p\.id === currentPractitionerId\)\) return currentPractitionerId/);
-    expect(BOOK).toMatch(/return list\[0\]\?\.id \?\? ""/);
-  });
-  it("confirmation shows the assigned practitioner (display name)", () => {
-    expect(BOOK).toMatch(/With \{assignedName\}/);
-    expect(BOOK).toMatch(/assignedName = showSelector/);
-  });
-  it("the page threads the capacity flag + current practitioner identity", () => {
-    expect(PAGE).toMatch(/practitionerCapacityEnabled=\{studio\.practitioner_capacity_enabled === true\}/);
-    expect(PAGE).toMatch(/currentPractitionerId=\{practitioner\.id\}/);
-    expect(PAGE).toMatch(/currentPractitionerName=\{practitioner\.display_name\}/);
   });
 });

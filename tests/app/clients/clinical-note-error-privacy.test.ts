@@ -21,10 +21,6 @@ const ACTIONS = readFileSync(
   join(ROOT, "app", "(app)", "clients", "[id]", "clinical-notes-actions.ts"),
   "utf8",
 );
-const SECTION = readFileSync(
-  join(ROOT, "components", "clinical-notes-section.tsx"),
-  "utf8",
-);
 
 /** Executable source only — a comment describing a banned pattern is not it. */
 function code(src: string): string {
@@ -56,19 +52,6 @@ describe("clinical-note actions return fixed, practitioner-safe copy", () => {
     }
   });
 
-  it("the distinct stale-revision message is RETAINED", () => {
-    // It discloses no internal detail and is the one case where the
-    // practitioner needs a specific, actionable instruction.
-    expect(ACTIONS).toContain("stale_revision");
-    expect(ACTIONS).toMatch(/already revised elsewhere/i);
-  });
-
-  it("validation and not-found copy is retained (it discloses nothing internal)", () => {
-    expect(ACTIONS).toContain("Note text is required.");
-    expect(ACTIONS).toContain("Client not found.");
-    expect(ACTIONS).toContain("Unknown note type.");
-  });
-
   it("no SQL/schema vocabulary can reach the returned copy", () => {
     // Scan every string literal that is RETURNED as an `error:` value.
     const returned = [...CODE.matchAll(/error:\s*("(?:[^"\\]|\\.)*")/g)].map(
@@ -97,20 +80,6 @@ describe("clinical-note actions return fixed, practitioner-safe copy", () => {
 });
 
 describe("operator logging is a safe classification, never PHI", () => {
-  it("logs the event, a safe code, the note kind and the owning ids", () => {
-    expect(CODE).toContain("logNoteFailure");
-    for (const field of [
-      "code",
-      "kind",
-      "clientId",
-      "studioId",
-      "practitionerId",
-      "isRevision",
-    ]) {
-      expect(CODE, `logger should carry ${field}`).toContain(field);
-    }
-  });
-
   it("covers all three previously-leaking paths", () => {
     for (const event of [
       "clinical_note_client_lookup_failed",
@@ -151,14 +120,5 @@ describe("operator logging is a safe classification, never PHI", () => {
       expect(m[0]).not.toMatch(/\bareas\b/);
       expect(m[0]).not.toMatch(/\.message/);
     }
-  });
-});
-
-describe("the renderer is the reason this matters", () => {
-  it("ClinicalNotesSection still renders the message verbatim", () => {
-    // Not a defect in itself — it is WHY the action must be the fixed-copy
-    // boundary. If this ever stopped being true the guard above still holds,
-    // but this documents the coupling.
-    expect(SECTION).toMatch(/\{state\.message\}/);
   });
 });

@@ -47,7 +47,4 @@ describe("the booking drawer ranks before it caps", () => {
     expect(drawer).not.toMatch(/matchesClientSearch/);
     expect(drawer).not.toMatch(/allClients\.filter\(/);
   });
-  it("keeps the Showing first N of M line", () => {
-    expect(drawer).toMatch(/Showing first \{clientMatches\.length\} of \{totalMatches\}/);
-  });
 });

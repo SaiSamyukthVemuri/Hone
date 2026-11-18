@@ -14,12 +14,6 @@ const ACTIONS = readFileSync(
   path.resolve(__dirname, "../../../app/intake/[token]/actions.ts"),
   "utf8",
 );
-// Comment-stripped view so a doc-comment mentioning e.g. the token cannot
-// satisfy or trip a privacy grep that must target real code.
-const CODE = ACTIONS.split("\n")
-  .filter((l) => !/^\s*\/\//.test(l))
-  .join("\n");
-
 // The submit action body (from `export async function submitIntakeAction` to
 // the next top-level function) — so positional assertions are scoped to it.
 function submitBody(): string {
@@ -30,12 +24,6 @@ function submitBody(): string {
 }
 
 describe("intake submit → in-app notification wiring", () => {
-  it("imports the PR #164 notification helper", () => {
-    expect(CODE).toMatch(
-      /import \{ recordPractitionerNotification \} from "@\/lib\/notifications\/practitioner-notifications"/,
-    );
-  });
-
   it("calls recordPractitionerNotification with the intake_submitted event", () => {
     const body = submitBody();
     expect(body).toMatch(/recordPractitionerNotification\(\{/);

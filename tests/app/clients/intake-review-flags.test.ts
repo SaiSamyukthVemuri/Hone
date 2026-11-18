@@ -4,11 +4,12 @@ import { join } from "node:path";
 
 // PR #266. Source-grep pins for the practitioner-only intake review flags:
 //   * the deriver is pure (no DB / supabase client);
-//   * the flags module + the review page use ONLY allowed wording and never
-//     the forbidden clinical-decision language (scoped to the new code, not
-//     the whole repo — older intake comments legitimately contain some terms);
-//   * the card is mounted on the practitioner intake review page and is NOT on
-//     the public client-facing /intake/[token] route.
+//   * the flags module + the review page never use the forbidden
+//     clinical-decision language (scoped to the new code, not the whole repo —
+//     older intake comments legitimately contain some terms);
+//   * the card is NOT on the public client-facing /intake/[token] route.
+// The allowed wording and the mounted card are proved behaviourally in
+// tests/lib/intake/review-flags*.test.ts and intake-invalid-catalogue-flags.test.ts.
 
 function read(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf8");
@@ -61,30 +62,7 @@ describe("forbidden clinical-decision wording (new code only)", () => {
   }
 });
 
-describe("allowed wording is present", () => {
-  it("module exposes the allowed level wording", () => {
-    expect(MODULE).toMatch(/Medical authorization may be required/);
-    expect(MODULE).toMatch(/Review before treatment/);
-    expect(MODULE).toMatch(/Precaution noted/);
-    expect(MODULE).toMatch(/Based on intake response/);
-  });
-
-  it("card uses the allowed header + professional-judgment caveat", () => {
-    expect(PAGE).toMatch(/Intake review needed/);
-    expect(PAGE).toMatch(/Use professional judgment and clinic policy\./);
-    expect(PAGE).toMatch(/latest recorded intake/i);
-  });
-});
-
 describe("practitioner-only surface", () => {
-  it("the review page mounts the derived flags card", () => {
-    expect(PAGE).toMatch(/deriveIntakeReviewFlags/);
-    expect(PAGE).toContain("const catalogue = questionnaireForRow(intake.questionnaire_snapshot)");
-    expect(PAGE).toContain("const INTAKE_STEPS = catalogue.steps");
-    expect(PAGE).toMatch(/<IntakeReviewFlags responses=\{responses\} steps=\{INTAKE_STEPS\} \/>/);
-    expect(PAGE).toContain("deriveIntakeReviewFlags(responses, steps)");
-  });
-
   it("the public client-facing intake route does NOT render review flags", () => {
     expect(PUBLIC_INTAKE).not.toMatch(/deriveIntakeReviewFlags|IntakeReviewFlags/);
   });
@@ -92,23 +70,6 @@ describe("practitioner-only surface", () => {
 
 // PR #267. Modality/category badges.
 describe("modality badges (PR #267)", () => {
-  it("the module exposes the allowed chart badge wording", () => {
-    expect(MODULE).toMatch(/Review before thermolysis/);
-    expect(MODULE).toMatch(/Review before continuous\/galvanic current/);
-    expect(MODULE).toMatch(/Medical authorization may be required/);
-    expect(MODULE).toMatch(/Precaution noted/);
-  });
-
-  it("the card renders each flag's badges via MODALITY_WORDING", () => {
-    expect(PAGE).toMatch(/MODALITY_WORDING/);
-    expect(PAGE).toMatch(/flag\.badges\.map/);
-  });
-
-  it("'contraindicated' never reaches the module or card (allowed only in docs/tests)", () => {
-    expect(codeOnly(MODULE)).not.toMatch(/contraindicat/i);
-    expect(codeOnly(PAGE)).not.toMatch(/contraindicat/i);
-  });
-
   it("the public client-facing route still has no modality badges", () => {
     expect(PUBLIC_INTAKE).not.toMatch(/MODALITY_WORDING|thermolysis|galvanic/i);
   });

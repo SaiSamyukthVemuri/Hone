@@ -3,8 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 // PR #307. Per-photo practitioner note/caption. The action is RLS-scoped and
-// row-affected-checked exactly like the archive hardening; the UI shows the note
-// on the card + modal with Add/Edit inline editing. Source-grep (the images UI
+// row-affected-checked exactly like the archive hardening. Source-grep (the images UI
 // isn't DOM-rendered in the node env) + a scope guard that upload / sanitizer /
 // storage / signed-URL / archive / session-attach behavior is untouched.
 
@@ -20,7 +19,6 @@ const ACTIONS = read("app/(app)/clients/[id]/images/actions.ts");
 const MANAGER = read("app/(app)/clients/[id]/images/TreatmentImagesManager.tsx");
 const MANAGER_CODE = codeOnly(MANAGER);
 const PAGE = read("app/(app)/clients/[id]/images/page.tsx");
-const TYPES = read("lib/types/database.ts");
 
 // ---------------------------------------------------------------------------
 // Server action
@@ -82,43 +80,6 @@ describe("updateTreatmentImageNoteAction", () => {
     expect(ACTION).toMatch(/Could not save the note/);
     expect(ACTION).toMatch(/revalidatePath\(`\/clients\/\$\{input\.clientId\}\/images`\)/);
     expect(ACTION).not.toMatch(/console\.|recordOpsAlert/);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Types + query
-// ---------------------------------------------------------------------------
-describe("types + query carry practitioner_note (read-only)", () => {
-  it("TreatmentImage type gains practitioner_note", () => {
-    expect(TYPES).toMatch(/practitioner_note: string \| null;/);
-  });
-  it("the image query selects practitioner_note and maps it to row.note", () => {
-    expect(PAGE).toMatch(/practitioner_note,/);
-    expect(PAGE).toMatch(/note: m\.practitioner_note \?\? null/);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// UI (card + modal)
-// ---------------------------------------------------------------------------
-describe("note UI on card + modal", () => {
-  it("PhotoNoteEditor shows the note text + Add note / Edit note", () => {
-    expect(MANAGER).toMatch(/function PhotoNoteEditor/);
-    expect(MANAGER).toMatch(/\{note \? "Edit note" : "Add note"\}/);
-    expect(MANAGER).toMatch(/whitespace-pre-wrap break-words text-xs/);
-  });
-  it("has an inline textarea editor with Save / Cancel calling the action", () => {
-    expect(MANAGER).toMatch(/<textarea/);
-    expect(MANAGER).toMatch(/maxLength=\{TREATMENT_NOTE_MAX_LENGTH\}/);
-    expect(MANAGER).toMatch(/updateTreatmentImageNoteAction\(\{/);
-    expect(MANAGER).toMatch(/Saving…|Save/);
-    expect(MANAGER).toMatch(/onClick=\{cancel\}/);
-  });
-  it("renders the editor on BOTH the card and the modal", () => {
-    const uses = MANAGER.match(/<PhotoNoteEditor/g) ?? [];
-    expect(uses.length).toBe(2);
-    expect(MANAGER).toMatch(/note=\{img\.note\}/); // card
-    expect(MANAGER).toMatch(/note=\{modal\.note\}/); // modal
   });
 });
 

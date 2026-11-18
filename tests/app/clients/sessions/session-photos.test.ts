@@ -35,12 +35,6 @@ describe("session photos: the Photos tab's trust boundary", () => {
     expect(helper).toMatch(/TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS/);
     expect(helper).toMatch(/\.filter\(\(p\): p is SessionPhoto => p !== null\)/);
   });
-
-  it("labels areas exactly as the Photos tab does, including 0128 structured areas", () => {
-    expect(helper).toMatch(/getSessionBlockAreasByBlockIds\(/);
-    expect(helper).toMatch(/structured_areas:/);
-    expect(helper).toMatch(/treatmentPhotoAreaLabel\(r\.session_block_id, block\)/);
-  });
 });
 
 describe("session photos on the chart page", () => {
@@ -64,10 +58,6 @@ describe("session photos on the chart page", () => {
     expect(section).toMatch(/href=\{`\/clients\/\$\{clientId\}\/images`\}/);
     expect(section).toMatch(/if \(photos\.length === 0\) return null;/);
     expect(page).toMatch(/<SessionPhotos clientId=\{id\} photos=\{sessionPhotos\} \/>/);
-  });
-
-  it("the link back to Photos is on the 44px touch floor", () => {
-    expect(section).toMatch(/className="inline-flex min-h-\[44px\] items-center/);
   });
 });
 

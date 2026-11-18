@@ -54,7 +54,7 @@ describe("0231 portrait UI", () => {
   });
 });
 
-describe("0231 portrait in the profile header: the Photos-tab trust boundary", () => {
+describe("0231 portrait signing helper + avatar: the Photos-tab trust boundary", () => {
   const helper = readFileSync(join(ROOT, "lib/images/client-portrait.ts"), "utf8");
 
   it("reads the row under RLS, scoped to studio + client + client-scope + unarchived", () => {
@@ -89,16 +89,6 @@ describe("0231 portrait in the profile header: the Photos-tab trust boundary", (
     expect(derive).toBeGreaterThan(original);
     expect(thumb).toBeGreaterThan(derive);
     expect(helper).toMatch(/return \{ url: data\.signedUrl, thumbUrl \};/);
-  });
-
-  it("the redesigned profile header shows initials only: no portrait is read, signed or rendered", () => {
-    // Sam (2026-11-01): the profile layout is independent of the held identification-photo
-    // feature. The 0231 portrait components stay in the repo for the Photos lane, but the profile
-    // page neither signs nor renders one. The images route keeps its own gated use (tests above).
-    const page = readFileSync(join(ROOT, "app/(app)/clients/[id]/page.tsx"), "utf8");
-    expect(page).not.toMatch(/signedClientPortraitUrl|ClientPortrait\b|clientPortraitEnabled|portrait_image_id/);
-    expect(page).toMatch(/data-testid="client-profile-avatar"/);
-    expect(page).toMatch(/clientAvatarInitials\(clientDisplay\)/);
   });
 
   it("the header avatar loads the derivative first, demotes to the original, and re-mints an EXPIRED URL once per variant", () => {

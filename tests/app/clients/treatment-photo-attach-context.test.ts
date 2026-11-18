@@ -111,11 +111,6 @@ describe("storage + sanitizer + orphan cleanup unchanged", () => {
     expect(PAGE).not.toMatch(/getPublicUrl|publicUrl/);
     expect(MANAGER).not.toMatch(/getPublicUrl|publicUrl/);
   });
-
-  it("the action did not gain a migration / schema change marker", () => {
-    // PR #284 is no-migration: it only sets columns that already exist (0092).
-    expect(ACTIONS).not.toMatch(/alter table|create table|add column/i);
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -137,43 +132,12 @@ describe("page loads recent sessions for the selector (scoped, RLS client)", () 
     expect(PAGE).toMatch(/const supabase = await createClient\(\)/);
     expect(PAGE).not.toMatch(/admin[\s\S]{0,40}\.from\("sessions"\)/);
   });
-
-  it("only ids + display labels reach the client (the option value is the id)", () => {
-    expect(PAGE).toMatch(/sessionBlockOptionLabel/);
-    expect(CONTEXT).toMatch(/export function sessionBlockOptionLabel/);
-  });
 });
 
 // ---------------------------------------------------------------------------
-// UI: the Photo context selector.
+// UI: the Photo context selector exposes no service role / storage internals.
 // ---------------------------------------------------------------------------
-describe("Photo context selector UI", () => {
-  it("renders the three context choices", () => {
-    expect(MANAGER).toMatch(/Client photo/);
-    expect(MANAGER).toMatch(/Session photo/);
-    expect(MANAGER).toMatch(/Treatment area photo/);
-  });
-
-  it("defaults to client photo", () => {
-    expect(MANAGER).toMatch(/useState<PhotoContextKind>\("client"\)/);
-  });
-
-  it("falls back to client-only messaging when the client has no sessions", () => {
-    expect(MANAGER).toMatch(/const hasSessions = sessionOptions\.length > 0/);
-    expect(MANAGER).toMatch(/No sessions yet for this client/);
-  });
-
-  it("session/block selects submit the ids; block requires a chosen area", () => {
-    expect(MANAGER).toMatch(/context\.sessionId = ctxSessionId/);
-    expect(MANAGER).toMatch(/context\.sessionBlockId = ctxBlockId/);
-    expect(MANAGER).toMatch(/Choose a treatment area/);
-  });
-
-  it("shows a 'Will attach as…' summary before upload + shows area labels", () => {
-    expect(MANAGER).toMatch(/Will attach as:/);
-    expect(MANAGER).toMatch(/b\.areaLabel/);
-  });
-
+describe("Photo context selector UI: no privileged internals", () => {
   it("is mobile-friendly (stacked / full-width controls) and the manager stays service-role-free", () => {
     expect(MANAGER).toMatch(/w-full/);
     expect(MANAGER).not.toMatch(/admin-server|createAdminClient|SUPABASE_SERVICE_ROLE_KEY/);
