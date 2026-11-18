@@ -6,7 +6,7 @@ import { getNewClientAdmissionMode } from "@/lib/booking/new-client-admission";
 import { newClientWaitlistCommitIsDurable } from "@/lib/booking/new-client-waitlist-durability-bridge";
 import { createClient } from "@/lib/supabase/server";
 import { hasActiveWaitlistEntries } from "@/lib/waitlist/operator-queue-presence";
-import type { SettingsNavEntry } from "./nav";
+import type { SettingsNavContext, SettingsNavEntry } from "./nav";
 
 // The Settings rail registry (settings redesign, WS-B owns this file).
 //
@@ -32,7 +32,7 @@ const OWNER = ["owner"] as const;
  * COMMIT PATH, not the mode (see the bridge): a WAITLIST mode whose joins still
  * commit through legacy email acceptance would open an empty queue.
  */
-const waitlistVisible: NonNullable<SettingsNavEntry["visibleWhen"]> = async (ctx) => {
+export const waitlistVisible: NonNullable<SettingsNavEntry["visibleWhen"]> = async (ctx) => {
   if (ctx.role !== "owner") return false;
   const admission = await getNewClientAdmissionMode(ctx.studio);
   const waitlistLive = newClientWaitlistCommitIsDurable(admission, ctx.studio.slug);
@@ -41,6 +41,23 @@ const waitlistVisible: NonNullable<SettingsNavEntry["visibleWhen"]> = async (ctx
     (await hasActiveWaitlistEntries(await createClient(), ctx.studio.id))
   );
 };
+
+/**
+ * Does the main navigation show "Waitlist" for this signed-in user in this studio?
+ *
+ * EXACTLY the Settings tab's rule, reused and not re-derived (`waitlistVisible` above): an owner, in a studio that is waitlisting
+ * new clients and recording them durably, or that already holds an entry the operator can act on. Admission being Closed does not
+ * hide it: that is a separate setting, and existing entries and invitations still need managing. It widens no access: the page
+ * keeps its own owner check, and a practitioner never sees the link. A failed read hides it (the same fail-closed answer the tab
+ * gives) and never breaks the shell.
+ */
+export async function showWaitlistInPrimaryNav(ctx: SettingsNavContext): Promise<boolean> {
+  try {
+    return (await waitlistVisible(ctx)) === true;
+  } catch {
+    return false;
+  }
+}
 
 // Groups open one focused view each (R2): every child is its OWN route, entered
 // at its heading, with no anchors into a longer page. Flat entries have no

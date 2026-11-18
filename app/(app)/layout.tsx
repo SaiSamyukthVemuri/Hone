@@ -20,6 +20,7 @@ import { AppFooter } from "@/app/_components/AppFooter";
 import { SafeAnalytics } from "@/app/_components/SafeAnalytics";
 import { identifyServerUser } from "@/lib/analytics/server";
 import { timed } from "@/lib/observability/perf-timing";
+import { showWaitlistInPrimaryNav } from "@/lib/settings/nav-registry";
 import { scopeNotificationsToViewer } from "@/lib/notifications/owner-only-events";
 
 export default async function AppLayout({
@@ -40,6 +41,12 @@ export default async function AppLayout({
     requirePractitionerWithStudio(),
   );
   const admin = isAdmin(practitioner.email);
+
+  // "Waitlist" in the main navigation follows the Settings tab's own rule for the CURRENT studio and role (never broader).
+  const showWaitlist = await showWaitlistInPrimaryNav({
+    role: practitioner.role === "owner" ? "owner" : "practitioner",
+    studio,
+  });
 
   // Identify the practitioner SERVER-SIDE (opaque UUID + validated coarse role
   // only). Moved off the browser: the authenticated app sends no browser
@@ -155,6 +162,16 @@ export default async function AppLayout({
               >
                 Calendar
               </PrimaryNavLink>
+              {showWaitlist && (
+                <PrimaryNavLink
+                  href="/settings/waitlist"
+                  match="section"
+                  testId="nav-waitlist"
+                  pendingLabel="Opening Waitlist…"
+                >
+                  Waitlist
+                </PrimaryNavLink>
+              )}
               {/* PR #229: Notifications moved out of the main tab
                   row to the header bell (right side, both
                   breakpoints), so the primary nav competes less and
@@ -243,6 +260,7 @@ export default async function AppLayout({
               studioName={studio.name}
               role={practitioner.role}
               canSwitchStudio={canSwitchStudio}
+              showWaitlist={showWaitlist}
             />
           </div>
         </div>
