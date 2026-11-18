@@ -133,6 +133,14 @@ function tree(initialView: "current" | "new") {
     null,
     createElement("h1", null, "Electrolysis session"),
     createElement(ChartingViewToggle),
+    // A real form with a real submit control, like the page's next-visit and notes forms: if the switch ever submitted
+    // "a form", this is one it could reach.
+    createElement(
+      "form",
+      { "data-testid": "sibling-form", onSubmit: (e: { preventDefault: () => void }) => e.preventDefault() },
+      createElement("input", { name: "note", defaultValue: "x" }),
+      createElement("button", { type: "submit" }, "Save"),
+    ),
     createElement(BlockSetupForm, {
       sessionId: "s1",
       clientId: "c1",
@@ -145,7 +153,7 @@ function tree(initialView: "current" | "new") {
   );
   return createElement(ChartingViewShell, {
     initialView,
-    summary: createElement(ChartingVisitSummary, { clientName: "Avery Example", areas: ["Upper lip"], blockCount: 1, nextVisitNoteRecorded: false }),
+    summary: createElement(ChartingVisitSummary, { clientName: "Avery Example", kind: "electrolysis", areas: ["Upper lip"], count: 1, nextVisitNoteRecorded: false }),
     children,
   });
 }
@@ -201,6 +209,26 @@ describe("the switch itself", () => {
     expect(rootEl().getAttribute("data-charting-view")).toBe("current");
     expect(host!.querySelector('[data-testid="charting-view-summary"]')).toBeNull();
     expect(prefAction.setChartingViewAction).toHaveBeenLastCalledWith("current");
+  });
+  it("shows a laser-appropriate summary for a laser visit", async () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () =>
+      root!.render(
+        createElement(ChartingViewShell, {
+          initialView: "new",
+          summary: createElement(ChartingVisitSummary, { clientName: "Avery Example", kind: "laser", areas: ["Legs"], count: 2, nextVisitNoteRecorded: true }),
+          children: createElement("div", null, "x"),
+        }),
+      ),
+    );
+    const text = host!.querySelector('[data-testid="charting-view-summary"]')!.textContent!;
+    expect(text).toContain("Zones treated");
+    expect(text).toContain("Passes saved");
+    expect(text).toContain("Legs");
+    expect(text).not.toContain("None saved yet");
+    expect(text).not.toContain("Settings blocks saved");
   });
   it("starts in New view when that is the saved choice", async () => {
     await mount("new");
@@ -262,6 +290,27 @@ describe("switching never loses or sends anything", () => {
     expect(host!.querySelector<HTMLInputElement>('[data-testid="probe-lot-input"]')).toBe(field);
     expect(field.value).toBe("LOT-ABC-123");
     expect(host!.querySelector('[data-testid="probe-lot-source"]')?.textContent ?? null).toBe(source);
+  });
+
+  it("a toggle click submits nothing: no submit event, no form.submit() or requestSubmit(), with a real form in the DOM", async () => {
+    await mount();
+    expect(host!.querySelectorAll("form").length, "a real form is mounted").toBeGreaterThan(0);
+    const submits: Event[] = [];
+    const onSubmit = (e: Event) => submits.push(e);
+    document.addEventListener("submit", onSubmit, true);
+    const requestSubmit = vi.spyOn(HTMLFormElement.prototype, "requestSubmit");
+    const submit = vi.spyOn(HTMLFormElement.prototype, "submit").mockImplementation(() => undefined);
+    try {
+      await click(toggle());
+      await click(toggle());
+      expect(submits).toEqual([]);
+      expect(requestSubmit).not.toHaveBeenCalled();
+      expect(submit).not.toHaveBeenCalled();
+    } finally {
+      document.removeEventListener("submit", onSubmit, true);
+      requestSubmit.mockRestore();
+      submit.mockRestore();
+    }
   });
 
   it("sends nothing: no save, no machine write, no machine memory change, whichever way it switches", async () => {

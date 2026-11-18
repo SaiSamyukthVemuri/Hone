@@ -62,7 +62,7 @@ import { createClient } from "@/lib/supabase/server";
 import { CHARTING_VIEW_STUDIOS_ENV } from "@/lib/charting/view-preference";
 import { chartingViewForPage } from "@/lib/charting/page-view";
 import { ChartingViewShell, ChartingViewToggle, ChartingVisitSummary } from "@/components/charting-view-shell";
-import { formatAreaLabel, resolveBlockAreas } from "@/lib/sessions/block-areas";
+import { buildVisitSummary } from "@/lib/charting/visit-summary";
 import { loadPreviousVisitNote } from "@/lib/sessions/previous-visit-note";
 import {
   attachChartEntryToPlanAction,
@@ -1134,7 +1134,12 @@ export default async function SessionDetailPage({
   );
 
   if (!chartingToggleVisible) return page;
-  const liveBlocks = (blockData?.blocks ?? []).filter((b) => b.deleted_at == null);
+  const visit = buildVisitSummary({
+    modality: session.modality,
+    blocks: blockData?.blocks,
+    laserEntries: session.laser_entries,
+    nextSessionNote: session.next_session_note,
+  });
   return (
     // key = this session: another session's page can never inherit this one's view state.
     <ChartingViewShell
@@ -1143,14 +1148,10 @@ export default async function SessionDetailPage({
       summary={
         <ChartingVisitSummary
           clientName={clientShownName}
-          areas={liveBlocks.flatMap((b) =>
-            resolveBlockAreas(
-              (b as { areas?: Parameters<typeof resolveBlockAreas>[0] }).areas,
-              b,
-            ).map(formatAreaLabel),
-          )}
-          blockCount={liveBlocks.length}
-          nextVisitNoteRecorded={Boolean(session.next_session_note && session.next_session_note.trim())}
+          kind={visit.kind}
+          areas={visit.areas}
+          count={visit.count}
+          nextVisitNoteRecorded={visit.nextVisitNoteRecorded}
         />
       }
     >

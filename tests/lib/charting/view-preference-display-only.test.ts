@@ -53,6 +53,17 @@ describe("the charting view preference is display only", () => {
     const files = out.split("\n").filter(Boolean);
     expect(files.filter((f) => !IMPORTERS.has(f))).toEqual([]);
   });
+  it("the page decision itself is imported only by the charting page (never by an authorization or permission module)", () => {
+    const out = execFileSync("git", ["grep", "-l", "-E", "chartingViewForPage|lib/charting/page-view", "--", "app", "lib", "components", "tests", "middleware.ts"], { encoding: "utf8" }).trim();
+    const allowed = new Set([
+      "app/(app)/clients/[id]/sessions/[sessionId]/page.tsx",
+      "lib/charting/page-view.ts",
+      "tests/lib/charting/page-view.test.ts",
+      "tests/lib/charting/view-preference-display-only.test.ts",
+      "tests/app/sessions/charting-view-page-wiring.test.ts",
+    ]);
+    expect(out.split("\n").filter(Boolean).filter((f) => !allowed.has(f))).toEqual([]);
+  });
   it("its readers are called by nothing but the one page decision", () => {
     const out = execFileSync(
       "git",

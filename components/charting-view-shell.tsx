@@ -96,15 +96,18 @@ export function ChartingViewToggle() {
 /** "This visit": a read-only summary of values the page already has. It reads and writes nothing. */
 export function ChartingVisitSummary({
   clientName,
+  kind,
   areas,
-  blockCount,
+  count,
   nextVisitNoteRecorded,
 }: {
   clientName: string;
+  kind: "electrolysis" | "laser";
   areas: string[];
-  blockCount: number;
+  count: number;
   nextVisitNoteRecorded: boolean;
 }) {
+  const laser = kind === "laser";
   return (
     <section className="rounded-lg border border-neutral-200 p-4 text-sm dark:border-neutral-800">
       <h2 className="text-base font-semibold">This visit</h2>
@@ -114,12 +117,12 @@ export function ChartingVisitSummary({
           <dd>{clientName}</dd>
         </div>
         <div>
-          <dt className="text-xs uppercase tracking-wide text-neutral-500">Areas treated</dt>
+          <dt className="text-xs uppercase tracking-wide text-neutral-500">{laser ? "Zones treated" : "Areas treated"}</dt>
           <dd>{areas.length > 0 ? areas.join(", ") : "None saved yet"}</dd>
         </div>
         <div>
-          <dt className="text-xs uppercase tracking-wide text-neutral-500">Settings blocks saved</dt>
-          <dd>{blockCount}</dd>
+          <dt className="text-xs uppercase tracking-wide text-neutral-500">{laser ? "Passes saved" : "Settings blocks saved"}</dt>
+          <dd>{count}</dd>
         </div>
         <div>
           <dt className="text-xs uppercase tracking-wide text-neutral-500">Next-visit note</dt>
