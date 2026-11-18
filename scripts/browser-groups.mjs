@@ -290,6 +290,8 @@ export const BROWSER_GROUPS = {
       "cancellation-fee-rules.spec.ts",
       "invitation-reconciliation.spec.ts",
       "invite-only.spec.ts",
+      // Connected Sabrina journey (opt-in: self-skips unless SABRINA_JOURNEY_E2E=1, so a targeted lane lists it but runs nothing).
+      "sabrina-journey.spec.ts",
       // FETT photos (HON-43): Photos-tab grid thumbnails survive a reload and
       // the 60 s signed-URL expiry. Here and not in `sessions` for UI-04's two
       // reasons: /clients/** has no PATH_TO_GROUP pattern (a photo diff already
