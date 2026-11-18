@@ -61,7 +61,7 @@ export const WIDENING_LATER_LINE = "Widening arrives in a later release.";
 export const NOT_ENFORCED_LINE = "Not enforced yet. This setting does nothing today, and it will not switch on by itself when that area is wired.";
 // Team's write-enforcement matrix (14 Nov): no hosted policy or RPC reads a permission key yet. On THIS branch the app does not read them
 // either, so the line says only what is true. WHEN a saved choice takes effect is not stated here: it depends on the key's release and on what
-// was stored when, so the database says it for every choice (the review's `timing`, 0356) and the page prints that and nothing else. A source test
+// was stored when, so the database says it for every choice (the review's `timing`, 0361) and the page prints that and nothing else. A source test
 // refuses any static timing prose outside TIMING_TEXT and notActiveYetKeeps.
 export const EACH_CHOICE_LINE = "Each saved choice below says when it takes effect.";
 export const ENFORCEMENT_SCOPE_LINE = `These settings are not in force yet. The app does not read them yet, and the database does not check them. ${EACH_CHOICE_LINE}`;

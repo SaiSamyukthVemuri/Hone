@@ -3,11 +3,11 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { existsSync } from "node:fs";
 
-// 0355 is a forward redefinition of perm_run_changes (0287 is applied and frozen). Source contract: the rollback restores the HOSTED body byte for
+// 0360 is a forward redefinition of perm_run_changes (0287 is applied and frozen). Source contract: the rollback restores the HOSTED body byte for
 // byte, the up body differs from it only in the listed lines, and the migration carries its own transaction and lock timeout.
 
-const UP = readFileSync("supabase/migrations/0355_roles_save_inert_denial.sql", "utf8");
-const DOWN = readFileSync("supabase/rollbacks/0355_roles_save_inert_denial.down.sql", "utf8");
+const UP = readFileSync("supabase/migrations/0360_roles_save_inert_denial.sql", "utf8");
+const DOWN = readFileSync("supabase/rollbacks/0360_roles_save_inert_denial.down.sql", "utf8");
 const OLD = readFileSync("supabase/migrations/0287_roles_permission_engine.sql", "utf8");
 const HOSTED_BODY_MD5 = "7d8924fbb394838f60d9e6cf89235e82"; // c04_function-bodies of the 0287 apply record, perm_run_changes
 
@@ -18,9 +18,9 @@ const bodyOf = (sql: string) => {
 };
 const headOf = (sql: string) => sql.slice(sql.indexOf("create or replace function public.perm_run_changes("), sql.indexOf("as $$", sql.indexOf("create or replace function public.perm_run_changes(")));
 
-describe("0355 source contract", () => {
+describe("0360 source contract", () => {
   it("exists (an older migration's test does not assert it is the maximum)", () => {
-    expect(existsSync("supabase/migrations/0355_roles_save_inert_denial.sql")).toBe(true);
+    expect(existsSync("supabase/migrations/0360_roles_save_inert_denial.sql")).toBe(true);
   });
 
   it("opens its own transaction with a lock timeout inside it", () => {

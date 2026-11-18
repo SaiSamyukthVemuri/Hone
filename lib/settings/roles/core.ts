@@ -25,7 +25,7 @@ export async function coreGetState(studioId: string): Promise<CoreState | null> 
   return parseState(await call("get_role_permissions", { p_studio: studioId }));
 }
 
-/** The review table for a save, built by the database for the version the page was read at (0356). A reply without the table is refused. */
+/** The review table for a save, built by the database for the version the page was read at (0361). A reply without the table is refused. */
 export async function corePreviewChanges(studioId: string, changes: unknown, expectedVersion: number): Promise<PreviewResult> {
   const r = parsePreview(await call("preview_role_changes_at", { p_studio: studioId, p_changes: changes, p_expected_version: expectedVersion }, REVIEW_MISSING));
   return r.ok && r.preview.review === null ? { ok: false, error: UNEXPECTED } : r;

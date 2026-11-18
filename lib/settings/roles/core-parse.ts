@@ -229,7 +229,7 @@ function auditChanges(
     return { before: b, after: a, storedBefore: sb, storedAfter: sa };
   }
   for (const k of Object.keys(after)) {
-    // Keys that begin with "_" are the database's own bookkeeping on the audit row (0356 `_review`: the version and hash a save was reviewed
+    // Keys that begin with "_" are the database's own bookkeeping on the audit row (0361 `_review`: the version and hash a save was reviewed
     // against). They are not permissions and are never shown.
     if (k.startsWith("_")) continue;
     if (kind === "staff_role_changed") {

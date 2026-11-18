@@ -1,19 +1,5 @@
--- 0355: perm_run_changes stores an owner's choice that matches the unreleased base but differs from what the page shows.
---
--- THE BUG. An owner who changes the shown On to Off was dropped as unchanged. A studio on the new_studio basis with no override sees a practitioner's avail.manage_own as On (the catalog's
--- new-studio default, 'studio'). Until the key is released perm_base_scope returns the existing snapshot ('off'). The owner changes On to Off. The
--- command compared the request with perm_base_scope, saw off = off, and DROPPED it: the preview said nothing_changed, or the Off was silently omitted
--- from a save that also carried other edits. The owner could not save an inert denial.
---
--- WHAT CHANGES. One condition in perm_run_changes (0287 is applied and frozen; this is a forward redefinition). A request is now also applied when it
--- differs from the value the owner is shown: coalesce(stored choice, the new-studio default on a new_studio studio, else the snapshot). The condition
--- is ADDITIVE: every request 0287 applied is still applied, and the stored-choice audit 'before' value is unchanged except for the newly applied case.
---
--- NOT CHANGED. perm_base_scope, perm_effective_scope and so effective access are untouched: a saved choice changes nobody's access until its key is
--- released and the owner activates it. The signature, language, volatility, security setting and search_path are those of 0287, so the grants persist
--- (perm_run_changes is internal: no API role holds EXECUTE; the commands that call it keep theirs). Rollback: supabase/rollbacks/0355_*.down.sql
--- restores the 0287 body (md5 of the hosted body 7d8924fbb394838f60d9e6cf89235e82).
-
+-- Rollback of 0361: restore the 0360 body of perm_run_changes (md5 of its prosrc: e1f64999b3fda06d586261447acbaca0, asserted by tests), then drop each new
+-- function by its exact signature. Order matters: perm_run_changes must stop calling the internal function before it is dropped.
 begin;
 set local lock_timeout = '5s';
 
@@ -68,7 +54,7 @@ begin
 
   begin
     insert into public.studio_permission_policy (studio_id, basis, version) values (p_studio, 'existing_snapshot', 0) on conflict do nothing;
-    -- 0355: the basis is read under the same row lock as the version, so a concurrent adopt or reset cannot change it between the read and the compare.
+    -- 0360: the basis is read under the same row lock as the version, so a concurrent adopt or reset cannot change it between the read and the compare.
     select spp.version, spp.basis into v_version, v_basis from public.studio_permission_policy spp where spp.studio_id = p_studio for update;
     v_basis := coalesce(v_basis, 'existing_snapshot');
     if p_expected_version is null and p_require_version then
@@ -120,7 +106,7 @@ begin
         -- The owner's STORED intent is compared as well as the effective value: a stored choice that is inactive (set before its key's
         -- release, no activation) resolves to the snapshot, so saving the snapshot value must still REPLACE it (Discard must work).
         select s.scope into v_stored_prev from public.studio_role_permissions s where s.studio_id = p_studio and s.role = v_role and s.key = v_key;
-        -- 0355: the value the owner SEES for a row with no stored choice is the studio's own basis (the new-studio default on a new studio,
+        -- 0360: the value the owner SEES for a row with no stored choice is the studio's own basis (the new-studio default on a new studio,
         -- the snapshot on an existing one), which is not the value perm_base_scope returns while the key is unreleased. A request that matches
         -- the unreleased base but differs from what the owner sees is a real choice (an inert Off on a new-studio default) and must be stored.
         v_default := case when v_basis = 'new_studio' then case v_role when 'practitioner' then c.new_practitioner else c.new_receptionist end else v_snap end;
@@ -212,7 +198,14 @@ begin
 end;
 $$;
 
--- Restated by name (the grants persist through create or replace; this makes the intent explicit): an internal function, no API role may execute it.
 revoke all on function public.perm_run_changes(uuid, jsonb, text, boolean, bigint, boolean, boolean) from public, anon, authenticated, service_role;
+
+drop function public.save_role_permissions_reviewed(uuid, bigint, jsonb, text, boolean, text);
+drop function public.preview_role_changes_at(uuid, jsonb, bigint);
+drop function public.perm_run_changes_reviewed(uuid, jsonb, text, boolean, bigint, boolean, boolean, text);
+drop function public.perm_review_hash(uuid, bigint, jsonb, jsonb, boolean, jsonb);
+drop function public.perm_review_hash_input(uuid, bigint, jsonb, jsonb, boolean, jsonb);
+drop function public.perm_review_timing(boolean, text, text, text, text, text, boolean, boolean);
+drop function public.perm_review_involved(text[]);
 
 commit;

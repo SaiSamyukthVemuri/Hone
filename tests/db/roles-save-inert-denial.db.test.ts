@@ -73,7 +73,7 @@ describe("alongside another edit the Off is not silently omitted", () => {
 });
 
 // ---------------------------------------------------------------------------------------------------------------------------------------
-// 0355 contract: the Off is INERT (no access moves), the existing_snapshot basis is as before, reset and adopt are exercised once each, and
+// 0360 contract: the Off is INERT (no access moves), the existing_snapshot basis is as before, reset and adopt are exercised once each, and
 // the grants are those of 0287.
 // ---------------------------------------------------------------------------------------------------------------------------------------
 const effectiveMaps = async (studioId: string) =>
@@ -115,10 +115,10 @@ describe("the existing_snapshot basis behaves as before", () => {
   });
 });
 
-describe("reset and adopt are exercised once each and keep their contract (same result on the hosted body and on 0355)", () => {
-  it("reset: removes a stored choice that 0287 and 0355 both store, reports ok, and effective access is unchanged", async () => {
+describe("reset and adopt are exercised once each and keep their contract (same result on the hosted body and on 0360)", () => {
+  it("reset: removes a stored choice that 0287 and 0360 both store, reports ok, and effective access is unchanged", async () => {
     const s = await seedStudio("inert-denial-reset");
-    // appt.cancel own differs from the base (studio), so both the hosted body and 0355 store it: this exercise does not depend on the fix
+    // appt.cancel own differs from the base (studio), so both the hosted body and 0360 store it: this exercise does not depend on the fix
     expect((await callAs(s.userId, "save_role_permissions", [s.studioId, 0, { practitioner: { "appt.cancel": "own" } }, null, false])).ok).toBe(true);
     expect(await storedRows(s.studioId)).toEqual([{ key: "appt.cancel", scope: "own" }]);
     const before = await effectiveMaps(s.studioId);
@@ -271,12 +271,12 @@ describe("N2: a stored Off is not undone by release or activation (rolled-back t
 });
 
 // ---------------------------------------------------------------------------------------------------------------------------------------
-// Insurance R1: 0355 never stores BELOW the snapshot. For each owner-configurable key and role whose new-studio default differs from its
+// Insurance R1: 0360 never stores BELOW the snapshot. For each owner-configurable key and role whose new-studio default differs from its
 // snapshot, on a fresh new_studio studio with nothing stored, request EVERY allowed scope in turn (the stored rows are removed between requests,
 // so each starts from nothing). A request is "new" when 0287's original condition would NOT have applied it (nothing stored, so: the request
 // equals perm_base_scope). Any such request that got stored must be stored as exactly the snapshot, and at least one is exercised per key and role.
 // ---------------------------------------------------------------------------------------------------------------------------------------
-describe("R1: whatever 0355 stores beyond 0287's condition equals the snapshot, across the whole catalog", () => {
+describe("R1: whatever 0360 stores beyond 0287's condition equals the snapshot, across the whole catalog", () => {
   it("every request 0287 would have dropped, if stored, is stored as the snapshot; at least one per key and role", async () => {
     const s = await seedStudio("inert-denial-r1");
     expect((await adminQuery(`select basis from public.studio_permission_policy where studio_id = $1`, [s.studioId])).rows[0].basis).toBe("new_studio");
