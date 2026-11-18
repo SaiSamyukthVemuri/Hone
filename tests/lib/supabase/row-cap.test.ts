@@ -8,7 +8,7 @@ vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
 
 import { createClient } from "@/lib/supabase/server";
 import { API_MAX_ROWS, mayBeTruncated } from "@/lib/supabase/row-cap";
-import { loadLastChartedTreatmentsForClients } from "@/lib/sessions/last-treatment-loader";
+import { loadLastChartedTreatment, loadLastChartedTreatmentForClient, loadLastChartedTreatmentsForClients } from "@/lib/sessions/last-treatment-loader";
 import { getBeforeTodayPreviews } from "@/lib/dashboard/before-today-previews";
 
 afterEach(() => vi.restoreAllMocks());
@@ -76,6 +76,36 @@ describe("the dashboard prep loader fails closed at the row cap", () => {
     expect(line).not.toContain(CLIENT);
     expect(line).not.toContain("Chin");
     expect(JSON.parse(line!)).toMatchObject({ event: "appointment_prep_blocks_batch_row_cap_reached", studio_id: STUDIO });
+  });
+});
+
+describe("the single-client block read (selectFromCandidates) fails closed at the row cap", () => {
+  const one = () => loadLastChartedTreatmentForClient({ studioId: STUDIO, clientId: CLIENT });
+  it("one block short of the cap: answers from the blocks it has", async () => {
+    use({ sessions: [prepSession("s1")], session_blocks: [prepBlock("s1"), ...filler(API_MAX_ROWS - 2)] });
+    const r = await one();
+    expect(r.unavailable).toBe(false);
+    expect(r.treatment).not.toBeNull();
+  });
+  it("exactly at the cap: unavailable, no treatment built from possibly cut blocks, and the narrative already loaded is kept", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    use({ sessions: [{ ...prepSession("s1"), next_session_note: "KEEP THIS PLAN" }], session_blocks: [prepBlock("s1"), ...filler(API_MAX_ROWS - 1)] });
+    const r = await one();
+    expect(r.unavailable).toBe(true);
+    expect(r.treatment).toBeNull();
+    expect(r.narrative.plan?.text).toBe("KEEP THIS PLAN");
+    const line = spy.mock.calls.map((c) => String(c[0])).find((l) => l.includes("last_charted_treatment_blocks_row_cap_reached"));
+    expect(line).toBeTruthy();
+    expect(line).not.toContain(CLIENT);
+    expect(JSON.parse(line!)).toMatchObject({ studio_id: STUDIO, candidate_count: 1 });
+  });
+  it("the sessions-in variant (charting and new-session pages) keeps its fail-soft null at the cap, and answers one short of it", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const sessions = [prepSession("s1")] as never;
+    use({ session_blocks: [prepBlock("s1"), ...filler(API_MAX_ROWS - 2)] });
+    expect(await loadLastChartedTreatment({ studioId: STUDIO, sessions })).not.toBeNull();
+    use({ session_blocks: [prepBlock("s1"), ...filler(API_MAX_ROWS - 1)] });
+    expect(await loadLastChartedTreatment({ studioId: STUDIO, sessions })).toBeNull();
   });
 });
 
