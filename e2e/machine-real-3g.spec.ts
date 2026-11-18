@@ -110,7 +110,9 @@ for (const device of [
           await expect(options).not.toHaveCount(0, { timeout: T });
           const values = await options.evaluateAll((els) => els.map((e) => (e as HTMLOptionElement).value));
           expect(values.some((v) => v.startsWith("synthetic:")), "the app server must not offer a synthetic profile").toBe(false);
-          expect([...values].sort()).toEqual(["dectro-apilus:junior-3g", "dectro-apilus:senior-3g"]);
+          // The two 3G models are offered exactly as before; the xCell Pur is the one other published contract (its row is in the same plan).
+          expect([...values].filter((v) => v.endsWith("-3g")).sort()).toEqual(["dectro-apilus:junior-3g", "dectro-apilus:senior-3g"]);
+          expect([...values].filter((v) => !v.endsWith("-3g")).sort()).toEqual(["dectro-apilus:xcell-pur"]);
           if (REAL_PATH) {
             // OWNER REGISTRATION through the real path (registerMachineAction), gated on the published contract.
             await page.locator("#machine-model").selectOption(profile.profileId);
