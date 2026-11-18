@@ -535,7 +535,19 @@ describe("L18 Phase 4 — command-bound table direct DML guard", () => {
         //
         // Excluded by exact name, so any OTHER new block-ish command still
         // trips this guard.
-        c !== "setup_readings_for_block",
+        c !== "setup_readings_for_block" &&
+        // HON-8 (0301). Two commands that record WHICH machine an area was
+        // charted on, as three nullable columns on session_blocks. Reviewed in
+        // tests/migrations/0301-session-block-machine-identity.test.ts (source
+        // contract: authenticated-only grants, studio and session lineage,
+        // retired-unit refusal, no backfill) and proven behaviourally in
+        // tests/db/session-block-machine-identity.db.test.ts. The create
+        // variant WRAPS the frozen 0223 command rather than reimplementing it.
+        //
+        // Excluded by exact name, so any OTHER new block-ish command still
+        // trips this guard.
+        c !== "create_block_with_initial_setup_and_identity" &&
+        c !== "record_block_machine_identity",
     );
     expect(unknown, "an unreviewed block/entry command appeared").toEqual([]);
   });
