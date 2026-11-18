@@ -11,10 +11,12 @@ const LEAK_EMAIL = "leak.probe@example.test";
 const INVITEE = "invitee.synthetic@example.test";
 
 const send = vi.hoisted(() => vi.fn());
+// The invitation goes through the SHARED transport (getResendTransport), so the E2E capture ledger sees it.
+const transportRef = vi.hoisted(() => ({ current: null as null | { emails: { send: unknown } } }));
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/email/client", () => ({
-  resend: { emails: { send } },
+  getResendTransport: () => transportRef.current,
   FROM_ADDRESS: "Hone <hello@hone.care>",
 }));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: vi.fn() }));
@@ -47,6 +49,7 @@ let logged: string[];
 
 beforeEach(() => {
   send.mockReset();
+  transportRef.current = { emails: { send } };
   logged = [];
   for (const level of ["error", "warn", "info", "log", "debug"] as const) {
     vi.spyOn(console, level).mockImplementation((...args: unknown[]) => {
@@ -126,5 +129,25 @@ describe("team invitation email failure log (MSG-LOG-RAW-ERROR)", () => {
 
     expect(result).toEqual({ ok: true, email: INVITEE });
     expect(logged).toEqual([]);
+  });
+
+  it("the invitation is handed to the shared transport once, to the invitee, with the studio's sender", async () => {
+    send.mockResolvedValue({ data: { id: "email-1" }, error: null });
+
+    await invitePractitionerAction(inviteForm());
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0]).toMatchObject({ from: "Hone <hello@hone.care>", to: INVITEE });
+    expect(typeof send.mock.calls[0][0].subject).toBe("string");
+  });
+
+  it("no transport configured: nothing is sent, the invite still succeeds, one closed warning", async () => {
+    transportRef.current = null;
+
+    const result = await invitePractitionerAction(inviteForm());
+
+    expect(result).toEqual({ ok: true, email: INVITEE });
+    expect(send).not.toHaveBeenCalled();
+    expectNoLeak();
   });
 });
