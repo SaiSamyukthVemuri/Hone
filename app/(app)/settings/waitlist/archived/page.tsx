@@ -41,7 +41,7 @@ export default async function WaitlistArchivedPage() {
       <h1 className="text-lg font-medium">Archived waitlist entries</h1>
       <p>
         These people were removed from the waitlist. They are not in the queue and cannot be invited. Their contact details, join date and
-        invitation history are kept here.
+        invitation history are shown here as recorded.
       </p>
       {list.kind === "unknown" ? <p role="status">We couldn&rsquo;t load the archive just now. Please try again.</p> : null}
       {list.kind === "ok" && list.entries.length === 0 ? <p>No archived entries.</p> : null}

@@ -35,8 +35,8 @@ beforeEach(() => {
     kind: "ok",
     capped: false,
     entries: [
-      { id: E1, name: "Sam Sample", joinedAt: "2026-10-01T15:00:00Z", removedAt: "2026-11-05T15:00:00Z", removedByRecorded: true },
-      { id: E2, name: "Sam Sample", joinedAt: "2026-10-02T15:00:00Z", removedAt: "2026-11-06T15:00:00Z", removedByRecorded: true },
+      { id: E1, name: "Avery Example", joinedAt: "2026-10-01T15:00:00Z", removedAt: "2026-11-05T15:00:00Z", removedByRecorded: true },
+      { id: E2, name: "Avery Example", joinedAt: "2026-10-02T15:00:00Z", removedAt: "2026-11-06T15:00:00Z", removedByRecorded: true },
       { id: E3, name: "Pat Placeholder", joinedAt: "", removedAt: null, removedByRecorded: false },
     ],
   });
@@ -90,6 +90,11 @@ describe("the Archived view", () => {
     expect(h.contacts).toHaveBeenCalledWith("s1", [E1, E2, E3]);
     expect(h.history).toHaveBeenCalledWith("s1", [E1, E2, E3]);
   });
+  it("promises nothing about how long anything is kept: the details are shown as recorded", async () => {
+    const out = await html();
+    expect(out).toContain("are shown here as recorded");
+    expect(out).not.toMatch(/\bkept\b|\bretain|forever|permanent/i);
+  });
   it("a failed read says so", async () => {
     h.archived.mockResolvedValue({ kind: "unknown" });
     expect(await html()).toContain("couldn’t load the archive");
@@ -114,8 +119,8 @@ describe("Archived entries are not in the queue and cannot be invited", () => {
 describe("archivedFromRows", () => {
   it("keeps same-name entries apart and drops malformed rows", () => {
     const out = archivedFromRows([
-      { id: E1, name: "Sam Sample", joined_at: "x", removed_at: "y", removed_by_practitioner_id: "p" },
-      { id: E2, name: "Sam Sample", joined_at: null, removed_at: null, removed_by_practitioner_id: null },
+      { id: E1, name: "Avery Example", joined_at: "x", removed_at: "y", removed_by_practitioner_id: "p" },
+      { id: E2, name: "Avery Example", joined_at: null, removed_at: null, removed_by_practitioner_id: null },
       { id: 7, name: "bad" },
     ]);
     expect(out.map((e) => [e.id, e.removedByRecorded])).toEqual([[E1, true], [E2, false]]);
