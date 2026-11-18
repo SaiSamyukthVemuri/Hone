@@ -498,9 +498,17 @@ export async function getBeforeTodayPreviews(
       notes: watchSource
         ? { at: watchSource.started_at, isLatest: watchSource.id === latestVisit?.id }
         : null,
-      setup: lastTreatment
-        ? { at: lastTreatment.started_at, isLatest: lastTreatment.id === latestVisit?.id }
-        : null,
+      // The setup line is read from the area treated most recently across ALL the client's blocks
+      // (intelligence.areas[0]), which is not necessarily the visit pickLastTreatment chose: a newer visit
+      // with only electrolysis or laser entries is "the last treatment" but supplies no setup. So the
+      // source is the date of the area that supplies THIS line, never the chosen visit's.
+      setup:
+        briefing.latestSetupLine && intelligence.areas[0]?.lastTreated
+          ? {
+              at: intelligence.areas[0].lastTreated,
+              isLatest: intelligence.areas[0].lastTreated === latestVisit?.started_at,
+            }
+          : null,
     };
     out.set(key, { ...compactBeforeToday(briefing), sources });
   }

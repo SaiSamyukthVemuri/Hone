@@ -58,6 +58,19 @@ async function labelsFor(tables: Record<string, Row[]>, clientId = CLIENT) {
 }
 
 describe("Today row: which visit did each line come from?", () => {
+  it("Codex P2: the newest charted visit has only laser entries (no blocks), so the setup line is an OLDER visit's: the label names that visit, not the newest", async () => {
+    const older = sess(CLIENT, "2026-10-20T15:00:00Z");
+    const newest = sess(CLIENT, "2026-11-10T15:00:00Z", { modality: "laser", laser_entries: [{ id: "l1", deleted_at: null }] });
+    const { preview, labels } = await labelsFor({
+      sessions: [older, newest],
+      session_blocks: [blk(older.id as string, "Jaw")],
+    });
+    expect(preview.setupLine).not.toBeNull(); // the setup comes from the older visit's blocks
+    expect(preview.sources?.latestAt).toBe("2026-11-10T15:00:00Z");
+    expect(labels.setup).toBe("Setup from 20 Oct (the latest visit on 10 Nov has no charted setup)");
+    expect(labels.setup).not.toBe("Setup from 10 Nov");
+  });
+
   it("several visits and areas, the newest visit has no notes and no charting: notes and setup come from earlier visits, and say so", async () => {
     const old = sess(CLIENT, "2026-10-03T15:00:00Z", { next_session_note: "Go gently on the chin" });
     const mid = sess(CLIENT, "2026-10-20T15:00:00Z");
@@ -70,7 +83,7 @@ describe("Today row: which visit did each line come from?", () => {
     expect(preview.setupLine).not.toBeNull(); // a setup line exists, from the mid visit
     expect(preview.sources?.latestAt).toBe("2026-11-10T15:00:00Z");
     expect(labels.notes).toBe("Notes from 3 Oct (the latest visit on 10 Nov has no notes)");
-    expect(labels.setup).toBe("Setup from 20 Oct (the latest visit on 10 Nov has no charted treatment)");
+    expect(labels.setup).toBe("Setup from 20 Oct (the latest visit on 10 Nov has no charted setup)");
   });
 
   it("when the newest visit has the notes and the charting, nothing is skipped and nothing is excused", async () => {

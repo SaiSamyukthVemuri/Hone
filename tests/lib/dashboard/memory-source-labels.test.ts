@@ -26,7 +26,7 @@ describe("memorySourceLabels", () => {
       TZ,
     );
     expect(l.notes).toBe("Notes from 3 Oct (the latest visit on 10 Nov has no notes)");
-    expect(l.setup).toBe("Setup from 20 Oct (the latest visit on 10 Nov has no charted treatment)");
+    expect(l.setup).toBe("Setup from 20 Oct (the latest visit on 10 Nov has no charted setup)");
   });
   it("never presents an earlier source as the latest, even when the latest date cannot be shown", () => {
     const l = memorySourceLabels({ latestAt: null, notes: { at: "2026-10-03T15:00:00Z", isLatest: false }, setup: null }, NOW, TZ);
@@ -60,7 +60,7 @@ describe("the labels reach the row through the workflow, and only with something
     unavailable: false, hasHistory: true, nextVisitNote: "plan text", cautionNote: null, setupLine: "27.12 MHz",
     reminders: [], intake: "none", charting: "none",
     notesSourceLabel: "Notes from 3 Oct (the latest visit on 10 Nov has no notes)",
-    setupSourceLabel: "Setup from 20 Oct (the latest visit on 10 Nov has no charted treatment)",
+    setupSourceLabel: "Setup from 20 Oct (the latest visit on 10 Nov has no charted setup)",
   };
   const one = (over: Partial<TodayWorkflowInput>) => buildTodayWorkflow([{ ...base, ...over }]).items[0];
   it("carries both labels when notes and setup are shown", () => {
@@ -99,5 +99,31 @@ describe("the treatment strip's date is the studio's calendar day (no server-loc
     expect(toDashboardPrepSummary({ memory: null, unavailable: false, planNote: null, planSourceLabel: "x" }).rememberSource).toBeNull();
     // The browser-bound projection still carries no note and no source line.
     expect(Object.keys(toDisclosureSummary(s)).sort()).toEqual(["compactSummary", "hasTreatment", "unavailable"]);
+  });
+});
+
+describe("Codex P2: the off-Today plan label names what is actually missing", () => {
+  const sources = { latestAt: "2026-11-10T15:00:00Z", notes: { at: "2026-10-03T15:00:00Z", isLatest: false }, setup: null };
+  it("a plan from an earlier visit says the latest visit has no PLAN for next time, never that it has no notes (it may have a caution)", () => {
+    const l = memorySourceLabels({ ...sources, notesKind: "plan" }, "2026-11-12T12:00:00Z", "America/New_York");
+    expect(l.notes).toBe("Plan from 3 Oct (the latest visit on 10 Nov has no plan for next time)");
+    expect(l.notes).not.toContain("has no notes");
+  });
+  it("the Today pick keeps its wording (a skipped visit there has neither a plan nor a caution)", () => {
+    const l = memorySourceLabels(sources, "2026-11-12T12:00:00Z", "America/New_York");
+    expect(l.notes).toBe("Notes from 3 Oct (the latest visit on 10 Nov has no notes)");
+  });
+  it("the same plan from the latest visit is just dated", () => {
+    expect(memorySourceLabels({ ...sources, notes: { at: "2026-11-10T15:00:00Z", isLatest: true }, notesKind: "plan" }, "2026-11-12T12:00:00Z", "America/New_York").notes).toBe("Plan from 10 Nov");
+  });
+});
+
+describe("Codex P2: the dashboard page asks for the plan wording off Today", () => {
+  it("planSourceLabel is built with notesKind \"plan\" (the page, not only the helper, says what is missing)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("app/(app)/dashboard/page.tsx", "utf8");
+    const at = src.indexOf("planSourceLabel: memorySourceLabels(");
+    expect(at).toBeGreaterThan(-1);
+    expect(src.slice(at, at + 900)).toMatch(/notesKind:\s*"plan"/);
   });
 });

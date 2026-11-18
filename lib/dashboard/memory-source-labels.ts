@@ -8,7 +8,7 @@
 // These labels say it. They never change WHICH visit is picked; they describe the pick already made.
 //   same visit      "Notes from 10 Nov"
 //   earlier visit   "Notes from 3 Oct (the latest visit on 10 Nov has no notes)"
-//                   "Setup from 3 Oct (the latest visit on 10 Nov has no charted treatment)"
+//                   "Setup from 3 Oct (the latest visit on 10 Nov has no charted setup)"
 // Dates are the STUDIO's calendar days, formatted on the server, never the server's or the viewer's locale.
 // "The latest visit" is the newest live, non-void session before this appointment: a draft or incomplete
 // session counts as a visit (it is a charting state, not evidence of no visit), a void or deleted one does not.
@@ -25,6 +25,12 @@ export type MemorySources = {
   latestAt: string | null;
   /** Where the plan/caution notes came from; null when no note exists. */
   notes: MemorySourcePoint | null;
+  /**
+   * What `notes` is a source OF. "notes" (default): the Today pick, which skips a visit only when it has neither a plan nor a caution,
+   * so "has no notes" is true of every skipped visit. "plan": the off-Today plan line, which is the newest "for next visit" note only,
+   * so a skipped newer visit may well have cautions or other notes; the reason must say what is actually missing.
+   */
+  notesKind?: "notes" | "plan";
   /** Where the latest setup/treatment came from; null when none is charted. */
   setup: MemorySourcePoint | null;
 };
@@ -68,7 +74,10 @@ export function memorySourceLabels(
       : `${what} from ${day} (an earlier visit)`;
   };
   return {
-    notes: label("Notes", sources.notes, "has no notes"),
-    setup: label("Setup", sources.setup, "has no charted treatment"),
+    notes:
+      sources.notesKind === "plan"
+        ? label("Plan", sources.notes, "has no plan for next time")
+        : label("Notes", sources.notes, "has no notes"),
+    setup: label("Setup", sources.setup, "has no charted setup"),
   };
 }

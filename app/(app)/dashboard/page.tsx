@@ -708,6 +708,8 @@ export default async function DashboardPage({
                 }
               : null,
             setup: null,
+            // The off-Today line is the newest "for next visit" note, so say what is missing: a plan, not "notes".
+            notesKind: "plan",
           },
           renderNow.toISOString(),
           studio.timezone,
