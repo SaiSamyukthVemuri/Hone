@@ -3,6 +3,7 @@ import type { FollowUpRow } from "@/lib/waitlist/followups-owner";
 import type { LinkableList } from "@/lib/waitlist/followup-linkable";
 import { bellStatusLine, DECLINE_CARD_SAVED, emailStatusLine, emptyOutboxCounts, type OutboxCounts } from "@/lib/waitlist/decline-status-lines";
 import { NO_TIMES_WORK_LABELS } from "@/lib/waitlist/decline-responses";
+import { buttonClasses } from "@/components/ui/button";
 import {
   eraseAnswersAction,
   keepWithdrawalAction,
@@ -10,6 +11,8 @@ import {
   markHandledAction,
 } from "@/app/(app)/settings/waitlist/follow-up-actions";
 import type { FollowUpNotice } from "@/lib/waitlist/follow-up-notice";
+import type { ReplyContact } from "@/lib/waitlist/reply-contact-pure";
+import { ReplyContactDetails } from "@/components/waitlist/reply-contact";
 
 // HON-7 (b). The owner's follow-up section: the target of the `#follow-up` anchor the email, the bell and the sign-in return all land on.
 // OWNER-ONLY BY CONSTRUCTION: it renders the recipient's answers, so it must only ever be rendered after the page's owner check (a test pins the
@@ -38,6 +41,13 @@ function eraseDate(iso: string | null, timeZone: string): string | null {
   }
 }
 
+/** What the OWNER reads above a person's answers. The recipient was asked different questions (NO_TIMES_WORK_LABELS); these name the answers for the owner. */
+export const OWNER_ANSWER_LABELS = { why: "Why these times don't work", better: "Preferred availability" } as const;
+
+/** Hierarchy: ONE primary per card (Book now), everything else secondary. */
+const PRIMARY = buttonClasses({ variant: "primary", size: "md" });
+const SECONDARY = buttonClasses({ variant: "secondary", size: "md" });
+
 const BUTTON =
   "inline-flex min-h-[44px] items-center rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900";
 
@@ -64,11 +74,11 @@ function EraseControl({ id }: { id: string }) {
 
 function MoreActions({ id, name }: { id: string; name: string }) {
   return (
-    <details data-testid="more-actions" className="mt-2">
+    <details data-testid="more-actions" className="relative shrink-0">
       <summary aria-label={`More actions for ${name}: erase answers`} className={`${BUTTON} cursor-pointer list-none select-none`}>
         More actions
       </summary>
-      <div className="mt-2">
+      <div className="absolute right-0 z-10 mt-1 w-72 max-w-[calc(100vw-4rem)] rounded-md border border-neutral-300 bg-white p-2 shadow-md dark:border-neutral-700 dark:bg-neutral-900">
         <EraseControl id={id} />
       </div>
     </details>
@@ -88,6 +98,8 @@ export function DeclineFollowUpSection({
   notice,
   justSaved = false,
   capped = false,
+  contacts = null,
+  renderedEntryIds = null,
 }: {
   rows: FollowUpRow[];
   timeZone: string;
@@ -101,6 +113,10 @@ export function DeclineFollowUpSection({
   justSaved?: boolean;
   /** True when the list reached the database's 500-row cap: more responses may be waiting than are shown. */
   capped?: boolean;
+  /** The linked entry's email and phone by ENTRY ID, read after the owner check; null when they could not be read. */
+  contacts?: ReadonlyMap<string, ReplyContact> | null;
+  /** The entries actually rendered in the queue on this page. The entry link is offered only for these, so it can never point at an anchor that is not here (a long section pages at 100). */
+  renderedEntryIds?: ReadonlySet<string> | null;
 }) {
   const open = rows.filter((r) => r.status === "open");
   return (
@@ -140,78 +156,79 @@ export function DeclineFollowUpSection({
           const emailLine = r.kind === "decline" ? emailStatusLine(emailEnabled, counts) : null;
           return (
             <li key={r.followupId} className="border-t border-amber-200 pt-3 first:border-t-0 first:pt-0" data-status={r.status} data-kind={r.kind}>
-              <p className="font-medium">{r.clientName || "A person on the waitlist"}</p>
-              {/* At the top of the row so an opened panel grows DOWNWARD into the row with room below it, never off the bottom of the screen; DOM, visual and focus order agree. */}
-              {!erased && hasAnswers ? <MoreActions id={r.followupId} name={r.clientName || "this person"} /> : null}
-              {r.kind === "withdrawal" ? <p>{NO_TIMES_WORK_LABELS.noLongerNeed}.</p> : null}
+              <div className="flex items-start justify-between gap-2" data-testid="response-header">
+                <p className={`min-w-0 flex-1 break-words font-medium ${!erased && hasAnswers ? "flex min-h-[44px] items-center" : ""}`}>{r.clientName || "A person on the waitlist"}</p>
+                {!erased && hasAnswers ? <MoreActions id={r.followupId} name={r.clientName || "this person"} /> : null}
+              </div>
+              <ReplyContactDetails entryId={r.entryId} contact={contacts?.get(r.entryId) ?? null} showEntryLink={r.status !== "removed" && renderedEntryIds?.has(r.entryId) === true} />
+              {r.kind === "withdrawal" ? <p className="mt-2">{NO_TIMES_WORK_LABELS.noLongerNeed}.</p> : null}
               {erased ? (
-                <p className="text-neutral-600 dark:text-neutral-400">
-                  {/* An answer past its deadline reads back as erased at the deadline before the job has physically erased it, so the copy claims only what is true of both: it is no longer shown. */}
+                <p className="mt-1 text-neutral-600 dark:text-neutral-400" data-testid="answers-erased">
+                  {/* An answer past its deadline reads back as erased at the deadline before the job has physically erased it, so the copy claims only what is true of both. */}
                   {eraseDate(r.answersErasedAt, timeZone) ? `Answers removed from view on ${eraseDate(r.answersErasedAt, timeZone)}.` : "Their answers have been removed from view."}
                 </p>
-              ) : r.whyNotWork !== null || r.betterTimes !== null ? (
-                <dl className="mt-1">
-                  <dt className="text-neutral-600 dark:text-neutral-400">{NO_TIMES_WORK_LABELS.why}</dt>
-                  <dd className="whitespace-pre-wrap">{r.whyNotWork}</dd>
-                  <dt className="mt-1 text-neutral-600 dark:text-neutral-400">{NO_TIMES_WORK_LABELS.better}</dt>
-                  <dd className="whitespace-pre-wrap">{r.betterTimes}</dd>
+              ) : hasAnswers ? (
+                <dl className="mt-1" data-testid="response-answers">
+                  <dt className="text-neutral-600 dark:text-neutral-400">{OWNER_ANSWER_LABELS.why}</dt>
+                  <dd className="whitespace-pre-wrap break-words">{r.whyNotWork}</dd>
+                  <dt className="mt-1 text-neutral-600 dark:text-neutral-400">{OWNER_ANSWER_LABELS.better}</dt>
+                  <dd className="whitespace-pre-wrap break-words">{r.betterTimes}</dd>
                 </dl>
               ) : null}
-              {!erased && hasAnswers ? (
-                <p className="mt-1 text-neutral-600 dark:text-neutral-400" data-testid="erase-by">
-                  {when ? `Answers will be removed from view on ${when}.` : "Erase date unavailable. You can erase these answers now, or contact support."}
-                </p>
-              ) : null}
-              {r.kind === "decline" ? (
-                <>
-                  <p className="mt-1 text-neutral-600 dark:text-neutral-400">{bellStatusLine()}</p>
-                  <p className="text-neutral-600 dark:text-neutral-400">{emailLine}</p>
-                </>
-              ) : (
-                <p className="mt-1 text-neutral-600 dark:text-neutral-400">{bellStatusLine()}</p>
-              )}
+              <details data-testid="response-details" className="mt-2">
+                <summary className={`${BUTTON} cursor-pointer list-none select-none`}>Details</summary>
+                <div className="mt-2 flex flex-col gap-1 text-neutral-600 dark:text-neutral-400">
+                  {!erased && hasAnswers ? (
+                    <p data-testid="erase-by">
+                      {when ? `Answers will be removed from view on ${when}.` : "Erase date unavailable. You can erase these answers now, or contact support."}
+                    </p>
+                  ) : null}
+                  <p>{bellStatusLine()}</p>
+                  {r.kind === "decline" ? <p>{emailLine}</p> : null}
+                </div>
+              </details>
               {r.status === "open" ? (
-                <div className="mt-2 flex flex-col gap-2">
+                <div className="mt-3 flex flex-col gap-2" data-testid="response-actions">
                   {linkable.get(r.followupId)?.more ? (
                     <p className="text-neutral-600 dark:text-neutral-400" data-testid="linkable-more">
                       {LINKABLE_MORE_COPY}
                     </p>
                   ) : null}
-                  {(linkable.get(r.followupId)?.items ?? []).map((a) => (
-                    <form key={a.id} action={linkAppointmentAction}>
-                      <Hidden id={r.followupId} />
-                      <input type="hidden" name="appointmentId" value={a.id} />
-                      <button type="submit" className={BUTTON}>
-                        Link booking: {a.label}
-                      </button>
-                    </form>
-                  ))}
                   <div className="flex flex-wrap gap-2">
-                    <Link href="/calendar" className={BUTTON}>
+                    <Link href="/calendar" className={PRIMARY}>
                       Book now
                     </Link>
                     {r.kind === "decline" ? (
                       <form action={markHandledAction}>
                         <Hidden id={r.followupId} />
-                        <button type="submit" className={BUTTON}>
+                        <button type="submit" className={SECONDARY}>
                           Mark handled
                         </button>
                       </form>
                     ) : (
                       <form action={keepWithdrawalAction}>
                         <Hidden id={r.followupId} />
-                        <button type="submit" className={BUTTON}>
+                        <button type="submit" className={SECONDARY}>
                           Keep on the waitlist
                         </button>
                       </form>
                     )}
                   </div>
+                  {(linkable.get(r.followupId)?.items ?? []).map((a) => (
+                    <form key={a.id} action={linkAppointmentAction}>
+                      <Hidden id={r.followupId} />
+                      <input type="hidden" name="appointmentId" value={a.id} />
+                      <button type="submit" className={`${SECONDARY} max-w-full text-left`}>
+                        Link booking: {a.label}
+                      </button>
+                    </form>
+                  ))}
                   <p className="text-neutral-600 dark:text-neutral-400">
                     Book now opens the calendar. After you book, the appointment appears here to link, which also covers someone who booked elsewhere.
                   </p>
                 </div>
               ) : (
-                <p className="mt-1 text-neutral-600 dark:text-neutral-400">{STATUS_COPY[r.status]}</p>
+                <p className="mt-2 text-neutral-600 dark:text-neutral-400">{STATUS_COPY[r.status]}</p>
               )}
             </li>
           );
