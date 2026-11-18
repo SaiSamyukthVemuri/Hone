@@ -13,8 +13,9 @@ let root: string;
 let migrations: string;
 let seed: string;
 let sqlFile: string;
+let allowedFile: string;
 let cache: string;
-const inputs = () => ({ migrationsDir: migrations, seedFile: seed, sqlFile });
+const inputs = () => ({ migrationsDir: migrations, seedFile: seed, sqlFile, allowedFile });
 
 beforeEach(() => {
   root = mkdtempSync(path.join(tmpdir(), "hone-baseline-key-"));
@@ -28,6 +29,8 @@ beforeEach(() => {
   writeFileSync(seed, "-- no rows\n");
   sqlFile = path.join(root, "sql.mjs");
   writeFileSync(sqlFile, "export const X = 1;\n");
+  allowedFile = path.join(root, "allowed.json");
+  writeFileSync(allowedFile, "[]\n");
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
@@ -47,6 +50,7 @@ describe("the cache key", () => {
     }],
     ["a removed migration", () => rmSync(path.join(migrations, "0002_b.sql"))],
     ["the seed", () => writeFileSync(seed, "insert into t values (1);\n")],
+    ["the allowed seeded-table list", () => writeFileSync(allowedFile, "[\"permission_catalog\"]\n")],
     ["the SQL the scripts run", () => writeFileSync(sqlFile, "export const X = 2;\n")],
   ])("changes when %s changes", (_label, change) => {
     const before = computeKey(inputs()).key;

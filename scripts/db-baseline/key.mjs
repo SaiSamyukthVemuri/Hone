@@ -1,6 +1,6 @@
 // The cache key. A cached baseline is valid for EXACTLY the inputs it was built from, and
 // nothing else decides that: the key is the sha256 of every supabase/migrations file (name
-// and content), the synthetic seed and the SQL the scripts run (sql.mjs). Change any byte of
+// and content), the synthetic seed, the allowed seeded-table list and the SQL the scripts run (sql.mjs). Change any byte of
 // any of them and the key changes, so the old entry is simply not found and a stale
 // baseline can never be restored by accident. Nothing is ever "refreshed in place".
 import { createHash } from "node:crypto";
@@ -13,7 +13,9 @@ export const REPO_ROOT = path.resolve(HERE, "..", "..");
 export const DEFAULT_MIGRATIONS = path.join(REPO_ROOT, "supabase", "migrations");
 export const DEFAULT_SEED = path.join(HERE, "seed.sql");
 export const DEFAULT_SQL = path.join(HERE, "sql.mjs");
-export const DEFAULT_CACHE = process.env.HONE_DB_BASELINE_CACHE || "/srv/hone/cache/db-baseline";
+export const DEFAULT_ALLOWED = path.join(HERE, "allowed-seeded-tables.json");
+// No default location: the cache is an owner-set directory outside the repository (HONE_DB_BASELINE_CACHE or --cache).
+export const DEFAULT_CACHE = process.env.HONE_DB_BASELINE_CACHE;
 
 const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
 
@@ -24,12 +26,13 @@ export function migrationsDigest(dir) {
   return { count: names.length, digest: sha256(lines.join("")) };
 }
 
-export function computeKey({ migrationsDir = DEFAULT_MIGRATIONS, seedFile = DEFAULT_SEED, sqlFile = DEFAULT_SQL } = {}) {
+export function computeKey({ migrationsDir = DEFAULT_MIGRATIONS, seedFile = DEFAULT_SEED, sqlFile = DEFAULT_SQL, allowedFile = DEFAULT_ALLOWED } = {}) {
   const migrations = migrationsDigest(migrationsDir);
   const seed = sha256(readFileSync(seedFile));
   const sql = sha256(readFileSync(sqlFile));
-  const key = sha256(`migrations ${migrations.digest}\nseed ${seed}\nsql ${sql}\n`);
-  return { key, migrations, seed, sql };
+  const allowed = sha256(readFileSync(allowedFile));
+  const key = sha256(`migrations ${migrations.digest}\nseed ${seed}\nsql ${sql}\nallowed ${allowed}\n`);
+  return { key, migrations, seed, sql, allowed };
 }
 
 export function entryDir(cacheDir, key) {

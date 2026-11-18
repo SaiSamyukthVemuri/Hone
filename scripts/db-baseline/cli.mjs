@@ -4,14 +4,17 @@
 //   node scripts/db-baseline/cli.mjs key
 //   node scripts/db-baseline/cli.mjs build   --container supabase_db_<id>   (stack with the chain applied)
 //   node scripts/db-baseline/cli.mjs seal    --container supabase_db_<id>   (a different, EMPTY stack)
-//   node scripts/db-baseline/cli.mjs restore --container supabase_db_<id>   (an empty or used stack)
+//   node scripts/db-baseline/cli.mjs restore --container supabase_db_<id>   (an empty or used stack; DESTRUCTIVE)
+// seal and restore drop schemas: they need the paired E2E_SUPABASE_URL + HONE_LOCAL_DB_URL of the stack you own, or
+// --confirm-owned <project>; they refuse when DOCKER_HOST is set or the docker context is not local.
 // Chain qualification (upgrade, rollback, migration-chain proofs) still uses a fresh
 // `supabase db reset`; a baseline is only for independent app, DB and e2e tests.
-import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { DEFAULT_CACHE, DEFAULT_MIGRATIONS, DEFAULT_SEED, computeKey, entryDir, lookup } from "./key.mjs";
+import { DEFAULT_ALLOWED, DEFAULT_CACHE, DEFAULT_MIGRATIONS, DEFAULT_SEED, REPO_ROOT, computeKey, entryDir, lookup } from "./key.mjs";
+import { cacheDirProblems, guardProblems, syntheticProblems } from "./guard.mjs";
 import { ACL_SQL, EXTENSIONS_SQL, FINGERPRINT_SQL, RESET_SQL, TRIGGERS_SQL } from "./sql.mjs";
 import { chainProblems, drift, parseFingerprint, summarise } from "./verify.mjs";
 
@@ -23,17 +26,29 @@ const opt = (name, dflt) => {
 };
 const cacheDir = opt("cache", DEFAULT_CACHE);
 const container = opt("container");
-const inputs = { migrationsDir: opt("migrations", DEFAULT_MIGRATIONS), seedFile: opt("seed", DEFAULT_SEED) };
+const confirmOwned = opt("confirm-owned");
+const inputs = { migrationsDir: opt("migrations", DEFAULT_MIGRATIONS), seedFile: opt("seed", DEFAULT_SEED), allowedFile: DEFAULT_ALLOWED };
 
 const fail = (msg, code = 1) => {
   console.error(`baseline: ${msg}`);
   process.exit(code);
 };
 const now = () => Number(process.hrtime.bigint()) / 1e9;
-const need = () => {
+// Every command that touches a container goes through here first. `destructive` commands (seal, restore) drop the public
+// and supabase_migrations schemas of that stack, so they also need proof the stack is the caller's own.
+const need = ({ destructive }) => {
   if (!container) fail("--container <database container name> is required");
-  // Only a local stack's database container is ever addressed.
-  if (!/^supabase_db_[A-Za-z0-9_.-]+$/.test(container)) fail("--container must be a local supabase_db_<project> container");
+  const ctx = spawnSync("docker", ["context", "show"], { encoding: "utf8" });
+  const dockerContext = (ctx.stdout || "").trim();
+  const ep = spawnSync("docker", ["context", "inspect", "--format", "{{.Endpoints.docker.Host}}", dockerContext || "default"], { encoding: "utf8" });
+  const port = spawnSync("docker", ["port", container, "5432/tcp"], { encoding: "utf8" });
+  const m = /:(\d+)\s*$/m.exec(port.stdout || "");
+  const problems = guardProblems({ container, destructive, env: process.env, confirmOwned, dockerContext, contextEndpoint: (ep.stdout || "").trim(), publishedDbPort: m ? Number(m[1]) : undefined });
+  if (problems.length) fail(`refused:\n  ${problems.join("\n  ")}`, 4);
+};
+const cacheOk = () => {
+  const problems = cacheDirProblems(cacheDir, REPO_ROOT);
+  if (problems.length) fail(`refused: ${problems.join("; ")}`, 4);
 };
 
 function docker(argv, { input, stdin, stdout } = {}) {
@@ -84,9 +99,10 @@ function wipe() {
 
 if (cmd === "key") {
   const k = computeKey(inputs);
-  console.log(JSON.stringify({ key: k.key, migrationFiles: k.migrations.count, migrationsDigest: k.migrations.digest, seed: k.seed, sql: k.sql }, null, 2));
+  console.log(JSON.stringify({ key: k.key, migrationFiles: k.migrations.count, migrationsDigest: k.migrations.digest, seed: k.seed, sql: k.sql, allowed: k.allowed }, null, 2));
 } else if (cmd === "build") {
-  need();
+  need({ destructive: false });
+  cacheOk();
   const k = computeKey(inputs);
   const dir = entryDir(cacheDir, k.key);
   if (existsSync(dir)) fail(`an entry for key ${k.key.slice(0, 12)} already exists; entries are immutable (delete it deliberately to rebuild)`);
@@ -95,6 +111,15 @@ if (cmd === "key") {
   const files = readdirSync(inputs.migrationsDir).filter((n) => n.endsWith(".sql")).map((n) => n.split("_")[0]).sort();
   if (JSON.stringify(versions) !== JSON.stringify(files)) fail(`the stack's migration history (${versions.length}) is not this checkout's migration list (${files.length}); build only from a fresh \`supabase db reset\``);
   psql(readFileSync(inputs.seedFile, "utf8"));
+  // Only synthetic, migration-seeded data may ever be cached.
+  {
+    const f = parseFingerprint(psql(FINGERPRINT_SQL));
+    const rowCounts = Object.fromEntries(f.data.map((l) => [l.slice(0, l.lastIndexOf("=")), Number(l.slice(l.lastIndexOf("=") + 1))]));
+    const problems = syntheticProblems({ authUsers: Number(f.authusers[0] ?? "NaN"), rowCounts, allowedSeeded: JSON.parse(readFileSync(inputs.allowedFile, "utf8")) });
+    if (problems.length) fail(`build refused: the database is not synthetic:\n  ${problems.join("\n  ")}`, 5);
+  }
+  mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
+  chmodSync(cacheDir, 0o700);
   const partial = `${dir}.partial`;
   rmSync(partial, { recursive: true, force: true });
   mkdirSync(partial, { recursive: true });
@@ -113,7 +138,8 @@ if (cmd === "key") {
   renameSync(partial, dir);
   console.log(`baseline: built ${dir} (UNVERIFIED: run \`seal\` against an empty stack)`);
 } else if (cmd === "seal") {
-  need();
+  need({ destructive: true });
+  cacheOk();
   const k = computeKey(inputs);
   const dir = entryDir(cacheDir, k.key);
   if (!existsSync(dir)) fail(`no entry for key ${k.key.slice(0, 12)}; run build first`);
@@ -133,7 +159,9 @@ if (cmd === "key") {
   chmodSync(dir, 0o555);
   console.log(`baseline: sealed ${dir} ${JSON.stringify(timing)}`);
 } else if (cmd === "restore") {
-  need();
+  need({ destructive: true });
+  cacheOk();
+  console.error("baseline: restore is DESTRUCTIVE: it drops the public and supabase_migrations schemas of this stack");
   const found = lookup(cacheDir, inputs);
   if (!found.ok) fail(found.reason, 3);
   const t0 = now();

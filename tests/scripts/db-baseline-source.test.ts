@@ -5,6 +5,9 @@ import { describe, expect, it } from "vitest";
 import { ACL_SQL, EXTENSIONS_SQL, TRIGGERS_SQL } from "../../scripts/db-baseline/sql.mjs";
 
 const cli = readFileSync(path.join(process.cwd(), "scripts/db-baseline/cli.mjs"), "utf8");
+const guardSrc = readFileSync(path.join(process.cwd(), "scripts/db-baseline/guard.mjs"), "utf8");
+const keySrc = readFileSync(path.join(process.cwd(), "scripts/db-baseline/key.mjs"), "utf8");
+const readme = readFileSync(path.join(process.cwd(), "scripts/db-baseline/README.md"), "utf8");
 
 describe("the restore path is the strict one", () => {
   it("restores with --no-acl and replays explicit grants, so the target's default privileges can never add access", () => {
@@ -27,8 +30,27 @@ describe("the restore path is the strict one", () => {
   });
 
   it("only ever addresses a local stack's database container", () => {
-    expect(cli).toMatch(/\^supabase_db_/);
     expect(cli).not.toMatch(/linked|--db-url|supabase\.co|db execute/);
+    expect(guardSrc).toMatch(/\^supabase_db_/);
+  });
+
+  it("the ownership guard runs before anything is dropped, and a failed restore verification clears the stack", () => {
+    for (const cmd of ["seal", "restore"]) {
+      const at = cli.indexOf(`cmd === "${cmd}"`);
+      expect(at).toBeGreaterThan(-1);
+      expect(cli.slice(at).indexOf("need({ destructive: true })")).toBeGreaterThan(-1);
+      expect(cli.slice(at).indexOf("need({ destructive: true })")).toBeLessThan(cli.slice(at).indexOf("restoreInto("));
+    }
+    expect(cli).toMatch(/restore is DESTRUCTIVE/);
+  });
+
+  it("build checks the data is synthetic before it caches anything", () => {
+    const at = cli.indexOf('cmd === "build"');
+    expect(cli.slice(at).indexOf("syntheticProblems(")).toBeLessThan(cli.slice(at).indexOf('"baseline.dump"'));
+  });
+
+  it("no private path is named in the scripts or the README", () => {
+    expect(cli + guardSrc + keySrc + readme).not.toMatch(/\/srv\/|\/home\//);
   });
 });
 

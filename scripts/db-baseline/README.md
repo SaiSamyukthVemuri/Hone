@@ -16,10 +16,22 @@ node scripts/db-baseline/cli.mjs restore --container supabase_db_<B>    # any em
 ## The cache key (automatic invalidation)
 
 `<cache>/<key>/` where `key` is the sha256 of every `supabase/migrations` file (name and content), the synthetic
-seed (`seed.sql`) and the SQL the scripts run (`sql.mjs`). Change any byte of any of them and the key changes, so
+seed (`seed.sql`), the allowed seeded-table list and the SQL the scripts run (`sql.mjs`). Change any byte of any of them and the key changes, so
 the old entry is not found and `restore` exits 3 asking for a fresh build. Entries are immutable and read-only; there
-is no refresh in place and no fallback to another entry. Default cache `/srv/hone/cache/db-baseline`
-(`HONE_DB_BASELINE_CACHE` or `--cache`).
+is no refresh in place and no fallback to another entry. The cache directory is `HONE_DB_BASELINE_CACHE`, an owner-set directory outside the repo (or `--cache`); there is no
+default, and the directory is created `0700`.
+
+## `seal` and `restore` are DESTRUCTIVE
+
+Both drop the `public` and `supabase_migrations` schemas of the stack they point at. They therefore refuse unless the stack is
+the caller's own: the paired `E2E_SUPABASE_URL` + `HONE_LOCAL_DB_URL` of that stack (loopback, one stack, and the database port
+is this container's published port), or an explicit `--confirm-owned <project>` naming it. They also refuse whenever
+`DOCKER_HOST` is set or the docker context is not the local default. Never point them at a shared test stack.
+
+## Only synthetic data is cached
+
+`build` refuses unless `auth.users` is empty and every row in `public` is in an allowed migration-seeded reference table
+(`allowed-seeded-tables.json`, part of the cache key); otherwise it prints the unexpected table names.
 
 ## What is in an entry
 
