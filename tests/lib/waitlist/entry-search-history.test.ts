@@ -67,23 +67,30 @@ describe("the Released list shows the MOST RECENT outcomes first", () => {
     expect(newest).toBeGreaterThan(0);
   });
   it("a malformed row in the middle does not shift later rows onto the wrong time", () => {
+    // Correct order by time: B (Nov 20), C (Nov 10), A (Nov 1). A positional zip would give B the malformed row's time (Jan 1),
+    // C the time of B and A its own, which orders C, A, B instead.
     const m = mergeReleased(
       [
-        row("old", "expired", "expired_at", "2026-11-01T00:00:00Z"),
-        { id: 99, name: "malformed", status: "expired", expired_at: "2030-01-01T00:00:00Z" },
-        row("new", "expired", "expired_at", "2026-11-20T00:00:00Z"),
-        row("mid", "expired", "expired_at", "2026-11-10T00:00:00Z"),
+        row("A", "expired", "expired_at", "2026-11-01T00:00:00Z"),
+        { id: 99, name: "malformed", status: "expired", expired_at: "2026-01-01T00:00:00Z" },
+        row("B", "expired", "expired_at", "2026-11-20T00:00:00Z"),
+        row("C", "expired", "expired_at", "2026-11-10T00:00:00Z"),
       ],
       [],
     );
-    expect(m.hits.map((h) => h.id)).toEqual(["new", "mid", "old"]);
+    expect(m.hits.map((h) => h.id)).toEqual(["B", "C", "A"]);
   });
   it("a malformed row among the released ones is dropped without disturbing the merge across states", () => {
+    // Correct: R2 (Nov 15), E1 (Nov 12), R1 (Nov 1). A positional zip would give R2 the id-less row's time (Jan 1) and R1 R2's.
     const m = mergeReleased(
-      [row("e1", "expired", "expired_at", "2026-11-12T00:00:00Z")],
-      [{ name: "no id", status: "released", released_at: "2026-11-30T00:00:00Z" }, row("r1", "released", "released_at", "2026-11-15T00:00:00Z")],
+      [row("E1", "expired", "expired_at", "2026-11-12T00:00:00Z")],
+      [
+        row("R1", "released", "released_at", "2026-11-01T00:00:00Z"),
+        { name: "no id", status: "released", released_at: "2026-01-01T00:00:00Z" },
+        row("R2", "released", "released_at", "2026-11-15T00:00:00Z"),
+      ],
     );
-    expect(m.hits.map((h) => h.id)).toEqual(["r1", "e1"]);
+    expect(m.hits.map((h) => h.id)).toEqual(["R2", "E1", "R1"]);
   });
   it("an entry with no recorded time sorts last rather than first", () => {
     const m = mergeReleased([{ id: "x", name: "n", status: "expired" }], [row("y", "released", "released_at", "2026-11-05T00:00:00Z")]);
