@@ -1066,14 +1066,12 @@ export default async function DashboardPage({
             todayLocal={todayLocal}
           />
         </div>
-        <Suspense key={`unfinished:${selectedDayLocal}:${period}`} fallback={null}>
-          <UnfinishedVisitsNote studioId={studio.id} nowIso={renderNow.toISOString()} />
-        </Suspense>
         {/* KEYED like the secondary stack below, for the same reason. */}
         <Suspense
           key={`needs:${selectedDayLocal}:${period}`}
           fallback={<NeedsAttentionSkeleton />}
         >
+          <UnfinishedVisitsNote studioId={studio.id} nowIso={renderNow.toISOString()} />
           <NeedsAttentionSection
             studioId={studio.id}
             studioTimezone={studio.timezone}
