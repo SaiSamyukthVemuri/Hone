@@ -218,6 +218,42 @@ describe("the refresh loop it is built against", () => {
     expect(prev).not.toBe(A);
     expect(r.effects).not.toContain("log");
   });
+  it("a render that lands on an UNRELATED third value does not fulfil the refresh: it still counts", () => {
+    const r = rig(); // baseline A
+    r.send(tick(PROBE_INTERVAL_MS));
+    expect(r.send(ok(1_600, B))).toEqual(["refresh"]); // fired for B; the latest server value is B
+    expect(r.state.refreshTimesMs).toHaveLength(1);
+    const unrelated = "d".repeat(32); // neither the fired value (B) nor the latest server value (B), and not the old baseline (A)
+    r.send({ type: "baseline", fingerprint: unrelated });
+    expect(r.state.refreshTimesMs).toHaveLength(1); // not fulfilled: it still counts
+    // ...and so a page that keeps landing on unrelated values is still bounded by the breaker
+    const loop = rig();
+    let now = PROBE_INTERVAL_MS;
+    const seen: string[] = [];
+    for (let i = 0; i < 12; i += 1) {
+      loop.send(tick(now));
+      seen.push(...loop.send(ok(now + 10, `${(i + 1).toString(16).padStart(2, "0")}${"2".repeat(30)}`)));
+      loop.send({ type: "baseline", fingerprint: `${(i + 1).toString(16).padStart(2, "0")}${"3".repeat(30)}` });
+      now += 2_000;
+    }
+    expect(seen.filter((e) => e === "refresh")).toHaveLength(LOOP_MAX_REFRESHES);
+    expect(seen.filter((e) => e === "log")).toHaveLength(1);
+  });
+  it("the suspension is exactly two minutes: probing stays off until then and resumes at it", () => {
+    expect(LOOP_SUSPEND_MS).toBe(120_000);
+    const r = rig();
+    let now = PROBE_INTERVAL_MS;
+    for (let i = 0; i < LOOP_MAX_REFRESHES + 1; i += 1) {
+      r.send(tick(now));
+      r.send(ok(now + 10, `${(i + 1).toString(16).padStart(2, "0")}${"4".repeat(30)}`));
+      now += 2_000;
+    }
+    const until = r.state.suspendedUntilMs;
+    expect(until).toBeGreaterThan(0);
+    expect(r.send(tick(until - 1))).toEqual([]);
+    expect(r.send(tick(until))).toContain("probe");
+    expect(until - (now - 2_000 + 10)).toBeLessThanOrEqual(LOOP_SUSPEND_MS);
+  });
   it("a fingerprint that keeps changing is capped by the breaker, which logs once and suspends", () => {
     const r = rig();
     let now = PROBE_INTERVAL_MS;
