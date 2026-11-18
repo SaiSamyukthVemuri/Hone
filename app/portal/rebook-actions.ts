@@ -1,5 +1,6 @@
 "use server";
 
+import { loadTreatmentTimeNameFields } from "@/lib/treatment-time/client-first-name";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { requirePortalSessionForAction } from "@/lib/portal/session";
@@ -773,7 +774,7 @@ export async function bookAnotherAppointmentAction(
           async () =>
             buildTreatmentTimeLine({
               enabled: true,
-              clientFirstName: clientName.split(/\s+/)[0] || clientName,
+              client: await loadTreatmentTimeNameFields(admin, studio.id, clientId, clientName),
               context: await getTreatmentTimeContextForEmail(studio.id, clientId),
             }),
         )
@@ -787,6 +788,7 @@ export async function bookAnotherAppointmentAction(
       { ok: false, error: "confirmation sender threw", retryable: false },
       () =>
         sendBookingConfirmationToClient({
+      nameReader: admin,
           appointment: created,
           service: service.service,
           studio,
@@ -863,6 +865,7 @@ export async function bookAnotherAppointmentAction(
   ) {
     await postCommit("portal_rebook_practitioner_email_threw", undefined, () =>
       sendBookingNotificationToPractitioner({
+      nameReader: admin,
         appointment: created,
         service: service.service,
         studio,

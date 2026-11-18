@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { clientDisplayName } from "@/lib/clients/identity";
 import { notFound } from "next/navigation";
 import {
   getClientById,
@@ -177,7 +178,7 @@ export default async function NewSessionPage({
           href={`/clients/${encodeURIComponent(id)}?tab=sessions`}
           className="min-w-0 [overflow-wrap:anywhere] text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
         >
-          ← {data.client.name}
+          ← {clientDisplayName(data.client)}
         </Link>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight">
           New session
@@ -227,7 +228,7 @@ export default async function NewSessionPage({
               </Link>
             )}
             <Link href={`/clients/${encodeURIComponent(id)}`} className="min-w-0 [overflow-wrap:anywhere] font-medium hover:underline">
-              Back to {data.client.name}
+              Back to {clientDisplayName(data.client)}
             </Link>
           </div>
         </section>

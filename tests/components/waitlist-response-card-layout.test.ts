@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -150,5 +152,24 @@ describe("contact variants and the phone format", () => {
     const contact = /data-testid="reply-contact"[\s\S]*?(?=data-testid="response-answers")/.exec(html)![0];
     expect(contact).not.toContain("<form");
     expect(contact).not.toContain('type="submit"');
+  });
+});
+
+describe("each handling control is wired to its OWN action, with the response's id", () => {
+  const src = readFileSync(join(process.cwd(), "components/waitlist/decline-follow-up-section.tsx"), "utf8");
+  const form = (action: string, label: string) =>
+    new RegExp(`<form action=\\{${action}\\}>\\s*<Hidden id=\\{r\\.followupId\\} />\\s*<button type="submit" className=\\{SECONDARY\\}>\\s*${label}\\s*</button>`);
+  it("Mark handled posts markHandledAction, and Keep on the waitlist posts keepWithdrawalAction", () => {
+    expect(src).toMatch(form("markHandledAction", "Mark handled"));
+    expect(src).toMatch(form("keepWithdrawalAction", "Keep on the waitlist"));
+  });
+  it("the two actions are not swapped: each label appears with exactly one of them", () => {
+    expect(src).not.toMatch(form("keepWithdrawalAction", "Mark handled"));
+    expect(src).not.toMatch(form("markHandledAction", "Keep on the waitlist"));
+  });
+  it("Mark handled belongs to a decline and Keep to a withdrawal", () => {
+    const i = src.indexOf('r.kind === "decline" ? (\n                      <form action={markHandledAction}>');
+    expect(i).toBeGreaterThan(-1);
+    expect(src.indexOf("<form action={keepWithdrawalAction}>", i)).toBeGreaterThan(i);
   });
 });
