@@ -851,6 +851,8 @@ const PINNED: string[] = [
   "fn public.preview_role_changes(p_studio uuid, p_changes jsonb)",
   "fn public.reset_role_to_defaults(p_studio uuid, p_role text, p_expected_version bigint, p_reason text, p_sensitive_confirmed boolean)",
   "fn public.save_role_permissions(p_studio uuid, p_expected_version bigint, p_changes jsonb, p_reason text, p_sensitive_confirmed boolean)",
+  "fn public.preview_role_changes_at(p_studio uuid, p_changes jsonb, p_expected_version bigint)",
+  "fn public.save_role_permissions_reviewed(p_studio uuid, p_expected_version bigint, p_changes jsonb, p_reason text, p_sensitive_confirmed boolea",
   "fn public.supersede_appointment_settlement(p_studio_id uuid, p_expected_settlement_id uuid, p_method text, p_amount_cents integer, p_reason tex",
   "fn public.update_own_practitioner_profile(p_studio_id uuid, p_display_name text, p_color text)",
   "fn realtime.apply_rls(wal jsonb, max_record_bytes integer)",
