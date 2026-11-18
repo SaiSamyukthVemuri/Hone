@@ -35,6 +35,10 @@ export function PractitionerCancelForm({ appointmentId }: PractitionerCancelForm
         setError(res.error);
         return;
       }
+      // The form unmounts once the page re-renders as cancelled, so the success line is carried by the page (?cancelled=1).
+      const url = new URL(window.location.href);
+      url.searchParams.set("cancelled", "1");
+      router.replace(`${url.pathname}${url.search}`);
       router.refresh();
     });
   }

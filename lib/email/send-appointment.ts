@@ -5,7 +5,10 @@ import { parseEmailOperationAuthority, parseEmailOperationRender, type EmailOper
 import { generateCancellationToken } from "@/lib/booking/tokens";
 import { generateIntakeLinkUrl } from "@/lib/intake/queries";
 import { buildTreatmentTimeLine } from "@/lib/treatment-time/format";
+import { loadTreatmentTimeNameFields } from "@/lib/treatment-time/client-first-name";
+import { loadCommunicationName, loadCommunicationNameForAppointment } from "@/lib/clients/communication-name-loader";
 import { isMissingColumnError } from "@/lib/db/missing-column";
+import type { ClientIdentityFields } from "@/lib/clients/identity";
 import { isE2eFakeResendEnabled } from "./e2e-fake-resend";
 import { safeLog } from "@/lib/logging/safe-log";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -480,6 +483,25 @@ export function logEmailFailure(opts: {
   })();
 }
 
+/** The communication name for a client email, loaded at the send boundary through the CALLER's existing admin client (no new service-role
+ * call site). With no reader given there is nothing to read and the stored name comes back at once. Never throws. */
+async function communicationNameAtSendBoundary(nameReader: unknown, studioId: string, clientId: string | null | undefined, storedName: string): Promise<string> {
+  if (!nameReader) return storedName;
+  try {
+    return await loadCommunicationName(nameReader, studioId, clientId, storedName);
+  } catch {
+    return storedName;
+  }
+}
+async function communicationNameForAppointmentAtSendBoundary(nameReader: unknown, studioId: string, appointmentId: string, storedName: string | null): Promise<string | null> {
+  if (!nameReader) return storedName;
+  try {
+    return await loadCommunicationNameForAppointment(nameReader, studioId, appointmentId, storedName);
+  } catch {
+    return storedName;
+  }
+}
+
 export async function sendBookingConfirmationToClient(params: {
   appointment: AnyAppointment;
   service: Pick<
@@ -495,6 +517,8 @@ export async function sendBookingConfirmationToClient(params: {
   intakeUrl: string | null;
   treatmentTimeLine: string | null;
   appBaseUrl: string;
+  /** The caller's existing admin client, used ONLY to read the client's preferred name. Absent: the stored name is used and nothing is read. */
+  nameReader?: unknown;
 }): Promise<EmailSendResult> {
   if (!params.clientEmail) {
     return { ok: false, error: "no_recipient", retryable: false };
@@ -527,6 +551,9 @@ export async function sendBookingConfirmationToClient(params: {
     bookingReference: emailBookingReference(params.appointment.id),
   });
 
+  // HON-58: the invite names the attendee by the name they go by (the communication name), loaded here at the send boundary.
+  // A failed or slow read, a missing column or no preferred name leaves the stored name; the send never depends on the read.
+  const attendeeName = await communicationNameAtSendBoundary(params.nameReader, params.studio.id, params.appointment.client_id, params.clientName);
   const ics = buildIcs({
     uid: params.appointment.id,
     start,
@@ -538,7 +565,7 @@ export async function sendBookingConfirmationToClient(params: {
       : `${serviceName} at ${params.studio.name}.`,
     organizerName: params.studio.name,
     organizerEmail: params.studio.owner_email,
-    attendeeName: params.clientName,
+    attendeeName,
     attendeeEmail: params.clientEmail,
   });
 
@@ -568,13 +595,15 @@ export async function sendBookingNotificationToPractitioner(params: {
   // the caller (the public booking action) so this helper does not
   // need to know about the canonical option set.
   referralSourceLabel: string | null;
+  /** The caller's existing admin client, used ONLY to read the client's preferred name. Absent: the stored name is used and nothing is read. */
+  nameReader?: unknown;
 }) {
   if (!params.practitionerEmail) return;
   const start = new Date(params.appointment.starts_at);
   const end = new Date(params.appointment.ends_at);
   const { subject, html, text } = buildPractitionerNotificationEmail({
     practitionerName: params.practitionerName,
-    clientName: params.clientName,
+    clientName: await communicationNameAtSendBoundary(params.nameReader, params.studio.id, params.appointment.client_id, params.clientName),
     clientEmail: params.clientEmail,
     clientPhone: params.clientPhone,
     studioName: params.studio.name,
@@ -612,12 +641,14 @@ export async function sendCancellationEmail(params: {
   rebookUrl?: string;
   // Per-event subject reference (tests/lib/email/email-subject-sweep.test.ts).
   appointmentId: string;
+  /** The caller's existing admin client, used ONLY to read the client's preferred name. Absent: the stored name is used and nothing is read. */
+  nameReader?: unknown;
 }): Promise<EmailSendResult> {
   if (!params.to) return { ok: false, error: "no_recipient", retryable: false };
   const { subject, html, text } = buildCancellationEmail({
     bookingReference: emailBookingReference(params.appointmentId),
     recipientName: params.recipientName,
-    clientName: params.clientName,
+    clientName: await communicationNameForAppointmentAtSendBoundary(params.nameReader, params.studio.id, params.appointmentId, params.clientName),
     studioName: params.studio.name,
     serviceName: params.serviceName,
     durationMinutes: params.durationMinutes,
@@ -931,7 +962,7 @@ export function resolveOperationPortalEnabled(read: VisibilityRead): boolean {
 
 /** Trusted renderer consumes ONLY the closed SQL projection, never a cron
  * joined row. This creates no dispatch permission; URL bytes are frozen once. */
-export function buildAppointmentEmailOperationPayload(projection: EmailOperationRender, purpose: "reminder_24h" | "reminder_2h", appointmentId: string, addressVisibility: unknown, portalEnabled: boolean = true): EmailPayload | null {
+export function buildAppointmentEmailOperationPayload(projection: EmailOperationRender, purpose: "reminder_24h" | "reminder_2h", appointmentId: string, addressVisibility: unknown, nameFields?: ClientIdentityFields, portalEnabled: boolean = true): EmailPayload | null {
   const origin = getRequiredAppOrigin();
   const kind = purpose === "reminder_24h" ? "24h" : "2h";
   const intakeUrl = projection.intake ? generateIntakeLinkUrl(projection.intake.id, origin) : null;
@@ -961,7 +992,7 @@ export function buildAppointmentEmailOperationPayload(projection: EmailOperation
       { cancellationUrl: `${origin}/cancel/${token}`, rescheduleUrl: `${origin}/reschedule/${token}` },
     ),
     portalLoginUrl: p.studio.slug?.trim() ? portalLoginUrlForStudio({ slug: p.studio.slug.trim(), client_portal_enabled: portalEnabled }) : null,
-    treatmentTimeLine: p.treatmentTime ? buildTreatmentTimeLine({ enabled: true, clientFirstName: p.client.name.split(/\s+/)[0] || p.client.name, context: p.treatmentTime }) : null,
+    treatmentTimeLine: p.treatmentTime ? buildTreatmentTimeLine({ enabled: true, client: nameFields ?? { name: p.client.name }, context: p.treatmentTime }) : null,
     intakeUrl,
     bookingReference: emailBookingReference(appointmentId),
   });
@@ -1009,6 +1040,9 @@ export async function sendAppointmentReminderOperation(admin: SupabaseClient, st
       await admin.from("studios").select("address_visibility").eq("id", studioId).maybeSingle());
     const portalEnabled = resolveOperationPortalEnabled(
       await admin.from("studios").select("client_portal_enabled").eq("id", studioId).maybeSingle());
+    // HON-58: the treatment-time sentence names the client by the name they go by. The 0247 projection carries only the stored
+    // name, so the preferred name is read here, once, before the request is frozen; a failed read leaves the stored name.
+    const nameFields = "kind" in render ? undefined : await loadTreatmentTimeNameFields(admin, studioId, render.client.id, render.client.name);
     const intakeOnly = "kind" in render;
     if (intakeOnly ? p.composition !== "intake_only" : p.composition !== (render.intake ? "reminder_with_intake" : "reminder_only")) return held;
     let attemptNumber = 0; let projection: "current" | "superseded" | "unverified" | "unchanged" | undefined;
@@ -1016,7 +1050,7 @@ export async function sendAppointmentReminderOperation(admin: SupabaseClient, st
     // minimal fake accepts one argument and safely ignores the second.
     const sendWithIdempotency: (payload: EmailPayload, options: Readonly<{ idempotencyKey: string }>) => Promise<unknown> = transport.emails.send.bind(transport.emails);
     const adapter = createProjectedEmailOperationDispatchAdapter({
-      render: (original) => buildAppointmentEmailOperationPayload(original, purpose, appointmentId, addressVisibility, portalEnabled),
+      render: (original) => buildAppointmentEmailOperationPayload(original, purpose, appointmentId, addressVisibility, nameFields, portalEnabled),
       currentRuntimeBinding: () => operationRuntime(transport).binding,
       authorize: async (binding, original) => {
         const { data, error } = await rpc("authorize_appointment_email_operation", {

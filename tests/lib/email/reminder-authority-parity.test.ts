@@ -189,8 +189,8 @@ describe("HON-47 portal switch on the operation-path reminder", () => {
 
   it.each(["reminder_24h", "reminder_2h"] as const)("%s: the portal link is printed when the portal is on and absent when it is off", async (purpose) => {
     const { buildAppointmentEmailOperationPayload } = await import("@/lib/email/send-appointment");
-    const on = all(buildAppointmentEmailOperationPayload(proj() as never, purpose, "appointment-1", "both", true));
-    const off = all(buildAppointmentEmailOperationPayload(proj() as never, purpose, "appointment-1", "both", false));
+    const on = all(buildAppointmentEmailOperationPayload(proj() as never, purpose, "appointment-1", "both", undefined, true));
+    const off = all(buildAppointmentEmailOperationPayload(proj() as never, purpose, "appointment-1", "both", undefined, false));
     expect(on).toContain("/portal/login?studio=original-studio");
     expect(off).not.toContain("/portal/login");
     expect(off).not.toContain("secure client portal");

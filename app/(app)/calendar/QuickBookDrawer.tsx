@@ -26,7 +26,7 @@ import {
   groupServicesByModality,
 } from "@/lib/booking/format";
 import { utcInstantFromLocal, formatClockLabel, type TimeFormat } from "@/lib/booking/tz";
-import { matchesClientSearch } from "@/lib/clients/name-search";
+import { rankDrawerClients } from "@/lib/clients/drawer-matches";
 import {
   fetchSlotsForClientBookingAction,
   fetchEligiblePractitionersAction,
@@ -112,10 +112,6 @@ const MAX_CLIENT_RESULTS = 12;
 // than a navigation control. ClientSearch renders <Link> rows that would
 // navigate away from /calendar and destroy the drawer state, so it cannot
 // be reused here.
-function matchClient(c: QuickBookClient, queryLower: string): boolean {
-  return matchesClientSearch(c, queryLower);
-}
-
 function formatLocalDate(localDate: string): string {
   const [y, m, d] = localDate.split("-").map(Number);
   if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) {
@@ -499,16 +495,11 @@ export function QuickBookDrawer({
         )
       : null;
 
-  const queryLower = clientQuery.trim().toLowerCase();
-  const clientMatches = selectedClient
-    ? []
-    : allClients.filter((c) => matchClient(c, queryLower)).slice(
-        0,
-        MAX_CLIENT_RESULTS,
-      );
-  const totalMatches = selectedClient
-    ? 0
-    : allClients.filter((c) => matchClient(c, queryLower)).length;
+  const ranked = selectedClient
+    ? { matches: [] as QuickBookClient[], total: 0 }
+    : rankDrawerClients(allClients, clientQuery, MAX_CLIENT_RESULTS);
+  const clientMatches = ranked.matches;
+  const totalMatches = ranked.total;
 
   // Save-enabled rule: standard flow needs a picked slot; override
   // flow needs a typed HH:MM AND the explicit confirmation

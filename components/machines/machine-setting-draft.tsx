@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { useReportDraft } from "./draft-registry";
 import { RangeConfirmationList } from "./range-confirmation-list";
+import { machineDraftHasEntries } from "@/lib/machines/pending-setup";
 import { SettingDraftFields } from "./setting-draft-fields";
 import {
   pruneConfirmations,
@@ -141,6 +143,9 @@ export function MachineSettingDraft({
   // outside a documented range must not ride through unconfirmed here. The
   // gate is reported upward as `blocking`; nothing records the tick until 0267
   // is applied and wired.
+  // Whether anything has been typed: reported as a LEVEL to the host's registry, and removed when this draft unmounts (draft-registry.tsx).
+  const [hasEntries, setHasEntries] = useState(false);
+  useReportDraft({ draft: hasEntries, unresolved: false });
   const [confirmed, setConfirmed] = useState<ReadonlySet<string>>(new Set());
   const confirmedRef = useRef(confirmed);
   confirmedRef.current = confirmed;
@@ -157,12 +162,14 @@ export function MachineSettingDraft({
     // every test stayed green, because a static render cannot type into a
     // field. What decides whether a clinical save proceeds does not belong
     // where only a mounted browser can reach it.
-    onDraftChange({
+    const payload = {
       groups: assembleGroupSubmissions(fieldGroups, next),
       blocking:
         draftBlocking(profile, fieldGroups, next) ??
         rangeConfirmationBlocking(nextWarnings, live),
-    });
+    };
+    setHasEntries(machineDraftHasEntries(payload));
+    onDraftChange(payload);
   };
 
   const editDraft = (f: (prev: SettingGroupDraft[]) => SettingGroupDraft[]) => {

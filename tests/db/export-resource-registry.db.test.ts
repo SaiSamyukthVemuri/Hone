@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 
 import {
   auditColumnCoverage,
+  auditRpcSources,
   auditResourceCoverage,
   CUSTOMER_RESOURCE_SCHEMA,
   EXPORT_RESOURCE_REGISTRY,
@@ -849,24 +850,24 @@ describe("what is excluded, and on what grounds", () => {
   //
   // The approved text states only what can be established without reading
   // application source: the migration that introduced the table, that it is not
-  // in the export, that TRUTH-01A makes NO finding about what reaches it, that
-  // the decision belongs to TRUTH-01B — plus, for
+  // in the export, that this export makes NO finding about what reaches it, that
+  // the decision waits for a field review — plus, for
   // pending_booking_payment_sessions, the pg_constraint cascade fact.
   const APPROVED_CONSERVATIVE_REASONS: Readonly<Record<string, string>> = {
     payment_consents:
-      "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision belongs to TRUTH-01B, after a field review of the payment-consent decisions and the metadata recorded with them.",
+      "Introduced by migration 0032. NOT included in this CSV export yet. This export makes NO FINDING about which code paths reach this table, so this record neither claims nor denies that anything uses it. It is pending a field review of the payment-consent decisions and the metadata recorded with them.",
     stripe_charge_attempts:
-      "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision belongs to TRUTH-01B, after a field review of the Stripe charge identifiers and provider failure detail it carries.",
+      "Introduced by migration 0032. NOT included in this CSV export yet. This export makes NO FINDING about which code paths reach this table, so this record neither claims nor denies that anything uses it. It is pending a field review of the Stripe charge identifiers and provider failure detail it carries.",
     stripe_disputes:
-      "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision belongs to TRUTH-01B, after a field review of the Stripe dispute identifiers and provider detail it carries.",
+      "Introduced by migration 0032. NOT included in this CSV export yet. This export makes NO FINDING about which code paths reach this table, so this record neither claims nor denies that anything uses it. It is pending a field review of the Stripe dispute identifiers and provider detail it carries.",
     stripe_payment_audit:
-      "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision belongs to TRUTH-01B, after a field review of the free-form provider audit payloads it carries.",
+      "Introduced by migration 0032. NOT included in this CSV export yet. This export makes NO FINDING about which code paths reach this table, so this record neither claims nor denies that anything uses it. It is pending a field review of the free-form provider audit payloads it carries.",
     stripe_refund_attempts:
-      "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision belongs to TRUTH-01B, after a field review of the Stripe refund identifiers and provider failure detail it carries.",
+      "Introduced by migration 0032. NOT included in this CSV export yet. This export makes NO FINDING about which code paths reach this table, so this record neither claims nor denies that anything uses it. It is pending a field review of the Stripe refund identifiers and provider failure detail it carries.",
     stripe_refunds:
-      "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision belongs to TRUTH-01B, after a field review of the Stripe refund identifiers it carries.",
+      "Introduced by migration 0032. NOT included in this CSV export yet. This export makes NO FINDING about which code paths reach this table, so this record neither claims nor denies that anything uses it. It is pending a field review of the Stripe refund identifiers it carries.",
     pending_booking_payment_sessions:
-      "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. What IS established comes from the database rather than from reading application code: studio_id carries ON DELETE CASCADE from studios, read from pg_constraint, so PostgreSQL removes these rows when a studio row is deleted. The export decision belongs to TRUTH-01B, after a field review of the public-booking payment session state and provider identifiers it carries.",
+      "Introduced by migration 0032. NOT included in this CSV export yet. This export makes NO FINDING about which code paths reach this table, so this record neither claims nor denies that anything uses it. What IS established comes from the database rather than from reading application code: studio_id carries ON DELETE CASCADE from studios, read from pg_constraint, so PostgreSQL removes these rows when a studio row is deleted. It is pending a field review of the public-booking payment session state and provider identifiers it carries.",
   };
 
   it("DESCOPE CONTROL A — each of the seven carries its EXACT approved conservative reason", () => {
@@ -915,11 +916,15 @@ describe("what is excluded, and on what grounds", () => {
       // LEAD-ALERT-01, no studio_id) and delivery_sweep_heartbeat (0215,
       // DELIVERY-VISIBILITY-01). 6 -> 7 derived: delivery_incidents (0215),
       // derived from the two ledgers.
-      platform: 7,
+      // 7 -> 8 platform: waitlist_retention_runs (0326, HON-7), the cleanup job's run log: counts and times, no studio column.
+      platform: 8,
       // 7 -> 8 derived: dashboard_attention_events (0298, HELD), an owner's own dismiss/restore tidy-up of the Dashboard Needs
       // attention list. View state, not studio content; every reminder it hides is recomputed from records that ARE exported.
-      derived: 8,
-      deliberate_privacy: 2,
+      // 8 -> 10 derived: waitlist_followups and waitlist_decline_owner_emails (0325, HON-7), the owner's follow-up queue and its
+      // delivery ledger. Operational; the client's own answers are exported through export_waitlist_decline_answers.
+      derived: 10,
+      // 2 -> 3 deliberate_privacy: waitlist_erase_records (0325), ids and dates only, kept 30 days.
+      deliberate_privacy: 3,
     });
   });
 
@@ -1167,6 +1172,56 @@ describe("0193 waitlist admission resources are classified deliberately", () => 
         EXPORT_RESOURCE_REGISTRY[resource].kind,
         `${resource} must not join the export in WAIT-ADMIT-01`,
       ).toBe("pending");
+    }
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// RPC-SOURCED EXPORTS: the declared return list must be the function's real one
+// ---------------------------------------------------------------------------
+//
+// A table no browser role can read (RLS on, no policy) is exported through its owner-gated function. The registry declares the columns that
+// function returns; only the live database knows what it actually returns, so the comparison lives here.
+describe("rpc-sourced exports return exactly the columns the registry declares", () => {
+  const rpcResources = () => exportedResources().filter((e) => e.disposition.rpcSource);
+
+  async function liveReturns(): Promise<Record<string, string[]>> {
+    const fns = rpcResources().map((e) => e.disposition.rpcSource!.fn);
+    const res = await adminQuery(
+      `select p.proname as fn, array_agg(a.name order by a.ord) as cols
+         from pg_proc p
+         join pg_namespace n on n.oid = p.pronamespace and n.nspname = 'public'
+         cross join lateral unnest(p.proargnames, p.proargmodes) with ordinality as a(name, mode, ord)
+        where p.proname = any($1) and a.mode in ('t', 'o')
+        group by p.proname`,
+      [fns],
+    );
+    return Object.fromEntries((res.rows as Array<{ fn: string; cols: string[] }>).map((r) => [r.fn, r.cols]));
+  }
+
+  it("the live return columns equal the declared ones, in both directions", async () => {
+    expect(rpcResources().length).toBeGreaterThan(0);
+    expect(auditRpcSources(await liveReturns())).toEqual({ ok: true, problems: [] });
+  });
+
+  it("RED when the live function returns a column the registry does not declare (fixture control)", async () => {
+    const live = await liveReturns();
+    const fn = rpcResources()[0].disposition.rpcSource!.fn;
+    expect(auditRpcSources({ ...live, [fn]: [...live[fn], "client_email"] }).ok).toBe(false);
+  });
+
+  it("the function is service_role-only: no browser role may execute it", async () => {
+    for (const { disposition } of rpcResources()) {
+      const res = await adminQuery(
+        `select r.rolname, has_function_privilege(r.rolname, p.oid, 'execute') as can
+           from pg_proc p
+           join pg_namespace n on n.oid = p.pronamespace and n.nspname = 'public'
+           cross join (select rolname from pg_roles where rolname in ('anon', 'authenticated')) r
+          where p.proname = $1`,
+        [disposition.rpcSource!.fn],
+      );
+      for (const row of res.rows as Array<{ rolname: string; can: boolean }>) expect(`${row.rolname}:${row.can}`).toBe(`${row.rolname}:false`);
     }
   });
 });

@@ -10,6 +10,7 @@
 // stay in storage and are surfaced only through the owner-only technical
 // disclosure and the existing admin surfaces.
 
+import { refundDisplayState } from "@/lib/billing/refund-display-state";
 import type { PaymentCurrency } from "@/lib/billing/payment-jurisdiction";
 import type { SessionPaymentExistingAttemptSummary } from "@/lib/billing/session-payment-types";
 
@@ -103,6 +104,8 @@ export type PaymentSummaryKind =
   | "paid_receipt_failed"
   | "refunded"
   | "refund_pending"
+  | "refund_review"
+  | "refund_action"
   | "failed";
 
 export type PaymentSummary = {
@@ -116,6 +119,11 @@ export type PaymentSummary = {
   currency: PaymentCurrency | null;
 };
 
+// The words for an unresolved refund, ONE source for the card header and the refund panel (Sam, 12 Nov): the panel
+// heading and the header are equal by construction, and a test pins it.
+export const REFUND_REVIEW_HEADING = "Refund needs review";
+export const REFUND_ACTION_HEADING = "Refund needs action at Stripe";
+
 export function derivePaymentSummary(
   attempt: SessionPaymentExistingAttemptSummary | null,
 ): PaymentSummary {
@@ -125,11 +133,38 @@ export function derivePaymentSummary(
   const amountCents = attempt.amountCents;
   const currency = attempt.currency;
   if (attempt.status === "succeeded") {
-    if (attempt.refundStatus === "succeeded") {
+    // R1: the headline comes from the SAME reading as the refund panel (our column AND the provider's), so the
+    // header can never say "Refunded" beside a panel that says the status is unclear.
+    const refund = refundDisplayState({
+      chargeStatus: attempt.status,
+      amountCents: attempt.amountCents,
+      refundStatus: attempt.refundStatus,
+      refundAmountCents: attempt.refundAmountCents,
+      providerRefundStatus: attempt.stripeRefundStatus,
+      stripeRefundId: attempt.stripeRefundId,
+      cumulativeFullRefundVerified: attempt.cumulativeFullRefundVerified,
+    });
+    if (refund.kind === "refunded") {
+      // "Refunded" only when nothing remains. Our writers record the FULL amount (v1 is full-only, 0078/0239/0240), so a
+      // smaller recorded refund is not reachable through them, but a row that carries one must not read "Refunded" with
+      // the CHARGE amount beside it (Photos e1, #1427). It says so, with the amount that went back, the same figure the
+      // refund panel shows. The kind stays "refunded": a refund did succeed, and the money controls read refundDisplayState
+      // directly (mayStartRefund / remainingRefundableCents), not this headline.
+      const partial = typeof refund.remainingRefundableCents === "number" && refund.remainingRefundableCents > 0;
+      if (partial && typeof attempt.refundAmountCents === "number") {
+        return { kind: "refunded", headline: "Partly refunded", tone: "neutral", amountCents: attempt.refundAmountCents, currency };
+      }
       return { kind: "refunded", headline: "Refunded", tone: "neutral", amountCents, currency };
     }
-    if (attempt.refundStatus === "pending_stripe") {
+    if (refund.kind === "pending") {
       return { kind: "refund_pending", headline: "Refund processing", tone: "processing", amountCents, currency };
+    }
+    // The provider says the refund needs action: the header says so too (it must not read "processing").
+    if (refund.kind === "needs_action") {
+      return { kind: "refund_action", headline: REFUND_ACTION_HEADING, tone: "issue", amountCents, currency };
+    }
+    if (refund.kind === "unclear" || refund.kind === "needs_review") {
+      return { kind: "refund_review", headline: REFUND_REVIEW_HEADING, tone: "issue", amountCents, currency };
     }
     if (attempt.receiptStatus === "failed") {
       return { kind: "paid_receipt_failed", headline: "Paid", tone: "paid", amountCents, currency };

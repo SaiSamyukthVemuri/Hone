@@ -292,7 +292,10 @@ describe("retained card money is measured in cents, not inferred from a status",
 
   it("the card gates on FULL refund, not on the presence of an attempt", () => {
     expect(CARD).toMatch(/const fullyRefunded =/);
-    expect(CARD).toMatch(/activeAttempt\.refundAmountCents \?\? 0\) >= activeAttempt\.amountCents/);
+    // R1 (Insurance F3): FULL is read through refundDisplayState (both refund columns agree AND nothing remains), which
+    // keeps the in-cents rule: an unreadable or partial amount is never "fully refunded".
+    expect(CARD).toMatch(/activeRefund\?\.kind === "refunded" &&\s*activeRefund\.remainingRefundableCents === 0/);
+    expect(CARD).not.toMatch(/activeAttempt\.refundStatus === "succeeded" &&\s*\(activeAttempt\.refundAmountCents/);
     expect(CARD).toMatch(/const cardMoneyHeld = activeAttempt !== null && !fullyRefunded/);
     // The settlement controls are gated on money HELD, never on the mere
     // existence of a succeeded row.

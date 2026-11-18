@@ -4,13 +4,14 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { SectionLabel } from "@/components/ui/section-label";
 import Link from "next/link";
+import { safeInAppHref } from "@/lib/notifications/safe-href";
 import { createClient } from "@/lib/supabase/server";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { scopeNotificationsToViewer } from "@/lib/notifications/owner-only-events";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { todayInTz } from "@/lib/booking/tz";
 import {
-  loadOverdueDisinfectantAlerts,
+  checkOverdueDisinfectantAlerts,
   type OverdueDisinfectantAlert,
 } from "@/lib/notifications/disinfectant-alerts";
 import { markAllReadFormAction } from "./actions";
@@ -46,6 +47,7 @@ export default async function NotificationsPage() {
       )
       .eq("studio_id", studio.id),
     practitioner.role === "owner",
+    practitioner.id,
   )
     .order("created_at", { ascending: false })
     .limit(NOTIFICATION_LIST_LIMIT);
@@ -57,13 +59,16 @@ export default async function NotificationsPage() {
 
   // Computed overdue-disinfactant operational alerts (studio-local "today"). One
   // bounded, studio-scoped, RLS-gated read; the studio id is server-derived.
-  const overdueAlerts = await loadOverdueDisinfectantAlerts(
+  const overdueCheck = await checkOverdueDisinfectantAlerts(
     supabase,
     studio.id,
     todayInTz(studio.timezone),
   );
 
-  const hasAnything = notifications.length > 0 || overdueAlerts.length > 0;
+  const overdueAlerts = overdueCheck.status === "ok" ? overdueCheck.alerts : [];
+  const disinfectantUnavailable = overdueCheck.status === "unavailable";
+
+  const hasAnything = notifications.length > 0 || overdueAlerts.length > 0 || disinfectantUnavailable;
 
   return (
     <div className="flex flex-col gap-6">
@@ -84,6 +89,16 @@ export default async function NotificationsPage() {
 
       {/* Operational safety alerts (computed, always visible while unresolved),
           sorted ahead of routine notifications. */}
+      {disinfectantUnavailable && (
+        <p
+          role="status"
+          data-testid="disinfectant-check-unavailable"
+          className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200"
+        >
+          Couldn&apos;t check disinfectant dates. Reload to try again.
+        </p>
+      )}
+
       {overdueAlerts.length > 0 && (
         <section aria-label="Operational alerts" className="flex flex-col gap-2">
           {/* The section-label primitive existed with THREE importers against
@@ -216,11 +231,12 @@ function NotificationRow({
       )}
     </div>
   );
-  if (notification.href) {
+  const href = safeInAppHref(notification.href);
+  if (href) {
     return (
       <li>
         <Link
-          href={notification.href}
+          href={href}
           className="block hover:bg-neutral-50 dark:hover:bg-neutral-900"
         >
           {inner}

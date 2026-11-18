@@ -155,6 +155,8 @@ export default async function CalendarPage({
       lastWeekParam: params.week,
       peopleParam: params.people,
       isOwner,
+      ownFirstId: isOwner ? null : practitioner.id,
+      viewerId: practitioner.id,
       reviewAssignmentsHref,
     });
   }
@@ -326,6 +328,7 @@ export default async function CalendarPage({
   return (
     <CalendarSidebar
       studioId={studio.id}
+      viewerId={practitioner.id}
       view="week"
       anchorDate={initialSelectedDate}
       selectedDate={initialSelectedDate}
@@ -333,6 +336,7 @@ export default async function CalendarPage({
       practitioners={sidebar.practitioners}
       selectedIds={sidebar.selectedIds}
       selectionParam={sidebar.param}
+      ownFirstId={isOwner ? null : practitioner.id}
       insights={insights}
     >
     <div className="flex flex-col gap-6">
@@ -555,9 +559,13 @@ async function renderMonthView(opts: {
   lastWeekParam: string | undefined;
   peopleParam: string | undefined;
   isOwner: boolean;
+  /** The viewer's practitioner id when a first visit should open on their own column (null for an owner). */
+  ownFirstId: string | null;
+  /** The viewer's practitioner id (an owner has one too): scopes the stored selection to the viewer. */
+  viewerId: string;
   reviewAssignmentsHref: Promise<string | undefined>;
 }) {
-  const { studio, timeFormat, today, monthParam, lastWeekParam, peopleParam, isOwner, reviewAssignmentsHref } = opts;
+  const { studio, timeFormat, today, monthParam, lastWeekParam, peopleParam, isOwner, ownFirstId, viewerId, reviewAssignmentsHref } = opts;
   const monthAnchor = firstOfMonthString(monthParam ?? today);
   const monthEnd = firstOfNextMonthString(monthAnchor);
   const prevMonth = firstOfPreviousMonthString(monthAnchor);
@@ -661,6 +669,7 @@ async function renderMonthView(opts: {
   return (
     <CalendarSidebar
       studioId={studio.id}
+      viewerId={viewerId}
       view="month"
       anchorDate={monthAnchor}
       selectedDate={null}
@@ -668,6 +677,7 @@ async function renderMonthView(opts: {
       practitioners={sidebar.practitioners}
       selectedIds={sidebar.selectedIds}
       selectionParam={sidebar.param}
+      ownFirstId={ownFirstId}
       insights={insights}
     >
     <div className="flex flex-col gap-6">
@@ -832,6 +842,7 @@ async function renderTeamDayView(opts: {
   return (
     <CalendarSidebar
       studioId={studio.id}
+      viewerId={practitioner.id}
       view="day"
       anchorDate={date}
       selectedDate={date}
@@ -839,6 +850,7 @@ async function renderTeamDayView(opts: {
       practitioners={sidebar.practitioners}
       selectedIds={sidebar.selectedIds}
       selectionParam={sidebar.param}
+      ownFirstId={isOwner ? null : practitioner.id}
       insights={insights}
     >
     <div className="flex flex-col gap-6">

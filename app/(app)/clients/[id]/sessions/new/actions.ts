@@ -6,6 +6,12 @@ import {
   mapSessionCommandError,
   GENERIC_SESSION_COMMAND_ERROR,
 } from "@/lib/sessions/session-command-errors";
+import {
+  ASSIGNED_ELSEWHERE_RAISED,
+  classifyAppointmentForStart,
+  sessionStartRefusalHref,
+  type StartAppointmentLookup,
+} from "@/lib/sessions/session-start-refusal";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import type { Modality } from "@/lib/types/database";
@@ -135,7 +141,8 @@ export async function startSessionAction(formData: FormData): Promise<void> {
   let appointmentEndsAt: string | null = null;
   if (typeof appointmentIdRaw === "string" && appointmentIdRaw.length > 0) {
     if (!UUID_RE.test(appointmentIdRaw)) {
-      throw new Error("Invalid appointment id.");
+      // Malformed: answered as a missing appointment, before any lookup.
+      redirect(sessionStartRefusalHref(clientId, appointmentIdRaw, "appointment_missing"));
     }
     const { data: appt, error: apptErr } = await timed(
       "session-start.lineage",
@@ -151,37 +158,18 @@ export async function startSessionAction(formData: FormData): Promise<void> {
     if (apptErr) {
       throw new Error(`Failed to verify appointment: ${dbErrorCode(apptErr)}`);
     }
-    if (!appt) {
-      throw new Error("Appointment not found.");
+    // Each refusal below is EXPECTED (a booking assigned to a colleague, a stale
+    // link) and is answered by redirecting back to this client's new-session
+    // page with a refusal code, which renders what happened. It used to be
+    // thrown, which put the generic error boundary in front of the person.
+    // The refusals themselves are unchanged and still happen BEFORE anything is
+    // written; start_session (0181) re-enforces them at the database boundary.
+    // ONE decision shared with the new-session page. A missing, not-visible or other-studio appointment is the SAME refusal (no existence oracle).
+    const decided = classifyAppointmentForStart(appt as StartAppointmentLookup | null, { studioId: studio.id, clientId, practitionerId: practitioner.id });
+    if (decided.refusal) {
+      redirect(sessionStartRefusalHref(clientId, appointmentIdRaw, decided.refusal));
     }
-    if (appt.studio_id !== studio.id) {
-      // Studio mismatch is a hard reject: a tampered form value cannot
-      // bind a session to another studio's appointment. RLS would
-      // already have refused the lookup, but the check is defence in
-      // depth.
-      throw new Error("Appointment is not in your studio.");
-    }
-    if (appt.client_id !== clientId) {
-      // Same studio, different client. Refuse: a session is per-client,
-      // and linking it to another client's appointment would corrupt
-      // both clients' treatment timelines.
-      throw new Error("Appointment is for a different client.");
-    }
-    // PR #156 patch. Practitioner lineage: refuse a session-to-
-    // appointment link when the appointment is assigned to a
-    // different practitioner. The appointments table currently
-    // allows practitioner_id to be non-null on every active booking
-    // surface (public booking + calendar create both stamp the
-    // practitioner), but historically a few legacy rows may carry
-    // null; we treat null as "unassigned, anyone in the studio may
-    // chart" rather than reject outright. Same-studio + same-client
-    // is preserved as the absolute floor. The session itself still
-    // records the current practitioner via the server-resolved
-    // practitioner.id on the insert below; this check is about which
-    // appointment the session links TO, not who performed it.
-    if (appt.practitioner_id && appt.practitioner_id !== practitioner.id) {
-      throw new Error("Appointment is assigned to a different practitioner.");
-    }
+    if (!appt) throw new Error("unreachable: a missing appointment was refused above");
     appointmentId = appt.id;
     appointmentStatus = (appt.status as string | null) ?? null;
     appointmentEndsAt = (appt.ends_at as string | null) ?? null;
@@ -262,6 +250,12 @@ export async function startSessionAction(formData: FormData): Promise<void> {
   rpcSpan.end();
 
   if (startErr) {
+    // The command re-checks lineage; if the assignment changed between the
+    // check above and the command (an owner reassigned it meanwhile), answer
+    // the same expected refusal rather than the generic error boundary.
+    if (appointmentId && mapSessionCommandError(startErr) === ASSIGNED_ELSEWHERE_RAISED) {
+      redirect(sessionStartRefusalHref(clientId, appointmentId, "assigned_elsewhere"));
+    }
     throw new Error(`Failed to start session: ${mapSessionCommandError(startErr)}`);
   }
   const started = Array.isArray(startRows)

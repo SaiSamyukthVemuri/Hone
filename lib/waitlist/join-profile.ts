@@ -162,7 +162,10 @@ function digitCount(value: string): number {
  */
 export type WaitlistJoinProfile = {
   firstName: string;
+  /** "" exactly when `singleLegalName` is true. Never invented, never split from the first name. */
   lastName: string;
+  /** The prospect said they have ONE legal name. An explicit answer, never inferred from a blank last name. */
+  singleLegalName: boolean;
   /** Trimmed + lowercased. The only representation this feature stores or sends. */
   email: string;
   /** Verbatim contact string, trimmed. Never coerced to E.164. */
@@ -216,6 +219,8 @@ export type ProfileValidation =
 export type RawJoinProfileInput = {
   firstName: unknown;
   lastName: unknown;
+  /** Optional: absent means false (two-part name), exactly as before. */
+  singleLegalName?: unknown;
   email: unknown;
   mobile: unknown;
   treatmentAreaIds: unknown;
@@ -252,8 +257,15 @@ export function validateWaitlistJoinProfile(
     errors.firstName = "Please shorten your first name.";
   }
 
+  const singleLegalName = raw.singleLegalName === true;
   const lastName = asString(raw.lastName);
-  if (lastName.length === 0) {
+  if (singleLegalName) {
+    // One legal name: the family name must be absent. It is refused, never dropped silently,
+    // so a stale last name cannot ride along with a "one name" answer.
+    if (lastName.length > 0) {
+      errors.lastName = "Clear the last name, or untick the one-name option.";
+    }
+  } else if (lastName.length === 0) {
     errors.lastName = "Enter your last name.";
   } else if (lastName.length > PROFILE_LAST_NAME_MAX) {
     errors.lastName = "Please shorten your last name.";
@@ -296,6 +308,7 @@ export function validateWaitlistJoinProfile(
     value: {
       firstName,
       lastName,
+      singleLegalName,
       email,
       mobile,
       // Non-null assertions are avoided: both were proven above, and narrowing
@@ -323,6 +336,8 @@ export type StoredWaitlistProfile = {
   legacyName?: string | null;
   firstName?: string | null;
   lastName?: string | null;
+  /** True only when the prospect said they have one legal name (0286). Absent or false on every legacy row. */
+  singleLegalName?: boolean | null;
   email?: string | null;
   /**
    * The number on file. Its PRESENCE says someone typed it; it says nothing
@@ -430,7 +445,11 @@ export function assessProfileCompleteness(
   const missing: ProfileField[] = [];
 
   if (!presentString(stored.firstName, PROFILE_FIRST_NAME_MAX)) missing.push("firstName");
-  if (!presentString(stored.lastName, PROFILE_LAST_NAME_MAX)) missing.push("lastName");
+  // A single legal name has no family name: lastName is then not missing. Anything else
+  // (a blank last name WITHOUT the explicit answer) is still incomplete, as before.
+  const singleName =
+    stored.singleLegalName === true && (stored.lastName ?? "").trim().length === 0;
+  if (!singleName && !presentString(stored.lastName, PROFILE_LAST_NAME_MAX)) missing.push("lastName");
   if (!presentString(stored.email, PROFILE_EMAIL_MAX)) missing.push("email");
   if (
     !presentString(stored.mobile, PROFILE_MOBILE_MAX) ||
@@ -565,6 +584,8 @@ export function invitationEligibility(
 type CompletionCore = {
   firstName: string;
   lastName: string;
+  /** Absent means false. */
+  singleLegalName?: boolean;
   treatmentAreaIds: ReadonlyArray<TreatmentAreaId>;
   availabilityPreference: AvailabilityPreference;
 };
@@ -600,6 +621,7 @@ export function completionPatchFromProfile(
   const core: CompletionCore = {
     firstName: profile.firstName,
     lastName: profile.lastName,
+    singleLegalName: profile.singleLegalName,
     treatmentAreaIds: profile.treatmentAreaIds,
     availabilityPreference: profile.availabilityPreference,
   };
@@ -679,6 +701,8 @@ export function waitTimeEstimatorInput(
 export type JoinProfileDraft = {
   firstName: string;
   lastName: string;
+  /** Unticked by default. Ticking it means "I have one legal name"; the last name is then empty. */
+  singleLegalName: boolean;
   email: string;
   mobile: string;
   treatmentAreaIds: ReadonlyArray<TreatmentAreaId>;
@@ -692,6 +716,7 @@ export function emptyJoinProfileDraft(): JoinProfileDraft {
   return {
     firstName: "",
     lastName: "",
+    singleLegalName: false,
     email: "",
     mobile: "",
     treatmentAreaIds: [],
@@ -722,6 +747,7 @@ export function completionDraftFromStored(
   return {
     firstName: (stored.firstName ?? "").trim(),
     lastName: (stored.lastName ?? "").trim(),
+    singleLegalName: stored.singleLegalName === true && (stored.lastName ?? "").trim().length === 0,
     email: (stored.email ?? "").trim(),
     mobile: (stored.mobile ?? "").trim(),
     treatmentAreaIds: usableAreas,
@@ -742,6 +768,7 @@ export function validateJoinProfileDraft(
   return validateWaitlistJoinProfile({
     firstName: draft.firstName,
     lastName: draft.lastName,
+    singleLegalName: draft.singleLegalName,
     email: draft.email,
     mobile: draft.mobile,
     treatmentAreaIds: draft.treatmentAreaIds,

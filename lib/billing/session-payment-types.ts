@@ -125,9 +125,14 @@ export type SessionPaymentExistingAttemptSummary = {
   // refundAmountCents field is included so a future partial-
   // refund PR does not require a type change.
   refundStatus: string | null;
+  // The PROVIDER's own refund state (migration 0240). Read with refundStatus through refundDisplayState.
+  stripeRefundStatus: string | null;
   refundAmountCents: number | null;
   refundedAt: string | null;
   stripeRefundId: string | null;
+  // TRUE when the signed cumulative full-refund receipt (0240 stripe_charge_refund_event_id) exists. Derived on the
+  // server; the event id itself is never sent to the client.
+  cumulativeFullRefundVerified: boolean;
   refundFailureCode: string | null;
   refundFailureMessageSafe: string | null;
 };

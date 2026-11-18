@@ -273,6 +273,7 @@ describe("completing a profile cannot move the queue position", () => {
         "firstName",
         "lastName",
         "mobileDisposition",
+        "singleLegalName",
         "treatmentAreaIds",
       ].sort(),
     );

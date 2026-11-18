@@ -7,8 +7,9 @@ import { INSIGHTS_RULE, type TimeInsightsModel } from "@/lib/calendar/time-insig
 import {
   SELECTION_PARAM,
   SIDEBAR_STORAGE_KEY,
+  clearLegacySelection,
   readStoredSelection,
-  restoreParam,
+  decideFirstVisit,
   serializeSelection,
   writeStoredSelection,
 } from "@/lib/calendar/practitioner-selection";
@@ -34,6 +35,7 @@ const DESKTOP_QUERY = "(min-width: 768px)";
 
 export function CalendarSidebar({
   studioId,
+  viewerId,
   view,
   anchorDate,
   selectedDate,
@@ -41,10 +43,13 @@ export function CalendarSidebar({
   practitioners,
   selectedIds,
   selectionParam,
+  ownFirstId,
   insights,
   children,
 }: {
   studioId: string;
+  /** The viewer's practitioner id: the stored selection is per studio AND per viewer (shared browsers). */
+  viewerId: string;
   view: "day" | "week" | "month";
   anchorDate: string;
   /** The date the view is on (null for Month, which has no single date). */
@@ -55,6 +60,8 @@ export function CalendarSidebar({
   selectedIds: ReadonlyArray<string>;
   /** The server's selection as a param (undefined = everyone). */
   selectionParam: string | undefined;
+  /** The viewer's own practitioner id when a first visit should open on their column; null/absent = everyone. */
+  ownFirstId?: string | null;
   /** Booked hours and count for the displayed period and selection (lib/calendar/time-insights.ts). */
   insights: TimeInsightsModel;
   children: ReactNode;
@@ -75,6 +82,8 @@ export function CalendarSidebar({
   useEffect(() => setChecked(selectedIds), [serverKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const listedIds = practitioners.map((p) => p.id);
+  const listedIdsRef = useRef(listedIds); // read by the one-time restore below without re-running it every render
+  listedIdsRef.current = listedIds;
   const hasParam = search.has(SELECTION_PARAM);
   const restored = useRef(false);
 
@@ -114,22 +123,29 @@ export function CalendarSidebar({
     } catch {
       storage = null;
     }
-    if (hasParam) {
-      writeStoredSelection(storage, studioId, selectionParam);
-      return;
-    }
-    if (restored.current) return;
-    restored.current = true;
-    const param = restoreParam(readStoredSelection(storage, studioId));
+    // Once per mount, drop the pre-fix per-studio key without reading it (it belonged to an unknown person).
+    if (!restored.current) clearLegacySelection(storage, studioId);
+    if (hasParam) writeStoredSelection(storage, studioId, viewerId, selectionParam);
+    // An explicit `?people=` is a choice: from here the own-first default never re-applies in this mount,
+    // even when storage is blocked and nothing was remembered (decideFirstVisit).
+    const { decided, param } = decideFirstVisit({
+      decided: restored.current,
+      hasParam,
+      readStored: () => readStoredSelection(storage, studioId, viewerId),
+      ownFirstId,
+      listedIds: listedIdsRef.current,
+    });
+    restored.current = decided;
     if (param !== null) replaceWith(param);
-  }, [hasParam, selectionParam, studioId, replaceWith]);
+  }, [hasParam, selectionParam, studioId, viewerId, replaceWith, ownFirstId]);
 
   function toggle(id: string) {
     const next = checked.includes(id) ? checked.filter((x) => x !== id) : [...checked, id];
     setChecked(next);
     const param = serializeSelection(next, listedIds);
+    restored.current = true; // the viewer chose: the first-visit default is done for this mount
     try {
-      writeStoredSelection(window.localStorage, studioId, param);
+      writeStoredSelection(window.localStorage, studioId, viewerId, param);
     } catch {
       /* the URL carries it */
     }

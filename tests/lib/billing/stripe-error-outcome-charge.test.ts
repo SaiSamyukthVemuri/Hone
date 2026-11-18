@@ -63,6 +63,8 @@ vi.mock("@/lib/billing/stripe-error-outcome", async (importOriginal) => {
   return {
     isDefinitiveStripeRefusal: (err: unknown) =>
       h.legacyRule ? err instanceof S.errors.StripeError : real.isDefinitiveStripeRefusal(err),
+    isDefinitiveChargeRefusal: (err: unknown) =>
+      h.legacyRule ? err instanceof S.errors.StripeError : real.isDefinitiveChargeRefusal(err),
   };
 });
 vi.mock("@/lib/stripe/server", () => ({
@@ -238,6 +240,7 @@ const AMBIGUOUS: Array<[string, () => unknown]> = [
   ["StripeAPIError (5xx)", () => new Stripe.errors.StripeAPIError(raw({ statusCode: 500, type: "api_error" }))],
   ["an unrecognised StripeError subtype (TemporarySessionExpiredError)", () => new Stripe.errors.TemporarySessionExpiredError(raw())],
   ["a bare StripeError", () => new Stripe.errors.StripeError(raw())],
+  ["StripeRateLimitError (429: transient, retrying may succeed, an intent may exist)", () => new Stripe.errors.StripeRateLimitError(raw({ statusCode: 429 }))],
   ["StripeIdempotencyError (key reused; the earlier request may have succeeded)", () => new Stripe.errors.StripeIdempotencyError(raw({ type: "idempotency_error", statusCode: 400 }))],
 ];
 
@@ -247,7 +250,6 @@ const DEFINITIVE: Array<[string, () => unknown]> = [
   ["StripeInvalidRequestError", () => new Stripe.errors.StripeInvalidRequestError(raw({ type: "invalid_request_error", statusCode: 400 }))],
   ["StripeAuthenticationError", () => new Stripe.errors.StripeAuthenticationError(raw({ statusCode: 401 }))],
   ["StripePermissionError", () => new Stripe.errors.StripePermissionError(raw({ statusCode: 403 }))],
-  ["StripeRateLimitError", () => new Stripe.errors.StripeRateLimitError(raw({ statusCode: 429 }))],
 ];
 
 describe("HON-11 #1 charge: an UNKNOWN outcome stays pending for manual review", () => {
@@ -272,6 +274,29 @@ describe("HON-11 #1 charge: a DEFINITIVE refusal is still terminal (unchanged)",
       expect(raisedManualReview()).toBe(false);
     });
   }
+
+  describe("E2: the stored 'no PaymentIntent was created' fact", () => {
+    const failedWrite = () => h.updates.find((u) => u.status === "failed") as Record<string, unknown> | undefined;
+    for (const [name, make] of DEFINITIVE.filter(([n]) => !n.includes("CardError"))) {
+      it(`${name} with no intent: records no_intent_created (this is what frees the appointment)`, async () => {
+        h.createError = make();
+        await run();
+        expect(failedWrite()).toMatchObject({ stripe_payment_intent_id: null, stripe_status: "no_intent_created" });
+      });
+    }
+    it("a CardError with NO intent on it is ambiguous: failed, but NO no_intent_created fact (it keeps blocking)", async () => {
+      h.createError = new Stripe.errors.StripeCardError(raw({ code: "card_declined", type: "card_error", statusCode: 402 }));
+      await run();
+      expect(failedWrite()).toMatchObject({ stripe_payment_intent_id: null, stripe_status: null });
+    });
+    for (const [name, make] of AMBIGUOUS) {
+      it(`${name}: never records the fact (the row is not even written failed)`, async () => {
+        h.createError = make();
+        await run();
+        expect(h.updates.some((u) => u.stripe_status === "no_intent_created")).toBe(false);
+      });
+    }
+  });
 
   it("authentication_required still shows its own message", async () => {
     h.createError = new Stripe.errors.StripeCardError(
@@ -334,9 +359,9 @@ describe("NEGATIVE CONTROL: the retired rule fails these tests", () => {
 
 describe("source shape: the runner consults the classifier in its terminal branch", () => {
   const src = readFileSync(join(__dirname, "../../../lib/billing/session-payment-charge.ts"), "utf8");
-  it("the terminal branch is gated on isDefinitiveStripeRefusal", () => {
+  it("the terminal branch is gated on isDefinitiveChargeRefusal (a 429 is not a refusal)", () => {
     expect(src).toMatch(
-      /if \(\s*err instanceof Stripe\.errors\.StripeError &&\s*isDefinitiveStripeRefusal\(err\)\s*\) \{/,
+      /if \(\s*err instanceof Stripe\.errors\.StripeError &&\s*isDefinitiveChargeRefusal\(err\)\s*\) \{/,
     );
     expect(src.match(/instanceof Stripe\.errors\.StripeError/g)).toHaveLength(1);
   });

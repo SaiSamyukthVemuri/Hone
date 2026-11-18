@@ -42,10 +42,13 @@ const NON_FINANCE_FORM_TYPES = [
   "photo_consent",
 ] as const;
 
-export async function getConsentTemplatesForStudio(
+// A failed template read is UNAVAILABLE, never "no forms": callers that show a list say they could not check.
+export type ConsentTemplatesCheck<T> = { status: "ok"; templates: T[] } | { status: "unavailable" };
+
+export async function checkConsentTemplatesForStudio(
   studioId: string,
   scope: CardAuthorizationScope,
-): Promise<ConsentFormTemplateForPractitioner[]> {
+): Promise<ConsentTemplatesCheck<ConsentFormTemplateForPractitioner>> {
   const admin = createAdminClient();
   let query = admin
     .from("consent_form_templates")
@@ -65,9 +68,18 @@ export async function getConsentTemplatesForStudio(
         timestamp: new Date().toISOString(),
       }),
     );
-    return [];
+    return { status: "unavailable" };
   }
-  return (data ?? []) as ConsentFormTemplateForPractitioner[];
+  return { status: "ok", templates: (data ?? []) as ConsentFormTemplateForPractitioner[] };
+}
+
+// Count-only or non-display callers keep the empty-list shape; display surfaces use the check above.
+export async function getConsentTemplatesForStudio(
+  studioId: string,
+  scope: CardAuthorizationScope,
+): Promise<ConsentFormTemplateForPractitioner[]> {
+  const r = await checkConsentTemplatesForStudio(studioId, scope);
+  return r.status === "ok" ? r.templates : [];
 }
 
 // Portal-facing template view. PR #167 added the explicit is_live
@@ -87,9 +99,9 @@ export type ConsentFormTemplateForPortal = Pick<
   "id" | "title" | "description" | "body" | "form_type" | "version"
 >;
 
-export async function getActiveConsentTemplatesForPortal(
+export async function checkActiveConsentTemplatesForPortal(
   studioId: string,
-): Promise<ConsentFormTemplateForPortal[]> {
+): Promise<ConsentTemplatesCheck<ConsentFormTemplateForPortal>> {
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("consent_form_templates")
@@ -106,9 +118,16 @@ export async function getActiveConsentTemplatesForPortal(
         timestamp: new Date().toISOString(),
       }),
     );
-    return [];
+    return { status: "unavailable" };
   }
-  return (data ?? []) as ConsentFormTemplateForPortal[];
+  return { status: "ok", templates: (data ?? []) as ConsentFormTemplateForPortal[] };
+}
+
+export async function getActiveConsentTemplatesForPortal(
+  studioId: string,
+): Promise<ConsentFormTemplateForPortal[]> {
+  const r = await checkActiveConsentTemplatesForPortal(studioId);
+  return r.status === "ok" ? r.templates : [];
 }
 
 // Portal-side per-template "have I already signed this template?"
@@ -486,8 +505,8 @@ export async function getPortalPhotoConsentsForPractitionerView(
 // cannot drift. It is an EXISTENCE question, so the projection is `id` with
 // `limit(1)`; template bodies are never loaded to answer it.
 //
-// `getActiveConsentTemplatesForPortal` is deliberately left byte-unchanged:
-// its existing callers keep their current behaviour.
+// `getActiveConsentTemplatesForPortal` remains as a list-returning wrapper over
+// `checkActiveConsentTemplatesForPortal`, which reports a failed read as unavailable.
 export type CardAuthorizationCapability =
   | { ok: true; enabled: boolean }
   | { ok: false };

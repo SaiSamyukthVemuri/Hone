@@ -424,7 +424,7 @@ describe("WAIT INTEGRATION-01 — recipient journey, accepted stack", () => {
   });
 
   // -------------------------------------------------------------------------
-  it("P1: a SUCCESSFUL booking stays confirmed in its own response, then reopens as UNKNOWN", async () => {
+  it("P1: a SUCCESSFUL booking stays confirmed in its own response, then reopens as the neutral 'already used'", async () => {
     // Case 1. The immediate response must NOT be collapsed — the recipient who
     // just booked still sees their confirmation. The degradation is only after
     // that transient knowledge is gone.
@@ -435,23 +435,37 @@ describe("WAIT INTEGRATION-01 — recipient journey, accepted stack", () => {
     if (loaded.kind !== "offer") throw new Error("expected an offer");
     const slot = loaded.days.flatMap((d) => d.slots)[0]!;
 
+    const proofCookie = hoisted.jar.get(CAPABILITY_COOKIE) as string;
+    expect(proofCookie, "the holder proved before booking").toBeTruthy();
+
     const booked = await bookInvitationSlotAction(offer.token, slot.start);
     expect(booked.kind, "the original response keeps its confirmed success").toBe("booked");
     expect(await apptCount(offer.studio.studioId)).toBe(1);
 
-    // FRESH RELOAD. Redemption is all that survives, and it is not appointment
-    // evidence — so neither outcome may be asserted.
+    // FRESH RELOAD, UNPROVEN. A successful booking clears the proof in the
+    // browser that booked, and the reload path (R5) gives every holder without a
+    // live proof the same neutral sentence: no service, time or outcome.
+    expect(hoisted.jar.has(CAPABILITY_COOKIE)).toBe(false);
     const reopened = await loadInvitationAction(offer.token);
     expect(reopened.kind).toBe("closed");
     if (reopened.kind !== "closed") throw new Error("expected closed");
-    expect(reopened.reason).toBe("booking_outcome_unknown");
+    expect(reopened.reason).toBe("already_used");
     expect(reopened.reason).not.toBe("already_redeemed");
-    // No slots survive into the unknown state, so nothing can be pressed.
+    // No slots survive into the closed state, so nothing can be pressed.
     expect((reopened as unknown as { days?: unknown }).days).toBeUndefined();
+
+    // A PROVEN holder (the proof cookie survived, e.g. a second browser) is read
+    // against the explicit link. This booking went through the previous path, which
+    // writes no link, so nothing is inferred from timestamps: contact the studio.
+    hoisted.jar.set(CAPABILITY_COOKIE, proofCookie);
+    const proven = await loadInvitationAction(offer.token);
+    expect(proven.kind).toBe("closed");
+    if (proven.kind !== "closed") throw new Error("expected closed");
+    expect(proven.reason).toBe("used_contact_studio");
   });
 
   // -------------------------------------------------------------------------
-  it("P1: a refusal AFTER redemption is consumed_without_booking, and reopens UNKNOWN", async () => {
+  it("P1: a refusal AFTER redemption is consumed_without_booking, and reopens as the neutral 'already used'", async () => {
     // P2 4008485175 — THE PREVIOUS FIXTURE PROVED NOTHING ABOUT REDEMPTION.
     //
     // It posted a date ~400 days out. `authorizeInvitationForBooking` rejects
@@ -517,11 +531,21 @@ describe("WAIT INTEGRATION-01 — recipient journey, accepted stack", () => {
     //    already_redeemed mapping to its old value makes this line fail — the
     //    reload would say an appointment exists for a booking that never
     //    committed, which is the P1 exactly.
+    //    (R5: a holder with no live proof gets the neutral sentence; a holder
+    //    who still has a proof is told to contact the studio, since no
+    //    appointment is linked to this invitation.)
+    const proofCookie2 = hoisted.jar.get(CAPABILITY_COOKIE) as string | undefined;
+    hoisted.jar.delete(CAPABILITY_COOKIE);
     const reopened = await loadInvitationAction(offer.token);
     expect(reopened.kind).toBe("closed");
     if (reopened.kind !== "closed") throw new Error("expected closed");
-    expect(reopened.reason).toBe("booking_outcome_unknown");
+    expect(reopened.reason).toBe("already_used");
     expect(reopened.reason).not.toBe("already_redeemed");
+    if (proofCookie2) {
+      hoisted.jar.set(CAPABILITY_COOKIE, proofCookie2);
+      const provenAgain = await loadInvitationAction(offer.token);
+      expect(provenAgain.kind === "closed" && provenAgain.reason).toBe("used_contact_studio");
+    }
 
     // 5. NO SLOTS AND NO ROUTE BACK, and the reload mutated nothing.
     expect((reopened as unknown as { days?: unknown }).days).toBeUndefined();

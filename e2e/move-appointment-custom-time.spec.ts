@@ -16,6 +16,7 @@ import {
   type E2eSeed,
 } from "./helpers/seed";
 import { bookAppointment, loginAsOwner, loginByMagicLink } from "./helpers/flows";
+import { utcInstantFromLocal } from "../lib/booking/tz";
 
 // Owner custom-time override for Move appointment (a code-only follow-up on the
 // 0133 RPC). Proves the parts only a browser can: the owner-only mode selector,
@@ -131,7 +132,7 @@ test("owner custom-time move works across mobile, tablet, desktop; non-owner can
     await ctx.close();
   });
 
-  await test.step("desktop: Escape closes when idle; keyboard acknowledgement; move persists", async () => {
+  await test.step("desktop: Escape closes when idle; typed time and keyboard acknowledgement persist the exact move", async () => {
     const { ctx, page } = await ownerCtx(browser, { width: 1280, height: 800 }, false);
     // Escape while idle closes the dialog (no move).
     const dialog = await openCustom(page);
@@ -141,8 +142,11 @@ test("owner custom-time move works across mobile, tablet, desktop; non-owner can
     const before = await getAppointmentsForClient(seed.studioId, clientId);
     const prev = before.find((a) => a.id === apptId)!;
     const d2 = await openCustom(page);
-    await d2.locator(String.raw`input[type="date"]`).fill(futureYmd(402));
-    await d2.locator('input[type="time"]').fill("04:00");
+    const date = futureYmd(402);
+    await d2.locator('input[type="date"]').fill(date);
+    await d2.getByRole("button", { name: "Type a time instead" }).click();
+    await d2.getByRole("textbox", { name: "Custom time" }).pressSequentially("3:30 PM");
+    await expect(d2.getByRole("button", { name: /^Move appointment$/ })).toBeDisabled();
     const ack = d2.getByRole("checkbox");
     await ack.focus();
     await page.keyboard.press("Space"); // toggle the acknowledgement via keyboard
@@ -153,7 +157,10 @@ test("owner custom-time move works across mobile, tablet, desktop; non-owner can
     await expect(d2).toHaveCount(0, { timeout: 15_000 });
     const after = await getAppointmentsForClient(seed.studioId, clientId);
     expect(after).toHaveLength(before.length);
-    expect(instant(after.find((a) => a.id === apptId)!.starts_at)).not.toBe(instant(prev.starts_at));
+    const moved = after.find((a) => a.id === apptId)!;
+    expect(instant(moved.starts_at)).not.toBe(instant(prev.starts_at));
+    const tz = await getStudioTimezone(seed.studioId);
+    expect(instant(moved.starts_at)).toBe(utcInstantFromLocal(date, "15:30", tz).getTime());
     await ctx.close();
   });
 

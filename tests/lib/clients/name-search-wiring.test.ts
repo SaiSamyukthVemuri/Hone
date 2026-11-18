@@ -14,7 +14,7 @@ const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
 
 const SURFACES = [
   "components/client-search.tsx",
-  "app/(app)/calendar/QuickBookDrawer.tsx",
+  "lib/clients/drawer-matches.ts", // the booking drawer's list (QuickBookDrawer calls it, pinned below)
   "app/(app)/global-search-actions.ts",
 ];
 
@@ -36,5 +36,18 @@ describe("global search orders client matches best-first (HON-58)", () => {
     const src = readFileSync("app/(app)/global-search-actions.ts", "utf8");
     expect(src).toMatch(/sortByMatchRank\(rows, query\)\.slice\(0, CLIENT_CAP\)/);
     expect(src).not.toMatch(/rows\.sort\(\(a, b\) => \(a\.name \?\? ""\)/);
+  });
+});
+
+describe("the booking drawer ranks before it caps", () => {
+  const drawer = read("app/(app)/calendar/QuickBookDrawer.tsx");
+  it("calls rankDrawerClients and keeps no hand-rolled filter-then-slice", () => {
+    expect(drawer).toMatch(/from "@\/lib\/clients\/drawer-matches"/);
+    expect(drawer).toMatch(/rankDrawerClients\(allClients, clientQuery, MAX_CLIENT_RESULTS\)/);
+    expect(drawer).not.toMatch(/matchesClientSearch/);
+    expect(drawer).not.toMatch(/allClients\.filter\(/);
+  });
+  it("keeps the Showing first N of M line", () => {
+    expect(drawer).toMatch(/Showing first \{clientMatches\.length\} of \{totalMatches\}/);
   });
 });

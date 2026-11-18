@@ -34,8 +34,17 @@ export function sliceViolations(profile: MachineProfile): SliceViolation[] {
   const out: SliceViolation[] = [];
   const evidenceIds = new Set(profile.evidence.map((e) => e.id));
   const blocked = (key: string) => profile.openQuestions.some((q) => q.blocks.some((t) => t === "*" || t === "@frequency" || t === key || t.startsWith(`${key}.`)));
+  // The frequency is checked DIRECTLY, not only through an open question: resolving or deleting the question must not be enough to offer
+  // a mode whose frequency was never established. (planContractPublication and catalogueIntegrity refuse it too; this is the third lock.)
+  const f = profile.frequency;
+  const frequencyProblem =
+    f.kind === "unverified" ? "frequency is unverified"
+    : (f.kind === "fixed" || f.kind === "selectable") && (f.verification === "unverified" || f.verification === "pending-evidence")
+      ? `frequency verification is ${f.verification}`
+      : null;
   for (const mode of profile.modes) {
     const add = (reason: string) => out.push({ profileId: profile.profileId, modeKey: mode.key, reason });
+    if (frequencyProblem) add(frequencyProblem);
     if (mode.captureHold) add("capture hold");
     if (blocked(mode.key)) add("open question blocks it");
     if (mode.verification !== "manufacturer-documented") add(`mode verification is ${mode.verification}`);

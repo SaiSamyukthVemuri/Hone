@@ -59,6 +59,8 @@ export const BROWSER_GROUPS = {
       // form must run this spec, and filing it elsewhere would hide it from
       // the only lane its subject can regress in.
       "machine-switch-discards-draft.spec.ts",
+      "machine-one-selector.spec.ts",
+      "machine-mode-then-save.spec.ts",
       // MPX-03: the LOST RESPONSE on the initial save, and pressing Save
       // again. Same surface once more, so the same group - and this one most
       // of all, because what it proves is that the FORM reuses its retry key,
@@ -160,6 +162,10 @@ export const BROWSER_GROUPS = {
       // condition is reported, required once it is, hidden again on retraction,
       // and read back truthfully on the practitioner review grid.
       "intake-diabetes-thyroid-subtypes.spec.ts",
+      // 0340: one intake through every legitimate browser writer in order
+      // (token save, token submit, owner review, notes); client and studio
+      // never move and the form is never hidden.
+      "intake-identity-journey.spec.ts",
     ],
   },
   portal: {
@@ -260,6 +266,8 @@ export const BROWSER_GROUPS = {
       // The same link hidden for a solo owner with nothing to review, shown otherwise (Sam, 2 Nov).
       "review-link-solo-owner.spec.ts",
       // HON-48 team day layout matrix (opt-in: self-skips unless CAL_LAYOUT_E2E=1, so a targeted lane lists them but runs nothing).
+      // #1424 own-calendar-first default, 1280/390 matrix (opt-in: self-skips unless CAL_OWN_FIRST_E2E=1, so a targeted lane lists it but runs nothing).
+      "calendar-own-first.spec.ts",
       "calendar-day-layout.spec.ts",
       "calendar-day-layout-single.spec.ts",
       // HON-48 team day view: five synthetic practitioners in one-column-per-
@@ -271,6 +279,7 @@ export const BROWSER_GROUPS = {
   owner_admin: {
     description: "owner/admin, onboarding, studio setup and capacity",
     specs: [
+      "cancellation-fee-rules.spec.ts",
       "invitation-reconciliation.spec.ts",
       "invite-only.spec.ts",
       // FETT photos (HON-43): Photos-tab grid thumbnails survive a reload and
@@ -295,6 +304,9 @@ export const BROWSER_GROUPS = {
       // briefing, an ordinary practitioner is refused it, and the owner-only
       // entry is not advertised in search. No new group: the taxonomy fits.
       "owner-practice-capacity.spec.ts",
+      // 0339 (owner-only writes on services and consent wording): the owner still edits services and consent wording
+      // through the shipped actions; a practitioner is shown no edit control.
+      "owner-only-catalog-edit.spec.ts",
       // REL-001: the authenticated app-shell error boundary, including the
       // auth-gate invariants (anonymous still bounces to /login, redirect() and
       // notFound() are not converted into a generic retry screen). It sits with

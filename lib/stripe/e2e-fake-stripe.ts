@@ -71,6 +71,46 @@ function recalledMoney(run: string, id: string | null | undefined): FakeMoney {
   return moneyByIdByRun.get(run)?.get(id) ?? { amount: null, currency: null };
 }
 
+// FAITHFUL PAYMENTINTENT STATE. The fake remembers what each PaymentIntent it created looks like (status, money, metadata,
+// livemode, charge), so a later retrieve and cancel state it back the way real Stripe does: the stored status and metadata,
+// amount and currency present, amount_received 0 until it is captured, and a cancel that moves the SAME object to
+// "canceled". Without this the owner action "Close declined attempt" (which checks id, amount, currency, mode, the attempt
+// id in the metadata, amount_received, and the cancel response) can never complete against the fake.
+type FakePi = {
+  id: string;
+  status: string;
+  amount: number | null;
+  currency: string | null;
+  metadata: Record<string, string>;
+  latestCharge: string | null;
+};
+const piByIdByRun = new Map<string, Map<string, FakePi>>();
+function storePi(run: string, pi: FakePi): void {
+  const m = piByIdByRun.get(run) ?? new Map<string, FakePi>();
+  m.set(pi.id, pi);
+  piByIdByRun.set(run, m);
+}
+function storedPi(run: string, id: string): FakePi | null {
+  return piByIdByRun.get(run)?.get(id) ?? null;
+}
+// Statuses real Stripe lets a PaymentIntent be cancelled from.
+const CANCELLABLE = new Set(["requires_payment_method", "requires_capture", "requires_confirmation", "requires_action"]);
+function piObject(pi: FakePi) {
+  const captured = pi.status === "succeeded";
+  return {
+    id: pi.id,
+    object: "payment_intent",
+    status: pi.status,
+    amount: pi.amount,
+    currency: pi.currency,
+    metadata: { ...pi.metadata },
+    livemode: false, // the fake is test-mode only
+    amount_received: captured ? (pi.amount ?? 0) : 0,
+    latest_charge: pi.latestCharge,
+    ...(pi.status === "canceled" ? { cancellation_reason: "requested_by_customer" } : {}),
+  };
+}
+
 function runId(): string {
   return process.env.HONE_E2E_RUN_ID ?? "no-run";
 }
@@ -127,12 +167,14 @@ export function resetFakeStripeState(run: string = runId()): void {
   idempotentResultByRun.delete(run);
   seqByRun.delete(run);
   moneyByIdByRun.delete(run);
+  piByIdByRun.delete(run);
 }
 
 // ---- The fake client -----------------------------------------------------------
 type CreatePiParams = {
   amount?: number | null;
   currency?: string | null;
+  metadata?: Record<string, string> | null;
 };
 type RequestOpts = { stripeAccount?: string; idempotencyKey?: string } | undefined;
 
@@ -179,12 +221,25 @@ function synthPaymentIntent(run: string, opts: RequestOpts, params?: CreatePiPar
     rememberMoney(run, id, money);
     rememberMoney(run, chargeId, money);
   }
+  // The first create states the PaymentIntent; a replay returns the stored object (same status, same metadata).
+  if (!existing) {
+    storePi(run, {
+      id,
+      status,
+      amount: money.amount,
+      currency: money.currency,
+      metadata: { ...(params?.metadata ?? {}) },
+      latestCharge: outcome === "success" ? chargeId : null,
+    });
+  }
+  const stored = storedPi(run, id);
   return {
+    ...(stored ? piObject(stored) : {}),
     id,
-    status,
+    status: stored?.status ?? status,
     amount: money.amount,
     currency: money.currency,
-    latest_charge: outcome === "success" ? chargeId : null,
+    latest_charge: stored ? stored.latestCharge : outcome === "success" ? chargeId : null,
   };
 }
 
@@ -205,10 +260,20 @@ export function createFakeStripe(): Stripe {
           replay: false, // a read, not a keyed effect
         });
         const run = runId();
+        const known = storedPi(run, id);
+        if (known) {
+          // A PaymentIntent the fake created: state it back as stored. A "processing" one settles on this read (the
+          // fake's existing behaviour for the Refresh action); a declined one stays requires_payment_method.
+          if (known.status === "processing") {
+            known.status = "succeeded";
+            known.latestCharge = known.latestCharge ?? `ch_test_e2e_${run}_${(id.match(/_(\d+)$/)?.[1] ?? "r")}`;
+            rememberMoney(run, known.latestCharge, { amount: known.amount, currency: known.currency });
+          }
+          return piObject(known);
+        }
         const chargeId = `ch_test_e2e_${run}_r`;
-        // States the money this PaymentIntent was created with. An id the fake
-        // never created states none, which the application treats as a
-        // mismatch, the same as real Stripe disagreeing with the row.
+        // An id the fake never created states no money, which the application treats as a mismatch, the same as real
+        // Stripe disagreeing with the row. (Unchanged legacy behaviour for ids seeded outside the fake.)
         const money = recalledMoney(run, id);
         rememberMoney(run, chargeId, money);
         return {
@@ -229,6 +294,20 @@ export function createFakeStripe(): Stripe {
           resultId: id,
           replay: false,
         });
+        const known = storedPi(runId(), id);
+        if (known) {
+          if (known.status === "canceled") return piObject(known);
+          if (!CANCELLABLE.has(known.status)) {
+            // Real Stripe refuses to cancel a PaymentIntent that is processing or already succeeded.
+            const err = new Error(`This PaymentIntent (${id}) cannot be canceled because its status is ${known.status}.`) as Error & { type: string; code: string; statusCode: number };
+            err.type = "invalid_request_error";
+            err.code = "payment_intent_unexpected_state";
+            err.statusCode = 400;
+            throw err;
+          }
+          known.status = "canceled";
+          return piObject(known);
+        }
         return { id, status: "canceled" };
       },
     },

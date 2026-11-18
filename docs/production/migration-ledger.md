@@ -15,7 +15,232 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
 
-## Current state (verified 2026-11-05T02:08:04Z-02:08:08Z, post-0281 apply; `0281` APPLIED OUT OF ORDER below the hosted max `0300`, `0247`, `0249`-`0252`, `0255` and `0256` NOT applied, repo == hosted)
+## Current state (repository facts derived 2026-11-08, carrier #1396; `0313` is recorded as applied and `0319` is MIGRATION-FIRST PENDING and NOT applied; the record of hosted below is current through `0354` for the migrations it names, apart from `0319` and the unhosted gaps)
+
+> **CURRENT RELATIONSHIP: repo > hosted only by the pending `0319`.** The hosted max is the value in the table below, as declared in `docs/production/migration-state.json`. The one pending file is sealed and unapplied: `0319_waitlist_times_unsuitable.sql` (sha256 `3aa52473bb55677b0ea629f44a4f21d3350fbf755a839044d7c7217e1fca2d2f`). `0313` is recorded as applied below. Applying `0319` is a separate approval of the exact bytes; this record applies nothing.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0357**, as declared in `docs/production/migration-state.json` on this tree. Advanced from `0300` by the record-only updates of 2026-11-14, 2026-11-15 and 2026-11-16, which declare the applies `0298`, `0301`-`0303`, `0287`, `0313`, `0323`-`0327`, `0338`, `0339`, `0340`, `0341`, `0350`, `0351`, `0352`, `0353`, `0354` and `0357` from their operator records; no apply is performed or re-verified by them. `0328` to `0337` are not hosted **by the row count** (the 0338, 0339, 0340, 0341, 0350, 0351, 0352, 0353, 0354 and 0357 read-backs were each one row above the read before them). `0355` and `0356` stay below the hosted maximum and unhosted: they are reserved for Roles. |
+| **Repo migration max** | **0357** (`0357_cancellation_fee_tiers.sql`), derived from the source files on this tree. <!-- ledger-derived --> |
+| **Remote-only migrations** | Not restated on this tree; this tree's record of hosted lags the real hosted state. |
+| **Pending migrations** | **`0319`** (`0319_waitlist_times_unsuitable.sql`, sealed, NOT applied). `0298`, `0313`, `0323`, `0324`, `0325`, `0326`, `0310`, `0327`, `0338`, `0339`, `0340`, `0341`, `0350`, `0351`, `0352`, `0353`, `0354` and `0357` were applied to production (see the apply entries below and the `hosted_note` in `migration-state.json`), and are no longer pending. The files for `0351` to `0354` and for `0357` are all on this tree. |
+| **Next free number** | Next free number is **0358** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by reservation, not by this file. <!-- ledger-derived --> |
+| **Project ref** | Canonical Hone production project. |
+
+### Cancellation fee tiers (0357, applied; the app code ships with #1526)
+
+`0357_cancellation_fee_tiers.sql` adds owner-governed notice-window and same-day cancellation fee rules, revision-based writes, an audit trail and immutable attempt timing evidence. It creates no studio enrollment, changes no policy or acknowledgement, and enables no fee. It is recorded as applied in the 0357 apply record in the section "The 0357 apply" below; the application code that uses it ships separately with #1526. See `docs/production/cancellation-fee-tiers-release.md`.
+
+### What the two pending migrations are (no hosted claim)
+
+- **`0313`** adds two empty tables (a follow-up item table and an invitation-to-appointment link table, both RLS on, no policy, no API-role privilege) and four service-role-only functions; nothing writes to them until the booking flag is switched on.
+- **`0319`** adds one empty table and four service-role-only functions for the "times don't work" reply; nothing writes to it until its flag is switched on.
+- Both are above this tree's declared hosted max, so each would be a plain push. Neither migration changes an existing table, column or row.
+
+### Newer apply entries (recorded 2026-11-09; this tree's declared hosted max is NOT advanced by this change)
+
+`0324`, `0325`, `0326` and `0327` have since been applied to production, one push each, under separate exact-package approvals. The four apply entries below are new; no earlier entry is rewritten. The "Pending migrations" cell above predates them and is kept as written for the same reason: it describes what this tree's declared hosted position implies, not the real hosted state. Advancing `hosted_migration_max` to `0327` in `migration-state.json` is a dated follow-up after HON-7 V1; it is blocked on the `0301`-`0303` and unallocated-number declarations, not on uncertainty about the applies.
+
+### The 0324 apply (facts as recorded by OPS, 2026-11-09; `01-ops/0324-APPLY-RESULT-20261109T0005Z.md`)
+
+- **What it is.** `0324_waitlist_atomic_send_allowance.sql`: it replaces the waitlist send command with a nine-argument version that enforces a send-time capacity limit and rotates a full admission round itself; the eight-argument send path is gone.
+- **Package.** One plain push of the sealed package, SEAL-SHA256SUMS `f687fdd1a2842b2eb29a9a976cb14a55643fd722c19d4c34c1b18ffc9cc1d194`; apply script `fd7b4f04…`, stage conf `f1001855…`, runner `c2e92c95…`, bundle tar `7372a8fa…` (264 files), pinned CLI v2.102.0.
+- **Pre-push reads.** 263 history rows, max `0323`, list md5 `66647823…`, `0324` absent; the preflight passed. The dry run listed exactly `0324_waitlist_atomic_send_allowance.sql`.
+- **Read-back.** 2026-11-09T00:04:55Z-00:04:58Z: **OVERALL PASS**. History 264 rows, max `0324`, `0324` once; the new functions are postgres-owned definers with `search_path = pg_catalog, pg_temp`, the admit function executable by the service role only and the internal count function by nobody, no PUBLIC; the ACL snapshot and the function body md5 values equal the sealed values; exactly one admit overload (nine arguments).
+- **Not captured.** Any server-side apply instant. Migration history is not table-content evidence.
+- **Release.** #1408 merged as `7e555f6ba` about 65 s after the read-back; between the apply and its deployment the live app's earlier send path failed closed and invitations were held.
+
+### The 0325 apply (facts as recorded by OPS, 2026-11-09; apply record `01-ops/0325-APPLY-RESULT-20261109T0205Z.md`; the read-only precheck is `01-ops/0325-PARTA-RESULT-20261109T0201Z.md`; Willow's apply record)
+
+- **What it is.** `0325_waitlist_decline_followups.sql`: the waitlist decline answers, withdrawal requests and the owner follow-up (four tables, three new triggers plus the existing entry transition-guard trigger whose function 0325 replaces, the commands, and an export-audit file-map entry).
+- **Package.** One plain push of the sealed package, SEAL-SHA256SUMS `d2573a90…`; 0325 sha256 `cca62b2f…`, down draft `cd459124…`; apply script `a269520e…`, reconcile `0b2aaf69…`; pinned CLI v2.102.0.
+- **Pre-push reads (Part A, 02:01Z).** 264 history rows, max `0324`, list md5 `24c1e042cb76d3e1d851d7876e9a1c10`, `0325` absent; all 17 gated preflight fields true.
+- **Push.** Plain push at 2026-11-09T02:05:44Z (client side).
+- **Read-back.** 2026-11-09T02:05:45Z-02:05:48Z: **OVERALL PASS**. History 265 rows, max `0325`, list md5 `751877e0…`; the 15 sealed function body md5 values, the ACLs, the four tables, the three new triggers and the replaced guard function passed.
+- **What is and is not live.** The schema, the commands, the trigger on clients and the export-audit file-map entry are in the database. At the apply (02:05Z) nothing called them; the application deployed at 02:11Z with the answers flag and owner email off. Admission stays Closed, public joining stays blocked, SMS stays off. Retention clocks start when the first real answer is stored, which cannot happen while the answers flag is off.
+- **Release.** #1410 merged as `7def16653` about 45 s after the push.
+- **Related record line.** The commits of #1404 (a test harness for the owner decline email) landed through #1407 (`1d6c06c35`), not through a merge of #1404 itself.
+- **Not captured.** Any server-side apply instant.
+
+### The 0326 apply (facts as recorded by OPS, 2026-11-09; apply record `01-ops/0326-APPLY-RESULT-20261109T1230Z.md`; the read-only precheck is `01-ops/0326-PARTA-RESULT-20261109T1222Z.md`)
+
+- **What it is.** `0326_waitlist_retention_cleanup.sql`: the scheduled retention cleanup for waitlist decline follow-ups. Six security-definer functions (the cleanup job, a failure recorder, a health read, a deadline helper, and replacements for two of the 0325 reads so overdue text is suppressed) and a run-log table with a bootstrap row.
+- **Approval.** Sam's own words on 2026-11-09 for this exact package (SEAL-SHA256SUMS `0c663db9…`), including, in Sam's words: "Keep WAITLIST_DECLINE_ANSWERS and owner email OFF."
+- **Package.** One plain push, exactly one migration; 0326 sha256 `5225f6aa…`; apply script `86230709…`; pinned CLI v2.102.0.
+- **Pre-push reads.** 265 history rows, max `0325`, `0326` absent; preflight passed; no transaction older than 60 s on the three scanned tables.
+- **Push.** 2026-11-09T12:30:09Z (client side).
+- **Read-back.** 12:30:10Z-12:30:13Z: **OVERALL PASS**. History 266 rows, max `0326`, `0326` once. The six functions are owned by `postgres`, with `search_path` set to `pg_catalog, pg_temp`; the job, the failure recorder, the health read and the two replaced reads are executable by `service_role` only, and the deadline helper by nobody; no PUBLIC. All six body md5 values equal the sealed values. The run-log table has row-level security on, no policy and no privilege for anyone; its four indexes exist and it holds exactly the one bootstrap run row.
+- **Hosted at that read-back:** 266 rows, max `0326`.
+- **Release.** #1412 merged as `26de3cc3b` at 13:00:03Z and #1413 as `2e3842f93` at 13:00:38Z, after the apply was verified. The first scheduled run row is expected from the 10:00 UTC run on 2026-11-10, read in a separate window. No gap read applies: the apply record's "gap read within 24 h" line is inherited template text.
+- **Not captured.** Any server-side apply instant.
+
+### The 0327 apply (facts as recorded by OPS, 2026-11-10; apply record `01-ops/0327-APPLY-RESULT-20261110T0019Z.md`; the read-only precheck is `01-ops/0327-PARTA-RESULT-20261110T0009Z.md`)
+
+- **What it is.** `0327_waitlist_followup_read_bound.sql`: it replaces the owner follow-up read so a withdrawal row shows the decline answer its retention clock binds to. Display only: it changes which decline answer a withdrawal row shows; retention, erase and export are unchanged. The export read and the erase-by helper keep their 0326 bodies. The file of 0327 arrived with #1419, merged as `09a84b18b` on 2026-11-10 at 00:22:08Z at head `04cb38a2e`, after the apply was read back.
+- **Approval.** Sam's own words for this exact package: apply 0327 only, with a plain push and without `--include-all`, migration sha256 `3b2c9a30…`, SEAL-SHA256SUMS `0c8b6170…`, and hold the #1419 merge until Sam reviews the production read-back.
+- **Package.** One plain push, exactly one migration; apply script `aedc55b3…`; bundle tar `84ea158b…` (267 files, 0001..0327, with the expected absences); pinned CLI v2.102.0.
+- **Pre-push reads.** 266 history rows, max `0326`, `0327` absent (the same as the Part A result); preflight passed.
+- **Push.** 2026-11-10T00:19:12Z (client side).
+- **Read-back.** 00:19:13Z-00:19:15Z: **OVERALL PASS**. History 267 rows, max `0327`, `0327` once. The owner follow-up read, the export read and the erase-by helper are `postgres`-owned security-definer functions with `search_path` set to `pg_catalog, pg_temp`; EXECUTE is `service_role` only on the two reads and nobody on the helper; no PUBLIC EXECUTE. The follow-up read has the 0327 body (md5 `a1943da8…`); exactly one overload each.
+- **Hosted at that read-back:** 267 rows, max `0327`.
+- **Release.** #1419 (the file of 0327) was held for Sam's review of the read-back, then merged on Sam's own words ("I approve merging #1419 at 04cb38a2e"); no application change was needed for it. The scheduled cleanup at 10:00 UTC on 2026-11-10 is to record a success heartbeat.
+- **Not captured.** Any server-side apply instant.
+
+### The 0338 apply (facts as recorded by OPS, 2026-11-14; apply receipt `01-ops/0338-apply-receipt-20261114.json`)
+
+- **What it is.** `0338_one_manual_fee_per_appointment.sql`: a unique partial index that enforces one manual late-cancel or no-show fee per appointment. The file arrived with #1433, merged as `8a1dfaba1` on 2026-11-14 at 15:02:10Z, after the apply was read back; the apply was therefore migration-first.
+- **Approval.** Sam's own words on 2026-11-14 for this exact package: apply 0338 only, with a plain push and without `--include-all`, provided the seal is unchanged and the immediate pre-apply checks pass. It does not authorize live charging, fee activation or any other migration.
+- **Package.** One plain push, exactly one migration; migration sha256 `1285a2e7…`; sealed package SEAL-SHA256SUMS `22c48e08…`; rehearsed on CLI 2.102.0; applied with the operator's pinned supabase-go build.
+- **Pre-push reads (Part A, 2026-11-14T02:35Z).** PASS: 267 history rows, max `0327`, `0338` absent; no open transactions.
+- **Read-back.** **OVERALL PASS**: 268 history rows, max `0338`, present once; the unique partial index is valid and ready; the public catalog equals the sealed post-0338 fingerprint.
+- **Hosted at that read-back:** 268 rows, max `0338`. By the row count (267 through `0327`, plus `0338` once, equals 268), `0328` to `0337` are not hosted.
+- **Reconcile.** Reconcile ran automatically inside the runner after the apply was verified; it makes no connection.
+- **Release.** #1433 merged afterwards, and #1436 after it. The live manual-fee gate is OFF for every studio as read at merge on 2026-11-14; this apply does not activate fees.
+- **Declared hosted maximum.** **Not advanced by this record.** `migration-state.json` still declares `0300`. Advancing it is a separate record change that must also declare the `0301`-`0303` and `0328`-`0337` positions; until then the "Hosted (production) migration max" cell below is the declared value, not the real hosted state.
+- **Not captured.** Any server-side apply instant.
+
+### The 0339 apply (facts as recorded by the operator, 2026-11-15; apply receipt `01-ops/0339-apply-receipt-20261115.json`)
+
+- **What it is.** `0339_owner_only_services_and_consent_template_writes.sql`: makes INSERT and UPDATE on `consent_form_templates` owner-only and re-creates the `services` owner-only write policies identically to those from `0302`. No grant, function, column or data change. The file is carried by #1444; the apply was migration-first.
+- **Approval.** The owner's approval, in their own words on 2026-11-15, for this exact sealed package: apply 0339 only, with a plain push and without `--include-all`. It covers no other migration.
+- **Package.** One plain push, exactly one migration; sealed package SEAL-SHA256SUMS `ee424cd1…`.
+- **Pre-apply read (Part A, 2026-11-15, 13:59:56Z to 13:59:58Z, client side).** PASS: 268 history rows, max `0338`, `0339` absent; no open transactions.
+- **Read-back (2026-11-15, 14:06:49Z to 14:06:51Z, client side).** **OVERALL PASS**, reconcile ALL; the runner exited 0.
+- **Hosted at that read-back:** 269 rows, max `0339`. By the row count (268 through `0338`, plus `0339` once, equals 269), `0328` to `0337` remain not hosted.
+- **Scope on hosted.** Only `consent_form_templates` changed; the `services` policies were re-created identically, from `0302`.
+- **Declared hosted maximum.** Advanced to `0339` in `migration-state.json` by this record, from the receipt only.
+- **Not captured.** Any server-side apply instant; `hosted_applied_at` stays null.
+- **Migration file header.** The header comment of the migration file was written before the apply and is kept unchanged, because applied migrations are frozen.
+
+### The 0340 apply (facts as recorded by the operator, 2026-11-15; apply receipt `01-ops/0340-apply-receipt-20261115.json`)
+
+- **What it is.** `0340_intake_terminal_identity_immutability.sql`: fixes a client intake form's client and studio once the form exists, and stops a signed-in caller changing the deletion marker of a submitted or reviewed intake. The file is carried by #1447; the apply was migration-first.
+- **Approval.** The owner's approval, in their own words on 2026-11-15, for this exact sealed package: apply 0340 only, with a plain push and without `--include-all`. It covers no other migration.
+- **Package.** One plain push, exactly one migration; sealed package SEAL-SHA256SUMS `36ce3dca…`.
+- **Pre-apply read (Part A, 2026-11-15, 14:15:00Z to 14:15:02Z, client side).** PASS: 269 history rows, max `0339`, `0340` absent; no open transactions.
+- **Read-back (2026-11-15, 14:24:23Z to 14:24:25Z, client side).** **OVERALL PASS**, reconcile ALL; the runner exited 0.
+- **Hosted at that read-back:** 270 rows, max `0340`. By the row count (269 through `0339`, plus `0340` once, equals 270), `0328` to `0337` remain not hosted.
+- **Scope on hosted.** Only `client_intake_forms` changed: two new triggers and one invoker function with no API execute. The existing triggers, grants and data are unchanged.
+- **Declared hosted maximum.** Advanced to `0340` in `migration-state.json` by this record, from the receipt only.
+- **Migration file header.** The header comment of the migration file was written before the apply and is kept unchanged, because applied migrations are frozen.
+- **Not captured.** Any server-side apply instant; `hosted_applied_at` stays null.
+
+### The 0310 apply (out of order; facts as recorded by the operator, 2026-11-15; apply receipt `01-ops/0310-apply-receipt-20261115.json`)
+
+- **What it is.** `0310_block_machine_identity_mode_contract.sql`: replaces the one function behind the three signed-in machine-identity commands. It refuses a machine mode the published contract does not allow for the machine's profile and version, an option-gated mode when the option is not positively present, and a profile that differs from the unit. The file is carried by #1369.
+- **Out of order.** Applied out of order, below the declared hosted maximum, which is unchanged; `hosted_out_of_order` declares it.
+- **Older declarations.** 0310 was removed from the `unhosted_below` lists of the nine older entries (0313, 0323 to 0327, 0338, 0339 and 0340), because a version cannot be both hosted and unhosted. Their other contents are unchanged.
+- **Approval.** The owner's approval, in their own words on 2026-11-15, for this exact sealed package (`01-ops/SAM-AUTHORIZATION-0310-b00-20261115T163821Z.txt`): 0310 only, `--include-all` within its stage, a dry run listing exactly 0310, a read-back to follow. It covers no other migration and no activation.
+- **Package.** Sealed package SEAL-SHA256SUMS `d10855e3…`.
+- **Pre-apply read (Part A, 2026-11-15, 16:35:04Z to 16:35:06Z, client side).** PASS: 270 history rows, max `0340`, `0310` absent; no open transactions.
+- **Read-back (2026-11-15, 16:39:13Z to 16:39:15Z, client side).** **OVERALL PASS**, reconcile ALL: 271 rows, max `0340`, `0310` present once.
+- **Scope on hosted.** Only the function `apply_block_machine_identity` changed. Tables, policies, grants and data are unchanged.
+- **Follow-up.** A 24-hour read-only re-run of the read-back, on or after 2026-11-16T16:40Z, is still to be recorded.
+- **Migration file header.** The header comment of the migration file was written before the apply and is kept unchanged, because applied migrations are frozen.
+- **Not captured.** Any server-side apply instant; `hosted_applied_at` stays null.
+
+### The 0341 apply (facts as recorded by the operator, 2026-11-15; apply receipt `01-ops/0341-apply-receipt-20261115.json`)
+
+- **What it is.** `0341_portal_message_member_write_policies.sql`: on the client portal message and reply tables it removes the member write policies and revokes INSERT and UPDATE from `anon` and `authenticated`; the application writes both tables through the server admin client. The file is carried by #1460; the apply was migration-first.
+- **Approval.** The owner's approval, in their own words on 2026-11-15, for this exact sealed package: apply 0341 only, with a plain push and without `--include-all`. It covers no other migration.
+- **Package.** One plain push, exactly one migration; sealed package SEAL-SHA256SUMS `d6bb5449…`.
+- **Pre-apply read (Part A, 2026-11-15, 16:47:51Z to 16:47:53Z, client side).** PASS: 271 history rows, max `0340`, `0341` absent; no open transactions.
+- **Read-backs (client side).** The first read-back (16:52:46Z to 16:52:48Z) passed. The verifying read-back (16:57:20Z to 16:57:39Z) was **OVERALL PASS**, and reconcile ALL followed at 16:57:55Z.
+- **Hosted at the verifying read-back:** 272 rows, max `0341`. By the row count (271 before, plus `0341` once, equals 272), `0328` to `0337` remain not hosted.
+- **Scope on hosted.** Only `client_portal_messages` and `client_portal_message_replies` changed: the three member write policies were dropped and INSERT and UPDATE were revoked from `anon` and `authenticated`. The two member SELECT policies, every SELECT grant and `service_role` are unchanged; no function, trigger, column or data changed.
+- **Declared hosted maximum.** Advanced to `0341` in `migration-state.json` by this record, from the receipt only.
+- **Migration file header.** The header comment of the migration file was written before the apply and is kept unchanged, because applied migrations are frozen.
+- **Not captured.** Any server-side apply instant; `hosted_applied_at` stays null.
+
+### The 0350 apply (facts as recorded by the operator, 2026-11-15; apply receipt `01-ops/0350-apply-receipt-20261115.json`)
+
+- **What it is.** `0350_setup_option_check_null_element.sql`: replaces one function so that a setup mode that requires an installed option is recorded only when the option is positively fitted; an unknown or incomplete option list refuses it. The file is carried by #1476; the apply was migration-first.
+- **Approval.** The owner's approval, in their own words on 2026-11-15 (`01-ops/SAM-AUTHORIZATION-0350-b00-20261115T171120Z.txt`), for this exact sealed package: apply 0350 only, with a plain push and without `--include-all`. It covers no other migration. After an earlier attempt that applied nothing, the owner gave a second approval, in their own words, for one new attempt under the same seal.
+- **Package.** One plain push, exactly one migration; sealed package SEAL-SHA256SUMS `cee54efa…`.
+- **Pre-apply read (Part A, 2026-11-15, 17:07:48Z to 17:07:49Z, client side).** PASS: 272 history rows, max `0341`, `0350` absent.
+- **First attempt (17:11Z).** It did not get past the dry run, so no push was reached and nothing reached production; `0350` was absent at its pre-push read.
+- **Read-back (2026-11-15, 17:21:33Z to 17:21:35Z, client side).** **OVERALL PASS**; reconcile ALL ran automatically.
+- **Hosted at that read-back:** 273 rows, max `0350`. By the row count (272 before, plus `0350` once, equals 273), `0328` to `0337` remain not hosted, and so do `0342` to `0349`, which have no file on this tree.
+- **Scope on hosted.** Only one function changed (replaced; invoker; EXECUTE stays revoked from public, `anon`, `authenticated` and `service_role`). No table, policy, trigger, column or data changed.
+- **Declared hosted maximum.** Advanced to `0350` in `migration-state.json` by this record, from the receipt only.
+- **Migration file header.** The header comment of the migration file was written before the apply and is kept unchanged, because applied migrations are frozen.
+- **Not captured.** Any server-side apply instant; `hosted_applied_at` stays null.
+
+### The 0351 apply (facts as recorded by the operator, 2026-11-16; apply receipt `01-ops/0351-apply-receipt-20261116.json`)
+
+- **What it is.** `0351_studio_manual_fee_settings.sql`: per-studio manual late-cancellation and no-show fee settings (every switch off, every mode fixed) with a change record. The file is carried by #1483; the apply was migration-first.
+- **Approval.** The owner's approval, in their own words on 2026-11-16 (`01-ops/SAM-AUTHORIZATION-0351-b00-20261116T200359Z.txt`), for this exact sealed package: apply 0351 only, with a plain push and without `--include-all`. It covers no other migration.
+- **Package.** One plain push, exactly one migration; sealed package SEAL-SHA256SUMS `cd0c7ef7…`.
+- **Pre-apply read (Part A, 2026-11-16, client side).** PASS: 273 history rows, max `0350`, `0351` absent.
+- **Read-back (2026-11-16, 20:18:36Z to 20:18:41Z, client side).** **OVERALL PASS**; reconcile ALL ran automatically.
+- **Scope on hosted.** Per-studio manual fee settings and their change record, with the guards around them. No studio's setting was written and no fee is enabled.
+- **Hosted at that read-back:** 274 rows, max `0351`. By the row count (273 before, plus `0351` once, equals 274), `0328` to `0337` remain not hosted, and so do `0342` to `0349`.
+- **Declared hosted maximum.** Advanced to `0351` in `migration-state.json` by this record, from the receipt only.
+- **Migration file header.** The header comment of the migration file was written before the apply and is kept unchanged, because applied migrations are frozen.
+- **Not captured.** Any server-side apply instant; `hosted_applied_at` stays null.
+
+### The 0352 apply (facts as recorded by the operator, 2026-11-16; apply receipt `01-ops/0352-apply-receipt-20261116.json`)
+
+- **What it is.** `0352_payment_charge_attempt_claimed_at.sql`: one nullable timestamp on charge attempts and the guard that stamps it when an attempt is claimed. The file is carried by #1483; the apply was migration-first.
+- **Approval.** The owner's approval, in their own words on 2026-11-16 (`01-ops/SAM-AUTHORIZATION-0352-b00-20261116T213919Z.txt`), for this exact sealed package: apply 0352 only, with a plain push and without `--include-all`. It covers no other migration.
+- **Package.** One plain push, exactly one migration; sealed package SEAL-SHA256SUMS `0df0c75f…`.
+- **Pre-apply read (Part A, 2026-11-16, client side).** PASS: 274 history rows, max `0351`, `0352` absent.
+- **Read-back (2026-11-16, 21:59:08Z to 21:59:10Z, client side).** **OVERALL PASS**; reconcile ALL ran automatically. The owner reported this read-back; the full transcript was not pasted, so the row count above is by the row count.
+- **Scope on hosted.** One nullable timestamp on charge attempts and its guard; no existing row changed and no fee is enabled.
+- **Hosted at that read-back:** 275 rows, max `0352`. By the row count (274 before, plus `0352` once, equals 275), `0328` to `0337` remain not hosted, and so do `0342` to `0349`.
+- **Declared hosted maximum.** Advanced to `0352` in `migration-state.json` by this record, from the receipt only.
+- **Migration file header.** The header comment of the migration file was written before the apply and is kept unchanged, because applied migrations are frozen.
+- **Not captured.** Any server-side apply instant; `hosted_applied_at` stays null.
+
+### The 0353 apply (facts as recorded by the operator, 2026-11-16; apply receipt `01-ops/0353-apply-receipt-20261116.json`)
+
+- **What it is.** `0353_waitlist_single_legal_name.sql`: adds a flag (default off) and its check on waitlist entries, and a second completion function, so that a waitlist entry can later carry a single legal name. The existing completion function is unchanged and the join path is unchanged. The file is carried by #1489; the apply was migration-first.
+- **Approval.** The owner's approval, in their own words on 2026-11-16 (`01-ops/SAM-AUTHORIZATION-0353-b00-20261116T232243Z.txt`), for this exact sealed package: apply 0353 only, with a plain push and without `--include-all`. It covers no other migration.
+- **Package.** One plain push, exactly one migration; sealed package SEAL-SHA256SUMS `f562f999…`.
+- **Pre-apply read (Part A, 2026-11-16, client side).** PASS: 275 history rows, max `0352`, `0353` absent.
+- **Read-back (2026-11-16, 23:25:39Z to 23:25:42Z, client side).** **OVERALL PASS**; reconcile ALL ran automatically.
+- **Scope on hosted.** One flag (default off) and its check on waitlist entries, and a second completion function for the service role only; no row is flagged, nothing is backfilled, and no studio's behaviour changes. Offering a single name is a separate reviewed change made after the apply.
+- **Hosted at that read-back:** 276 rows, max `0353`. By the row count (275 before, plus `0353` once, equals 276), `0328` to `0337` remain not hosted, and so do `0342` to `0349`.
+- **Declared hosted maximum.** Advanced to `0353` on 2026-11-16, from the receipt only, and to `0354` by the 0354 apply recorded below.
+- **Migration file header.** The header comment of the migration file was written before the apply and is kept unchanged, because applied migrations are frozen.
+- **Not captured.** Any server-side apply instant; `hosted_applied_at` stays null.
+
+### The 0354 apply (facts as recorded by the operator, 2026-11-16; apply receipt `01-ops/0354-apply-receipt-20261116.json`)
+
+- **What it is.** `0354_quoted_amount_explicit_zero_custom_price.sql`: replaces one function so that an explicit $0 client price is honoured. The file is carried by #1483; the apply was migration-first.
+- **Approval.** The owner's approval, in their own words on 2026-11-16 (`01-ops/SAM-AUTHORIZATION-0354-b00-20261116T233132Z.txt`), for this exact sealed package: apply 0354 only, with a plain push and without `--include-all`. It covers no other migration.
+- **Package.** One plain push, exactly one migration; sealed package SEAL-SHA256SUMS `25078eed…`.
+- **Pre-apply read (Part A, 2026-11-16, client side).** PASS: 276 history rows, max `0353`, `0354` absent.
+- **Read-back (2026-11-16, 23:33:53Z to 23:33:55Z, client side).** **OVERALL PASS**; reconcile ALL ran automatically.
+- **Scope on hosted.** One function replaced (EXECUTE stays revoked from every role); no table, column or row changed, and no existing studio's prices change behaviour.
+- **Hosted at that read-back:** 277 rows, max `0354`. By the row count (276 before, plus `0354` once, equals 277), `0328` to `0337` remain not hosted, and so do `0342` to `0349`.
+- **Declared hosted maximum.** Advanced to `0354` in `migration-state.json` by this record, from the receipt only.
+- **Migration file header.** The header comment of the migration file was written before the apply and is kept unchanged, because applied migrations are frozen.
+- **Not captured.** Any server-side apply instant; `hosted_applied_at` stays null.
+
+### The 0357 apply (facts as recorded by the operator, 2026-11-18; apply receipt `01-ops/0357-apply-receipt.json`)
+
+- **What it is.** `0357_cancellation_fee_tiers.sql`: the studio cancellation fee rule tables, their change record and the checks around them. The file is on this tree with this record; its application code is carried by #1526, which is **not** released by this record. The apply was migration-first.
+- **Approval.** The owner's approval, in their own words on 2026-11-18 (the owner's authorization record), for this exact sealed package: apply 0357 only, with a plain push and without `--include-all`. It covers no other migration and does not release #1526's application.
+- **Package.** One plain push, exactly one migration; sealed package SEAL-SHA256SUMS `7b67a22a…`, sealed file sha256 `2c639578…` (the file on this tree has that hash). The dry run listed exactly one migration, `0357`.
+- **Attempt 1: NOT APPLIED.** The access token was in the wrong format at the first read-only query. Nothing was pushed and no marker was written.
+- **Attempt 2: APPLIED and verified.** Pre-apply reads: 277 history rows, max `0354`, `0357` absent; the sealed preflight passed; no open transaction older than 60 seconds on the three scanned tables; the three tables were small. The marker was written at 2026-11-18T00:28:44Z.
+- **Read-back (2026-11-18, 00:28:45Z to 00:28:49Z, client side).** **OVERALL PASS**: 278 history rows, max `0357`, `0357` present once; columns, constraints, row-level security and policies, table privileges, functions, triggers and comments equal to the sealed values; the public catalog equal to the sealed post-0357 fingerprint. The reconcile is done.
+- **Scope on hosted.** New tables only. By design of the migration, no studio is enrolled and no fee is charged (it inserts no rows); the runner wrote no settings. A row count is to be confirmed at the 24-hour read. The migration does not touch the no-show and waitlist paths.
+- **Hosted at that read-back:** 278 rows, max `0357`. By the row count (277 before, plus `0357` once, equals 278), `0355` and `0356` stay BELOW the hosted maximum and UNHOSTED: they are reserved for Roles. `0328` to `0337` and `0342` to `0349` remain not hosted as before.
+- **Declared hosted maximum.** Advanced to `0357` in `migration-state.json` by this record, from the receipt only; `0357` is declared there as hosted ahead of the unhosted numbers below it (`hosted_out_of_order`), which now include `0355` and `0356`.
+- **Migration file header.** The header comment of the migration file is kept as sealed, because applied migrations are frozen.
+- **Not captured.** Any server-side apply instant; `hosted_applied_at` stays null. The declared project is not named in this record.
+- **Not done by this record.** #1526's application is not released and needs the owner's separate approval. A 24-hour read-only check is due no earlier than 2026-11-19T00:29Z.
+
+### HON-7 V1 activation (a configuration change, not a migration; recorded 2026-11-09 from `01-ops/ROLES-DECISIONS-LOG.md` and `01-ops/HON7-RETENTION-DEADLINE-TRACKER.md`)
+
+- **What changed.** Sam approved, in Sam's own words, activating HON-7 V1 in production with the corrected notice from #1414 and #1415. The activation instant is **2026-11-09T15:19:06Z**: the answers flag (`WAITLIST_DECLINE_ANSWERS`) and owner email (`HONE_WAITLIST_DECLINE_OWNER_EMAIL_ENABLED`, with `HONE_WAITLIST_DECLINE_OWNER_EMAIL_SINCE` set to that instant) were created as Production-only environment variables, then production was redeployed on `c671beb22` (READY 15:21:44Z). Variables created 15:19:06Z; redeploy READY 15:21:44Z; the deadline is counted from the earlier instant (conservative).
+- **Unchanged.** Admission stays Closed, public joining stays blocked and SMS stays off. No migration was applied for this.
+- **Retention.** The 30-day hard deadline for automatic cleanup (2026-12-09T15:19:06Z) is to be met by the 0326 cleanup, applied and deployed before the activation; the first scheduled run (10:00 UTC, 2026-11-10) is read separately and is not recorded here.
+
+## Previous state (verified 2026-11-05T02:08:04Z-02:08:08Z, post-0281 apply; `0281` APPLIED OUT OF ORDER below the hosted max `0300`, `0247`, `0249`-`0252`, `0255` and `0256` NOT applied, repo == hosted)
 
 > **CURRENT RELATIONSHIP: repo == hosted at `0300`, with `0281` applied below the max (an out-of-order apply, declared in `hosted_out_of_order`), and `0247`, `0249`-`0252`, `0255`, `0256`, `0259`-`0265`, `0267`-`0271`, `0273`, `0275`-`0280`, `0282`-`0296`, `0298` and `0299` declared unhosted.** The single sealed migration `0281_identity_revisions_audit_atomic_save.sql` (sha256 `7fe0b10a973103393718ed1ac4fd94e42e23fac87b295ed9c67c0e2ce0c9dff2`) was APPLIED to production by ONE push of one file with `--include-all` inside the sealed stage, by Sam under his own-words authorization (`01-ops/SAM-AUTHORIZATION-0281-b01-20261105T020553Z.txt`, sha256 `853d7783681d81885f9aaafdeae064be68add10c51bed53dae01115623e9ec73`). Carrier PR #1358 head `3f6c8d25563ac561d5679e5de99ec251b142e013` at the apply; stage `stage-0281-b01-mac` (internal stage id `0281-b00`), `SHA256SUMS.txt` sha256 `a0c40670db8d588e2209f8581c5a827276ca39f4b2f0459b7ccf6bf546e829a3`.
 

@@ -235,6 +235,7 @@ describe("NON-VACUITY — the negative controls above can actually fail", () => 
       initialDraft: {
         firstName: "Sarah",
         lastName: "Jones",
+        singleLegalName: false,
         email: "sarah@example.com",
         mobile: "07700900123",
         treatmentAreaIds: ["chin"],

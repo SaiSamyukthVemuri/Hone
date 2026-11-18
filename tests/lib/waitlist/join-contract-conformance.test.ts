@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AREAS, OTHER_AREA } from "@/lib/constants";
+import { AREAS, OTHER_AREA, PRACTITIONER_ONLY_AREAS } from "@/lib/constants";
 import { WaitlistJoinForm } from "@/components/waitlist/waitlist-join-form";
 import { CompleteProfilePanel } from "@/components/waitlist/complete-profile-panel";
 import {
@@ -85,10 +85,10 @@ describe("CLAUSE — mobile is required", () => {
 });
 
 describe("CLAUSE — treatment areas are a controlled multi-select, no free text", () => {
-  it("the catalog is exactly AREAS minus the public free-text 'Other'", () => {
+  it("the catalog is exactly AREAS minus the public free-text 'Other' and the practitioner-only areas", () => {
     const labels = TREATMENT_AREA_IDS.map((id) => TREATMENT_AREA_LABEL[id]);
     expect([...labels].sort()).toEqual(
-      [...AREAS.filter((a) => a !== OTHER_AREA)].sort(),
+      [...AREAS.filter((a) => a !== OTHER_AREA && !PRACTITIONER_ONLY_AREAS.includes(a))].sort(),
     );
     expect(labels).not.toContain(OTHER_AREA);
   });

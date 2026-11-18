@@ -133,33 +133,26 @@ describe("PR #178: RefundSubPanel rendering shape", () => {
     expect(CARD).toMatch(/function RefundSubPanel/);
   });
 
-  it("RefundSubPanel branches on persisted refund_status (succeeded / pending / failed)", () => {
+  it("RefundSubPanel reads BOTH refund columns through refundDisplayState (R1) and branches on its kinds", () => {
     const block = blockFor("RefundSubPanel");
-    expect(block).toMatch(/attempt\.refundStatus === "succeeded"/);
-    expect(block).toMatch(/attempt\.refundStatus === "pending_stripe"/);
-    expect(block).toMatch(/attempt\.refundStatus === "failed"/);
+    expect(block).toMatch(/refundDisplayState\(\{/);
+    expect(block).toMatch(/refundStatus:\s*attempt\.refundStatus/);
+    expect(block).toMatch(/providerRefundStatus:\s*attempt\.stripeRefundStatus/);
+    for (const kind of ["refunded", "pending", "needs_action", "unclear", "failed"]) {
+      expect(block, kind).toMatch(new RegExp(`display\\.kind === "${kind}"`));
+    }
+    // The old single-column reads must be gone: they are what let "succeeded" hide a provider failure.
+    expect(block).not.toMatch(/attempt\.refundStatus === "/);
   });
 
-  it("the Refund charge button only appears when status is null or failed (persisted)", () => {
+  it("the Refund charge button renders ONLY when refundDisplayState allows a new refund", () => {
     const block = blockFor("RefundSubPanel");
-    // The button-render gate excludes persistedSucceeded + persistedPending.
-    // STRUCTURAL, not distance-based. The original assertion allowed 800
-    // characters between each token; unrelated edits elsewhere in the file
-    // pushed the gap past that and failed while the gate was perfectly intact.
-    // Assert the guard itself instead of how close together it happens to sit.
-    const gateIdx = block.indexOf("!persistedSucceeded");
-    const pendingIdx = block.indexOf("!persistedPending");
+    const gateIdx = block.indexOf("display.mayStartRefund");
     const buttonIdx = block.indexOf("Refund charge");
-    expect(gateIdx, "persistedSucceeded guard present").toBeGreaterThan(-1);
-    expect(pendingIdx, "persistedPending guard present").toBeGreaterThan(-1);
+    expect(gateIdx, "mayStartRefund guard present").toBeGreaterThan(-1);
     expect(buttonIdx, "Refund charge button present").toBeGreaterThan(-1);
-    // Both guards precede the button, i.e. they gate its render.
     expect(gateIdx).toBeLessThan(buttonIdx);
-    expect(pendingIdx).toBeLessThan(buttonIdx);
-    // ...and they are part of one conjunction, not two unrelated branches.
-    expect(block.slice(gateIdx, pendingIdx + 20)).toMatch(
-      /!persistedSucceeded\s*&&\s*\n?\s*!persistedPending/,
-    );
+    expect(block).toMatch(/isOwner\s*&&\s*\n?\s*display\.mayStartRefund\s*&&\s*\n?\s*!localRefunded/);
   });
 
   it("the refund copy is neutral (no test-mode / no-live-money claim)", () => {
@@ -188,7 +181,9 @@ describe("PR #178: RefundSubPanel rendering shape", () => {
     // The raw Stripe refund id is no longer inline — it lives in the owner-only
     // Technical payment details disclosure on SucceededPanel.
     expect(block).not.toMatch(/Stripe refund:/);
-    expect(block).not.toMatch(/attempt\.stripeRefundId/);
+    // R1: the refund id is an INPUT to refundDisplayState (a provider trace blocks a new attempt) and is never rendered.
+    expect([...block.matchAll(/attempt\.stripeRefundId/g)]).toHaveLength(1);
+    expect(block).toMatch(/stripeRefundId:\s*attempt\.stripeRefundId,/);
   });
 
   it("the failed state stays calm — no raw code/message inline (they are owner-only)", () => {

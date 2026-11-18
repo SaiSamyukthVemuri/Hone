@@ -13,6 +13,8 @@ export type PortalPendingTasks = {
   consentToSignCount: number;
   // Published portal messages the client has not yet opened.
   unreadMessageCount: number;
+  // The consent template read FAILED, so consentToSignCount is unknown, not zero.
+  consentUnknown: boolean;
   hasAny: boolean;
 };
 
@@ -25,6 +27,7 @@ export function computePortalPendingTasks(input: {
     client_reviewed_at: string | null;
     archived_at?: string | null;
   }>;
+  consentUnavailable?: boolean;
 }): PortalPendingTasks {
   const intakeIncomplete = input.intakeStatus === "in_progress";
 
@@ -49,6 +52,7 @@ export function computePortalPendingTasks(input: {
     intakeIncomplete,
     consentToSignCount,
     unreadMessageCount,
+    consentUnknown: input.consentUnavailable === true,
     hasAny:
       intakeIncomplete || consentToSignCount > 0 || unreadMessageCount > 0,
   };

@@ -1,0 +1,121 @@
+{
+  "status": "complete",
+  "plan_sha256": "fccd6216257eeddaf6f796b1aa67a745cf5f45770ede8cdd2410559c0cea6d9a",
+  "catalogue_commit": "2ac628f29f377a0da1fd9f2ef6f0e67c73f7ef7e",
+  "project_ref_fingerprint": "75e251ead0244fb1",
+  "approver_role": "owner",
+  "token_sha256": "8d37bc93a9c7715191d5d56526ff14f4dfdaa3d6e344513a3a34a990a150a0ed",
+  "key_binding": "jwt_ref_claim",
+  "target_binding": "project kind and the migration head are ASSERTED by the token (the approver's separate read-only check), not proven by this runner; the target is bound only by the token's ref, the URL, supabase/.temp/project-ref and the key's ref claim when it has one",
+  "token_declared": {
+    "hosted_migration_max": "0357",
+    "expected_existing_rows": 0
+  },
+  "runtime": {
+    "node": "v25.8.1"
+  },
+  "started_at": "2026-11-18T02:16:03.070Z",
+  "published": [
+    "dectro-apilus:senior-3g@3:flash",
+    "dectro-apilus:senior-3g@3:microflash",
+    "dectro-apilus:senior-3g@3:multiplex",
+    "dectro-apilus:senior-3g@3:blend",
+    "dectro-apilus:senior-3g@3:omniblend",
+    "dectro-apilus:senior-3g@3:multiblend",
+    "dectro-apilus:senior-3g@3:electrolysis",
+    "dectro-apilus:junior-3g@3:flash",
+    "dectro-apilus:junior-3g@3:blend",
+    "dectro-apilus:junior-3g@3:electrolysis"
+  ],
+  "unchanged": [],
+  "attempted_uncertain": [],
+  "not_attempted": [],
+  "results": [
+    {
+      "id": "dectro-apilus:senior-3g@3:flash",
+      "result": "4"
+    },
+    {
+      "id": "dectro-apilus:senior-3g@3:microflash",
+      "result": "4"
+    },
+    {
+      "id": "dectro-apilus:senior-3g@3:multiplex",
+      "result": "6"
+    },
+    {
+      "id": "dectro-apilus:senior-3g@3:blend",
+      "result": "7"
+    },
+    {
+      "id": "dectro-apilus:senior-3g@3:omniblend",
+      "result": "5"
+    },
+    {
+      "id": "dectro-apilus:senior-3g@3:multiblend",
+      "result": "7"
+    },
+    {
+      "id": "dectro-apilus:senior-3g@3:electrolysis",
+      "result": "3"
+    },
+    {
+      "id": "dectro-apilus:junior-3g@3:flash",
+      "result": "4"
+    },
+    {
+      "id": "dectro-apilus:junior-3g@3:blend",
+      "result": "7"
+    },
+    {
+      "id": "dectro-apilus:junior-3g@3:electrolysis",
+      "result": "3"
+    }
+  ],
+  "before": [
+    {
+      "id": "dectro-apilus:senior-3g@3:flash",
+      "hash": null
+    },
+    {
+      "id": "dectro-apilus:senior-3g@3:microflash",
+      "hash": null
+    },
+    {
+      "id": "dectro-apilus:senior-3g@3:multiplex",
+      "hash": null
+    },
+    {
+      "id": "dectro-apilus:senior-3g@3:blend",
+      "hash": null
+    },
+    {
+      "id": "dectro-apilus:senior-3g@3:omniblend",
+      "hash": null
+    },
+    {
+      "id": "dectro-apilus:senior-3g@3:multiblend",
+      "hash": null
+    },
+    {
+      "id": "dectro-apilus:senior-3g@3:electrolysis",
+      "hash": null
+    },
+    {
+      "id": "dectro-apilus:junior-3g@3:flash",
+      "hash": null
+    },
+    {
+      "id": "dectro-apilus:junior-3g@3:blend",
+      "hash": null
+    },
+    {
+      "id": "dectro-apilus:junior-3g@3:electrolysis",
+      "hash": null
+    }
+  ],
+  "read_back_mismatches": [],
+  "read_back_unreadable": [],
+  "partial": false,
+  "ended_at": "2026-11-18T02:16:06.053Z"
+}

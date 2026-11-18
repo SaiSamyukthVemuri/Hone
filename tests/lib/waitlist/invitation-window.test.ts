@@ -467,8 +467,10 @@ describe("CENSUS — the database's own default can never decide the window", ()
     expect(ttlCommands.length).toBeGreaterThan(0);
 
     let callsChecked = 0;
+    // A command redefined by a later migration (0324 widens admit_) is governed by its LAST declaration.
+    const lastDeclaration = new Map(SQL_FUNCTIONS.map((f) => [f.name, f.params]));
     for (const cmd of ttlCommands) {
-      const declaredArity = paramCount(cmd.params);
+      const declaredArity = paramCount(lastDeclaration.get(cmd.name) ?? cmd.params);
       const callRe = new RegExp(`public\\.${cmd.name}\\s*\\(`, "g");
       for (const m of MIGRATION_SQL.matchAll(callRe)) {
         const at = m.index ?? 0;

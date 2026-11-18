@@ -185,7 +185,7 @@ describe("runSessionPaymentCharge: paymentIntents.create parameters", () => {
 
   it("passes stripeAccount + idempotencyKey on the RequestOptions arg", () => {
     expect(HELPER).toMatch(
-      /\{\s*\n?\s*stripeAccount:\s*card\.stripe_account_id,\s*\n?\s*idempotencyKey,\s*\n?\s*\}/,
+      /\{\s*\n?\s*stripeAccount:\s*card\.stripe_account_id,\s*\n?\s*idempotencyKey,[\s\S]*?\n\s*\}/,
     );
   });
 
@@ -266,7 +266,9 @@ describe("PR #320: requires_action is canceled, never silently terminal", () => 
     const fn = HELPER.slice(
       HELPER.indexOf("async function finalizeRequiresActionPaymentIntent"),
     );
-    expect(fn).toMatch(/await args\.stripe\.paymentIntents\.cancel\(/);
+    // E1: the single call site is now the shared helper; the finalizer routes through it.
+    expect(fn).toMatch(/await cancelPaymentIntentConfirmed\(args\.stripe, args\.pi, args\.stripeAccountId\)/);
+    expect(HELPER).toMatch(/export async function cancelPaymentIntentConfirmed[\s\S]{0,700}paymentIntents\.cancel\(/);
   });
 
   it("on cancel SUCCESS: writes terminal failed with failure code requires_action_canceled", () => {
