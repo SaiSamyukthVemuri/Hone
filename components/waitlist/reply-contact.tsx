@@ -9,7 +9,8 @@ import { formatPhoneForDisplay, mailtoHref, telHref, type ReplyContact } from "@
 // state, marks nothing handled, and sends nothing. A response is only closed by its own form on the card.
 //
 // Two rows with the SAME shape, so they line up: the value on the left (it wraps, so a long address never overflows), and its actions on the right.
-const ACTION = buttonClasses({ variant: "secondary", size: "sm" });
+// Every contact action has the SAME minimum width and centred label, so Email and Call line up in one column and the two Copy buttons in the next.
+const ACTION = buttonClasses({ variant: "secondary", size: "sm", className: "inline-flex min-w-[5rem] items-center justify-center" });
 
 function CopyButton({ value, label, name }: { value: string; label: string; name: string }) {
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
@@ -110,7 +111,7 @@ export function ReplyContactDetails({
         </Row>
       )}
       {showEntryLink && (
-        <Link className="min-h-[44px] self-start underline" href={entryHref}>
+        <Link className="inline-flex min-h-[44px] items-center self-start underline" href={entryHref}>
           Open this waitlist entry
         </Link>
       )}

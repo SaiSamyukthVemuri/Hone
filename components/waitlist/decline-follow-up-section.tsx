@@ -157,18 +157,18 @@ export function DeclineFollowUpSection({
           return (
             <li key={r.followupId} className="border-t border-amber-200 pt-3 first:border-t-0 first:pt-0" data-status={r.status} data-kind={r.kind}>
               <div className="flex items-start justify-between gap-2" data-testid="response-header">
-                <p className="min-w-0 flex-1 break-words font-medium">{r.clientName || "A person on the waitlist"}</p>
+                <p className={`min-w-0 flex-1 break-words font-medium ${!erased && hasAnswers ? "flex min-h-[44px] items-center" : ""}`}>{r.clientName || "A person on the waitlist"}</p>
                 {!erased && hasAnswers ? <MoreActions id={r.followupId} name={r.clientName || "this person"} /> : null}
               </div>
               <ReplyContactDetails entryId={r.entryId} contact={contacts?.get(r.entryId) ?? null} showEntryLink={r.status !== "removed" && renderedEntryIds?.has(r.entryId) === true} />
               {r.kind === "withdrawal" ? <p className="mt-2">{NO_TIMES_WORK_LABELS.noLongerNeed}.</p> : null}
               {erased ? (
-                <p className="mt-2 text-neutral-600 dark:text-neutral-400" data-testid="answers-erased">
+                <p className="mt-1 text-neutral-600 dark:text-neutral-400" data-testid="answers-erased">
                   {/* An answer past its deadline reads back as erased at the deadline before the job has physically erased it, so the copy claims only what is true of both. */}
                   {eraseDate(r.answersErasedAt, timeZone) ? `Answers removed from view on ${eraseDate(r.answersErasedAt, timeZone)}.` : "Their answers have been removed from view."}
                 </p>
               ) : hasAnswers ? (
-                <dl className="mt-2" data-testid="response-answers">
+                <dl className="mt-1" data-testid="response-answers">
                   <dt className="text-neutral-600 dark:text-neutral-400">{OWNER_ANSWER_LABELS.why}</dt>
                   <dd className="whitespace-pre-wrap break-words">{r.whyNotWork}</dd>
                   <dt className="mt-1 text-neutral-600 dark:text-neutral-400">{OWNER_ANSWER_LABELS.better}</dt>

@@ -56,6 +56,26 @@ describe("the response card's order", () => {
   });
 });
 
+describe("alignment", () => {
+  it("every contact action has the same minimum width and a centred label, so the columns line up", () => {
+    const html = render([row()]);
+    const actions = [...html.matchAll(/<(?:a|button)[^>]*class="([^"]*)"[^>]*>(Email|Call|Copy)</g)];
+    expect(actions.map((m) => m[2])).toEqual(["Email", "Copy", "Call", "Copy"]);
+    for (const m of actions) expect(m[1]).toMatch(/min-w-\[5rem\].*justify-center|justify-center.*min-w-\[5rem\]/);
+  });
+  it("the name shares a 44px centre line with More actions, and only when More actions is there", () => {
+    const withMore = render([row()]);
+    expect(/<p class="[^"]*min-h-\[44px\][^"]*items-center[^"]*">Avery Example/.test(withMore)).toBe(true);
+    const erased = render([row({ answersErasedAt: "2026-11-01T00:00:00Z", whyNotWork: null, betterTimes: null })]);
+    expect(/<p class="[^"]*min-h-\[44px\][^"]*">Avery Example/.test(erased)).toBe(false);
+  });
+  it("the entry link centres its text in its tap target, and the answers follow it with the tight section gap", () => {
+    const html = render([row()]);
+    expect(html).toMatch(/class="[^"]*inline-flex[^"]*min-h-\[44px\][^"]*items-center[^"]*"[^>]*>Open this waitlist entry/);
+    expect(html).toMatch(/<dl class="mt-1" data-testid="response-answers"/);
+  });
+});
+
 describe("labels", () => {
   it("the owner reads exactly 'Why these times don't work' and 'Preferred availability'", () => {
     expect(OWNER_ANSWER_LABELS).toEqual({ why: "Why these times don't work", better: "Preferred availability" });
