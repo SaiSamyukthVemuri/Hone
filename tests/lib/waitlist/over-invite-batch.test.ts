@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   canConfirmOverInvite,
   recheckBeforeSend,
+  reopenFailed,
   retryTargets,
   runInviteBatch,
   summarize,
@@ -82,9 +83,8 @@ describe("delivery, chunks and retry", () => {
     const first = await run(ids(60), send);
     expect(summarize(first.results).sent).toBe(25);
     expect(first.more).toBe(true);
-    const done = new Set(first.results.filter((x) => x.status === "sent").map((x) => x.entryId));
-    const second = await run(ids(60), send, { alreadySent: done });
-    const third = await run(ids(60), send, { alreadySent: new Set(second.results.filter((x) => x.status === "sent").map((x) => x.entryId)) });
+    const second = await run(ids(60), send, { previous: first.results });
+    const third = await run(ids(60), send, { previous: second.results });
     expect(third.more).toBe(false);
     expect(sentIds).toHaveLength(60);
     expect(new Set(sentIds).size).toBe(60);
@@ -121,5 +121,42 @@ describe("delivery, chunks and retry", () => {
       return { kind: "refused", code: "something_new" };
     });
     expect(r.results.map((x) => (x.status === "failed" ? x.detail : x.status))).toEqual(["delivery", "refused_unexpectedly"]);
+  });
+  it("continuing a chunk keeps earlier skipped and failed results and advances only the pending ones (26 people, the first 25 refused)", async () => {
+    const calls: string[] = [];
+    const send = async (id: string): Promise<SendOutcome> => {
+      calls.push(id);
+      return id === "e25" ? { kind: "sent" } : { kind: "refused", code: "consent_missing" };
+    };
+    const first = await run(ids(26), send);
+    expect(summarize(first.results)).toEqual({ pending: 1, sent: 0, skipped: 25, failed: 0 });
+    const second = await run(ids(26), send, { previous: first.results });
+    expect(summarize(second.results)).toEqual({ pending: 0, sent: 1, skipped: 25, failed: 0 });
+    expect(second.more).toBe(false);
+    expect(calls).toHaveLength(26);
+    expect(new Set(calls).size).toBe(26);
+  });
+  it("failures are not retried implicitly: only reopenFailed makes the next call retry exactly them", async () => {
+    let ok = false;
+    const calls: string[] = [];
+    const send = async (id: string): Promise<SendOutcome> => (calls.push(id), id === "e1" && !ok ? { kind: "failed" } : { kind: "sent" });
+    const first = await run(ids(3), send);
+    const again = await run(ids(3), send, { previous: first.results });
+    expect(calls).toEqual(["e0", "e1", "e2"]);
+    expect(summarize(again.results)).toEqual({ pending: 0, sent: 2, skipped: 0, failed: 1 });
+    ok = true;
+    const retry = await run(ids(3), send, { previous: reopenFailed(again.results) });
+    expect(calls).toEqual(["e0", "e1", "e2", "e1"]);
+    expect(summarize(retry.results)).toEqual({ pending: 0, sent: 3, skipped: 0, failed: 0 });
+  });
+  it("a NaN or non-finite chunk size falls back to the default instead of stalling; a non-positive one clamps to one send per call", async () => {
+    for (const c of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      const r = await run(ids(3), async () => ({ kind: "sent" }), { chunkSize: c });
+      expect(summarize(r.results).sent, String(c)).toBe(3);
+    }
+    for (const c of [-4, 0]) {
+      const r = await run(ids(3), async () => ({ kind: "sent" }), { chunkSize: c });
+      expect(summarize(r.results), String(c)).toEqual({ pending: 2, sent: 1, skipped: 0, failed: 0 });
+    }
   });
 });

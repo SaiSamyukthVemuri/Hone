@@ -51,20 +51,27 @@ export async function runInviteBatch(input: {
   sleep?: (ms: number) => Promise<void>;
   chunkSize?: number;
   spacingMs?: number;
-  /** Items already sent in an earlier run are never sent again. */
-  alreadySent?: ReadonlySet<string>;
+  /**
+   * Results of an earlier call for this same batch. Every TERMINAL one (sent, skipped, failed) is carried over unchanged and never attempted
+   * again; only `pending` and new entries are. To retry failures, pass `previous` through `reopenFailed` first, so a retry is always explicit.
+   */
+  previous?: readonly ItemResult[];
 }): Promise<{ results: ItemResult[]; paused: boolean; more: boolean }> {
   const sleep = input.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const spacing = input.spacingMs ?? DEFAULT_SPACING_MS;
-  const chunk = Math.max(1, Math.floor(input.chunkSize ?? DEFAULT_CHUNK));
+  const requested = input.chunkSize ?? DEFAULT_CHUNK;
+  const chunk = Number.isFinite(requested) ? Math.max(1, Math.floor(requested)) : DEFAULT_CHUNK;
+  const prior = new Map<string, ItemResult>();
+  for (const r of input.previous ?? []) if (r.status !== "pending") prior.set(r.entryId, r);
   const seen = new Set<string>();
   const ids = input.entryIds.filter((id) => (seen.has(id) ? false : (seen.add(id), true)));
   const results: ItemResult[] = [];
   let paused = false;
   let sends = 0;
   for (const entryId of ids) {
-    if (input.alreadySent?.has(entryId)) {
-      results.push({ entryId, status: "sent" });
+    const done = prior.get(entryId);
+    if (done) {
+      results.push(done);
       continue;
     }
     if (paused || sends >= chunk) {
@@ -90,7 +97,17 @@ export async function runInviteBatch(input: {
   return { results, paused, more: results.some((r) => r.status === "pending") };
 }
 
-/** Retry targets: the failed items only. A sent item is never resent, a skipped one is a guard the owner must resolve first. */
+/** Turn the failed items of a previous call back into pending, so the next call retries exactly those and nothing else. */
+export function reopenFailed(results: readonly ItemResult[]): ItemResult[] {
+  return results.map((r) => (r.status === "failed" ? { entryId: r.entryId, status: "pending" as const } : r));
+}
+
+/**
+ * Retry targets: the failed items only. A sent item is never resent, a skipped one is a guard the owner must resolve first. Items still `pending`
+ * after a pause or a chunk are NOT here: the caller continues them by calling again with `previous`.
+ * Per-person duplicate protection (two entries for one person), consent and the messaging limits are enforced by the server command behind the
+ * send port, never by this module, and the 500 ms spacing is per call: the caller must space its own calls.
+ */
 export function retryTargets(results: readonly ItemResult[]): string[] {
   return results.filter((r) => r.status === "failed").map((r) => r.entryId);
 }
