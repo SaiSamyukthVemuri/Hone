@@ -34,19 +34,23 @@ export function likePattern(q: string): string {
 export type SearchHit = { id: string; name: string; status: string; section: EntrySection | null; joinedAt: string };
 export type SearchResult = { kind: "unknown" } | { kind: "ok"; hits: SearchHit[]; capped: boolean };
 
+/** One row to one hit, or null when the row is malformed. The single place a row's validity is decided. */
+export function hitFromRow(r: Record<string, unknown>): SearchHit | null {
+  if (typeof r.id !== "string" || typeof r.name !== "string" || typeof r.status !== "string") return null;
+  return {
+    id: r.id,
+    name: r.name,
+    status: r.status,
+    section: SECTION_OF_STATUS[r.status] ?? null,
+    joinedAt: typeof r.joined_at === "string" ? r.joined_at : "",
+  };
+}
+
 export function hitsFromRows(rows: ReadonlyArray<Record<string, unknown>>): SearchHit[] {
-  const out: SearchHit[] = [];
-  for (const r of rows) {
-    if (typeof r.id !== "string" || typeof r.name !== "string" || typeof r.status !== "string") continue;
-    out.push({
-      id: r.id,
-      name: r.name,
-      status: r.status,
-      section: SECTION_OF_STATUS[r.status] ?? null,
-      joinedAt: typeof r.joined_at === "string" ? r.joined_at : "",
-    });
-  }
-  return out;
+  return rows.flatMap((r) => {
+    const h = hitFromRow(r);
+    return h ? [h] : [];
+  });
 }
 
 export async function searchWaitlistEntries(studioId: string, query: string): Promise<SearchResult> {
@@ -79,10 +83,13 @@ type RowWithTime = Record<string, unknown>;
  * `capped` is true when anything was left out, so the cut is always the OLDEST outcomes.
  */
 export function mergeReleased(expiredRows: ReadonlyArray<RowWithTime>, releasedRows: ReadonlyArray<RowWithTime>, limit: number = RELEASED_LIMIT): { hits: SearchHit[]; capped: boolean } {
+  // The hit and its time are produced from the SAME row, so a malformed row that is dropped cannot shift any later row's time.
   const withTime = (rows: ReadonlyArray<RowWithTime>, col: string) =>
-    hitsFromRows(rows).map((h, i) => {
-      const t = rows[i] && typeof rows[i]![col] === "string" ? Date.parse(rows[i]![col] as string) : NaN;
-      return { h, t: Number.isNaN(t) ? -Infinity : t };
+    rows.flatMap((r) => {
+      const h = hitFromRow(r);
+      if (!h) return [];
+      const t = typeof r[col] === "string" ? Date.parse(r[col] as string) : NaN;
+      return [{ h, t: Number.isNaN(t) ? -Infinity : t }];
     });
   const all = [...withTime(expiredRows, "expired_at"), ...withTime(releasedRows, "released_at")];
   all.sort((a, b) => (b.t !== a.t ? (b.t > a.t ? 1 : -1) : a.h.id < b.h.id ? -1 : a.h.id > b.h.id ? 1 : 0));
