@@ -154,6 +154,19 @@ test.describe("B. staff books, the practitioner charts (HON-45)", () => {
     // The charted-but-unfinished visit is visible to the owner on the dashboard, so it cannot stay open unseen.
     await ownerPage.goto("/dashboard");
     await expect(ownerPage.getByText("Not finished").first()).toBeVisible({ timeout: T });
+    // SETUP SHORTCUT (labelled): clone this charted visit onto 30 earlier days (distinct days, so the practitioner-overlap
+    // constraint is not touched; the cancellation token hash is cleared, it is unique) so the total is above one page (25).
+    await sql(
+      `with src as (select * from public.appointments where id=$1 and studio_id=$2),
+            newa as (
+              insert into public.appointments
+              select (jsonb_populate_record(a, jsonb_build_object('id', gen_random_uuid(), 'starts_at', x.ts, 'ends_at', x.ts + interval '1 hour', 'cancellation_token_hash', null))).*
+                from src a, lateral (select (date_trunc('day', now()) - (g || ' days')::interval + interval '10 hours') as ts from generate_series(2, 31) g) x
+              returning id, studio_id, client_id, practitioner_id)
+       insert into public.sessions (studio_id, client_id, practitioner_id, performed_by_practitioner_id, modality, appointment_id)
+       select studio_id, client_id, practitioner_id, practitioner_id, (select modality from public.sessions where id=$3), id from newa`,
+      [appointmentId, seed.studioId, sessionId],
+    );
     // REAL-DB PROOF of the exact count and the View all list (inner joins, count, range): the page must agree with an independent
     // SQL count of confirmed, ended appointments that have a live chart, and the studio's own list must hold exactly those rows.
     const [{ n }] = await sql<{ n: string }>(
@@ -169,8 +182,18 @@ test.describe("B. staff books, the practitioner charts (HON-45)", () => {
     await ownerPage.getByTestId("unfinished-view-all").click();
     await ownerPage.waitForURL(/\/dashboard\/unfinished/, { timeout: T });
     await expect(ownerPage.getByTestId("unfinished-list-total")).toContainText(`${total} ${total === 1 ? "visit" : "visits"} not finished`, { timeout: T });
-    await expect(ownerPage.getByTestId("unfinished-list").locator("li")).toHaveCount(Math.min(total, 25));
+    expect(total).toBeGreaterThan(25);
+    await expect(ownerPage.getByTestId("unfinished-list").locator("li")).toHaveCount(25);
     await expect(ownerPage.locator(`a[href$="/sessions/${sessionId}"]`).first()).toBeVisible();
+    // Page 2 holds the rest: no gap and no overlap with page 1 (distinct session links), and no Next on the last page.
+    const page1 = await ownerPage.getByTestId("unfinished-list").locator("a[href*='/sessions/']").evaluateAll((as) => as.map((a) => a.getAttribute("href")));
+    await ownerPage.getByTestId("unfinished-next").click();
+    await ownerPage.waitForURL(/page=2/, { timeout: T });
+    await expect(ownerPage.getByTestId("unfinished-list").locator("li")).toHaveCount(total - 25);
+    const page2 = await ownerPage.getByTestId("unfinished-list").locator("a[href*='/sessions/']").evaluateAll((as) => as.map((a) => a.getAttribute("href")));
+    expect(page1).toHaveLength(25);
+    expect(new Set([...page1, ...page2]).size).toBe(total);
+    await expect(ownerPage.getByTestId("unfinished-next")).toHaveCount(0);
   });
 
   test("J5 Finish completes once, sends no postcare and takes no payment; reload changes nothing", async () => {
