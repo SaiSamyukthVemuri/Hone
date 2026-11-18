@@ -54,6 +54,15 @@ describe("the restore path is the strict one", () => {
   });
 });
 
+describe("the fingerprint compares effective ACLs, not their spelling", () => {
+  it("a NULL acl (the default) and the explicit default the replay writes are the same fact: schema and migration-table ACLs go through acldefault", () => {
+    // Found on the third stack run: the chain leaves supabase_migrations' ACLs NULL; the replay materialises the identical default.
+    expect(FINGERPRINT_SQL).toMatch(/coalesce\(n\.nspacl, acldefault\('n', n\.nspowner\)\)/);
+    expect(FINGERPRINT_SQL).toMatch(/coalesce\(c\.relacl, acldefault\(/);
+    expect(FINGERPRINT_SQL).not.toMatch(/coalesce\(n\.nspacl::text/);
+  });
+});
+
 describe("the fingerprint is one line per fact", () => {
   it("every category collapses whitespace, because a column default or constraint expression can span lines (a continuation line is not a fact)", () => {
     // Found on the first stack run: a multi-line value parsed as a category-less line ("CASE").
