@@ -60,6 +60,11 @@ export type TodayWorkflowInput = {
   cautionNote: string | null;
   // "27.12 MHz · Ballet F3 · Thermolysis"; recorded setup, or null.
   setupLine: string | null;
+  // Where the notes and the setup came from, already worded in the studio's calendar by the caller
+  // (lib/dashboard/memory-source-labels.ts), so this module stays timezone-free. Optional: absent means
+  // nothing is labelled.
+  notesSourceLabel?: string | null;
+  setupSourceLabel?: string | null;
   // Granular missing-record reminders, already safe-worded by buildBeforeToday.
   reminders: ReadonlyArray<string>;
   intake: TodayIntake;
@@ -90,6 +95,11 @@ export type TodayWorkflowItem = {
   caution: string | null;
   // Rendered once under "Latest setup".
   setup: string | null;
+  // "Notes from 3 Oct (the latest visit on 10 Nov has no notes)" for Remember and Caution; null when there are
+  // no notes or no label was supplied. Said once, never per line.
+  notesSourceLabel: string | null;
+  // The same, for the setup line.
+  setupSourceLabel: string | null;
   // Specific, shortened, deduplicated missing-record reminders. NEVER
   // accompanied by a generic "Records: N reminders" count.
   missingRecords: string[];
@@ -180,6 +190,9 @@ function buildItem(input: TodayWorkflowInput): TodayWorkflowItem {
     remember,
     caution,
     setup,
+    // Only with a note / a setup actually shown, and only when the row has answered history.
+    notesSourceLabel: input.hasHistory && (remember || caution) ? trimmedOrNull(input.notesSourceLabel) : null,
+    setupSourceLabel: setup ? trimmedOrNull(input.setupSourceLabel) : null,
     missingRecords,
     intake: input.intake,
     charting: input.charting,

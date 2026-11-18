@@ -11,6 +11,8 @@ export type TimesFeedbackCount = { kind: "unknown" } | { kind: "ok"; n: number }
 
 export type TimesFeedbackRow = {
   invitationId: string;
+  // The waitlist entry this reply belongs to. The contact card is joined on THIS id, never on the name.
+  entryId: string;
   entryName: string;
   note: string | null;
   createdAt: string;
@@ -45,9 +47,12 @@ export async function listTimesFeedback(studioId: string, actorUserId: string | 
     if (data.length > 0 && (data[0] as { result?: unknown }).result !== "ok") return { kind: "unknown" };
     const rows: TimesFeedbackRow[] = [];
     for (const r of data as Array<Record<string, unknown>>) {
-      if (typeof r.invitation_id !== "string" || typeof r.entry_name !== "string") return { kind: "unknown" };
+      if (typeof r.invitation_id !== "string" || typeof r.entry_id !== "string" || typeof r.entry_name !== "string") {
+        return { kind: "unknown" };
+      }
       rows.push({
         invitationId: r.invitation_id,
+        entryId: r.entry_id,
         entryName: r.entry_name,
         note: typeof r.note === "string" ? r.note : null,
         createdAt: typeof r.created_at === "string" ? r.created_at : "",

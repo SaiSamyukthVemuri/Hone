@@ -62,6 +62,7 @@ import type {
   VerificationState,
 } from "./profile-contract";
 import { APILUS_3G_PROFILES, APILUS_3G_TEXT_PROFILES } from "./apilus-3g";
+import { XCELL_PUR_PROFILES } from "./xcell-pur";
 import { recordedProfile } from "./profile-contract";
 
 // ---------------------------------------------------------------------------
@@ -528,6 +529,8 @@ function apilus(
 export const MACHINE_CATALOGUE: readonly MachineProfile[] = [
   ...APILUS_3G_PROFILES,
   ...APILUS_3G_TEXT_PROFILES,
+  // Blocked, MultiPlex-only; a separate profile so the xCell entry below stays unchanged (HON-71).
+  ...XCELL_PUR_PROFILES,
   apilus("xCell", {
     modes: ["multiplex", "multiblend"],
     evidence: [APILUS_COMPARISON, APILUS_XCELL_MANUAL, CHLOE_FIELD_SCOPE],

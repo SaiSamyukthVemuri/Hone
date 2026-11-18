@@ -17,12 +17,17 @@
 // DEFINITIONS (reused, not invented):
 //   next appointment  status confirmed and starts_at after now, earliest first;
 //                     cancelled, no-show and completed are never upcoming.
+//   last visit        lib/clients/last-visit.ts (live non-void session or completed appointment, not in the
+//                     future). The sort and the "not seen in N months" filter use it; a client with NO
+//                     recorded visit is a separate bucket ("No recorded visit"), never "overdue"
+//                     (lib/clients/last-visit-filter.ts).
 //   intake            the canonical current intake per client (newest non-deleted
 //                     form): submitted = awaiting review, reviewed = reviewed,
 //                     in progress or no form = not submitted.
 
 import { directoryMatchRank, directorySortKey, matchesDirectoryQuery, normalizeDirectoryQuery } from "@/lib/clients/directory-search";
 import type { DirectoryIdentityRow } from "@/lib/clients/directory-rules";
+import { lastVisitMatcher, parseLastVisitFilter, type LastVisitFilter } from "@/lib/clients/last-visit-filter";
 
 export const DIRECTORY_PAGE_SIZE = 25;
 
@@ -34,12 +39,14 @@ export type NextAppointment =
   | { state: "unavailable" };
 
 export type DirectoryFilter = "intake_review" | "no_upcoming";
-export type DirectorySort = "name" | "next" | "archived";
+export type DirectorySort = "name" | "next" | "lastvisit" | "archived";
 
 export type DirectoryParams = {
   q: string;
   filters: DirectoryFilter[];
   sort: DirectorySort;
+  /** "Not seen in N months" / "No recorded visit"; "any" applies nothing. Ignored in the archived view. */
+  lastVisit: LastVisitFilter;
   page: number;
 };
 
@@ -48,7 +55,16 @@ export type DirectoryAggregates = {
   nextAppointments: ReadonlyMap<string, string> | null;
   /** client id -> canonical current intake status; null when the read failed. */
   intake: ReadonlyMap<string, IntakeStatusValue> | null;
+  /**
+   * client id -> last visit (lib/clients/last-visit.ts); null when the read failed. UNDEFINED means it was
+   * not read because nothing in this request needs the whole set; a sort or filter that needs it and finds
+   * it undefined or null is unavailable, never answered from nothing.
+   */
+  lastVisits?: ReadonlyMap<string, string> | null;
 };
+
+/** What "now" and "the studio's calendar" mean for the last-visit filter. Passed in, never read here. */
+export type DirectoryClock = { nowIso: string; timeZone: string };
 
 export type DirectoryRow = DirectoryIdentityRow & {
   next: NextAppointment;
@@ -73,6 +89,10 @@ export type DirectoryPage = {
   sortDegraded: boolean;
   nextUnavailable: boolean;
   intakeUnavailable: boolean;
+  /** The last-visit sort or filter was requested but its whole-set data is unavailable. */
+  lastVisitUnavailable: boolean;
+  /** The last-visit FILTER could not be applied (its data is unavailable): no rows, an explicit message. */
+  lastVisitBlocked: boolean;
 };
 
 const FILTERS: ReadonlyArray<DirectoryFilter> = ["intake_review", "no_upcoming"];
@@ -91,14 +111,16 @@ export function parseDirectoryParams(
   // typed filter is ignored there rather than matching placeholder aggregates (Insurance K5).
   const filters = view === "archived" ? [] : FILTERS.filter((f) => rawFilters.includes(f));
   const rawSort = one(sp.sort);
-  // Active: name (default) or next appointment. Archived: most recently archived (default) or name.
+  // Active: name (default), next appointment or last visit. Archived: most recently archived (default) or name.
   const sort: DirectorySort =
     view === "archived"
       ? rawSort === "name" ? "name" : "archived"
-      : rawSort === "next" ? "next" : "name";
+      : rawSort === "next" ? "next" : rawSort === "lastvisit" ? "lastvisit" : "name";
+  // Like the other filters, ignored in the archived view (which reads no visit data).
+  const lastVisit: LastVisitFilter = view === "archived" ? "any" : parseLastVisitFilter(sp.lastvisit);
   const n = Number.parseInt(one(sp.page) ?? "1", 10);
   const page = Number.isFinite(n) && n >= 1 ? Math.min(n, 100000) : 1;
-  return { q, filters, sort, page };
+  return { q, filters, sort, lastVisit, page };
 }
 
 function intakeState(status: IntakeStatusValue | undefined): IntakeState {
@@ -143,8 +165,13 @@ export function queryDirectory(
   source: ReadonlyArray<DirectoryIdentityRow>,
   aggregates: DirectoryAggregates,
   params: DirectoryParams,
+  clock: DirectoryClock = { nowIso: new Date().toISOString(), timeZone: "UTC" },
 ): DirectoryPage {
   const nextUnavailable = aggregates.nextAppointments === null;
+  const lastVisits = aggregates.lastVisits ?? null;
+  const needsLastVisit = params.sort === "lastvisit" || params.lastVisit !== "any";
+  const lastVisitUnavailable = needsLastVisit && lastVisits === null;
+  const lastVisitBlocked = params.lastVisit !== "any" && lastVisitUnavailable;
   const intakeUnavailable = aggregates.intake === null;
 
   const rows = buildDirectoryRows(source, aggregates);
@@ -165,17 +192,41 @@ export function queryDirectory(
     sortDegraded,
     nextUnavailable,
     intakeUnavailable,
+    lastVisitUnavailable,
+    lastVisitBlocked,
   };
-  if (blockedFilters.length > 0) return { ...base, rows: [], total: 0 };
+  if (blockedFilters.length > 0 || lastVisitBlocked) return { ...base, rows: [], total: 0 };
 
   let set = rows.filter((r) => matchesDirectoryQuery(r, params.q));
   if (params.filters.includes("intake_review")) set = set.filter((r) => r.intake === "awaiting_review");
   if (params.filters.includes("no_upcoming")) set = set.filter((r) => r.next.state === "none");
+  if (params.lastVisit === "none") {
+    // No recorded visit: its own bucket. Absent evidence is not a date, so it is never in "not seen in N months".
+    set = set.filter((r) => !lastVisits!.has(r.id));
+  } else if (params.lastVisit !== "any") {
+    // The cutoff and the date formatter are built ONCE for the request, not per client.
+    const atLeast = lastVisitMatcher(Number(params.lastVisit), clock.nowIso, clock.timeZone);
+    set = set.filter((r) => {
+      const at = lastVisits!.get(r.id);
+      return at !== undefined && atLeast(at);
+    });
+  }
 
   if (params.sort === "next" && !nextUnavailable) {
     set.sort((a, b) => {
       const ta = a.next.state === "scheduled" ? a.next.startsAt : null;
       const tb = b.next.state === "scheduled" ? b.next.startsAt : null;
+      if (ta !== null && tb !== null && ta !== tb) return ta < tb ? -1 : 1;
+      if (ta !== null && tb === null) return -1;
+      if (ta === null && tb !== null) return 1;
+      return byName(a, b);
+    });
+  } else if (params.sort === "lastvisit" && !lastVisitUnavailable) {
+    // Longest ago first. A client with NO recorded visit is not "longest ago": they follow everyone who has
+    // a recorded visit, alphabetically, as their own group.
+    set.sort((a, b) => {
+      const ta = lastVisits!.get(a.id) ?? null;
+      const tb = lastVisits!.get(b.id) ?? null;
       if (ta !== null && tb !== null && ta !== tb) return ta < tb ? -1 : 1;
       if (ta !== null && tb === null) return -1;
       if (ta === null && tb !== null) return 1;
@@ -218,6 +269,7 @@ export function directoryHref(state: {
   q?: string;
   filters?: ReadonlyArray<DirectoryFilter>;
   sort?: DirectorySort;
+  lastVisit?: LastVisitFilter;
   page?: number;
   client?: string;
 }): string {
@@ -226,6 +278,8 @@ export function directoryHref(state: {
   if (state.q) p.set("q", state.q);
   for (const f of state.filters ?? []) p.append("filter", f);
   if (state.sort === "next") p.set("sort", "next");
+  if (state.sort === "lastvisit") p.set("sort", "lastvisit");
+  if (state.lastVisit && state.lastVisit !== "any") p.set("lastvisit", state.lastVisit);
   if (state.sort === "name" && state.view === "archived") p.set("sort", "name");
   if (state.page && state.page > 1) p.set("page", String(state.page));
   if (state.client) p.set("client", state.client);
