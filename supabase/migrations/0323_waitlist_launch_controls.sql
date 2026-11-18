@@ -97,7 +97,6 @@ set search_path = pg_catalog, pg_temp
 as $$ select true $$;
 
 revoke all on function public.assert_new_client_admission(uuid, text, boolean) from public, anon, authenticated, service_role;
-revoke all on function public.waitlist_closed_invited_booking_enabled() from public, anon, authenticated, service_role;
 grant execute on function public.waitlist_closed_invited_booking_enabled() to service_role;
 
 comment on function public.waitlist_closed_invited_booking_enabled() is

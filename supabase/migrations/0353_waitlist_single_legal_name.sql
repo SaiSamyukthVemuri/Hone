@@ -280,7 +280,6 @@ $$;
 
 revoke execute on function public.complete_waitlist_profile_by_grant_v2(text, text, text, text[], text, text, boolean, boolean) from public;
 revoke execute on function public.complete_waitlist_profile_by_grant_v2(text, text, text, text[], text, text, boolean, boolean) from anon;
-revoke execute on function public.complete_waitlist_profile_by_grant_v2(text, text, text, text[], text, text, boolean, boolean) from authenticated;
 revoke execute on function public.complete_waitlist_profile_by_grant_v2(text, text, text, text[], text, text, boolean, boolean) from service_role;
 grant execute on function public.complete_waitlist_profile_by_grant_v2(text, text, text, text[], text, text, boolean, boolean) to service_role;
 

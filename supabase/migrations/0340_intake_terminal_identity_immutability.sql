@@ -67,7 +67,6 @@ end;
 $$;
 
 -- A trigger function is never called directly; firing it needs no EXECUTE privilege.
-revoke all on function public.enforce_intake_terminal_visibility() from public, anon, authenticated, service_role;
 
 drop trigger if exists client_intake_forms_terminal_visibility on public.client_intake_forms;
 create trigger client_intake_forms_terminal_visibility

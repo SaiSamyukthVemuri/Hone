@@ -1106,7 +1106,6 @@ revoke execute on function public.studio_named_stripe_accounts(uuid) from authen
 revoke execute on function public.studio_named_stripe_accounts(uuid) from service_role;
 
 revoke execute on function public.initialize_studio_payment_jurisdiction_from_history(uuid, text, text, text, text, text, boolean, text[], uuid[]) from public;
-revoke execute on function public.initialize_studio_payment_jurisdiction_from_history(uuid, text, text, text, text, text, boolean, text[], uuid[]) from anon;
 revoke execute on function public.initialize_studio_payment_jurisdiction_from_history(uuid, text, text, text, text, text, boolean, text[], uuid[]) from authenticated;
 revoke execute on function public.initialize_studio_payment_jurisdiction_from_history(uuid, text, text, text, text, text, boolean, text[], uuid[]) from service_role;
 grant execute on function public.initialize_studio_payment_jurisdiction_from_history(uuid, text, text, text, text, text, boolean, text[], uuid[]) to service_role;

@@ -82,7 +82,6 @@ set local lock_timeout = '5s';
 revoke insert, update, delete on table public.sessions from authenticated;
 revoke insert, update, delete on table public.session_blocks from authenticated;
 revoke insert, update, delete on table public.session_block_areas from authenticated;
-revoke insert, update, delete on table public.electrolysis_entries from authenticated;
 revoke insert, update, delete on table public.laser_entries from authenticated;
 revoke insert, update, delete on table public.treatment_images from authenticated;
 

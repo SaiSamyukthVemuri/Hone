@@ -108,7 +108,6 @@ $$;
 
 revoke all privileges on function public.appointment_quoted_amount_cents(uuid, uuid) from public;
 revoke all privileges on function public.appointment_quoted_amount_cents(uuid, uuid) from anon;
-revoke all privileges on function public.appointment_quoted_amount_cents(uuid, uuid) from authenticated;
 revoke all privileges on function public.appointment_quoted_amount_cents(uuid, uuid) from service_role;
 
 comment on function public.appointment_quoted_amount_cents(uuid, uuid) is
