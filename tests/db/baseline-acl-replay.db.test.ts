@@ -21,7 +21,7 @@ afterAll(async () => {
 const SNAPSHOT = `
   select x from (
     select 'rel|' || c.relname || '|' || pg_get_userbyid(c.relowner) || '|' || coalesce(a.grantee::regrole::text, 'PUBLIC') || '|' || a.privilege_type || '|' || a.is_grantable::text as x
-      from pg_class c, lateral aclexplode(coalesce(c.relacl, acldefault(case when c.relkind = 'S' then 'S' else 'r' end, c.relowner))) a
+      from pg_class c, lateral aclexplode(coalesce(c.relacl, acldefault((case when c.relkind = 'S' then 'S' else 'r' end)::"char", c.relowner))) a
      where c.relnamespace = 'public'::regnamespace and c.relkind in ('r','p','v','m','f','S')
     union all
     select 'fn|' || p.oid::regprocedure::text || '|' || coalesce(a.grantee::regrole::text, 'PUBLIC') || '|' || a.privilege_type || '|' || a.is_grantable::text
@@ -31,7 +31,7 @@ const SNAPSHOT = `
       from pg_namespace n, lateral aclexplode(coalesce(n.nspacl, acldefault('n', n.nspowner))) a where n.nspname in ('public', 'supabase_migrations')
     union all
     select 'migrel|' || c.relname || '|' || coalesce(a.grantee::regrole::text, 'PUBLIC') || '|' || a.privilege_type || '|' || a.is_grantable::text
-      from pg_class c, lateral aclexplode(coalesce(c.relacl, acldefault(case when c.relkind = 'S' then 'S' else 'r' end, c.relowner))) a
+      from pg_class c, lateral aclexplode(coalesce(c.relacl, acldefault((case when c.relkind = 'S' then 'S' else 'r' end)::"char", c.relowner))) a
      where c.relnamespace = 'supabase_migrations'::regnamespace and c.relkind in ('r','p','v','m','f','S')
     union all
     select 'type|' || t.typname || '|' || coalesce(a.grantee::regrole::text, 'PUBLIC') || '|' || a.privilege_type || '|' || a.is_grantable::text

@@ -79,6 +79,9 @@ describe("the generated replays cover what pg_dump does not carry", () => {
   it("extensions are created before the dump is loaded, and triggers on auth are replayed", () => {
     expect(EXTENSIONS_SQL).toMatch(/create extension if not exists/);
     expect(TRIGGERS_SQL).toMatch(/pg_get_triggerdef/);
+    // The platform's own triggers already exist on a stack: a plain CREATE TRIGGER failed the first seal on realtime.subscription.
+    expect(TRIGGERS_SQL).toMatch(/CREATE OR REPLACE TRIGGER/);
+    expect(TRIGGERS_SQL).toMatch(/tgconstraint = 0/);
     expect(TRIGGERS_SQL).toMatch(/'auth'/);
     expect(cli.indexOf("extensions.sql")).toBeLessThan(cli.indexOf('"pg_restore", "-U"'));
   });

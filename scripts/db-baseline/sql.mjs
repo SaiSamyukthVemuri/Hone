@@ -68,11 +68,13 @@ select format('create extension if not exists %I schema %I;', e.extname, n.nspna
  where e.extname <> 'plpgsql' order by e.extname;
 `;
 
-// Triggers the migrations put on tables OUTSIDE the dumped schemas (auth.users).
+// Triggers on tables OUTSIDE the dumped schemas: the one a migration puts on auth.users, plus the platform's own on
+// realtime and storage. CREATE OR REPLACE, because a stack already has the platform's (a plain CREATE failed on
+// realtime.subscription's tr_check_filters on the first seal): replacing an identical one changes nothing.
 export const TRIGGERS_SQL = String.raw`
-select pg_get_triggerdef(t.oid) || ';'
+select regexp_replace(pg_get_triggerdef(t.oid), '^CREATE TRIGGER', 'CREATE OR REPLACE TRIGGER') || ';'
   from pg_trigger t join pg_class c on c.oid = t.tgrelid join pg_namespace n on n.oid = c.relnamespace
- where not t.tgisinternal and n.nspname in ('auth','storage','realtime')
+ where not t.tgisinternal and t.tgconstraint = 0 and n.nspname in ('auth','storage','realtime')
  order by n.nspname, c.relname, t.tgname;
 `;
 
