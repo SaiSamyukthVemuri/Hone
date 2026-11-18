@@ -9,6 +9,31 @@ const ALLOWED = new Set([
   "tests/lib/charting/view-preference.test.ts",
   "tests/lib/charting/view-preference-display-only.test.ts",
   "tests/app/charting-view-actions.test.ts",
+  "tests/app/sessions/charting-view-page-wiring.test.ts",
+  "tests/lib/charting/page-view.test.ts",
+]);
+
+// Files that may IMPORT the preference module at all. An authorization, permission, role or policy module is
+// deliberately absent; adding one here is a decision a reviewer must see.
+const IMPORTERS = new Set([
+  "app/(app)/charting-view-actions.ts",
+  "app/(app)/clients/[id]/sessions/[sessionId]/page.tsx",
+  "components/charting-view-shell.tsx",
+  "components/use-charting-view-preference.ts",
+  "lib/charting/page-view.ts",
+  "tests/app/charting-view-actions.test.ts",
+  "tests/components/charting-view-preference-hook.test.ts",
+  "tests/lib/charting/page-view.test.ts",
+  "tests/lib/charting/view-preference-display-only.test.ts",
+  "tests/lib/charting/view-preference.test.ts",
+]);
+// Who may call the READERS. page-view.ts is the one runtime caller.
+const READER_USERS = new Set([
+  "lib/charting/view-preference.ts",
+  "lib/charting/page-view.ts",
+  "tests/lib/charting/view-preference.test.ts",
+  "tests/lib/charting/view-preference-display-only.test.ts",
+  "tests/app/sessions/charting-view-page-wiring.test.ts",
 ]);
 
 describe("the charting view preference is display only", () => {
@@ -18,6 +43,35 @@ describe("the charting view preference is display only", () => {
     }).trim();
     const files = out.split("\n").filter(Boolean);
     expect(files.filter((f) => !ALLOWED.has(f))).toEqual([]);
+  });
+  it("is imported only by the files that display or remember it, never by an authorization or permission module", () => {
+    const out = execFileSync(
+      "git",
+      ["grep", "-l", "-E", "lib/charting/view-preference", "--", "app", "lib", "components", "tests", "middleware.ts"],
+      { encoding: "utf8" },
+    ).trim();
+    const files = out.split("\n").filter(Boolean);
+    expect(files.filter((f) => !IMPORTERS.has(f))).toEqual([]);
+  });
+  it("the page decision itself is imported only by the charting page (never by an authorization or permission module)", () => {
+    const out = execFileSync("git", ["grep", "-l", "-E", "chartingViewForPage|lib/charting/page-view", "--", "app", "lib", "components", "tests", "middleware.ts"], { encoding: "utf8" }).trim();
+    const allowed = new Set([
+      "app/(app)/clients/[id]/sessions/[sessionId]/page.tsx",
+      "lib/charting/page-view.ts",
+      "tests/lib/charting/page-view.test.ts",
+      "tests/lib/charting/view-preference-display-only.test.ts",
+      "tests/app/sessions/charting-view-page-wiring.test.ts",
+    ]);
+    expect(out.split("\n").filter(Boolean).filter((f) => !allowed.has(f))).toEqual([]);
+  });
+  it("its readers are called by nothing but the one page decision", () => {
+    const out = execFileSync(
+      "git",
+      ["grep", "-l", "-E", "chartingViewFromMetadata|resolveChartingView|readChartingView", "--", "app", "lib", "components", "tests", "middleware.ts"],
+      { encoding: "utf8" },
+    ).trim();
+    const files = out.split("\n").filter(Boolean);
+    expect(files.filter((f) => !READER_USERS.has(f))).toEqual([]);
   });
   it("stores a closed value and no free text", async () => {
     const mod = await import("@/lib/charting/view-preference");
