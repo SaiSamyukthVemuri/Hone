@@ -18,6 +18,7 @@ const ALLOWED = new Set([
 const IMPORTERS = new Set([
   "app/(app)/charting-view-actions.ts",
   "app/(app)/clients/[id]/sessions/[sessionId]/page.tsx",
+  "components/charting-view-context.tsx", // type-only: the view name
   "components/charting-view-shell.tsx",
   "components/use-charting-view-preference.ts",
   "lib/charting/page-view.ts",
