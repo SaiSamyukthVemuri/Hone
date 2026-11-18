@@ -1156,7 +1156,7 @@ describe("the synthetic demo profile cannot reach production", () => {
     // The REAL profiles that are active on their own merits (HON-8's first slice): the gate neither adds nor removes them. Pinned by
     // id so a stray activation of any other real profile still fails here, and so these two are never read as synthetic.
     const realActiveIds = realBefore.filter((p) => p.availability === "active").map((p) => p.profileId).sort();
-    expect(realActiveIds).toEqual(["dectro-apilus:junior-3g", "dectro-apilus:senior-3g"]);
+    expect(realActiveIds).toEqual(["dectro-apilus:junior-3g", "dectro-apilus:senior-3g", "dectro-apilus:xcell-pur"]);
     const on = synthetic.catalogueForRuntime(base);
     const fixtures = on.filter((p) => p.profileId.startsWith("synthetic:"));
     expect(fixtures.map((p) => p.profileId).sort()).toEqual(expectedSyntheticIds);
