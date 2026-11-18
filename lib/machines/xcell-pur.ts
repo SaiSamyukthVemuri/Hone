@@ -21,6 +21,7 @@
  * Unblocking is a separate, reviewed step: the manual (edition and the software version it covers), the frequency, a second photo, and
  * then publication under a new owner token. See the open questions and the slice gate (tests/lib/machines/apilus-3g-first-slice.test.ts).
  */
+import { sliceViolations } from "./slice-gate";
 import type { EvidenceRef, MachineField, MachineMode, MachineProfile, ModeStage, OpenQuestion } from "./profile-contract";
 
 export const XCELL_PUR_PROFILE_ID = "dectro-apilus:xcell-pur";
@@ -172,4 +173,33 @@ function xcellPur(): MachineProfile {
   };
 }
 
-export const XCELL_PUR_PROFILES: readonly MachineProfile[] = [xcellPur()];
+/**
+ * ENABLEMENT (HON-71). A closed allow-list, like FIRST_SLICE_ACTIVE_MODES for the 3G models: the mode is offered only if it is named
+ * here AND the slice gate passes it. The gate is the evidence: it passes a mode only when the mode and every field are
+ * `manufacturer-documented`, nothing is unverified or held by an open question (the frequency question included), no range is enforced
+ * and the evidence resolves. Today it does NOT pass, so `multiplex` stays blocked and the profile publishes nothing. When the manual and
+ * the frequency are in hand the change that enables it edits the DATA above (verification states, unverified aspects, evidence, the
+ * frequency, the resolved questions); this list and the activation below do not change.
+ */
+export const XCELL_PUR_ACTIVE_MODES: readonly string[] = ["multiplex"];
+
+/** Activates only the named modes the slice gate passes. It can add; it can never override a hold. */
+export function applyXcellPurSlice(p: MachineProfile, allowed: readonly string[]): void {
+  const allow = new Set(allowed);
+  const refused = new Set(sliceViolations(p).map((v) => v.modeKey));
+  for (const m of p.modes) if (allow.has(m.key) && !refused.has(m.key)) m.availability = "active";
+}
+
+function enabled(): MachineProfile {
+  const p = xcellPur();
+  applyXcellPurSlice(p, XCELL_PUR_ACTIVE_MODES);
+  // The profile is offered only when at least one mode passed the gate. An active profile whose frequency or fields are unevidenced
+  // would break the catalogue's integrity invariants, so the profile stays blocked until then, with no edit here.
+  if (p.modes.some((m) => m.availability === "active")) {
+    p.availability = "active";
+    p.availabilityReason = "MultiPlex enabled for the first slice: the manual, the software version and the frequency are evidenced and the slice gate passes the mode.";
+  }
+  return p;
+}
+
+export const XCELL_PUR_PROFILES: readonly MachineProfile[] = [enabled()];

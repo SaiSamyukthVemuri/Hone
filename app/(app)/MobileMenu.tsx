@@ -23,12 +23,15 @@ export function MobileMenu({
   studioName,
   role,
   canSwitchStudio,
+  showWaitlist = false,
 }: {
   admin: boolean;
   displayName: string;
   studioName: string;
   role: string;
   canSwitchStudio: boolean;
+  /** Decided on the server by the same rule as the Settings tab; this only presents it. */
+  showWaitlist?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   // SIGNOUT-02c. The in-flight flag is NOT owned here any more. Both shells are
@@ -358,6 +361,7 @@ export function MobileMenu({
             { href: "/dashboard", label: "Dashboard" },
             { href: "/clients", label: "Clients" },
             { href: "/calendar", label: "Calendar" },
+            ...(showWaitlist ? [{ href: "/settings/waitlist", label: "Waitlist" }] : []),
             { href: "/records", label: "Records" },
             // OWNER-CAP follow-up: the owner's permanent Business entry, the
             // phone half of the desktop tab in layout.tsx. It belongs HERE, in
