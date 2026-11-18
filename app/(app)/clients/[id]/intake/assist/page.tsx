@@ -93,7 +93,7 @@ export default async function AssistedIntakePage({
         >
           ← Health intake
         </Link>
-        <h1 className="text-3xl font-semibold tracking-tight">
+        <h1 className="min-w-0 [overflow-wrap:anywhere] text-3xl font-semibold tracking-tight">
           Complete intake with {client.name}
         </h1>
       </div>

@@ -1928,9 +1928,9 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
   });
 });
 
-const APPLY_HISTORY_ENTRIES = 31;
+const APPLY_HISTORY_ENTRIES = 33;
 const APPLY_HISTORY_DIGEST =
-  "a34a29baab2cc076ef4663f5d06eb1f774583bb35fc134b6b35faf1ede07723c";
+  "a81638dad149908f80f199eca9106eb1b86a820f09508352ab55057973fbfbb6";
 
 describe("canonical production docs: the apply history is append-only", () => {
   /**

@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 274,
+    "count": 276,
     "last": "0357_cancellation_fee_tiers.sql",
-    "sha256": "a0311d0f5634e964162129f5ec136c709c6501f7985e1e4afa951d4913c2dfae"
+    "sha256": "2fd806fcd667daf0644fbe27a47b0c2fc26409995c881621572eedc55743a126"
   },
   "public": {
     "tables": [
@@ -14,6 +14,7 @@
       "appointment_settlements",
       "appointments",
       "audit_logs",
+      "block_write_receipts",
       "booking_tracking_consents",
       "calendar_connection_secrets",
       "calendar_connections",
@@ -166,6 +167,7 @@
       "amend_finalized_session",
       "amend_finalized_session_with_image",
       "apply_block_extra_fields",
+      "apply_block_machine_identity",
       "appointment_actor_role",
       "appointment_audit_derive_trusted_fields",
       "appointment_buffer_conflict",
@@ -255,6 +257,7 @@
       "create_appointment_core",
       "create_block_with_entry",
       "create_block_with_initial_setup",
+      "create_block_with_initial_setup_and_identity",
       "create_internal_appointment_v2",
       "create_laser_entry",
       "create_or_claim_refund_attempt",
@@ -441,6 +444,7 @@
       "reconcile_refund_event",
       "reconcile_setup_intent_succeeded",
       "record_appointment_settlement",
+      "record_block_machine_identity",
       "record_calendar_sync_result",
       "record_client_archive_audit_governed",
       "record_clinical_records_audit",
@@ -458,6 +462,7 @@
       "record_platform_early_access_signup",
       "record_platform_lead_alerts_unconfigured",
       "record_setup_group_in_scope",
+      "record_setup_submission_with_identity",
       "record_sms_delivery_status",
       "record_sms_result",
       "record_stripe_account_jurisdiction",
