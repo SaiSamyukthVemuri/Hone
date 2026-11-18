@@ -19,7 +19,7 @@ describe("pages that read the client themselves", () => {
   for (const f of READ_PAGES) {
     it(`${f}: reads preferred_name through the fallback and renders the display name, never the stored name`, () => {
       const src = code(read(f));
-      expect(src).toContain("readWithPreferredName");
+      expect(src).toContain("await readWithPreferredName((includePreferred) =>");
       expect(src).toContain("${preferredNameColumn(includePreferred)}name");
       expect(src).toContain("clientDisplayName(client)");
       expect(src, "no raw stored-name render").not.toMatch(/\bclient\??\.name\b/);
