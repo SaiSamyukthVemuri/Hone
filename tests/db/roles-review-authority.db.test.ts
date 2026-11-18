@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { adminQuery, adminTx, closePool, seedMember, seedStudio, type SeededStudio } from "./helpers/harness";
 
-// 0356: ONE review table, built by the database, for the exact policy version a save will check. Synthetic data. Anything that releases a key or
+// 0361: ONE review table, built by the database, for the exact policy version a save will check. Synthetic data. Anything that releases a key or
 // writes inside a transaction below is rolled back (releasing is operator-only and must never persist on a shared stack).
 // Releases are operator-only and must never persist on a stack: a test that commits one (the two-session and F4 cases) or a mutant that lets one through
 // is undone here, from the rows as they were before the file ran.
@@ -131,12 +131,12 @@ describe("contract: the existing result keys and types are unchanged; the table 
   });
 });
 
-describe("the delegator perm_run_changes returns exactly what the 0355 body returned", () => {
-  it("on a set of requests (preview and error paths), the delegator equals the sealed 0355 body installed under another name", async () => {
+describe("the delegator perm_run_changes returns exactly what the 0360 body returned", () => {
+  it("on a set of requests (preview and error paths), the delegator equals the sealed 0360 body installed under another name", async () => {
     const st = await studio();
-    const src = readFileSync("supabase/migrations/0355_roles_save_inert_denial.sql", "utf8");
+    const src = readFileSync("supabase/migrations/0360_roles_save_inert_denial.sql", "utf8");
     const from = src.indexOf("create or replace function public.perm_run_changes(");
-    const fn = src.slice(from, src.indexOf("$$;", src.indexOf("as $$", from)) + 3).replace("public.perm_run_changes(", "public.zz_run_changes_0355(");
+    const fn = src.slice(from, src.indexOf("$$;", src.indexOf("as $$", from)) + 3).replace("public.perm_run_changes(", "public.zz_run_changes_0360(");
     const cases: Record<string, unknown>[] = [
       { practitioner: { "avail.manage_own": "off" } },
       { practitioner: { "appt.cancel": "off", "avail.manage_own": "off" } },
@@ -148,11 +148,11 @@ describe("the delegator perm_run_changes returns exactly what the 0355 body retu
     ];
     await inTx(async (q) => {
       await q(fn);
-      await q(`grant execute on function public.zz_run_changes_0355(uuid, jsonb, text, boolean, bigint, boolean, boolean) to authenticated`);
+      await q(`grant execute on function public.zz_run_changes_0360(uuid, jsonb, text, boolean, bigint, boolean, boolean) to authenticated`);
       await q("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: st.userId, role: "authenticated" })]);
       {
         for (const c of cases) {
-          const a = (await q(`select public.zz_run_changes_0355($1, $2, null, false, null, false, false) as r`, [st.studioId, c])).rows[0].r;
+          const a = (await q(`select public.zz_run_changes_0360($1, $2, null, false, null, false, false) as r`, [st.studioId, c])).rows[0].r;
           const b = (await q(`select public.perm_run_changes($1, $2, null, false, null, false, false) as r`, [st.studioId, c])).rows[0].r;
           expect(b, JSON.stringify(c)).toEqual(a);
         }
@@ -1043,7 +1043,7 @@ describe("dependents: a change to a key moves every key that requires it, and th
   });
 
   it("the hash input's `changes` field: exact encoding and byte order of a fixed example (uppercase sorts before lowercase, whatever the database collation)", async () => {
-    const id = "00000000-0000-4000-8000-000000000356";
+    const id = "00000000-0000-4000-8000-000000000361";
     const changes = {
       receptionist: [{ key: "a.x", before: "off", after: "studio", consequence: "words", affected: { count: 3 } }],
       practitioner: [
@@ -1054,13 +1054,13 @@ describe("dependents: a change to a key moves every key that requires it, and th
     };
     const text = (await adminQuery(`select public.perm_review_hash_input($1, 5, '[]'::jsonb, '[]'::jsonb, false, $2::jsonb)::text as t`, [id, JSON.stringify(changes)])).rows[0].t as string;
     expect(text).toBe(
-      '{"v": 1, "basis": null, "gates": [], "review": [], "studio": "00000000-0000-4000-8000-000000000356", "catalog": [], "changes": [{"key": "B.z", "role": "practitioner", "after": "off", "before": "own"}, {"key": "a.w", "role": "practitioner", "after": "own", "before": "off"}, {"key": "b.y", "role": "practitioner", "after": "off", "before": "studio"}, {"key": "a.x", "role": "receptionist", "after": "studio", "before": "off"}], "version": 5, "basis_at": null, "releases": [], "activations": [], "sensitive_keys": [], "reason_required": false}',
+      '{"v": 1, "basis": null, "gates": [], "review": [], "studio": "00000000-0000-4000-8000-000000000361", "catalog": [], "changes": [{"key": "B.z", "role": "practitioner", "after": "off", "before": "own"}, {"key": "a.w", "role": "practitioner", "after": "own", "before": "off"}, {"key": "b.y", "role": "practitioner", "after": "off", "before": "studio"}, {"key": "a.x", "role": "receptionist", "after": "studio", "before": "off"}], "version": 5, "basis_at": null, "releases": [], "activations": [], "sensitive_keys": [], "reason_required": false}',
     );
     expect(text).not.toMatch(/words|people|affected|count/); // no consequence text, people, names or counts
   });
 
   it("the documented field list equals the input's real keys, and `changes` holds only role, key, before, after", async () => {
-    const src = readFileSync("supabase/migrations/0356_roles_review_authority.sql", "utf8");
+    const src = readFileSync("supabase/migrations/0361_roles_review_authority.sql", "utf8");
     const documented = /-- Fields: ([^\n]+)\./.exec(src)![1].split(", ").sort();
     const st = await studio();
     const input = (await adminQuery(`select public.perm_review_hash_input($1, 3, '[]'::jsonb, '[]'::jsonb, false, $2::jsonb) as i`, [st.studioId, JSON.stringify({ practitioner: [{ key: "k", before: "a", after: "b", sensitive: true }] })])).rows[0].i as Record<string, unknown>;
@@ -1175,10 +1175,10 @@ describe("the hash: algorithm, encoding, field list, determinism", () => {
   });
 
   it("a fixed example pins the exact encoding (no policy row, no involved keys)", async () => {
-    const id = "00000000-0000-4000-8000-000000000356";
+    const id = "00000000-0000-4000-8000-000000000361";
     const text = (await adminQuery(`select public.perm_review_hash_input($1, 5, '[]'::jsonb, '[]'::jsonb, false, '{}'::jsonb)::text as t`, [id])).rows[0].t as string;
     expect(text).toBe(
-      '{"v": 1, "basis": null, "gates": [], "review": [], "studio": "00000000-0000-4000-8000-000000000356", "catalog": [], "changes": [], "version": 5, "basis_at": null, "releases": [], "activations": [], "sensitive_keys": [], "reason_required": false}',
+      '{"v": 1, "basis": null, "gates": [], "review": [], "studio": "00000000-0000-4000-8000-000000000361", "catalog": [], "changes": [], "version": 5, "basis_at": null, "releases": [], "activations": [], "sensitive_keys": [], "reason_required": false}',
     );
     expect((await adminQuery(`select public.perm_review_hash($1, 5, '[]'::jsonb, '[]'::jsonb, false, '{}'::jsonb) as h`, [id])).rows[0].h).toBe(createHash("sha256").update(text, "utf8").digest("hex"));
   });
@@ -1246,15 +1246,15 @@ describe("grants and function settings", () => {
 });
 
 describe("rollback", () => {
-  it("restores the sealed 0355 body, drops every new function, and the old commands still work", async () => {
+  it("restores the sealed 0360 body, drops every new function, and the old commands still work", async () => {
     const st = await studio();
-    const down = readFileSync("supabase/rollbacks/0356_roles_review_authority.down.sql", "utf8")
+    const down = readFileSync("supabase/rollbacks/0361_roles_review_authority.down.sql", "utf8")
       .replace(/^begin;$/m, "")
       .replace(/^commit;$/m, "");
     await inTx(async (q) => {
       await q(down);
       const md5 = (await q(`select md5(prosrc) as m from pg_proc where oid = 'public.perm_run_changes(uuid, jsonb, text, boolean, bigint, boolean, boolean)'::regprocedure`)).rows[0].m;
-      expect(md5).toBe("4e65b638a84cfba3d24c1fc44b34daa0");
+      expect(md5).toBe("e1f64999b3fda06d586261447acbaca0");
       for (const f of ["perm_review_involved", "perm_review_timing", "perm_review_hash_input", "perm_review_hash", "perm_run_changes_reviewed", "preview_role_changes_at", "save_role_permissions_reviewed"]) {
         expect(Number((await q(`select count(*) n from pg_proc where proname = $1 and pronamespace = 'public'::regnamespace`, [f])).rows[0].n), f).toBe(0);
       }

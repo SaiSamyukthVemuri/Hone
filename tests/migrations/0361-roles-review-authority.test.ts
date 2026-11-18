@@ -3,13 +3,13 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isRepoMax } from "./helpers/migration-state";
 
-// 0356 source contract: function-only; the internal body equals the 0355 body apart from the declared lines; the rollback restores the sealed 0355
+// 0361 source contract: function-only; the internal body equals the 0360 body apart from the declared lines; the rollback restores the sealed 0360
 // body and drops each new function by exact signature; every new function is revoked by name from four roles; no RAISE carries the table.
 
-const UP = readFileSync("supabase/migrations/0356_roles_review_authority.sql", "utf8");
-const DOWN = readFileSync("supabase/rollbacks/0356_roles_review_authority.down.sql", "utf8");
-const PREV = readFileSync("supabase/migrations/0355_roles_save_inert_denial.sql", "utf8");
-const SEALED_0355_BODY_MD5 = "4e65b638a84cfba3d24c1fc44b34daa0"; // prosrc of perm_run_changes after 0355 (recorded in the 0355 PR)
+const UP = readFileSync("supabase/migrations/0361_roles_review_authority.sql", "utf8");
+const DOWN = readFileSync("supabase/rollbacks/0361_roles_review_authority.down.sql", "utf8");
+const PREV = readFileSync("supabase/migrations/0360_roles_save_inert_denial.sql", "utf8");
+const SEALED_0360_BODY_MD5 = "e1f64999b3fda06d586261447acbaca0"; // prosrc of perm_run_changes after 0360 (recorded in the 0360 PR)
 
 const bodyOf = (sql: string, name: string) => {
   const from = sql.indexOf(`create or replace function public.${name}(`);
@@ -31,38 +31,38 @@ const NEW_FUNCTIONS: [string, string][] = [
   ["save_role_permissions_reviewed", "uuid, bigint, jsonb, text, boolean, text"],
 ];
 
-describe("0356 source contract", () => {
+describe("0361 source contract", () => {
   it("is the current maximum migration (only the max may assert this)", () => {
-    expect(isRepoMax("0356")).toBe(true);
+    expect(isRepoMax("0361")).toBe(true);
   });
 
   it("opens its own transaction with a lock timeout inside it, and is function-only", () => {
     expect(UP).toMatch(/^begin;\s*\nset local lock_timeout = '5s';/m);
     expect(UP.trimEnd().endsWith("commit;")).toBe(true);
     expect(UP).not.toMatch(/\b(create|alter|drop)\s+(table|index|trigger|policy|type)\b/i);
-    // the only table write is the internal function's, copied from 0355 (a single insert into studio_role_permissions plus the audit insert)
+    // the only table write is the internal function's, copied from 0360 (a single insert into studio_role_permissions plus the audit insert)
     expect((UP.match(/insert\s+into\s+public\.(\w+)/gi) ?? []).map((s) => s.replace(/\s+/g, " ").toLowerCase()).sort()).toEqual(
       ["insert into public.permission_audit", "insert into public.studio_permission_policy", "insert into public.studio_permission_policy", "insert into public.studio_role_permissions"].sort(),
     );
     expect(UP).not.toMatch(/\bdelete\s+from\b/i);
   });
 
-  it("the 0355 body hashes to the sealed value, and the rollback restores it byte for byte", () => {
-    expect(createHash("md5").update(bodyOf(PREV, "perm_run_changes")).digest("hex")).toBe(SEALED_0355_BODY_MD5);
-    expect(createHash("md5").update(bodyOf(DOWN, "perm_run_changes")).digest("hex")).toBe(SEALED_0355_BODY_MD5);
+  it("the 0360 body hashes to the sealed value, and the rollback restores it byte for byte", () => {
+    expect(createHash("md5").update(bodyOf(PREV, "perm_run_changes")).digest("hex")).toBe(SEALED_0360_BODY_MD5);
+    expect(createHash("md5").update(bodyOf(DOWN, "perm_run_changes")).digest("hex")).toBe(SEALED_0360_BODY_MD5);
     expect(headOf(DOWN, "perm_run_changes")).toBe(headOf(PREV, "perm_run_changes"));
   });
 
-  it("the delegator keeps the exact 0355 head", () => {
+  it("the delegator keeps the exact 0360 head", () => {
     expect(headOf(UP, "perm_run_changes")).toBe(headOf(PREV, "perm_run_changes"));
   });
 
-  it("the internal body equals the 0355 body apart from the declared lines (additive)", () => {
+  it("the internal body equals the 0360 body apart from the declared lines (additive)", () => {
     const prev = bodyOf(PREV, "perm_run_changes").split("\n");
     const next = bodyOf(UP, "perm_run_changes_reviewed").split("\n");
     const prevSet = new Set(prev.map((l) => l.trim()));
     const removed = prev.filter((l) => !next.map((n) => n.trim()).includes(l.trim()));
-    // exactly two 0355 lines are rewritten: the apply condition (now `if v_applies then`, with v_applies computed from the SAME expression) and the result's last line
+    // exactly two 0360 lines are rewritten: the apply condition (now `if v_applies then`, with v_applies computed from the SAME expression) and the result's last line
     expect(removed.map((l) => l.trim())).toEqual([
       "if v_scope <> v_base or (v_stored_prev is not null and v_stored_prev <> v_scope) or v_scope <> v_shown then",
       "'reason_required', v_widen, 'sensitive_keys', v_sens",
