@@ -154,7 +154,13 @@ export function stepPoller(state: PollerState, event: PollerEvent): Step {
 
     case "baseline": {
       const pending = state.pending === event.fingerprint ? null : state.pending;
-      return { state: { ...state, baseline: event.fingerprint, pending }, effects: [] };
+      // A render that carries a DIFFERENT baseline than the one held means the screen has caught up with something (our own
+      // refresh, or a change this very session made): the dedupe marker has done its job, so clear it. Otherwise a later,
+      // real return to a value we once handled (B -> local change C -> another session returns the server to B) would be
+      // suppressed until the 60 s backstop. A persistent page/probe MISMATCH re-renders the SAME baseline, so it keeps the
+      // marker, and the breaker still bounds a baseline that keeps moving.
+      const lastHandled = event.fingerprint !== state.baseline ? null : state.lastHandled;
+      return { state: { ...state, baseline: event.fingerprint, pending, lastHandled }, effects: [] };
     }
 
     case "probed": {

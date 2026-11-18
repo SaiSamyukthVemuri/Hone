@@ -182,6 +182,23 @@ describe("the refresh loop it is built against", () => {
     }
     expect(refreshes).toBe(1);
   });
+  it("B -> local change C -> another session returns the server to B: that real change is NOT suppressed", () => {
+    const r = rig(); // baseline A
+    r.send(tick(PROBE_INTERVAL_MS));
+    expect(r.send(ok(1_600, B))).toEqual(["refresh"]); // another session's change; handled
+    r.send({ type: "baseline", fingerprint: B }); // the render caught up
+    r.send({ type: "baseline", fingerprint: C }); // this session's own action moved what it shows
+    r.send(tick(4_000));
+    expect(r.send(ok(4_100, B))).toEqual(["refresh"]); // the server is back at B, which differs from C: refresh
+  });
+  it("a persistent mismatch (the render keeps carrying the same baseline) still costs only one refresh", () => {
+    const r = rig();
+    r.send(tick(PROBE_INTERVAL_MS));
+    expect(r.send(ok(1_600, B))).toEqual(["refresh"]);
+    r.send({ type: "baseline", fingerprint: A }); // same baseline as held: nothing caught up
+    r.send(tick(4_000));
+    expect(r.send(ok(4_100, B))).toEqual([]);
+  });
   it("a fingerprint that keeps changing is capped by the breaker, which logs once and suspends", () => {
     const r = rig();
     let now = PROBE_INTERVAL_MS;

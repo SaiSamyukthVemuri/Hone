@@ -133,8 +133,8 @@ describe("calendar change probe on the real stack", () => {
     await expectNew("appointment updated: the database trigger moves updated_at");
     const block = randomUUID();
     await adminQuery(
-      `insert into public.studio_timed_blocks (id, studio_id, starts_at, ends_at, category, practitioner_id) values ($1,$2,$3,$4,'break',$5)`,
-      [block, A.studioId, at("13:00"), at("13:30"), A.practitionerId],
+      `insert into public.studio_timed_blocks (id, studio_id, starts_at, ends_at, category, practitioner_id) values ($1,$2,$3,$4,'break',null)`,
+      [block, A.studioId, at("13:00"), at("13:30")], // studio-wide: a per-practitioner block needs practitioner capacity enabled, which this fixture does not set
     );
     await expectNew("block inserted");
     await adminQuery("update public.studio_timed_blocks set category = 'lunch' where id = $1", [block]);
