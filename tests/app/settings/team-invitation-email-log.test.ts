@@ -149,5 +149,6 @@ describe("team invitation email failure log (MSG-LOG-RAW-ERROR)", () => {
     expect(result).toEqual({ ok: true, email: INVITEE });
     expect(send).not.toHaveBeenCalled();
     expectNoLeak();
+    expect(logged).toEqual(["Skipping invitation email: Resend client is not configured."]);
   });
 });
