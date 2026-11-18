@@ -449,8 +449,7 @@ describe("0173 — scope: B5-B8 are not absorbed", () => {
 
   it("does not absorb B5's 0174 — no such migration is created here", () => {
     // The L23 closure was briefly drafted as a companion 0174. 0174 belongs to
-    // B5 (attribution + audit integrity); the full ownership assertion lives in
-    // tests/migrations/0173-parent-delete-l23-closure.test.ts.
+    // B5 (attribution + audit integrity).
     expect(PROSE).toMatch(/0174/);
   });
 });

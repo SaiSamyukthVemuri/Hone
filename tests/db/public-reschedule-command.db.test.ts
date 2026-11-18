@@ -1490,8 +1490,7 @@ describe("0171 — privilege boundary", () => {
 
   it("after 0172 the appointments table leaves both browser roles with SELECT only", async () => {
     // Was "revokes NOTHING from the appointments table". 0171 itself still
-    // revokes nothing — that remains pinned byte-level in
-    // tests/migrations/0171-public-reschedule-command.test.ts. What changed is
+    // revokes nothing. What changed is
     // the CHAIN this suite runs against: migration 0172 (appointment boundary
     // B3) now applies after 0171, so the observed posture inverts.
     const r = await adminQuery(
