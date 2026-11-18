@@ -155,3 +155,54 @@ describe("census of the email templates", () => {
     expect(code("lib/billing/payment-receipt.ts")).toContain("clientCommunicationName(");
   });
 });
+
+// ---- studio scope: a filter-aware fake database, so dropping a studio_id filter changes the answer --------------------------------------
+describe("the loaders are studio-scoped", () => {
+  type Row = { id: string; studio_id: string; client: { name: string; preferred_name: string | null } };
+  function scopedAdmin(rows: Row[]) {
+    return {
+      from: () => {
+        const filters: [string, string][] = [];
+        const q = {
+          select: () => q,
+          eq: (c: string, v: string) => (filters.push([c, v]), q),
+          maybeSingle: async () => {
+            const hit = rows.find((r) => filters.every(([c, v]) => (r as unknown as Record<string, unknown>)[c] === v));
+            return { data: hit ? { client: hit.client, ...hit.client } : null, error: null };
+          },
+        };
+        return q;
+      },
+    };
+  }
+  const OTHER_STUDIOS_ROW: Row = { id: "appt-9", studio_id: "studio-2", client: { name: "Other Studio Client", preferred_name: "Rowan" } };
+
+  it("another studio's appointment never yields that studio's client name (the appointment-id loader)", async () => {
+    const admin = scopedAdmin([OTHER_STUDIOS_ROW]);
+    expect(await loadCommunicationNameForAppointment(admin, "studio-1", "appt-9", "Quillon Sentinel")).toBe("Quillon Sentinel");
+    // control: the same row IS found from its own studio, so the filter is the only thing keeping it out
+    expect(await loadCommunicationNameForAppointment(admin, "studio-2", "appt-9", "Other Studio Client")).toBe("Rowan");
+  });
+  it("another studio's client never yields that studio's preferred name (the client-id loader)", async () => {
+    const admin = {
+      from: () => {
+        const filters: [string, string][] = [];
+        const q = {
+          select: () => q,
+          eq: (c: string, v: string) => (filters.push([c, v]), q),
+          maybeSingle: async () => {
+            const row = { id: "client-9", studio_id: "studio-2", name: "Other Studio Client", preferred_name: "Rowan" } as Record<string, unknown>;
+            return { data: filters.every(([c, v]) => row[c] === v) ? row : null, error: null };
+          },
+        };
+        return q;
+      },
+    };
+    expect(await loadCommunicationName(admin, "studio-1", "client-9", "Quillon Sentinel")).toBe("Quillon Sentinel");
+    expect(await loadCommunicationName(admin, "studio-2", "client-9", "Other Studio Client")).toBe("Rowan");
+  });
+  it("both loaders put a studio_id filter on the read (source pin, alongside the behaviour above)", () => {
+    const src = code("lib/clients/communication-name-loader.ts") + code("lib/treatment-time/client-first-name.ts");
+    expect((src.match(/\.eq\("studio_id", studioId\)/g) ?? []).length).toBe(2);
+  });
+});
