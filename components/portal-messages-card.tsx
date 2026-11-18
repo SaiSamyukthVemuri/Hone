@@ -8,6 +8,7 @@ import type { PortalMessageForPractitioner } from "@/lib/portal-messages/queries
 import type { PortalMessageReplyForPractitioner } from "@/lib/portal-messages/replies-queries";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { useReturnFocus } from "@/components/use-return-focus";
+import { PORTAL_MESSAGES_OFF_NOTE } from "@/lib/booking/client-self-service-policy";
 
 const SUBJECT_MAX = 160;
 const BODY_MAX = 5000;
@@ -36,6 +37,8 @@ type Props = {
   archiveAction: ActionFn<ArchiveResult>;
   markReplySeenAction: MarkSeenAction;
   practitionerNames: Record<string, string>;
+  /** HON-47. FALSE hides the composer and shows a note. Absent means ON. The server refuses either way. */
+  portalEnabled?: boolean;
 };
 
 // Practitioner-side composer + list for one-way secure portal
@@ -60,6 +63,7 @@ export function PortalMessagesCard({
   archiveAction,
   markReplySeenAction,
   practitionerNames,
+  portalEnabled = true,
 }: Props) {
   // Group replies by parent message id once per render so the message
   // rows don't each re-filter the full array. Memoised on the replies
@@ -200,7 +204,7 @@ export function PortalMessagesCard({
             secure message.
           </p>
         </div>
-        {!clientIsArchived && !open && (
+        {!clientIsArchived && portalEnabled && !open && (
           <Button
             variant="secondary"
             size="sm"
@@ -221,7 +225,16 @@ export function PortalMessagesCard({
         </p>
       )}
 
-      {open && !clientIsArchived && (
+      {!clientIsArchived && !portalEnabled && (
+        <p
+          data-testid="portal-messages-off-status"
+          className="rounded-md bg-neutral-50 p-3 text-xs text-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"
+        >
+          {PORTAL_MESSAGES_OFF_NOTE}
+        </p>
+      )}
+
+      {open && !clientIsArchived && portalEnabled && (
         <div className="flex flex-col gap-3 rounded-md border border-neutral-200 bg-neutral-50 p-4 dark:border-neutral-700 dark:bg-neutral-900">
           <p className="text-sm font-medium">Send secure portal message</p>
           <p className="text-[11px] text-neutral-500">
