@@ -9,6 +9,7 @@ vi.mock("@/app/(app)/settings/waitlist/follow-up-actions", () => ({
   eraseAnswersAction: vi.fn(),
   linkAppointmentAction: vi.fn(),
 }));
+vi.mock("@/app/(app)/settings/waitlist/booked-manually-actions", () => ({ bookedManuallyAction: vi.fn() }));
 import { DeclineFollowUpSection } from "@/components/waitlist/decline-follow-up-section";
 import { emptyOutboxCounts } from "@/lib/waitlist/decline-status-lines";
 import type { FollowUpRow } from "@/lib/waitlist/followups-owner";
@@ -207,5 +208,19 @@ describe("the owner follow-up section", () => {
   });
   it("an empty list says so", () => {
     expect(render([])).toContain("No responses need follow-up");
+  });
+});
+
+describe("Booked manually on the card", () => {
+  it("renders nothing extra while the feature is off", () => {
+    expect(render([row()])).not.toContain("card-booked-manually");
+  });
+  it("an open card for a person with appointments offers all of them", () => {
+    const h = render([row()], { manualChoices: new Map([["e1", [{ id: "a1", label: "A" }, { id: "a2", label: "B" }]]]) });
+    expect(h).toContain("card-booked-manually");
+    expect((h.match(/<option /g) ?? []).length).toBe(3);
+  });
+  it("a person the loader did not return (converted, removed) gets no control on the card", () => {
+    expect(render([row()], { manualChoices: new Map() })).not.toContain("card-booked-manually");
   });
 });

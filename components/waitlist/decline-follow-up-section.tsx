@@ -10,6 +10,7 @@ import {
   linkAppointmentAction,
   markHandledAction,
 } from "@/app/(app)/settings/waitlist/follow-up-actions";
+import { BookedManuallyForm, type ManualBookingChoice } from "@/components/waitlist/booked-manually-form";
 import type { FollowUpNotice } from "@/lib/waitlist/follow-up-notice";
 import type { ReplyContact } from "@/lib/waitlist/reply-contact-pure";
 import { ReplyContactDetails } from "@/components/waitlist/reply-contact";
@@ -100,6 +101,7 @@ export function DeclineFollowUpSection({
   capped = false,
   contacts = null,
   renderedEntryIds = null,
+  manualChoices = null,
 }: {
   rows: FollowUpRow[];
   timeZone: string;
@@ -117,6 +119,8 @@ export function DeclineFollowUpSection({
   contacts?: ReadonlyMap<string, ReplyContact> | null;
   /** The entries actually rendered in the queue on this page. The entry link is offered only for these, so it can never point at an anchor that is not here (a long section pages at 100). */
   renderedEntryIds?: ReadonlySet<string> | null;
+  /** "Booked manually" choices by entry id; null while that feature is off, so nothing extra renders. */
+  manualChoices?: ReadonlyMap<string, readonly ManualBookingChoice[]> | null;
 }) {
   const open = rows.filter((r) => r.status === "open");
   return (
@@ -223,6 +227,12 @@ export function DeclineFollowUpSection({
                       </button>
                     </form>
                   ))}
+                  {manualChoices?.has(r.entryId) === true && (
+                    <details data-testid="card-booked-manually">
+                      <summary className={`${BUTTON} cursor-pointer list-none select-none`}>Booked manually</summary>
+                      <BookedManuallyForm entryId={r.entryId} choices={manualChoices.get(r.entryId) ?? []} />
+                    </details>
+                  )}
                   <p className="text-neutral-600 dark:text-neutral-400">
                     Book now opens the calendar. After you book, the appointment appears here to link, which also covers someone who booked elsewhere.
                   </p>
