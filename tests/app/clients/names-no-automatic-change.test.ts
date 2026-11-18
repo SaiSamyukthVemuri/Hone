@@ -36,7 +36,18 @@ describe("no automatic name changes", () => {
   });
   it("no migration in this change set exists for names (the S1 files arrive via the record PR)", () => {
     const migs = readdirSync("supabase/migrations").filter((f) => /hon58|legal_name|preferred/i.test(f));
-    // Any such file must be one of the three S1 migrations; this PR adds none.
-    for (const f of migs) expect(f).toMatch(/^(0258_hon58_identity|0266_legal_name_receptionist_access|0272_hon58_legal_identity_hardening)\.sql$/);
+    // Any such file must be one of the three S1 migrations, or the one named exception below; this PR adds none.
+    for (const f of migs) expect(f).toMatch(/^(0258_hon58_identity|0266_legal_name_receptionist_access|0272_hon58_legal_identity_hardening|0353_waitlist_single_legal_name)\.sql$/);
+  });
+  // The one named exception: 0353 is the waitlist single-legal-name flag. It defaults off, changes no existing client name,
+  // and was reviewed and applied separately, so its filename is frozen. It matches the name filter above only by its name;
+  // this proves it never writes a client row, so the exception stays honest.
+  it("0353 (waitlist single legal name) never updates, inserts into or deletes from clients", () => {
+    const sql = readFileSync("supabase/migrations/0353_waitlist_single_legal_name.sql", "utf8")
+      .split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+    expect(sql).not.toMatch(/\bupdate\s+(only\s+)?(public\.)?clients\b/i);
+    expect(sql).not.toMatch(/\binsert\s+into\s+(public\.)?clients\b/i);
+    expect(sql).not.toMatch(/\bdelete\s+from\s+(public\.)?clients\b/i);
+    expect(sql).not.toMatch(/\balter\s+table\s+(only\s+)?(public\.)?clients\b/i);
   });
 });

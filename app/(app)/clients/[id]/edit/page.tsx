@@ -54,7 +54,7 @@ export default async function EditClientPage({
       <div>
         <Link
           href={`/clients/${id}`}
-          className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+          className="min-w-0 [overflow-wrap:anywhere] text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
         >
           ← {clientDisplayName({ name: c.name, preferred_name: preferredName })}
         </Link>

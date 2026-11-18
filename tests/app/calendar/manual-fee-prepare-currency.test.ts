@@ -35,7 +35,7 @@ import { prepareManualFeeChargeAction } from "@/app/(app)/calendar/[id]/manual-f
 
 const eligible = (currency: string) => ({
   eligible: true, cardPaymentMethodId: "cpm-1", cardAuthorizationSignatureId: "sig-1", policyAcknowledgementId: "ack-1",
-  policySnapshotHash: "h", amountCents: 5000, currency, timingClassification: "practitioner_asserted",
+  policySnapshotHash: "h", amountCents: 5000, feeBasis: { calcMode: "fixed", basisCents: null, percentBp: null }, currency, timingClassification: "practitioner_asserted",
   appointment: { id: "appt-1" }, client: { id: "client-1", name: "A B" }, card: {}, cardAuthorization: {}, policyAcknowledgement: {}, existingAttempts: [],
 });
 function form(shown: string | null) {

@@ -198,7 +198,7 @@ export default async function ClientIntakePage({
         <PendingLink
           href={`/clients/${id}`}
           pendingLabel="Opening client…"
-          className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+          className="min-w-0 [overflow-wrap:anywhere] text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
         >
           ← {client.name}
         </PendingLink>
@@ -250,7 +250,7 @@ export default async function ClientIntakePage({
         <PendingLink
           href={`/clients/${id}`}
           pendingLabel="Opening client…"
-          className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+          className="min-w-0 [overflow-wrap:anywhere] text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
         >
           ← {client.name}
         </PendingLink>
@@ -297,7 +297,7 @@ export default async function ClientIntakePage({
           <h2 className="text-sm font-semibold uppercase tracking-wider text-neutral-700 dark:text-neutral-300">
             With the client
           </h2>
-          <p className="mt-2 text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
+          <p className="min-w-0 [overflow-wrap:anywhere] mt-2 text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
             Sitting with {client.name}? Work through the questionnaire together
             and record their answers. They complete their own confirmations and
             submit at the end.

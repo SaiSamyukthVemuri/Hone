@@ -1260,3 +1260,38 @@ export function resolveTreatmentParams(
     machine_frequency: block?.machine_frequency ?? entry.machine_frequency,
   };
 }
+
+
+/**
+ * Whether this studio has charted with the existing (legacy) workflow: a
+ * treatment area with a legacy mode, or one already saved as that model.
+ * Read under the caller's session, so row security decides what is visible;
+ * a failed read answers false. Used only to decide whether the one machine
+ * selector offers that workflow as a choice.
+ */
+export async function studioHasLegacyMachineHistory(
+  studioId: string,
+  legacyProfileId: string,
+): Promise<boolean> {
+  const supabase = await createClient();
+  const { count, error } = await supabase
+    .from("session_blocks")
+    .select("id", { count: "exact", head: true })
+    .eq("studio_id", studioId)
+    .is("deleted_at", null)
+    .or(`mode.not.is.null,machine_profile_id.eq.${legacyProfileId}`);
+  if (!error) return (count ?? 0) > 0;
+  // THE IDENTITY COLUMN MAY NOT EXIST YET (0301 is migration-first and the
+  // order can slip), which fails the whole query. Ask the question the old
+  // schema can answer: has this studio ever charted in the existing workflow?
+  const legacy = await supabase
+    .from("session_blocks")
+    .select("id", { count: "exact", head: true })
+    .eq("studio_id", studioId)
+    .is("deleted_at", null)
+    .not("mode", "is", null);
+  // STILL FAILING: offer the existing workflow rather than hide it. It is
+  // the studio's own default, and withholding it is the worse error.
+  if (legacy.error) return true;
+  return (legacy.count ?? 0) > 0;
+}
