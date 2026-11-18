@@ -1,51 +1,90 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { adminTx, closePool } from "./helpers/harness";
+import { Pool } from "pg";
+import { closePool, resolveLocalDbUrl } from "./helpers/harness";
 // @ts-expect-error - .mjs utility ships without type declarations
 import { ACL_SQL } from "../../scripts/db-baseline/sql.mjs";
 
 // The baseline restore replays explicit grants generated from the chain (scripts/db-baseline/sql.mjs, ACL_SQL).
-// This proves the mechanism on the real stack: give tables MORE access than the chain gave them (what a target's
-// default privileges do to an object whose ACL equals the built-in default), replay, and the ACL is exactly the
-// chain's again. A negative control shows the extra grant is real before the replay.
+// Proven here on the real stack, over EVERY table, view, sequence, function and the schema (and column ACLs):
+//   1. the full replay changes nothing on the chain it was generated from (aclexplode identical before and after);
+//   2. after extra access is given to an owner-only table, a function and the schema (what a target's default
+//      privileges do to an object whose ACL equals the built-in default), the replay returns EVERY ACL to the
+//      chain's, so no role keeps an extra grant. Negative control: the extra grants are visible before the replay.
+// Each case runs in a transaction that is rolled back.
 
+const superPool = new Pool({ connectionString: resolveLocalDbUrl().replace("//postgres:", "//supabase_admin:") });
 afterAll(async () => {
+  await superPool.end();
   await closePool();
 });
 
+const SNAPSHOT = `
+  select x from (
+    select 'rel|' || c.relname || '|' || pg_get_userbyid(c.relowner) || '|' || coalesce(a.grantee::regrole::text, 'PUBLIC') || '|' || a.privilege_type || '|' || a.is_grantable::text as x
+      from pg_class c, lateral aclexplode(coalesce(c.relacl, acldefault(case when c.relkind = 'S' then 'S' else 'r' end, c.relowner))) a
+     where c.relnamespace = 'public'::regnamespace and c.relkind in ('r','p','v','m','f','S')
+    union all
+    select 'fn|' || p.oid::regprocedure::text || '|' || coalesce(a.grantee::regrole::text, 'PUBLIC') || '|' || a.privilege_type || '|' || a.is_grantable::text
+      from pg_proc p, lateral aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a where p.pronamespace = 'public'::regnamespace
+    union all
+    select 'nsp|' || n.nspname || '|' || coalesce(a.grantee::regrole::text, 'PUBLIC') || '|' || a.privilege_type || '|' || a.is_grantable::text
+      from pg_namespace n, lateral aclexplode(coalesce(n.nspacl, acldefault('n', n.nspowner))) a where n.nspname = 'public'
+    union all
+    select 'col|' || c.relname || '|' || t.attname || '|' || coalesce(a.grantee::regrole::text, 'PUBLIC') || '|' || a.privilege_type
+      from pg_attribute t join pg_class c on c.oid = t.attrelid, lateral aclexplode(t.attacl) a
+     where c.relnamespace = 'public'::regnamespace and t.attacl is not null
+  ) s order by x`;
+
 class Rollback extends Error {}
 
-describe("baseline ACL replay never leaves a table with more grants than the chain", () => {
-  it("restores the chain's ACL after extra grants, and the extra grants were real", async () => {
-    const seen: { before: Record<string, string>; leaked: Record<string, string>; after: Record<string, string>; tables: string[] } = { before: {}, leaked: {}, after: {}, tables: [] };
-    try {
-      await adminTx(async (q) => {
-        const cand = await q(
-          `select c.relname from pg_class c where c.relnamespace = 'public'::regnamespace and c.relkind = 'r'
-              and coalesce(c.relacl::text, '') !~ 'anon=' and coalesce(c.relacl::text, '') !~ 'authenticated=' and pg_get_userbyid(c.relowner) = current_user
-            order by c.relname limit 3`,
-        );
-        seen.tables = cand.rows.map((r: Record<string, unknown>) => String(r.relname));
-        const acls = async () => {
-          const r = await q(`select relname::text n, coalesce(relacl::text, '<default>') a from pg_class where relnamespace = 'public'::regnamespace and relname = any($1)`, [seen.tables]);
-          return Object.fromEntries(r.rows.map((x: Record<string, unknown>) => [String(x.n), String(x.a)]));
-        };
-        seen.before = await acls();
-        // The replay script, generated from the chain's state NOW, narrowed to these tables.
-        const gen = await q(ACL_SQL);
-        const stmts = gen.rows.map((r: Record<string, unknown>) => String(Object.values(r)[0])).filter((s: string) => seen.tables.some((t) => s.includes(` TABLE public.${t} `) || s.includes(` TABLE public."${t}" `)));
-        for (const t of seen.tables) await q(`grant all on table public.${t} to anon, authenticated`);
-        seen.leaked = await acls();
-        for (const s of stmts) await q(s);
-        seen.after = await acls();
-        throw new Rollback();
-      });
-    } catch (e) {
-      if (!(e instanceof Rollback)) throw e;
-    }
-    expect(seen.tables.length, "need owner-only tables to prove the replay on").toBeGreaterThan(0);
-    for (const t of seen.tables) {
-      expect(seen.leaked[t], `negative control: the extra grant on ${t} must be real before the replay`).not.toBe(seen.before[t]);
-      expect(seen.after[t], `${t} must carry exactly the chain's grants after the replay`).toBe(seen.before[t]);
-    }
+async function inRolledBackTx(fn: (q: (t: string) => Promise<Record<string, unknown>[]>) => Promise<void>) {
+  const client = await superPool.connect();
+  try {
+    await client.query("begin");
+    await fn(async (t) => (await client.query(t)).rows);
+    throw new Rollback();
+  } catch (e) {
+    if (!(e instanceof Rollback)) throw e;
+  } finally {
+    await client.query("rollback").catch(() => undefined);
+    client.release();
+  }
+}
+
+const lines = (rows: Record<string, unknown>[]) => rows.map((r) => String(r.x));
+const script = (rows: Record<string, unknown>[]) => rows.map((r) => String(Object.values(r)[0])).join("\n");
+
+describe("baseline ACL replay: no role gains access", () => {
+  it("replaying the chain's own script changes no table, function or schema ACL", async () => {
+    await inRolledBackTx(async (q) => {
+      const before = lines(await q(SNAPSHOT));
+      expect(before.length).toBeGreaterThan(1000);
+      const gen = script(await q(ACL_SQL));
+      await q(gen);
+      const after = lines(await q(SNAPSHOT));
+      expect(after.filter((x) => !before.includes(x)), "grants the replay ADDED").toEqual([]);
+      expect(before.filter((x) => !after.includes(x)), "grants the replay REMOVED").toEqual([]);
+    });
+  });
+
+  it("returns every ACL to the chain's after extra access was given, and the extra access was real", async () => {
+    await inRolledBackTx(async (q) => {
+      const before = lines(await q(SNAPSHOT));
+      const gen = script(await q(ACL_SQL));
+      const t = (await q(`select c.relname from pg_class c where c.relnamespace = 'public'::regnamespace and c.relkind = 'r'
+                            and coalesce(c.relacl::text, '') !~ 'anon=' and coalesce(c.relacl::text, '') !~ 'authenticated=' order by c.relname limit 1`))[0];
+      expect(t, "need an owner-only table to prove the replay on").toBeTruthy();
+      const f = (await q(`select p.oid::regprocedure::text as f from pg_proc p where p.pronamespace = 'public'::regnamespace and coalesce(p.proacl::text, '') !~ 'anon=' and pg_get_userbyid(p.proowner) = 'postgres' limit 1`))[0];
+      expect(f, "need a function without anon execute").toBeTruthy();
+      await q(`grant all on table public.${String(t.relname)} to anon, authenticated`);
+      await q(`grant execute on function ${String(f.f)} to anon`);
+      await q(`grant create on schema public to anon`);
+      const leaked = lines(await q(SNAPSHOT));
+      expect(leaked.filter((x) => !before.includes(x)).length, "negative control: the extra grants must exist before the replay").toBeGreaterThan(0);
+      await q(gen);
+      const after = lines(await q(SNAPSHOT));
+      expect(after.filter((x) => !before.includes(x)), "EXTRA GRANTS still present after the replay").toEqual([]);
+      expect(before.filter((x) => !after.includes(x)), "grants the replay lost").toEqual([]);
+    });
   });
 });

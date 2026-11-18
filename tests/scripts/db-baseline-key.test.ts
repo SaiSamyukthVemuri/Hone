@@ -41,7 +41,10 @@ describe("the cache key", () => {
   it.each([
     ["one byte of one migration", () => writeFileSync(path.join(migrations, "0002_b.sql"), "select 3;\n")],
     ["a new migration", () => writeFileSync(path.join(migrations, "0003_c.sql"), "select 1;\n")],
-    ["a renamed migration", () => writeFileSync(path.join(migrations, "0002_renamed.sql"), "select 2;\n") && rmSync(path.join(migrations, "0002_b.sql"))],
+    ["a renamed migration", () => {
+      writeFileSync(path.join(migrations, "0002_renamed.sql"), "select 2;\n");
+      rmSync(path.join(migrations, "0002_b.sql"));
+    }],
     ["a removed migration", () => rmSync(path.join(migrations, "0002_b.sql"))],
     ["the seed", () => writeFileSync(seed, "insert into t values (1);\n")],
     ["the SQL the scripts run", () => writeFileSync(sqlFile, "export const X = 2;\n")],
