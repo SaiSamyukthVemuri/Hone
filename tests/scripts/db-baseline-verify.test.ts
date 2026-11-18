@@ -10,6 +10,9 @@ const base = [
   "grants:rel|clients|{postgres=arwdDxtm/postgres}|postgres",
   "grants:rel|studios|{postgres=arwdDxtm/postgres,authenticated=r/postgres}|postgres",
   "grants:fn|f(uuid)|{=X/postgres,anon=X/postgres}|postgres|",
+  "platform:rel|auth.users|{supabase_auth_admin=arwdDxtm/supabase_admin}|supabase_admin",
+  "grants:type|mood|{=U/postgres}|postgres",
+  "grants:migrel|schema_migrations|{postgres=arwdDxtm/postgres}|postgres",
   "extensions:btree_gist=1.7@public",
   "outside:trg|auth.users|on_auth_user_created|handle_new_user",
   "data:clients=0",
@@ -59,6 +62,18 @@ describe("a restored database against the chain it stands in for", () => {
   ])("%s is refused", (_label, line) => {
     const restored = parseFingerprint(base.replace(line.trim(), "").replace(/\n\n/g, "\n"));
     expect(chainProblems(fp(), restored).length).toBeGreaterThan(0);
+  });
+
+  it("a type ACL or a supabase_migrations ACL with more access than the chain is an extra grant", () => {
+    const t = fp((x) => x.replace("grants:type|mood|{=U/postgres}|postgres", "grants:type|mood|{=U/postgres,anon=U/postgres}|postgres"));
+    expect(chainProblems(fp(), t).some((p: string) => p.startsWith("EXTRA GRANT") && p.includes("type|mood"))).toBe(true);
+    const m = fp((x) => x.replace("grants:migrel|schema_migrations|{postgres=arwdDxtm/postgres}|postgres", "grants:migrel|schema_migrations|{postgres=arwdDxtm/postgres,anon=r/postgres}|postgres"));
+    expect(chainProblems(fp(), m).some((p: string) => p.startsWith("EXTRA GRANT") && p.includes("migrel"))).toBe(true);
+  });
+
+  it("drift in the auth, storage or realtime ACLs refuses the restore", () => {
+    const restored = fp((x) => x.replace("{supabase_auth_admin=arwdDxtm/supabase_admin}", "{supabase_auth_admin=arwdDxtm/supabase_admin,anon=r/supabase_admin}"));
+    expect(chainProblems(fp(), restored).some((p: string) => p.startsWith("platform:"))).toBe(true);
   });
 
   it("drift from the sealed verification restore is reported", () => {

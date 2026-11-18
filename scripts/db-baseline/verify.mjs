@@ -2,7 +2,7 @@
 // what it measured, and the tests feed it fixtures.
 import { createHash } from "node:crypto";
 
-export const CATEGORIES = ["migrations", "catalog", "grants", "extensions", "outside", "data", "authusers"];
+export const CATEGORIES = ["migrations", "catalog", "grants", "platform", "extensions", "outside", "data", "authusers"];
 
 /** Parses "category:line" output into { category: sortedLines[] }. */
 export function parseFingerprint(text) {

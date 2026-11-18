@@ -59,7 +59,8 @@ describe("the generated replays cover what pg_dump does not carry", () => {
     expect(ACL_SQL).toMatch(/aclexplode/);
     expect(ACL_SQL).toMatch(/acldefault/);
     expect(ACL_SQL.indexOf("revoke all on")).toBeGreaterThan(-1);
-    for (const kind of ["'TABLE'", "'SEQUENCE'", "'ROUTINE'", "'SCHEMA'"]) expect(ACL_SQL).toContain(kind);
+    for (const kind of ["'TABLE'", "'SEQUENCE'", "'ROUTINE'", "'SCHEMA'", "'DOMAIN'", "'TYPE'"]) expect(ACL_SQL).toContain(kind);
+    expect(ACL_SQL).toContain("supabase_migrations.%I"); // the migration history's own tables
     expect(ACL_SQL).toMatch(/revoke all \(%I\)/); // column ACLs
     expect(ACL_SQL).toMatch(/alter default privileges for role/);
   });

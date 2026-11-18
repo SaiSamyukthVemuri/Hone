@@ -5,7 +5,7 @@ import { closePool, resolveLocalDbUrl } from "./helpers/harness";
 import { ACL_SQL } from "../../scripts/db-baseline/sql.mjs";
 
 // The baseline restore replays explicit grants generated from the chain (scripts/db-baseline/sql.mjs, ACL_SQL).
-// Proven here on the real stack, over EVERY table, view, sequence, function and the schema (and column ACLs):
+// Proven here on the real stack, over EVERY table, view, sequence, function, type and the schemas (public and supabase_migrations, incl. the migration history's tables) and column ACLs:
 //   1. the full replay changes nothing on the chain it was generated from (aclexplode identical before and after);
 //   2. after extra access is given to an owner-only table, a function and the schema (what a target's default
 //      privileges do to an object whose ACL equals the built-in default), the replay returns EVERY ACL to the
@@ -28,7 +28,15 @@ const SNAPSHOT = `
       from pg_proc p, lateral aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a where p.pronamespace = 'public'::regnamespace
     union all
     select 'nsp|' || n.nspname || '|' || coalesce(a.grantee::regrole::text, 'PUBLIC') || '|' || a.privilege_type || '|' || a.is_grantable::text
-      from pg_namespace n, lateral aclexplode(coalesce(n.nspacl, acldefault('n', n.nspowner))) a where n.nspname = 'public'
+      from pg_namespace n, lateral aclexplode(coalesce(n.nspacl, acldefault('n', n.nspowner))) a where n.nspname in ('public', 'supabase_migrations')
+    union all
+    select 'migrel|' || c.relname || '|' || coalesce(a.grantee::regrole::text, 'PUBLIC') || '|' || a.privilege_type || '|' || a.is_grantable::text
+      from pg_class c, lateral aclexplode(coalesce(c.relacl, acldefault(case when c.relkind = 'S' then 'S' else 'r' end, c.relowner))) a
+     where c.relnamespace = 'supabase_migrations'::regnamespace and c.relkind in ('r','p','v','m','f','S')
+    union all
+    select 'type|' || t.typname || '|' || coalesce(a.grantee::regrole::text, 'PUBLIC') || '|' || a.privilege_type || '|' || a.is_grantable::text
+      from pg_type t, lateral aclexplode(coalesce(t.typacl, acldefault('T', t.typowner))) a
+     where t.typnamespace = 'public'::regnamespace and t.typtype in ('e','d','r','m')
     union all
     select 'col|' || c.relname || '|' || t.attname || '|' || coalesce(a.grantee::regrole::text, 'PUBLIC') || '|' || a.privilege_type
       from pg_attribute t join pg_class c on c.oid = t.attrelid, lateral aclexplode(t.attacl) a

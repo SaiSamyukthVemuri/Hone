@@ -60,7 +60,29 @@ chain's catalog md5 cannot equal the restored one. On any mismatch the database 
 Hone has no `supabase/seed.sql`; every DB test seeds its own studio through `tests/db/helpers/harness`. `seed.sql` is an
 intentionally empty, hashed placeholder: a shared row would change counts tests assume.
 
+## Failure leaves the stack wiped
+
+Once `restore` or `seal` has begun dropping schemas, ANY failure (the dump load, the ACL replay, the trigger replay, a fingerprint
+mismatch) clears `public` and `supabase_migrations` again before exiting non-zero. A half-restored stack would carry the target's
+default ACLs (for example PUBLIC execute on functions the chain revoked).
+
+## Behaviours to know (both fail closed)
+
+- **Role list.** `acl.sql` revokes from every role that existed in the BUILD stack's `pg_roles` (names baked in at build time). A
+  target stack with an extra role that holds grants is not cleaned by it, but the grants fingerprint lists every grantee, so the
+  restore is refused rather than accepted.
+- **Used stack.** Only `public` and `supabase_migrations` are reset. Rows left in `auth.users`, objects in other schemas, or an
+  extension in another schema are not cleared; any of them that differ from the chain fail the fingerprint (`authusers`,
+  `platform`, `extensions`, `outside`) and the restore is refused.
+
+## Coverage
+
+Replayed AND fingerprinted: ACLs on tables, views, sequences, functions, routines, types and domains in `public`, column ACLs,
+schema-scoped default privileges, and the ACLs of `supabase_migrations`'s tables and schema. Fingerprinted only (drift refuses the
+restore, nothing is replayed): ACLs on the relations, functions, types and schemas of `auth`, `storage` and `realtime`, and role
+memberships (`pg_auth_members`).
+
 ## Not covered
 
-Types' own ACLs, policies outside `public` (they are fingerprinted, not replayed: a mismatch refuses the restore), Storage
-(the CI stack does not start it) and Auth data.
+Policies outside `public` (fingerprinted, not replayed: a mismatch refuses the restore), Storage (the CI stack does not start it)
+and Auth data (a baseline holds none).

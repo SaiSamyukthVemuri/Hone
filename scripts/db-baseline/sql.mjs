@@ -38,6 +38,15 @@ select 'grants:' || x from (
     union all select 'nsp|' || n.nspname || '|' || coalesce(n.nspacl::text,'') from pg_namespace n where n.nspname in ('public','supabase_migrations')
     union all select 'def|' || coalesce(n.nspname,'*') || '|' || pg_get_userbyid(d.defaclrole) || '|' || d.defaclobjtype::text || '|' || coalesce(d.defaclacl::text,'') from pg_default_acl d left join pg_namespace n on n.oid=d.defaclnamespace
     union all select 'col|' || c.relname || '|' || a.attname || '|' || coalesce(a.attacl::text,'') from pg_attribute a join pg_class c on c.oid=a.attrelid where c.relnamespace='public'::regnamespace and a.attacl is not null
+    union all select 'type|' || t.typname || '|' || coalesce(t.typacl::text,'') || '|' || pg_get_userbyid(t.typowner) from pg_type t where t.typnamespace='public'::regnamespace and t.typtype in ('e','d','r','m')
+    union all select 'migrel|' || c.relname || '|' || coalesce(c.relacl::text,'') || '|' || pg_get_userbyid(c.relowner) from pg_class c where c.relnamespace='supabase_migrations'::regnamespace and c.relkind in ('r','p','v','m','f','S')
+  ) s(x);
+select 'platform:' || x from (
+    select 'rel|' || n.nspname || '.' || c.relname || '|' || coalesce(c.relacl::text,'') || '|' || pg_get_userbyid(c.relowner) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname in ('auth','storage','realtime') and c.relkind in ('r','p','v','m','f','S')
+    union all select 'fn|' || p.oid::regprocedure::text || '|' || coalesce(p.proacl::text,'') || '|' || pg_get_userbyid(p.proowner) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname in ('auth','storage','realtime')
+    union all select 'nsp|' || n.nspname || '|' || coalesce(n.nspacl::text,'') from pg_namespace n where n.nspname in ('auth','storage','realtime','supabase_migrations')
+    union all select 'type|' || n.nspname || '.' || t.typname || '|' || coalesce(t.typacl::text,'') from pg_type t join pg_namespace n on n.oid=t.typnamespace where n.nspname in ('auth','storage','realtime') and t.typtype in ('e','d','r','m')
+    union all select 'member|' || m.roleid::regrole::text || '|' || m.member::regrole::text || '|' || m.admin_option::text from pg_auth_members m
   ) s(x);
 select 'extensions:' || extname || '=' || extversion || '@' || extnamespace::regnamespace::text from pg_extension;
 select 'outside:' || x from (
@@ -86,8 +95,20 @@ objs as (
   select 'ROUTINE', p.oid::regprocedure::text, coalesce(p.proacl, acldefault('f', p.proowner))
     from pg_proc p where p.pronamespace = 'public'::regnamespace
   union all
+  select 'TABLE', format('supabase_migrations.%I', c.relname), coalesce(c.relacl, acldefault('r', c.relowner))
+    from pg_class c where c.relnamespace = 'supabase_migrations'::regnamespace and c.relkind in ('r','p','v','m','f')
+  union all
+  select 'SEQUENCE', format('supabase_migrations.%I', c.relname), coalesce(c.relacl, acldefault('S', c.relowner))
+    from pg_class c where c.relnamespace = 'supabase_migrations'::regnamespace and c.relkind = 'S'
+  union all
+  select case when t.typtype = 'd' then 'DOMAIN' else 'TYPE' end, format('public.%I', t.typname), coalesce(t.typacl, acldefault('T', t.typowner))
+    from pg_type t where t.typnamespace = 'public'::regnamespace and t.typtype in ('e','d','r','m')
+  union all
   select 'SCHEMA', 'public', coalesce(n.nspacl, acldefault('n', n.nspowner))
     from pg_namespace n where n.nspname = 'public'
+  union all
+  select 'SCHEMA', 'supabase_migrations', coalesce(n.nspacl, acldefault('n', n.nspowner))
+    from pg_namespace n where n.nspname = 'supabase_migrations'
 )
 select format('revoke all on %s %s from public, %s;', o.kind, o.ident, r.l) from objs o, allroles r
 union all

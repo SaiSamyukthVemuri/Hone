@@ -29,8 +29,16 @@ const container = opt("container");
 const confirmOwned = opt("confirm-owned");
 const inputs = { migrationsDir: opt("migrations", DEFAULT_MIGRATIONS), seedFile: opt("seed", DEFAULT_SEED), allowedFile: DEFAULT_ALLOWED };
 
+// Once a restore has begun dropping schemas, ANY failure (the dump load, the ACL replay, the trigger replay, a mismatch)
+// leaves the stack wiped, never half-restored with the target's default ACLs.
+let dirty = false;
 const fail = (msg, code = 1) => {
   console.error(`baseline: ${msg}`);
+  if (dirty) {
+    dirty = false;
+    wipe();
+    console.error("baseline: the stack was cleared");
+  }
   process.exit(code);
 };
 const now = () => Number(process.hrtime.bigint()) / 1e9;
@@ -64,6 +72,7 @@ const fingerprint = () => parseFingerprint(psql(FINGERPRINT_SQL));
 
 function restoreInto(dir) {
   const t0 = now();
+  dirty = true;
   psql(RESET_SQL);
   psql(readFileSync(path.join(dir, "extensions.sql"), "utf8"));
   const dump = path.join(dir, "baseline.dump");
@@ -89,6 +98,7 @@ function restoreInto(dir) {
   const t1 = now();
   psql(readFileSync(path.join(dir, "acl.sql"), "utf8"), { single: true });
   psql(readFileSync(path.join(dir, "triggers.sql"), "utf8"), { single: true });
+  dirty = false;
   return { restoreSeconds: +(t1 - t0).toFixed(1), replaySeconds: +(now() - t1).toFixed(1) };
 }
 
