@@ -521,7 +521,7 @@ describe("MANUAL FEE: read error != absence", () => {
     studioRow({});
     const { eligible, reasons } = await feeReasons();
     expect(eligible).toBe(false);
-    expect(reasons.join(" | ")).toMatch(/on hold for this launch/i);
+    expect(reasons.join(" | ")).toMatch(/has not been released for this studio/i);
     expect(reasons.join(" | ")).not.toMatch(/turned off for this studio/i);
   });
 });

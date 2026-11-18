@@ -31,11 +31,9 @@ describe("allowlist logic", () => {
     );
   });
 
-  it("late_cancellation_fee is BLOCKED in LIVE with the exact hold message", () => {
-    expect(isChargeReasonAllowedInLive("late_cancellation_fee")).toBe(false);
-    expect(liveChargeReasonBlockMessage("late_cancellation_fee", true)).toBe(
-      LIVE_MANUAL_FEE_HOLD_MESSAGE,
-    );
+  it("late_cancellation_fee is available across studios, subject to the tier setup guards", () => {
+    expect(isChargeReasonAllowedInLive("late_cancellation_fee")).toBe(true);
+    expect(liveChargeReasonBlockMessage("late_cancellation_fee", true)).toBeNull();
   });
 
   it("TEST mode blocks nothing (existing manual-fee test behavior preserved)", () => {
@@ -52,7 +50,7 @@ describe("allowlist logic", () => {
 
   it("exposes the exact required user-facing message", () => {
     expect(LIVE_MANUAL_FEE_HOLD_MESSAGE).toBe(
-      "Live cancellation and no-show fee charging is on hold for this launch. Use session payments only unless manual fees are explicitly approved.",
+      "Live charging for this fee type has not been released for this studio.",
     );
   });
 });
