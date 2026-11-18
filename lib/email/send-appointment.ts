@@ -5,7 +5,9 @@ import { parseEmailOperationAuthority, parseEmailOperationRender, type EmailOper
 import { generateCancellationToken } from "@/lib/booking/tokens";
 import { generateIntakeLinkUrl } from "@/lib/intake/queries";
 import { buildTreatmentTimeLine } from "@/lib/treatment-time/format";
+import { loadTreatmentTimeNameFields } from "@/lib/treatment-time/client-first-name";
 import { isMissingColumnError } from "@/lib/db/missing-column";
+import type { ClientIdentityFields } from "@/lib/clients/identity";
 import { isE2eFakeResendEnabled } from "./e2e-fake-resend";
 import { safeLog } from "@/lib/logging/safe-log";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -920,7 +922,7 @@ export function resolveOperationAddressVisibility(read: VisibilityRead): unknown
 
 /** Trusted renderer consumes ONLY the closed SQL projection, never a cron
  * joined row. This creates no dispatch permission; URL bytes are frozen once. */
-export function buildAppointmentEmailOperationPayload(projection: EmailOperationRender, purpose: "reminder_24h" | "reminder_2h", appointmentId: string, addressVisibility: unknown): EmailPayload | null {
+export function buildAppointmentEmailOperationPayload(projection: EmailOperationRender, purpose: "reminder_24h" | "reminder_2h", appointmentId: string, addressVisibility: unknown, nameFields?: ClientIdentityFields): EmailPayload | null {
   const origin = getRequiredAppOrigin();
   const kind = purpose === "reminder_24h" ? "24h" : "2h";
   const intakeUrl = projection.intake ? generateIntakeLinkUrl(projection.intake.id, origin) : null;
@@ -950,7 +952,7 @@ export function buildAppointmentEmailOperationPayload(projection: EmailOperation
       { cancellationUrl: `${origin}/cancel/${token}`, rescheduleUrl: `${origin}/reschedule/${token}` },
     ),
     portalLoginUrl: p.studio.slug?.trim() ? portalLoginUrlForStudio({ slug: p.studio.slug.trim() }) : null,
-    treatmentTimeLine: p.treatmentTime ? buildTreatmentTimeLine({ enabled: true, clientFirstName: p.client.name.split(/\s+/)[0] || p.client.name, context: p.treatmentTime }) : null,
+    treatmentTimeLine: p.treatmentTime ? buildTreatmentTimeLine({ enabled: true, client: nameFields ?? { name: p.client.name }, context: p.treatmentTime }) : null,
     intakeUrl,
     bookingReference: emailBookingReference(appointmentId),
   });
@@ -996,6 +998,9 @@ export async function sendAppointmentReminderOperation(admin: SupabaseClient, st
     // today's legacy default ("both"). Any OTHER failure renders NO address.
     const addressVisibility = resolveOperationAddressVisibility(
       await admin.from("studios").select("address_visibility").eq("id", studioId).maybeSingle());
+    // HON-58: the treatment-time sentence names the client by the name they go by. The 0247 projection carries only the stored
+    // name, so the preferred name is read here, once, before the request is frozen; a failed read leaves the stored name.
+    const nameFields = "kind" in render ? undefined : await loadTreatmentTimeNameFields(admin, studioId, render.client.id, render.client.name);
     const intakeOnly = "kind" in render;
     if (intakeOnly ? p.composition !== "intake_only" : p.composition !== (render.intake ? "reminder_with_intake" : "reminder_only")) return held;
     let attemptNumber = 0; let projection: "current" | "superseded" | "unverified" | "unchanged" | undefined;
@@ -1003,7 +1008,7 @@ export async function sendAppointmentReminderOperation(admin: SupabaseClient, st
     // minimal fake accepts one argument and safely ignores the second.
     const sendWithIdempotency: (payload: EmailPayload, options: Readonly<{ idempotencyKey: string }>) => Promise<unknown> = transport.emails.send.bind(transport.emails);
     const adapter = createProjectedEmailOperationDispatchAdapter({
-      render: (original) => buildAppointmentEmailOperationPayload(original, purpose, appointmentId, addressVisibility),
+      render: (original) => buildAppointmentEmailOperationPayload(original, purpose, appointmentId, addressVisibility, nameFields),
       currentRuntimeBinding: () => operationRuntime(transport).binding,
       authorize: async (binding, original) => {
         const { data, error } = await rpc("authorize_appointment_email_operation", {

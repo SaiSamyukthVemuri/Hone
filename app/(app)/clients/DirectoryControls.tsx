@@ -8,6 +8,11 @@ import {
   type DirectorySort,
 } from "@/lib/clients/directory-query";
 import { MAX_DIRECTORY_QUERY_LENGTH } from "@/lib/clients/directory-search";
+import {
+  LAST_VISIT_FILTER_CHOICES,
+  LAST_VISIT_FILTER_LABEL,
+  type LastVisitFilter,
+} from "@/lib/clients/last-visit-filter";
 
 // Search, sort and filters for the clients directory.
 //
@@ -29,6 +34,7 @@ export type DirectoryControlsState = {
   q: string;
   filters: DirectoryFilter[];
   sort: DirectorySort;
+  lastVisit: LastVisitFilter;
 };
 
 const FILTER_LABEL: Record<DirectoryFilter, string> = {
@@ -39,11 +45,12 @@ const FILTER_LABEL: Record<DirectoryFilter, string> = {
 const SORT_LABEL: Record<DirectorySort, string> = {
   name: "Name",
   next: "Next appointment",
+  lastvisit: "Last visit (longest ago first)",
   archived: "Recently archived",
 };
 
 const SORT_CHOICES: Record<View, DirectorySort[]> = {
-  active: ["name", "next"],
+  active: ["name", "next", "lastvisit"],
   archived: ["archived", "name"],
 };
 
@@ -56,6 +63,7 @@ export function DirectoryControls({ state }: { state: DirectoryControlsState }) 
   const [q, setQ] = useState(state.q);
   const [filters, setFilters] = useState<DirectoryFilter[]>(state.filters);
   const [sort, setSort] = useState<DirectorySort>(state.sort);
+  const [lastVisit, setLastVisit] = useState<LastVisitFilter>(state.lastVisit);
 
   // The URL is the source of truth: Back, Forward, Clear and a link that opens the
   // directory with a state all arrive as new props, and the controls follow them.
@@ -64,11 +72,12 @@ export function DirectoryControls({ state }: { state: DirectoryControlsState }) 
     setQ(state.q);
     setFilters(state.filters);
     setSort(state.sort);
+    setLastVisit(state.lastVisit);
     // filtersKey stands in for the array identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.q, filtersKey, state.sort]);
+  }, [state.q, filtersKey, state.sort, state.lastVisit]);
 
-  const go = (next: { q: string; filters: DirectoryFilter[]; sort: DirectorySort }) => {
+  const go = (next: { q: string; filters: DirectoryFilter[]; sort: DirectorySort; lastVisit: LastVisitFilter }) => {
     startTransition(() => {
       router.push(directoryHref({ view: state.view, ...next }), { scroll: false });
     });
@@ -78,6 +87,7 @@ export function DirectoryControls({ state }: { state: DirectoryControlsState }) 
   // The term itself is never repeated in text (Privacy S8): the input shows it.
   if (state.q) activeParts.push("search");
   for (const f of state.filters) activeParts.push(FILTER_LABEL[f]);
+  if (state.lastVisit !== "any") activeParts.push(LAST_VISIT_FILTER_LABEL[state.lastVisit]);
   const hasActive = activeParts.length > 0;
   const defaultSort: DirectorySort = archived ? "archived" : "name";
 
@@ -90,7 +100,7 @@ export function DirectoryControls({ state }: { state: DirectoryControlsState }) 
       aria-busy={pending}
       onSubmit={(e) => {
         e.preventDefault();
-        go({ q: q.trim(), filters, sort });
+        go({ q: q.trim(), filters, sort, lastVisit });
       }}
       className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-3 dark:border-neutral-800"
     >
@@ -134,7 +144,7 @@ export function DirectoryControls({ state }: { state: DirectoryControlsState }) 
                   checked={sort === value}
                   onChange={() => {
                     setSort(value);
-                    go({ q: state.q, filters: state.filters, sort: value });
+                    go({ q: state.q, filters: state.filters, sort: value, lastVisit });
                   }}
                   className="peer sr-only"
                 />
@@ -163,7 +173,7 @@ export function DirectoryControls({ state }: { state: DirectoryControlsState }) 
                       ? [...filters.filter((f) => f !== value), value]
                       : filters.filter((f) => f !== value);
                     setFilters(next);
-                    go({ q: state.q, filters: next, sort: state.sort });
+                    go({ q: state.q, filters: next, sort: state.sort, lastVisit });
                   }}
                   className="peer sr-only"
                 />
@@ -171,6 +181,42 @@ export function DirectoryControls({ state }: { state: DirectoryControlsState }) 
                   className={`${TARGET} flex items-center rounded-full border border-neutral-300 px-4 text-sm text-neutral-700 peer-checked:border-neutral-900 peer-checked:bg-neutral-900 peer-checked:font-medium peer-checked:text-white peer-focus-visible:ring-2 peer-focus-visible:ring-neutral-900 peer-focus-visible:ring-offset-2 dark:border-neutral-700 dark:text-neutral-300 dark:peer-checked:border-white dark:peer-checked:bg-white dark:peer-checked:text-neutral-900 dark:peer-focus-visible:ring-white`}
                 >
                   {FILTER_LABEL[value]}
+                </span>
+              </label>
+            ))}
+          </fieldset>
+        )}
+
+        {!archived && (
+          <fieldset className="flex flex-wrap items-center gap-2">
+            <legend className="sr-only">Last visit</legend>
+            <span aria-hidden className="text-xs font-medium text-neutral-600 dark:text-neutral-400">
+              Last visit
+            </span>
+            {LAST_VISIT_FILTER_CHOICES.map((value) => (
+              <label key={value} className="cursor-pointer">
+                {/* One choice at a time; choosing the selected one again clears it. */}
+                <input
+                  type="radio"
+                  name="lastvisit"
+                  value={value}
+                  checked={lastVisit === value}
+                  onChange={() => {
+                    setLastVisit(value);
+                    go({ q: state.q, filters: state.filters, sort: state.sort, lastVisit: value });
+                  }}
+                  onClick={() => {
+                    if (lastVisit === value && state.lastVisit === value) {
+                      setLastVisit("any");
+                      go({ q: state.q, filters: state.filters, sort: state.sort, lastVisit: "any" });
+                    }
+                  }}
+                  className="peer sr-only"
+                />
+                <span
+                  className={`${TARGET} flex items-center rounded-full border border-neutral-300 px-4 text-sm text-neutral-700 peer-checked:border-neutral-900 peer-checked:bg-neutral-900 peer-checked:font-medium peer-checked:text-white peer-focus-visible:ring-2 peer-focus-visible:ring-neutral-900 peer-focus-visible:ring-offset-2 dark:border-neutral-700 dark:text-neutral-300 dark:peer-checked:border-white dark:peer-checked:bg-white dark:peer-checked:text-neutral-900 dark:peer-focus-visible:ring-white`}
+                >
+                  {LAST_VISIT_FILTER_LABEL[value]}
                 </span>
               </label>
             ))}
@@ -195,7 +241,8 @@ export function DirectoryControls({ state }: { state: DirectoryControlsState }) 
               setQ("");
               setFilters([]);
               setSort(defaultSort);
-              go({ q: "", filters: [], sort: defaultSort });
+              setLastVisit("any");
+              go({ q: "", filters: [], sort: defaultSort, lastVisit: "any" });
             }}
             className={`${TARGET} rounded-md px-3 text-sm text-neutral-700 underline dark:text-neutral-300`}
           >

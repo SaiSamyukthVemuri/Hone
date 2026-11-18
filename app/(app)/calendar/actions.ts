@@ -1,5 +1,6 @@
 "use server";
 
+import { loadTreatmentTimeNameFields } from "@/lib/treatment-time/client-first-name";
 import { recordAppointmentCancelNotifications } from "@/lib/notifications/appointment-cancel-notification";
 import { CLIENT_NAME_MAX, CLIENT_NAME_TOO_LONG } from "@/lib/clients/identity";
 import { revalidatePath } from "next/cache";
@@ -994,7 +995,7 @@ async function dispatchBookingEmails(p: DispatchParams) {
     const treatmentTimeLine = p.studio.show_treatment_time_to_clients
       ? buildTreatmentTimeLine({
           enabled: true,
-          clientFirstName: p.clientName.split(/\s+/)[0] || p.clientName,
+          client: await loadTreatmentTimeNameFields(createAdminClient(), p.studio.id, p.appointment.client_id, p.clientName),
           context: await getTreatmentTimeContextForEmail(
             p.studio.id,
             p.appointment.client_id,
