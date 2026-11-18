@@ -1165,6 +1165,7 @@ export default async function WaitlistSettingsPage({
                     return (
                       <li
                         key={row.id}
+                        id={`entry-${row.id}`}
                         // WHICH PERSON THIS ROW IS, on the row itself.
                         //
                         // A control is only reachable if it is reachable ON THE
