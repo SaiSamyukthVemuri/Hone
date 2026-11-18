@@ -34,6 +34,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { loadCommunicationName, loadCommunicationNameForAppointment } from "@/lib/clients/communication-name-loader";
+import { createAdminClient } from "@/lib/supabase/admin-server";
 import { sendBookingConfirmationToClient, sendBookingNotificationToPractitioner, sendCancellationEmail } from "@/lib/email/send-appointment";
 
 beforeEach(() => { sent.length = 0; reads.calls.length = 0; reads.mode = "preferred"; vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://hone.example"); });
@@ -68,9 +69,11 @@ describe("the loaders", () => {
 });
 
 describe("the senders, rendered (a captured transport; nothing is sent)", () => {
-  const confirm = () => sendBookingConfirmationToClient({ appointment: APPT, service: null, studio: STUDIO, practitionerDisplayName: null, clientName: "Quillon Sentinel", clientEmail: "client@harness.local", cancellationUrl: "https://x.test/c", rescheduleUrl: null, intakeUrl: null, treatmentTimeLine: null, appBaseUrl: "https://hone.example" } as never);
-  const notify = () => sendBookingNotificationToPractitioner({ appointment: APPT, service: null, studio: STUDIO, practitionerName: "Pat", practitionerEmail: "pat@studio.test", clientName: "Quillon Sentinel", clientEmail: "client@harness.local", clientPhone: null, notes: null, appointmentUrl: "https://x.test/cal", referralSourceLabel: null } as never);
-  const cancel = () => sendCancellationEmail({ to: "pat@studio.test", recipientName: "Pat", clientName: "Quillon Sentinel", studio: STUDIO, serviceName: "Session", durationMinutes: 60, startsAt: new Date("2026-12-01T15:00:00Z"), actorName: null, actorRole: "system", reason: null, isClient: false, appointmentId: "appt-1" } as never);
+  // the caller's existing admin client is handed to the sender (the sender creates none of its own); a throwing factory models a caller whose client failed
+  const reader = () => { try { return createAdminClient(); } catch { return undefined; } };
+  const confirm = () => sendBookingConfirmationToClient({ appointment: APPT, service: null, studio: STUDIO, practitionerDisplayName: null, clientName: "Quillon Sentinel", clientEmail: "client@harness.local", cancellationUrl: "https://x.test/c", rescheduleUrl: null, intakeUrl: null, treatmentTimeLine: null, appBaseUrl: "https://hone.example", nameReader: reader() } as never);
+  const notify = () => sendBookingNotificationToPractitioner({ appointment: APPT, service: null, studio: STUDIO, practitionerName: "Pat", practitionerEmail: "pat@studio.test", clientName: "Quillon Sentinel", clientEmail: "client@harness.local", clientPhone: null, notes: null, appointmentUrl: "https://x.test/cal", referralSourceLabel: null, nameReader: reader() } as never);
+  const cancel = () => sendCancellationEmail({ to: "pat@studio.test", recipientName: "Pat", clientName: "Quillon Sentinel", studio: STUDIO, serviceName: "Session", durationMinutes: 60, startsAt: new Date("2026-12-01T15:00:00Z"), actorName: null, actorRole: "system", reason: null, isClient: false, appointmentId: "appt-1", nameReader: reader() } as never);
 
   it("the calendar invite names the attendee by the communication name", async () => {
     await confirm();
@@ -88,6 +91,15 @@ describe("the senders, rendered (a captured transport; nothing is sent)", () => 
     await cancel();
     expect((sent[0] as { text: string }).text).toMatch(/Client:?\s*Fern/);
     expect(JSON.stringify(sent[0])).not.toContain("Quillon");
+  });
+  it("with no admin client handed in, nothing is read and the stored name is used at once", async () => {
+    const noReader = (extra: object) => ({ ...extra, nameReader: undefined });
+    reads.calls.length = 0;
+    await sendBookingNotificationToPractitioner(noReader({ appointment: APPT, service: null, studio: STUDIO, practitionerName: "Pat", practitionerEmail: "pat@studio.test", clientName: "Quillon Sentinel", clientEmail: "client@harness.local", clientPhone: null, notes: null, appointmentUrl: "https://x.test/cal", referralSourceLabel: null }) as never);
+    await sendCancellationEmail(noReader({ to: "pat@studio.test", recipientName: "Pat", clientName: "Quillon Sentinel", studio: STUDIO, serviceName: "Session", durationMinutes: 60, startsAt: new Date("2026-12-01T15:00:00Z"), actorName: null, actorRole: "system", reason: null, isClient: false, appointmentId: "appt-1" }) as never);
+    expect(reads.calls).toEqual([]);
+    expect(JSON.stringify(sent)).toContain("Quillon Sentinel");
+    expect(JSON.stringify(sent)).not.toContain("Fern");
   });
   for (const mode of ["none", "missing-column", "error", "throw", "hang"] as const) {
     it(`with the read ${mode}: today's stored name, and the send still happens`, async () => {
@@ -146,8 +158,9 @@ describe("census of the email templates", () => {
   });
   it("the one template that renders a client name (appointment.ts) is fed the communication name by every sender", () => {
     const send = code("lib/email/send-appointment.ts");
-    expect(send).toContain("clientName: await communicationNameAtSendBoundary(params.studio.id, params.appointment.client_id, params.clientName),");
-    expect(send).toContain("clientName: await communicationNameForAppointmentAtSendBoundary(params.studio.id, params.appointmentId, params.clientName),");
+    expect(send).toContain("clientName: await communicationNameAtSendBoundary(params.nameReader, params.studio.id, params.appointment.client_id, params.clientName),");
+    expect(send).toContain("clientName: await communicationNameForAppointmentAtSendBoundary(params.nameReader, params.studio.id, params.appointmentId, params.clientName),");
+    expect(send, "the sender creates no service-role client of its own").not.toMatch(/createAdminClient/);
     expect(send).toContain("attendeeName,");
     expect(send).not.toMatch(/attendeeName: params\.clientName/);
   });
@@ -206,3 +219,21 @@ describe("the loaders are studio-scoped", () => {
     expect((src.match(/\.eq\("studio_id", studioId\)/g) ?? []).length).toBe(2);
   });
 });
+
+describe("every caller hands its existing admin client to the sender", () => {
+  const code2 = (p: string) => readFileSync(p, "utf8").split("\n").filter((l) => !/^\s*\/\//.test(l)).join("\n");
+  const CALLERS: [string, string, number][] = [
+    ["app/portal/rebook-actions.ts", "sendBookingConfirmationToClient", 1], ["app/portal/rebook-actions.ts", "sendBookingNotificationToPractitioner", 1],
+    ["app/book/[slug]/actions.ts", "sendBookingConfirmationToClient", 1], ["app/book/[slug]/actions.ts", "sendBookingNotificationToPractitioner", 1],
+    ["app/(app)/calendar/actions.ts", "sendCancellationEmail", 1], ["app/(app)/calendar/actions.ts", "sendBookingConfirmationToClient", 1], ["app/(app)/calendar/actions.ts", "sendBookingNotificationToPractitioner", 1],
+    ["app/cancel/[token]/actions.ts", "sendCancellationEmail", 1], ["app/reschedule/[token]/actions.ts", "sendBookingConfirmationToClient", 1],
+  ];
+  for (const [file, fn, n] of CALLERS) {
+    it(`${file}: ${fn}(...) passes nameReader`, () => {
+      const src = code2(file);
+      const calls = [...src.matchAll(new RegExp(`${fn}\\(\\{\\s*nameReader: `, "g"))].length;
+      expect(calls).toBe(n);
+    });
+  }
+});
+
