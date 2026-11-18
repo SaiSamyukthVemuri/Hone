@@ -7,6 +7,7 @@ const m = vi.hoisted(() => ({
   access: { allowed: true, studioName: "Studio" } as { allowed: boolean; studioName: string | null },
   inserts: 0,
   emails: 0,
+  askedStudios: [] as string[],
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
@@ -14,7 +15,7 @@ vi.mock("@/lib/supabase/queries", () => ({
   getCurrentPractitionerWithStudio: async () => ({ practitioner: { id: "p1", active: true }, studio: { id: "s1", name: "Studio", slug: "studio" } }),
 }));
 vi.mock("@/lib/rate-limit/public", () => ({ limitPractitionerClientEmail: async () => ({ allowed: true }) }));
-vi.mock("@/lib/portal/portal-access-gate", () => ({ studioPortalAccess: async () => m.access }));
+vi.mock("@/lib/portal/portal-access-gate", () => ({ studioPortalAccess: async (_admin: unknown, studioId: string) => { m.askedStudios.push(studioId); return m.access; } }));
 vi.mock("@/lib/email/send-appointment", () => ({ sendEmailSafely: async () => { m.emails += 1; return { ok: true }; } }));
 vi.mock("@/lib/email/studio-identity", () => ({ resolveReplyTo: () => null, studioClientContactEmail: () => null }));
 vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: () => "https://app.example.test" }));
@@ -50,6 +51,7 @@ beforeEach(() => {
   m.access = { allowed: true, studioName: "Studio" };
   m.inserts = 0;
   m.emails = 0;
+  m.askedStudios = [];
 });
 
 describe("createPortalMessageAction with the client portal off", () => {
@@ -67,6 +69,10 @@ describe("createPortalMessageAction with the client portal off", () => {
     expect(r).toEqual({ ok: false, error: expect.stringMatching(/off for this studio, or could not be confirmed/) });
     expect(m.inserts).toBe(0);
     expect(m.emails).toBe(0);
+  });
+  it("the policy asked about is the SESSION's studio, never another", async () => {
+    await createPortalMessageAction(form());
+    expect(m.askedStudios).toEqual(["s1"]);
   });
   it("positive control: portal on writes the message", async () => {
     const r = await createPortalMessageAction(form());
