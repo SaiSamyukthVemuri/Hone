@@ -41,6 +41,7 @@ const fail = (msg, code = 1) => {
   }
   process.exit(code);
 };
+process.on("uncaughtException", (e) => fail(`unexpected error: ${e && e.message ? e.message : e}`));
 const now = () => Number(process.hrtime.bigint()) / 1e9;
 // Every command that touches a container goes through here first. `destructive` commands (seal, restore) drop the public
 // and supabase_migrations schemas of that stack, so they also need proof the stack is the caller's own.
@@ -98,7 +99,7 @@ function restoreInto(dir) {
   const t1 = now();
   psql(readFileSync(path.join(dir, "acl.sql"), "utf8"), { single: true });
   psql(readFileSync(path.join(dir, "triggers.sql"), "utf8"), { single: true });
-  dirty = false;
+  // `dirty` stays true: the caller clears it only after the fingerprint verification PASSED.
   return { restoreSeconds: +(t1 - t0).toFixed(1), replaySeconds: +(now() - t1).toFixed(1) };
 }
 
@@ -162,6 +163,7 @@ if (cmd === "key") {
     wipe();
     fail(`the verification restore is not equivalent to the chain (${problems.length} problems):\n  ${problems.slice(0, 25).join("\n  ")}`);
   }
+  dirty = false;
   chmodSync(dir, 0o755);
   writeFileSync(path.join(dir, "restored-fingerprint.txt"), restoredText);
   writeFileSync(path.join(dir, "verified.json"), JSON.stringify({ verifiedAt: new Date().toISOString(), ...timing, summary: summarise(parseFingerprint(restoredText)) }, null, 2));
@@ -185,6 +187,7 @@ if (cmd === "key") {
     wipe();
     fail(`restore REFUSED: the restored database does not match its fingerprints (${problems.length} problems; the database was cleared):\n  ${problems.slice(0, 25).join("\n  ")}`);
   }
+  dirty = false;
   console.log(`baseline: restored and verified key ${found.key.slice(0, 12)} in ${(now() - t0).toFixed(1)}s ${JSON.stringify(timing)}`);
 } else {
   fail("usage: cli.mjs key | build --container C | seal --container C | restore --container C [--cache DIR] [--migrations DIR] [--seed FILE]", 2);

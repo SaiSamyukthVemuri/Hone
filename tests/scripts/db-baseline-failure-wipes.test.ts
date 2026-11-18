@@ -27,6 +27,7 @@ if [ "$1" = exec ]; then
       if [[ " $* " == *" -f - "* ]]; then
         input=$(cat); echo "PSQL-STDIN: $(echo "$input" | head -c 160 | tr '\\n' ' ')" >> "$FAKE_LOG"
         if [ -n "$FAIL_ON" ] && echo "$input" | grep -q "$FAIL_ON"; then echo "ERROR: simulated failure" >&2; exit 3; fi
+        if [ -n "$FP_OUT" ] && echo "$input" | grep -q "select 'migrations:'"; then printf '%s\\n' "$FP_OUT"; fi
       fi;;
     *" pg_restore "*)
       if [[ " $* " == *" -l "* ]]; then printf '; toc\\n1; 1 1 SCHEMA - public x\\n2; 2 2 TABLE public t postgres\\n'; else cat > /dev/null; fi;;
@@ -56,10 +57,10 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
-const run = (failOn: string) =>
+const run = (failOn: string, fpOut = "") =>
   spawnSync("node", [CLI, "restore", "--container", "supabase_db_g-test", "--confirm-owned", "g-test", "--cache", path.join(root, "cache")], {
     encoding: "utf8",
-    env: { ...process.env, PATH: `${path.join(root, "bin")}:${process.env.PATH}`, FAKE_LOG: log, FAIL_ON: failOn, DOCKER_HOST: "" },
+    env: { ...process.env, PATH: `${path.join(root, "bin")}:${process.env.PATH}`, FAKE_LOG: log, FAIL_ON: failOn, FP_OUT: fpOut, DOCKER_HOST: "" },
   });
 const calls = () => readFileSync(log, "utf8").split("\n").filter(Boolean);
 const WIPE = "drop schema if exists supabase_migrations cascade";
@@ -92,6 +93,33 @@ describe("a failure after the restore began leaves the stack wiped", () => {
     const c = calls();
     const failed = c.findIndex((l) => l.startsWith("PSQL-STDIN: create extension"));
     expect(c.some((l, i) => i > failed && l.startsWith("ARGS:") && l.includes(WIPE))).toBe(true);
+  });
+
+  it("a failing fingerprint query after a clean restore is wiped: an unverified database is never left behind", () => {
+    const r = run("select 'migrations:'");
+    expect(r.status).toBe(1);
+    const c = calls();
+    const failed = c.findIndex((l) => (l.startsWith("PSQL-STDIN:") && l.includes("select 'migrations:'")));
+    expect(failed, "the fingerprint query must have been attempted").toBeGreaterThan(-1);
+    expect(c.some((l, i) => i > failed && l.startsWith("ARGS:") && l.includes(WIPE))).toBe(true);
+  });
+
+  it("an unrecognised fingerprint line (a parse failure) is wiped too", () => {
+    const r = run("", "mystery:1");
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/unrecognised fingerprint line/);
+    const c = calls();
+    const at = c.findIndex((l) => (l.startsWith("PSQL-STDIN:") && l.includes("select 'migrations:'")));
+    expect(c.some((l, i) => i > at && l.startsWith("ARGS:") && l.includes(WIPE))).toBe(true);
+  });
+
+  it("control: a restore whose verification passes is NOT wiped afterwards", () => {
+    const r = run("");
+    expect(r.status).toBe(0);
+    const c = calls();
+    const at = c.findIndex((l) => (l.startsWith("PSQL-STDIN:") && l.includes("select 'migrations:'")));
+    expect(at).toBeGreaterThan(-1);
+    expect(c.some((l, i) => i > at && l.startsWith("ARGS:") && l.includes(WIPE))).toBe(false);
   });
 
   it("a guard refusal wipes nothing and touches no database", () => {
