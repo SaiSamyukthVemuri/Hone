@@ -1,5 +1,6 @@
 "use client";
 
+import { machineModelLabel } from "@/lib/machines/display-name";
 import { recordedSummary } from "@/lib/machines/recorded-count";
 import { useEffect, useRef, useState } from "react";
 import { LEGACY_MACHINE_OPTION_VALUE } from "@/lib/machines/legacy-machine";
@@ -227,6 +228,12 @@ export type MachineFirstSetupPanelProps = {
    * the server says this studio has that workflow's history.
    */
   legacyMachine?: { profileId: string; label: string } | null;
+  /**
+   * MultiPlex as a MODE of the one xCell choice (HON-71): the studio's usable xCell Pur unit, present only when the server found the
+   * contract published. The unit is never listed as a second xCell; picking MultiPlex under xCell selects it, picking the existing
+   * settings returns to the existing workflow. Null means nothing about the xCell choice changes.
+   */
+  multiplexRoute?: { deviceId: string; modeKey: string } | null;
   /** The area was saved as that workflow: open on it. */
   initialLegacyChosen?: boolean;
   /** A saved area that already holds xCell Pur readings: native machines are listed but cannot be chosen. */
@@ -314,7 +321,7 @@ export function withheld(catalogue: readonly MachineProfile[]) {
     .filter((p) => p.availability !== "active")
     .map((p) => ({
       key: p.profileId,
-      name: `${p.manufacturer} ${p.model}${p.variant ? ` (${p.variant})` : ""}`,
+      name: machineModelLabel(p),
       availability: p.availability,
       reason: p.availabilityReason ?? "Not offered for new capture.",
       openQuestions: p.openQuestions.length,
@@ -344,6 +351,7 @@ function MachineFirstSetupPanelImpl({
   unitNames = {},
   onSelectMachine,
   legacyMachine = null,
+  multiplexRoute = null,
   initialLegacyChosen = false,
   nativeLocked = false,
   savedDeviceId = null,
@@ -427,6 +435,8 @@ function MachineFirstSetupPanelImpl({
   const [legacyChosen, setLegacyChosen] = useState(
     initialLegacyChosen && legacyMachine !== null,
   );
+  // The route applies only beside the existing xCell choice (never a second xCell on its own).
+  const xcellRouted = multiplexRoute !== null && legacyMachine !== null;
   /**
    * Choose (or clear) the machine.
    *
@@ -717,7 +727,11 @@ function MachineFirstSetupPanelImpl({
           <select
             className={fieldControlClass()}
             ref={selectRef}
-            value={legacyChosen ? LEGACY_MACHINE_OPTION_VALUE : (deviceId ?? (savedUnavailable ? savedDeviceId : "") ?? "")}
+            value={
+              legacyChosen || (xcellRouted && deviceId === multiplexRoute?.deviceId)
+                ? LEGACY_MACHINE_OPTION_VALUE
+                : (deviceId ?? (savedUnavailable ? savedDeviceId : "") ?? "")
+            }
             onChange={(e) =>
               e.target.value === LEGACY_MACHINE_OPTION_VALUE
                 ? void chooseDevice(null, true)
@@ -753,10 +767,12 @@ function MachineFirstSetupPanelImpl({
               so clearing remains reachable.
             */}
             <option value="">Choose machine…</option>
-            {selectable.map(({ device, profile }) => (
+            {selectable
+              // ONE xCell CHOICE: the MultiPlex unit is reached through the xCell entry's mode, never listed as a second xCell.
+              .filter(({ device }) => !(xcellRouted && device.deviceId === multiplexRoute?.deviceId))
+              .map(({ device, profile }) => (
               <option key={device.deviceId} value={device.deviceId} disabled={nativeLocked}>
-                {device.displayName} — {profile.manufacturer} {profile.model}
-                {profile.variant ? ` (${profile.variant})` : ""}
+                {device.displayName} — {machineModelLabel(profile)}
               </option>
             ))}
             {savedUnavailable && savedDeviceId !== null && (
@@ -783,6 +799,23 @@ function MachineFirstSetupPanelImpl({
         <p className="text-sm text-neutral-600 dark:text-neutral-400" data-testid="machine-saved-unavailable">
           {unitNames[savedDeviceId as string] ?? "This area's machine"} is saved on this area but is no longer available. Its settings stay as recorded.
         </p>
+      )}
+      {scope && xcellRouted && multiplexRoute && (legacyChosen || deviceId === multiplexRoute.deviceId) && (
+        <FieldLabel label="xCell mode" hint={blockId && !nativeLocked && legacyChosen ? "To chart MultiPlex, add a new area." : undefined}>
+          <select
+            className={fieldControlClass()}
+            value={deviceId === multiplexRoute.deviceId ? multiplexRoute.modeKey : "existing"}
+            onChange={(e) =>
+              e.target.value === "existing" ? void chooseDevice(null, true) : void chooseDevice(multiplexRoute.deviceId)
+            }
+            // A saved area keeps the identity it was saved with: MultiPlex is chosen on a NEW area, never switched onto charted values.
+            disabled={Boolean(blockId) || selectionPending || identityFrozen}
+            data-testid="xcell-mode-select"
+          >
+            <option value="existing">Existing xCell settings</option>
+            <option value={multiplexRoute.modeKey}>MultiPlex</option>
+          </select>
+        </FieldLabel>
       )}
       {scope && nativeLocked && (
         <p className="text-sm text-neutral-600 dark:text-neutral-400" data-testid="machine-native-locked">
@@ -901,10 +934,9 @@ function MachineFirstSetupPanelImpl({
       ) : (
         <div className="flex flex-col gap-3" data-testid="machine-chosen">
           <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-            {chosen.device.displayName}
+            {xcellRouted && chosen.device.deviceId === multiplexRoute?.deviceId ? legacyMachine?.label : chosen.device.displayName}
             <span className="ml-2 font-normal text-neutral-600 dark:text-neutral-400">
-              {chosen.profile.manufacturer} {chosen.profile.model}
-              {chosen.profile.variant ? ` (${chosen.profile.variant})` : ""}
+              {xcellRouted && chosen.device.deviceId === multiplexRoute?.deviceId ? "" : machineModelLabel(chosen.profile)}
               {mode ? ` - ${mode.nativeLabel}` : ""}
             </span>
             {/* AN EXPLICIT WAY TO CHANGE IT: takes the practitioner to the one

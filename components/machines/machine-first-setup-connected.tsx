@@ -656,6 +656,7 @@ export function MachineFirstSetupConnected({
       // The existing workflow as a choice in THE selector, and whether this
       // area was saved as it.
       legacyMachine={ctx.legacyMachine}
+      multiplexRoute={ctx.multiplexRoute}
       nativeLocked={Boolean(blockId) && legacyReadingsLocked}
       // THE SAVED UNIT, from the area's own record: not from the panel's current pick, which can be a remembered
       // preference on an area that never saved an identity.
