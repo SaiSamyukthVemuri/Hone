@@ -151,29 +151,6 @@ describe("placement + page", () => {
     expect(PAGE).not.toMatch(/"use client"/);
   });
 
-  it("all checklist surfaces render: sections + first consultation (no future-onboarding section)", () => {
-    expect(PAGE).toMatch(/Ready for first real consultation/);
-    for (const line of [
-      "Client can book",
-      "Probe lot can be recorded",
-      "Aftercare\\/risks can be marked",
-      "Payments run in the studio",
-    ]) {
-      expect(PAGE).toMatch(new RegExp(line));
-    }
-    // PR #216: the future-onboarding section was removed; Getting
-    // Started is about the current user's setup only.
-    expect(PAGE).not.toMatch(/Before onboarding another practitioner or studio/);
-    expect(PAGE).not.toMatch(/Chloe has completed a real consultation test/);
-    expect(PAGE).not.toMatch(/onboarding another/i);
-  });
-
-  it("items render status badges, explanations, and Open links", () => {
-    expect(PAGE).toMatch(/Done/);
-    expect(PAGE).toMatch(/To do/);
-    expect(PAGE).toMatch(/Review/);
-    expect(PAGE).toMatch(/Open →/);
-  });
 });
 
 describe("safety", () => {

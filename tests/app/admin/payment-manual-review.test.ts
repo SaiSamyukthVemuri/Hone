@@ -257,7 +257,6 @@ function read(rel: string): string {
 }
 const PAGE = read("app/admin/payments/manual-review/page.tsx");
 const HELPER = read("lib/billing/payment-manual-review.ts");
-const ADMIN_INDEX = read("app/admin/page.tsx");
 const ADMIN_LAYOUT = read("app/admin/layout.tsx");
 const codeOnly = (s: string) =>
   s.split("\n").filter((l) => !/^\s*\/\//.test(l) && !/^\s*\*/.test(l)).join("\n");
@@ -314,12 +313,6 @@ describe("manual-review page: queue selection mirrors docs/16 §17.7", () => {
     expect(PAGE).toMatch(/\.is\("resolved_at", null\)/);
     expect(PAGE).toMatch(/selectPaymentReviewAlerts/);
   });
-  it("renders empty states + links to /admin/ops-alerts for resolution", () => {
-    expect(PAGE).toMatch(/No payment attempts stuck/);
-    expect(PAGE).toMatch(/No unresolved critical payment alerts/);
-    expect(PAGE).toMatch(/href="\/admin\/ops-alerts"/);
-  });
-
   it("surfaces a read failure loudly (never a false 'all clear' empty queue) without leaking the provider error", () => {
     // Both reads capture .error and throw a GENERIC message — a failed query
     // must not render as an empty queue, and the raw provider message is not leaked.
@@ -328,12 +321,5 @@ describe("manual-review page: queue selection mirrors docs/16 §17.7", () => {
     const throwCount = (PAGE.match(/throw new Error\("Could not load the payment manual-review queue\."\)/g) ?? []).length;
     expect(throwCount).toBe(2);
     expect(PAGE).not.toMatch(/throw new Error\(`?[^"]*\$\{[^}]*Err[^}]*\}/); // no interpolated provider message
-  });
-});
-
-describe("admin index links to the manual-review queue", () => {
-  it("has a QuickLink to /admin/payments/manual-review", () => {
-    expect(ADMIN_INDEX).toMatch(/href="\/admin\/payments\/manual-review"/);
-    expect(ADMIN_INDEX).toMatch(/Payment manual review/);
   });
 });

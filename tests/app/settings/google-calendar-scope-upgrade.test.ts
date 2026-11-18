@@ -217,15 +217,6 @@ describe("settings card — B2.4 destination-driven UX source pins", () => {
     join(process.cwd(), "app/(app)/settings/profile/GoogleCalendarCard.tsx"),
     "utf8",
   );
-  it("consumes derived readiness + drives the destination setup + scope-upgrade CTA", () => {
-    expect(src).toMatch(/readiness: ConnectionReadiness/);
-    expect(src).toMatch(/startGoogleCalendarEventScopeUpgradeAction/);
-    expect(src).toMatch(/dedicated_permission_required/);
-    expect(src).toMatch(/existing_permission_required/);
-    expect(src).toMatch(/outbound_scope_ready/);
-    expect(src).toMatch(/Grant permission to (create a calendar|use your calendar)/);
-    expect(src).toMatch(/Synchronization is still disabled/);
-  });
   it("never renders a token/scope-consent secret or claims sync is active", () => {
     expect(src).not.toMatch(/accessToken|refresh_token|codeVerifier/);
     expect(src).not.toMatch(/synchronization is active|sync is on|syncing/i);

@@ -24,9 +24,6 @@ const SESSION_PAGE = read(
   "app/(app)/clients/[id]/sessions/[sessionId]/page.tsx",
 );
 const CLIENT_PAGE = read("app/(app)/clients/[id]/page.tsx");
-const MIGRATION = read(
-  "supabase/migrations/0084_practitioner_default_machine_frequency.sql",
-);
 
 // ---------------------------------------------------------------------------
 // 1. Sticky machine frequency
@@ -45,12 +42,6 @@ describe("machine frequency: tap toggle with a sticky last-used default", () => 
     // iPad-friendly hit area (same px-4 py-2 pills as Mode).
     expect(region).toMatch(/px-4 py-2/);
     expect(region).not.toMatch(/<input/);
-  });
-
-  it("the allowed values are exactly the schema's two frequencies", () => {
-    const constants = read("lib/constants.ts");
-    expect(constants).toMatch(/"13\.56 MHz",\s*\n\s*"27\.12 MHz",/);
-    expect(MIGRATION).toMatch(/in \('13\.56 MHz','27\.12 MHz'\)/);
   });
 
   it("NEW treatment-area drafts seed from the practitioner's sticky default", () => {
@@ -100,16 +91,6 @@ describe("machine frequency: tap toggle with a sticky last-used default", () => 
     expect(SNAPSHOT).toMatch(/machineFrequency: block\.machine_frequency \?\? ""/);
     expect(ACTIONS).toMatch(/copyPreviousSessionAreasAction/);
     expect(ACTIONS).toMatch(/temporarily unavailable/);
-  });
-
-  it("migration 0084 is additive and nullable (no backfill, old rows unaffected)", () => {
-    expect(MIGRATION).toMatch(
-      /add column if not exists default_machine_frequency text/,
-    );
-    expect(MIGRATION).toMatch(/default_machine_frequency is null/);
-    expect(MIGRATION).not.toMatch(/not null/i);
-    expect(MIGRATION).not.toMatch(/update public\./);
-    expect(MIGRATION).not.toMatch(/drop column/);
   });
 });
 

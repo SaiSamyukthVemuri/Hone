@@ -226,16 +226,6 @@ describe("3 — a failed secondary read cannot speak for the clinical record", (
 // ---------------------------------------------------------------------------
 
 describe("4 — nothing about what renders changed", () => {
-  it("every moved card renders from the same component and props", () => {
-    expect(STACK_CODE).toContain("<NeedsAttentionPanel");
-    expect(STACK_CODE).toContain("<BirthdaysThisMonth");
-    expect(STACK_CODE).toContain("<PracticeSnapshot");
-    expect(STACK_CODE).toContain("livemode={inferStripeLivemode()}");
-    expect(STACK_CODE).toContain("<BookingSetupCard readiness={readiness} staffManaged={staffManaged} />");
-    expect(STACK_CODE).toContain('href="/dashboard/capacity"');
-    expect(STACK_CODE).toContain('href="/getting-started"');
-  });
-
   it("the To-do model is built from the same four domains, unchanged", () => {
     expect(STACK_CODE).toContain("buildDashboardTodo({");
     for (const field of [

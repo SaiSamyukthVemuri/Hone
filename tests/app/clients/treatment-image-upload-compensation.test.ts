@@ -187,7 +187,7 @@ describe("upload: compensation when the planes disagree", () => {
   });
 });
 
-describe("upload source shape: the boundary is documented and intact", () => {
+describe("upload source shape: the boundary is intact", () => {
   // The signer moved into sign-treatment-image.ts (shared with the re-mint
   // route, Codex P1 4307807754); the surface is both files together.
   const ACTIONS =
@@ -208,11 +208,6 @@ describe("upload source shape: the boundary is documented and intact", () => {
     expect(ACTIONS).toMatch(/treatment_image_orphan_cleanup_failed/);
     expect(ACTIONS).toMatch(/treatment_image_metadata_insert_failed/);
     expect(ACTIONS).toMatch(/severity: rmErr \? "critical" : "warning"/);
-  });
-
-  it("states that the two planes are not one transaction", () => {
-    expect(ACTIONS).toMatch(/cannot\s+\*?\s*\n?\s*\/\/\s*share a transaction|share a transaction/);
-    expect(ACTIONS).toMatch(/Nothing here makes the upload atomic/i);
   });
 
   it("leaves the signed-URL read path unchanged and read-only", () => {

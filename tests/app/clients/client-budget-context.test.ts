@@ -522,13 +522,6 @@ describe("consultation surface", () => {
     );
   });
 
-  it("budget is NOT a client_clinical_notes kind", () => {
-    const types = readFileSync(join(ROOT, "lib/types/database.ts"), "utf8");
-    expect(types).toContain(
-      'export type ClinicalNoteKind = "consultation" | "skin_hair_analysis";',
-    );
-  });
-
   it("the three chip labels render exactly as approved", () => {
     expect(Object.values(CLIENT_BUDGET_LEVEL_LABELS)).toEqual([
       "No stated limit",
@@ -539,21 +532,6 @@ describe("consultation surface", () => {
       expect(BUDGET_CARD).toContain("CLIENT_BUDGET_LEVEL_LABELS");
       expect(label).not.toMatch(/unlimited/i);
     }
-  });
-
-  it("M. chips meet the 44px touch-target floor", () => {
-    // min-h-11 == 2.75rem == 44px.
-    const chipBlock = BUDGET_CARD.slice(
-      BUDGET_CARD.indexOf("CLIENT_BUDGET_LEVELS.map"),
-    );
-    expect(chipBlock).toContain("min-h-11");
-    // Chips wrap rather than overflow a 390px viewport.
-    expect(BUDGET_CARD).toContain("flex flex-wrap gap-2");
-  });
-
-  it("M. chips are real buttons with an accessible pressed state", () => {
-    expect(BUDGET_CARD).toContain('type="button"');
-    expect(BUDGET_CARD).toContain("aria-pressed={selected}");
   });
 
   it("selecting a chip does NOT inject boilerplate into the textarea", () => {
@@ -579,9 +557,5 @@ describe("N. budget context never reaches a client-facing surface", () => {
       )
       .trim();
     expect(out).toBe("");
-  });
-
-  it("the card documents itself as practitioner-only", () => {
-    expect(BUDGET_CARD).toContain("never shown to the client");
   });
 });

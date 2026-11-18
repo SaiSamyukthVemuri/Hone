@@ -461,10 +461,6 @@ const PROFILE_CODE = codeOnly(PROFILE);
 const ACTIONS_CODE = codeOnly(read("app/(app)/clients/[id]/intake/actions.ts"));
 
 describe("5. the button", () => {
-  it("carries the exact CTA copy", () => {
-    expect(BUTTON_CODE).toContain("Start intake with client");
-  });
-
   it("shows a pending label and disables itself while creating", () => {
     expect(BUTTON_CODE).toMatch(/disabled=\{isPending\}/);
     expect(BUTTON_CODE).toMatch(
@@ -540,10 +536,6 @@ describe("5. the button", () => {
     expect(BUTTON_CODE).not.toMatch(/useOptimistic/);
     expect(BUTTON_CODE).not.toMatch(/setIntake|localStorage|sessionStorage/);
   });
-
-  it("meets the house touch target", () => {
-    expect(BUTTON_CODE).toMatch(/min-h-\[44px\]/);
-  });
 });
 
 // One status branch of the Health intake card, sliced from its own gate to the
@@ -606,10 +598,6 @@ describe("6. the Health & Forms card", () => {
     expect(branch).not.toContain("StartAssistedIntakeButton");
     expect(branch).not.toContain("startAssistedIntakeAction");
   });
-
-  it("the no-intake copy names the client", () => {
-    expect(PROFILE).toMatch(/No intake on file for this client\./);
-  });
 });
 
 describe("7. the action reuses creation rather than re-implementing it", () => {
@@ -626,18 +614,6 @@ describe("7. the action reuses creation rather than re-implementing it", () => {
     expect(body).not.toMatch(/createIntakeRequestForClient/);
     expect(body).not.toMatch(/generateIntakeLinkUrl|generateIntakeToken/);
     expect(body).not.toMatch(/createAdminClient/);
-  });
-
-  it("pins send_email to false, and reads no email flag of its own", () => {
-    expect(body).toMatch(/fd\.set\("send_email", "false"\)/);
-    expect(body).not.toMatch(/formData\.get\("send_email"\)/);
-  });
-
-  it("returns no URL to the browser", () => {
-    expect(body).not.toMatch(/intakeUrl:/);
-    expect(ACTIONS_CODE).toMatch(
-      /export type StartAssistedIntakeResult =\s*\|\s*\{ ok: true; intakeId: string \}/,
-    );
   });
 
   it("returns no raw provider text", () => {

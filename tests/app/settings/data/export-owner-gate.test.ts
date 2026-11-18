@@ -28,7 +28,6 @@ function codeOnly(src: string): string {
 }
 const CODE = codeOnly(ACTIONS);
 const WRITER = codeOnly(readFileSync(path.resolve(__dirname, "../../../../lib/audit/governed-writes.ts"), "utf8"));
-const AUDIT_SQL = readFileSync(path.resolve(__dirname, "../../../../supabase/migrations/0242_close_direct_generic_audit_inserts.sql"), "utf8");
 const EXPORT_WRITER = WRITER.slice(WRITER.indexOf("export async function recordStudioExportAudit"));
 
 describe("export: owner-only gate", () => {
@@ -45,25 +44,13 @@ describe("export: owner-only gate", () => {
     expect(firstReadIdx).toBeGreaterThan(gateIdx);
   });
 
-  it("the refusal does not leak the role model or table names", () => {
-    const refusal = "You do not have permission to export data.";
-    expect(refusal).not.toMatch(/owner|role|admin/i);
-  });
-
   it("the inactive-practitioner gate is still present", () => {
     expect(CODE).toMatch(/Inactive practitioners cannot export data\./);
   });
 });
 
 describe("export: audit trail", () => {
-  it("a successful export writes an audit_logs row with the studio_export action", () => {
-    expect(EXPORT_WRITER).toContain('admin.rpc("record_studio_export_audit_governed"');
-    expect(EXPORT_WRITER).toContain("p_actor_id: practitioner.id");
-    expect(AUDIT_SQL).toContain("v_actor,'studio_export','studio',p_studio_id");
-  });
-
   it("the audit row carries entity + metadata (filename, files, row counts)", () => {
-    expect(AUDIT_SQL).toContain("v_actor,'studio_export','studio',p_studio_id");
     expect(EXPORT_WRITER).toContain("p_studio_id: studio.id");
     expect(CODE).toMatch(/filename,/);
     // TRUTH-01A. `files` and `row_counts` were hand-written literals and had

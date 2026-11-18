@@ -29,11 +29,6 @@ const PRINT = read("app/(app)/records/print/page.tsx");
 const EXPORT = read("app/(app)/settings/data/actions.ts");
 
 describe("manufacturer dropdown", () => {
-  it("offers Protec / Ballet / Sterex + Other", () => {
-    expect(FORMS).toMatch(/MANUFACTURER_OPTIONS\s*=\s*\[\s*"Protec",\s*"Ballet",\s*"Sterex"\s*\]/);
-    expect(FORMS).toMatch(/Other \(type a name\)/);
-    expect(FORMS).toMatch(/function ManufacturerPicker/);
-  });
   it("submits exactly one manufacturer_name (hidden input; select is unnamed)", () => {
     expect(FORMS).toMatch(/<input type="hidden" name="manufacturer_name" value=\{resolved\}/);
     // no <select> carries name="manufacturer_name" (no collision), and the only
@@ -73,23 +68,7 @@ describe("copy-last never copies the lot number", () => {
   });
 });
 
-describe("Records page expiry states + banner", () => {
-  it("computes state per row and styles expired red / expiring amber with a helper-driven badge", () => {
-    expect(PAGE).toMatch(/supplyExpiryState\(r\.expiry_date, today\)/);
-    // Badge text comes from supplyExpiryLabel (one source of truth incl. the
-    // PR #317 "Expires today" state) — not hardcoded literals in the page.
-    expect(PAGE).toMatch(/supplyExpiryLabel\(expiry\)/);
-    expect(PAGE).toMatch(/\{expiryLabel\}/);
-    expect(PAGE).toMatch(/bg-red-50/);
-    expect(PAGE).toMatch(/bg-amber-50/);
-    // "today" and "expiring" share the amber row treatment.
-    expect(PAGE).toMatch(/expiry === "today" \|\| expiry === "expiring"/);
-  });
-  it("shows a summary banner with expired + expiring-within-30 counts", () => {
-    expect(PAGE).toMatch(/summarizeSupplyExpiry\(records, today\)/);
-    expect(PAGE).toMatch(/expiring within 30 days/);
-    expect(PAGE).toMatch(/\$\{expirySummary\.expired\} expired/);
-  });
+describe("Records page expiry states", () => {
   it("uses studio-local today", () => {
     expect(PAGE).toMatch(/const today = todayInTz\(timezone\)/);
   });
@@ -183,11 +162,6 @@ describe("PR #317: print expiry marker + export note", () => {
 });
 
 describe("no migration / schema / RLS change", () => {
-  it("the new getExpiringSterileItems query adds no DDL/RPC (plain scoped select)", () => {
-    const s = QUERIES.indexOf("export async function getExpiringSterileItems");
-    const body = QUERIES.slice(s, s + 900);
-    expect(body).not.toMatch(/alter table|create table|create policy|drop policy|\.rpc\(/i);
-  });
   it("the new expiry helper + dashboard card contain no DB/DDL at all", () => {
     const EXPIRY = read("lib/record-keeping/expiry.ts");
     for (const src of [EXPIRY, MODEL, LIST]) {

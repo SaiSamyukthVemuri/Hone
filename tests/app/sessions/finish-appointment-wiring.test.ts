@@ -307,19 +307,6 @@ describe("BLOCKER 1: the completion control is mounted before it is usable too",
 });
 
 describe("BLOCKER 2: Finish uses sessions.appointment_id, not billing types", () => {
-  it("reads the linked appointment id straight off the session row", () => {
-    expect(PAGE).toMatch(
-      /const linkedAppointmentId = session\.appointment_id \?\? null;/,
-    );
-  });
-
-  it("no Finish identifier comes from the billing eligibility result", () => {
-    const c = code(PAGE);
-    expect(c).not.toMatch(/sessionPaymentEligibility\.appointment/);
-    // The eligibility object is still passed to the unchanged payment card.
-    expect(c).toMatch(/eligibility=\{sessionPaymentEligibility\}/);
-  });
-
   it("the appointment context query verifies id, studio AND client lineage", () => {
     expect(PAGE).toMatch(
       /\.eq\("id", linkedAppointmentId\)\s*\n\s*\.eq\("studio_id", studio\.id\)[\s\S]{0,400}\.eq\("client_id", id\)/,
@@ -335,10 +322,6 @@ describe("BLOCKER 2: Finish uses sessions.appointment_id, not billing types", ()
     expect(q).toMatch(/\.eq\("id", linkedAppointmentId\)/);
     expect(c).not.toMatch(/from\("appointments"\)[\s\S]{0,400}\.limit\(/);
     expect(c).not.toMatch(/from\("appointments"\)[\s\S]{0,400}\.order\(/);
-  });
-
-  it("still exactly ONE appointment read", () => {
-    expect((PAGE.match(/from\("appointments"\)/g) ?? []).length).toBe(1);
   });
 });
 

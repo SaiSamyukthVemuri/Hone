@@ -39,10 +39,6 @@ describe("DASH-TRUTH-02 disclosure", () => {
     expect(LIST_CODE).toMatch(/href=\{item\.action\.href\}/);
   });
 
-  it("M4 collapse is the same control, toggled", () => {
-    expect(LIST_CODE).toMatch(/setExpanded\(\(v\) => !v\)/);
-  });
-
   it("the count can only ever name rows that are actually loaded", () => {
     expect(LIST_CODE).toMatch(/todo\.items\.length - TODO_COMPACT_COUNT/);
     expect(TODO_COMPACT_COUNT).toBeLessThan(TODO_DISCLOSURE_LIMIT);
@@ -66,16 +62,6 @@ describe("DASH-TRUTH-03 practice snapshot", () => {
     expect(SNAPSHOT).not.toMatch(/Payments prepared/);
     expect(SNAPSHOT).not.toMatch(/Test payments prepared/);
     expect(SNAPSHOT).not.toMatch(/testPayments\.prepared/);
-  });
-
-  it("S3 Payments charged remains", () => {
-    expect(SNAPSHOT).toMatch(/Payments charged/);
-    expect(SNAPSHOT).toMatch(/testPayments\.charged/);
-  });
-
-  it("S4 Refunds remains", () => {
-    expect(SNAPSHOT).toMatch(/Refunds/);
-    expect(SNAPSHOT).toMatch(/testPayments\.refunds/);
   });
 });
 

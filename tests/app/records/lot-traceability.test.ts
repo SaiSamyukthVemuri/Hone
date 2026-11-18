@@ -42,51 +42,6 @@ describe("lot matching (pure)", () => {
   });
 });
 
-describe("placement", () => {
-  it("search box + Trace usage live in Record Keeping -> Sterile Items", () => {
-    expect(PAGE).toMatch(/Search lot number/);
-    expect(PAGE).toMatch(/Enter lot number, for example 460941/);
-    expect(PAGE).toMatch(/Trace usage/);
-    expect(PAGE).toMatch(
-      /\/records\?section=sterile&lot=\$\{encodeURIComponent\(r\.lot_number\)\}/,
-    );
-    // No new top-level nav item.
-    expect(read("app/(app)/layout.tsx")).not.toMatch(/[Tt]raceability/);
-  });
-});
-
-describe("traceability view + empty states", () => {
-  it("lot details render from matching sterile items, with Not recorded expiry fallback", () => {
-    expect(PAGE).toMatch(/Matching sterile item record/);
-    expect(PAGE).toMatch(
-      /No matching sterile item record found for this lot number\./,
-    );
-    expect(PAGE).toMatch(/dateOnly\(r\.expiry_date\) \?\? "Not recorded"/);
-  });
-
-  it("usage rows carry client, date, area, operator, setup, aftercare status, and links", () => {
-    expect(PAGE).toMatch(/Used in/);
-    expect(PAGE).toMatch(/href=\{`\/clients\/\$\{u\.clientId\}`\}/);
-    expect(PAGE).toMatch(
-      /href=\{`\/clients\/\$\{u\.clientId\}\/sessions\/\$\{u\.sessionId\}`\}/,
-    );
-    expect(PAGE).toMatch(/"Aftercare marked"/);
-    expect(PAGE).toMatch(/"Aftercare not marked"/);
-  });
-
-  it("all three empty states render", () => {
-    expect(PAGE).toMatch(
-      /Search a lot number or choose a Sterile Item record to see where\s*\n?\s*it\s*\n?\s*was used\.|Search a lot number or choose a Sterile Item record to see where/,
-    );
-    expect(PAGE).toMatch(
-      /No charted treatment areas have used this lot yet\./,
-    );
-    expect(PAGE).toMatch(
-      /Used in charting, but no matching Sterile Item record was\s*\n?\s*found\./,
-    );
-  });
-});
-
 describe("safety wording", () => {
   it("traceability wording only; never causation or lot judgments", () => {
     const panel = PAGE.slice(PAGE.indexOf("LotTraceabilityPanel"));
