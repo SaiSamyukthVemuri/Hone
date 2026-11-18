@@ -87,4 +87,17 @@ describe("useRetainedState", () => {
     act(() => disc.current!("b1"));
     expect(a.current!.value.a).toBe("one");
   });
+
+  it("discard of a key also drops its ':' entries, and nothing else", () => {
+    const store = createRetainedStore();
+    store.set("b1:draft", 1);
+    store.set("b1:baseline", 2);
+    store.set("b10:draft", 3);
+    store.set("b1", 4);
+    store.discard("b1");
+    expect(store.get("b1:draft")).toBeUndefined();
+    expect(store.get("b1:baseline")).toBeUndefined();
+    expect(store.get("b1")).toBeUndefined();
+    expect(store.get("b10:draft")?.v).toBe(3);
+  });
 });

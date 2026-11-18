@@ -120,3 +120,44 @@ describe("retained editor state across a layout switch", () => {
     expect(notes().value).toBe("");
   });
 });
+
+function leaveIsHeld() {
+  const ev = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(ev);
+  return ev.defaultPrevented;
+}
+const hasText = (t: string) => (host!.textContent ?? "").includes(t);
+
+describe("the dirty baseline is retained with the draft", () => {
+  it("after an edit, an unmount and a remount the form is still unsaved, says so, and the leave guard is armed", async () => {
+    await render(true, "block:b9");
+    expect(hasText("Unsaved changes")).toBe(false);
+    expect(leaveIsHeld()).toBe(false);
+    await type("unsaved note");
+    expect(hasText("Unsaved changes")).toBe(true);
+    expect(leaveIsHeld()).toBe(true);
+    await render(false, "block:b9");
+    await render(true, "block:b9");
+    expect(notes().value).toBe("unsaved note");
+    expect(hasText("Unsaved changes"), "must not turn into Saved").toBe(true);
+    expect(leaveIsHeld(), "the leave guard must still protect the edit").toBe(true);
+  });
+
+  it("an untouched form stays clean across a remount (the baseline is the original, not a rebuilt one)", async () => {
+    await render(true, "block:b8");
+    await render(false, "block:b8");
+    await render(true, "block:b8");
+    expect(hasText("Unsaved changes")).toBe(false);
+    expect(leaveIsHeld()).toBe(false);
+  });
+
+  it("typing the original value back makes it clean again after a remount", async () => {
+    await render(true, "block:b7");
+    await type("x");
+    await render(false, "block:b7");
+    await render(true, "block:b7");
+    await type("");
+    expect(hasText("Unsaved changes")).toBe(false);
+    expect(leaveIsHeld()).toBe(false);
+  });
+});

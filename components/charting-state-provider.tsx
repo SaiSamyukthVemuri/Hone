@@ -49,7 +49,10 @@ export function createRetainedStore(): RetainedStore {
       emit();
     },
     discard(key) {
-      if (map.delete(key)) emit();
+      // The key itself and every `${key}:...` entry, so an editor's several retained values go together.
+      let removed = map.delete(key);
+      for (const k of [...map.keys()]) if (k.startsWith(`${key}:`)) removed = map.delete(k) || removed;
+      if (removed) emit();
     },
     subscribe(listener) {
       listeners.add(listener);
