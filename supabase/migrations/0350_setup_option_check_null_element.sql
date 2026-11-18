@@ -314,6 +314,7 @@ $$;
 
 revoke execute on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid, text[], boolean) from public;
 revoke execute on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid, text[], boolean) from anon;
+revoke execute on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid, text[], boolean) from authenticated;
 revoke execute on function public.record_setup_group_in_scope(uuid, uuid, uuid, uuid, text, integer, text[], text, text, smallint[], jsonb, uuid, text[], boolean) from service_role;
 
 commit;

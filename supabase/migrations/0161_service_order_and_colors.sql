@@ -292,6 +292,7 @@ $$;
 comment on function public.show_studio_service(uuid, uuid) is
   'Re-show a HIDDEN service at the END of the visible order and renormalize. Idempotent: on an already-visible service it normalizes without moving it. Owner-only. Migration 0161.';
 
+revoke all on function public.show_studio_service(uuid, uuid) from public, anon;
 grant execute on function public.show_studio_service(uuid, uuid)
   to authenticated, service_role;
 

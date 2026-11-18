@@ -30,5 +30,6 @@ create trigger client_intake_forms_questionnaire_snapshot
 before insert or update on public.client_intake_forms
 for each row execute function public.guard_intake_questionnaire_snapshot();
 
+revoke execute on function public.guard_intake_questionnaire_snapshot() from public, anon, authenticated, service_role;
 -- No new grants, public command, historical row rewrite, or consent replacement.
 commit;

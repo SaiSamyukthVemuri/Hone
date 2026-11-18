@@ -48,6 +48,7 @@ $$;
 
 revoke execute on function public.payment_charge_attempts_claimed_at_guard() from public;
 revoke execute on function public.payment_charge_attempts_claimed_at_guard() from anon;
+revoke execute on function public.payment_charge_attempts_claimed_at_guard() from authenticated;
 revoke execute on function public.payment_charge_attempts_claimed_at_guard() from service_role;
 
 drop trigger if exists payment_charge_attempts_claimed_at_guard on public.payment_charge_attempts;

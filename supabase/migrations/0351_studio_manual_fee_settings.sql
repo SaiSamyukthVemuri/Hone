@@ -146,6 +146,7 @@ create policy "studio_manual_fee_setting_changes: owners read"
   using (public.is_studio_owner(studio_id));
 
 revoke all on public.studio_manual_fee_setting_changes from public;
+revoke all on public.studio_manual_fee_setting_changes from anon;
 revoke all on public.studio_manual_fee_setting_changes from authenticated;
 revoke all on public.studio_manual_fee_setting_changes from service_role;
 grant select on public.studio_manual_fee_setting_changes to authenticated;
