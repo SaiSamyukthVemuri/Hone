@@ -1,50 +1,18 @@
 import "server-only";
 
-// Server-side LIVE charge-reason allowlist (launch hard hold).
-//
-// For this launch, LIVE-mode charging is restricted to session payments only.
-// Manual no-show / late-cancellation fee charging is on a HARD HOLD in live
-// mode until it is explicitly enabled in a future PR: enforced server-side
-// (prepare AND execute), never UI-only. TEST mode is unaffected: every reason
-// is allowed so existing manual-fee testing keeps working.
-//
-// This module changes NO charge/refund/webhook execution and adds NO Stripe
-// SDK calls or DB writes. It is a pure predicate + the user-facing message.
+// Cancellation fees are available to every studio after owner tier setup and enablement (0357).
+// No-show fees retain their separate per-studio rollout control. Unknown charge reasons fail closed.
+// These release predicates do not replace the owner, current policy, card or attempt guards.
 
 export const LIVE_MANUAL_FEE_HOLD_MESSAGE =
-  "Live cancellation and no-show fee charging is on hold for this launch. Use session payments only unless manual fees are explicitly approved.";
+  "Live charging for this fee type has not been released for this studio.";
 
 // Charge reasons permitted to prepare/execute in LIVE mode right now.
 // session_payment is allowed; the manual-fee reasons are held.
 const LIVE_ALLOWED_CHARGE_REASONS = new Set<string>(["session_payment"]);
 
-// The two manual-fee reasons. They are held in LIVE mode EXCEPT for studios named in
-// the per-reason server-side allowlist for THAT reason. Nothing else (a future
-// reason) is ever opened by either list.
+// Legacy late-cancellation environment values no longer govern availability. No-show retains its own list.
 const MANUAL_FEE_CHARGE_REASONS = new Set<string>(["no_show_fee", "late_cancellation_fee"]);
-
-// Per-studio, PER-REASON live enablement (route (a): no migration). Each list is a
-// server-side environment variable holding comma-separated studio ids, and each opens
-// ONLY its own reason:
-//   HONE_LATE_CANCEL_FEE_LIVE_STUDIO_IDS -> late_cancellation_fee only
-//   HONE_NO_SHOW_FEE_LIVE_STUDIO_IDS     -> no_show_fee only
-// The DEFAULT IS EMPTY, so with a variable unset, blank or malformed that fee stays
-// held. Read at call time, on the server only, never exposed to the browser (no
-// NEXT_PUBLIC_ prefix). A studio id is never written in a repo file: it lives only in
-// the deployment environment, on the operator's per-studio written approval.
-//
-// TEMPORARY RELEASE CONTROL, not the studio-facing feature. The studio-facing switch is the owner's own setting
-// (studios.late_cancel_fee_enabled / no_show_fee_enabled, 0351, lib/billing/manual-fee-studio-setting.ts). In LIVE mode a
-// fee needs BOTH that setting ON and the studio in that reason's list here; in TEST mode only the setting applies.
-// For EACH fee type separately, its list is removed only when ALL of these hold (set by the platform operator, 15 Nov 2026):
-//   (a) the settings migration (0351) is applied and read back;
-//   (b) the readiness of that type has been reviewed (payment-safety review, and a wording review);
-//   (c) its tests pass, including the test-mode smoke for that type;
-//   (d) monitoring is in place for stuck or unclear fee attempts;
-//   (e) the platform operator gives explicit rollout approval.
-// There is NO minimum number of days or of real charged fees: a real fee is never created to satisfy a testing count.
-// Removal is a PR that deletes that type's release check here, after which the owner's setting plus payment readiness
-// alone govern. First responder for a stuck or unclear attempt: the on-call operator; Stripe investigation escalates to the platform operator.
 export const LATE_CANCEL_FEE_LIVE_STUDIOS_ENV = "HONE_LATE_CANCEL_FEE_LIVE_STUDIO_IDS";
 export const NO_SHOW_FEE_LIVE_STUDIOS_ENV = "HONE_NO_SHOW_FEE_LIVE_STUDIO_IDS";
 
@@ -91,6 +59,9 @@ export function isManualFeeLiveEnabledForStudio(
 }
 
 export function isChargeReasonAllowedInLive(chargeReason: string, studioId?: string | null): boolean {
+  // Cancellation fees are self-service for every studio. The governed tier configuration,
+  // owner enablement, policy, card authorization and payment readiness still apply at prepare/execute.
+  if (chargeReason === "late_cancellation_fee") return true;
   if (LIVE_ALLOWED_CHARGE_REASONS.has(chargeReason)) return true;
   if (!MANUAL_FEE_CHARGE_REASONS.has(chargeReason)) return false;
   return isManualFeeLiveEnabledForStudio(chargeReason, studioId);
