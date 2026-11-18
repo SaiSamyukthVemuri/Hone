@@ -1,10 +1,17 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { adminQuery, closePool, seedStudio } from "./helpers/harness";
+import { assertCatalogUnchanged, captureCatalog, restoreCatalog, type CatalogSnapshot } from "./helpers/catalog-guard";
 
+// This suite runs 0325's down and up on the stack it is pointed at, which strips what later migrations added to the same objects (0326's indexes and
+// reads, for one). It puts back exactly what it found and then asserts the catalog is as it was.
+let catalogBefore: CatalogSnapshot;
+beforeAll(async () => {
+  catalogBefore = await captureCatalog();
+});
 afterAll(async () => {
-  await closePool();
+  await assertCatalogUnchanged(catalogBefore, "the 0325 round-trip suite").finally(closePool);
 });
 
 const root = join(__dirname, "..", "..", "supabase");
@@ -75,6 +82,7 @@ describe("0325 up / down / up", () => {
       expect(await admitSrc()).toContain("if v_competing + 1 > p_fit then");
     } finally {
       await q(up);
+      await restoreCatalog(catalogBefore);
     }
     expect(await tables()).toBe(4);
     expect(await admitSrc()).toContain("pending_owner_review");
