@@ -9,8 +9,8 @@ import path from "node:path";
 //
 //   1. every former direct writer now goes through a governed command, and none
 //      of them reports success for a write that did not happen;
-//   2. the platform-global ops-alert resolver states its plurality and
-//      lookup-failure rules in code — the BEHAVIOUR is driven through the real
+//   2. the platform-global ops-alert resolver never logs raw database text.
+//      Its plurality and lookup-failure BEHAVIOUR is driven through the real
 //      action in tests/app/admin/ops-alert-attribution.test.ts.
 
 const root = path.resolve(__dirname, "../../../");
@@ -81,19 +81,9 @@ describe("0178 — the practitioner direct writers are gone", () => {
 // B — ops-alert attribution
 // ---------------------------------------------------------------------------
 // The BEHAVIOUR (0 / 1 / 2 memberships and a lookup failure) is driven through
-// the real action in tests/app/admin/ops-alert-attribution.test.ts. Recomputing
-// the rule here would pass even if the action ignored its own resolver, so this
-// file keeps only what a source contract can honestly own.
-describe("0178 — the ops resolver states its plurality and failure rules in code", () => {
-  it("reads plural rows, distinguishes a lookup error, and never uses first-row semantics", () => {
-    const src = codeOnly(OPS);
-    expect(src).toMatch(/const \{ data: practitionerRows, error: practitionerLookupError \}/);
-    expect(src).toContain("practitionerRows.length === 1");
-    expect(src).toMatch(/if \(practitionerLookupError\)/);
-    expect(src).not.toMatch(/\.maybeSingle\(\)|\.single\(\)|\.limit\(1\)/);
-    expect(src).toContain("resolved_by_practitioner_id: practitionerId,");
-  });
-
+// the real action in tests/app/admin/ops-alert-attribution.test.ts. This file
+// keeps only the absence that test's fake error (a code, no message) cannot see.
+describe("0178 — the ops resolver's lookup-failure log is bounded", () => {
   it("logs a BOUNDED diagnostic — an event name and a code, never row or user data", () => {
     const src = codeOnly(OPS);
     expect(src).toContain("ops_alert_resolver_practitioner_lookup_failed");

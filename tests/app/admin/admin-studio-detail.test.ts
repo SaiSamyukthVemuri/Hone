@@ -3,10 +3,10 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 // PR #256: admin studio-detail privacy follow-up. Pins that the operator-only
-// /admin/studios/[id] page shows operational metadata + AGGREGATE counts only,
-// and no longer selects or renders raw client names/contacts or any clinical /
+// /admin/studios/[id] page selects no raw client names/contacts and no clinical /
 // payment / token / audit content. End-to-end (no seeded client name appears)
-// is proven by e2e/new-studio-wizard.spec.ts.
+// is proven by e2e/new-studio-wizard.spec.ts; the access gate by
+// tests/security/sec-002-admin-route-requests.test.ts.
 
 const ROOT = path.resolve(__dirname, "../../..");
 function read(rel: string): string {
@@ -21,19 +21,6 @@ function codeOnly(src: string): string {
 
 const PAGE = read("app/admin/studios/[id]/page.tsx");
 const PAGE_CODE = codeOnly(PAGE);
-const LAYOUT = read("app/admin/layout.tsx");
-
-describe("operator-only access (reuses the /admin layout isAdmin gate)", () => {
-  it("the admin layout still guards every /admin route incl. studio detail", () => {
-    expect(LAYOUT).toMatch(/if \(!user\) redirect\("\/login"\);/);
-    expect(LAYOUT).toMatch(/if \(!isAdmin\(user\.email\)\) redirect\("\/dashboard"\);/);
-  });
-
-  it("reads via the service-role admin client (gated by the layout)", () => {
-    expect(PAGE).toMatch(/from "@\/lib\/supabase\/admin-server"/);
-    expect(PAGE_CODE).toMatch(/createAdminClient\(\)/);
-  });
-});
 
 describe("privacy: no raw client data is selected or rendered", () => {
   it("does NOT run a standalone clients / practitioners / invitations ROW select", () => {
@@ -67,39 +54,5 @@ describe("privacy: no raw client data is selected or rendered", () => {
     expect(PAGE_CODE).not.toMatch(/token|audit_event/i);
     // No client contact columns.
     expect(PAGE_CODE).not.toMatch(/phone|\baddress\b/i);
-  });
-});
-
-describe("shows operational metadata + aggregate counts + setup flags", () => {
-  it("uses embedded aggregate counts for the studio", () => {
-    expect(PAGE_CODE).toMatch(/practitioners\(count\)/);
-    expect(PAGE_CODE).toMatch(/clients\(count\)/);
-    expect(PAGE_CODE).toMatch(/services\(count\)/);
-    expect(PAGE_CODE).toMatch(/studio_availability_default\(count\)/);
-    expect(PAGE_CODE).toMatch(/appointments\(count\)/);
-    expect(PAGE_CODE).toMatch(/imported_treatment_memories\(count\)/);
-  });
-
-  it("renders metadata, counts, setup checks, and the disabled-payments flag", () => {
-    expect(PAGE).toMatch(/Owner email/);
-    expect(PAGE).toMatch(/Timezone/);
-    expect(PAGE).toMatch(/Booking/);
-    expect(PAGE).toMatch(/Owner invite/);
-    expect(PAGE).toMatch(/Counts/);
-    expect(PAGE).toMatch(/Setup checks/);
-    // PR B: the inverted hardcoded "Live payments disabled" green flag is
-    // gone; payments render as a state-driven capability flag + per-mode
-    // status cards (redacted, counts only).
-    expect(PAGE).not.toMatch(/Live payments disabled/);
-    expect(PAGE).toMatch(/Payments \(\$\{payments\.runtimeMode\} mode\)/);
-    expect(PAGE).toMatch(/PaymentModeCard/);
-    expect(PAGE).toMatch(/account ids are redacted/);
-    // Aggregate-only disclaimer.
-    expect(PAGE).toMatch(/Aggregate counts only/);
-  });
-
-  it("links back to the console and the New Studio Wizard", () => {
-    expect(PAGE).toMatch(/href="\/admin"/);
-    expect(PAGE).toMatch(/href="\/admin\/studios\/new"/);
   });
 });

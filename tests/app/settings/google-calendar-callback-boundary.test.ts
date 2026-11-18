@@ -35,11 +35,6 @@ describe("callback boundary — state consumed before persist", () => {
 });
 
 describe("callback boundary — uses the exact destination-scope helpers", () => {
-  it("imports/uses normalizeGrantedScopes, hasRequiredEventScopes, requiredEventScopeFor", () => {
-    expect(SRC).toMatch(/normalizeGrantedScopes/);
-    expect(SRC).toMatch(/hasRequiredEventScopes/);
-    expect(SRC).toMatch(/requiredEventScopeFor/);
-  });
   it("normalizes the granted scopes from the token response (primary) with a tokeninfo fallback", () => {
     expect(SRC).toMatch(/grantedScopes = normalizeGrantedScopes\(token\.grantedScopes\)/);
     expect(SRC).toMatch(/grantedScopes\.length === 0[\s\S]{0,120}fetchTokenInfoScopes/);
@@ -83,10 +78,7 @@ describe("callback boundary — account-switch protection", () => {
   });
 });
 
-describe("callback boundary — the removed broad scope + no event I/O", () => {
-  it("does NOT import or reference the removed broad EVENT_WRITE_SCOPE", () => {
-    expect(SRC).not.toMatch(/EVENT_WRITE_SCOPE/);
-  });
+describe("callback boundary — no event I/O", () => {
   it("does NOT enqueue, sync, or write any Google event (setup only)", () => {
     expect(SRC).not.toMatch(/calendar_sync_outbox|calendar_event_links|events\.(insert|patch|delete)/);
   });

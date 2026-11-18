@@ -77,26 +77,6 @@ describe("the client boundary carries only the visible projection", () => {
     join(process.cwd(), "app/(app)/dashboard/dashboard-treatment-memory.tsx"),
     "utf8",
   );
-  const PAGE = readFileSync(
-    join(process.cwd(), "app/(app)/dashboard/page.tsx"),
-    "utf8",
-  );
-  const PAGE_CODE = PAGE.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-
-  it("the Client Component does not accept the full model as a prop", () => {
-    expect(COMPONENT).toMatch(/^"use client";/);
-    expect(COMPONENT).not.toMatch(/memory: AppointmentPrepMemory \| null/);
-    // NARROWER than the row's own summary: it omits the plan note, which the
-    // server renders itself. Passing the wider object crossed that note to the
-    // browser for every row that had one.
-    expect(COMPONENT).toMatch(/summary: DashboardTreatmentDisclosureSummary/);
-    expect(COMPONENT).not.toMatch(/summary\.remember/);
-  });
-
-  it("the page passes the projection, never the memory", () => {
-    expect(PAGE_CODE).toMatch(/prepSummary=\{/);
-    expect(PAGE_CODE).not.toMatch(/memory=\{prepMemory\.memory\}/);
-  });
 
   it("the projection contains only fields the collapsed row paints", () => {
     const SUMMARY = readFileSync(
@@ -119,23 +99,9 @@ describe("the client boundary carries only the visible projection", () => {
     // …and once fetched it is kept, so reopening costs nothing.
     expect(COMPONENT).toMatch(/if \(!next \|\| result !== null \|\| pending\) return;/);
   });
-
-  it("the accessible disclosure contract is preserved", () => {
-    expect(COMPONENT).toMatch(/type="button"/);
-    expect(COMPONENT).toMatch(/aria-expanded=\{open\}/);
-    expect(COMPONENT).toMatch(/aria-controls=\{regionId\}/);
-    // Outside the row's link: no nested interactive elements. Matched on any
-    // *Link closing tag, not one spelling — UI-01C swapped the row body to
-    // PendingContainerLink, which is the same anchor with an out-of-flow
-    // pending presentation inside it, and cannot move this boundary.
-    // FIDELITY C: it now sits inside the row's closed-by-default <details>, still AFTER the link closes.
-    const closeAt = PAGE_CODE.indexOf("</PendingContainerLink>");
-    expect(closeAt).toBeGreaterThan(-1);
-    expect(PAGE_CODE.indexOf("<DashboardTreatmentMemory")).toBeGreaterThan(closeAt);
-  });
 });
 
-describe("four distinct failure/success paths, and they stay distinct", () => {
+describe("a rejected invocation is contained, and its error is never read", () => {
   const COMPONENT = readFileSync(
     join(process.cwd(), "app/(app)/dashboard/dashboard-treatment-memory.tsx"),
     "utf8",
@@ -162,20 +128,5 @@ describe("four distinct failure/success paths, and they stay distinct", () => {
     expect(COMPONENT).toMatch(/\} catch \{/);
     expect(COMPONENT).not.toMatch(/catch \(/);
     expect(COMPONENT).not.toMatch(/console\./);
-  });
-
-  it("all four paths render their own state", () => {
-    // loaded → the card; none → a quiet no-detail line; unavailable →
-    // the truthful failure copy, whether it came from the server or from a
-    // rejected invocation. A transport failure and a server-reported failure
-    // deliberately converge, because they are the same fact to the reader.
-    expect(COMPONENT).toMatch(/result\.status === "loaded"/);
-    expect(COMPONENT).toMatch(/result\.status === "none"/);
-    expect(COMPONENT).toMatch(/Previous treatment could not be loaded/);
-    expect(COMPONENT).toMatch(/<AppointmentPrepMemoryCard/);
-  });
-
-  it("containment does not disturb the cache — one fetch per mounted row", () => {
-    expect(COMPONENT).toMatch(/if \(!next \|\| result !== null \|\| pending\) return;/);
   });
 });

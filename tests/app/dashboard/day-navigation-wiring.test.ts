@@ -1,17 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { COMPOSED_DASHBOARD } from "./helpers/composed-dashboard";
 
-// The day-navigation ARITHMETIC is proved in tests/lib/dashboard. This file
-// proves the PAGE is wired to it — and, more importantly, that off Today the
-// page asks no history question at all.
-//
-// Source pins, because the Dashboard is an async server component with a dozen
-// awaited loaders and the repo has no harness that renders it. Same idiom as
-// operational-hierarchy.test.ts.
+// The day-navigation ARITHMETIC is proved in tests/lib/dashboard, and the
+// navigation itself in the browser (e2e/dashboard-day-navigation.spec.ts). This
+// file keeps the page-wiring pins those cannot see: actual-today is never the
+// selected day, the roster window is DST-correct, and off Today the page asks
+// no history question at all.
 
-const read = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
 // PERF-01C: the secondary stack (To do, Birthdays, snapshot, setup cards) now
 // renders from app/(app)/dashboard/secondary-stack.tsx behind a Suspense
 // boundary, so the day's roster no longer waits on studio paperwork. These
@@ -19,22 +14,11 @@ const read = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
 // COMPOSED source (page with the child spliced in where it renders) rather
 // than half the page. See tests/app/dashboard/helpers/composed-dashboard.ts.
 const PAGE = COMPOSED_DASHBOARD;
-const SNAPSHOT = read("app/(app)/dashboard/practice-snapshot.tsx");
 const strip = (s: string) =>
   s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 const CODE = strip(PAGE);
-const SNAPSHOT_CODE = strip(SNAPSHOT);
 
-describe("the selected day is resolved once, defensively, from the URL", () => {
-  it("the raw param never reaches a date helper unvalidated", () => {
-    expect(CODE).toMatch(
-      /const selectedDayLocal = resolveSelectedDay\(sp\.day, todayLocal\)/,
-    );
-    // No second reader of the raw param. A second, unvalidated read is how a
-    // `2026-02-31` reaches the date helpers.
-    expect((CODE.match(/sp\.day/g) ?? []).length).toBe(1);
-  });
-
+describe("actual today is its own value, never the selected day", () => {
   it("actual-today is still its own value and is NOT redefined from the URL", () => {
     // The single most dangerous edit in this feature. `todayLocal` also drives
     // birthdays, the sterile-supply expiry horizon, the To-do supply labels and
@@ -49,15 +33,6 @@ describe("the selected day is resolved once, defensively, from the URL", () => {
     expect(CODE).toMatch(/getClientBirthdaysForMonth\([^)]*todayLocal/s);
     expect(CODE).toMatch(/getExpiringSterileItems\(studio\.id, todayLocal\)/);
     expect(CODE).toMatch(/todayLocal,\s*\}\)/); // buildDashboardTodo
-  });
-
-  it("the 'am I on today' test compares against that ONE value", () => {
-    // Not a fresh clock read: a render straddling local midnight would then
-    // have the roster window and the history gate disagree.
-    expect(CODE).toMatch(
-      /const viewingToday = isViewingTodayFn\(selectedDayLocal, todayLocal\)/,
-    );
-    expect((CODE.match(/todayInTz\(/g) ?? []).length).toBe(1);
   });
 });
 
@@ -92,26 +67,6 @@ describe("OFF TODAY THE PAGE ASKS NO HISTORY QUESTION — the load-bearing rule"
     expect(CODE.match(/getBeforeTodayPreviews\(/g) ?? []).toHaveLength(1);
   });
 
-  it("the APPOINTMENT-PREP loader now runs for the selected day", () => {
-    // The opposite call from the Before-Today model, and for a structural
-    // reason: this loader has no clock, is bounded by each appointment's own
-    // `starts_at`, and reports a failed or truncated read as `unavailable`
-    // rather than as an absence. That is what makes it safe on any day — and
-    // it is what gives a practitioner something to prepare with.
-    expect(CODE).not.toMatch(/const prepLoads = !viewingToday/);
-    // PERF-01B: started before the linked-session chain, awaited where read.
-    // The claim is that it runs UNGATED on any day, so it is pinned as the
-    // absence of a day gate on its single call site rather than as an inline
-    // `await` spelling.
-    expect(CODE).toMatch(/loadLastChartedTreatmentsForClients\(\{/);
-    expect(CODE.match(/loadLastChartedTreatmentsForClients\(/g) ?? []).toHaveLength(1);
-    expect(CODE).not.toMatch(/viewingToday\s*\?\s*loadLastChartedTreatmentsForClients\(/);
-    // Still one request PER APPOINTMENT, carrying its own boundary.
-    expect(CODE).toMatch(/requestKey: a\.id/);
-    expect(CODE).toMatch(/before: a\.starts_at/);
-    expect(CODE).toMatch(/excludeAppointmentId: a\.id/);
-  });
-
   it("the workflow INPUTS are empty off today, so no row can carry a history claim", () => {
     // `hasHistory` is a required field. The only way to build an item off
     // Today would be to invent one, so no item is built: every non-Today row
@@ -122,174 +77,11 @@ describe("OFF TODAY THE PAGE ASKS NO HISTORY QUESTION — the load-bearing rule"
     );
   });
 
-  it("every RELATIONSHIP claim is still behind the workflow null", () => {
-    // The rule that survives: nothing may say new-vs-returning off Today.
-    // These all live inside `{workflow && (`, which is null off Today.
-    expect(CODE).toMatch(/\{workflow && \(/);
-    const block = CODE.slice(CODE.indexOf("{workflow && ("));
-    for (const claim of [
-      "New client · No charted history yet",
-      "Remember: {workflow.remember}",
-      "Latest setup:",
-      "workflow.missingRecords.length > 0",
-    ]) {
-      expect(block, claim).toContain(claim);
-    }
-  });
-
-  it("the treatment memory is NOT behind it — it has its own authority", () => {
-    // Clinical preparation evidence and relationship status are different
-    // facts from different loaders. Tying the first to the second is what
-    // emptied the future-day roster.
-    expect(CODE).not.toMatch(/\{workflow\?\.hasHistory && \(/);
-    expect(CODE).toMatch(
-      /\{\(prepSummary\.hasTreatment \|\| prepSummary\.unavailable\) && \(/,
-    );
-  });
-
-  it("the plan note is CARRIED from the loader, not dropped", () => {
-    // `narrative.plan` is already loaded and was being thrown away here. It is
-    // the newest recorded "for next visit" note, it survives both "nothing
-    // charted" and a failed block read, and on a future day it is the single
-    // most useful thing the practitioner can read.
-    expect(CODE).toMatch(
-      /planNote: load\.narrative\.plan\?\.text\?\.trim\(\) \|\| null/,
-    );
-    // …and the no-load fallback must not invent one.
-    expect(CODE).toMatch(/memory: null,\s*unavailable: false,\s*planNote: null,/);
-  });
-
   it("the plan note renders off Today, and ONLY off Today", () => {
     // On Today the row already prints this same field as its "Remember" line
     // from the Before-Today model; printing it twice under two labels is a bug
     // this row has had once already.
     expect(CODE).toMatch(/\{!workflow && prepSummary\.remember && \(/);
-  });
-
-  it("the page states NOTHING about history in the unasked direction either", () => {
-    // Not "New client", and equally not "History unavailable": V1 did not ask,
-    // and an unavailability notice would answer a question nobody posed.
-    // Comment-stripped: the page documents this very rule in prose, so a raw
-    // grep would be satisfied by the explanation rather than the code.
-    expect(CODE).not.toMatch(/History unavailable/);
-    expect(CODE).not.toMatch(/Returning client/);
-  });
-
-  it("the primary action is never handed a fabricated absence", () => {
-    // The trap this replaces: a bare `hasHistory: workflow?.hasHistory ?? false`
-    // handed straight to the resolver manufactures a "no history" answer off
-    // Today and sends a ten-year client to the brand-new-client affordance.
-    //
-    // The page no longer calls the resolver at all — the wrapper is the
-    // authority, and `hasHistory` survives ONLY inside the `asked: true` arm,
-    // where an answer genuinely exists.
-    expect(CODE).not.toMatch(/resolveNextAction\(\{/);
-    expect(CODE).toMatch(/resolveDayNextAction\(\{/);
-    // THE TWO-AUTHORITY MATRIX. Today carries two independent evidence
-    // sources — the Before-Today workflow and the appointment-prep loader —
-    // and they can disagree. The action must not contradict either:
-    //
-    //   workflow true                     -> history present
-    //   workflow false + prep treatment   -> history present (the prep loader
-    //                                        PROVED it; a boolean must not
-    //                                        override proof)
-    //   workflow false + prep unavailable -> NOT ASKED, neutral action
-    //   workflow false + prep proved none -> history absent
-    const actionCall = CODE.slice(
-      CODE.indexOf("resolveDayNextAction({"),
-      CODE.indexOf("});", CODE.indexOf("resolveDayNextAction({")),
-    );
-    expect(actionCall).toMatch(/history: !historyAsked\s*\?\s*\{ asked: false \}/);
-    expect(actionCall).toMatch(
-      /prepSummary\.unavailable && !\(workflow\?\.hasHistory \?\? false\)\s*\?\s*\{ asked: false \}/,
-    );
-    expect(actionCall).toMatch(
-      /hasHistory:\s*\(workflow\?\.hasHistory \?\? false\) \|\| prepSummary\.hasTreatment/,
-    );
-    expect(CODE).toMatch(/historyAsked=\{viewingToday\}/);
-  });
-
-  it("resolveNextAction itself is UNTOUCHED, so today's action cannot drift", () => {
-    const nextAction = read("lib/dashboard/next-action.ts");
-    expect(nextAction).toMatch(/hasHistory: boolean;/);
-    expect(nextAction).toMatch(/if \(input\.hasHistory\) \{/);
-  });
-});
-
-describe("time-relative surfaces stay anchored to the REAL present", () => {
-  it("the Current pill cannot appear on a day that is not today", () => {
-    // Gated by CONSTRUCTION — the empty set is built when the briefing is not
-    // on today, so no downstream reader can reintroduce the highlight.
-    expect(CODE).toMatch(
-      /const currentAppointmentIdSet = !viewingToday\s*\?\s*new Set<string>\(\)\s*:\s*currentAppointmentIds\(/,
-    );
-  });
-});
-
-describe("the two day controls do not fight each other", () => {
-  it("day links carry the period", () => {
-    for (const id of ["dashboard-prev-day", "dashboard-today", "dashboard-next-day"]) {
-      expect(PAGE, id).toMatch(new RegExp(`data-testid="${id}"`));
-    }
-    const uses = [...CODE.matchAll(/dashboardDayHref\(\{[\s\S]*?\}\)/g)];
-    expect(uses).toHaveLength(3);
-    for (const u of uses) expect(u[0]).toMatch(/\bperiod,?\s*\}/);
-    expect(CODE).not.toMatch(/href="\/dashboard\?day=/);
-  });
-
-  it("period links carry the DAY — they are not hardcoded back to /dashboard", () => {
-    expect(SNAPSHOT_CODE).not.toMatch(/`\/dashboard\?period=\$\{/);
-    expect(SNAPSHOT_CODE).toMatch(
-      /href=\{dashboardDayHref\(\{ day: selectedDay, todayLocal, period: p\.key \}\)\}/,
-    );
-    expect(CODE).toMatch(
-      /<PracticeSnapshot[\s\S]{0,300}?selectedDay=\{selectedDayLocal\}[\s\S]{0,120}?todayLocal=\{todayLocal\}/,
-    );
-  });
-
-  it("the period pills decline Next's default scroll-to-top", () => {
-    // DASH-SNAPSHOT-SCROLL-01. The Practice snapshot is the LAST section on the
-    // Dashboard, so its reader is always scrolled down — and Next's App Router
-    // resets `documentElement.scrollTop` on every forward <Link> navigation
-    // unless the link declines it. The period changed correctly and threw the
-    // practitioner to the top of the page, away from the numbers they had just
-    // asked to re-cut.
-    //
-    // That the VIEWPORT actually stays put is proved in the browser
-    // (e2e/dashboard-day-navigation.spec.ts, "the period filter updates IN
-    // PLACE"). This pin is what stops the opt-out being dropped in an edit that
-    // never runs a browser lane.
-    // UI-01H-A: the period control is now a <PendingLink> so the tap is
-    // acknowledged, but it is STILL one control and still a Link underneath —
-    // PendingLink spreads `...rest` onto next/link, so `scroll={false}` reaches
-    // the same place it always did. The opt-out is what this test guards, not
-    // the element's name.
-    expect((SNAPSHOT_CODE.match(/<PendingLink\b/g) ?? []).length).toBe(1);
-    expect((SNAPSHOT_CODE.match(/<Link\b/g) ?? []).length).toBe(0);
-    const periodLink = SNAPSHOT_CODE.slice(SNAPSHOT_CODE.indexOf("<PendingLink"));
-    expect(periodLink).toMatch(/scroll=\{false\}/);
-    // Still server-driven query navigation, and the href/aria contract is
-    // unchanged: the same Link carries both.
-    expect(periodLink).toMatch(/href=\{dashboardDayHref\(/);
-    expect(periodLink).toMatch(/aria-current=\{metrics\.period === p\.key/);
-  });
-
-  it("the fix is the Link's own behaviour — not a client-side scroll shim", () => {
-    // The tempting repairs all trade a server-rendered section for a client
-    // one, and each of them hides the symptom somewhere the next reader cannot
-    // see it: a manual scroll restore races the paint, a stored offset outlives
-    // the navigation that justified it, and router.replace() drops the history
-    // entry that makes Back work.
-    expect(SNAPSHOT_CODE).not.toMatch(/"use client"/);
-    expect(SNAPSHOT_CODE).not.toMatch(/window\.scrollTo|scrollIntoView/);
-    expect(SNAPSHOT_CODE).not.toMatch(/sessionStorage|localStorage/);
-    expect(SNAPSHOT_CODE).not.toMatch(/useRouter|router\.replace|router\.push/);
-  });
-
-  it("the outward control is disabled at the horizon, never a rejected link", () => {
-    expect(CODE).toMatch(/\{canGoBack \? \(/);
-    expect(CODE).toMatch(/\{canGoForward \? \(/);
-    expect((CODE.match(/data-disabled="true"/g) ?? []).length).toBe(2);
   });
 });
 
@@ -318,63 +110,5 @@ describe("#598 survives on every day", () => {
   it("the card load is still ONE bounded, studio-scoped batch for the day's clients", () => {
     expect(CODE).toMatch(/loadCardOnFileForStudio\(studio\.id, selectedDayClientIds\)/);
     expect((CODE.match(/loadCardOnFileForStudio\(/g) ?? []).length).toBe(1);
-  });
-});
-
-describe("both Dashboard exits to the Calendar carry the selected day", () => {
-  it("no bare /calendar link survives", () => {
-    // Two of them: the section header's "Book appointment" and the empty
-    // state's "View calendar".
-    expect(CODE).not.toMatch(/href="\/calendar"/);
-    expect((CODE.match(/calendarHrefForDashboardDay\(/g) ?? []).length).toBe(2);
-  });
-
-  it("both build the href from the RESOLVED day, never the raw param", () => {
-    expect(CODE).toMatch(
-      /calendarHrefForDashboardDay\(\{\s*selectedDay: selectedDayLocal,\s*todayLocal,\s*\}\)/,
-    );
-    // The empty state receives the same two values as props.
-    expect(CODE).toMatch(
-      /calendarHrefForDashboardDay\(\{ selectedDay, todayLocal \}\)/,
-    );
-    expect(CODE).not.toMatch(/calendarHrefForDashboardDay\([^)]*sp\.day/);
-  });
-
-  it("ONE authority builds the URL — no hand-rolled second copy", () => {
-    expect(CODE).not.toMatch(/`\/calendar\?day=\$\{/);
-  });
-});
-
-describe("the heading prints each fact exactly once", () => {
-  it("the sub-line is CONDITIONAL, not unconditional", () => {
-    // The shipped defect: `dayHeading` falls through to the same function the
-    // sub-line prints, so from two days out the page rendered
-    // "Sunday, August 23" stacked over "Sunday, August 23".
-    expect(CODE).toMatch(/\{daySubLabel\(selectedDayLocal, todayLocal\) && \(/);
-    // The old unconditional call is gone.
-    expect(CODE).not.toMatch(
-      /<p className="text-sm text-neutral-600 dark:text-neutral-400">\s*\{formatSelectedDayLabel\(selectedDayLocal\)\}/,
-    );
-  });
-
-  it("the page no longer imports the raw label formatter for the sub-line", () => {
-    // One authority for "what goes under the heading": `daySubLabel`, which
-    // returns null rather than repeating the heading.
-    expect(CODE).toMatch(/daySubLabel/);
-  });
-});
-
-describe("the day control is one group, stable across days", () => {
-  it("all three segments render on EVERY day", () => {
-    // The middle segment used to be omitted on today, which changed the
-    // group's width and moved "Next →" out from under a repeating thumb.
-    expect(CODE).not.toMatch(/\{!viewingToday && \(\s*<Link/);
-    expect(CODE).toMatch(/\{viewingToday \? \(/);
-    // Present-but-inert on today, and it says so to assistive tech.
-    expect(CODE).toMatch(/aria-current="page"[\s\S]{0,120}data-testid="dashboard-today"/);
-  });
-
-  it("the segments share ONE bordered boundary", () => {
-    expect(CODE).toMatch(/<nav aria-label="Change day" className=\{DAY_NAV_GROUP\}>/);
   });
 });

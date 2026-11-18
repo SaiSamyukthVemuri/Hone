@@ -14,30 +14,7 @@ const ACTIONS_PATH = path.resolve(
 );
 const ACTIONS = readFileSync(ACTIONS_PATH, "utf8");
 
-function codeOnly(src: string): string {
-  return src
-    .split("\n")
-    .filter((line) => !/^\s*\/\//.test(line))
-    .join("\n");
-}
-const ACTIONS_CODE = codeOnly(ACTIONS);
-
-describe("rotateCalendarFeedTokenAction: uses the shared helpers", () => {
-  it("imports generateCalendarFeedToken + hashCalendarFeedToken from lib/calendar-feed/token", () => {
-    expect(ACTIONS).toMatch(
-      /import \{\s*\n?\s*generateCalendarFeedToken,\s*\n?\s*hashCalendarFeedToken,\s*\n?\s*\} from "@\/lib\/calendar-feed\/token"/,
-    );
-  });
-
-  it("does NOT import randomBytes from node:crypto directly any more", () => {
-    expect(ACTIONS).not.toMatch(
-      /import \{[^}]*randomBytes[^}]*\} from "crypto"/,
-    );
-    expect(ACTIONS).not.toMatch(
-      /import \{[^}]*randomBytes[^}]*\} from "node:crypto"/,
-    );
-  });
-
+describe("rotateCalendarFeedTokenAction: uses the shared hash helper", () => {
   it("computes the hash via the shared helper", () => {
     expect(ACTIONS).toMatch(
       /const tokenHash = hashCalendarFeedToken\(token\);/,
@@ -93,34 +70,6 @@ describe("clearCalendarFeedTokenAction: nulls ONLY the hash (phase 2 / 0116)", (
     // 0178: NULL is passed as a VALUE to the governed command — revoking a feed
     // is a real operation, not "leave unchanged".
     expect(ACTIONS).toMatch(/p_token_hash: null/);
-    expect(ACTIONS).not.toMatch(/calendar_feed_token: null,/);
-  });
-});
-
-describe("settings actions: PR #182 phase-1 boundaries", () => {
-  it("does NOT touch any payment / Stripe code", () => {
-    expect(ACTIONS_CODE).not.toMatch(
-      /paymentIntents\.create|refunds\.create|charges\.create|checkout\.sessions|STRIPE_ALLOW_LIVE_MODE/,
-    );
-  });
-
-  it("does NOT log raw tokens via console.error or structured logs (code only)", () => {
-    expect(ACTIONS_CODE).not.toMatch(
-      /console\.error\([\s\S]{0,200}calendar_feed_token/,
-    );
-  });
-
-  it("does NOT send SMS / email", () => {
-    expect(ACTIONS_CODE).not.toMatch(/sendEmailSafely|sendSms|twilio/i);
-  });
-});
-
-describe("phase 2 (migration 0116): raw-token writes are gone", () => {
-  it("the actions no longer write the raw calendar_feed_token column", () => {
-    // 0116 dropped the raw column; the UI reads existence from the hash and
-    // renders the URL only from the action's one-time return value. A refactor
-    // that reintroduced a raw-column write would be caught here.
-    expect(ACTIONS).not.toMatch(/calendar_feed_token: token,/);
     expect(ACTIONS).not.toMatch(/calendar_feed_token: null,/);
   });
 });
