@@ -44,7 +44,7 @@ const BASELINE: ReadonlyArray<readonly [string, number, Status]> = [
   ["app/(app)/clients/[id]/sessions/[sessionId]/page.tsx", 4, "unreviewed"],
   ["app/(app)/clients/[id]/sessions/new/page.tsx", 2, "unreviewed"],
   ["app/(app)/global-search-actions.ts", 3, "helper"],
-  ["app/api/cron/appointment-reminders/route.ts", 3, "unreviewed"],
+  ["app/api/cron/appointment-reminders/route.ts", 2, "unreviewed"],
   ["app/intake/[token]/actions.ts", 2, "unreviewed"],
   ["components/client-search.tsx", 1, "unreviewed"],
   ["lib/billing/card-change-notification.ts", 3, "unreviewed"],
