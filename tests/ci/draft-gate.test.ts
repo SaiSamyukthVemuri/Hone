@@ -56,6 +56,17 @@ describe("CI-DRAFT-01 triggers", () => {
   });
 });
 
+// CI-COST-01: the one deliberate later edit to a heavy condition. The non-required
+// lanes' extended term also needs browser_run, because `changes` emits
+// browser_extended=true for an empty (no-browser) selection too. Named here so
+// every other byte of those conditions is still proved unchanged against the base.
+const EXTENDED_TERM = "needs.changes.outputs.browser_extended == 'true'";
+const LATER_EDITS: Record<string, (inner: string) => string> = {
+  // storage-photos also runs on any database change (CI's db lane has no storage-api).
+  "storage-photos": (s) => s.replace(EXTENDED_TERM, `(needs.changes.outputs.browser_run == 'true' && ${EXTENDED_TERM}) || needs.changes.outputs.database == 'true'`),
+  "webkit-hon-62": (s) => s.replace(EXTENDED_TERM, `(needs.changes.outputs.browser_run == 'true' && ${EXTENDED_TERM})`),
+};
+
 describe("CI-DRAFT-01 job conditions", () => {
   const base = baseCi();
   it("every Supabase-starting job is one of the gated heavy jobs (none missed)", () => {
@@ -70,7 +81,11 @@ describe("CI-DRAFT-01 job conditions", () => {
     it(`${job}: condition is draft != true && ( <base condition, unchanged> )`, () => {
       const was = ifLine(base, job);
       expect(was, `${job} had a condition at the base`).not.toBeNull();
-      const inner = was!.match(/^\$\{\{ (.*) \}\}$/)![1];
+      let inner = was!.match(/^\$\{\{ (.*) \}\}$/)![1];
+      if (LATER_EDITS[job]) {
+        expect(inner.split(EXTENDED_TERM).length - 1, `${job}: the base has exactly one extended term`).toBe(1);
+        inner = LATER_EDITS[job](inner);
+      }
       expect(ifLine(CI, job)).toBe(`\${{ github.event.pull_request.draft != true && ( ${inner} ) }}`);
     });
   }

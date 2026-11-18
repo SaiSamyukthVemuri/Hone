@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import Stripe from "stripe";
+import { tierStudio, tierRules, tierFrozen, TIER_TIMING } from "./helpers/cancellation-tier-fixture";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { feeExecuteBlock, feePrepareBlock } from "@/lib/billing/manual-fee-one-per-appointment";
@@ -22,6 +23,7 @@ const h = vi.hoisted(() => ({
   updates: [] as Array<Record<string, unknown>>,
   rows: {} as Record<string, unknown>,
   claimResult: "claimed" as string,
+  onClaim: null as null | (() => void),
   /** Negative control: restore the pre-HON-11 rule. */
   legacyRule: false,
   siblings: [] as unknown[] | null,
@@ -114,7 +116,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       const read = () =>
         table === "payment_charge_attempts" && siblingQuery
           ? { data: h.siblings, error: h.siblingsError }
-          : { data: h.rows[table] ?? null, error: null };
+          : { data: table === "studio_cancellation_fee_rules" ? tierRules(h.rows.studios) : table === "studios" ? tierStudio(h.rows.studios) : table === "payment_charge_attempts" ? tierFrozen(h.rows[table]) : table === "appointments" ? { ...TIER_TIMING, ...(h.rows[table] as object ?? {}) } : h.rows[table] ?? null, error: null };
       q.select = () => {
         if (isUpdate) {
           h.updates.push(payload ?? {});
@@ -156,6 +158,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       if (name !== "claim_session_payment_charge_attempt") return { data: null, error: null };
       h.claimCalls += 1;
       h.order.push("claim");
+      h.onClaim?.();
       return {
         data: [
           {
@@ -209,6 +212,10 @@ const ATTEMPT_ROW = {
   stripe_payment_intent_id: null,
   stripe_idempotency_key: null,
   updated_at: "2026-08-01T00:00:00.000Z",
+  // 0351: the calculation frozen at prepare (fixed mode, the studio row below holds the same amount).
+  calc_mode: "fixed",
+  basis_cents: null,
+  percent_bp: null,
 };
 
 beforeEach(() => {
@@ -224,6 +231,7 @@ beforeEach(() => {
   h.alertInputs = [];
   h.updates = [];
   h.claimResult = "claimed";
+  h.onClaim = null;
   h.legacyRule = false;
   h.siblings = [];
   h.siblingsError = null;
@@ -249,6 +257,17 @@ beforeEach(() => {
     // Explicit verified synthetic configuration; no runtime country default.
     studio_payment_jurisdictions: { payment_country: "CA", payment_currency: "cad" },
     client_stripe_customers: { stripe_customer_id: "cus_test" },
+    // The studio's own switches (0351): ON here so these tests keep exercising the runner past the setting gate.
+    studios: {
+      late_cancel_fee_enabled: true,
+      no_show_fee_enabled: true,
+      late_cancel_fee_mode: "fixed",
+      no_show_fee_mode: "fixed",
+      late_cancel_fee_percent_bp: null,
+      no_show_fee_percent_bp: null,
+      late_cancel_fee_cents: AMOUNT,
+      no_show_fee_cents: AMOUNT,
+    },
   };
 });
 
@@ -604,5 +623,36 @@ describe("an ALREADY-CLAIMED attempt keeps the existing manual-review handling w
     const at = src.indexOf("let stripe: Stripe | undefined;");
     expect(at).toBeGreaterThan(0);
     expect(src.slice(at, at + 200)).toMatch(/if \(attemptRow\.status === "ready"\)/);
+  });
+});
+
+
+describe("0351 post-claim read: the owner's settings are read once more before the Stripe request", () => {
+  it("CONTROL: with the settings unchanged the claimed fee is sent exactly once", async () => {
+    h.createReply = OK_PI;
+    const r = await run();
+    expect(r).toMatchObject({ ok: true, outcome: "succeeded" });
+    expect(h.createKeys).toHaveLength(1);
+  });
+  it("the fee is switched OFF at the claim: nothing is sent, the claim is retained for manual review", async () => {
+    h.onClaim = () => { h.rows = { ...h.rows, studios: { ...(h.rows.studios as object), no_show_fee_enabled: false } }; };
+    const r = await run();
+    expect(r).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+    expect(h.claimCalls).toBe(1);
+    expect(h.createKeys).toHaveLength(0);
+  });
+  it("the percentage or mode changed at the claim: nothing is sent either", async () => {
+    h.onClaim = () => { h.rows = { ...h.rows, studios: { ...(h.rows.studios as object), no_show_fee_cents: AMOUNT + 100 } }; };
+    const r = await run();
+    expect(r).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+    expect(h.createKeys).toHaveLength(0);
+  });
+  it("an attempt already pending is reconciled without the setting being consulted for a new send", async () => {
+    h.rows = { ...h.rows, payment_charge_attempts: { ...(h.rows.payment_charge_attempts as object), status: "pending_stripe" } };
+    h.claimResult = "already_pending";
+    h.onClaim = () => { h.rows = { ...h.rows, studios: { ...(h.rows.studios as object), no_show_fee_enabled: false } }; };
+    const r = await run();
+    // switching the fee off never blocks an attempt that was already claimed: it is not re-gated by the setting
+    expect(JSON.stringify(r)).not.toMatch(/turned off for this studio|settings changed after this fee was prepared/);
   });
 });

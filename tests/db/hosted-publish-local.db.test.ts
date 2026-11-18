@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { planContractPublication } from "../../lib/machines/contract-publication";
 import { E2E_SERVICE_ROLE_KEY, E2E_SUPABASE_URL } from "../../e2e/helpers/local-env";
 
-// HON-8 D4, Privacy BB3: the hosted runner's REAL client and REAL comparison against a real owned local stack. The unit tests use fakes whose
+// HON-8 D4: the hosted runner's REAL client and REAL comparison against a real owned local stack. The unit tests use fakes whose
 // stored shape the test author chose; this is the only proof that what the real sync RPC stores reads back, through the real PostgREST reads,
 // EQUAL to projectPlanRow for every planned mode, so the runner neither refuses its own publication nor treats a published row as different.
 //
@@ -16,9 +16,9 @@ const plan = planContractPublication();
 const same = (a: unknown, b: unknown) => sha256(JSON.stringify(a)) === sha256(JSON.stringify(b));
 
 // OPT-IN. It publishes the real contract rows through PostgREST (committed, immutable), so it must never run in the shared DB lane where other
-// suites assume an unpublished starting point (the F5 partial-publication proof). Run it by hand on an OWNED stack:
+// suites assume an unpublished starting point (the partial-publication proof). Run it by hand on an OWNED stack:
 //   HONE_HOSTED_LOCAL_PROOF=1 E2E_SUPABASE_URL=... HONE_LOCAL_DB_URL=... npx vitest run -c vitest.db.config.ts tests/db/hosted-publish-local.db.test.ts
-describe.skipIf(!process.env.HONE_HOSTED_LOCAL_PROOF)("the hosted client against a real local stack (BB3)", () => {
+describe.skipIf(!process.env.HONE_HOSTED_LOCAL_PROOF)("the hosted client against a real local stack", () => {
   const client = makeHostedClient({ url: E2E_SUPABASE_URL, key: E2E_SERVICE_ROLE_KEY, checkUrl: () => undefined });
 
   it("plans ten modes, and the fingerprint sees the sync function without reading any migrations schema", async () => {
@@ -30,7 +30,11 @@ describe.skipIf(!process.env.HONE_HOSTED_LOCAL_PROOF)("the hosted client against
     for (const row of plan.publish) {
       const existing = await client.readContract(row);
       if (existing) expect(same(existing, projectPlanRow(row)), `${row.p_mode_key}: a row already on the stack must already equal the plan`).toBe(true);
-      else await client.rpc(RPC, row);
+      else {
+        // The runner's stop on the sync's result relies on this: a NEW mode returns exactly the planned field count, as a JSON number.
+        const out = await client.rpc(RPC, row);
+        expect(out, `${row.p_mode_key}: the sync returns the number of field rows it inserted`).toBe(row.p_fields.length);
+      }
       const back = await client.readContract(row);
       expect(back, `${row.p_mode_key} is present after publishing`).not.toBeNull();
       expect(same(back, projectPlanRow(row)), `${row.p_mode_key} reads back equal to projectPlanRow`).toBe(true);

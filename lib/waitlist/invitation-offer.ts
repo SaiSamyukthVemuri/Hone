@@ -163,6 +163,8 @@ export type BookingRefusal =
   | "unavailable"
   /** 0319: the optional text was refused. Nothing changed; the offer is intact. */
   | "note_invalid"
+  /** The phone number sent with a "none of these times work" answer was refused (a class only: nothing typed is echoed). Nothing changed. */
+  | "contact_invalid"
   /** 0319: the "these times don't work" tap did not complete. Nothing changed. */
   | "feedback_unavailable";
 

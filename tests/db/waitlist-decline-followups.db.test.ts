@@ -225,6 +225,45 @@ describe("withdrawal", () => {
     expect((await q(`select * from public.waitlist_decline_owner_emails where studio_id=$1`, [f.studioId]))).toHaveLength(0);
   });
 
+  it("puts the person back in their ORIGINAL place in the owner's queue, and Keep changes nothing about the entry", async () => {
+    const f = await seed("q");
+    const e1 = await entry(f, "q1");
+    const e2 = await entry(f, "q2");
+    const e3 = await entry(f, "q3");
+    // The owner's waiting queue is ordered by joined_at, then id (the same order the settings page reads).
+    const queue = () =>
+      q<{ id: string }>(
+        `select id from public.new_client_waitlist_entries where studio_id=$1 and status='waiting' order by joined_at asc, id asc`,
+        [f.studioId],
+      ).then((r) => r.map((x) => x.id));
+    const before = await queue();
+    expect(before).toHaveLength(3);
+    expect(new Set(before)).toEqual(new Set([e1.id, e2.id, e3.id]));
+    // e2 must NOT be last, so a reset to the back of the queue cannot go unseen.
+    expect(before.indexOf(e2.id)).toBeLessThan(before.length - 1);
+    const joinedBefore = (await entryRow(e2.id)).joined_at;
+
+    const t = await invite(f, e2.id);
+    expect((await entryRow(e2.id)).status).not.toBe("waiting");
+    expect(await queue()).toEqual(before.filter((id) => id !== e2.id));
+
+    expect((await q(`select * from public.request_waitlist_withdrawal($1,$2)`, [t.token, t.cap]))[0].result).toBe("recorded");
+    const afterWithdraw = await entryRow(e2.id);
+    expect(afterWithdraw.status).toBe("waiting");
+    expect(afterWithdraw.joined_at).toEqual(joinedBefore);
+    expect(await queue()).toEqual(before);
+
+    // Keep closes the follow-up row and writes nothing to the entry.
+    const full = (id: string) =>
+      q(`select status, joined_at, claimed_at, claimed_by_practitioner_id, invited_at, released_at, expired_at from public.new_client_waitlist_entries where id=$1`, [id]).then((r) => r[0]);
+    const entryBeforeKeep = await full(e2.id);
+    const fid = (await q(`select id from public.waitlist_followups where entry_id=$1`, [e2.id]))[0].id;
+    expect((await q(`select * from public.keep_waitlist_withdrawal($1,$2,$3)`, [f.studioId, f.userId, fid]))[0].result).toBe("kept");
+    expect(await full(e2.id)).toEqual(entryBeforeKeep);
+    expect(await queue()).toEqual(before);
+    expect((await q(`select status from public.waitlist_followups where id=$1`, [fid]))[0].status).toBe("kept");
+  });
+
   it("an unknown token gets the same neutral answer", async () => {
     const r = await q(`select * from public.request_waitlist_withdrawal($1,$2)`, ["a".repeat(64), "b".repeat(64)]);
     expect(r[0].result).toBe("recorded");

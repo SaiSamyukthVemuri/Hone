@@ -31,7 +31,7 @@ export const BODY_ZONES: ReadonlyArray<BodyZone> = [
     areas: ["Upper lip", "Chin", "Jawline", "Cheeks", "Sideburns", "Eyebrows", "Ears"],
   },
   { id: "neck", label: "Neck", areas: ["Neck"] },
-  { id: "torso", label: "Torso", areas: ["Chest", "Abdomen", "Back"] },
+  { id: "torso", label: "Torso", areas: ["Chest", "Abdomen", "Back", "Areolas"] },
   { id: "arms", label: "Arms", areas: ["Underarms", "Forearms", "Hands"] },
   { id: "legs", label: "Legs", areas: ["Thighs", "Lower legs", "Feet"] },
   {

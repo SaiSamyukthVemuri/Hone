@@ -13,6 +13,7 @@ const EMPTY_SIGNALS: OnboardingSignals = {
   hasService: false,
   hasAvailability: false,
   isPubliclyBookable: false,
+  bookingReadiness: { state: "blocked", next: null },
   paymentsReady: false,
   publicBookingUrl: "",
 };
@@ -32,6 +33,7 @@ const READY_SIGNALS: OnboardingSignals = {
   hasService: true,
   hasAvailability: true,
   isPubliclyBookable: true,
+  bookingReadiness: { state: "ready" },
   paymentsReady: false,
   publicBookingUrl: "https://hone.care/book/test",
 };

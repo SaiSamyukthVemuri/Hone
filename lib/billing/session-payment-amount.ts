@@ -15,7 +15,7 @@
 // milliseconds.
 //
 // PRECEDENCE (and nothing else is ever consulted):
-//   1. A current client-specific price for the booked service.
+//   1. A current client-specific price for the booked service (a recorded $0 is a price: it resolves to `free`).
 //   2. Otherwise the booked service's current menu price.
 //   3. Otherwise preparation is BLOCKED. There is no fallback to
 //      sessions.price_paid_cents, to a prior attempt, or to anything the
@@ -49,7 +49,11 @@ export type UnresolvedSessionPaymentAmount =
   // no uniqueness constraint on client_pricing (traced: only a PK on id), so
   // this is genuinely reachable, and picking one would mean charging a client
   // an amount decided by database row order.
-  | { kind: "ambiguous_custom_pricing"; serviceName: string; candidateCents: number[] };
+  | { kind: "ambiguous_custom_pricing"; serviceName: string; candidateCents: number[] }
+  // A current client-specific row for this service holds a price that cannot be a price (negative, fractional or not a
+  // finite number). The DB CHECK forbids it, so only a hand-built row can reach this. It is NOT "no custom price recorded":
+  // falling through to the menu price would charge a client whose recorded price is unreadable.
+  | { kind: "invalid_custom_pricing"; serviceName: string };
 
 // FREE-01. A studio can deliberately price a service at $0, a free
 // consultation being the obvious case. That is a REAL, decided price, and it is
@@ -100,19 +104,13 @@ export function resolveAuthoritativeSessionPaymentAmount(input: {
   // deliberately: changing the linkage is a separate, migration-shaped decision.
   const serviceKey = serviceName.trim().toLowerCase();
 
-  // Current, positively-priced custom rows for THIS service.
-  //
-  // A zero or negative custom price is not treated as "charge nothing", the
-  // model has always read it as "no custom price recorded", and silently
-  // charging $0 because of a bad row would be worse than falling through to the
-  // menu price. (The DB CHECK already forbids negatives; this is belt and
-  // braces for a hand-built row.)
+  // Current custom rows for THIS service (effective on or before today). A recorded price of exactly 0 is a real,
+  // decided price: the studio's owner can record it explicitly (addClientPricingAction accepts a non-negative price, and
+  // the column is `check (price_cents >= 0)`), and it takes precedence over a positive menu price. It resolves to the
+  // existing `free` kind, the same as a $0 menu price (FREE-01). A NEGATIVE or non-finite price is unusable and refuses
+  // (invalid_custom_pricing); it never falls through to the menu price. A missing row is still "no custom price".
   const current = customPricing.filter(
-    (row) =>
-      row.service_name.trim().toLowerCase() === serviceKey &&
-      row.effective_from <= today &&
-      Number.isFinite(row.price_cents) &&
-      row.price_cents > 0,
+    (row) => row.service_name.trim().toLowerCase() === serviceKey && row.effective_from <= today,
   );
 
   if (current.length > 0) {
@@ -123,12 +121,19 @@ export function resolveAuthoritativeSessionPaymentAmount(input: {
       if (row.effective_from > latest) latest = row.effective_from;
     }
     const tied = current.filter((row) => row.effective_from === latest);
+
+    // An unusable price among the equally-current winners refuses. An unusable row that a NEWER usable row supersedes
+    // does not matter (the newer row decides), which is why this looks only at `tied`.
+    if (tied.some((r) => !Number.isInteger(r.price_cents) || r.price_cents < 0)) {
+      return { kind: "invalid_custom_pricing", serviceName };
+    }
+
     const distinct = Array.from(new Set(tied.map((r) => r.price_cents)));
 
     if (distinct.length > 1) {
-      // Equally current, disagreeing prices. Fail closed: any pick here would
-      // be decided by row order, not by anything the studio actually recorded.
-      // Sorted so the reported candidates are stable for display and tests.
+      // Equally current, disagreeing prices (a $0 row and a positive row count as disagreeing). Fail closed: any pick
+      // here would be decided by row order, not by anything the studio actually recorded. Sorted so the reported
+      // candidates are stable for display and tests.
       return {
         kind: "ambiguous_custom_pricing",
         serviceName,
@@ -136,10 +141,12 @@ export function resolveAuthoritativeSessionPaymentAmount(input: {
       };
     }
 
-    // Equally current rows that AGREE on the price are safe and deterministic:
-    // every candidate yields the same number, so no row-order dependence
-    // exists. The note is taken from the first such row.
     const row = tied[0];
+    if (row.price_cents === 0) {
+      // The explicit $0 custom price: free, never a chargeable row.
+      return { kind: "free", serviceName, durationMinutes: appointmentDurationMinutes };
+    }
+    // Equally current rows that AGREE on the price are safe and deterministic.
     return {
       kind: "resolved",
       amountCents: row.price_cents,
@@ -165,10 +172,8 @@ export function resolveAuthoritativeSessionPaymentAmount(input: {
   // costs nothing. Reached ONLY after the custom-pricing block above, so
   // precedence is untouched: a client with a current positive custom price for
   // a $0 menu service is still charged that custom price, and ambiguous custom
-  // pricing still fails closed. Note the model has never accepted a zero custom
-  // price as "charge nothing" (those rows are filtered out above as "no custom
-  // price recorded"), so zero-dollar CUSTOM pricing is not a state this
-  // codebase supports and none is invented here.
+  // pricing still fails closed. An explicit $0 CUSTOM price is handled in that
+  // block and also resolves to `free`.
   //
   // `price_cents` is `int check (price_cents >= 0)` and nullable since 0010, so
   // 0 and NULL are genuinely different recorded facts, not one sloppy value.
@@ -195,6 +200,8 @@ export function unresolvedAmountMessage(
       return "This appointment has no booked service, so there is no price to charge. Add the service to the appointment first.";
     case "missing_price":
       return `No price is configured for ${result.serviceName}. Set its price in your service menu, or add a client-specific price, before preparing payment.`;
+    case "invalid_custom_pricing":
+      return `This client's recorded price for ${result.serviceName} is not a usable price. Correct it in this client's pricing before preparing payment.`;
     case "ambiguous_custom_pricing":
       return `${result.serviceName} has more than one current client-specific price for this client. Review this client's pricing so there is a single current price before preparing payment.`;
   }

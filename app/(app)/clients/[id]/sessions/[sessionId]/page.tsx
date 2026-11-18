@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { FromLastVisitBand } from "@/components/from-last-visit-band";
 import { notFound } from "next/navigation";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
 import {
@@ -719,14 +720,7 @@ export default async function SessionDetailPage({
         </section>
       )}
       {fromLastVisit && (
-        <section className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm dark:border-blue-900 dark:bg-blue-950/40">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-blue-800 dark:text-blue-300">
-            From last visit, for today
-          </h2>
-          <p className="mt-1.5 whitespace-pre-wrap text-blue-950 dark:text-blue-100">
-            {fromLastVisit}
-          </p>
-        </section>
+        <FromLastVisitBand note={fromLastVisit} session={previousVisit.session} clientId={id} />
       )}
 
       {/* PR #199: the separate "Performed by" card is gone; the

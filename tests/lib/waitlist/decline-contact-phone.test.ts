@@ -157,8 +157,8 @@ describe("number hardening", () => {
   });
 });
 
-describe("the phone rules stay unwired", () => {
-  // The wiring change removes this block. The module must not be called from an action, a form or a page until the storage that holds a number is applied and read back.
+describe("the phone rules are called only by the action's validation", () => {
+  // HON-7: the action validates a sent choice and stores nothing. No form, page or component may import the module until the storage that holds a number is applied and read back.
   function walk(dir: string, out: string[] = []): string[] {
     for (const name of readdirSync(dir)) {
       if (name === "node_modules" || name.startsWith(".")) continue;
@@ -168,12 +168,12 @@ describe("the phone rules stay unwired", () => {
     }
     return out;
   }
-  it("no application file imports decline-contact-phone", () => {
+  it("only the invitation actions import decline-contact-phone", () => {
     const offenders = ["app", "components", "lib"]
       .flatMap((d) => walk(join(process.cwd(), d)))
       .filter((f) => !f.endsWith("lib/waitlist/decline-contact-phone.ts"))
       .filter((f) => /decline-contact-phone/.test(readFileSync(f, "utf8")));
-    expect(offenders).toEqual([]);
+    expect(offenders.map((f) => f.slice(process.cwd().length + 1))).toEqual(["app/invitation/[token]/actions.ts"]);
   });
   it("the module imports nothing that stores, sends or reads a database", () => {
     const src = readFileSync(join(process.cwd(), "lib/waitlist/decline-contact-phone.ts"), "utf8");

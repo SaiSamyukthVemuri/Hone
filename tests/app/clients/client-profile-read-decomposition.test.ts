@@ -178,7 +178,7 @@ describe("independent reads run in one parallel wave", () => {
       "getTreatmentPlansForClient",
       "getTotalTreatmentTime",
       "getPortalMessagesForPractitionerView",
-      "getConsentTemplatesForStudio",
+      "checkConsentTemplatesForStudio",
       "getActiveCardForStudioClient",
       "getRecentPortalAccessEvents",
     ]) {
