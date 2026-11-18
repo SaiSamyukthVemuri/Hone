@@ -52,57 +52,52 @@ describe("the charting selector offers ONE xCell", () => {
     expect([...machineSelect().options].map((o) => o.value)).not.toContain("unit-1");
     expect(visibleOutsideProvenance()).not.toMatch(/xCell Pur/i);
   });
-  it("without a route nothing changes: the unit is just a unit and there is no mode switch", () => {
+  it("without a route nothing changes: the unit is just a unit", () => {
     mount({ multiplexRoute: null });
     expect(modeSelect()).toBeNull();
     expect([...machineSelect().options].map((o) => o.value)).toContain("unit-1");
   });
 });
 
-describe("MultiPlex is added alongside the existing xCell settings", () => {
-  it("no machine chosen: no xCell mode control and no machine settings", () => {
+describe("the panel acts on the host form's MultiPlex request (there is no second selector here)", () => {
+  const rerender = (extra: Record<string, unknown>) =>
+    act(() => root!.render(createElement(MachineFirstSetupPanel, { devices: [UNIT], scope: SCOPE, catalogue: MACHINE_CATALOGUE, legacyMachine: LEGACY, multiplexRoute: ROUTE, ...extra } as never)));
+  it("no xCell-mode selector exists at all", () => {
     mount();
+    set(machineSelect(), "legacy:xcell");
     expect(modeSelect()).toBeNull();
   });
-  it("choosing xCell opens the existing settings, with MultiPlex offered as the added mode", () => {
-    const kinds: string[] = [];
-    mount({ onKindChange: (k: string) => kinds.push(k) });
-    set(machineSelect(), "legacy:xcell");
-    expect(kinds.at(-1)).toBe("legacy");
-    expect(modeSelect()!.value).toBe("existing");
-    expect([...modeSelect()!.options].map((o) => o.textContent)).toEqual(["Existing xCell settings", "MultiPlex"]);
-  });
-  it("choosing MultiPlex selects the routed unit with the multiplex mode (native), and the selector still reads xCell", async () => {
+  it("a request for MultiPlex selects the routed unit with the multiplex mode (native) while the selector still reads xCell", async () => {
     const seen: unknown[] = []; const kinds: string[] = [];
     const onSelectMachine = vi.fn(async () => ({ ok: true }));
     mount({ onSelectMachine, onResolvedChoice: (c: unknown) => seen.push(c), onKindChange: (k: string) => kinds.push(k) });
     set(machineSelect(), "legacy:xcell");
-    set(modeSelect()!, "multiplex");
+    rerender({ onSelectMachine, onResolvedChoice: (c: unknown) => seen.push(c), onKindChange: (k: string) => kinds.push(k), multiplexRequest: { seq: 1, want: true } });
     await act(async () => { await Promise.resolve(); });
-    expect(onSelectMachine).toHaveBeenLastCalledWith(expect.objectContaining({ deviceId: "unit-1" }));
     expect(seen.at(-1)).toEqual({ deviceId: "unit-1", modeKey: "multiplex" });
     expect(kinds.at(-1)).toBe("native");
     expect(machineSelect().value).toBe("legacy:xcell");
-    expect(modeSelect()!.value).toBe("multiplex");
     expect(visibleOutsideProvenance()).not.toMatch(/xCell Pur/i);
-    // The ONE place the Pur name may appear: the provenance block's citation of the manufacturer's own product page (its title).
-    // Its heading line still names the studio's xCell.
     expect(host!.querySelector('[data-testid="profile-provenance"] p')?.textContent).toMatch(/^Dectro xCell ·/);
   });
-  it("going back to the existing settings returns to the existing workflow with no unit and no mode", async () => {
+  it("the same sequence again changes nothing; a request to leave returns to the existing workflow", async () => {
     const seen: unknown[] = []; const kinds: string[] = [];
-    mount({ onSelectMachine: vi.fn(async () => ({ ok: true })), onResolvedChoice: (c: unknown) => seen.push(c), onKindChange: (k: string) => kinds.push(k) });
+    const common = { onSelectMachine: vi.fn(async () => ({ ok: true })), onResolvedChoice: (c: unknown) => seen.push(c), onKindChange: (k: string) => kinds.push(k) };
+    mount(common);
     set(machineSelect(), "legacy:xcell");
-    set(modeSelect()!, "multiplex");
+    rerender({ ...common, multiplexRequest: { seq: 1, want: true } });
     await act(async () => { await Promise.resolve(); });
-    set(modeSelect()!, "existing");
+    rerender({ ...common, multiplexRequest: { seq: 2, want: false } });
     await act(async () => { await Promise.resolve(); });
     expect(kinds.at(-1)).toBe("legacy");
     expect(seen.at(-1)).toEqual({ deviceId: null, modeKey: null, legacy: true });
   });
-  it("a SAVED area keeps the identity it was saved with: the mode control is read-only", () => {
-    mount({ blockId: "b1", initialLegacyChosen: true });
-    expect(modeSelect()!.disabled).toBe(true);
+  it("a SAVED area ignores a request: it keeps the identity it was saved with", async () => {
+    const onSelectMachine = vi.fn(async () => ({ ok: true }));
+    mount({ blockId: "b1", initialLegacyChosen: true, onSelectMachine });
+    rerender({ blockId: "b1", initialLegacyChosen: true, onSelectMachine, multiplexRequest: { seq: 1, want: true } });
+    await act(async () => { await Promise.resolve(); });
+    expect(onSelectMachine).not.toHaveBeenCalled();
   });
 });
 

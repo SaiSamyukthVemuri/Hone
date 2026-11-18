@@ -233,12 +233,6 @@ export function MachineFirstSetupConnected({
   const [written, setWritten] = useState<NonNullable<MachineFirstSetupConnectedProps["savedIdentity"]> | null>(null);
   const savedIdentity = written ?? savedIdentityProp;
   const [ctx, setCtx] = useState<MachineSetupContext | null>(null);
-  // The host form's Mode control learns whether MultiPlex may be offered, and under which unit a saved area is recognised.
-  const routeDeviceId = ctx?.multiplexRoute?.deviceId ?? null;
-  useEffect(() => {
-    onMultiplexRoute?.(routeDeviceId ? { deviceId: routeDeviceId } : null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [routeDeviceId]);
   // A CONFIRMED SAVE whose follow-up refresh of the recorded settings failed: the save stands, only the list is out of date.
   const [refreshFailedAfterSave, setRefreshFailedAfterSave] = useState(false);
   const [refusedAfterSave, setRefusedAfterSave] = useState<"access" | "unavailable" | null>(null);
@@ -255,7 +249,11 @@ export function MachineFirstSetupConnected({
           );
           return mod.loadMachineSetupContext({ clientId, sessionId, blockId });
         });
-      setCtx(await loader());
+      const loaded = await loader();
+      setCtx(loaded);
+      // The host form's Mode control learns whether MultiPlex may be offered, and under which unit a saved area is recognised.
+      // Reported where the context ARRIVES, not from an effect: the wrapper keeps its single open-on-saved-identity effect.
+      onMultiplexRoute?.(loaded.multiplexRoute ? { deviceId: loaded.multiplexRoute.deviceId } : null);
       setState("idle");
     } catch {
       // Charting below is unaffected by a failed identity read, so this is

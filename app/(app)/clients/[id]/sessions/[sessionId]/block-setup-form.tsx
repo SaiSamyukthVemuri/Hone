@@ -462,6 +462,8 @@ export function BlockSetupForm({
   } | null>(null);
   const draftRegistry = useDraftRegistryState();
   const [identityDirty, setIdentityDirty] = useState(false);
+  // The unit the NEW area's draft is bound to (reported by the panel), so a Mode pill never outlives the machine it describes.
+  const [draftDeviceId, setDraftDeviceId] = useState<string | null>(null);
   useReportDraft({ draft: identityDirty, unresolved: false }, draftRegistry.api);
   // An EXISTING area that already holds legacy readings is never switched to a
   // native machine: that would leave two machines' settings on one area, or
@@ -528,6 +530,7 @@ export function BlockSetupForm({
       // auto-resolving in a panel opened afterwards must not become the live draft the retry could read.
       if (createAttemptRef.current !== null) return;
       identityDraftRef.current = choice;
+      setDraftDeviceId(choice?.deviceId ?? null);
       // Only a pick the practitioner made counts as an unsaved edit.
       if (explicit) setIdentityDirty(choice !== null);
     },
@@ -539,9 +542,11 @@ export function BlockSetupForm({
   const [multiplexRoute, setMultiplexRoute] = useState<{ deviceId: string } | null>(null);
   const [multiplexRequest, setMultiplexRequest] = useState<{ seq: number; want: boolean } | null>(null);
   const multiplexSaved = Boolean(block?.studio_machine_id && multiplexRoute && block.studio_machine_id === multiplexRoute.deviceId);
-  const multiplexSelected = multiplexSaved || (machineKind === "native" && multiplexRequest?.want === true && !block);
+  const multiplexSelected =
+    multiplexSaved || (!block && machineKind === "native" && multiplexRoute !== null && draftDeviceId === multiplexRoute.deviceId);
   // Offered on a NEW area under the existing xCell choice. An area holding legacy values never switches (today's refusal stays).
-  const multiplexOffered = multiplexRoute !== null && !legacyDataLocked && !block && (machineKind === "legacy" || multiplexSelected);
+  const multiplexOffered =
+    multiplexSaved || (multiplexRoute !== null && !legacyDataLocked && !block && (machineKind === "legacy" || multiplexSelected));
   const showModeControl = machineKind !== "native" || multiplexSelected;
   const showLegacyFields = machineKind !== "native";
   // A lot/batch belongs to ONE probe. Provenance is therefore tracked PER PROBE
