@@ -193,6 +193,9 @@ type AttemptRow = {
   stripe_refund_status: string | null;
   stripe_refund_event_created: number | null;
   stripe_refund_event_id: string | null;
+  // HON-49 (0358): the refund history summary. succeeded NULL = never established (not zero); inflight counts refunds still pending.
+  refunds_succeeded_cents: number | null;
+  refunds_inflight_count: number | null;
 };
 
 export async function refundPaymentChargeAttempt(args: {
@@ -221,7 +224,7 @@ export async function refundPaymentChargeAttempt(args: {
   const { data: rawRow, error: loadErr } = await admin
     .from("payment_charge_attempts")
     .select(
-      "id, studio_id, client_id, charge_reason, status, stripe_livemode, stripe_account_id, stripe_customer_id, stripe_payment_intent_id, stripe_charge_id, amount_cents, currency, charged_at, refund_status, refund_amount_cents, refunded_at, stripe_refund_id, stripe_refund_status, stripe_refund_event_created, stripe_refund_event_id",
+      "id, studio_id, client_id, charge_reason, status, stripe_livemode, stripe_account_id, stripe_customer_id, stripe_payment_intent_id, stripe_charge_id, amount_cents, currency, charged_at, refund_status, refund_amount_cents, refunded_at, stripe_refund_id, stripe_refund_status, stripe_refund_event_created, stripe_refund_event_id, refunds_succeeded_cents, refunds_inflight_count",
     )
     .eq("id", args.attemptId)
     .maybeSingle();
@@ -359,6 +362,13 @@ export async function refundPaymentChargeAttempt(args: {
       || attempt.stripe_refund_event_created !== null || attempt.stripe_refund_event_id !== null) {
     return { ok: false, outcome: "needs_manual_review", message: "A refund outcome is already recorded for this payment. The studio owner must review it before starting another refund." };
   }
+  // HON-49 (0358): money already went back (or is going back) according to the signed refund history, so this whole-charge refund must not start:
+  // it would try to return money that is no longer on the card. Same plain refusal as any other recorded refund outcome. The claim below
+  // rechecks the same columns, so a history that arrives after this read also stops it.
+  if ((typeof attempt.refunds_succeeded_cents === "number" && attempt.refunds_succeeded_cents > 0)
+      || (typeof attempt.refunds_inflight_count === "number" && attempt.refunds_inflight_count > 0)) {
+    return { ok: false, outcome: "needs_manual_review", message: "A refund outcome is already recorded for this payment. The studio owner must review it before starting another refund." };
+  }
   if (!attempt.stripe_account_id) {
     return {
       ok: false,
@@ -400,6 +410,9 @@ export async function refundPaymentChargeAttempt(args: {
     .is("stripe_refund_status", null)
     .is("stripe_refund_event_created", null)
     .is("stripe_refund_event_id", null)
+    // HON-49 (0358): recheck the refund history under the row UPDATE (the history may have been recorded after the read above).
+    .or("refunds_inflight_count.eq.0")
+    .or("refunds_succeeded_cents.is.null,refunds_succeeded_cents.eq.0")
     // RECIPROCAL WITH THE RECEIPT CLAIM. A refund may not start while a receipt
     // send holds the row.
     //

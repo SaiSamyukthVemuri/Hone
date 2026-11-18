@@ -23,6 +23,8 @@ const RECORD_OPS_ALERT = vi.fn<(input: OpsAlertInput) => Promise<void>>(async ()
 const NOTIFY_CRITICAL_OPS_ALERT = vi.fn(async () => {});
 const CAPTURE_EVENT = vi.fn();
 const ACCOUNTS_RETRIEVE = vi.fn();
+// HON-49: the authenticated, read-only refund-list read the webhook makes when a charge.refunded payload carries no complete list.
+const REFUNDS_LIST = vi.fn();
 const PAYMENT_METHOD_RETRIEVE = vi.fn();
 const ENSURE_CARD_NOTIFICATION = vi.fn(async () => ({ eventType: "card_added", deduped: false }));
 
@@ -33,6 +35,7 @@ vi.mock("@/lib/stripe/server", async (importActual) => {
     getStripe: () => ({
       webhooks: { constructEvent: CONSTRUCT_EVENT },
       accounts: { retrieve: ACCOUNTS_RETRIEVE },
+      refunds: { list: REFUNDS_LIST },
       paymentMethods: { retrieve: PAYMENT_METHOD_RETRIEVE },
     }),
   };
@@ -113,6 +116,8 @@ function makeAdmin(reads: Record<string, ReadResult[]>, rpcs: Record<string, Rea
         return { data: [{ out_result: "recorded", out_account_country: args.p_country,
           out_payment_country: args.p_country, out_matches: true }], error: null };
       }
+      // HON-49: the refund-history command, called for every signed charge.refunded. A healthy default so existing refund tests keep their meaning.
+      if (name === "record_charge_refund_history") return { data: [{ result: "recorded", out_attempt_id: args.p_attempt_id }], error: null };
       if (name === "reconcile_bound_payment_event") {
         const row = observedAttempt;
         const object = args.p_object as Record<string, unknown>;
@@ -202,6 +207,9 @@ beforeEach(() => {
   NOTIFY_CRITICAL_OPS_ALERT.mockClear();
   CAPTURE_EVENT.mockClear();
   ACCOUNTS_RETRIEVE.mockReset();
+  // Default: the provider REFUSES the refund-list read (a permission error), so a test that does not configure it sees the refusal, never a silent success.
+  REFUNDS_LIST.mockReset();
+  REFUNDS_LIST.mockRejectedValue(Object.assign(new Error("synthetic: not readable"), { type: "StripePermissionError" }));
   PAYMENT_METHOD_RETRIEVE.mockReset();
   ENSURE_CARD_NOTIFICATION.mockReset();
   ENSURE_CARD_NOTIFICATION.mockResolvedValue({ eventType: "card_added", deduped: false });
@@ -1445,7 +1453,7 @@ describe("P1-B: the account arm records the Account's country", () => {
 // recordOpsAlert never throws and a mocked throw would prove nothing.
 // ===========================================================================
 describe("W-O1 governed refund refusal through the route, real alert writer", () => {
-  function prepareCharge(refunds: unknown, refundStatus: string | null = "pending_stripe") {
+  function prepareCharge(refunds: unknown, refundStatus: string | null = "pending_stripe", history?: ReadResult) {
     const row = {
       id: "attempt-1", studio_id: "studio-1", client_id: "client-1", charge_reason: "session_payment",
       status: "succeeded", stripe_livemode: false, stripe_account_id: "acct_test_1",
@@ -1464,7 +1472,7 @@ describe("W-O1 governed refund refusal through the route, real alert writer", ()
     ADMIN.current = makeAdmin({
       studio_payment_settings: [{ data: { studio_id: "studio-1" }, error: null }],
       payment_charge_attempts: [{ data: row, error: null }],
-    }, { claim_stripe_event: CLAIM_OK });
+    }, { claim_stripe_event: CLAIM_OK, ...(history ? { record_charge_refund_history: history } : {}) });
   }
   const oneRefund = (status: string) => ({ object: "list", has_more: false, data: [{ object: "refund", id: "re_1",
     amount: 5000, currency: "cad", charge: "ch_1", payment_intent: "pi_1", status }] });
@@ -1472,9 +1480,32 @@ describe("W-O1 governed refund refusal through the route, real alert writer", ()
     ADMIN.current!.updateCalls.filter((u) => u.payload.refund_status === "succeeded");
   const failInsert = () => { OPS_INSERT_ERROR.current = { code: "XX000", message: "synthetic ops_alerts insert failure" }; };
   const refusals = [
-    ["the default payload with no refund object (refused before the command)", undefined, "charge_refunded_cumulative_evidence_refused"],
+    ["the default payload with no refund object (the read is refused by the provider)", undefined, "charge_refunded_refund_list_unavailable"],
     ["a pending refund (refused by the bound command)", oneRefund("pending"), "stripe_webhook_bound_command_refused"],
   ] as const;
+
+  // HON-49 (0358): a FULL refund whose history write is refused still takes the older receipt path, but the refusal is kept durably: a critical
+  // alert, and when that alert cannot be kept the route answers 500 and releases the claim (so the event is retried), exactly like the other refusals.
+  it("a full refund whose history is REFUSED keeps a durable critical alert (charge_refunded_history_refused) and is acknowledged", async () => {
+    prepareCharge(oneRefund("succeeded"), null, { data: [{ result: "identity_mismatch" }], error: null });
+    expect((await callRoute()).status).toBe(200);
+    expect(ADMIN.current!.opsRows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: "charge_refunded_history_refused", severity: "critical" }),
+    ]));
+  });
+  it("a full refund whose history is refused and whose alert CANNOT be kept: 500, claim released, nothing completed", async () => {
+    prepareCharge(oneRefund("succeeded"), null, { data: [{ result: "identity_mismatch" }], error: null });
+    failInsert();
+    expect((await callRoute()).status).toBe(500);
+    expect(completionWrites()).toEqual([]);
+    expect(names(ADMIN.current!.rpcCalls)).toContain("release_stripe_event_claim_with_error");
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("mark_stripe_event_processed");
+  });
+  it("a full refund whose history is recorded raises no history refusal alert", async () => {
+    prepareCharge(oneRefund("succeeded"), null, { data: [{ result: "recorded" }], error: null });
+    expect((await callRoute()).status).toBe(200);
+    expect(ADMIN.current!.opsRows.filter((r) => r.event === "charge_refunded_history_refused")).toEqual([]);
+  });
 
   it.each(refusals)("alert row written for %s: the refusal is final (200), nothing completed", async (_l, refunds, alert) => {
     prepareCharge(refunds);
@@ -1576,12 +1607,14 @@ describe("W-O1 governed refund refusal through the route, real alert writer", ()
 });
 
 // ===========================================================================
-// A SIGNED PARTIAL REFUND IS NOT RECORDED TODAY (HON-49). These pin TODAY'S behaviour, named as such, so that
-// the day partial refunds are recorded (HON-49) they fail on purpose and are REWRITTEN with the new rule, never loosened.
-// What is pinned: a signed charge.refunded for less than the whole charge raises a critical alert, changes NO row, is
-// acknowledged as processed (200), and leaves the panel and the balance reading "not refunded".
+// A SIGNED PARTIAL REFUND IS RECORDED (HON-49, migration 0358). This REPLACES the "PINNED TODAY" tests of #1531, which pinned that a signed
+// charge.refunded for less than the whole charge raised a critical alert and changed nothing. They failed on purpose when the webhook began
+// calling record_charge_refund_history; they are rewritten here with the new rule, not loosened. What is asserted now: a signed partial refund
+// with a COMPLETE refund list is written through that one command (and only that command, beside claim and mark), the evidence is built from the
+// signed event's own charge (the identity fields never come from the stored attempt), the event is acknowledged, the attempt row's older refund columns are untouched,
+// the alert is a WARNING; and when the command refuses, or the list is incomplete, today's critical alert and no-write behaviour are kept.
 // ===========================================================================
-describe("PINNED TODAY (HON-49): a partial refund recorded in Stripe is not recorded in Hone", () => {
+describe("HON-49: a partial refund signed by Stripe is recorded in the refund history", () => {
   const attemptRow = () => ({
     id: "attempt-1", studio_id: "studio-1", client_id: "client-1", charge_reason: "session_payment",
     status: "succeeded", stripe_livemode: false, stripe_account_id: "acct_test_1",
@@ -1589,24 +1622,25 @@ describe("PINNED TODAY (HON-49): a partial refund recorded in Stripe is not reco
     amount_cents: 5000, currency: "cad", charged_at: null, refund_status: null,
     refund_amount_cents: null, refunded_at: null, stripe_refund_id: null,
   });
+  const RECORDED = { data: [{ result: "recorded", out_attempt_id: "attempt-1", out_studio_id: "studio-1", out_succeeded_cents: 2000, out_inflight_count: 0 }], error: null };
   // One fake database for a whole test, with enough queued reads for `deliveries` webhook calls, so everything the route did is
   // visible together (a fresh fake per call would hide the earlier calls).
-  function startDatabase(deliveries: number) {
+  function startDatabase(deliveries: number, history: ReadResult | Error = RECORDED) {
     ADMIN.current = makeAdmin({
       studio_payment_settings: Array.from({ length: deliveries }, () => ({ data: { studio_id: "studio-1" }, error: null })),
       payment_charge_attempts: Array.from({ length: deliveries }, () => ({ data: attemptRow(), error: null })),
-    }, { claim_stripe_event: CLAIM_OK });
+    }, { claim_stripe_event: CLAIM_OK, record_charge_refund_history: history });
   }
-  function partial(eventId: string, refunds: Array<{ id: string; amount: number }>) {
-    const refunded = refunds.reduce((n, r) => n + r.amount, 0);
+  function partial(eventId: string, refunds: Array<{ id: string; amount: number; status?: string }>, over: { has_more?: boolean; omitList?: boolean; customer?: string } = {}) {
+    const refunded = refunds.filter((r) => (r.status ?? "succeeded") === "succeeded").reduce((n, r) => n + r.amount, 0);
     const event = {
       id: eventId, object: "event", created: 1770000000, type: "charge.refunded", account: "acct_test_1", livemode: false,
       data: { object: {
         object: "charge", id: "ch_1", status: "succeeded", paid: true, captured: true, livemode: false,
         payment_intent: "pi_1", customer: "cus_1", amount: 5000, amount_captured: 5000, currency: "cad",
         refunded: false, amount_refunded: refunded, metadata: { hone_payment_charge_attempt_id: "attempt-1" },
-        refunds: { object: "list", has_more: false, data: refunds.map((r) => ({ object: "refund", id: r.id, amount: r.amount,
-          currency: "cad", charge: "ch_1", payment_intent: "pi_1", status: "succeeded" })) },
+        ...(over.omitList ? {} : { refunds: { object: "list", has_more: over.has_more ?? false, data: refunds.map((r) => ({ object: "refund", id: r.id, amount: r.amount,
+          currency: "cad", charge: "ch_1", payment_intent: "pi_1", status: r.status ?? "succeeded" })) } }),
       } },
     };
     const webhooks = new Stripe("sk_test_synthetic_no_network").webhooks;
@@ -1614,47 +1648,561 @@ describe("PINNED TODAY (HON-49): a partial refund recorded in Stripe is not reco
     const payload = JSON.stringify(event);
     return post(payload, webhooks.generateTestHeaderString({ payload, secret: "whsec_test" }));
   }
-  const alerts = () => ADMIN.current!.opsRows.filter((r) => r.event === "charge_refunded_partial_out_of_band");
-  // The only database commands a partial refund may run: claim the event, then mark it processed. Any other command (a different
-  // one that writes the row, for example) fails the exact-list checks below.
-  const ONLY_CLAIM_AND_MARK = ["claim_stripe_event", "mark_stripe_event_processed"];
+  const alerts = (event: string) => ADMIN.current!.opsRows.filter((r) => r.event === event);
+  const HISTORY = ["claim_stripe_event", "record_charge_refund_history", "mark_stripe_event_processed"];
+  const historyCalls = () => ADMIN.current!.rpcCalls.filter((c) => c.name === "record_charge_refund_history");
 
-  it("one signed partial refund (2000 of 5000): critical alert, no row change, only claim and mark commands, acknowledged", async () => {
+  it("one signed partial refund (2000 of 5000): recorded through the history command only, a WARNING alert, no row change, acknowledged", async () => {
     startDatabase(1);
     const res = await callRoute(partial("evt_partial_1", [{ id: "re_1", amount: 2000 }]));
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ok: true });
-    expect(alerts()).toEqual([expect.objectContaining({ severity: "critical" })]);
+    expect(names(ADMIN.current!.rpcCalls)).toEqual(HISTORY);
     expect(ADMIN.current!.updateCalls).toEqual([]);
-    expect(names(ADMIN.current!.rpcCalls)).toEqual(ONLY_CLAIM_AND_MARK);
+    expect(alerts("charge_refunded_partial_recorded")).toEqual([expect.objectContaining({ severity: "warning" })]);
+    expect(alerts("charge_refunded_partial_out_of_band")).toEqual([]);
+    expect(historyCalls()[0].args).toMatchObject({
+      p_attempt_id: "attempt-1", p_event_id: "evt_partial_1", p_event_type: "charge.refunded", p_studio_id: "studio-1",
+      p_stripe_account_id: "acct_test_1", p_livemode: false,
+      p_object: {
+        customer_id: "cus_1", payment_intent_id: "pi_1", charge_id: "ch_1", amount_cents: 5000, currency: "cad", event_created: 1770000000,
+        evidence_kind: "signed_event", charge_amount_refunded: 2000, charge_refund_list_complete: true,
+        components: [{ refund_id: "re_1", amount_cents: 2000, currency: "cad", refund_status: "succeeded", charge_id: "ch_1", payment_intent_id: "pi_1" }],
+      },
+    });
   });
 
-  it("a second partial (3000 of 5000 in all) is treated the same: no row change, two critical alerts in all, only claim and mark commands each time", async () => {
+  it("a second partial (3000 of 5000 in all) is recorded the same way: the command receives BOTH refunds of the signed list", async () => {
     startDatabase(2);
     expect((await callRoute(partial("evt_partial_1", [{ id: "re_1", amount: 2000 }]))).status).toBe(200);
-    expect(alerts()).toHaveLength(1);
     const res = await callRoute(partial("evt_partial_2", [{ id: "re_1", amount: 2000 }, { id: "re_2", amount: 1000 }]));
     expect(res.status).toBe(200);
-    expect(alerts()).toEqual([
-      expect.objectContaining({ severity: "critical", stripe_event_id: "evt_partial_1" }),
-      expect.objectContaining({ severity: "critical", stripe_event_id: "evt_partial_2" }),
-    ]);
+    expect(alerts("charge_refunded_partial_recorded")).toHaveLength(2);
+    expect(alerts("charge_refunded_partial_out_of_band")).toEqual([]);
     expect(ADMIN.current!.updateCalls).toEqual([]);
-    expect(names(ADMIN.current!.rpcCalls)).toEqual([...ONLY_CLAIM_AND_MARK, ...ONLY_CLAIM_AND_MARK]);
+    expect(names(ADMIN.current!.rpcCalls)).toEqual([...HISTORY, ...HISTORY]);
+    expect((historyCalls()[1].args.p_object as { components: unknown[]; charge_amount_refunded: number }).components).toHaveLength(2);
+    expect((historyCalls()[1].args.p_object as { charge_amount_refunded: number }).charge_amount_refunded).toBe(3000);
   });
 
-  it("with the row untouched, the panel and the balance both still say the whole charge is refundable and kept", async () => {
+  it("a pending refund beside a succeeded one is sent with its own status (the command counts it in flight)", async () => {
+    startDatabase(1);
+    await callRoute(partial("evt_partial_pending", [{ id: "re_1", amount: 2000 }, { id: "re_2", amount: 1000, status: "pending" }]));
+    const components = (historyCalls()[0].args.p_object as { components: Array<{ refund_id: string; refund_status: string }> }).components;
+    expect(components.map((c) => `${c.refund_id}:${c.refund_status}`)).toEqual(["re_1:succeeded", "re_2:pending"]);
+  });
+
+  for (const result of ["identity_mismatch", "refund_evidence_refused", "terminal_refund_mismatch", "invalid_input", "not_found"]) {
+    it(`the command refuses (${result}): today's critical alert, no row change, still acknowledged (a refusal must not cause a retry loop)`, async () => {
+      startDatabase(1, { data: [{ result }], error: null });
+      const res = await callRoute(partial("evt_partial_refused", [{ id: "re_1", amount: 2000 }]));
+      expect(res.status).toBe(200);
+      expect(alerts("charge_refunded_partial_out_of_band")).toEqual([expect.objectContaining({ severity: "critical" })]);
+      expect(alerts("charge_refunded_partial_recorded")).toEqual([]);
+      expect(ADMIN.current!.updateCalls).toEqual([]);
+    });
+  }
+
+  // A deploy before 0358, or a 0358 rollback: the command does not exist. The webhook must behave exactly as it did before this change.
+  for (const code of ["42883", "PGRST202"]) {
+    it(`the history command is missing (${code}): today's critical alert and no write, acknowledged, never a retry loop`, async () => {
+      startDatabase(1, { data: null, error: { code, message: "function record_charge_refund_history does not exist" } as never });
+      const res = await callRoute(partial(`evt_partial_missing_${code}`, [{ id: "re_1", amount: 2000 }]));
+      expect(res.status).toBe(200);
+      expect(historyCalls()).toHaveLength(1);
+      expect(alerts("charge_refunded_partial_out_of_band")).toEqual([expect.objectContaining({ severity: "critical" })]);
+      expect(alerts("charge_refunded_partial_recorded")).toEqual([]);
+      expect(ADMIN.current!.updateCalls).toEqual([]);
+    });
+  }
+
+  it("a database error from the command is not acknowledged: the event is retried, and nothing is claimed as recorded", async () => {
+    startDatabase(1, { data: null, error: { code: "XX000", message: "boom" } as never });
+    const res = await callRoute(partial("evt_partial_dberr", [{ id: "re_1", amount: 2000 }]));
+    expect(res.status).toBeGreaterThanOrEqual(500);
+    expect(alerts("charge_refunded_partial_recorded")).toEqual([]);
+    expect(ADMIN.current!.updateCalls).toEqual([]);
+  });
+
+  it("with the summary recorded (2000 of 5000 back), the panel says 3000 is still refundable and the balance says 3000 is kept (so 2000 of a 5000 quote is owed)", async () => {
     const { refundDisplayState } = await import("@/lib/billing/refund-display-state");
     const { outstandingForAppointment } = await import("@/lib/billing/outstanding-balance");
     const row = attemptRow();
     expect(refundDisplayState({
       chargeStatus: row.status, amountCents: row.amount_cents, refundStatus: row.refund_status,
       refundAmountCents: row.refund_amount_cents, providerRefundStatus: null, stripeRefundId: row.stripe_refund_id,
-      cumulativeFullRefundVerified: false,
-    })).toEqual({ kind: "not_refunded", remainingRefundableCents: 5000, mayStartRefund: true });
+      cumulativeFullRefundVerified: false, refundsSucceededCents: 2000, refundsInflightCount: 0,
+    })).toEqual({ kind: "refunded", remainingRefundableCents: 3000, mayStartRefund: false, refundedCents: 2000 });
     expect(outstandingForAppointment({
       status: "completed", endsAt: "2026-10-01T15:00:00Z", now: "2026-11-03T12:00:00Z", quoteCents: 5000, studioCurrency: "CAD",
-      settlements: [], cards: [{ status: "succeeded", amountCents: 5000, refundStatus: null, refundAmountCents: null, currency: "cad" }],
-    })).toEqual({ kind: "paid" });
+      settlements: [], cards: [{ status: "succeeded", amountCents: 5000, refundStatus: null, refundAmountCents: null, currency: "cad", refundsSucceededCents: 2000, refundsInflightCount: 0 }],
+    })).toMatchObject({ kind: "owed", outstandingCents: 2000, cardKeptCents: 3000 });
+  });
+});
+
+// ===========================================================================
+// HON-49: a signed charge.refunded usually carries NO refund list (the provider stopped expanding it on a Charge at API 2022-11-15, and expand
+// never applies to a webhook payload). The server then READS the list itself: authenticated, read-only, for the charge and connected account
+// named by the SIGNED event. These cases drive REAL-SHAPED, really-signed events (fake secret, no network) at the pinned API version through the
+// route, with a fake provider client. Before this fallback the same events recorded nothing and completed nothing (a critical alert each; pinned
+// in the "today" tests this section replaced).
+// ===========================================================================
+describe("HON-49: the authenticated refund-list read when the signed payload has no complete list", () => {
+  const PINNED_API_VERSION = "2026-04-22.dahlia";
+  // The version the live endpoint is set to (a dashboard setting, newer than the SDK pin; recorded in docs/production/stripe-webhook-endpoint-facts.md).
+  const LIVE_API_VERSION = "2026-06-24.dahlia";
+  const row = (refundStatus: string | null) => ({
+    id: "attempt-1", studio_id: "studio-1", client_id: "client-1", charge_reason: "session_payment",
+    status: "succeeded", stripe_livemode: false, stripe_account_id: "acct_test_1",
+    stripe_customer_id: "cus_1", stripe_payment_intent_id: "pi_1", stripe_charge_id: "ch_1",
+    amount_cents: 5000, currency: "cad", charged_at: null, refund_status: refundStatus,
+    refund_amount_cents: refundStatus ? 5000 : null, refunded_at: null, stripe_refund_id: null,
+  });
+  const RECORDED = { data: [{ result: "recorded", out_attempt_id: "attempt-1", out_studio_id: "studio-1", out_succeeded_cents: 2000, out_inflight_count: 0 }], error: null };
+  type Refund = Record<string, unknown>;
+  const fr = (id: string, amount: number, status = "succeeded", over: Refund = {}): Refund =>
+    ({ object: "refund", id, amount, currency: "cad", charge: "ch_1", payment_intent: "pi_1", status, ...over });
+  const page = (data: Refund[], has_more = false) => ({ object: "list", data, has_more, url: "/v1/refunds" });
+  const providerError = (type: string, extra: Refund = {}) => Object.assign(new Error(`synthetic ${type}`), { type, ...extra });
+
+  function setup(deliveries = 1, opts: { refundStatus?: string | null; history?: ReadResult | Error; studio?: ReadResult } = {}) {
+    ADMIN.current = makeAdmin({
+      studio_payment_settings: Array.from({ length: deliveries }, () => opts.studio ?? { data: { studio_id: "studio-1" }, error: null }),
+      payment_charge_attempts: Array.from({ length: deliveries }, () => ({ data: row(opts.refundStatus ?? null), error: null })),
+    }, { claim_stripe_event: CLAIM_OK, record_charge_refund_history: opts.history ?? RECORDED });
+  }
+  // A Charge WITHOUT `refunds` (or with it null / cut short), signed for real, api_version stamped on the event.
+  function send(o: { id: string; refundedCents: number; full?: boolean; list?: "absent" | "null" | "empty" | "has_more" | "complete"; charge?: Refund; livemode?: boolean; forge?: boolean; apiVersion?: string }) {
+    const full = o.full ?? o.refundedCents === 5000;
+    const listField = o.list === "null" ? { refunds: null }
+      : o.list === "empty" ? { refunds: page([]) }
+      : o.list === "has_more" ? { refunds: page([fr("re_payload", 100)], true) }
+      : o.list === "complete" ? { refunds: page([fr("re_1", o.refundedCents)]) } : {};
+    const event = { id: o.id, object: "event", api_version: o.apiVersion ?? PINNED_API_VERSION, created: 1770000000, type: "charge.refunded",
+      account: "acct_test_1", livemode: o.livemode ?? false, data: { object: {
+        object: "charge", id: "ch_1", status: "succeeded", paid: true, captured: true, livemode: o.livemode ?? false,
+        payment_intent: "pi_1", customer: "cus_1", amount: 5000, amount_captured: 5000, currency: "cad",
+        refunded: full, amount_refunded: o.refundedCents, metadata: { hone_payment_charge_attempt_id: "attempt-1" }, ...listField, ...(o.charge ?? {}),
+      } } };
+    return signAndSend(event, o.forge);
+  }
+  function signAndSend(event: Record<string, unknown>, forge?: boolean) {
+    const webhooks = new Stripe("sk_test_synthetic_no_network").webhooks;
+    CONSTRUCT_EVENT.mockImplementation((body, header, secret) => webhooks.constructEvent(body, header, secret));
+    const payload = JSON.stringify(event);
+    const header = webhooks.generateTestHeaderString({ payload, secret: forge ? "whsec_wrong" : "whsec_test" });
+    return callRoute(post(payload, header));
+  }
+  const alertsOf = (e: string) => ADMIN.current!.opsRows.filter((r) => r.event === e);
+  const unavailable = () => alertsOf("charge_refunded_refund_list_unavailable");
+  const historyCalls = () => ADMIN.current!.rpcCalls.filter((c) => c.name === "record_charge_refund_history");
+  const reconcileCalls = () => ADMIN.current!.rpcCalls.filter((c) => c.name === "reconcile_bound_payment_event");
+  const completed = () => ADMIN.current!.updateCalls.filter((u) => u.payload.refund_status === "succeeded");
+  const obj = (c: { args: Record<string, unknown> }) => c.args.p_object as Record<string, unknown>;
+
+  it("partial, payload has no list: ONE read for the signed charge and account, recorded with the authenticated kind, warning, 200", async () => {
+    REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000)]));
+    setup();
+    expect((await send({ id: "evt_rd1", refundedCents: 2000 })).status).toBe(200);
+    expect(REFUNDS_LIST).toHaveBeenCalledTimes(1);
+    expect(REFUNDS_LIST).toHaveBeenCalledWith(expect.objectContaining({ charge: "ch_1", limit: 100 }), expect.objectContaining({ stripeAccount: "acct_test_1", timeout: expect.any(Number) }));
+    expect(historyCalls()).toHaveLength(1);
+    expect(obj(historyCalls()[0])).toMatchObject({ evidence_kind: "signed_event_with_authenticated_list", charge_refund_list_complete: true, charge_amount_refunded: 2000, customer_id: "cus_1", payment_intent_id: "pi_1", charge_id: "ch_1" });
+    expect((obj(historyCalls()[0]).components as unknown[])).toHaveLength(1);
+    expect(alertsOf("charge_refunded_partial_recorded")).toEqual([expect.objectContaining({ severity: "warning" })]);
+    expect(ADMIN.current!.updateCalls).toEqual([]);
+  });
+  it("the same with Charge.refunds null", async () => {
+    REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000)]));
+    setup();
+    expect((await send({ id: "evt_rd1b", refundedCents: 2000, list: "null" })).status).toBe(200);
+    expect(REFUNDS_LIST).toHaveBeenCalledTimes(1);
+    expect(historyCalls()).toHaveLength(1);
+  });
+  it("two pages: both read in order through the cursor, ONE evidence object with both refunds, one command call", async () => {
+    REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000)], true)).mockResolvedValueOnce(page([fr("re_2", 1000)]));
+    setup();
+    expect((await send({ id: "evt_rd2", refundedCents: 3000 })).status).toBe(200);
+    expect(REFUNDS_LIST).toHaveBeenCalledTimes(2);
+    expect(REFUNDS_LIST.mock.calls[1][0]).toMatchObject({ charge: "ch_1", starting_after: "re_1" });
+    expect(historyCalls()).toHaveLength(1);
+    expect((obj(historyCalls()[0]).components as Array<{ refund_id: string }>).map((c) => c.refund_id)).toEqual(["re_1", "re_2"]);
+  });
+  it("a list that never ends stops at the page cap: not complete, critical alert, nothing written, acknowledged", async () => {
+    let n = 0;
+    REFUNDS_LIST.mockImplementation(async () => page([fr(`re_${n++}`, 100)], true));
+    setup();
+    expect((await send({ id: "evt_rd3", refundedCents: 2000 })).status).toBe(200);
+    expect(REFUNDS_LIST).toHaveBeenCalledTimes(5);
+    expect(historyCalls()).toEqual([]);
+    expect(unavailable()).toEqual([expect.objectContaining({ severity: "critical" })]);
+    expect(ADMIN.current!.updateCalls).toEqual([]);
+  });
+  it("the payload already carries a complete list: NO read, the signed-event kind", async () => {
+    setup();
+    expect((await send({ id: "evt_rd4", refundedCents: 2000, list: "complete" })).status).toBe(200);
+    expect(REFUNDS_LIST).not.toHaveBeenCalled();
+    expect(obj(historyCalls()[0])).toMatchObject({ evidence_kind: "signed_event" });
+  });
+  it("the payload's list is marked cut short (has_more): it is not trusted, the read runs, the authenticated kind is used", async () => {
+    REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000)]));
+    setup();
+    expect((await send({ id: "evt_rd5", refundedCents: 2000, list: "has_more" })).status).toBe(200);
+    expect(REFUNDS_LIST).toHaveBeenCalledTimes(1);
+    expect(obj(historyCalls()[0])).toMatchObject({ evidence_kind: "signed_event_with_authenticated_list" });
+  });
+  for (const [label, err] of [["a connection error", providerError("StripeConnectionError")], ["a rate limit", providerError("StripeRateLimitError", { statusCode: 429 })], ["a provider error", providerError("StripeAPIError", { statusCode: 503 })], ["a timeout", providerError("StripeConnectionError", { code: "ETIMEDOUT" })]] as const) {
+    it(`${label}: 500, claim released, the command is NOT called, nothing claimed as recorded (the event is retried)`, async () => {
+      REFUNDS_LIST.mockRejectedValueOnce(err);
+      setup();
+      expect((await send({ id: "evt_rd6", refundedCents: 2000 })).status).toBeGreaterThanOrEqual(500);
+      expect(historyCalls()).toEqual([]);
+      expect(names(ADMIN.current!.rpcCalls)).toContain("release_stripe_event_claim_with_error");
+      expect(names(ADMIN.current!.rpcCalls)).not.toContain("mark_stripe_event_processed");
+      expect(alertsOf("charge_refunded_partial_recorded")).toEqual([]);
+    });
+  }
+  for (const [label, err] of [["no such charge", providerError("StripeInvalidRequestError", { code: "resource_missing", statusCode: 404 })], ["access to the account revoked", providerError("StripePermissionError", { statusCode: 403 })]] as const) {
+    it(`${label}: a refusal, not a retry loop: critical alert kept, acknowledged, nothing written`, async () => {
+      REFUNDS_LIST.mockRejectedValueOnce(err);
+      setup();
+      expect((await send({ id: "evt_rd8", refundedCents: 2000 })).status).toBe(200);
+      expect(unavailable()).toEqual([expect.objectContaining({ severity: "critical" })]);
+      expect(historyCalls()).toEqual([]);
+    });
+  }
+  it("a refusal whose alert CANNOT be kept: 500 and the claim released (retried), as every other refusal", async () => {
+    REFUNDS_LIST.mockRejectedValueOnce(providerError("StripePermissionError"));
+    setup();
+    OPS_INSERT_ERROR.current = { code: "XX000", message: "synthetic ops_alerts insert failure" };
+    expect((await send({ id: "evt_rd8b", refundedCents: 2000 })).status).toBe(500);
+    expect(names(ADMIN.current!.rpcCalls)).toContain("release_stripe_event_claim_with_error");
+  });
+  for (const [label, bad] of [["another charge", fr("re_1", 2000, "succeeded", { charge: "ch_other" })], ["another payment intent", fr("re_1", 2000, "succeeded", { payment_intent: "pi_other" })], ["another currency", fr("re_1", 2000, "succeeded", { currency: "usd" })]] as const) {
+    it(`a read refund naming ${label} is refused BEFORE the command: critical alert, no command call`, async () => {
+      REFUNDS_LIST.mockResolvedValueOnce(page([bad]));
+      setup();
+      expect((await send({ id: "evt_rd10", refundedCents: 2000 })).status).toBe(200);
+      expect(historyCalls()).toEqual([]);
+      expect(unavailable()).toEqual([expect.objectContaining({ severity: "critical" })]);
+    });
+  }
+  it("a read list BEHIND the signed total (3000 went back, the list shows 2000) is refused: critical alert, no write", async () => {
+    REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000)]));
+    setup();
+    expect((await send({ id: "evt_rd13", refundedCents: 3000 })).status).toBe(200);
+    expect(historyCalls()).toEqual([]);
+    expect(unavailable()).toHaveLength(1);
+  });
+  it("a read list AHEAD of the signed total (a later refund) is accepted and recorded with the whole list", async () => {
+    REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000), fr("re_2", 1000)]));
+    setup();
+    expect((await send({ id: "evt_rd14", refundedCents: 2000 })).status).toBe(200);
+    expect(historyCalls()).toHaveLength(1);
+    expect((obj(historyCalls()[0]).components as unknown[])).toHaveLength(2);
+    expect(obj(historyCalls()[0])).toMatchObject({ charge_amount_refunded: 2000 });
+    expect(alertsOf("charge_refunded_partial_recorded")).toHaveLength(1);
+  });
+  it("duplicate refund ids in the read list are refused", async () => {
+    REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 1000), fr("re_1", 1000)]));
+    setup();
+    expect((await send({ id: "evt_rd15", refundedCents: 2000 })).status).toBe(200);
+    expect(historyCalls()).toEqual([]);
+    expect(unavailable()).toHaveLength(1);
+  });
+  it("zero refunds returned although the signed total is above 0: refused", async () => {
+    REFUNDS_LIST.mockResolvedValueOnce(page([]));
+    setup();
+    expect((await send({ id: "evt_rd16", refundedCents: 2000 })).status).toBe(200);
+    expect(historyCalls()).toEqual([]);
+    expect(unavailable()).toHaveLength(1);
+  });
+  it("a pending refund beside a succeeded one is sent with both statuses (the command counts the pending as in flight)", async () => {
+    REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000), fr("re_2", 1000, "pending")]));
+    setup();
+    expect((await send({ id: "evt_rd17", refundedCents: 2000 })).status).toBe(200);
+    expect((obj(historyCalls()[0]).components as Array<{ refund_status: string }>).map((c) => c.refund_status)).toEqual(["succeeded", "pending"]);
+  });
+  it("the history command is missing (42883) after a successful read: the earlier critical alert, no write, acknowledged", async () => {
+    REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000)]));
+    setup(1, { history: { data: null, error: { code: "42883", message: "function does not exist" } as never } });
+    expect((await send({ id: "evt_rd18", refundedCents: 2000 })).status).toBe(200);
+    expect(alertsOf("charge_refunded_partial_out_of_band")).toEqual([expect.objectContaining({ severity: "critical" })]);
+  });
+  it("a failed read is retried: the redelivery reads again and records exactly once", async () => {
+    REFUNDS_LIST.mockRejectedValueOnce(providerError("StripeConnectionError")).mockResolvedValueOnce(page([fr("re_1", 2000)]));
+    setup(2);
+    expect((await send({ id: "evt_rd19", refundedCents: 2000 })).status).toBeGreaterThanOrEqual(500);
+    expect(historyCalls()).toEqual([]);
+    expect((await send({ id: "evt_rd19", refundedCents: 2000 })).status).toBe(200);
+    expect(REFUNDS_LIST).toHaveBeenCalledTimes(2);
+    expect(historyCalls()).toHaveLength(1);
+  });
+  it("a forged or wrong-secret event is refused with 400 before ANY read", async () => {
+    setup();
+    expect((await send({ id: "evt_rd20", refundedCents: 2000, forge: true })).status).toBe(400);
+    expect(REFUNDS_LIST).not.toHaveBeenCalled();
+    expect(ADMIN.current!.rpcCalls).toEqual([]);
+  });
+  it("a live-mode event on a test deployment is ignored: no read, no write", async () => {
+    setup();
+    await send({ id: "evt_rd21", refundedCents: 2000, livemode: true });
+    expect(REFUNDS_LIST).not.toHaveBeenCalled();
+    expect(historyCalls()).toEqual([]);
+    expect(ADMIN.current!.updateCalls).toEqual([]);
+  });
+  it("an event for an account bound to no studio makes no read", async () => {
+    setup(1, { studio: { data: null, error: null } });
+    await send({ id: "evt_rd22", refundedCents: 2000 });
+    expect(REFUNDS_LIST).not.toHaveBeenCalled();
+    expect(historyCalls()).toEqual([]);
+  });
+
+  // The existing full-refund path (0240) shares the SAME read: the evidence it sends carries the authenticated kind.
+  it("FULL refund (dashboard refund, row has none), payload has no list: read once, history recorded, and the 0240 command is sent the authenticated kind", async () => {
+    REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 5000)]));
+    setup();
+    expect((await send({ id: "evt_full", refundedCents: 5000 })).status).toBe(200);
+    expect(REFUNDS_LIST).toHaveBeenCalledTimes(1);
+    expect(obj(historyCalls()[0])).toMatchObject({ evidence_kind: "signed_event_with_authenticated_list" });
+    expect(reconcileCalls()).toHaveLength(1);
+    expect(obj(reconcileCalls()[0])).toMatchObject({ evidence_kind: "signed_event_with_authenticated_list", charge_refund_list_complete: true, refund_id: "re_1", refund_amount_cents: 5000 });
+  });
+  it("FULL refund Hone started (row pending), cumulative (2000 + 3000), payload has no list: the 0240 command gets both components with the authenticated kind", async () => {
+    REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000), fr("re_2", 3000)]));
+    setup(1, { refundStatus: "pending_stripe" });
+    expect((await send({ id: "evt_full_cum", refundedCents: 5000 })).status).toBe(200);
+    expect(reconcileCalls()).toHaveLength(1);
+    expect(obj(reconcileCalls()[0])).toMatchObject({ evidence_kind: "signed_event_with_authenticated_list", charge_refund_list_complete: true });
+    expect((obj(reconcileCalls()[0]).charge_refund_components as unknown[])).toHaveLength(2);
+  });
+  it("FULL refund, payload has no list, the read is refused: critical alert, NOTHING completed, no command, acknowledged", async () => {
+    setup();
+    expect((await send({ id: "evt_full_refused", refundedCents: 5000 })).status).toBe(200);
+    expect(unavailable()).toEqual([expect.objectContaining({ severity: "critical" })]);
+    expect(reconcileCalls()).toEqual([]);
+    expect(historyCalls()).toEqual([]);
+    expect(completed()).toEqual([]);
+  });
+  it("FULL refund, the read fails with a provider error: 500, claim released, nothing completed", async () => {
+    REFUNDS_LIST.mockRejectedValueOnce(providerError("StripeAPIError", { statusCode: 500 }));
+    setup();
+    expect((await send({ id: "evt_full_err", refundedCents: 5000 })).status).toBeGreaterThanOrEqual(500);
+    expect(reconcileCalls()).toEqual([]);
+    expect(names(ADMIN.current!.rpcCalls)).toContain("release_stripe_event_claim_with_error");
+  });
+
+  // The live endpoint is set to a NEWER API version than the SDK pin, and charge.refunded WITHOUT an embedded list is the only refund signal
+  // it delivers. Every refund shape runs at both versions and with the list absent, null and empty: the read is used and the right command
+  // and kind are sent.
+  describe.each([["the pinned version", PINNED_API_VERSION], ["the live endpoint version", LIVE_API_VERSION]])("at %s", (_label, apiVersion) => {
+    describe.each(["absent", "null", "empty"] as const)("with the refund list %s", (list) => {
+      it("a PARTIAL refund is read once and recorded through the history command with the authenticated kind", async () => {
+        REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000)]));
+        setup();
+        expect((await send({ id: `evt_v_p_${apiVersion}_${list}`, refundedCents: 2000, list, apiVersion })).status).toBe(200);
+        expect(REFUNDS_LIST).toHaveBeenCalledTimes(1);
+        expect(historyCalls()).toHaveLength(1);
+        expect(obj(historyCalls()[0])).toMatchObject({ evidence_kind: "signed_event_with_authenticated_list", charge_refund_list_complete: true, charge_amount_refunded: 2000 });
+        expect(reconcileCalls()).toEqual([]);
+      });
+      it("a FULL refund made outside Hone is read once; the full-refund command gets the authenticated kind", async () => {
+        REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 5000)]));
+        setup();
+        expect((await send({ id: `evt_v_f_${apiVersion}_${list}`, refundedCents: 5000, list, apiVersion })).status).toBe(200);
+        expect(REFUNDS_LIST).toHaveBeenCalledTimes(1);
+        expect(obj(historyCalls()[0])).toMatchObject({ evidence_kind: "signed_event_with_authenticated_list" });
+        expect(reconcileCalls()).toHaveLength(1);
+        expect(obj(reconcileCalls()[0])).toMatchObject({ evidence_kind: "signed_event_with_authenticated_list", charge_refund_list_complete: true, refund_id: "re_1", refund_amount_cents: 5000 });
+      });
+      it("a CUMULATIVE full refund (2000 + 3000) on a refund Hone started is read once; the command gets both components", async () => {
+        REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000), fr("re_2", 3000)]));
+        setup(1, { refundStatus: "pending_stripe" });
+        expect((await send({ id: `evt_v_c_${apiVersion}_${list}`, refundedCents: 5000, list, apiVersion })).status).toBe(200);
+        expect(REFUNDS_LIST).toHaveBeenCalledTimes(1);
+        expect(reconcileCalls()).toHaveLength(1);
+        expect(obj(reconcileCalls()[0])).toMatchObject({ evidence_kind: "signed_event_with_authenticated_list", charge_refund_list_complete: true });
+        expect((obj(reconcileCalls()[0]).charge_refund_components as unknown[])).toHaveLength(2);
+      });
+    });
+  });
+
+  // The event shape at the live endpoint version. BUILT FROM STRIPE'S DOCUMENTED Charge shape for that version (not a captured event; an
+  // optional redacted test-mode event can replace it): the customer, payment intent, amount, currency and amount_refunded are present and there
+  // is NO refunds list, exactly what the route must cope with.
+  it("the live-version charge.refunded (built from the documented shape) carries the identity fields and amount_refunded but no refunds list", async () => {
+    REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000)]));
+    setup();
+    await send({ id: "evt_shape_live", refundedCents: 2000, list: "absent", apiVersion: LIVE_API_VERSION });
+    const body = JSON.parse(CONSTRUCT_EVENT.mock.calls[0][0] as string);
+    expect(body.api_version).toBe(LIVE_API_VERSION);
+    expect(body.type).toBe("charge.refunded");
+    expect(body.account).toBe("acct_test_1");
+    expect(body.data.object).toMatchObject({ object: "charge", customer: "cus_1", payment_intent: "pi_1", amount: 5000, currency: "cad", amount_refunded: 2000 });
+    expect("refunds" in body.data.object).toBe(false);
+    expect(REFUNDS_LIST).toHaveBeenCalledTimes(1);
+  });
+
+  // ---- Sam's coverage list: multiple refunds, duplicates and order, account isolation (route level; fake provider, no network) ----
+  describe.each([["the pinned version", PINNED_API_VERSION], ["the live endpoint version", LIVE_API_VERSION]])("multiple refunds at %s", (_l, apiVersion) => {
+    it("a SECOND partial (3000 in all, list absent): the read returns both refunds, the history command gets both, nothing is completed", async () => {
+      REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000), fr("re_2", 1000)]));
+      setup();
+      expect((await send({ id: `evt_second_${apiVersion}`, refundedCents: 3000, list: "absent", apiVersion })).status).toBe(200);
+      expect(REFUNDS_LIST).toHaveBeenCalledTimes(1);
+      expect((obj(historyCalls()[0]).components as Array<{ refund_id: string }>).map((c) => c.refund_id)).toEqual(["re_1", "re_2"]);
+      expect(obj(historyCalls()[0])).toMatchObject({ charge_amount_refunded: 3000, evidence_kind: "signed_event_with_authenticated_list" });
+      expect(reconcileCalls()).toEqual([]);
+      expect(completed()).toEqual([]);
+    });
+    it("a partial THEN the remainder made outside Hone (row has no refund): the last event reads both refunds and completes through the full-refund command", async () => {
+      REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000), fr("re_2", 3000)]));
+      setup();
+      expect((await send({ id: `evt_remainder_${apiVersion}`, refundedCents: 5000, list: "absent", apiVersion })).status).toBe(200);
+      expect(historyCalls()).toHaveLength(1);
+      expect(reconcileCalls()).toHaveLength(1);
+      expect((obj(reconcileCalls()[0]).charge_refund_components as unknown[])).toHaveLength(2);
+      expect(obj(reconcileCalls()[0])).toMatchObject({ evidence_kind: "signed_event_with_authenticated_list", charge_refund_list_complete: true });
+    });
+  });
+
+  it("the SAME event delivered twice: the second delivery is recognised as processed, makes no read and calls no command", async () => {
+    ADMIN.current = makeAdmin({
+      studio_payment_settings: [{ data: { studio_id: "studio-1" }, error: null }],
+      payment_charge_attempts: [{ data: row(null), error: null }],
+    }, { claim_stripe_event: { data: [{ already_processed: true, currently_processing_elsewhere: false, claimed_by_this_request: false, claim_token: null }], error: null } });
+    expect((await send({ id: "evt_dup", refundedCents: 2000, list: "absent" })).status).toBe(200);
+    expect(REFUNDS_LIST).not.toHaveBeenCalled();
+    expect(historyCalls()).toEqual([]);
+    expect(reconcileCalls()).toEqual([]);
+    expect(ADMIN.current!.updateCalls).toEqual([]);
+  });
+  it("an OLDER charge.refunded after a newer one: the command answers already_recorded; acknowledged, no critical alert, no row change", async () => {
+    REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000)]));
+    setup(1, { history: { data: [{ result: "already_recorded", out_attempt_id: "attempt-1", out_studio_id: "studio-1", out_succeeded_cents: 3000, out_inflight_count: 0 }], error: null } });
+    expect((await send({ id: "evt_older", refundedCents: 2000, list: "absent" })).status).toBe(200);
+    expect(historyCalls()).toHaveLength(1);
+    expect(ADMIN.current!.opsRows.filter((r) => r.severity === "critical")).toEqual([]);
+    expect(ADMIN.current!.updateCalls).toEqual([]);
+  });
+
+  it("the history answers already_recorded (a retry) and the full-refund command STILL runs and completes the refund", async () => {
+    REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 5000)]));
+    setup(1, { history: { data: [{ result: "already_recorded", out_attempt_id: "attempt-1", out_studio_id: "studio-1", out_succeeded_cents: 5000, out_inflight_count: 0 }], error: null } });
+    expect((await send({ id: "evt_retry_full", refundedCents: 5000, list: "absent" })).status).toBe(200);
+    expect(historyCalls()).toHaveLength(1);
+    expect(reconcileCalls()).toHaveLength(1);
+    expect(obj(reconcileCalls()[0])).toMatchObject({ evidence_kind: "signed_event_with_authenticated_list", refund_amount_cents: 5000 });
+    expect(alertsOf("charge_refunded_history_refused")).toEqual([]);
+  });
+
+  it("the SAME event read twice across a retry with DIFFERENT answers: first AHEAD (then the database fails), second BEHIND (refused); nothing wrong is recorded", async () => {
+    REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000), fr("re_2", 1000)])).mockResolvedValueOnce(page([fr("re_2", 1000)]));
+    setup(2, { history: { data: null, error: { code: "XX000", message: "synthetic database failure" } as never } });
+    const first = await send({ id: "evt_two_reads", refundedCents: 2000, list: "absent" });
+    expect(first.status).toBeGreaterThanOrEqual(500);
+    expect((obj(historyCalls()[0]).components as unknown[])).toHaveLength(2);
+    expect(names(ADMIN.current!.rpcCalls)).toContain("release_stripe_event_claim_with_error");
+    const second = await send({ id: "evt_two_reads", refundedCents: 2000, list: "absent" });
+    expect(second.status).toBe(200);
+    expect(REFUNDS_LIST).toHaveBeenCalledTimes(2);
+    expect(historyCalls()).toHaveLength(1); // the behind list never reached the command
+    expect(unavailable()).toEqual([expect.objectContaining({ severity: "critical" })]);
+    expect(ADMIN.current!.updateCalls).toEqual([]);
+  });
+
+  describe("connected-account isolation", () => {
+    it("the read uses the event's connected account, never one named inside the charge", async () => {
+      REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000)]));
+      setup();
+      await send({ id: "evt_iso_read", refundedCents: 2000, list: "absent", charge: { on_behalf_of: "acct_other_B", application: "ca_other", metadata: { hone_payment_charge_attempt_id: "attempt-1", stripe_account: "acct_other_B" } } });
+      expect(REFUNDS_LIST).toHaveBeenCalledTimes(1);
+      expect(REFUNDS_LIST.mock.calls[0][1]).toMatchObject({ stripeAccount: "acct_test_1" });
+      expect(JSON.stringify(REFUNDS_LIST.mock.calls)).not.toContain("acct_other_B");
+    });
+    it("the stored attempt is looked up only inside the studio bound to the event's account, in the event's mode", async () => {
+      REFUNDS_LIST.mockResolvedValueOnce(page([fr("re_1", 2000)]));
+      setup();
+      await send({ id: "evt_iso_eq", refundedCents: 2000, list: "absent" });
+      expect(ADMIN.current!.eqCalls).toEqual(expect.arrayContaining([
+        { table: "payment_charge_attempts", column: "studio_id", value: "studio-1" },
+        { table: "payment_charge_attempts", column: "stripe_account_id", value: "acct_test_1" },
+        { table: "payment_charge_attempts", column: "stripe_livemode", value: false },
+      ]));
+    });
+    it("an attempt that does not exist in that studio and account: no read, nothing recorded, nothing written", async () => {
+      ADMIN.current = makeAdmin({
+        studio_payment_settings: [{ data: { studio_id: "studio-1" }, error: null }],
+        payment_charge_attempts: [{ data: null, error: null }],
+      }, { claim_stripe_event: CLAIM_OK });
+      expect((await send({ id: "evt_iso_none", refundedCents: 2000, list: "absent" })).status).toBe(200);
+      expect(REFUNDS_LIST).not.toHaveBeenCalled();
+      expect(historyCalls()).toEqual([]);
+      expect(reconcileCalls()).toEqual([]);
+      expect(ADMIN.current!.updateCalls).toEqual([]);
+    });
+    it.each([["a different charge id", { stripe_charge_id: "ch_other" }], ["a different payment intent", { stripe_payment_intent_id: "pi_other" }], ["a different connected account", { stripe_account_id: "acct_other" }], ["a different customer", { stripe_customer_id: "cus_other" }]])(
+      "a stored attempt with %s than the signed charge is refused: no read, no history, nothing written", async (_label, override) => {
+        ADMIN.current = makeAdmin({
+          studio_payment_settings: [{ data: { studio_id: "studio-1" }, error: null }],
+          payment_charge_attempts: [{ data: { ...row(null), ...override }, error: null }],
+        }, { claim_stripe_event: CLAIM_OK, record_charge_refund_history: RECORDED });
+        const res = await send({ id: `evt_iso_${Object.keys(override)[0]}`, refundedCents: 2000, list: "absent" });
+        expect(res.status).toBeLessThan(500);
+        expect(REFUNDS_LIST).not.toHaveBeenCalled();
+        expect(historyCalls()).toEqual([]);
+        expect(ADMIN.current!.updateCalls).toEqual([]);
+      });
+  });
+
+  // What the owner and the staff see after each recorded history: the panel, the balance (kept AND outstanding) and the remaining refundable
+  // amount all come from the same recorded figures. (The history rows themselves are proved in the database tests.)
+  describe("truthful panel and balance for each recorded history (charge 5000, quote 5000)", () => {
+    it.each([
+      ["no refund recorded", null, 0, { kind: "refunded" }, null, 0, 5000],
+      ["a partial of 2000", 2000, 0, { kind: "refunded", remainingRefundableCents: 3000, refundedCents: 2000 }, "owed", 2000, 3000],
+      ["two partials (2000 + 1000)", 3000, 0, { kind: "refunded", remainingRefundableCents: 2000, refundedCents: 3000 }, "owed", 3000, 2000],
+      ["a partial then the remainder (5000 in all)", 5000, 0, { kind: "refunded", remainingRefundableCents: 0, refundedCents: 5000 }, "owed", 5000, 0],
+    ] as const)("%s", async (_label, succeeded, inflight, panel, balanceKind, owedCents, keptCents) => {
+      const { refundDisplayState } = await import("@/lib/billing/refund-display-state");
+      const { outstandingForAppointment } = await import("@/lib/billing/outstanding-balance");
+      const state = refundDisplayState({ chargeStatus: "succeeded", amountCents: 5000, refundStatus: null, refundAmountCents: null, providerRefundStatus: null,
+        stripeRefundId: null, cumulativeFullRefundVerified: false, refundsSucceededCents: succeeded, refundsInflightCount: inflight });
+      if (succeeded === null) {
+        expect(state.kind).not.toBe("refunded");
+      } else {
+        expect(state).toMatchObject(panel);
+      }
+      const balance = outstandingForAppointment({ status: "completed", endsAt: "2026-10-01T15:00:00Z", now: "2026-11-03T12:00:00Z", quoteCents: 5000, studioCurrency: "CAD",
+        settlements: [], cards: [{ status: "succeeded", amountCents: 5000, refundStatus: null, refundAmountCents: null, currency: "cad", refundsSucceededCents: succeeded, refundsInflightCount: inflight }] });
+      if (balanceKind === null) expect(balance.kind).toBe("paid");
+      else expect(balance).toMatchObject({ kind: "owed", outstandingCents: owedCents, cardKeptCents: keptCents });
+    });
+    it("a pending refund in flight: the panel says pending and the balance says it cannot state a figure (never a guess)", async () => {
+      const { refundDisplayState } = await import("@/lib/billing/refund-display-state");
+      const { outstandingForAppointment } = await import("@/lib/billing/outstanding-balance");
+      expect(refundDisplayState({ chargeStatus: "succeeded", amountCents: 5000, refundStatus: null, refundAmountCents: null, providerRefundStatus: null,
+        stripeRefundId: null, cumulativeFullRefundVerified: false, refundsSucceededCents: 2000, refundsInflightCount: 1 })).toMatchObject({ mayStartRefund: false });
+      expect(outstandingForAppointment({ status: "completed", endsAt: "2026-10-01T15:00:00Z", now: "2026-11-03T12:00:00Z", quoteCents: 5000, studioCurrency: "CAD",
+        settlements: [], cards: [{ status: "succeeded", amountCents: 5000, refundStatus: null, refundAmountCents: null, currency: "cad", refundsSucceededCents: 2000, refundsInflightCount: 1 }] })).toEqual({ kind: "amount_unavailable" });
+    });
+  });
+
+  // refund.* events are NOT subscribed on the live endpoint, so they should never arrive. If one ever does (a changed subscription), it must stay
+  // safe: handled as before from the Refund object inside the event, with NO list read and the signed-event kind.
+  it("a refund.updated that arrives anyway (live endpoint version) behaves as before: signed-event kind, no provider read", async () => {
+    ADMIN.current = makeAdmin({
+      studio_payment_settings: [{ data: { studio_id: "studio-1" }, error: null }],
+      payment_charge_attempts: [{ data: { ...row("pending_stripe"), stripe_refund_id: "re_1" }, error: null }],
+    }, { claim_stripe_event: CLAIM_OK, reconcile_bound_payment_event: { data: [{ result: "refund_pending" }], error: null } });
+    const res = await signAndSend({ id: "evt_refund_updated_live", object: "event", api_version: LIVE_API_VERSION, created: 1770000000, type: "refund.updated",
+      account: "acct_test_1", livemode: false, data: { object: { object: "refund", id: "re_1", charge: "ch_1", payment_intent: "pi_1", amount: 5000,
+        currency: "cad", status: "pending", metadata: { hone_payment_charge_attempt_id: "attempt-1" } } } });
+    expect(res.status).toBe(200);
+    expect(REFUNDS_LIST).not.toHaveBeenCalled();
+    expect(historyCalls()).toEqual([]);
+    expect(reconcileCalls()).toHaveLength(1);
+    expect(obj(reconcileCalls()[0])).toMatchObject({ evidence_kind: "signed_event", refund_id: "re_1", refund_status: "pending" });
+    expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
   });
 });

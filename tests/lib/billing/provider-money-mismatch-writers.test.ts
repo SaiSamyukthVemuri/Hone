@@ -25,6 +25,7 @@ const h = vi.hoisted(() => ({
   rows: {} as Record<string, unknown>,
   updates: [] as Array<{ table: string; payload: Record<string, unknown> }>,
   rpcCalls: [] as string[],
+  historyObjects: [] as Array<Record<string, unknown>>,
   boundObjects: [] as Array<Record<string, unknown>>,
   updateAttempts: [] as Array<{ payload: Record<string, unknown>; filters: Array<{ column: string; value: unknown }>; matched: boolean }>,
   afterRetrieve: null as null | (() => void),
@@ -43,6 +44,9 @@ const h = vi.hoisted(() => ({
   pendingWriteZero: false,
   refund: {} as Record<string, unknown>,
   stripeCalls: [] as string[],
+  // HON-49: the authenticated refund-list read. Default: the provider refuses it (a permission error), so a payload WITHOUT a refund list is
+  // still refused here; the read path itself is tested through the route in webhook-durable-account-read.test.ts.
+  refundListCalls: [] as Array<Record<string, unknown>>,
 }));
 
 const fakeStripe = {
@@ -68,6 +72,10 @@ const fakeStripe = {
     create: async () => {
       h.stripeCalls.push("refund_create");
       return h.refund;
+    },
+    list: async (params: Record<string, unknown>) => {
+      h.refundListCalls.push(params);
+      throw Object.assign(new Error("synthetic: not readable"), { type: "StripePermissionError" });
     },
   },
 };
@@ -225,6 +233,11 @@ vi.mock("@/lib/supabase/admin-server", () => ({
         Object.assign(row, payload);
         return { data: [{ result: "reconciled", status_before: statusBefore }], error: null };
       }
+      if (name === "record_charge_refund_history") {
+        // HON-49 (0358): called by the webhook for every signed charge.refunded; the older refund commands above are unaffected by it.
+        h.historyObjects.push(args.p_object as Record<string, unknown>);
+        return { data: [{ result: "recorded", out_attempt_id: args.p_attempt_id }], error: null };
+      }
       if (name === "reconcile_card_payment_succeeded") {
         return { data: [{ result: "reconciled", status_before: "pending_stripe" }], error: null };
       }
@@ -342,6 +355,7 @@ beforeEach(() => {
   h.rows = {};
   h.updates = [];
   h.rpcCalls = [];
+  h.historyObjects = [];
   h.boundObjects = [];
   h.updateAttempts = [];
   h.afterRetrieve = null;
@@ -353,6 +367,7 @@ beforeEach(() => {
   h.alertThrows = false;
   h.refundObservationFailure = null;
   h.stripeCalls = [];
+  h.refundListCalls = [];
   h.claim = {};
   h.pi = {};
   h.createError = null;
@@ -1093,7 +1108,10 @@ describe("PAY-002 governed: charge.refunded never completes an unconfirmed refun
     const ev = single(undefined);
     delete ((ev.data.object as unknown) as Record<string, unknown>).refunds;
     const out = await handleChargeRefunded(ev, CTX);
-    expect(out).toMatchObject({ cumulativeRefundEvidenceRefused: true });
+    // HON-49: the payload has no list, so the server tries to read it; the provider refuses the read here, so the refusal is the same:
+    // nothing is completed and no command is called.
+    expect(out).toMatchObject({ refundListUnavailable: true });
+    expect(h.refundListCalls).toHaveLength(1);
     expect(h.rpcCalls).not.toContain("reconcile_bound_payment_event");
     expect(h.updates).toEqual([]);
   });
@@ -1273,7 +1291,10 @@ describe("PAY002 cumulative full refund evidence", () => {
     { captured: false }, { amount_captured: AMOUNT - 1 }, { livemode: true },
   ])("missing complete/captured charge context refuses: %j", async (over) => {
     const out = await handleChargeRefunded(prepare(undefined, over), CTX);
-    expect(out.cumulativeRefundEvidenceRefused).toBe(true);
+    // An absent, null, empty or cut-short list now triggers the authenticated read (refused by the provider in this fake); every other
+    // missing-context case still reaches the older refusal.
+    const listCase = "refunds" in over;
+    expect(listCase ? out.refundListUnavailable : out.cumulativeRefundEvidenceRefused).toBe(true);
     expect(h.boundObjects).toEqual([]);
     expect(h.updates).toEqual([]);
   });

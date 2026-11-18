@@ -40,7 +40,30 @@ function configPath(runId: string): string {
   return join(tmpdir(), `${PREFIX}${runId}.config.json`);
 }
 
+function refundsPath(runId: string): string {
+  return join(tmpdir(), `${PREFIX}${runId}.refunds.json`);
+}
+
 export type FakeOutcome = "success" | "decline" | "processing";
+
+// The refunds the runner seeded for a charge (an EXTERNAL refund, such as one made in the provider's dashboard). Read by the fake
+// refunds.list. Test-safe fields only; inert (empty) when the guard is off or nothing was seeded.
+export type FakeSeededRefund = { id: string; amount: number; currency: string; status: string; payment_intent: string };
+export function readFakeRefundsForCharge(runId: string, chargeId: string): FakeSeededRefund[] {
+  try {
+    assertAllowed(runId);
+  } catch {
+    return [];
+  }
+  const p = refundsPath(runId);
+  if (!existsSync(p)) return [];
+  try {
+    const all = JSON.parse(readFileSync(p, "utf8")) as Record<string, FakeSeededRefund[]>;
+    return Array.isArray(all[chargeId]) ? all[chargeId] : [];
+  } catch {
+    return [];
+  }
+}
 
 // ----- Server-side (fake processor) API -----------------------------------------
 // Append one call record (0o600). Bounded line; JSONL.
@@ -122,7 +145,7 @@ export function resetFakeStripeLedger(runId: string): void {
 
 export function cleanupFakeStripeFiles(runId: string): void {
   assertAllowed(runId);
-  for (const p of [ledgerPath(runId), configPath(runId)]) {
+  for (const p of [ledgerPath(runId), configPath(runId), refundsPath(runId)]) {
     if (existsSync(p)) rmSync(p, { force: true });
   }
 }

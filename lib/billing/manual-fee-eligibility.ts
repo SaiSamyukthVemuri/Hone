@@ -499,7 +499,7 @@ export async function getManualFeeChargeEligibility(
     admin
       .from("payment_charge_attempts")
       .select(
-        "id, charge_reason, status, amount_cents, currency, calc_mode, basis_cents, percent_bp, created_at, stripe_payment_intent_id, stripe_charge_id, stripe_status, charged_at, failed_at, failure_code, failure_message_safe, cancelled_at, cancelled_reason, refund_status, refund_amount_cents, stripe_refund_status, stripe_refund_id, stripe_charge_refund_event_id, refunded_at, receipt_sent_at, updated_at",
+        "id, charge_reason, status, amount_cents, currency, calc_mode, basis_cents, percent_bp, created_at, stripe_payment_intent_id, stripe_charge_id, stripe_status, charged_at, failed_at, failure_code, failure_message_safe, cancelled_at, cancelled_reason, refund_status, refund_amount_cents, stripe_refund_status, stripe_refund_id, stripe_charge_refund_event_id, refunds_succeeded_cents, refunds_inflight_count, refunded_at, receipt_sent_at, updated_at",
       )
       .eq("studio_id", args.studioId)
       .eq("appointment_id", args.appointmentId)
@@ -551,6 +551,8 @@ export async function getManualFeeChargeEligibility(
       stripe_refund_id: (row.stripe_refund_id as string | null) ?? null,
       cumulative_full_refund_verified:
         typeof row.stripe_charge_refund_event_id === "string" && row.stripe_charge_refund_event_id.length > 0,
+      refunds_succeeded_cents: typeof row.refunds_succeeded_cents === "number" ? row.refunds_succeeded_cents : null,
+      refunds_inflight_count: typeof row.refunds_inflight_count === "number" ? row.refunds_inflight_count : null,
       receipt_sent_at: (row.receipt_sent_at as string | null) ?? null,
       updated_at: (row.updated_at as string | null) ?? null,
     })),

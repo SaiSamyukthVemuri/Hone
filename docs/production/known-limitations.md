@@ -668,3 +668,14 @@ belonging to their own lane.
 | **Owner** | Sam (engineering) |
 | **Next gate** | A new migration — provisionally `0205` — issuing `revoke all on function public.studios_admission_mode_guard() from public, anon, authenticated, service_role;`. Trigger functions need no grant to fire, so no grant replaces them. Extend `tests/security/clinical-rpc-grant-guard.test.ts` to cover trigger functions, since it did not catch this. |
 | **Blocks** | **Nothing.** It does not block the NEW-CLIENT-MODE-01 release, the remaining activation steps, or operator use of the admission control. |
+
+## L34 — after a partial or outside refund, the appointment page and the roster still show Paid
+
+| Field | Value |
+|---|---|
+| **Impact** | After a partial refund, or a refund made outside Hone, the appointment page and the calendar and dashboard roster still show Paid. The client's session payment card shows the refunded amount and what is still on the card. |
+| **Evidence** | The roster badge reads only the older refund columns, not the recorded refund history. The payment browser spec marks it as a `test.fixme` so it cannot be forgotten. |
+| **Current mitigation** | The session payment card is correct. The owner reads the true amounts there. |
+| **Owner** | Sam (engineering) |
+| **Next gate** | A follow-up named "appointment-payment-state and the SQL live-card-money check". |
+| **Blocks** | Nothing today. |
