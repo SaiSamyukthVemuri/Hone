@@ -130,3 +130,13 @@ export async function paymentFootprint(studioId: string, appointmentId: string, 
   const [paid] = await sql<{ price_paid_cents: number | null }>("select price_paid_cents from public.sessions where id=$1", [sessionId]);
   return { appointmentPaymentRows: pay.n, chargeAttempts: att.n, pricePaidCents: paid?.price_paid_cents ?? null };
 }
+
+/** Drive the real two-step postcare send: open the preview dialog, tick the consultation attestation only if it is offered, confirm. */
+export async function sendPostcareViaDialog(page: Page, buttonName: RegExp | string = /^(Send|Resend) postcare$/): Promise<void> {
+  await page.getByRole("button", { name: buttonName }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Send postcare preview" });
+  await expect(dialog).toBeVisible({ timeout: T });
+  const attest = dialog.getByRole("checkbox");
+  if (await attest.count()) await attest.check();
+  await dialog.getByTestId("postcare-confirm").click();
+}
