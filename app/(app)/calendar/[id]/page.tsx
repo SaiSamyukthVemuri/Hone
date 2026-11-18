@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { clientDisplayName } from "@/lib/clients/identity";
+import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { getPinnedNotesForClient } from "@/lib/client-pinned-notes/queries";
 import { getClientTags } from "@/lib/client-tags/queries";
@@ -112,16 +114,28 @@ export default async function AppointmentDetailPage({
   const isOwner = practitioner.role === "owner";
   const supabase = await createClient();
 
-  const { data, error } = await supabase
-    .from("appointments")
-    .select(
-      "*, client:clients(id, name, email, phone, pronouns, allergies, fitzpatrick_type, skin_notes), service:services(id, name, default_duration_minutes, modality), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name, color)",
-    )
-    .eq("id", id)
-    .eq("studio_id", studio.id)
-    .maybeSingle<Joined>();
+  // HON-58: the page shows the DISPLAY name (preferred, else stored), computed here on the server. The embed names
+  // its columns (never `*`, never the legal identity table); `preferred_name` is read with the shared missing-column fallback.
+  const { data, error } = await readWithPreferredName((includePreferred) =>
+    supabase
+      .from("appointments")
+      .select(
+        `*, client:clients(id, name, ${preferredNameColumn(includePreferred)}email, phone, pronouns, allergies, fitzpatrick_type, skin_notes), service:services(id, name, default_duration_minutes, modality), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name, color)`,
+      )
+      .eq("id", id)
+      .eq("studio_id", studio.id)
+      .maybeSingle<Joined>(),
+  );
   if (error) throw new Error(`db_error:${dbErrorCode(error)}`);
   if (!data) notFound();
+  // Client communications keep the STORED name until the studio decides whether they use the preferred name: the send action
+  // greets with the stored name, so every preview on this page must too. Captured before the display name replaces it.
+  const storedClientName = data.client?.name ?? "";
+  // ONE string leaves this block for the screen: the preferred and stored names are not both passed on to the rest of the page.
+  if (data.client) {
+    const { preferred_name: preferredName, ...rest } = data.client as typeof data.client & { preferred_name?: string | null };
+    data.client = { ...rest, name: clientDisplayName({ name: rest.name, preferred_name: preferredName }) };
+  }
 
   const isCancelled = data.status === "cancelled";
 
@@ -593,7 +607,7 @@ export default async function AppointmentDetailPage({
           }
           reviewUrl={studio.postcare_review_url}
           reviewPromptText={studio.postcare_review_prompt_text}
-          clientName={data.client.name}
+          clientName={storedClientName}
           serviceName={data.service?.name ?? null}
           serviceModality={data.service?.modality ?? null}
           startsAt={data.starts_at}

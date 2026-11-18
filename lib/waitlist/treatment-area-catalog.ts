@@ -39,7 +39,7 @@
 // and the catalog is public product vocabulary, not configuration.
 // ===========================================================================
 
-import { AREAS, AREA_REGIONS, OTHER_AREA } from "@/lib/constants";
+import { AREAS, AREA_REGIONS, OTHER_AREA, PRACTITIONER_ONLY_AREAS } from "@/lib/constants";
 
 /**
  * Frozen identifiers. A value here is a durable key: it may be retired, never
@@ -142,9 +142,9 @@ export const TREATMENT_AREA_REGIONS: ReadonlyArray<{
 
 const ID_SET: ReadonlySet<string> = new Set<string>(TREATMENT_AREA_IDS);
 
-/** The canonical label set this catalog claims to mirror: `AREAS` less "Other". */
+/** The canonical label set this catalog claims to mirror: `AREAS` less "Other" and less the practitioner-only areas. */
 export function canonicalProspectAreaLabels(): ReadonlyArray<string> {
-  return AREAS.filter((label) => label !== OTHER_AREA);
+  return AREAS.filter((label) => label !== OTHER_AREA && !PRACTITIONER_ONLY_AREAS.includes(label));
 }
 
 /** The region names this catalog reuses, in `lib/constants.ts` order. */
