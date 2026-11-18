@@ -1401,6 +1401,7 @@ export default async function ClientCheatSheetPage({
             archiveAction={archivePortalMessageAction}
             markReplySeenAction={markPortalReplySeenAction}
             practitionerNames={practitionerNames}
+            portalEnabled={clientSelfServicePolicyFromStudio(studio).portal}
           />
         </>
       )}
