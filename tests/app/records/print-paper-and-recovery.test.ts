@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { ARM_FALLBACK_MS, printWithAudit, type ArmDeps } from "@/lib/records/print/arm-print";
 
-// HON-46 (Sam's decision, 18 Nov 2026): the day packet prints on Letter AND A4, and a failed, cancelled or restored print leaves the
+// Per the owner's print decision: the day packet prints on Letter AND A4, and a failed, cancelled or restored print leaves the
 // treatment workflow usable. Paper is the printer's choice, so these tests pin that the layout names NO paper and holds no fixed
 // width, and that every way a print can end leaves the page disarmed and the next Print working.
 
