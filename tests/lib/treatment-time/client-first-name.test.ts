@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { buildTreatmentTimeLine } from "@/lib/treatment-time/format";
-import { loadTreatmentTimeNameFields, treatmentTimeFirstName } from "@/lib/treatment-time/client-first-name";
+import { buildTreatmentTimeLine, treatmentTimeFirstName } from "@/lib/treatment-time/format";
+import { loadTreatmentTimeNameFields } from "@/lib/treatment-time/client-first-name";
 
 // HON-58: the reminder email's treatment-time sentence names the client by the name they go by. Synthetic names only; nothing is sent.
 
@@ -27,7 +27,7 @@ function fakeAdmin(results: Result[]) {
 const lineFor = async (admin: unknown, stored: string) =>
   buildTreatmentTimeLine({
     enabled: true,
-    clientFirstName: treatmentTimeFirstName(await loadTreatmentTimeNameFields(admin, "studio-1", "client-1", stored)),
+    client: await loadTreatmentTimeNameFields(admin, "studio-1", "client-1", stored),
     context: { sessionCount: 0, totalMinutes: 0 },
   });
 
@@ -71,25 +71,46 @@ describe("the rendered treatment-time sentence", () => {
     expect(calls[0].eq).toEqual([["id", "client-1"], ["studio_id", "studio-1"]]);
   });
   it("the later sessions' sentence names nobody, so it is unchanged", () => {
-    expect(buildTreatmentTimeLine({ enabled: true, clientFirstName: "Fern", context: { sessionCount: 2, totalMinutes: 90 } })).toBe(
+    expect(buildTreatmentTimeLine({ enabled: true, client: { name: "Fern" }, context: { sessionCount: 2, totalMinutes: 90 } })).toBe(
       "Treatment time so far: 1h 30m · This will be session 3.",
     );
   });
 });
 
-describe("both reminder paths name the client through the helper", () => {
-  const code = (p: string) => readFileSync(p, "utf8").split("\n").filter((l) => !/^\s*\/\//.test(l)).join("\n");
-  it("the reminders cron route", () => {
-    const src = code("app/api/cron/appointment-reminders/route.ts");
-    expect(src).toContain("treatmentTimeFirstName(");
-    expect(src).toContain("loadTreatmentTimeNameFields(");
-    expect(src, "no first-word-of-the-stored-name").not.toMatch(/client\.name\.split/);
+describe("the helper itself", () => {
+  it("takes identity fields, so a stored first word cannot be passed in", () => {
+    expect(treatmentTimeFirstName({ name: "Quillon Sentinel", preferred_name: "Fern" })).toBe("Fern");
+    expect(treatmentTimeFirstName({ name: "Quillon Sentinel", preferred_name: null })).toBe("Quillon");
+    expect(treatmentTimeFirstName({ name: "Quillon Sentinel", legal_given_name: "Legal", legal_family_name: "Name" })).toBe("Quillon");
+    expect(treatmentTimeFirstName({ name: "Mononym" })).toBe("Mononym");
+    const line = buildTreatmentTimeLine({ enabled: true, client: { name: "Quillon Sentinel", preferred_name: "Fern" }, context: { sessionCount: 0, totalMinutes: 0 } });
+    expect(line).toBe("This will be Fern's first electrolysis session.");
+    expect(buildTreatmentTimeLine({ enabled: false, client: { name: "Q" }, context: { sessionCount: 0, totalMinutes: 0 } })).toBeNull();
   });
-  it("the trusted-render operation path", () => {
-    const src = code("lib/email/send-appointment.ts");
-    expect(src).toContain("treatmentTimeFirstName(nameFields ?? { name: p.client.name })");
-    expect(src).toContain("loadTreatmentTimeNameFields(admin, studioId, render.client.id, render.client.name)");
-    expect(src).toContain("addressVisibility, nameFields)");
-    expect(src, "no first-word-of-the-stored-name").not.toMatch(/client\.name\.split/);
+});
+
+describe("every path that builds the sentence names the client through the loader", () => {
+  const code = (p: string) => readFileSync(p, "utf8").split("\n").filter((l) => !/^\s*\/\//.test(l)).join("\n");
+  const PATHS: [string, string, string][] = [
+    ["the reminders cron route", "app/api/cron/appointment-reminders/route.ts", "client: await loadTreatmentTimeNameFields(\n            admin,\n            appt.studio.id,\n            appt.client_id,\n            appt.client.name,"],
+    ["the trusted-render operation path", "lib/email/send-appointment.ts", "client: nameFields ?? { name: p.client.name }"],
+    ["the public booking confirmation", "app/book/[slug]/actions.ts", "client: await loadTreatmentTimeNameFields(admin, studio.id, clientId, clientName)"],
+    ["the portal rebook", "app/portal/rebook-actions.ts", "client: await loadTreatmentTimeNameFields(admin, studio.id, clientId, clientName)"],
+    ["the reschedule confirmation", "app/reschedule/[token]/actions.ts", "client: await loadTreatmentTimeNameFields(admin, asserted.original.studio_id, asserted.original.client_id, clientRow.name)"],
+    ["the calendar confirm/move", "app/(app)/calendar/actions.ts", "client: await loadTreatmentTimeNameFields(createAdminClient(), p.studio.id, p.appointment.client_id, p.clientName)"],
+  ];
+  for (const [label, file, needle] of PATHS) {
+    it(`${label}: passes the loaded identity, studio-scoped, never a first word of the stored name`, () => {
+      const src = code(file);
+      expect(src).toContain(needle);
+      expect(src).not.toMatch(/clientFirstName/);
+      expect(src).not.toMatch(/\.split\(\/\\s\+\/\)\[0\]/);
+    });
+  }
+  it("no file in app/ or lib/ calls the sentence builder without being in the list above (the name-string option no longer exists; the type enforces it)", () => {
+    const { execSync } = require("node:child_process") as typeof import("node:child_process");
+    const callers = execSync(`grep -rlE "buildTreatmentTimeLine\\(" app lib --include=*.ts --include=*.tsx`, { encoding: "utf8" })
+      .split("\n").filter(Boolean).filter((f) => f !== "lib/treatment-time/format.ts").sort();
+    expect(callers).toEqual(PATHS.map(([, f]) => f).sort());
   });
 });

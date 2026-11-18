@@ -7,14 +7,8 @@
 // here, so the preferred name is read separately, once, right before the line is built. That read is fail-soft: any error
 // (including the column being absent before 0258) leaves the stored name, which is today's behaviour, never a failed send.
 
-import { clientCommunicationName, type ClientIdentityFields } from "@/lib/clients/identity";
+import type { ClientIdentityFields } from "@/lib/clients/identity";
 import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
-
-/** The first word of the communication name (preferred, else stored); the whole name when it has no space. */
-export function treatmentTimeFirstName(client: ClientIdentityFields): string {
-  const full = clientCommunicationName(client);
-  return full.split(/\s+/)[0] || full;
-}
 
 type ReadClient = {
   from: (table: string) => {

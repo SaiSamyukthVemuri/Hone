@@ -5,7 +5,7 @@ import { parseEmailOperationAuthority, parseEmailOperationRender, type EmailOper
 import { generateCancellationToken } from "@/lib/booking/tokens";
 import { generateIntakeLinkUrl } from "@/lib/intake/queries";
 import { buildTreatmentTimeLine } from "@/lib/treatment-time/format";
-import { loadTreatmentTimeNameFields, treatmentTimeFirstName } from "@/lib/treatment-time/client-first-name";
+import { loadTreatmentTimeNameFields } from "@/lib/treatment-time/client-first-name";
 import { isMissingColumnError } from "@/lib/db/missing-column";
 import type { ClientIdentityFields } from "@/lib/clients/identity";
 import { isE2eFakeResendEnabled } from "./e2e-fake-resend";
@@ -952,7 +952,7 @@ export function buildAppointmentEmailOperationPayload(projection: EmailOperation
       { cancellationUrl: `${origin}/cancel/${token}`, rescheduleUrl: `${origin}/reschedule/${token}` },
     ),
     portalLoginUrl: p.studio.slug?.trim() ? portalLoginUrlForStudio({ slug: p.studio.slug.trim() }) : null,
-    treatmentTimeLine: p.treatmentTime ? buildTreatmentTimeLine({ enabled: true, clientFirstName: treatmentTimeFirstName(nameFields ?? { name: p.client.name }), context: p.treatmentTime }) : null,
+    treatmentTimeLine: p.treatmentTime ? buildTreatmentTimeLine({ enabled: true, client: nameFields ?? { name: p.client.name }, context: p.treatmentTime }) : null,
     intakeUrl,
     bookingReference: emailBookingReference(appointmentId),
   });
