@@ -1907,6 +1907,20 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Introduced by migration 0223 (MPX-02, #829). The studio's own list of physical electrolysis machines: a display name, the catalogue profile and version it was registered against, the options physically fitted, and a retirement instant. It holds NO client or clinical data and no provider identifier. It is plainly studio-owned content and a studio export should probably carry it, but that is a product decision this lane was not asked to make, so nothing is claimed here. Whoever takes it should note that treatment_setup_readings references this table, so exporting the readings without the machines would leave an unresolvable identifier in the archive.",
   },
+  studio_cancellation_fee_rule_changes: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "The studio's own record of changes to its cancellation fee tiers: the previous and new rule, who changed it and when. It holds no client data and no free text, only a staff user id. It is not in this export yet; whether it is included is decided together with the studio's other settings histories.",
+  },
+  studio_cancellation_fee_rules: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "The studio's current cancellation fee tiers: one row per studio holding the notice window in hours, a fixed or percentage rate for the notice window and for the same day, whether charging is switched on, the revision and a hash of the policy text the owner reviewed. It is studio payment configuration, not client data, and holds no free text. It is not in this export yet; it is decided together with the studio's other payment settings.",
+  },
   studio_manual_fee_setting_changes: {
     kind: "pending",
     ticket: "TRUTH-01B",
