@@ -56,6 +56,9 @@ describe("the material-change re-check", () => {
     expect(recheckBeforeSend({ fit: 5, active: 3, extra: 10 }, { fit: 0, active: 3, extra: 10 })).toBe("reconfirm");
     expect(recheckBeforeSend(shown, { fit: 0, active: 4, extra: 10 })).toBe("reconfirm");
   });
+  it("re-prompts when only the quantity changed", () => {
+    expect(recheckBeforeSend(shown, { fit: 0, active: 3, extra: 11 })).toBe("reconfirm");
+  });
   it("confirming again on the new numbers sends (the new numbers become the shown ones)", () => {
     const fresh = { fit: 0, active: 4, extra: 10 };
     expect(recheckBeforeSend(fresh, { ...fresh })).toBe("send");
