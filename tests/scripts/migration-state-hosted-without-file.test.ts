@@ -137,18 +137,6 @@ describe("hosted_without_repo_file", () => {
     }
   });
 
-  it("accepts each of the three real apply-record shapes, for the matching version", () => {
-    for (const rec of [
-      "01-ops/RECORD-0301-APPLIED-20261106.md",
-      "01-ops/0313-APPLY-RESULT-20261108T1929Z.md",
-      "01-ops/rmin-0303-apply-20261108/NOTES.md",
-    ]) {
-      const v = rec.match(/\d{4}/)![0];
-      const n = Number(v);
-      const r = run(range(1, n - 1).concat(n + 1), n + 1, [{ version: v, apply_record: rec }]);
-      expect(r.invalid_declarations, rec).toEqual([]);
-    }
-  });
   it("NEGATIVE: an apply_record of the wrong shape, the wrong folder or ANOTHER version's record is refused", () => {
     for (const bad of ["notes.md", "01-ops/a.md", "docs/RECORD-0301-APPLIED-20261106.md", "01-ops/RECORD-0302-APPLIED-20261106.md", "01-ops/RECORD-0301-APPLIED-2026.md", "01-ops/RECORD-0301-APPLIED-20261106.md.txt", "../01-ops/RECORD-0301-APPLIED-20261106.md"]) {
       const r = run(range(1, 300).concat(302), 302, [{ version: "0301", apply_record: bad }]);

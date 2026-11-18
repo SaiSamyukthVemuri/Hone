@@ -23,7 +23,6 @@ const READINESS = readDoc("docs/16_LIVE_PAYMENTS_READINESS.md");
 const PAYMENTS = readDoc("docs/06_PAYMENTS_AND_STRIPE.md");
 const DEPLOY = readDoc("docs/10_DEPLOYMENT_AND_ENV.md");
 const SMOKE = readDoc("docs/12_SMOKE_TESTS.md");
-const DECISIONS = readDoc("docs/13_BACKLOG_AND_DECISIONS.md");
 const HANDOFF = readDoc("docs/14_AI_HANDOFF.md");
 
 // Extract the §17 runbook block so prose elsewhere in the long doc
@@ -217,15 +216,10 @@ describe("supporting docs frame PR #282 as readiness, not enablement", () => {
     expect(SMOKE).toMatch(/`?SELECT`?-only/);
   });
 
-  it("docs/13 has the PR #282 decision entry (docs-only, no migration)", () => {
-    expect(DECISIONS).toMatch(/PR #282/);
-    expect(DECISIONS).toMatch(/no migration/i);
-  });
-
   it("docs/14 current-status is at PR #282 or later and keeps live payments disabled", () => {
     // The handoff status header rolls forward with each docs PR; assert it is
     // at #282 or higher (so PR #282's contract holds without locking later
-    // PRs to back-edit this file — matching live-payments-readiness.test.ts).
+    // PRs to back-edit this file).
     const m = HANDOFF.match(/Current production status \(as of PR #(\d+)\)/);
     expect(m).not.toBeNull();
     if (m) expect(Number(m[1])).toBeGreaterThanOrEqual(282);

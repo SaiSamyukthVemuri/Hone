@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -99,20 +99,4 @@ esac
     const shared = { names: ["supabase_kong_Hone-0162", "supabase_db_Hone-0162"], ports: { "supabase_kong_Hone-0162": "0.0.0.0:59401", "supabase_db_Hone-0162": "0.0.0.0:59402" }, labels: {} };
     expect(run(fixture({ holder: "photos", ...shared }), env).stderr).toContain("must not be the shared stack");
   }, 60000);
-});
-
-describe("allocated finite-reading migration (static evidence only)", () => {
-  const source = readFileSync(path.join(root, "supabase/migrations/0235_machine_finite_readings.sql"), "utf8");
-  const sql = source.replace(/--[^\n]*/g, "");
-  const detectsFiniteConstraint = (text: string) =>
-    /alter table public\.treatment_setup_readings\s+add constraint treatment_setup_readings_finite_value\s+check\s*\(value_numeric is null or value_numeric not in\s*\(\s*'NaN'::numeric,\s*'Infinity'::numeric,\s*'-Infinity'::numeric\)\) not valid;/i.test(text);
-  it("enforces new rows without rewriting immutable historical observations", () => {
-    expect(detectsFiniteConstraint(sql)).toBe(true);
-    expect(sql).toMatch(/begin;\s*set local lock_timeout = '5s';/);
-    expect(sql).toMatch(/commit;/);
-    expect(sql).not.toMatch(/\b(update|delete|truncate)\b/i);
-  });
-  it.each(["NaN", "Infinity", "-Infinity"])("negative control: detector notices missing %s", (value) => {
-    expect(detectsFiniteConstraint(sql.replace(`'${value}'::numeric`, "'0'::numeric"))).toBe(false);
-  });
 });

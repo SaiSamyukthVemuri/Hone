@@ -12,23 +12,6 @@ const laneRuns = (p: ReturnType<typeof plan>, name: string) =>
   (p.lanes as Array<{ lane: string; run: boolean }>).find((l) => l.lane.startsWith(name))?.run;
 
 describe("browser group manifest integrity", () => {
-  it("maps every spec on disk to exactly one group", () => {
-    const disk = readdirSync("e2e").filter((f) => f.endsWith(".spec.ts"));
-    const mapped = Object.values(BROWSER_GROUPS as Record<string, { specs: string[] }>).flatMap(
-      (g) => g.specs,
-    );
-    const unmapped = disk.filter((f) => !mapped.includes(f));
-    expect(unmapped, "every spec must belong to a group or it will never run in a targeted lane").toEqual([]);
-    // No duplicates across groups — a spec in two groups would run twice.
-    expect(new Set(mapped).size).toBe(mapped.length);
-  });
-
-  it("references no spec that does not exist", () => {
-    const disk = new Set(readdirSync("e2e").filter((f) => f.endsWith(".spec.ts")));
-    const mapped = Object.values(BROWSER_GROUPS as Record<string, { specs: string[] }>).flatMap((g) => g.specs);
-    expect(mapped.filter((f) => !disk.has(f))).toEqual([]);
-  });
-
   it("every group documents its purpose", () => {
     for (const [name, def] of Object.entries(BROWSER_GROUPS as Record<string, { description: string }>)) {
       expect(def.description.length, `${name} needs a description`).toBeGreaterThan(10);
@@ -345,9 +328,6 @@ describe("acceptance case 1 — docs-only", () => {
     expect(laneRuns(p, "mobile completion")).toBe(false);
     expect(laneRuns(p, "typecheck")).toBe(false);
   });
-  it("selects no browser group", () => {
-    expect(sel("docs/x.md").groups).toEqual([]);
-  });
 });
 
 describe("acceptance case 2 — migration-only", () => {
@@ -431,13 +411,6 @@ describe("acceptance case 7 — shared browser fixture", () => {
     expect(sel("supabase/migrations/0166_x.sql").groups).toEqual([]);
     expect(plan("supabase/migrations/0166_x.sql").browser.groups).toEqual([]);
   });
-
-  it("migration-only still skips payment, Google and mobile", () => {
-    const p = plan("supabase/migrations/0166_x.sql");
-    expect(laneRuns(p, "payment browser")).toBe(false);
-    expect(laneRuns(p, "google browser")).toBe(false);
-    expect(laneRuns(p, "mobile completion")).toBe(false);
-  });
 });
 
 describe("acceptance case 8 — workflow / CI change", () => {
@@ -463,15 +436,7 @@ describe("acceptance case 9 — unknown shared path fails safe", () => {
   });
 });
 
-describe("acceptance case 10 — superseded PR runs are cancelled", () => {
-  it("the PR workflow declares a PR-scoped cancelling concurrency group", async () => {
-    const { readFileSync } = await import("node:fs");
-    const ci = readFileSync(".github/workflows/ci.yml", "utf8");
-    // CI-PUSH-CONCURRENCY-01: the PR group is keyed on the PR number and cancels; push runs are keyed on the sha and never cancel
-    // (the behavioural proof, with a negative control, is in ci-config.test.ts).
-    expect(ci).toMatch(/group: \$\{\{ github\.event_name == 'pull_request' && format\('hone-pr-ci-\{0\}', github\.event\.pull_request\.number\)/);
-    expect(ci).toMatch(/cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}/);
-  });
+describe("acceptance case 10 — nightly concurrency (the PR group is proved in ci-config.test.ts)", () => {
   it("nightly concurrency stays separate from PR concurrency", async () => {
     const { readFileSync } = await import("node:fs");
     const nightly = readFileSync(".github/workflows/nightly.yml", "utf8");

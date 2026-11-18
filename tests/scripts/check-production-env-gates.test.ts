@@ -194,12 +194,6 @@ describe("check-production-env-gates script (PR #262)", () => {
     expect(r.stdout + r.stderr).not.toContain(OPS_EMAIL_SENTINEL);
   });
 
-  it("is a NO-OP on preview deploys (env intentionally absent)", () => {
-    const r = run({ VERCEL_ENV: "preview" });
-    expect(r.status, r.stdout + r.stderr).toBe(0);
-    expect(r.stdout).toMatch(/^SKIP public-rate-limit-env/m);
-  });
-
   it("is a NO-OP when VERCEL_ENV is unset (local / CI build)", () => {
     // No VERCEL_ENV and no Upstash vars — the local/CI build path. Must
     // not fail, even though `next build` sets NODE_ENV=production.

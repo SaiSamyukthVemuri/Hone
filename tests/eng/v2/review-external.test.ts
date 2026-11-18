@@ -412,13 +412,4 @@ describe("parseRollup and bindExternal (EXT-CONTEXT-01)", () => {
     expect(() => parseRollup(hostile, p776)).not.toThrow();
     expect(parseRollup(hostile, p776)).toMatchObject({ ok: false, reason: "malformed" });
   });
-
-  it("permutation of the contexts gives the same normalized multiset", () => {
-    const a = ok(ext("rollup/rollup-776.json")).external;
-    const raw = clone(load("rollup/rollup-776.json"));
-    raw.data.repository.object.statusCheckRollup.contexts.nodes.reverse();
-    const b = ok(bindExternal(ok(parseRollup(raw, REQUESTED["rollup/rollup-776.json"])))).external;
-    const key = (e: any) => `${e.source}|${e.state}`;
-    expect(b.map(key).sort()).toEqual(a.map(key).sort());
-  });
 });

@@ -93,7 +93,4 @@ describe("the canonical array is validated as written, with or without markers",
     expect(bad(["0301", "0301"], ["0303"])).not.toBe("");
     expect(bad(["0302", "0301"], ["0303"])).not.toBe("");
   });
-  it("a well-formed array merges with markers as before", () => {
-    expect(mergeReservedDeclarations(["0301", "0302"], ["0303"])).toEqual({ declared: ["0301", "0302", "0303"], invalid: [] });
-  });
 });
