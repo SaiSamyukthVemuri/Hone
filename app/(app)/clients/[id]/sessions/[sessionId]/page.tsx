@@ -59,6 +59,10 @@ import {
   updateSessionPerformerAction,
 } from "./actions";
 import { createClient } from "@/lib/supabase/server";
+import { CHARTING_VIEW_STUDIOS_ENV } from "@/lib/charting/view-preference";
+import { chartingViewForPage } from "@/lib/charting/page-view";
+import { ChartingViewShell, ChartingViewToggle, ChartingVisitSummary } from "@/components/charting-view-shell";
+import { formatAreaLabel, resolveBlockAreas } from "@/lib/sessions/block-areas";
 import { loadPreviousVisitNote } from "@/lib/sessions/previous-visit-note";
 import {
   attachChartEntryToPlanAction,
@@ -586,11 +590,25 @@ export default async function SessionDetailPage({
   const isFinalized =
     session.record_status === "finalized" || session.record_status === "void";
 
+  // THE CURRENT / NEW VIEW SWITCH. Hidden unless the rollout setting names this studio (or says all); then nothing
+  // below changes at all and no extra read happens. When it is available, the person's own saved choice is read from
+  // their sign-in profile (a failed read means Current). It is a display choice only and decides nothing else.
+  const { toggleVisible: chartingToggleVisible, view: chartingInitialView } = await chartingViewForPage({
+    studioId: practitioner.studio_id,
+    rawGate: process.env[CHARTING_VIEW_STUDIOS_ENV],
+    readMetadata: async () => {
+      const {
+        data: { user: authUser },
+      } = await (await createClient()).auth.getUser();
+      return authUser?.user_metadata;
+    },
+  });
+
   // Everything above is server work the practitioner waits on; the render
   // below is what they finally see.
   domainSpan.end();
 
-  return (
+  const page = (
     <div className="flex flex-col gap-8">
       <div className="flex flex-col gap-3">
         <Link
@@ -600,9 +618,12 @@ export default async function SessionDetailPage({
           ← {clientShownName}
         </Link>
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h1 className="text-3xl font-semibold tracking-tight capitalize">
-            {session.modality} session
-          </h1>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <h1 className="text-3xl font-semibold tracking-tight capitalize">
+              {session.modality} session
+            </h1>
+            {chartingToggleVisible ? <ChartingViewToggle /> : null}
+          </div>
           <EditSessionStartedAt
             sessionId={session.id}
             clientId={id}
@@ -1110,6 +1131,31 @@ export default async function SessionDetailPage({
         </div>
       )}
     </div>
+  );
+
+  if (!chartingToggleVisible) return page;
+  const liveBlocks = (blockData?.blocks ?? []).filter((b) => b.deleted_at == null);
+  return (
+    // key = this session: another session's page can never inherit this one's view state.
+    <ChartingViewShell
+      key={session.id}
+      initialView={chartingInitialView}
+      summary={
+        <ChartingVisitSummary
+          clientName={clientShownName}
+          areas={liveBlocks.flatMap((b) =>
+            resolveBlockAreas(
+              (b as { areas?: Parameters<typeof resolveBlockAreas>[0] }).areas,
+              b,
+            ).map(formatAreaLabel),
+          )}
+          blockCount={liveBlocks.length}
+          nextVisitNoteRecorded={Boolean(session.next_session_note && session.next_session_note.trim())}
+        />
+      }
+    >
+      {page}
+    </ChartingViewShell>
   );
 }
 

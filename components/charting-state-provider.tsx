@@ -79,7 +79,9 @@ export function useRetainedState<T>(
 ): [T, Dispatch<SetStateAction<T>>] {
   const store = useContext(Ctx);
   const [local, setLocal] = useState<T>(init);
-  const retained = store !== null && key != null;
+  // A missing or EMPTY key is keyless: never a shared entry. Retention needs a real, non-empty key.
+  const hasKey = typeof key === "string" && key !== "";
+  const retained = store !== null && hasKey;
   const box = useSyncExternalStore(
     store ? store.subscribe : noopSubscribe,
     () => (retained ? store.get(key) : undefined),
@@ -94,7 +96,7 @@ export function useRetainedState<T>(
     (u) => {
       const next = typeof u === "function" ? (u as (prev: T) => T)(valueRef.current) : u;
       valueRef.current = next;
-      if (store !== null && key != null) store.set(key, next);
+      if (store !== null && typeof key === "string" && key !== "") store.set(key, next);
       else setLocal(next);
     },
     [store, key],
@@ -107,7 +109,7 @@ export function useDiscardRetained(): (key: string | null | undefined) => void {
   const store = useContext(Ctx);
   return useCallback(
     (key) => {
-      if (store !== null && key != null) store.discard(key);
+      if (store !== null && typeof key === "string" && key !== "") store.discard(key);
     },
     [store],
   );

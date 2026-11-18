@@ -100,4 +100,25 @@ describe("useRetainedState", () => {
     expect(store.get("b1")).toBeUndefined();
     expect(store.get("b10:draft")?.v).toBe(3);
   });
+
+  it("a missing or EMPTY key under a provider never shares an entry", () => {
+    for (const k of [null, undefined, ""] as Array<string | null | undefined>) {
+      const a = { current: null as Api | null };
+      const b = { current: null as Api | null };
+      mount(
+        h(
+          ChartingStateProvider,
+          null,
+          h(Probe, { k: k as string | null, api: a, init: () => ({ a: "one", n: 0 }) }),
+          h(Probe, { k: k as string | null, api: b, init: () => ({ a: "two", n: 0 }) }),
+        ),
+      );
+      act(() => a.current!.set((d) => ({ ...d, a: "edited" })));
+      expect(a.current!.value.a).toBe("edited");
+      expect(b.current!.value.a, `key ${JSON.stringify(k)} must not be shared`).toBe("two");
+      act(() => root?.unmount());
+      host?.remove();
+      root = host = null;
+    }
+  });
 });

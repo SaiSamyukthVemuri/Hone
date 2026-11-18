@@ -531,7 +531,7 @@ export function BlockSetupForm({
         }
       }
     },
-    [legacyDataLocked, setRetainedBaseline],
+    [legacyDataLocked, setRetainedBaseline, setMachineKind],
   );
   const onIdentityDraft = useCallback(
     (
