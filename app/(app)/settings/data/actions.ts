@@ -1235,7 +1235,6 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     // disagree.
     not_exported: pendingResources().map(({ resource, disposition }) => ({
       resource,
-      ticket: disposition.ticket,
       tier: disposition.tier,
       reason: disposition.reason,
     })),
@@ -1294,7 +1293,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         : "",
     );
   const notExportedLines = pendingResources()
-    .map(({ resource, disposition }) => `- ${resource} (${disposition.ticket}): ${disposition.reason}`)
+    .map(({ resource, disposition }) => `- ${resource}: ${disposition.reason}`)
     .join("\n");
   const withheldLines = excludedResources()
     .map(({ resource, disposition }) => `- ${resource} (${disposition.category}): ${disposition.reason}`)

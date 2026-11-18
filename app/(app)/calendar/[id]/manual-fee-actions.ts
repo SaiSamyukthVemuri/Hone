@@ -197,6 +197,10 @@ export async function prepareManualFeeChargeAction(
       created_by_practitioner_id: practitionerId,
       charge_reason: chargeReason,
       amount_cents: eligibility.amountCents,
+      // 0351: how the amount was derived, frozen with it. Execute never recomputes.
+      calc_mode: eligibility.feeBasis.calcMode,
+      basis_cents: eligibility.feeBasis.basisCents,
+      percent_bp: eligibility.feeBasis.percentBp,
       currency: eligibility.currency,
       status: "ready",
       // PR #323: write the current deployment mode (false in test env).

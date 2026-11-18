@@ -162,7 +162,7 @@ function visit(node: ts.Node, fn: (n: ts.Node) => void): void {
   ts.forEachChild(node, (c) => visit(c, fn));
 }
 
-const LOADERS = ["getConsentTemplatesForStudio", "getLatestSignaturesForPractitionerView"];
+const LOADERS = ["getConsentTemplatesForStudio", "checkConsentTemplatesForStudio", "getLatestSignaturesForPractitionerView"];
 
 describe("no caller reaches a card-authorization loader without naming the scope", () => {
   it("every reference is a direct call whose scope argument is an object literal naming includeCardAuthorization", { timeout: 60_000 }, () => {

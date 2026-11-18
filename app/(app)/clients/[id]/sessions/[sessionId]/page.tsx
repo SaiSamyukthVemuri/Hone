@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { clientDisplayName } from "@/lib/clients/identity";
+import { FromLastVisitBand } from "@/components/from-last-visit-band";
 import { notFound } from "next/navigation";
 import { DAY_PACKET_OPEN_PATH, dayPacketEntry } from "@/lib/records/print/day-entry";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
@@ -566,7 +568,9 @@ export default async function SessionDetailPage({
       .map((b) => b.id),
   );
 
-  const clientFirstName = clientData.client.name.split(/\s+/)[0] || clientData.client.name;
+  // Staff screen wording: the name the client goes by (HON-58). The postcare PREVIEW below keeps the stored name on purpose (it must match the send).
+  const clientShownName = clientDisplayName(clientData.client);
+  const clientFirstName = clientShownName.split(/\s+/)[0] || clientShownName;
   // " · 1 laser session previously" / " · 3 laser sessions previously"
   const priorLaserClause =
     priorLaserCount > 0
@@ -600,7 +604,7 @@ export default async function SessionDetailPage({
           href={`/clients/${id}?tab=sessions`}
           className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
         >
-          ← {clientData.client.name}
+          ← {clientShownName}
         </Link>
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h1 className="text-3xl font-semibold tracking-tight capitalize">
@@ -745,14 +749,7 @@ export default async function SessionDetailPage({
         </section>
       )}
       {fromLastVisit && (
-        <section className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm dark:border-blue-900 dark:bg-blue-950/40">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-blue-800 dark:text-blue-300">
-            From last visit, for today
-          </h2>
-          <p className="mt-1.5 whitespace-pre-wrap text-blue-950 dark:text-blue-100">
-            {fromLastVisit}
-          </p>
-        </section>
+        <FromLastVisitBand note={fromLastVisit} session={previousVisit.session} clientId={id} />
       )}
 
       {/* PR #199: the separate "Performed by" card is gone; the

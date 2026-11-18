@@ -96,6 +96,10 @@ export type EligibilityExistingAttemptSummary = {
   // 'ready' row still passes the type check before any Stripe call.
   stripe_payment_intent_id: string | null;
   stripe_charge_id: string | null;
+  /** 0351: how the amount was derived at prepare (canonical fee attempts only; legacy rows leave these undefined). */
+  calc_mode?: "fixed" | "percent" | null;
+  basis_cents?: number | null;
+  percent_bp?: number | null;
   /** Stored provider PaymentIntent status; null for legacy rows (a failed legacy row therefore cannot prove it is uncollectable). */
   stripe_status?: string | null;
   charged_at: string | null;
@@ -119,6 +123,11 @@ export type EligibilityExistingAttemptSummary = {
   updated_at?: string | null;
 };
 
+/** How a fee amount was derived at prepare (0351). Frozen onto the attempt; execute never recomputes. */
+export type ManualFeeBasis =
+  | { calcMode: "fixed"; basisCents: null; percentBp: null }
+  | { calcMode: "percent"; basisCents: number; percentBp: number };
+
 export type ManualFeeEligibility =
   | {
       eligible: true;
@@ -127,8 +136,9 @@ export type ManualFeeEligibility =
       policyAcknowledgementId: string;
       policySnapshotHash: string;
       amountCents: number;
+      feeBasis: ManualFeeBasis;
       currency: string;
-      timingClassification: "practitioner_asserted";
+      timingClassification: "practitioner_asserted" | "system_derived";
       appointment: EligibilityAppointmentSummary;
       client: EligibilityClientSummary;
       card: EligibilityCardSummary;
@@ -145,7 +155,10 @@ export type ManualFeeEligibility =
       cardAuthorization: EligibilityCardAuthorizationSummary | null;
       policyAcknowledgement: EligibilityPolicyAckSummary | null;
       amountCents: number | null;
+      feeBasis: ManualFeeBasis | null;
+      /** True when percent mode calculated a fee of exactly $0.00 (zero price or rounds to zero): nothing is owed, no attempt. */
+      noFeeOwed: boolean;
       currency: string | null;
-      timingClassification: "practitioner_asserted";
+      timingClassification: "practitioner_asserted" | "system_derived";
       existingAttempts: EligibilityExistingAttemptSummary[];
     };

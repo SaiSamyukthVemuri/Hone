@@ -45,6 +45,9 @@ export const STUDIO_SETTINGS = {
   client_reschedule_enabled: { default: true, kind: "preference", readAt: "action" },
   practitioner_capacity_enabled: { default: false, kind: "preference", readAt: "action" },
   practitioner_capacity_booking_enabled: { default: false, kind: "rollout", readAt: "action" },
+  // Manual fee charges (0351): the owner turns each on in Settings, Payments. Both default OFF and a missing or unreadable value reads as off.
+  late_cancel_fee_enabled: { default: false, kind: "preference", readAt: "action" },
+  no_show_fee_enabled: { default: false, kind: "preference", readAt: "action" },
   google_calendar_connection_enabled: { default: false, kind: "preference", readAt: "action" },
   google_calendar_outbound_sync_enabled: { default: false, kind: "preference", readAt: "send-time" },
   google_calendar_inbound_busy_enabled: { default: false, kind: "preference", readAt: "action" },

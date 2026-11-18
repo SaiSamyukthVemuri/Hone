@@ -4,9 +4,8 @@ import { adminQuery, adminTx, asUser, closePool, seedMember, seedStudio } from "
 // 0188 — WAIT-03 private invitation lifecycle, proved against a real local
 // PostgreSQL.
 //
-// The static contract (what the migration SAYS) is pinned in
-// tests/migrations/0188-new-client-waitlist-invitations.test.ts. This file
-// proves the BEHAVIOUR that file cannot see: that the exact-N claim really
+// This file
+// proves the BEHAVIOUR a reading of the migration text cannot see: that the exact-N claim really
 // partitions under concurrency, that a token really redeems exactly once, that
 // an expired token is refused FOR THAT REASON, and that a prospect holding a
 // live token really cannot be removed.

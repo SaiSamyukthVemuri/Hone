@@ -3,6 +3,7 @@ import Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { liveChargeReasonBlockMessage } from "@/lib/billing/live-charge-reason-allowlist";
+import { loadManualFeeExecuteHold } from "@/lib/billing/manual-fee-studio-setting";
 import { oneFeeExecuteVerdict } from "@/lib/billing/manual-fee-execute-guard";
 import { getSessionPaymentStripe } from "@/lib/stripe/session-payment-stripe";
 import { recordOpsAlert } from "@/lib/ops/alerts";
@@ -1384,6 +1385,19 @@ export async function runSessionPaymentCharge(args: {
   if (liveHold) {
     return { ok: false, outcome: "live_mode_blocked", message: liveHold };
   }
+  // The studio's OWN settings for this manual fee (0351), re-read from the database at THREE points for a NEW fee (an attempt
+  // that is still "ready" when this call starts): (1) here, the early friendly refusal; (2) immediately before the claim;
+  // (3) after the claim, immediately before the Stripe create call. Each compares the owner's current on/off, mode, percentage
+  // and fixed amount with what was frozen on the attempt at prepare (loadManualFeeExecuteHold). An attempt already claimed or
+  // sent (pending_stripe and every terminal state) is reconciled, refreshed and refunded exactly as before, so none of the
+  // three reads applies to it. Fails closed on an unreadable setting. session_payment is not governed by it.
+  const isNewManualFee = attemptRow.status === "ready";
+  if (isNewManualFee) {
+    const settingHold = await loadManualFeeExecuteHold(admin, attemptRow);
+    if (settingHold) {
+      return { ok: false, outcome: "blocked", message: settingHold };
+    }
+  }
   // Codex P1 #4369182087 (#1035). The currency sent to Stripe is the attempt's
   // PERSISTED currency, and only cad or usd are currencies Hone charges in: an
   // unreadable or unsupported stored value is refused here, before any Stripe
@@ -1585,6 +1599,15 @@ export async function runSessionPaymentCharge(args: {
     }
   }
 
+  // Read (2): the setting once more, immediately before the claim, so a refusal here still leaves the attempt "ready"
+  // (recoverable: the owner cancels it and prepares again).
+  if (isNewManualFee) {
+    const preClaimHold = await loadManualFeeExecuteHold(admin, attemptRow);
+    if (preClaimHold) {
+      return { ok: false, outcome: "blocked", message: preClaimHold };
+    }
+  }
+
   // 5. Atomically claim the attempt. Idempotency key is deterministic
   //    so a retry produces the same key.
   const idempotencyKey = buildIdempotencyKey(attemptRow.id, attemptRow.charge_reason ?? "session_payment");
@@ -1774,6 +1797,18 @@ export async function runSessionPaymentCharge(args: {
   if (!(await canCreateInCurrentPaymentCountry(currentCountryArgs))) {
     return { ok: false, outcome: "needs_manual_review", message: NEEDS_MANUAL_REVIEW_MESSAGE,
       attemptId: attemptRow.id };
+  }
+
+  // Read (3): the owner's settings after the claim, the last read before the request goes to Stripe, for a NEW fee only
+  // (never for a reconcile or retrieve of an already-sent attempt, which returned above). Like the country recheck, a claimed
+  // attempt that fails it is retained as pending_stripe for manual review and is NEVER sent. WHAT REMAINS: this is the last
+  // read, not a lock. A settings change committed after this line, while the request is already on its way to Stripe, cannot
+  // be recalled; the change record (0351) shows when it happened.
+  if (isNewManualFee) {
+    const postClaimHold = await loadManualFeeExecuteHold(admin, attemptRow);
+    if (postClaimHold) {
+      return { ok: false, outcome: "needs_manual_review", message: NEEDS_MANUAL_REVIEW_MESSAGE, attemptId: attemptRow.id };
+    }
   }
 
   // 6b. Create + confirm the PaymentIntent. Off-session because the

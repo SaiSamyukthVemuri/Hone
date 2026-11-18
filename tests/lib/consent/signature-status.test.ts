@@ -118,7 +118,7 @@ describe("consent card wiring (source pins — NOT a DOM behavior test)", () => 
 
   it("card uses consentRowState + summarizeConsent and renders Outdated + a pre-treatment summary", () => {
     expect(CARD).toMatch(/consentRowState\(t, sig\)/);
-    expect(CARD).toMatch(/summarizeConsent\(activeTemplates, latestByTemplateId\)/);
+    expect(CARD).toMatch(/summarizeConsent\(unavailable \? \[\] : activeTemplates, latestByTemplateId\)/);
     expect(CARD).toMatch(/label: "Outdated"/);
     expect(CARD).toMatch(/need attention before treatment/);
     expect(CARD).toMatch(/re-sign needed \(current v\{t\.version\}\)/);

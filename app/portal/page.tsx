@@ -24,7 +24,7 @@ import { portalLogoutAction } from "./logout/actions";
 import { markPortalMessageReviewedAction } from "./portal-message-actions";
 import { PortalReplyForm } from "./PortalReplyForm";
 import {
-  getActiveConsentTemplatesForPortal,
+  checkActiveConsentTemplatesForPortal,
   getLatestSignaturesByTemplateForPortal,
 } from "@/lib/consent/queries";
 import { PortalConsentForms } from "./PortalConsentForms";
@@ -78,7 +78,7 @@ export default async function PortalHomePage() {
     preCareEntries,
     messages,
     replies,
-    consentTemplates,
+    consentTemplatesCheck,
     consentSignaturesByTemplate,
   ] = await Promise.all([
     getPortalUpcomingAppointments(session.studioId, session.clientId),
@@ -102,12 +102,15 @@ export default async function PortalHomePage() {
     // section; templates the client has already signed render as a
     // "Signed" badge under "Recently signed" instead of the
     // unsigned "Forms to review" block.
-    getActiveConsentTemplatesForPortal(session.studioId),
+    checkActiveConsentTemplatesForPortal(session.studioId),
     getLatestSignaturesByTemplateForPortal(
       session.studioId,
       session.clientId,
     ),
   ]);
+  // A failed read is shown as such, never as "no forms"; a successful empty read still renders no section.
+  const consentFormsUnavailable = consentTemplatesCheck.status === "unavailable";
+  const consentTemplates = consentTemplatesCheck.status === "ok" ? consentTemplatesCheck.templates : [];
   const unsignedConsentTemplates = consentTemplates.filter((t) => {
     const sig = consentSignaturesByTemplate.get(t.id);
     if (!sig) return true;
@@ -306,6 +309,7 @@ export default async function PortalHomePage() {
   const hasNeedsYou =
     hasIntakeAction
     || hasUnsignedForms
+    || consentFormsUnavailable
     || hasUnreviewedMessages
     || showAddCardInNeedsYou
     || showCardAuthorizationNeeded
@@ -505,6 +509,12 @@ export default async function PortalHomePage() {
                     </Link>
                   )}
                 </section>
+              )}
+
+              {consentFormsUnavailable && (
+                <p role="status" data-testid="portal-forms-unavailable" className="text-[13px] text-[#6B6B6B]">
+                  We couldn’t check for forms just now. Please reload this page to try again.
+                </p>
               )}
 
               {hasUnsignedForms && (

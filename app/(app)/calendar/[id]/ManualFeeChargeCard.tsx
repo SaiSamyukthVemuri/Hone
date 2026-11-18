@@ -1,5 +1,6 @@
 "use client";
 
+import { describeFeeAmount } from "@/lib/billing/manual-fee-percent";
 import { ONE_FEE_PER_APPOINTMENT_MESSAGE } from "@/lib/billing/manual-fee-one-per-appointment";
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
@@ -291,7 +292,15 @@ function PreparePanel({
           {chargeTypeLabel(chargeType)}
         </PreviewRow>
         <PreviewRow label="Amount">
-          {formatCents(eligibility.amountCents ?? 0, eligibility.currency ?? "")}
+          <span data-testid="fee-amount-basis">
+            {describeFeeAmount({
+              calcMode: eligibility.feeBasis?.calcMode,
+              basisCents: eligibility.feeBasis?.basisCents,
+              percentBp: eligibility.feeBasis?.percentBp,
+              amountCents: eligibility.amountCents ?? 0,
+              currency: eligibility.currency ?? "",
+            })}
+          </span>
         </PreviewRow>
         <PreviewRow label="Client">{eligibility.clientName}</PreviewRow>
         <PreviewRow label="Appointment">
@@ -318,14 +327,27 @@ function PreparePanel({
         </PreviewRow>
       </dl>
 
-      <p data-testid="fee-saved-amount-copy" className="text-xs font-medium">
-        The saved fixed {chargeTypeLabel(chargeType).toLowerCase()} of{" "}
-        {formatCents(eligibility.amountCents ?? 0, eligibility.currency ?? "")} will be charged to the client&apos;s saved card. This is the amount set in your payment settings; it cannot be changed here.
-      </p>
+      {eligibility.feeBasis?.calcMode === "percent" ? (
+        <p data-testid="fee-saved-amount-copy" className="text-xs font-medium">
+          {describeFeeAmount({
+            calcMode: "percent",
+            basisCents: eligibility.feeBasis.basisCents,
+            percentBp: eligibility.feeBasis.percentBp,
+            amountCents: eligibility.amountCents ?? 0,
+            currency: eligibility.currency ?? "",
+          })}{" "}
+          will be charged to the client&apos;s saved card. The amount is calculated from the booked service&apos;s price (or the client&apos;s custom price), before any tax. It is fixed when you prepare the charge and cannot be changed here.
+        </p>
+      ) : (
+        <p data-testid="fee-saved-amount-copy" className="text-xs font-medium">
+          The saved fixed {chargeTypeLabel(chargeType).toLowerCase()} of{" "}
+          {formatCents(eligibility.amountCents ?? 0, eligibility.currency ?? "")} will be charged to the client&apos;s saved card. This is the amount set in your payment settings; it cannot be changed here.
+        </p>
+      )}
       <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
-        Timing classification is manual for this version. Confirm this
-        appointment qualifies under the policy before preparing the
-        charge.
+        {eligibility.timingClassification === "system_derived"
+          ? "The rate is selected from the recorded cancellation time and the studio’s local date. Confirm this appointment qualifies under the acknowledged policy before preparing the charge."
+          : "Timing classification is manual for this version. Confirm this appointment qualifies under the policy before preparing the charge."}
       </p>
 
       <label className="flex flex-col gap-1.5 text-xs">
@@ -468,7 +490,10 @@ function ReadyPanel({
       <div className="flex flex-col gap-1">
         <h4 className="font-medium">Ready to charge</h4>
         <p className="text-xs">
-          Amount: {formatCents(attempt.amount_cents, attempt.currency)}
+          Amount:{" "}
+          <span data-testid="fee-amount-basis">
+            {describeFeeAmount({ calcMode: attempt.calc?.mode, basisCents: attempt.calc?.basisCents, percentBp: attempt.calc?.percentBp, amountCents: attempt.amount_cents, currency: attempt.currency })}
+          </span>
           {card && (
             <>
               {" · "}Card: {describeCard(card)}
@@ -481,10 +506,17 @@ function ReadyPanel({
         <li>policy acknowledged</li>
         <li>internal note recorded</li>
       </ul>
-      <p data-testid="fee-saved-amount-copy" className="text-xs font-medium">
-        The saved fixed {chargeTypeLabel(attempt.charge_type).toLowerCase()} of{" "}
-        {formatCents(attempt.amount_cents, attempt.currency)} will be charged to the client&apos;s saved card. This is the amount set in your payment settings; it cannot be changed here.
-      </p>
+      {attempt.calc?.mode === "percent" ? (
+        <p data-testid="fee-saved-amount-copy" className="text-xs font-medium">
+          {describeFeeAmount({ calcMode: "percent", basisCents: attempt.calc.basisCents, percentBp: attempt.calc.percentBp, amountCents: attempt.amount_cents, currency: attempt.currency })}{" "}
+          will be charged to the client&apos;s saved card. The amount was calculated when this charge was prepared, before any tax, and cannot be changed here. If the fee settings or the price have changed and you want the new figure, cancel this prepared charge and prepare it again.
+        </p>
+      ) : (
+        <p data-testid="fee-saved-amount-copy" className="text-xs font-medium">
+          The saved fixed {chargeTypeLabel(attempt.charge_type).toLowerCase()} of{" "}
+          {formatCents(attempt.amount_cents, attempt.currency)} will be charged to the client&apos;s saved card. This is the amount set in your payment settings; it cannot be changed here.
+        </p>
+      )}
       <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
         The client&apos;s saved card on file will be charged this fee.
       </p>

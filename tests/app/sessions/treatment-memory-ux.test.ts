@@ -193,7 +193,7 @@ describe("4. back navigation returns to the Sessions tab", () => {
   it("session detail and new-session back links carry ?tab=sessions", () => {
     expect(SESSION_PAGE).toMatch(/href=\{`\/clients\/\$\{id\}\?tab=sessions`\}/);
     expect(NEW_SESSION_PAGE).toMatch(
-      /href=\{`\/clients\/\$\{id\}\?tab=sessions`\}/,
+      /href=\{`\/clients\/\$\{encodeURIComponent\(id\)\}\?tab=sessions`\}/,
     );
   });
 });

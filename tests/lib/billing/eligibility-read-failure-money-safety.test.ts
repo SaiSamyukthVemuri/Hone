@@ -240,7 +240,7 @@ function healthyFee() {
     acknowledged_at: "2026-08-01T00:00:00.000Z",
     policy_snapshot_hash: "hash-1",
   });
-  rows("studios", { id: STUDIO, no_show_fee_cents: 5000, late_cancel_fee_cents: 5000 });
+  rows("studios", { id: STUDIO, no_show_fee_cents: 5000, late_cancel_fee_cents: 5000, late_cancel_fee_enabled: true, no_show_fee_enabled: true, late_cancel_fee_mode: "fixed", no_show_fee_mode: "fixed", late_cancel_fee_percent_bp: null, no_show_fee_percent_bp: null, timezone: "America/Toronto" });
   rows("studio_payment_jurisdictions", { payment_country: "CA", payment_currency: "cad" });
   empty("payment_charge_attempts");
   empty("manual_fee_charge_attempts");

@@ -12,6 +12,9 @@ import {
   publishableKeyOk,
 } from "@/lib/payments/payment-status-presenter";
 import { PaymentsSettings, type StripeStatusView } from "./PaymentsSettings";
+import { CancellationFeeRulesCard } from "./CancellationFeeRulesCard";
+import { buildPolicySnapshot } from "@/lib/booking/policy-acknowledgement";
+import { cancellationFeeState, isCancellationFeeRules } from "@/lib/billing/cancellation-fee-rules";
 import { FeeAmountsCard } from "./FeeAmountsCard";
 import {
   OwnerOnlyNotice,
@@ -21,6 +24,7 @@ import {
 import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
 import { currencyLabel } from "@/lib/billing/payment-jurisdiction";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { MANUAL_FEE_STATE_COPY, manualFeeEffectiveState } from "@/lib/billing/manual-fee-studio-setting";
 
 export type PaymentsViewKind = "setup" | "card-on-file" | "fees";
 
@@ -44,19 +48,72 @@ export async function PaymentsView({ view }: { view: PaymentsViewKind }) {
     // The fee currency is the studio's VERIFIED jurisdiction currency, never a
     // constant; an unknown or unreadable jurisdiction prints "not confirmed".
     const feeJurisdictionOnly = await getStudioPaymentJurisdiction(studio.id);
+    // "Saved" versus "actually active". Payment readiness here is the same server-derived capability the
+    // setup banner uses, plus a confirmed jurisdiction. The gate itself is the one prepare and execute call.
+    const feeSupabase = await createClient();
+    const { data: feeRows, error: feeRowsErr } = await feeSupabase.rpc("get_studio_payment_settings_display", {
+      p_studio_id: studio.id,
+      p_stripe_livemode: inferStripeLivemode(),
+    });
+    const feeRow = Array.isArray(feeRows) ? feeRows[0] : feeRows;
+    const feeConnect = deriveConnectCapability(
+      feeRow
+        ? {
+            accountStatus: feeRow.account_status ?? null,
+            chargesEnabled: feeRow.charges_enabled === true,
+            payoutsEnabled: feeRow.payouts_enabled === true,
+          }
+        : feeRowsErr
+          ? undefined
+          : null,
+    );
+    const paymentsReady = feeConnect === "ready" && feeJurisdictionOnly.ok;
+    const feeLivemode = inferStripeLivemode();
+    const { data: cancellationRules, error: cancellationRulesError } = await feeSupabase.from("studio_cancellation_fee_rules")
+      .select("revision, enabled, notice_hours, notice_mode, notice_value, same_day_mode, same_day_value, policy_snapshot_hash")
+      .eq("studio_id", studio.id).maybeSingle();
+    const cancellationPolicyHash = buildPolicySnapshot({ cancellationPolicyText: studio.cancellation_policy_text, noShowPolicyText: studio.no_show_policy_text }).policySnapshotHash;
+    const noShowState = manualFeeEffectiveState({
+      chargeReason: "no_show_fee",
+      settingRow: studio,
+      paymentsReady,
+      livemode: feeLivemode,
+      studioId: studio.id,
+    });
     return (
       <section className="flex flex-col gap-8">
         <SettingsViewHeading
           title="Cancellation & no-show fees"
           scope={STUDIO_WIDE_SCOPE}
         >
-          The dollar amounts used by the manual fee preview. Money is not
+          Choose a fixed amount or a percentage for each fee. Money is not
           charged here.
         </SettingsViewHeading>
-        {/* PR #145. Owner-only fee amount settings. */}
+        <CancellationFeeRulesCard
+          key={studio.id}
+          initial={isCancellationFeeRules(cancellationRules) ? cancellationRules : null}
+          policyText={studio.cancellation_policy_text ?? ""}
+          policyHash={cancellationPolicyHash}
+          currency={feeJurisdictionOnly.ok ? currencyLabel(feeJurisdictionOnly.jurisdiction.currency) : null}
+          status={cancellationRulesError ? "Cancellation fee settings could not be checked." : cancellationFeeState(cancellationRules, cancellationPolicyHash, paymentsReady)}
+          available={!cancellationRulesError}
+        />
         <FeeAmountsCard
+          hideLateCancel
           initialLateCancelCents={studio.late_cancel_fee_cents}
           initialNoShowCents={studio.no_show_fee_cents}
+          lateCancel={{
+            enabled: studio.late_cancel_fee_enabled === true,
+            mode: studio.late_cancel_fee_mode === "percent" ? "percent" : "fixed",
+            percentBp: studio.late_cancel_fee_percent_bp ?? null,
+            status: { saved: "Saved as off", effective: "Configure cancellation rules above" },
+          }}
+          noShow={{
+            enabled: studio.no_show_fee_enabled === true,
+            mode: studio.no_show_fee_mode === "percent" ? "percent" : "fixed",
+            percentBp: studio.no_show_fee_percent_bp ?? null,
+            status: MANUAL_FEE_STATE_COPY[noShowState],
+          }}
           currencyLabel={
             feeJurisdictionOnly.ok
               ? currencyLabel(feeJurisdictionOnly.jurisdiction.currency)

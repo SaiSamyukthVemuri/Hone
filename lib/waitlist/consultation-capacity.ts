@@ -82,7 +82,7 @@ export function allowanceHeadline(
   return {
     headline,
     short,
-    note: `Next 14 days, any day or time. ${lowerBound} Availability can change; invitations don't reserve appointments.`,
+    note: `Next 14 days, any day or time. ${lowerBound} Availability can change; invitations don’t reserve appointments.`,
   };
 }
 
