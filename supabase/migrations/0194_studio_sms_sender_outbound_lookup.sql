@@ -94,7 +94,6 @@ comment on function public.resolve_active_studio_sms_sender(uuid) is
 
 revoke execute on function public.resolve_active_studio_sms_sender(uuid) from public;
 revoke execute on function public.resolve_active_studio_sms_sender(uuid) from anon;
-revoke execute on function public.resolve_active_studio_sms_sender(uuid) from authenticated;
 revoke execute on function public.resolve_active_studio_sms_sender(uuid) from service_role;
 
 -- The server dispatcher runs as service_role, and it is the only caller.

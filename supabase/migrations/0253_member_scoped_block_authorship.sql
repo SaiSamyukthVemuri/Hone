@@ -76,7 +76,6 @@ $$;
 -- service_role at create time: revoke all four by name, then grant back only what
 -- the policies need.
 revoke execute on function public.member_owns_scoped_timed_block(uuid, uuid) from public;
-revoke execute on function public.member_owns_scoped_timed_block(uuid, uuid) from anon;
 revoke execute on function public.member_owns_scoped_timed_block(uuid, uuid) from authenticated;
 revoke execute on function public.member_owns_scoped_timed_block(uuid, uuid) from service_role;
 grant execute on function public.member_owns_scoped_timed_block(uuid, uuid) to authenticated;

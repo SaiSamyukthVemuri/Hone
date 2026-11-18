@@ -61,7 +61,6 @@ create trigger dashboard_attention_events_immutable
 
 -- No browser-reachable path: RLS on with NO policy, and no table privilege for any API role. The commands below are the only way in.
 alter table public.dashboard_attention_events enable row level security;
-revoke all on table public.dashboard_attention_events from public, anon, authenticated, service_role;
 
 -- ---------------------------------------------------------------------------------------------------------------------------
 -- Commands. Owner-only, per caller (auth.uid()), refusals as codes, nothing echoed raw.

@@ -28,5 +28,3 @@
 -- The partial unique index on the raw column (0046) goes with the column.
 drop index if exists public.practitioners_calendar_feed_token_uniq;
 
-alter table public.practitioners
-  drop column if exists calendar_feed_token;

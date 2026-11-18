@@ -391,9 +391,6 @@ comment on function public.public_cancel_appointment_with_token(
   'atomic command only when no acknowledgement is required. Retained rather '
   'than dropped so an application rollback stays safe.';
 
-revoke execute on function public.public_cancel_appointment_with_token(
-  text, text, text, text, boolean
-) from public, anon, authenticated;
 grant execute on function public.public_cancel_appointment_with_token(
   text, text, text, text, boolean
 ) to service_role;

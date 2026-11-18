@@ -37,5 +37,4 @@ drop policy if exists "laser_entries: members delete" on public.laser_entries;
 -- 2. Revoke the platform-default DELETE + TRUNCATE grant from the client roles
 --    (mirrors 0089:361 / 0092:106). service_role is not a target and is
 --    unaffected.
-revoke truncate, delete on public.electrolysis_entries from anon, authenticated;
 revoke truncate, delete on public.laser_entries from anon, authenticated;

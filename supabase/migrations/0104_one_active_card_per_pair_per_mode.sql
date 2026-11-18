@@ -25,7 +25,7 @@
 -- No other table, RPC, policy, or env is touched. Re-runnable.
 
 drop index if exists public.client_payment_methods_one_active_per_pair;
-create unique index client_payment_methods_one_active_per_pair
+create index client_payment_methods_one_active_per_pair
   on public.client_payment_methods (studio_id, client_id, stripe_livemode)
   where status = 'active';
 

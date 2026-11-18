@@ -3,7 +3,7 @@
   "migrations": {
     "count": 276,
     "last": "0357_cancellation_fee_tiers.sql",
-    "sha256": "2fd806fcd667daf0644fbe27a47b0c2fc26409995c881621572eedc55743a126"
+    "sha256": "dd70857007e35478d520ab780727f8e52a2f2081d33db73c7729c5679094c47b"
   },
   "public": {
     "tables": [
