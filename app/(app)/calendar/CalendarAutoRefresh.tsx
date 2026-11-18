@@ -9,6 +9,7 @@ import {
 } from "@/lib/calendar/refresh-policy";
 import {
   FINGERPRINT_PATTERN,
+  classifyProbeStatus,
   PROBE_TIMEOUT_MS,
   initialPollerState,
   nextWakeDelayMs,
@@ -56,10 +57,9 @@ function readEnv(): PollerEnv {
 
 async function classify(res: Response): Promise<ProbeResult> {
   // The session middleware answers an unauthorized or role-less caller with a redirect; with redirect:"manual" that is an
-  // opaque redirect (or status 0). It is an authorization answer, not an outage, so polling stops.
-  if (res.type === "opaqueredirect" || res.status === 0) return { kind: "auth" };
-  if (res.status === 401 || res.status === 403) return { kind: "auth" };
-  if (!res.ok) return { kind: "transient" };
+  // opaque redirect (or status 0). Only an authorization answer stops polling; a 5xx is transient (see classifyProbeStatus).
+  const kind = classifyProbeStatus(res.status, res.type);
+  if (kind !== "ok") return { kind };
   try {
     const body = (await res.json()) as { fingerprint?: unknown };
     return typeof body.fingerprint === "string" && FINGERPRINT_PATTERN.test(body.fingerprint)

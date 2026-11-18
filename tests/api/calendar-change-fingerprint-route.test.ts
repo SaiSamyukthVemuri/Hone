@@ -7,6 +7,7 @@ import { NextRequest } from "next/server";
 const state = vi.hoisted(() => ({
   user: { id: "u" } as { id: string } | null,
   studio: { id: "s-1", timezone: "America/Toronto" } as { id: string; timezone: string } | null,
+  identityThrows: null as unknown,
   read: vi.fn(async (..._a: unknown[]) => "0123456789abcdef0123456789abcdef"),
 }));
 
@@ -15,12 +16,14 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 vi.mock("@/lib/supabase/queries", () => ({
   getCurrentPractitionerWithStudio: async () => {
-    if (!state.studio) throw new Error("no practitioner");
+    if (state.identityThrows) throw state.identityThrows;
+    if (!state.studio) throw new IdentityRefusalError("no-active-practitioner", "No active practitioner found for the signed-in user.");
     return { studio: state.studio };
   },
 }));
 vi.mock("@/lib/calendar/change-probe-read", () => ({ readCalendarFingerprint: (...a: unknown[]) => state.read(...a) }));
 
+import { IdentityRefusalError } from "@/lib/supabase/identity-refusal";
 import { GET } from "@/app/api/calendar/change-fingerprint/route";
 
 const get = (qs: string) => GET(new NextRequest(`http://localhost/api/calendar/change-fingerprint?${qs}`));
@@ -28,6 +31,7 @@ const get = (qs: string) => GET(new NextRequest(`http://localhost/api/calendar/c
 beforeEach(() => {
   state.user = { id: "u" };
   state.studio = { id: "s-1", timezone: "America/Toronto" };
+  state.identityThrows = null;
   state.read.mockClear();
 });
 
@@ -55,6 +59,21 @@ describe("GET /api/calendar/change-fingerprint", () => {
     const res = await get("view=day&anchor=2026-11-18");
     expect(res.status).toBe(403);
     expect(state.read).not.toHaveBeenCalled();
+  });
+  it("a thrown infrastructure error in the identity read is a retryable 503, never a 403", async () => {
+    state.identityThrows = new Error("connection terminated unexpectedly");
+    const res = await get("view=day&anchor=2026-11-18");
+    expect(res.status).toBe(503);
+    expect(state.read).not.toHaveBeenCalled();
+    expect(JSON.stringify(await res.json())).not.toMatch(/connection/);
+  });
+  it("a studio choice still owed is a controlled refusal: 403", async () => {
+    state.identityThrows = new IdentityRefusalError("studio-choice-required", "choose a studio first");
+    expect((await get("view=day&anchor=2026-11-18")).status).toBe(403);
+  });
+  it("the session vanishing mid-request (a redirect from the identity layer) is a 401", async () => {
+    state.identityThrows = Object.assign(new Error("NEXT_REDIRECT"), { digest: "NEXT_REDIRECT;replace;/login;307;" });
+    expect((await get("view=day&anchor=2026-11-18")).status).toBe(401);
   });
   it("a bad view or anchor is a 400 before any identity or read work", async () => {
     for (const qs of ["", "view=year&anchor=2026-11-18", "view=day", "view=day&anchor=2026-02-30", "view=day&anchor=2026-11-18T00:00"]) {

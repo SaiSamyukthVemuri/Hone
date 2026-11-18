@@ -17,8 +17,11 @@
 // disagreeing for the SAME data, so every probe refreshes and every refresh re-renders the same mismatch. Two guards:
 //   1. at most ONE change-refresh per distinct server fingerprint (`lastHandled`): a mismatch that persists costs one
 //      extra refresh, not one per probe;
-//   2. a loop breaker: more than LOOP_MAX_REFRESHES change-refreshes inside LOOP_WINDOW_MS suspends probing for
-//      LOOP_SUSPEND_MS, logs once, and leaves the 60 s refresh to carry the screen.
+//   2. a loop breaker: more than LOOP_MAX_REFRESHES UNFULFILLED change-refreshes inside LOOP_WINDOW_MS suspends probing
+//      for LOOP_SUSPEND_MS, logs once, and leaves the 60 s refresh to carry the screen. A refresh is FULFILLED when the next
+//      render's baseline catches up to the value it was fired for (or the latest server value): that is a real change,
+//      applied, and never counts. Counting real changes here silenced a busy studio's screens for five minutes (found by
+//      the five-practitioner measurement: rounds 5 to 14 of 20 fell back to the 60 s cycle).
 
 /** Named so the interval can be tuned against the measured load. About 1.5 s plus the 1.2 to 1.8 s render fits the 2.5 to 4 s target. */
 export const PROBE_INTERVAL_MS = 1_500;
@@ -27,12 +30,25 @@ export const PROBE_BACKOFF_MAX_MS = 60_000;
 export const PROBE_TIMEOUT_MS = 8_000;
 export const LOOP_WINDOW_MS = 60_000;
 export const LOOP_MAX_REFRESHES = 5;
-export const LOOP_SUSPEND_MS = 300_000;
+/** Short on purpose: a false trip costs one minute on the 60 s backstop, not five. */
+export const LOOP_SUSPEND_MS = 120_000;
 /** While a change is pending under a hold-off, re-check this often (a dialog closing raises no event of its own). */
 export const HOLD_OFF_RECHECK_MS = 500;
 
 /** The shape of a fingerprint answer: 32 lowercase hex characters. Lives here, not in change-fingerprint.ts, because that module is server-only (node:crypto) and the client must validate the body. */
 export const FINGERPRINT_PATTERN = /^[0-9a-f]{32}$/;
+
+/**
+ * What a probe's HTTP status means to the poller. Only an authorization answer stops polling for good: 401, 403, or the
+ * session middleware's redirect (an opaque redirect, or status 0). Everything else that is not a success, a 5xx above all
+ * (the route answers 503 when its membership read threw), is TRANSIENT: back off and resume when the server recovers.
+ */
+export function classifyProbeStatus(status: number, type?: string): "auth" | "transient" | "ok" {
+  if (type === "opaqueredirect" || status === 0) return "auth";
+  if (status === 401 || status === 403) return "auth";
+  if (status >= 200 && status < 300) return "ok";
+  return "transient";
+}
 
 export type PollerEnv = {
   visible: boolean;
@@ -58,6 +74,8 @@ export type PollerState = {
   pending: string | null;
   /** The last server fingerprint a change-refresh was fired for. */
   lastHandled: string | null;
+  /** The latest fingerprint the server answered. */
+  lastServer: string | null;
   refreshTimesMs: number[];
   suspendedUntilMs: number;
   loopLogged: boolean;
@@ -89,6 +107,7 @@ export function initialPollerState(baseline: string, nowMs: number): PollerState
     consecutiveErrors: 0,
     pending: null,
     lastHandled: null,
+    lastServer: null,
     refreshTimesMs: [],
     suspendedUntilMs: 0,
     loopLogged: false,
@@ -159,8 +178,13 @@ export function stepPoller(state: PollerState, event: PollerEvent): Step {
       // real return to a value we once handled (B -> local change C -> another session returns the server to B) would be
       // suppressed until the 60 s backstop. A persistent page/probe MISMATCH re-renders the SAME baseline, so it keeps the
       // marker, and the breaker still bounds a baseline that keeps moving.
-      const lastHandled = event.fingerprint !== state.baseline ? null : state.lastHandled;
-      return { state: { ...state, baseline: event.fingerprint, pending, lastHandled }, effects: [] };
+      const moved = event.fingerprint !== state.baseline;
+      const lastHandled = moved ? null : state.lastHandled;
+      // FULFILLED: the render moved the baseline to what the refresh was fired for (or to the latest server value). That
+      // refresh did its job, so it stops counting toward the loop breaker.
+      const fulfilled = moved && (event.fingerprint === state.lastHandled || event.fingerprint === state.lastServer);
+      const refreshTimesMs = fulfilled ? state.refreshTimesMs.slice(0, -1) : state.refreshTimesMs;
+      return { state: { ...state, baseline: event.fingerprint, pending, lastHandled, refreshTimesMs }, effects: [] };
     }
 
     case "probed": {
@@ -178,7 +202,7 @@ export function stepPoller(state: PollerState, event: PollerEvent): Step {
       }
       // ok. A little jitter keeps five screens from probing in lockstep.
       const wait = Math.round(PROBE_INTERVAL_MS * (0.9 + 0.2 * event.jitter));
-      next = { ...next, consecutiveErrors: 0, nextProbeAtMs: event.nowMs + wait };
+      next = { ...next, consecutiveErrors: 0, nextProbeAtMs: event.nowMs + wait, lastServer: r.fingerprint };
       if (r.fingerprint === next.baseline) {
         next = { ...next, pending: null };
       } else if (r.fingerprint !== next.lastHandled) {

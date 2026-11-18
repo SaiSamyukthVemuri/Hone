@@ -5,6 +5,7 @@ import {
   LOOP_SUSPEND_MS,
   PROBE_BACKOFF_MAX_MS,
   PROBE_INTERVAL_MS,
+  classifyProbeStatus,
   initialPollerState,
   nextWakeDelayMs,
   probeBackoffMs,
@@ -199,6 +200,24 @@ describe("the refresh loop it is built against", () => {
     r.send(tick(4_000));
     expect(r.send(ok(4_100, B))).toEqual([]);
   });
+  it("REAL changes never trip the breaker: twenty genuine changes, each applied by its render, all refresh and probing continues", () => {
+    const r = rig();
+    let now = PROBE_INTERVAL_MS;
+    let refreshes = 0;
+    let prev = A;
+    for (let i = 0; i < 20; i += 1) {
+      const next = `${(i + 1).toString(16).padStart(2, "0")}${"1".repeat(30)}`;
+      r.send(tick(now));
+      refreshes += r.send(ok(now + 50, next)).filter((e) => e === "refresh").length;
+      r.send({ type: "baseline", fingerprint: next }); // the render caught up to what was handled
+      expect(r.state.suspendedUntilMs).toBe(0);
+      prev = next;
+      now += 2_000;
+    }
+    expect(refreshes).toBe(20);
+    expect(prev).not.toBe(A);
+    expect(r.effects).not.toContain("log");
+  });
   it("a fingerprint that keeps changing is capped by the breaker, which logs once and suspends", () => {
     const r = rig();
     let now = PROBE_INTERVAL_MS;
@@ -215,7 +234,7 @@ describe("the refresh loop it is built against", () => {
     // after the suspension it resumes
     const later = r.state.suspendedUntilMs + 1;
     expect(r.send(tick(later))).toContain("probe");
-    expect(LOOP_SUSPEND_MS).toBeGreaterThan(60_000);
+    expect(LOOP_SUSPEND_MS).toBeGreaterThanOrEqual(60_000);
   });
 });
 
@@ -225,5 +244,34 @@ describe("nextWakeDelayMs", () => {
     expect(nextWakeDelayMs(s, 0, { ...OK, visible: false })).toBeNull();
     expect(nextWakeDelayMs(s, 0, OK)).toBe(PROBE_INTERVAL_MS);
     expect(nextWakeDelayMs({ ...s, inFlight: true }, 0, OK)).toBeNull();
+  });
+});
+
+describe("what a probe's HTTP status means (a database blip must never silence a screen for good)", () => {
+  it("only an authorization answer is auth: 401, 403, a redirect", () => {
+    expect(classifyProbeStatus(401)).toBe("auth");
+    expect(classifyProbeStatus(403)).toBe("auth");
+    expect(classifyProbeStatus(0)).toBe("auth");
+    expect(classifyProbeStatus(307, "opaqueredirect")).toBe("auth");
+  });
+  it("a 5xx, including the route's 503, and a 4xx that is not authorization are transient", () => {
+    for (const s of [500, 502, 503, 504, 400, 404, 429]) expect(classifyProbeStatus(s)).toBe("transient");
+    expect(classifyProbeStatus(200)).toBe("ok");
+  });
+  it("after a 503 the screen backs off and RESUMES: the next probe fires and a change is then applied", () => {
+    const r = rig();
+    r.send(tick(PROBE_INTERVAL_MS));
+    r.send({ type: "probed", nowMs: 1_600, env: OK, result: { kind: classifyProbeStatus(503) === "transient" ? "transient" : "auth" }, jitter: 0 });
+    expect(r.state.stopped).toBe(false);
+    const due = r.state.nextProbeAtMs;
+    expect(r.send(tick(due))).toEqual(["probe"]);
+    expect(r.send(ok(due + 50, B))).toEqual(["refresh"]);
+  });
+  it("a 403 stops polling for good", () => {
+    const r = rig();
+    r.send(tick(PROBE_INTERVAL_MS));
+    r.send({ type: "probed", nowMs: 1_600, env: OK, result: { kind: classifyProbeStatus(403) === "auth" ? "auth" : "transient" }, jitter: 0 });
+    expect(r.state.stopped).toBe(true);
+    expect(r.send(tick(999_999))).toEqual([]);
   });
 });
