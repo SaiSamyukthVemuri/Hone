@@ -253,6 +253,16 @@ describe("xCell Pur: the publication plan and the existing workflow are unchange
     expect(rest).toEqual(without.publish);
   });
 
+  it("is refused again if its frequency is taken away: the gate itself refuses an unverified frequency", () => {
+    const noFrequency = structuredClone(pur);
+    noFrequency.frequency = { kind: "unverified", note: "x" };
+    noFrequency.modes[0]!.availability = "blocked";
+    expect(sliceViolations(noFrequency, { acceptDeviceConfirmed: true }).map((v) => v.reason)).toContain("frequency is unverified");
+    const pendingFrequency = structuredClone(pur);
+    pendingFrequency.frequency = { kind: "fixed", mhz: 27.12, verification: "pending-evidence", evidence: [pur.evidence[0]!.id] };
+    expect(sliceViolations(pendingFrequency, { acceptDeviceConfirmed: true }).map((v) => v.reason)).toContain("frequency verification is pending-evidence");
+  });
+
   it("is refused again if a field falls back to pending evidence", () => {
     const pending = structuredClone(pur);
     modeFields(pending.modes[0]!)[0]!.field.verification = "pending-evidence";
