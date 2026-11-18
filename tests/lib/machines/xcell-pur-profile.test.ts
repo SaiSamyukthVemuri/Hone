@@ -1,14 +1,14 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { MACHINE_CATALOGUE } from "../../../lib/machines/catalogue";
+import { MACHINE_CATALOGUE, catalogueIntegrity } from "../../../lib/machines/catalogue";
 import { priorSetupView } from "../../../lib/machines/charting";
 import { planContractPublication } from "../../../lib/machines/contract-publication";
 import { legacyMachineOffer } from "../../../lib/machines/legacy-machine";
 import { activeModes, modeFields, type MachineProfile, type ObservationSource } from "../../../lib/machines/profile-contract";
 import { ROUTINE_REQUIRED_INPUT_BUDGET, routineRequiredInputs, sliceViolations } from "../../../lib/machines/slice-gate";
 import { validateReading } from "../../../lib/machines/validate-reading";
-import { XCELL_PUR_PROFILE_ID } from "../../../lib/machines/xcell-pur";
+import { XCELL_PUR_ACTIVE_MODES, XCELL_PUR_PROFILE_ID, applyXcellPurSlice } from "../../../lib/machines/xcell-pur";
 
 // HON-71 (linked to HON-8): the xCell Pur MultiPlex contract lands BLOCKED. These tests pin what it records, that values keep every digit
 // the screen shows, that nothing calculates EL, that a blank UL is an absence and never 0, and that the publication plan is unchanged by it.
@@ -26,7 +26,7 @@ function activeCopy(): MachineProfile {
 }
 
 describe("xCell Pur: what the contract records", () => {
-  it("is one blocked profile, version 1, with one blocked MultiPlex mode and an unverified frequency", () => {
+  it("is one profile, version 1, blocked because the slice gate refuses its one MultiPlex mode, with an unverified frequency", () => {
     expect(pur).toBeDefined();
     expect([pur.family, pur.manufacturer, pur.model, pur.version, pur.availability]).toEqual(["Dectro/Apilus", "Dectro", "xCell Pur", 1, "blocked"]);
     expect(pur.frequency.kind).toBe("unverified");
@@ -185,13 +185,12 @@ describe("xCell Pur: EL is displayed, never calculated; a blank UL is an absence
 });
 
 describe("xCell Pur: the publication plan and the existing workflow are unchanged", () => {
-  it("does NOT publish the profile while it is blocked, and says why", () => {
+  it("does NOT publish the profile while the gate refuses its mode, and says why", () => {
     const plan = planContractPublication();
     expect(plan.publish.some((r) => r.p_machine_profile_id === XCELL_PUR_PROFILE_ID)).toBe(false);
     const skipped = plan.skipped.filter((s) => s.profileId === XCELL_PUR_PROFILE_ID);
     expect(skipped.map((s) => s.mode)).toEqual(["multiplex"]);
     const reasons = skipped[0]!.reasons.join(" | ");
-    expect(reasons).toMatch(/profile is blocked/);
     expect(reasons).toMatch(/mode is blocked/);
     expect(reasons).toMatch(/frequency is unverified/);
     expect(reasons).toMatch(/held by an open question/);
@@ -219,5 +218,69 @@ describe("xCell Pur: the publication plan and the existing workflow are unchange
     for (const p of MACHINE_CATALOGUE.filter((p) => /apilus:(senior|junior)-3g/.test(p.profileId))) {
       expect(p.evidence.some((e) => pur.evidence.some((x) => x.id === e.id)), p.profileId).toBe(false);
     }
+  });
+});
+
+describe("xCell Pur enablement: the evidence is the only thing between this profile and publication", () => {
+  /** A THROWAWAY copy as it would look once the manual, the software version and the frequency are evidenced. The real entry is untouched. */
+  function evidenced(): MachineProfile {
+    const p = structuredClone(pur);
+    p.openQuestions = [];
+    p.frequency = { kind: "fixed", mhz: 27.12, verification: "manufacturer-documented", evidence: [p.evidence[0]!.id] };
+    p.modes[0]!.verification = "manufacturer-documented";
+    for (const { field } of modeFields(p.modes[0]!)) { field.verification = "manufacturer-documented"; delete field.unverified; }
+    p.modes[0]!.availability = "blocked";
+    // The profile turns active only together with an active mode (see enabled() in xcell-pur.ts).
+    p.availability = "active";
+    return p;
+  }
+
+  it("today the slice gate refuses the mode for exactly the evidence reasons, and nothing else", () => {
+    const reasons = sliceViolations(pur).map((v) => v.reason);
+    expect(reasons).toContain("open question blocks it");
+    expect(reasons.filter((r) => /verification pending-evidence/.test(r)).length).toBe(8);
+    expect(reasons.filter((r) => /unverified editability/.test(r)).sort()).toEqual([
+      "displayed_el: unverified editability", "displayed_ul: unverified editability",
+    ]);
+    // Nothing about structure: no range, no missing evidence, no capture hold, no budget breach.
+    expect(reasons.some((r) => /range|evidence missing|capture hold/.test(r))).toBe(false);
+  });
+
+  it("the real entry keeps the mode blocked and publishes nothing, because the gate still refuses it", () => {
+    expect(multiplex.availability).toBe("blocked");
+    expect(planContractPublication().publish.some((r) => r.p_machine_profile_id === XCELL_PUR_PROFILE_ID)).toBe(false);
+  });
+
+  it("with the evidence in place the gate is clean, the mode activates, and exactly one row publishes for the exact scope", () => {
+    const p = evidenced();
+    expect(sliceViolations(p)).toEqual([]);
+    applyXcellPurSlice(p, XCELL_PUR_ACTIVE_MODES);
+    expect(p.modes[0]!.availability).toBe("active");
+    const others = MACHINE_CATALOGUE.filter((x) => x.profileId !== XCELL_PUR_PROFILE_ID);
+    expect(catalogueIntegrity([...others, p])).toEqual([]);
+    const rows = planContractPublication([...others, p]).publish.filter((r) => r.p_machine_profile_id === XCELL_PUR_PROFILE_ID);
+    expect(rows.map((r) => `${r.p_machine_profile_id}@${r.p_machine_profile_version}:${r.p_mode_key}`)).toEqual(["dectro-apilus:xcell-pur@1:multiplex"]);
+    expect(rows[0]!.p_fields.map((f) => [f.stage_key, f.field_key, f.native_unit, f.decimals, f.quantity, f.optional])).toEqual([
+      ["", "displayed_el", "device-display", 0, "energy-display", true],
+      ["", "displayed_ul", "device-display", 0, "energy-display", true],
+      ["slow_thermolysis", "slow_thermolysis_duration", "s", 2, "duration", false],
+      ["slow_thermolysis", "slow_thermolysis_intensity", "%", 0, "intensity", false],
+      ["snap", "snap_duration", "s", 3, "duration", false],
+      ["snap", "snap_intensity", "%", 0, "intensity", false],
+      ["snap", "snap_count", "count", 0, "count", false],
+      ["snap", "snap_interval", "s", 2, "duration", true],
+    ]);
+  });
+
+  it("enabling it never adds a row for any other profile", () => {
+    const p = evidenced();
+    applyXcellPurSlice(p, XCELL_PUR_ACTIVE_MODES);
+    const others = MACHINE_CATALOGUE.filter((x) => x.profileId !== XCELL_PUR_PROFILE_ID);
+    const withPur = planContractPublication([...others, p]).publish.filter((r) => r.p_machine_profile_id !== XCELL_PUR_PROFILE_ID);
+    expect(withPur).toEqual(planContractPublication(others).publish);
+  });
+
+  it("the allow-list names only the MultiPlex mode", () => {
+    expect(XCELL_PUR_ACTIVE_MODES).toEqual(["multiplex"]);
   });
 });
