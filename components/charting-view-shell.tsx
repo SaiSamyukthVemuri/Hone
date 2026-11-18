@@ -13,13 +13,11 @@
  * payment action. The only thing it asks the server for is to remember the choice (components/use-charting-view-
  * preference.ts), and a failure there only shows a notice.
  */
-import { createContext, useContext, type ReactNode } from "react";
+import { useContext, type ReactNode } from "react";
 import { setChartingViewAction } from "@/app/(app)/charting-view-actions";
 import { useChartingViewPreference } from "@/components/use-charting-view-preference";
+import { ChartingViewContext } from "@/components/charting-view-context";
 import type { ChartingView } from "@/lib/charting/view-preference";
-
-type Value = { view: ChartingView; setView: (v: ChartingView) => void; notice: string | null };
-const Ctx = createContext<Value | null>(null);
 
 export function ChartingViewShell({
   initialView,
@@ -34,7 +32,7 @@ export function ChartingViewShell({
   const state = useChartingViewPreference(initialView, setChartingViewAction);
   const isNew = state.view === "new";
   return (
-    <Ctx.Provider value={state}>
+    <ChartingViewContext.Provider value={state}>
       <div
         data-testid="charting-view-root"
         data-charting-view={state.view}
@@ -54,13 +52,13 @@ export function ChartingViewShell({
           </aside>
         ) : null}
       </div>
-    </Ctx.Provider>
+    </ChartingViewContext.Provider>
   );
 }
 
 /** Rendered beside the session title. Only rendered when the switch is available (the page decides). */
 export function ChartingViewToggle() {
-  const ctx = useContext(Ctx);
+  const ctx = useContext(ChartingViewContext);
   if (ctx === null) return null;
   const on = ctx.view === "new";
   return (

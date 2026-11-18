@@ -20,7 +20,7 @@
 // actions already accept every field used here, no action behavior
 // change.
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState, useTransition } from "react";
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { SaveStatus } from "@/components/sessions/save-status";
@@ -101,6 +101,7 @@ import { BodyMapAreaPicker } from "@/components/body-map-area-picker";
 import { MultiAreaEditor } from "@/components/multi-area-editor";
 import { resolveBlockAreas, type BlockArea } from "@/lib/sessions/block-areas";
 import { useRetainedState } from "@/components/charting-state-provider";
+import { NewViewStep, useChartingView } from "@/components/charting-view-context";
 import { DraftRegistryProvider, useDraftRegistryState, useReportDraft } from "@/components/machines/draft-registry";
 import { MachineFirstSetupConnected } from "@/components/machines/machine-first-setup-connected";
 import { ProbePicker } from "@/components/probe-picker";
@@ -453,6 +454,7 @@ export function BlockSetupForm({
   retainKey,
 }: Props) {
   const isEdit = !!block;
+  const isNewView = useChartingView() === "new";
   const [draft, setDraftRaw] = useRetainedState<Draft>(retainKey ? `${retainKey}:draft` : null, () =>
     initialDraft(block, firstEntry, defaultPrimaryArea, defaultMachineFrequency, initialAreas),
   );
@@ -1912,56 +1914,8 @@ export function BlockSetupForm({
       </div>
     ) : null;
 
-  return (
-    <div className="flex flex-col gap-5 rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950">
-      <ConfirmDialog
-        open={leaveAttempt !== null}
-        title={leaveDialogCopy(leaveAttempt?.dirtyCount ?? 1).title}
-        description={leaveDialogCopy(leaveAttempt?.dirtyCount ?? 1).description}
-        confirmLabel="Leave"
-        cancelLabel="Stay"
-        onConfirm={() => {
-          const go = leaveAttempt?.proceed;
-          setLeaveAttempt(null);
-          go?.();
-        }}
-        onCancel={() => setLeaveAttempt(null)}
-      />
-      {(() => {
-        const state: SaveState | null = pending
-          ? { status: "saving" }
-          : error
-            ? { status: "failed", message: error }
-            : dirty
-              ? { status: "unsaved" }
-              : isEdit
-                ? { status: "saved" }
-                : null;
-        return state ? (
-          <SaveStatus
-            state={state}
-            onRetry={saveBlocked ? undefined : () => submit()}
-          />
-        ) : null;
-      })()}
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="text-base font-medium">
-          {isEdit ? "Edit settings block" : "Add settings block"}
-        </h3>
-        {!isEdit && previousBlock && (
-          <button
-            type="button"
-            onClick={copySettings}
-            // Copying another area's settings REPLACES most of the payload,
-            // so it is the largest possible edit under a held retry key.
-            disabled={pending || draftFrozen}
-            className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-          >
-            Copy settings from another area in this session
-          </button>
-        )}
-      </div>
-
+  const machineSection = (
+    <Fragment key="machine">
       {/* MPX-03. Machine first: the exact model is chosen before the settings
           it governs, and the panel then shows that model's own fields under the
           machine's labels and units. It is a DISPLAY surface - it records
@@ -2023,7 +1977,10 @@ export function BlockSetupForm({
           {copyMessage}
         </p>
       )}
-
+    </Fragment>
+  );
+  const areasSection = (
+    <Fragment key="areas">
       {/* Multi-area (0128): areas treated with these settings, each with its
           own laterality. Replaces the single-area picker; the server persists
           canonical session_block_areas rows + a legacy primary_area/side. */}
@@ -2032,6 +1989,71 @@ export function BlockSetupForm({
         onChange={(areas) => update("areas", areas)}
         idPrefix={`area-${block?.id ?? "new"}-${sessionId}`}
       />
+    </Fragment>
+  );
+
+  return (
+    <div className="flex flex-col gap-5 rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950">
+      <ConfirmDialog
+        open={leaveAttempt !== null}
+        title={leaveDialogCopy(leaveAttempt?.dirtyCount ?? 1).title}
+        description={leaveDialogCopy(leaveAttempt?.dirtyCount ?? 1).description}
+        confirmLabel="Leave"
+        cancelLabel="Stay"
+        onConfirm={() => {
+          const go = leaveAttempt?.proceed;
+          setLeaveAttempt(null);
+          go?.();
+        }}
+        onCancel={() => setLeaveAttempt(null)}
+      />
+      {(() => {
+        const state: SaveState | null = pending
+          ? { status: "saving" }
+          : error
+            ? { status: "failed", message: error }
+            : dirty
+              ? { status: "unsaved" }
+              : isEdit
+                ? { status: "saved" }
+                : null;
+        return state ? (
+          <SaveStatus
+            state={state}
+            onRetry={saveBlocked ? undefined : () => submit()}
+          />
+        ) : null;
+      })()}
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-base font-medium">
+          {isEdit ? "Edit settings block" : "Add settings block"}
+        </h3>
+        {!isEdit && previousBlock && (
+          <button
+            type="button"
+            onClick={copySettings}
+            // Copying another area's settings REPLACES most of the payload,
+            // so it is the largest possible edit under a held retry key.
+            disabled={pending || draftFrozen}
+            className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+          >
+            Copy settings from another area in this session
+          </button>
+        )}
+      </div>
+
+      {/* ORDER. Current view: machine panel, then the areas (as it always was). New view: Areas treated first, then the
+          machine panel under "Treatment settings", with numbered step headings. Both are KEYED siblings of one list, so
+          switching moves them without remounting: the machine panel's typed settings and the area picks stay as they
+          are. */}
+      {isNewView
+        ? [
+            <NewViewStep key="step-areas" n={1} title="Areas treated" />,
+            areasSection,
+            <NewViewStep key="step-settings" n={2} title="Treatment settings" />,
+            machineSection,
+          ]
+        : [machineSection, areasSection]}
 
       {/* Machine settings come after the area, in Chloe's charting
           order (PR #204): frequency (a property of the machine),
@@ -2292,6 +2314,8 @@ export function BlockSetupForm({
           Used for total treatment time if you track it.
         </span>
       </label>
+
+      {isNewView ? <NewViewStep n={3} title="Client response" /> : null}
 
       {/* PR #279 (migration 0095): numbing record: a factual note of whether
           the client used numbing before treatment. "Not recorded" (NULL) is the
