@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-// 0356 source guards (Insurance G1/C4/F6, Privacy L1-L3/H4). Reading source is the point: these pin WHO may call what and WHERE the review table and its
+// 0361 source guards (Insurance G1/C4/F6, Privacy L1-L3/H4). Reading source is the point: these pin WHO may call what and WHERE the review table and its
 // consistency stamp may travel. A stamp is not a permission; it never reaches a URL, a log, an error report or an analytics event.
 
 const dirs = ["lib/settings/roles", "app/(app)/settings/roles"];

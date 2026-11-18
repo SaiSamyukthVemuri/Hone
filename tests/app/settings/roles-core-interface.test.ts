@@ -127,7 +127,7 @@ describe("the actions hand the core only what the owner changed, after re-checki
 });
 
 describe("the migration's functions and parameter names are the ones the page calls", () => {
-  const sql = readFileSync("supabase/migrations/0287_roles_permission_engine.sql", "utf8") + readFileSync("supabase/migrations/0356_roles_review_authority.sql", "utf8");
+  const sql = readFileSync("supabase/migrations/0287_roles_permission_engine.sql", "utf8") + readFileSync("supabase/migrations/0361_roles_review_authority.sql", "utf8");
   const src = readFileSync("lib/settings/roles/core.ts", "utf8");
   it("matches every rpc name and p_ argument", () => {
     const calls = [...src.matchAll(/call\(\s*"([a-z_]+)",\s*\{([^}]*)\}(?:,\s*REVIEW_MISSING)?,?\s*\)/g)];
