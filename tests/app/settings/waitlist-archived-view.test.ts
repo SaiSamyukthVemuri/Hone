@@ -95,6 +95,11 @@ describe("the Archived view", () => {
     expect(out).toContain("are shown here as recorded");
     expect(out).not.toMatch(/\bkept\b|\bretain|forever|permanent/i);
   });
+  it("renders no 'Open this waitlist entry' link: a removed entry has no queue anchor", async () => {
+    const out = await html();
+    expect(out).not.toContain("Open this waitlist entry");
+    expect(out).not.toContain("/settings/waitlist#entry-");
+  });
   it("a failed read says so", async () => {
     h.archived.mockResolvedValue({ kind: "unknown" });
     expect(await html()).toContain("couldn’t load the archive");
