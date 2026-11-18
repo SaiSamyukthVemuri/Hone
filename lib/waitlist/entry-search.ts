@@ -70,20 +70,45 @@ export async function searchWaitlistEntries(studioId: string, query: string): Pr
 export const RELEASED_LIMIT = 100;
 export type ReleasedList = { kind: "unknown" } | { kind: "ok"; hits: SearchHit[]; capped: boolean };
 
-/** Entries whose status is expired or released, oldest join first (the queue's own order). Read-only, owner session, studio-scoped. */
+type RowWithTime = Record<string, unknown>;
+
+/**
+ * Merge the expired and the released entries into ONE list, newest outcome first, capped.
+ * The time is the entry's own recorded outcome time for the state it is in now: `expired_at` for an expired entry, `released_at` for a
+ * released one (a person's decline also releases the entry, so it is the decline time too). An entry whose time is missing sorts last.
+ * `capped` is true when anything was left out, so the cut is always the OLDEST outcomes.
+ */
+export function mergeReleased(expiredRows: ReadonlyArray<RowWithTime>, releasedRows: ReadonlyArray<RowWithTime>, limit: number = RELEASED_LIMIT): { hits: SearchHit[]; capped: boolean } {
+  const withTime = (rows: ReadonlyArray<RowWithTime>, col: string) =>
+    hitsFromRows(rows).map((h, i) => {
+      const t = rows[i] && typeof rows[i]![col] === "string" ? Date.parse(rows[i]![col] as string) : NaN;
+      return { h, t: Number.isNaN(t) ? -Infinity : t };
+    });
+  const all = [...withTime(expiredRows, "expired_at"), ...withTime(releasedRows, "released_at")];
+  all.sort((a, b) => (b.t !== a.t ? (b.t > a.t ? 1 : -1) : a.h.id < b.h.id ? -1 : a.h.id > b.h.id ? 1 : 0));
+  return { hits: all.slice(0, limit).map((x) => x.h), capped: all.length > limit };
+}
+
+/**
+ * Entries whose status is expired or released, the MOST RECENT outcomes first, capped at RELEASED_LIMIT. Each state is read newest-first
+ * with one extra row, so anything cut off is always older than everything shown. Read-only, owner session, studio-scoped.
+ */
 export async function listReleasedEntries(studioId: string): Promise<ReleasedList> {
   try {
-    const { data, error } = await (await createClient())
-      .from("new_client_waitlist_entries")
-      .select("id,name,status,joined_at")
-      .eq("studio_id", studioId)
-      .in("status", ["expired", "released"])
-      .order("joined_at", { ascending: true })
-      .order("id", { ascending: true })
-      .limit(RELEASED_LIMIT + 1);
-    if (error || !Array.isArray(data)) return { kind: "unknown" };
-    const hits = hitsFromRows(data as Array<Record<string, unknown>>);
-    return { kind: "ok", hits: hits.slice(0, RELEASED_LIMIT), capped: hits.length > RELEASED_LIMIT };
+    const supabase = await createClient();
+    const read = (status: "expired" | "released", col: "expired_at" | "released_at") =>
+      supabase
+        .from("new_client_waitlist_entries")
+        .select("id,name,status,joined_at,expired_at,released_at")
+        .eq("studio_id", studioId)
+        .eq("status", status)
+        .order(col, { ascending: false })
+        .order("id", { ascending: true })
+        .limit(RELEASED_LIMIT + 1);
+    const [expired, released] = await Promise.all([read("expired", "expired_at"), read("released", "released_at")]);
+    if (expired.error || released.error || !Array.isArray(expired.data) || !Array.isArray(released.data)) return { kind: "unknown" };
+    const merged = mergeReleased(expired.data as RowWithTime[], released.data as RowWithTime[]);
+    return { kind: "ok", ...merged };
   } catch {
     return { kind: "unknown" };
   }

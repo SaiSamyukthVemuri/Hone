@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { hitsFromRows, likePattern, normalizeQuery, SECTION_OF_STATUS } from "@/lib/waitlist/entry-search";
+import { hitsFromRows, likePattern, mergeReleased, normalizeQuery, SECTION_OF_STATUS } from "@/lib/waitlist/entry-search";
 import { describeInvitation, historyFromRows, outcomeOf, type InvitationFacts } from "@/lib/waitlist/invitation-history";
 import { InvitationFacts as FactsView } from "@/components/waitlist/invitation-facts";
 
@@ -20,7 +20,7 @@ const base: InvitationFacts = {
 describe("search input", () => {
   it("needs two characters, collapses spaces, bounds length, escapes LIKE wildcards", () => {
     expect(normalizeQuery("a")).toBeNull();
-    expect(normalizeQuery("  Sam   Sample ")).toBe("Sam Sample");
+    expect(normalizeQuery("  Avery   Example ")).toBe("Avery Example");
     expect(normalizeQuery("x".repeat(200))!.length).toBe(60);
     expect(normalizeQuery(null)).toBeNull();
     expect(likePattern("50%_off\\")).toBe("%50\\%\\_off\\\\%");
@@ -36,11 +36,48 @@ describe("search results are labelled by section, and same-name people stay sepa
   });
   it("two entries with the same name are two hits, each with its own section and id", () => {
     const hits = hitsFromRows([
-      { id: E1, name: "Sam Sample", status: "waiting", joined_at: "2026-10-01T00:00:00Z" },
-      { id: E2, name: "Sam Sample", status: "removed", joined_at: "2026-10-02T00:00:00Z" },
+      { id: E1, name: "Avery Example", status: "waiting", joined_at: "2026-10-01T00:00:00Z" },
+      { id: E2, name: "Avery Example", status: "removed", joined_at: "2026-10-02T00:00:00Z" },
       { id: 5, name: "bad", status: "waiting" },
     ]);
     expect(hits.map((h) => [h.id, h.section])).toEqual([[E1, "Active"], [E2, "Archived"]]);
+  });
+});
+
+describe("the Released list shows the MOST RECENT outcomes first", () => {
+  const row = (id: string, status: string, col: string, at: string) => ({ id, name: `n-${id}`, status, joined_at: "2020-01-01T00:00:00Z", [col]: at });
+  it("orders expired and released together by their recorded outcome time, newest first, not by join date", () => {
+    const m = mergeReleased(
+      [row("a", "expired", "expired_at", "2026-11-01T00:00:00Z"), row("c", "expired", "expired_at", "2026-11-10T00:00:00Z")],
+      [row("b", "released", "released_at", "2026-11-05T00:00:00Z")],
+    );
+    expect(m.hits.map((h) => h.id)).toEqual(["c", "b", "a"]);
+    expect(m.capped).toBe(false);
+  });
+  it("past the cap the OLDEST outcomes are cut, the newest stay, and the notice flag is set", () => {
+    const expired = Array.from({ length: 60 }, (_, i) => row(`e${String(i).padStart(2, "0")}`, "expired", "expired_at", `2026-10-${String((i % 28) + 1).padStart(2, "0")}T00:00:00Z`));
+    const released = Array.from({ length: 60 }, (_, i) => row(`r${String(i).padStart(2, "0")}`, "released", "released_at", `2026-11-${String((i % 28) + 1).padStart(2, "0")}T00:00:00Z`));
+    const m = mergeReleased(expired, released, 100);
+    expect(m.hits).toHaveLength(100);
+    expect(m.capped).toBe(true);
+    const newest = Date.parse("2026-11-28T00:00:00Z");
+    expect(m.hits.some((h) => h.id.startsWith("r"))).toBe(true);
+    // every released entry (all newer than every expired one) survives; only expired ones are cut
+    expect(m.hits.filter((h) => h.id.startsWith("r"))).toHaveLength(60);
+    expect(newest).toBeGreaterThan(0);
+  });
+  it("an entry with no recorded time sorts last rather than first", () => {
+    const m = mergeReleased([{ id: "x", name: "n", status: "expired" }], [row("y", "released", "released_at", "2026-11-05T00:00:00Z")]);
+    expect(m.hits.map((h) => h.id)).toEqual(["y", "x"]);
+  });
+  it("the read orders each state newest-first by its own outcome column and never by join date", () => {
+    const s = read("lib/waitlist/entry-search.ts");
+    expect(s).toContain('.order(col, { ascending: false })');
+    expect(s).toContain('read("expired", "expired_at")');
+    expect(s).toContain('read("released", "released_at")');
+    expect(s).toContain(".limit(RELEASED_LIMIT + 1)");
+    const fn = s.slice(s.indexOf("export async function listReleasedEntries"));
+    expect(fn.slice(0, fn.indexOf("\n}\n"))).not.toContain('order("joined_at"');
   });
 });
 
