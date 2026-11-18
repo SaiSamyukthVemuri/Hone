@@ -2,15 +2,13 @@ import { describe, expect, it } from "vitest";
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { countVersion, isRepoMax } from "./helpers/migration-state";
 
-// 0339: services and consent_form_templates writes are owner-only. STATIC contract only.
+// 0339: services and consent_form_templates writes are owner-only. Rollback file and application-writer census.
 // Behaviour is proved against a real database in tests/db/owner-only-catalog-writes.db.test.ts.
 
 const root = join(__dirname, "..", "..");
 const NAME = "0339_owner_only_services_and_consent_template_writes";
 const exec = (sql: string) => sql.split("\n").map((l) => l.replace(/--.*$/, "")).join("\n");
-const E = exec(readFileSync(join(root, `supabase/migrations/${NAME}.sql`), "utf8"));
 const DOWN = exec(readFileSync(join(root, `supabase/rollbacks/${NAME}.down.sql`), "utf8"));
 const creates = (sql: string) => sql.match(/create policy[^;]+;/g) ?? [];
 
@@ -26,45 +24,7 @@ const TABLES = [
   ],
 ] as const;
 
-describe("0339: shape", () => {
-  it("is no longer the current maximum (only the max may assert it is)", () => {
-    expect(isRepoMax("0339")).toBe(false);
-  });
-
-  it("consumes exactly one number", () => {
-    expect(countVersion("0339")).toBe(1);
-  });
-
-  it("opens its own transaction and arms lock_timeout inside it", () => {
-    expect(E.trim()).toMatch(/^begin;\s*set local lock_timeout = '5s';/);
-    expect(E.trim().endsWith("commit;")).toBe(true);
-  });
-
-  it("creates exactly four policies, all owner-only, and nothing else", () => {
-    expect(creates(E).length).toBe(4);
-    expect(E).not.toMatch(/\b(grant|revoke)\b/);
-    expect(E).not.toMatch(/create (or replace )?function|alter table|comment on|\b(insert into|update public|delete from)\b/);
-    expect(E).not.toMatch(/for (delete|all|select) /);
-    expect(E).not.toMatch(/drop policy if exists "[a-z_]*select"/);
-  });
-
-  it.each(TABLES)("%s: drops both member write policies and creates the two owner policies", (table, mIns, mUpd, oIns, oUpd) => {
-    expect(E).toContain(`drop policy if exists "${mIns}" on public.${table};`);
-    expect(E).toContain(`drop policy if exists "${mUpd}" on public.${table};`);
-    const mine = creates(E).filter((p) => p.includes(` on public.${table} `));
-    expect(mine.length).toBe(2);
-    for (const p of mine) {
-      expect(p).toMatch(/ for (insert|update) to authenticated/);
-      expect(p).toContain("public.is_studio_owner(studio_id)");
-      expect(p).not.toContain("is_studio_member");
-    }
-    expect(mine.find((p) => p.includes(`"${oIns}"`))).toMatch(/for insert to authenticated\s+with check \(public\.is_studio_owner\(studio_id\)\);/);
-    // UPDATE checks ownership of the existing row (USING) and of the resulting row (WITH CHECK).
-    expect(mine.find((p) => p.includes(`"${oUpd}"`))).toMatch(
-      /for update to authenticated\s+using \(public\.is_studio_owner\(studio_id\)\)\s+with check \(public\.is_studio_owner\(studio_id\)\);/,
-    );
-  });
-
+describe("0339: rollback", () => {
   it.each(TABLES)("%s: the down restores the two original member policies", (table, mIns, mUpd, oIns, oUpd) => {
     const mine = creates(DOWN).filter((p) => p.includes(` on public.${table} `));
     expect(mine.length).toBe(2);

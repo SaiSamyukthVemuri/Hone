@@ -81,7 +81,7 @@ export function PaymentMethodCard({
         <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
           Payment method
         </h2>
-        <p className="mt-1 text-xs text-neutral-500">
+        <p className="mt-1 min-w-0 [overflow-wrap:anywhere] text-xs text-neutral-500">
           Card on file for {clientName}. Managed by the client in the
           secure portal.
         </p>

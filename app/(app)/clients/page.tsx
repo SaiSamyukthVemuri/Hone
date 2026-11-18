@@ -23,7 +23,7 @@ import {
   readNextAppointments,
   type DirectorySupabase,
 } from "@/lib/clients/directory-read";
-import { readLastVisits, type LastVisitSupabase } from "@/lib/clients/last-visit";
+import { readAllLastVisits, readLastVisits, type LastVisitSupabase } from "@/lib/clients/last-visit";
 import { DirectoryControls } from "./DirectoryControls";
 import {
   ClientOverview,
@@ -76,16 +76,29 @@ export default async function ClientsPage({
   // and intake form (Insurance K1). The archived view reads neither.
   const needAllNext = !archived && (query.sort === "next" || query.filters.includes("no_upcoming"));
   const needAllIntake = !archived && query.filters.includes("intake_review");
+  // The last-visit sort and the "not seen in N months" filter decide the set or its order, so they need every
+  // client's last visit (one bounded whole-studio read, same definition). A plain page only reads its own.
+  const needAllLastVisit = !archived && (query.sort === "lastvisit" || query.lastVisit !== "any");
+  const clock = { nowIso, timeZone: studio.timezone };
   const none = <T,>() => Promise.resolve(new Map<string, T>());
 
-  const [source, wholeNext, wholeIntake] = await Promise.all([
+  const [source, wholeNext, wholeIntake, wholeLastVisits] = await Promise.all([
     readDirectoryClients(db, studio.id, archived),
     needAllNext ? readNextAppointments(db, studio.id, nowIso) : none<string>(),
     needAllIntake ? readCurrentIntake(db, studio.id) : none<"in_progress">(),
+    needAllLastVisit
+      ? readAllLastVisits(supabase as unknown as LastVisitSupabase, studio.id, nowIso)
+      : Promise.resolve(null),
   ]);
+  // undefined: not needed this request; null: needed and unavailable; a map: the whole set.
+  const wholeLastVisitMap = wholeLastVisits === null ? undefined : wholeLastVisits.ok ? wholeLastVisits.value : null;
   const identityRows = source.map(projectStaffRow);
-  let aggregates: DirectoryAggregates = { nextAppointments: wholeNext, intake: wholeIntake };
-  let data = queryDirectory(identityRows, aggregates, query);
+  let aggregates: DirectoryAggregates = {
+    nextAppointments: wholeNext,
+    intake: wholeIntake,
+    lastVisits: wholeLastVisitMap,
+  };
+  let data = queryDirectory(identityRows, aggregates, query, clock);
 
   // The overview's client comes from the same authorized set; the page's rows are
   // known now, so the display-only aggregates are read for exactly those clients.
@@ -98,9 +111,9 @@ export default async function ClientsPage({
       needAllNext ? Promise.resolve(wholeNext) : readNextAppointments(db, studio.id, nowIso, pageIds),
       needAllIntake ? Promise.resolve(wholeIntake) : readCurrentIntake(db, studio.id, pageIds),
     ]);
-    aggregates = { nextAppointments: pageNext, intake: pageIntake };
+    aggregates = { nextAppointments: pageNext, intake: pageIntake, lastVisits: wholeLastVisitMap };
     // Same set, order and count (neither aggregate decided them); only the shown values are now real.
-    data = queryDirectory(identityRows, aggregates, query);
+    data = queryDirectory(identityRows, aggregates, query, clock);
   }
 
   // The overview's client comes from the same authorized set: an id that is not in
@@ -113,13 +126,23 @@ export default async function ClientsPage({
   // Last visit: ONE batched read for the visible page (plus the open overview).
   const ids = data.rows.map((r) => r.id);
   if (selected && !ids.includes(selected.id)) ids.push(selected.id);
+  // When the whole-studio read already answered, the page's cells come from it (no second read).
   const lastVisits = archived
     ? null
-    : await readLastVisits(supabase as unknown as LastVisitSupabase, studio.id, ids, nowIso);
+    : wholeLastVisits !== null
+      ? wholeLastVisits
+      : await readLastVisits(supabase as unknown as LastVisitSupabase, studio.id, ids, nowIso);
   const lastVisitMap = lastVisits && lastVisits.ok ? lastVisits.value : null;
   domain.end();
 
-  const state: DirectoryState = { view, q: query.q, filters: query.filters, sort: query.sort, page: data.page };
+  const state: DirectoryState = {
+    view,
+    q: query.q,
+    filters: query.filters,
+    sort: query.sort,
+    lastVisit: query.lastVisit,
+    page: data.page,
+  };
 
   // The overview opens under its own row (nothing above it moves). A selected client
   // that is not on the page being shown (an edited URL) is shown above the list instead.

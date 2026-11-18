@@ -39,9 +39,14 @@ async function noOverflow(page: Page) {
   expect(sw, `no horizontal overflow (scrollWidth ${sw} vs clientWidth ${cw})`).toBeLessThanOrEqual(cw);
 }
 async function openMachinePanel(page: Page) {
-  await expect(page.getByTestId("machine-first-trigger")).toBeVisible({ timeout: T });
-  await page.getByTestId("machine-first-open").click();
-  await expect(page.getByTestId("machine-first-panel")).toBeVisible({ timeout: T });
+  // An area that already carries a saved machine opens its panel itself on reopen (the saved choice is restored), so the trigger
+  // is only briefly visible, disabled on "Loading", then gone. The panel appearing is the assertion; the click is best effort.
+  const panel = page.getByTestId("machine-first-panel");
+  await expect(page.getByTestId("machine-first-trigger").or(panel)).toBeVisible({ timeout: T });
+  if (!(await panel.isVisible())) {
+    await page.getByTestId("machine-first-open").click({ timeout: 3000 }).catch(() => undefined);
+  }
+  await expect(panel).toBeVisible({ timeout: T });
 }
 async function openCreateForm(page: Page, clientId: string, sessionId: string) {
   await page.goto(`/clients/${clientId}/sessions/${sessionId}`);

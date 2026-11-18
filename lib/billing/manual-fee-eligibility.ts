@@ -5,9 +5,10 @@ import { JURISDICTION_UNVERIFIED_REASON } from "@/lib/billing/payment-jurisdicti
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { feePrepareBlock } from "@/lib/billing/manual-fee-one-per-appointment";
 import { liveChargeReasonBlockMessage } from "@/lib/billing/live-charge-reason-allowlist";
+import { loadCancellationFeeRules } from "@/lib/billing/cancellation-fee-rules-server";
+import { selectCancellationFeeTier } from "@/lib/billing/cancellation-fee-rules";
 import { manualFeeSettingBlockMessage } from "@/lib/billing/manual-fee-studio-setting";
 import {
-  MANUAL_FEE_AMOUNT_CEILING_CENTS,
   type EligibilityAppointmentSummary,
   type EligibilityCardAuthorizationSummary,
   type EligibilityCardSummary,
@@ -56,15 +57,8 @@ export {
 //      with status in {ready, pending_stripe, succeeded}) is already
 //      sitting against the same (appointment, charge_type) pair.
 //
-// Timing classification (v1)
-// --------------------------
-// Hone has cancellation_policy_text and no_show_policy_text on studios
-// as free-form text; there is no structured threshold (e.g.
-// cancellation_window_hours) yet. The system therefore CANNOT
-// mechanically classify "this cancellation crossed the late window".
-// v1 records the practitioner's manual assertion of charge_type with a
-// surfaced warning. A future PR that adds structured policy thresholds
-// can flip this to system_derived.
+// Cancellation timing is derived from the studio’s notice window and local calendar day.
+// No-show classification remains the practitioner’s assertion of the appointment status.
 //
 // What this helper does NOT do
 // ----------------------------
@@ -200,10 +194,9 @@ export async function getManualFeeChargeEligibility(
   let cardSignatureId: string | null = null;
   let cardPaymentMethodId: string | null = null;
   const livemode = inferStripeLivemode();
-  // Launch hard hold: in LIVE mode, manual no-show / late-cancellation fee
-  // charging is on hold (session payments only). This makes prepare refuse
-  // and surfaces the hold in the manual-fee panel's blocking reasons. Test
-  // mode is unaffected. Refund/cancel/display are NOT gated by eligibility.
+  // No-show retains its independent live rollout gate. Cancellation fees are available
+  // after governed owner tier setup; loadCancellationFeeRules below enforces that setup.
+  // Refund/cancel/display are not gated by eligibility.
   const feeChargeReason =
     serverChargeType === "no_show" ? "no_show_fee" : "late_cancellation_fee";
   const liveHold = liveChargeReasonBlockMessage(feeChargeReason, livemode, args.studioId);
@@ -378,17 +371,28 @@ export async function getManualFeeChargeEligibility(
   } else if (!studioRow) {
     reasons.push("Studio not found.");
   } else {
-    // The studio's own setting for this fee (0351). Both the setting and, in LIVE mode, the release list above must
-    // allow it. Fails closed: anything but `true` is OFF.
-    const settingHold = manualFeeSettingBlockMessage(feeChargeReason, studioRow);
+    // Cancellation uses the governed tier row; a legacy flat-rate ON flag never enrolls a studio.
+    // No-show retains its existing setting and live release gate.
+    const cancellationConfig = serverChargeType === "late_cancel" ? await loadCancellationFeeRules(admin, args.studioId) : null;
+    let cancellationRate: { mode: "fixed" | "percent"; value: number } | null = null;
+    if (cancellationConfig) {
+      if (!cancellationConfig.ok) reasons.push(cancellationConfig.error);
+      else {
+        if (policySnapshotHash !== cancellationConfig.policyHash) reasons.push("This appointment’s acknowledged policy differs from the policy reviewed for these fee rules. No fee can be prepared.");
+        const selection = selectCancellationFeeTier({ rules: cancellationConfig.rules, startsAt: appointmentSummary?.starts_at ?? null, cancelledAt: appointmentSummary?.cancelled_at ?? null, timezone: cancellationConfig.timezone });
+        if (!selection.ok) reasons.push(selection.error);
+        else cancellationRate = selection.rate;
+      }
+    }
+    const settingHold = serverChargeType === "late_cancel" ? null : manualFeeSettingBlockMessage(feeChargeReason, studioRow);
     if (settingHold) reasons.push(settingHold);
     const configuredMode =
-      serverChargeType === "late_cancel" ? studioRow.late_cancel_fee_mode : studioRow.no_show_fee_mode;
+      serverChargeType === "late_cancel" ? cancellationRate?.mode : studioRow.no_show_fee_mode;
     if (configuredMode === "percent") {
       // PERCENT MODE: the amount is computed here, once, on the server, from the appointment's session price, and
       // frozen onto the attempt by the prepare action. No fallback to the fixed amount on any refusal.
       const bp =
-        serverChargeType === "late_cancel" ? studioRow.late_cancel_fee_percent_bp : studioRow.no_show_fee_percent_bp;
+        serverChargeType === "late_cancel" ? cancellationRate?.value : studioRow.no_show_fee_percent_bp;
       if (!isValidPercentBp(bp)) {
         reasons.push(percentFeeRefusalMessage("invalid_percent"));
       } else if (clientId) {
@@ -437,7 +441,7 @@ export async function getManualFeeChargeEligibility(
     } else {
       const cents =
         serverChargeType === "late_cancel"
-          ? studioRow.late_cancel_fee_cents
+          ? cancellationRate?.value
           : studioRow.no_show_fee_cents;
       // NULL and 0 both block. The DB CHECK on
       // studios.<type>_fee_cents permits 0 for settings/test clearing
@@ -601,7 +605,7 @@ export async function getManualFeeChargeEligibility(
       amountCents,
       feeBasis,
       currency,
-      timingClassification: "practitioner_asserted",
+      timingClassification: serverChargeType === "late_cancel" ? "system_derived" : "practitioner_asserted",
       appointment: appointmentSummary,
       client: clientSummary,
       card: cardSummary,
@@ -622,7 +626,7 @@ export async function getManualFeeChargeEligibility(
     feeBasis,
     noFeeOwed,
     currency,
-    timingClassification: "practitioner_asserted",
+    timingClassification: serverChargeType === "late_cancel" ? "system_derived" : "practitioner_asserted",
     existingAttempts,
   };
 }

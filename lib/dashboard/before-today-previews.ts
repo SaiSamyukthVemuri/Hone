@@ -2,9 +2,11 @@ import { createClient } from "@/lib/supabase/server";
 import {
   buildLastSessionSummary,
   pickLastTreatment,
+  pickNewestNonVoidSession,
   pickPreClientWatchPlanSource,
   type ClinicalSummaryBlock,
 } from "@/lib/sessions/clinical-summary";
+import { NO_MEMORY_SOURCES, type MemorySources } from "@/lib/dashboard/memory-source-labels";
 import { buildTreatmentIntelligence } from "@/lib/sessions/treatment-intelligence";
 import {
   buildBeforeToday,
@@ -12,6 +14,7 @@ import {
 } from "@/lib/sessions/before-today";
 import type { SessionBlockArea } from "@/lib/types/database";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { mayBeTruncated } from "@/lib/supabase/row-cap";
 
 // PR #212: compact "Before today" previews for the Dashboard Today
 // roster. The preview is a RENDERING of the exact same PR #211
@@ -58,6 +61,9 @@ export type BeforeTodayPreview = {
   nextVisitNote: string | null;
   cautionNote: string | null;
   reminders: string[];
+  // Where the notes and the setup came from (dates only, no ids), so the row can SAY when they are from an
+  // earlier visit than the latest one. Optional: a preview built without it labels nothing.
+  sources?: MemorySources;
 };
 
 // Pure: collapse a full briefing into the three preview lines. Watch
@@ -197,7 +203,15 @@ async function readRows(
       logReadFailure(event, studioId, dbErrorCode(error), scopeCount);
       return { rows: [], failed: true };
     }
-    return { rows: Array.isArray(data) ? data : [], failed: false };
+    const rows = Array.isArray(data) ? data : [];
+    // FAIL CLOSED at the API row cap. The blocks and areas reads are ordered by sort_order / display_order, not
+    // recency, so a result at the cap may have lost rows of ANY session, the newest included. A cut read is
+    // not an answer. (The sessions read is bounded below the cap by its own limit, so it never trips this.)
+    if (mayBeTruncated(rows.length)) {
+      logReadFailure(`${event.replace(/_failed$/, "")}_row_cap_reached`, studioId, null, scopeCount);
+      return { rows: [], failed: true };
+    }
+    return { rows, failed: false };
   } catch {
     // Nothing is taken from the thrown value: a driver error carries the
     // statement in its message exactly as a PostgREST error does.
@@ -483,7 +497,29 @@ export async function getBeforeTodayPreviews(
         clinicalUnavailable || (windowFull && !(lastTreatment && watchSource)),
       clientRecordUnavailable,
     });
-    out.set(key, compactBeforeToday(briefing));
+    // WHERE each line came from. This describes the picks made above; it never changes them. "The latest
+    // visit" is the newest live, non-void session before this appointment (a draft or incomplete session
+    // counts: it is a charting state, not evidence of no visit).
+    const latestVisit = pickNewestNonVoidSession(clientSessions);
+    const sources: MemorySources = {
+      ...NO_MEMORY_SOURCES,
+      latestAt: latestVisit?.started_at ?? null,
+      notes: watchSource
+        ? { at: watchSource.started_at, isLatest: watchSource.id === latestVisit?.id }
+        : null,
+      // The setup line is read from the area treated most recently across ALL the client's blocks
+      // (intelligence.areas[0]), which is not necessarily the visit pickLastTreatment chose: a newer visit
+      // with only electrolysis or laser entries is "the last treatment" but supplies no setup. So the
+      // source is the date of the area that supplies THIS line, never the chosen visit's.
+      setup:
+        briefing.latestSetupLine && intelligence.areas[0]?.lastTreated
+          ? {
+              at: intelligence.areas[0].lastTreated,
+              isLatest: intelligence.areas[0].lastTreated === latestVisit?.started_at,
+            }
+          : null,
+    };
+    out.set(key, { ...compactBeforeToday(briefing), sources });
   }
   return out;
 }

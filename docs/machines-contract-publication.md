@@ -76,7 +76,8 @@ volumes preserved and the slot released; the shared frozen-stack census had zero
 ## Required P0 model evidence
 
 Both Apilus Senior 3G and Junior 3G remain required P0 work and distinct contracts.
-The current dry-run publishes neither because activation remains explicitly held.
+At the production tip `3abdf3f5e` the dry-run publishes ten v3 contracts for the two models
+(first slice) and holds the rest per mode; see [the publication record](machines-publication-record-2026-11-17.md).
 Both have independent manufacturer-documented v2 native numeric contracts; their
 v1 contracts remain retained. See [the native contract record](apilus-3g-native-contracts.md)
 for the implemented fields and narrow remaining precision/order/categorical gaps.

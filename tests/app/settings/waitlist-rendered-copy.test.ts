@@ -81,7 +81,7 @@ describe("the owner's Waitlist page: the allowance", () => {
     const page = await ownerPage();
     expect(page).toContain("5 consultation appointments available. You can invite 3 more people.");
     expect(page).toContain(
-      "Next 14 days, any day or time. These are minimums: the count never over-promises but may under-count. Availability can change; invitations don't reserve appointments.",
+      "Next 14 days, any day or time. These are minimums: the count never over-promises but may under-count. Availability can change; invitations don’t reserve appointments.",
     );
   });
   it("says the counts include every live invitation when the estimate is the conservative one (all scope)", async () => {
@@ -181,6 +181,21 @@ describe("the owner's follow-up rows: Keep on the waitlist", () => {
     expect(page).toContain("Kept on the waitlist.");
     expect(page).not.toContain("Keep on the waitlist");
   });
+  it("shows the kept state only inside the collapsed Closed group, so it is reachable but not visible until the owner opens that group", () => {
+    // On screen, pressing Keep makes the row leave the open list. "Kept on the waitlist." is what the row says once it sits in Closed.
+    const raw = renderToStaticMarkup(
+      createElement(DeclineFollowUpSection, {
+        rows: [row({ followupId: "44444444-4444-4444-8444-444444444444", entryId: "e2", status: "open" }), row({ status: "kept", closedAt: "2026-11-09T11:00:00Z" })],
+        timeZone: "UTC", emailEnabled: true, outbox: new Map([["i1", emptyOutboxCounts()]]), linkable: new Map(), notice: null,
+      }),
+    );
+    const closed = /<details data-testid="closed-responses"[^>]*>([\s\S]*?)<\/ul><\/details>/.exec(raw);
+    expect(closed, "a Closed group renders when a row is kept").not.toBeNull();
+    expect(closed![0]).not.toMatch(/<details[^>]*\sopen/);
+    expect(readable(closed![0])).toContain("Closed (1)");
+    expect(readable(closed![0])).toContain("Kept on the waitlist.");
+    expect(readable(raw.replace(closed![0], ""))).not.toContain("Kept on the waitlist.");
+  });
   it("says there is nothing to follow up when there are no rows", () => {
     expect(section([])).toContain("No responses need follow-up.");
   });
@@ -198,6 +213,8 @@ describe("the owner email, as rendered", () => {
     expect(mail.text).toContain("https://app.example.test/settings/waitlist?followup=1#follow-up");
     expect(mail.html).toContain('href="https://app.example.test/settings/waitlist?followup=1#follow-up"');
     expect(readable(mail.html)).not.toMatch(/Synthetic|@|\d{3}[-. ]?\d{4}/);
+    // No answer text and no test-fixture wording in either body, raw or rendered (the template takes no answer input at all).
+    for (const body of [mail.text, mail.html, readable(mail.html)]) expect(body).not.toMatch(/Synthetic|mornings/);
   });
 });
 

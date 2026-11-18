@@ -91,6 +91,8 @@ vi.mock("@/lib/supabase/server", () => {
         }
         return { data: [], error: null };
       }
+      // An update returns the row it matched (the action now asks for it back with .select("id") and treats zero rows as a failed completion mark).
+      if (state.verb === "update") return { data: [{ id: "batch-1" }], error: null };
       return { data: [], error: null };
     }
     q.single = async () => result();

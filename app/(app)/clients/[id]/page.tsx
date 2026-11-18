@@ -88,7 +88,7 @@ import { getPortalMessagesForPractitionerView } from "@/lib/portal-messages/quer
 import { getPortalMessageRepliesForPractitionerView } from "@/lib/portal-messages/replies-queries";
 import { PortalMessagesCard } from "@/components/portal-messages-card";
 import {
-  getConsentTemplatesForStudio,
+  checkConsentTemplatesForStudio,
   getLatestSignaturesForPractitionerView,
 } from "@/lib/consent/queries";
 import { ConsentSignaturesCard } from "@/components/consent-signatures-card";
@@ -370,7 +370,7 @@ export default async function ClientCheatSheetPage({
     personalNotes,
     portalMessages,
     portalMessageReplies,
-    consentTemplatesAll,
+    consentTemplatesCheck,
     consentLatestSignatures,
     activeCard,
     importedMemory,
@@ -436,8 +436,8 @@ export default async function ClientCheatSheetPage({
     // PR #134 (migration 0057): consent / e-sign. Overview status card, and
     // both feed computePortalPendingTasks.
     needsConsent
-      ? getConsentTemplatesForStudio(studio.id, { includeCardAuthorization: isOwner })
-      : Promise.resolve([] as Awaited<ReturnType<typeof getConsentTemplatesForStudio>>),
+      ? checkConsentTemplatesForStudio(studio.id, { includeCardAuthorization: isOwner })
+      : Promise.resolve({ status: "ok", templates: [] } as Awaited<ReturnType<typeof checkConsentTemplatesForStudio>>),
     needsConsent
       ? getLatestSignaturesForPractitionerView(studio.id, client.id, { includeCardAuthorization: isOwner })
       : Promise.resolve([] as Awaited<ReturnType<typeof getLatestSignaturesForPractitionerView>>),
@@ -481,6 +481,10 @@ export default async function ClientCheatSheetPage({
     practitioners.map((p) => [p.id, p.display_name?.trim() || p.email]),
   );
 
+  // A failed template read is UNAVAILABLE, never "no forms" (see ConsentSignaturesCard).
+  const consentTemplatesUnavailable = consentTemplatesCheck.status === "unavailable";
+  const consentTemplatesAll = consentTemplatesCheck.status === "ok" ? consentTemplatesCheck.templates : [];
+
   // Portal Access PR 3: outstanding portal tasks, from already-loaded data —
   // no new queries.
   const portalPendingTasks = computePortalPendingTasks({
@@ -488,6 +492,7 @@ export default async function ClientCheatSheetPage({
     activeConsentTemplates: consentTemplatesAll,
     latestSignatures: consentLatestSignatures,
     portalMessages,
+    consentUnavailable: consentTemplatesUnavailable,
   });
 
   // Migration 0126: dated consultation + skin/hair analysis clinical notes.
@@ -970,7 +975,7 @@ export default async function ClientCheatSheetPage({
               >
                 {clientAvatarInitials(clientDisplay)}
               </span>
-              <h1 className="break-words text-2xl font-semibold tracking-tight md:text-3xl">
+              <h1 className="min-w-0 [overflow-wrap:anywhere] text-2xl font-semibold tracking-tight md:text-3xl">
                 {clientDisplay}
               </h1>
               {/* PR Willow launch fixes: when the client is archived
@@ -1050,7 +1055,7 @@ export default async function ClientCheatSheetPage({
 
       <ProfileTabBar active={activeTab} tabs={profileTabsFor({ isOwner })} />
 
-      {/* Contact column beside every tab (stacked above the content on phones). */}
+      {/* Contact column beside every tab on desktop; on phones the tab's content comes first and the contact card follows it (ContactSidebar: order-last md:order-none). */}
       <div data-testid="profile-layout" className="grid gap-6 md:grid-cols-[206px_minmax(0,1fr)]">
         <ContactSidebar
           clientId={client.id}
@@ -1230,6 +1235,7 @@ export default async function ClientCheatSheetPage({
                 version: t.version,
               }))}
             latestSignatures={consentLatestSignatures}
+            unavailable={consentTemplatesUnavailable}
           />
 
           {/* PR #194: allergies moved to the top of Overview (under

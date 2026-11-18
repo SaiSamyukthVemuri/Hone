@@ -1,4 +1,6 @@
 import { questionnaireForRow, QUESTIONNAIRE_HISTORY_UNAVAILABLE } from "@/lib/intake/questionnaire";
+import { clientDisplayName } from "@/lib/clients/identity";
+import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
 import Link from "next/link";
 // RESP-CLIENT-INTAKE-01. Only the back control was in the measured slice; the
 // "view current intake" and "assisted intake" links below stay bare <Link> on
@@ -145,12 +147,14 @@ export default async function ClientIntakePage({
   const { studio } = await requirePractitionerWithStudio();
 
   const supabase = await createClient();
-  const { data: client, error: clientErr } = await supabase
+  const { data: client, error: clientErr } = await readWithPreferredName((includePreferred) =>
+    supabase
     .from("clients")
-    .select("id, name, email")
+    .select(`id, ${preferredNameColumn(includePreferred)}name, email`)
     .eq("studio_id", studio.id)
     .eq("id", id)
-    .maybeSingle();
+    .maybeSingle<{ id: string; name: string; preferred_name?: string | null; email: string | null }>(),
+  );
   if (clientErr) throw new Error(`db_error:${dbErrorCode(clientErr)}`);
   if (!client) notFound();
 
@@ -198,9 +202,9 @@ export default async function ClientIntakePage({
         <PendingLink
           href={`/clients/${id}`}
           pendingLabel="Opening client…"
-          className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+          className="min-w-0 [overflow-wrap:anywhere] text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
         >
-          ← {client.name}
+          ← {clientDisplayName(client)}
         </PendingLink>
         <h1 className="text-3xl font-semibold tracking-tight">Health intake</h1>
         <p className="text-sm text-neutral-600">
@@ -250,9 +254,9 @@ export default async function ClientIntakePage({
         <PendingLink
           href={`/clients/${id}`}
           pendingLabel="Opening client…"
-          className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+          className="min-w-0 [overflow-wrap:anywhere] text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
         >
-          ← {client.name}
+          ← {clientDisplayName(client)}
         </PendingLink>
         <h1 className="text-3xl font-semibold tracking-tight">Health intake</h1>
         <p className="text-sm text-neutral-500">
@@ -297,8 +301,8 @@ export default async function ClientIntakePage({
           <h2 className="text-sm font-semibold uppercase tracking-wider text-neutral-700 dark:text-neutral-300">
             With the client
           </h2>
-          <p className="mt-2 text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
-            Sitting with {client.name}? Work through the questionnaire together
+          <p className="min-w-0 [overflow-wrap:anywhere] mt-2 text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
+            Sitting with {clientDisplayName(client)}? Work through the questionnaire together
             and record their answers. They complete their own confirmations and
             submit at the end.
           </p>

@@ -86,7 +86,7 @@ export function ArchiveClientControl({
       className="flex flex-col gap-3 rounded-md border border-red-300 bg-red-50 p-4 dark:border-red-700/60 dark:bg-red-950/20"
     >
       <input type="hidden" name="client_id" value={clientId} />
-      <p className="text-sm font-medium text-red-900 dark:text-red-100">
+      <p className="min-w-0 [overflow-wrap:anywhere] text-sm font-medium text-red-900 dark:text-red-100">
         Archive {clientName}?
       </p>
       <p className="text-xs text-red-900/80 dark:text-red-100/80">

@@ -10,6 +10,7 @@ export function RowSafetyLines({
   pinnedNotes,
   unavailable,
   caution,
+  cautionSource,
   lastTreatment,
 }: {
   pinnedNotes: ReadonlyArray<{ id: string; text: string }> | null;
@@ -17,6 +18,8 @@ export function RowSafetyLines({
   unavailable: boolean;
   /** The newest caution/watch text, already resolved by the caller from an answered read with history. */
   caution: string | null;
+  /** Where that caution came from ("Notes from 3 Oct (the latest visit on 10 Nov has no notes)"), or null. */
+  cautionSource?: string | null;
   /** The one-line previous-treatment summary (the prep authority's compactSummary), or null when none was proved. */
   lastTreatment?: string | null;
 }) {
@@ -72,6 +75,11 @@ export function RowSafetyLines({
           title={caution}
         >
           Caution: {caution}
+          {cautionSource && (
+            <span data-testid="today-row-caution-source" className="mt-0.5 block text-[11px] text-neutral-500 dark:text-neutral-400">
+              {cautionSource}
+            </span>
+          )}
         </span>
       )}
     </>

@@ -225,6 +225,45 @@ describe("withdrawal", () => {
     expect((await q(`select * from public.waitlist_decline_owner_emails where studio_id=$1`, [f.studioId]))).toHaveLength(0);
   });
 
+  it("puts the person back in their ORIGINAL place in the owner's queue, and Keep changes nothing about the entry", async () => {
+    const f = await seed("q");
+    const e1 = await entry(f, "q1");
+    const e2 = await entry(f, "q2");
+    const e3 = await entry(f, "q3");
+    // The owner's waiting queue is ordered by joined_at, then id (the same order the settings page reads).
+    const queue = () =>
+      q<{ id: string }>(
+        `select id from public.new_client_waitlist_entries where studio_id=$1 and status='waiting' order by joined_at asc, id asc`,
+        [f.studioId],
+      ).then((r) => r.map((x) => x.id));
+    const before = await queue();
+    expect(before).toHaveLength(3);
+    expect(new Set(before)).toEqual(new Set([e1.id, e2.id, e3.id]));
+    // e2 must NOT be last, so a reset to the back of the queue cannot go unseen.
+    expect(before.indexOf(e2.id)).toBeLessThan(before.length - 1);
+    const joinedBefore = (await entryRow(e2.id)).joined_at;
+
+    const t = await invite(f, e2.id);
+    expect((await entryRow(e2.id)).status).not.toBe("waiting");
+    expect(await queue()).toEqual(before.filter((id) => id !== e2.id));
+
+    expect((await q(`select * from public.request_waitlist_withdrawal($1,$2)`, [t.token, t.cap]))[0].result).toBe("recorded");
+    const afterWithdraw = await entryRow(e2.id);
+    expect(afterWithdraw.status).toBe("waiting");
+    expect(afterWithdraw.joined_at).toEqual(joinedBefore);
+    expect(await queue()).toEqual(before);
+
+    // Keep closes the follow-up row and writes nothing to the entry.
+    const full = (id: string) =>
+      q(`select status, joined_at, claimed_at, claimed_by_practitioner_id, invited_at, released_at, expired_at from public.new_client_waitlist_entries where id=$1`, [id]).then((r) => r[0]);
+    const entryBeforeKeep = await full(e2.id);
+    const fid = (await q(`select id from public.waitlist_followups where entry_id=$1`, [e2.id]))[0].id;
+    expect((await q(`select * from public.keep_waitlist_withdrawal($1,$2,$3)`, [f.studioId, f.userId, fid]))[0].result).toBe("kept");
+    expect(await full(e2.id)).toEqual(entryBeforeKeep);
+    expect(await queue()).toEqual(before);
+    expect((await q(`select status from public.waitlist_followups where id=$1`, [fid]))[0].status).toBe("kept");
+  });
+
   it("an unknown token gets the same neutral answer", async () => {
     const r = await q(`select * from public.request_waitlist_withdrawal($1,$2)`, ["a".repeat(64), "b".repeat(64)]);
     expect(r[0].result).toBe("recorded");
@@ -297,13 +336,17 @@ describe("D4: owner functions refuse non-owners and other studios", () => {
 });
 
 describe("link a booking (the narrow waiting -> converted edge)", () => {
+  // Each appointment gets its OWN day, from a counter, so two appointments of one studio can never overlap: the studio-wide
+  // exclusion constraint (no_overlapping_appointments_studio_wide) is left exactly as it is. A random hour offset collided
+  // whenever two draws in one test matched (CI run 44375993388).
+  let aptSeq = 0;
   async function apt(f: F, email: string, status = "confirmed") {
     const c = await q(`select id from public.clients where studio_id=$1 and lower(btrim(email))=lower($2)`, [f.studioId, email]).then(async (r) =>
       r.length ? r : q(`insert into public.clients (studio_id,name,email) values ($1,'Linked',$2) returning id`, [f.studioId, email]));
     const a = await q(
       `insert into public.appointments (studio_id,client_id,service_id,starts_at,ends_at,duration_minutes,status)
        values ($1,$2,$3, now()+($5||' hours')::interval, now()+($5||' hours')::interval+interval '30 minutes', 30, $4) returning id`,
-      [f.studioId, c[0].id, f.serviceId, status, String(72 + Math.floor(Math.random() * 400))],
+      [f.studioId, c[0].id, f.serviceId, status, String(72 + 24 * ++aptSeq)],
     );
     return a[0].id as string;
   }
