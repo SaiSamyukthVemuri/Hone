@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 // @ts-expect-error - .mjs utility ships without type declarations
+import { chainProblems, parseFingerprint } from "../../scripts/db-baseline/verify.mjs";
 import { ACL_SQL, EXTENSIONS_SQL, FINGERPRINT_SQL, TRIGGERS_SQL } from "../../scripts/db-baseline/sql.mjs";
 
 const cli = readFileSync(path.join(process.cwd(), "scripts/db-baseline/cli.mjs"), "utf8");
@@ -55,11 +56,24 @@ describe("the restore path is the strict one", () => {
 });
 
 describe("the fingerprint compares effective ACLs, not their spelling", () => {
-  it("a NULL acl (the default) and the explicit default the replay writes are the same fact: schema and migration-table ACLs go through acldefault", () => {
-    // Found on the third stack run: the chain leaves supabase_migrations' ACLs NULL; the replay materialises the identical default.
-    expect(FINGERPRINT_SQL).toMatch(/coalesce\(n\.nspacl, acldefault\('n', n\.nspowner\)\)/);
-    expect(FINGERPRINT_SQL).toMatch(/coalesce\(c\.relacl, acldefault\(/);
-    expect(FINGERPRINT_SQL).not.toMatch(/coalesce\(n\.nspacl::text/);
+  it("every ACL fact is a SORTED set of (grantee, privilege, grantable) tuples from aclexplode, with the object's default for a NULL acl, so order and NULL-versus-explicit-default cannot cause a false refusal (Codex P1 r4621516265)", () => {
+    // No category may serialise a raw ACL array any more.
+    expect(FINGERPRINT_SQL).not.toMatch(/(relacl|proacl|nspacl|typacl|attacl|defaclacl)::text/);
+    expect(FINGERPRINT_SQL).not.toMatch(/coalesce\([a-z]\.(relacl|proacl|nspacl|typacl)::text/);
+    for (const col of ["relacl", "proacl", "nspacl", "typacl", "attacl", "defaclacl"]) {
+      expect(FINGERPRINT_SQL, col).toMatch(new RegExp(`aclexplode\\([^)]*${col}`));
+    }
+    expect(FINGERPRINT_SQL).toMatch(/string_agg\([^]*? order by /);
+    // NULL means the object's default for its kind: tables/sequences, functions, schemas, types.
+    for (const kind of ["'f'", "'n'", "'T'"]) expect(FINGERPRINT_SQL).toContain(`acldefault(${kind},`);
+    expect(FINGERPRINT_SQL).toMatch(/acldefault\(\(case when c\.relkind='S'/);
+  });
+
+  it("the extra-grant control still bites: a tuple the chain lacks is reported by name", () => {
+    const chain = ["grants:rel|t|authenticated=SELECT,postgres=DELETE|postgres"].join("\n");
+    const restored = ["grants:rel|t|PUBLIC=SELECT,authenticated=SELECT,postgres=DELETE|postgres"].join("\n");
+    const problems = chainProblems(parseFingerprint(chain), parseFingerprint(restored));
+    expect(problems.join("\n")).toMatch(/EXTRA GRANT/);
   });
 });
 
