@@ -116,6 +116,7 @@ import {
   selectCurrentIntakeByClient,
   type TodayIntakeRow,
 } from "@/lib/dashboard/today-intake";
+import { UnfinishedVisitsNote } from "./unfinished-visits-note";
 import { getMissingRecordsAssistant } from "@/lib/dashboard/missing-records-assistant";
 import { currentAppointmentIds } from "@/lib/dashboard/current-appointment";
 import {
@@ -1065,6 +1066,9 @@ export default async function DashboardPage({
             todayLocal={todayLocal}
           />
         </div>
+        <Suspense key={`unfinished:${selectedDayLocal}:${period}`} fallback={null}>
+          <UnfinishedVisitsNote studioId={studio.id} nowIso={renderNow.toISOString()} />
+        </Suspense>
         {/* KEYED like the secondary stack below, for the same reason. */}
         <Suspense
           key={`needs:${selectedDayLocal}:${period}`}
