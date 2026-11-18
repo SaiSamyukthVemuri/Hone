@@ -82,3 +82,17 @@ it("copying writes to the clipboard and changes no state: no form, no fetch", as
   expect(h.textContent).toContain("Copied");
   expect(fetchSpy).not.toHaveBeenCalled();
 });
+
+it("the phone Copy button writes the STORED value, not the formatted display text", async () => {
+  const write = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", { value: { writeText: write }, configurable: true });
+  const h = render(createElement(ReplyContactDetails, { entryId: ID, contact: { kind: "entry", email: null, phone: "4165550123" } }));
+  // The card SHOWS it formatted for reading...
+  expect(h.textContent).toContain("(416) 555-0123");
+  // ...but Copy and Call keep the stored dialable digits.
+  await act(async () => { h.querySelector<HTMLButtonElement>('button[aria-label="Copy phone"]')!.click(); });
+  expect(write).toHaveBeenCalledTimes(1);
+  expect(write).toHaveBeenCalledWith("4165550123");
+  expect(write).not.toHaveBeenCalledWith("(416) 555-0123");
+  expect(h.querySelector('a[href="tel:4165550123"]')).not.toBeNull();
+});

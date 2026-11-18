@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { clientDisplayName } from "@/lib/clients/identity";
+import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
 import { notFound } from "next/navigation";
 import {
   requirePractitionerWithStudio,
@@ -43,12 +45,14 @@ export default async function ClientImagesPage({
   const portraitEnabled = clientPortraitEnabled();
 
   const supabase = await createClient();
-  const { data: client, error: clientErr } = await supabase
+  const { data: client, error: clientErr } = await readWithPreferredName((includePreferred) =>
+    supabase
     .from("clients")
-    .select("id, name, portrait_image_id")
+    .select(`id, ${preferredNameColumn(includePreferred)}name, portrait_image_id`)
     .eq("studio_id", studio.id)
     .eq("id", id)
-    .maybeSingle();
+    .maybeSingle<{ id: string; name: string; preferred_name?: string | null; portrait_image_id: string | null }>(),
+  );
   if (clientErr) throw new Error(`db_error:${dbErrorCode(clientErr)}`);
   if (!client) notFound();
 
@@ -254,7 +258,7 @@ export default async function ClientImagesPage({
         href={`/clients/${id}`}
         className="min-w-0 [overflow-wrap:anywhere] text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
       >
-        ← {client.name}
+        ← {clientDisplayName(client)}
       </Link>
       <header>
         <h1 className="text-3xl font-semibold tracking-tight">Treatment Photos</h1>
