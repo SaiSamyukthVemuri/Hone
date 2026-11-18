@@ -65,9 +65,8 @@ const COMMANDS: ReadonlyArray<[string, string]> = [
 
 describe("0202 takes the number it derived", () => {
   it("is no longer the repository maximum — 0203 is", () => {
-    // Handed to 0203 per CLAUDE.md: only the CURRENT max asserts this, and
-    // tests/migrations/0203-waitlist-mobile-verification-authority.test.ts
-    // carries it now. AUTHORING 0203 is what flips this, not applying it --
+    // Handed on per CLAUDE.md: only the CURRENT max asserts this.
+    // AUTHORING 0203 is what flips this, not applying it --
     // `isRepoMax` is derived from the migrations directory.
     expect(isRepoMax(VERSION)).toBe(false);
     // DERIVED, NOT PINNED. A literal list here is exactly the "trip on the next

@@ -2,9 +2,11 @@ import { createClient } from "@/lib/supabase/server";
 import {
   buildLastSessionSummary,
   pickLastTreatment,
+  pickNewestNonVoidSession,
   pickPreClientWatchPlanSource,
   type ClinicalSummaryBlock,
 } from "@/lib/sessions/clinical-summary";
+import { NO_MEMORY_SOURCES, type MemorySources } from "@/lib/dashboard/memory-source-labels";
 import { buildTreatmentIntelligence } from "@/lib/sessions/treatment-intelligence";
 import {
   buildBeforeToday,
@@ -58,6 +60,9 @@ export type BeforeTodayPreview = {
   nextVisitNote: string | null;
   cautionNote: string | null;
   reminders: string[];
+  // Where the notes and the setup came from (dates only, no ids), so the row can SAY when they are from an
+  // earlier visit than the latest one. Optional: a preview built without it labels nothing.
+  sources?: MemorySources;
 };
 
 // Pure: collapse a full briefing into the three preview lines. Watch
@@ -483,7 +488,29 @@ export async function getBeforeTodayPreviews(
         clinicalUnavailable || (windowFull && !(lastTreatment && watchSource)),
       clientRecordUnavailable,
     });
-    out.set(key, compactBeforeToday(briefing));
+    // WHERE each line came from. This describes the picks made above; it never changes them. "The latest
+    // visit" is the newest live, non-void session before this appointment (a draft or incomplete session
+    // counts: it is a charting state, not evidence of no visit).
+    const latestVisit = pickNewestNonVoidSession(clientSessions);
+    const sources: MemorySources = {
+      ...NO_MEMORY_SOURCES,
+      latestAt: latestVisit?.started_at ?? null,
+      notes: watchSource
+        ? { at: watchSource.started_at, isLatest: watchSource.id === latestVisit?.id }
+        : null,
+      // The setup line is read from the area treated most recently across ALL the client's blocks
+      // (intelligence.areas[0]), which is not necessarily the visit pickLastTreatment chose: a newer visit
+      // with only electrolysis or laser entries is "the last treatment" but supplies no setup. So the
+      // source is the date of the area that supplies THIS line, never the chosen visit's.
+      setup:
+        briefing.latestSetupLine && intelligence.areas[0]?.lastTreated
+          ? {
+              at: intelligence.areas[0].lastTreated,
+              isLatest: intelligence.areas[0].lastTreated === latestVisit?.started_at,
+            }
+          : null,
+    };
+    out.set(key, { ...compactBeforeToday(briefing), sources });
   }
   return out;
 }

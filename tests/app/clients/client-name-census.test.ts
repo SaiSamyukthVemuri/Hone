@@ -43,7 +43,7 @@ const BASELINE: ReadonlyArray<readonly [string, number, Status]> = [
   ["app/(app)/clients/[id]/clinical-notes/print/page.tsx", 1, "gap"],
   ["app/(app)/clients/[id]/sessions/[sessionId]/page.tsx", 1, "fine"],
   ["app/(app)/global-search-actions.ts", 3, "helper"],
-  ["app/api/cron/appointment-reminders/route.ts", 3, "gap"],
+  ["app/api/cron/appointment-reminders/route.ts", 2, "fine"],
   ["app/intake/[token]/actions.ts", 2, "gap"],
   ["components/client-search.tsx", 1, "unreviewed"],
   ["lib/billing/card-change-notification.ts", 3, "gap"],
@@ -53,7 +53,7 @@ const BASELINE: ReadonlyArray<readonly [string, number, Status]> = [
   ["lib/clients/identity.ts", 2, "helper"],
   ["lib/clients/name-search.ts", 2, "fine"],
   ["lib/clinical-records/insurer-field-gaps.ts", 1, "helper"],
-  ["lib/email/send-appointment.ts", 3, "gap"],
+  ["lib/email/send-appointment.ts", 3, "fine"],
   ["lib/notifications/appointment-cancel-notification.ts", 1, "gap"],
   ["lib/record-keeping/queries.ts", 2, "unreviewed"],
 ];
@@ -61,8 +61,6 @@ const BASELINE: ReadonlyArray<readonly [string, number, Status]> = [
 // Why each "gap" is one. Confirmed by reading the file; NOT fixed in the PR that records them (each is a separate decision or change).
 const GAP_EVIDENCE: Record<string, string> = {
   "app/(app)/clients/[id]/clinical-notes/print/page.tsx": "clinical output prints the stored name; the rule is the legal identity (clientClinicalName) when one is set",
-  "app/api/cron/appointment-reminders/route.ts": "LIVE client-facing: the treatment-time line renders \"<first word of the STORED name>'s first electrolysis session\" in the reminder email when the studio shows treatment time (lib/treatment-time/format.ts:64)",
-  "lib/email/send-appointment.ts": "LIVE client-facing: same treatment-time line, first word of the stored name (line ~953; fixed separately). Also hands the STORED name to the practitioner new-booking and cancellation emails (see STAFF_EMAIL_GAPS)",
   "app/intake/[token]/actions.ts": 'staff notification "<stored name> submitted an intake form."',
   "lib/billing/card-change-notification.ts": "staff notification names the client by the stored name (select name only)",
   "lib/notifications/appointment-cancel-notification.ts": "staff notification names the client by the stored name (reads name only)",
@@ -73,6 +71,8 @@ const UNRENDERED_EVIDENCE: Record<string, string> = {
   "app/(app)/calendar/postcare-auto-send.ts": "tests/app/calendar/calendar-communication-preview-name.test.ts (the postcare email renders no client name; the send is pinned to the stored name so preview and send agree)",
 };
 const FINE_REASON: Record<string, string> = {
+  "app/api/cron/appointment-reminders/route.ts": "the treatment-time line now names the client through the shared loader (communication name); the two stored-name reads left are the loader's fallback argument and a template parameter the client reminder does not render",
+  "lib/email/send-appointment.ts": "the client-facing sites (the treatment-time line, the trusted-render path) take the loader's communication name and fall back to the stored name; the stored-name reads left are those fallbacks. The staff emails it sends are recorded in STAFF_EMAIL_GAPS",
   "app/(app)/clients/[id]/sessions/[sessionId]/page.tsx": "the one remaining read feeds the postcare PREVIEW, which is pinned to the stored name so it matches the send; the page's screen wording uses clientDisplayName",
   "lib/clients/name-search.ts": "search deliberately matches BOTH the stored and the preferred name (tests/lib/clients/name-search.test.ts)",
 };

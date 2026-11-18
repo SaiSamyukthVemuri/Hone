@@ -98,9 +98,8 @@ describe("0183: file and numbering", () => {
     // THE 0184 HANDOFF HAPPENED. This block asserted "hosted_migration_max ===
     // 0183", the operator-observed window, 0183's evidence and the
     // single-current-record consistency check while 0183 was the hosted max.
-    // 0184 was applied on 2026-08-17, so all of that moved to
-    // tests/migrations/0184-client-budget-context-least-privilege.test.ts —
-    // exactly as this block was built to hand off.
+    // 0184 was applied on 2026-08-17, so all of that was handed off —
+    // exactly as this block was built to do.
     //
     // What survives here is what stays true forever: 0183 IS applied, so it
     // must never appear as pending again, and its bytes are frozen.

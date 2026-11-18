@@ -499,15 +499,10 @@ describe("L18 Phase 4 — command-bound table direct DML guard", () => {
         // DELEGATES: it calls `create_block_with_entry` (0166) rather than
         // writing `session_blocks` itself, so this guard's six
         // command-bound tables keep exactly the write paths they already
-        // had. That delegation is asserted - declaration, order, types and
-        // by-name forwarding, all re-derived from 0166's own declaration - in
-        // tests/migrations/0223-machine-inventory-and-setup-readings.test.ts.
-        //
-        // ITS BEHAVIOUR IS NOT YET PROVEN. 0223 is PENDING and no database
-        // has run it; the behavioural specification is
-        // tests/db/machine-setup-submission.db.test.ts, which HAS NOT RUN.
+        // had. That delegation is in the applied, frozen 0223 body; its
+        // behaviour is specified by tests/db/machine-setup-submission.db.test.ts.
         // This entry says the command is REVIEWED, which is what this guard
-        // asks, and must not be read as saying it works.
+        // asks.
         //
         // Excluded by exact name, like the entry above, so any OTHER new
         // block-ish command still trips this guard.
@@ -530,17 +525,15 @@ describe("L18 Phase 4 — command-bound table direct DML guard", () => {
         // reviewing: the block-in-session lineage is a JOIN PREDICATE rather
         // than a precheck, and it is SECURITY INVOKER so the studio-member
         // policies remain the second, independent limb. Reviewed in
-        // tests/lib/machines/readings-complete-read.test.ts and
-        // tests/migrations/0223-machine-inventory-and-setup-readings.test.ts.
+        // tests/lib/machines/readings-complete-read.test.ts.
         //
         // Excluded by exact name, so any OTHER new block-ish command still
         // trips this guard.
         c !== "setup_readings_for_block" &&
         // HON-8 (0301). Two commands that record WHICH machine an area was
-        // charted on, as three nullable columns on session_blocks. Reviewed in
-        // tests/migrations/0301-session-block-machine-identity.test.ts (source
-        // contract: authenticated-only grants, studio and session lineage,
-        // retired-unit refusal, no backfill) and proven behaviourally in
+        // charted on, as three nullable columns on session_blocks. Proven
+        // behaviourally (authenticated-only grants, studio and session lineage,
+        // retired-unit refusal) in
         // tests/db/session-block-machine-identity.db.test.ts. The create
         // variant WRAPS the frozen 0223 command rather than reimplementing it.
         //

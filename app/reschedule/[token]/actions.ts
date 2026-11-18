@@ -1,5 +1,6 @@
 "use server";
 
+import { loadTreatmentTimeNameFields } from "@/lib/treatment-time/client-first-name";
 import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { loadPublicSlotsByDate } from "@/lib/booking/public-slot-range";
@@ -1163,7 +1164,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
         async () =>
           buildTreatmentTimeLine({
             enabled: true,
-            clientFirstName: clientRow.name.split(/\s+/)[0] || clientRow.name,
+            client: await loadTreatmentTimeNameFields(admin, asserted.original.studio_id, asserted.original.client_id, clientRow.name),
             context: await getTreatmentTimeContextForEmail(
               asserted.original.studio_id,
               asserted.original.client_id,

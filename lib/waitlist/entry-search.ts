@@ -120,3 +120,47 @@ export async function listReleasedEntries(studioId: string): Promise<ReleasedLis
     return { kind: "unknown" };
   }
 }
+
+export const ARCHIVED_LIMIT = 100;
+export type ArchivedEntry = {
+  id: string;
+  name: string;
+  joinedAt: string;
+  removedAt: string | null;
+  removedByRecorded: boolean;
+};
+export type ArchivedList = { kind: "unknown" } | { kind: "ok"; entries: ArchivedEntry[]; capped: boolean };
+
+export function archivedFromRows(rows: ReadonlyArray<Record<string, unknown>>): ArchivedEntry[] {
+  const out: ArchivedEntry[] = [];
+  for (const r of rows) {
+    if (typeof r.id !== "string" || typeof r.name !== "string") continue;
+    out.push({
+      id: r.id,
+      name: r.name,
+      joinedAt: typeof r.joined_at === "string" ? r.joined_at : "",
+      removedAt: typeof r.removed_at === "string" ? r.removed_at : null,
+      removedByRecorded: typeof r.removed_by_practitioner_id === "string",
+    });
+  }
+  return out;
+}
+
+/** Removed (Archived) entries, most recently removed first. Read-only, owner session, studio-scoped. */
+export async function listArchivedEntries(studioId: string): Promise<ArchivedList> {
+  try {
+    const { data, error } = await (await createClient())
+      .from("new_client_waitlist_entries")
+      .select("id,name,joined_at,removed_at,removed_by_practitioner_id")
+      .eq("studio_id", studioId)
+      .eq("status", "removed")
+      .order("removed_at", { ascending: false })
+      .order("id", { ascending: true })
+      .limit(ARCHIVED_LIMIT + 1);
+    if (error || !Array.isArray(data)) return { kind: "unknown" };
+    const entries = archivedFromRows(data as Array<Record<string, unknown>>);
+    return { kind: "ok", entries: entries.slice(0, ARCHIVED_LIMIT), capped: entries.length > ARCHIVED_LIMIT };
+  } catch {
+    return { kind: "unknown" };
+  }
+}

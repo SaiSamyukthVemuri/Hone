@@ -981,6 +981,11 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
       "Owner-only name search over the waitlist, reached from a link on the waitlist page. It follows its parent: the waitlist Settings tab appears only for a studio whose durable waitlist is switched on, so listing it in Global Search would offer an empty or refused page to everyone else.",
   },
   {
+    route: "/settings/waitlist/archived",
+    reason:
+      "Owner-only read-only view of waitlist entries an owner removed, reached from a link on the waitlist page. It follows its parent: listing it in Global Search would offer an empty or refused page to every studio that has not enabled the waitlist and to non-owners.",
+  },
+  {
     route: "/settings/waitlist/released",
     reason:
       "Owner-only read-only history of released and expired waitlist entries, reached from a link on the waitlist page. It follows its parent: listing it in Global Search would offer an empty or refused page to every studio that has not enabled the waitlist and to non-owners.",

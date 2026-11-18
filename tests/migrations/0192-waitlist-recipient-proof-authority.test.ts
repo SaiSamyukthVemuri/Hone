@@ -53,8 +53,8 @@ describe("0192 — identity and position", () => {
   // previous comment asked for ("whoever adds 0193 moves it") and the rule
   // CLAUDE.md states: only the CURRENT maximum migration's own test may assert
   // isRepoMax, because otherwise every landing migration reds an older file and
-  // the sweep gets missed. tests/migrations/0193-waitlist-admission-authority.test.ts
-  // now carries it. Nothing else in this file changed: every behavioural and
+  // the sweep gets missed.
+  // Nothing else in this file changed: every behavioural and
   // security assertion 0192 makes about itself is untouched.
 
   it("opens its own transaction and bounds the lock", () => {
