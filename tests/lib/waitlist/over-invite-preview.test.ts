@@ -4,6 +4,7 @@ import {
   OVER_INVITE_CLIENT_COPY,
   OVER_INVITE_OWNER_COPY,
   buildOverInvitePreview,
+  expiringSoonLabel,
   countUpcomingExpirations,
   isMaterialChange,
 } from "@/lib/waitlist/over-invite-preview";
@@ -62,9 +63,16 @@ describe("the preview", () => {
     expect(p.line).toBe("1 estimated appointment available · 0 invitations active · Send 1 more → 1 active invitation");
     expect(p.beyondCapacity).toBe(false);
   });
-  it("never shows negative, fractional or non-finite numbers, and expiring never exceeds active", () => {
+  it("never shows negative, fractional or non-finite numbers", () => {
     const p = buildOverInvitePreview({ fit: -3, active: 2.9, expiringSoon: 9, extra: Number.NaN });
-    expect(p).toMatchObject({ fit: 0, active: 2, extra: 0, expiringSoon: 2, resultingTotal: 2 });
+    expect(p).toMatchObject({ fit: 0, active: 2, extra: 0, expiringSoon: 9, resultingTotal: 2 });
+  });
+  it("the expiring count is studio-wide, so it may exceed the window-scoped active count and is not clamped", () => {
+    expect(buildOverInvitePreview({ fit: 3, active: 1, expiringSoon: 6, extra: 2 })).toMatchObject({ active: 1, expiringSoon: 6, resultingTotal: 3 });
+  });
+  it("the label says the count is across the studio, within 24 hours", () => {
+    expect(expiringSoonLabel(1)).toBe("1 invitation across the studio expires within 24 hours");
+    expect(expiringSoonLabel(6)).toBe("6 invitations across the studio expire within 24 hours");
   });
   it("carries the owner copy verbatim and the client copy is verbatim", () => {
     expect(buildOverInvitePreview({ fit: 0, active: 0, expiringSoon: 0, extra: 1 }).ownerCopy).toBe(

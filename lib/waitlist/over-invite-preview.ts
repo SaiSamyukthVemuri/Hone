@@ -11,6 +11,10 @@ export const OVER_INVITE_OWNER_COPY = "Invitations do not reserve appointments. 
 export const OVER_INVITE_CLIENT_COPY =
   "Choose from current availability. Appointment times are not reserved and may fill before your invitation expires.";
 
+/** The owner-facing wording for the studio-wide count, so the copy says what the number is. */
+export const expiringSoonLabel = (count: number): string =>
+  `${count} ${count === 1 ? "invitation" : "invitations"} across the studio ${count === 1 ? "expires" : "expire"} within 24 hours`;
+
 export type ExpiringInvitation = { expiresAt: string };
 
 /**
@@ -37,7 +41,10 @@ export type OverInvitePreview = {
   fit: number;
   /** Still-valid invitations already out. */
   active: number;
-  /** Invitations that will expire soon (informational; they are still counted in `active`). */
+  /**
+   * Live invitations across the WHOLE STUDIO that expire within 24 hours, as the server reports them. NOT scoped to the booking window, so it can
+   * exceed `active` (which is the live invitations overlapping the window). Informational only; it takes no part in the totals.
+   */
   expiringSoon: number;
   /** The extra the owner proposes to send now. */
   extra: number;
@@ -62,7 +69,8 @@ export function buildOverInvitePreview(input: {
   const fit = whole(input.fit);
   const active = whole(input.active);
   const extra = whole(input.extra);
-  const expiringSoon = Math.min(whole(input.expiringSoon), active);
+  // Not clamped to `active`: the two are scoped differently (studio-wide vs the window), so one can legitimately exceed the other.
+  const expiringSoon = whole(input.expiringSoon);
   const resultingTotal = active + extra;
   return {
     fit,
