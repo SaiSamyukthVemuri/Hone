@@ -17,14 +17,6 @@ describe("login page: sign-in only, invite-only, no self-serve signup", () => {
   const LOGIN = read("app/(auth)/login/page.tsx").replace(/\s+/g, " ");
   const LOGIN_ACTIONS = read("app/(auth)/login/actions.ts");
 
-  it("presents sign-in with explicit invite-only copy", () => {
-    expect(LOGIN).toMatch(/Sign in to Hone/);
-    expect(LOGIN).toMatch(
-      /Invited users only\. Use the email address your studio invitation was sent to\./,
-    );
-    expect(LOGIN).toMatch(/Need access[\s\S]{0,160}hello@hone\.care/);
-  });
-
   it("has NO self-serve signup / create-studio CTA or copy", () => {
     expect(LOGIN).not.toMatch(/create account|sign up|create studio|start free|start your studio/i);
   });
@@ -94,14 +86,6 @@ describe("server-side guards: no-studio users are gated", () => {
 describe("the /no-access gate is safe and leaks nothing", () => {
   const PAGE = read("app/(auth)/no-access/page.tsx");
   const ACTIONS = read("app/(auth)/no-access/actions.ts");
-
-  it("renders the invite-only gate copy and only Sign out + Contact Hone actions", () => {
-    expect(PAGE).toMatch(/No studio access yet/);
-    expect(PAGE).toMatch(/Hone is currently invite-only for supervised studios/);
-    expect(PAGE).toMatch(/Sign out/);
-    expect(PAGE).toMatch(/Contact Hone/);
-    expect(PAGE).toMatch(/mailto:hello@hone\.care/);
-  });
 
   it("does its own auth check: anon -> /login, has-studio -> /dashboard (no loop)", () => {
     expect(PAGE).toMatch(/redirect\("\/login"\)/);

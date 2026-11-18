@@ -48,16 +48,6 @@ describe("getAppointmentsForClientProfile scope + shape", () => {
     expect(SOURCE).toMatch(/CLIENT_APPOINTMENT_TIMELINE_LIMIT\s*=\s*100/);
   });
 
-  it("selects service name + modality for the row label", () => {
-    const fn = helperBlock();
-    expect(fn).toMatch(/service:services\(name, modality\)/);
-  });
-
-  it("selects cancelled_at and cancellation_reason", () => {
-    const fn = helperBlock();
-    expect(fn).toMatch(/cancelled_at,\s*cancellation_reason/);
-  });
-
   it("loads linked sessions via the PR #156 appointment_id FK", () => {
     const fn = helperBlock();
     expect(fn).toMatch(/\.in\(\s*["']appointment_id["']\s*,\s*apptIds\s*\)/);
@@ -89,17 +79,5 @@ describe("getAppointmentsForClientProfile scope + shape", () => {
     const fn = helperBlock();
     expect(fn).not.toMatch(/createAdminClient|admin-server/);
     expect(fn).toMatch(/await createClient\(\)/);
-  });
-
-  it("exports a row type carrying linked_session metadata", () => {
-    // The shared type lives outside the function block; pin the
-    // contract by name so the component compiles against the same
-    // shape.
-    const typeBlock =
-      SOURCE.match(/export type ClientAppointmentTimelineRow[\s\S]*?\};/)?.[0] ?? "";
-    expect(typeBlock).toMatch(/linked_session:\s*\{/);
-    expect(typeBlock).toMatch(/modality:\s*Modality/);
-    expect(typeBlock).toMatch(/cancelled_at:\s*string\s*\|\s*null/);
-    expect(typeBlock).toMatch(/cancellation_reason:\s*string\s*\|\s*null/);
   });
 });

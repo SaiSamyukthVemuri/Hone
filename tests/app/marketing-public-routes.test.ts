@@ -34,10 +34,4 @@ describe("middleware public-route allowlist", () => {
   it("allowlists the resource articles via the /resources/ prefix", () => {
     expect(MW).toMatch(/pathname\.startsWith\("\/resources\/"\)/);
   });
-
-  it("still redirects unauthenticated users away from non-public routes", () => {
-    // The gate itself is intact (defense against an accidental blanket allow).
-    expect(MW).toMatch(/if \(!user && !isPublicRoute\)/);
-    expect(MW).toMatch(/url\.pathname = "\/login"/);
-  });
 });

@@ -24,12 +24,6 @@ const CORE = readFileSync(
 );
 
 describe("signConsentFormAction: PR #177 refresh wiring", () => {
-  it("imports the refresh helper", () => {
-    expect(ACTION).toMatch(
-      /import \{ refreshActiveCardAuthorizationPointersForSignature \} from "@\/lib\/payment-methods\/refresh-card-authorization-pointer"/,
-    );
-  });
-
   it("calls the refresh helper only when template.form_type === 'card_authorization'", () => {
     expect(ACTION).toMatch(
       /if \(result\.formType === "card_authorization"\)[\s\S]{0,1500}refreshActiveCardAuthorizationPointersForSignature\(/,

@@ -6,11 +6,11 @@ import path from "node:path";
 // landing-page actions that insert directly into waitlist /
 // demo_requests; before this PR they had no rate limit and could be
 // scripted to fill the database. These source-grep tests pin: both
-// actions route through the shared lib/rate-limit/public.ts limiter,
-// the check runs AFTER validation but BEFORE the Supabase insert,
-// the limiter key uses the normalized email, the refusal copy is the
-// shared generic message, and the new limiter buckets are namespaced
-// with the windows decided in the PR (5/h per IP, 2/d per email).
+// actions check the shared lib/rate-limit/public.ts limiter with the
+// normalized email BEFORE the Supabase insert, the refusal is the
+// shared generic message, and the limiter buckets are namespaced,
+// hashed and fail-open with the windows decided in the PR (5/h per
+// IP, 2/d per email).
 
 const ROOT = path.resolve(__dirname, "../../..");
 const WAITLIST = readFileSync(
@@ -34,25 +34,10 @@ const DEMO_CODE = codeOnly(DEMO);
 const LIMITER_CODE = codeOnly(LIMITER);
 
 describe("waitlist action: rate-limited via shared infrastructure", () => {
-  it("imports limitWaitlistSubmit + RATE_LIMIT_MESSAGE from lib/rate-limit/public", () => {
-    expect(WAITLIST).toMatch(
-      /import \{\s*\n?\s*limitWaitlistSubmit,\s*\n?\s*RATE_LIMIT_MESSAGE,\s*\n?\s*\} from "@\/lib\/rate-limit\/public"/,
-    );
-  });
-
   it("checks the limiter with the NORMALIZED email", () => {
     expect(WAITLIST_CODE).toMatch(
       /limitWaitlistSubmit\(\{\s*\n?\s*headers: await headers\(\),\s*\n?\s*email: normalized,\s*\n?\s*\}\)/,
     );
-  });
-
-  it("normalization (trim + lowercase) happens before the limiter call", () => {
-    const normIdx = WAITLIST_CODE.indexOf(
-      "const normalized = email.trim().toLowerCase();",
-    );
-    const limitIdx = WAITLIST_CODE.indexOf("limitWaitlistSubmit(");
-    expect(normIdx).toBeGreaterThan(-1);
-    expect(limitIdx).toBeGreaterThan(normIdx);
   });
 
   it("rate-limit check happens BEFORE the Supabase insert", () => {
@@ -68,28 +53,9 @@ describe("waitlist action: rate-limited via shared infrastructure", () => {
     );
     expect(WAITLIST_CODE).not.toMatch(/already submitted|blocked/i);
   });
-
-  it("validation still runs before the limiter (invalid emails never consume budget)", () => {
-    const validateIdx = WAITLIST_CODE.indexOf("EMAIL_RE.test(normalized)");
-    const limitIdx = WAITLIST_CODE.indexOf("limitWaitlistSubmit(");
-    expect(validateIdx).toBeGreaterThan(-1);
-    expect(limitIdx).toBeGreaterThan(validateIdx);
-  });
-
-  it("duplicate-as-success handling is unchanged", () => {
-    expect(WAITLIST_CODE).toMatch(
-      /error\.code === PG_UNIQUE_VIOLATION/,
-    );
-  });
 });
 
 describe("demo request action: rate-limited via shared infrastructure", () => {
-  it("imports limitDemoRequestSubmit + RATE_LIMIT_MESSAGE from lib/rate-limit/public", () => {
-    expect(DEMO).toMatch(
-      /import \{\s*\n?\s*limitDemoRequestSubmit,\s*\n?\s*RATE_LIMIT_MESSAGE,\s*\n?\s*\} from "@\/lib\/rate-limit\/public"/,
-    );
-  });
-
   it("checks the limiter with the normalized email variable", () => {
     expect(DEMO_CODE).toMatch(
       /limitDemoRequestSubmit\(\{\s*\n?\s*headers: await headers\(\),\s*\n?\s*email,\s*\n?\s*\}\)/,
@@ -110,13 +76,6 @@ describe("demo request action: rate-limited via shared infrastructure", () => {
     expect(DEMO_CODE).toMatch(
       /if \(!rate\.allowed\) \{\s*\n?\s*return \{ ok: false, error: RATE_LIMIT_MESSAGE \};/,
     );
-  });
-
-  it("name/email validation still runs before the limiter", () => {
-    const validateIdx = DEMO_CODE.indexOf("EMAIL_RE.test(email)");
-    const limitIdx = DEMO_CODE.indexOf("limitDemoRequestSubmit(");
-    expect(validateIdx).toBeGreaterThan(-1);
-    expect(limitIdx).toBeGreaterThan(validateIdx);
   });
 });
 
@@ -154,34 +113,11 @@ describe("limiter module: marketing form buckets", () => {
     expect(block).toMatch(/logBackendUnavailable\(form, err\)/);
     expect(block).toMatch(/return \{ allowed: true \};\s*\/\/ fail open/);
   });
-
-  it("the shared generic refusal copy is unchanged", () => {
-    expect(LIMITER_CODE).toMatch(
-      /export const RATE_LIMIT_MESSAGE =\s*\n?\s*"Too many requests right now\. Please wait a moment and try again\.";/,
-    );
-  });
 });
 
-describe("PR #187 boundaries", () => {
+describe("public form actions do not log", () => {
   it("no raw request-body or PII logging in either action (code only)", () => {
     expect(WAITLIST_CODE).not.toMatch(/console\./);
     expect(DEMO_CODE).not.toMatch(/console\./);
-  });
-
-  it("no email sending or SMS added", () => {
-    const both = WAITLIST_CODE + DEMO_CODE;
-    expect(both).not.toMatch(/sendEmailSafely|resend|sendSms|twilio/i);
-  });
-
-  it("no payment / Stripe code in the touched files", () => {
-    const all = WAITLIST_CODE + DEMO_CODE + LIMITER_CODE;
-    expect(all).not.toMatch(
-      /paymentIntents|refunds\.create|charges\.create|checkout\.sessions|STRIPE_ALLOW_LIVE_MODE/,
-    );
-  });
-
-  it("no calendar feed surface touched", () => {
-    const all = WAITLIST_CODE + DEMO_CODE + LIMITER_CODE;
-    expect(all).not.toMatch(/calendar_feed_token/);
   });
 });

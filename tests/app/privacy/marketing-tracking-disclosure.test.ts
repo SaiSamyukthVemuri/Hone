@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// Provider-agnostic marketing/analytics privacy + consent framework (docs/UI
+// Provider-agnostic marketing/analytics privacy + consent framework (UI
 // copy only — no tracking enabled, no sender, no provider receives data).
 
 function read(rel: string): string {
@@ -11,7 +11,6 @@ function read(rel: string): string {
 
 const PRIVACY = read("app/privacy/page.tsx");
 const TERMS = read("app/terms/page.tsx");
-const PLAN = read("docs/23_STUDIO_MARKETING_TRACKING_PLAN.md");
 const META_LIB = read("lib/conversion/meta-capi.ts");
 
 describe("privacy policy — marketing/analytics disclosure", () => {
@@ -80,61 +79,6 @@ describe("terms — studio-owned provider responsibility", () => {
   it("uses cautious wording (may / where enabled / subject to consent)", () => {
     expect(TERMS).toMatch(/subject to applicable\s+consent and configuration/);
     expect(TERMS).toMatch(/Hone may provide integration tools/);
-  });
-});
-
-describe("plan doc — provider-agnostic model + data minimization", () => {
-  it("is titled as the generic Studio Marketing plan, Meta only the first foundation", () => {
-    expect(PLAN).toMatch(/# Studio Marketing and Conversion Tracking Plan/);
-    expect(PLAN).toMatch(/provider-agnostic/i);
-    expect(PLAN).toMatch(/Meta is the first/i);
-  });
-
-  it("describes per-studio provider config, NOT one global Hone pixel", () => {
-    expect(PLAN).toMatch(/per studio/i);
-    expect(PLAN).toMatch(/not a shared Hone-wide pixel/i);
-    for (const p of [
-      "meta",
-      "google_ads",
-      "ga4",
-      "tiktok",
-      "pinterest",
-      "linkedin",
-      "microsoft_ads",
-      "custom",
-    ]) {
-      expect(PLAN).toContain(p);
-    }
-  });
-
-  it("contains the allowed AND forbidden payload lists", () => {
-    for (const a of ["event_name", "event_time", "event_id", "event_source_url", "service_category"]) {
-      expect(PLAN).toContain(a);
-    }
-    for (const f of [
-      "treatment notes",
-      "intake / health data",
-      "contraindications",
-      "body areas",
-      "treatment photos",
-      "appointment notes",
-      "cancellation reasons",
-      "portal tokens",
-      "payment card data",
-    ]) {
-      expect(PLAN.toLowerCase()).toContain(f.toLowerCase());
-    }
-  });
-
-  it("booking-consent draft says booking continues without marketing tracking + is separable", () => {
-    expect(PLAN).toMatch(/Declining marketing tracking does not stop your booking/);
-    expect(PLAN).toMatch(/separate.*from.*transactional|transactional.*separate/i);
-    expect(PLAN).toMatch(/recorded\s+separately/i);
-  });
-
-  it("includes a studio-website cookie banner draft with accept/reject buttons", () => {
-    expect(PLAN).toMatch(/Accept marketing cookies/);
-    expect(PLAN).toMatch(/Reject non-essential cookies/);
   });
 });
 

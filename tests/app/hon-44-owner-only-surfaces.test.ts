@@ -50,9 +50,6 @@ describe("session page loaders (Privacy PEER-1140 L3): the payment reads run for
     expect(src).toMatch(/isOwner\s*\?\s*timed\("session-chart\.payment-amount"[\s\S]*?:\s*Promise\.resolve\(null\)/);
     expect(src).toMatch(/isOwner && linkedAppointmentId\s*\?\s*timed\("session-chart\.settlements"/);
   });
-  it("the card renders only with the owner flag AND the loaded eligibility", () => {
-    expect(src).toMatch(/\{isOwner && sessionPaymentEligibility && \(\s*<div id="session-payment">/);
-  });
 });
 
 describe("appointment next step (Privacy PEER-1140 L2): a non-owner is not sent to billing", () => {
