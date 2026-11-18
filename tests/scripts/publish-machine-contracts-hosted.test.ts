@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 // HON-8 D4: the hosted publication runner, against FAKES. Nothing here reaches a network, a key or a real ledger. Design:
-// machines/HON8-D4-HOSTED-RUNNER-DESIGN.md v2; tests answer Insurance C1-C8 and Privacy F1-F7.
+// machines/HON8-D4-HOSTED-RUNNER-DESIGN.md v2.
 
 const lib = await import("../../scripts/lib/hosted-publish.mjs");
 const { runHosted, sha256, redact, Refusal, projectPlanRow, plannedSet, makeHostedClient, makeFsLedger, KEY_VAR, URL_VAR } = lib;
@@ -60,7 +60,7 @@ function deps(over: Record<string, unknown> = {}, tokenOver: Record<string, unkn
     client: () => ({
       async fingerprint() { calls.push("fingerprint"); return { rpcExists: true }; },
       async readContract(row: any) { calls.push(`read:${row.p_mode_key}`); return stored.get(row.p_mode_key) ?? null; },
-      async rpc(_n: string, row: any) { calls.push(`rpc:${row.p_mode_key}`); stored.set(row.p_mode_key, projectPlanRow(row)); return 1; },
+      async rpc(_n: string, row: any) { calls.push(`rpc:${row.p_mode_key}`); const had = stored.has(row.p_mode_key); stored.set(row.p_mode_key, projectPlanRow(row)); return had ? 0 : row.p_fields.length; },
     }),
     ...over,
   };
@@ -89,7 +89,7 @@ describe("control: a fully valid run publishes, reads back, and writes a finishe
   });
 });
 
-describe("startup refusals: every one happens before any network call, ledger write, or key use (F1, F3, C3)", () => {
+describe("startup refusals: every one happens before any network call, ledger write, or key use", () => {
   const cases: Array<[string, (d: any) => void, RegExp]> = [
     ["HTTPS_PROXY", (d) => { d.env.HTTPS_PROXY = "http://p"; }, /HTTPS_PROXY/],
     ["lowercase http_proxy", (d) => { d.env.http_proxy = "http://p"; }, /http_proxy/],
@@ -133,7 +133,7 @@ describe("startup refusals: every one happens before any network call, ledger wr
   });
 });
 
-describe("token and inputs: every refusal, before any write (C4, C5, C6, F4)", () => {
+describe("token and inputs: every refusal, before any write", () => {
   const cases: Array<[string, (x: ReturnType<typeof deps>) => void, RegExp]> = [
     ["no --expect-token-sha256", ({ d }) => { d.expectTokenSha256 = undefined; }, /expect-token-sha256/],
     ["a different token sha256", ({ d }) => { d.expectTokenSha256 = "b".repeat(64); }, /not the one quoted/],
@@ -171,7 +171,7 @@ describe("token and inputs: every refusal, before any write (C4, C5, C6, F4)", (
   });
 });
 
-describe("hosted fingerprint (F4, BB1): no migration-schema read; the target is held to what Sam bound into the token", () => {
+describe("hosted fingerprint: no migration-schema read; the target is held to what Sam bound into the token", () => {
   const noWrite = (x: any) => expect(x.calls.filter((c: string) => c.startsWith("rpc:") || c.startsWith("ledger:"))).toEqual([]);
   it("a missing RPC refuses before any intent or write", async () => {
     const x = deps();
@@ -215,7 +215,7 @@ describe("hosted fingerprint (F4, BB1): no migration-schema read; the target is 
   });
 });
 
-describe("single use, write-ahead intent, and partial runs (C1, C6, F2)", () => {
+describe("single use, write-ahead intent, and partial runs", () => {
   it("the intent record exists BEFORE the first RPC", async () => {
     const { d, calls } = deps();
     await runHosted(d);
@@ -231,7 +231,7 @@ describe("single use, write-ahead intent, and partial runs (C1, C6, F2)", () => 
     x.d.client = () => ({
       async fingerprint() { return { rpcExists: true }; },
       async readContract(row: any) { return x.stored.get(row.p_mode_key) ?? null; },
-      async rpc(_n: string, row: any) { x.calls.push(`rpc:${row.p_mode_key}`); if (++n === 2) throw new Error(`process died ${KEY}`); x.stored.set(row.p_mode_key, projectPlanRow(row)); return 1; },
+      async rpc(_n: string, row: any) { x.calls.push(`rpc:${row.p_mode_key}`); if (++n === 2) throw new Error(`process died ${KEY}`); x.stored.set(row.p_mode_key, projectPlanRow(row)); return row.p_fields.length; },
     });
     const first = await runHosted(x.d).then(() => null, (e: Error) => e);
     expect(first!.message, "the failure is reported and redacted").not.toContain(KEY);
@@ -277,12 +277,12 @@ describe("single use, write-ahead intent, and partial runs (C1, C6, F2)", () => 
     expect(r.published).toEqual(["fixture:p@3:blend", "fixture:p@3:electrolysis"]);
   });
 
-  it("a read-back mismatch is reported and the receipt says so", async () => {
+  it("a row that reads back equal at its own sync but differs by the end is still reported in the final read-back", async () => {
     const x = deps();
     x.d.client = () => ({
       async fingerprint() { return { rpcExists: true }; },
       async readContract(row: any) { return x.stored.get(row.p_mode_key) ?? null; },
-      async rpc(_n: string, row: any) { x.stored.set(row.p_mode_key, { channels_max: 1, requires_installed_option: null, fields: [] }); return 1; },
+      async rpc(_n: string, row: any) { x.stored.set(row.p_mode_key, projectPlanRow(row)); if (row.p_mode_key === "electrolysis") x.stored.set("flash", { channels_max: 1, requires_installed_option: null, fields: [] }); return row.p_fields.length; },
     });
     await expect(runHosted(x.d)).rejects.toThrow(/read-back mismatch/);
     const receipt = JSON.parse([...x.files.entries()].find(([k]) => k.endsWith(".receipt.json"))![1]);
@@ -290,7 +290,7 @@ describe("single use, write-ahead intent, and partial runs (C1, C6, F2)", () => 
   });
 });
 
-describe("exclusive intent claim (G1, Codex P2 #3, BB4) and uncertain outcomes (Codex P2 #2, #1)", () => {
+describe("exclusive intent claim and uncertain outcomes", () => {
   it("two runs of one token over a REAL ledger directory: exactly one publishes, the other is refused", async () => {
     const dir = mkdtempSync(join(tmpdir(), "ledger-race-"));
     try {
@@ -342,10 +342,16 @@ describe("exclusive intent claim (G1, Codex P2 #3, BB4) and uncertain outcomes (
   it("a read-back REQUEST that fails still finalizes the receipt, names the rows, and exits non-zero with the token burned", async () => {
     const x = deps();
     let after = false;
+    let lastSynced = false;
     x.d.client = () => ({
       async fingerprint() { return { rpcExists: true }; },
-      async readContract(row: any) { if (after) throw new Error(`503 ${KEY}`); return x.stored.get(row.p_mode_key) ?? null; },
-      async rpc(_n: string, row: any) { x.stored.set(row.p_mode_key, projectPlanRow(row)); if (row.p_mode_key === "electrolysis") after = true; return 1; },
+      async readContract(row: any) {
+        if (after) throw new Error(`503 ${KEY}`);
+        const v = x.stored.get(row.p_mode_key) ?? null;
+        if (lastSynced && row.p_mode_key === "electrolysis") after = true; // the last row's own immediate read-back succeeds; the final pass fails
+        return v;
+      },
+      async rpc(_n: string, row: any) { x.stored.set(row.p_mode_key, projectPlanRow(row)); if (row.p_mode_key === "electrolysis") lastSynced = true; return row.p_fields.length; },
     });
     await expect(runHosted(x.d)).rejects.toThrow(/read-back could not be completed/);
     const raw = [...x.files.entries()].find(([k]) => k.endsWith(".receipt.json"))![1];
@@ -357,7 +363,68 @@ describe("exclusive intent claim (G1, Codex P2 #3, BB4) and uncertain outcomes (
   });
 });
 
-describe("approval expiry is rechecked before the first hosted write (Codex P2)", () => {
+describe("each row is checked right after its own sync, and the run stops at the first bad one", () => {
+  const stopped = async (x: any) => {
+    const e = await runHosted(x.d).then(() => null, (err: Error) => err);
+    const receipt = JSON.parse([...x.files.entries()].find(([k]: [string, string]) => k.endsWith(".receipt.json"))![1]);
+    return { e, receipt, rpcs: x.calls.filter((c: string) => c.startsWith("rpc:")) };
+  };
+  it("a sync that stores a row with fields missing stops the run at that row: the next mode is never sent", async () => {
+    const x = deps();
+    x.d.client = () => ({
+      async fingerprint() { return { rpcExists: true }; },
+      async readContract(row: any) { return x.stored.get(row.p_mode_key) ?? null; },
+      async rpc(_n: string, row: any) {
+        x.calls.push(`rpc:${row.p_mode_key}`);
+        const p: any = projectPlanRow(row);
+        x.stored.set(row.p_mode_key, row.p_mode_key === "blend" ? { ...p, fields: p.fields.map((f: any) => ({ ...f, value_kind: undefined, choices: undefined })) } : p);
+        return row.p_fields.length;
+      },
+    });
+    const { e, receipt, rpcs } = await stopped(x);
+    expect(e!.message).toMatch(/read-back of .*blend.* right after its sync/);
+    expect(rpcs).toEqual(["rpc:flash", "rpc:blend"]);
+    expect(receipt.not_attempted).toEqual(["fixture:p@3:electrolysis"]);
+    expect(receipt.status).toBe("partial_or_failed_token_burned");
+  });
+  it("a sync that returns the wrong field count for a new mode stops the run", async () => {
+    const x = deps();
+    x.d.client = () => ({
+      async fingerprint() { return { rpcExists: true }; },
+      async readContract(row: any) { return x.stored.get(row.p_mode_key) ?? null; },
+      async rpc(_n: string, row: any) { x.calls.push(`rpc:${row.p_mode_key}`); x.stored.set(row.p_mode_key, projectPlanRow(row)); return row.p_mode_key === "flash" ? 0 : row.p_fields.length; },
+    });
+    const { e, receipt, rpcs } = await stopped(x);
+    expect(e!.message).toMatch(/the sync returned 0 for .*flash.*, expected 1/);
+    expect(rpcs).toEqual(["rpc:flash"]);
+    expect(receipt.not_attempted).toEqual(["fixture:p@3:blend", "fixture:p@3:electrolysis"]);
+  });
+  it("a sync that reports inserted fields for an identical existing mode stops the run", async () => {
+    const x = deps({}, { expected_existing_rows: 1 });
+    x.stored.set("flash", projectPlanRow(ROW("flash")));
+    x.d.client = () => ({
+      async fingerprint() { return { rpcExists: true }; },
+      async readContract(row: any) { return x.stored.get(row.p_mode_key) ?? null; },
+      async rpc(_n: string, row: any) { x.calls.push(`rpc:${row.p_mode_key}`); x.stored.set(row.p_mode_key, projectPlanRow(row)); return 1; },
+    });
+    const { e, rpcs } = await stopped(x);
+    expect(e!.message).toMatch(/the sync returned 1 for .*flash.*, expected 0/);
+    expect(rpcs).toEqual(["rpc:flash"]);
+  });
+  it("a non-numeric or missing result also stops the run", async () => {
+    const x = deps();
+    x.d.client = () => ({
+      async fingerprint() { return { rpcExists: true }; },
+      async readContract(row: any) { return x.stored.get(row.p_mode_key) ?? null; },
+      async rpc(_n: string, row: any) { x.calls.push(`rpc:${row.p_mode_key}`); x.stored.set(row.p_mode_key, projectPlanRow(row)); return "1"; },
+    });
+    const { e, rpcs } = await stopped(x);
+    expect(e!.message).toMatch(/the sync returned 1 for/);
+    expect(rpcs).toHaveLength(1);
+  });
+});
+
+describe("approval expiry is rechecked before the first hosted write", () => {
   const EXP = Date.parse("2026-11-10T20:00:00Z");
   it("an approval that runs out during the prompt/reads is refused with no intent and no write", async () => {
     const x = deps();
@@ -390,7 +457,7 @@ describe("approval expiry is rechecked before the first hosted write (Codex P2)"
   });
 });
 
-describe("receipt durability (C7)", () => {
+describe("receipt durability", () => {
   it("a receipt-write failure after publishing prints the body and exits non-zero", async () => {
     const x = deps();
     let n = 0;
@@ -402,7 +469,7 @@ describe("receipt durability (C7)", () => {
   });
 });
 
-describe("the key never leaves the process (F1)", () => {
+describe("the key never leaves the process", () => {
   it("is removed from the environment object once read", async () => {
     const x = deps();
     await runHosted(x.d);
@@ -413,6 +480,36 @@ describe("the key never leaves the process (F1)", () => {
     const out = redact(text, KEY);
     expect(out).not.toContain(KEY);
     expect(out).not.toMatch(/abc\.def|zzz|eyJhbGci/);
+  });
+  it("redact also removes the hosted URL, its host and the 20-character project ref", () => {
+    const url = `https://${REF}.supabase.co`;
+    const text = `fetch failed for ${url}/rest/v1/x (host ${REF}.supabase.co, project ${REF}) with ${KEY}`;
+    const out = redact(text, KEY, { url, ref: REF });
+    expect(out).not.toContain(REF);
+    expect(out).not.toContain("supabase.co");
+    expect(out).not.toContain(KEY);
+    expect(out).toContain("[redacted-url]");
+  });
+  it("a client error that carries the bare project ref and the URL reaches no message, output line or receipt with either", async () => {
+    const x = deps();
+    x.d.client = () => ({
+      async fingerprint() { return { rpcExists: true }; },
+      async readContract() { return null; },
+      async rpc() { throw new Error(`upstream said project ${REF} at https://${REF}.supabase.co/rest/v1/rpc failed`); },
+    });
+    const e = await runHosted(x.d).then(() => null, (err: Error) => err);
+    expect(e, "the run stops on the client error").toBeInstanceOf(Error);
+    const receiptRaw = [...x.files.entries()].filter(([k]) => k.endsWith(".receipt.json")).map(([, v]) => v).join("\n");
+    const everything = [e!.message, ...x.calls.filter((c) => c.startsWith("stdout:")), receiptRaw].join("\n");
+    expect(everything).not.toContain(REF);
+    expect(everything).not.toContain("supabase.co");
+    expect(receiptRaw, "the failure is recorded, redacted").toContain("[redacted-");
+  });
+  it("redact removes a hosted-looking URL or host even when the target was not passed in", () => {
+    const other = "zyxwvutsrqponmlkjihg";
+    const out = redact(`error at https://${other}.supabase.co/rest/v1/y and ${other}.supabase.co`, KEY);
+    expect(out).not.toContain(other);
+    expect(out).not.toContain("supabase.co");
   });
   it("the real client refuses a redirect and never calls anything but select reads and the one RPC", async () => {
     const seen: string[] = [];
@@ -428,7 +525,7 @@ describe("the key never leaves the process (F1)", () => {
 describe("source guards", () => {
   const lib = readFileSync(join(root, "scripts/lib/hosted-publish.mjs"), "utf8");
   const cli = readFileSync(join(root, "scripts/publish-machine-contracts-hosted.mjs"), "utf8");
-  it("the CLI never passes the URL-check seam, and the lib never reads the migrations schema (BB3, BB1)", () => {
+  it("the CLI never passes the URL-check seam, and the lib never reads the migrations schema", () => {
     expect(cli).not.toMatch(/checkUrl/);
     expect(lib).not.toMatch(/Accept-Profile|supabase_migrations|schema_migrations/);
     expect(lib).not.toMatch(/projectKind/);

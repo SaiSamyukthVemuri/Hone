@@ -193,7 +193,7 @@ export function PortalMessagesCard({
               </span>
             )}
           </h2>
-          <p className="mt-1 text-xs text-neutral-500">
+          <p className="mt-1 min-w-0 [overflow-wrap:anywhere] text-xs text-neutral-500">
             One-way secure notes to {clientName}. Shown in their portal;
             the email notification does not include the message text.
             Clients can reply inline; you can respond by sending a new

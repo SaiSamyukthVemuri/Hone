@@ -54,9 +54,10 @@ export type LastVisitResult = { ok: true; value: Map<string, string> } | { ok: f
 async function newestPerClient(
   page: (from: number, to: number) => PromiseLike<{ data: Row[] | null; error: unknown }>,
   timeColumn: string,
+  maxBlocks: number = MAX_BLOCKS,
 ): Promise<Map<string, string> | null> {
   const out = new Map<string, string>();
-  for (let block = 0; block < MAX_BLOCKS; block += 1) {
+  for (let block = 0; block < maxBlocks; block += 1) {
     const { data, error } = await page(block * BLOCK, block * BLOCK + BLOCK - 1);
     if (error) return null;
     const rows = data ?? [];
@@ -76,9 +77,10 @@ type Window = { from: string | null; before: string | null };
 async function newestInWindow(
   supabase: LastVisitSupabase,
   studioId: string,
-  ids: readonly string[],
+  ids: readonly string[] | null,
   nowIso: string,
   w: Window,
+  maxBlocks: number = MAX_BLOCKS,
 ): Promise<Map<string, string> | null> {
   const [sessions, appointments] = await Promise.all([
     newestPerClient(
@@ -87,15 +89,16 @@ async function newestInWindow(
           .from("sessions")
           .select("client_id, started_at")
           .eq("studio_id", studioId)
-          .in("client_id", [...ids])
           .is("deleted_at", null)
           .neq("record_status", "void")
           .lte("started_at", nowIso);
+        if (ids) q = q.in("client_id", [...ids]);
         if (w.from) q = q.gte("started_at", w.from);
         if (w.before) q = q.lt("started_at", w.before);
         return q.order("started_at", { ascending: false }).order("id", { ascending: true }).range(from, to);
       },
       "started_at",
+      maxBlocks,
     ),
     newestPerClient(
       (from, to) => {
@@ -103,14 +106,15 @@ async function newestInWindow(
           .from("appointments")
           .select("client_id, starts_at")
           .eq("studio_id", studioId)
-          .in("client_id", [...ids])
           .eq("status", "completed")
           .lte("starts_at", nowIso);
+        if (ids) q = q.in("client_id", [...ids]);
         if (w.from) q = q.gte("starts_at", w.from);
         if (w.before) q = q.lt("starts_at", w.before);
         return q.order("starts_at", { ascending: false }).order("id", { ascending: true }).range(from, to);
       },
       "starts_at",
+      maxBlocks,
     ),
   ]);
   // Either source failing makes the whole answer unavailable: the later of the
@@ -145,6 +149,24 @@ export async function readLastVisits(
   if (older === null) return { ok: false };
   for (const [id, at] of older) recent.set(id, at);
   return { ok: true, value: recent };
+}
+
+// WHOLE-STUDIO READ, for the last-visit SORT and FILTER only (they decide the set or its order, so they
+// need every client, not one page). Same definition, same two sources, no client-id list (a studio-sized
+// `in (...)` is not safe in a URL). It reads only a client id and a timestamp. The bound is explicit and
+// larger than the page read's: WHOLE_MAX_BLOCKS blocks of BLOCK rows per source, so 30,000 rows each. A studio
+// past it gets `{ ok: false }` (the sort and filter say "unavailable"), never a partial answer that would
+// call someone unseen because their newest visit was beyond the cap. No migration: if a studio ever
+// outgrows this, the replacement is a database aggregate behind this same signature.
+export const WHOLE_MAX_BLOCKS = 30;
+
+export async function readAllLastVisits(
+  supabase: LastVisitSupabase,
+  studioId: string,
+  nowIso: string,
+): Promise<LastVisitResult> {
+  const all = await newestInWindow(supabase, studioId, null, nowIso, { from: null, before: null }, WHOLE_MAX_BLOCKS);
+  return all === null ? { ok: false } : { ok: true, value: all };
 }
 
 /**

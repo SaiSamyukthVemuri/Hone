@@ -1,6 +1,6 @@
 // The phone rules for the "None of these times work" response, as PURE functions: no I/O, no storage, no consent, no wording.
-// Nothing calls them yet; the form and the action are wired to them in a later change, after the storage that holds a number is
-// applied and read back. They carry no opt-in wording and no retention rule.
+// Only the answers action's validation calls them today, and it stores nothing; a form is wired to them after the storage that holds a
+// number is applied and read back. They carry no opt-in wording and no retention rule.
 //
 // ONE RULE, NOT A NEW COUNTRY RULE. A "valid number" is the sender's own rule (normalizePhoneForSms, through validateWaitlistPhone),
 // so every number accepted here is one a text or call could reach. On top of that sits the SHAPE the stored column will hold:
