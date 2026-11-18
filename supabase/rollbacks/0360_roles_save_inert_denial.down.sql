@@ -1,4 +1,4 @@
--- Down for 0355: restore the 0287 body of perm_run_changes (hosted md5 7d8924fbb394838f60d9e6cf89235e82). Rollback only; never run against a hosted database without approval. No data is touched.
+-- Down for 0360: restore the 0287 body of perm_run_changes (hosted md5 7d8924fbb394838f60d9e6cf89235e82). Rollback only; never run against a hosted database without approval. No data is touched.
 begin;
 set local lock_timeout = '5s';
 

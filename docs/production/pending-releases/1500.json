@@ -1,1 +1,1 @@
-{"pr":1500,"runtime":true,"migrations":["supabase/migrations/0355_roles_save_inert_denial.sql"],"release_receipt":"01-ops/1500-release-receipt.json"}
+{"pr":1500,"runtime":true,"migrations":["supabase/migrations/0360_roles_save_inert_denial.sql"],"release_receipt":"01-ops/1500-release-receipt.json"}

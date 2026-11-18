@@ -1,4 +1,4 @@
--- 0356: ONE review table, built by the database, for the exact policy version a save will check.
+-- 0361: ONE review table, built by the database, for the exact policy version a save will check.
 --
 -- THE PROBLEM. The Roles page decided in the browser what each key's "before" was and what a save would do, while the database decided it again at
 -- save time, differently. The preview returned only the effective diff, so with nothing released it could not say what was stored, what the owner
@@ -6,7 +6,7 @@
 -- to the PREVIEW's version would silently replace that other change.
 --
 -- WHAT THIS ADDS (functions only; no table, column, policy, index or data is touched):
---   perm_run_changes_reviewed(8 args)  INTERNAL. The 0355 body of perm_run_changes plus one parameter (p_review_hash) and these declared lines only:
+--   perm_run_changes_reviewed(8 args)  INTERNAL. The 0360 body of perm_run_changes plus one parameter (p_review_hash) and these declared lines only:
 --       (1) declarations v_applies, v_rows, v_review, v_hash;
 --       (2) v_applies is computed once and a row is recorded for every requested key (role, key, stored_before, shown_before, requested, written, snapshot);
 --       (3) after the effective maps exist, the review table and its hash are built;
@@ -14,7 +14,7 @@
 --       (5) the result gains `review`, `review_version`, `review_hash`; every existing result key keeps its name and type;
 --       (6) a reviewed commit records {version, hash} under `_review` inside the audit row's `after`; with no hash nothing is added.
 --   perm_run_changes(7 args)  unchanged head and ACL; it delegates with a null hash and strips the three new keys, so its callers (the old preview and
---       save commands) see exactly what 0355 returned.
+--       save commands) see exactly what 0360 returned.
 --   preview_role_changes_at(uuid, jsonb, bigint)  the preview WITH the page's expected version (the version check runs when commit is false) and the table.
 --   save_role_permissions_reviewed(uuid, bigint, jsonb, text, boolean, text)  the save that requires a version AND the review hash.
 --   perm_review_involved, perm_review_timing, perm_review_hash_input, perm_review_hash  INTERNAL helpers.
@@ -29,7 +29,7 @@
 --
 -- NOT CHANGED. perm_base_scope, perm_effective_scope and so effective access; reset, adopt and activation (they keep their own version and hash checks).
 -- Grants: every new function is revoked from public, anon, authenticated and service_role by name; only the two commands are granted, to authenticated.
--- Rollback: supabase/rollbacks/0356_*.down.sql restores the 0355 body (md5 4e65b638a84cfba3d24c1fc44b34daa0) and drops each new function by exact signature.
+-- Rollback: supabase/rollbacks/0361_*.down.sql restores the 0360 body (md5 e1f64999b3fda06d586261447acbaca0) and drops each new function by exact signature.
 
 begin;
 set local lock_timeout = '5s';
@@ -157,7 +157,7 @@ as $$
   select encode(sha256(convert_to(public.perm_review_hash_input(p_studio, p_version, p_review, p_sens, p_widen, p_changes)::text, 'UTF8')), 'hex')
 $$;
 
--- INTERNAL. The 0355 body of perm_run_changes with one more parameter; the declared differences are listed in the header.
+-- INTERNAL. The 0360 body of perm_run_changes with one more parameter; the declared differences are listed in the header.
 create or replace function public.perm_run_changes_reviewed(
   p_studio uuid, p_changes jsonb, p_reason text, p_confirmed boolean,
   p_expected_version bigint, p_require_version boolean, p_commit boolean, p_review_hash text
@@ -201,7 +201,7 @@ declare
   v_stored_prev text;
   v_widen boolean := false;
   v_result jsonb;
-  -- 0356
+  -- 0361
   v_applies boolean;
   v_rows jsonb := '[]'::jsonb;
   v_review jsonb := '[]'::jsonb;
@@ -214,7 +214,7 @@ begin
 
   begin
     insert into public.studio_permission_policy (studio_id, basis, version) values (p_studio, 'existing_snapshot', 0) on conflict do nothing;
-    -- 0355: the basis is read under the same row lock as the version, so a concurrent adopt or reset cannot change it between the read and the compare.
+    -- 0360: the basis is read under the same row lock as the version, so a concurrent adopt or reset cannot change it between the read and the compare.
     select spp.version, spp.basis into v_version, v_basis from public.studio_permission_policy spp where spp.studio_id = p_studio for update;
     v_basis := coalesce(v_basis, 'existing_snapshot');
     if p_expected_version is null and p_require_version then
@@ -266,13 +266,13 @@ begin
         -- The owner's STORED intent is compared as well as the effective value: a stored choice that is inactive (set before its key's
         -- release, no activation) resolves to the snapshot, so saving the snapshot value must still REPLACE it (Discard must work).
         select s.scope into v_stored_prev from public.studio_role_permissions s where s.studio_id = p_studio and s.role = v_role and s.key = v_key;
-        -- 0355: the value the owner SEES for a row with no stored choice is the studio's own basis (the new-studio default on a new studio,
+        -- 0360: the value the owner SEES for a row with no stored choice is the studio's own basis (the new-studio default on a new studio,
         -- the snapshot on an existing one), which is not the value perm_base_scope returns while the key is unreleased. A request that matches
         -- the unreleased base but differs from what the owner sees is a real choice (an inert Off on a new-studio default) and must be stored.
         v_default := case when v_basis = 'new_studio' then case v_role when 'practitioner' then c.new_practitioner else c.new_receptionist end else v_snap end;
         v_shown := coalesce(v_stored_prev, v_default);
         v_applies := v_scope <> v_base or (v_stored_prev is not null and v_stored_prev <> v_scope) or v_scope <> v_shown;
-        -- 0356: every requested key is recorded with what was stored, what the owner was shown, and whether this call writes it.
+        -- 0361: every requested key is recorded with what was stored, what the owner was shown, and whether this call writes it.
         v_rows := v_rows || jsonb_build_array(jsonb_build_object('role', v_role, 'key', v_key, 'stored_before', v_stored_prev, 'shown_before', v_shown,
                                                                   'requested', v_scope, 'written', v_applies, 'snapshot', v_snap));
         if v_applies then
@@ -316,7 +316,7 @@ begin
     end loop;
     v_widen := jsonb_array_length(v_sens) > 0;
 
-    -- 0356: the review table, built from the same values the decision above used, then its hash. Nothing here is free text.
+    -- 0361: the review table, built from the same values the decision above used, then its hash. Nothing here is free text.
     select coalesce(jsonb_agg(jsonb_build_object(
              'role', r.value ->> 'role',
              'key', r.value ->> 'key',
@@ -374,7 +374,7 @@ begin
           jsonb_build_object('stored', v_item ->> 'scope', 'effective', v_after_eff -> v_role ->> (v_item ->> 'key')));
       end loop;
       if v_audit_after <> '{}'::jsonb then
-        -- 0356: a reviewed save records which review it was (version and hash), inside `after`. Nothing else is added.
+        -- 0361: a reviewed save records which review it was (version and hash), inside `after`. Nothing else is added.
         if p_review_hash is not null then
           v_audit_after := v_audit_after || jsonb_build_object('_review', jsonb_build_object('version', v_version, 'hash', v_hash));
         end if;
@@ -393,7 +393,7 @@ begin
 end;
 $$;
 
--- The 7-argument command keeps its exact head and ACL. It delegates with no review hash and hands back exactly what 0355 returned.
+-- The 7-argument command keeps its exact head and ACL. It delegates with no review hash and hands back exactly what 0360 returned.
 create or replace function public.perm_run_changes(
   p_studio uuid, p_changes jsonb, p_reason text, p_confirmed boolean,
   p_expected_version bigint, p_require_version boolean, p_commit boolean
