@@ -1145,6 +1145,62 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       "Raw Stripe webhook receipts kept for idempotency. The authoritative copy lives at Stripe and is retrievable from the Stripe dashboard.",
   },
 
+  // roles and permissions (0287)
+  permission_catalog: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "Introduced by migration 0287. The list of permission keys and their defaults. It is platform-wide reference data with no studio column, so it is not a studio's own record.",
+  },
+  permission_key_release: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "Introduced by migration 0287. Which permission keys the platform has released. Platform-wide release state with no studio column, so it is not a studio's own record.",
+  },
+  permission_narrowings: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "Introduced by migration 0287. The decision list the permission defaults were taken from. Platform-wide reference data with no studio column, so it is not a studio's own record.",
+  },
+  permission_audit: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "Introduced by migration 0287. NOT included in this CSV export yet. This export makes NO FINDING about how a studio would use it. It is pending a field review of the free-form before and after payloads and the reasons it records for each change.",
+  },
+  permission_key_activation: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "Introduced by migration 0287. NOT included in this CSV export yet. This export makes NO FINDING about how a studio would use it. It is pending a decision on whether a studio's own activation history belongs in its export.",
+  },
+  permission_ship_gates: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "Introduced by migration 0287. NOT included in this CSV export yet. This export makes NO FINDING about how a studio would use it. It is pending a decision on whether a studio's own gate records belong in its export.",
+  },
+  studio_permission_policy: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "Introduced by migration 0287. NOT included in this CSV export yet. This export makes NO FINDING about how a studio would use it. It is pending a decision on whether a studio's own permission policy belongs in its export.",
+  },
+  studio_role_permissions: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "Introduced by migration 0287. NOT included in this CSV export yet. This export makes NO FINDING about how a studio would use it. It is pending a decision on whether a studio's own role choices belong in its export.",
+  },
+
   // dead
   payment_consents: {
     kind: "pending",
