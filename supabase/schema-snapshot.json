@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 276,
-    "last": "0358_payment_charge_refund_history.sql",
-    "sha256": "ba95f8a9a35918a3015ad8d5641298404cecbc8ee4fed5bd46bde71133e189b3"
+    "count": 277,
+    "last": "0359_reconcile_accepts_authenticated_refund_list.sql",
+    "sha256": "7d98f0d215b027ab938a4af5389459f8941dd37a1d2a764dc982991d96d8bb47"
   },
   "public": {
     "tables": [
