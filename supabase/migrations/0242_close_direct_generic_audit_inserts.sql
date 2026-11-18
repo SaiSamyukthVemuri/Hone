@@ -12,6 +12,7 @@ drop policy if exists "audit_logs: members insert" on public.audit_logs;
 
 -- ACL denial is independent of any other permissive RLS policy. PUBLIC must
 -- be included, and column-level INSERT grants must not provide a back door.
+revoke insert on table public.audit_logs from public, anon, authenticated;
 do $$
 declare
   v_column text;
