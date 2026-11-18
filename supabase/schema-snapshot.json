@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 275,
-    "last": "0354_quoted_amount_explicit_zero_custom_price.sql",
-    "sha256": "e6bdc246ded3f6086d608422f2ffe985e858cc01324eb24cdeeeb1afa1b335b8"
+    "count": 276,
+    "last": "0358_payment_charge_refund_history.sql",
+    "sha256": "ba95f8a9a35918a3015ad8d5641298404cecbc8ee4fed5bd46bde71133e189b3"
   },
   "public": {
     "tables": [
@@ -69,6 +69,7 @@
       "new_client_waitlist_preference_grants",
       "ops_alerts",
       "payment_charge_attempts",
+      "payment_charge_refunds",
       "payment_consents",
       "payment_recovery_tokens",
       "pending_booking_payment_sessions",
@@ -401,6 +402,7 @@
       "payment_charge_attempts_jurisdiction_guard",
       "payment_charge_attempts_money_immutable",
       "payment_charge_attempts_touch_updated_at",
+      "payment_charge_refunds_guard",
       "platform_lead_alerts_guard",
       "practitioner_cancel_appointment",
       "practitioner_capacity_retirement_blockers",
@@ -442,6 +444,7 @@
       "record_appointment_settlement",
       "record_block_machine_identity",
       "record_calendar_sync_result",
+      "record_charge_refund_history",
       "record_client_archive_audit_governed",
       "record_clinical_records_audit",
       "record_email_attempt",
