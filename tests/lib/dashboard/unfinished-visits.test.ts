@@ -166,3 +166,33 @@ describe("the dashboard line", () => {
     expect(unfinishedTotalLabel(12)).toBe("12 visits not finished");
   });
 });
+
+describe("each filter is load-bearing (rows that only ONE filter excludes)", () => {
+  // The appointment and its chart disagree about the studio, or the client is archived. Either filter alone would hide these,
+  // so each is exercised by a row only that filter excludes.
+  const mismatchedAppt = () => mk(2001, { studio_id: "S2", sessions: [{ id: "s2001", studio_id: "S1", deleted_at: null }] });
+  const mismatchedChart = () => mk(2002, { studio_id: "S1", sessions: [{ id: "s2002", studio_id: "S2", deleted_at: null }] });
+  const archived = () => mk(2003, { client: { id: "c2003", name: "Gone", archived_at: "2026-01-01T00:00:00Z" } });
+
+  it("the appointment's own studio_id is required: a S2 appointment with an S1 chart is neither counted nor listed", async () => {
+    h.table = [mk(1), mismatchedAppt()];
+    expect(await countUnfinishedVisits("S1", NOW)).toBe(1);
+    const pg = await loadUnfinishedPage("S1", NOW, 1);
+    expect(pg.total).toBe(1);
+    expect(pg.rows.map((r) => r.appointmentId)).toEqual(["a0001"]);
+  });
+
+  it("the chart's studio_id is required: an S1 appointment with an S2 chart is neither counted nor listed", async () => {
+    h.table = [mk(1), mismatchedChart()];
+    expect(await countUnfinishedVisits("S1", NOW)).toBe(1);
+    expect((await loadUnfinishedPage("S1", NOW, 1)).rows.map((r) => r.appointmentId)).toEqual(["a0001"]);
+  });
+
+  it("archived clients are excluded from the LIST as well as the count", async () => {
+    h.table = [mk(1), archived()];
+    const pg = await loadUnfinishedPage("S1", NOW, 1);
+    expect(pg.total).toBe(1);
+    expect(pg.rows.map((r) => r.appointmentId)).toEqual(["a0001"]);
+    expect(await countUnfinishedVisits("S1", NOW)).toBe(1);
+  });
+});
