@@ -62,7 +62,8 @@ describe("CI-DRAFT-01 triggers", () => {
 // every other byte of those conditions is still proved unchanged against the base.
 const EXTENDED_TERM = "needs.changes.outputs.browser_extended == 'true'";
 const LATER_EDITS: Record<string, (inner: string) => string> = {
-  "storage-photos": (s) => s.replace(EXTENDED_TERM, `(needs.changes.outputs.browser_run == 'true' && ${EXTENDED_TERM})`),
+  // storage-photos also runs on any database change (CI's db lane has no storage-api).
+  "storage-photos": (s) => s.replace(EXTENDED_TERM, `(needs.changes.outputs.browser_run == 'true' && ${EXTENDED_TERM}) || needs.changes.outputs.database == 'true'`),
   "webkit-hon-62": (s) => s.replace(EXTENDED_TERM, `(needs.changes.outputs.browser_run == 'true' && ${EXTENDED_TERM})`),
 };
 

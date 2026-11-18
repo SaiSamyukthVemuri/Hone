@@ -292,8 +292,9 @@ describe("the step that emits the matrix actually RUNS", () => {
   // CI-COST-01. The empty-selection rule above emits browser_extended=true for
   // EVERY diff that selects no group, including docs-only and no-browser diffs
   // whose shards are skipped. The non-required storage-photos and webkit lanes
-  // read browser_extended directly, so they ran on exactly those diffs (331 jobs,
-  // 2,508 runner-minutes in 3-17 Nov). Their extended term now needs browser_run.
+  // read browser_extended directly, so they ran on exactly those diffs. Their
+  // extended term now needs browser_run. storage-photos ALSO runs on any database
+  // change, because CI's db lane starts Supabase without storage-api.
   // This drives the REAL step output through the REAL job conditions.
   it("the non-required lanes do not run on a no-browser diff, and still run on extended and full-matrix ones", async () => {
     // @ts-expect-error - .mjs utility ships without type declarations
@@ -327,25 +328,36 @@ describe("the step that emits the matrix actually RUNS", () => {
           readFileSync(outFile, "utf8").split("\n").filter(Boolean).map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]),
         );
         const c = classify(files) as Record<string, unknown>;
-        for (const k of ["full_matrix_required", "payment"]) o[k] = String(c[k]);
+        for (const k of ["full_matrix_required", "payment", "database"]) o[k] = String(c[k]);
         return o;
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
     };
     const SHARDS_EXTENDED = "(needs.changes.outputs.browser_run == 'true' && needs.changes.outputs.browser_extended == 'true')";
-    const cases: Array<[string, string[], boolean]> = [
-      ["docs-only", ["docs/README.md"], false],
-      ["migration-only (database lane, no browser)", ["supabase/migrations/0999_x.sql"], false],
-      ["extended via unattributed app code", ["app/(app)/dashboard/page.tsx"], true],
-      ["full matrix", ["vitest.config.ts"], true],
+    const DATABASE = "needs.changes.outputs.database == 'true'";
+    // [name, files, storage-photos runs, webkit runs]
+    const cases: Array<[string, string[], boolean, boolean]> = [
+      ["docs-only", ["docs/README.md"], false, false],
+      ["migration-only (database lane, no browser)", ["supabase/migrations/0999_x.sql"], true, false],
+      ["extended via unattributed app code", ["app/(app)/dashboard/page.tsx"], true, true],
+      ["full matrix", ["vitest.config.ts"], true, true],
     ];
+    expect(ifOf("storage-photos"), "storage-photos keeps the database term").toContain(DATABASE);
+    expect(ifOf("webkit-hon-62"), "webkit has no database term").not.toContain(DATABASE);
     for (const job of ["storage-photos", "webkit-hon-62"]) {
       const cond = ifOf(job);
       expect(cond, `${job} carries the guarded extended term`).toContain(SHARDS_EXTENDED);
-      for (const [name, files, want] of cases) {
+      for (const [name, files, wantStorage, wantWebkit] of cases) {
+        const want = job === "storage-photos" ? wantStorage : wantWebkit;
         const o = outputsFor(files);
         expect(evalIf(cond, o), `${job} on ${name}`).toBe(want);
+        if (job === "storage-photos" && name.startsWith("migration-only")) {
+          // The database term, not the extended term, is what keeps this run.
+          expect(o.database, name).toBe("true");
+          expect(o.browser_run, name).toBe("false");
+          expect(evalIf(cond.replace(` || ${DATABASE}`, ""), o), `${job} without the database term on ${name}`).toBe(false);
+        }
         if (!want) {
           // Non-vacuity: this diff really carries the empty-selection flag, and the
           // unguarded condition really would have started the job.
