@@ -27,3 +27,4 @@ export async function loadCalLayoutConstants(): Promise<CalLayoutConstants> {
   // production today: gridTemplateColumns `60px repeat(n, minmax(9rem, 1fr))`, 9rem = 144px; no compact constant exists.
   return { minColumnPx: 144, singleColumnMaxPx: null, railPx: 60, source: "production literals (9rem minimum, no named constant)" };
 }
+// Temporary CI qualification comment for #1548 (not for merge).
