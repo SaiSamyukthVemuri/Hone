@@ -1,7 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 
+const sql = readFileSync("supabase/migrations/0246_intake_questionnaire_snapshot.sql", "utf8");
+const code = sql.replace(/^\s*--.*$/gm, "");
+
 describe("0246 prospective-only snapshot boundary", () => {
+  // Kept: the sole guard of the trigger function's EXECUTE revoke. Control PR
+  // #1588 removed that revoke and no database test noticed.
+  it("pins exact issue content and guards every update, including NULL adoption and service-role writes", () => {
+    expect(code).toContain("approved constant jsonb := $catalogue$");
+    expect(code).toContain("new.questionnaire_snapshot <> approved");
+    expect(code).toContain("new.questionnaire_snapshot := approved");
+    expect(code).toContain("new.questionnaire_snapshot is distinct from old.questionnaire_snapshot");
+    expect(code).toContain("before insert or update on public.client_intake_forms");
+    expect(code).toContain("from public, anon, authenticated, service_role");
+    expect(code).not.toMatch(/auth\.role|session_user|current_user|disable\s+trigger|write_intake_revision/);
+  });
   it("uses row-catalogue step limits on save, submit and assisted handoff", () => {
     const client = readFileSync("app/intake/[token]/actions.ts", "utf8");
     const assisted = readFileSync("app/(app)/clients/[id]/intake/actions.ts", "utf8");
