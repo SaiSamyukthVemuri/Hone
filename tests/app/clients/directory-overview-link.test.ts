@@ -27,7 +27,7 @@ describe("overview links keep the results page", () => {
   it("the row link carries ?page=2 and the Close link returns to page 2 with no fragment", () => {
     const data = queryDirectory(source, none, { ...parseDirectoryParams({}), page: 2 });
     expect(data.page).toBe(2);
-    const state = { view: "active" as const, q: "", filters: [], sort: "name" as const, page: data.page };
+    const state = { view: "active" as const, q: "", filters: [], sort: "name" as const, lastVisit: "any" as const, page: data.page };
     const first = data.rows[0].id;
     const html = render(state, data, null);
     expect(html).toContain(`href="/clients?page=2&amp;client=${first}"`);
@@ -40,7 +40,7 @@ describe("overview links keep the results page", () => {
 
   it("control: page 1 carries no page parameter", () => {
     const data = queryDirectory(source, none, parseDirectoryParams({}));
-    const state = { view: "active" as const, q: "", filters: [], sort: "name" as const, page: 1 };
+    const state = { view: "active" as const, q: "", filters: [], sort: "name" as const, lastVisit: "any" as const, page: 1 };
     const html = render(state, data, null);
     expect(html).toContain(`href="/clients?client=${data.rows[0].id}"`);
   });
@@ -57,7 +57,7 @@ describe("directory interaction contract (HON-58)", () => {
 
   it("the overview renders INSIDE the selected row's item, so nothing above it moves", () => {
     const data = queryDirectory(source, none, parseDirectoryParams({}));
-    const state = { view: "active" as const, q: "", filters: [], sort: "name" as const, page: 1 };
+    const state = { view: "active" as const, q: "", filters: [], sort: "name" as const, lastVisit: "any" as const, page: 1 };
     const id = data.rows[2].id;
     const html = renderToStaticMarkup(
       createElement(DirectoryResults, {
@@ -74,7 +74,7 @@ describe("directory interaction contract (HON-58)", () => {
 
   it("no directory link carries a #fragment, and row links do not scroll", () => {
     const data = queryDirectory(source, none, parseDirectoryParams({}));
-    const state = { view: "active" as const, q: "", filters: [], sort: "name" as const, page: 1 };
+    const state = { view: "active" as const, q: "", filters: [], sort: "name" as const, lastVisit: "any" as const, page: 1 };
     const html = render(state, data, data.rows[0].id);
     expect(html).not.toMatch(/href="[^"]*#/);
     expect(read("ClientsDirectory.tsx")).not.toMatch(/#client-/);
@@ -111,9 +111,9 @@ describe("directory interaction contract (HON-58)", () => {
 });
 
 describe("empty states and the archived view (Insurance K5, K6)", () => {
-  it("an empty last visit says it is Hone's record, and a studio date renders on the server", async () => {
+  it("an empty last visit says only that nothing is recorded, and a studio date renders on the server", async () => {
     const { LastVisitText, lastVisitCell } = await import("@/app/(app)/clients/ClientsDirectory");
-    expect(renderToStaticMarkup(createElement(LastVisitText, { cell: { kind: "none" } }))).toContain("No visit recorded in Hone");
+    expect(renderToStaticMarkup(createElement(LastVisitText, { cell: { kind: "none" } }))).toContain("No recorded visit");
     const cell = lastVisitCell(new Map([["c1", "2030-03-02T03:30:00Z"]]), "c1", "America/Los_Angeles");
     expect(renderToStaticMarkup(createElement(LastVisitText, { cell }))).toContain(">Mar 1, 2030</time>");
   });
@@ -126,7 +126,7 @@ describe("empty states and the archived view (Insurance K5, K6)", () => {
   it("the next appointment is the studio's clock too, server-rendered (M4)", () => {
     const row = { ...projectStaffRow({ id: "c9", name: "N", preferred_name: null, pronouns: null, email: null, phone: null, archived_at: null }) };
     const base = { ...row, intake: "not_submitted" as const };
-    const state = { view: "active" as const, q: "", filters: [], sort: "name" as const, page: 1 };
+    const state = { view: "active" as const, q: "", filters: [], sort: "name" as const, lastVisit: "any" as const, page: 1 };
     // Newer ICU puts a narrow no-break space before AM/PM; compare with a plain space.
     const html = (tz: string) =>
       renderToStaticMarkup(
