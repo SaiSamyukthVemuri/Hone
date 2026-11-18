@@ -288,6 +288,74 @@ describe("the step that emits the matrix actually RUNS", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  // CI-COST-01. The empty-selection rule above emits browser_extended=true for
+  // EVERY diff that selects no group, including docs-only and no-browser diffs
+  // whose shards are skipped. The non-required storage-photos and webkit lanes
+  // read browser_extended directly, so they ran on exactly those diffs (331 jobs,
+  // 2,508 runner-minutes in 3-17 Nov). Their extended term now needs browser_run.
+  // This drives the REAL step output through the REAL job conditions.
+  it("the non-required lanes do not run on a no-browser diff, and still run on extended and full-matrix ones", async () => {
+    // @ts-expect-error - .mjs utility ships without type declarations
+    const { classify } = await import("../../scripts/classify-changes.mjs");
+    const script = stepScript("Select browser groups");
+    const ifOf = (job: string) => {
+      const block = CI_YML.slice(CI_YML.indexOf(`\n  ${job}:\n`));
+      return block.match(/\n {4}if: (.*)\n/)![1];
+    };
+    // Evaluates exactly the expression shapes these two conditions use; anything
+    // else is left unrewritten and refused, so the evaluator cannot silently pass.
+    const evalIf = (expr: string, o: Record<string, string>) => {
+      const js = expr
+        .replace(/^\$\{\{\s*|\s*\}\}$/g, "")
+        .replace(/github\.event\.pull_request\.draft != true/g, "true")
+        .replace(/needs\.changes\.outputs\.(\w+) == '(\w+)'/g, (_, k, v) => String(o[k] === v))
+        .replace(/contains\(needs\.changes\.outputs\.(\w+), '([^']+)'\)/g, (_, k, v) => String((o[k] ?? "").includes(v)));
+      expect(js, "only booleans and operators remain").toMatch(/^[\s()|&!truefals]*$/);
+      return Function(`return (${js})`)() as boolean;
+    };
+    const outputsFor = (files: string[]) => {
+      const dir = mkdtempSync(path.join(tmpdir(), "hone-ci-step-"));
+      const outFile = path.join(dir, "github_output");
+      try {
+        writeFileSync(outFile, "");
+        symlinkSync(path.join(ROOT, "scripts"), path.join(dir, "scripts"));
+        symlinkSync(path.join(ROOT, "node_modules"), path.join(dir, "node_modules"));
+        writeFileSync(path.join(dir, "changed.txt"), files.join("\n") + "\n");
+        execFileSync("bash", ["-c", script], { cwd: dir, env: { ...localOnlyEnv(), GITHUB_OUTPUT: outFile }, encoding: "utf8" });
+        const o: Record<string, string> = Object.fromEntries(
+          readFileSync(outFile, "utf8").split("\n").filter(Boolean).map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]),
+        );
+        const c = classify(files) as Record<string, unknown>;
+        for (const k of ["full_matrix_required", "payment"]) o[k] = String(c[k]);
+        return o;
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    };
+    const SHARDS_EXTENDED = "(needs.changes.outputs.browser_run == 'true' && needs.changes.outputs.browser_extended == 'true')";
+    const cases: Array<[string, string[], boolean]> = [
+      ["docs-only", ["docs/README.md"], false],
+      ["migration-only (database lane, no browser)", ["supabase/migrations/0999_x.sql"], false],
+      ["extended via unattributed app code", ["app/(app)/dashboard/page.tsx"], true],
+      ["full matrix", ["vitest.config.ts"], true],
+    ];
+    for (const job of ["storage-photos", "webkit-hon-62"]) {
+      const cond = ifOf(job);
+      expect(cond, `${job} carries the guarded extended term`).toContain(SHARDS_EXTENDED);
+      for (const [name, files, want] of cases) {
+        const o = outputsFor(files);
+        expect(evalIf(cond, o), `${job} on ${name}`).toBe(want);
+        if (!want) {
+          // Non-vacuity: this diff really carries the empty-selection flag, and the
+          // unguarded condition really would have started the job.
+          expect(o.browser_run, name).toBe("false");
+          expect(o.browser_extended, name).toBe("true");
+          expect(evalIf(cond.replace(SHARDS_EXTENDED, "needs.changes.outputs.browser_extended == 'true'"), o), `${job} unguarded on ${name}`).toBe(true);
+        }
+      }
+    }
+  });
 });
 
 describe("the split covers the same specs, once and only once", () => {

@@ -2269,10 +2269,17 @@ jobs:
   # bypassCSP in the test browser because the local stack serves storage over
   # http; the app CSP is not touched. Not required: no job needs it, the
   # aggregator does not read it and branch protection does not name it.
+  #
+  # The extended term is ANDed with browser_run. `changes` emits
+  # browser_extended=true for an EMPTY selection too (its "no groups means the
+  # whole suite" rule, correct only for a run that reaches the shards), so a
+  # docs-only or no-browser diff - shards skipped - still started this job and
+  # webkit-hon-62. Measured 3-17 Nov: 331 such jobs, 2,508 runner-minutes.
+  # full_matrix_required and the spec terms are unchanged.
   storage-photos:
     name: storage photos (not required)
     needs: changes
-    if: ${{ github.event.pull_request.draft != true && ( needs.changes.outputs.full_matrix_required == 'true' || needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/treatment-image-upload-formats.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-client-portrait.spec.ts') ) }}
+    if: ${{ github.event.pull_request.draft != true && ( needs.changes.outputs.full_matrix_required == 'true' || (needs.changes.outputs.browser_run == 'true' && needs.changes.outputs.browser_extended == 'true') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/treatment-image-upload-formats.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-client-portrait.spec.ts') ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
@@ -2512,7 +2519,9 @@ jobs:
   # projects, sharding, budget and aggregator are untouched.
   #
   # Runs when the HON-62 spec is selected, and on every extended or full-matrix
-  # run. The project exists only under HONE_E2E_WEBKIT=1 (playwright.config.ts),
+  # run - extended meaning the browser shards actually run (browser_run), not
+  # the empty-selection flag a no-browser diff also carries (see storage-photos).
+  # The project exists only under HONE_E2E_WEBKIT=1 (playwright.config.ts),
   # so no other lane can pick it up.
   #
   # Its browser is NOT cached: actions/cache keys Chromium's cache on runner OS +
@@ -2527,7 +2536,7 @@ jobs:
   webkit-hon-62:
     name: webkit time inputs (HON-62, not required)
     needs: changes
-    if: ${{ github.event.pull_request.draft != true && ( needs.changes.outputs.full_matrix_required == 'true' || needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/finish-appointment-mobile.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-touch-floor.spec.ts') || needs.changes.outputs.payment == 'true' ) }}
+    if: ${{ github.event.pull_request.draft != true && ( needs.changes.outputs.full_matrix_required == 'true' || (needs.changes.outputs.browser_run == 'true' && needs.changes.outputs.browser_extended == 'true') || contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/finish-appointment-mobile.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-touch-floor.spec.ts') || needs.changes.outputs.payment == 'true' ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
