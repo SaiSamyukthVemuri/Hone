@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -352,8 +352,9 @@ describe("the check never exits 1 for anything but a read MISS", () => {
   const API = "http://127.0.0.1:56521";
 
   /** The real script, copied into a scratch tree so its repo root is the scratch dir. */
+  // realpath on each copied root: the script runs only when argv[1] equals its own resolved path, and macOS tmpdir() is a symlink.
   function run(args: string[], stamp?: string): { code: number | null; stderr: string } {
-    const root = mkdtempSync(path.join(tmpdir(), "drill-entry-"));
+    const root = realpathSync(mkdtempSync(path.join(tmpdir(), "drill-entry-")));
     try {
       mkdirSync(path.join(root, "scripts", "ops"), { recursive: true });
       copyFileSync(SCRIPT, path.join(root, "scripts", "ops", "restore-drill-app-check.mjs"));
@@ -390,7 +391,7 @@ describe("the check never exits 1 for anything but a read MISS", () => {
   });
 
   it("an error thrown OUTSIDE main() still exits 2, not Node's own 1", () => {
-    const root = mkdtempSync(path.join(tmpdir(), "drill-late-"));
+    const root = realpathSync(mkdtempSync(path.join(tmpdir(), "drill-late-")));
     try {
       mkdirSync(path.join(root, "scripts", "ops"), { recursive: true });
       const copy = path.join(root, "scripts", "ops", "restore-drill-app-check.mjs");
@@ -452,7 +453,7 @@ describe("token isolation: the API must be exactly the drill's loopback stack", 
   });
 
   it("every entry point exits 2 for a hosted URL with ZERO network attempts (real child process, traps on fetch, net, tls, dns, http)", () => {
-    const root = mkdtempSync(path.join(tmpdir(), "drill-trap-"));
+    const root = realpathSync(mkdtempSync(path.join(tmpdir(), "drill-trap-")));
     try {
       const trap = path.join(root, "trap.cjs");
       const log = path.join(root, "attempts.log");

@@ -111,7 +111,8 @@ touch "${archives}/libnss3_$n.deb"`,
   return { dir, lock, run };
 }
 
-describe("playwright-system-deps.sh: cached, bounded INSIDE sudo, retried once on a clean apt", () => {
+// The script and these fakes need setsid, flock and fuser: Linux only, like the runners the script is for.
+describe.skipIf(process.platform !== "linux")("playwright-system-deps.sh: cached, bounded INSIDE sudo, retried once on a clean apt", () => {
   it("a healthy install runs once, inside sudo, keeps the mirror, and saves the .debs for the cache", () => {
     const r = setup("ok").run();
     expect(r.status, r.stderr).toBe(0);
