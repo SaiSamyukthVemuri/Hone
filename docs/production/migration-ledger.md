@@ -218,7 +218,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 ### The 0357 apply (facts as recorded by the operator, 2026-11-18; apply receipt `01-ops/0357-apply-receipt.json`)
 
 - **What it is.** `0357_cancellation_fee_tiers.sql`: the studio cancellation fee rule tables, their change record and the checks around them. The file is on this tree with this record; its application code is carried by #1526, which is **not** released by this record. The apply was migration-first.
-- **Approval.** The owner's approval, in their own words on 2026-11-18 (`01-ops/SAM-AUTHORIZATION-0357-b00-20261118T001722Z.txt`), for this exact sealed package: apply 0357 only, with a plain push and without `--include-all`. It covers no other migration and does not release #1526's application.
+- **Approval.** The owner's approval, in their own words on 2026-11-18 (the owner's authorization record), for this exact sealed package: apply 0357 only, with a plain push and without `--include-all`. It covers no other migration and does not release #1526's application.
 - **Package.** One plain push, exactly one migration; sealed package SEAL-SHA256SUMS `7b67a22a…`, sealed file sha256 `2c639578…` (the file on this tree has that hash). The dry run listed exactly one migration, `0357`.
 - **Attempt 1: NOT APPLIED.** The access token was in the wrong format at the first read-only query. Nothing was pushed and no marker was written.
 - **Attempt 2: APPLIED and verified.** Pre-apply reads: 277 history rows, max `0354`, `0357` absent; the sealed preflight passed; no open transaction older than 60 seconds on the three scanned tables; the three tables were small. The marker was written at 2026-11-18T00:28:44Z.
