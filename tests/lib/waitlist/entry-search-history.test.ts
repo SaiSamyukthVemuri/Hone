@@ -98,7 +98,8 @@ describe("the Released list shows the MOST RECENT outcomes first", () => {
   });
   it("the read orders each state newest-first by its own outcome column and never by join date", () => {
     const s = read("lib/waitlist/entry-search.ts");
-    expect(s).toContain('.order(col, { ascending: false })');
+    // nullsFirst:false so the database cut matches the in-memory rule that an entry with no recorded time sorts LAST.
+    expect(s).toContain(".order(col, { ascending: false, nullsFirst: false })");
     expect(s).toContain('read("expired", "expired_at")');
     expect(s).toContain('read("released", "released_at")');
     expect(s).toContain(".limit(RELEASED_LIMIT + 1)");

@@ -109,7 +109,7 @@ export async function listReleasedEntries(studioId: string): Promise<ReleasedLis
         .select("id,name,status,joined_at,expired_at,released_at")
         .eq("studio_id", studioId)
         .eq("status", status)
-        .order(col, { ascending: false })
+        .order(col, { ascending: false, nullsFirst: false })
         .order("id", { ascending: true })
         .limit(RELEASED_LIMIT + 1);
     const [expired, released] = await Promise.all([read("expired", "expired_at"), read("released", "released_at")]);
