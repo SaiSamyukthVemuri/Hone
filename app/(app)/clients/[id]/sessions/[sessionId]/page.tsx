@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { clientDisplayName } from "@/lib/clients/identity";
 import { FromLastVisitBand } from "@/components/from-last-visit-band";
 import { notFound } from "next/navigation";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
@@ -566,7 +567,9 @@ export default async function SessionDetailPage({
       .map((b) => b.id),
   );
 
-  const clientFirstName = clientData.client.name.split(/\s+/)[0] || clientData.client.name;
+  // Staff screen wording: the name the client goes by (HON-58). The postcare PREVIEW below keeps the stored name on purpose (it must match the send).
+  const clientShownName = clientDisplayName(clientData.client);
+  const clientFirstName = clientShownName.split(/\s+/)[0] || clientShownName;
   // " · 1 laser session previously" / " · 3 laser sessions previously"
   const priorLaserClause =
     priorLaserCount > 0
@@ -594,7 +597,7 @@ export default async function SessionDetailPage({
           href={`/clients/${id}?tab=sessions`}
           className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
         >
-          ← {clientData.client.name}
+          ← {clientShownName}
         </Link>
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h1 className="text-3xl font-semibold tracking-tight capitalize">

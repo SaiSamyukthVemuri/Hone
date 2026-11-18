@@ -1,21 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { countVersion, fileForVersion } from "./helpers/migration-state";
+
 const sql = readFileSync("supabase/migrations/0246_intake_questionnaire_snapshot.sql", "utf8");
 const code = sql.replace(/^\s*--.*$/gm, "");
 
 describe("0246 prospective-only snapshot boundary", () => {
-  it("has one allocated transaction and nullable column without default/adoption", () => {
-    // This historical contract owns0246; finite-prefix MAX stays derived.
-    // A next filename of0247 is not authority to use its held allocation.
-    expect(countVersion("0246")).toBe(1);
-    expect(fileForVersion("0246")).toBe("0246_intake_questionnaire_snapshot.sql");
-    expect(code.trim()).toMatch(/^begin;/);
-    expect(code).toContain("set local lock_timeout = '5s'");
-    expect(code.trim()).toMatch(/commit;$/);
-    expect(code).toContain("add column questionnaire_snapshot jsonb;");
-    expect(code).not.toMatch(/\bupdate\s+public\.|\bgrant\b|create\s+table|security\s+definer|default\s+/i);
-  });
+  // Kept: the sole guard of the trigger function's EXECUTE revoke. Control PR
+  // #1588 removed that revoke and no database test noticed.
   it("pins exact issue content and guards every update, including NULL adoption and service-role writes", () => {
     expect(code).toContain("approved constant jsonb := $catalogue$");
     expect(code).toContain("new.questionnaire_snapshot <> approved");

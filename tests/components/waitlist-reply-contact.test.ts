@@ -28,8 +28,9 @@ it("email and phone present: shows both, with mailto, tel, copy and the entry li
   expect(h.querySelector('a[href="mailto:a@example.test"]')).not.toBeNull();
   expect(h.querySelector('a[href="tel:+15550100"]')).not.toBeNull();
   expect(h.querySelector(`a[href="/settings/waitlist#entry-${ID}"]`)).not.toBeNull();
-  expect(h.textContent).toContain("Copy email");
-  expect(h.textContent).toContain("Copy phone");
+  // Visible label is just "Copy"; the accessible name says which one.
+  expect(h.querySelector('button[aria-label="Copy email"]')?.textContent).toBe("Copy");
+  expect(h.querySelector('button[aria-label="Copy phone"]')?.textContent).toBe("Copy");
 });
 
 it("phone missing says so and offers no call link", () => {
@@ -75,9 +76,23 @@ it("copying writes to the clipboard and changes no state: no form, no fetch", as
   vi.stubGlobal("fetch", fetchSpy);
   const h = render(createElement(ReplyContactDetails, { entryId: ID, contact: { kind: "entry", email: "a@example.test", phone: "555 0100" } }));
   expect(h.querySelector("form")).toBeNull();
-  const btn = [...h.querySelectorAll("button")].find((b) => b.textContent === "Copy email")!;
+  const btn = h.querySelector<HTMLButtonElement>('button[aria-label="Copy email"]')!;
   await act(async () => { btn.click(); });
   expect(write).toHaveBeenCalledWith("a@example.test");
   expect(h.textContent).toContain("Copied");
   expect(fetchSpy).not.toHaveBeenCalled();
+});
+
+it("the phone Copy button writes the STORED value, not the formatted display text", async () => {
+  const write = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", { value: { writeText: write }, configurable: true });
+  const h = render(createElement(ReplyContactDetails, { entryId: ID, contact: { kind: "entry", email: null, phone: "4165550123" } }));
+  // The card SHOWS it formatted for reading...
+  expect(h.textContent).toContain("(416) 555-0123");
+  // ...but Copy and Call keep the stored dialable digits.
+  await act(async () => { h.querySelector<HTMLButtonElement>('button[aria-label="Copy phone"]')!.click(); });
+  expect(write).toHaveBeenCalledTimes(1);
+  expect(write).toHaveBeenCalledWith("4165550123");
+  expect(write).not.toHaveBeenCalledWith("(416) 555-0123");
+  expect(h.querySelector('a[href="tel:4165550123"]')).not.toBeNull();
 });
