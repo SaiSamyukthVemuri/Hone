@@ -7,6 +7,7 @@ import {
 } from "@/lib/machines/charting";
 import type { RecordedReading } from "@/lib/machines/machine-queries";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
+import { machineDisplayName } from "@/lib/machines/display-name";
 import {
   recordedProfile,
   findMode,
@@ -168,7 +169,7 @@ export function MachinePriorSetup({
   }
 
   const machine = profile
-    ? `${profile.manufacturer} ${profile.model}${profile.variant ? ` (${profile.variant})` : ""}`
+    ? machineDisplayName(profile)
     : first.profileId;
 
   // THE PHYSICAL UNIT, named where the studio can recognise it. The id itself

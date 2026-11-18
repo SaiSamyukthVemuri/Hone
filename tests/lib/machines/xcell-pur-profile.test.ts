@@ -211,7 +211,7 @@ describe("xCell Pur: the publication plan and the existing workflow are unchange
   });
 
   it("leaves the existing xCell workflow's selector offer exactly as it was", () => {
-    expect(legacyMachineOffer(MACHINE_CATALOGUE)).toEqual({ profileId: "dectro-apilus:xcell", label: "Dectro xCell" });
+    expect(legacyMachineOffer(MACHINE_CATALOGUE)).toEqual({ profileId: "dectro-apilus:xcell", label: "Dectro xCell — existing charting" });
   });
 
   it("is a different profile from Senior and Junior 3G, whose published contracts it does not touch", () => {

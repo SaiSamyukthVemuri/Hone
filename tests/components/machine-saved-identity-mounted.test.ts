@@ -983,7 +983,7 @@ describe("a saved area that already holds xCell Pur readings takes no native mac
     expect(actions.rememberMachineSelectionAction).not.toHaveBeenCalled();
     expect(actions.recordSetupSubmissionAction).not.toHaveBeenCalled();
     expect(sel.value).toBe("legacy:xcell");
-    expect(host!.textContent).toContain("This area already has xCell Pur readings");
+    expect(host!.textContent).toContain("This area already has readings saved with Dectro xCell — existing charting");
   });
 
   it("NEGATIVE CONTROL: the same pick on an area WITHOUT legacy readings is written", async () => {

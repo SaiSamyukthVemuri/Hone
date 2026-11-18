@@ -12,6 +12,7 @@ import {
   type RegisterResult,
 } from "@/components/machines/machine-register-form";
 import { OwnerOnlyNotice } from "@/components/settings/view-heading";
+import { machineDisplayName } from "@/lib/machines/display-name";
 
 export default async function MachineSettingsPage() {
   const { practitioner, studio } = await requirePractitionerWithStudio();
@@ -35,7 +36,7 @@ export default async function MachineSettingsPage() {
   }
   const models = listableProfiles(active, (p) => published.get(`${p.profileId}@${p.version}`) ?? null).map((p) => ({
     profileId: p.profileId,
-    label: `${p.manufacturer} ${p.model}`,
+    label: machineDisplayName(p),
   }));
 
   const listed = await listStudioMachines(db, studio.id);

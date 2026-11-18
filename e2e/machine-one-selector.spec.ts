@@ -512,7 +512,7 @@ for (const device of [
         Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(el, id);
         el.dispatchEvent(new Event("change", { bubbles: true }));
       }, s.senior);
-      await expect(page.getByText("This area already has xCell Pur readings").first()).toBeVisible({ timeout: T });
+      await expect(page.getByText("This area already has readings saved with Dectro xCell — existing charting").first()).toBeVisible({ timeout: T });
       await page.waitForTimeout(1500);
       const after = (await blocksOf(old[0]!.session_id))[0]!;
       expect(after, "no identity, no change to the record").toMatchObject({ mode: "thermo", energy_level: "7", machine_profile_id: null, studio_machine_id: null, machine_mode_key: null });

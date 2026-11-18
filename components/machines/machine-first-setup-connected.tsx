@@ -7,6 +7,7 @@ import { SectionLabel } from "@/components/ui/section-label";
 import { MachineFirstSetupPanel } from "./machine-first-setup-panel";
 import { NO_PERSISTENCE } from "@/lib/machines/selection-store";
 import type { MachineSetupContext } from "@/app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions";
+import { LEGACY_WORKFLOW_NAME } from "@/lib/machines/display-name";
 
 // MPX-03 — the panel with its identity resolved on the server, ON DEMAND.
 //
@@ -52,7 +53,7 @@ export const SAVED_MACHINE_CANNOT_BE_CLEARED =
 
 /** ONE refusal text for a native machine on an area that already holds xCell Pur readings. */
 export const LEGACY_AREA_NATIVE_MACHINE_REFUSED =
-  "This area already has xCell Pur readings. Add a new area to chart another machine.";
+  `This area already has readings saved with ${LEGACY_WORKFLOW_NAME}. Add a new area to chart another machine.`;
 
 export type MachineFirstSetupConnectedProps = {
   /** The treatment block being charted, from the host form. */

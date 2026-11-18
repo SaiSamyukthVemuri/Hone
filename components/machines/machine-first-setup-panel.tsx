@@ -39,6 +39,7 @@ import type { MachineProfile } from "@/lib/machines/profile-contract";
 import { nativeFieldGroups } from "@/lib/machines/charting";
 import { OWNER_INPUT_REQUEST } from "@/lib/machines/owner-input-copy";
 import { profileProvenance } from "@/lib/machines/profile-provenance";
+import { LEGACY_WORKFLOW_NAME, machineDisplayName } from "@/lib/machines/display-name";
 import {
   selectableDevices,
   supportedModes,
@@ -314,7 +315,7 @@ export function withheld(catalogue: readonly MachineProfile[]) {
     .filter((p) => p.availability !== "active")
     .map((p) => ({
       key: p.profileId,
-      name: `${p.manufacturer} ${p.model}${p.variant ? ` (${p.variant})` : ""}`,
+      name: machineDisplayName(p),
       availability: p.availability,
       reason: p.availabilityReason ?? "Not offered for new capture.",
       openQuestions: p.openQuestions.length,
@@ -755,8 +756,7 @@ function MachineFirstSetupPanelImpl({
             <option value="">Choose machine…</option>
             {selectable.map(({ device, profile }) => (
               <option key={device.deviceId} value={device.deviceId} disabled={nativeLocked}>
-                {device.displayName} — {profile.manufacturer} {profile.model}
-                {profile.variant ? ` (${profile.variant})` : ""}
+                {device.displayName} — {machineDisplayName(profile)}
               </option>
             ))}
             {savedUnavailable && savedDeviceId !== null && (
@@ -786,7 +786,7 @@ function MachineFirstSetupPanelImpl({
       )}
       {scope && nativeLocked && (
         <p className="text-sm text-neutral-600 dark:text-neutral-400" data-testid="machine-native-locked">
-          This area already has xCell Pur readings. Add a new area to chart another machine.
+          This area already has readings saved with {LEGACY_WORKFLOW_NAME}. Add a new area to chart another machine.
         </p>
       )}
 
@@ -903,8 +903,7 @@ function MachineFirstSetupPanelImpl({
           <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
             {chosen.device.displayName}
             <span className="ml-2 font-normal text-neutral-600 dark:text-neutral-400">
-              {chosen.profile.manufacturer} {chosen.profile.model}
-              {chosen.profile.variant ? ` (${chosen.profile.variant})` : ""}
+              {machineDisplayName(chosen.profile)}
               {mode ? ` - ${mode.nativeLabel}` : ""}
             </span>
             {/* AN EXPLICIT WAY TO CHANGE IT: takes the practitioner to the one

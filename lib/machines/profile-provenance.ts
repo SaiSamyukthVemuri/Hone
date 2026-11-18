@@ -1,4 +1,5 @@
 import type { EvidenceRef, MachineProfile } from "./profile-contract";
+import { machineDisplayName } from "./display-name";
 
 /**
  * WHERE A MACHINE PROFILE CAME FROM, in words a practitioner can read.
@@ -59,7 +60,7 @@ export function profileProvenance(profile: MachineProfile): ProfileProvenance {
   const confirmed = profile.verification === "device-confirmed";
   const documented = profile.verification === "manufacturer-documented";
   return {
-    title: `${profile.manufacturer} ${profile.model}${profile.variant ? ` (${profile.variant})` : ""}`,
+    title: machineDisplayName(profile),
     versionLabel: `Profile version ${profile.version}`,
     sources,
     confirmation: confirmed ? "confirmed" : documented ? "pending" : "not-applicable",

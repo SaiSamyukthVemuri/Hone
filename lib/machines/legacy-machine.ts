@@ -1,4 +1,5 @@
 import { currentProfile, type MachineProfile } from "./profile-contract";
+import { legacyWorkflowLabel } from "./display-name";
 
 /**
  * The existing charting workflow (the studio's xCell) as a CHOICE in the one
@@ -25,8 +26,6 @@ export function legacyMachineOffer(
   if (!entry) return null;
   return {
     profileId: entry.profileId,
-    label: [entry.manufacturer, entry.model, entry.variant]
-      .filter((part): part is string => Boolean(part))
-      .join(" "),
+    label: legacyWorkflowLabel(entry),
   };
 }

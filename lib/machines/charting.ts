@@ -40,6 +40,7 @@ import {
   type ReadingValue,
 } from "./profile-contract";
 import { MACHINE_CATALOGUE, profileById, profileAtVersion } from "./catalogue";
+import { machineDisplayName } from "./display-name";
 import {
   carryForwardCompatibility,
   type ValidationOutcome,
@@ -405,9 +406,7 @@ export function priorSetupView(
   }
 
   return {
-    machine: `${profile.manufacturer} ${profile.model}${
-      profile.variant ? ` (${profile.variant})` : ""
-    }`,
+    machine: machineDisplayName(profile),
     profileId: profile.profileId,
     profileVersion: setup.profileVersion,
     modeLabel: mode?.nativeLabel ?? setup.modeKey,
