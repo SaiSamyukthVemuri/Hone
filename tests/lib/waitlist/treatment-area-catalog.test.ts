@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AREAS, AREA_REGIONS, OTHER_AREA } from "@/lib/constants";
+import { AREAS, AREA_REGIONS, OTHER_AREA, PRACTITIONER_ONLY_AREAS } from "@/lib/constants";
 import {
   TREATMENT_AREA_IDS,
   TREATMENT_AREA_LABEL,
@@ -23,17 +23,24 @@ import {
 // that rejects EVERYTHING would pass every negative test in isolation.
 
 describe("the catalog mirrors lib/constants and drops exactly one member", () => {
-  it("holds AREAS minus 'Other', as a set", () => {
+  it("holds AREAS minus 'Other' and minus the practitioner-only areas, as a set", () => {
     const labels = TREATMENT_AREA_IDS.map((id) => TREATMENT_AREA_LABEL[id]);
     // Re-derived FROM the canonical source, not re-typed: adding an area to
     // lib/constants.ts without adding it here reds this test.
     expect([...labels].sort()).toEqual([...canonicalProspectAreaLabels()].sort());
   });
 
-  it("drops 'Other' and NOTHING else", () => {
+  it("drops 'Other' and the named practitioner-only areas and NOTHING else", () => {
     const labels = new Set(TREATMENT_AREA_IDS.map((id) => TREATMENT_AREA_LABEL[id]));
     const dropped = AREAS.filter((label) => !labels.has(label));
-    expect(dropped).toEqual([OTHER_AREA]);
+    expect(dropped).toEqual([...PRACTITIONER_ONLY_AREAS, OTHER_AREA]);
+  });
+
+  it("the prospect catalogue is FROZEN at the 21 database ids: Areolas is practitioner-only and absent", () => {
+    expect(TREATMENT_AREA_IDS).toHaveLength(21);
+    expect(PRACTITIONER_ONLY_AREAS).toEqual(["Areolas"]);
+    expect(Object.values(TREATMENT_AREA_LABEL)).not.toContain("Areolas");
+    expect(TREATMENT_AREA_REGIONS.flatMap((g) => g.areaIds)).toHaveLength(21);
   });
 
   it("keeps 'Full face', which AREA_REGIONS omits", () => {

@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { FeeAmountsCard } from "@/app/(app)/settings/payments/FeeAmountsCard";
@@ -6,7 +7,7 @@ import { FeeAmountsCard } from "@/app/(app)/settings/payments/FeeAmountsCard";
 // #1035 Codex P1 #4369182087. The late-cancellation / no-show fee inputs print
 // the studio's VERIFIED currency (resolved on the server), never a literal CAD.
 const render = (currencyLabel: "CAD" | "USD" | null) =>
-  renderToStaticMarkup(createElement(FeeAmountsCard, { initialLateCancelCents: 2500, initialNoShowCents: 5000, currencyLabel } as never));
+  renderToStaticMarkup(createElement(FeeAmountsCard, { initialLateCancelCents: 2500, initialNoShowCents: 5000, lateCancel: { enabled: false, mode: "fixed", percentBp: null, status: { saved: "Saved as off", effective: "Not active" } }, noShow: { enabled: false, mode: "fixed", percentBp: null, status: { saved: "Saved as off", effective: "Not active" } }, currencyLabel } as never));
 
 describe("fee amount inputs print the verified studio currency", () => {
   it("US studio: both inputs say USD, none says CAD", () => {

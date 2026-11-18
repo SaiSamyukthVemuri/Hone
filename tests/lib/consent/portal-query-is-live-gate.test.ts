@@ -55,7 +55,7 @@ describe("portal-facing consent query (lib/consent/queries.ts)", () => {
     // comparison is caught.
     const fn =
       QUERIES.match(
-        /export async function getActiveConsentTemplatesForPortal[\s\S]*?\n\}/,
+        /export async function checkActiveConsentTemplatesForPortal[\s\S]*?\n\}/,
       )?.[0] ?? "";
     expect(fn).toMatch(/\.eq\("is_live",\s*true\)/);
   });
@@ -66,7 +66,7 @@ describe("portal-facing consent query (lib/consent/queries.ts)", () => {
     // clause needs to be a deliberate choice, not an accident.
     const fn =
       QUERIES.match(
-        /export async function getActiveConsentTemplatesForPortal[\s\S]*?\n\}/,
+        /export async function checkActiveConsentTemplatesForPortal[\s\S]*?\n\}/,
       )?.[0] ?? "";
     expect(fn).toMatch(/\.eq\("status",\s*"active"\)/);
   });
@@ -77,7 +77,7 @@ describe("portal-facing consent query (lib/consent/queries.ts)", () => {
     // catches an accidental .select("*") regression.
     const fn =
       QUERIES.match(
-        /export async function getActiveConsentTemplatesForPortal[\s\S]*?\n\}/,
+        /export async function checkActiveConsentTemplatesForPortal[\s\S]*?\n\}/,
       )?.[0] ?? "";
     expect(fn).toMatch(
       /\.select\("id, title, description, body, form_type, version"\)/,
@@ -92,7 +92,7 @@ describe("portal-facing consent query (lib/consent/queries.ts)", () => {
     // hide the drafts.
     const fn =
       QUERIES.match(
-        /export async function getConsentTemplatesForStudio[\s\S]*?\n\}/,
+        /export async function checkConsentTemplatesForStudio[\s\S]*?\n\}/,
       )?.[0] ?? "";
     expect(fn).not.toMatch(/\.eq\("is_live"/);
     expect(fn).not.toMatch(/\.eq\("status"/);

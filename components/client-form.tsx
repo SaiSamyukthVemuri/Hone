@@ -550,7 +550,7 @@ export function ClientForm({
               <Link
                 key={d.clientId}
                 href={`/clients/${d.clientId}`}
-                className="font-medium underline underline-offset-2"
+                className="min-w-0 [overflow-wrap:anywhere] font-medium underline underline-offset-2"
               >
                 Open {d.clientName}
               </Link>

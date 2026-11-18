@@ -16,6 +16,20 @@ import { loginAsOwner } from "./helpers/flows";
 
 const WIZARD = '[data-testid="onboarding-wizard"]';
 
+// The wizard now agrees with the canonical new-client readiness, which also asks for a live TREATMENT consent form. The default
+// seed has a consultation service, open days and a slug but no such form, so a studio that is genuinely ready needs this one row
+// (the same insert the consent settings page makes; no seed helper is changed).
+async function seedReadyStudio() {
+  const seed = await seedE2eStudio();
+  await sql(
+    `insert into public.consent_form_templates
+       (studio_id, title, description, body, form_type, version, status, is_live)
+     values ($1, 'Treatment consent', 'E2E treatment consent', 'E2E treatment consent body', 'treatment_consent', 1, 'active', true)`,
+    [seed.studioId],
+  );
+  return seed;
+}
+
 test.describe("onboarding v2 — flag OFF (default) is unchanged", () => {
   test("no wizard, and the legacy getting-started link is shown", async ({
     page,
@@ -41,7 +55,7 @@ test.describe("onboarding v2 — flag ON", () => {
   test("auto-opens, walks the steps, skips payments, celebrates, completes", async ({
     page,
   }) => {
-    const seed = await seedE2eStudio();
+    const seed = await seedReadyStudio();
     await setStudioOnboardingV2Enabled(seed.studioId, true);
     await loginAsOwner(page, seed);
 
@@ -96,7 +110,7 @@ test.describe("onboarding v2 — flag ON", () => {
   test("dismiss keeps progress; the pinned card re-opens the wizard", async ({
     page,
   }) => {
-    const seed = await seedE2eStudio();
+    const seed = await seedReadyStudio();
     await setStudioOnboardingV2Enabled(seed.studioId, true);
     await loginAsOwner(page, seed);
 
@@ -131,7 +145,7 @@ test.describe("onboarding v2 — flag ON", () => {
   test("a later INCOMPLETE server model can show the card again", async ({
     page,
   }) => {
-    const seed = await seedE2eStudio();
+    const seed = await seedReadyStudio();
     await setStudioOnboardingV2Enabled(seed.studioId, true);
     await loginAsOwner(page, seed);
 
@@ -168,7 +182,7 @@ test.describe("onboarding v2 — flag ON", () => {
   test("the celebration is consumed once, and reopening does not replay it", async ({
     page,
   }) => {
-    const seed = await seedE2eStudio();
+    const seed = await seedReadyStudio();
     await setStudioOnboardingV2Enabled(seed.studioId, true);
     await loginAsOwner(page, seed);
 
@@ -228,7 +242,7 @@ test.describe("onboarding v2 — flag ON", () => {
   test("a REFUSED stamp leaves the celebration owed, and it can play again", async ({
     page,
   }) => {
-    const seed = await seedE2eStudio();
+    const seed = await seedReadyStudio();
     await setStudioOnboardingV2Enabled(seed.studioId, true);
     await loginAsOwner(page, seed);
 
@@ -290,7 +304,7 @@ test.describe("onboarding v2 — flag ON", () => {
   test("a retry after a refusal is not spent by the previous showing's close", async ({
     page,
   }) => {
-    const seed = await seedE2eStudio();
+    const seed = await seedReadyStudio();
     await setStudioOnboardingV2Enabled(seed.studioId, true);
     await loginAsOwner(page, seed);
 
@@ -375,7 +389,7 @@ test.describe("onboarding v2 — flag ON", () => {
   test("closing before the stamp resolves still settles correctly", async ({
     page,
   }) => {
-    const seed = await seedE2eStudio();
+    const seed = await seedReadyStudio();
     await setStudioOnboardingV2Enabled(seed.studioId, true);
     await loginAsOwner(page, seed);
 
@@ -431,7 +445,7 @@ test.describe("onboarding v2 — flag ON", () => {
   test("an incomplete studio cannot consume the celebration early", async ({
     page,
   }) => {
-    const seed = await seedE2eStudio();
+    const seed = await seedReadyStudio();
     await setStudioOnboardingV2Enabled(seed.studioId, true);
     await sql(`update services set active = false where studio_id = $1`, [
       seed.studioId,
@@ -466,7 +480,7 @@ test.describe("onboarding v2 — a request lost in transit", () => {
   test("never escapes as a crash, never replaces the Dashboard, never claims completion", async ({
     page,
   }) => {
-    const seed = await seedE2eStudio();
+    const seed = await seedReadyStudio();
     await setStudioOnboardingV2Enabled(seed.studioId, true);
 
     const reported: string[] = [];
@@ -578,3 +592,50 @@ function reportedErrorValues(envelope: string): string[] {
   }
   return values;
 }
+
+test.describe("onboarding v2 — the wizard agrees with the canonical new-client readiness", () => {
+  test("no live treatment consent form: the booking step is not done, says so, and the wizard never says you're ready", async ({
+    page,
+  }) => {
+    // The default seed: a consultation service, open days and a slug, but NO live treatment consent form.
+    const seed = await seedE2eStudio();
+    await setStudioOnboardingV2Enabled(seed.studioId, true);
+    await loginAsOwner(page, seed);
+
+    const wizard = page.locator(WIZARD);
+    await expect(wizard).toBeVisible();
+    await wizard.getByRole("button", { name: "Get started" }).click();
+    await wizard.getByRole("button", { name: "Continue" }).click();
+    await wizard.getByRole("button", { name: "Continue" }).click();
+    await expect(wizard.getByRole("heading", { name: "Get your booking page ready" })).toBeVisible();
+    // The page is not live in this state, so the word must be absent: a presence check cannot catch a contradiction.
+    await expect(wizard.getByText("Your booking page is live")).toHaveCount(0);
+    await expect(wizard.getByText(/not ready for new clients yet/i)).toBeVisible();
+    await expect(wizard.getByText("No live treatment consent form.")).toBeVisible();
+    await expect(wizard.getByText("✓ Done")).toHaveCount(0);
+    await expect(wizard.getByRole("link", { name: "Open setup" })).toHaveAttribute("href", "/settings/consent");
+    // No way to share a link or move on as if the studio were ready.
+    await expect(wizard.getByRole("link", { name: "Open booking page" })).toHaveCount(0);
+    await expect(wizard.getByRole("button", { name: "Continue" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "You're ready" })).toHaveCount(0);
+
+    // The pinned setup card agrees: the booking row is still open and links to the missing piece.
+    await wizard.getByRole("button", { name: "Close setup" }).click();
+    const row = page.getByRole("listitem").filter({ hasText: "Get your booking page ready" });
+    await expect(row.getByRole("link", { name: "Set up" })).toHaveAttribute("href", "/settings/consent");
+    await expect(page.getByText("Your booking page is live")).toHaveCount(0);
+
+    // Adding the live form makes the same studio ready, with no other change.
+    await sql(
+      `insert into public.consent_form_templates
+         (studio_id, title, description, body, form_type, version, status, is_live)
+       values ($1, 'Treatment consent', 'E2E treatment consent', 'E2E treatment consent body', 'treatment_consent', 1, 'active', true)`,
+      [seed.studioId],
+    );
+    await page.reload();
+    const readyRow = page.getByRole("listitem").filter({ hasText: "Your booking page is live" });
+    await expect(readyRow).toBeVisible();
+    await expect(readyRow.getByRole("link", { name: "Set up" })).toHaveCount(0);
+    await expect(page.getByText("Get your booking page ready")).toHaveCount(0);
+  });
+});
