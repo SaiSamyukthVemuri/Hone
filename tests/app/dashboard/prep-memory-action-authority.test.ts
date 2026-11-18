@@ -109,7 +109,7 @@ describe("the client boundary carries only the visible projection", () => {
     ).replace(/\/\*[\s\S]*?\*\//g, "");
     const fields = [...type.matchAll(/^\s{2}(\w+)[?]?:/gm)].map((m) => m[1]);
     expect(fields.sort()).toEqual(
-      ["compactSummary", "hasTreatment", "remember", "unavailable"].sort(),
+      ["compactSummary", "hasTreatment", "remember", "rememberSource", "unavailable"].sort(),
     );
   });
 
