@@ -713,8 +713,8 @@ describe("J9-G the money-table universe fails closed (F5)", () => {
     const { s } = await activeCa("g-charge-refunds");
     await adminQuery(
       `insert into public.payment_charge_refunds
-         (attempt_id, studio_id, stripe_refund_id, amount_cents, currency, status, first_event_id, last_event_id, last_event_created)
-       select a.id, a.studio_id, 're_j9_${rid()}', 1000, a.currency, 'succeeded', 'evt_j9_${rid()}', 'evt_j9_${rid()}', 1
+         (attempt_id, studio_id, stripe_refund_id, amount_cents, currency, status, evidence_kind, first_event_id, last_event_id, last_event_created)
+       select a.id, a.studio_id, 're_j9_${rid()}', 1000, a.currency, 'succeeded', 'signed_event', 'evt_j9_${rid()}', 'evt_j9_${rid()}', 1
          from public.payment_charge_attempts a where a.studio_id = '${s.studioId}' limit 1`,
     );
     expect(await init(s.studioId)).toBe("initialized");
