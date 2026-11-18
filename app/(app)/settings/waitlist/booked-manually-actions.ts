@@ -29,6 +29,8 @@ export async function bookedManuallyAction(formData: FormData): Promise<void> {
   const confirm = formData.get("confirmEmailMismatch") === "on";
   if (!waitlistBookedManuallyEnabled()) back("unavailable");
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
-  if (!entryId || !appointmentId || practitioner.role !== "owner" || !practitioner.user_id) back("not_owner");
+  // The role is checked HERE, before any command, and again inside the database. A bad id is a neutral refusal, not a claim about roles.
+  if (practitioner.role !== "owner" || !practitioner.user_id) back("not_owner");
+  if (!entryId || !appointmentId) back("invalid_request");
   back(await markEntryBookedManually(studio.id, practitioner.user_id!, entryId!, appointmentId!, confirm));
 }

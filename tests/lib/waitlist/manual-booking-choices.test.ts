@@ -16,7 +16,7 @@ function fakeDb(opts: { clients?: unknown; appts?: Record<string, unknown>; boom
   };
   return { db: db as never, calls };
 }
-const lab = (s: string) => `at ${s}`;
+const lab = (s: string, h = "") => `at ${s}${h ? ` · ${h}` : ""}`;
 
 describe("loadManualBookingChoices", () => {
   it("offers every appointment of every client sharing the entry's email, case-folded, with no 10-row cap", async () => {
@@ -42,5 +42,16 @@ describe("loadManualBookingChoices", () => {
     expect((await loadManualBookingChoices(f.db, "s", [{ id: "e1", email: "  " }], lab)).size).toBe(0);
     expect(f.calls.length).toBe(0);
     expect(calls.length).toBeGreaterThan(0);
+  });
+});
+
+describe("appointmentHint", () => {
+  it("is the service name and the practitioner's initials, so a parent's and a child's appointments differ", async () => {
+    const { appointmentHint } = await import("@/lib/waitlist/manual-booking-choices");
+    expect(appointmentHint({ name: "Laser" }, { display_name: "Jane Doe" })).toBe("Laser · JD");
+    expect(appointmentHint([{ name: "Electrolysis" }], [{ display_name: "sam v lee" }])).toBe("Electrolysis · SV");
+    expect(appointmentHint(null, { display_name: "Jane Doe" })).toBe("JD");
+    expect(appointmentHint(undefined, undefined)).toBe("");
+    expect(appointmentHint({ name: 5 }, { display_name: 7 })).toBe("");
   });
 });

@@ -15,7 +15,8 @@ export const BOOKED_MANUALLY_RESULTS = [
   "invitation_redeemed",
 ] as const;
 
-export type BookedManuallyResult = (typeof BOOKED_MANUALLY_RESULTS)[number] | "unavailable";
+// `invalid_request` is not a database code: it is the neutral answer to a malformed or missing id (never "only the owner can do this").
+export type BookedManuallyResult = (typeof BOOKED_MANUALLY_RESULTS)[number] | "unavailable" | "invalid_request";
 
 const KNOWN = new Set<string>(BOOKED_MANUALLY_RESULTS);
 export const isBookedManuallyResult = (v: unknown): v is (typeof BOOKED_MANUALLY_RESULTS)[number] =>
@@ -34,13 +35,14 @@ export const BOOKED_MANUALLY_COPY: Record<BookedManuallyResult, string> = {
   email_mismatch:
     "The email on that booking is different from the waiting list email. If it is the same person, tick the confirmation and try again.",
   invitation_redeemed: "This person already used their invitation to book. Open their booking instead.",
+  invalid_request: "That couldn't be done.",
   unavailable: "That couldn't be done right now. Nothing was changed. Try again.",
 };
 
 /** The `?bm=` code the page reads back. Anything unrecognised reads as the generic failure, never as success. */
 export function bookedManuallyNoticeFrom(code: unknown): BookedManuallyResult | null {
   if (code === undefined || code === null || code === "") return null;
-  return isBookedManuallyResult(code) || code === "unavailable" ? (code as BookedManuallyResult) : "unavailable";
+  return isBookedManuallyResult(code) || code === "unavailable" || code === "invalid_request" ? (code as BookedManuallyResult) : "unavailable";
 }
 
 export const bookedManuallyOk = (r: BookedManuallyResult) => r === "booked" || r === "already_booked";

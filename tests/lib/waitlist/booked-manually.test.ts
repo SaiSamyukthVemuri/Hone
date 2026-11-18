@@ -72,14 +72,14 @@ describe("markEntryBookedManually", () => {
 
 describe("the notice copy", () => {
   it("has a sentence for every result and for unavailable, none with an email, an id or a name placeholder", () => {
-    for (const r of [...BOOKED_MANUALLY_RESULTS, "unavailable"] as const) {
+    for (const r of [...BOOKED_MANUALLY_RESULTS, "unavailable", "invalid_request"] as const) {
       const t = BOOKED_MANUALLY_COPY[r];
       expect(t.length, r).toBeGreaterThan(10);
       expect(t, r).not.toMatch(/@|[0-9a-f]{8}-[0-9a-f]{4}/i);
     }
   });
   it("only booked and already_booked read as success", () => {
-    for (const r of [...BOOKED_MANUALLY_RESULTS, "unavailable"] as const) {
+    for (const r of [...BOOKED_MANUALLY_RESULTS, "unavailable", "invalid_request"] as const) {
       expect(bookedManuallyOk(r)).toBe(r === "booked" || r === "already_booked");
     }
   });
@@ -91,6 +91,7 @@ describe("the notice copy", () => {
     expect(bookedManuallyNoticeFrom(undefined)).toBeNull();
     expect(bookedManuallyNoticeFrom("")).toBeNull();
     expect(bookedManuallyNoticeFrom("booked")).toBe("booked");
+    expect(bookedManuallyNoticeFrom("invalid_request")).toBe("invalid_request");
     expect(bookedManuallyNoticeFrom("<script>")).toBe("unavailable");
     expect(bookedManuallyNoticeFrom(["booked"])).toBe("unavailable");
   });

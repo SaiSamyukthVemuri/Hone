@@ -72,8 +72,8 @@ describe("bookedManuallyAction", () => {
     ["no appointment", { entryId: E }],
     ["a malformed entry", { entryId: "x' or 1=1", appointmentId: A }],
     ["a malformed appointment", { entryId: E, appointmentId: "nope" }],
-  ])("%s never reaches the command", async (_n, o) => {
-    expect(await run(form(o as Record<string, string>))).toBe("/settings/waitlist?bm=not_owner");
+  ])("%s never reaches the command and gets the neutral answer, not a claim about roles", async (_n, o) => {
+    expect(await run(form(o as Record<string, string>))).toBe("/settings/waitlist?bm=invalid_request");
     expect(h.command).not.toHaveBeenCalled();
   });
   it("with the flag off nothing is called and the owner is told it is unavailable", async () => {

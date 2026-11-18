@@ -677,8 +677,9 @@ export default async function WaitlistSettingsPage({
         supabase,
         studio.id,
         rows.filter((r) => r.status !== "converted" && r.status !== "removed").map((r) => ({ id: r.id, email: r.email })),
-        (iso) =>
-          new Intl.DateTimeFormat("en-US", { timeZone: studio.timezone ?? "UTC", dateStyle: "medium", timeStyle: "short" }).format(new Date(iso)),
+        (iso, hint) =>
+          new Intl.DateTimeFormat("en-US", { timeZone: studio.timezone ?? "UTC", dateStyle: "medium", timeStyle: "short" }).format(new Date(iso)) +
+          (hint ? ` · ${hint}` : ""),
       )
     : null;
   const bookedManualNotice = bookedManuallyOn ? bookedManuallyNoticeFrom(firstParam(params.bm)) : null;

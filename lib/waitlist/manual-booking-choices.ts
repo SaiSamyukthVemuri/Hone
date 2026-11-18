@@ -6,6 +6,19 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // an unreadable read offers nothing and never guesses.
 export type ManualBookingChoice = { id: string; label: string };
 
+/** A non-identifying hint so appointments of people who share an email (a parent and child) can be told apart: the service name and the practitioner's initials. */
+export function appointmentHint(service: unknown, practitioner: unknown): string {
+  const one = <T,>(v: T | T[] | null | undefined) => (Array.isArray(v) ? v[0] : v);
+  const sn = one(service as { name?: unknown } | null);
+  const pn = one(practitioner as { display_name?: unknown } | null);
+  const name = typeof sn?.name === "string" ? sn.name.trim() : "";
+  const initials =
+    typeof pn?.display_name === "string"
+      ? pn.display_name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => Array.from(w)[0].toUpperCase()).join("")
+      : "";
+  return [name, initials].filter(Boolean).join(" · ");
+}
+
 // Bounded so one person with a very long history cannot make the page unbounded; the picker says when it was cut.
 export const MANUAL_CHOICES_PER_PERSON = 100;
 const ID_CHUNK = 50;
@@ -21,7 +34,7 @@ export async function loadManualBookingChoices(
   db: SupabaseClient,
   studioId: string,
   entries: ReadonlyArray<{ id: string; email: string }>,
-  label: (startsAtIso: string) => string,
+  label: (startsAtIso: string, hint: string) => string,
   now: Date = new Date(),
 ): Promise<Map<string, ManualBookingChoice[]>> {
   const out = new Map<string, ManualBookingChoice[]>();
@@ -50,7 +63,7 @@ export async function loadManualBookingChoices(
         part.map((clientId) =>
           db
             .from("appointments")
-            .select("id,starts_at")
+            .select("id,starts_at,service:services(name),practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name)")
             .eq("studio_id", studioId)
             .eq("client_id", clientId)
             .neq("status", "cancelled")
@@ -64,8 +77,10 @@ export async function loadManualBookingChoices(
         if (res.error || !Array.isArray(res.data)) return;
         byClient.set(
           part[i],
-          (res.data as Array<{ id?: unknown; starts_at?: unknown }>).flatMap((a) =>
-            typeof a.id === "string" && typeof a.starts_at === "string" ? [{ id: a.id, label: label(a.starts_at) }] : [],
+          (res.data as Array<{ id?: unknown; starts_at?: unknown; service?: unknown; practitioner?: unknown }>).flatMap((a) =>
+            typeof a.id === "string" && typeof a.starts_at === "string"
+              ? [{ id: a.id, label: label(a.starts_at, appointmentHint(a.service, a.practitioner)) }]
+              : [],
           ),
         );
       });
