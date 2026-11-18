@@ -18,8 +18,6 @@ import { calendarFingerprint } from "./change-fingerprint";
 import { calendarLoadRange, type CalendarView } from "./calendar-load-range";
 
 const PAGE_SIZE = 1000;
-/** A runaway read fails loudly instead of hashing a truncated list. 20,000 appointments in one month view is not a studio. */
-const MAX_PAGES = 20;
 
 export async function readCalendarFingerprint(input: {
   studioId: string;
@@ -36,7 +34,10 @@ export async function readCalendarFingerprint(input: {
   const readAppointments = async () => {
     const rows: Array<{ id: string; updated_at: string | null }> = [];
     let afterId: string | null = null;
-    for (let page = 0; page < MAX_PAGES; page += 1) {
+    // Same semantics as the page loader (getAppointmentsForRange): keyset by id, continue until an EMPTY page (a lower
+    // server row cap can return a short page that is not the last), a repeated id refuses the whole read.
+    const seen = new Set<string>();
+    for (;;) {
       let query = supabase
         .from("appointments")
         .select("id, updated_at")
@@ -47,11 +48,14 @@ export async function readCalendarFingerprint(input: {
       const { data, error } = await query.order("id").range(0, PAGE_SIZE - 1);
       if (error) throw new Error(`Failed to read appointments: ${dbErrorCode(error)}`);
       const got = (data ?? []) as Array<{ id: string; updated_at: string | null }>;
-      rows.push(...got);
-      if (got.length < PAGE_SIZE) return rows;
+      if (got.length === 0) return rows;
+      for (const row of got) {
+        if (seen.has(row.id)) throw new Error("Failed to read appointments: repeated row");
+        seen.add(row.id);
+        rows.push(row);
+      }
       afterId = got[got.length - 1].id;
     }
-    throw new Error("Failed to read appointments: too many rows");
   };
 
   const readTimedBlocks = async () => {

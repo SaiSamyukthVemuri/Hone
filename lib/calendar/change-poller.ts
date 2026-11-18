@@ -38,14 +38,24 @@ export const HOLD_OFF_RECHECK_MS = 500;
 /** The shape of a fingerprint answer: 32 lowercase hex characters. Lives here, not in change-fingerprint.ts, because that module is server-only (node:crypto) and the client must validate the body. */
 export const FINGERPRINT_PATTERN = /^[0-9a-f]{32}$/;
 
+/** Consecutive "not signed in" answers needed before polling stops for good. */
+export const UNAUTH_CONFIRM_STRIKES = 3;
+
 /**
- * What a probe's HTTP status means to the poller. Only an authorization answer stops polling for good: 401, 403, or the
- * session middleware's redirect (an opaque redirect, or status 0). Everything else that is not a success, a 5xx above all
- * (the route answers 503 when its membership read threw), is TRANSIENT: back off and resume when the server recovers.
+ * What a probe's HTTP status means to the poller.
+ *  - "refused": 403, a definite refusal of this user (IdentityRefusalError). Stops polling for good.
+ *  - "unauthenticated": 401 or the session middleware's redirect (opaque redirect). AMBIGUOUS: a real expired session
+ *    looks the same as a middleware or auth-service blip (the middleware turns a failed session or membership read into
+ *    a redirect), so it must repeat UNAUTH_CONFIRM_STRIKES times in a row, with back-off between, before polling stops.
+ *  - "transient": everything else that is not a success (5xx, 429, a network-ish status 0 that is not a redirect).
  */
-export function classifyProbeStatus(status: number, type?: string): "auth" | "transient" | "ok" {
-  if (type === "opaqueredirect" || status === 0) return "auth";
-  if (status === 401 || status === 403) return "auth";
+export function classifyProbeStatus(
+  status: number,
+  type?: string,
+): "refused" | "unauthenticated" | "transient" | "ok" {
+  if (type === "opaqueredirect") return "unauthenticated";
+  if (status === 403) return "refused";
+  if (status === 401) return "unauthenticated";
   if (status >= 200 && status < 300) return "ok";
   return "transient";
 }
@@ -62,7 +72,8 @@ export type PollerEnv = {
 export type ProbeResult =
   | { kind: "ok"; fingerprint: string }
   | { kind: "transient" } // network error, timeout, 5xx, a malformed body
-  | { kind: "auth" }; // 401, 403, or a redirect to /login or /no-access
+  | { kind: "refused" } // 403: stop for good
+  | { kind: "unauthenticated" }; // 401 or a middleware redirect: stop only when it repeats
 
 export type PollerState = {
   /** The fingerprint of the data this screen was last rendered from (supplied by the server render). */
@@ -79,7 +90,9 @@ export type PollerState = {
   refreshTimesMs: number[];
   suspendedUntilMs: number;
   loopLogged: boolean;
-  /** An auth refusal: polling stops for the life of the screen. */
+  /** Consecutive "unauthenticated" answers (reset by any ok or transient answer). */
+  unauthStrikes: number;
+  /** A confirmed refusal: polling stops for the life of the screen. */
   stopped: boolean;
 };
 
@@ -111,6 +124,7 @@ export function initialPollerState(baseline: string, nowMs: number): PollerState
     refreshTimesMs: [],
     suspendedUntilMs: 0,
     loopLogged: false,
+    unauthStrikes: 0,
     stopped: false,
   };
 }
@@ -192,17 +206,21 @@ export function stepPoller(state: PollerState, event: PollerEvent): Step {
       if (!state.inFlight) return { state, effects: [] };
       let next: PollerState = { ...state, inFlight: false };
       const r = event.result;
-      if (r.kind === "auth") {
+      if (r.kind === "refused") {
         return { state: { ...next, stopped: true, pending: null }, effects: [] };
       }
-      if (r.kind === "transient") {
+      if (r.kind === "unauthenticated" || r.kind === "transient") {
         const errors = next.consecutiveErrors + 1;
-        next = { ...next, consecutiveErrors: errors, nextProbeAtMs: event.nowMs + probeBackoffMs(errors) };
+        const strikes = r.kind === "unauthenticated" ? next.unauthStrikes + 1 : 0;
+        if (strikes >= UNAUTH_CONFIRM_STRIKES) {
+          return { state: { ...next, unauthStrikes: strikes, stopped: true, pending: null }, effects: [] };
+        }
+        next = { ...next, consecutiveErrors: errors, unauthStrikes: strikes, nextProbeAtMs: event.nowMs + probeBackoffMs(errors) };
         return settle(next, event.nowMs, event.env);
       }
       // ok. A little jitter keeps five screens from probing in lockstep.
       const wait = Math.round(PROBE_INTERVAL_MS * (0.9 + 0.2 * event.jitter));
-      next = { ...next, consecutiveErrors: 0, nextProbeAtMs: event.nowMs + wait, lastServer: r.fingerprint };
+      next = { ...next, consecutiveErrors: 0, unauthStrikes: 0, nextProbeAtMs: event.nowMs + wait, lastServer: r.fingerprint };
       if (r.fingerprint === next.baseline) {
         next = { ...next, pending: null };
       } else if (r.fingerprint !== next.lastHandled) {

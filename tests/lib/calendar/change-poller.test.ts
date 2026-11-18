@@ -6,6 +6,7 @@ import {
   PROBE_BACKOFF_MAX_MS,
   PROBE_INTERVAL_MS,
   classifyProbeStatus,
+  UNAUTH_CONFIRM_STRIKES,
   initialPollerState,
   nextWakeDelayMs,
   probeBackoffMs,
@@ -158,10 +159,10 @@ describe("errors", () => {
     r.send(transient(1_600));
     expect(r.effects).not.toContain("refresh");
   });
-  it("an auth refusal stops polling for good", () => {
+  it("a refusal (403) stops polling for good", () => {
     const r = rig();
     r.send(tick(PROBE_INTERVAL_MS));
-    r.send({ type: "probed", nowMs: 1_600, env: OK, result: { kind: "auth" }, jitter: 0 });
+    r.send({ type: "probed", nowMs: 1_600, env: OK, result: { kind: "refused" }, jitter: 0 });
     expect(r.state.stopped).toBe(true);
     expect(r.send(tick(999_999))).toEqual([]);
     expect(r.send({ type: "returned", nowMs: 1_000_000, env: OK })).toEqual([]);
@@ -284,11 +285,11 @@ describe("nextWakeDelayMs", () => {
 });
 
 describe("what a probe's HTTP status means (a database blip must never silence a screen for good)", () => {
-  it("only an authorization answer is auth: 401, 403, a redirect", () => {
-    expect(classifyProbeStatus(401)).toBe("auth");
-    expect(classifyProbeStatus(403)).toBe("auth");
-    expect(classifyProbeStatus(0)).toBe("auth");
-    expect(classifyProbeStatus(307, "opaqueredirect")).toBe("auth");
+  it("403 is a definite refusal; 401 and a middleware redirect are only unauthenticated (ambiguous)", () => {
+    expect(classifyProbeStatus(403)).toBe("refused");
+    expect(classifyProbeStatus(401)).toBe("unauthenticated");
+    expect(classifyProbeStatus(307, "opaqueredirect")).toBe("unauthenticated");
+    expect(classifyProbeStatus(0)).toBe("transient");
   });
   it("a 5xx, including the route's 503, and a 4xx that is not authorization are transient", () => {
     for (const s of [500, 502, 503, 504, 400, 404, 429]) expect(classifyProbeStatus(s)).toBe("transient");
@@ -297,7 +298,7 @@ describe("what a probe's HTTP status means (a database blip must never silence a
   it("after a 503 the screen backs off and RESUMES: the next probe fires and a change is then applied", () => {
     const r = rig();
     r.send(tick(PROBE_INTERVAL_MS));
-    r.send({ type: "probed", nowMs: 1_600, env: OK, result: { kind: classifyProbeStatus(503) === "transient" ? "transient" : "auth" }, jitter: 0 });
+    r.send({ type: "probed", nowMs: 1_600, env: OK, result: { kind: classifyProbeStatus(503) === "transient" ? "transient" : "refused" }, jitter: 0 });
     expect(r.state.stopped).toBe(false);
     const due = r.state.nextProbeAtMs;
     expect(r.send(tick(due))).toEqual(["probe"]);
@@ -306,7 +307,45 @@ describe("what a probe's HTTP status means (a database blip must never silence a
   it("a 403 stops polling for good", () => {
     const r = rig();
     r.send(tick(PROBE_INTERVAL_MS));
-    r.send({ type: "probed", nowMs: 1_600, env: OK, result: { kind: classifyProbeStatus(403) === "auth" ? "auth" : "transient" }, jitter: 0 });
+    r.send({ type: "probed", nowMs: 1_600, env: OK, result: { kind: classifyProbeStatus(403) === "refused" ? "refused" : "transient" }, jitter: 0 });
+    expect(r.state.stopped).toBe(true);
+    expect(r.send(tick(999_999))).toEqual([]);
+  });
+  it("a redirect blip (middleware could not read the session) does not stop polling: it backs off and resumes", () => {
+    const r = rig();
+    let now = PROBE_INTERVAL_MS;
+    for (let i = 0; i < UNAUTH_CONFIRM_STRIKES - 1; i += 1) {
+      r.send(tick(now));
+      r.send({ type: "probed", nowMs: now + 50, env: OK, result: { kind: "unauthenticated" }, jitter: 0 });
+      expect(r.state.stopped).toBe(false);
+      now = r.state.nextProbeAtMs;
+    }
+    r.send(tick(now));
+    expect(r.send(ok(now + 50, B))).toEqual(["refresh"]);
+    expect(r.state.unauthStrikes).toBe(0);
+  });
+  it("a transient answer in between resets the strikes (only CONSECUTIVE unauthenticated answers count)", () => {
+    const r = rig();
+    let now = PROBE_INTERVAL_MS;
+    const answer = (kind: "unauthenticated" | "transient") => {
+      r.send(tick(now));
+      r.send({ type: "probed", nowMs: now + 50, env: OK, result: { kind }, jitter: 0 });
+      now = r.state.nextProbeAtMs;
+    };
+    for (let i = 0; i < 5; i += 1) {
+      answer("unauthenticated");
+      answer("transient");
+    }
+    expect(r.state.stopped).toBe(false);
+  });
+  it("a real expired session (unauthenticated every time) stops after the confirming strikes", () => {
+    const r = rig();
+    let now = PROBE_INTERVAL_MS;
+    for (let i = 0; i < UNAUTH_CONFIRM_STRIKES; i += 1) {
+      r.send(tick(now));
+      r.send({ type: "probed", nowMs: now + 50, env: OK, result: { kind: "unauthenticated" }, jitter: 0 });
+      now = r.state.nextProbeAtMs;
+    }
     expect(r.state.stopped).toBe(true);
     expect(r.send(tick(999_999))).toEqual([]);
   });

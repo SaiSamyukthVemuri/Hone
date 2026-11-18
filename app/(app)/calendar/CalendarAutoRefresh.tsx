@@ -57,7 +57,8 @@ function readEnv(): PollerEnv {
 
 async function classify(res: Response): Promise<ProbeResult> {
   // The session middleware answers an unauthorized or role-less caller with a redirect; with redirect:"manual" that is an
-  // opaque redirect (or status 0). Only an authorization answer stops polling; a 5xx is transient (see classifyProbeStatus).
+  // opaque redirect. A 403 stops polling; a 401 or redirect stops it only when it repeats (a middleware blip looks the same as an
+  // expired session); a 5xx is transient (see classifyProbeStatus).
   const kind = classifyProbeStatus(res.status, res.type);
   if (kind !== "ok") return { kind };
   try {
