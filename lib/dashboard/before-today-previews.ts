@@ -2,9 +2,11 @@ import { createClient } from "@/lib/supabase/server";
 import {
   buildLastSessionSummary,
   pickLastTreatment,
+  pickNewestNonVoidSession,
   pickPreClientWatchPlanSource,
   type ClinicalSummaryBlock,
 } from "@/lib/sessions/clinical-summary";
+import { NO_MEMORY_SOURCES, type MemorySources } from "@/lib/dashboard/memory-source-labels";
 import { buildTreatmentIntelligence } from "@/lib/sessions/treatment-intelligence";
 import {
   buildBeforeToday,
@@ -58,6 +60,9 @@ export type BeforeTodayPreview = {
   nextVisitNote: string | null;
   cautionNote: string | null;
   reminders: string[];
+  // Where the notes and the setup came from (dates only, no ids), so the row can SAY when they are from an
+  // earlier visit than the latest one. Optional: a preview built without it labels nothing.
+  sources?: MemorySources;
 };
 
 // Pure: collapse a full briefing into the three preview lines. Watch
@@ -483,7 +488,21 @@ export async function getBeforeTodayPreviews(
         clinicalUnavailable || (windowFull && !(lastTreatment && watchSource)),
       clientRecordUnavailable,
     });
-    out.set(key, compactBeforeToday(briefing));
+    // WHERE each line came from. This describes the picks made above; it never changes them. "The latest
+    // visit" is the newest live, non-void session before this appointment (a draft or incomplete session
+    // counts: it is a charting state, not evidence of no visit).
+    const latestVisit = pickNewestNonVoidSession(clientSessions);
+    const sources: MemorySources = {
+      ...NO_MEMORY_SOURCES,
+      latestAt: latestVisit?.started_at ?? null,
+      notes: watchSource
+        ? { at: watchSource.started_at, isLatest: watchSource.id === latestVisit?.id }
+        : null,
+      setup: lastTreatment
+        ? { at: lastTreatment.started_at, isLatest: lastTreatment.id === latestVisit?.id }
+        : null,
+    };
+    out.set(key, { ...compactBeforeToday(briefing), sources });
   }
   return out;
 }

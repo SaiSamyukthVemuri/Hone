@@ -32,6 +32,8 @@ export type DashboardPrepSummary = {
    * Before-Today model does not run and this is the only place it can appear.
    */
   remember: string | null;
+  /** Where that plan note came from when it is not the latest visit ("Notes from 3 Oct (the latest visit on 10 Nov has no notes)"). */
+  rememberSource: string | null;
 };
 
 /** Project the server-only model down to exactly what the row paints. */
@@ -39,12 +41,17 @@ export function toDashboardPrepSummary(args: {
   memory: AppointmentPrepMemory | null;
   unavailable: boolean;
   planNote: string | null;
+  /** The studio timezone, so the date is the studio's calendar day. */
+  timeZone?: string;
+  /** Already worded by memorySourceLabels. */
+  planSourceLabel?: string | null;
 }): DashboardPrepSummary {
   return {
     hasTreatment: args.memory !== null,
     unavailable: args.unavailable,
-    compactSummary: args.memory ? compactSummary(args.memory) : null,
+    compactSummary: args.memory ? compactSummary(args.memory, args.timeZone) : null,
     remember: args.planNote,
+    rememberSource: args.planNote ? (args.planSourceLabel ?? null) : null,
   };
 }
 
