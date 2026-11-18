@@ -252,7 +252,7 @@ export default async function ClientImagesPage({
     <div className="flex flex-col gap-6">
       <Link
         href={`/clients/${id}`}
-        className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+        className="min-w-0 [overflow-wrap:anywhere] text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
       >
         ← {client.name}
       </Link>
