@@ -72,7 +72,7 @@ const UNRENDERED_EVIDENCE: Record<string, string> = {
 };
 const FINE_REASON: Record<string, string> = {
   "app/api/cron/appointment-reminders/route.ts": "the treatment-time line now names the client through the shared loader (communication name); the two stored-name reads left are the loader's fallback argument and a template parameter the client reminder does not render",
-  "lib/email/send-appointment.ts": "the client-facing sites (the treatment-time line, the trusted-render path) take the loader's communication name and fall back to the stored name; the stored-name reads left are those fallbacks. The staff emails it sends are recorded in STAFF_EMAIL_GAPS",
+  "lib/email/send-appointment.ts": "the client-facing sites (the treatment-time line, the trusted-render path) take the loader's communication name and fall back to the stored name; the stored-name reads left are those fallbacks. The practitioner and cancellation emails it sends take the same loader's name (pinned by their rendered output in tests/lib/email/client-email-names.test.ts)",
   "app/(app)/clients/[id]/sessions/[sessionId]/page.tsx": "the one remaining read feeds the postcare PREVIEW, which is pinned to the stored name so it matches the send; the page's screen wording uses clientDisplayName",
   "lib/clients/name-search.ts": "search deliberately matches BOTH the stored and the preferred name (tests/lib/clients/name-search.test.ts)",
 };
@@ -118,24 +118,9 @@ describe("client-name census: which files read a stored client name", () => {
   });
 });
 
-// Staff emails that render a client name from a caller-supplied string. The rule for staff surfaces is the display name
-// (preferred, else stored); these render whatever the caller passes, and every caller passes the stored name. Recorded as gaps, NOT
-// fixed here: the template is shared by several callers (calendar, public booking, portal rebook, reschedule, cancel), each with its own
-// client read, so the fix is one loader at the send boundary, a separate change.
-const STAFF_EMAIL_GAPS: ReadonlyArray<readonly [string, string, string]> = [
-  ["lib/email/templates/appointment.ts", "const safeClient = escapeHtml(p.clientName);", "practitioner new-booking email, HTML client name"],
-  ["lib/email/templates/appointment.ts", "\n${p.clientName}\n", "practitioner new-booking email, text client name"],
-  ["lib/email/templates/appointment.ts", 'rows.push(["Client", p.clientName.trim()])', "cancellation email, the Client row"],
-  ["lib/email/send-appointment.ts", "clientName: params.clientName,", "the send functions pass the caller's stored name through unchanged"],
-];
-
-describe("staff emails that name the client by the stored name are recorded, not forgotten", () => {
-  for (const [file, needle, what] of STAFF_EMAIL_GAPS) {
-    it(`${file}: ${what}`, () => {
-      expect(readFileSync(file, "utf8"), "the site moved or was fixed: update STAFF_EMAIL_GAPS (a fixed one is removed)").toContain(needle);
-    });
-  }
-});
+// The staff emails that name the client (the practitioner new-booking email, the cancellation email's Client row) and the calendar-invite
+// attendee name carry the communication name through the send-boundary loader. That is pinned by what the emails RENDER, not by a source
+// needle: tests/lib/email/client-email-names.test.ts sends each through a captured transport and asserts the name in the output.
 
 describe("statuses are true of the files they are attached to", () => {
   const read = (f: string) => readFileSync(f, "utf8");

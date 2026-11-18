@@ -5,8 +5,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({
   user: null as null | { id: string; user_metadata: unknown },
   updateError: null as null | { message: string },
+  gate: "practitioner" as "practitioner" | "refused",
   throwOn: null as null | "getUser" | "updateUser" | "createClient",
   calls: [] as string[],
+}));
+vi.mock("@/lib/supabase/queries", () => ({
+  getCurrentPractitionerWithStudio: async () => {
+    state.calls.push("gate");
+    if (state.gate === "refused") throw new Error("no active practitioner");
+    return { practitioner: { id: "p" }, studio: { id: "s" } };
+  },
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => {
@@ -40,6 +48,7 @@ import { NOT_REMEMBERED_MESSAGE } from "@/lib/charting/view-preference";
 beforeEach(() => {
   state.user = { id: "u1", user_metadata: { full_name: "Avery Example", theme: { dark: true } } };
   state.updateError = null;
+  state.gate = "practitioner";
   state.throwOn = null;
   state.calls = [];
 });
@@ -62,7 +71,13 @@ describe("setChartingViewAction", () => {
   });
   it("touches nothing but the sign-in profile: one read, one write, no table", async () => {
     await setChartingViewAction("new");
-    expect(state.calls).toEqual(["getUser", "updateUser"]);
+    expect(state.calls).toEqual(["gate", "getUser", "updateUser"]);
+  });
+  it("refuses without an active practitioner: the gate runs first and nothing is read or written", async () => {
+    state.gate = "refused";
+    expect(await setChartingViewAction("new")).toEqual({ ok: false, error: NOT_REMEMBERED_MESSAGE });
+    expect(state.calls).toEqual(["gate"]);
+    expect(state.user!.user_metadata).toEqual({ full_name: "Avery Example", theme: { dark: true } });
   });
   it.each([undefined, null, "", "New", "all", 1, {}, ["new"], "new "])("refuses %j without writing", async (v) => {
     expect(await setChartingViewAction(v)).toEqual({ ok: false, error: NOT_REMEMBERED_MESSAGE });

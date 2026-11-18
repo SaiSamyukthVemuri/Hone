@@ -38,7 +38,7 @@ afterEach(() => {
 
 type Mode = "ok" | "stall-then-ok" | "stall" | "stall-leak" | "fail";
 
-function setup(mode: Mode, cached: string[] = []) {
+function setup(mode: Mode, cached: string[] = [], mirrorUrl = "http://azure.archive.ubuntu.com/ubuntu/") {
   const dir = mkdtempSync(path.join(tmpdir(), "hone-pw-deps-"));
   scratch.push(dir);
   const bin = path.join(dir, "bin");
@@ -47,12 +47,13 @@ function setup(mode: Mode, cached: string[] = []) {
   const mirrors = path.join(dir, "apt-mirrors.txt");
   const lock = path.join(dir, "lock-frontend");
   const trace = path.join(dir, "trace");
-  for (const d of [bin, archives]) mkdirSync(d);
+  const conf = path.join(dir, "apt.conf.d");
+  for (const d of [bin, archives, conf]) mkdirSync(d);
   if (cached.length) {
     mkdirSync(cache);
     for (const f of cached) writeFileSync(path.join(cache, f), "deb");
   }
-  writeFileSync(mirrors, "http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n");
+  writeFileSync(mirrors, `${mirrorUrl}\tpriority:1\n`);
   writeFileSync(lock, "");
   const exe = (name: string, body: string) => {
     writeFileSync(path.join(bin, name), `#!/bin/bash\n${body}\n`);
@@ -67,6 +68,7 @@ if [ "\${FAKE_ROOT:-0}" = 1 ]; then apt-get install; else sudo apt-get install; 
   exe(
     "apt-get",
     `n=$(( $(cat "${dir}/count" 2>/dev/null || echo 0) + 1 )); echo $n > "${dir}/count"
+cp "${conf}/99playwright-no-upgrade" "${dir}/conf-at-apt-$n" 2>/dev/null || echo missing > "${dir}/conf-at-apt-$n"
 exec 9>>"${lock}"
 flock -n 9 || { echo "E: Could not get lock ${lock}" >&2; echo "apt-get #$n: lock busy" >> "${trace}"; exit 100; }
 case "${mode}" in
@@ -91,6 +93,7 @@ touch "${archives}/libnss3_$n.deb"`,
     HOME: dir,
     PW_DEB_CACHE_DIR: cache,
     APT_ARCHIVES_DIR: archives,
+    APT_CONF_DIR: conf,
     APT_MIRROR_FILES: `${mirrors} ${path.join(dir, "absent.sources")}`,
     APT_LOCK_FILES: lock,
     PW_DEPS_FIRST_TIMEOUT: "1",
@@ -119,6 +122,28 @@ describe("playwright-system-deps.sh: cached, bounded INSIDE sudo, retried once o
     expect(r.mirror).toContain("azure.archive.ubuntu.com");
     expect(r.cache).toEqual(["libnss3_1.deb"]);
   });
+
+  it("apt is told never to upgrade a package the image already has, BEFORE the first install runs (4 mesa upgrades stalled 6 jobs on 18 Nov)", () => {
+    const h = setup("ok");
+    const r = h.run();
+    expect(r.status, r.stderr).toBe(0);
+    expect(readFileSync(path.join(h.dir, "conf-at-apt-1"), "utf8").trim()).toBe('APT::Get::Upgrade "false";');
+  });
+
+  it("the retry's mirror switch really switches a regional (ec2) mirror, not only azure", () => {
+    const r = setup("stall-then-ok", [], "http://us-east-2.ec2.archive.ubuntu.com/ubuntu/").run();
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    expect(r.calls[0]).toContain("mirror=http://us-east-2.ec2.archive.ubuntu.com/ubuntu/");
+    expect(r.calls[r.calls.length - 1]).toContain("mirror=http://archive.ubuntu.com/ubuntu/");
+  }, 120_000);
+
+  it("the mirror rewrite is idempotent and leaves security and other hosts alone", () => {
+    const h = setup("stall-then-ok", [], "http://archive.ubuntu.com/ubuntu/");
+    const r = h.run();
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    expect(r.mirror).toContain("http://archive.ubuntu.com/ubuntu/");
+    expect(r.mirror).not.toContain("archive.archive");
+  }, 120_000);
 
   it("cached .debs are put where apt looks BEFORE the install runs", () => {
     const r = setup("ok", ["libgbm1_1.deb", "libnss3_0.deb"]).run();
