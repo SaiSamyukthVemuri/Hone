@@ -100,6 +100,7 @@ import { isCanonicalTreatmentArea } from "@/lib/sessions/area-validation";
 import { BodyMapAreaPicker } from "@/components/body-map-area-picker";
 import { MultiAreaEditor } from "@/components/multi-area-editor";
 import { resolveBlockAreas, type BlockArea } from "@/lib/sessions/block-areas";
+import { useRetainedState } from "@/components/charting-state-provider";
 import { DraftRegistryProvider, useDraftRegistryState, useReportDraft } from "@/components/machines/draft-registry";
 import { MachineFirstSetupConnected } from "@/components/machines/machine-first-setup-connected";
 import { ProbePicker } from "@/components/probe-picker";
@@ -216,6 +217,9 @@ type Props = {
   // primary_area + side when empty.
   initialAreas?: BlockArea[];
   onCancel: () => void;
+  // OPT-IN retained state (components/charting-state-provider.tsx). Absent = exactly the previous
+  // behaviour: every value below is plain component state.
+  retainKey?: string;
 };
 
 type Draft = {
@@ -442,16 +446,18 @@ export function BlockSetupForm({
   probeLotInventory = [],
   initialAreas,
   onCancel,
+  retainKey,
 }: Props) {
   const isEdit = !!block;
-  const [draft, setDraftRaw] = useState<Draft>(() =>
+  const [draft, setDraftRaw] = useRetainedState<Draft>(retainKey ? `${retainKey}:draft` : null, () =>
     initialDraft(block, firstEntry, defaultPrimaryArea, defaultMachineFrequency, initialAreas),
   );
   // WHICH KIND OF MACHINE IS IN FORCE, so only that machine's fields show.
   // Opened from the area's SAVED identity (migration 0301), never inferred:
   // an area with no saved identity is "none", and "none" keeps the existing
   // charting fields exactly as they were.
-  const [machineKind, setMachineKind] = useState<"none" | "legacy" | "native">(
+  const [machineKind, setMachineKind] = useRetainedState<"none" | "legacy" | "native">(
+    retainKey ? `${retainKey}:machineKind` : null,
     block?.studio_machine_id ? "native" : block?.machine_profile_id ? "legacy" : "none",
   );
   // A NEW area carries the chosen machine into its Save (one transaction).
