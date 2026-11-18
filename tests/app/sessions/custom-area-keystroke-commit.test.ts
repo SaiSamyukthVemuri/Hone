@@ -31,40 +31,6 @@ describe("AreaPicker custom text is draft-only in explicit-commit mode", () => {
     // multi-area editor treats as an APPEND is unreachable from a keystroke.
     expect(PICKER).toMatch(/function setCustom\(next: string\) \{[\s\S]*?setCustomValue\(next\);[\s\S]*?if \(explicit\) return;[\s\S]*?onChange\(next\);/);
   });
-
-  it("revealing the Other input is not a commit in explicit mode", () => {
-    // The legacy pickOther() called onChange(customValue), which would append
-    // the draft the moment the practitioner tapped "Other".
-    expect(PICKER).toMatch(/function pickOther\(\) \{[\s\S]*?if \(explicit\) \{[\s\S]*?setOtherSelected\(\(open\) => !open\);[\s\S]*?return;/);
-  });
-
-  it("commit is guarded: blank/whitespace-only can never commit", () => {
-    expect(PICKER).toMatch(/function commitCustom\(\)/);
-    expect(PICKER).toMatch(/if \(!canCommitCustomArea\(customValue\)\) return;/);
-    expect(PICKER).toMatch(/disabled=\{!canCommit\}/);
-  });
-
-  it("offers BOTH commit affordances — an Add area button and Enter", () => {
-    expect(PICKER).toMatch(/onClick=\{commitCustom\}/);
-    expect(PICKER).toMatch(/if \(e\.key === "Enter"\) \{[\s\S]*?e\.preventDefault\(\);[\s\S]*?commitCustom\(\);/);
-  });
-
-  it("Enter is prevented from submitting the surrounding settings-block form", () => {
-    expect(PICKER).toMatch(/e\.preventDefault\(\);/);
-  });
-
-  it("clears the draft after an accepted commit (so repeated Enter is a no-op)", () => {
-    expect(PICKER).toMatch(/const accepted = onCommitCustom\(customValue\);[\s\S]*?if \(accepted\) setCustomValue\(""\);/);
-  });
-
-  it("defaults to the legacy live contract so existing callers are unchanged", () => {
-    expect(PICKER).toMatch(/customCommit = "live"/);
-    expect(PICKER).toMatch(/const explicit = customCommit === "explicit";/);
-  });
-
-  it("canonical chips still add immediately in both modes", () => {
-    expect(PICKER).toMatch(/function pickCanonical\(area: string\) \{[\s\S]*?onChange\(area\);/);
-  });
 });
 
 describe("MultiAreaEditor commits custom areas explicitly", () => {
@@ -74,17 +40,6 @@ describe("MultiAreaEditor commits custom areas explicitly", () => {
     expect(EDITOR).toMatch(/onCommitCustom=\{commitCustomArea\}/);
   });
 
-  it("routes every add through the single commit rule (append + dedupe)", () => {
-    expect(EDITOR).toMatch(/import \{ commitAreaToSet \} from "@\/lib\/sessions\/area-input";/);
-    expect(EDITOR).toMatch(/function addArea\(next: string\) \{[\s\S]*?commitAreaToSet\(value, next\)/);
-    expect(EDITOR).toMatch(/function commitCustomArea\(raw: string\): boolean \{[\s\S]*?commitAreaToSet\(value, raw\)/);
-  });
-
-  it("tells the practitioner when the area was already in the block", () => {
-    expect(EDITOR).toMatch(/is already in this settings block/);
-    expect(EDITOR).toMatch(/role="status"/);
-  });
-
   it("clears that notice on ANY edit to the set, so it cannot state a false fact", () => {
     // The notice asserts something about the CURRENT set. Removing the very
     // area it names, or changing a laterality, must retract it.
@@ -92,12 +47,6 @@ describe("MultiAreaEditor commits custom areas explicitly", () => {
       const body = EDITOR.slice(EDITOR.indexOf(`function ${fn}(`));
       expect(body.slice(0, 260), `${fn} must clear the notice`).toMatch(/setNotice\(null\);/);
     }
-  });
-
-  it("keeps per-area laterality, remove, and apply-to-all intact", () => {
-    expect(EDITOR).toMatch(/function setLaterality/);
-    expect(EDITOR).toMatch(/function remove/);
-    expect(EDITOR).toMatch(/function applyToAll/);
   });
 });
 

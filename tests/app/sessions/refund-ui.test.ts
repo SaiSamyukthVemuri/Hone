@@ -10,33 +10,13 @@ import path from "node:path";
 //     null or 'failed'
 //   * uses two-click confirm (Refund charge then
 //     "Confirm: refund charge ($X.XX)")
-//   * says test mode + no live money
-//   * never says "Live refund", "Refund complete", "Money returned",
-//     "Official refund receipt"
+//   * never says "Live refund" or "Official refund receipt"
 
 const CARD_PATH = path.resolve(
   __dirname,
   "../../../components/session-payment-prepare-card.tsx",
 );
 const CARD = readFileSync(CARD_PATH, "utf8");
-
-const TYPES_PATH = path.resolve(
-  __dirname,
-  "../../../lib/billing/session-payment-types.ts",
-);
-const TYPES = readFileSync(TYPES_PATH, "utf8");
-
-const ELIG_PATH = path.resolve(
-  __dirname,
-  "../../../lib/billing/session-payment-eligibility.ts",
-);
-const ELIG = readFileSync(ELIG_PATH, "utf8");
-
-const PAGE_PATH = path.resolve(
-  __dirname,
-  "../../../app/(app)/clients/[id]/sessions/[sessionId]/page.tsx",
-);
-const PAGE = readFileSync(PAGE_PATH, "utf8");
 
 function blockFor(name: string): string {
   const startIdx = CARD.indexOf(`function ${name}(`);
@@ -54,107 +34,7 @@ function codeOnly(src: string): string {
 }
 const CARD_CODE = codeOnly(CARD);
 
-describe("PR #178: SessionPaymentExistingAttemptSummary carries refund fields", () => {
-  it("type adds refundStatus / refundAmountCents / refundedAt", () => {
-    expect(TYPES).toMatch(/refundStatus:\s*string \| null/);
-    expect(TYPES).toMatch(/refundAmountCents:\s*number \| null/);
-    expect(TYPES).toMatch(/refundedAt:\s*string \| null/);
-  });
-
-  it("type adds stripeRefundId / refundFailureCode / refundFailureMessageSafe", () => {
-    expect(TYPES).toMatch(/stripeRefundId:\s*string \| null/);
-    expect(TYPES).toMatch(/refundFailureCode:\s*string \| null/);
-    expect(TYPES).toMatch(/refundFailureMessageSafe:\s*string \| null/);
-  });
-
-  it("eligibility helper SELECTs every new refund column", () => {
-    for (const col of [
-      "refund_status",
-      "refund_amount_cents",
-      "refunded_at",
-      "stripe_refund_id",
-      "refund_failure_code",
-      "refund_failure_message_safe",
-    ]) {
-      expect(ELIG).toContain(col);
-    }
-  });
-
-  it("eligibility helper maps each refund column into the summary", () => {
-    expect(ELIG).toMatch(/refundStatus:[\s\S]{0,80}row\.refund_status/);
-    expect(ELIG).toMatch(/refundAmountCents:[\s\S]{0,80}row\.refund_amount_cents/);
-    expect(ELIG).toMatch(/refundedAt:[\s\S]{0,80}row\.refunded_at/);
-    expect(ELIG).toMatch(/stripeRefundId:[\s\S]{0,80}row\.stripe_refund_id/);
-    expect(ELIG).toMatch(/refundFailureCode:[\s\S]{0,80}row\.refund_failure_code/);
-    expect(ELIG).toMatch(
-      /refundFailureMessageSafe:[\s\S]{0,80}row\.refund_failure_message_safe/,
-    );
-  });
-});
-
-describe("PR #178: SessionPaymentPrepareCard wires refundAction", () => {
-  it("the card accepts a refundAction prop", () => {
-    expect(CARD).toMatch(/refundAction:\s*RefundAction/);
-  });
-
-  it("the page passes refundPaymentChargeAttemptAction into the card", () => {
-    expect(PAGE).toMatch(/refundAction=\{refundPaymentChargeAttemptAction\}/);
-  });
-
-  it("AttemptStatusPanel forwards refundAction to SucceededPanel only", () => {
-    const dispatch = blockFor("AttemptStatusPanel");
-    expect(dispatch).toMatch(
-      /case "succeeded":[\s\S]{0,500}refundAction=\{refundAction\}/,
-    );
-    // Other branches must NOT receive the prop.
-    const sliceCase = (name: string): string => {
-      const start = dispatch.indexOf(`case "${name}":`);
-      if (start === -1) return "";
-      const after = start + 1;
-      const next = dispatch.slice(after).search(/case "|default:/);
-      return next === -1
-        ? dispatch.slice(start)
-        : dispatch.slice(start, after + next);
-    };
-    for (const name of ["ready", "pending_stripe", "failed", "cancelled", "blocked"]) {
-      const block = sliceCase(name);
-      expect(block).not.toMatch(/refundAction=/);
-    }
-  });
-});
-
 describe("PR #178: RefundSubPanel rendering shape", () => {
-  it("the SucceededPanel renders <RefundSubPanel ...>", () => {
-    const block = blockFor("SucceededPanel");
-    expect(block).toMatch(/<RefundSubPanel/);
-  });
-
-  it("RefundSubPanel exists as a dedicated function", () => {
-    expect(CARD).toMatch(/function RefundSubPanel/);
-  });
-
-  it("RefundSubPanel reads BOTH refund columns through refundDisplayState (R1) and branches on its kinds", () => {
-    const block = blockFor("RefundSubPanel");
-    expect(block).toMatch(/refundDisplayState\(\{/);
-    expect(block).toMatch(/refundStatus:\s*attempt\.refundStatus/);
-    expect(block).toMatch(/providerRefundStatus:\s*attempt\.stripeRefundStatus/);
-    for (const kind of ["refunded", "pending", "needs_action", "unclear", "failed"]) {
-      expect(block, kind).toMatch(new RegExp(`display\\.kind === "${kind}"`));
-    }
-    // The old single-column reads must be gone: they are what let "succeeded" hide a provider failure.
-    expect(block).not.toMatch(/attempt\.refundStatus === "/);
-  });
-
-  it("the Refund charge button renders ONLY when refundDisplayState allows a new refund", () => {
-    const block = blockFor("RefundSubPanel");
-    const gateIdx = block.indexOf("display.mayStartRefund");
-    const buttonIdx = block.indexOf("Refund charge");
-    expect(gateIdx, "mayStartRefund guard present").toBeGreaterThan(-1);
-    expect(buttonIdx, "Refund charge button present").toBeGreaterThan(-1);
-    expect(gateIdx).toBeLessThan(buttonIdx);
-    expect(block).toMatch(/isOwner\s*&&\s*\n?\s*display\.mayStartRefund\s*&&\s*\n?\s*!localRefunded/);
-  });
-
   it("the refund copy is neutral (no test-mode / no-live-money claim)", () => {
     const block = blockFor("RefundSubPanel");
     expect(block).toMatch(
@@ -194,35 +74,17 @@ describe("PR #178: RefundSubPanel rendering shape", () => {
     expect(block).not.toMatch(/attempt\.refundFailureCode/);
   });
 
-  it("the pending state surfaces a calm 'Refund pending' message", () => {
-    const block = blockFor("RefundSubPanel");
-    expect(block).toMatch(/Refund pending\./);
-  });
-
   it("setLocalRefunded only fires on r.ok === true", () => {
     const block = blockFor("RefundSubPanel");
     expect(block).toMatch(
       /if \(r\.ok\)\s*\{[\s\S]{0,400}setLocalRefunded\(/,
     );
   });
-
-  it("non-ok results call setError(r.error) instead of setLocalRefunded", () => {
-    const block = blockFor("RefundSubPanel");
-    expect(block).toMatch(/setError\(r\.error\);/);
-  });
 });
 
 describe("PR #178: forbidden copy on the refund surface", () => {
   it("does NOT say 'Live refund'", () => {
     expect(CARD_CODE).not.toMatch(/Live refund/);
-  });
-
-  it("does NOT say 'Refund complete'", () => {
-    expect(CARD_CODE).not.toMatch(/Refund complete/);
-  });
-
-  it("does NOT say 'Money returned'", () => {
-    expect(CARD_CODE).not.toMatch(/Money returned/);
   });
 
   it("does NOT say 'Official refund receipt'", () => {

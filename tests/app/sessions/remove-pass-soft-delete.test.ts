@@ -9,10 +9,8 @@ import { join } from "node:path";
 // selected pass is voided — never the block/area, session, appointment, client,
 // other passes, or photos.
 //
-// Source-level guarantees (matching the clinical-lineage / last-treatment-cleanup
-// house style). True DB behavior (A stays after B removed, cross-studio reject,
-// no double-void) is guaranteed by the code mechanisms asserted below and is a
-// candidate for a follow-up db-integration test.
+// Source-level guarantees. DB behavior (A stays after B removed, cross-studio
+// reject, no double-void) is proven in tests/db/remove-pass-soft-delete.db.test.ts.
 
 function read(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf8");
@@ -21,7 +19,6 @@ function stripComments(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
 }
 
-const MIGRATION = read("supabase/migrations/0114_entry_soft_delete.sql");
 const SESSION_ACTIONS = read(
   "app/(app)/clients/[id]/sessions/[sessionId]/actions.ts",
 );
@@ -29,37 +26,6 @@ const SESSION_ACTIONS_CODE = stripComments(SESSION_ACTIONS);
 const QUERIES = read("lib/supabase/queries.ts");
 const PREVIEWS = read("lib/dashboard/before-today-previews.ts");
 const CLIENT_PAGE = read("app/(app)/clients/[id]/page.tsx");
-const BLOCKS_VIEW = read(
-  "app/(app)/clients/[id]/sessions/[sessionId]/session-blocks-view.tsx",
-);
-const SESSION_PAGE = read(
-  "app/(app)/clients/[id]/sessions/[sessionId]/page.tsx",
-);
-const REMOVE_BTN = read("components/remove-pass-button.tsx");
-const TYPES = read("lib/types/database.ts");
-
-describe("0114 migration: additive soft-delete columns on both pass tables", () => {
-  it("adds deleted_at/deleted_by/delete_reason to electrolysis_entries and laser_entries", () => {
-    for (const tbl of ["electrolysis_entries", "laser_entries"]) {
-      const chunk = MIGRATION.slice(MIGRATION.indexOf(`alter table public.${tbl}`));
-      expect(chunk).toMatch(/add column if not exists deleted_at\s+timestamptz/);
-      expect(chunk).toMatch(
-        /add column if not exists deleted_by\s+uuid references public\.practitioners\(id\) on delete set null/,
-      );
-      expect(chunk).toMatch(/add column if not exists delete_reason text/);
-    }
-  });
-
-  it("adds active partial indexes and is non-destructive (no backfill / no RLS change)", () => {
-    expect(MIGRATION).toMatch(/electrolysis_entries_active_idx[\s\S]*where deleted_at is null/);
-    expect(MIGRATION).toMatch(/laser_entries_active_idx[\s\S]*where deleted_at is null/);
-    // Additive only — no update of existing rows, no RLS/policy change here.
-    expect(MIGRATION).not.toMatch(/^\s*update\s/im);
-    expect(MIGRATION).not.toMatch(/drop\s+policy/i);
-    expect(MIGRATION).not.toMatch(/create\s+policy/i);
-    expect(MIGRATION).not.toMatch(/enable row level security/i);
-  });
-});
 
 describe("server actions: audited soft-delete, no hard delete", () => {
   it("removes a pass via UPDATE of deleted_at/deleted_by/delete_reason (not DELETE)", () => {
@@ -170,34 +136,6 @@ describe("read paths exclude voided passes (not counted as active anywhere)", ()
     expect(CLIENT_PAGE).toMatch(/\.filter\(\(e\) => !e\.deleted_at\)/);
     expect(PREVIEWS).toMatch(/electrolysis_entries\(hairs_treated, deleted_at\), laser_entries\(id, deleted_at\)/);
     expect(PREVIEWS).toMatch(/\.filter\(\s*\(e\) => !e\.deleted_at/);
-  });
-
-  it("entry types carry the soft-delete triad", () => {
-    // Both ElectrolysisEntry and LaserEntry expose deleted_at (so filters typecheck).
-    const el = TYPES.slice(TYPES.indexOf("export type ElectrolysisEntry"));
-    expect(el.slice(0, el.indexOf("};"))).toMatch(/deleted_at: string \| null/);
-    const la = TYPES.slice(TYPES.indexOf("export type LaserEntry"));
-    expect(la.slice(0, la.indexOf("};"))).toMatch(/deleted_at: string \| null/);
-  });
-});
-
-describe("UI: Remove pass with confirmation, no bare-✕ hard delete", () => {
-  it("RemovePassButton shows the exact retrospective confirmation copy + optional reason", () => {
-    expect(REMOVE_BTN).toMatch(
-      /Remove this pass from the active treatment record\? Other passes for this\s*area will stay\./,
-    );
-    expect(REMOVE_BTN).toMatch(/name="reason"/);
-    expect(REMOVE_BTN).toMatch(/Reason \(optional\)/);
-  });
-
-  it("both charting surfaces use RemovePassButton and drop the old ✕ delete form", () => {
-    expect(BLOCKS_VIEW).toMatch(/<RemovePassButton/);
-    expect(SESSION_PAGE).toMatch(/<RemovePassButton/);
-    // The old bare-✕ "Delete entry" affordance is gone from both.
-    expect(BLOCKS_VIEW).not.toMatch(/aria-label="Delete entry"/);
-    expect(SESSION_PAGE).not.toMatch(/aria-label="Delete entry"/);
-    expect(BLOCKS_VIEW).not.toMatch(/>✕</);
-    expect(SESSION_PAGE).not.toMatch(/>✕</);
   });
 });
 

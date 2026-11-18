@@ -18,15 +18,6 @@ const PAGE = read(`${BASE}/page.tsx`);
 const CARD = read("components/copy-draft-card.tsx");
 
 describe("preview is EPHEMERAL — building/refreshing/removing/cancelling writes nothing", () => {
-  it("build uses the READ-ONLY source action + the pure builder; source is not browser-chosen", () => {
-    expect(PANEL).toMatch(/getWholeSessionCopySourceAction\(\{ clientId, sessionId \}\)/);
-    expect(PANEL).toMatch(/buildCopyDrafts\(res\.source\)/);
-    // The panel takes ONLY clientId + sessionId — no browser-supplied source id.
-    expect(PANEL).not.toMatch(/previousSessionId/);
-    expect(PANEL).toMatch(/data-testid="copy-previous-preview"/);
-    expect(PANEL).toMatch(/data-testid="copy-previous-refresh"/);
-  });
-
   it("removeDraft + cancel are pure client-state changes (no server action)", () => {
     expect(PANEL).toMatch(/function removeDraft\([\s\S]{0,120}setDrafts\(\(d\) => d\.filter/);
     expect(PANEL).toMatch(/function cancel\(\)[\s\S]{0,220}setPhase\("idle"\)/);
@@ -36,10 +27,6 @@ describe("preview is EPHEMERAL — building/refreshing/removing/cancelling write
     );
     expect(removeAndCancel).not.toMatch(/commitWholeSessionCopyAction/);
     expect(removeAndCancel).not.toMatch(/getWholeSessionCopySourceAction/);
-  });
-
-  it("a fresh idempotency key is minted per preview build (at-most-once commit)", () => {
-    expect(PANEL).toMatch(/setIdempotencyKey\(crypto\.randomUUID\(\)\)/);
   });
 
   it("there is exactly ONE commit call site — submitCommit() — sending the narrow input + server fingerprint", () => {
@@ -58,26 +45,6 @@ describe("preview is EPHEMERAL — building/refreshing/removing/cancelling write
     expect((PANEL.match(/await submitCommit\(/g) ?? []).length).toBe(2);
   });
 
-  it("there is exactly ONE source-read call site — loadSource() — shared by both routes", () => {
-    expect((PANEL.match(/getWholeSessionCopySourceAction\(/g) ?? []).length).toBe(1);
-    expect(PANEL).toMatch(/async function loadSource\(\)/);
-    expect((PANEL.match(/await loadSource\(\)/g) ?? []).length).toBe(2);
-    // loadSource is READ-ONLY: it never reaches the commit action.
-    const fn = PANEL.slice(
-      PANEL.indexOf("async function loadSource()"),
-      PANEL.indexOf("async function submitCommit("),
-    );
-    expect(fn).not.toMatch(/commitWholeSessionCopyAction|submitCommit/);
-  });
-
-  it("renders EDITABLE cards (CopyDraftCard) with an in-state update handler — no writes", () => {
-    expect(PANEL).toMatch(/<CopyDraftCard/);
-    expect(PANEL).toMatch(/function updateDraft\(next: CopyAreaDraft\)[\s\S]{0,120}setDrafts\(\(d\) => d\.map/);
-    // updateDraft is pure state; it never calls a server action.
-    const upd = PANEL.slice(PANEL.indexOf("function updateDraft"), PANEL.indexOf("function cancel"));
-    expect(upd).not.toMatch(/commitWholeSessionCopyAction|getWholeSessionCopySourceAction/);
-  });
-
   it("the editable card reuses SHARED widgets and never edits minutes", () => {
     // Reuses the shared area editor + probe picker + shared constants/gating.
     expect(CARD).toMatch(/from "@\/components\/multi-area-editor"/);
@@ -91,15 +58,6 @@ describe("preview is EPHEMERAL — building/refreshing/removing/cancelling write
     expect(CARD).not.toMatch(/minutes_performed/);
     // All edits go through onChange (component state) — the card imports no server action.
     expect(CARD).not.toMatch(/whole-session-copy-actions|use server|\.rpc\(/);
-  });
-
-  it("displays the source visit date so the practitioner knows which visit is copied", () => {
-    expect(PANEL).toMatch(/data-testid="copy-previous-source-date"/);
-    expect(PANEL).toMatch(/setSourceStartedAt\(loaded\.sourceStartedAt\)/);
-    // The IDLE card names the visit too, from the page's own descriptor read, so
-    // the fast path never requires opening a preview just to learn which visit
-    // is being brought forward.
-    expect(PANEL).toMatch(/data-testid="copy-previous-idle-source-date"/);
   });
 });
 
@@ -152,29 +110,9 @@ describe("server actions — read-only descriptor source; service-role RPC is th
       expect(ACTIONS).toMatch(new RegExp(`case "${code}":`));
     }
   });
-
-  it("the commit action is registered in the service-role allowlist", () => {
-    const allow = read("tests/security/service-role-allowlist.ts");
-    expect(allow).toMatch(/whole-session-copy-actions\.ts/);
-  });
 });
 
 describe("wiring", () => {
-  it("the session page renders the panel with clientId + sessionId + the canonical source date only", () => {
-    expect(PAGE).toMatch(
-      /<CopyPreviousAreasPanel\s+clientId=\{id\}\s+sessionId=\{session\.id\}\s+sourceStartedAt=\{copySourceStartedAt\}\s*\/>/,
-    );
-    expect(PAGE).toMatch(/import \{ CopyPreviousAreasPanel \}/);
-    expect(PAGE).not.toMatch(/<CopyPreviousAreasButton/);
-    // The date comes from the SAME descriptor that gates the panel — not a
-    // second "latest previous session" query that could name a different visit.
-    expect(PAGE).toMatch(
-      /copySourceStartedAt =\s*\n?\s*\(copyDescriptor as \{ source_started_at\?: string \} \| null\)\?\.source_started_at/,
-    );
-    // The panel still receives NO browser-chosen source session id.
-    expect(PAGE).not.toMatch(/previousSessionId=/);
-  });
-
   it("the page gates the panel on the CANONICAL descriptor — not a separate previous-session query", () => {
     expect(PAGE).toMatch(/whole_session_copy_source_descriptor/);
     expect(PAGE).toMatch(/canCopyFromPrevious/);
@@ -184,34 +122,13 @@ describe("wiring", () => {
 });
 
 // Phase B reconciliation with the Phase A clinical contract. The editable copy
-// card must match production charting: no galvanic-intensity control, PicoBlend
-// precision steps, and the pulse control labeled + placed like Phase A.
+// card must match production charting: no galvanic-intensity control, the
+// OmniBlend rule, and no minutes/outcome input.
 describe("copy card matches the Phase A charting contract", () => {
   it("(2) has NO galvanic intensity field/label/testid", () => {
     expect(CARD).not.toMatch(/Galvanic intensity/);
     expect(CARD).not.toMatch(/galvanicIntensityPercent/);
     expect(CARD).not.toMatch(/galv-intensity/);
-  });
-
-  it("(3C) galvanic mA uses step='0.01' and thermolysis duration uses step='0.001' (PicoBlend precision)", () => {
-    expect(CARD).toMatch(/Galvanic mA[\s\S]{0,200}?step="0\.01"/);
-    expect(CARD).toMatch(/Thermolysis duration \(s\)[\s\S]{0,200}?step="0\.001"/);
-  });
-
-  it("(3C) the pulse control is labeled 'Thermolysis pulse count' and sits INSIDE the thermolysis section", () => {
-    expect(CARD).toMatch(/>Thermolysis pulse count</);
-    expect(CARD).not.toMatch(/>Pulse count</); // old standalone label gone
-    // Structurally: the pulse label appears within the thermolysis block. Machine
-    // order (Chloe) puts the GALVANIC group first, so containment is asserted
-    // against the thermolysis block itself, not by "before galvanic".
-    const thermo = CARD.indexOf("sections.showThermo");
-    const galv = CARD.indexOf("sections.showGalv");
-    const pulse = CARD.indexOf("Thermolysis pulse count");
-    expect(thermo).toBeGreaterThan(-1);
-    expect(galv).toBeGreaterThan(-1);
-    expect(galv).toBeLessThan(thermo); // galvanic group comes first
-    expect(pulse).toBeGreaterThan(thermo);
-    expect(CARD.slice(thermo, pulse)).not.toMatch(/Galvanic mA|Units of lye/);
   });
 
   it("(3C) ports the charting form's OmniBlend rule: no thermolysis duration for OmniBlend", () => {

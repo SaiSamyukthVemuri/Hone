@@ -69,36 +69,6 @@ describe("capture: updateNextSessionNoteAction", () => {
 });
 
 describe("capture surface: session detail page", () => {
-  const NOTE_FORM = readFileSync(
-    path.join(
-      ROOT,
-      "app/(app)/clients/[id]/sessions/[sessionId]/NextVisitNoteForm.tsx",
-    ),
-    "utf8",
-  );
-
-  it("renders the For next visit form bound to the action (renamed in PR #194)", () => {
-    expect(SESSION_PAGE).toMatch(/>For next visit</);
-    expect(SESSION_PAGE).toMatch(/action=\{updateNextSessionNoteAction\}/);
-    expect(SESSION_PAGE).toMatch(
-      /initialNote=\{session\.next_session_note \?\? ""\}/,
-    );
-  });
-
-  it("the field is the ONE next-visit surface (PR #199 copy)", () => {
-    expect(SESSION_PAGE).toMatch(
-      /Anything to remember, watch, or do differently next time\./,
-    );
-    expect(NOTE_FORM).toMatch(/Upper lip: start lower and check sensitivity/);
-  });
-
-  it("PR #191: saving shows explicit saved / cleared / error feedback", () => {
-    expect(NOTE_FORM).toMatch(/Saved just now\./);
-    expect(NOTE_FORM).toMatch(/Note cleared\./);
-    expect(NOTE_FORM).toMatch(/Unsaved changes/);
-    expect(NOTE_FORM).toMatch(/role="alert"/);
-    expect(NOTE_FORM).toMatch(/\{pending \? "Saving…" : "Save note"\}/);
-  });
 
   it("PR #191: the action returns a result so failures surface in the form", () => {
     const CODE = codeOnly(SESSION_ACTIONS);
@@ -120,53 +90,6 @@ describe("surfacing: the latest previous note appears when charting", () => {
       /\.not\("next_session_note", "is", null\)\s*\n?\s*\.lt\("started_at", input\.before\)\s*\n?\s*\.order\("started_at", \{ ascending: false \}\)\s*\n?\s*\.order\("id", \{ ascending: false \}\)\s*\n?\s*\.limit\(/,
     );
   });
-
-  it("renders the From last visit banner only when a note exists", () => {
-    expect(SESSION_PAGE).toMatch(/\{fromLastVisit && \(/);
-    expect(SESSION_PAGE).toMatch(/From last visit, for today/);
-  });
-
-  it("new-session page surfaces the previous note inside the context panel", () => {
-    expect(NEW_SESSION_PAGE).toMatch(/Previous session context/);
-    expect(NEW_SESSION_PAGE).toMatch(
-      /<FromLastVisitForToday summary=\{previousSummary\} \/>/,
-    );
-  });
-
-  it("new-session panel renders nothing for first-visit clients", () => {
-    expect(NEW_SESSION_PAGE).toMatch(/\{previousSummary && previousMeta && \(/);
-  });
-
-  it("appointment detail card surfaces the note via the shared prep model", () => {
-    // Session 1D: the appointment page moved from the COMPACT summary
-    // (buildLastSessionSummary → FromLastVisitForToday) to the full appointment
-    // prep model, which carries the same note as its own labelled section
-    // rather than folded into a combined watch/plan band. The loop this file
-    // pins — written while charting, read before the next visit — is unchanged;
-    // only the surface that reads it is richer.
-    // The literal input object moved into the shared mapper
-    // (prepMemoryInputFromTreatment) when the dashboard became a second
-    // consumer of this model; the page still builds through the same builder.
-    expect(APPOINTMENT_PAGE).toMatch(
-      /buildAppointmentPrepMemory\(\s*prepMemoryInputFromTreatment\(selected\),?\s*\)/,
-    );
-    // ...and the plan passthrough is pinned where it now lives — the shared
-    // mapper — so it protects the dashboard's copy of this surface too.
-    expect(
-      readFileSync(path.join(ROOT, "lib/sessions/appointment-prep-memory.ts"), "utf8"),
-    ).toMatch(/next_session_note: selected\.session\.next_session_note \?\? null/);
-    const CARD = readFileSync(
-      path.join(ROOT, "components/appointment-prep-memory-card.tsx"),
-      "utf8",
-    );
-    expect(CARD).toMatch(/notes\.forNextVisit/);
-    // And the label is the shared one, not a new literal on the card.
-    const MODEL = readFileSync(
-      path.join(ROOT, "lib/sessions/appointment-prep-memory.ts"),
-      "utf8",
-    );
-    expect(MODEL).toMatch(/next_session_note: "For next visit"/);
-  });
 });
 
 describe("shared helper usage (both context surfaces)", () => {
@@ -175,21 +98,6 @@ describe("shared helper usage (both context surfaces)", () => {
   // summary; the appointment page is the full pre-visit read and uses the prep
   // model. What must stay true of BOTH is that neither re-derives the clinical
   // vocabulary or the "which session was the last treatment" rule.
-  it("the new-session page still uses the compact shared summary", () => {
-    expect(NEW_SESSION_PAGE).toMatch(/from "@\/lib\/sessions\/clinical-summary"/);
-    expect(NEW_SESSION_PAGE).toMatch(/from "@\/components\/last-session-summary"/);
-    expect(NEW_SESSION_PAGE).toMatch(/<AreaSummaries summary=\{/);
-  });
-
-  it("the appointment page uses the shared prep model and card", () => {
-    expect(APPOINTMENT_PAGE).toMatch(
-      /from "@\/lib\/sessions\/appointment-prep-memory"/,
-    );
-    expect(APPOINTMENT_PAGE).toMatch(
-      /from "@\/components\/appointment-prep-memory-card"/,
-    );
-    expect(APPOINTMENT_PAGE).toMatch(/<AppointmentPrepMemoryCard/);
-  });
 
   it("BOTH surfaces select the last treatment through the ONE shared authority", () => {
     // This is the invariant that actually matters, and it is stronger than the

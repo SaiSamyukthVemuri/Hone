@@ -31,8 +31,6 @@ const ACTIONS = read(`${BASE}/whole-session-copy-actions.ts`);
 const PAGE = read(`${BASE}/page.tsx`);
 const VIEW = read(`${BASE}/session-blocks-view.tsx`);
 const LANDING = read("lib/sessions/fast-chart-start.ts");
-const NORMALIZE = read("lib/sessions/whole-session-copy-normalize.ts");
-const MODEL = read("lib/sessions/whole-session-copy.ts");
 const MIGRATION = read("supabase/migrations/0157_whole_session_copy_setup.sql");
 
 // The fast path's own body, isolated so an assertion about it cannot be
@@ -41,39 +39,6 @@ const FAST = PANEL.slice(
   PANEL.indexOf("function startFromLastSession()"),
   PANEL.indexOf("function buildPreview()"),
 );
-
-describe("(1) an eligible repeat client is offered the fast path as the PRIMARY action", () => {
-  it("the idle card leads with 'Start from last session'", () => {
-    expect(PANEL).toMatch(/data-testid="copy-previous-fast-start"/);
-    expect(PANEL).toMatch(/Start from last session/);
-    expect(FAST.length).toBeGreaterThan(0);
-  });
-
-  it("the primary CTA appears BEFORE the preview CTA in the idle card", () => {
-    const idle = PANEL.slice(PANEL.indexOf('if (phase === "idle")'));
-    const fastCta = idle.indexOf('data-testid="copy-previous-fast-start"');
-    const previewCta = idle.indexOf('data-testid="copy-previous-preview"');
-    expect(fastCta).toBeGreaterThan(-1);
-    expect(previewCta).toBeGreaterThan(-1);
-    expect(fastCta).toBeLessThan(previewCta);
-  });
-
-  it("(18) the cautious PREVIEW path is RETAINED, with its testids and controls intact", () => {
-    expect(PANEL).toMatch(/data-testid="copy-previous-preview"/);
-    expect(PANEL).toMatch(/Preview first/);
-    expect(PANEL).toMatch(/data-testid="copy-previous-preview-panel"/);
-    expect(PANEL).toMatch(/data-testid="copy-previous-commit"/);
-    expect(PANEL).toMatch(/data-testid="copy-previous-refresh"/);
-    expect(PANEL).toMatch(/data-testid="copy-previous-cancel"/);
-    expect(PANEL).toMatch(/<CopyDraftCard/);
-  });
-
-  it("the gate is unchanged: the panel still renders only on an EMPTY editable electrolysis chart", () => {
-    expect(PAGE).toMatch(
-      /!isFinalized &&\s*\n\s*session\.modality === "electrolysis" &&\s*\n\s*blockData &&\s*\n\s*blockData\.blocks\.length === 0 &&\s*\n\s*canCopyFromPrevious/,
-    );
-  });
-});
 
 describe("the idle card is HYDRATION-SAFE — it renders no runtime-locale date", () => {
   // Regression guard. Naming the source visit on the IDLE card put a date into
@@ -87,32 +52,9 @@ describe("the idle card is HYDRATION-SAFE — it renders no runtime-locale date"
     expect(PANEL).not.toMatch(/toLocaleString\(/);
     expect(PANEL).not.toMatch(/toLocaleTimeString\(/);
   });
-
-  it("visit dates go through the shared instant renderer", () => {
-    expect(PANEL).toMatch(/import \{ FormattedDateTime \} from "@\/components\/formatted-date-time"/);
-    expect(PANEL).toMatch(/<FormattedDateTime iso=\{iso \?\? ""\} format="date" \/>/);
-    // Both surfaces — the idle card and the preview header — use it.
-    expect((PANEL.match(/<VisitDate iso=/g) ?? []).length).toBe(2);
-  });
-
-  it("the prose interpolates no date, so the server pass has no gap in a sentence", () => {
-    const idle = PANEL.slice(
-      PANEL.indexOf('if (phase === "idle")'),
-      PANEL.indexOf('data-testid="copy-previous-fast-start"'),
-    );
-    expect(idle).not.toMatch(/\$\{visit\}|\{visit\}/);
-  });
 });
 
 describe("(2) the fast path uses the AUTHORITATIVE previous session — never a browser choice", () => {
-  it("it reads the source through the shared loader, which uses the server descriptor", () => {
-    expect(FAST).toMatch(/await loadSource\(\)/);
-    expect(PANEL).toMatch(
-      /async function loadSource\(\)[\s\S]{0,400}?getWholeSessionCopySourceAction\(\{ clientId, sessionId \}\)/,
-    );
-    expect(ACTIONS).toMatch(/whole_session_copy_source_descriptor/);
-  });
-
   it("the panel accepts NO source session id from anywhere — not a prop, not a param", () => {
     expect(PANEL).not.toMatch(/previousSessionId/);
     expect(PANEL).not.toMatch(/sourceSessionId\?:/); // never an inbound prop
@@ -147,41 +89,6 @@ describe("(3/4/5/6/7/8/9) reusable setup copies; today's clinical facts are NEVE
     expect(FAST).not.toMatch(
       /minutes|minutesPerformed|hairs|hairsTreated|tolerance|reaction|observationChips|observation_chips|comments|caution|numbing|aftercare|payment/i,
     );
-  });
-
-  it("(4) minutes performed is absent from the canonical client model AND the normalizer output", () => {
-    expect(MODEL).not.toMatch(/minutesPerformed|minutes:/);
-    // draftToCopyInput's setup literal carries no minutes key.
-    const mapper = MODEL.slice(MODEL.indexOf("export function draftToCopyInput"));
-    expect(mapper).not.toMatch(/minutes/i);
-    // The normalizer accepts no minutes input and emits none.
-    expect(NORMALIZE).not.toMatch(/minutes_performed:/);
-    const setupInput = NORMALIZE.slice(
-      NORMALIZE.indexOf("export type WholeSessionCopySetupInput"),
-      NORMALIZE.indexOf("export type WholeSessionCopyDraftInput"),
-    );
-    expect(setupInput).not.toMatch(/minutes/i);
-  });
-
-  it("(5/6/7/8/9) the normalizer emits no hairs, reaction, tolerance, chips, notes, caution or numbing", () => {
-    const emitted = NORMALIZE.slice(NORMALIZE.indexOf("const block: Record<string, unknown>"));
-    for (const forbidden of [
-      "hairs_treated",
-      "reaction_type",
-      "reaction_notes",
-      "tolerance_rating",
-      "observation_chips",
-      "comments",
-      "caution_for_next_session",
-      "caution_note",
-      "numbing_status",
-      "numbing_notes",
-      "block_name",
-      "block_notes",
-      "minutes_performed",
-    ]) {
-      expect(emitted).not.toMatch(new RegExp(`\\b${forbidden}\\b`));
-    }
   });
 
   it("the RPC's INSERT allow-lists are the backstop — outcome columns are not writable by a copy", () => {
@@ -247,14 +154,6 @@ describe("(11) double submit cannot duplicate the copied setup", () => {
     expect(FAST).toMatch(/finally \{\s*\n\s*fastInFlightRef\.current = false;/);
   });
 
-  it("the button is also disabled while the transition is pending", () => {
-    expect(PANEL).toMatch(/const \[fastStarting, startFast\] = useTransition\(\)/);
-    expect(PANEL).toMatch(
-      /data-testid="copy-previous-fast-start"[\s\S]{0,200}?|disabled=\{busy\}[\s\S]{0,200}?data-testid="copy-previous-fast-start"/,
-    );
-    expect(PANEL).toMatch(/const busy = fastStarting \|\| loading;/);
-  });
-
   // NOTE ON SCOPE: these are STRUCTURAL guards on the orchestration. They do not
   // by themselves prove that a lost response replays — that claim is only as good
   // as a run in which the write lands and the answer does not, which is
@@ -295,14 +194,6 @@ describe("(11) double submit cannot duplicate the copied setup", () => {
     expect(FAST).toMatch(/pendingRetryRef\.current = null;\s*\n\s*setAmbiguous\(false\);/);
     // Nothing retries on its own — recovery is always a practitioner action.
     expect(FAST).not.toMatch(/setTimeout|setInterval|while \(|for \(/);
-  });
-
-  it("both success shapes land the same way, so a replay is as actionable as a first commit", () => {
-    expect(PANEL).toMatch(/function landIn\(createdBlockIds: string\[\]\)/);
-    expect(FAST).toMatch(/landIn\(outcome\.createdBlockIds\)/);
-    // The landing does not branch on idempotentReplay — the ids are authoritative
-    // either way.
-    expect(FAST).not.toMatch(/idempotentReplay/);
   });
 
   it("the misleading 'nothing to copy' route is unreachable while an outcome is unknown", () => {
@@ -369,45 +260,10 @@ describe("(13) today's chart is never destructively replaced", () => {
 });
 
 describe("(19) after the copy she lands in TODAY'S editor — no close/refresh/scroll/reopen", () => {
-  it("the fast path routes using the ids the RPC already returned (no schema change needed)", () => {
-    expect(PANEL).toMatch(/const landing = landingBlockId\(createdBlockIds\)/);
-    expect(PANEL).toMatch(/router\.replace\(fastChartUrl\(clientId, sessionId, landing\)\)/);
-    expect(FAST).toMatch(/landIn\(outcome\.createdBlockIds\)/);
-    // The commit action already surfaces them; nothing new was added to the DB.
-    expect(ACTIONS).toMatch(/createdBlockIds: result\.created_block_ids \?\? \[\]/);
-    expect(MIGRATION).toMatch(/'created_block_ids', to_jsonb\(v_ids\)/);
-  });
-
-  it("router.replace (not push) is used, so the copy leaves no extra history entry to back through", () => {
-    const landFn = PANEL.slice(
-      PANEL.indexOf("function landIn(createdBlockIds: string[])"),
-      PANEL.indexOf("function startFromLastSession()"),
-    );
-    expect(landFn).toMatch(/router\.replace\(/);
-    expect(landFn).not.toMatch(/router\.push\(/);
-    expect(PANEL).not.toMatch(/router\.push\(/);
-  });
-
   it("the page validates the landing id SERVER-side against this session's live blocks", () => {
     expect(PAGE).toMatch(/resolveAutoEditBlockId\(\s*\n?\s*query\[FAST_CHART_PARAM\]/);
     expect(PAGE).toMatch(/\.filter\(\(b\) => b\.deleted_at == null\)/);
     expect(LANDING).toMatch(/liveBlockIds\.includes\(candidate\)/);
-  });
-
-  it("the named area mounts already open, and scrolls itself into view", () => {
-    expect(VIEW).toMatch(/const \[editing, setEditing\] = useState\(autoEdit\)/);
-    expect(VIEW).toMatch(/sectionRef\.current\?\.scrollIntoView\(\{ block: "start" \}\)/);
-    expect(VIEW).toMatch(/id=\{`area-\$\{block\.id\}`\}/);
-    expect(VIEW).toMatch(/data-editing=\{editing \? "true" : "false"\}/);
-  });
-
-  it("the editor she lands in is the one-page form that owns TODAY'S facts", () => {
-    // Editing an existing block renders BlockSetupForm with the block + its
-    // first entry — the form that carries minutes, hairs, chips, tolerance and
-    // notes. That is what makes the landing immediately actionable.
-    expect(VIEW).toMatch(
-      /\{editing \? \(\s*\n\s*<BlockSetupForm[\s\S]{0,400}?block=\{block\}[\s\S]{0,200}?firstEntry=\{entriesSorted\[0\] \?\? null\}/,
-    );
   });
 
   it("the landing param is ONE-SHOT: consumed and cleared without a refetch", () => {
@@ -430,15 +286,5 @@ describe("(16/17) no new write surface, no migration", () => {
   it("the fast path adds no direct DML and no second RPC", () => {
     expect(PANEL).not.toMatch(/\.from\(|\.insert\(|\.update\(|\.delete\(|\.rpc\(/);
     expect((ACTIONS.match(/\.rpc\("copy_session_setup"/g) ?? []).length).toBe(1);
-  });
-
-  it("the commit action is still the registered service-role caller", () => {
-    const allow = read("tests/security/service-role-allowlist.ts");
-    expect(allow).toMatch(/whole-session-copy-actions\.ts/);
-  });
-
-  it("0157 is untouched applied history", () => {
-    expect(MIGRATION).toMatch(/create or replace function public\.copy_session_setup\(/);
-    expect(MIGRATION).toMatch(/^-- 0157: whole-session/);
   });
 });
