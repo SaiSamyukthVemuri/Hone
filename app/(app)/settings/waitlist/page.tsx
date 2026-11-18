@@ -968,6 +968,7 @@ export default async function WaitlistSettingsPage({
                 notice={followUpNotice}
                 capped={followUps.capped === true}
                 contacts={followUpContacts?.kind === "ok" ? followUpContacts.byEntry : null}
+                renderedEntryIds={new Set(rows.map((r) => r.id))}
               />
             ) : (
               <p id="follow-up" className="scroll-mt-[calc(var(--settings-top,4.5rem)+4rem)] text-sm text-neutral-600 min-[700px]:scroll-mt-[calc(var(--settings-top,4.5rem)+1rem)] dark:text-neutral-400" role="status">

@@ -13,7 +13,7 @@ vi.mock("@/app/(app)/settings/waitlist/follow-up-actions", () => ({
 import { DeclineFollowUpSection } from "@/components/waitlist/decline-follow-up-section";
 import { emptyOutboxCounts } from "@/lib/waitlist/decline-status-lines";
 import type { FollowUpRow } from "@/lib/waitlist/followups-owner";
-import type { ReplyContact } from "@/lib/waitlist/reply-contact";
+import type { ReplyContact } from "@/lib/waitlist/reply-contact-pure";
 
 const E1 = "00000000-0000-4000-8000-0000000000e1";
 const E2 = "00000000-0000-4000-8000-0000000000e2";
@@ -33,18 +33,18 @@ const row = (o: Partial<FollowUpRow> = {}): FollowUpRow => ({
   eraseBy: "2027-02-07T10:00:00Z",
   ...o,
 });
-const render = (rows: FollowUpRow[], contacts: Map<string, ReplyContact> | null) =>
+const render = (rows: FollowUpRow[], contacts: Map<string, ReplyContact> | null, rendered: Set<string> | null = null) =>
   renderToStaticMarkup(
     createElement(DeclineFollowUpSection, {
       rows, timeZone: "UTC", emailEnabled: true,
       outbox: new Map([["i1", { ...emptyOutboxCounts(), sent: 1 }]]),
-      linkable: new Map(), notice: null, contacts,
+      linkable: new Map(), notice: null, contacts, renderedEntryIds: rendered,
     }),
   );
 
 describe("the decline response card shows the entry's contact", () => {
   it("email and phone present: both, with mailto, tel, copy and the entry link", () => {
-    const html = render([row()], new Map([[E1, { kind: "entry", email: "a@example.test", phone: "+1 555 0100" }]]));
+    const html = render([row()], new Map([[E1, { kind: "entry", email: "a@example.test", phone: "+1 555 0100" }]]), new Set([E1]));
     expect(html).toContain("Weekday evenings");
     expect(html).toContain("a@example.test");
     expect(html).toContain('href="mailto:a@example.test"');
@@ -85,6 +85,14 @@ describe("the decline response card shows the entry's contact", () => {
     expect(html).toContain("no longer exists");
     expect(html).not.toContain("mailto:");
   });
+  it("the entry link is offered only for an entry rendered on this page (no dangling anchor for a paged-out entry)", () => {
+    const m = new Map<string, ReplyContact>([[E1, { kind: "entry", email: "a@example.test", phone: null }]]);
+    const mk = (ids: Set<string> | null) =>
+      renderToStaticMarkup(createElement(DeclineFollowUpSection, { rows: [row()], timeZone: "UTC", emailEnabled: true, outbox: null, linkable: new Map(), notice: null, contacts: m, renderedEntryIds: ids }));
+    expect(mk(new Set([E1]))).toContain(`href="/settings/waitlist#entry-${E1}"`);
+    expect(mk(new Set([E2]))).not.toContain("Open this waitlist entry");
+    expect(mk(null)).not.toContain("Open this waitlist entry");
+  });
   it("an unreadable contact read says so, and a removed response offers no entry link", () => {
     expect(render([row()], null)).toContain("couldn’t load this person’s contact");
     const removed = render([row({ status: "removed" })], new Map([[E1, { kind: "entry", email: "a@example.test", phone: null }]]));
@@ -92,7 +100,7 @@ describe("the decline response card shows the entry's contact", () => {
     expect(removed).not.toContain("Open this waitlist entry");
   });
   it("adds no new form or action: the only forms are the existing response actions", () => {
-    const html = render([row()], new Map([[E1, { kind: "entry", email: "a@example.test", phone: "555 0100" }]]));
+    const html = render([row()], new Map([[E1, { kind: "entry", email: "a@example.test", phone: "555 0100" }]]), new Set([E1]));
     const start = html.indexOf('data-testid="reply-contact"');
     const contactPart = html.slice(start, html.indexOf("Open this waitlist entry", start));
     expect(contactPart).not.toContain("<form");

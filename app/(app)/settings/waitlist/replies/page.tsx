@@ -66,6 +66,7 @@ export default async function RepliesPage({
               <p className="mt-1 whitespace-pre-wrap">{r.note ?? "No message left."}</p>
               <ReplyContactDetails
                 entryId={r.entryId}
+                showEntryLink={false}
                 contact={contacts?.kind === "ok" ? (contacts.byEntry.get(r.entryId) ?? null) : null}
               />
               <form action={acknowledgeReplyAction} className="mt-2">

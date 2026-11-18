@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { contactsFromRows, mailtoHref, telHref } from "@/lib/waitlist/reply-contact";
+import { contactsFromRows, mailtoHref, telHref } from "@/lib/waitlist/reply-contact-pure";
 
 const ROOT = join(__dirname, "..", "..", "..");
 const read = (p: string) => readFileSync(join(ROOT, p), "utf8");
@@ -74,5 +74,36 @@ describe("source guards", () => {
   it("the contact component has no form, action or server call: opening or copying changes nothing", () => {
     const C = read("components/waitlist/reply-contact.tsx");
     expect(C).not.toMatch(/<form|action=|"use server"|fetch\(|acknowledge/);
+  });
+});
+
+describe("client/server split (the build broke when a client component reached next/headers)", () => {
+  const { readdirSync, statSync } = require("node:fs") as typeof import("node:fs");
+  const files: string[] = [];
+  const walk = (dir: string) => {
+    for (const name of readdirSync(join(ROOT, dir))) {
+      if (name === "node_modules" || name.startsWith(".")) continue;
+      const rel = `${dir}/${name}`;
+      if (statSync(join(ROOT, rel)).isDirectory()) walk(rel);
+      else if (/\.(ts|tsx)$/.test(name)) files.push(rel);
+    }
+  };
+  for (const d of ["app", "components", "lib"]) walk(d);
+  it("no 'use client' file imports a server-only module", () => {
+    const SERVER = /from\s+["'](@\/lib\/supabase\/(server|admin-server)|@\/lib\/waitlist\/reply-contact|server-only)["']/;
+    const bad = files.filter((f) => {
+      const src = read(f);
+      return /^\s*["']use client["']/.test(src) && SERVER.test(src);
+    });
+    expect(bad).toEqual([]);
+  });
+  it("the server loader is server-only and the pure module imports nothing from the server", () => {
+    expect(read("lib/waitlist/reply-contact.ts")).toContain('import "server-only"');
+    expect(read("lib/waitlist/reply-contact-pure.ts")).not.toMatch(/^import /m);
+  });
+  it("the contact component imports only the pure module", () => {
+    const c = read("components/waitlist/reply-contact.tsx");
+    expect(c).toContain("@/lib/waitlist/reply-contact-pure");
+    expect(c).not.toMatch(/@\/lib\/waitlist\/reply-contact["']/);
   });
 });

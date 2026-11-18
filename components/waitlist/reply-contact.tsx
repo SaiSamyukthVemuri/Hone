@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { mailtoHref, telHref, type ReplyContact } from "@/lib/waitlist/reply-contact";
+import { mailtoHref, telHref, type ReplyContact } from "@/lib/waitlist/reply-contact-pure";
 
 // Contact details for one "replies to review" card. Everything here is a plain link or a clipboard copy: opening a
 // link or pressing Copy changes no state, marks nothing handled, and sends nothing. The reply is only marked seen by
