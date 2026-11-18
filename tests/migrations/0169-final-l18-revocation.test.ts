@@ -27,7 +27,7 @@ const TABLES = [
 ] as const;
 
 // The "nothing above me" tripwire moved to the CURRENT maximum's own test when
-// 0170 landed (tests/migrations/0170-public-appointment-command.test.ts), which
+// 0170 landed, which
 // is the repository convention: only the current max asserts isRepoMax, so a new
 // migration does not require a sweep of every older per-migration test.
 

@@ -2781,12 +2781,9 @@ describe("conversion — serialization against an in-flight redemption", () => {
 // =============================================================================
 // THE TEMPORAL EDGES — one executable proof per serialization boundary.
 //
-// Every test below is registered to a row in tests/db/helpers/temporal-edges.ts
-// through `edgeTitle`, and the closure guard in
-// tests/migrations/0189-waitlist-invitation-wall-clock-expiry.test.ts fails if
-// an edge has no implementing test, or if that test does not carry the evidence
-// its proof kind demands. Deleting one of these does not quietly reduce
-// coverage; it turns the matrix red.
+// No closure guard watches this list: the registry and the guard this comment
+// used to cite no longer exist, so deleting a test below reduces coverage
+// silently. Review a removal by eye.
 //
 // THREE MECHANISMS, AND THEY ARE NOT INTERCHANGEABLE.
 //   * Both commands touch a row that already exists in a state the successor

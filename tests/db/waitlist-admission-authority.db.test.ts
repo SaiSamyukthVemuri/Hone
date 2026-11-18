@@ -7,9 +7,8 @@ import path from "node:path";
 
 // 0193 — WAIT-ADMIT-01, proved against a real local PostgreSQL.
 //
-// The static contract (what the migration SAYS) is pinned in
-// tests/migrations/0193-waitlist-admission-authority.test.ts. This file proves
-// the BEHAVIOUR that file cannot see: that a member is genuinely refused, that
+// This file proves
+// the BEHAVIOUR a reading of the migration text cannot see: that a member is genuinely refused, that
 // an imported join date genuinely survives the trigger, and that a prospect
 // holding a valid token genuinely cannot move their own position in the queue.
 //
@@ -81,9 +80,7 @@ async function openRound(studio: Seeded, allowance: number): Promise<string> {
 /**
  * THE FRONTIER, DERIVED FROM 0193 AND CHECKED AGAINST THE LIVE DATABASE.
  *
- * The source-side twin of this guard lives in
- * tests/migrations/0193-waitlist-admission-authority.test.ts. This one closes
- * the other half: that the ACLs PostgreSQL actually holds match the set the
+ * This guard checks that the ACLs PostgreSQL actually holds match the set the
  * migration declares, so neither a missing matrix entry nor a missing REVOKE
  * can hide. Signature-aware, because an overload with the same name is drift
  * this suite has already had to be rewritten once to catch.
