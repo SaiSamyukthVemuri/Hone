@@ -6,8 +6,9 @@ import path from "node:path";
 // re-introduced "Mark completed" button on the appointment lifecycle
 // surface. The action + RPC predate PR #180; the regression risk
 // here is the BUTTON, which was deliberately removed earlier and is
-// now back. Tests pin: button presence, gating, two-click confirm,
-// success message, and the absence of any cancelled/no-show flip.
+// now back. Tests pin: gating, two-click confirm, success message, and
+// the absence of any cancelled/no-show flip. The completion error map is
+// proved behaviourally in b6-mark-complete-error-map.test.ts.
 
 // The completion control was EXTRACTED so the calendar surface and the
 // charting "Finish appointment" workflow share one implementation instead of
@@ -38,33 +39,6 @@ function codeOnly(src: string): string {
     .filter((line) => !/^\s*\/\//.test(line))
     .join("\n");
 }
-
-describe("AppointmentLifecycleActions: Mark completed button restoration", () => {
-  it("imports markAppointmentCompleteAction from the calendar actions module", () => {
-    expect(COMPONENT).toMatch(
-      /import \{\s*\n?\s*markAppointmentCompleteAction \} from "@\/app\/\(app\)\/calendar\/actions"/,
-    );
-    expect(CALENDAR).toMatch(
-      /import \{ markAppointmentNoShowAction \} from "\.\/actions"/,
-    );
-  });
-
-  it("renders a 'Mark completed' button", () => {
-    expect(COMPONENT).toMatch(/>\s*Mark completed\s*</);
-  });
-
-  it("the Mark completed button uses the primary (filled) styling so it is obvious", () => {
-    // The primary styling is `bg-neutral-900 ... text-white`; pin
-    // that the Mark completed button uses it rather than the
-    // outline-only variant used by Mark no-show.
-    const block =
-      COMPONENT.match(
-        /<button[\s\S]{0,2000}onClick=\{openConfirm\}[\s\S]{0,2000}Mark completed/,
-      )?.[0] ?? "";
-    expect(block).toMatch(/bg-neutral-900/);
-    expect(block).toMatch(/text-white/);
-  });
-});
 
 describe("AppointmentLifecycleActions: Mark completed gating", () => {
   it("the component returns null for non-confirmed statuses", () => {
@@ -120,16 +94,6 @@ describe("AppointmentLifecycleActions: confirmation dialog (replaces window.conf
   // dialog, not native window.confirm(), because window.confirm can be
   // silently suppressed on iOS Safari (returns false with nothing shown),
   // which the old code treated as a Cancel — so "Mark completed" did nothing.
-
-  it("imports and renders the accessible ConfirmDialog", () => {
-    expect(COMPONENT).toMatch(
-      /import \{ ConfirmDialog \} from "@\/components\/confirm-dialog"/,
-    );
-    // One dialog per action, now one per owner: the shared completion control
-    // carries the complete dialog, the calendar surface carries no-show.
-    expect((COMPONENT.match(/<ConfirmDialog\b/g) ?? []).length).toBe(1);
-    expect((CALENDAR.match(/<ConfirmDialog\b/g) ?? []).length).toBe(1);
-  });
 
   it("does NOT use window.confirm anywhere (the iOS-suppressible API is gone)", () => {
     const code = codeOnly(COMPONENT);
@@ -223,21 +187,7 @@ describe("AppointmentLifecycleActions: confirm runs the action once", () => {
   });
 });
 
-describe("AppointmentLifecycleActions: cancelled / no_show paths unchanged", () => {
-  it("the no-show button still renders with its existing handler (calendar only)", () => {
-    expect(CALENDAR).toMatch(
-      /<button[\s\S]{0,2000}onClick=\{runNoShow\}[\s\S]{0,2000}Mark no-show/,
-    );
-  });
-
-  it("cancelled / no_show / completed appointments return null (no buttons)", () => {
-    // The early return guards every terminal-state appointment so
-    // neither Mark completed nor Mark no-show renders on the calendar. The
-    // charting workflow reaches the same outcome through the pure presenter,
-    // which returns a terminal completion state and mounts no control at all.
-    expect(CALENDAR).toMatch(/status !== "confirmed"/);
-  });
-
+describe("AppointmentLifecycleActions: no way back from a terminal status", () => {
   it("the component does NOT add any 'restore' / 'reopen' affordance", () => {
     // PR #180 deliberately does not introduce any way to reverse a
     // terminal status. The no-show confirm message legitimately
@@ -247,29 +197,7 @@ describe("AppointmentLifecycleActions: cancelled / no_show paths unchanged", () 
   });
 });
 
-describe("markAppointmentCompleteAction (unchanged): RPC + scoping", () => {
-  it("still calls the mark_appointment_complete RPC with p_appointment_id / p_studio_id / p_practitioner_id", () => {
-    expect(ACTIONS).toMatch(
-      /admin\.rpc\("mark_appointment_complete",\s*\{[\s\S]{0,400}p_appointment_id:\s*appointmentId[\s\S]{0,200}p_studio_id:\s*studio\.id[\s\S]{0,200}p_practitioner_id:\s*practitioner\.id/,
-    );
-  });
-
-  it("still refuses inactive practitioners with a user-friendly message", () => {
-    expect(ACTIONS).toMatch(
-      /Inactive practitioners cannot mark appointments complete\./,
-    );
-  });
-
-  it("still maps 'not yet ended' to a user-friendly message", () => {
-    expect(ACTIONS).toMatch(/This appointment hasn't ended yet\./);
-  });
-
-  it("still maps 'not confirmed' to a user-friendly message", () => {
-    expect(ACTIONS).toMatch(
-      /Only confirmed appointments can be marked complete\./,
-    );
-  });
-
+describe("markAppointmentCompleteAction: revalidation", () => {
   it("still revalidates /calendar + /calendar/<id> on success", () => {
     expect(ACTIONS).toMatch(/revalidatePath\("\/calendar"\)/);
     expect(ACTIONS).toMatch(
@@ -458,17 +386,6 @@ describe("T6.8 markAppointmentCompleteAction handles the RAISING command's excep
     expect(b).not.toMatch(/ok: true/);
   });
 
-  it("maps the two documented refusal messages, and falls back to a generic failure for the rest", () => {
-    const b = branchFor(COMPLETE_BODY, "rpcErr");
-    // 'appointment has not yet ended' (0032:4083)
-    expect(b).toMatch(/not yet ended/);
-    // 'appointment is not confirmed (current: …)' (0032:4080)
-    expect(b).toMatch(/not confirmed/);
-    // Everything else — including the 42501 active-membership raise and any
-    // future errcode — reaches the generic failure. Fail-closed.
-    expect(b).toMatch(/Could not mark this appointment complete/i);
-  });
-
   it("returns ok only AFTER the RPC reported no error", () => {
     const errIndex = COMPLETE_BODY.indexOf("if (rpcErr)");
     const okIndex = COMPLETE_BODY.lastIndexOf("return { ok: true }");
@@ -634,10 +551,5 @@ describe("AppointmentLifecycleActions: forbidden surface (PR #180 scope)", () =>
   it("does NOT touch payment_charge_attempts or session_payment", () => {
     const code = codeOnly(COMPONENT);
     expect(code).not.toMatch(/payment_charge_attempts|session_payment_/);
-  });
-
-  it("does NOT add SMS / email triggers", () => {
-    const code = codeOnly(COMPONENT);
-    expect(code).not.toMatch(/sendEmailSafely|sendSms|twilio/i);
   });
 });

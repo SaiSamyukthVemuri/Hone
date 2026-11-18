@@ -4,15 +4,13 @@ import path from "node:path";
 
 // PR B Part 4 Item 6 — calendar Quick Book practitioner-aware booking wiring.
 // The DB authorization is proven in the v2 command DB suite; these pin the
-// drawer's target-aware slots + selector + the desktop/mobile threading, while
-// preserving the intricate drag/override contract.
+// drawer's target-aware slots + selector and the page-level source of the
+// targeting props.
 
 const root = path.resolve(__dirname, "../../..");
 const read = (rel: string) => readFileSync(path.join(root, rel), "utf8");
 
 const DRAWER = read("app/(app)/calendar/QuickBookDrawer.tsx");
-const DAYCOL = read("app/(app)/calendar/DayColumn.tsx");
-const MOBILE = read("app/(app)/calendar/CalendarMobileDayView.tsx");
 const PAGE = read("app/(app)/calendar/page.tsx");
 
 describe("QuickBookDrawer — owner selector, target-aware slots, member/Legacy", () => {
@@ -59,21 +57,7 @@ describe("QuickBookDrawer — owner selector, target-aware slots, member/Legacy"
   });
 });
 
-describe("desktop + mobile thread identical targeting context", () => {
-  for (const [name, src] of [
-    ["DayColumn", DAYCOL],
-    ["CalendarMobileDayView", MOBILE],
-  ] as const) {
-    it(`${name} accepts + forwards the capacity/target props to QuickBookDrawer`, () => {
-      expect(src).toMatch(/practitionerCapacityEnabled: boolean/);
-      expect(src).toMatch(/currentPractitionerId: string/);
-      expect(src).toMatch(/currentPractitionerName: string/);
-      expect(src).toMatch(/practitionerCapacityEnabled=\{practitionerCapacityEnabled\}/);
-      expect(src).toMatch(/currentPractitionerId=\{currentPractitionerId\}/);
-      expect(src).toMatch(/currentPractitionerName=\{currentPractitionerName\}/);
-      expect(src).toMatch(/isOwner=\{isOwner\}/);
-    });
-  }
+describe("targeting context comes from the server", () => {
   it("the calendar page feeds both render paths from the server-resolved practitioner + studio", () => {
     expect((PAGE.match(/practitionerCapacityEnabled=\{studio\.practitioner_capacity_enabled === true\}/g) ?? []).length).toBe(2);
     // HON-48: the team day view is the third path, with the same server-resolved

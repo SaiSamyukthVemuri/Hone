@@ -5,10 +5,9 @@ import path from "node:path";
 // PR #311. Postcare send-state correctness. The P1: sendPostcareEmailAction
 // used postcare_email_sent_at as BOTH the first-send claim AND the "sent"
 // marker, stamping it BEFORE the Resend call — so a provider failure left a
-// false "Postcare sent". This pins the corrected flow: claim via
-// postcare_email_claimed_at, stamp sent_at ONLY after provider success, record
-// failed_at + a SAFE last_error on failure, and a 4/5-state UI that never
-// overclaims delivery. (calendar actions/UI are source-grep tested.)
+// false "Postcare sent". The corrected claim / provider / settle flow is proved
+// behaviourally in b8-manual-postcare-command.test.ts; this file keeps the
+// source tripwires that test cannot see and the UI state copy.
 
 const root = path.resolve(__dirname, "../../../");
 const read = (rel: string) => readFileSync(path.join(root, rel), "utf8");
@@ -18,7 +17,6 @@ const codeOnly = (src: string) =>
 const ACTIONS = read("app/(app)/calendar/actions.ts");
 const BUTTON = read("app/(app)/calendar/PostcareSendButton.tsx");
 const PAGE = read("app/(app)/calendar/[id]/page.tsx");
-const TYPES = read("lib/types/database.ts");
 
 // Scope to the postcare action body so other actions can't satisfy the greps.
 const ACTION = (() => {
@@ -30,7 +28,6 @@ const ACTION = (() => {
   return nextRel === -1 ? ACTIONS.slice(s) : ACTIONS.slice(s, s + 1 + nextRel);
 })();
 const ACTION_CODE = codeOnly(ACTION);
-const count = (s: string, re: RegExp) => (s.match(re) ?? []).length;
 
 // ---------------------------------------------------------------------------
 // Action: claim / success / failure
@@ -46,36 +43,11 @@ const count = (s: string, re: RegExp) => (s.match(re) ?? []).length;
 // so the claims are restated against the boundary that actually exists.
 //
 // SCOPE: this is a SOURCE-CONTRACT suite — it reads the action's text. The
-// behavioural coverage lives in the DB matrix (42/42) and the auto RPC suite.
+// behavioural coverage lives in the DB matrix (42/42), the auto RPC suite and
+// b8-manual-postcare-command.test.ts.
 // ---------------------------------------------------------------------------
 
-describe("sendPostcareEmailAction: claims through the command, never directly", () => {
-  it("writes NO appointment column itself — the six live only in SQL now", () => {
-    for (const col of [
-      "postcare_email_claimed_at",
-      "postcare_email_last_attempt_at",
-      "postcare_email_send_attempts",
-      "postcare_email_sent_at",
-      "postcare_email_failed_at",
-      "postcare_email_last_error",
-    ]) {
-      // A read (`.select(...)`) may still name a column; an ASSIGNMENT may not.
-      expect(ACTION_CODE, `${col} must not be assigned in TypeScript`).not.toMatch(
-        new RegExp(`${col}\\s*:`),
-      );
-    }
-    expect(ACTION_CODE).not.toMatch(/\.update\(/);
-  });
-
-  it("claims via claim_postcare_send, exactly once, before the provider", () => {
-    expect(count(ACTION_CODE, /claim_postcare_send/g)).toBe(1);
-    const claim = ACTION_CODE.indexOf("claim_postcare_send");
-    const provider = ACTION_CODE.indexOf("sendPostcareToClient");
-    expect(claim).toBeGreaterThan(-1);
-    expect(provider).toBeGreaterThan(-1);
-    expect(claim, "the claim must precede the provider call").toBeLessThan(provider);
-  });
-
+describe("sendPostcareEmailAction: the database owns the clock", () => {
   it("generates no clock value for any postcare state", () => {
     // The stale window, the attempt counter and every state timestamp are the
     // database's. A JS clock here would reintroduce exactly the drift B8 removed.
@@ -92,55 +64,13 @@ describe("sendPostcareEmailAction: claims through the command, never directly", 
       "every remaining generated timestamp must be a log field, not postcare state",
     ).toBe(logTimestamps.length);
   });
-
-  it("forwards the DB-issued token unchanged into settlement", () => {
-    // Re-deriving it would round microseconds away and settlement would miss
-    // its own claim, so nothing would ever be recorded as sent.
-    expect(ACTION_CODE).toMatch(/const claimToken = claim\.claimed_at;/);
-    expect(count(ACTION_CODE, /p_claimed_at: claimToken/g)).toBe(2);
-    expect(ACTION_CODE).not.toMatch(/p_claimed_at: new Date/);
-    expect(ACTION_CODE).not.toMatch(/p_claimed_at: .*toISOString/);
-  });
 });
 
-describe("sendPostcareEmailAction: settlement is the only writer", () => {
-  it("settles success and failure through the command, with the retryable flag", () => {
-    expect(count(ACTION_CODE, /settle_postcare_send/g)).toBe(2);
-    expect(ACTION_CODE).toMatch(/p_success: true/);
-    expect(ACTION_CODE).toMatch(/p_success: false/);
-    expect(ACTION_CODE).toMatch(/p_retryable: result\.retryable/);
-  });
-
+describe("sendPostcareEmailAction: settlement payload", () => {
   it("sends no provider text to the database", () => {
     // The safe operator-facing copy is derived in SQL from `retryable` alone.
     expect(ACTION_CODE).not.toMatch(/p_error|p_message|p_last_error/);
     expect(ACTION_CODE).not.toMatch(/safePostcareLastError/);
-  });
-
-  it("provider success whose settlement fails is NOT reported as sent", () => {
-    // Provider truth and persisted truth are different facts.
-    expect(ACTION_CODE).toMatch(/provider_sent_status_unrecorded/);
-    const code = ACTION_CODE.indexOf("provider_sent_status_unrecorded");
-    const okTrue = ACTION_CODE.lastIndexOf("return { ok: true };");
-    expect(code).toBeGreaterThan(-1);
-    expect(okTrue).toBeGreaterThan(-1);
-    expect(code, "the unrecorded-status branch must guard the success return").toBeLessThan(
-      okTrue,
-    );
-  });
-
-  it("refusals are mapped to safe copy and never reach the provider", () => {
-    expect(ACTION_CODE).toMatch(/postcareClaimRefusalCopy/);
-    expect(ACTION_CODE).toMatch(/claim\.result !== "claimed"/);
-    // The refusal return sits before the provider call.
-    const refusal = ACTION_CODE.indexOf("postcareClaimRefusalCopy(claim.result)");
-    const provider = ACTION_CODE.indexOf("sendPostcareToClient");
-    expect(refusal).toBeLessThan(provider);
-  });
-
-  it("the completed-only refusal has truthful copy", () => {
-    expect(ACTIONS).toMatch(/case "not_completed":/);
-    expect(ACTIONS).toMatch(/once the appointment is completed/i);
   });
 });
 describe("postcare UI states (PostcareSendButton)", () => {
@@ -180,17 +110,7 @@ describe("postcare UI states (PostcareSendButton)", () => {
   });
 });
 
-describe("types + query carry the new columns", () => {
-  it("Appointment type gains the 4 columns", () => {
-    for (const c of [
-      "postcare_email_claimed_at",
-      "postcare_email_failed_at",
-      "postcare_email_last_error",
-      "postcare_email_last_attempt_at",
-    ]) {
-      expect(TYPES).toMatch(new RegExp(`${c}: string \\| null;`));
-    }
-  });
+describe("the action read carries the claim columns", () => {
   it("the action select loads claimed_at + failed_at", () => {
     expect(ACTION).toMatch(/postcare_email_claimed_at, postcare_email_failed_at/);
   });

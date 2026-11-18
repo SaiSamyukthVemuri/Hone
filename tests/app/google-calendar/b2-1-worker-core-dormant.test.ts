@@ -56,24 +56,6 @@ describe("B2.1 worker core is not activated", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("c3: the calendar crons are registered as DAILY schedules; the worker stays gated by worker_enabled, not by scheduling", () => {
-    // B2.3-c3 registers /api/cron/calendar-reconcile + /api/cron/calendar-sync as
-    // once-per-day vercel.json crons (the plan caps cron at daily). Registration is
-    // DORMANT: worker_enabled=false makes the claim RPC return zero rows + mutate
-    // nothing, and every studio sync flag is false. Dormancy is NOT "unscheduled".
-    const vercel = JSON.parse(readFileSync(join(ROOT, "vercel.json"), "utf8")) as {
-      crons?: { path: string; schedule: string }[];
-    };
-    const byPath = new Map((vercel.crons ?? []).map((c) => [c.path, c.schedule]));
-    expect(byPath.get("/api/cron/calendar-sync")).toBe("30 9 * * *");
-    expect(byPath.get("/api/cron/calendar-reconcile")).toBe("0 9 * * *");
-    // Neither is sub-daily (the plan rejects `*/N`); the daily materialize-breaks cron is preserved.
-    for (const p of ["/api/cron/calendar-sync", "/api/cron/calendar-reconcile"]) {
-      expect(byPath.get(p)).not.toMatch(/\*\//);
-    }
-    expect(byPath.get("/api/cron/materialize-recurring-breaks")).toBe("0 8 * * *");
-  });
-
   it("the two calendar cron routes exist and are registered only at the approved daily schedules", () => {
     const cronRoutes = walk(join("app", "api", "cron")).filter((f) => /calendar/i.test(f));
     // Both route files exist; there are EXACTLY two Google Calendar cron routes

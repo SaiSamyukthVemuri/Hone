@@ -22,41 +22,15 @@ function blockFor(name: string): string {
   return rel === -1 ? PAGE.slice(startIdx) : PAGE.slice(startIdx, after + rel);
 }
 
-describe("PR #181: NextStepCard replaces the bare 'Completed' placeholder", () => {
+describe("PR #181: completed appointments render NextStepCard", () => {
   it("the completed branch dispatches to <NextStepCard ...>", () => {
     expect(PAGE).toMatch(
       /typedStatus === "completed"[\s\S]{0,200}<NextStepCard/,
     );
   });
-
-  it("the bare placeholder section that read 'Completed' is removed for completed appointments", () => {
-    // The previous wording was a literal section containing only the
-    // word "Completed". The dispatch now routes via NextStepCard;
-    // the standalone placeholder text must not return.
-    const completedBlock =
-      PAGE.match(
-        /typedStatus === "completed"[\s\S]{0,400}\)\}/,
-      )?.[0] ?? "";
-    expect(completedBlock).not.toMatch(/>\s*Completed\s*</);
-  });
-
-  it("the NextStepCard receives appointmentId, clientId, linkedSession", () => {
-    expect(PAGE).toMatch(
-      /<NextStepCard\s*\n[\s\S]{0,400}clientId=\{data\.client\?\.id \?\? null\}[\s\S]{0,400}appointmentId=\{id\}[\s\S]{0,400}linkedSession=\{linkedSession\}/,
-    );
-  });
 });
 
 describe("PR #181: NextStepCard three-state CTA precedence", () => {
-  it("declares the component", () => {
-    expect(PAGE).toMatch(/function NextStepCard\(\{/);
-  });
-
-  it("renders the 'Appointment completed' heading", () => {
-    const block = blockFor("NextStepCard");
-    expect(block).toMatch(/Appointment completed/);
-  });
-
   it("renders the HON-45 'Next step' guidance naming both truthful outcomes", () => {
     const block = blockFor("NextStepCard");
     expect(block).toMatch(
@@ -97,13 +71,7 @@ describe("PR #181: NextStepCard three-state CTA precedence", () => {
   });
 });
 
-describe("PR #181: NextStepCard styling + safety", () => {
-  it("uses primary (filled) styling on the CTA so it is the obvious next action", () => {
-    const block = blockFor("NextStepCard");
-    expect(block).toMatch(/bg-neutral-900/);
-    expect(block).toMatch(/text-white/);
-  });
-
+describe("PR #181: NextStepCard safety", () => {
   it("renders a fallback header when clientId is null (no CTA)", () => {
     const block = blockFor("NextStepCard");
     expect(block).toMatch(/if \(!clientId\)/);

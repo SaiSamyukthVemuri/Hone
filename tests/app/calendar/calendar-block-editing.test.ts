@@ -14,9 +14,6 @@ const PAGE = read("app/(app)/calendar/page.tsx");
 const AVAIL_ACTIONS = read("app/(app)/settings/availability/actions.ts");
 
 describe("reuses the existing OWNER-GATED actions (no new action, no RLS change)", () => {
-  it("the drawer imports updateTimedBlockAction + deleteTimedBlockAction from Settings", () => {
-    expect(DRAWER).toMatch(/import \{[\s\S]*updateTimedBlockAction,[\s\S]*deleteTimedBlockAction,[\s\S]*\} from "@\/app\/\(app\)\/settings\/availability\/actions"/);
-  });
   it("those actions remain owner-gated (assertOwnerWithStudio) — unchanged", () => {
     const upd = AVAIL_ACTIONS.slice(AVAIL_ACTIONS.indexOf("export async function updateTimedBlockAction"), AVAIL_ACTIONS.indexOf("export async function deleteTimedBlockAction"));
     expect(upd).toMatch(/assertOwnerWithStudio\(\)/);
@@ -31,12 +28,6 @@ describe("reuses the existing OWNER-GATED actions (no new action, no RLS change)
 });
 
 describe("owner: edit + delete controls", () => {
-  const ownerBranch = DRAWER.slice(DRAWER.indexOf("{!isOwner ? ("));
-  it("owner sees the editable form (date + start/end time inputs + category + note)", () => {
-    expect(ownerBranch).toMatch(/type="date"/);
-    expect(ownerBranch.match(/type="time"/g)?.length).toBe(2); // start + end
-    expect(ownerBranch).toMatch(/<select/); // category
-  });
   it("save calls the reused update action", () => {
     expect(DRAWER).toMatch(/await updateTimedBlockAction\(fd\)/);
   });

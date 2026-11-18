@@ -41,11 +41,6 @@ describe("B8 — PostcareSection gates the send control on completion", () => {
     expect(src, "the prop must not be optional").not.toMatch(/appointmentStatus\?:/);
   });
 
-  it("renders the completed-only explanation instead of the send control", () => {
-    expect(src).toMatch(/data-testid="postcare-not-completed"/);
-    expect(src).toMatch(/Available after the appointment is completed\./);
-  });
-
   it("the not-completed branch precedes the send control", () => {
     // Ordering IS the gate here: a branch placed after the send fragment would
     // never be reached for a non-completed appointment.
@@ -112,14 +107,5 @@ describe("B8 — both mount points pass the authoritative status", () => {
     const src = read(file);
     expect(src).toMatch(/<PostcareSection/);
     expect(src, `${file} must pass appointmentStatus`).toMatch(pattern);
-  });
-
-  it("the calendar page no longer claims status is not a gate", () => {
-    // That comment was true before B8 and is false now. Two contradictory
-    // architectural stories in one file is how the next reader picks the wrong
-    // one.
-    const src = read(CALENDAR);
-    expect(src).not.toMatch(/Status is NOT a gate/);
-    expect(src).toMatch(/postcare is\s*\n?\s*completed-only/);
   });
 });

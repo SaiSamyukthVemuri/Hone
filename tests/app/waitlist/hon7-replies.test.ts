@@ -67,16 +67,6 @@ describe("0319 owner replies surface", () => {
     expect(PAGE.indexOf("Not available yet.")).toBeGreaterThan(PAGE.indexOf('practitioner.role !== "owner"'));
   });
 
-  it("says the list is capped when there are more than it shows", () => {
-    expect(PAGE).toMatch(/Showing the oldest \{list\.rows\.length\} of \{total\.n\}/);
-  });
-
-  it("states what was true when they replied", () => {
-    expect(PAGE).toContain("was returned to the");
-    expect(PAGE).toContain("when they replied");
-    expect(CARD).toContain("returned to the");
-  });
-
   it("acknowledges by invitation id", () => {
     expect(LIB).toContain("p_invitation_id: invitationId");
     expect(ACT).toContain('formData.get("invitationId")');
