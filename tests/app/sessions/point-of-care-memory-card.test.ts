@@ -213,14 +213,15 @@ describe("read-only and RLS-scoped", () => {
     // query and therefore a second failure to classify. Both sites, and ONLY
     // these two, may log — and both are held to the redaction contract above.
     const code = codeOnly(LOADER);
-    // FOUR sites now: the per-client loader's candidate + block reads, and the
-    // batched companion's. The count is not the contract — the REDACTION is,
+    // SIX sites now: the per-client loader's candidate + block reads, the
+    // batched companion's, and one row-cap classification in each block read
+    // (a result at the API row cap fails closed). The count is not the contract — the REDACTION is,
     // and it is asserted for every one of them below.
-    expect((code.match(/console\./g) ?? []).length).toBe(4);
+    expect((code.match(/console\./g) ?? []).length).toBe(6);
     // Every one of them is console.error(JSON.stringify({...})) — never a bare
     // string, never the raw PostgREST message.
     expect((code.match(/console\.error\(\s*JSON\.stringify\(\{/g) ?? []).length).toBe(
-      4,
+      6,
     );
     // The redaction contract is asserted for EVERY log site, not just the one
     // Session 1D happened to add — that is what actually protects the pipeline
@@ -235,7 +236,7 @@ describe("read-only and RLS-scoped", () => {
         return rest.slice(0, end === -1 ? 500 : end);
       },
     );
-    expect(logSites).toHaveLength(4);
+    expect(logSites).toHaveLength(6);
     for (const site of logSites) {
       expect(site).toMatch(/code:/);
       // Either the companion's `input.studioId` or selectFromCandidates' bare
