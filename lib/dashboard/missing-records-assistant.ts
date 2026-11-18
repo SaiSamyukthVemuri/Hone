@@ -416,44 +416,42 @@ export async function getMissingRecordsAssistant(
   }
 
   // 3b) HON-45: PAST appointments that are still CONFIRMED and have a (non-deleted) session. Starting a chart no longer
-  //     completes the appointment, so these are open until Finish. ONE embedded query (sessions inner-joined to their
-  //     appointment), bounded by the same window and cap as the completed-appointment scan.
+  //     completes the appointment, so these are open until Finish. ONE query FROM appointments (sessions embedded inner), so
+  //     the cap applies to appointments and the order is deterministic: most recently ended first, id as the tie-break.
+  //     (Past the cap the rows shown are the newest, never an arbitrary subset.)
   const { data: openRows, error: openError } = await readWithPreferredName((withPreferred) =>
     supabase
-      .from("sessions")
+      .from("appointments")
       .select(
-        `id, appointment_id, appointments!inner(id, client_id, starts_at, ends_at, status, client:clients(id, name, ${preferredNameColumn(withPreferred)}archived_at))`,
+        `id, client_id, starts_at, ends_at, status, client:clients(id, name, ${preferredNameColumn(withPreferred)}archived_at), sessions!inner(id, studio_id, deleted_at)`,
       )
       .eq("studio_id", studioId)
-      .is("deleted_at", null)
-      .not("appointment_id", "is", null)
-      .eq("appointments.status", "confirmed")
-      .gte("appointments.starts_at", windowStartIso)
-      .lte("appointments.ends_at", nowUtcIso)
+      .eq("status", "confirmed")
+      .gte("starts_at", windowStartIso)
+      .lte("ends_at", nowUtcIso)
+      .eq("sessions.studio_id", studioId)
+      .is("sessions.deleted_at", null)
+      .order("ends_at", { ascending: false })
+      .order("id", { ascending: false })
       .limit(COMPLETED_APPT_CAP),
   );
   if (openError) throw new Error("Failed to load missing records");
-  type OpenSessionRow = {
+  type OpenApptRow = {
     id: string;
-    appointment_id: string | null;
-    appointments: {
-      id: string;
-      client_id: string;
-      starts_at: string;
-      client: SessionScanRow["client"];
-    } | Array<{ id: string; client_id: string; starts_at: string; client: SessionScanRow["client"] }> | null;
+    client_id: string;
+    starts_at: string;
+    client: SessionScanRow["client"];
+    sessions: Array<{ id: string }> | { id: string } | null;
   };
-  const seenOpenAppts = new Set<string>();
   const unfinishedAppointments: UnfinishedAppointment[] = [];
-  for (const r of (openRows ?? []) as unknown as OpenSessionRow[]) {
-    const appt = Array.isArray(r.appointments) ? (r.appointments[0] ?? null) : r.appointments;
-    if (!appt || seenOpenAppts.has(appt.id)) continue;
+  for (const appt of (openRows ?? []) as unknown as OpenApptRow[]) {
+    const sess = Array.isArray(appt.sessions) ? (appt.sessions[0] ?? null) : appt.sessions;
+    if (!sess) continue;
     const client = joinedClient(appt.client);
     if (!client || client.archived_at) continue;
-    seenOpenAppts.add(appt.id);
     unfinishedAppointments.push({
       appointmentId: appt.id,
-      sessionId: r.id,
+      sessionId: sess.id,
       clientId: appt.client_id,
       clientName: clientDisplayName(client),
       startedAt: appt.starts_at,
