@@ -29,6 +29,15 @@ describe("the route exists only when MultiPlex can really be saved", () => {
   ])("is NOT offered when %s, so Chloe's form is exactly as it was", (_n, over) => {
     expect(xcellMultiplexRoute({ ...base, ...over } as typeof base)).toBeNull();
   });
+  it("PROFILE ACTIVE is its own check: a blocked profile whose MultiPlex mode still reads active offers no route", () => {
+    const blockedProfile = MACHINE_CATALOGUE.map((p) => (p.profileId === XCELL_PUR_PROFILE_ID ? { ...p, availability: "blocked" as const } : p));
+    expect(blockedProfile.find((p) => p.profileId === XCELL_PUR_PROFILE_ID)!.modes.find((m) => m.key === "multiplex")!.availability).toBe("active");
+    expect(xcellMultiplexRoute({ ...base, catalogue: blockedProfile })).toBeNull();
+  });
+  it("MODE ACTIVE is its own check: an active profile whose MultiPlex mode is withheld offers no route", () => {
+    const withheld = MACHINE_CATALOGUE.map((p) => (p.profileId === XCELL_PUR_PROFILE_ID ? { ...p, modes: p.modes.map((m) => ({ ...m, availability: "blocked" as const })) } : p));
+    expect(xcellMultiplexRoute({ ...base, catalogue: withheld })).toBeNull();
+  });
   it("is not offered when the catalogue does not carry an active profile", () => {
     const blocked = MACHINE_CATALOGUE.map((p) => (p.profileId === XCELL_PUR_PROFILE_ID ? { ...p, availability: "blocked" as const } : p));
     expect(xcellMultiplexRoute({ ...base, catalogue: blocked })).toBeNull();

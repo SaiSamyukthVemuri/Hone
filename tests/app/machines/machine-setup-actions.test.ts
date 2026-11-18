@@ -2135,6 +2135,36 @@ describe("recordBlockMachineIdentityAction without 0301", () => {
 
 
 // ===========================================================================
+// MULTIPLEX ON AN AREA THAT ALREADY HOLDS xCELL VALUES IS REFUSED BY THE SERVER (one xCell, one Mode control).
+// The Mode control hides MultiPlex for such an area, but a stale tab or a crafted request must not reach the area's identity: the
+// command refuses it inside its transaction and the action reports it as rejected, never saved.
+// ===========================================================================
+describe("recordBlockMachineIdentityAction refuses MultiPlex on a legacy-valued area (server side)", () => {
+  const multiplex = {
+    clientId: "client-ana", sessionId: "session-1", blockId: "block-legacy",
+    deviceId: UNIT_ID, modeKey: "multiplex", profileId: null as string | null, idempotencyKey: "pick-key-0002",
+  };
+  beforeEach(() => arrangeUnit({ machine_profile_id: "dectro-apilus:xcell-pur", machine_profile_version: 1 }));
+
+  it("the command's refusal is returned as rejected: no identity is reported as stored", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcError = { code: "P0001", message: "This area already holds xCell Pur readings; add a new area for another machine." };
+    const out = await actions.recordBlockMachineIdentityAction(multiplex);
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.code).toBe("rejected");
+    expect((out as { identity?: unknown }).identity).toBeUndefined();
+    expect(DB.calls.some((c) => c.fn === "record_block_machine_identity")).toBe(true);
+  });
+
+  it("NEGATIVE CONTROL: the same request on an area with no legacy values is stored", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcResult = { ...RECEIPT("v3"), machine_profile_id: "dectro-apilus:xcell-pur", machine_mode_key: "multiplex" };
+    expect((await actions.recordBlockMachineIdentityAction(multiplex)).ok).toBe(true);
+  });
+});
+
+// ===========================================================================
 // AN IMPOSSIBLE UNIT / MODE PAIR IS REFUSED BEFORE ANYTHING IS WRITTEN
 // The identity command only checks that the unit is the studio's and not retired. The action applies the contract
 // `rememberMachineSelectionAction` uses, first, so a stale panel or a crafted request cannot store a mode the unit's model does

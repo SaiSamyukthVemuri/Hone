@@ -1,4 +1,4 @@
-import { activeModes, currentProfile, type MachineProfile } from "./profile-contract";
+import { currentProfile, type MachineProfile } from "./profile-contract";
 import { XCELL_PUR_PROFILE_ID } from "./xcell-pur";
 import type { StudioDevice } from "./selection";
 
@@ -30,7 +30,8 @@ export function xcellMultiplexRoute(input: {
   if (!input.legacyOffered || input.publishedModes === null) return null;
   const profile = currentProfile(input.catalogue, XCELL_PUR_PROFILE_ID);
   if (!profile || profile.availability !== "active") return null;
-  if (!activeModes(profile).some((m) => m.key === XCELL_MULTIPLEX_MODE_KEY)) return null;
+  // Each check stands on its own (a profile that is not active offers nothing, whatever its modes say): the mode is read directly.
+  if (!profile.modes.some((m) => m.key === XCELL_MULTIPLEX_MODE_KEY && m.availability === "active")) return null;
   if (!input.publishedModes.includes(XCELL_MULTIPLEX_MODE_KEY)) return null;
   const unit = input.devices
     .filter((d) => d.profileId === profile.profileId && d.profileVersion === profile.version && d.retiredAt === null)
