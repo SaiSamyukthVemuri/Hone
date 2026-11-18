@@ -34,26 +34,30 @@ export function parseLastVisitFilter(raw: string | string[] | undefined): LastVi
   return v === "3" || v === "6" || v === "12" || v === "none" ? v : "any";
 }
 
-/** The studio-local calendar date (YYYY-MM-DD) of an instant, or null when the instant is not a date. */
-export function studioLocalDate(iso: string, timeZone: string): string | null {
-  const at = new Date(iso);
-  if (Number.isNaN(at.getTime())) return null;
-  const fmt = (tz: string) => {
-    const parts = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(at);
+/** One formatter for a timezone, built ONCE: returns the studio-local calendar date (YYYY-MM-DD) of an instant, or null. */
+function localDateFormatter(timeZone: string): (iso: string) => string | null {
+  const build = (tz: string) => new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" });
+  let fmt: Intl.DateTimeFormat;
+  try {
+    fmt = build(timeZone);
+  } catch {
+    fmt = build("UTC");
+  }
+  return (iso) => {
+    const at = new Date(iso);
+    if (Number.isNaN(at.getTime())) return null;
+    const parts = fmt.formatToParts(at);
     const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
     return `${get("year")}-${get("month")}-${get("day")}`;
   };
-  try {
-    return fmt(timeZone);
-  } catch {
-    return fmt("UTC");
-  }
 }
 
-/** Today's studio-local date minus `months` calendar months, day clamped to the shorter month. */
-export function notSeenCutoffDate(nowIso: string, months: number, timeZone: string): string | null {
-  const today = studioLocalDate(nowIso, timeZone);
-  if (!today) return null;
+/** The studio-local calendar date (YYYY-MM-DD) of an instant, or null when the instant is not a date. */
+export function studioLocalDate(iso: string, timeZone: string): string | null {
+  return localDateFormatter(timeZone)(iso);
+}
+
+function cutoffFromToday(today: string, months: number): string {
   const [y, m, d] = today.split("-").map(Number);
   const total = y * 12 + (m - 1) - months;
   const ny = Math.floor(total / 12);
@@ -63,6 +67,28 @@ export function notSeenCutoffDate(nowIso: string, months: number, timeZone: stri
   return `${String(ny).padStart(4, "0")}-${String(nm).padStart(2, "0")}-${String(nd).padStart(2, "0")}`;
 }
 
+/** Today's studio-local date minus `months` calendar months, day clamped to the shorter month. */
+export function notSeenCutoffDate(nowIso: string, months: number, timeZone: string): string | null {
+  const today = studioLocalDate(nowIso, timeZone);
+  return today ? cutoffFromToday(today, months) : null;
+}
+
+/**
+ * The matcher for ONE request: the cutoff is computed once and one date formatter is shared across every
+ * client, so filtering a studio of thousands costs one formatter, not one per client. Identical in meaning
+ * to `lastVisitIsAtLeastMonthsAgo` (a visit on the cutoff day counts); that function is this one, built per call.
+ */
+export function lastVisitMatcher(months: number, nowIso: string, timeZone: string): (lastVisitIso: string) => boolean {
+  const localDate = localDateFormatter(timeZone);
+  const today = localDate(nowIso);
+  const cutoff = today ? cutoffFromToday(today, months) : null;
+  return (lastVisitIso) => {
+    if (cutoff === null) return false;
+    const visit = localDate(lastVisitIso);
+    return visit !== null && visit <= cutoff;
+  };
+}
+
 /** True when a recorded last visit is N calendar months ago or longer (studio-local dates). */
 export function lastVisitIsAtLeastMonthsAgo(
   lastVisitIso: string,
@@ -70,8 +96,5 @@ export function lastVisitIsAtLeastMonthsAgo(
   nowIso: string,
   timeZone: string,
 ): boolean {
-  const cutoff = notSeenCutoffDate(nowIso, months, timeZone);
-  const visit = studioLocalDate(lastVisitIso, timeZone);
-  if (cutoff === null || visit === null) return false;
-  return visit <= cutoff;
+  return lastVisitMatcher(months, nowIso, timeZone)(lastVisitIso);
 }

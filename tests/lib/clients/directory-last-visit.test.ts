@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   LAST_VISIT_FILTER_LABEL,
   lastVisitIsAtLeastMonthsAgo,
+  lastVisitMatcher,
   notSeenCutoffDate,
   parseLastVisitFilter,
   studioLocalDate,
@@ -63,6 +64,47 @@ describe("not seen in N months: calendar months in the studio's timezone", () =>
     expect(LAST_VISIT_FILTER_LABEL.none).toBe("No recorded visit");
     expect(Object.values(LAST_VISIT_FILTER_LABEL).filter((l) => /not seen/i.test(l))).toHaveLength(3);
     expect(LAST_VISIT_FILTER_LABEL.none).not.toMatch(/overdue|not seen|never/i);
+  });
+});
+
+describe("one matcher per request gives the same answer as the per-client function, and builds one formatter", () => {
+  const nows = ["2026-11-18T12:00:00Z", "2026-08-31T12:00:00Z", "2028-08-31T12:00:00Z", "2026-03-31T12:00:00Z", "2026-02-10T04:30:00Z", "2026-01-01T00:30:00Z"];
+  const zones = ["America/New_York", "UTC", "Pacific/Auckland", "Not/AZone"];
+  const offsets = [-400, -190, -181, -180, -179, -1, 0, 1, 30, 200];
+  it("equals lastVisitIsAtLeastMonthsAgo across month ends, a leap year, year boundaries and timezones", () => {
+    let checked = 0;
+    for (const now of nows) for (const tz of zones) for (const months of [3, 6, 12]) {
+      const match = lastVisitMatcher(months, now, tz);
+      for (const days of offsets) {
+        const visit = new Date(Date.parse(now) + days * 86_400_000 + 5 * 3_600_000).toISOString();
+        expect(match(visit)).toBe(lastVisitIsAtLeastMonthsAgo(visit, months, now, tz));
+        checked += 1;
+      }
+      expect(match("not a date")).toBe(false);
+    }
+    expect(checked).toBe(nows.length * zones.length * 3 * offsets.length);
+  });
+  it("keeps the boundary: the cutoff day counts, the next day does not", () => {
+    const match = lastVisitMatcher(6, NOW, TZ);
+    expect(match("2026-05-18T15:00:00Z")).toBe(true);
+    expect(match("2026-05-19T15:00:00Z")).toBe(false);
+  });
+  it("filtering many clients builds ONE date formatter, not one per client", () => {
+    const many = Array.from({ length: 2000 }, (_, i) => src(`k${i}`, `Client ${String(i).padStart(4, "0")}`));
+    const map = new Map(many.map((r, i) => [r.id, new Date(Date.parse(NOW) - (i + 1) * 86_400_000).toISOString()]));
+    const Real = Intl.DateTimeFormat;
+    let built = 0;
+    const spy = vi.spyOn(Intl, "DateTimeFormat").mockImplementation(function (...args: ConstructorParameters<typeof Intl.DateTimeFormat>) {
+      built += 1;
+      return new Real(...args);
+    } as never);
+    try {
+      const p = queryDirectory(many, agg(map), P({ lastVisit: "3" }), clock);
+      expect(p.total).toBeGreaterThan(0);
+      expect(built).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

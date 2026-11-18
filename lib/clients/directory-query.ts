@@ -27,7 +27,7 @@
 
 import { directoryMatchRank, directorySortKey, matchesDirectoryQuery, normalizeDirectoryQuery } from "@/lib/clients/directory-search";
 import type { DirectoryIdentityRow } from "@/lib/clients/directory-rules";
-import { lastVisitIsAtLeastMonthsAgo, parseLastVisitFilter, type LastVisitFilter } from "@/lib/clients/last-visit-filter";
+import { lastVisitMatcher, parseLastVisitFilter, type LastVisitFilter } from "@/lib/clients/last-visit-filter";
 
 export const DIRECTORY_PAGE_SIZE = 25;
 
@@ -204,10 +204,11 @@ export function queryDirectory(
     // No recorded visit: its own bucket. Absent evidence is not a date, so it is never in "not seen in N months".
     set = set.filter((r) => !lastVisits!.has(r.id));
   } else if (params.lastVisit !== "any") {
-    const months = Number(params.lastVisit);
+    // The cutoff and the date formatter are built ONCE for the request, not per client.
+    const atLeast = lastVisitMatcher(Number(params.lastVisit), clock.nowIso, clock.timeZone);
     set = set.filter((r) => {
       const at = lastVisits!.get(r.id);
-      return at !== undefined && lastVisitIsAtLeastMonthsAgo(at, months, clock.nowIso, clock.timeZone);
+      return at !== undefined && atLeast(at);
     });
   }
 
