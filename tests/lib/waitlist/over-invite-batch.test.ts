@@ -149,10 +149,10 @@ describe("delivery, chunks and retry", () => {
     expect(calls).toEqual(["e0", "e1", "e2", "e1"]);
     expect(summarize(retry.results)).toEqual({ pending: 0, sent: 3, skipped: 0, failed: 0 });
   });
-  it("a NaN or non-finite chunk size falls back to the default instead of stalling; a non-positive one clamps to one send per call", async () => {
+  it("a NaN or non-finite chunk size falls back to the default chunk of 25 instead of removing the bound; a non-positive one clamps to one send per call", async () => {
     for (const c of [Number.NaN, Number.POSITIVE_INFINITY]) {
-      const r = await run(ids(3), async () => ({ kind: "sent" }), { chunkSize: c });
-      expect(summarize(r.results).sent, String(c)).toBe(3);
+      const r = await run(ids(60), async () => ({ kind: "sent" }), { chunkSize: c });
+      expect(summarize(r.results), String(c)).toEqual({ pending: 35, sent: 25, skipped: 0, failed: 0 });
     }
     for (const c of [-4, 0]) {
       const r = await run(ids(3), async () => ({ kind: "sent" }), { chunkSize: c });
