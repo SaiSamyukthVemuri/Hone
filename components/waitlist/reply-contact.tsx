@@ -27,7 +27,16 @@ function CopyButton({ value, label }: { value: string; label: string }) {
   );
 }
 
-export function ReplyContactDetails({ entryId, contact }: { entryId: string; contact: ReplyContact | null }) {
+export function ReplyContactDetails({
+  entryId,
+  contact,
+  showEntryLink = true,
+}: {
+  entryId: string;
+  contact: ReplyContact | null;
+  /** False when the entry has been removed from the queue, so the link would land on nothing. */
+  showEntryLink?: boolean;
+}) {
   const entryHref = `/settings/waitlist#entry-${entryId}`;
   if (contact === null) {
     return (
@@ -74,9 +83,11 @@ export function ReplyContactDetails({ entryId, contact }: { entryId: string; con
           <span className="text-neutral-600">No phone number on this entry</span>
         )}
       </div>
-      <Link className="min-h-[44px] underline" href={entryHref}>
-        Open this waitlist entry
-      </Link>
+      {showEntryLink && (
+        <Link className="min-h-[44px] underline" href={entryHref}>
+          Open this waitlist entry
+        </Link>
+      )}
     </div>
   );
 }

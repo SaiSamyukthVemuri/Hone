@@ -10,6 +10,8 @@ import {
   markHandledAction,
 } from "@/app/(app)/settings/waitlist/follow-up-actions";
 import type { FollowUpNotice } from "@/lib/waitlist/follow-up-notice";
+import type { ReplyContact } from "@/lib/waitlist/reply-contact";
+import { ReplyContactDetails } from "@/components/waitlist/reply-contact";
 
 // HON-7 (b). The owner's follow-up section: the target of the `#follow-up` anchor the email, the bell and the sign-in return all land on.
 // OWNER-ONLY BY CONSTRUCTION: it renders the recipient's answers, so it must only ever be rendered after the page's owner check (a test pins the
@@ -88,6 +90,7 @@ export function DeclineFollowUpSection({
   notice,
   justSaved = false,
   capped = false,
+  contacts = null,
 }: {
   rows: FollowUpRow[];
   timeZone: string;
@@ -101,6 +104,8 @@ export function DeclineFollowUpSection({
   justSaved?: boolean;
   /** True when the list reached the database's 500-row cap: more responses may be waiting than are shown. */
   capped?: boolean;
+  /** The linked entry's email and phone by ENTRY ID, read after the owner check; null when they could not be read. */
+  contacts?: ReadonlyMap<string, ReplyContact> | null;
 }) {
   const open = rows.filter((r) => r.status === "open");
   return (
@@ -143,6 +148,7 @@ export function DeclineFollowUpSection({
               <p className="font-medium">{r.clientName || "A person on the waitlist"}</p>
               {/* At the top of the row so an opened panel grows DOWNWARD into the row with room below it, never off the bottom of the screen; DOM, visual and focus order agree. */}
               {!erased && hasAnswers ? <MoreActions id={r.followupId} name={r.clientName || "this person"} /> : null}
+              <ReplyContactDetails entryId={r.entryId} contact={contacts?.get(r.entryId) ?? null} showEntryLink={r.status !== "removed"} />
               {r.kind === "withdrawal" ? <p>{NO_TIMES_WORK_LABELS.noLongerNeed}.</p> : null}
               {erased ? (
                 <p className="text-neutral-600 dark:text-neutral-400">

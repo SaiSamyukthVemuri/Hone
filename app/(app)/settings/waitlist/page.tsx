@@ -22,6 +22,7 @@ import { declineOwnerEmailActivation } from "@/lib/waitlist/decline-owner-email-
 import { waitlistDeclineAnswersEnabled } from "@/lib/waitlist/decline-answers-gate";
 import { readFollowUps } from "@/lib/waitlist/followups-owner";
 import { loadLinkableAppointments } from "@/lib/waitlist/followup-linkable";
+import { loadReplyContacts } from "@/lib/waitlist/reply-contact";
 import { DeclineFollowUpSection } from "@/components/waitlist/decline-follow-up-section";
 import { DeclineEmailFailedNotice } from "@/components/waitlist/decline-email-failed-notice";
 import {
@@ -658,6 +659,9 @@ export default async function WaitlistSettingsPage({
   const declineAnswersOn = waitlistDeclineAnswersEnabled();
   const followUps = declineAnswersOn ? await readFollowUps(studio.id, practitioner.user_id) : null;
   const followUpOpenRows = followUps?.kind === "ok" ? followUps.rows : [];
+  // Contact for each response, by ENTRY ID within the studio (never by name), read through the owner's own session.
+  const followUpContacts =
+    followUps?.kind === "ok" ? await loadReplyContacts(studio.id, [...new Set(followUps.rows.map((r) => r.entryId))]) : null;
   const linkable = await loadLinkableAppointments(supabase, studio.id, followUpOpenRows, studio.timezone ?? "UTC");
   const outbox = await loadOutboxCounts(
     studio.id,
@@ -963,6 +967,7 @@ export default async function WaitlistSettingsPage({
                 linkable={linkable}
                 notice={followUpNotice}
                 capped={followUps.capped === true}
+                contacts={followUpContacts?.kind === "ok" ? followUpContacts.byEntry : null}
               />
             ) : (
               <p id="follow-up" className="scroll-mt-[calc(var(--settings-top,4.5rem)+4rem)] text-sm text-neutral-600 min-[700px]:scroll-mt-[calc(var(--settings-top,4.5rem)+1rem)] dark:text-neutral-400" role="status">
