@@ -27,6 +27,10 @@ import {
   buildTreatmentTimeLine,
   getTreatmentTimeContextForEmail,
 } from "@/lib/treatment-time/queries";
+import {
+  loadTreatmentTimeNameFields,
+  treatmentTimeFirstName,
+} from "@/lib/treatment-time/client-first-name";
 import type { Appointment, Client, Service, Studio } from "@/lib/types/database";
 import { generateCancellationToken } from "@/lib/booking/tokens";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
@@ -442,8 +446,14 @@ async function sendReminderPass(opts: {
     const treatmentTimeLine = appt.studio.show_treatment_time_to_clients
       ? buildTreatmentTimeLine({
           enabled: true,
-          clientFirstName:
-            appt.client.name.split(/\s+/)[0] || appt.client.name,
+          clientFirstName: treatmentTimeFirstName(
+            await loadTreatmentTimeNameFields(
+              admin,
+              appt.studio.id,
+              appt.client_id,
+              appt.client.name,
+            ),
+          ),
           context: await getTreatmentTimeContextForEmail(
             appt.studio.id,
             appt.client_id,
