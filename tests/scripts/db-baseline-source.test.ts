@@ -69,6 +69,24 @@ describe("the fingerprint compares effective ACLs, not their spelling", () => {
     expect(FINGERPRINT_SQL).toMatch(/acldefault\(\(case when c\.relkind='S'/);
   });
 
+  it("each serialised item carries the grantee, the privilege AND the grantable marker (dropping the grant option or the grantee must fail this test)", () => {
+    const n = (FINGERPRINT_SQL.match(/string_agg\(/g) ?? []).length;
+    expect(n).toBeGreaterThan(8);
+    // one grantee term, one privilege term and one grantable marker per aggregate, in the item AND in its ordering.
+    expect((FINGERPRINT_SQL.match(/coalesce\(nullif\(ax\.grantee::regrole::text,'-'\),'PUBLIC'\) \|\| '=' \|\| ax\.privilege_type \|\| case when ax\.is_grantable then '\*' else '' end/g) ?? []).length).toBe(n);
+    expect((FINGERPRINT_SQL.match(/order by coalesce\(nullif\(ax\.grantee::regrole::text,'-'\),'PUBLIC'\), ax\.privilege_type, ax\.is_grantable\)/g) ?? []).length).toBe(n);
+  });
+
+  it("a restore that differs ONLY in the grantee, or ONLY in the grant option, is refused (the comparison is on content)", () => {
+    const chain = parseFingerprint("grants:rel|t|authenticated=SELECT,postgres=DELETE|postgres");
+    const onlyGrantee = parseFingerprint("grants:rel|t|anon=SELECT,postgres=DELETE|postgres");
+    const onlyOption = parseFingerprint("grants:rel|t|authenticated=SELECT*,postgres=DELETE|postgres");
+    const same = parseFingerprint("grants:rel|t|authenticated=SELECT,postgres=DELETE|postgres");
+    expect(chainProblems(chain, same)).toEqual([]);
+    expect(chainProblems(chain, onlyGrantee).join("\n")).toMatch(/EXTRA GRANT/);
+    expect(chainProblems(chain, onlyOption).join("\n")).toMatch(/EXTRA GRANT/);
+  });
+
   it("the extra-grant control still bites: a tuple the chain lacks is reported by name", () => {
     const chain = ["grants:rel|t|authenticated=SELECT,postgres=DELETE|postgres"].join("\n");
     const restored = ["grants:rel|t|PUBLIC=SELECT,authenticated=SELECT,postgres=DELETE|postgres"].join("\n");
