@@ -55,6 +55,9 @@ export const LEGACY_AREA_NATIVE_MACHINE_REFUSED =
   "This area already has xCell Pur readings. Add a new area to chart another machine.";
 
 export type MachineFirstSetupConnectedProps = {
+  /** MultiPlex as a mode of the ONE xCell choice: the host form's Mode control asks here, and learns whether it may offer it. */
+  multiplexRequest?: { seq: number; want: boolean } | null;
+  onMultiplexRoute?: (route: { deviceId: string } | null) => void;
   /** The treatment block being charted, from the host form. */
   blockId?: string | null;
   /**
@@ -217,6 +220,8 @@ export function MachineFirstSetupConnected({
   blockVersion,
   onBlockVersion,
   legacyReadingsLocked = false,
+  multiplexRequest = null,
+  onMultiplexRoute,
 }: MachineFirstSetupConnectedProps) {
   // WHAT THIS AREA HAS PERSISTED, tracked from this panel's own successful
   // identity writes. The prop is the identity the page
@@ -228,6 +233,12 @@ export function MachineFirstSetupConnected({
   const [written, setWritten] = useState<NonNullable<MachineFirstSetupConnectedProps["savedIdentity"]> | null>(null);
   const savedIdentity = written ?? savedIdentityProp;
   const [ctx, setCtx] = useState<MachineSetupContext | null>(null);
+  // The host form's Mode control learns whether MultiPlex may be offered, and under which unit a saved area is recognised.
+  const routeDeviceId = ctx?.multiplexRoute?.deviceId ?? null;
+  useEffect(() => {
+    onMultiplexRoute?.(routeDeviceId ? { deviceId: routeDeviceId } : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeDeviceId]);
   // A CONFIRMED SAVE whose follow-up refresh of the recorded settings failed: the save stands, only the list is out of date.
   const [refreshFailedAfterSave, setRefreshFailedAfterSave] = useState(false);
   const [refusedAfterSave, setRefusedAfterSave] = useState<"access" | "unavailable" | null>(null);
@@ -657,6 +668,7 @@ export function MachineFirstSetupConnected({
       // area was saved as it.
       legacyMachine={ctx.legacyMachine}
       multiplexRoute={ctx.multiplexRoute}
+      multiplexRequest={multiplexRequest}
       nativeLocked={Boolean(blockId) && legacyReadingsLocked}
       // THE SAVED UNIT, from the area's own record: not from the panel's current pick, which can be a remembered
       // preference on an area that never saved an identity.

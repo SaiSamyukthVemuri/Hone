@@ -533,6 +533,16 @@ export function BlockSetupForm({
     },
     [],
   );
+  // MULTIPLEX IN THE ONE MODE CONTROL. The panel reports the xCell Pur unit only when the contract row is published and a unit exists.
+  // Picking MultiPlex under the existing xCell choice binds a NEW area to that unit when it is saved; the mode is then frozen with the
+  // area. A saved area is recognised by its stored unit, never by a control.
+  const [multiplexRoute, setMultiplexRoute] = useState<{ deviceId: string } | null>(null);
+  const [multiplexRequest, setMultiplexRequest] = useState<{ seq: number; want: boolean } | null>(null);
+  const multiplexSaved = Boolean(block?.studio_machine_id && multiplexRoute && block.studio_machine_id === multiplexRoute.deviceId);
+  const multiplexSelected = multiplexSaved || (machineKind === "native" && multiplexRequest?.want === true && !block);
+  // Offered on a NEW area under the existing xCell choice. An area holding legacy values never switches (today's refusal stays).
+  const multiplexOffered = multiplexRoute !== null && !legacyDataLocked && !block && (machineKind === "legacy" || multiplexSelected);
+  const showModeControl = machineKind !== "native" || multiplexSelected;
   const showLegacyFields = machineKind !== "native";
   // A lot/batch belongs to ONE probe. Provenance is therefore tracked PER PROBE
   // rather than as a global "has she edited it?" boolean.
@@ -1985,6 +1995,8 @@ export function BlockSetupForm({
             : null
         }
         onKindChange={onKindChange}
+        multiplexRequest={multiplexRequest}
+        onMultiplexRoute={setMultiplexRoute}
         onIdentityDraft={block ? undefined : onIdentityDraft}
         blockVersion={blockVersion}
         legacyReadingsLocked={legacyDataLocked}
@@ -2147,7 +2159,7 @@ export function BlockSetupForm({
         )}
       </div>
 
-      {showLegacyFields && (
+      {showModeControl && (
       <div className="flex flex-col gap-2">
         <span className="text-sm font-medium">Mode</span>
         <div className="flex flex-wrap gap-2">
@@ -2157,7 +2169,12 @@ export function BlockSetupForm({
               <button
                 key={m.value}
                 type="button"
-                onClick={() => update("mode", selected ? "" : m.value)}
+                disabled={multiplexSaved}
+                onClick={() => {
+                  update("mode", selected ? "" : m.value);
+                  // Leaving MultiPlex returns the area to the existing xCell workflow.
+                  if (multiplexSelected) setMultiplexRequest((r) => ({ seq: (r?.seq ?? 0) + 1, want: false }));
+                }}
                 className={`rounded-full border px-4 py-2 text-sm transition ${
                   selected
                     ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
@@ -2168,6 +2185,22 @@ export function BlockSetupForm({
               </button>
             );
           })}
+          {multiplexOffered && (
+            <button
+              type="button"
+              data-testid="mode-multiplex"
+              aria-pressed={multiplexSelected}
+              disabled={multiplexSaved}
+              onClick={() => setMultiplexRequest((r) => ({ seq: (r?.seq ?? 0) + 1, want: !multiplexSelected }))}
+              className={`rounded-full border px-4 py-2 text-sm transition ${
+                multiplexSelected
+                  ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
+                  : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300"
+              }`}
+            >
+              MultiPlex
+            </button>
+          )}
         </div>
       </div>
       )}

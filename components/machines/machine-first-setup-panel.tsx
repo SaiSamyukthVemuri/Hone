@@ -234,6 +234,11 @@ export type MachineFirstSetupPanelProps = {
    * settings returns to the existing workflow. Null means nothing about the xCell choice changes.
    */
   multiplexRoute?: { deviceId: string; modeKey: string } | null;
+  /**
+   * The host form's MULTIPLEX pick in its ONE Mode control (there is no second selector here). Each pick bumps `seq`: `want` true
+   * binds this NEW area to the routed unit, false returns it to the existing xCell workflow. Acted on only when the sequence changes.
+   */
+  multiplexRequest?: { seq: number; want: boolean } | null;
   /** The area was saved as that workflow: open on it. */
   initialLegacyChosen?: boolean;
   /** A saved area that already holds xCell Pur readings: native machines are listed but cannot be chosen. */
@@ -352,6 +357,7 @@ function MachineFirstSetupPanelImpl({
   onSelectMachine,
   legacyMachine = null,
   multiplexRoute = null,
+  multiplexRequest = null,
   initialLegacyChosen = false,
   nativeLocked = false,
   savedDeviceId = null,
@@ -629,6 +635,16 @@ function MachineFirstSetupPanelImpl({
     : (chosen && mode) || savedUnavailable || modeUnresolved
       ? "native"
       : "none";
+  const lastMultiplexSeq = useRef(multiplexRequest?.seq ?? 0);
+  useEffect(() => {
+    if (!multiplexRequest || multiplexRequest.seq === lastMultiplexSeq.current) return;
+    lastMultiplexSeq.current = multiplexRequest.seq;
+    // A NEW area only: a saved area keeps the identity it was saved with.
+    if (!xcellRouted || !multiplexRoute || blockId) return;
+    if (multiplexRequest.want) void chooseDevice(multiplexRoute.deviceId);
+    else if (deviceId === multiplexRoute.deviceId) void chooseDevice(null, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [multiplexRequest]);
   useEffect(() => {
     onKindChange?.(machineKind);
   }, [machineKind, onKindChange]);
@@ -800,26 +816,9 @@ function MachineFirstSetupPanelImpl({
           {unitNames[savedDeviceId as string] ?? "This area's machine"} is saved on this area but is no longer available. Its settings stay as recorded.
         </p>
       )}
-      {scope && xcellRouted && multiplexRoute && (legacyChosen || deviceId === multiplexRoute.deviceId) && (
-        <FieldLabel label="xCell mode" hint={blockId && !nativeLocked && legacyChosen ? "To chart MultiPlex, add a new area." : undefined}>
-          <select
-            className={fieldControlClass()}
-            value={deviceId === multiplexRoute.deviceId ? multiplexRoute.modeKey : "existing"}
-            onChange={(e) =>
-              e.target.value === "existing" ? void chooseDevice(null, true) : void chooseDevice(multiplexRoute.deviceId)
-            }
-            // A saved area keeps the identity it was saved with: MultiPlex is chosen on a NEW area, never switched onto charted values.
-            disabled={Boolean(blockId) || selectionPending || identityFrozen}
-            data-testid="xcell-mode-select"
-          >
-            <option value="existing">Existing xCell settings</option>
-            <option value={multiplexRoute.modeKey}>MultiPlex</option>
-          </select>
-        </FieldLabel>
-      )}
       {scope && nativeLocked && (
         <p className="text-sm text-neutral-600 dark:text-neutral-400" data-testid="machine-native-locked">
-          This area already has xCell Pur readings. Add a new area to chart another machine.
+          {xcellRouted ? "This area already has readings saved in the other xCell modes. Add a new area to chart MultiPlex." : "This area already has xCell Pur readings. Add a new area to chart another machine."}
         </p>
       )}
 
