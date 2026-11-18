@@ -77,6 +77,7 @@ import {
   chartingLabel,
   aftercareLabel,
   completionLabel,
+  autoPostcareNote,
   postcareLabel,
 } from "@/lib/sessions/finish-appointment";
 import { MarkAppointmentCompleteControl } from "@/components/appointment/mark-complete-control";
@@ -949,6 +950,14 @@ export default async function SessionDetailPage({
           >
             {completionLabel(finishState.completion)}
           </span>
+          {(() => {
+            const note = autoPostcareNote(studio.postcare_delivery_mode, finishState.completion.kind);
+            return note ? (
+              <p data-testid="finish-auto-postcare-note" className="text-xs text-neutral-600 dark:text-neutral-400">
+                {note}
+              </p>
+            ) : null;
+          })()}
           {/* Mounted for BOTH before_start and ready. The shared control owns
               the disabled state AND the timer that re-enables the button the
               moment starts_at passes: mounting it only when already "ready"

@@ -83,7 +83,7 @@ const LOADERS = [
     name: "missing-records assistant",
     load: () => getMissingRecordsAssistant("studio-1", "2026-10-24T12:00:00.000Z"),
     message: /^Failed to load missing records$/,
-    reads: ["sessions#1", "sessions#2", "session_blocks#1", "appointments#1", "client_intake_forms#1"],
+    reads: ["sessions#1", "sessions#2", "sessions#3", "session_blocks#1", "appointments#1", "client_intake_forms#1"],
   },
   {
     name: "expiring sterile items",

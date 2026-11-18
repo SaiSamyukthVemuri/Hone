@@ -223,3 +223,18 @@ export function postcareLabel(state: FinishPostcareState): string {
       return "Not sent yet";
   }
 }
+
+// HON-45 (Sam's decision): Finish writes COMPLETION and nothing else, EXCEPT that a studio which explicitly opted into
+// `postcare_delivery_mode = 'auto_on_complete'` keeps its automatic postcare. That opt-in is honoured, never hidden: while the
+// appointment can still be completed, the Finish panel says, beforehand and in plain words, what completing will also do.
+// Charging is never part of Finish, in any mode. Pure: no I/O, no clock.
+export const AUTO_POSTCARE_NOTE =
+  "Postcare will be sent automatically when you mark this completed (studio setting). Charging is separate and is never done here.";
+
+export function autoPostcareNote(
+  deliveryMode: string | null | undefined,
+  completionKind: FinishCompletionState["kind"],
+): string | null {
+  if (deliveryMode !== "auto_on_complete") return null;
+  return completionKind === "ready" || completionKind === "before_start" ? AUTO_POSTCARE_NOTE : null;
+}
