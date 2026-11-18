@@ -100,6 +100,7 @@ import { isCanonicalTreatmentArea } from "@/lib/sessions/area-validation";
 import { BodyMapAreaPicker } from "@/components/body-map-area-picker";
 import { MultiAreaEditor } from "@/components/multi-area-editor";
 import { resolveBlockAreas, type BlockArea } from "@/lib/sessions/block-areas";
+import { useRetainedState } from "@/components/charting-state-provider";
 import { DraftRegistryProvider, useDraftRegistryState, useReportDraft } from "@/components/machines/draft-registry";
 import { MachineFirstSetupConnected } from "@/components/machines/machine-first-setup-connected";
 import { ProbePicker } from "@/components/probe-picker";
@@ -216,6 +217,13 @@ type Props = {
   // primary_area + side when empty.
   initialAreas?: BlockArea[];
   onCancel: () => void;
+  // OPT-IN retained state (components/charting-state-provider.tsx). Absent = exactly the previous
+  // behaviour: every value below is plain component state.
+  // WHAT IS RETAINED so far: the draft, the machine kind and the dirty baseline (`:draft`, `:machineKind`, `:baseline`).
+  // NOT yet retained: the native machine panel's own settings, the machine identity pick and the probe-lot provenance.
+  // A view that opts in must retain those too before it ships, or a switch would drop them. Drop every key of an editor
+  // with `useDiscardRetained()(retainKey)` on cancel and after a confirmed save.
+  retainKey?: string;
 };
 
 type Draft = {
@@ -442,16 +450,18 @@ export function BlockSetupForm({
   probeLotInventory = [],
   initialAreas,
   onCancel,
+  retainKey,
 }: Props) {
   const isEdit = !!block;
-  const [draft, setDraftRaw] = useState<Draft>(() =>
+  const [draft, setDraftRaw] = useRetainedState<Draft>(retainKey ? `${retainKey}:draft` : null, () =>
     initialDraft(block, firstEntry, defaultPrimaryArea, defaultMachineFrequency, initialAreas),
   );
   // WHICH KIND OF MACHINE IS IN FORCE, so only that machine's fields show.
   // Opened from the area's SAVED identity (migration 0301), never inferred:
   // an area with no saved identity is "none", and "none" keeps the existing
   // charting fields exactly as they were.
-  const [machineKind, setMachineKind] = useState<"none" | "legacy" | "native">(
+  const [machineKind, setMachineKind] = useRetainedState<"none" | "legacy" | "native">(
+    retainKey ? `${retainKey}:machineKind` : null,
     block?.studio_machine_id ? "native" : block?.machine_profile_id ? "legacy" : "none",
   );
   // A NEW area carries the chosen machine into its Save (one transaction).
@@ -479,7 +489,14 @@ export function BlockSetupForm({
         firstEntry?.units_of_lye != null),
   );
   // The dirty baseline (set on first render, below). Declared here so the native switch can rebase it.
-  const initialDraftJson = useRef<string | null>(null);
+  // RETAINED WITH THE DRAFT: the baseline the draft is compared against. Rebuilding it from a restored draft
+  // would make an edited draft look saved (no "Unsaved", no leave guard), so with a retainKey the ORIGINAL baseline
+  // is kept alongside the draft and read back on remount.
+  const [retainedBaseline, setRetainedBaseline] = useRetainedState<string | null>(
+    retainKey ? `${retainKey}:baseline` : null,
+    null,
+  );
+  const initialDraftJson = useRef<string | null>(retainedBaseline);
   // The FROZEN setter, reached through a ref because it is declared further
   // down and this callback has to keep one identity.
   const setDraftRef = useRef<(u: (d: Draft) => Draft) => void>(() => undefined);
@@ -510,10 +527,11 @@ export function BlockSetupForm({
         // (and a leave prompt) on an untouched form.
         if (initialDraftJson.current !== null) {
           initialDraftJson.current = JSON.stringify(cleared(JSON.parse(initialDraftJson.current) as Draft));
+          setRetainedBaseline(initialDraftJson.current);
         }
       }
     },
-    [legacyDataLocked],
+    [legacyDataLocked, setRetainedBaseline],
   );
   const onIdentityDraft = useCallback(
     (
@@ -1039,6 +1057,12 @@ export function BlockSetupForm({
   if (initialDraftJson.current === null) {
     initialDraftJson.current = JSON.stringify(draft);
   }
+  // Write the baseline into the retained store AFTER the first commit (never during render), before any edit can happen.
+  useEffect(() => {
+    if (retainKey && retainedBaseline === null && initialDraftJson.current !== null) {
+      setRetainedBaseline(initialDraftJson.current);
+    }
+  }, [retainKey, retainedBaseline, setRetainedBaseline]);
   // THE CREATE ATTEMPT IS AN OWNER. A NEW area saved with prefilled values and an auto-resolved machine has a draft
   // EQUAL to its baseline, and auto-resolution is not an edit, so nothing marked it unsaved: leaving mid-save dropped `bareCreateKeyRef`
   // (not in the URL) and recreating could duplicate a committed save. From submit until a CONFIRMED outcome the attempt is both an unsaved
