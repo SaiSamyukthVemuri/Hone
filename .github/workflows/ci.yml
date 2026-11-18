@@ -436,6 +436,76 @@ jobs:
         # intentionally allowed. Regression fence for the 0025 fresh-apply defect.
         run: npm run check:migration-extensions
 
+  # CI-COST-02. The record suites, first, so a PR that cannot merge does not
+  # start the heavy lanes.
+  #
+  # validate runs these same two files inside `npm test`, but only after install,
+  # typecheck, lint and build: p50 10.5 min after the run starts. By then every
+  # heavy lane (four browser shards, db, payment, mobile, google, storage, webkit)
+  # is already running and runs to the end. Measured 3-17 Nov: the unit step failed
+  # in 352 PR runs, and the heavy lanes in those runs held 28,647 runner-minutes,
+  # 39% of all PR CI. In a 40-run sample of those failures, 36 included one of
+  # these two suites (the migration-ledger block, or the PR's missing release
+  # receipt) and 23 failed on nothing else.
+  #
+  # This job runs exactly those two files with validate's inputs: full history,
+  # the event payload Actions writes for every step, and the same
+  # CANONICAL_FRESHNESS expression. Both suites import only node built-ins and
+  # their own helpers, so they need none of validate's dummy app env. The heavy
+  # lanes `needs:` it, so a red ledger stops them before they start.
+  #
+  # It adds no new reason for a run to fail, apart from its own setup. validate
+  # still runs both files in `npm test` on every non-docs run, so whenever these
+  # assertions fail here they fail there too. The required checks, the aggregator and its inputs are
+  # unchanged. A skipped heavy lane that its diff needs still fails closed: the
+  # aggregator on skipped shards, ENG-LOOP's REQUIRED_JOB_TABLE on skipped
+  # db/payment/mobile/google.
+  #
+  # PRs only. On a production push CANONICAL_FRESHNESS is `enforce`, and a stale
+  # record there must not cost the merge commit its browser and DB proof. So on
+  # push every step is skipped, the job succeeds at once, and the heavy lanes run
+  # exactly as before. Docs-only diffs skip it with validate; their heavy lanes
+  # never run.
+  #
+  # Cost: one extra job, about 1.5 runner-minutes, on the heavy lanes' critical
+  # path (install + two files). Trade: a heavy-lane failure that coexists with a
+  # record failure now surfaces one push later. In 28% of the completed runs that
+  # failed unit tests, a required heavy lane had also failed.
+  records-preflight:
+    name: records pre-flight (ledger + receipt)
+    needs: changes
+    if: ${{ needs.changes.outputs.docs_only != 'true' }}
+    runs-on: ubuntu-24.04
+    # Target ~2 min. The ceiling clears the 7.1 min `npm ci` outlier recorded on
+    # validate above.
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The ledger and receipt suites read history and the PR's base.
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.22.1"
+          cache: "npm"
+
+      - name: Install dependencies
+        if: ${{ github.event_name == 'pull_request' }}
+        run: npm ci
+
+      - name: Ledger and release-receipt suites
+        if: ${{ github.event_name == 'pull_request' }}
+        run: npx vitest run tests/docs/canonical-production-facts.test.ts tests/ci/pr-release-receipt.test.ts
+        env:
+          # Identical to validate's Unit tests step.
+          CANONICAL_FRESHNESS: ${{ (github.event_name != 'pull_request' || needs.changes.outputs.production_record == 'true') && 'enforce' || 'measure' }}
+
   # PR #220. DB/RLS integration lane: applies the FULL migration
   # chain (0001-current) to a throwaway LOCAL Supabase Postgres in
   # the runner and exercises real RLS policies, triggers, claim
@@ -522,7 +592,7 @@ jobs:
 
   db-integration:
     name: db integration (local supabase)
-    needs: changes
+    needs: [changes, records-preflight]
     if: ${{ github.event.pull_request.draft != true && ( needs.changes.outputs.database == 'true' || needs.changes.outputs.security == 'true' || needs.changes.outputs.full_matrix_required == 'true' ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
@@ -822,7 +892,7 @@ jobs:
     # Dynamic name: branch protection must NOT depend on it. The stable
     # required check is the `browser-e2e` aggregator at the end of this file.
     name: browser shard ${{ matrix.shard }} (${{ needs.changes.outputs.browser_extended == 'true' && 'extended' || 'targeted' }})
-    needs: changes
+    needs: [changes, records-preflight]
     if: ${{ github.event.pull_request.draft != true && ( needs.changes.outputs.browser_run == 'true' || needs.changes.outputs.full_matrix_required == 'true' ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
@@ -1482,7 +1552,7 @@ jobs:
   # port collision with browser-e2e, and a flake here never blocks the fast lane.
   payment-browser-e2e:
     name: payment browser e2e (fake stripe)
-    needs: changes
+    needs: [changes, records-preflight]
     if: ${{ github.event.pull_request.draft != true && ( needs.changes.outputs.payment == 'true' || needs.changes.outputs.full_matrix_required == 'true' ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
@@ -1751,7 +1821,7 @@ jobs:
   # Separate job (own runner) → no port collision with the other browser lanes.
   mobile-completion-e2e:
     name: mobile completion e2e (chromium iphone-profile)
-    needs: changes
+    needs: [changes, records-preflight]
     if: ${{ github.event.pull_request.draft != true && ( needs.changes.outputs.mobile == 'true' || needs.changes.outputs.full_matrix_required == 'true' ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
@@ -2003,7 +2073,7 @@ jobs:
   # Separate job (own runner) → no port collision with the other browser lanes.
   google-browser-e2e:
     name: google browser e2e (fake google)
-    needs: changes
+    needs: [changes, records-preflight]
     if: ${{ github.event.pull_request.draft != true && ( needs.changes.outputs.google_calendar == 'true' || needs.changes.outputs.full_matrix_required == 'true' ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
@@ -2278,7 +2348,7 @@ jobs:
   # full_matrix_required and the spec terms are unchanged.
   storage-photos:
     name: storage photos (not required)
-    needs: changes
+    needs: [changes, records-preflight]
     if: ${{ github.event.pull_request.draft != true && ( needs.changes.outputs.full_matrix_required == 'true' || (needs.changes.outputs.browser_run == 'true' && needs.changes.outputs.browser_extended == 'true') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/treatment-image-upload-formats.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-client-portrait.spec.ts') ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
@@ -2535,7 +2605,7 @@ jobs:
   #   (CLAUDE.md section 4).
   webkit-hon-62:
     name: webkit time inputs (HON-62, not required)
-    needs: changes
+    needs: [changes, records-preflight]
     if: ${{ github.event.pull_request.draft != true && ( needs.changes.outputs.full_matrix_required == 'true' || (needs.changes.outputs.browser_run == 'true' && needs.changes.outputs.browser_extended == 'true') || contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/finish-appointment-mobile.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-touch-floor.spec.ts') || needs.changes.outputs.payment == 'true' ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
