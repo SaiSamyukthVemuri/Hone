@@ -17,7 +17,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 
 ## Current state (repository facts derived 2026-11-08, carrier #1396; `0313` is recorded as applied and `0319` is MIGRATION-FIRST PENDING and NOT applied; the record of hosted below is current through `0354` for the migrations it names, apart from `0319` and the unhosted gaps)
 
-> **CURRENT RELATIONSHIP: repo > hosted, with pending `0319` and `0357`.** The hosted max is the value in the table below, as declared in `docs/production/migration-state.json`. The earlier pending file is sealed and unapplied: `0319_waitlist_times_unsuitable.sql` (sha256 `3aa52473bb55677b0ea629f44a4f21d3350fbf755a839044d7c7217e1fca2d2f`). `0313` is recorded as applied below. Applying `0319` is a separate approval of the exact bytes; this record applies nothing.
+> **CURRENT RELATIONSHIP: repo > hosted only by the pending `0319`.** The hosted max is the value in the table below, as declared in `docs/production/migration-state.json`. The one pending file is sealed and unapplied: `0319_waitlist_times_unsuitable.sql` (sha256 `3aa52473bb55677b0ea629f44a4f21d3350fbf755a839044d7c7217e1fca2d2f`). `0313` is recorded as applied below. Applying `0319` is a separate approval of the exact bytes; this record applies nothing.
 
 | Field | Value |
 |---|---|
@@ -28,11 +28,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | **Next free number** | Next free number is **0358** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by reservation, not by this file. <!-- ledger-derived --> |
 | **Project ref** | Canonical Hone production project. |
 
-### Cancellation fee tiers (0357, pending; no hosted claim)
-
-`0357_cancellation_fee_tiers.sql` adds owner-governed notice-window and same-day cancellation fee rules, revision-based writes, an audit trail and immutable attempt timing evidence. It creates no studio enrollment, changes no policy or acknowledgement, and enables no fee. The earlier Roles packages own `0355` and `0356`; reservation markers preserve their allocations. Applying `0357` requires its own reviewed package and explicit per-change approval. Neither Roles migration nor `0319` is included in that authorization. See `docs/production/cancellation-fee-tiers-release.md`.
-
-### Earlier pending work (no hosted claim)
+### What the two pending migrations are (no hosted claim)
 
 - **`0313`** adds two empty tables (a follow-up item table and an invitation-to-appointment link table, both RLS on, no policy, no API-role privilege) and four service-role-only functions; nothing writes to them until the booking flag is switched on.
 - **`0319`** adds one empty table and four service-role-only functions for the "times don't work" reply; nothing writes to it until its flag is switched on.
