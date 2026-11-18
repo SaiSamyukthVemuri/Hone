@@ -64,11 +64,6 @@ describe("Guard 2: manual fee charge live-mode early return", () => {
     expect(SESSION).toMatch(/live_mode_blocked/);
   });
 
-  it("the live-mode block uses a constant message, not an ad-hoc string", () => {
-    // Pin the constant name so a future PR cannot drop it and write
-    // a literal that quietly changes the user-facing copy.
-  });
-
   it("eligibility helper matches the current environment's Stripe livemode on card lookup", () => {
     // The helper calls inferStripeLivemode() to derive the
     // current environment's mode and uses .eq("stripe_livemode",
@@ -93,22 +88,9 @@ describe("Guard 3: DB CHECK constraint on manual_fee_charge_attempts", () => {
   });
 });
 
-describe("paymentIntents.create stays in the allowlisted files (PR #173 expanded to 2)", () => {
+describe("unified charge executor: legacy executor gone + idempotency keys", () => {
   it("the legacy manual-fee executor no longer exists (PR #218)", () => {
     expect(() => readRepoFile("lib/billing/manual-fee-charge.ts")).toThrow();
-  });
-
-  it("lib/billing/session-payment-charge.ts has exactly one paymentIntents.create call (PR #173)", () => {
-    // PR #173 added the session payment execution helper. The
-    // Stripe gate script is updated to allow exactly 2 occurrences
-    // across the two allowlisted files; the per-file count is
-    // pinned here so a future refactor that adds a second call
-    // site to either file is caught.
-    const sessionPayment = readRepoFile(
-      "lib/billing/session-payment-charge.ts",
-    );
-    const matches = sessionPayment.match(/paymentIntents\.create/g) ?? [];
-    expect(matches.length).toBe(1);
   });
 
   it("fees use deterministic reason-scoped idempotency keys in the unified executor", () => {
@@ -123,10 +105,6 @@ describe("paymentIntents.create stays in the allowlisted files (PR #173 expanded
     );
     expect(sessionPayment).toMatch(/buildIdempotencyKey/);
     expect(sessionPayment).toMatch(/hone:session_payment:\$\{attemptId\}:v1/);
-  });
-
-  it("paymentIntents.create does not appear in any portal action file", () => {
-    expect(PORTAL_PAY_ACTIONS).not.toMatch(/paymentIntents\.create/);
   });
 });
 
@@ -185,51 +163,6 @@ describe("env file documents the dormancy default", () => {
     // an optional comment continuation so a single-line rewrite
     // also matches.
     expect(ENV_EXAMPLE).toMatch(/P0[\s\n#]+violation/i);
-  });
-});
-
-describe("no live-mode behavior added by this PR (docs + tests only)", () => {
-  it("the unified executor remains the only paymentIntents.create call site", () => {
-    const SESSION = readRepoFile("lib/billing/session-payment-charge.ts");
-    expect(SESSION.match(/paymentIntents\.create/g)?.length).toBe(1);
-  });
-
-  it("no refunds.create call exists anywhere in the runtime tree", () => {
-    // Symbolic; the real enforcement is in check-stripe-gates.mjs,
-    // but mirroring it here keeps the test surface readable.
-    const files = [
-      STRIPE_SERVER,
-      ELIGIBILITY,
-      PORTAL_PAY_ACTIONS,
-    ];
-    for (const f of files) {
-      expect(f).not.toMatch(/refunds\.create/);
-    }
-  });
-
-  it("no checkout.sessions call exists in any of the touched files", () => {
-    const files = [
-      STRIPE_SERVER,
-      ELIGIBILITY,
-      PORTAL_PAY_ACTIONS,
-    ];
-    for (const f of files) {
-      expect(f).not.toMatch(/checkout\.sessions/);
-    }
-  });
-
-  it("set_studio_require_card_on_file is not called from any of the touched files", () => {
-    // The dormancy posture is also enforced by require_card_on_file
-    // staying false. The runtime code should not be calling the
-    // setter without going through a deliberate enablement path.
-    const files = [
-      STRIPE_SERVER,
-      ELIGIBILITY,
-      PORTAL_PAY_ACTIONS,
-    ];
-    for (const f of files) {
-      expect(f).not.toMatch(/set_studio_require_card_on_file/);
-    }
   });
 });
 

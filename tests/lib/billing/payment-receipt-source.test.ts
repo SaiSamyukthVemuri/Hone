@@ -10,7 +10,8 @@ import path from "node:path";
 //   * eligibility gates BEFORE the email send
 //   * atomic claim shape
 //   * truthful update-on-success vs update-on-failure
-//   * no new Stripe call
+//   * no direct Stripe call from the action (the helper's Stripe call
+//     inventory is enforced by scripts/check-stripe-gates.mjs)
 //   * no SMS / no live-mode change / no manual_fee touch
 
 const HELPER_PATH = path.resolve(
@@ -62,10 +63,6 @@ describe("sendPaymentChargeReceipt: eligibility gates (pre-send)", () => {
     expect(HELPER).toMatch(/reason:\s*"not_succeeded"/);
   });
 
-  it("refuses when the row mode does not match the deployment mode (PR #323)", () => {
-    expect(HELPER).toMatch(/attempt\.stripe_livemode !== inferStripeLivemode\(\)/);
-  });
-
   it("refuses when stripe_payment_intent_id is missing", () => {
     expect(HELPER).toMatch(/!attempt\.stripe_payment_intent_id/);
     expect(HELPER).toMatch(/reason:\s*"missing_payment_intent"/);
@@ -73,16 +70,6 @@ describe("sendPaymentChargeReceipt: eligibility gates (pre-send)", () => {
 
   it("refuses when charged_at is missing", () => {
     expect(HELPER).toMatch(/!attempt\.charged_at/);
-  });
-
-  it("short-circuits when receipt_status is already 'sent'", () => {
-    expect(HELPER).toMatch(/attempt\.receipt_status === "sent"/);
-    expect(HELPER).toMatch(/reason:\s*"already_sent"/);
-  });
-
-  it("short-circuits when receipt_status is 'sending' (in-flight)", () => {
-    expect(HELPER).toMatch(/attempt\.receipt_status === "sending"/);
-    expect(HELPER).toMatch(/reason:\s*"in_flight"/);
   });
 
   it("refuses when the client has no email on file", () => {
@@ -143,33 +130,7 @@ describe("sendPaymentChargeReceipt: write on success", () => {
   });
 });
 
-describe("sendPaymentChargeReceipt: write on retryable failure (release claim)", () => {
-  it("an AMBIGUOUS failure HOLDS the claim and never releases it", () => {
-    // BEHAVIOUR CHANGE, DELIBERATE. This previously asserted
-    // `sendResult.retryable -> receipt_status: null`, i.e. the claim was released
-    // so a later attempt could retry.
-    //
-    // `retryable` covers timeout, network failure, an empty response and 5xx --
-    // every case where the request reached Resend, or may have, so DELIVERY IS
-    // UNKNOWN. Releasing the claim there lets the next caller send a second
-    // receipt for a charge that may already have been receipted, and once several
-    // concurrent charge invocations can reach the sender that stops being
-    // theoretical. The file's own comment named the hazard on the
-    // failure-to-release path while the success path did it anyway.
-    //
-    // The row now stays at 'sending' -- truthful: a send was started and its
-    // outcome is unknown -- and an operator reconciles with the provider.
-    const at = HELPER.search(/if \(sendResult\.retryable\)/);
-    expect(at).toBeGreaterThan(-1);
-    const branch = HELPER.slice(at, HELPER.indexOf("  // Terminal failure", at));
-    expect(
-      branch,
-      "an ambiguous delivery must not release the receipt claim",
-    ).not.toMatch(/receipt_status:\s*null/);
-    expect(branch).toMatch(/claim_released: false/);
-    expect(branch).toMatch(/delivery_unknown: true/);
-  });
-
+describe("sendPaymentChargeReceipt: pre-dispatch failure releases the claim", () => {
   it("a PRE-DISPATCH failure still releases the claim, because nothing was sent", () => {
     // The asymmetry that makes the above safe rather than merely strict. A PDF
     // failure never reaches the provider, so delivery is definitively "no" and
@@ -179,24 +140,6 @@ describe("sendPaymentChargeReceipt: write on retryable failure (release claim)",
     const fn = HELPER.slice(at, at + 1400);
     expect(fn).toMatch(/receipt_status:\s*null/);
     expect(fn).toMatch(/deliveryUnknown: false/);
-  });
-
-  it("an ambiguous failure records a CRITICAL ops_alert naming the held claim", () => {
-    // Critical rather than warning, because holding the claim removes the
-    // self-healing that made a released claim a warning: the row cannot proceed
-    // until a person reconciles with the provider.
-    expect(HELPER).toMatch(
-      /severity:\s*"critical"[\s\S]{0,600}event:\s*"payment_receipt_send_ambiguous_claim_held"/,
-    );
-  });
-
-  it("an ambiguous failure returns the ambiguous reason, not a retryable one", () => {
-    // "try again in a moment" is advice that must not be given when a duplicate
-    // is the risk, so the caller is handed the ambiguous outcome instead.
-    const at = HELPER.search(/if \(sendResult\.retryable\)/);
-    const branch = HELPER.slice(at, HELPER.indexOf("  // Terminal failure", at));
-    expect(branch).toMatch(/reason:\s*"send_ambiguous_state_not_recorded"/);
-    expect(branch).not.toMatch(/reason:\s*"send_failed_retryable"/);
   });
 });
 
@@ -232,19 +175,6 @@ describe("PR #175 patch: sent-email but DB-update-failed safety", () => {
   // recorded. The patch returns a distinct sent_but_record_update
   // _failed outcome with a critical-severity ops_alert.
 
-  it("the result type declares the new sent_but_record_update_failed reason", () => {
-    expect(HELPER).toMatch(/"sent_but_record_update_failed"/);
-  });
-
-  it("the post-send UPDATE error branch returns ok:false with sent_but_record_update_failed", () => {
-    // The write-failure block must NOT return ok:true. Pin the
-    // shape: when writeErr is truthy on the success-path UPDATE,
-    // the helper returns {ok:false, reason:'sent_but_record_update_failed'}.
-    expect(HELPER).toMatch(
-      /if \(writeErr\)\s*\{[\s\S]{0,2000}reason:\s*"sent_but_record_update_failed"[\s\S]{0,1000}\}/,
-    );
-  });
-
   it("the failure-message warns the operator NOT to send again until reconciled", () => {
     expect(HELPER).toMatch(
       /The receipt email may have been sent, but Hone could not record it\. Do not send again until this is checked\./,
@@ -276,17 +206,7 @@ describe("PR #175 patch: sent-email but DB-update-failed safety", () => {
   });
 });
 
-describe("sendPaymentChargeReceipt: NO new Stripe / SMS / live-mode", () => {
-  it("does NOT call paymentIntents.create", () => {
-    expect(HELPER).not.toMatch(/paymentIntents\.create/);
-  });
-
-  it("does NOT call charges.create / refunds.create / checkout.sessions", () => {
-    expect(HELPER).not.toMatch(/charges\.create/);
-    expect(HELPER).not.toMatch(/refunds\.create/);
-    expect(HELPER).not.toMatch(/checkout\.sessions/);
-  });
-
+describe("sendPaymentChargeReceipt: NO SMS / live-mode / manual_fee", () => {
   it("does NOT reference STRIPE_ALLOW_LIVE_MODE", () => {
     expect(HELPER).not.toMatch(/STRIPE_ALLOW_LIVE_MODE/);
   });

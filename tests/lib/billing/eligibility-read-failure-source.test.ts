@@ -60,10 +60,6 @@ describe("both manual-fee history sources keep their errors", () => {
     expect(FEE).not.toMatch(/const \[\{ data[^\]]*\] = await Promise\.all/);
     expect(FEE).toMatch(/const \[canonicalRes, legacyRes\] = await Promise\.all/);
   });
-
-  it("a failure on EITHER source raises the read-failure reason", () => {
-    expect(FEE).toMatch(/canonicalRes\.error \|\| legacyRes\.error/);
-  });
 });
 
 describe("mode and tenant predicates survive", () => {

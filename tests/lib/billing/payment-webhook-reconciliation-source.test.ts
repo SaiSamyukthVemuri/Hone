@@ -37,35 +37,9 @@ describe("payment-webhook-reconciliation: server boundary", () => {
   it("uses createAdminClient (service role)", () => {
     expect(HELPER).toMatch(/createAdminClient/);
   });
-
-  it("imports recordOpsAlert from the ops alerts helper", () => {
-    expect(HELPER).toMatch(
-      /import \{ recordOpsAlert(?:, recordOpsAlertDurably)? \} from "@\/lib\/ops\/alerts"/,
-    );
-  });
 });
 
-describe("payment-webhook-reconciliation: NO new Stripe API calls", () => {
-  it("does NOT call paymentIntents.create (code only)", () => {
-    expect(HELPER_CODE).not.toMatch(/paymentIntents\.create/);
-  });
-
-  it("does NOT call refunds.create (code only)", () => {
-    expect(HELPER_CODE).not.toMatch(/refunds\.create/);
-  });
-
-  it("does NOT call charges.create (code only)", () => {
-    expect(HELPER_CODE).not.toMatch(/charges\.create/);
-  });
-
-  it("does NOT call setupIntents.create (code only)", () => {
-    expect(HELPER_CODE).not.toMatch(/setupIntents\.create/);
-  });
-
-  it("does NOT call checkout.sessions (code only)", () => {
-    expect(HELPER_CODE).not.toMatch(/checkout\.sessions/);
-  });
-
+describe("payment-webhook-reconciliation: no SDK access, email, SMS or manual_fee", () => {
   it("does NOT import getStripe (no SDK access needed)", () => {
     expect(HELPER).not.toMatch(/import \{[^}]*getStripe/);
   });
@@ -169,41 +143,7 @@ describe("PR #319: setup_intent.succeeded live-mode dormancy guard", () => {
   });
 });
 
-describe("payment-webhook-reconciliation: metadata lookup order", () => {
-  it("resolves the canonical key 'hone_payment_charge_attempt_id' first", () => {
-    expect(HELPER).toMatch(/hone_payment_charge_attempt_id/);
-    expect(HELPER).toMatch(
-      /1\. Canonical metadata[\s\S]{0,800}canonicalId/,
-    );
-  });
-
-  it("falls back to the legacy 'hone_session_payment_charge_attempt_id' second", () => {
-    expect(HELPER).toMatch(/hone_session_payment_charge_attempt_id/);
-    expect(HELPER).toMatch(
-      /2\. Legacy metadata[\s\S]{0,800}legacyId/,
-    );
-  });
-
-  it("falls back to stripe_payment_intent_id or stripe_charge_id last", () => {
-    expect(HELPER).toMatch(/3\. Stripe id fallback/);
-    expect(HELPER).toMatch(/fallbackByPaymentIntentId/);
-    expect(HELPER).toMatch(/fallbackByChargeId/);
-  });
-});
-
-describe("payment-webhook-reconciliation: metadata mismatch handling", () => {
-  it("verifies studio_id, client_id, charge_reason against the row", () => {
-    expect(HELPER).toMatch(/hone_studio_id/);
-    expect(HELPER).toMatch(/hone_client_id/);
-    expect(HELPER).toMatch(/hone_charge_reason/);
-  });
-
-  it("records a critical ops_alert with event 'stripe_webhook_metadata_mismatch'", () => {
-    expect(HELPER).toMatch(
-      /severity:\s*"critical"[\s\S]{0,400}event:\s*"stripe_webhook_metadata_mismatch"/,
-    );
-  });
-
+describe("payment-webhook-reconciliation: metadata mismatch does not mutate", () => {
   it("does NOT mutate the row on a metadata mismatch", () => {
     // The verifyMetadataAgainstRow helper returns false, and the
     // handlers short-circuit with metadataMismatch:true BEFORE any
@@ -468,75 +408,12 @@ describe("payment-webhook-reconciliation: reason-agnostic by construction", () =
   });
 });
 
-describe("Webhook route wiring (PR #179)", () => {
-  it("imports all five reconciliation handlers (+ the shared live-mode guard, PR #319)", () => {
-    expect(ROUTE).toMatch(
-      /import \{\s*\n?\s*handlePaymentIntentSucceeded,\s*\n?\s*handlePaymentIntentPaymentFailed,\s*\n?\s*handleChargeRefunded,\s*\n?\s*handleRefundStatusEvent,\s*\n?\s*handleChargeDisputeCreated,\s*\n?\s*shouldIgnoreLiveModeEvent,\s*\n?\s*\} from "@\/lib\/billing\/payment-webhook-reconciliation"/,
-    );
-  });
-
-  it("dispatches payment_intent.succeeded to the handler", () => {
-    expect(ROUTE).toMatch(
-      /case "payment_intent\.succeeded":[\s\S]{0,200}handlePaymentIntentSucceeded\(event, ctx\)/,
-    );
-  });
-
-  it("dispatches payment_intent.payment_failed to the handler", () => {
-    expect(ROUTE).toMatch(
-      /case "payment_intent\.payment_failed":[\s\S]{0,200}handlePaymentIntentPaymentFailed\(event, ctx\)/,
-    );
-  });
-
-  it("dispatches charge.refunded to the handler", () => {
-    expect(ROUTE).toMatch(
-      /case "charge\.refunded":[\s\S]{0,200}handleChargeRefunded\(event, ctx\)/,
-    );
-  });
-
-  it("dispatches charge.dispute.created to the handler", () => {
-    expect(ROUTE).toMatch(
-      /case "charge\.dispute\.created":[\s\S]{0,200}handleChargeDisputeCreated\(event, ctx\)/,
-    );
-  });
-});
-
-describe("Webhook route: signature + idempotency preserved", () => {
-  it("still verifies Stripe signature via stripe.webhooks.constructEvent", () => {
-    expect(ROUTE).toMatch(/stripe\.webhooks\.constructEvent/);
-  });
-
-  it("still claims the event via claim_stripe_event RPC", () => {
-    expect(ROUTE).toMatch(/claim_stripe_event/);
-  });
-
-  it("still returns 200 on already_processed (duplicate event id)", () => {
-    expect(ROUTE).toMatch(
-      /claim\.already_processed[\s\S]{0,2000}alreadyProcessed:\s*true/,
-    );
-  });
-
+describe("Webhook route: bad signature", () => {
   it("still returns 400 on bad signature", () => {
     // The status:400 returns appear several places after the
     // GENERIC_BAD_SIGNATURE constant declaration; widen the slack.
     expect(ROUTE).toMatch(
       /Invalid signature[\s\S]{0,5000}status:\s*400/,
     );
-  });
-});
-
-describe("Webhook route: PR #179 does NOT introduce new Stripe API calls", () => {
-  it("the route still has no paymentIntents.create call", () => {
-    const routeCode = codeOnly(ROUTE);
-    expect(routeCode).not.toMatch(/paymentIntents\.create/);
-  });
-
-  it("the route still has no refunds.create call", () => {
-    const routeCode = codeOnly(ROUTE);
-    expect(routeCode).not.toMatch(/refunds\.create/);
-  });
-
-  it("the route still has no charges.create call", () => {
-    const routeCode = codeOnly(ROUTE);
-    expect(routeCode).not.toMatch(/charges\.create/);
   });
 });

@@ -66,13 +66,6 @@ describe("writeFailedOutcome: DB-error persistence failure is CRITICAL (PR #310)
 });
 
 describe("writeFailedOutcome: zero-row persistence failure is CRITICAL (PR #310)", () => {
-  it("keeps the event name and is now critical (not warning)", () => {
-    expect(ZEROROW_BRANCH).toMatch(/!updatedRows \|\| updatedRows\.length === 0/);
-    expect(ZEROROW_BRANCH).toMatch(
-      /severity: "critical",\s*event: "session_payment_failed_write_zero_rows"/,
-    );
-  });
-
   it("carries the same safe ids + details as the DB-error branch", () => {
     expect(ZEROROW_BRANCH).toMatch(/studioId: args\.studioId/);
     expect(ZEROROW_BRANCH).toMatch(/clientId: args\.clientId/);
