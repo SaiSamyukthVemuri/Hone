@@ -872,6 +872,14 @@ export default async function WaitlistSettingsPage({
       <p className="text-sm font-medium" aria-live="polite">
         Waitlist entries: <span className="tabular-nums">{active}</span>
       </p>
+      <p className="flex flex-wrap gap-x-4 text-sm" data-testid="waitlist-tools-nav">
+        <Link href="/settings/waitlist/search" className="underline">
+          Search the waitlist by name
+        </Link>
+        <Link href="/settings/waitlist/released" className="underline">
+          Released and expired history
+        </Link>
+      </p>
 
       {/* NO BULK CLAIM CONTROL. "Claim the next N" was removed with the rest of
           the claiming vocabulary — see the CLAIMING IS INTERNAL note at the top
