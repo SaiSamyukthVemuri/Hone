@@ -4,10 +4,10 @@
 // slot engine, real durations, overlap counted once), never from the browser. This module only turns the numbers
 // the server already holds into the preview and its exact words. It decides nothing about who may send.
 
-/** Sam's exact owner wording. Pinned verbatim by a test. */
+/** The agreed owner wording. Pinned verbatim by a test. */
 export const OVER_INVITE_OWNER_COPY = "Invitations do not reserve appointments. Some clients may find no availability.";
 
-/** Sam's exact client wording, shown on the invitation page. Pinned verbatim by a test. */
+/** The agreed client wording, shown on the invitation page. Pinned verbatim by a test. */
 export const OVER_INVITE_CLIENT_COPY =
   "Choose from current availability. Appointment times are not reserved and may fill before your invitation expires.";
 

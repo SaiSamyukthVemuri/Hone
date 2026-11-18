@@ -52,7 +52,7 @@ describe("upcoming expirations", () => {
 });
 
 describe("the preview", () => {
-  it("is Sam's example line exactly", () => {
+  it("is the agreed example line exactly", () => {
     const p = buildOverInvitePreview({ fit: 5, active: 8, expiringSoon: 2, extra: 10 });
     expect(p.line).toBe("5 estimated appointments available · 8 invitations active · Send 10 more → 18 active invitations");
     expect(p).toMatchObject({ resultingTotal: 18, beyondCapacity: true, expiringSoon: 2 });
