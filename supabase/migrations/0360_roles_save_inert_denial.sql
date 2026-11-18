@@ -1,4 +1,4 @@
--- 0355: perm_run_changes stores an owner's choice that matches the unreleased base but differs from what the page shows.
+-- 0360: perm_run_changes stores an owner's choice that matches the unreleased base but differs from what the page shows.
 --
 -- THE BUG. An owner who changes the shown On to Off was dropped as unchanged. A studio on the new_studio basis with no override sees a practitioner's avail.manage_own as On (the catalog's
 -- new-studio default, 'studio'). Until the key is released perm_base_scope returns the existing snapshot ('off'). The owner changes On to Off. The
@@ -11,7 +11,7 @@
 --
 -- NOT CHANGED. perm_base_scope, perm_effective_scope and so effective access are untouched: a saved choice changes nobody's access until its key is
 -- released and the owner activates it. The signature, language, volatility, security setting and search_path are those of 0287, so the grants persist
--- (perm_run_changes is internal: no API role holds EXECUTE; the commands that call it keep theirs). Rollback: supabase/rollbacks/0355_*.down.sql
+-- (perm_run_changes is internal: no API role holds EXECUTE; the commands that call it keep theirs). Rollback: supabase/rollbacks/0360_*.down.sql
 -- restores the 0287 body (md5 of the hosted body 7d8924fbb394838f60d9e6cf89235e82).
 
 begin;
@@ -68,7 +68,7 @@ begin
 
   begin
     insert into public.studio_permission_policy (studio_id, basis, version) values (p_studio, 'existing_snapshot', 0) on conflict do nothing;
-    -- 0355: the basis is read under the same row lock as the version, so a concurrent adopt or reset cannot change it between the read and the compare.
+    -- 0360: the basis is read under the same row lock as the version, so a concurrent adopt or reset cannot change it between the read and the compare.
     select spp.version, spp.basis into v_version, v_basis from public.studio_permission_policy spp where spp.studio_id = p_studio for update;
     v_basis := coalesce(v_basis, 'existing_snapshot');
     if p_expected_version is null and p_require_version then
@@ -120,7 +120,7 @@ begin
         -- The owner's STORED intent is compared as well as the effective value: a stored choice that is inactive (set before its key's
         -- release, no activation) resolves to the snapshot, so saving the snapshot value must still REPLACE it (Discard must work).
         select s.scope into v_stored_prev from public.studio_role_permissions s where s.studio_id = p_studio and s.role = v_role and s.key = v_key;
-        -- 0355: the value the owner SEES for a row with no stored choice is the studio's own basis (the new-studio default on a new studio,
+        -- 0360: the value the owner SEES for a row with no stored choice is the studio's own basis (the new-studio default on a new studio,
         -- the snapshot on an existing one), which is not the value perm_base_scope returns while the key is unreleased. A request that matches
         -- the unreleased base but differs from what the owner sees is a real choice (an inert Off on a new-studio default) and must be stored.
         v_default := case when v_basis = 'new_studio' then case v_role when 'practitioner' then c.new_practitioner else c.new_receptionist end else v_snap end;

@@ -109,8 +109,8 @@ describe("0287 activation rule: source contract", () => {
     const walk = (d: string) => { for (const n of readdirSync(d)) { const f = `${d}/${n}`; if (n === "node_modules" || n === ".next" || n === ".git") continue; statSync(f).isDirectory() ? walk(f) : /\.(ts|tsx|sql|mjs)$/.test(n) && files.push(f); } };
     for (const d of ["app", "lib", "components", "scripts", "supabase/migrations"]) walk(d);
     const re = /(insert\s+into|update|delete\s+from)\s+(public\.)?(studio_role_permissions|permission_key_activation|permission_key_release)\b|\.from\(\s*["'](studio_role_permissions|permission_key_activation|permission_key_release)["']\s*\)/;
-    // 0355 is the one sanctioned forward redefinition of the writer (perm_run_changes); its own contract test pins that it adds no other write.
-    const SANCTIONED_REDEFINITION = "0355_roles_save_inert_denial.sql";
+    // 0360 is the one sanctioned forward redefinition of the writer (perm_run_changes); its own contract test pins that it adds no other write.
+    const SANCTIONED_REDEFINITION = "0360_roles_save_inert_denial.sql";
     const hits = files.filter((f) => !f.endsWith(FILE) && !f.endsWith(SANCTIONED_REDEFINITION) && re.test(readFileSync(f, "utf8")));
     expect(hits).toEqual([]);
   });
