@@ -8,7 +8,7 @@
 export type ClientSelfServiceForm = {
   cancellation: boolean;
   reschedule: boolean;
-  // 0252. Present only when the submission carried the portal key. ABSENT means
+  // 0365. Present only when the submission carried the portal key. ABSENT means
   // "leave the portal setting alone", never "turn it off".
   portal?: boolean;
 };

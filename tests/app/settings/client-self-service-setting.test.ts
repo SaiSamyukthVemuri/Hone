@@ -11,7 +11,7 @@ vi.mock("server-only", () => ({}));
 const st = vi.hoisted(() => ({
   role: "owner" as string,
   studioId: "studio-A",
-  // 0252: extra keys on the loaded studio row (the column is present only after apply).
+  // 0365: extra keys on the loaded studio row (the column is present only after apply).
   studioExtra: {} as Record<string, unknown>,
   updates: [] as Array<{ patch: Record<string, unknown>; id: unknown }>,
   error: null as { code?: string; message: string } | null,
@@ -132,7 +132,7 @@ function formWithPortal(portal: string): FormData {
   return f;
 }
 
-describe("0252 portal switch: parser", () => {
+describe("0365 portal switch: parser", () => {
   it("an absent portal key means 'leave it alone', never 'off'", () => {
     expect(parseClientSelfServiceForm(form("true", "false"))).toEqual({ cancellation: true, reschedule: false });
   });
@@ -145,15 +145,15 @@ describe("0252 portal switch: parser", () => {
   });
 });
 
-describe("0252 portal switch: action", () => {
-  it("before 0252 is applied (no column on the row) a submission without the portal key writes exactly the two older flags", async () => {
+describe("0365 portal switch: action", () => {
+  it("before 0365 is applied (no column on the row) a submission without the portal key writes exactly the two older flags", async () => {
     const { setClientSelfServiceAction } = await import("@/app/(app)/settings/studio/actions");
     const res = await setClientSelfServiceAction(form("false", "true"));
     expect(res.ok).toBe(true);
     expect(st.updates).toHaveLength(1);
     expect(Object.keys(st.updates[0].patch).sort()).toEqual(["client_cancellation_enabled", "client_reschedule_enabled"]);
   });
-  it("before 0252 is applied a submission that names the portal key is refused whole: nothing is written", async () => {
+  it("before 0365 is applied a submission that names the portal key is refused whole: nothing is written", async () => {
     const { setClientSelfServiceAction } = await import("@/app/(app)/settings/studio/actions");
     const res = await setClientSelfServiceAction(formWithPortal("false"));
     expect(res).toEqual({ ok: false, error: "The client portal switch is not available yet." });
@@ -166,7 +166,7 @@ describe("0252 portal switch: action", () => {
     expect((await setClientSelfServiceAction(formWithPortal("false"))).ok).toBe(false);
     expect(st.updates).toHaveLength(0);
   });
-  it("after 0252 (column present) the owner's portal value is written with the other two, on the caller's studio only", async () => {
+  it("after 0365 (column present) the owner's portal value is written with the other two, on the caller's studio only", async () => {
     const { setClientSelfServiceAction } = await import("@/app/(app)/settings/studio/actions");
     st.studioExtra = { client_portal_enabled: true };
     const res = await setClientSelfServiceAction(formWithPortal("false"));
@@ -175,7 +175,7 @@ describe("0252 portal switch: action", () => {
       { patch: { client_cancellation_enabled: true, client_reschedule_enabled: true, client_portal_enabled: false }, id: "studio-A" },
     ]);
   });
-  it("after 0252 a submission WITHOUT the portal key still leaves the portal column alone", async () => {
+  it("after 0365 a submission WITHOUT the portal key still leaves the portal column alone", async () => {
     const { setClientSelfServiceAction } = await import("@/app/(app)/settings/studio/actions");
     st.studioExtra = { client_portal_enabled: false };
     await setClientSelfServiceAction(form("true", "true"));
@@ -190,7 +190,7 @@ describe("0252 portal switch: action", () => {
   });
 });
 
-describe("0252 portal switch: what the copy may claim", () => {
+describe("0365 portal switch: what the copy may claim", () => {
   it("the staff and switch wording never claims portal links are withdrawn from every email (that needs 0247's snapshot change)", async () => {
     const { PORTAL_OFF_STAFF_MESSAGE } = await import("@/lib/booking/client-self-service-policy");
     const form = readFileSync("app/(app)/settings/studio/ClientSelfServiceForm.tsx", "utf8");

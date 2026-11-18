@@ -1,12 +1,12 @@
 -- ===========================================================================
--- NNNN — HON-47: A STUDIO MAY TURN OFF CLIENT PORTAL ACCESS
+-- 0365 — HON-47: A STUDIO MAY TURN OFF CLIENT PORTAL ACCESS
 -- ===========================================================================
 --
--- UNNUMBERED DRAFT. NOT IN supabase/migrations, NOT APPLIED ANYWHERE.
--- OPS allocates the number after the governed 0247-0250 range and the #1035
--- rollout decisions. Until then this file is a reviewable draft only, and the
--- application branch that reads the column (feat/hon-47-portal-controls) is not
--- releasable.
+-- NOT APPLIED ANYWHERE. The number 0365 is PROVISIONAL: OPS confirms it when the
+-- package is built (0358-0364 are sealed or provisional packages not yet on
+-- production). The application branch that reads the column
+-- (feat/hon-47-portal-controls) is not releasable until this is approved and
+-- applied.
 --
 -- WHAT THIS ADDS, AND NOTHING ELSE:
 --   1. studios.client_portal_enabled boolean NOT NULL DEFAULT TRUE.

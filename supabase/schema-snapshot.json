@@ -2,8 +2,8 @@
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
     "count": 277,
-    "last": "0357_cancellation_fee_tiers.sql",
-    "sha256": "84b4df8f7c1e5dd4832d0438600412409133f1074fae9f58e683fd79ce01e46d"
+    "last": "0365_client_portal_controls.sql",
+    "sha256": "997c4f4c9ad8d101576755da6785350948b6bb18f9defa61c492b54178f01518"
   },
   "public": {
     "tables": [

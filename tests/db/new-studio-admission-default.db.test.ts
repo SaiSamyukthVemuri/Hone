@@ -246,7 +246,7 @@ describe("the shipped column comments are what the catalog actually holds", () =
       "c6cd2ae72320a7a98f58950cea9556614703294df8439225a448b3d755477673",
     client_reschedule_enabled:
       "aa1447d5fc9f94a983900a0922b5be50c5a0edb67e63bedeffd6aa69291390d1",
-    // 0252 (HON-47): the client-portal flag's comment.
+    // 0365 (HON-47): the client-portal flag's comment.
     client_portal_enabled:
       "7d9e1f799238ca0b321295026301854ce623765e777efca6f135cf7a20d110da",
     clinical_corrections_enabled:

@@ -11,10 +11,10 @@ import {
 } from "@/tests/db/helpers/harness";
 
 // ===========================================================================
-// HON-47 MIGRATION 0252 — studios.client_portal_enabled + the portal access
+// HON-47 MIGRATION 0365 — studios.client_portal_enabled + the portal access
 // guard. DB-BEHAVIOUR HALF (the application half is unit-tested under
 // tests/app and tests/lib; the source contract is
-// tests/migrations/0252-client-portal-controls.test.ts).
+// tests/migrations/0365-client-portal-controls.test.ts).
 // ===========================================================================
 //
 // Runs in CI's DB lane and on an owned isolated stack (CLAUDE.md §5); never

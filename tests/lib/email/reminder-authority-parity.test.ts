@@ -207,7 +207,7 @@ describe("HON-47 portal switch on the operation-path reminder", () => {
     expect(r({ data: { client_portal_enabled: true }, error: null })).toBe(true);
     expect(r({ data: {}, error: null })).toBe(true); // absent column value: the default is on
     expect(r({ data: { client_portal_enabled: null }, error: null })).toBe(true);
-    expect(r({ data: null, error: { code: "PGRST204", message: "Could not find the 'client_portal_enabled' column of 'studios' in the schema cache" } })).toBe(true); // 0252 not applied
+    expect(r({ data: null, error: { code: "PGRST204", message: "Could not find the 'client_portal_enabled' column of 'studios' in the schema cache" } })).toBe(true); // 0365 not applied
     expect(r({ data: null, error: { code: "57014", message: "statement timeout" } })).toBe(false);
     expect(r({ data: null, error: { code: "42703", message: "column studios.other does not exist" } })).toBe(false);
     expect(r({ data: null, error: null })).toBe(false); // no row: fail closed

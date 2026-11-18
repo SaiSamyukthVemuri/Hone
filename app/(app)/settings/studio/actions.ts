@@ -185,7 +185,7 @@ export async function setStudioEmailSettingsAction(
 // ---------------------------------------------------------------------------
 // setClientSelfServiceAction (HON-47)
 // ---------------------------------------------------------------------------
-// Owner-only. Writes the two 0234 flags, and the 0252 portal flag only when the
+// Owner-only. Writes the two 0234 flags, and the 0365 portal flag only when the
 // submission names it and the studio row carries the column, on the CALLER'S
 // studio and nothing else: the studio id comes from the signed-in owner's session, never
 // from the form. Both values must be the literal "true" or "false"; anything
@@ -210,8 +210,8 @@ export async function setClientSelfServiceAction(
     return { ok: false, error: "Could not save settings. Please try again." };
   }
 
-  // 0252. The portal column is written ONLY when the signed-in owner's studio row
-  // already carries it (a boolean). Before 0252 is applied the key is absent, so a
+  // 0365. The portal column is written ONLY when the signed-in owner's studio row
+  // already carries it (a boolean). Before 0365 is applied the key is absent, so a
   // submission that names it is refused whole and nothing is written: the two older
   // flags must never fail because a third column does not exist yet.
   const portalColumnPresent =

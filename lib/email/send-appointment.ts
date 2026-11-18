@@ -950,7 +950,7 @@ export function resolveOperationAddressVisibility(read: VisibilityRead): unknown
 }
 
 /** HON-47: the portal switch is not in the sealed 0247 projection, so it is read
- * separately, as address visibility is. A missing column (0252 not applied) is
+ * separately, as address visibility is. A missing column (0365 not applied) is
  * "allowed" (the column defaults true); a null or absent value is allowed; only an
  * explicit false withdraws the link. Any OTHER read failure withdraws it: a link
  * the portal may refuse is worse than no link. */
