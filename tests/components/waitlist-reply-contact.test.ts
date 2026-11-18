@@ -28,8 +28,9 @@ it("email and phone present: shows both, with mailto, tel, copy and the entry li
   expect(h.querySelector('a[href="mailto:a@example.test"]')).not.toBeNull();
   expect(h.querySelector('a[href="tel:+15550100"]')).not.toBeNull();
   expect(h.querySelector(`a[href="/settings/waitlist#entry-${ID}"]`)).not.toBeNull();
-  expect(h.textContent).toContain("Copy email");
-  expect(h.textContent).toContain("Copy phone");
+  // Visible label is just "Copy"; the accessible name says which one.
+  expect(h.querySelector('button[aria-label="Copy email"]')?.textContent).toBe("Copy");
+  expect(h.querySelector('button[aria-label="Copy phone"]')?.textContent).toBe("Copy");
 });
 
 it("phone missing says so and offers no call link", () => {
@@ -75,7 +76,7 @@ it("copying writes to the clipboard and changes no state: no form, no fetch", as
   vi.stubGlobal("fetch", fetchSpy);
   const h = render(createElement(ReplyContactDetails, { entryId: ID, contact: { kind: "entry", email: "a@example.test", phone: "555 0100" } }));
   expect(h.querySelector("form")).toBeNull();
-  const btn = [...h.querySelectorAll("button")].find((b) => b.textContent === "Copy email")!;
+  const btn = h.querySelector<HTMLButtonElement>('button[aria-label="Copy email"]')!;
   await act(async () => { btn.click(); });
   expect(write).toHaveBeenCalledWith("a@example.test");
   expect(h.textContent).toContain("Copied");
