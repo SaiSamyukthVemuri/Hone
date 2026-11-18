@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 
 // HON-47. What staff and a visiting client SEE when client portal access is off,
 // rendered through react-dom/server (output, not a source grep). The flag is the
-// held 0252 column, absent on today's schema, and absent means ON: every default
+// held 0365 column, absent on today's schema, and absent means ON: every default
 // case below must look exactly as before. Synthetic data only.
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: () => undefined }), redirect: () => undefined }));

@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 276,
-    "last": "0357_cancellation_fee_tiers.sql",
-    "sha256": "2fd806fcd667daf0644fbe27a47b0c2fc26409995c881621572eedc55743a126"
+    "count": 277,
+    "last": "0365_client_portal_controls.sql",
+    "sha256": "997c4f4c9ad8d101576755da6785350948b6bb18f9defa61c492b54178f01518"
   },
   "public": {
     "tables": [
@@ -236,6 +236,7 @@
       "client_legal_identities_revision",
       "client_legal_name_access_audit_immutable",
       "client_personal_notes_set_studio_id",
+      "client_portal_access_guard",
       "clients_erase_waitlist_decline_answers",
       "clients_identity_guard",
       "clients_portrait_integrity",

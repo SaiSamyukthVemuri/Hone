@@ -29,6 +29,7 @@ export default async function StudioClientSelfServicePage() {
           reschedule: policy.reschedule,
         }}
         portalEnabled={policy.portal}
+        portalSwitchAvailable={typeof studio.client_portal_enabled === "boolean"}
       />
     </section>
   );

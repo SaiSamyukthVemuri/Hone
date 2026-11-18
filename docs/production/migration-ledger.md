@@ -22,10 +22,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0357**, as declared in `docs/production/migration-state.json` on this tree. Advanced from `0300` by the record-only updates of 2026-11-14, 2026-11-15 and 2026-11-16, which declare the applies `0298`, `0301`-`0303`, `0287`, `0313`, `0323`-`0327`, `0338`, `0339`, `0340`, `0341`, `0350`, `0351`, `0352`, `0353`, `0354` and `0357` from their operator records; no apply is performed or re-verified by them. `0328` to `0337` are not hosted **by the row count** (the 0338, 0339, 0340, 0341, 0350, 0351, 0352, 0353, 0354 and 0357 read-backs were each one row above the read before them). `0355` and `0356` stay below the hosted maximum and unhosted: they are reserved for Roles. |
-| **Repo migration max** | **0357** (`0357_cancellation_fee_tiers.sql`), derived from the source files on this tree. <!-- ledger-derived --> |
+| **Repo migration max** | **0365** (`0365_client_portal_controls.sql`), derived from the source files on this tree. <!-- ledger-derived --> |
 | **Remote-only migrations** | Not restated on this tree; this tree's record of hosted lags the real hosted state. |
 | **Pending migrations** | **`0319`** (`0319_waitlist_times_unsuitable.sql`, sealed, NOT applied). `0298`, `0313`, `0323`, `0324`, `0325`, `0326`, `0310`, `0327`, `0338`, `0339`, `0340`, `0341`, `0350`, `0351`, `0352`, `0353`, `0354` and `0357` were applied to production (see the apply entries below and the `hosted_note` in `migration-state.json`), and are no longer pending. The files for `0351` to `0354` and for `0357` are all on this tree. |
-| **Next free number** | Next free number is **0358** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by reservation, not by this file. <!-- ledger-derived --> |
+| **Next free number** | Next free number is **0366** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by reservation, not by this file. <!-- ledger-derived --> |
 | **Project ref** | Canonical Hone production project. |
 
 ### Cancellation fee tiers (0357, applied; the app code ships with #1526)
@@ -403,7 +403,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | **Hosted (production) migration max** | **0257**, declared in `docs/production/migration-state.json` (unchanged by this apply). Read back 2026-10-31T01:31:05Z-01:31:08Z: APPLIED+VERIFIED as recorded by OPS: 248 history rows, max 0257, `0254` exactly once; functions and sealed bodies PASS; each of `payment_charge_attempts`, `manual_fee_charge_attempts` and `appointment_settlements` has exactly one owner-gated SELECT policy. **No server apply timestamp was captured**, so `hosted_applied_at` stays null. |
 | **Repo migration max** | **0257** (`0257_studio_payment_jurisdiction_failed_attempt_ack.sql`), derived from the source files on this tree; `0254` is present at the sealed bytes. |
 | **Remote-only migrations** | **None.** Production has nothing the repository lacks. |
-| **Pending migrations** | **None** above the hosted head. `0247`, `0249`-`0253`, `0255` and `0256` are declared unhosted gaps below it, not a pending suffix. |
+| **Pending migrations** | **None** above the hosted head. `0247`, `0249`-`0253`, `0255` and `0256` are declared unhosted gaps below it, not a pending suffix. `0252` is present in the repository only on the HON-47 carrier branch (PR 1134, sealed bytes, not applied): it is one of those declared gaps, and applying it is its own out-of-order stage that needs Sam's approval. |
 | **Next free number** | Next free number is **0258** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by OPS reservation, not by this file. |
 | **Project ref** | Canonical Hone production project. |
 

@@ -949,9 +949,20 @@ export function resolveOperationAddressVisibility(read: VisibilityRead): unknown
   return (read.data as { address_visibility?: unknown }).address_visibility;
 }
 
+/** HON-47: the portal switch is not in the sealed 0247 projection, so it is read
+ * separately, as address visibility is. A missing column (0365 not applied) is
+ * "allowed" (the column defaults true); a null or absent value is allowed; only an
+ * explicit false withdraws the link. Any OTHER read failure withdraws it: a link
+ * the portal may refuse is worse than no link. */
+export function resolveOperationPortalEnabled(read: VisibilityRead): boolean {
+  if (read.error) return isMissingColumnError(read.error, "client_portal_enabled");
+  if (!read.data) return false;
+  return (read.data as { client_portal_enabled?: unknown }).client_portal_enabled !== false;
+}
+
 /** Trusted renderer consumes ONLY the closed SQL projection, never a cron
  * joined row. This creates no dispatch permission; URL bytes are frozen once. */
-export function buildAppointmentEmailOperationPayload(projection: EmailOperationRender, purpose: "reminder_24h" | "reminder_2h", appointmentId: string, addressVisibility: unknown, nameFields?: ClientIdentityFields): EmailPayload | null {
+export function buildAppointmentEmailOperationPayload(projection: EmailOperationRender, purpose: "reminder_24h" | "reminder_2h", appointmentId: string, addressVisibility: unknown, nameFields?: ClientIdentityFields, portalEnabled: boolean = true): EmailPayload | null {
   const origin = getRequiredAppOrigin();
   const kind = purpose === "reminder_24h" ? "24h" : "2h";
   const intakeUrl = projection.intake ? generateIntakeLinkUrl(projection.intake.id, origin) : null;
@@ -980,7 +991,7 @@ export function buildAppointmentEmailOperationPayload(projection: EmailOperation
       { client_cancellation_enabled: p.studio.client_cancellation_enabled ?? undefined, client_reschedule_enabled: p.studio.client_reschedule_enabled ?? undefined },
       { cancellationUrl: `${origin}/cancel/${token}`, rescheduleUrl: `${origin}/reschedule/${token}` },
     ),
-    portalLoginUrl: p.studio.slug?.trim() ? portalLoginUrlForStudio({ slug: p.studio.slug.trim() }) : null,
+    portalLoginUrl: p.studio.slug?.trim() ? portalLoginUrlForStudio({ slug: p.studio.slug.trim(), client_portal_enabled: portalEnabled }) : null,
     treatmentTimeLine: p.treatmentTime ? buildTreatmentTimeLine({ enabled: true, client: nameFields ?? { name: p.client.name }, context: p.treatmentTime }) : null,
     intakeUrl,
     bookingReference: emailBookingReference(appointmentId),
@@ -1027,6 +1038,8 @@ export async function sendAppointmentReminderOperation(admin: SupabaseClient, st
     // today's legacy default ("both"). Any OTHER failure renders NO address.
     const addressVisibility = resolveOperationAddressVisibility(
       await admin.from("studios").select("address_visibility").eq("id", studioId).maybeSingle());
+    const portalEnabled = resolveOperationPortalEnabled(
+      await admin.from("studios").select("client_portal_enabled").eq("id", studioId).maybeSingle());
     // HON-58: the treatment-time sentence names the client by the name they go by. The 0247 projection carries only the stored
     // name, so the preferred name is read here, once, before the request is frozen; a failed read leaves the stored name.
     const nameFields = "kind" in render ? undefined : await loadTreatmentTimeNameFields(admin, studioId, render.client.id, render.client.name);
@@ -1037,7 +1050,7 @@ export async function sendAppointmentReminderOperation(admin: SupabaseClient, st
     // minimal fake accepts one argument and safely ignores the second.
     const sendWithIdempotency: (payload: EmailPayload, options: Readonly<{ idempotencyKey: string }>) => Promise<unknown> = transport.emails.send.bind(transport.emails);
     const adapter = createProjectedEmailOperationDispatchAdapter({
-      render: (original) => buildAppointmentEmailOperationPayload(original, purpose, appointmentId, addressVisibility, nameFields),
+      render: (original) => buildAppointmentEmailOperationPayload(original, purpose, appointmentId, addressVisibility, nameFields, portalEnabled),
       currentRuntimeBinding: () => operationRuntime(transport).binding,
       authorize: async (binding, original) => {
         const { data, error } = await rpc("authorize_appointment_email_operation", {

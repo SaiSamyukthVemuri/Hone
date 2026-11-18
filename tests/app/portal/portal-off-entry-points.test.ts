@@ -5,7 +5,7 @@ import path from "node:path";
 // HON-47. Entry points that run BEFORE a portal session exists must honour the
 // studio's client portal flag: the practitioner "send link" path, the verify
 // action (which must not burn the single-use link), and the public login
-// action. Synthetic data only. client_portal_enabled is the held 0252 column,
+// action. Synthetic data only. client_portal_enabled is the held 0365 column,
 // so every case here is also a statement about today's schema: absent = allowed.
 
 type Studio = Record<string, unknown> | null;
