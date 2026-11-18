@@ -108,7 +108,7 @@ describe("the exact total", () => {
 
 describe("pagination", () => {
   it("the pages cover every row exactly once (no gaps, no duplicates), newest ended first with id as the tie-break", async () => {
-    h.table = Array.from({ length: 130 }, (_, i) => mk(i)).reverse(); // stored in an unhelpful order
+    h.table = Array.from({ length: 130 }, (_, i) => mk(i)); // stored id-ascending: without the id tie-break, ties come out ascending
     const first = await loadUnfinishedPage("S1", NOW, 1);
     expect(first.pageCount).toBe(Math.ceil(130 / UNFINISHED_PAGE_SIZE));
     const all: Array<{ id: string; endsAt: string }> = [];
