@@ -17,7 +17,7 @@ const SLUG_A = "studio-a";
 const SLUG_B = "studio-b";
 const scenario = {
   studio: "A" as "A" | "B",
-  role: "owner" as "owner" | "member",
+  role: "owner" as string,
   rows: [] as Array<{ studio_id: string; status: string }>,
   error: null as null | { code: string },
 };
@@ -95,7 +95,7 @@ describe("the main navigation entry follows the Settings tab's rule, exactly", (
     ["only removed/converted history", [{ studio_id: "studio-id-a", status: "removed" }, { studio_id: "studio-id-a", status: "converted" }]],
     ["an active entry in ANOTHER studio", [{ studio_id: "studio-id-b", status: "waiting" }]],
   ];
-  for (const role of ["owner", "member"] as const) for (const flags of [true, false]) for (const m of modes) for (const [label, rows] of rowSets) {
+  for (const role of ["owner", "member"]) for (const flags of [true, false]) for (const m of modes) for (const [label, rows] of rowSets) {
     it(`role ${role}, flags ${flags ? "on" : "off"}, admission ${m.mode}, ${label}: nav == settings tab`, async () => {
       scenario.role = role; scenario.rows = rows; setFlags(flags);
       admission.value = { ok: true, mode: m.mode, source: "persisted" };
@@ -183,4 +183,33 @@ describe("active styling: the section stays lit on every waitlist subpage", () =
   it.each(["/settings/booking", "/settings/waitlisted", "/settings", "/calendar", "/records", null])(
     "%s is not current", (p) => expect(isCurrentSection(p as string | null, href, "section")).toBe(false),
   );
+});
+
+describe("receptionists never reach this navigation, and the gate is false for them anyway", () => {
+  const read = (p: string) => readFileSync(p, "utf8");
+  it("the shell's identity is resolved from `practitioners` rows only, so a receptionist-only user is redirected before the shell renders", () => {
+    const queries = read("lib/supabase/queries.ts");
+    const loader = queries.slice(queries.indexOf("async function loadActiveMembershipRows"), queries.indexOf("// PERF-01A. ONE identity resolution per request."));
+    expect(loader).toMatch(/\.from\("practitioners"\)/);
+    expect(loader).not.toMatch(/studio_receptionists/);
+    // no active practitioner row -> /no-access, in the redirecting guard the layout uses
+    expect(queries).toMatch(/membership\.kind === "none"\) \{\s*\/\/ Authenticated but no studio membership: invite-only gate\.\s*redirect\("\/no-access"\)/);
+    expect(read("app/(app)/layout.tsx")).toContain("requirePractitionerWithStudio()");
+  });
+  it("no runtime code outside the export registry and generated types reads the receptionist table, so no desk surface renders this layout", () => {
+    for (const f of ["app/(app)/layout.tsx", "app/(app)/MobileMenu.tsx", "lib/settings/nav-registry.ts", "lib/supabase/queries.ts"]) {
+      expect(read(f), f).not.toMatch(/studio_receptionists/);
+    }
+  });
+  it("the shell asks the gate for 'owner' only when the role is exactly 'owner'", () => {
+    expect(read("app/(app)/layout.tsx")).toContain('role: practitioner.role === "owner" ? "owner" : "practitioner"');
+  });
+  it("a role that is not 'owner' (including 'receptionist', an empty string or an unknown one) is hidden", async () => {
+    scenario.rows = [{ studio_id: "studio-id-a", status: "waiting" }];
+    admission.value = { ok: true, mode: "waitlist", source: "persisted" };
+    for (const role of ["receptionist", "", "admin", "OWNER", "member"]) {
+      scenario.role = role;
+      expect(await navShown(), `role ${JSON.stringify(role)}`).toBe(false);
+    }
+  });
 });
