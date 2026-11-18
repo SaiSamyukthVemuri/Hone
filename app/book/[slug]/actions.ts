@@ -1994,6 +1994,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       { ok: false, error: "confirmation sender threw", retryable: false },
       () =>
         sendBookingConfirmationToClient({
+      nameReader: admin,
           appointment: created,
           service,
           studio,
@@ -2074,6 +2075,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     // depend on notifying staff. Recipients and enablement logic are unchanged.
     await postCommit("public_booking_practitioner_email_threw", undefined, () =>
       sendBookingNotificationToPractitioner({
+      nameReader: admin,
         appointment: created,
         service,
         studio,

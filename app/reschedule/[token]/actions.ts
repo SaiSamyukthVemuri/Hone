@@ -1185,6 +1185,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
       { ok: false, error: "confirmation sender threw", retryable: false },
       async () =>
         sendBookingConfirmationToClient({
+      nameReader: admin,
           appointment: created,
           service: serviceRow,
           studio: studioRow,
