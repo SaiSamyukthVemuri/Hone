@@ -6,6 +6,8 @@ import { generateCancellationToken } from "@/lib/booking/tokens";
 import { generateIntakeLinkUrl } from "@/lib/intake/queries";
 import { buildTreatmentTimeLine } from "@/lib/treatment-time/format";
 import { loadTreatmentTimeNameFields } from "@/lib/treatment-time/client-first-name";
+import { loadCommunicationName, loadCommunicationNameForAppointment } from "@/lib/clients/communication-name-loader";
+import { createAdminClient } from "@/lib/supabase/admin-server";
 import { isMissingColumnError } from "@/lib/db/missing-column";
 import type { ClientIdentityFields } from "@/lib/clients/identity";
 import { isE2eFakeResendEnabled } from "./e2e-fake-resend";
@@ -482,6 +484,22 @@ export function logEmailFailure(opts: {
   })();
 }
 
+/** The communication name for a client email, loaded at the send boundary. Never throws; any failure keeps the stored name. */
+async function communicationNameAtSendBoundary(studioId: string, clientId: string | null | undefined, storedName: string): Promise<string> {
+  try {
+    return await loadCommunicationName(createAdminClient(), studioId, clientId, storedName);
+  } catch {
+    return storedName;
+  }
+}
+async function communicationNameForAppointmentAtSendBoundary(studioId: string, appointmentId: string, storedName: string | null): Promise<string | null> {
+  try {
+    return await loadCommunicationNameForAppointment(createAdminClient(), studioId, appointmentId, storedName);
+  } catch {
+    return storedName;
+  }
+}
+
 export async function sendBookingConfirmationToClient(params: {
   appointment: AnyAppointment;
   service: Pick<
@@ -529,6 +547,9 @@ export async function sendBookingConfirmationToClient(params: {
     bookingReference: emailBookingReference(params.appointment.id),
   });
 
+  // HON-58: the invite names the attendee by the name they go by (the communication name), loaded here at the send boundary.
+  // A failed or slow read, a missing column or no preferred name leaves the stored name; the send never depends on the read.
+  const attendeeName = await communicationNameAtSendBoundary(params.studio.id, params.appointment.client_id, params.clientName);
   const ics = buildIcs({
     uid: params.appointment.id,
     start,
@@ -540,7 +561,7 @@ export async function sendBookingConfirmationToClient(params: {
       : `${serviceName} at ${params.studio.name}.`,
     organizerName: params.studio.name,
     organizerEmail: params.studio.owner_email,
-    attendeeName: params.clientName,
+    attendeeName,
     attendeeEmail: params.clientEmail,
   });
 
@@ -576,7 +597,7 @@ export async function sendBookingNotificationToPractitioner(params: {
   const end = new Date(params.appointment.ends_at);
   const { subject, html, text } = buildPractitionerNotificationEmail({
     practitionerName: params.practitionerName,
-    clientName: params.clientName,
+    clientName: await communicationNameAtSendBoundary(params.studio.id, params.appointment.client_id, params.clientName),
     clientEmail: params.clientEmail,
     clientPhone: params.clientPhone,
     studioName: params.studio.name,
@@ -619,7 +640,7 @@ export async function sendCancellationEmail(params: {
   const { subject, html, text } = buildCancellationEmail({
     bookingReference: emailBookingReference(params.appointmentId),
     recipientName: params.recipientName,
-    clientName: params.clientName,
+    clientName: await communicationNameForAppointmentAtSendBoundary(params.studio.id, params.appointmentId, params.clientName),
     studioName: params.studio.name,
     serviceName: params.serviceName,
     durationMinutes: params.durationMinutes,
