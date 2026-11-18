@@ -314,7 +314,7 @@ describe("what a probe's HTTP status means (a database blip must never silence a
   it("a redirect blip (middleware could not read the session) does not stop polling: it backs off and resumes", () => {
     const r = rig();
     let now = PROBE_INTERVAL_MS;
-    for (let i = 0; i < UNAUTH_CONFIRM_STRIKES - 1; i += 1) {
+    for (let i = 0; i < 2; i += 1) {
       r.send(tick(now));
       r.send({ type: "probed", nowMs: now + 50, env: OK, result: { kind: "unauthenticated" }, jitter: 0 });
       expect(r.state.stopped).toBe(false);
