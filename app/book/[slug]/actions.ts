@@ -1,5 +1,6 @@
 "use server";
 
+import { loadTreatmentTimeNameFields } from "@/lib/treatment-time/client-first-name";
 import { CLIENT_NAME_MAX, CLIENT_NAME_TOO_LONG } from "@/lib/clients/identity";
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
@@ -1973,7 +1974,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
           async () =>
             buildTreatmentTimeLine({
               enabled: true,
-              clientFirstName: clientName.split(/\s+/)[0] || clientName,
+              client: await loadTreatmentTimeNameFields(admin, studio.id, clientId, clientName),
               context: await getTreatmentTimeContextForEmail(studio.id, clientId),
             }),
         )
@@ -1993,6 +1994,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       { ok: false, error: "confirmation sender threw", retryable: false },
       () =>
         sendBookingConfirmationToClient({
+      nameReader: admin,
           appointment: created,
           service,
           studio,
@@ -2073,6 +2075,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     // depend on notifying staff. Recipients and enablement logic are unchanged.
     await postCommit("public_booking_practitioner_email_threw", undefined, () =>
       sendBookingNotificationToPractitioner({
+      nameReader: admin,
         appointment: created,
         service,
         studio,

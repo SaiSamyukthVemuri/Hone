@@ -25,8 +25,8 @@ import {
 // that belongs only to studios that really did predate 0204.
 //
 // WHY THESE ASSERTIONS LIVE AGAINST A REAL DATABASE. The fix is a column
-// DEFAULT, and a default is only observable on an actual INSERT. The source
-// contract in tests/migrations/0205-new-studio-admission-default.test.ts proves
+// DEFAULT, and a default is only observable on an actual INSERT. The migration
+// text shows
 // the SHAPE of the migration — one default, two comments, and TWO
 // `update public.studios` statements per candidate: the unpermitted guard PROBE
 // and the permitted REPAIR — and deliberately proves nothing about behaviour,
