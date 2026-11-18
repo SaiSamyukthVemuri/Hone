@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import Stripe from "stripe";
+import { tierStudio, tierRules, tierFrozen, TIER_TIMING } from "./helpers/cancellation-tier-fixture";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { feeExecuteBlock, feePrepareBlock } from "@/lib/billing/manual-fee-one-per-appointment";
@@ -115,7 +116,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       const read = () =>
         table === "payment_charge_attempts" && siblingQuery
           ? { data: h.siblings, error: h.siblingsError }
-          : { data: h.rows[table] ?? null, error: null };
+          : { data: table === "studio_cancellation_fee_rules" ? tierRules(h.rows.studios) : table === "studios" ? tierStudio(h.rows.studios) : table === "payment_charge_attempts" ? tierFrozen(h.rows[table]) : table === "appointments" ? { ...TIER_TIMING, ...(h.rows[table] as object ?? {}) } : h.rows[table] ?? null, error: null };
       q.select = () => {
         if (isUpdate) {
           h.updates.push(payload ?? {});

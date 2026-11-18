@@ -506,8 +506,8 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     title: "Cancellation & no-show fees",
     category: "Settings",
     href: "/settings/payments/fees",
-    description: "Late-cancellation and no-show fee rules and on/off settings",
-    keywords: ["fee amounts", "cancellation and no show fee amounts", "late cancellation fee", "cancellation fee", "no show fee", "fees"],
+    description: "Cancellation notice window, same-day rate, no-show rules and on/off settings",
+    keywords: ["fee amounts", "cancellation and no show fee amounts", "late cancellation fee", "cancellation fee", "no show fee", "fees", "48 hours", "notice window", "same-day cancellation"],
     visibility: "owner",
     priority: 412,
   },
@@ -974,6 +974,16 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
     route: "/settings/waitlist/replies",
     reason:
       "Owner-only list of the replies people left when the offered times did not suit them (0319). It holds clients' own words, appears only when the reply feature is switched on, and is reached from the count on the waitlist page, so listing it in Global Search would offer an empty or refused page to everyone else.",
+  },
+  {
+    route: "/settings/waitlist/search",
+    reason:
+      "Owner-only name search over the waitlist, reached from a link on the waitlist page. It follows its parent: the waitlist Settings tab appears only for a studio whose durable waitlist is switched on, so listing it in Global Search would offer an empty or refused page to everyone else.",
+  },
+  {
+    route: "/settings/waitlist/released",
+    reason:
+      "Owner-only read-only history of released and expired waitlist entries, reached from a link on the waitlist page. It follows its parent: listing it in Global Search would offer an empty or refused page to every studio that has not enabled the waitlist and to non-owners.",
   },
   {
     route: "/settings/payments/refresh",

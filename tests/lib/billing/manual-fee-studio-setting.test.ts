@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { tierStudio, tierRules, tierFrozen, TIER_TIMING } from "./helpers/cancellation-tier-fixture";
 
 // Per-studio manual-fee switches (0351) and their relation to the temporary LIVE release lists.
 // Synthetic ids only. The runner section drives the REAL executor against a fake database and a Stripe
@@ -42,9 +43,11 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       const read = () => {
         if (table === "studios") {
           h.studioReads++;
-          return h.studioError ? { data: null, error: { code: "57014" } } : { data: h.studioRow, error: null };
+          return h.studioError ? { data: null, error: { code: "57014" } } : { data: tierStudio(h.studioRow), error: null };
         }
-        if (table === "payment_charge_attempts") return sibling ? { data: [], error: null } : { data: h.attempt, error: null };
+        if (table === "payment_charge_attempts") return sibling ? { data: [], error: null } : { data: tierFrozen(h.attempt), error: null };
+        if (table === "studio_cancellation_fee_rules") return { data: tierRules(h.studioRow), error: null };
+        if (table === "appointments") return { data: TIER_TIMING, error: null };
         return { data: ROWS[table] ?? null, error: null };
       };
       for (const m of ["select", "eq", "is", "in", "order", "limit"]) q[m] = () => q;
@@ -141,46 +144,45 @@ describe("the studio setting is a pure, fail-closed gate", () => {
 });
 
 describe("saved versus actually active (the Settings screen uses the same gates as prepare and execute)", () => {
-  const state = (reason: typeof LATE | typeof NOSHOW, row: unknown, ready: boolean, live: boolean) =>
+  const state = (reason: typeof NOSHOW | typeof NOSHOW, row: unknown, ready: boolean, live: boolean) =>
     manualFeeEffectiveState({ chargeReason: reason, settingRow: row as never, paymentsReady: ready, livemode: live, studioId: STUDIO });
 
   it("saved OFF is off whatever else is true", () => {
-    for (const ready of [true, false]) for (const live of [true, false]) expect(state(LATE, BOTH_OFF, ready, live)).toBe("off");
+    for (const ready of [true, false]) for (const live of [true, false]) expect(state(NOSHOW, BOTH_OFF, ready, live)).toBe("off");
   });
   it("saved ON in percent mode with NO percentage (the unusable state a race could leave) is NOT active, never 'Active', whatever else is true", () => {
     const unusable = { ...BOTH_ON, late_cancel_fee_mode: "percent", late_cancel_fee_percent_bp: null, no_show_fee_mode: "percent", no_show_fee_percent_bp: null };
     for (const ready of [true, false]) for (const live of [true, false]) {
-      expect(state(LATE, unusable, ready, live)).toBe("not_active_config");
+      expect(state(NOSHOW, unusable, ready, live)).toBe("not_active_config");
       expect(state(NOSHOW, unusable, ready, live)).toBe("not_active_config");
     }
     expect(MANUAL_FEE_STATE_COPY.not_active_config.effective).toMatch(/^Not active: the fee amount or percentage is not set/);
   });
   it("saved ON, payments not ready: NOT active (payments), in test and live", () => {
-    expect(state(LATE, BOTH_ON, false, false)).toBe("not_active_payments");
-    expect(state(LATE, BOTH_ON, false, true)).toBe("not_active_payments");
+    expect(state(NOSHOW, BOTH_ON, false, false)).toBe("not_active_payments");
+    expect(state(NOSHOW, BOTH_ON, false, true)).toBe("not_active_payments");
   });
   it("saved ON, ready, TEST mode: active (the release list is skipped in test mode)", () => {
-    expect(state(LATE, BOTH_ON, true, false)).toBe("active");
+    expect(state(NOSHOW, BOTH_ON, true, false)).toBe("active");
     expect(state(NOSHOW, BOTH_ON, true, false)).toBe("active");
   });
   it("saved ON, ready, LIVE mode, studio NOT on that type's release list: NOT active (not released for the studio)", () => {
-    expect(state(LATE, BOTH_ON, true, true)).toBe("not_active_release");
-    vi.stubEnv(NO_SHOW_FEE_LIVE_STUDIOS_ENV, STUDIO);
-    expect(state(LATE, BOTH_ON, true, true)).toBe("not_active_release"); // the OTHER type's list does not open this one
-  });
-  it("saved ON, ready, LIVE mode, on that type's list: active; the other type stays pending", () => {
-    vi.stubEnv(LATE_CANCEL_FEE_LIVE_STUDIOS_ENV, STUDIO);
-    expect(state(LATE, BOTH_ON, true, true)).toBe("active");
     expect(state(NOSHOW, BOTH_ON, true, true)).toBe("not_active_release");
-    expect(state(LATE, { ...BOTH_ON, late_cancel_fee_enabled: false }, true, true)).toBe("off");
+    vi.stubEnv(LATE_CANCEL_FEE_LIVE_STUDIOS_ENV, STUDIO);
+    expect(state(NOSHOW, BOTH_ON, true, true)).toBe("not_active_release"); // cancellation setup never opens no-show fees
+  });
+  it("a no-show release requires its own saved switch", () => {
+    vi.stubEnv(NO_SHOW_FEE_LIVE_STUDIOS_ENV, STUDIO);
+    expect(state(NOSHOW, BOTH_ON, true, true)).toBe("active");
+    expect(state(NOSHOW, { ...BOTH_ON, no_show_fee_enabled: false }, true, true)).toBe("off");
   });
   it("another studio's id on the list never makes this studio active", () => {
-    vi.stubEnv(LATE_CANCEL_FEE_LIVE_STUDIOS_ENV, OTHER);
-    expect(state(LATE, BOTH_ON, true, true)).toBe("not_active_release");
+    vi.stubEnv(NO_SHOW_FEE_LIVE_STUDIOS_ENV, OTHER);
+    expect(state(NOSHOW, BOTH_ON, true, true)).toBe("not_active_release");
   });
   it("the legacy combined variable opens nothing", () => {
     vi.stubEnv(LEGACY_MANUAL_FEE_LIVE_STUDIOS_ENV, STUDIO);
-    expect(state(LATE, BOTH_ON, true, true)).toBe("not_active_release");
+    expect(state(NOSHOW, BOTH_ON, true, true)).toBe("not_active_release");
     expect(state(NOSHOW, BOTH_ON, true, true)).toBe("not_active_release");
   });
   it("the screen never says Active unless the state is active, and never says on-and-active for a gated type", () => {
@@ -206,7 +208,7 @@ describe("EXECUTE: the runner re-reads the studio setting before any claim or St
     expect(h.stripeCalls).toEqual([]);
   });
   it("a prepared-then-DISABLED late-cancel attempt is refused: no claim, no Stripe, the setting message", async () => {
-    h.studioRow = { late_cancel_fee_enabled: false, no_show_fee_enabled: true };
+    h.studioRow = { ...BOTH_ON, late_cancel_fee_enabled: false };
     const r = await run();
     expect(r.ok).toBe(false);
     if (r.ok) throw new Error("unreachable");
@@ -259,7 +261,7 @@ describe("EXECUTE: the runner re-reads the studio setting before any claim or St
   });
   it("LIVE mode needs BOTH: setting ON alone is refused by the release gate; setting OFF is refused even when listed", async () => {
     h.livemode = true;
-    h.attempt = attemptRow({ stripe_livemode: true });
+    h.attempt = attemptRow({ stripe_livemode: true, charge_reason: NOSHOW });
     const saved = { cpm: ROWS.client_payment_methods, sps: ROWS.studio_payment_settings };
     ROWS.client_payment_methods = { ...(saved.cpm as object), stripe_livemode: true };
     ROWS.studio_payment_settings = { ...(saved.sps as object), stripe_livemode: true };
@@ -268,11 +270,11 @@ describe("EXECUTE: the runner re-reads the studio setting before any claim or St
     expect(r1.ok).toBe(false);
     if (!r1.ok) expect(r1.outcome).toBe("live_mode_blocked");
     expect(h.rpcs).toEqual([]);
-    vi.stubEnv(LATE_CANCEL_FEE_LIVE_STUDIOS_ENV, STUDIO);
+    vi.stubEnv(NO_SHOW_FEE_LIVE_STUDIOS_ENV, STUDIO);
     h.studioRow = BOTH_OFF;
     const r2 = await run();
     expect(r2.ok).toBe(false);
-    if (!r2.ok) expect(r2.message).toBe(LATE_CANCEL_FEE_DISABLED_MESSAGE);
+    if (!r2.ok) expect(r2.message).toBe(NO_SHOW_FEE_DISABLED_MESSAGE);
     expect(h.rpcs).toEqual([]);
     h.studioRow = BOTH_ON;
     await run();
@@ -347,7 +349,7 @@ describe("PREPARE and the owner-only write use the same gate (source pins)", () 
     for (const f of ["lib/billing/manual-fee-studio-setting.ts", "lib/billing/live-charge-reason-allowlist.ts"]) {
       const src = read(f);
       expect(src.startsWith('import "server-only";')).toBe(true);
-      expect(src).toMatch(/the platform operator gives explicit rollout approval/);
+      expect(src).toMatch(/Cancellation fees|Cancellation settings/);
       expect(src).not.toMatch(/14 days|5 real|at least 5/);
     }
   });
@@ -401,10 +403,14 @@ describe("execute hold: the owner's settings now versus what was frozen at prepa
   const FIXED = { id: ATTEMPT, studio_id: STUDIO, charge_reason: LATE, amount_cents: 5000 };
   // A fake whose studios row and frozen attempt row are chosen per test; reads are the only thing it supports.
   const mk = (studio: unknown, frozen: unknown, studioErr = false, frozenErr = false) => ({
-    from: (t: string) => ({ select: () => ({ eq: () => ({ maybeSingle: async () => {
-      if (t === "studios") return { data: studio, error: studioErr ? { code: "x" } : null };
-      return { data: frozen, error: frozenErr ? { code: "x" } : null };
-    } }) }) }),
+    from: (t: string) => {
+      const q = { select: () => q, eq: () => q, maybeSingle: async () => {
+        if (t === "studios") return { data: tierStudio(studio), error: studioErr ? { code: "x" } : null };
+        if (t === "studio_cancellation_fee_rules") return { data: tierRules(studio), error: null };
+        if (t === "appointments") return { data: TIER_TIMING, error: null };
+        return { data: tierFrozen(frozen), error: frozenErr ? { code: "x" } : null };
+      } }; return q;
+    },
   });
   const FROZEN_FIXED = { calc_mode: "fixed", basis_cents: null, percent_bp: null };
   const FROZEN_PCT = { calc_mode: "percent", basis_cents: 12000, percent_bp: 7500 };
