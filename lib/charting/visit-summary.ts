@@ -10,7 +10,7 @@ export type VisitSummary = {
   nextVisitNoteRecorded: boolean;
 };
 
-type BlockLike = { deleted_at: string | null; areas?: Parameters<typeof resolveBlockAreas>[0]; primary_area?: string | null; side?: string | null };
+type BlockLike = { deleted_at: string | null; structured_areas?: Parameters<typeof resolveBlockAreas>[0]; primary_area?: string | null; side?: string | null };
 type LaserLike = { deleted_at: string | null; zone: string };
 
 export function buildVisitSummary(o: {
@@ -24,7 +24,7 @@ export function buildVisitSummary(o: {
     const live = (o.blocks ?? []).filter((b) => b.deleted_at == null);
     return {
       kind: "electrolysis",
-      areas: live.flatMap((b) => resolveBlockAreas(b.areas, b).map(formatAreaLabel)),
+      areas: live.flatMap((b) => resolveBlockAreas(b.structured_areas, b).map(formatAreaLabel)),
       count: live.length,
       nextVisitNoteRecorded,
     };
