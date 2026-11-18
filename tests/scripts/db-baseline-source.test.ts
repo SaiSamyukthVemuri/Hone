@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 // @ts-expect-error - .mjs utility ships without type declarations
-import { ACL_SQL, EXTENSIONS_SQL, TRIGGERS_SQL } from "../../scripts/db-baseline/sql.mjs";
+import { ACL_SQL, EXTENSIONS_SQL, FINGERPRINT_SQL, TRIGGERS_SQL } from "../../scripts/db-baseline/sql.mjs";
 
 const cli = readFileSync(path.join(process.cwd(), "scripts/db-baseline/cli.mjs"), "utf8");
 const guardSrc = readFileSync(path.join(process.cwd(), "scripts/db-baseline/guard.mjs"), "utf8");
@@ -51,6 +51,17 @@ describe("the restore path is the strict one", () => {
 
   it("no private path is named in the scripts or the README", () => {
     expect(cli + guardSrc + keySrc + readme).not.toMatch(/\/srv\/|\/home\//);
+  });
+});
+
+describe("the fingerprint is one line per fact", () => {
+  it("every category collapses whitespace, because a column default or constraint expression can span lines (a continuation line is not a fact)", () => {
+    // Found on the first stack run: a multi-line value parsed as a category-less line ("CASE").
+    for (const cat of ["migrations", "catalog", "grants", "platform", "extensions", "outside", "data"]) {
+      const at = FINGERPRINT_SQL.indexOf(`'${cat}:'`);
+      expect(at, cat).toBeGreaterThan(-1);
+      expect(FINGERPRINT_SQL.slice(at, at + 160), cat).toContain("regexp_replace(");
+    }
   });
 });
 

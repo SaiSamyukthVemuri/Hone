@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 // @ts-expect-error - .mjs utility ships without type declarations
 import { cacheDirProblems, guardProblems, syntheticProblems } from "../../scripts/db-baseline/guard.mjs";
@@ -87,6 +89,15 @@ describe("build refuses a database that is not synthetic", () => {
 
   it("an empty allowed list means any row is refused", () => {
     expect(syntheticProblems({ ...ok, allowedSeeded: [] }).join(" ")).toContain("permission_catalog (40)");
+  });
+});
+
+describe("the committed allowed seeded-table list", () => {
+  // Pinned from the first stack run: the chain holds exactly these two single-row tables, both platform tables with no studio,
+  // client, staff or session data (calendar_sync_control: one control row; waitlist_retention_runs: one bootstrap run-log row).
+  it("is exactly the two migration-seeded reference tables the run found", () => {
+    const list = JSON.parse(readFileSync(path.join(process.cwd(), "scripts/db-baseline/allowed-seeded-tables.json"), "utf8"));
+    expect(list).toEqual(["calendar_sync_control", "waitlist_retention_runs"]);
   });
 });
 

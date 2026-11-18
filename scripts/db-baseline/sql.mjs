@@ -6,8 +6,8 @@
 // One raw line per fact, prefixed with its category. The scripts compute count and
 // md5 per category themselves, so a mismatch can be shown line by line.
 export const FINGERPRINT_SQL = String.raw`
-select 'migrations:' || version from supabase_migrations.schema_migrations;
-select 'catalog:' || x from (
+select 'migrations:' || regexp_replace(version, E'\\s+', ' ', 'g') from supabase_migrations.schema_migrations;
+select 'catalog:' || regexp_replace(x, E'\\s+', ' ', 'g') from (
     select 'rel|' || c.relname || '|' || c.relkind::text from pg_catalog.pg_class c
      where c.relnamespace = 'public'::regnamespace and c.relkind in ('r','p','v','m','f','S','i')
        and not exists (select 1 from pg_catalog.pg_depend d where d.classid = 'pg_catalog.pg_class'::regclass and d.objid = c.oid and d.deptype = 'e')
@@ -32,7 +32,7 @@ select 'catalog:' || x from (
      where p.pronamespace = 'public'::regnamespace
        and not exists (select 1 from pg_catalog.pg_depend d where d.classid = 'pg_catalog.pg_proc'::regclass and d.objid = p.oid and d.deptype = 'e')
   ) s(x);
-select 'grants:' || x from (
+select 'grants:' || regexp_replace(x, E'\\s+', ' ', 'g') from (
     select 'rel|' || c.relname || '|' || coalesce(c.relacl::text,'') || '|' || pg_get_userbyid(c.relowner) from pg_class c where c.relnamespace='public'::regnamespace and c.relkind in ('r','p','v','m','f','S')
     union all select 'fn|' || p.oid::regprocedure::text || '|' || coalesce(p.proacl::text,'') || '|' || pg_get_userbyid(p.proowner) || '|' || coalesce(p.proconfig::text,'') from pg_proc p where p.pronamespace='public'::regnamespace
     union all select 'nsp|' || n.nspname || '|' || coalesce(n.nspacl::text,'') from pg_namespace n where n.nspname in ('public','supabase_migrations')
@@ -41,20 +41,20 @@ select 'grants:' || x from (
     union all select 'type|' || t.typname || '|' || coalesce(t.typacl::text,'') || '|' || pg_get_userbyid(t.typowner) from pg_type t where t.typnamespace='public'::regnamespace and t.typtype in ('e','d','r','m')
     union all select 'migrel|' || c.relname || '|' || coalesce(c.relacl::text,'') || '|' || pg_get_userbyid(c.relowner) from pg_class c where c.relnamespace='supabase_migrations'::regnamespace and c.relkind in ('r','p','v','m','f','S')
   ) s(x);
-select 'platform:' || x from (
+select 'platform:' || regexp_replace(x, E'\\s+', ' ', 'g') from (
     select 'rel|' || n.nspname || '.' || c.relname || '|' || coalesce(c.relacl::text,'') || '|' || pg_get_userbyid(c.relowner) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname in ('auth','storage','realtime') and c.relkind in ('r','p','v','m','f','S')
     union all select 'fn|' || p.oid::regprocedure::text || '|' || coalesce(p.proacl::text,'') || '|' || pg_get_userbyid(p.proowner) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname in ('auth','storage','realtime')
     union all select 'nsp|' || n.nspname || '|' || coalesce(n.nspacl::text,'') from pg_namespace n where n.nspname in ('auth','storage','realtime','supabase_migrations')
     union all select 'type|' || n.nspname || '.' || t.typname || '|' || coalesce(t.typacl::text,'') from pg_type t join pg_namespace n on n.oid=t.typnamespace where n.nspname in ('auth','storage','realtime') and t.typtype in ('e','d','r','m')
     union all select 'member|' || m.roleid::regrole::text || '|' || m.member::regrole::text || '|' || m.admin_option::text from pg_auth_members m
   ) s(x);
-select 'extensions:' || extname || '=' || extversion || '@' || extnamespace::regnamespace::text from pg_extension;
-select 'outside:' || x from (
+select 'extensions:' || regexp_replace(extname || '=' || extversion || '@' || extnamespace::regnamespace::text, E'\\s+', ' ', 'g') from pg_extension;
+select 'outside:' || regexp_replace(x, E'\\s+', ' ', 'g') from (
     select 'trg|' || n.nspname || '.' || c.relname || '|' || t.tgname || '|' || t.tgfoid::regproc::text from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where not t.tgisinternal and n.nspname in ('auth','storage','realtime','extensions','supabase_migrations')
     union all select 'pol|' || n.nspname || '.' || c.relname || '|' || p.polname from pg_policy p join pg_class c on c.oid=p.polrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname <> 'public'
     union all select 'fn|' || p.oid::regprocedure::text || '|' || md5(p.prosrc) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname in ('auth','storage') and p.oid > 16384 and pg_get_userbyid(p.proowner) = 'postgres'
   ) s(x);
-select 'data:' || t || '=' || n from (
+select 'data:' || regexp_replace(t, E'\\s+', ' ', 'g') || '=' || n from (
     select table_name::text t, (xpath('/row/c/text()', query_to_xml(format('select count(*) c from public.%I', table_name), false, true, '')))[1]::text n from information_schema.tables where table_schema='public' and table_type='BASE TABLE'
   ) s;
 select 'authusers:' || count(*) from auth.users;
