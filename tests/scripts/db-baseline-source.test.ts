@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 // @ts-expect-error - .mjs utility ships without type declarations
 import { chainProblems, parseFingerprint } from "../../scripts/db-baseline/verify.mjs";
+// @ts-expect-error - .mjs utility ships without type declarations
 import { ACL_SQL, EXTENSIONS_SQL, FINGERPRINT_SQL, TRIGGERS_SQL } from "../../scripts/db-baseline/sql.mjs";
 
 const cli = readFileSync(path.join(process.cwd(), "scripts/db-baseline/cli.mjs"), "utf8");
