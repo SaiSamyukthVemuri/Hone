@@ -72,6 +72,7 @@ describe("the panel acts on the host form's MultiPlex request (there is no secon
     const onSelectMachine = vi.fn(async () => ({ ok: true }));
     mount({ onSelectMachine, onResolvedChoice: (c: unknown) => seen.push(c), onKindChange: (k: string) => kinds.push(k) });
     set(machineSelect(), "legacy:xcell");
+    await act(async () => { await Promise.resolve(); }); // the pick settles first: a request during a pending pick is dropped (P1)
     rerender({ onSelectMachine, onResolvedChoice: (c: unknown) => seen.push(c), onKindChange: (k: string) => kinds.push(k), multiplexRequest: { seq: 1, want: true } });
     await act(async () => { await Promise.resolve(); });
     expect(seen.at(-1)).toEqual({ deviceId: "unit-1", modeKey: "multiplex" });
@@ -85,12 +86,26 @@ describe("the panel acts on the host form's MultiPlex request (there is no secon
     const common = { onSelectMachine: vi.fn(async () => ({ ok: true })), onResolvedChoice: (c: unknown) => seen.push(c), onKindChange: (k: string) => kinds.push(k) };
     mount(common);
     set(machineSelect(), "legacy:xcell");
+    await act(async () => { await Promise.resolve(); });
     rerender({ ...common, multiplexRequest: { seq: 1, want: true } });
     await act(async () => { await Promise.resolve(); });
     rerender({ ...common, multiplexRequest: { seq: 2, want: false } });
     await act(async () => { await Promise.resolve(); });
     expect(kinds.at(-1)).toBe("legacy");
     expect(seen.at(-1)).toEqual({ deviceId: null, modeKey: null, legacy: true });
+  });
+  it("THE FREEZE WINS (P1): a request made while a save is pending is dropped, and is not applied when the freeze lifts", async () => {
+    const seen: unknown[] = []; const kinds: string[] = [];
+    const common = { onSelectMachine: vi.fn(async () => ({ ok: true })), onResolvedChoice: (c: unknown) => seen.push(c), onKindChange: (k: string) => kinds.push(k) };
+    mount({ ...common, settingDraftFrozen: true });
+    set(machineSelect(), "legacy:xcell");
+    rerender({ ...common, settingDraftFrozen: true, multiplexRequest: { seq: 1, want: true } });
+    await act(async () => { await Promise.resolve(); });
+    expect(kinds.at(-1)).toBe("legacy");
+    expect(seen.some((c) => (c as { modeKey?: string } | null)?.modeKey === "multiplex")).toBe(false);
+    rerender({ ...common, settingDraftFrozen: false, multiplexRequest: { seq: 1, want: true } });
+    await act(async () => { await Promise.resolve(); });
+    expect(kinds.at(-1), "the dropped request is not replayed").toBe("legacy");
   });
   it("a SAVED area ignores a request: it keeps the identity it was saved with", async () => {
     const onSelectMachine = vi.fn(async () => ({ ok: true }));

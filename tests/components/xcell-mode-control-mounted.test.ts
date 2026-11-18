@@ -171,6 +171,18 @@ describe("saved areas", () => {
     expect(legacyFieldsShown()).toBe(true);
   });
 
+  it("P2: after the machine of a saved MultiPlex area is changed and written, MultiPlex is no longer treated as saved", async () => {
+    actions.recordBlockMachineIdentityAction.mockResolvedValueOnce({ ok: true, identity: { profileId: "dectro-apilus:senior-3g", deviceId: "unit-senior", modeKey: "standard" } } as never);
+    await mount({ ...BLOCK, studio_machine_id: "unit-pur", machine_mode_key: "multiplex" });
+    await act(async () => { await Promise.resolve(); });
+    expect(multiplexPill()!.disabled).toBe(true);
+    await openPanel();
+    await pick("unit-senior");
+    await act(async () => { await Promise.resolve(); });
+    // The record now holds the Senior unit: the stale "saved as MultiPlex" state must not linger as a frozen, pressed pill.
+    expect(multiplexPill(), "no frozen MultiPlex pill after the machine changed").toBeNull();
+    expect(pillLabels()).toEqual([]);
+  });
   it("an area saved as MultiPlex shows it selected and frozen in the same Mode control, with the other modes unavailable", async () => {
     await mount({ ...BLOCK, studio_machine_id: "unit-pur", machine_mode_key: "multiplex" });
     await act(async () => { await Promise.resolve(); });

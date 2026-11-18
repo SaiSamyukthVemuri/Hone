@@ -641,6 +641,9 @@ function MachineFirstSetupPanelImpl({
     lastMultiplexSeq.current = multiplexRequest.seq;
     // A NEW area only: a saved area keeps the identity it was saved with.
     if (!xcellRouted || !multiplexRoute || blockId) return;
+    // THE FREEZE WINS (Codex P1): a request that arrives while a create is pending or its response is unknown is dropped, never queued,
+    // so no click can move the identity under an unresolved save.
+    if (identityFrozen || selectionPending) return;
     if (multiplexRequest.want) void chooseDevice(multiplexRoute.deviceId);
     else if (deviceId === multiplexRoute.deviceId) void chooseDevice(null, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps

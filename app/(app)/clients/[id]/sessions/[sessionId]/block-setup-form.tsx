@@ -559,13 +559,19 @@ export function BlockSetupForm({
   // area. A saved area is recognised by its stored unit, never by a control.
   const [multiplexRoute, setMultiplexRoute] = useState<{ deviceId: string } | null>(null);
   const [multiplexRequest, setMultiplexRequest] = useState<{ seq: number; want: boolean } | null>(null);
-  const multiplexSaved = Boolean(block?.studio_machine_id && multiplexRoute && block.studio_machine_id === multiplexRoute.deviceId);
+  // THE SAVED MACHINE FOLLOWS THE PANEL'S WRITES (Codex P2): once a machine change is written, the panel's own written identity is the
+  // record, not the block prop this form first rendered with. `undefined` = nothing written yet, so the prop still stands.
+  const [writtenDeviceId, setWrittenDeviceId] = useState<string | null | undefined>(undefined);
+  const savedDeviceId = writtenDeviceId !== undefined ? writtenDeviceId : (block?.studio_machine_id ?? null);
+  const multiplexSaved = Boolean(savedDeviceId && multiplexRoute && savedDeviceId === multiplexRoute.deviceId);
   const multiplexSelected =
     multiplexSaved || (!block && machineKind === "native" && multiplexRoute !== null && draftDeviceId === multiplexRoute.deviceId);
   // Offered on a NEW area under the existing xCell choice. An area holding legacy values never switches (today's refusal stays).
   const multiplexOffered =
     multiplexSaved || (multiplexRoute !== null && !legacyDataLocked && !block && (machineKind === "legacy" || multiplexSelected));
   const showModeControl = machineKind !== "native" || multiplexSelected;
+  // The Mode controls are held with every other identity control (Codex P1): while this form's save or the panel's identity write is
+  // pending or unresolved, no click may start or undo a MultiPlex choice. `draftFrozen` and `identityWritePending` are declared below.
   const showLegacyFields = machineKind !== "native";
   // A lot/batch belongs to ONE probe. Provenance is therefore tracked PER PROBE
   // rather than as a global "has she edited it?" boolean.
@@ -2026,6 +2032,7 @@ export function BlockSetupForm({
         onKindChange={onKindChange}
         multiplexRequest={multiplexRequest}
         onMultiplexRoute={setMultiplexRoute}
+        onSavedDeviceChange={setWrittenDeviceId}
         onIdentityDraft={block ? undefined : onIdentityDraft}
         blockVersion={blockVersion}
         legacyReadingsLocked={legacyDataLocked}
@@ -2198,7 +2205,7 @@ export function BlockSetupForm({
               <button
                 key={m.value}
                 type="button"
-                disabled={multiplexSaved}
+                disabled={multiplexSaved || draftFrozen || identityWritePending}
                 onClick={() => {
                   update("mode", selected ? "" : m.value);
                   // Leaving MultiPlex returns the area to the existing xCell workflow.
@@ -2219,7 +2226,7 @@ export function BlockSetupForm({
               type="button"
               data-testid="mode-multiplex"
               aria-pressed={multiplexSelected}
-              disabled={multiplexSaved}
+              disabled={multiplexSaved || draftFrozen || identityWritePending}
               onClick={() => setMultiplexRequest((r) => ({ seq: (r?.seq ?? 0) + 1, want: !multiplexSelected }))}
               className={`rounded-full border px-4 py-2 text-sm transition ${
                 multiplexSelected

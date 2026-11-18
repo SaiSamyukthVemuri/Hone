@@ -122,6 +122,8 @@ export type MachineFirstSetupConnectedProps = {
     modeKey: string | null;
   } | null;
   /** Forwarded to the panel: which kind of machine is in force. */
+  /** The saved machine after a successful identity write, so the host's MultiPlex state follows the record rather than the first prop. */
+  onSavedDeviceChange?: (deviceId: string | null) => void;
   onKindChange?: NonNullable<
     Parameters<typeof MachineFirstSetupPanel>[0]["onKindChange"]
   >;
@@ -216,6 +218,7 @@ export function MachineFirstSetupConnected({
   holdAutoSelect = false,
   savedIdentity: savedIdentityProp = null,
   onKindChange,
+  onSavedDeviceChange,
   onIdentityDraft,
   blockVersion,
   onBlockVersion,
@@ -508,6 +511,7 @@ export function MachineFirstSetupConnected({
       const adopt = (out: Extract<IdentityWriteOutcome, { ok: true }>, fallback: IdentityChoice) => {
         const stored = out.identity ?? fallback;
         setWritten({ profileId: stored.profileId, deviceId: stored.deviceId, modeKey: stored.modeKey });
+        onSavedDeviceChange?.(stored.deviceId ?? null);
         adopted = { profileId: stored.profileId, deviceId: stored.deviceId, modeKey: stored.modeKey };
         if (out.updatedAt) {
           version = out.updatedAt;
