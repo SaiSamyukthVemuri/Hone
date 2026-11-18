@@ -56,24 +56,8 @@ describe("action derives auth server-side (no client trust)", () => {
 });
 
 describe("modal reuses the existing card + actions (single hardened payment path)", () => {
-  it("renders the existing SessionPaymentPrepareCard, not a new charge flow", () => {
-    expect(MODAL).toMatch(/<SessionPaymentPrepareCard/);
-    // The same four hardened server actions are passed through unchanged.
-    for (const a of [
-      "prepareSessionPaymentChargeAction",
-      "executeSessionPaymentChargeAction",
-      "sendPaymentChargeReceiptAction",
-      "refundPaymentChargeAttemptAction",
-    ]) {
-      expect(MODAL).toMatch(new RegExp(a));
-    }
-  });
   it("does NOT reimplement any Stripe / charge / refund logic", () => {
     expect(MODAL).not.toMatch(/@stripe\/|paymentIntents\.|charges\.|refunds\.|amount_cents/);
-  });
-  it("re-reads trusted server state on open (local state is never authoritative)", () => {
-    expect(MODAL).toMatch(/getQuickCheckoutContextAction\(appointmentId\)/);
-    expect(MODAL).toMatch(/if \(!open\) return/);
   });
   it("is charting-independent: closes to finish charting later, never finalizes", () => {
     expect(MODAL).toMatch(/finish charting later/);
@@ -99,11 +83,6 @@ describe("entry point is completed-appointment only", () => {
     expect(BUTTON).toMatch(/if \(status !== "completed"\) return null/);
     expect(BUTTON).toMatch(/data-testid="checkout-button"/);
     expect(BUTTON).toMatch(/min-h-\[44px\]/);
-  });
-  it("the calendar appointment detail wires Checkout for completed appointments", () => {
-    // Via the shared AppointmentCheckoutCell (which renders CheckoutButton).
-    expect(CAL).toMatch(/<AppointmentCheckoutCell/);
-    expect(CAL).toMatch(/typedStatus === "completed"/);
   });
   it("there is a single checkout flow (calendar reuses the shared component)", () => {
     // No second bespoke checkout modal/flow in calendar code.

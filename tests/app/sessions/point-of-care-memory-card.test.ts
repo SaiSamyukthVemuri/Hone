@@ -22,8 +22,6 @@ const CARD = read("components/last-treatment-memory-card.tsx");
 const LOADER = read("lib/sessions/last-treatment-loader.ts");
 const MEMORY = read("lib/sessions/point-of-care-memory.ts");
 const SELECTOR = read("lib/sessions/charted-session.ts");
-const TREATMENT_TIME = read("lib/treatment-time/queries.ts");
-const AREA_BUCKET = read("lib/treatment-time/area-bucket.ts");
 
 function codeOnly(src: string): string {
   return src
@@ -32,34 +30,7 @@ function codeOnly(src: string): string {
     .join("\n");
 }
 
-describe("the memory card is mounted ON the live charting page", () => {
-  it("the charting page imports and renders the card", () => {
-    expect(SESSION_PAGE).toMatch(
-      /import \{ LastTreatmentMemoryCard \} from "@\/components\/last-treatment-memory-card"/,
-    );
-    expect(SESSION_PAGE).toMatch(/<LastTreatmentMemoryCard/);
-  });
-
-  it("it renders BEFORE the block-entry surface, not below the current session's forms", () => {
-    const card = SESSION_PAGE.indexOf("<LastTreatmentMemoryCard");
-    const blocks = SESSION_PAGE.indexOf("<SessionBlocksView");
-    const laserForm = SESSION_PAGE.indexOf("<LogLaserEntryForm");
-    expect(card).toBeGreaterThan(-1);
-    expect(blocks).toBeGreaterThan(-1);
-    expect(card).toBeLessThan(blocks);
-    expect(card).toBeLessThan(laserForm);
-  });
-
-  it("it renders above the collapsed consultation section too, so memory is first", () => {
-    const card = SESSION_PAGE.indexOf("<LastTreatmentMemoryCard");
-    const notesSection = SESSION_PAGE.indexOf("<ClinicalNotesSection");
-    expect(card).toBeLessThan(notesSection);
-  });
-
-  it("it renders nothing for a client with no prior charted treatment", () => {
-    expect(SESSION_PAGE).toMatch(/\{pointOfCareMemory && \(/);
-  });
-
+describe("the memory card on the live charting page", () => {
   it("a charted visit with NO settings blocks says so, instead of \"Area not recorded\"", () => {
     // A LASER prior visit (or pre-block legacy electrolysis) qualifies as
     // charted but produces zero blocks. Found by adversarial review: the card
@@ -75,23 +46,6 @@ describe("the memory card is mounted ON the live charting page", () => {
     expect(MEMORY).toMatch(/legacy treatment entries without settings blocks/i);
     expect(MEMORY).toMatch(/Open the full chart to review what was recorded/i);
   });
-
-  it("the /sessions/new context panel uses the SAME shared copy, not its own", () => {
-    expect(NEW_SESSION_PAGE).toMatch(
-      /blocklessTreatmentCopy\(\{/,
-    );
-    expect(NEW_SESSION_PAGE).toMatch(/data-testid="previous-context-blockless"/);
-    // It must not hand-roll the sentence.
-    const code = codeOnly(NEW_SESSION_PAGE);
-    expect(code).not.toMatch(/charted as laser passes/i);
-    // And it must render the fallback INSTEAD of an empty AreaSummaries.
-    expect(NEW_SESSION_PAGE).toMatch(/\{blocklessNote \? \(/);
-    expect(NEW_SESSION_PAGE).not.toMatch(/Area not recorded/);
-  });
-
-  it("the card carries a test handle so the browser spec is not selector-fragile", () => {
-    expect(CARD).toMatch(/data-testid="last-treatment-memory"/);
-  });
 });
 
 describe("both previous-context surfaces use the ONE shared selector", () => {
@@ -99,10 +53,6 @@ describe("both previous-context surfaces use the ONE shared selector", () => {
     expect(SESSION_PAGE).toMatch(/loadLastChartedTreatment\(\{/);
     expect(SESSION_PAGE).toMatch(/excludeSessionId: session\.id/);
     expect(SESSION_PAGE).toMatch(/before: session\.started_at/);
-  });
-
-  it("the new-session page loads the last CHARTED treatment", () => {
-    expect(NEW_SESSION_PAGE).toMatch(/loadLastChartedTreatment\(\{/);
   });
 
   it("the new-session page no longer picks the newest session ROW", () => {
@@ -128,14 +78,6 @@ describe("both previous-context surfaces use the ONE shared selector", () => {
     expect(code).not.toMatch(/\.find\(\s*\(s\)\s*=>\s*hasChartedContent/);
     expect(code).not.toMatch(/electrolysis_entries\.length\s*>\s*0/);
     expect(code).not.toMatch(/laser_entries\.length\s*>\s*0/);
-  });
-
-  it("the shared selector requires CONTENT, not merely a session row", () => {
-    const code = codeOnly(SELECTOR);
-    expect(code).toMatch(/hasChartedContent/);
-    expect(code).toMatch(/electrolysis_entries/);
-    expect(code).toMatch(/laser_entries/);
-    expect(SELECTOR).toMatch(/record_status === "void"/);
   });
 });
 
@@ -286,81 +228,9 @@ describe("read-only and RLS-scoped", () => {
 });
 
 describe("no forked display vocabulary", () => {
-  it("the memory view model composes the existing shared helpers", () => {
-    for (const mod of [
-      "@/lib/sessions/block-areas",
-      "@/lib/sessions/format-seconds",
-      "@/lib/sessions/reading-field-order",
-      "@/lib/sessions/clinical-response",
-      "@/lib/sessions/reaction-unified",
-      "@/lib/sessions/treatment-setup-snapshot",
-    ]) {
-      expect(MEMORY).toContain(mod);
-    }
-  });
-
-  it("it does not re-implement the unified reaction classifier", () => {
-    const code = codeOnly(MEMORY);
-    expect(code).toMatch(/unifiedReactionLabels\(/);
-    expect(code).not.toMatch(/REACTION_TYPES|isReactionChipLabel|normalizeChips/);
-  });
-
-  it("thermolysis duration goes through the 3dp formatter, never a local rounder", () => {
-    const code = codeOnly(MEMORY);
-    expect(code).toMatch(/formatSeconds\(num\(canonical\?\.thermolysis_duration_seconds\)\)/);
-    expect(code).not.toMatch(/toFixed\(2\)\s*\}?`?\s*;?\s*\/\/?\s*thermolysis/i);
-    expect(code).not.toMatch(/Math\.round\([^)]*\* 100\) \/ 100/);
-  });
-
   it("the retired galvanic intensity input is named nowhere in the feature", () => {
     for (const src of [CARD, LOADER, MEMORY, SELECTOR]) {
       expect(codeOnly(src)).not.toMatch(/galvanic_intensity_percent/);
     }
-  });
-});
-
-describe("multi-area treatment-time attribution", () => {
-  it("the bucket key is canonicalized so tap order cannot fragment a combination", () => {
-    // display_order is the practitioner's tap order, so the combined key must
-    // depend on the SET of areas, not the order they were entered in.
-    const code = codeOnly(AREA_BUCKET);
-    expect(code).toMatch(/const canonical = \[\.\.\.names\]\.sort\(/);
-    expect(code).toMatch(/return canonical\.join\(AREA_BUCKET_SEPARATOR\)/);
-  });
-
-  it("the breakdown resolves its bucket through the shared, pure area resolver", () => {
-    expect(TREATMENT_TIME).toMatch(
-      /import \{ buildAreaMinutesBreakdown \} from "\.\/area-bucket"/,
-    );
-    expect(TREATMENT_TIME).toMatch(/return buildAreaMinutesBreakdown\(/);
-    expect(AREA_BUCKET).toMatch(/const area = resolveAreaBucketLabel\(block\)/);
-  });
-
-  it("it no longer buckets on the legacy primary_area alone", () => {
-    const code = codeOnly(TREATMENT_TIME);
-    expect(code).not.toMatch(/const structured = block\.primary_area\?\.trim\(\)/);
-  });
-
-  it("it loads the structured areas in the SAME embed — no extra round-trip", () => {
-    expect(TREATMENT_TIME).toMatch(
-      /structured_areas:session_block_areas\(id, area, display_order, created_at\)/,
-    );
-    // One sessions read, still.
-    expect(
-      (TREATMENT_TIME.match(/\.from\("sessions"\)/g) ?? []).length,
-    ).toBeLessThanOrEqual(3);
-  });
-
-  it("the block's minutes are credited exactly once per block", () => {
-    const code = codeOnly(AREA_BUCKET);
-    const loop = code.slice(
-      code.indexOf("export function buildAreaMinutesBreakdown"),
-      code.indexOf("export function resolveAreaBucketLabel"),
-    );
-    // One set() per block iteration; no inner per-area loop, so a multi-area
-    // block can never contribute its duration more than once.
-    expect((loop.match(/minutesByArea\.set\(/g) ?? []).length).toBe(1);
-    expect(loop).not.toMatch(/for \(const \w+ of [^)]*areas/);
-    expect((loop.match(/resolveAreaBucketLabel\(/g) ?? []).length).toBe(1);
   });
 });

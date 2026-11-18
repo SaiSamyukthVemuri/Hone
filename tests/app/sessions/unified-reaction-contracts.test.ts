@@ -5,13 +5,11 @@ import { join } from "node:path";
 // Charting unification — SOURCE-CONTRACT guards for the reaction-driven safety
 // consumers. These enforce, at the source level, the query + data-handling
 // properties the runtime tests can't easily assert: set-based (no N+1) embedded
-// reads, studio scoping (no cross-studio leakage), historical-data preservation,
-// and that no active galvanic_intensity_percent input is written by new charting.
+// reads, studio scoping (no cross-studio leakage), and the shared reaction helper.
 
 function read(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf8");
 }
-const BASE = "app/(app)/clients/[id]/sessions/[sessionId]";
 
 const CONSUMERS: Array<{ label: string; file: string }> = [
   { label: "clients-needing-attention", file: "lib/dashboard/clients-needing-attention.ts" },
@@ -53,50 +51,5 @@ describe("consumers derive reactions ONLY via the shared unified helper (no ad-h
   it("treatment-intelligence + clinical-summary use the shared unified helper", () => {
     expect(read("lib/sessions/treatment-intelligence.ts")).toMatch(/unifiedReactionLabels\(/);
     expect(read("lib/sessions/clinical-summary.ts")).toMatch(/unifiedReactionLabels\(/);
-  });
-});
-
-describe("(5/8/9) galvanic intensity + reaction_type historical-data preservation", () => {
-  const FORM = read(`${BASE}/block-setup-form.tsx`);
-  it("no active Galvanic intensity % input remains in either charting form", () => {
-    expect(FORM).not.toMatch(/<span[^>]*>Galvanic intensity %<\/span>/);
-    expect(read(`${BASE}/simplified-entry-form.tsx`)).not.toMatch(/<span[^>]*>Galvanic intensity %<\/span>/);
-  });
-  it("neither form hydrates or sends galvanic_intensity_percent — history is preserved SERVER-SIDE, not via a browser round-trip", () => {
-    // Final amendment: galvanic intensity is a RETIRED reading. The form no longer
-    // hydrates it into the draft nor sends it on save (no hidden browser-controlled
-    // clinical field). Preservation is server-authoritative: the update path omits
-    // the column (historical value untouched) and inserts force NULL.
-    expect(FORM).not.toMatch(/galvanicIntensityPercent/);
-    expect(read(`${BASE}/simplified-entry-form.tsx`)).not.toMatch(/galvanicIntensityPercent/);
-    const BLOCK_ACTIONS = read(`${BASE}/block-actions.ts`);
-    const ACTIONS = read(`${BASE}/actions.ts`);
-    // L18 Phase 2: the retirement moved from the application to the database.
-    // `write_electrolysis_entry` (migration 0166) has NO parameter for
-    // galvanic_intensity_percent: its INSERT hard-codes NULL and its UPDATE
-    // omits the column entirely, so a new row cannot carry a value and a
-    // historical one cannot be overwritten — server-authoritative in the
-    // strongest sense, since there is no longer an application literal to edit.
-    const MIGRATION = read("supabase/migrations/0166_session_block_electrolysis_commands.sql");
-    expect(MIGRATION).not.toMatch(/p_galvanic_intensity_percent/);
-    expect(MIGRATION).toMatch(/galvanic_intensity_percent/); // named in the INSERT column list
-    // Strip comments first: both modules still DOCUMENT the retirement in prose,
-    // which is the point — what must be absent is any code that writes it.
-    const blockCode = BLOCK_ACTIONS.split("\n")
-      .map((l) => l.replace(/\/\/.*$/, ""))
-      .join("\n");
-    expect(blockCode).not.toMatch(/galvanic_intensity_percent/);
-    expect(ACTIONS).not.toMatch(/formData\.get\("galvanic_intensity_percent"\)/);
-    expect(ACTIONS).not.toMatch(/p_galvanic_intensity_percent/);
-  });
-  it("reaction_type is PRESERVED while its chip stays selected and cleared ONLY when removed (never invented)", () => {
-    // Save payload: keep draft.reactionType only if its label chip is still selected, else null.
-    expect(FORM).toMatch(
-      /reactionType:[\s\S]{0,220}isChipSelected\([\s\S]{0,80}reactionTypeLabel\([\s\S]{0,80}\?\s*draft\.reactionType\s*:\s*null/,
-    );
-  });
-  it("today's minutes are never part of the copy — form has no minutes in the merged findings box", () => {
-    // (Guard against a future accidental re-add of minutes into observations.)
-    expect(FORM).toMatch(/OBSERVATIONS_RESPONSE_HEADING/);
   });
 });

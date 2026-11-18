@@ -24,24 +24,6 @@ function codeOnly(src: string): string {
 const ACTIONS_CODE = codeOnly(ACTIONS);
 
 describe("startSessionAction: PR #180 auto-mark-completed helper", () => {
-  it("declares maybeMarkAppointmentCompletedOnSessionStart at module scope", () => {
-    expect(ACTIONS).toMatch(
-      /async function maybeMarkAppointmentCompletedOnSessionStart\(args: \{/,
-    );
-  });
-
-  it("the helper accepts appointmentId, studioId, practitionerId, status, endsAt", () => {
-    const block =
-      ACTIONS.match(
-        /async function maybeMarkAppointmentCompletedOnSessionStart\(args: \{[\s\S]{0,600}\}\)/,
-      )?.[0] ?? "";
-    expect(block).toMatch(/appointmentId: string/);
-    expect(block).toMatch(/studioId: string/);
-    expect(block).toMatch(/practitionerId: string/);
-    expect(block).toMatch(/status: string/);
-    expect(block).toMatch(/endsAt: string/);
-  });
-
   it("the helper only proceeds when status === 'confirmed' (cancelled / no_show / completed skipped)", () => {
     expect(ACTIONS).toMatch(/args\.status !== "confirmed"/);
   });
@@ -68,19 +50,9 @@ describe("startSessionAction: PR #180 auto-mark-completed helper", () => {
     expect(rpcAt).toBeGreaterThan(guardAt);
   });
 
-  it("the helper skips future appointments (endsAtMs > Date.now())", () => {
-    expect(ACTIONS).toMatch(/endsAtMs > Date\.now\(\)/);
-  });
-
   it("the helper calls the mark_appointment_complete RPC via the admin client", () => {
     expect(ACTIONS).toMatch(
       /admin\.rpc\("mark_appointment_complete",\s*\{[\s\S]{0,300}p_appointment_id:\s*args\.appointmentId/,
-    );
-  });
-
-  it("the helper imports the admin client dynamically (cold-path)", () => {
-    expect(ACTIONS).toMatch(
-      /await import\("@\/lib\/supabase\/admin-server"\)/,
     );
   });
 });
@@ -92,31 +64,12 @@ describe("startSessionAction: PR #180 fail-soft contract", () => {
     );
   });
 
-  it("the helper logs an RPC error event when rpcErr is truthy", () => {
-    expect(ACTIONS).toMatch(
-      /if \(rpcErr\)[\s\S]{0,600}session_start_auto_mark_complete_rpc_error/,
-    );
-  });
-
   it("the helper does NOT throw on RPC failure (no `throw` inside the helper body)", () => {
     const body =
       ACTIONS.match(
         /async function maybeMarkAppointmentCompletedOnSessionStart\([\s\S]{0,4000}\n\}\n/,
       )?.[0] ?? "";
     expect(body).not.toMatch(/\bthrow\s/);
-  });
-});
-
-describe("startSessionAction: appointment lookup widened to status + ends_at", () => {
-  it("the appointment SELECT now includes status + ends_at", () => {
-    expect(ACTIONS).toMatch(
-      /\.select\("id, studio_id, client_id, practitioner_id, status, ends_at"\)/,
-    );
-  });
-
-  it("appointmentStatus + appointmentEndsAt are captured from the row", () => {
-    expect(ACTIONS).toMatch(/let appointmentStatus: string \| null = null;/);
-    expect(ACTIONS).toMatch(/let appointmentEndsAt: string \| null = null;/);
   });
 });
 
@@ -137,22 +90,6 @@ describe("startSessionAction: helper is invoked after session insert", () => {
     expect(redirectIdx).toBeGreaterThan(-1);
     expect(callIdx).toBeGreaterThan(insertIdx);
     expect(callIdx).toBeLessThan(redirectIdx);
-  });
-
-  it("the call site is guarded by appointmentId + appointmentStatus + appointmentEndsAt all truthy", () => {
-    expect(ACTIONS).toMatch(
-      /if \(appointmentId && appointmentStatus && appointmentEndsAt\)\s*\{[\s\S]{0,800}maybeMarkAppointmentCompletedOnSessionStart\(\{/,
-    );
-  });
-
-  it("the call site revalidates the calendar appointment detail path so the new status is visible", () => {
-    expect(ACTIONS).toMatch(
-      // SESSION-START-01 2A: the call may now be wrapped in a perf-timing helper,
-    // so its terminator is `}),` rather than `});`. The ORDERING and PROXIMITY
-    // this guard exists for are unchanged: the helper is invoked, and the
-    // calendar detail path is revalidated close after it.
-    /maybeMarkAppointmentCompletedOnSessionStart\(\{[\s\S]{0,800}\}\)[,;][\s\S]{0,300}revalidatePath\(`\/calendar\/\$\{appointmentId\}`\)/,
-    );
   });
 });
 

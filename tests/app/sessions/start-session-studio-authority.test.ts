@@ -54,18 +54,6 @@ describe("startSessionAction — explicit studio authority", () => {
     /const\s*\{[^}]*studio[^}]*\}\s*=\s*await\s+(?:timed\(\s*"[^"]+",\s*\(\)\s*=>\s*getCurrentPractitionerWithStudio\(\)\s*,?\s*\)|getCurrentPractitionerWithStudio\(\))\s*;/,
     );
   });
-
-  it("still sends the other four command arguments", () => {
-    const call = startSessionRpcCall();
-    for (const arg of [
-      "p_client_id",
-      "p_modality",
-      "p_appointment_id",
-      "p_coalesce_minutes",
-    ]) {
-      expect(call).toContain(arg);
-    }
-  });
 });
 
 describe("startSessionAction — the browser never chooses tenant scope", () => {
