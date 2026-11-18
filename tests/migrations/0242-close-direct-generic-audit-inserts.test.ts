@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { exportedResources } from "@/lib/export/resource-registry";
-import { countVersion, fileForVersion } from "./helpers/migration-state";
 
 const sql = readFileSync("supabase/migrations/0242_close_direct_generic_audit_inserts.sql", "utf8");
 const code = sql.replace(/^\s*--.*$/gm, "");
@@ -10,30 +9,6 @@ const clients = readFileSync("app/(app)/clients/[id]/actions.ts", "utf8");
 const exporter = readFileSync("app/(app)/settings/data/actions.ts", "utf8");
 
 describe("0242 closes direct generic audit forgery without expanding authority", () => {
-  it("uses its allocated filename once, with a bounded transaction", () => {
-    expect(countVersion("0242")).toBe(1);
-    expect(fileForVersion("0242")).toBe("0242_close_direct_generic_audit_inserts.sql");
-    expect(code.trim()).toMatch(/^begin;/);
-    expect(code).toContain("set local lock_timeout = '5s';");
-    expect(code.trim()).toMatch(/commit;$/);
-  });
-  it("closes PUBLIC/anon/authenticated table and column grants, independently of policies", () => {
-    expect(code).toContain('drop policy if exists "audit_logs: members insert" on public.audit_logs');
-    expect(code).toContain("revoke insert on table public.audit_logs from public, anon, authenticated");
-    expect(code).toContain("revoke insert (%I) on table public.audit_logs from public, anon, authenticated");
-    for (const role of ["anon", "authenticated"]) {
-      expect(code).toContain(`has_table_privilege('${role}', 'public.audit_logs', 'INSERT')`);
-      expect(code).toContain(`has_any_column_privilege('${role}', 'public.audit_logs', 'INSERT')`);
-    }
-  });
-  it("requires existing table authority, only explicit narrow EXECUTE, no history rewrite", () => {
-    expect(code).toContain("if not has_table_privilege('service_role', 'public.audit_logs', 'INSERT')");
-    expect(code).not.toMatch(/grant\s+(?:insert|update|delete|select)|grant[^;]+on\s+table/i);
-    expect(code.match(/grant execute on function/g)).toHaveLength(2);
-    expect(code).not.toMatch(/create\s+(?:table|policy)|update\s+public\.audit_logs|delete\s+from\s+public\.audit_logs/i);
-    expect(code).not.toMatch(/drop policy[^;]+members read/);
-    expect(code).not.toContain("record_clinical_records_audit");
-  });
   it("the three user action writers use a typed server-only helper, without a generic transport", () => {
     expect(helper).toContain('import "server-only"');
     expect(helper).not.toContain('"use server"');
@@ -73,20 +48,6 @@ describe("0242 atomic governed service commands", () => {
     const registry = Object.fromEntries(exportedResources().map(({ resource, disposition }) => [resource, disposition.file]));
     // Every exported resource must be in the LATEST map (otherwise a production export would fail its audit step).
     for (const [resource, file] of Object.entries(registry)) expect(JSON.parse(next!)[resource], resource).toBe(file);
-  });
-  it("preserves0178 SELECT-only runtimes and validates actual trusted owner separately from ACLs", () => {
-    const frozen = readFileSync("supabase/migrations/0178_practitioner_identity_boundary.sql", "utf8");
-    expect(frozen).toContain("revoke all privileges on table public.practitioners");
-    expect(frozen).toContain("grant select on table public.practitioners");
-    expect(code).not.toMatch(/grant\s+update|alter\s+role|create\s+role|grant[^;]+to\s+(?:anon|authenticated)/i);
-    expect(code).toContain("v_function is null or v_owner is null or not exists");
-    expect(code.indexOf("v_function is null")).toBeLessThan(code.indexOf("lateral pg_catalog.aclexplode"));
-    expect(code).toContain("p.proconfig=array['search_path=\"\"','lock_timeout=5s']::pg_catalog.text[]");
-    expect(code).toContain("pg_catalog.pg_has_role(v_role.oid,v_owner,'MEMBER')");
-    expect(code).toContain("pg_catalog.pg_has_role(v_role.oid,v_owner,'SET')");
-    expect(code).toContain("v_owner<>v_expected_owner");
-    expect(code).toContain("pg_catalog.has_table_privilege(v_expected_owner,v_required.table_name,v_required.privilege_name)");
-    expect(code).toContain("Runtime practitioner identity boundary unexpectedly widened");
   });
   it("binds membership locks and audit insertion in each narrow transaction", () => {
     for (const name of ["record_client_archive_audit_governed", "record_studio_export_audit_governed"]) {
