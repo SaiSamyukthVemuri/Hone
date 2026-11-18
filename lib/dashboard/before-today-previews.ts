@@ -12,6 +12,7 @@ import {
 } from "@/lib/sessions/before-today";
 import type { SessionBlockArea } from "@/lib/types/database";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { mayBeTruncated } from "@/lib/supabase/row-cap";
 
 // PR #212: compact "Before today" previews for the Dashboard Today
 // roster. The preview is a RENDERING of the exact same PR #211
@@ -197,7 +198,15 @@ async function readRows(
       logReadFailure(event, studioId, dbErrorCode(error), scopeCount);
       return { rows: [], failed: true };
     }
-    return { rows: Array.isArray(data) ? data : [], failed: false };
+    const rows = Array.isArray(data) ? data : [];
+    // FAIL CLOSED at the API row cap. The blocks and areas reads are ordered by sort_order / display_order, not
+    // recency, so a result at the cap may have lost rows of ANY session, the newest included. A cut read is
+    // not an answer. (The sessions read is bounded below the cap by its own limit, so it never trips this.)
+    if (mayBeTruncated(rows.length)) {
+      logReadFailure(`${event.replace(/_failed$/, "")}_row_cap_reached`, studioId, null, scopeCount);
+      return { rows: [], failed: true };
+    }
+    return { rows, failed: false };
   } catch {
     // Nothing is taken from the thrown value: a driver error carries the
     // statement in its message exactly as a PostgREST error does.
