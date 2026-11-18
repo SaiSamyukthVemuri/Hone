@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 275,
-    "last": "0354_quoted_amount_explicit_zero_custom_price.sql",
-    "sha256": "e6bdc246ded3f6086d608422f2ffe985e858cc01324eb24cdeeeb1afa1b335b8"
+    "count": 276,
+    "last": "0357_cancellation_fee_tiers.sql",
+    "sha256": "2fd806fcd667daf0644fbe27a47b0c2fc26409995c881621572eedc55743a126"
   },
   "public": {
     "tables": [
@@ -102,6 +102,8 @@
       "studio_availability_overrides",
       "studio_blockouts",
       "studio_calendar_reservations",
+      "studio_cancellation_fee_rule_changes",
+      "studio_cancellation_fee_rules",
       "studio_legal_name_access",
       "studio_machines",
       "studio_manual_fee_setting_changes",
@@ -201,6 +203,8 @@
       "can_read_client_legal_identity",
       "can_use_client_legal_identity",
       "cancel_appointment_core",
+      "cancellation_fee_attempt_guard",
+      "cancellation_fee_legacy_setting_guard",
       "capture_treatment_reading_change",
       "check_claimed_payment_method_cleanup_safety",
       "claim_calendar_sync_op",
@@ -516,6 +520,7 @@
       "revert_appointment_outcome",
       "revoke_waitlist_preference_grant",
       "run_waitlist_retention_cleanup",
+      "save_cancellation_fee_rules",
       "save_client_card_on_file",
       "save_client_card_on_file_ordered",
       "save_weekly_availability",
@@ -525,6 +530,7 @@
       "session_is_visible",
       "set_appointment_capacity_enabled",
       "set_appointment_notes",
+      "set_cancellation_fee_rules_enabled",
       "set_client_portrait",
       "set_new_client_admission_mode",
       "set_next_session_note",

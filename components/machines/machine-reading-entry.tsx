@@ -135,7 +135,7 @@ export type MachineReadingEntryProps = {
   /** Injected by tests so the retry key is deterministic. */
   mintKey?: () => string;
   /**
-   * TRUE WHILE A MACHINE OR MODE CHANGE IS BEING WRITTEN (Codex, #1369 4487911008). On a saved area the pick is written first and
+   * TRUE WHILE A MACHINE OR MODE CHANGE IS BEING WRITTEN. On a saved area the pick is written first and
    * applied after; in between, this entry still belongs to the OLD machine while the record may already hold the new one, so a save
    * here would submit the old machine's readings under the new machine. Submission is held until the change settles; the entry is
    * then remounted for the new machine (its key) or, on a refusal, stays and works again. The draft itself is kept.
@@ -339,7 +339,7 @@ export function MachineReadingEntry({
    */
   const transportHold = pending || save.unresolved;
 
-  // NOT AFTER AN ACKNOWLEDGED SAVE (Codex, #1369 4477412918). The typed values stay in `groups`
+  // NOT AFTER AN ACKNOWLEDGED SAVE. The typed values stay in `groups`
   // until the practitioner starts a new capture, but they are RECORDED by then: the page must
   // stop saying Unsaved and stop warning on leave. A save still in flight or of unknown outcome
   // is not recorded, so it keeps counting.

@@ -6,8 +6,8 @@ import { adminQuery, asUser, closePool, seedSession, seedStudio, type SeededStud
 // ===========================================================================
 // A LOST-ANSWER RETRY OF A BARE (SETTINGS-FREE) AREA SAVE MAKES ONE AREA.
 //
-// Photos R2 (#1369) found that pressing Save again after a lost answer created a SECOND area when nothing machine-related was
-// typed: a bare create was unkeyed, so nothing recognised the retry. The same is true on production before #1369. 0223's create
+// Pressing Save again after a lost answer created a SECOND area when nothing machine-related was
+// typed: a bare create was unkeyed, so nothing recognised the retry. The same was true before this change. 0223's create
 // claim already takes a key with NO groups; these cases prove that is enough, and that deliberate second areas still work.
 // ===========================================================================
 
@@ -100,7 +100,7 @@ describe("a bare area save carries a retry key", () => {
 });
 
 // ===========================================================================
-// INSURANCE N-1: THE 0223 FALLBACK (0301 NOT APPLIED, or rolled back).
+// THE 0223 FALLBACK (0301 NOT APPLIED, or rolled back).
 //
 // The action falls back to 0223's create_block_with_initial_setup, the SAME command the 0301 wrapper delegates to, when the
 // wrapper does not exist. That 0223 takes a key with an EMPTY settings half was only asserted in a comment. These cases call the

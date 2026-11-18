@@ -20,7 +20,7 @@ vi.mock("@/lib/supabase/server", () => ({
 
 import { readClientLastMachine } from "@/lib/sessions/client-last-machine";
 
-// OPS/Photos R2: a client last charted on xCell Pur showed no suggestion because only blocks with a saved identity were read.
+// A client last charted on xCell Pur showed no suggestion because only blocks with a saved identity were read.
 beforeEach(() => {
   calls.length = 0;
   results = [];

@@ -26,7 +26,7 @@ export async function readClientLastMachine(clientId: string): Promise<ClientLas
     .from("session_blocks")
     .select("machine_profile_id, studio_machine_id, machine_mode_key, mode, sessions!inner(client_id)")
     .eq("sessions.client_id", clientId)
-    // A deleted or void visit is not the client's last machine (Privacy EL-2a, Insurance N-5).
+    // A deleted or void visit is not the client's last machine.
     .is("sessions.deleted_at", null)
     .neq("sessions.record_status", "void")
     .is("deleted_at", null)

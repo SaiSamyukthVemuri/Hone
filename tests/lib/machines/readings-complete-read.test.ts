@@ -350,7 +350,7 @@ describe("readingsForBlock fails CLOSED rather than returning part of a block", 
       spy.mockRestore();
     });
 
-    it("INSURANCE: P0002 and 42501 are each read ONCE (a coded refusal is never retried)", async () => {
+    it("P0002 and 42501 are each read ONCE (a coded refusal is never retried)", async () => {
       for (const code of ["P0002", "42501", "PGRST116"]) {
         const { spy } = captured();
         const { db, calls } = seq([{ error: { message: "x", code } }, { error: null }]);
@@ -361,7 +361,7 @@ describe("readingsForBlock fails CLOSED rather than returning part of a block", 
       }
     });
 
-    it("INSURANCE: an unknown message maps to errorClass 'other' and the text is never logged", async () => {
+    it("an unknown message maps to errorClass 'other' and the text is never logged", async () => {
       const { spy, lines } = captured();
       const { db } = seq([{ error: { message: "the flux capacitor is unhappy 10.0.0.7" } }]);
       await readingsForBlock(db, "b", "s", { retryDelayMs: 0 });

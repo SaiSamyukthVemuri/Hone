@@ -1610,7 +1610,7 @@ describe("previous-treatment guidance excludes the session being charted", () =>
   });
 });
 
-describe("readingsForBlockAction reports a DEFINITIVE refusal apart from a transient failure (#1369 R3-2)", () => {
+describe("readingsForBlockAction reports a DEFINITIVE refusal apart from a transient failure", () => {
   const input = { ...ROUTE, blockId: "block-1" };
 
   it("not signed in is an ACCESS refusal", async () => {
@@ -1640,7 +1640,7 @@ describe("readingsForBlockAction reports a DEFINITIVE refusal apart from a trans
     expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false, refused: "access" });
   });
 
-  // OPS decision after #1369 shard 1 at d298c8b92: ONE retry of the (STABLE, side-effect-free) read, only for a CODE-LESS error.
+  // ONE retry of the (STABLE, side-effect-free) read, only for a CODE-LESS error.
   const readCalls = () => DB.calls.filter((c) => c.fn === "setup_readings_for_block").length;
   it("RETRY: a code-less error then success returns the readings (no failure for the caller), after exactly two reads", async () => {
     signIn("studio-fett", "pract-sabrina", "owner");
@@ -2063,7 +2063,7 @@ describe("the staleness refusal, narrowed to the revise path", () => {
 });
 
 // THE UNIT THE IDENTITY WRITES BELOW ARE MADE AGAINST. The action now checks the pick against the studio's own inventory and
-// the catalogue (Codex, #1369 4498767101), so every case that expects a write needs a registered, supported unit and mode.
+// the catalogue, so every case that expects a write needs a registered, supported unit and mode.
 const UNIT_ID = "11111111-1111-4111-8111-111111111111";
 const UNIT_MODE = "galvanic";
 const unitRow = (over: Record<string, unknown> = {}) => ({
@@ -2092,7 +2092,7 @@ const RECEIPT = (updatedAt: string) => ({
 });
 
 // ===========================================================================
-// 0301 NOT APPLIED YET (Privacy EH-1/EH-2): saving the machine choice on an
+// 0301 NOT APPLIED YET: saving the machine choice on an
 // existing area says it cannot be saved yet. It never says saved.
 // ===========================================================================
 describe("recordBlockMachineIdentityAction without 0301", () => {
@@ -2135,7 +2135,7 @@ describe("recordBlockMachineIdentityAction without 0301", () => {
 
 
 // ===========================================================================
-// AN IMPOSSIBLE UNIT / MODE PAIR IS REFUSED BEFORE ANYTHING IS WRITTEN (Codex, #1369 4498767101)
+// AN IMPOSSIBLE UNIT / MODE PAIR IS REFUSED BEFORE ANYTHING IS WRITTEN
 // The identity command only checks that the unit is the studio's and not retired. The action applies the contract
 // `rememberMachineSelectionAction` uses, first, so a stale panel or a crafted request cannot store a mode the unit's model does
 // not offer. Every refusal here must leave the command uncalled: "nothing written" is the point.
@@ -2181,7 +2181,7 @@ describe("recordBlockMachineIdentityAction checks the choice against the unit's 
     expect(wrote()).toBe(false);
   });
 
-  // AVAILABILITY IS LEFT TO THE RECEIPT-AWARE COMMAND (Codex, #1369 4499083273). The command answers a repeated key from its receipt
+  // AVAILABILITY IS LEFT TO THE RECEIPT-AWARE COMMAND. The command answers a repeated key from its receipt
   // before it looks at the unit, and refuses a NEW write to a retired or foreign unit itself, so the action calls it and, when it
   // refuses, reports the preflight's own clear words.
   it("a unit that is not this studio's: the command is asked and refuses the NEW write; the clear words come back", async () => {
@@ -2243,7 +2243,7 @@ describe("recordBlockMachineIdentityAction checks the choice against the unit's 
     expect(wrote()).toBe(false);
   });
 
-  // ---- THE LOST-ANSWER RETRY (Codex, #1369 4499083273): commit, lose the reply, the unit is retired, retry the SAME key, recover.
+  // ---- THE LOST-ANSWER RETRY: commit, lose the reply, the unit is retired, retry the SAME key, recover.
   describe("a same-key retry of a committed write recovers whatever has changed since", () => {
     const STORED_ROW = [{ id: "block-1", machine_profile_id: null, studio_machine_id: UNIT_ID, machine_mode_key: UNIT_MODE }];
     const REPLAY = { ...RECEIPT("v2"), reused: true, machine_mode_key: UNIT_MODE };
@@ -2300,9 +2300,9 @@ describe("recordBlockMachineIdentityAction checks the choice against the unit's 
 });
 
 // ===========================================================================
-// THE FORM'S OWN IDENTITY WRITE IS NOT "CHANGED ELSEWHERE" (Photos R2, #1369 c0d7b3ddc)
+// THE FORM'S OWN IDENTITY WRITE IS NOT "CHANGED ELSEWHERE"
 // The held version is checked INSIDE the command's transaction and the new one comes back from
-// the same UPDATE ... RETURNING (Codex 4476240827), so the action reads nothing itself.
+// the same UPDATE ... RETURNING, so the action reads nothing itself.
 // ===========================================================================
 describe("recordBlockMachineIdentityAction hands back the new block version", () => {
   const args = {
@@ -2346,7 +2346,7 @@ describe("recordBlockMachineIdentityAction hands back the new block version", ()
     expect(out.ok).toBe(false);
     expect("updatedAt" in out).toBe(false);
   });
-  // OPS decision (K-2 CI red): a stored pick must reach the session page data, like Save, so a reopened editor is never stale.
+  // A stored pick must reach the session page data, like Save, so a reopened editor is never stale.
   it("a stored identity write revalidates the session page, and a refused or failed one does not", async () => {
     signIn("studio-1", "prac-1", "practitioner");
     revalidatePathMock.mockClear();
@@ -2369,7 +2369,7 @@ describe("recordBlockMachineIdentityAction hands back the new block version", ()
 });
 
 // ===========================================================================
-// A LOST ANSWER IS UNKNOWN, AND A SAME-KEY REPLAY IS ANSWERED FROM ITS RECEIPT (Codex 4488743493)
+// A LOST ANSWER IS UNKNOWN, AND A SAME-KEY REPLAY IS ANSWERED FROM ITS RECEIPT
 // ===========================================================================
 describe("recordBlockMachineIdentityAction: a lost answer is unknown, a replay returns the stored version and identity", () => {
   const args = {
@@ -2408,7 +2408,7 @@ describe("recordBlockMachineIdentityAction: a lost answer is unknown, a replay r
 });
 
 
-// Insurance F-1 / Codex 4475784164: a non-replayed submission stamps the block identity (bumps updated_at) too.
+// A non-replayed submission stamps the block identity (bumps updated_at) too.
 describe("recordSetupSubmissionAction hands back the new block version", () => {
   const call = (expectedUpdatedAt?: string) =>
     actions.recordSetupSubmissionAction({
@@ -2431,7 +2431,7 @@ describe("recordSetupSubmissionAction hands back the new block version", () => {
     expect((out as { updatedAt?: string }).updatedAt).toBe("v2");
     expect(DB.calls.at(-1)?.args).toMatchObject({ p_expected_updated_at: "v1" });
   });
-  // Codex 4481814168: Cancel then reopen after "Save these settings" must not hold the pre-submission version.
+  // Cancel then reopen after "Save these settings" must not hold the pre-submission version.
   it("a successful submission revalidates the session page (replay included); a refused one does not", async () => {
     revalidatePathMock.mockClear();
     ok({ block_updated_at: "v2" });
@@ -2460,7 +2460,7 @@ describe("recordSetupSubmissionAction hands back the new block version", () => {
   });
 });
 
-// Insurance N-8: a same-key replay hands back NO token (the command returns none when reused).
+// A same-key replay hands back NO token (the command returns none when reused).
 describe("a replayed submission hands back no token", () => {
   it("NEGATIVE CONTROL: reused=true carries no block_updated_at, so no token and the next block save still conflicts", async () => {
     synthDevice();
@@ -2479,7 +2479,7 @@ describe("a replayed submission hands back no token", () => {
   });
 });
 
-// RC-3 (Insurance, 0301 receipts): every caller of the identity write outside the tests. The write needs a per-pick retry key and
+// 0301 receipts: every caller of the identity write outside the tests. The write needs a per-pick retry key and
 // a caller that settles an unconfirmed answer by it, so only the panel's wrapper may call the action, and only the action the query.
 describe("callers of the area identity write", () => {
   const walk = (dir: string): string[] =>

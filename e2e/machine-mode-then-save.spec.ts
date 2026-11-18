@@ -5,7 +5,7 @@ import { seedE2eStudio, seedE2eMember, sql } from "./helpers/seed";
 import { loginByMagicLink } from "./helpers/flows";
 import { planContractPublication } from "../lib/machines/contract-publication";
 
-// HON-8 (#1369, Photos R2 at c0d7b3ddc): changing the MODE on a saved area writes the machine identity at once and bumps the block's version.
+// HON-8: changing the MODE on a saved area writes the machine identity at once and bumps the block's version.
 // The form kept the old version, so the NEXT block save (a shared field, or a mode-only change) was refused as "changed elsewhere" and the typed
 // value was lost. The identity write now hands the form the new version. The real conflict is NOT weakened: two negative controls below.
 // Synthetic studio, client and values; local stack only.
@@ -69,7 +69,7 @@ const CONFLICT = /changed elsewhere/i;
  * Run `action`, then wait until every server-action POST it caused has FINISHED (and at least one was seen).
  * Waiting on one response can match the wrong request (a prefetch, the remembered-selection write) and let an
  * assertion read the database BEFORE the write under test has landed, which passes whether or not the write was
- * refused (Insurance V-1). Settled = at least one action POST seen, none in flight, quiet for 400ms.
+ * refused. Settled = at least one action POST seen, none in flight, quiet for 400ms.
  */
 async function settleServerActions(page: import("@playwright/test").Page, action: () => Promise<unknown>): Promise<number> {
   let seen = 0;
@@ -111,7 +111,7 @@ for (const which of ["senior", "junior"] as const) {
       await page.getByTestId("machine-select").selectOption(unitId);
       await expect(page.getByTestId("machine-chosen")).toBeVisible({ timeout: T });
       await page.getByTestId(`machine-mode-${first}`).click({ timeout: T });
-      // Photos' repro chooses an area; without one, treatment details (Hairs treated) are refused.
+      // The repro chooses an area; without one, treatment details (Hairs treated) are refused.
       await page.getByRole("button", { name: "Chin", exact: true }).first().click({ timeout: T });
       await page.getByTestId("save-treatment-area").click({ timeout: T });
       let blocks: Awaited<ReturnType<typeof blocksOf>> = [];
@@ -163,12 +163,12 @@ for (const which of ["senior", "junior"] as const) {
       await expect(page.getByText(CONFLICT)).toHaveCount(0);
     });
 
-    // Insurance P-1 (#1369 4f484772e): every own write in ONE open editor hands back its token, so a pick, a reading submission and the block Save
+    // Every own write in ONE open editor hands back its token, so a pick, a reading submission and the block Save
     // chain without a conflict; and a genuine edit between the reading and the Save is still refused.
     async function pickThenRecordReading(page: Page, blockId: string) {
       await page.getByTestId(`machine-mode-${second}`).click({ timeout: T });
       await expect.poll(() => keyOf(blockId), { timeout: T }).toBe(second);
-      // A saved area writes its record FIRST and applies the pick after (Insurance LK-3), so the database changes before the panel
+      // A saved area writes its record FIRST and applies the pick after, so the database changes before the panel
       // does: wait for the PANEL to show the new mode before typing, or the readings go into the entry that is about to be replaced.
       await expect(page.getByTestId(`machine-mode-${second}`)).toHaveAttribute("aria-pressed", "true", { timeout: T });
       const controls = page.locator('[data-testid^="reading-"]');
@@ -195,7 +195,7 @@ for (const which of ["senior", "junior"] as const) {
       expect(await keyOf(blockId)).toBe(second);
     });
 
-    // Codex 4481814168: "Save these settings", Cancel, reopen: the reopened editor must hold the CURRENT version, so its Save is not "changed elsewhere".
+    // "Save these settings", Cancel, reopen: the reopened editor must hold the CURRENT version, so its Save is not "changed elsewhere".
     test("a settings submission, then Cancel and reopen, then the block Save, shows no conflict", async ({ page }) => {
       const s = await seedStudio();
       const { blockId } = await savedArea(page, s);
@@ -250,10 +250,10 @@ for (const which of ["senior", "junior"] as const) {
       await page.getByTestId("save-treatment-area").click({ timeout: T });
       await expect(page.getByText(CONFLICT).first()).toBeVisible({ timeout: T });
       expect(await entryHairs(blockId)).toBe(111);
-      // The mode click on the STALE tab must not launder the conflict. The held version is checked INSIDE the identity write's transaction (Codex 4476240827),
+      // The mode click on the STALE tab must not launder the conflict. The held version is checked INSIDE the identity write's transaction,
       // so the click is itself refused as changed-elsewhere: the stored mode is NOT overwritten from a tab that has not seen the other edit, and no new version is adopted.
       //
-      // WAIT FOR THE CLICK'S OWN OUTCOME before asserting anything (Insurance V-1). The conflict text is ALREADY on screen from the Save above, so waiting for it
+      // WAIT FOR THE CLICK'S OWN OUTCOME before asserting anything. The conflict text is ALREADY on screen from the Save above, so waiting for it
       // proves nothing about the click; the identity write is a server action POST, so wait until the server actions the click caused have all finished, and only then read the stored mode. Asserting before
       // that response would pass whether or not the write was refused.
       await settleServerActions(page, () => page.getByTestId(`machine-mode-${second}`).click({ timeout: T }));
@@ -262,14 +262,14 @@ for (const which of ["senior", "junior"] as const) {
       await page.getByLabel("Hairs treated", { exact: true }).fill("333");
       await settleServerActions(page, () => page.getByTestId("save-treatment-area").click({ timeout: T }));
       await expect(page.getByText(CONFLICT).first()).toBeVisible({ timeout: T });
-      // RE-READ AFTER THE FINAL CONFLICT (Insurance V-1): neither the mode nor the other tab's value moved.
+      // RE-READ AFTER THE FINAL CONFLICT: neither the mode nor the other tab's value moved.
       expect(await keyOf(blockId), "the stored mode after the final conflict").toBe(first);
       expect(await entryHairs(blockId)).toBe(111);
     });
   });
 }
 
-// Photos R2 finding 2 (#1369): a NEW session suggests THIS CLIENT's last machine, not the practitioner's last pick anywhere. Repro: chart client B on
+// A NEW session suggests THIS CLIENT's last machine, not the practitioner's last pick anywhere. Repro: chart client B on
 // Junior, then client X on the existing workflow (xCell), open a new session for X: xCell is pre-chosen, not Junior.
 test.describe("a new session starts on the client's own last machine, 1280", () => {
   test.use({ viewport: { width: 1280, height: 800 } });

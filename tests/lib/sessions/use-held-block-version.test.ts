@@ -8,7 +8,7 @@ import { useHeldBlockVersion } from "@/lib/sessions/use-held-block-version";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-// Insurance N-4 (#1369 818410af2): the identity write revalidates the session page, which can hand an OPEN, edited form a
+// The identity write revalidates the session page, which can hand an OPEN, edited form a
 // newer block version. The form must keep the version it holds; only its own write's returned token moves it.
 let seen: { version: string | null; adopt: (t: string) => void };
 function Probe({ prop }: { prop: string | null }) {
@@ -55,7 +55,7 @@ describe("the held block version", () => {
     expect(src).not.toMatch(/adoptedVersion/);
   });
 
-  // Privacy NB-1: every successful block save closes the editor, so the next open starts from the fresh prop and nothing needs adopting.
+  // Every successful block save closes the editor, so the next open starts from the fresh prop and nothing needs adopting.
   it("a successful update save and a successful create save both close the form, and both mount sites close on it", () => {
     const form = readFileSync("app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx", "utf8");
     expect(form).toMatch(/if \(!res\.ok\) \{\s*setError\(res\.error\);\s*return;\s*\}\s*setSaveConfirmed\(true\);\s*closeForm\(\);/);

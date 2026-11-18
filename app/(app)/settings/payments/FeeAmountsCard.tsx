@@ -20,6 +20,7 @@ type TypeProps = {
 };
 
 type Props = {
+  hideLateCancel?: boolean;
   initialLateCancelCents: number | null;
   initialNoShowCents: number | null;
   lateCancel: TypeProps;
@@ -252,11 +253,11 @@ function FeeRuleCard({ feeType, title, description, slug, initial, initialCents,
   );
 }
 
-export function FeeAmountsCard({ initialLateCancelCents, initialNoShowCents, lateCancel, noShow, currencyLabel }: Props) {
+export function FeeAmountsCard({ hideLateCancel = false, initialLateCancelCents, initialNoShowCents, lateCancel, noShow, currencyLabel }: Props) {
   return (
     <div className="flex flex-col gap-5 text-sm">
       <p className="text-sm text-fg-muted">Set the rule, then choose whether to allow the fee. Saving never turns it on.</p>
-      <FeeRuleCard feeType="late_cancel" title="Late cancellation fee" description="For appointments cancelled at short notice." slug="late-cancel" initial={lateCancel} initialCents={initialLateCancelCents} currencyLabel={currencyLabel} />
+      {!hideLateCancel && <FeeRuleCard feeType="late_cancel" title="Late cancellation fee" description="For appointments cancelled at short notice." slug="late-cancel" initial={lateCancel} initialCents={initialLateCancelCents} currencyLabel={currencyLabel} />}
       <FeeRuleCard feeType="no_show" title="No-show fee" description="For appointments the client doesn’t attend." slug="no-show" initial={noShow} initialCents={initialNoShowCents} currencyLabel={currencyLabel} />
       <details className="rounded-lg border border-line px-5 py-1 sm:px-6">
         <summary className={cx("flex min-h-[44px] cursor-pointer items-center rounded-md text-sm font-medium", FOCUS_RING)}>How manual fees work</summary>

@@ -505,7 +505,7 @@ export function BlockSetupForm({
           pulseDelay: String(PULSE_DELAY_DEFAULT),
         });
         setDraftRef.current(cleared);
-        // REBASE THE DIRTY BASELINE (Codex 4482278089): the switch is not the practitioner's edit. An automatically resolved
+        // REBASE THE DIRTY BASELINE: the switch is not the practitioner's edit. An automatically resolved
         // machine clears a prefilled studio-default frequency, and comparing against the pre-switch draft showed "Unsaved"
         // (and a leave prompt) on an untouched form.
         if (initialDraftJson.current !== null) {
@@ -524,7 +524,7 @@ export function BlockSetupForm({
       } | null,
       explicit: boolean,
     ) => {
-      // NOT WHILE A CREATE IS UNRESOLVED (Codex 4488516837): the attempt's identity is snapshotted, and a remembered machine
+      // NOT WHILE A CREATE IS UNRESOLVED: the attempt's identity is snapshotted, and a remembered machine
       // auto-resolving in a panel opened afterwards must not become the live draft the retry could read.
       if (createAttemptRef.current !== null) return;
       identityDraftRef.current = choice;
@@ -754,7 +754,7 @@ export function BlockSetupForm({
   // write their LEVELS into it and remove themselves on unmount; "unsaved" and "a save is unresolved" are derived from it, so nothing here
   // sets them by hand. The picked-but-unwritten machine (`identityDirty`) is reported into the same registry below.
   const revisionUnresolved = draftRegistry.view.anyUnresolved;
-  // A saved area's machine choice is being written; the block save waits (Codex, #1369 4477716784).
+  // A saved area's machine choice is being written; the block save waits.
   const [identityWritePending, setIdentityWritePending] = useState(false);
 
   /**
@@ -1001,7 +1001,7 @@ export function BlockSetupForm({
    */
   const bareCreateKeyRef = useRef<string | null>(null);
   /**
-   * THE IDENTITY THE FIRST CREATE ATTEMPT WAS MADE WITH, held with its key until the attempt is resolved (Codex 4488516837).
+   * THE IDENTITY THE FIRST CREATE ATTEMPT WAS MADE WITH, held with its key until the attempt is resolved.
    * A retry sends this, never the live draft: a lost answer plus a machine panel opened afterwards used to send a different
    * identity under the original key, which 0223 refuses as a payload mismatch. `unresolved` records that an answer was lost,
    * so a later refusal is read as "already saved", not as "nothing committed".
@@ -1039,13 +1039,13 @@ export function BlockSetupForm({
   if (initialDraftJson.current === null) {
     initialDraftJson.current = JSON.stringify(draft);
   }
-  // THE CREATE ATTEMPT IS AN OWNER (Codex #1369 4506141998). A NEW area saved with prefilled values and an auto-resolved machine has a draft
+  // THE CREATE ATTEMPT IS AN OWNER. A NEW area saved with prefilled values and an auto-resolved machine has a draft
   // EQUAL to its baseline, and auto-resolution is not an edit, so nothing marked it unsaved: leaving mid-save dropped `bareCreateKeyRef`
   // (not in the URL) and recreating could duplicate a committed save. From submit until a CONFIRMED outcome the attempt is both an unsaved
   // draft and unresolved: in flight (`pending`) or held after a lost answer or a refusal that follows one (`saveUnresolved`). A definitive
   // refusal with no lost answer is a confirmed outcome (nothing committed, key dropped), and a confirmed success closes the form, whose
   // unmount removes this key. Registered like every other owner, so the guard derives from it.
-  // `unresolved` IS DELIBERATELY FALSE (Insurance final437 F1): `anyUnresolved` is `revisionUnresolved`, which disables Save and Cancel, and in
+  // `unresolved` IS DELIBERATELY FALSE: `anyUnresolved` is `revisionUnresolved`, which disables Save and Cancel, and in
   // CREATE mode pressing Save again unchanged IS the recovery (INITIAL_SAVE_UNRESOLVED; the retry key makes it safe). `saveUnresolved`
   // already freezes the draft. The guard needs only the draft flag.
   const createAttemptOpen = !block && (pending || saveUnresolved);
@@ -1055,7 +1055,7 @@ export function BlockSetupForm({
     draftRegistry.view.anyDraft;
   // THE LEAVE PROMPT is the app's own dialog (never a native confirm).
   const [leaveAttempt, setLeaveAttempt] = useState<{ proceed: () => void; dirtyCount: number } | null>(null);
-  // ARMED UNTIL A SAVE IS CONFIRMED (Codex #1369 4493497730). It used to be disarmed while "Saving…" was pending, so closing, reloading or
+  // ARMED UNTIL A SAVE IS CONFIRMED. It used to be disarmed while "Saving…" was pending, so closing, reloading or
   // following a link mid-save could lose the unconfirmed draft and, for a create, the retry key that keeps a lost answer from becoming a
   // second area. The request is in flight, its outcome is not known, and the draft is not saved: the guard stays armed through the request,
   // through an unknown or lost reply, and through a definitive refusal (the draft is still unsaved). It is bypassed only here, after a
@@ -1368,7 +1368,7 @@ export function BlockSetupForm({
   }
 
   /**
-   * EVERY GATE THAT HOLDS THE SAVE, NAMED ONCE (Codex, #1369 4475351367, P1).
+   * EVERY GATE THAT HOLDS THE SAVE, NAMED ONCE.
    * The Save button was disabled by these but `submit()` was not, and other
    * callers reach it directly - the save-status "Try again" button is enabled
    * whenever `error` is set. A FAILED CLAIM LOOKUP sets `error` while
@@ -1390,8 +1390,7 @@ export function BlockSetupForm({
     resumeChoicePending ||
     resumedNeedsSettings ||
     resumedUnconfirmed ||
-    // HELD WHILE A MACHINE REVISION IS UNRESOLVED (Codex, #1205
-    // 4401466832). On an existing block this button saves the AREA and
+    // HELD WHILE A MACHINE REVISION IS UNRESOLVED. On an existing block this button saves the AREA and
     // closes the form, which unmounts the entry and discards the
     // retained retry key of a machine save whose answer was lost; if
     // that save had committed, re-entering the settings appends a
@@ -1400,7 +1399,7 @@ export function BlockSetupForm({
     // does not strand her. The create-mode flag is deliberately NOT
     // here: there, pressing Save again unchanged IS the recovery.
     revisionUnresolved ||
-    // HELD WHILE A SAVED AREA'S MACHINE CHOICE IS BEING WRITTEN (Codex, #1369 4477716784): the block save would
+    // HELD WHILE A SAVED AREA'S MACHINE CHOICE IS BEING WRITTEN: the block save would
     // commit first, the identity write would then be refused as stale, and the choice would be lost silently.
     identityWritePending;
 
@@ -2574,7 +2573,7 @@ export function BlockSetupForm({
             // does not strand her. The create-mode flag is deliberately NOT
             // here: there, pressing Save again unchanged IS the recovery.
             revisionUnresolved ||
-            // And while a saved area's machine choice is being written (Codex, #1369 4477716784).
+            // And while a saved area's machine choice is being written.
             identityWritePending
           }
           data-testid="save-treatment-area"

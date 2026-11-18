@@ -7,7 +7,7 @@ import path from "node:path";
 import { leaveDialogCopy } from "@/lib/sessions/leave-dialog-copy";
 import { registeredGuardCount, useUnsavedGuard } from "@/lib/sessions/use-unsaved-guard";
 
-// Codex, #1369 4505287597: two dirty BlockSection editors each mounted their own Navigation-API guard. Both cancelled Back and
+// Two dirty BlockSection editors each mounted their own Navigation-API guard. Both cancelled Back and
 // opened a dialog; confirming one armed only that form's replay flag, so the other guard cancelled the replay, and confirming
 // the second re-cancelled the first. The listeners are now owned ONCE by a module-level coordinator the dirty forms register with.
 const { createElement } = await import("react");
@@ -124,7 +124,7 @@ describe("one coordinator for every dirty form", () => {
   });
 });
 
-describe("the dialog speaks for every dirty form (Insurance final418 C1)", () => {
+describe("the dialog speaks for every dirty form", () => {
   it("the asking form is told how many forms are dirty: 2 with two, 1 with one", async () => {
     const nav = installNav();
     const a = vi.fn();
@@ -157,7 +157,7 @@ describe("the dialog speaks for every dirty form (Insurance final418 C1)", () =>
   });
 });
 
-describe("the fallbacks with two dirty forms (Insurance final418 C2)", () => {
+describe("the fallbacks with two dirty forms", () => {
   it("no Navigation API: a popstate gives ONE dialog and Leave replays ONE history move", async () => {
     let entry = 5;
     (window as unknown as { navigation: unknown }).navigation = {

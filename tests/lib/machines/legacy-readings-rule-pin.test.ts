@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-// Insurance LK-5 (#1369): the page decides whether an area "holds legacy readings" from the entries it loads, and 0301 decides it from
+// The page decides whether an area "holds legacy readings" from the entries it loads, and 0301 decides it from
 // the entries in the database. The two lists must follow ONE rule: live (not deleted) readings. A soft-deleted entry is not a reading
 // to either. If one side changes, this fails and the other must be looked at.
 const read = (p: string) => readFileSync(p, "utf8");

@@ -6,7 +6,7 @@ export type ClientLastMachineChoice = { deviceId: string | null; modeKey: string
 
 /**
  * THIS CLIENT's last machine, checked like any other choice before it is offered
- * (Photos R2; Privacy EL-2b). A unit the picker would refuse is dropped; a mode
+ *. A unit the picker would refuse is dropped; a mode
  * that is not one of that unit's ACTIVE modes becomes null, which the panel
  * resolves to the unit's first active mode, exactly as for the remembered
  * preference. The existing workflow is offered only when that is the model.

@@ -257,7 +257,7 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // 1280/390 matrix (about 9 minutes with a cold build) is run on demand, not in the targeted lane.
     // After merging production (which took the count to 54 with calendar-own-first.spec.ts, above): HON-8 adds machine-one-selector.spec.ts (HON-8, one selector for xCell/Junior/Senior, save/reopen, leave guard) joined `sessions`
     // beside machine-switch-discards-draft.spec.ts. RECORDED AS A DECISION per the note above: it is the only lane its subject can regress in.
-    // Now 56: machine-mode-then-save.spec.ts (HON-8, Photos R2: a mode click then a block save must not conflict with the user's own write; a genuine
+    // Now 56: machine-mode-then-save.spec.ts (HON-8: a mode click then a block save must not conflict with the user's own write; a genuine
     // second-tab edit still does) joined `sessions`. RECORDED AS A DECISION per the note above. Cost: FOUR executed cases (two models x two), each a
     // seeded studio, a magic-link login and a few page loads: about 2 minutes.
     expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(56);

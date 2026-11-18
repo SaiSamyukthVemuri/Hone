@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Codex, #1369 4493497730: the leave guard was disarmed while "Saving…" was pending, so closing, reloading or following a link mid-save
+// The leave guard was disarmed while "Saving…" was pending, so closing, reloading or following a link mid-save
 // could lose an unconfirmed draft (and, for a create, the retry key). It is armed while a request is in flight, through an unknown or
 // lost reply, and through a definitive refusal; only a CONFIRMED save releases it. Mounted: the real form, the real hook, a real
 // beforeunload event. Synthetic records.
@@ -166,7 +166,7 @@ describe("the leave guard on the real form", () => {
   });
 });
 
-// Codex #1369 4506141998: a NEW area saved UNCHANGED (prefilled values; the draft equals its baseline) was not unsaved, so an in-flight or
+// A NEW area saved UNCHANGED (prefilled values; the draft equals its baseline) was not unsaved, so an in-flight or
 // unresolved create did not arm the guard, and leaving dropped the create key (which is not in the URL). The create attempt is a registry
 // owner: unresolved from submit until a CONFIRMED outcome.
 describe("the leave guard on a CREATE saved without any edit", () => {

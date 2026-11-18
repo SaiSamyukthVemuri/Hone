@@ -225,10 +225,10 @@ describe("0301: the identity is saved with the area", () => {
   });
 });
 
-// Codex 4492927325: 0223's create claim hashes only its own arguments, and a profile id with no registered unit is not one of
+// 0223's create claim hashes only its own arguments, and a profile id with no registered unit is not one of
 // them. The same key with the profile changed from nothing to xCell used to be answered as a successful replay while the
 // choice was never recorded. The identity of the original save is its receipt; a different identity under the key is refused.
-describe("0301: a create replay must ask for the identity the original save recorded (Codex 4492927325)", () => {
+describe("0301: a create replay must ask for the identity the original save recorded", () => {
   const areas = (studioId: string) =>
     adminQuery(`select count(*)::int as n from public.session_blocks where studio_id = $1 and deleted_at is null`, [studioId]).then((r) => r.rows[0].n as number);
 
@@ -371,7 +371,7 @@ describe("0301: an existing area", () => {
     expect((await identity(blockId)).machine_mode_key).toBe("galvanic");
   });
 
-  it("a LATE REPLAY of an earlier submission does not put the earlier unit back (Privacy F-2)", async () => {
+  it("a LATE REPLAY of an earlier submission does not put the earlier unit back", async () => {
     const studio = await seedStudio("identity-replay");
     const { sessionId, blockId } = await seedSession(studio);
     const first = await register(studio);
@@ -400,7 +400,7 @@ describe("0301: an existing area", () => {
 
 // ===========================================================================
 // THE HELD VERSION IS CHECKED, AND THE NEW ONE RETURNED, INSIDE THE WRITE'S OWN
-// TRANSACTION (Codex #1369 4476240827). A read taken around the write could be
+// TRANSACTION. A read taken around the write could be
 // overtaken by a second tab; the command's own `UPDATE ... RETURNING` cannot.
 // ===========================================================================
 describe("0301: the block version token is checked and returned in the write transaction", () => {
@@ -485,7 +485,7 @@ describe("0301: the block version token is checked and returned in the write tra
     expect((await identity(blockId)).studio_machine_id).toBeNull();
   });
 
-  it("a same-key replay checks nothing and returns the version the ORIGINAL write stored, not the block's current one (Insurance N-8; receipts)", async () => {
+  it("a same-key replay checks nothing and returns the version the ORIGINAL write stored, not the block's current one", async () => {
     const studio = await seedStudio("token-replay");
     const { sessionId, blockId } = await seedSession(studio);
     const machine = await register(studio);
@@ -496,10 +496,10 @@ describe("0301: the block version token is checked and returned in the write tra
   });
 });
 
-// Insurance Z-1: record_treatment_setup_submission takes FOR SHARE on the block and the identity write takes
+// Record_treatment_setup_submission takes FOR SHARE on the block and the identity write takes
 // FOR UPDATE later in the same transaction, so two concurrent submissions on one block could each hold SHARE
 // and wait on the other's upgrade (deadlock 40P01). The wrapper now takes FOR UPDATE first.
-describe("0301: two concurrent submissions on one block do not deadlock (Insurance Z-1)", () => {
+describe("0301: two concurrent submissions on one block do not deadlock", () => {
   const ROUNDS = 12;
   it("both submissions commit, in either order, round after round", async () => {
     const studio = await seedStudio("concurrent-submit");
@@ -534,7 +534,7 @@ describe("0301: two concurrent submissions on one block do not deadlock (Insuran
   });
 });
 
-describe("0301: no direct write path to the new columns (Privacy EH-3)", () => {
+describe("0301: no direct write path to the new columns", () => {
   const COLS = ["machine_profile_id", "studio_machine_id", "machine_mode_key"];
 
   it("authenticated and anon hold no UPDATE or INSERT privilege on them, by table or by column", async () => {
@@ -575,7 +575,7 @@ describe("0301: legacy rows", () => {
 
 // ===========================================================================
 // An area that already holds xCell Pur readings never gets a NATIVE identity
-// (Codex, #1369 4471593271; decided by OPS). The refusal is in the one writer, so every command reaches it.
+//. The refusal is in the one writer, so every command reaches it.
 // ===========================================================================
 describe("0301: a saved area with xCell Pur readings takes no native machine", () => {
   const REFUSED = /already holds xCell Pur readings/;
@@ -684,7 +684,7 @@ describe("0301: a saved area with xCell Pur readings takes no native machine", (
     expect((await identity(blockId)).studio_machine_id).toBe(machine);
   });
 
-  it("NEGATIVE CONTROL: a SOFT-DELETED legacy entry is not a reading (OPS decision on Insurance LK-1)", async () => {
+  it("NEGATIVE CONTROL: a SOFT-DELETED legacy entry is not a reading", async () => {
     const studio = await seedStudio("identity-lock-deleted-entry");
     const { sessionId, blockId } = await seedSession(studio);
     const machine = await register(studio);
@@ -697,7 +697,7 @@ describe("0301: a saved area with xCell Pur readings takes no native machine", (
     expect((await identity(blockId)).studio_machine_id).toBe(machine);
   });
 
-  it("the create wrapper with a native unit AND one legacy parameter refuses and creates NO block (Insurance LK-2)", async () => {
+  it("the create wrapper with a native unit AND one legacy parameter refuses and creates NO block", async () => {
     const studio = await seedStudio("identity-lock-wrapper");
     const { sessionId } = await seedSession(studio);
     const machine = await register(studio);
@@ -717,9 +717,9 @@ describe("0301: a saved area with xCell Pur readings takes no native machine", (
   });
 });
 
-// Codex 4486745915: assert_session_writable (0166, frozen) never looks at sessions.deleted_at, and soft_delete_session leaves the
+// Assert_session_writable (0166, frozen) never looks at sessions.deleted_at, and soft_delete_session leaves the
 // blocks alone, so a direct call could change the identity of a block in a REMOVED session. Every identity command now refuses.
-describe("0301: a soft-deleted session takes no identity (Codex 4486745915)", () => {
+describe("0301: a soft-deleted session takes no identity", () => {
   const GONE = /Session not found or not writable/;
   async function retire(sessionId: string) {
     await adminTx(async (q) => {
@@ -805,7 +805,7 @@ describe("0301: a soft-deleted session takes no identity (Codex 4486745915)", ()
     }
   });
 
-  // 0310 redefines the core, so the order must hold for ITS body too, and the unit is locked LAST (Codex 4487384239).
+  // 0310 redefines the core, so the order must hold for ITS body too, and the unit is locked LAST.
   it("source order, 0310 core: live session lock, then the block lock, then the unit FOR SHARE", () => {
     const sql = readFileSync("supabase/migrations/0310_block_machine_identity_mode_contract.sql", "utf8");
     const i = sql.indexOf("create or replace function public.apply_block_machine_identity(");

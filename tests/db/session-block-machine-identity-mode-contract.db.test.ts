@@ -262,7 +262,7 @@ describe("only apply_block_machine_identity writes machine_mode_key", () => {
 });
 
 // ===========================================================================
-// THE UNIT IS LOCKED BEFORE IT IS ACCEPTED (Codex 4487384239).
+// THE UNIT IS LOCKED BEFORE IT IS ACCEPTED.
 // retire_studio_machine serialises only through its UPDATE row lock, so an UNLOCKED read of `retired_at` in the core could see the unit
 // live, lose the race to a committed retire, and then record a retired unit on the block. The core takes the unit FOR SHARE after the
 // session and block locks, so a concurrent retire either goes first (the unit is refused) or waits.
