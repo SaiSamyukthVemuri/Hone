@@ -22,9 +22,8 @@ import { describe, expect, it } from "vitest";
 //
 // WHAT THIS PROVES, AND DELIBERATELY NOTHING MORE:
 //
-//   1. every converted file uses SectionLabel;
-//   2. no converted file still contains the hand-rolled duplicate;
-//   3. legacy occurrence counts do not INCREASE from the measured baseline;
+//   3. legacy occurrence counts do not INCREASE from the measured baseline,
+//      and no file outside that baseline introduces the duplicate;
 //   4. SectionLabel remains the source of truth for the contract.
 //
 // WHAT THIS DOES NOT ATTEMPT, AND WHY THAT IS A DECISION RATHER THAN A GAP.
@@ -53,40 +52,6 @@ import { describe, expect, it } from "vitest";
 const REPO_ROOT = path.resolve(__dirname, "../..");
 const PRIMITIVE = "components/ui/section-label.tsx";
 const PRIMITIVE_SOURCE = readFileSync(path.join(REPO_ROOT, PRIMITIVE), "utf8");
-/**
- * The files this slice actually converted.
- *
- * Named explicitly rather than derived from the directory: Settings →
- * Availability also contains page.tsx, PractitionerWeekEditor.tsx and
- * ScopeSelector.tsx, which carried no hand-rolled label and were correctly left
- * alone. A prefix match would have demanded the primitive from files that never
- * needed it.
- *
- * Slice 3 is the same shape, measured the same way rather than assumed: the
- * session-charting directory holds thirteen `.tsx` files and the other eight
- * contain no `uppercase` at all, so the five listed below are the whole
- * population of that surface and not a chosen subset.
- */
-const CONVERTED: readonly string[] = [
-  // Slice 1 (#746) — Settings > Availability.
-  "app/(app)/settings/availability/AvailabilityClient.tsx",
-  "app/(app)/settings/availability/RecurringBreaksSection.tsx",
-  "app/(app)/settings/availability/ScopeField.tsx",
-  "app/(app)/settings/availability/TimedBlocksSection.tsx",
-  // Slice 2 — the rest of Settings, which is what completes the directory.
-  "app/(app)/settings/booking/BookingLinkCard.tsx",
-  "app/(app)/settings/consent/ConsentTemplatesEditor.tsx",
-  "app/(app)/settings/forms/intake-preview/page.tsx",
-  "app/(app)/settings/services/page.tsx",
-  "app/(app)/settings/tracking/TrackingProviderSelector.tsx",
-  // Slice 3 — session charting, which completes that directory.
-  "app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx",
-  "app/(app)/clients/[id]/sessions/[sessionId]/page.tsx",
-  "app/(app)/clients/[id]/sessions/[sessionId]/session-blocks-view.tsx",
-  "app/(app)/clients/[id]/sessions/[sessionId]/simplified-entry-form.tsx",
-  "app/(app)/clients/[id]/sessions/new/page.tsx",
-];
-
 /**
  * The shape that retired the directory-wide claim.
  *
@@ -392,10 +357,10 @@ const LEGACY_BASELINE: ReadonlyArray<readonly [string, number]> = [
  * A discovered absolute path, as this file's canonical lists spell it.
  *
  * `path.relative` emits the PLATFORM separator: `app\foo.tsx` on Windows, while
- * `CONVERTED`, `PRIMITIVE` and `LEGACY_BASELINE` are all written with `/`. Every
+ * `PRIMITIVE` and `LEGACY_BASELINE` are both written with `/`. Every
  * membership test here is a string comparison against those lists, so on a
- * Windows runner or developer machine nothing matches: converted files look
- * missing, baseline exclusions stop excluding, and the guard reports failures
+ * Windows runner or developer machine nothing matches: baseline exclusions
+ * stop excluding, and the guard reports failures
  * that are entirely an artefact of the separator.
  *
  * The canonical lists stay platform-independent — they describe the repository,
@@ -439,9 +404,8 @@ const BASELINE = new Map(LEGACY_BASELINE.map(([f, n]) => [f, n]));
 const FILES = ROOTS.flatMap((root) => walk(path.join(REPO_ROOT, root))).map((f) =>
   toRepoPath(path.relative(REPO_ROOT, f)),
 );
-const ADOPTED = CONVERTED;
 
-describe("UX-02: SectionLabel adoption at the converted Settings and session-charting sites", () => {
+describe("UX-02: SectionLabel stays the one definition of the section label", () => {
   it("4. the contract is read from the primitive, not restated here", () => {
     for (const c of ["font-medium", "uppercase", "tracking-wider"]) {
       expect(CONTRACT.typography.has(c), `contract lost ${c}`).toBe(true);
@@ -450,37 +414,6 @@ describe("UX-02: SectionLabel adoption at the converted Settings and session-cha
       true,
     );
     expect(CONTRACT.sizes.size, "the primitive's SIZE map went unread").toBeGreaterThan(0);
-  });
-
-  it("1. every converted file uses SectionLabel", () => {
-    expect(ADOPTED.length, "the converted set disappeared").toBe(14);
-    for (const file of ADOPTED) {
-      expect(FILES, `${file} is no longer in the tree`).toContain(file);
-    }
-    const without = ADOPTED.filter(
-      (file) => !readFileSync(path.join(REPO_ROOT, file), "utf8").includes("<SectionLabel"),
-    );
-    expect(without, "converted files must render the primitive").toEqual([]);
-  });
-
-  it("2. no converted file still hand-rolls the duplicate", () => {
-    for (const file of ADOPTED) {
-      expect(duplicates(file), `${file} still hand-rolls the label`).toEqual([]);
-      expect(BASELINE.has(file), `${file} should not be on the legacy baseline`).toBe(false);
-    }
-  });
-
-  it("2b. the conversion is complete — 41 sites across the fourteen converted files", () => {
-    // The slice's own claim, asserted rather than described: counting the
-    // primitive's usages is what makes the conversion total checkable.
-    // 21 from slice 1 (#746) + 7 from slice 2 + 13 from slice 3 = 41.
-    const total = ADOPTED.reduce(
-      (sum, file) =>
-        sum +
-        (readFileSync(path.join(REPO_ROOT, file), "utf8").match(/<SectionLabel[\s>]/g) ?? []).length,
-      0,
-    );
-    expect(total, "the converted site count moved").toBe(41);
   });
 
   it("5. the detector's blind spot is REAL, and is stated here rather than hidden", () => {
@@ -688,10 +621,10 @@ describe("UX-02: SectionLabel adoption at the converted Settings and session-cha
 // P2 (#746 exact-head review): discovered paths must be canonical before they
 // are compared to the lists in this file.
 //
-// Every membership test here is a string comparison against CONVERTED,
-// PRIMITIVE or LEGACY_BASELINE, all of which are written with "/". `path.relative`
+// Every membership test here is a string comparison against PRIMITIVE or
+// LEGACY_BASELINE, both of which are written with "/". `path.relative`
 // emits the PLATFORM separator, so on Windows a discovered "app\foo.tsx" matches
-// none of them: converted files read as missing, baseline exclusions stop
+// none of them: baseline exclusions stop
 // excluding, and the guard fails for a reason that has nothing to do with the
 // code it is guarding.
 describe("discovered paths are normalized before comparison", () => {

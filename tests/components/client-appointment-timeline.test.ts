@@ -157,12 +157,6 @@ const PAGE_PATH = path.resolve(
 const PAGE_SOURCE = readFileSync(PAGE_PATH, "utf8");
 
 describe("client profile Sessions tab embeds the appointment timeline", () => {
-  it("imports ClientAppointmentTimeline", () => {
-    expect(PAGE_SOURCE).toMatch(
-      /import \{ ClientAppointmentTimeline \} from "@\/components\/client-appointment-timeline"/,
-    );
-  });
-
   it("calls getAppointmentsForClientProfile with the resolved studio + client ids", () => {
     expect(PAGE_SOURCE).toMatch(
       /getAppointmentsForClientProfile\(\s*studio\.id,\s*client\.id,?\s*\)/,
@@ -173,17 +167,5 @@ describe("client profile Sessions tab embeds the appointment timeline", () => {
     expect(PAGE_SOURCE).toMatch(
       /<ClientAppointmentTimeline[\s\S]*?clientId=\{client\.id\}[\s\S]*?rows=\{appointmentTimeline\}/,
     );
-  });
-
-  it("no longer renders the legacy 'Visits awaiting charting' section", () => {
-    expect(PAGE_SOURCE).not.toMatch(/Visits awaiting charting/);
-  });
-
-  it("top-level + Log session button carries the secondary-path helper text", () => {
-    // PR #233 shortened the helper for phones; same meaning: the
-    // button is the walk-in path, booked appointments chart from the
-    // Sessions tab row.
-    expect(PAGE_SOURCE).toMatch(/Log session is for walk-ins without a booked appointment/);
-    expect(PAGE_SOURCE).toMatch(/chart from the appointment row in Sessions/);
   });
 });

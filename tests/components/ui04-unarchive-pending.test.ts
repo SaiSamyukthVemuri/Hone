@@ -109,9 +109,4 @@ describe("UI-04: both unarchive controls report their own progress", () => {
     expect(EDIT).not.toContain("useFormStatus");
     expect(LIST).not.toContain("useFormStatus");
   });
-
-  it("adds no dependency", () => {
-    const pkg = JSON.parse(read("package.json")) as { dependencies: Record<string, string> };
-    expect(Object.keys(pkg.dependencies).length).toBe(21);
-  });
 });

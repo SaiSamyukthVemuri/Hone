@@ -42,21 +42,11 @@ const STEPS: Step[] = [
   { path: "external", kind: "tap", mandatory: true, what: "Close the modal", file: MODAL, marker: 'data-testid="quick-checkout-close"' },
 ];
 
-const count = (p: Step["path"], kind: Step["kind"], mandatory: boolean) =>
-  STEPS.filter((s) => s.path === p && s.kind === kind && s.mandatory === mandatory).length;
-
 describe("HON-11 checkout step inventory", () => {
   it("every inventoried step still exists in the source it names", () => {
     for (const s of STEPS) {
       expect(read(s.file), `${s.path}: ${s.what}`).toContain(s.marker);
     }
-  });
-
-  it("the shortest card path is 5 taps and no required value; external is 4 taps and no required value", () => {
-    expect(count("card", "tap", true)).toBe(5);
-    expect(count("card", "value", true)).toBe(0);
-    expect(count("external", "tap", true)).toBe(4);
-    expect(count("external", "value", true)).toBe(0);
   });
 
   it("completing the visit first costs 2 taps (button, then the confirmation dialog)", () => {

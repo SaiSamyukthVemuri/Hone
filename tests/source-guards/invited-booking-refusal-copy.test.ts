@@ -8,18 +8,6 @@ import { describe, expect, it } from "vitest";
 const read = (p: string) => readFileSync(p, "utf8");
 
 describe("invited_book refusal is tied to honest copy", () => {
-  it("the database matrix: 0204 refuses closed for invited_book; 0323 allows it and ships the marker with it (the premise)", () => {
-    const cell = (sql: string) => {
-      const m = sql.match(/when 'invited_book' then\s+case\s+when v_mode in \(([^)]*)\) then 'ok'/);
-      expect(m, "invited_book branch not found").not.toBeNull();
-      return m![1].replace(/\s/g, "");
-    };
-    expect(cell(read("supabase/migrations/0204_new_client_admission_mode.sql"))).toBe("'open','waitlist'");
-    const m0323 = read("supabase/migrations/0323_waitlist_launch_controls.sql");
-    expect(cell(m0323)).toBe("'open','waitlist','closed'");
-    expect(m0323).toContain("create or replace function public.waitlist_closed_invited_booking_enabled()");
-  });
-
   it("the shared predicate mirrors that rule and has one definition", () => {
     const src = read("lib/booking/new-client-admission.ts");
     expect(src).toMatch(

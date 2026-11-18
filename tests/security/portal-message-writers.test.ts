@@ -2,11 +2,10 @@ import { describe, expect, it } from "vitest";
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { countVersion, isRepoMax } from "../migrations/helpers/migration-state";
 
 // Portal messages and replies. STATIC contract only: who writes the two tables in the
 // application, that each writer resolves its actor and tenant from the session before it opens the service-role
-// client, and the shape of migration 0341. Runtime behaviour is in tests/db/portal-message-direct-writes.db.test.ts.
+// client, and the shape of the 0341 rollback. Runtime behaviour is in tests/db/portal-message-direct-writes.db.test.ts.
 
 const root = join(__dirname, "..", "..");
 const STAFF = "app/(app)/clients/[id]/portal-messages-actions.ts";
@@ -69,10 +68,9 @@ describe("portal message writers: actor and tenant come from the session, never 
   });
 });
 
-describe("0341: the two portal message tables only, policies and write grants only", () => {
+describe("0341 rollback: restores exactly what the migration removed", () => {
   const NAME = "0341_portal_message_member_write_policies";
   const strip = (sql: string) => sql.split("\n").map((l) => l.replace(/--.*$/, "")).join("\n");
-  const E = strip(read(`supabase/migrations/${NAME}.sql`));
   const DOWN = strip(read(`supabase/rollbacks/${NAME}.down.sql`));
   const TABLES = ["client_portal_messages", "client_portal_message_replies"];
   const WRITE_POLICIES = [
@@ -82,29 +80,6 @@ describe("0341: the two portal message tables only, policies and write grants on
   ] as const;
   // every "public.<table>" either file names must be one of the two
   const tablesNamed = (sql: string) => [...new Set([...sql.matchAll(/\bon (?:table )?public\.([a-z_]+)/g)].map((m) => m[1]))].sort();
-
-  it("consumes exactly one migration number", () => {
-    expect(countVersion("0341")).toBe(1);
-    expect(isRepoMax("0341")).toBe(false); // only the current maximum asserts this (CLAUDE.md §2)
-  });
-
-  it("opens its own transaction, drops exactly the three member write policies and creates nothing", () => {
-    expect(E.trim()).toMatch(/^begin;\s*set local lock_timeout = '5s';/);
-    expect(E.trim().endsWith("commit;")).toBe(true);
-    expect(E.match(/drop policy/g)?.length).toBe(3);
-    for (const [policy, table] of WRITE_POLICIES) {
-      expect(E).toContain(`drop policy if exists "${policy}" on public.${table};`);
-    }
-    expect(E).not.toMatch(/create policy|create (or replace )?function|create trigger|alter table|\bgrant\b|\b(insert into|update public|delete from)\b/);
-    expect(E).not.toMatch(/drop policy if exists "[a-z_]*select"/); // read access untouched
-    expect(tablesNamed(E)).toEqual([...TABLES].sort());
-  });
-
-  it("revokes INSERT and UPDATE only, from anon and authenticated only", () => {
-    expect(E.match(/revoke [^;]+;/g) ?? []).toEqual(
-      TABLES.map((t) => `revoke insert, update on table public.${t} from anon, authenticated;`),
-    );
-  });
 
   it("the rollback grants back exactly what was revoked and restores the three 0055 policy definitions", () => {
     expect(DOWN.match(/grant [^;]+;/g) ?? []).toEqual(

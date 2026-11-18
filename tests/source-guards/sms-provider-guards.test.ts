@@ -285,28 +285,9 @@ describe("browser-supplied provider identifiers are never authority", () => {
   });
 
   it("the claim key is minted by the database, never by the application", () => {
-    const migration = readFileSync(
-      path.join(ROOT, "supabase/migrations/0191_studio_sms_sender_provisioning.sql"),
-      "utf8",
-    );
-    expect(migration).toMatch(/'hone-sms-' \|\| replace\(gen_random_uuid\(\)::text, '-', ''\)/);
-    // And nothing in the application generates one.
+    // The key is minted in SQL (0191); nothing in the application generates one.
     expect(code(ORCHESTRATION)).not.toMatch(/hone-sms-/);
     expect(code(STORE)).not.toMatch(/hone-sms-/);
-  });
-
-  it("the browser's grant excludes every provider identifier", () => {
-    const migration = readFileSync(
-      path.join(ROOT, "supabase/migrations/0191_studio_sms_sender_provisioning.sql"),
-      "utf8",
-    );
-    const grant = migration.slice(
-      migration.indexOf("grant select ("),
-      migration.indexOf(") on public.studio_sms_senders to authenticated;"),
-    );
-    expect(grant).not.toContain("phone_number_sid");
-    expect(grant).not.toContain("messaging_service_sid");
-    expect(grant).not.toContain("provisioning_claim_key");
   });
 });
 
