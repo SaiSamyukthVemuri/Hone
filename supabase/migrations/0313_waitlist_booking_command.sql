@@ -385,6 +385,7 @@ $$;
 -- ---------------------------------------------------------------------------
 -- 5. Grants, restated BY NAME for all three default grantees.
 -- ---------------------------------------------------------------------------
+revoke all on function public.redeem_and_book_waitlist_invitation(text, text, uuid, uuid, text, text, text, timestamptz, uuid, timestamptz, text, boolean, text, text) from public, anon, authenticated, service_role;
 revoke all on function public.waitlist_invitation_booking_state(text) from public, anon, authenticated, service_role;
 revoke all on function public.record_waitlist_invitation_followup(text, text) from public, anon, authenticated, service_role;
 revoke all on function public.resolve_waitlist_invitation_followup(uuid, uuid, uuid) from public, anon, authenticated, service_role;

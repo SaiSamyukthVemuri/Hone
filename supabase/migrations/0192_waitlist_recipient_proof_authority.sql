@@ -1406,6 +1406,7 @@ revoke all privileges on function public.redeem_new_client_waitlist_invitation(t
 revoke all privileges on function public.issue_new_client_waitlist_invitation(uuid, uuid, uuid, integer) from public;
 revoke all privileges on function public.issue_new_client_waitlist_invitation(uuid, uuid, uuid, integer) from anon;
 revoke all privileges on function public.issue_new_client_waitlist_invitation(uuid, uuid, uuid, integer) from authenticated;
+revoke all privileges on function public.issue_new_client_waitlist_invitation(uuid, uuid, uuid, integer) from service_role;
 
 -- ---------------------------------------------------------------------
 -- 14b. THE LEGACY LIFECYCLE COMMANDS LEARN THAT A DECLINED ROW IS CLOSED.
