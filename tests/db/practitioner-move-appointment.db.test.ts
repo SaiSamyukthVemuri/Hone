@@ -472,10 +472,9 @@ describe("atomicity + buffer invariant + grants", () => {
   // no object left to hold a grant.
   //
   // Deliberately NOT replaced with a "the function does not exist" check here —
-  // tests/migrations/0175-appointment-transition-integrity.test.ts already pins
-  // the exact DROP statements, and tests/db/appointment-transition-integrity
-  // .db.test.ts already proves all three are absent from pg_proc while their
-  // successors survive. A third copy would be duplication, not coverage.
+  // tests/db/appointment-transition-integrity.db.test.ts already proves all
+  // three are absent from pg_proc while their successors survive. A second
+  // copy would be duplication, not coverage.
   //
   // What that test was really protecting — "this migration did not weaken some
   // OTHER command's EXECUTE posture" — is preserved by the reschedule
