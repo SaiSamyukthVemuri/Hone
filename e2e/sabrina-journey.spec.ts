@@ -84,7 +84,7 @@ test.describe("A. invite and accept (HON-44)", () => {
   // getResendTransport(), so the fake transport and its capture ledger never see it (the server logged
   // team_invitation_email_failed:provider_error:validation_error against the lane's dummy key). Written down as the exact
   // contract; blocked until the invitation send goes through the shared transport.
-  test.fixme("J1b the invitation email is recorded by the captured transport, exactly once (blocked until the invitation-transport fix, #1608, is on the base: un-fixme then)", async () => {
+  test("J1b the invitation email is recorded by the captured transport, exactly once", async () => {
     const mark = markResendLedger();
     const email = `success+j-cap-${run}@harness.local`;
     await inviteViaTeamPage(ownerPage, email, `Journey Captured ${run}`);
@@ -154,6 +154,23 @@ test.describe("B. staff books, the practitioner charts (HON-45)", () => {
     // The charted-but-unfinished visit is visible to the owner on the dashboard, so it cannot stay open unseen.
     await ownerPage.goto("/dashboard");
     await expect(ownerPage.getByText("Not finished").first()).toBeVisible({ timeout: T });
+    // REAL-DB PROOF of the exact count and the View all list (inner joins, count, range): the page must agree with an independent
+    // SQL count of confirmed, ended appointments that have a live chart, and the studio's own list must hold exactly those rows.
+    const [{ n }] = await sql<{ n: string }>(
+      `select count(*)::text as n from public.appointments a
+        where a.studio_id=$1 and a.status='confirmed' and a.ends_at <= now()
+          and exists (select 1 from public.sessions s where s.appointment_id=a.id and s.studio_id=a.studio_id and s.deleted_at is null)
+          and exists (select 1 from public.clients c where c.id=a.client_id and c.archived_at is null)`,
+      [seed.studioId],
+    );
+    const total = Number(n);
+    expect(total).toBeGreaterThanOrEqual(1);
+    await expect(ownerPage.getByTestId("unfinished-total")).toContainText(`${total} ${total === 1 ? "visit" : "visits"} not finished`, { timeout: T });
+    await ownerPage.getByTestId("unfinished-view-all").click();
+    await ownerPage.waitForURL(/\/dashboard\/unfinished/, { timeout: T });
+    await expect(ownerPage.getByTestId("unfinished-list-total")).toContainText(`${total} ${total === 1 ? "visit" : "visits"} not finished`, { timeout: T });
+    await expect(ownerPage.getByTestId("unfinished-list").locator("li")).toHaveCount(Math.min(total, 25));
+    await expect(ownerPage.locator(`a[href$="/sessions/${sessionId}"]`).first()).toBeVisible();
   });
 
   test("J5 Finish completes once, sends no postcare and takes no payment; reload changes nothing", async () => {
