@@ -40,8 +40,8 @@ const SIGS: Record<string, string> = {
 // current maximum migration's own test may assert isRepoMax — an older
 // per-migration test that keeps the pin turns every subsequent migration into a
 // mechanical sweep, which is exactly how 0163/0164/0165 each went red after
-// push. The "nothing above me" tripwire is served centrally by the current
-// maximum's test (tests/migrations/0172-appointment-dml-revocation.test.ts).
+// push. The "nothing above me" tripwire is served centrally
+// (tests/migrations/max-pin-tripwire.test.ts).
 
 describe("0171 — declares exactly the three intended functions", () => {
   it("creates only the reschedule candidate helper, validator and command", () => {

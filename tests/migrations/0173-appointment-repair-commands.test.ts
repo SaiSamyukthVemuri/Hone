@@ -11,9 +11,7 @@ import { countVersion } from "./helpers/migration-state";
 // which functions exist, what the file must NOT contain, and the standing
 // prohibitions B4 inherits from 0172.
 //
-// Cloned from tests/migrations/0172-appointment-dml-revocation.test.ts, which is
-// the repository's template for a boundary migration test — including its
-// hard-won lesson about anchored regexes (see EXECUTABLE below).
+// Carries the hard-won lesson about anchored regexes (see EXECUTABLE below).
 // ===========================================================================
 
 const FILE = "supabase/migrations/0173_appointment_repair_commands.sql";
@@ -55,8 +53,7 @@ const FUNCTIONS = [
 // ---------------------------------------------------------------------------
 
 describe("0173 — migration state", () => {
-  // The CENTRAL tripwire, moved here from
-  // tests/migrations/0172-appointment-dml-revocation.test.ts when B4 landed.
+  // The CENTRAL tripwire, moved here when B4 landed.
   // Only the current maximum migration's own test carries it (CLAUDE.md §2);
   // an older per-migration test that keeps the pin turns every subsequent
   // migration into a mechanical sweep, which is exactly how 0163, 0164 and 0165

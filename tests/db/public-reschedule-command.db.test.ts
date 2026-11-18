@@ -1484,8 +1484,7 @@ describe("0171 — privilege boundary", () => {
   // RETIRED (B6 / 0175). This asserted the legacy v1 `reschedule_appointment`
   // remained INSTALLED for deployment skew. B6 dropped it by exact signature
   // after a zero-caller census, so the claim is not merely false — the object
-  // it referred to is gone. The exact DROP is pinned in
-  // tests/migrations/0175-appointment-transition-integrity.test.ts and its
+  // it referred to is gone. Its
   // absence is proven in tests/db/appointment-transition-integrity.db.test.ts,
   // so no replacement assertion is added here.
 
