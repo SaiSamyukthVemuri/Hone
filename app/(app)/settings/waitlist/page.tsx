@@ -879,6 +879,9 @@ export default async function WaitlistSettingsPage({
         <Link href="/settings/waitlist/released" className="underline">
           Released and expired history
         </Link>
+        <Link href="/settings/waitlist/archived" className="underline">
+          Archived entries
+        </Link>
       </p>
 
       {/* NO BULK CLAIM CONTROL. "Claim the next N" was removed with the rest of
