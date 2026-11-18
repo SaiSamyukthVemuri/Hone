@@ -107,6 +107,40 @@ describe("the panel acts on the host form's MultiPlex request (there is no secon
     await act(async () => { await Promise.resolve(); });
     expect(kinds.at(-1), "the dropped request is not replayed").toBe("legacy");
   });
+  // INSURANCE (#1603): each half of the freeze guard is pinned on its own, so removing either one fails a test.
+  it("HALF 1 (selectionPending): a request made while a machine pick is still pending is dropped", async () => {
+    const seen: unknown[] = []; const kinds: string[] = [];
+    const common = { onSelectMachine: vi.fn(() => new Promise(() => undefined)), onResolvedChoice: (c: unknown) => seen.push(c), onKindChange: (k: string) => kinds.push(k) };
+    mount(common);
+    set(machineSelect(), "legacy:xcell"); // the pick never settles
+    rerender({ ...common, multiplexRequest: { seq: 1, want: true } });
+    await act(async () => { await Promise.resolve(); });
+    expect(seen.some((c) => (c as { modeKey?: string } | null)?.modeKey === "multiplex")).toBe(false);
+    expect(kinds.at(-1)).not.toBe("native");
+  });
+  it("HALF 2 (identityFrozen via revisionUnresolved): a request made while a save is unresolved is dropped", async () => {
+    const { DraftRegistryProvider, useDraftRegistryState } = await import("@/components/machines/draft-registry");
+    function UnresolvedHost({ children }: { children?: unknown }) {
+      const { api } = useDraftRegistryState();
+      return createElement(DraftRegistryProvider, { api, view: { anyDraft: true, anyUnresolved: true }, children } as never);
+    }
+    const seen: unknown[] = []; const kinds: string[] = [];
+    const common = { onSelectMachine: vi.fn(async () => ({ ok: true })), onResolvedChoice: (c: unknown) => seen.push(c), onKindChange: (k: string) => kinds.push(k) };
+    const render = (extra: Record<string, unknown>) =>
+      act(() => root!.render(createElement(UnresolvedHost, null, createElement(MachineFirstSetupPanel, {
+        devices: [UNIT], scope: SCOPE, catalogue: MACHINE_CATALOGUE, legacyMachine: LEGACY, multiplexRoute: ROUTE, ...common, ...extra,
+      } as never)) as never));
+    host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
+    render({});
+    await act(async () => { await Promise.resolve(); });
+    // the machine picker is held while a save is unresolved, so reach legacy through the saved-identity prop instead of the select
+    render({ initialLegacyChosen: true });
+    await act(async () => { await Promise.resolve(); });
+    render({ initialLegacyChosen: true, multiplexRequest: { seq: 1, want: true } });
+    await act(async () => { await Promise.resolve(); });
+    expect(seen.some((c) => (c as { modeKey?: string } | null)?.modeKey === "multiplex")).toBe(false);
+    expect(kinds.at(-1)).not.toBe("native");
+  });
   it("a SAVED area ignores a request: it keeps the identity it was saved with", async () => {
     const onSelectMachine = vi.fn(async () => ({ ok: true }));
     mount({ blockId: "b1", initialLegacyChosen: true, onSelectMachine });
