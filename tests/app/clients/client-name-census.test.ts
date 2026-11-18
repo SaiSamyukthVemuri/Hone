@@ -62,7 +62,7 @@ const BASELINE: ReadonlyArray<readonly [string, number, Status]> = [
 const GAP_EVIDENCE: Record<string, string> = {
   "app/(app)/clients/[id]/clinical-notes/print/page.tsx": "clinical output prints the stored name; the rule is the legal identity (clientClinicalName) when one is set",
   "app/api/cron/appointment-reminders/route.ts": "LIVE client-facing: the treatment-time line renders \"<first word of the STORED name>'s first electrolysis session\" in the reminder email when the studio shows treatment time (lib/treatment-time/format.ts:64)",
-  "lib/email/send-appointment.ts": "LIVE client-facing: same treatment-time line, first word of the stored name (line ~953)",
+  "lib/email/send-appointment.ts": "LIVE client-facing: same treatment-time line, first word of the stored name (line ~953; fixed separately). Also hands the STORED name to the practitioner new-booking and cancellation emails (see STAFF_EMAIL_GAPS)",
   "app/intake/[token]/actions.ts": 'staff notification "<stored name> submitted an intake form."',
   "lib/billing/card-change-notification.ts": "staff notification names the client by the stored name (select name only)",
   "lib/notifications/appointment-cancel-notification.ts": "staff notification names the client by the stored name (reads name only)",
@@ -116,6 +116,25 @@ describe("client-name census: which files read a stored client name", () => {
     const stale = BASELINE.filter(([f, n]) => (found.get(f) ?? 0) < n).map(([f, n]) => `${f}: now ${found.get(f) ?? 0}, recorded ${n}`);
     expect(stale).toEqual([]);
   });
+});
+
+// Staff emails that render a client name from a caller-supplied string. The rule for staff surfaces is the display name
+// (preferred, else stored); these render whatever the caller passes, and every caller passes the stored name. Recorded as gaps, NOT
+// fixed here: the template is shared by several callers (calendar, public booking, portal rebook, reschedule, cancel), each with its own
+// client read, so the fix is one loader at the send boundary, a separate change.
+const STAFF_EMAIL_GAPS: ReadonlyArray<readonly [string, string, string]> = [
+  ["lib/email/templates/appointment.ts", "const safeClient = escapeHtml(p.clientName);", "practitioner new-booking email, HTML client name"],
+  ["lib/email/templates/appointment.ts", "\n${p.clientName}\n", "practitioner new-booking email, text client name"],
+  ["lib/email/templates/appointment.ts", 'rows.push(["Client", p.clientName.trim()])', "cancellation email, the Client row"],
+  ["lib/email/send-appointment.ts", "clientName: params.clientName,", "the send functions pass the caller's stored name through unchanged"],
+];
+
+describe("staff emails that name the client by the stored name are recorded, not forgotten", () => {
+  for (const [file, needle, what] of STAFF_EMAIL_GAPS) {
+    it(`${file}: ${what}`, () => {
+      expect(readFileSync(file, "utf8"), "the site moved or was fixed: update STAFF_EMAIL_GAPS (a fixed one is removed)").toContain(needle);
+    });
+  }
 });
 
 describe("statuses are true of the files they are attached to", () => {
