@@ -28,6 +28,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | **Next free number** | Next free number is **0358** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by reservation, not by this file. <!-- ledger-derived --> |
 | **Project ref** | Canonical Hone production project. |
 
+### Cancellation fee tiers (0357, applied; the app code ships with #1526)
+
+`0357_cancellation_fee_tiers.sql` adds owner-governed notice-window and same-day cancellation fee rules, revision-based writes, an audit trail and immutable attempt timing evidence. It creates no studio enrollment, changes no policy or acknowledgement, and enables no fee. It is recorded as applied in the 0357 apply record in the section "The 0357 apply" below; the application code that uses it ships separately with #1526. See `docs/production/cancellation-fee-tiers-release.md`.
+
 ### What the two pending migrations are (no hosted claim)
 
 - **`0313`** adds two empty tables (a follow-up item table and an invitation-to-appointment link table, both RLS on, no policy, no API-role privilege) and four service-role-only functions; nothing writes to them until the booking flag is switched on.
