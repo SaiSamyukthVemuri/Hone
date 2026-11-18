@@ -302,7 +302,7 @@ export function GlobalSearch({ variant }: { variant: "desktop" | "mobile" }) {
 
   if (variant === "desktop") {
     return (
-      <div ref={rootRef} className="relative w-36 lg:w-48 xl:w-56">
+      <div ref={rootRef} className="relative w-36 lg:w-48">
         <input
           type="search"
           value={query}
