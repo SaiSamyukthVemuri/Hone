@@ -622,8 +622,20 @@ test.describe("the studio's waitlist queue", () => {
     await loginAsOwner(page, seed);
 
     // The tab is visible because this studio's durable waitlist is enabled.
+    // Scoped to the Settings rail: the main navigation now carries a link with
+    // the same name (HON-7), so an unscoped locator matches both.
     await page.goto("/settings/booking");
-    await expect(page.getByRole("link", { name: /^waitlist$/i })).toBeVisible();
+    await expect(
+      page
+        .getByRole("navigation", { name: "Settings sections" })
+        .getByRole("link", { name: /^waitlist$/i }),
+    ).toBeVisible();
+    // The same studio and owner also see the main navigation entry.
+    await expect(
+      page
+        .getByRole("navigation", { name: "Primary navigation" })
+        .getByRole("link", { name: /^waitlist$/i }),
+    ).toBeVisible();
 
     await page.goto("/settings/waitlist");
     await expect(page.getByRole("heading", { name: /^waitlist$/i })).toBeVisible();
