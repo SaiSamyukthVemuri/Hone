@@ -31,7 +31,11 @@ export default async function TicketedDayPacketPage({ params }: { params: Promis
     return (
       <div role="alert" data-testid="day-packet-refusal" className="flex flex-col gap-2 text-sm">
         <p className="text-base font-medium">This print link is no longer valid.</p>
-        <p>Open Print again from the client&rsquo;s session. A print link works once and for five minutes.</p>
+        <p>Start a fresh print from the client&rsquo;s session: open the session and press &ldquo;Print this day&rsquo;s record&rdquo; again.</p>
+        <p>
+          A print link works once, for five minutes. If you reloaded this page, went Back to it, or your browser (Safari
+          on an iPad, for example) restored this tab, the link has already been used.
+        </p>
         <p className="text-neutral-600">No clinical record is shown.</p>
         <ReopenButton ticket={token} isOwner={practitioner.role === "owner" && practitioner.active === true} />
         <Link href="/records" prefetch={false} referrerPolicy="no-referrer" className="text-neutral-600 underline print:hidden">
