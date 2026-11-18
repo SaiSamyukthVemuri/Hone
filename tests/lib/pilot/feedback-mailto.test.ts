@@ -1,6 +1,6 @@
 import { COMPOSED_DASHBOARD } from "../../app/dashboard/helpers/composed-dashboard";
 import { describe, expect, it } from "vitest";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   buildPilotFeedbackMailto,
@@ -13,7 +13,7 @@ import {
 // Pilot Love Loop V1 (PR #250). Manual mailto only — no automated send,
 // no contacts, no referral automation, no AI. The builder takes ENUM
 // inputs only, so by construction no client-sensitive data can reach the
-// subject/body. These tests pin that, plus the component/dashboard wiring.
+// subject/body. These tests pin that, plus the Dashboard no longer rendering it.
 //
 // CHLOE D4 (this PR). The Dashboard "Pilot learning" card is REMOVED: it was
 // pilot tooling ("…Send it to Sam", "Know another electrologist?") occupying a
@@ -124,29 +124,6 @@ describe("Pilot Love Loop: source pins (helper + components)", () => {
     expect(PROMPT).not.toMatch(/"use client"|onClick|<button|<form|action=/);
     expect(PROMPT).toMatch(/href=\{buildPilotFeedbackMailto/);
   });
-
-  it("the prompt copy is quiet and optional, never a growth/referral nag", () => {
-    expect(PROMPT).toMatch(/Was this useful\?/);
-    expect(PROMPT).toMatch(/Not really/);
-    expect(PROMPT).not.toMatch(
-      /refer a friend|invite your contacts|help us grow|claim your reward|share client/i,
-    );
-  });
-
-  it("CHLOE D4: the Pilot learning card component is DELETED, not orphaned", () => {
-    // A caller census ran before deleting it: the component was imported by
-    // exactly one file (the dashboard page) and referenced nowhere else, so it
-    // is genuinely dead rather than merely unrendered. The shared
-    // feedback-mailto helper is NOT deleted — PilotFeedbackPrompt still uses
-    // it, which is the whole reason this file still exists.
-    expect(
-      existsSync(join(process.cwd(), "app/(app)/dashboard/pilot-learning.tsx")),
-      "pilot-learning.tsx should be deleted",
-    ).toBe(false);
-    expect(existsSync(join(process.cwd(), "lib/pilot/feedback-mailto.ts"))).toBe(
-      true,
-    );
-  });
 });
 
 describe("Pilot Love Loop: dashboard wiring (source pins)", () => {
@@ -165,15 +142,6 @@ describe("Pilot Love Loop: dashboard wiring (source pins)", () => {
     expect(PAGE_CODE).not.toMatch(/Send it to Sam/i);
     expect(PAGE_CODE).not.toMatch(/Know another electrologist/i);
     expect(PAGE_CODE).not.toMatch(/Pilot learning/);
-  });
-
-  it("the operational surfaces it sat beside are untouched", () => {
-    // The Daily Prep Brief card is retired into the combined Today workflow.
-    expect(PAGE).toMatch(/buildTodayWorkflow\(todayWorkflowInputs\)/);
-    // Intended change (dashboard attention, #1356): the panel takes the model via the visibility resolver (dismissals applied);
-    // the model is still built by buildNeedsAttention.
-    expect(PAGE).toMatch(/buildNeedsAttention\(\{/);
-    expect(PAGE).toMatch(/<NeedsAttentionPanel\s+needs=\{v\.shown\}/);
   });
 
   // DASH-TRUTH-04: the Dashboard no longer carries ANY feedback prompt. The

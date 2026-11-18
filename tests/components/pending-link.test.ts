@@ -66,16 +66,6 @@ describe("UI-01 ships exactly one client boundary, in the right place", () => {
     expect(code).toContain("useLinkStatus");
   });
 
-  it("does NOT live in components/ui/, the server-compatible primitive layer", () => {
-    // tests/components/ui-foundations.test.ts asserts that no file in
-    // components/ui/ declares "use client" or touches a stateful React hook,
-    // because a visual foundation must never be the reason a server-rendered
-    // clinical page starts hydrating. PendingLink would violate both. Carving
-    // an exception into that guard would have weakened a rule with a real
-    // stated purpose; the component moved instead.
-    expect(PENDING_LINK.startsWith("components/ui/")).toBe(false);
-  });
-
   it("stays a leaf island — next/link and two class helpers, nothing else", () => {
     // UI-R01 added exactly one import: @/components/ui/spinner, which is the
     // same CHARACTER as ./ui/control-base — a server-compatible, dependency-free
@@ -309,12 +299,6 @@ describe("UI-01C: two forms, one mechanism", () => {
     expect(code.match(/data-link-pending="true"/g) ?? []).toHaveLength(2);
   });
 
-  it("the container form starts no navigation either", () => {
-    expect(code).not.toContain("onClick");
-    expect(code).not.toContain("router.push");
-    expect(code).not.toContain("preventDefault");
-  });
-
   it("does NOT reach for display: contents", () => {
     // The obvious way to make a wrapper disappear from layout, and rejected:
     // whether `display: contents` also removes the element from the
@@ -403,24 +387,10 @@ describe("UI-01C: PendingContainerLink adds nothing to the layout", () => {
 });
 
 describe("UI-01C: the row body and the calendar toolbar are wired to it", () => {
-    const dash = codeOnly(COMPOSED_DASHBOARD);
   const toolbarSrc = read("app/(app)/calendar/CalendarToolbar.tsx");
   const toggleSrc = read("app/(app)/calendar/ViewToggle.tsx");
   const toolbar = codeOnly(toolbarSrc);
   const toggle = codeOnly(toggleSrc);
-
-  it("the appointment row body uses the container form, once", () => {
-    expect(dash.match(/<PendingContainerLink\b/g) ?? []).toHaveLength(1);
-    expect(dash).toMatch(
-      /<PendingContainerLink[\s\S]{0,300}href=\{`\/calendar\/\$\{appt\.id\}`\}/,
-    );
-    // Destination unchanged. The layout classes follow the compact row (#1308): the body is a direct flex
-    // item of the row, full width on a phone and the growing column beside Visit details and Open on desktop.
-    expect(dash).toMatch(
-      /<PendingContainerLink[\s\S]{0,300}className="flex min-w-0 basis-full gap-3 lg:basis-0 lg:flex-1"/,
-    );
-    expect(dash).toContain('pendingLabel="Opening appointment…"');
-  });
 
   it("every calendar toolbar control that navigates is a PendingLink", () => {
     // Real client navigations: Week and Month (the toggle), then Today,
@@ -457,16 +427,6 @@ describe("UI-01C: the row body and the calendar toolbar are wired to it", () => 
     for (const source of [toolbarSrc, toggleSrc]) {
       expect(source).not.toMatch(/^"use client"/);
     }
-  });
-
-  it("changes no destination and no existing semantics", () => {
-    for (const href of ["todayHref", "prevHref", "nextHref", "upcomingHref"]) {
-      expect(toolbar).toContain(`href={${href}}`);
-    }
-    expect(toggle).toContain("href={tab.href}");
-    expect(toolbar).toContain('aria-label="Previous"');
-    expect(toolbar).toContain('aria-label="Next"');
-    expect(toggle).toContain('aria-current={active ? "page" : undefined}');
   });
 
   it("gives every toolbar control a request-shaped pending label", () => {

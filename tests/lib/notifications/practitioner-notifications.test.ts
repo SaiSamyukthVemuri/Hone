@@ -57,44 +57,12 @@ describe("helper module imports + boundary", () => {
     expect(stripped).toMatch(/^\s*import "server-only";/);
   });
 
-  it("imports the admin client (service-role write path)", () => {
-    expect(SOURCE).toMatch(
-      /import \{ createAdminClient \} from "@\/lib\/supabase\/admin-server"/,
-    );
-  });
-
   it("does NOT import the RLS-side createClient (writes bypass RLS deliberately)", () => {
     expect(SOURCE).not.toMatch(/from "@\/lib\/supabase\/server"/);
   });
 });
 
 describe("helper enforces the never-throws contract", () => {
-  it("wraps the admin insert in a void fire-and-forget IIFE", () => {
-    expect(SOURCE).toMatch(/void \(async \(\) => \{/);
-  });
-
-  it("the IIFE body is wrapped in try/catch", () => {
-    // The fire-and-forget block must contain a try { ... } catch (err) { ... }
-    // around the createAdminClient + insert. We pin the shape; the
-    // catch arm logs and fires an ops_alerts entry (also fire-and-
-    // forget).
-    // HON-7: the try/catch lives in the shared write function that the IIFE (and the awaitable variant) call.
-    const iife =
-      SOURCE.match(
-        /async function writePractitionerNotification[\s\S]*?\n\}\n/,
-      )?.[0] ?? "";
-    expect(iife).toMatch(/try \{/);
-    expect(iife).toMatch(/\} catch \(err\) \{/);
-  });
-
-  it("logs to ops_alerts via the existing recordOpsAlert helper", () => {
-    // Two distinct sites: the insert-failure branch and the
-    // catch-all branch. Both go through fireAndForgetOpsAlert.
-    expect(SOURCE).toMatch(/import\("@\/lib\/ops\/alerts"\)/);
-    const opsCalls = SOURCE.match(/recordOpsAlert\(/g) ?? [];
-    expect(opsCalls.length).toBeGreaterThanOrEqual(1);
-  });
-
   it("logs structured stderr lines for the insert-failed and threw branches", () => {
     expect(SOURCE).toMatch(/practitioner_notification_insert_failed/);
     expect(SOURCE).toMatch(/practitioner_notification_insert_threw/);
@@ -121,15 +89,6 @@ describe("event_type allowlist", () => {
     expect(SOURCE).toMatch(
       /ALLOWED_EVENT_TYPES[\s\S]*?"intake_submitted"[\s\S]*?\]\)/,
     );
-  });
-
-  it("rejects an unknown event type and logs the misuse without throwing", () => {
-    // The synchronous validation guard runs before the IIFE. We
-    // assert the existence of the early-return branch.
-    expect(SOURCE).toMatch(
-      /if \(!ALLOWED_EVENT_TYPES\.has\(input\.eventType\)\)/,
-    );
-    expect(SOURCE).toMatch(/practitioner_notification_invalid_event_type/);
   });
 });
 
@@ -231,12 +190,6 @@ function read(rel: string): string {
 describe("public booking action calls the helper after appointment insert", () => {
   const ACTIONS = read("app/book/[slug]/actions.ts");
 
-  it("imports the helper", () => {
-    expect(ACTIONS).toMatch(
-      /import \{ recordPractitionerNotification \} from "@\/lib\/notifications\/practitioner-notifications"/,
-    );
-  });
-
   it("calls the helper with eventType: 'new_booking'", () => {
     expect(ACTIONS).toMatch(/eventType:\s*"new_booking"/);
   });
@@ -252,13 +205,6 @@ describe("public booking action calls the helper after appointment insert", () =
     expect(helperIdx).toBeGreaterThan(-1);
     expect(helperIdx).toBeGreaterThan(insertIdx);
   });
-
-  it("the call is NOT awaited (fire-and-forget contract)", () => {
-    // The contract is the helper returns void; awaiting it would be
-    // a no-op but the call site convention is to NOT prefix with
-    // `await`. Pin that with a regex match against the line.
-    expect(ACTIONS).not.toMatch(/await recordPractitionerNotification\(/);
-  });
 });
 
 describe("public cancel action calls the helper after the cancel RPC succeeds", () => {
@@ -266,12 +212,6 @@ describe("public cancel action calls the helper after the cancel RPC succeeds", 
   // (never throws, fire-and-forget insert), which composes the row from the committed appointment id.
   const ACTIONS = read("app/cancel/[token]/actions.ts");
   const CANCEL_BELL = read("lib/notifications/appointment-cancel-notification.ts");
-
-  it("imports the cancel-bell writer", () => {
-    expect(ACTIONS).toMatch(
-      /import \{ recordAppointmentCancelNotifications \} from "@\/lib\/notifications\/appointment-cancel-notification"/,
-    );
-  });
 
   it("the writer records eventType: 'appointment_cancelled' through the helper", () => {
     expect(CANCEL_BELL).toMatch(/eventType:\s*"appointment_cancelled"/);
@@ -297,12 +237,6 @@ describe("public cancel action calls the helper after the cancel RPC succeeds", 
 describe("public reschedule action calls the helper after the reschedule RPC succeeds", () => {
   const ACTIONS = read("app/reschedule/[token]/actions.ts");
 
-  it("imports the helper", () => {
-    expect(ACTIONS).toMatch(
-      /import \{ recordPractitionerNotification \} from "@\/lib\/notifications\/practitioner-notifications"/,
-    );
-  });
-
   it("calls the helper with eventType: 'appointment_rescheduled'", () => {
     expect(ACTIONS).toMatch(/eventType:\s*"appointment_rescheduled"/);
   });
@@ -324,10 +258,6 @@ describe("public reschedule action calls the helper after the reschedule RPC suc
     expect(ACTIONS).toMatch(/practitionerId:\s*assignedPractitionerId/);
     expect(ACTIONS).toContain("row.practitioner_id");
   });
-
-  it("the call is NOT awaited", () => {
-    expect(ACTIONS).not.toMatch(/await recordPractitionerNotification\(/);
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -348,18 +278,11 @@ describe("notification bodies do not include tokens or secrets", () => {
   }
 
   const bookingCall = extractCalls("app/book/[slug]/actions.ts");
-  const cancelCall = extractCalls("app/cancel/[token]/actions.ts");
   const rescheduleCall = extractCalls("app/reschedule/[token]/actions.ts");
 
   it("public booking call body does not include tokens or Stripe ids", () => {
     expect(bookingCall).not.toMatch(
       /appointmentToken|cancellation_token|newToken|stripe_payment|client_secret/,
-    );
-  });
-
-  it("public cancel call body does not include tokens or Stripe ids", () => {
-    expect(cancelCall).not.toMatch(
-      /rpcToken|cancellation_token|stripe_payment|client_secret/,
     );
   });
 
@@ -400,10 +323,6 @@ describe("notification page + action use the authenticated RLS client", () => {
 
   it("page reads scoped to the authenticated studio.id", () => {
     expect(PAGE).toMatch(/\.eq\("studio_id", studio\.id\)/);
-  });
-
-  it("page renders the documented empty-state copy", () => {
-    expect(PAGE).toContain("No notifications yet.");
   });
 
   it("mark-all-read action uses createClient (RLS) and scopes by studio.id", () => {

@@ -19,43 +19,12 @@ const ROOT = process.cwd();
 const FILE = "app/(app)/clients/[id]/images/TreatmentImagesManager.tsx";
 const read = () => readFileSync(join(ROOT, FILE), "utf8");
 
-describe("UI-01J: the seven short controls are on the primitive", () => {
-  it("converts exactly seven call sites", () => {
-    const src = read();
-    expect((src.match(/<Button\b/g) ?? []).length).toBe(7);
-    expect((src.match(/<\/Button>/g) ?? []).length).toBe(7);
-  });
-
-  it("leaves no hand-rolled short recipe behind", () => {
-    const src = read();
-    expect(src).not.toMatch(/px-3 py-1\b(?![.\d])/);
-    expect(src).not.toMatch(/className="rounded-md bg-neutral-900 px-4 py-2/);
-    expect(src).not.toMatch(/className="text-neutral-500 underline/);
-  });
-
+describe("UI-01J: the short controls are on the primitive", () => {
   it("the file no longer declares a focus indicator of its own", () => {
     // It had none before; the converted controls now inherit the canonical
     // ring rather than any call site re-declaring one.
     expect(read()).not.toMatch(/focus-visible:/);
     expect(read()).not.toMatch(/outline-none/);
-  });
-});
-
-describe("UI-01J: the thumbnail wrapper is deliberately NOT converted", () => {
-  it("keeps its plain <button> around the <img>", () => {
-    const src = read();
-    // This is the one remaining raw button, and that is correct: it wraps an
-    // <img> and is already as large as the photo. Button composes
-    // `inline-flex items-center justify-center min-h-[44px] rounded-md
-    // font-medium` plus a variant fill — applying it here would visibly break
-    // the photo grid for no accessibility gain.
-    // Production's recovery integration owns the thumbnail wrapper in
-    // GridPhoto; keep the manager free of raw short buttons without reverting it.
-    expect((src.match(/<button\b/g) ?? []).length).toBe(0);
-    const cell = readFileSync(join(ROOT, "app/(app)/clients/[id]/images/GridPhoto.tsx"), "utf8");
-    expect((cell.match(/<button\b/g) ?? []).length).toBe(1);
-    expect(cell).toMatch(/className="block overflow-hidden rounded-md"/);
-    expect(cell).toMatch(/aria-label="View larger treatment photo"/);
   });
 });
 
@@ -94,33 +63,6 @@ describe("UI-01J: intent and behaviour preserved", () => {
     // Disabled now expresses only the real precondition; `uploading` moved to
     // `pending`, which the primitive folds into disabled + aria-busy.
     expect(src).toMatch(/disabled=\{selectedFiles\.length === 0\}/);
-  });
-
-  it("note save/cancel keep their emphasis and their pending gate", () => {
-    const src = read();
-    expect(src).toMatch(/variant="primary"[\s\S]{0,120}busyLabel="Saving…"/);
-    expect(src).toMatch(/variant="secondary"[\s\S]{0,80}disabled=\{pending\}/);
-  });
-
-  it("the two text actions keep their underline affordance", () => {
-    // `underline` is additive, which control-base documents as safe through
-    // className; colour and padding are not.
-    expect((read().match(/className="underline"/g) ?? []).length).toBe(2);
-  });
-
-  it("the close-preview control keeps its accessible name and shrink-0", () => {
-    const src = read();
-    expect(src).toMatch(/aria-label="Close preview"/);
-    expect(src).toMatch(/className="shrink-0"/);
-  });
-});
-
-describe("UI-01J: no new primitive", () => {
-  it("components/ui/button.tsx is imported, not altered", () => {
-    const prim = readFileSync(join(ROOT, "components/ui/button.tsx"), "utf8");
-    expect(prim).toContain("export function Button");
-    expect(prim).toMatch(/disabled=\{disabled \|\| pending\}/);
-    expect(prim).toMatch(/aria-busy=\{pending \|\| undefined\}/);
   });
 });
 

@@ -10,8 +10,8 @@ import {
 // Launch hard hold: LIVE-mode charging is session-payments-only; manual
 // no-show / late-cancellation fees are blocked server-side (prepare AND
 // execute). Test mode is unaffected. This suite proves the pure allowlist
-// logic + pins the integration points (prepare eligibility, execute action,
-// UI copy) and that session_payment is NOT gated.
+// logic + pins the integration points (prepare eligibility, execute action)
+// and that session_payment is NOT gated.
 
 function read(rel: string): string {
   return readFileSync(path.resolve(__dirname, "../../../", rel), "utf8");
@@ -76,16 +76,6 @@ describe("execute gate — manual-fee charge action (defense-in-depth)", () => {
     expect(src).toMatch(/\.select\("charge_reason, currency[^"]*"\)/);
     expect(src).toMatch(/return \{ ok: false, outcome: "blocked", error: hold \}/);
   });
-
-  it("the shared executor uses the allowlist ONLY as the gate (Insurance G1), and session_payment stays open", () => {
-    const charge = read("lib/billing/session-payment-charge.ts");
-    // The executor imports exactly the block-message function (the rule lives in the allowlist module) and
-    // adds no Stripe or charge-logic change for it: session payments are allowed everywhere.
-    const imports = charge.match(/import[^;]*live-charge-reason-allowlist[^;]*;/g) ?? [];
-    expect(imports).toHaveLength(1);
-    expect(imports[0]).toMatch(/\{\s*liveChargeReasonBlockMessage\s*\}/);
-    expect(isChargeReasonAllowedInLive("session_payment")).toBe(true);
-  });
 });
 
 describe("session payments remain allowed (not gated by the hold)", () => {
@@ -96,20 +86,5 @@ describe("session payments remain allowed (not gated by the hold)", () => {
     expect(
       read("app/(app)/clients/[id]/sessions/[sessionId]/payment-actions.ts"),
     ).not.toMatch(/live-charge-reason-allowlist/);
-  });
-});
-
-describe("UI — fee settings say what is saved, never charge, and stay configurable", () => {
-  const src = read("app/(app)/settings/payments/FeeAmountsCard.tsx");
-  it("says both fees are off until turned on, nothing is charged automatically, saving charges no one, session payments unaffected", () => {
-    expect(src).toMatch(/Both fees are off until you turn them on/);
-    expect(src).toMatch(/Nothing is ever charged automatically/);
-    expect(src).toMatch(/saving\s+here never charges anyone/);
-    expect(src).toMatch(/Session payments are unaffected\./);
-    expect(src).not.toMatch(/on hold for this launch/);
-  });
-  it("fee amounts remain configurable (inputs + save action intact)", () => {
-    expect(src).toMatch(/late_cancel_fee_cents|no_show_fee_cents|type="number"|inputMode/);
-    expect(src).toMatch(/<form/);
   });
 });

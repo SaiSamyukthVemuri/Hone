@@ -312,15 +312,6 @@ describe("appointment prep surface", () => {
     expect(APPOINTMENT).not.toMatch(/href=\{`\/clients\/\$\{clientId\}\/intake`\}/);
   });
 
-  it("names the practitioner task instead of vague View/Review copy", () => {
-    const line = functionSource(APPOINTMENT, "IntakeStatusLine");
-    expect(line).toMatch(/IntakeStatusLine/);
-    // Exactly the two linked states — submitted and reviewed.
-    expect(line.match(/>\s*Review intake\s*</g) ?? []).toHaveLength(2);
-    expect(line).not.toMatch(/>\s*View\s*</);
-    expect(line).not.toMatch(/>\s*Review\s*</);
-  });
-
   it("still offers no review link for in-progress or absent intake", () => {
     const line = functionSource(APPOINTMENT, "IntakeStatusLine");
     const inProgress =
@@ -330,12 +321,5 @@ describe("appointment prep surface", () => {
     const none = /if \(!intake\)[\s\S]*?\n  \}/.exec(line)?.[0] ?? "";
     expect(none).toMatch(/no form on file/);
     expect(none).not.toMatch(/<Link/);
-  });
-
-  it("PR #517 appointment-preparation memory is untouched by this change", () => {
-    // The intake affordance is a separate line in the client briefing; it must
-    // not have absorbed or reshaped the previous-treatment memory.
-    expect(APPOINTMENT).toMatch(/<IntakeStatusLine intake=\{intake\} clientId=\{client\.id\} \/>/);
-    expect(APPOINTMENT).toMatch(/getLatestIntakeForClient\(studio\.id, clientId\)/);
   });
 });

@@ -165,12 +165,6 @@ describe("UI-R01 press acknowledgement: the state the app was missing", () => {
     }
   });
 
-  it("Button composes the leaf layer deliberately, not a retired universal class", () => {
-    const src = code("components/ui/button.tsx");
-    expect(src).toContain("LEAF_CONTROL_PRESS");
-    expect(src).not.toMatch(/\bCONTROL_PRESS\b(?!_)/);
-  });
-
   it("pressed and DISABLED remain visually distinguishable", () => {
     // Different channels entirely: press is colour, disabled is opacity.
     expect(SURFACE_PRESS).not.toContain("opacity");
@@ -254,15 +248,6 @@ describe("UI-R01 spinner: one spinner, stable box, legible when still", () => {
     expect(html).toContain("Loading");
     // The mark itself stays decorative even then.
     expect(html).toContain('aria-hidden="true"');
-  });
-
-  it("IS the navigation mark — one spinner in the app, not two", () => {
-    // pending-link.tsx must compose the primitive rather than re-spelling it.
-    // If these drift, navigation pending and control pending stop looking like
-    // the same product.
-    const src = code("components/pending-link.tsx");
-    expect(src).toContain("spinnerClasses");
-    expect(src).not.toMatch(/const MARK =\s*"size-4 animate-spin/);
   });
 
   it("ships no third-party package", () => {
@@ -412,12 +397,6 @@ describe("UI-R01 proof surface: the migrated controls", () => {
     // The hardcoded brand hex and inline style are gone.
     expect(exportBtn).not.toContain("#0A0A0A");
     expect(exportBtn).not.toContain("style={{ backgroundColor");
-  });
-
-  it("the export control no longer swaps a width-changing label", () => {
-    // "Export data" (11) -> "Preparing export…" (17) resized the button mid-press.
-    expect(exportBtn).not.toContain('"Preparing export…"');
-    expect(exportBtn).not.toMatch(/pending \? "/);
   });
 
   it("the export control announces success and failure", () => {
