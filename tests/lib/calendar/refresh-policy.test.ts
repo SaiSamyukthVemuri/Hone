@@ -69,9 +69,17 @@ describe("the component and where it is mounted", () => {
   const component = readFileSync("app/(app)/calendar/CalendarAutoRefresh.tsx", "utf8");
   const toolbar = readFileSync("app/(app)/calendar/CalendarToolbar.tsx", "utf8");
 
-  it("only asks the existing server render for a refresh: no socket, no fetch, no subscription", () => {
+  it("only asks the existing server render for a refresh: no socket, no subscription, one probe request", () => {
     expect(component).toMatch(/router\.refresh\(\)/);
-    expect(component).not.toMatch(/WebSocket|EventSource|fetch\(|supabase|realtime|channel\(/i);
+    // No realtime platform, ever (Sam's HON-48 bound): no socket, no event stream, no Supabase client, no channel.
+    expect(component).not.toMatch(/WebSocket|EventSource|supabase|realtime|channel\(/i);
+    // The one network call is the change probe: a plain GET to the one route that answers with a hash, never cached,
+    // never following a redirect (a redirect is an authorization answer and stops the polling).
+    expect([...component.matchAll(/fetch\(/g)]).toHaveLength(1);
+    expect(component).toMatch(/\/api\/calendar\/change-fingerprint\?view=/);
+    expect(component).toMatch(/cache: "no-store"/);
+    expect(component).toMatch(/redirect: "manual"/);
+    expect(component).not.toMatch(/method: "(POST|PUT|PATCH|DELETE)"|body:/);
   });
 
   it("removes every listener and the timer when it unmounts", () => {
@@ -89,9 +97,11 @@ describe("the component and where it is mounted", () => {
   });
 
   it("is on the toolbar every calendar view shares (week, month, team day)", () => {
-    expect(toolbar).toMatch(/import \{ CalendarAutoRefresh \} from "\.\/CalendarAutoRefresh"/);
-    expect(toolbar).toMatch(/<CalendarAutoRefresh \/>/);
+    expect(toolbar).toMatch(/import \{ CalendarAutoRefresh, type ChangeProbeProps \} from "\.\/CalendarAutoRefresh"/);
+    expect(toolbar).toMatch(/<CalendarAutoRefresh probe=\{changeProbe\} \/>/);
     const page = readFileSync("app/(app)/calendar/page.tsx", "utf8");
     expect([...page.matchAll(/<CalendarToolbar/g)]).toHaveLength(3);
+    // Every view hands the toolbar the fingerprint of what it just drew, so the screen has something to compare with.
+    expect([...page.matchAll(/changeProbe=\{changeProbe\}/g)]).toHaveLength(3);
   });
 });

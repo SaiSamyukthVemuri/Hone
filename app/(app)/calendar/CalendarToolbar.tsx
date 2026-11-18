@@ -1,6 +1,6 @@
 import { PendingLink } from "@/components/pending-link";
 import { CalendarViewToggle } from "./ViewToggle";
-import { CalendarAutoRefresh } from "./CalendarAutoRefresh";
+import { CalendarAutoRefresh, type ChangeProbeProps } from "./CalendarAutoRefresh";
 
 // Google/Apple-style desktop calendar toolbar (PR A). Presentational only: it
 // renders navigation LINKS using the calendar's existing query params
@@ -36,6 +36,8 @@ type Props = {
   // Owner only (HON-44). Absent for everyone else, so the link is not rendered; the page itself still 404s for a non-owner.
   reviewAssignmentsHref?: string;
   hideStepNavOnMobile: boolean;
+  // HON-48: what this render was drawn from, so the screen can ask "has it changed?" instead of refreshing on a timer.
+  changeProbe?: ChangeProbeProps;
 };
 
 const STEP_LINK =
@@ -54,11 +56,12 @@ export function CalendarToolbar({
   upcomingHref,
   reviewAssignmentsHref,
   hideStepNavOnMobile,
+  changeProbe,
 }: Props) {
   return (
     <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       {/* HON-48: keeps this screen current for the other people on the calendar. */}
-      <CalendarAutoRefresh />
+      <CalendarAutoRefresh probe={changeProbe} />
       <div>
         {/* The visible date range IS the heading, Google-style. */}
         <h1 className="text-2xl font-semibold tracking-tight">{rangeLabel}</h1>

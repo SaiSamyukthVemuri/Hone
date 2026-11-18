@@ -17,7 +17,6 @@ import {
   localDateString,
   startOfWeek,
   todayInTz,
-  utcInstantFromLocal,
 } from "@/lib/booking/tz";
 import type {
   AppointmentWithPractitionerColor,
@@ -45,6 +44,8 @@ import {
   weekRangeLabel,
 } from "./calendar-format";
 import { CalendarToolbar } from "./CalendarToolbar";
+import { calendarLoadRange } from "@/lib/calendar/calendar-load-range";
+import { calendarFingerprint } from "@/lib/calendar/change-fingerprint";
 import { shouldShowReviewLink } from "@/lib/appointments/review-link";
 import {
   CalendarMobileDayView,
@@ -172,8 +173,8 @@ export default async function CalendarPage({
   const initialSelectedDate =
     params.day ?? (today >= weekStart && today <= weekEnd ? today : weekStart);
 
-  const startUtc = utcInstantFromLocal(weekStart, "00:00", studio.timezone);
-  const endUtc = utcInstantFromLocal(addDays(weekStart, 7), "00:00", studio.timezone);
+  // The same range the change probe fingerprints (lib/calendar/calendar-load-range.ts), so the two cannot disagree.
+  const { startUtc, endUtc } = calendarLoadRange("week", weekStart, studio.timezone);
 
   // Week-view domain window. Bracketed rather than wrapped so the parallel
   // wave below keeps its exact shape and indentation — this PR measures the
@@ -215,6 +216,18 @@ export default async function CalendarPage({
     getBoundaryCrossingAppointments(studio.id, startUtc),
   ]);
   domain.end();
+  // HON-48: what THIS render was drawn from, so the screen can ask the server whether it changed instead of refreshing on a
+  // timer. Computed from the rows just loaded (no extra read), before any selection or filtering narrows them.
+  const changeProbe = {
+    view: "week" as const,
+    anchor: weekStart,
+    fingerprint: calendarFingerprint({
+      appointments,
+      timedBlocks,
+      blockouts,
+      occurrences: recurringOccurrences,
+    }),
+  };
 
   // Sidebar selection: view-only. It narrows which already-loaded appointments are DRAWN; the
   // availability, blocks and every action below are untouched.
@@ -345,6 +358,7 @@ export default async function CalendarPage({
           these week controls would be redundant. */}
       <CalendarToolbar
         view="week"
+        changeProbe={changeProbe}
         rangeLabel={weekRangeLabel(weekStart, weekEnd)}
         timezone={studio.timezone}
         weekHref={withSelection(`/calendar?view=week&week=${weekStart}`, sidebar.param)}
@@ -579,8 +593,7 @@ async function renderMonthView(opts: {
   // get appointments when they happen to also be in the studio month
   // we loaded. This is intentional; spillover counts come from the
   // month load itself when applicable, not from extra queries.
-  const startUtc = utcInstantFromLocal(monthAnchor, "00:00", studio.timezone);
-  const endUtc = utcInstantFromLocal(monthEnd, "00:00", studio.timezone);
+  const { startUtc, endUtc } = calendarLoadRange("month", monthAnchor, studio.timezone);
 
   // Month-view domain window. Same span name as the week view: the two paths
   // are mutually exclusive, so one request records exactly one of them.
@@ -620,6 +633,18 @@ async function renderMonthView(opts: {
     getBoundaryCrossingAppointments(studio.id, startUtc),
   ]);
   domain.end();
+  // HON-48: what THIS render was drawn from, so the screen can ask the server whether it changed instead of refreshing on a
+  // timer. Computed from the rows just loaded (no extra read), before any selection or filtering narrows them.
+  const changeProbe = {
+    view: "month" as const,
+    anchor: monthAnchor,
+    fingerprint: calendarFingerprint({
+      appointments,
+      timedBlocks,
+      blockouts,
+      occurrences: recurringOccurrences,
+    }),
+  };
 
   // Sidebar selection: view-only, narrows the chips drawn (blocked time and closures still show).
   const sidebar = buildSidebarModel(activePractitioners, peopleParam);
@@ -686,6 +711,7 @@ async function renderMonthView(opts: {
           has no separate day-nav). */}
       <CalendarToolbar
         view="month"
+        changeProbe={changeProbe}
         rangeLabel={monthYearLabel(monthAnchor)}
         timezone={studio.timezone}
         weekHref={withSelection(lastWeekHref, sidebar.param)}
@@ -760,8 +786,7 @@ async function renderTeamDayView(opts: {
 
   const [y, m, d] = date.split("-").map(Number);
   const dayOfWeek = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
-  const startUtc = utcInstantFromLocal(date, "00:00", studio.timezone);
-  const endUtc = utcInstantFromLocal(addDays(date, 1), "00:00", studio.timezone);
+  const { startUtc, endUtc } = calendarLoadRange("day", date, studio.timezone);
 
   const domain = startPerfSpan("calendar.domain");
   const [
@@ -794,6 +819,18 @@ async function renderTeamDayView(opts: {
     getBoundaryCrossingAppointments(studio.id, startUtc),
   ]);
   domain.end();
+  // HON-48: what THIS render was drawn from, so the screen can ask the server whether it changed instead of refreshing on a
+  // timer. Computed from the rows just loaded (no extra read), before any selection or filtering narrows them.
+  const changeProbe = {
+    view: "day" as const,
+    anchor: date,
+    fingerprint: calendarFingerprint({
+      appointments,
+      timedBlocks,
+      blockouts,
+      occurrences: recurringOccurrences,
+    }),
+  };
 
   if (!hasDayView(capacityEnabled, activePractitioners)) {
     redirect(`/calendar?day=${date}`);
@@ -856,6 +893,7 @@ async function renderTeamDayView(opts: {
     <div className="flex flex-col gap-6">
       <CalendarToolbar
         view="day"
+        changeProbe={changeProbe}
         rangeLabel={`${weekdayLabel(dayOfWeek)}, ${monthDayLabel(date)}, ${y}`}
         timezone={studio.timezone}
         dayHref={withSelection(`/calendar?view=day&day=${date}`, sidebar.param)}

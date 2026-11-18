@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { addDays, startOfWeek, utcInstantFromLocal } from "@/lib/booking/tz";
 import { DAY_LABELS, weekdayLabel } from "@/app/(app)/calendar/calendar-format";
 import { monthGridDates } from "@/lib/booking/month-grid";
+import { calendarLoadRange } from "@/lib/calendar/calendar-load-range";
 
 // The practitioner calendar week runs SUNDAY → SATURDAY, and the SAME Sunday
 // boundary drives display, the data range, and navigation.
@@ -48,6 +49,7 @@ import { monthGridDates } from "@/lib/booking/month-grid";
 // in tests/lib/dashboard/practice-metrics-week.test.ts.
 
 const TZ = "America/Toronto"; // the repo's established DST fixture timezone
+const CAL_RANGE = readFileSync(join(process.cwd(), "lib/calendar/calendar-load-range.ts"), "utf8");
 const CAL_PAGE = readFileSync(
   join(process.cwd(), "app/(app)/calendar/page.tsx"),
   "utf8",
@@ -324,13 +326,29 @@ describe("DST — local midnight boundaries, never 168 fixed hours", () => {
   // right 50 weeks a year and silently off by an hour in the other two. Pin it
   // HERE, next to the semantics it would break, not only in the wiring block.
   it("the PAGE's end boundary is a local midnight, never start + a fixed span", () => {
-    expect(CAL_PAGE).toMatch(
-      /const endUtc = utcInstantFromLocal\(addDays\(weekStart, 7\), "00:00", studio\.timezone\)/,
-    );
+    // The range now lives in ONE helper shared with the change probe (HON-48); the page must call it for the week view,
+    // and the helper must spell the end as a local midnight.
+    expect(CAL_PAGE).toMatch(/calendarLoadRange\("week", weekStart, studio\.timezone\)/);
+    expect(CAL_RANGE).toMatch(/addDays\(anchor, 7\)/);
+    expect(CAL_RANGE).toMatch(/utcInstantFromLocal\(endLocal, "00:00", timezone\)/);
     // Any elapsed-time spelling of "a week": 168h, 7*24, 604800s, or the
     // millisecond forms those become once multiplied out.
     expect(CAL_PAGE).not.toMatch(/168|7 \* 24|604800|604_800/);
+    expect(CAL_RANGE).not.toMatch(/168|7 \* 24|604800|604_800/);
     expect(CAL_PAGE).not.toMatch(/startUtc\.getTime\(\) \+/);
+    expect(CAL_RANGE).not.toMatch(/getTime\(\) \+/);
+  });
+
+  it("the shared range helper returns Sunday→Sunday local midnight across both DST weeks", () => {
+    for (const [tz, ws] of [
+      ["America/Los_Angeles", "2026-03-08"],
+      ["America/Los_Angeles", "2026-11-01"],
+      ["Pacific/Auckland", "2026-04-05"],
+    ] as const) {
+      const { startUtc, endUtc } = calendarLoadRange("week", ws, tz);
+      expect(startUtc.getTime()).toBe(utcInstantFromLocal(ws, "00:00", tz).getTime());
+      expect(endUtc.getTime()).toBe(utcInstantFromLocal(addDays(ws, 7), "00:00", tz).getTime());
+    }
   });
 
   it("the boundary holds in a southern-hemisphere zone too (opposite DST)", () => {
@@ -358,14 +376,13 @@ describe("calendar page wiring (source pins)", () => {
   });
 
   it("the fetch range is local midnight on weekStart → weekStart + 7", () => {
-    expect(CAL_PAGE).toMatch(
-      /utcInstantFromLocal\(weekStart, "00:00", studio\.timezone\)/,
-    );
-    expect(CAL_PAGE).toMatch(
-      /utcInstantFromLocal\(addDays\(weekStart, 7\), "00:00", studio\.timezone\)/,
-    );
+    // Through the shared helper (also used by the change probe), which spells both ends as local midnights.
+    expect(CAL_PAGE).toMatch(/calendarLoadRange\("week", weekStart, studio\.timezone\)/);
+    expect(CAL_RANGE).toMatch(/utcInstantFromLocal\(anchor, "00:00", timezone\)/);
+    expect(CAL_RANGE).toMatch(/addDays\(anchor, 7\)/);
     // Never a fixed elapsed-hours week.
     expect(CAL_PAGE).not.toMatch(/168|7 \* 24|604800/);
+    expect(CAL_RANGE).not.toMatch(/168|7 \* 24|604800/);
   });
 
   it("navigation derives from weekStart, not from arbitrary elapsed time", () => {
