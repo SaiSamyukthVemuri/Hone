@@ -259,9 +259,8 @@ describe("B5 attribution — created_by_practitioner_id", () => {
 // B6 dropped both by exact signature after a zero-caller census, so there is no
 // legacy writer left to inherit anything. The attribution property itself is
 // unaffected and remains proven against the governed successors elsewhere in
-// this same file, and the drops are pinned by
-// tests/migrations/0175-appointment-transition-integrity.test.ts plus the
-// pg_proc absence check in tests/db/appointment-transition-integrity.db.test.ts.
+// this same file, and the drops are proven by the pg_proc absence check in
+// tests/db/appointment-transition-integrity.db.test.ts.
 
 describe("B5 attribution — cancelled_by_practitioner_id", () => {
   it("a PRACTITIONER cancellation records WHICH practitioner, and keeps the role word", async () => {

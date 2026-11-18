@@ -189,7 +189,7 @@ describe("the owner's follow-up rows: Keep on the waitlist", () => {
         timeZone: "UTC", emailEnabled: true, outbox: new Map([["i1", emptyOutboxCounts()]]), linkable: new Map(), notice: null,
       }),
     );
-    const closed = /<details data-testid="closed-responses"[^>]*>([\s\S]*?)<\/details>/.exec(raw);
+    const closed = /<details data-testid="closed-responses"[^>]*>([\s\S]*?)<\/ul><\/details>/.exec(raw);
     expect(closed, "a Closed group renders when a row is kept").not.toBeNull();
     expect(closed![0]).not.toMatch(/<details[^>]*\sopen/);
     expect(readable(closed![0])).toContain("Closed (1)");
