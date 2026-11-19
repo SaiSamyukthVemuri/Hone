@@ -1,8 +1,9 @@
 import "server-only";
-import type Stripe from "stripe";
+import Stripe from "stripe";
 import {
   appendFakeCallToLedger,
   readFakeOutcome,
+  readFakeWebhookTiming,
 } from "@/lib/stripe/e2e-fake-ledger";
 
 // Minimal, server-only FAKE Stripe processor for the disposable E2E stack. It
@@ -83,6 +84,10 @@ type FakePi = {
   currency: string | null;
   metadata: Record<string, string>;
   latestCharge: string | null;
+  // Real Stripe states the customer a PaymentIntent was created for; the application's webhook identity check compares it.
+  customer?: string | null;
+  // Set only on a declined intent, as real Stripe states `last_payment_error` on a PaymentIntent whose attempt was refused.
+  lastPaymentError?: { type: "card_error"; code: string; decline_code: string; message: string } | null;
 };
 const piByIdByRun = new Map<string, Map<string, FakePi>>();
 function storePi(run: string, pi: FakePi): void {
@@ -107,8 +112,101 @@ function piObject(pi: FakePi) {
     livemode: false, // the fake is test-mode only
     amount_received: captured ? (pi.amount ?? 0) : 0,
     latest_charge: pi.latestCharge,
+    ...(pi.customer ? { customer: pi.customer } : {}),
     ...(pi.status === "canceled" ? { cancellation_reason: "requested_by_customer" } : {}),
+    ...(pi.lastPaymentError ? { last_payment_error: { ...pi.lastPaymentError } } : {}),
   };
+}
+
+// A declined card. Real Stripe answers a declined off-session confirm with HTTP 402 and a card error that CARRIES the
+// PaymentIntent (status requires_payment_method), and it later sends payment_intent.payment_failed. The fake does both,
+// so the application's thrown-error branch and its webhook reconciliation both run, as they would against Stripe.
+const DECLINE_ERROR = {
+  type: "card_error" as const,
+  code: "card_declined",
+  decline_code: "generic_decline",
+  message: "Your card was declined.",
+};
+const FAKE_WEBHOOK_DELAY_MS = 750;
+
+export function buildFakePaymentFailedEvent(pi: FakePi, stripeAccount: string | null) {
+  return {
+    id: `evt_test_e2e_${pi.id}`,
+    object: "event",
+    api_version: "2024-06-20",
+    created: Math.floor(Date.now() / 1000),
+    livemode: false,
+    type: "payment_intent.payment_failed",
+    pending_webhooks: 1,
+    request: { id: null, idempotency_key: null },
+    ...(stripeAccount ? { account: stripeAccount } : {}),
+    data: { object: piObject(pi) },
+  };
+}
+
+// Posts the event, signed with the lane's webhook secret, to the application's own webhook route. A deferred send, after the
+// charge call has returned and the executor has bound the intent to its attempt, which is the order real Stripe produces.
+function localOriginOrNull(raw: string): string | null {
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== "http:" || (u.hostname !== "127.0.0.1" && u.hostname !== "localhost")) return null;
+    if (u.username || u.password) return null;
+    return u.origin;
+  } catch {
+    return null;
+  }
+}
+
+// Stripe redelivers an event whose endpoint did not answer 2xx, with backoff, for days. The application relies on that: a
+// decline event that arrives before the charge request has stored its intent id is refused with a 500 on purpose, so it
+// is sent again. The fake redelivers a bounded number of times, one second apart, and stops at the first 2xx.
+const FAKE_WEBHOOK_REDELIVERIES = 8;
+const FAKE_WEBHOOK_REDELIVERY_GAP_MS = 1000;
+
+function redeliverLater(run: string, piId: string, account: string | null, attempt: number): void {
+  if (attempt > FAKE_WEBHOOK_REDELIVERIES) return;
+  const t = setTimeout(() => {
+    void (async () => {
+      const out = await deliverFakePaymentFailedWebhook(run, piId, account);
+      if (!out.delivered) redeliverLater(run, piId, account, attempt + 1);
+    })();
+  }, FAKE_WEBHOOK_REDELIVERY_GAP_MS);
+  if (typeof t === "object" && t && "unref" in t) (t as { unref: () => void }).unref();
+}
+async function redeliverFromFirstAttempt(run: string, piId: string, account: string | null): Promise<void> {
+  const out = await deliverFakePaymentFailedWebhook(run, piId, account);
+  if (!out.delivered) redeliverLater(run, piId, account, 1);
+}
+
+export async function deliverFakePaymentFailedWebhook(
+  run: string,
+  piId: string,
+  stripeAccount: string | null,
+  deps: { fetchImpl?: typeof fetch; origin?: string; secret?: string } = {},
+): Promise<{ delivered: boolean; status: number | null }> {
+  const pi = storedPi(run, piId);
+  const secret = deps.secret ?? process.env.STRIPE_WEBHOOK_SECRET;
+  if (!pi || !secret) return { delivered: false, status: null };
+  const payload = JSON.stringify(buildFakePaymentFailedEvent(pi, stripeAccount));
+  const signature = Stripe.webhooks.generateTestHeaderString({ payload, secret });
+  // The lane's server sets PORT; with neither an origin nor a PORT (an ordinary unit test) nothing is sent. A signed event
+  // is only ever sent to this machine: any origin whose hostname is not exactly 127.0.0.1 or localhost sends nothing.
+  const candidate =
+    deps.origin ??
+    process.env.HONE_E2E_APP_ORIGIN ??
+    (process.env.PORT && /^[0-9]{2,5}$/.test(process.env.PORT) ? `http://127.0.0.1:${process.env.PORT}` : null);
+  const origin = candidate ? localOriginOrNull(candidate) : null;
+  if (!origin) return { delivered: false, status: null };
+  try {
+    const res = await (deps.fetchImpl ?? fetch)(`${origin}/api/stripe/webhook`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "stripe-signature": signature },
+      body: payload,
+    });
+    return { delivered: res.ok, status: res.status };
+  } catch {
+    return { delivered: false, status: null };
+  }
 }
 
 function runId(): string {
@@ -175,10 +273,11 @@ type CreatePiParams = {
   amount?: number | null;
   currency?: string | null;
   metadata?: Record<string, string> | null;
+  customer?: string | null;
 };
 type RequestOpts = { stripeAccount?: string; idempotencyKey?: string } | undefined;
 
-function synthPaymentIntent(run: string, opts: RequestOpts, params?: CreatePiParams) {
+async function synthPaymentIntent(run: string, opts: RequestOpts, params?: CreatePiParams) {
   const key = opts?.idempotencyKey ?? null;
   const existing = idempotentResult(run, key);
   // A replay is a create whose idempotency key already produced an effect. It
@@ -204,8 +303,11 @@ function synthPaymentIntent(run: string, opts: RequestOpts, params?: CreatePiPar
     resultId: id,
     replay,
   });
-  // Success → succeeded (+ latest_charge); decline → non-succeeded status the
-  // real executor persists as failed; processing → pending.
+  // Success → succeeded (+ latest_charge); decline → requires_payment_method, thrown as a card error carrying the intent
+  // (below). The executor does NOT write a terminal failure from that: a PaymentIntent that is not confirmed canceled can
+  // still complete, so the attempt stays pending_stripe, and the payment_intent.payment_failed event is what is meant to
+  // finish it. WHETHER it can is under review: a thrown decline may leave the intent id unbound on the attempt, in which
+  // case the event waits for a binding that never comes (see the handler-level test). processing → pending.
   const status =
     outcome === "decline"
       ? "requires_payment_method"
@@ -230,7 +332,36 @@ function synthPaymentIntent(run: string, opts: RequestOpts, params?: CreatePiPar
       currency: money.currency,
       metadata: { ...(params?.metadata ?? {}) },
       latestCharge: outcome === "success" ? chargeId : null,
+      customer: params?.customer ?? null,
+      lastPaymentError: outcome === "decline" ? { ...DECLINE_ERROR } : null,
     });
+  }
+  if (outcome === "decline") {
+    const declined = storedPi(run, id);
+    if (declined) {
+      // Only the FIRST send of a key is an effect: Stripe replays the same 402 for a repeated key and sends one event.
+      if (!existing) {
+        if (readFakeWebhookTiming(run) === "before_return") {
+          // The event is delivered and processed before this call returns, so it reaches the application ahead of the
+          // intent being bound to its attempt. A refusal is redelivered afterwards, as Stripe does.
+          const first = await deliverFakePaymentFailedWebhook(run, id, opts?.stripeAccount ?? null);
+          if (!first.delivered) redeliverLater(run, id, opts?.stripeAccount ?? null, 1);
+        } else {
+          const t = setTimeout(() => {
+            void redeliverFromFirstAttempt(run, id, opts?.stripeAccount ?? null);
+          }, FAKE_WEBHOOK_DELAY_MS);
+          if (typeof t === "object" && t && "unref" in t) (t as { unref: () => void }).unref();
+        }
+      }
+      throw new Stripe.errors.StripeCardError({
+        type: "card_error",
+        code: DECLINE_ERROR.code,
+        decline_code: DECLINE_ERROR.decline_code,
+        message: DECLINE_ERROR.message,
+        statusCode: 402,
+        payment_intent: piObject(declined),
+      } as unknown as ConstructorParameters<typeof Stripe.errors.StripeCardError>[0]);
+    }
   }
   const stored = storedPi(run, id);
   return {
