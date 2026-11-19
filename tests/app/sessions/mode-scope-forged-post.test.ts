@@ -7,7 +7,7 @@ const h = vi.hoisted(() => ({
   rpc: vi.fn(),
   last: null as unknown,
   filters: [] as Array<[string, string, unknown]>,
-  stored: { block: { probe_key: null, probe_inventory_item_id: null, probe_lot_number: null, mode: "thermo" } as Record<string, unknown>, entry: null as Record<string, unknown> | null },
+  stored: { block: { probe_key: null, probe_inventory_item_id: null, probe_lot_number: null, mode: "thermo" } as Record<string, unknown>, entry: null as Record<string, unknown> | null, entries: undefined as Array<Record<string, unknown>> | undefined },
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/rollouts/charting-rollout", () => ({ chartingRolloutFor: vi.fn(async () => h.rollout) }));
@@ -30,10 +30,13 @@ vi.mock("@/lib/supabase/server", () => ({
     from: (table: string) => {
       const chain: Record<string, unknown> = {};
       const self = () => chain;
-      for (const k of ["select", "is", "order", "limit"]) chain[k] = self;
+      let liveOnly = false;
+      for (const k of ["select", "order", "limit"]) chain[k] = self;
+      // The mock HONOURS the live-only filter, so a read that forgets it is visible: removed rows come back unless `.is("deleted_at", null)` was asked for.
+      chain.is = (c: string, v: unknown) => { if (c === "deleted_at" && v === null) liveOnly = true; return chain; };
       chain.eq = (c: string, v: unknown) => { h.filters.push([table, c, v]); return chain; };
       // A list read (the entries of a block) is awaited directly: it answers the stored entry rows.
-      chain.then = (res: (v: unknown) => unknown) => res({ data: table === "electrolysis_entries" ? (h.stored.entry ? [h.stored.entry] : []) : [], error: null });
+      chain.then = (res: (v: unknown) => unknown) => res({ data: table === "electrolysis_entries" ? ((h.stored.entries ?? (h.stored.entry ? [h.stored.entry] : [])) as Array<Record<string, unknown>>).filter((r) => !liveOnly || r.deleted_at == null) : [], error: null });
       chain.single = async () => ({ data: { id: "b1", updated_at: "2026-11-19T10:00:00.000Z" }, error: null });
       chain.maybeSingle = async () => ({ data: table === "session_blocks" ? h.stored.block : h.stored.entry, error: null });
       return chain;
@@ -68,6 +71,7 @@ beforeEach(() => {
   h.rollout = true;
   h.stored.block = { probe_key: null, probe_inventory_item_id: null, probe_lot_number: null, mode: "thermo" };
   h.stored.entry = null;
+  h.stored.entries = undefined;
 });
 
 describe("CREATE with the rollout ON drops every field that does not belong to the submitted mode", () => {
@@ -140,6 +144,18 @@ describe("EDIT with the rollout ON: the same rule, and the freeze", () => {
     expect(f).toContainEqual(["electrolysis_entries", "block_id", "b1"]);
     expect(f).toContainEqual(["electrolysis_entries", "studio_id", "st1"]);
     expect(f.some((x) => x[1] === "id"), "never filtered by a client-supplied entry id").toBe(false);
+  });
+  it("a REMOVED entry that holds readings does not freeze the block when the live entries hold none", async () => {
+    h.stored.block = { ...h.stored.block, mode: "thermo" };
+    h.stored.entries = [{ deleted_at: "2026-11-18T10:00:00Z", thermolysis_intensity_percent: 40 }, { deleted_at: null, thermolysis_intensity_percent: null }];
+    expect((await update({ mode: "galv" })).ok).toBe(true);
+  });
+  it("ONLY THE SECOND live entry holds readings: the block is still frozen (not just the first entry)", async () => {
+    h.stored.block = { ...h.stored.block, mode: "thermo" };
+    h.stored.entries = [{ deleted_at: null, thermolysis_intensity_percent: null }, { deleted_at: null, thermolysis_intensity_percent: 40 }];
+    const res = await update({ mode: "galv" });
+    expect(res.ok).toBe(false);
+    expect(h.rpc).not.toHaveBeenCalled();
   });
   it("a block that holds ONLY pulse values is not frozen (stated rule)", async () => {
     h.stored.block = { ...h.stored.block, mode: "thermo" };

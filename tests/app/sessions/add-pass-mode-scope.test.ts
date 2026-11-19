@@ -70,6 +70,17 @@ describe("add-pass, rollout ON: the SAVED mode wins and only its fields travel",
     await addElectrolysisEntryAction(form({ apilus_modality: "Omniblend" }));
     expect(r()).toMatchObject({ mode: "blend", tdur: null, tint: 55, ma: 2.5, ul: 4 });
   });
+  it("N2: NO block id: the request's mode is used (there is no saved block to follow), but the pass is still scoped to that mode's fields and attaches to no existing block", async () => {
+    const f = form({ mode: "thermo" });
+    f.delete("block_id");
+    await addElectrolysisEntryAction(f);
+    expect(r()).toMatchObject({ mode: "thermo", ma: null, ul: null, tint: 55, count: 7 });
+    expect(args().p_block_id ?? null).toBeNull();
+    const g = form({ mode: "galv" });
+    g.delete("block_id");
+    await addElectrolysisEntryAction(g);
+    expect(r()).toMatchObject({ mode: "galv", mod: null, tint: null, tdur: null, ma: 2.5, ul: 4, delay: null });
+  });
   it("an unknown block (or another studio's) is refused and nothing is written", async () => {
     h.blockFound = false;
     const res = await addElectrolysisEntryAction(form({}));
