@@ -365,7 +365,7 @@ export function MachineReadingEntry({
     machine: null,
     draftAreas: [],
     unsaved: false,
-    attention: readingsSaveNeedsAttention({ pending, unresolved: save.unresolved, recorded: save.recorded, message: save.message }),
+    attention: readingsSaveNeedsAttention({ pending, ...save }),
   });
 
   // EVERY DRAFT CHANGE CLOSES THE OPEN SAVE, which is how the retry key keeps
