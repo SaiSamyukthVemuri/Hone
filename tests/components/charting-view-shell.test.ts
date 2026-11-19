@@ -349,3 +349,75 @@ describe("switching never loses or sends anything", () => {
     expect(rootEl().getAttribute("data-charting-view")).toBe("current");
   });
 });
+
+// ---- Block editing in New view: the same editor, the New order, nothing remounted ----------------------------------
+const step = (n: number) => host!.querySelector(`[data-testid="new-view-step-${n}"]`);
+const areasEl = () => host!.querySelector('[data-testid="selected-areas"]') as HTMLElement;
+const machineOpenEl = () => host!.querySelector('[data-testid="machine-first-open"]') as HTMLElement;
+const before = (a: Node, b: Node) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+describe("block editing in New view", () => {
+  it("Current view is exactly today's order with no step headings: machine first, then the areas", async () => {
+    await mount();
+    expect(step(1)).toBeNull();
+    expect(step(2)).toBeNull();
+    expect(step(3)).toBeNull();
+    expect(before(machineOpenEl(), areasEl()), "machine panel precedes the areas").toBe(true);
+  });
+
+  it("New view: numbered steps; Areas treated first, then Treatment settings (the machine panel), then Client response", async () => {
+    await mount("new");
+    expect(step(1)!.textContent).toContain("Areas treated");
+    expect(step(2)!.textContent).toContain("Treatment settings");
+    expect(step(3)!.textContent).toContain("Client response");
+    expect(before(step(1)!, areasEl())).toBe(true);
+    expect(before(areasEl(), step(2)!)).toBe(true);
+    expect(before(step(2)!, machineOpenEl())).toBe(true);
+    expect(before(machineOpenEl(), step(3)!)).toBe(true);
+    expect(before(step(3)!, notes())).toBe(true);
+  });
+
+  it("switching moves the machine panel and the area editor WITHOUT remounting them: same nodes, typed values kept, nothing sent", async () => {
+    await mount();
+    await openPanel();
+    const field = reading();
+    await setInput(field, "120");
+    const select = machineSelect();
+    const areas = areasEl();
+    const note = notes();
+    await setInput(note, "kept note");
+    const callsBefore = saveCalls();
+    await click(toggle());
+    expect(before(areasEl(), machineSelect()), "New order: areas before the machine panel").toBe(true);
+    expect(areasEl(), "the area editor is the same node").toBe(areas);
+    expect(machineSelect(), "the machine select is the same node").toBe(select);
+    expect(reading(), "the typed setting's field is the same node").toBe(field);
+    expect(reading().value).toBe("120");
+    expect(notes()).toBe(note);
+    expect(notes().value).toBe("kept note");
+    await click(toggle());
+    expect(before(machineSelect(), areasEl()), "back to Current's order").toBe(true);
+    expect(areasEl()).toBe(areas);
+    expect(machineSelect()).toBe(select);
+    expect(reading()).toBe(field);
+    expect(reading().value).toBe("120");
+    expect(saveCalls()).toBe(callsBefore);
+  });
+
+  it("the editor's controls are the same in both views (same save and cancel controls)", async () => {
+    await mount();
+    const idsCurrent = Array.from(host!.querySelectorAll("[data-testid]"))
+      .map((e) => e.getAttribute("data-testid"))
+      .filter((t) => !t!.startsWith("new-view-step") && !t!.startsWith("charting-view-summary"))
+      .sort();
+    await click(toggle());
+    const idsNew = Array.from(host!.querySelectorAll("[data-testid]"))
+      .map((e) => e.getAttribute("data-testid"))
+      .filter((t) => !t!.startsWith("new-view-step") && !t!.startsWith("charting-view-summary"))
+      .sort();
+    expect(idsNew).toEqual(idsCurrent);
+    expect(idsNew).toContain("save-treatment-area");
+    expect(idsNew).toContain("cancel-treatment-area");
+  });
+});
+
