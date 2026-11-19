@@ -387,6 +387,24 @@ describe("apply_block_machine_identity: the xCell Pur model with a legacy-column
     expect((await failure(identity(s.blockId, S.studioId, SEN, senior, null)))?.message).toMatch(/already holds xCell Pur readings/);
   });
 
+  it("D3/D4: a block with a stale legacy mode and frequency takes a native identity and keeps those columns untouched; an entry with a legacy reading still blocks the native identity", async () => {
+    const S = await seedStudio("sw-d34");
+    const s = await seedSession(S);
+    await adminTx(async (q) => { await q(`set local session_replication_role = replica`); await q(`update public.session_blocks set mode = 'galv', machine_frequency = '13.56 MHz' where id = $1`, [s.blockId]); });
+    const senior = await unitOf(S.studioId, SEN, 3);
+    await identity(s.blockId, S.studioId, SEN, senior, "flash");
+    const row = (await adminQuery(`select mode, machine_frequency, machine_profile_id from public.session_blocks where id=$1`, [s.blockId])).rows[0];
+    expect(row.mode).toBe("galv");
+    expect(row.machine_frequency).toBe("13.56 MHz");
+    expect(row.machine_profile_id).toBe(SEN);
+    expect((await adminQuery(`select public.block_holds_legacy_readings($1) h`, [s.blockId])).rows[0].h).toBe(false);
+    const S2 = await seedStudio("sw-d4");
+    const s2 = await seedSession(S2);
+    await adminQuery(`insert into public.electrolysis_entries (session_id, block_id, area, mode, galvanic_ma) values ($1,$2,'Upper lip','galv',2)`, [s2.sessionId, s2.blockId]);
+    const senior2 = await unitOf(S2.studioId, SEN, 3);
+    expect((await failure(identity(s2.blockId, S2.studioId, SEN, senior2, "flash")))?.message).toMatch(/already holds/);
+  });
+
   it("an UNTOUCHED saved block is not frozen: a block saved with only an area, the sticky frequency and a mode selection can still change machine, and so can one whose only entry has no reading", async () => {
     const S = await seedStudio("sw-untouched");
     const s = await seedSession(S);

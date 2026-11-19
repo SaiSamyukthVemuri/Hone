@@ -280,6 +280,10 @@ end $$;
 -- PILOT ORDER: migration A (the amended apply_block_machine_identity below) is part of THIS apply. Until it is applied a pilot studio cannot save
 -- xCell Pur Thermolysis, Blend or Galvanic (the application refuses it by design), so the pilot starts only after this migration is applied.
 -- NOTES for reviewers:
+--  (c) A block that moves to a native identity keeps its legacy `mode` and `machine_frequency` columns exactly as they were: this migration neither
+--      clears nor reads them. They are not part of the readings definition below, so a stale legacy mode or frequency never counts as a legacy
+--      reading and never freezes anything. The chart shows a native reading by ITS OWN capture key (the unit, model and mode stored on the reading
+--      row), never by the block's current identity.
 --  (a) The legacy `mode` column on session_blocks is NOT frozen at DB level: practitioners legitimately edit it today. The mode freeze for
 --      legacy modes is application-only (the charting action refuses it on the server behind the rollout); the race there is narrow.
 --      Only machine_profile_id, studio_machine_id and machine_mode_key are frozen here.
