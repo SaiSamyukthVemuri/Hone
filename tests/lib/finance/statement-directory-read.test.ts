@@ -140,7 +140,7 @@ describe("Find a client: the read", () => {
   });
   it("FAILS CLOSED at the block cap: a studio larger than the cap is read_failed, never a shortened list", async () => {
     const blocks = Array.from({ length: 51 }, (_, k) => ok(Array.from({ length: 500 }, (_, i) => row(`b${String(k).padStart(3, "0")}-${String(i).padStart(4, "0")}`, `N ${k}-${i}`))));
-    expect(await load("owner", recording({ clients: blocks }).client)).toEqual({ access: "granted", ok: false, reason: "read_failed" });
+    expect(await load("owner", recording({ clients: [...blocks, ok([])] }).client)).toEqual({ access: "granted", ok: false, reason: "read_failed" });
     const underCap = blocks.slice(0, 49);
     underCap.push(ok([row("zzz", "Tail")]));
     const r = await load("owner", recording({ clients: underCap }).client);
