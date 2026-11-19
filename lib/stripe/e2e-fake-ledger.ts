@@ -39,6 +39,9 @@ function ledgerPath(runId: string): string {
 function configPath(runId: string): string {
   return join(tmpdir(), `${PREFIX}${runId}.config.json`);
 }
+function piStatePath(runId: string): string {
+  return join(tmpdir(), `${PREFIX}${runId}.pis.json`);
+}
 
 export type FakeOutcome = "success" | "decline" | "processing";
 
@@ -141,6 +144,41 @@ export function setFakeStripeWebhookTiming(runId: string, timing: FakeWebhookTim
   renameSync(tmp, p);
 }
 
+// PAYMENTINTENT STATE ACROSS ROUTE BUNDLES. Next compiles each route into its own bundle, so module-level state set while a
+// server action created an intent is invisible to the webhook route that later retrieves or cancels it: the retrieve then
+// states an intent the fake "never created" (no amount, no metadata) and the application correctly refuses it. The fake
+// therefore keeps each intent's state here as well, keyed by id, so every route sees the same object, as with Stripe.
+// Synthetic, test-safe fields only (id, status, amount, currency, metadata ids, customer id, charge id, synthetic error code).
+export function writeFakePiState(runId: string, pi: { id: string } & Record<string, unknown>): void {
+  assertAllowed(runId);
+  const p = piStatePath(runId);
+  let all: Record<string, unknown> = {};
+  if (existsSync(p)) {
+    try {
+      all = JSON.parse(readFileSync(p, "utf8"));
+    } catch {
+      all = {};
+    }
+  }
+  all[pi.id] = pi;
+  const tmp = `${p}.${Math.abs(hashRun(runId))}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(all), { mode: 0o600 });
+  renameSync(tmp, p);
+}
+
+export function readFakePiState(runId: string, id: string): Record<string, unknown> | null {
+  assertAllowed(runId);
+  const p = piStatePath(runId);
+  if (!existsSync(p)) return null;
+  try {
+    const all = JSON.parse(readFileSync(p, "utf8")) as Record<string, unknown>;
+    const pi = all[id];
+    return pi && typeof pi === "object" ? (pi as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function clearFakeStripeBehavior(runId: string): void {
   assertAllowed(runId);
   const p = configPath(runId);
@@ -151,11 +189,13 @@ export function resetFakeStripeLedger(runId: string): void {
   assertAllowed(runId);
   const p = ledgerPath(runId);
   if (existsSync(p)) rmSync(p, { force: true });
+  const pis = piStatePath(runId);
+  if (existsSync(pis)) rmSync(pis, { force: true });
 }
 
 export function cleanupFakeStripeFiles(runId: string): void {
   assertAllowed(runId);
-  for (const p of [ledgerPath(runId), configPath(runId)]) {
+  for (const p of [ledgerPath(runId), configPath(runId), piStatePath(runId)]) {
     if (existsSync(p)) rmSync(p, { force: true });
   }
 }

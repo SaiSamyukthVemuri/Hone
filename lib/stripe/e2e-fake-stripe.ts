@@ -3,7 +3,9 @@ import Stripe from "stripe";
 import {
   appendFakeCallToLedger,
   readFakeOutcome,
+  readFakePiState,
   readFakeWebhookTiming,
+  writeFakePiState,
 } from "@/lib/stripe/e2e-fake-ledger";
 
 // Minimal, server-only FAKE Stripe processor for the disposable E2E stack. It
@@ -94,9 +96,29 @@ function storePi(run: string, pi: FakePi): void {
   const m = piByIdByRun.get(run) ?? new Map<string, FakePi>();
   m.set(pi.id, pi);
   piByIdByRun.set(run, m);
+  // Also persisted, so another route's bundle (the webhook retrieving or cancelling an intent a server action created)
+  // sees the same object. Guarded: a no-op when fake mode is off (ordinary unit tests).
+  try {
+    writeFakePiState(run, pi);
+  } catch {
+    /* guard off or ledger unavailable → in-memory only */
+  }
 }
 function storedPi(run: string, id: string): FakePi | null {
-  return piByIdByRun.get(run)?.get(id) ?? null;
+  const local = piByIdByRun.get(run)?.get(id);
+  if (local) return local;
+  try {
+    const persisted = readFakePiState(run, id) as FakePi | null;
+    if (persisted) {
+      const m = piByIdByRun.get(run) ?? new Map<string, FakePi>();
+      m.set(id, persisted);
+      piByIdByRun.set(run, m);
+      return persisted;
+    }
+  } catch {
+    /* guard off or ledger unavailable */
+  }
+  return null;
 }
 // Statuses real Stripe lets a PaymentIntent be cancelled from.
 const CANCELLABLE = new Set(["requires_payment_method", "requires_capture", "requires_confirmation", "requires_action"]);
@@ -399,6 +421,7 @@ export function createFakeStripe(): Stripe {
             known.status = "succeeded";
             known.latestCharge = known.latestCharge ?? `ch_test_e2e_${run}_${(id.match(/_(\d+)$/)?.[1] ?? "r")}`;
             rememberMoney(run, known.latestCharge, { amount: known.amount, currency: known.currency });
+            storePi(run, known);
           }
           return piObject(known);
         }
@@ -437,6 +460,7 @@ export function createFakeStripe(): Stripe {
             throw err;
           }
           known.status = "canceled";
+          storePi(runId(), known);
           return piObject(known);
         }
         return { id, status: "canceled" };
