@@ -30,6 +30,13 @@ const isReviewPolicy = (p) =>
 /** GitHub's PullRequestReviewState, closed. */
 const REVIEW_STATES = ["PENDING", "COMMENTED", "APPROVED", "CHANGES_REQUESTED", "DISMISSED"];
 
+/**
+ * Codex's receipt header, exactly as it has opened every clean verdict since 25 Oct 2026 (REVIEW-RECEIPT-01).
+ * Fixed here like the marker: the exact v1 line and one blank line, once, at the very start, or nothing.
+ */
+const RECEIPT_HEADER = "<!-- codex-review-receipt:v1 -->\n\n";
+const verdictText = (body) => (body.startsWith(RECEIPT_HEADER) ? body.slice(RECEIPT_HEADER.length) : body);
+
 const MARKER_ANY = /\*\*Reviewed commit:\*\*/g;
 const MARKER_10 = /\*\*Reviewed commit:\*\* `([0-9a-f]{10})`/;
 
@@ -59,7 +66,7 @@ export function bindReviews(input) {
       });
     }
     for (const c of evidence.comments) {
-      if (!c.body.startsWith(policy.cleanPrefix)) continue;
+      if (!verdictText(c.body).startsWith(policy.cleanPrefix)) continue;
       reviews.push({
         id: c.id,
         channel: "CLEAN_COMMENT",
