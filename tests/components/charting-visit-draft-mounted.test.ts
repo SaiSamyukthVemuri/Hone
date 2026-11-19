@@ -13,8 +13,10 @@ function Form({ id, report }: { id: string; report: VisitDraftReport }) {
   useReportVisitDraft(id, report);
   return null;
 }
+let lastSummary: unknown = null;
 function Reader() {
   const s = useVisitDraftSummary();
+  lastSummary = s;
   return createElement("output", { "data-m": s.machine ?? "", "data-a": s.draftAreas.join("|"), "data-u": String(s.unsaved) });
 }
 
@@ -78,5 +80,15 @@ describe("the Session payment step is listed only where the payment card renders
   it("not listed otherwise (a practitioner, or an ineligible session)", () => {
     expect(html(false)).not.toContain("Session payment");
     expect(html(false)).toContain("Review &amp; finish");
+  });
+});
+
+describe("the summary never carries draft content", () => {
+  it("the activity token holds the draft, but the summary object does not expose it", async () => {
+    const SECRET = "SYNTHETIC-READING-9.87 and a private note";
+    await render(createElement(Form, { id: "block:a", report: { ...base, machine: "Unit A", unsaved: true, activity: JSON.stringify({ comments: SECRET, intensity: "9.87" }) } }));
+    expect(JSON.stringify(lastSummary)).not.toContain("SYNTHETIC-READING");
+    expect(JSON.stringify(lastSummary)).not.toContain("9.87");
+    expect(Object.keys(lastSummary as object).sort()).toEqual(["attention", "draftAreas", "machine", "unsaved"]);
   });
 });

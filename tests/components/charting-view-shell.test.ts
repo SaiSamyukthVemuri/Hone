@@ -422,6 +422,18 @@ describe("the one-choice preselect (New view only)", () => {
 describe("the This visit card follows the open form", () => {
   const sum = () => host!.querySelector<HTMLElement>('[data-testid="charting-view-summary"]')!;
   const row = (id: string) => sum().querySelector<HTMLElement>(`[data-testid="${id}"]`)!;
+  it("typed readings and notes never appear in the This visit markup", async () => {
+    await mount("new");
+    await setInput(notes(), "PRIVATE-NOTE-TEXT 4242");
+    await openPanel();
+    const field = reading();
+    if (field) await setInput(field, "7777");
+    const markup = sum().outerHTML;
+    expect(markup).not.toContain("PRIVATE-NOTE-TEXT");
+    expect(markup).not.toContain("4242");
+    if (field) expect(markup).not.toContain("7777");
+    expect(row("visit-summary-status").textContent).toBe("Not saved yet");
+  });
   it("lists the five steps in the reference order, with Record response optional", async () => {
     await mount("new");
     const lis = Array.from(sum().querySelectorAll('[data-testid="visit-steps"] li'));
