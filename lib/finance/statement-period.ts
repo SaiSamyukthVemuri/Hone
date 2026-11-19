@@ -21,6 +21,16 @@ export function isStatementMonth(v: string | undefined, currentMonth: YearMonth)
   return isYearMonth(v) && v >= STATEMENT_MIN_MONTH && v <= currentMonth;
 }
 
+/**
+ * The month the page shows for a requested one: the request when it is a valid month in range, otherwise the current month, with `fellBack`
+ * true when something WAS requested but could not be honoured (so the page says so). An absent request is not a fallback.
+ */
+export function resolveStatementMonth(requested: string | string[] | undefined, currentMonth: YearMonth): { month: YearMonth; fellBack: boolean } {
+  const value = Array.isArray(requested) ? requested[0] : requested;
+  if (isStatementMonth(value, currentMonth)) return { month: value, fellBack: false };
+  return { month: currentMonth, fellBack: value !== undefined };
+}
+
 export function yearMonthOf(localDate: string): YearMonth {
   return localDate.slice(0, 7);
 }

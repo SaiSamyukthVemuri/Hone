@@ -167,8 +167,47 @@ describe("month bounds (Insurance P1)", () => {
   });
   it("the page uses the bounded check and passes the bound and notice to the view", () => {
     const src = readFileSync("app/(app)/financials/statement/page.tsx", "utf8");
-    expect(src).toContain("isStatementMonth(requested, current)");
+    expect(src).toContain("resolveStatementMonth(sp.month, current)");
+    expect(src).toContain("fellBack ? STATEMENT_MONTH_NOTICE : null");
     expect(src).toMatch(/maxMonth=\{current\}/);
     expect(src).not.toMatch(/isYearMonth\(requested\)/);
+  });
+});
+
+describe("month bounds: Previous is hidden at the first month, and the fallback notice is decided by the page's resolver (Insurance C1, C2)", () => {
+  it("at 2000-01 there is no Previous link (and Next still exists)", async () => {
+    const { StatementView } = await import("@/app/(app)/financials/statement/statement-view");
+    const empty = buildStatement({ studioCurrency: "cad", appointments: [], cardRows: [], settlementRows: [], legacyFeeRows: [] });
+    const html = renderToStaticMarkup(
+      StatementView({
+        view: { access: "granted", ok: true, month: "2000-01", label: "January 2000", timezone: "America/Toronto", startLocal: "2000-01-01", endLocalExclusive: "2000-02-01", statement: empty, visitInfo: {}, practitionerNames: {} },
+        currency: "cad", format: fmt, maxMonth: "2026-11", notice: null,
+      }),
+    );
+    expect(html).not.toContain("Previous month");
+    expect(html).toContain("Next month");
+    const feb = await render({ maxMonth: "2026-12" });
+    expect(feb).toContain("Previous month");
+  });
+  it("resolveStatementMonth: valid in-range months pass without a notice", async () => {
+    const { resolveStatementMonth } = await import("@/lib/finance/statement-period");
+    expect(resolveStatementMonth("2026-03", "2026-11")).toEqual({ month: "2026-03", fellBack: false });
+    expect(resolveStatementMonth(["2026-03", "2099-01"], "2026-11")).toEqual({ month: "2026-03", fellBack: false });
+    expect(resolveStatementMonth("2000-01", "2026-11")).toEqual({ month: "2000-01", fellBack: false });
+    expect(resolveStatementMonth(undefined, "2026-11")).toEqual({ month: "2026-11", fellBack: false });
+  });
+  it("an OUT-OF-RANGE month (9999-12, 0000-01, 1999-12, a future month) falls back to the current month WITH a notice", async () => {
+    const { resolveStatementMonth } = await import("@/lib/finance/statement-period");
+    for (const m of ["9999-12", "0000-01", "0001-01", "1999-12", "2026-12"]) expect(resolveStatementMonth(m, "2026-11"), m).toEqual({ month: "2026-11", fellBack: true });
+  });
+  it("an INVALID month (bad shape, month 13, empty) falls back WITH a notice", async () => {
+    const { resolveStatementMonth } = await import("@/lib/finance/statement-period");
+    for (const m of ["abc", "2026-13", "2026-1", "", "2026-00", "20261"]) expect(resolveStatementMonth(m, "2026-11"), m).toEqual({ month: "2026-11", fellBack: true });
+    expect(resolveStatementMonth([], "2026-11")).toEqual({ month: "2026-11", fellBack: false });
+  });
+  it("the notice reads the same copy constant the view renders, and renders with a role=status", async () => {
+    const html = await render({ maxMonth: "2026-11", notice: STATEMENT_MONTH_NOTICE });
+    expect(html).toContain(STATEMENT_MONTH_NOTICE);
+    expect(html).toMatch(/role="status"/);
   });
 });

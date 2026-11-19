@@ -2,7 +2,7 @@ import { formatMoney, type PaymentCurrency } from "@/lib/billing/payment-jurisdi
 import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
 import { localDateString } from "@/lib/booking/tz";
 import { loadStatementView } from "@/lib/finance/statement-read";
-import { isStatementMonth, yearMonthOf } from "@/lib/finance/statement-period";
+import { resolveStatementMonth, yearMonthOf } from "@/lib/finance/statement-period";
 import { STATEMENT_MONTH_NOTICE } from "@/lib/finance/statement-copy";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 
@@ -32,12 +32,10 @@ export default async function StatementPage({ searchParams }: { searchParams: Pr
   }
 
   const sp = await searchParams;
-  const requested = Array.isArray(sp.month) ? sp.month[0] : sp.month;
-  // An unrecognised month falls back to the current one; it is never an unbounded window.
+  // An unrecognised or out-of-range month falls back to the current one, with a visible notice; it is never an unbounded window.
   const current = yearMonthOf(localDateString(new Date(), studio.timezone));
-  const valid = isStatementMonth(requested, current);
-  const month = valid ? requested : current;
-  const notice = requested !== undefined && !valid ? STATEMENT_MONTH_NOTICE : null;
+  const { month, fellBack } = resolveStatementMonth(sp.month, current);
+  const notice = fellBack ? STATEMENT_MONTH_NOTICE : null;
 
   const jurisdiction = await getStudioPaymentJurisdiction(studio.id);
   const currency: PaymentCurrency | null = jurisdiction.ok ? jurisdiction.jurisdiction.currency : null;
