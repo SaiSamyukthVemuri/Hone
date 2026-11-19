@@ -2,7 +2,8 @@
 // public.block_holds_legacy_readings is the authority; tests/db/machine-switches.db.test.ts pins that the two agree on a matrix of cases,
 // so a change to either list fails that test. A soft-deleted entry is not a reading.
 
-export const LEGACY_BLOCK_READING_TEXT_COLUMNS = ["mode", "apilus_modality", "machine_frequency"] as const;
+// Not included on purpose: the block's `mode` (a selection) and `machine_frequency` (a sticky default written by a save with no reading touched).
+export const LEGACY_BLOCK_READING_TEXT_COLUMNS = ["apilus_modality"] as const;
 export const LEGACY_BLOCK_READING_NUMBER_COLUMNS = ["energy_level"] as const;
 export const LEGACY_ENTRY_READING_COLUMNS = [
   "thermolysis_intensity_percent",

@@ -381,10 +381,25 @@ describe("apply_block_machine_identity: the xCell Pur model with a legacy-column
   it("a block holding legacy readings takes the Pur legacy identity, but another native identity is still refused (0310's rule stands)", async () => {
     const S = await seedStudio("sw-id-readings");
     const s = await seedSession(S);
-    await setLegacyMode(s.blockId);
+    await adminTx(async (q) => { await q(`set local session_replication_role = replica`); await q(`update public.session_blocks set energy_level = 3 where id = $1`, [s.blockId]); });
     await identity(s.blockId, S.studioId, PUR, null, "thermolysis");
     const senior = await unitOf(S.studioId, SEN, 3);
     expect((await failure(identity(s.blockId, S.studioId, SEN, senior, null)))?.message).toMatch(/already holds xCell Pur readings/);
+  });
+
+  it("an UNTOUCHED saved block is not frozen: a block saved with only an area, the sticky frequency and a mode selection can still change machine, and so can one whose only entry has no reading", async () => {
+    const S = await seedStudio("sw-untouched");
+    const s = await seedSession(S);
+    await adminTx(async (q) => { await q(`set local session_replication_role = replica`); await q(`update public.session_blocks set mode = 'thermo', machine_frequency = '27.12 MHz' where id = $1`, [s.blockId]); });
+    await adminQuery(`insert into public.electrolysis_entries (session_id, block_id, area, mode) values ($1,$2,'Upper lip','thermo')`, [s.sessionId, s.blockId]);
+    expect((await adminQuery(`select public.block_holds_legacy_readings($1) h`, [s.blockId])).rows[0].h).toBe(false);
+    const senior = await unitOf(S.studioId, SEN, 3);
+    await identity(s.blockId, S.studioId, SEN, senior, "flash");
+    expect(await failure(adminQuery(`update public.session_blocks set machine_profile_id=$2, studio_machine_id=null, machine_mode_key='thermolysis' where id=$1`, [s.blockId, PUR]))).toBeNull();
+    expect(await failure(adminQuery(`update public.session_blocks set machine_mode_key='blend' where id=$1`, [s.blockId]))).toBeNull();
+    // the moment a reading is recorded the identity freezes
+    await adminTx(async (q) => { await q(`set local session_replication_role = replica`); await q(`update public.electrolysis_entries set thermolysis_intensity_percent = 30 where block_id = $1`, [s.blockId]); });
+    expect((await failure(adminQuery(`update public.session_blocks set machine_mode_key='galvanic' where id=$1`, [s.blockId])))?.message).toMatch(/already holds readings/);
   });
 
   it("the legacy xCell identity (no unit, no mode) is untouched, and a historical legacy-xCell block reopens unchanged", async () => {
@@ -600,10 +615,10 @@ describe("Insurance conditions: one live Pur unit, forced RLS, one readings defi
     type Case = { name: string; block?: Record<string, unknown>; entry?: Record<string, unknown>; deleted?: boolean; reading: boolean };
     const cases: Case[] = [
       { name: "empty", reading: false },
-      { name: "block mode", block: { mode: "thermo" }, reading: true },
+      { name: "block mode alone (a selection, not a reading)", block: { mode: "thermo" }, reading: false },
       { name: "block modality", block: { apilus_modality: "Synchro" }, reading: true },
       { name: "block energy level", block: { energy_level: 3 }, reading: true },
-      { name: "block frequency", block: { machine_frequency: "27.12 MHz" }, reading: true },
+      { name: "block frequency alone (a sticky default, not a reading)", block: { machine_frequency: "27.12 MHz" }, reading: false },
       { name: "entry thermolysis intensity", entry: { thermolysis_intensity_percent: 30 }, reading: true },
       { name: "entry thermolysis duration", entry: { thermolysis_duration_seconds: 2 }, reading: true },
       { name: "entry galvanic ma", entry: { galvanic_ma: 1.5 }, reading: true },

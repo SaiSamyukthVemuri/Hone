@@ -294,18 +294,17 @@ end $$;
 -- (the second trigger, SECURITY INVOKER so it locks only a block the caller may write), so a reading cannot commit between this check and the identity update, and the check then sees committed readings.
 -- ---------------------------------------------------------------------------
 -- ONE DEFINITION of "this block holds legacy readings", shared by the freeze trigger below, identity migration A (the area guard in
--- apply_block_machine_identity) and the application (a test pins the agreement): the legacy block columns, and the live entry reading columns
--- including energy level and modality. A soft-deleted entry is not a reading. Native MultiPlex readings (treatment_setup_readings) are NOT part of
--- it and do not freeze the identity: each native reading carries the unit, model and mode it was recorded under (the capture key), so a later
--- unit correction cannot rewrite what a reading says, and the existing submission commands already allow that correction.
+-- apply_block_machine_identity) and the application (a test pins the agreement): the machine readings a practitioner recorded. On the block that is
+-- the energy level and the modality; on its live entries the thermolysis, galvanic, units-of-lye, energy-level and modality columns. A soft-deleted
+-- entry is not a reading. NOT part of it, on purpose: the block's `mode` (a selection, not a reading) and `machine_frequency` (a sticky per-
+-- practitioner default that a save writes even when no reading was touched), so a block saved with only an area stays free to change machine.
+-- Native MultiPlex readings (treatment_setup_readings) do not freeze the identity either: each carries its own unit, model and mode (the capture
+-- key), so a later unit correction cannot rewrite what a reading says, and the existing submission commands already allow that correction.
 create or replace function public.block_holds_legacy_readings(p_block_id uuid)
 returns boolean language sql stable security definer set search_path = pg_catalog, pg_temp as $$
   select exists (select 1 from public.session_blocks b
                   where b.id = p_block_id
-                    and (nullif(btrim(b.mode::text), '') is not null
-                         or nullif(btrim(b.apilus_modality::text), '') is not null
-                         or b.energy_level is not null
-                         or nullif(btrim(b.machine_frequency::text), '') is not null))
+                    and (nullif(btrim(b.apilus_modality::text), '') is not null or b.energy_level is not null))
       or exists (select 1 from public.electrolysis_entries e
                   where e.block_id = p_block_id and e.deleted_at is null
                     and (e.thermolysis_intensity_percent is not null or e.thermolysis_duration_seconds is not null
