@@ -407,6 +407,12 @@ describe("read-only, owner-gated, no new write surface", () => {
     "app/(app)/financials/statements/statements-chrome.tsx",
     "lib/finance/statement-screen.ts",
     "lib/finance/statement-finder-keys.ts",
+    "lib/finance/statement-csv.ts",
+    "lib/finance/owner-client-statement.ts",
+    "app/(app)/financials/statements/statement-print-view.tsx",
+    "app/(app)/financials/statements/print-button.tsx",
+    "app/(app)/financials/statements/[clientId]/print/page.tsx",
+    "app/(app)/financials/statements/[clientId]/export.csv/route.ts",
   ];
   const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
   it("none of the new files writes, calls Stripe, mails, texts, uses a service-role client, or declares a server action", () => {
@@ -422,7 +428,7 @@ describe("read-only, owner-gated, no new write surface", () => {
       const code = strip(read(f));
       const gate = code.indexOf('practitioner.role !== "owner"');
       expect(gate, f).toBeGreaterThan(-1);
-      for (const reader of ["getStudioPaymentJurisdiction(", "loadStatementDirectory(", "loadFinderClients(", "loadLastVisitDates(", "loadClientStatementRead("]) {
+      for (const reader of ["getStudioPaymentJurisdiction(", "loadStatementDirectory(", "loadFinderClients(", "loadLastVisitDates(", "loadClientStatementRead(", "loadOwnerClientStatement("]) {
         const at = code.indexOf(reader);
         if (at > -1) expect(gate, `${f} ${reader}`).toBeLessThan(at);
       }
@@ -430,6 +436,6 @@ describe("read-only, owner-gated, no new write surface", () => {
   });
   it("the pages are never cached, and the client id comes from the URL only to be verified by the read module", () => {
     for (const f of ["app/(app)/financials/statements/page.tsx", "app/(app)/financials/statements/[clientId]/page.tsx"]) expect(read(f)).toMatch(/export const dynamic = "force-dynamic"/);
-    expect(read("app/(app)/financials/statements/[clientId]/page.tsx")).toMatch(/loadClientStatementRead\(practitioner, studio, currency, clientId/);
+    expect(read("app/(app)/financials/statements/[clientId]/page.tsx")).toMatch(/loadOwnerClientStatement\(\{ practitioner, studio, clientId/);
   });
 });
