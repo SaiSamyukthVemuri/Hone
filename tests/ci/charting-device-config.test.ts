@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 // The HON-80 device matrix is a separate config that only re-selects projects. These pin that it cannot change isolation or turn the switch on.
@@ -43,5 +44,42 @@ describe("e2e/charting-new-view.spec.ts", () => {
   });
   it("proves the rollout setting reached the server instead of skipping silently", () => {
     expect(spec).toMatch(/the switch must exist: start the app server with HONE_CHARTING_NEW_VIEW_STUDIO_IDS=all/);
+  });
+});
+
+describe("playwright.charting-payment.config.ts selects only the charting payment spec", () => {
+  const listed = (webkit: "0" | "1") => {
+    const out = execFileSync("npx", ["playwright", "test", "--config", "playwright.charting-payment.config.ts", "--list", "--reporter=json"], {
+      encoding: "utf8",
+      env: { ...process.env, HONE_E2E_WEBKIT: webkit },
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    const files = new Set<string>();
+    const projects = new Set<string>();
+    let tests = 0;
+    const walk = (suite: { file?: string; suites?: unknown[]; specs?: { file: string; tests: { projectName: string }[] }[] }) => {
+      for (const sp of suite.specs ?? []) {
+        files.add(sp.file);
+        for (const t of sp.tests) {
+          tests += 1;
+          projects.add(t.projectName);
+        }
+      }
+      for (const c of (suite.suites ?? []) as (typeof suite)[]) walk(c);
+    };
+    for (const s of JSON.parse(out).suites) walk(s);
+    return { files: [...files], projects: [...projects].sort(), tests };
+  };
+  it("without WebKit: only the charting payment spec, in one project", () => {
+    const r = listed("0");
+    expect(r.files).toEqual(["charting-new-view-payment.spec.ts"]);
+    expect(r.projects).toEqual(["chromium-charting-payment"]);
+    expect(r.tests).toBe(3);
+  });
+  it("with HONE_E2E_WEBKIT=1: still only the charting payment spec (no inherited quick-checkout project or grep)", () => {
+    const r = listed("1");
+    expect(r.files).toEqual(["charting-new-view-payment.spec.ts"]);
+    expect(r.projects).toEqual(["chromium-charting-payment", "webkit-charting-payment"]);
+    expect(r.tests).toBe(6);
   });
 });
