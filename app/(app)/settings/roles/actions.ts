@@ -15,6 +15,8 @@ import {
   coreSave,
 } from "@/lib/settings/roles/core";
 import { enforcementRefusal } from "@/lib/settings/roles/model";
+import { chosenChanges, defaultsPolicy, savedChoicesFor } from "@/lib/settings/roles/diff";
+import { ROLES, type Role, type Scope } from "@/lib/permissions/catalog";
 import { loadStudioPolicyState, type StudioPolicyState } from "@/lib/settings/roles/policy-store";
 import { reasonAcceptable, type AccessResult, type ActivationPreviewResult, type ChangeRoleResult, type CommandResult, type HistoryResult, type PreviewResult, type RoleError } from "@/lib/settings/roles/api";
 
@@ -80,26 +82,46 @@ export async function reloadPolicyAction(): Promise<{ ok: true; state: StudioPol
   return state.writable ? { ok: true, state } : refuse({ code: "unavailable" });
 }
 
+// The saved-choice side of a preview. The core's preview answers about effective access, which is empty while nothing is released even when
+// the owner's choices move, so the server also reads the policy and lists the choices the request would change. The read is bound to the
+// previewed version: if the policy moved between the two reads, the preview is refused as stale rather than describing a version the
+// owner will not be overwriting (Codex P2 4584603808, 4584672884). Choice lists, not an access diff: the core remains the only judge.
+async function withChoices(
+  studioId: string,
+  result: PreviewResult,
+  choicesOf: (policies: StudioPolicyState["policies"]) => import("@/lib/settings/roles/api").PreviewChoice[],
+): Promise<PreviewResult> {
+  if (!result.ok) return result;
+  const state = await loadStudioPolicyState(studioId);
+  if (!state.writable) return refuse({ code: "unavailable" });
+  if (state.version !== result.preview.version) return refuse({ code: "stale_version" });
+  return { ok: true, preview: { ...result.preview, choices: choicesOf(state.policies) } };
+}
+
+const toDefaults = (p: StudioPolicyState["policies"]) => ({ practitioner: defaultsPolicy(p.practitioner), receptionist: defaultsPolicy(p.receptionist) });
+
 /** Pure preview of a draft's changed keys; returns the version it was computed against. Writes nothing. */
 export async function previewRoleChangesAction(edits: unknown): Promise<PreviewResult> {
   const owner = await assertOwner();
   if (!owner) return refuse({ code: "refused" });
   const changes = changesShape(edits);
   if (!changes) return refuse({ code: "invalid_changes" });
-  return (await wiringRefusal(owner.studioId, changes)) ?? corePreviewChanges(owner.studioId, changes);
+  const refusal = await wiringRefusal(owner.studioId, changes);
+  if (refusal) return refusal;
+  return withChoices(owner.studioId, await corePreviewChanges(owner.studioId, changes), (p) => savedChoicesFor(p, changes as Partial<Record<Role, Record<string, Scope>>>));
 }
 
 export async function previewResetAction(role: unknown): Promise<PreviewResult> {
   const owner = await assertOwner();
   if (!owner) return refuse({ code: "refused" });
   if (!isRole(role)) return refuse({ code: "unknown_role" });
-  return corePreviewReset(owner.studioId, role);
+  return withChoices(owner.studioId, await corePreviewReset(owner.studioId, role), (p) => chosenChanges([role], p, toDefaults(p)));
 }
 
 export async function previewAdoptAction(): Promise<PreviewResult> {
   const owner = await assertOwner();
   if (!owner) return refuse({ code: "refused" });
-  return corePreviewAdopt(owner.studioId);
+  return withChoices(owner.studioId, await corePreviewAdopt(owner.studioId), (p) => chosenChanges(ROLES, p, toDefaults(p)));
 }
 
 /** Save the changed keys of both roles in one atomic request, bound to the version a preview returned. */

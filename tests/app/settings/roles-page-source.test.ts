@@ -33,8 +33,10 @@ describe("the Roles actions", () => {
     }
   });
   it("never report success on its own: success only ever comes from the core's answer", () => {
-    // The one `ok: true` is reloadPolicyAction handing back what get_role_permissions holds; it asserts no write happened.
-    expect(actions.match(/ok: true/g)).toHaveLength(2); // the return type and the value, both in reloadPolicyAction
+    // `ok: true` appears in reloadPolicyAction (the return type and the value: what get_role_permissions holds, no write) and once more in
+    // withChoices, which only runs on a preview the core already answered ok (`if (!result.ok) return result`) and adds the saved-choice list.
+    expect(actions.match(/ok: true/g)).toHaveLength(3);
+    expect(actions).toMatch(/if \(!result\.ok\) return result;/);
     expect(actions).toMatch(/\{ ok: true; state: StudioPolicyState \}/);
   });
   it("bind every write to the version a preview returned, and send it to the core", () => {
