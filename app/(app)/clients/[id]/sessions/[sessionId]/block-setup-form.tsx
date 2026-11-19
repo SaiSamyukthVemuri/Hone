@@ -104,7 +104,7 @@ import { useRetainedState } from "@/components/charting-state-provider";
 import { NewViewHint, NewViewStep, useChartingRollout, useChartingView } from "@/components/charting-view-context";
 import { useReportVisitDraft, visitMachineLine } from "@/components/charting-visit-draft";
 import { useRegisterVisitSaver, type SaveOutcome } from "@/components/charting-visit-save";
-import { hiddenBagsNotice, hiddenModesWithValues, pulseRecordable, switchMode, type ModeBags } from "@/lib/sessions/mode-bags";
+import { hiddenBagsNotice, hiddenModesWithValues, mergeTouched, pulseTouchedFromRecord, pulseRecordable, switchMode, type ModeBags, type PulseTouched } from "@/lib/sessions/mode-bags";
 import { DraftRegistryProvider, useDraftRegistryState, useReportDraft } from "@/components/machines/draft-registry";
 import { MachineFirstSetupConnected } from "@/components/machines/machine-first-setup-connected";
 import { ProbePicker } from "@/components/probe-picker";
@@ -474,7 +474,7 @@ export function BlockSetupForm({
   // are never recorded. With the rollout off none of this runs and the form behaves exactly as it did.
   const rollout = useChartingRollout();
   const [modeBags, setModeBags] = useRetainedState<ModeBags>(retainKey ? `${retainKey}:modeBags` : null, {});
-  const [pulseTouched, setPulseTouched] = useRetainedState<boolean>(retainKey ? `${retainKey}:pulseTouched` : null, false);
+  const [pulseTouched, setPulseTouched] = useRetainedState<PulseTouched>(retainKey ? `${retainKey}:pulseTouched` : null, () => pulseTouchedFromRecord(firstEntry));
   // WHICH KIND OF MACHINE IS IN FORCE, so only that machine's fields show.
   // Opened from the area's SAVED identity (migration 0301), never inferred:
   // an area with no saved identity is "none", and "none" keeps the existing
@@ -1420,6 +1420,7 @@ export function BlockSetupForm({
     // With a native machine in force only the SHARED fields (probe and lot) are copied; the hidden legacy fields stay
     // cleared, so nothing legacy is ever submitted.
     setDraft((d) => ({ ...d, ...copyPatchForMachine(machineKind, patch) }));
+    if (rollout) setPulseTouched((t) => mergeTouched(t, pulseTouchedFromRecord(firstEntry)));
     // Bind the copied lot to the copied probe, so the probe-change effect does
     // NOT then overwrite it with an unrelated historical suggestion. Selecting a
     // different probe afterwards still runs the normal resolver for that probe.
@@ -1570,13 +1571,13 @@ export function BlockSetupForm({
     if (!hairs.ok) return fail(hairs.error);
     const pulseStr = draft.pulseCount.trim();
     // REDESIGN: the pulse controls are recorded only when TOUCHED and the shown mode has a thermolysis group; an untouched default is never a record.
-    const pulseHeld = rollout && !pulseRecordable(draft.mode, pulseTouched);
-    const pulseCount = pulseStr === "" || pulseHeld ? null : parseInt(pulseStr, 10);
+    const pulseOk = rollout ? pulseRecordable(draft.mode, pulseTouched) : { count: true, delay: true };
+    const pulseCount = pulseStr === "" || !pulseOk.count ? null : parseInt(pulseStr, 10);
     // Pulse delay is only recorded when multiple pulses were done. When
     // applicable, validate the range here so the practitioner gets the exact
     // message; the server re-validates (defense-in-depth).
     let pulseDelaySeconds: number | null = null;
-    if (pulseCount != null && pulseCount > 1 && draft.pulseDelay.trim() !== "") {
+    if (pulseCount != null && pulseCount > 1 && pulseOk.delay && draft.pulseDelay.trim() !== "") {
       const pd = Number(draft.pulseDelay);
       if (!Number.isFinite(pd) || pd < PULSE_DELAY_MIN || pd > PULSE_DELAY_MAX) {
         return fail("Pulse delay must be between 0.03 and 1.90 seconds.");
@@ -1813,7 +1814,7 @@ export function BlockSetupForm({
       PULSE_COUNT_MAX,
       Math.max(PULSE_COUNT_MIN, base + delta),
     );
-    if (rollout) setPulseTouched(true);
+    if (rollout) setPulseTouched((t) => ({ ...t, count: true }));
     update("pulseCount", String(next));
   }
 
@@ -1900,7 +1901,7 @@ export function BlockSetupForm({
               max={PULSE_COUNT_MAX}
               value={draft.pulseCount}
               onChange={(e) => {
-                if (rollout) setPulseTouched(true);
+                if (rollout) setPulseTouched((t) => ({ ...t, count: true }));
                 update("pulseCount", e.target.value);
               }}
               className="w-20 rounded-md border border-neutral-300 bg-white px-3 py-3 text-center text-base tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
@@ -1929,7 +1930,7 @@ export function BlockSetupForm({
                   max={PULSE_DELAY_MAX}
                   value={draft.pulseDelay}
                   onChange={(e) => {
-                    if (rollout) setPulseTouched(true);
+                    if (rollout) setPulseTouched((t) => ({ ...t, delay: true }));
                     update("pulseDelay", e.target.value);
                   }}
                   aria-label="Pulse delay in seconds"
