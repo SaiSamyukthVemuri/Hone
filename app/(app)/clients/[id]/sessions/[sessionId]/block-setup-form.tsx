@@ -2089,7 +2089,7 @@ export function BlockSetupForm({
             areasSection,
             <NewViewStep key="step-settings" n={2} title="Enter settings" />,
             // Shown only when a machine really is selected (a saved native unit, or the unit the panel reports).
-            machineKind === "native" ? (
+            machineKind !== "none" ? (
               <NewViewHint key="hint-machine" testId="new-view-hint-machine">
                 Your machine is already selected.
               </NewViewHint>

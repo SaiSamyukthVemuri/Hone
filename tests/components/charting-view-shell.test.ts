@@ -356,6 +356,69 @@ const areasEl = () => host!.querySelector('[data-testid="selected-areas"]') as H
 const machineOpenEl = () => host!.querySelector('[data-testid="machine-first-open"]') as HTMLElement;
 const before = (a: Node, b: Node) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
 
+describe("the one-choice preselect (New view only)", () => {
+  const only = { ...DEVICE };
+  async function mountCreate(view: "current" | "new", ctx: Record<string, unknown>) {
+    ctxBox.ctx = { ...CTX, remembered: null, legacyMachine: null, ...ctx };
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const el = createElement(ChartingViewShell, {
+      initialView: view,
+      summary: createElement(ChartingVisitSummary, { clientName: "Avery Example", kind: "electrolysis", areas: [], count: 0, nextVisitNoteRecorded: false }),
+      children: createElement(
+        "div",
+        null,
+        createElement(ChartingViewToggle),
+        createElement(BlockSetupForm, { sessionId: "s1", clientId: "c1", previousBlock: null, block: null as never, firstEntry: null, onCancel: () => undefined }),
+      ),
+    });
+    await act(async () => root!.render(el));
+    if (!host.querySelector('[data-testid="machine-select"]')) {
+      const open = host.querySelector('[data-testid="machine-first-open"]');
+      if (open) await click(open);
+    }
+  }
+  it("one live unit and nothing else chosen: New view opens on it and says so; nothing is saved", async () => {
+    await mountCreate("new", { devices: [only] });
+    expect(machineSelect().value).toBe("room-9");
+    expect(host!.querySelector('[data-testid="new-view-hint-machine"]')).not.toBeNull();
+    expect(saveCalls()).toBe(0);
+  });
+  it("Current view is untouched: the same studio opens on no machine and says nothing", async () => {
+    await mountCreate("current", { devices: [only] });
+    expect(machineSelect().value).toBe("");
+    expect(host!.querySelector('[data-testid="new-view-hint-machine"]')).toBeNull();
+  });
+  it("zero units, a retired unit, or two units preselect nothing", async () => {
+    await mountCreate("new", { devices: [] });
+    expect(host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')?.value ?? "").toBe("");
+    await act(async () => root!.unmount());
+    host!.remove();
+    await mountCreate("new", { devices: [{ ...only, retiredAt: "2026-01-01T00:00:00.000Z" }] });
+    expect(host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')?.value ?? "").toBe("");
+    await act(async () => root!.unmount());
+    host!.remove();
+    await mountCreate("new", { devices: [only, { ...only, deviceId: "room-10", displayName: "Room 10 unit" }] });
+    expect(machineSelect().value).toBe("");
+  });
+  it("a remembered machine still wins, and the existing xCell offered beside a unit makes two entries: nothing is preselected", async () => {
+    await mountCreate("new", { devices: [only], legacyMachine: CTX.legacyMachine });
+    expect(machineSelect().value).toBe("");
+  });
+  it("the existing xCell offered alone is the one entry and opens chosen", async () => {
+    await mountCreate("new", { devices: [], legacyMachine: CTX.legacyMachine });
+    expect(host!.querySelector('[data-testid="new-view-hint-machine"]')).not.toBeNull();
+    expect(saveCalls()).toBe(0);
+  });
+  it("a view switch after mount selects nothing and changes nothing", async () => {
+    await mountCreate("current", { devices: [only] });
+    await click(toggle());
+    expect(machineSelect().value).toBe("");
+    expect(saveCalls()).toBe(0);
+  });
+});
+
 describe("the This visit card follows the open form", () => {
   const sum = () => host!.querySelector<HTMLElement>('[data-testid="charting-view-summary"]')!;
   const row = (id: string) => sum().querySelector<HTMLElement>(`[data-testid="${id}"]`)!;

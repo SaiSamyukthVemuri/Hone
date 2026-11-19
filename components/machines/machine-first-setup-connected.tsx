@@ -6,6 +6,9 @@ import { Button } from "@/components/ui/button";
 import { SectionLabel } from "@/components/ui/section-label";
 import { MachineFirstSetupPanel } from "./machine-first-setup-panel";
 import { NO_PERSISTENCE } from "@/lib/machines/selection-store";
+import { selectableDevices } from "@/lib/machines/selection";
+import { preselectOnlyChoice } from "@/lib/machines/preselect";
+import { useChartingView } from "@/components/charting-view-context";
 import type { MachineSetupContext } from "@/app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions";
 
 // MPX-03 — the panel with its identity resolved on the server, ON DEMAND.
@@ -623,6 +626,14 @@ export function MachineFirstSetupConnected({
   const hold = holdAutoSelect;
   const newAreaLast = !hasSaved && !blockId && !hold ? (ctx.clientLastMachine ?? null) : null;
   const autoRemembered = hold ? null : (ctx.remembered ?? null);
+  // THE ONE-CHOICE PRESELECT: New view only, a NEW area only, and only when nothing else would choose (no saved unit, no client-last, no
+  // remembered or restored machine, no remembered-unavailable note, nothing held). Read once at mount by the panel's initial state, so a
+  // later view switch or re-render never changes a selection. A display default: it saves nothing.
+  const isNewView = useChartingView() === "new";
+  const onlyChoice =
+    isNewView && !hold && !hasSaved && !blockId && !newAreaLast && !autoRemembered && !ctx.rememberedUnavailable && !ctx.restoredSelection && ctx.scope
+      ? preselectOnlyChoice(selectableDevices(ctx.scope, ctx.devices, ctx.catalogue.length > 0 ? ctx.catalogue : undefined), ctx.legacyMachine !== null)
+      : null;
 
   if (refusedAfterSave) {
     return (
@@ -637,7 +648,7 @@ export function MachineFirstSetupConnected({
     <MachineFirstSetupPanel
       scope={ctx.scope}
       devices={ctx.devices}
-      initialDeviceId={newAreaLast ? newAreaLast.deviceId : (autoRemembered?.deviceId ?? null)}
+      initialDeviceId={newAreaLast ? newAreaLast.deviceId : (autoRemembered?.deviceId ?? (onlyChoice?.kind === "native" ? onlyChoice.deviceId : null))}
       // The remembered MODE, which the loader has always resolved and which
       // nothing forwarded - so the panel silently used each profile's first
       // active mode and recorded against the wrong field contract.
@@ -681,7 +692,8 @@ export function MachineFirstSetupConnected({
       savedModeKey={blockId ? (savedIdentity?.modeKey ?? null) : null}
       initialLegacyChosen={
         (savedIdentity?.deviceId == null && savedIdentity?.profileId != null) ||
-        Boolean(newAreaLast?.legacy)
+        Boolean(newAreaLast?.legacy) ||
+        onlyChoice?.kind === "legacy"
       }
       onKindChange={onKindChange}
       // A machine the panel resolves on its own is carried too (create mode),
