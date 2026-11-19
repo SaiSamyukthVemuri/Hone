@@ -34,8 +34,7 @@ import { openCheckout, prepareInModal, closeModal, armReady } from "./helpers/ch
 //   after          the event arrives a moment after the charge call returned (the usual order);
 //   before_return  the event is delivered and processed BEFORE the charge call returns, i.e. before the executor has bound
 //                  the intent to its attempt.
-// Either way the end state must be the same: one attempt, failed, no Paid, one processor effect, no retry, no cancel,
-// no refund. If the early order leaves the attempt pending, that is a FINDING about the webhook path, not a test to loosen.
+// Either way the end state must be the same: one attempt, failed, no Paid, one processor effect, no retry, no refund, and the ORIGINAL intent cancelled exactly once by the cleanup. If the early order leaves the attempt pending, that is a FINDING about the webhook path, not a test to loosen.
 
 let seed: PaymentSeed;
 
@@ -94,7 +93,7 @@ async function declineScenario(timing: "after" | "before_return", label: string,
     const methods = callsForAccount(seed.connectedAccountId).map((c) => c.method);
     expect(methods.filter((m) => m === "pi_create")).toHaveLength(1);
     expect(methods.filter((m) => m === "refund_create")).toHaveLength(0);
-    expect(methods.filter((m) => m === "pi_cancel")).toHaveLength(0);
+    expect(methods.filter((m) => m === "pi_cancel")).toHaveLength(1); // the cleanup closes the original intent, exactly once
     expect((await getSessionPaymentAttemptRows(seed.sessionId)).map((r) => r.status)).toEqual(["failed"]);
 
     await page.goto(`/clients/${seed.clientId}/sessions/${seed.sessionId}`);
