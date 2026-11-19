@@ -51,12 +51,17 @@ afterEach(() => {
   root = host = null;
 });
 
-async function mount(o: { rollout: boolean; create?: boolean; entry?: unknown }) {
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
+const { ChartingStateProvider } = await import("@/components/charting-state-provider");
+async function mount(o: { rollout: boolean; create?: boolean; entry?: unknown; saved?: unknown[]; previous?: unknown; retainKey?: string; show?: boolean }) {
+  if (!root) {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+  }
   const form = createElement(BlockSetupForm, {
-    sessionId: "s1", clientId: "c1", previousBlock: null,
+    savedBlocks: o.saved as never,
+    retainKey: o.retainKey,
+    sessionId: "s1", clientId: "c1", previousBlock: (o.previous ?? null) as never,
     block: o.create ? null : ({ ...BLOCK } as never),
     firstEntry: (o.create ? null : (o.entry ?? ENTRY)) as never,
     initialAreas: [{ area: "Upper lip", side: "center" }] as never,
@@ -64,7 +69,11 @@ async function mount(o: { rollout: boolean; create?: boolean; entry?: unknown })
   });
   await act(async () => {
     root!.render(
-      createElement(ChartingViewContext.Provider, { value: { view: "new", setView: () => undefined, notice: null, rolloutOn: o.rollout } }, form),
+      createElement(
+        ChartingStateProvider,
+        null,
+        createElement(ChartingViewContext.Provider, { value: { view: "new", setView: () => undefined, notice: null, rolloutOn: o.rollout } }, o.show === false ? createElement("i") : form),
+      ),
     );
   });
 }
@@ -203,5 +212,47 @@ describe("R3: values typed with NO mode are parked at the first mode pick, never
     expect(host!.querySelector('[data-testid="hidden-mode-readings-notice"]')!.textContent).toMatch(/before a mode was chosen/);
     await click(pill("Thermolysis")); // tapping the selected pill clears the mode
     expect(labelInput("Energy level").value).toBe("14");
+  });
+});
+
+describe("R4: copy-settings and a resumed (retained) draft are the same family as B1", () => {
+  const SOURCE = { ...BLOCK, id: "b0", sort_order: 0, primary_area: "Chin", electrolysis_entries: [{ ...ENTRY, id: "e0" }] };
+  it("copy-settings brings a saved pulse 3 / delay 0.4 into a NEW area, and Save writes them", async () => {
+    await mount({ rollout: true, create: true, saved: [SOURCE], previous: SOURCE });
+    await click([...host!.querySelectorAll("button")].find((b) => b.textContent?.includes("Copy settings from another area"))!);
+    await save();
+    const p = sent(blockActions.createTreatmentAreaWithEntryAction);
+    expect(p.readings.pulseCount).toBe(3);
+    expect(p.readings.pulseDelaySeconds).toBe(0.4);
+  });
+  it("copy-settings from a source with NO recorded pulse leaves the new block sending no pulse reading", async () => {
+    const bare = { ...SOURCE, electrolysis_entries: [{ ...ENTRY, id: "e0", pulse_count: null, pulse_delay_seconds: null }] };
+    await mount({ rollout: true, create: true, saved: [bare], previous: bare });
+    await click([...host!.querySelectorAll("button")].find((b) => b.textContent?.includes("Copy settings from another area"))!);
+    await save();
+    const p = sent(blockActions.createTreatmentAreaWithEntryAction);
+    expect(p.readings.pulseCount).toBeNull();
+    expect(p.readings.pulseDelaySeconds).toBeNull();
+  });
+  it("a resumed retained draft keeps WHICH controls were touched: count touched before the unmount, delay never", async () => {
+    await mount({ rollout: true, create: true, retainKey: "k1" });
+    await click(pill("Thermolysis"));
+    await click(aria("Increase thermolysis pulse count"));
+    await mount({ rollout: true, create: true, retainKey: "k1", show: false }); // the layout switch unmounts the editor
+    await mount({ rollout: true, create: true, retainKey: "k1" });
+    await save();
+    const p = sent(blockActions.createTreatmentAreaWithEntryAction);
+    expect(p.readings.pulseCount).toBe(2);
+    expect(p.readings.pulseDelaySeconds).toBeNull();
+  });
+  it("a resumed retained draft with NOTHING touched still sends no pulse reading", async () => {
+    await mount({ rollout: true, create: true, retainKey: "k2" });
+    await click(pill("Thermolysis"));
+    await mount({ rollout: true, create: true, retainKey: "k2", show: false });
+    await mount({ rollout: true, create: true, retainKey: "k2" });
+    await save();
+    const p = sent(blockActions.createTreatmentAreaWithEntryAction);
+    expect(p.readings.pulseCount).toBeNull();
+    expect(p.readings.pulseDelaySeconds).toBeNull();
   });
 });
