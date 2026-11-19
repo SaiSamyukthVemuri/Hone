@@ -160,7 +160,7 @@ test.describe("B. staff books, the practitioner charts (HON-45)", () => {
       `with src as (select * from public.appointments where id=$1 and studio_id=$2),
             newa as (
               insert into public.appointments
-              select (jsonb_populate_record(a, jsonb_build_object('id', gen_random_uuid(), 'starts_at', x.ts, 'ends_at', x.ts + interval '1 hour', 'cancellation_token_hash', null))).*
+              select (jsonb_populate_record(null::public.appointments, to_jsonb(a) || jsonb_build_object('id', gen_random_uuid(), 'starts_at', x.ts, 'ends_at', x.ts + interval '1 hour', 'cancellation_token_hash', null))).*
                 from src a, lateral (select (date_trunc('day', now()) - (g || ' days')::interval + interval '10 hours') as ts from generate_series(2, 31) g) x
               returning id, studio_id, client_id, practitioner_id)
        insert into public.sessions (studio_id, client_id, practitioner_id, performed_by_practitioner_id, modality, appointment_id)
