@@ -600,13 +600,6 @@ export function checkClaudePolicy() {
   const sec = start >= 0 ? md.slice(start, md.indexOf("\n## ", start) > 0 ? md.indexOf("\n## ", start) : undefined).replace(/\s+/g, " ") : "";
   const need: [string, RegExp][] = [
     ["never manipulate (edit, delete, conceal, minimize)", /never edit, delete, conceal, minimize or otherwise manipulate a Codex comment or review thread/i],
-    // Operator standing authorization (2026-11-19) replaced the per-thread rule; the guard pins its conditions instead.
-    ["resolve only after verifying on the current head", /resolve a review thread only after verifying, on the PR's current head commit, that the finding is fixed or no longer applies/i],
-    ["evidence posted in the thread first", /posts a reply in that thread naming the commit verified and the test or code evidence/i],
-    ["the evidence reply is public text with no ids, paths or names", /that reply is public text: it carries no internal ids, private paths, tenant or person names, or review labels/i],
-    ["incomplete evidence keeps it open", /when the evidence is incomplete the thread stays open/i],
-    ["product decision or exception goes to the operator", /needs a product decision or an exception to a release requirement goes to the operator first/i],
-    ["resolving is the only permitted change", /resolving is the only permitted change to a thread/i],
     ["the R5-DELETE limitation", /R5-DELETE/],
     ["a deleted finding is invisible", /cannot see a deleted finding/i],
     ["credential indistinguishability", /cannot tell an agent using the operator's credential from the operator/i],
@@ -615,5 +608,26 @@ export function checkClaudePolicy() {
     r.checked += 1;
     if (!re.test(sec)) r.add(n, "not stated in CLAUDE.md §4's ENG-LOOP shepherd section");
   }
+  // The operator's standing authorization (2026-11-19) replaced the per-thread rule. Resolving a thread removes
+  // it from FINDINGS_OPEN, so the paragraph granting it is pinned WHOLE (whitespace-normalised, exact): any
+  // added qualifier, reordering, change of who may resolve, or dropped clause fails, not only a removed phrase.
+  r.checked += 1;
+  const PARA_START = "**Resolving a thread**";
+  const at = sec.indexOf(PARA_START);
+  const para = at >= 0 ? sec.slice(at, sec.indexOf("It needs the dedicated read-only token", at)).trim() : "";
+  if (para !== RESOLVING_A_THREAD) {
+    r.add("the resolving-a-thread paragraph, exactly", "CLAUDE.md §4's 'Resolving a thread' paragraph differs from the pinned text");
+  }
   return r;
 }
+
+/** The exact operator-authorized rule (CLAUDE.md §4), whitespace-normalised. Changing it is a policy change: update
+ *  CLAUDE.md and this constant together, in a PR the operator approves. */
+export const RESOLVING_A_THREAD =
+  "**Resolving a thread** (operator standing authorization, 2026-11-19, superseding the per-thread rule of 2026-10-08). " +
+  "The coordinator may resolve a review thread only after verifying, on the PR's current head commit, that the finding " +
+  "is fixed or no longer applies. Before resolving, it posts a reply in that thread naming the commit verified and the " +
+  "test or code evidence (file and line, or the test that pins it). That reply is public text: it carries no internal " +
+  "ids, private paths, tenant or person names, or review labels. When the evidence is incomplete the thread stays open. " +
+  "A resolution that needs a product decision or an exception to a release requirement goes to the operator first. " +
+  "Resolving is the only permitted change to a thread: its comments are never edited, deleted, hidden or minimized.";
