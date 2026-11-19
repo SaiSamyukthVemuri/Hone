@@ -32,8 +32,6 @@ const IMPORTERS = new Set([
   "tests/lib/charting/page-view.test.ts",
   "tests/lib/charting/view-preference-display-only.test.ts",
   "tests/lib/charting/view-preference.test.ts",
-  "lib/machines/xcell-registration-gate.ts", // the rollout gate for the xCell offer; not an authorization module
-  "tests/lib/machines/xcell-registration-gate.test.ts",
 ]);
 // Who may call the READERS. page-view.ts is the one runtime caller.
 const READER_USERS = new Set([

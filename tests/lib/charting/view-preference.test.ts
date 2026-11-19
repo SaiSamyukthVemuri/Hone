@@ -67,7 +67,8 @@ describe("who sees the toggle: the server's rollout answer, passed in", () => {
   });
   it("the module reads no environment variable and no database (it is client-safe)", async () => {
     const { readFileSync } = await import("node:fs");
-    const src = readFileSync("lib/charting/view-preference.ts", "utf8").replace(/\/\/.*$/gm, "");
-    expect(src).not.toMatch(/process\.env|HONE_CHARTING|createClient|server-only/);
+    for (const f of ["lib/charting/view-preference.ts"]) {
+      expect(readFileSync(f, "utf8").replace(/\/\/.*$/gm, ""), f).not.toMatch(/process\.env|HONE_CHARTING|createClient|server-only/);
+    }
   });
 });

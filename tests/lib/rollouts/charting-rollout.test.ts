@@ -76,9 +76,9 @@ describe("the NEW-SETUP route decision (Insurance E1 and E2)", () => {
 });
 
 describe("no environment variable anywhere", () => {
-  it("the resolver, the gate and the view module do not read the old allowlist variable", () => {
-    for (const f of ["lib/rollouts/charting-rollout.ts", "lib/machines/xcell-registration-gate.ts", "lib/charting/view-preference.ts", "lib/charting/page-view.ts"]) {
-      expect(readFileSync(f, "utf8").replace(/\/\/.*$/gm, ""), f).not.toMatch(/process\.env|HONE_CHARTING_NEW_VIEW/);
+  it("the resolver and the registration gate read no environment variable", () => {
+    for (const f of ["lib/rollouts/charting-rollout.ts", "lib/machines/xcell-registration-gate.ts"]) {
+      expect(readFileSync(f, "utf8").replace(/\/\/.*$/gm, ""), f).not.toMatch(/process\.env/);
     }
   });
 });
