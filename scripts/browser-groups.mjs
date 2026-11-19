@@ -38,6 +38,9 @@ export const BROWSER_GROUPS = {
       // pattern at all.
       "ui06-dashboard-chrome.spec.ts",
       "charting-usability-polish.spec.ts",
+      // The optional New view of the session chart. Opt-in: it is skipped unless the app server is started with the rollout setting set to "all",
+      // so the ordinary lanes only list it; the device matrix runs it through playwright.charting.config.ts.
+      "charting-new-view.spec.ts",
       // Budget context is a peer section of the Consultation & Skin/Hair
       // surface, so it belongs with the clinical-notes coverage.
       "client-budget-context.spec.ts",
@@ -290,6 +293,8 @@ export const BROWSER_GROUPS = {
       "cancellation-fee-rules.spec.ts",
       "invitation-reconciliation.spec.ts",
       "invite-only.spec.ts",
+      // Connected practitioner journey (opt-in: self-skips unless MULTI_PRACTITIONER_JOURNEY_E2E=1, so a targeted lane lists it but runs nothing).
+      "practitioner-journey.spec.ts",
       // FETT photos (HON-43): Photos-tab grid thumbnails survive a reload and
       // the 60 s signed-URL expiry. Here and not in `sessions` for UI-04's two
       // reasons: /clients/** has no PATH_TO_GROUP pattern (a photo diff already

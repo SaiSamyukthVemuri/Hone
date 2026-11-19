@@ -390,6 +390,184 @@ describe("registration refuses a profile the server does not offer", () => {
   });
 });
 
+describe("the studio's one xCell: registration of the xCell Pur unit (HON-71)", () => {
+  const PUR = "dectro-apilus:xcell-pur";
+  const published = (modes: string[]) => modes.map((m) => ({ mode_key: m, machine_profile_version: 1 }));
+  const purRow = (over: Record<string, unknown> = {}) => ({
+    id: "22222222-2222-4222-8222-222222222222", studio_id: "studio-fett", machine_profile_id: PUR, machine_profile_version: 1,
+    display_name: "Dectro xCell", installed_options: [], retired_at: null, ...over,
+  });
+  const wrote = () => DB.calls.some((c) => c.fn === "register_studio_machine");
+  const GATE = "HONE_CHARTING_NEW_VIEW_STUDIO_IDS";
+  const LISTED_STUDIO = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"; // synthetic
+  const OTHER_STUDIO = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"; // synthetic
+  beforeEach(() => { vi.stubEnv(GATE, "all"); }); // the cases below are about the registration rules; the gate cases set their own value
+
+  it("registers it through the existing owner command once its contract is published and the studio has none", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = [];
+    DB.rpcResult = "33333333-3333-4333-8333-333333333333";
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r).toMatchObject({ ok: true, machineId: "33333333-3333-4333-8333-333333333333" });
+    expect(wrote()).toBe(true);
+  });
+
+  it("UNPUBLISHED stays unregisterable: no contract rows, no write", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = [];
+    DB.rowsFor.studio_machines = [];
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/No published field contract/);
+    expect(wrote()).toBe(false);
+  });
+
+  it("a SECOND registration is refused with a clear message, and nothing is written", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = [purRow()];
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "xCell second room" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/already has its xCell registered/);
+    expect(wrote()).toBe(false);
+  });
+
+  it("an unreadable inventory refuses too (it cannot be shown that none exists)", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.errorFor.studio_machines = { message: "connection reset" };
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r.ok).toBe(false);
+    expect(wrote()).toBe(false);
+  });
+
+  it("a RETIRED xCell does not block a new one (the inventory read excludes retired units)", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = []; // listStudioMachines filters retired units in SQL
+    DB.rpcResult = "44444444-4444-4444-8444-444444444444";
+    expect((await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" })).ok).toBe(true);
+  });
+
+  it("the guard is specific to the xCell: another model's registration is not blocked by an existing xCell", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["flash", "microflash", "multiplex", "blend", "omniblend", "multiblend", "electrolysis"]).map((r) => ({ ...r, machine_profile_version: 3 }));
+    DB.rowsFor.studio_machines = [purRow()];
+    DB.rpcResult = "55555555-5555-4555-8555-555555555555";
+    const r = await actions.registerMachineAction({ profileId: "dectro-apilus:senior-3g", displayName: "Room 2" });
+    expect(r.ok).toBe(true);
+  });
+
+  it("the xCell's name is FIXED: a posted name is ignored, so the unique name index is the atomic one-per-studio guarantee", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = [];
+    DB.rpcResult = "88888888-8888-4888-8888-888888888888";
+    expect((await actions.registerMachineAction({ profileId: PUR, displayName: "Room 4 laser" })).ok).toBe(true);
+    const call = DB.calls.find((c) => c.fn === "register_studio_machine");
+    expect(call?.args.p_display_name).toBe("Dectro xCell");
+  });
+  it("RACE: two owner tabs both pass the inventory read; the second insert hits the unique name index and gets the same clear message", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = []; // both tabs saw none
+    DB.rpcError = { message: 'duplicate key value violates unique constraint "studio_machines_studio_display_name_uniq"', code: "23505" };
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r).toMatchObject({ ok: false, code: "rejected", error: "This studio already has its xCell registered." });
+  });
+  it("RACE: an UNRELATED unique violation (23505 on another constraint) or a matching message without the code is NOT disguised", async () => {
+    for (const err of [
+      { message: 'duplicate key value violates unique constraint "some_other_uniq"', code: "23505" },
+      { message: 'duplicate key value violates unique constraint "studio_machines_studio_display_name_uniq"', code: "42501" },
+      { message: "already exists" },
+    ]) {
+      signIn("studio-fett", "pract-owner-a");
+      DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+      DB.rowsFor.studio_machines = [];
+      DB.rpcError = err;
+      const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.error).not.toBe("This studio already has its xCell registered.");
+    }
+  });
+  it("RACE: another database error on the xCell is NOT disguised as 'already registered'", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = [];
+    DB.rpcError = { message: "Only the studio owner may register a machine.", code: "42501" };
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/Only the studio owner/);
+  });
+  it("a non-xCell model keeps the name the owner typed", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["flash", "microflash", "multiplex", "blend", "omniblend", "multiblend", "electrolysis"]).map((r) => ({ ...r, machine_profile_version: 3 }));
+    DB.rowsFor.studio_machines = [];
+    DB.rpcResult = "99999999-9999-4999-8999-999999999999";
+    await actions.registerMachineAction({ profileId: "dectro-apilus:senior-3g", displayName: "Room 2" });
+    expect(DB.calls.find((c) => c.fn === "register_studio_machine")?.args.p_display_name).toBe("Room 2");
+  });
+  it("ROLLOUT GATE: unset means nobody, and the refusal is the generic one, before any contract or inventory read", async () => {
+    vi.stubEnv(GATE, "");
+    signIn(LISTED_STUDIO, "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = []; // unpublished too: the generic gate message must win, so the gate ran first
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toMatch(/not offered yet/);
+      expect(r.error).not.toMatch(/No published field contract|allowlist|studio/i);
+    }
+    expect(wrote()).toBe(false);
+  });
+  it("ROLLOUT GATE: an UNLISTED studio is refused by the action even though the form was forged and the contract is published", async () => {
+    vi.stubEnv(GATE, LISTED_STUDIO);
+    signIn(OTHER_STUDIO, "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = [];
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/not offered yet/);
+    expect(wrote()).toBe(false);
+  });
+  it("ROLLOUT GATE: a LISTED studio may register it, and 'all' (a test value) also passes", async () => {
+    vi.stubEnv(GATE, `${LISTED_STUDIO},${OTHER_STUDIO}`);
+    signIn(LISTED_STUDIO, "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = [];
+    DB.rpcResult = "66666666-6666-4666-8666-666666666666";
+    expect((await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" })).ok).toBe(true);
+  });
+  it("ROLLOUT GATE: an unpublished contract is refused even for a listed studio", async () => {
+    vi.stubEnv(GATE, LISTED_STUDIO);
+    signIn(LISTED_STUDIO, "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = [];
+    DB.rowsFor.studio_machines = [];
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/No published field contract/);
+  });
+  it("ROLLOUT GATE: another model is not affected by the gate (3G registers with the gate unset)", async () => {
+    vi.stubEnv(GATE, "");
+    signIn(OTHER_STUDIO, "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["flash", "microflash", "multiplex", "blend", "omniblend", "multiblend", "electrolysis"]).map((r) => ({ ...r, machine_profile_version: 3 }));
+    DB.rowsFor.studio_machines = [];
+    DB.rpcResult = "77777777-7777-4777-8777-777777777777";
+    expect((await actions.registerMachineAction({ profileId: "dectro-apilus:senior-3g", displayName: "Room 2" })).ok).toBe(true);
+  });
+  it("the studio the gate tests is the authenticated scope's, never a posted value", () => {
+    const body = CODE.slice(CODE.indexOf("export async function registerMachineAction"));
+    expect(body).toContain("xcellRegistrationAllowed(scope.studioId)");
+    expect(body).not.toMatch(/xcellRegistrationAllowed\(input\./);
+  });
+
+  it("the owner check stays in the database command, and the settings page itself shows only the owner notice to anyone else", () => {
+    expect(CODE).toContain("registerStudioMachine(db");
+    const page = readFileSync(path.resolve(__dirname, "../../../app/(app)/settings/machines/page.tsx"), "utf8");
+    expect(page).toMatch(/role !== "owner"[\s\S]{0,120}OwnerOnlyNotice/);
+  });
+});
+
 describe("the prior-setup read is scoped to the ROUTE CLIENT, not the studio", () => {
   // The defect this replaced: latestRecordedSetup took only a studio id, so in
   // a studio with more than one client the panel showed whichever block was
