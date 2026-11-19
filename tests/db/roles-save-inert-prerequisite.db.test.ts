@@ -65,12 +65,22 @@ describe("an inert On whose prerequisite is satisfied by the chosen defaults is 
 });
 
 describe("controls: a prerequisite that is NOT satisfied by the intended policy still refuses", () => {
-  it("turning a dependent On while its configurable prerequisite is turned Off in the same request is refused", async () => {
+  // Only keys the request CHANGES are checked, so the dependent must really change: appt.reassign defaults Off for a practitioner and requires
+  // appt.move (configurable, default own). The request turns the dependent On (studio) and the prerequisite Off in the same save.
+  it("a changed dependent whose configurable prerequisite is turned Off in the same request is refused, and nothing is stored", async () => {
     const s = await seedStudio("inert-prereq-neg");
-    // clin.edit_records requires clin.view_records (configurable): the intended result has the prerequisite Off.
-    const res = await callAs(s.userId, "save_role_permissions", [s.studioId, 0, { practitioner: { "clin.view_records": "off", "clin.edit_records": "studio" } }, "Test of the prerequisite refusal", true]);
-    expect(res.ok).toBe(false);
+    const res = await callAs(s.userId, "save_role_permissions", [s.studioId, 0, { practitioner: { "appt.move": "off", "appt.reassign": "studio" } }, "Test of the prerequisite refusal", true]);
+    expect(res.ok, res.raw).toBe(false);
     expect(res.code, res.raw).toBe("prerequisite_unmet");
     expect(await stored(s.studioId, "practitioner")).toEqual([]);
+  });
+
+  it("on the existing_snapshot basis the receptionist's prerequisite (client.view_directory) is Off, so clin.view_photos On is refused", async () => {
+    const s = await seedStudio("inert-prereq-snap");
+    await adminQuery(`update public.studio_permission_policy set basis = 'existing_snapshot' where studio_id = $1`, [s.studioId]);
+    const res = await callAs(s.userId, "save_role_permissions", [s.studioId, 0, { receptionist: { "clin.view_photos": "studio" } }, "Allow receptionists to see treatment photos", true]);
+    expect(res.ok, res.raw).toBe(false);
+    expect(res.code, res.raw).toBe("prerequisite_unmet");
+    expect(await stored(s.studioId, "receptionist")).toEqual([]);
   });
 });
