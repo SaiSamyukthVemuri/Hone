@@ -1,0 +1,89 @@
+import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { isRepoMax } from "./helpers/migration-state";
+
+// 0360 is a forward redefinition of perm_run_changes (0287 is applied and frozen). Source contract: the rollback restores the HOSTED body byte for
+// byte, the up body differs from it only in the listed lines, and the migration carries its own transaction and lock timeout.
+
+const UP = readFileSync("supabase/migrations/0360_roles_save_inert_denial.sql", "utf8");
+const DOWN = readFileSync("supabase/rollbacks/0360_roles_save_inert_denial.down.sql", "utf8");
+const OLD = readFileSync("supabase/migrations/0287_roles_permission_engine.sql", "utf8");
+const HOSTED_BODY_MD5 = "7d8924fbb394838f60d9e6cf89235e82"; // c04_function-bodies of the 0287 apply record, perm_run_changes
+
+const bodyOf = (sql: string) => {
+  const from = sql.indexOf("create or replace function public.perm_run_changes(");
+  const open = sql.indexOf("as $$", from) + "as $$".length;
+  return sql.slice(open, sql.indexOf("$$;", open));
+};
+const headOf = (sql: string) => sql.slice(sql.indexOf("create or replace function public.perm_run_changes("), sql.indexOf("as $$", sql.indexOf("create or replace function public.perm_run_changes(")));
+
+describe("0360 source contract", () => {
+  it("is the current maximum migration (only the max may assert this)", () => {
+    expect(isRepoMax("0360")).toBe(true);
+  });
+
+  it("opens its own transaction with a lock timeout inside it", () => {
+    expect(UP).toMatch(/^begin;\s*\nset local lock_timeout = '5s';/m);
+    expect(UP.trimEnd().endsWith("commit;")).toBe(true);
+  });
+
+  it("the 0287 body is the hosted body (md5 from the apply record), and the rollback restores it exactly", () => {
+    expect(createHash("md5").update(bodyOf(OLD)).digest("hex")).toBe(HOSTED_BODY_MD5);
+    expect(createHash("md5").update(bodyOf(DOWN)).digest("hex")).toBe(HOSTED_BODY_MD5);
+  });
+
+  it("keeps the 0287 signature, language, volatility, security setting and search_path", () => {
+    expect(headOf(UP)).toBe(headOf(OLD));
+  });
+
+  it("changes the body in exactly these places: declarations, the locked basis read, the apply condition, the prerequisite check, and one comment", () => {
+    const before = bodyOf(OLD).split("\n");
+    const after = bodyOf(UP).split("\n");
+    const removed = before.filter((l) => !after.includes(l));
+    const added = after.filter((l) => !before.includes(l));
+    expect(removed.map((l) => l.trim())).toEqual([
+      "select spp.version into v_version from public.studio_permission_policy spp where spp.studio_id = p_studio for update;",
+      "if v_scope <> v_base or (v_stored_prev is not null and v_stored_prev <> v_scope) then",
+      "v_apply := v_apply || jsonb_build_array(jsonb_build_object('role', v_role, 'key', v_key, 'scope', v_scope, 'base', coalesce(v_stored_prev, v_base)));",
+      // the prerequisite check (Codex P2 4620000794): the 0287 block that used release-dependent effective access
+      "-- Prerequisites must hold on the RESULTING set.",
+      "select * into c from public.permission_catalog where key = v_item ->> 'key';",
+      "foreach v_req in array c.requires loop",
+      "v_cap := public.perm_effective_scope(p_studio, v_item ->> 'role', v_req, array[v_item ->> 'key']);",
+      "if public.perm_rank(v_cap) < public.perm_rank(v_item ->> 'scope') then",
+      "message = public.perm_fail('prerequisite_unmet', v_item ->> 'key', v_item ->> 'role', null, jsonb_build_object('blocked_by', v_req))::text;",
+      "-- edited that key or only raised a prerequisite that had been capping it (Privacy E1). Judged on the resulting maps.", // comment only: no review-lane reference in a migration
+    ]);
+    expect(added.some((l) => l.includes("or v_scope <> v_shown then"))).toBe(true);
+    // the condition is ADDITIVE: the old test is still a disjunct
+    expect(bodyOf(UP)).toContain("v_scope <> v_base or (v_stored_prev is not null and v_stored_prev <> v_scope) or v_scope <> v_shown");
+    // the prerequisite check judges the INTENDED policy over the whole requires chain and no longer asks the release-dependent resolver
+    const body = bodyOf(UP);
+    expect(body).toContain("with recursive req_chain(k) as (");
+    expect(body).toContain("jsonb_build_object('blocked_by', v_anc.k)");
+    expect(body).not.toContain("v_cap := public.perm_effective_scope(");
+    expect(body).toMatch(/select s\.scope from public\.studio_role_permissions s where s\.studio_id = p_studio and s\.role = v_item ->> 'role' and s\.key = v_anc\.k/);
+    // access resolution is not touched
+    expect(UP).not.toMatch(/create or replace function public\.perm_(base_scope|effective_scope|scope_source)/);
+  });
+
+  it("its only write to the permission tables is the same single insert as 0287's perm_run_changes", () => {
+    const writes = (sql: string) => (sql.match(/(insert\s+into|update|delete\s+from)\s+(public\.)?(studio_role_permissions|permission_key_activation|permission_key_release)\b/g) ?? []).length;
+    expect(writes(bodyOf(UP))).toBe(writes(bodyOf(OLD)));
+    expect(writes(UP.replace(bodyOf(UP), ""))).toBe(0);
+  });
+
+  it("reads the basis under the same lock as the version (one select ... for update), not before it", () => {
+    const body = bodyOf(UP);
+    expect(body).toContain("select spp.version, spp.basis into v_version, v_basis from public.studio_permission_policy spp where spp.studio_id = p_studio for update;");
+    // no separate, unlocked read of the basis anywhere in the body
+    expect(body.match(/select spp\.basis into/g)).toBeNull();
+  });
+
+  it("restates the revoke by name, from public, anon, authenticated and service_role, in the migration and the rollback", () => {
+    const re = /revoke all on function public\.perm_run_changes\(uuid, jsonb, text, boolean, bigint, boolean, boolean\) from public, anon, authenticated, service_role;/;
+    expect(UP).toMatch(re);
+    expect(DOWN).toMatch(re);
+  });
+});
