@@ -19,6 +19,8 @@ import {
   clientStatementHref,
   clientsListHref,
   moneyLineTexts,
+  statementExportHref,
+  statementPrintHref,
   visitFeeText,
   type ClientView,
 } from "@/lib/finance/statement-screen";
@@ -77,6 +79,11 @@ export function ClientStatementView({ document: doc, month, monthLabel, maxMonth
             </PendingLink>
           ))}
         </nav>
+        <div className="flex flex-wrap items-center gap-4 text-sm">
+          {/* Plain links: the CSV is a file download, the print page is a printable view. Neither writes, charges or messages anyone. */}
+          <a href={statementExportHref(clientId, month, view)} className={cx("inline-flex items-center underline", CONTROL_MIN_TOUCH, FOCUS_RING)}>Export CSV</a>
+          <PendingLink href={statementPrintHref(clientId, month, view)} className={cx("inline-flex items-center underline", CONTROL_MIN_TOUCH, FOCUS_RING)}>Print / Save as PDF</PendingLink>
+        </div>
         {view === "month" ? <MonthControls base={`/financials/statements/${encodeURIComponent(clientId)}`} month={month} maxMonth={maxMonth} /> : null}
         {notice ? <p className="text-sm text-fg" role="status">{notice}</p> : null}
       </header>

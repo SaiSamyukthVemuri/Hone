@@ -1,11 +1,9 @@
-import { formatMoney, type PaymentCurrency } from "@/lib/billing/payment-jurisdiction";
-import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
+import { formatMoney } from "@/lib/billing/payment-jurisdiction";
 import { localDateString } from "@/lib/booking/tz";
-import { loadClientStatementRead } from "@/lib/finance/client-statement-read";
-import { buildStatementDocument } from "@/lib/finance/statement-document";
+import { loadOwnerClientStatement } from "@/lib/finance/owner-client-statement";
 import { STATEMENT_MONTH_NOTICE } from "@/lib/finance/statement-copy";
 import { monthRange, resolveStatementMonth, yearMonthOf } from "@/lib/finance/statement-period";
-import { STATEMENTS_OWNER_ONLY, STATEMENT_READ_UNAVAILABLE, clientsListHref, parseClientView } from "@/lib/finance/statement-screen";
+import { STATEMENTS_OWNER_ONLY, STATEMENT_READ_UNAVAILABLE, clientsListHref } from "@/lib/finance/statement-screen";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 
 import { ClientStatementView } from "../client-statement-view";
@@ -34,45 +32,27 @@ export default async function ClientStatementPage({
   const { clientId } = await params;
   const sp = await searchParams;
   const now = new Date();
-  const current = yearMonthOf(localDateString(now, studio.timezone));
-  const { month, fellBack } = resolveStatementMonth(sp.month, current);
-  const view = parseClientView(sp.view);
-
-  const jurisdiction = await getStudioPaymentJurisdiction(studio.id);
-  const currency: PaymentCurrency | null = jurisdiction.ok ? jurisdiction.jurisdiction.currency : null;
-
-  const unavailable = (reason: string) => (
-    <section className="space-y-3 rounded-lg border border-line p-6 text-sm text-fg" role="alert">
-      <p>{STATEMENT_READ_UNAVAILABLE[reason] ?? STATEMENT_READ_UNAVAILABLE.read_failed}</p>
-      <a href={clientsListHref(month)} className="underline">Back to Clients</a>
-    </section>
-  );
-
-  const read = await loadClientStatementRead(practitioner, studio, currency, clientId, now);
-  if (read.access !== "granted") return unavailable("read_failed");
-  if (!read.ok) return unavailable(read.reason);
-
-  const built = buildStatementDocument({
-    studioId: studio.id,
-    identity: { studioName: studio.name, legalEntityName: null, address: null, contactEmail: null },
-    client: read.client,
-    scope: view === "history" ? { kind: "full_history" } : { kind: "month", month },
-    currency: read.studioCurrency,
-    preparedOn: localDateString(now, studio.timezone),
-    visits: read.visits,
-    feeItems: read.feeItems,
-  });
-  if (!built.ok) return unavailable("build_failed");
+  const result = await loadOwnerClientStatement({ practitioner, studio, clientId, monthParam: sp.month, viewParam: sp.view, now });
+  if (!result.ok) {
+    const { month } = resolveStatementMonth(sp.month, yearMonthOf(localDateString(now, studio.timezone)));
+    return (
+      <section className="space-y-3 rounded-lg border border-line p-6 text-sm text-fg" role="alert">
+        <p>{STATEMENT_READ_UNAVAILABLE[result.reason] ?? STATEMENT_READ_UNAVAILABLE.read_failed}</p>
+        <a href={clientsListHref(month)} className="underline">Back to Clients</a>
+      </section>
+    );
+  }
+  const { month, view, currency } = result;
 
   return (
     <ClientStatementView
-      document={built.document}
+      document={result.document}
       month={month}
       monthLabel={monthRange(month).label}
-      maxMonth={current}
+      maxMonth={result.currentMonth}
       view={view}
-      notice={fellBack ? STATEMENT_MONTH_NOTICE : null}
-      offDocumentWithMoney={read.offDocumentWithMoney}
+      notice={result.fellBack ? STATEMENT_MONTH_NOTICE : null}
+      offDocumentWithMoney={result.offDocumentWithMoney}
       format={(c) => formatMoney(c, currency)}
     />
   );
