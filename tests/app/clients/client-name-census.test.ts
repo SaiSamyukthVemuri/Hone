@@ -42,6 +42,7 @@ const BASELINE: ReadonlyArray<readonly [string, number, Status]> = [
   ["app/(app)/calendar/postcare-auto-send.ts", 1, "unrendered"],
   ["app/(app)/clients/[id]/clinical-notes/print/page.tsx", 1, "gap"],
   ["app/(app)/clients/[id]/sessions/[sessionId]/page.tsx", 1, "fine"],
+  ["app/(app)/financials/statements/client-statement-view.tsx", 2, "fine"], // renders document.client.name, which the document model already resolved to the display name
   ["app/(app)/global-search-actions.ts", 3, "helper"],
   ["app/api/cron/appointment-reminders/route.ts", 2, "fine"],
   ["app/intake/[token]/actions.ts", 2, "gap"],

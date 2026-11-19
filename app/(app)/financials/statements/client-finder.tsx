@@ -14,10 +14,13 @@ import type { YearMonth } from "@/lib/finance/statement-period";
 // navigation is by the option's client id, never by name, so two clients with one name can never be mixed. The list is told apart by last visit date.
 // This component reads nothing and writes nothing: the clients arrive from the server page; selecting only navigates.
 
+/** WHAT CROSSES TO THE BROWSER, and nothing else: an id, the name as shown (the preferred name when set, never a legal name) and whether the client is archived. */
+export type FinderOption = { id: string; displayName: string; archived: boolean };
+
 export type FinderProps = {
   month: YearMonth;
   monthLabel: string;
-  clients: readonly FinderClient[];
+  clients: readonly FinderOption[];
   /** Eligible visits in the selected month, by client id; absent means none. */
   monthVisits: Readonly<Record<string, number>>;
   /** Last visit dates (studio-local), only for clients that share a name; absent means the detail could not be read. */
@@ -30,7 +33,9 @@ export function ClientFinder({ month, monthLabel, clients, monthVisits, lastVisi
   const inputRef = useRef<HTMLInputElement>(null);
   const [state, setState] = useState<FinderKeyState>(FINDER_INITIAL);
   const counts = useMemo(() => new Map(Object.entries(monthVisits)), [monthVisits]);
-  const outcome = useMemo(() => findClients(clients, state.query, counts), [clients, state.query, counts]);
+  // The matcher takes the shown name only; the options carry no stored or legal name to match against.
+  const searchable = useMemo<FinderClient[]>(() => clients.map((c) => ({ id: c.id, name: c.displayName, preferredName: null, archived: c.archived })), [clients]);
+  const outcome = useMemo(() => findClients(searchable, state.query, counts), [searchable, state.query, counts]);
   const options = outcome.results;
 
   const open = (index: number) => {

@@ -1,6 +1,7 @@
 import { formatMoney, type PaymentCurrency } from "@/lib/billing/payment-jurisdiction";
 import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
 import { localDateString } from "@/lib/booking/tz";
+import { clientDisplayName } from "@/lib/clients/identity";
 import { FINDER_CLIENT_CAP, STATEMENTS_OWNER_ONLY, parseClientsParams, sameNameClientIds } from "@/lib/finance/statement-screen";
 import { loadFinderClients, loadLastVisitDates, loadStatementDirectory, LAST_VISIT_MAX_CLIENTS } from "@/lib/finance/statement-directory-read";
 import { monthRange, yearMonthOf } from "@/lib/finance/statement-period";
@@ -43,7 +44,9 @@ export default async function StatementsClientsPage({ searchParams }: { searchPa
       const sameName = sameNameClientIds(found.clients);
       // Two clients with one name are told apart by their last visit date; beyond the bound, or on any failure, the screen says only "same name".
       const last = sameName.length <= LAST_VISIT_MAX_CLIENTS ? await loadLastVisitDates(practitioner, studio, sameName) : null;
-      finder = { state: "ok", clients: found.clients, lastVisits: last && last.access === "granted" && last.ok ? last.lastVisit : null };
+      // Only an id, the shown name and the archived flag are handed to the browser (built here, AFTER the owner gate above).
+      const options = found.clients.map((c) => ({ id: c.id, displayName: clientDisplayName({ name: c.name, preferred_name: c.preferredName }), archived: c.archived }));
+      finder = { state: "ok", clients: options, lastVisits: last && last.access === "granted" && last.ok ? last.lastVisit : null };
     }
   }
 

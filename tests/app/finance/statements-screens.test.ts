@@ -30,10 +30,10 @@ const read = (p: string) => readFileSync(path.join(ROOT, p), "utf8");
 const fmt = (c: number) => `$${(c / 100).toFixed(2)}`;
 
 const clients = [
-  { id: "c-ada-1", name: "Ada Lovelace", preferredName: null, archived: false },
-  { id: "c-ada-2", name: "Ada Lovelace", preferredName: null, archived: false },
-  { id: "c-grace", name: "Grace Hopper", preferredName: null, archived: false },
-  { id: "c-old", name: "Old Client", preferredName: null, archived: true },
+  { id: "c-ada-1", displayName: "Ada Lovelace", archived: false },
+  { id: "c-ada-2", displayName: "Ada Lovelace", archived: false },
+  { id: "c-grace", displayName: "Grace Hopper", archived: false },
+  { id: "c-old", displayName: "Old Client", archived: true },
 ];
 const mounted: Array<{ unmount: () => void; el: HTMLElement }> = [];
 afterEach(() => {
@@ -285,6 +285,53 @@ describe("a client's statement", () => {
     const out = html(createElement(ClientStatementView, stmtProps(docFor([visit()]))));
     const visibleText = out.replace(/<[^>]*>/g, " ");
     expect(visibleText).not.toMatch(/c-ada-1|a1\b|@|\+\d{6,}/);
+  });
+});
+
+describe("Privacy pins: what reaches the browser, and where a last visit date may go", () => {
+  const strip = (x: string) => x.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  it("the finder's prop type carries ONLY an id, the shown name and the archived flag", () => {
+    const src = read("app/(app)/financials/statements/client-finder.tsx");
+    const type = src.match(/export type FinderOption = \{([^}]*)\}/)?.[1] ?? "";
+    expect(type.split(";").map((f) => f.trim().split(":")[0]).filter(Boolean)).toEqual(["id", "displayName", "archived"]);
+    // and what the page hands it is built from exactly those three, after the owner gate
+    const page = strip(read("app/(app)/financials/statements/page.tsx"));
+    const gate = page.indexOf('practitioner.role !== "owner"');
+    const build = page.indexOf("const options = found.clients.map");
+    expect(gate).toBeGreaterThan(-1);
+    expect(build).toBeGreaterThan(gate);
+    expect(page.slice(build, build + 260)).toMatch(/\{ id: c\.id, displayName: clientDisplayName\([^)]*\), archived: c\.archived \}/);
+    expect(page).not.toMatch(/clients: found\.clients/);
+  });
+  it("a client's stored or legal name, preferred name and contact details never reach the browser through the finder", () => {
+    const html = (() => {
+      const el = mountFinder();
+      type(el, "ada");
+      return el.outerHTML;
+    })();
+    expect(html).not.toMatch(/preferred|legal|email|phone|@/i);
+  });
+  it("a last visit date is never put in a log, an analytics event or a URL", () => {
+    for (const f of [
+      "app/(app)/financials/statements/page.tsx",
+      "app/(app)/financials/statements/client-finder.tsx",
+      "app/(app)/financials/statements/clients-view.tsx",
+      "lib/finance/statement-screen.ts",
+      "lib/finance/statement-directory-read.ts",
+    ]) {
+      const code = strip(read(f));
+      expect(code, f).not.toMatch(/console\.|logger|analytics|posthog|sentry|captureException|track\(|capture\(/i);
+    }
+    // No URL builder takes a last visit, and the finder uses it only as option text.
+    const screen = strip(read("lib/finance/statement-screen.ts"));
+    for (const fn of ["tabHref", "clientsListHref", "clientStatementHref"]) {
+      const body = screen.slice(screen.indexOf(`export function ${fn}`), screen.indexOf("}", screen.indexOf(`export function ${fn}`)));
+      expect(body, fn).not.toMatch(/lastVisit|last_visit/i);
+    }
+    const finder = strip(read("app/(app)/financials/statements/client-finder.tsx"));
+    expect(finder.match(/lastVisits/g)?.length).toBeGreaterThan(0);
+    expect(finder).not.toMatch(/router\.push\([^)]*lastVisit/);
+    expect(finder).not.toMatch(/href=\{[^}]*lastVisit/);
   });
 });
 

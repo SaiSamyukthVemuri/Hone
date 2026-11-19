@@ -1,11 +1,11 @@
 import { PendingLink } from "@/components/pending-link";
 import { EmptyState } from "@/components/ui/empty-state";
 import { CONTROL_MIN_TOUCH, FOCUS_RING, cx } from "@/components/ui/control-base";
-import { DIRECTORY_MONTH_NOTE, offDocumentMoneyNotice, pageDirectory, type DirectoryResult, type FinderClient } from "@/lib/finance/statement-directory";
+import { DIRECTORY_MONTH_NOTE, offDocumentMoneyNotice, pageDirectory, type DirectoryResult } from "@/lib/finance/statement-directory";
 import type { YearMonth } from "@/lib/finance/statement-period";
 import { FINDER_TOO_MANY, STATEMENT_READ_UNAVAILABLE, clientStatementHref, clientsListHref, CLIENTS_PAGE_SIZE } from "@/lib/finance/statement-screen";
 
-import { ClientFinder } from "./client-finder";
+import { ClientFinder, type FinderOption } from "./client-finder";
 import { MonthControls, StatementsTabs } from "./statements-chrome";
 
 export type ClientsViewProps = {
@@ -17,7 +17,7 @@ export type ClientsViewProps = {
   page: number;
   format: (cents: number) => string;
   directory: { ok: true; value: DirectoryResult } | { ok: false; reason: string };
-  finder: { state: "ok"; clients: readonly FinderClient[]; lastVisits: Record<string, string | null> | null } | { state: "too_many" } | { state: "unavailable" };
+  finder: { state: "ok"; clients: readonly FinderOption[]; lastVisits: Record<string, string | null> | null } | { state: "too_many" } | { state: "unavailable" };
 };
 
 export function ClientsView({ month, monthLabel, maxMonth, timezone, notice, page, format, directory, finder }: ClientsViewProps) {
