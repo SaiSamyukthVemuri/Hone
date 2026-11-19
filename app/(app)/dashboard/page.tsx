@@ -110,11 +110,13 @@ import {
   type TodayWorkflowInput,
   type TodayWorkflowItem,
 } from "@/lib/dashboard/today-workflow";
+import { memorySourceLabels } from "@/lib/dashboard/memory-source-labels";
 import {
   resolveTodayIntakeAction,
   selectCurrentIntakeByClient,
   type TodayIntakeRow,
 } from "@/lib/dashboard/today-intake";
+import { UnfinishedVisitsNote } from "./unfinished-visits-note";
 import { getMissingRecordsAssistant } from "@/lib/dashboard/missing-records-assistant";
 import { currentAppointmentIds } from "@/lib/dashboard/current-appointment";
 import {
@@ -680,7 +682,7 @@ export default async function DashboardPage({
     if (!load) {
       prepSummaryByAppointment.set(
         appt.id,
-        toDashboardPrepSummary({ memory: null, unavailable: false, planNote: null }),
+        toDashboardPrepSummary({ memory: null, unavailable: false, planNote: null, timeZone: studio.timezone }),
       );
       continue;
     }
@@ -695,6 +697,24 @@ export default async function DashboardPage({
         // loader builds it to survive both "nothing charted" and a failed block
         // read, so a note-only visit still reaches the practitioner.
         planNote: load.narrative.plan?.text?.trim() || null,
+        timeZone: studio.timezone,
+        // Said when the plan note is from an EARLIER visit than the latest one (never changes which is picked).
+        planSourceLabel: memorySourceLabels(
+          {
+            latestAt: load.narrative.latestVisit?.at ?? null,
+            notes: load.narrative.plan
+              ? {
+                  at: load.narrative.plan.startedAt,
+                  isLatest: load.narrative.plan.sessionId === load.narrative.latestVisit?.id,
+                }
+              : null,
+            setup: null,
+            // The off-Today line is the newest "for next visit" note, so say what is missing: a plan, not "notes".
+            notesKind: "plan",
+          },
+          renderNow.toISOString(),
+          studio.timezone,
+        ).notes,
       }),
     );
   }
@@ -710,6 +730,7 @@ export default async function DashboardPage({
   // exists to avoid. An empty input list means every non-Today row gets
   // `workflow === null`, and the preparation block and treatment memory —
   // both already guarded on it in production — go quiet on their own.
+  const nowIsoForLabels = renderNow.toISOString();
   const todayWorkflowInputs: TodayWorkflowInput[] = (
     viewingToday ? visibleAppointments : []
   ).map(
@@ -741,6 +762,11 @@ export default async function DashboardPage({
         nextVisitNote: preview?.nextVisitNote ?? null,
         cautionNote: preview?.cautionNote ?? null,
         setupLine: preview?.setupLine ?? null,
+        // Where the notes and the setup came from, in the STUDIO's calendar (never the server's locale).
+        ...(() => {
+          const l = memorySourceLabels(preview?.sources, nowIsoForLabels, studio.timezone);
+          return { notesSourceLabel: l.notes, setupSourceLabel: l.setup };
+        })(),
         reminders: preview?.reminders ?? [],
         intake,
         charting,
@@ -993,6 +1019,7 @@ export default async function DashboardPage({
                   portalEnabled={clientSelfServicePolicyFromStudio(studio).portal}
                   historyAsked={viewingToday}
                   isCurrent={currentAppointmentIdSet.has(appt.id)}
+                  hasEnded={new Date(appt.ends_at).getTime() <= renderNow.getTime()}
                   cardOnFile={resolveCardOnFileStatus(
                     cardOnFileLoad,
                     appt.client_id,
@@ -1044,6 +1071,7 @@ export default async function DashboardPage({
           key={`needs:${selectedDayLocal}:${period}`}
           fallback={<NeedsAttentionSkeleton />}
         >
+          <UnfinishedVisitsNote studioId={studio.id} nowIso={renderNow.toISOString()} />
           <NeedsAttentionSection
             studioId={studio.id}
             studioTimezone={studio.timezone}
@@ -1141,6 +1169,7 @@ function AppointmentRow({
   prepSummary,
   historyAsked,
   isCurrent,
+  hasEnded,
   cardOnFile,
   tz,
   timeFormat,
@@ -1173,6 +1202,8 @@ function AppointmentRow({
   // Resolved ONCE for the whole page against one instant (see `renderNow`), not
   // re-derived per row from its own clock read.
   isCurrent: boolean;
+  // HON-45: the appointment's end has passed, judged against the same single `renderNow` as `isCurrent`.
+  hasEnded: boolean;
   // Three states, never two. `unavailable` means the card read failed, which is
   // NOT the same claim as "this client has no card".
   // `null` = this studio has no card-on-file route, so the row asks no card
@@ -1220,6 +1251,7 @@ function AppointmentRow({
           },
     sessionId: linkedSession?.sessionId ?? null,
     hasChartedArea: linkedSession?.hasChartedArea ?? false,
+    hasEnded,
   });
   // Review intake: the direct route from Today into the canonical
   // practitioner intake-review surface, replacing the
@@ -1341,7 +1373,7 @@ function AppointmentRow({
               {nextAction.chip && (
                 <span
                   className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] leading-3 font-medium uppercase tracking-wider ${
-                    nextAction.chip === "Charting needed"
+                    nextAction.chip === "Charting needed" || nextAction.chip === "Not finished"
                       ? "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200"
                       : "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-200"
                   }`}
@@ -1393,6 +1425,7 @@ function AppointmentRow({
               pinnedNotes={pinnedNotes}
               unavailable={workflow ? workflow.unavailable : prepSummary.unavailable}
               caution={workflow && !workflow.unavailable && workflow.hasHistory ? workflow.caution : null}
+              cautionSource={workflow && !workflow.unavailable && workflow.hasHistory ? workflow.notesSourceLabel : null}
               lastTreatment={prepSummary.hasTreatment ? prepSummary.compactSummary : null}
             />
           </div>
@@ -1482,6 +1515,11 @@ function AppointmentRow({
                         longer taken from `rememberLine`, which collapsed the
                         caution and the plan into one string, so the caution
                         used to print twice under two different labels. */}
+                    {workflow.notesSourceLabel && (
+                      <span data-testid="today-notes-source" className="text-[11px] text-neutral-500">
+                        {workflow.notesSourceLabel}
+                      </span>
+                    )}
                     {workflow.remember && (
                       <span
                         className="whitespace-pre-wrap break-words text-blue-900 dark:text-blue-200"
@@ -1500,6 +1538,11 @@ function AppointmentRow({
                     <span className="whitespace-pre-wrap break-words text-neutral-600 dark:text-neutral-400">
                       Latest setup: {workflow.setup ?? "Not recorded"}
                     </span>
+                    {workflow.setupSourceLabel && (
+                      <span data-testid="today-setup-source" className="text-[11px] text-neutral-500">
+                        {workflow.setupSourceLabel}
+                      </span>
+                    )}
                   </>
                 )}
                 {/* Specific missing-record reminders, once each. The generic
@@ -1559,6 +1602,11 @@ function AppointmentRow({
               <span className="font-medium text-neutral-500">Remember: </span>
               {prepSummary.remember}
             </span>
+            {prepSummary.rememberSource && (
+              <span data-testid="dashboard-prep-remember-source" className="mt-0.5 block text-[11px] text-neutral-500">
+                {prepSummary.rememberSource}
+              </span>
+            )}
           </div>
         )}
         {(prepSummary.hasTreatment || prepSummary.unavailable) && (

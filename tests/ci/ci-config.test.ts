@@ -455,14 +455,17 @@ describe("PR CI — path-aware lane selection", () => {
     ]) {
       expect(jobs, `${job} must still exist`).toContain(job);
     }
-    // Eight gated lanes declare `needs: changes` + an `if:` on classifier output
-    // (the seventh is canonical-record, the docs-only production-record lane,
-    // #825 6215529089; the eighth is storage-photos, not required, E-GAPS; the ninth is the non-required webkit-hon-62 lane).
-    expect((CI.match(/^ {4}needs: changes$/gm) ?? []).length).toBe(9);
-    // CI-DRAFT-01: seven of them (every Supabase-starting heavy lane) are wrapped in
-    // the draft gate; validate and canonical-record stay bare. The exact wrapping
-    // is proved against the base commit in tests/ci/draft-gate.test.ts.
-    expect((CI.match(/^ {4}if: \$\{\{ needs\.changes\.outputs\./gm) ?? []).length).toBe(2);
+    // Ten gated lanes declare an `if:` on classifier output. validate,
+    // canonical-record (the docs-only production-record lane, #825 6215529089)
+    // and records-preflight (CI-COST-02) need `changes` alone. The seven heavy
+    // lanes, storage-photos (E-GAPS) and webkit-hon-62 (HON-62) included, also
+    // need records-preflight, so a red ledger or receipt stops them before they start.
+    expect((CI.match(/^ {4}needs: changes$/gm) ?? []).length).toBe(3);
+    expect((CI.match(/^ {4}needs: \[changes, records-preflight\]$/gm) ?? []).length).toBe(7);
+    // CI-DRAFT-01: the seven heavy lanes (every Supabase-starting one) are wrapped in
+    // the draft gate; validate, canonical-record and records-preflight stay bare. The
+    // exact wrapping is proved against the base commit in tests/ci/draft-gate.test.ts.
+    expect((CI.match(/^ {4}if: \$\{\{ needs\.changes\.outputs\./gm) ?? []).length).toBe(3);
     expect((CI.match(/^ {4}if: \$\{\{ github\.event\.pull_request\.draft != true && \( needs\.changes\.outputs\./gm) ?? []).length).toBe(7);
   });
 
@@ -913,7 +916,11 @@ describe("PR CI — path-aware lane selection", () => {
     // 90 s: 3x the healthiest-slow install measured (26 s); the worst-case
     // guard above derives every step ceiling from these defaults.
     expect(script).toMatch(/FIRST="\$\{PW_DEPS_FIRST_TIMEOUT:-90\}"/);
-    expect(script).toMatch(/azure\\\.archive\\\.ubuntu\\\.com\|archive\.ubuntu\.com/);
+    // The retry rewrites ANY <region>.archive / <region>.ec2.archive host (not only azure) to archive.ubuntu.com; the behaviour is
+    // run for real in tests/ci/playwright-system-deps.test.ts, so this only pins that the rewrite exists.
+    expect(script).toMatch(/sed -i -E '[^']*archive\\\.ubuntu\\\.com[^']*archive\.ubuntu\.com/);
+    // And that apt never upgrades what the image already has (the 18 Nov mesa stall).
+    expect(script).toContain('APT::Get::Upgrade "false"');
   });
 
   it("emits timing diagnostics including a timeout hint", () => {
@@ -1341,7 +1348,7 @@ describe("HON-62: the WebKit time-input job is separate, scoped and never requir
   });
 
   it("runs when the HON-62 spec is selected, and on extended / full-matrix runs", () => {
-    expect(job.needs).toBe("changes");
+    expect(job.needs).toEqual(["changes", "records-preflight"]);
     expect(job.if).toContain("contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts')");
     expect(job.if).toContain("needs.changes.outputs.browser_extended == 'true'");
     expect(job.if).toContain("needs.changes.outputs.full_matrix_required == 'true'");
@@ -1496,7 +1503,9 @@ describe("HON-62: the WebKit time-input job is separate, scoped and never requir
     expect(agg.name).toBe("browser e2e (local stack)");
     expect(agg.needs).toEqual(["changes", "browser-e2e-shard", "canonical-record"]);
     expect(Object.keys(jobs).sort()).toEqual(
-      ["browser-e2e", "browser-e2e-shard", "canonical-record", "changes", "db-integration", "google-browser-e2e", "mobile-completion-e2e", "payment-browser-e2e", "storage-photos", "validate", "webkit-hon-62"].sort(),
+      // records-preflight (CI-COST-02) is the other job added since; it is not
+      // aggregated either, and validate re-runs its two files.
+      ["browser-e2e", "browser-e2e-shard", "canonical-record", "changes", "db-integration", "google-browser-e2e", "mobile-completion-e2e", "payment-browser-e2e", "records-preflight", "storage-photos", "validate", "webkit-hon-62"].sort(),
     );
     for (const [name, def] of Object.entries(jobs)) {
       const needs = ([] as string[]).concat((def as Job).needs ?? []);
@@ -2209,8 +2218,8 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   it("the checkout count across the workflow directory is the reviewed one", () => {
     expect(
       checkoutCount(WORKFLOWS),
-      "9 in ci.yml (the aggregator has none; canonical-record added by #825 6215529089; storage-photos by E-GAPS; webkit-hon-62 by HON-62) + 1 in nightly.yml + 1 in restore-drill.yml (DR-01A)",
-    ).toBe(12);
+      "9 in ci.yml (the aggregator has none; canonical-record added by #825 6215529089; storage-photos by E-GAPS; webkit-hon-62 by HON-62; records-preflight by CI-COST-02) + 1 in nightly.yml + 1 in restore-drill.yml (DR-01A)",
+    ).toBe(13);
   });
 
   // -------------------------------------------------------------------------

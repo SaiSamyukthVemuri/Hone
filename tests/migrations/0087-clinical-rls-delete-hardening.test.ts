@@ -3,21 +3,16 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
 
-// PR #217 (migration 0087): clinical RLS delete hardening. STATIC
-// policy tests over the migration chain: strong, but they prove the
-// SQL text, not the deployed database. A real DB/RLS integration
-// harness (spin up Postgres, apply the chain, exercise policies as
-// authenticated users) is still needed and is documented as an open
-// follow-up in docs/13.
+// Migration 0087 (clinical RLS delete hardening) is applied and frozen. What
+// can still change is everything around it: a later migration re-creating a
+// broad policy, or app code hard-deleting a table 0087 made no-delete.
 
 function read(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf8");
 }
 
-const M = read("supabase/migrations/0087_clinical_rls_delete_hardening.sql");
-
-// The full migration chain AFTER 0087, used to prove no later file
-// (today: none) re-creates a broad policy on the hardened tables.
+// The full migration chain, used to prove no file after 0087 re-creates a
+// broad policy on the hardened tables.
 const CHAIN = readdirSync(join(process.cwd(), "supabase/migrations"))
   .filter((f) => f.endsWith(".sql"))
   .sort()
@@ -46,57 +41,6 @@ const DELETE_KEPT_TABLES = [
   "client_pricing",
 ];
 
-describe("migration 0087: policy-only delete hardening", () => {
-  it("is policy-only: no schema or data statements", () => {
-    expect(M).not.toMatch(/create table|alter table|drop table|drop column|add column/i);
-    expect(M).not.toMatch(/^\s*update public\.\w+\s+set/im);
-    expect(M).not.toMatch(/^\s*delete from/im);
-    expect(M).not.toMatch(/^grant /im);
-    expect(M).not.toMatch(/to anon/);
-    expect(M).not.toMatch(/stripe|payment_charge|auth\.users|record_keeping_audit/i);
-  });
-
-  it("drops the broad FOR ALL policy on every hardened table", () => {
-    for (const t of [...NO_DELETE_TABLES, ...DELETE_KEPT_TABLES]) {
-      expect(M, t).toMatch(new RegExp(`drop policy if exists "[^"]*" on public\\.${t};`));
-    }
-    // And never creates a FOR ALL policy itself.
-    expect(M).not.toMatch(/for all/);
-  });
-
-  it("creates select/insert/update and NO delete for the history tables", () => {
-    for (const t of NO_DELETE_TABLES) {
-      expect(M, t).toMatch(new RegExp(`on public\\.${t} for select to authenticated`));
-      expect(M, t).toMatch(new RegExp(`on public\\.${t} for insert to authenticated`));
-      expect(M, t).toMatch(new RegExp(`on public\\.${t} for update to authenticated`));
-      expect(M, t).not.toMatch(new RegExp(`on public\\.${t} for delete`));
-    }
-  });
-
-  it("keeps DELETE explicitly only where the app has a real delete affordance", () => {
-    for (const t of DELETE_KEPT_TABLES) {
-      expect(M, t).toMatch(new RegExp(`on public\\.${t} for delete to authenticated`));
-    }
-    const deleteCount = M.match(/for delete to authenticated/g)?.length;
-    expect(deleteCount).toBe(DELETE_KEPT_TABLES.length);
-  });
-
-  it("uses the project's studio-scoped expressions only", () => {
-    expect(M).toMatch(/public\.is_studio_member\(studio_id\)/);
-    expect(M).toMatch(/public\.session_is_visible\(session_id\)/);
-    expect(M).not.toMatch(/using \(true\)|with check \(true\)/);
-  });
-
-  it("every UPDATE policy carries both USING and WITH CHECK", () => {
-    const updates = M.split(/create policy/).filter((p) => p.includes("for update"));
-    expect(updates.length).toBeGreaterThan(0);
-    for (const p of updates) {
-      expect(p).toMatch(/using \(public\./);
-      expect(p).toMatch(/with check \(public\./);
-    }
-  });
-});
-
 describe("chain invariants after 0087", () => {
   it("no migration AFTER 0087 re-creates a FOR ALL policy on the hardened tables", () => {
     const after = CHAIN.filter(({ f }) => f > "0087");
@@ -107,13 +51,6 @@ describe("chain invariants after 0087", () => {
         );
       }
     }
-  });
-
-  it("Record Keeping audit policies are untouched by this PR", () => {
-    // No DDL touches record_keeping tables (the header comment may
-    // mention them in the unchanged list).
-    expect(M).not.toMatch(/on public\.record_keeping/);
-    expect(M).not.toMatch(/policy [^\n]*record_keeping/);
   });
 });
 

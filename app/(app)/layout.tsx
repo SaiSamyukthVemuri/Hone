@@ -20,6 +20,7 @@ import { AppFooter } from "@/app/_components/AppFooter";
 import { SafeAnalytics } from "@/app/_components/SafeAnalytics";
 import { identifyServerUser } from "@/lib/analytics/server";
 import { timed } from "@/lib/observability/perf-timing";
+import { showWaitlistInPrimaryNav } from "@/lib/settings/nav-registry";
 import { scopeNotificationsToViewer } from "@/lib/notifications/owner-only-events";
 
 export default async function AppLayout({
@@ -63,12 +64,23 @@ export default async function AppLayout({
   // Willow follow-up: overdue disinfectant "Replace now" records also count
   // toward the badge (computed, not persisted) so the operational safety alert is
   // visible from every page. Two bounded studio-scoped reads, run together.
-  const [unreadPersisted, overdueDisinfectantCount] = await timed(
+  //
+  // "Waitlist" in the main navigation follows the Settings tab's own rule for the
+  // CURRENT studio and role (never broader), and fails closed. It needs only the
+  // identity above, so it runs WITH these reads instead of ahead of them, and is
+  // measured under its own span so its cost is visible in production timings.
+  const [unreadPersisted, overdueDisinfectantCount, showWaitlist] = await timed(
     "shell.support-reads",
     () =>
       Promise.all([
         loadUnreadNotificationCount(studio.id, practitioner.role === "owner", practitioner.id),
         loadOverdueDisinfectantCount(studio.id, studio.timezone),
+        timed("shell.waitlist-nav", () =>
+          showWaitlistInPrimaryNav({
+            role: practitioner.role === "owner" ? "owner" : "practitioner",
+            studio,
+          }),
+        ),
       ]),
   );
   const unreadNotifications = unreadPersisted + overdueDisinfectantCount;
@@ -155,6 +167,16 @@ export default async function AppLayout({
               >
                 Calendar
               </PrimaryNavLink>
+              {showWaitlist && (
+                <PrimaryNavLink
+                  href="/settings/waitlist"
+                  match="section"
+                  testId="nav-waitlist"
+                  pendingLabel="Opening Waitlist…"
+                >
+                  Waitlist
+                </PrimaryNavLink>
+              )}
               {/* PR #229: Notifications moved out of the main tab
                   row to the header bell (right side, both
                   breakpoints), so the primary nav competes less and
@@ -243,6 +265,7 @@ export default async function AppLayout({
               studioName={studio.name}
               role={practitioner.role}
               canSwitchStudio={canSwitchStudio}
+              showWaitlist={showWaitlist}
             />
           </div>
         </div>

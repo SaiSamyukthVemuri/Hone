@@ -179,6 +179,32 @@ describe("batched prep memory — one client cannot receive another's treatment"
   });
 });
 
+describe("batched prep memory — latestVisit is the newest live visit, charted or not, per client", () => {
+  it("names the newest non-void, non-deleted visit even when it has no chart or notes, and never another client's", async () => {
+    const { out } = await run(
+      {
+        sessions: [
+          session({ id: "s-a-old", client_id: ALICE, started_at: "2026-01-10T10:00:00Z", next_session_note: "OLD PLAN" }),
+          session({ id: "s-a-new", client_id: ALICE, started_at: "2026-02-01T10:00:00Z", electrolysis_entries: [], laser_entries: [] }),
+          session({ id: "s-a-void", client_id: ALICE, started_at: "2026-03-01T10:00:00Z", record_status: "void" }),
+          session({ id: "s-a-del", client_id: ALICE, started_at: "2026-03-05T10:00:00Z", deleted_at: "2026-03-06T00:00:00Z" }),
+          session({ id: "s-b-1", client_id: BOB, started_at: "2026-01-20T10:00:00Z" }),
+        ],
+        session_blocks: [block("s-a-old"), block("s-b-1")],
+      },
+      [{ clientId: ALICE }, { clientId: BOB }],
+    );
+    expect(out.get(ALICE)?.narrative.latestVisit).toEqual({ id: "s-a-new", at: "2026-02-01T10:00:00Z" });
+    // the plan note still comes from the older visit that carries one: the label the dashboard needs is that they differ
+    expect(out.get(ALICE)?.narrative.plan?.text).toBe("OLD PLAN");
+    expect(out.get(BOB)?.narrative.latestVisit).toEqual({ id: "s-b-1", at: "2026-01-20T10:00:00Z" });
+  });
+  it("is null when the client has no eligible visit", async () => {
+    const { out } = await run({ sessions: [], session_blocks: [] }, [{ clientId: ALICE }]);
+    expect(out.get(ALICE)?.narrative.latestVisit ?? null).toBeNull();
+  });
+});
+
 describe("batched prep memory — each appointment keeps its OWN boundary", () => {
   it("a per-client `before` excludes a session that starts after that appointment", async () => {
     const rows = {
