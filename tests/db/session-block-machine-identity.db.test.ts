@@ -48,14 +48,14 @@ async function publish(): Promise<void> {
   );
 }
 
-async function register(studio: SeededStudio): Promise<string> {
+async function register(studio: SeededStudio, name = "Room 1"): Promise<string> {
   await publish();
   return asUser(studio.userId, async (q) => {
     const r = await q(`select public.register_studio_machine($1,$2,$3,$4,$5) as id`, [
       studio.studioId,
       PROFILE,
       VERSION,
-      "Room 1",
+      name,
       [],
     ]);
     return r.rows[0].id as string;
@@ -291,7 +291,7 @@ describe("0301: a create replay must ask for the identity the original save reco
     const studio = await seedStudio("create-replay-other-unit");
     const { sessionId } = await seedSession(studio);
     const one = await register(studio);
-    const two = await register(studio);
+    const two = await register(studio, "Room 2");
     const first = await save(studio, sessionId, { machine: one, mode: "galvanic", key: "create-key-0008", groups: groups("7") });
     const before = await areas(studio.studioId);
     await expect(save(studio, sessionId, { machine: two, mode: "galvanic", key: "create-key-0008", groups: groups("7") })).rejects.toThrow(/already used/);
