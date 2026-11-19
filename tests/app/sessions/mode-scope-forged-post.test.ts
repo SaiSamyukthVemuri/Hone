@@ -141,6 +141,30 @@ describe("the rollout OFF: the request is used exactly as it always was", () => 
   });
 });
 
+describe("minutes: the action writes the SAME absolute value however many times it is saved (rollout on and off)", () => {
+  for (const on of [true, false]) {
+    it(`edit saved twice with minutes 9 (rollout ${on ? "on" : "off"}): both writes carry exactly 9 on the block and the entry, never 18`, async () => {
+      h.rollout = on;
+      h.stored.block = { ...h.stored.block, mode: "thermo" };
+      await update({ mode: "thermo", minutesPerformed: 9 });
+      await update({ mode: "thermo", minutesPerformed: 9 });
+      const calls = h.rpc.mock.calls.filter((c) => c[0] === "update_block_with_entry").map((c) => c[1] as Record<string, unknown>);
+      expect(calls).toHaveLength(2);
+      for (const a of calls) {
+        expect(a.p_minutes_performed).toBe(9);
+        expect((a.p_block as Record<string, unknown>).minutes_performed).toBe(9);
+      }
+    });
+  }
+  it("editing 9 to 25 sends 25 (a replacement, not an addition)", async () => {
+    await update({ mode: "thermo", minutesPerformed: 9 });
+    await update({ mode: "thermo", minutesPerformed: 25 });
+    const a = lastArgs();
+    expect(a.p_minutes_performed).toBe(25);
+    expect((a.p_block as Record<string, unknown>).minutes_performed).toBe(25);
+  });
+});
+
 describe("W4/W2 source pins", () => {
   it("both write paths scope before shaping, and only behind the rollout", async () => {
     const { readFileSync } = await import("node:fs");
