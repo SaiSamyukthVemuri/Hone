@@ -22,7 +22,7 @@ export type WorkerDeps = {
   /** Sends the one invitation email. `entryId` lets the deliverer re-read the stored address when the command did not return one. */
   deliver: (issued: IssuedInvitation, entryId: string, item: ClaimedItem) => Promise<DeliveryState>;
   /** Re-reads, immediately before the send, that the entry may still be mailed (waiting/invited, not removed, has an address). */
-  mayStillSend: (entryId: string) => Promise<boolean>;
+  mayStillSend: (item: ClaimedItem) => Promise<boolean>;
   sleep: (ms: number) => Promise<void>;
 };
 
@@ -64,7 +64,7 @@ async function runOne(deps: WorkerDeps, item: ClaimedItem): Promise<ItemOutcome>
   // Re-read just before the send: an entry removed or changed since the batch was confirmed is skipped, never mailed.
   let may = false;
   try {
-    may = await deps.mayStillSend(item.entryId);
+    may = await deps.mayStillSend(item);
   } catch {
     may = false;
   }
