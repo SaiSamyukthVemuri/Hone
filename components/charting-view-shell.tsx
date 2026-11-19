@@ -18,6 +18,7 @@ import { setChartingViewAction } from "@/app/(app)/charting-view-actions";
 import { useChartingViewPreference } from "@/components/use-charting-view-preference";
 import { ChartingViewContext } from "@/components/charting-view-context";
 import { ChartingVisitDraftProvider, useVisitDraftSummary } from "@/components/charting-visit-draft";
+import { ChartingVisitSaveProvider, VisitSaveControl } from "@/components/charting-visit-save";
 import type { ChartingView } from "@/lib/charting/view-preference";
 
 export function ChartingViewShell({
@@ -35,6 +36,7 @@ export function ChartingViewShell({
   return (
     <ChartingViewContext.Provider value={state}>
       <ChartingVisitDraftProvider>
+      <ChartingVisitSaveProvider>
       <div
         data-testid="charting-view-root"
         data-charting-view={state.view}
@@ -54,6 +56,7 @@ export function ChartingViewShell({
           </aside>
         ) : null}
       </div>
+      </ChartingVisitSaveProvider>
       </ChartingVisitDraftProvider>
     </ChartingViewContext.Provider>
   );
@@ -178,6 +181,7 @@ export function ChartingVisitSummary({
           <dd>{nextVisitNoteRecorded ? "Recorded" : "Not recorded"}</dd>
         </div>
       </dl>
+      <VisitSaveControl />
     </section>
   );
 }

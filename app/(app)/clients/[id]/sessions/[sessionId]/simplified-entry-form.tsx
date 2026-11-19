@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
+import { useRegisterVisitSaver, type SaveOutcome } from "@/components/charting-visit-save";
 import {
   AREAS,
   PULSE_COUNT_DEFAULT,
@@ -97,6 +98,8 @@ export function SimplifiedEntryForm({
   const [recovery, setRecovery] = useState<string | null>(null);
   const [savedLabel, setSavedLabel] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  // Set when a save's answer was LOST (the transport threw): a row may exist, so Save visit never resubmits this pass on its own.
+  const answerLost = useRef(false);
   // "This visit" (New view): an unsaved or failed pass shows as such. Display only: this form reports and never reads it back.
   // The pass INHERITS the saved block's machine, so it reports that machine's label. Read only in New view (the context load is a read, and
   // Current view stays exactly as it was), and only when the block carries one.
@@ -126,15 +129,15 @@ export function SimplifiedEntryForm({
     update("pulse_count", String(next));
   }
 
-  function submit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
+  // THE ONE SAVE. The form's own button and Save visit both run it. It returns what happened on EVERY exit (never a pending promise).
+  function buildAndSave(): Promise<SaveOutcome> {
     // In the persisted-but-unverified recovery state, refuse to resubmit: the
     // row may already exist and a second insert would duplicate it.
-    if (recovery) return;
+    if (recovery) return Promise.resolve({ status: "held", message: recovery });
     setError(null);
     if (draft.areas.length === 0) {
       setError("Pick at least one area.");
-      return;
+      return Promise.resolve({ status: "failed", message: "Pick at least one area." });
     }
 
     const fd = new FormData();
@@ -171,33 +174,63 @@ export function SimplifiedEntryForm({
     // observation_chips). Kept SEPARATE from the free-text comments above.
     fd.set("observation_chips", JSON.stringify(draft.observationChips));
 
-    startTransition(async () => {
+    return (async (): Promise<SaveOutcome> => {
       try {
         const res = await addElectrolysisEntryAction(fd);
+        answerLost.current = false; // an answer arrived, so the outcome is known again
         if (res.ok) {
           setDraft(emptyDraft());
           setSavedLabel(pickSavedLabel());
           window.setTimeout(() => setSavedLabel(null), 1500);
-          return;
+          return { status: "saved" };
         }
         if (res.code === "unverified") {
           // A row MAY exist but its observations weren't confirmed. Lock the
           // form so the practitioner can't blind-resubmit and duplicate the
           // clinical entry; the draft is preserved for reference.
           setRecovery(res.error);
-          return;
+          return { status: "held", message: res.error };
         }
         // invalid_input / not_persisted → nothing was inserted. Safe to fix and
         // retry; keep the form + draft as-is and show the error.
         setError(res.error);
+        return { status: "failed", message: res.error };
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to add entry.");
+        // THE ANSWER WAS LOST: a row may exist. Save visit will not resubmit this pass (see `answerLost`).
+        answerLost.current = true;
+        const message = err instanceof Error ? err.message : "Failed to add entry.";
+        setError(message);
+        return { status: "failed", message };
       }
+    })();
+  }
+
+  function submit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    startTransition(async () => {
+      await buildAndSave();
     });
   }
 
+  // SAVE VISIT. Held while this form is mid-save, locked in recovery, or after a LOST ANSWER (a second insert could duplicate the pass: the
+  // practitioner decides with the form's own button). Nothing to save means no call.
+  const rootRef = useRef<HTMLFormElement>(null);
+  useRegisterVisitSaver(`pass:${block.id}`, "Add pass", rootRef, () => {
+    if (pending) return Promise.resolve<SaveOutcome>({ status: "held", message: "A save is already in progress." });
+    if (recovery) return Promise.resolve<SaveOutcome>({ status: "held", message: recovery });
+    if (answerLost.current) return Promise.resolve<SaveOutcome>({ status: "held", message: "The last attempt's result is unknown. Check the record, then save this pass with its own button." });
+    if (JSON.stringify(draft) === JSON.stringify(emptyDraft())) return Promise.resolve<SaveOutcome>({ status: "nothing" });
+    let p!: Promise<SaveOutcome>;
+    startTransition(async () => {
+      p = buildAndSave();
+      await p;
+    });
+    return p;
+  });
+
   return (
     <form
+      ref={rootRef}
       onSubmit={submit}
       data-testid="add-pass-form"
       className="flex flex-col gap-4 rounded-md border border-dashed border-neutral-300 bg-neutral-50 p-4 dark:border-neutral-700 dark:bg-neutral-900/50"
