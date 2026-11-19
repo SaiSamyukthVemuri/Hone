@@ -6,6 +6,7 @@ const h = vi.hoisted(() => ({
   rollout: true,
   rpc: vi.fn(),
   last: null as unknown,
+  filters: [] as Array<[string, string, unknown]>,
   stored: { block: { probe_key: null, probe_inventory_item_id: null, probe_lot_number: null, mode: "thermo" } as Record<string, unknown>, entry: null as Record<string, unknown> | null },
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -29,7 +30,10 @@ vi.mock("@/lib/supabase/server", () => ({
     from: (table: string) => {
       const chain: Record<string, unknown> = {};
       const self = () => chain;
-      for (const k of ["select", "eq", "is", "order", "limit"]) chain[k] = self;
+      for (const k of ["select", "is", "order", "limit"]) chain[k] = self;
+      chain.eq = (c: string, v: unknown) => { h.filters.push([table, c, v]); return chain; };
+      // A list read (the entries of a block) is awaited directly: it answers the stored entry rows.
+      chain.then = (res: (v: unknown) => unknown) => res({ data: table === "electrolysis_entries" ? (h.stored.entry ? [h.stored.entry] : []) : [], error: null });
       chain.single = async () => ({ data: { id: "b1", updated_at: "2026-11-19T10:00:00.000Z" }, error: null });
       chain.maybeSingle = async () => ({ data: table === "session_blocks" ? h.stored.block : h.stored.entry, error: null });
       return chain;
@@ -60,6 +64,7 @@ const NONE = { ma: null, gdur: null, tint: null, tdur: null, ul: null, mod: null
 
 beforeEach(() => {
   h.rpc.mockReset();
+  h.filters = [];
   h.rollout = true;
   h.stored.block = { probe_key: null, probe_inventory_item_id: null, probe_lot_number: null, mode: "thermo" };
   h.stored.entry = null;
@@ -89,6 +94,16 @@ describe("CREATE with the rollout ON drops every field that does not belong to t
   });
 });
 
+describe("a forged MODE value is refused before anything else (rollout on)", () => {
+  for (const mode of ["multiplex", "THERMO", "x'; drop", "thermolysis"]) {
+    it(`create and edit with mode ${JSON.stringify(mode)}: refused, nothing written`, async () => {
+      expect((await create({ mode })).ok).toBe(false);
+      expect((await update({ mode })).ok).toBe(false);
+      expect(h.rpc).not.toHaveBeenCalled();
+    });
+  }
+});
+
 describe("EDIT with the rollout ON: the same rule, and the freeze", () => {
   it("forged thermolysis fields on a galvanic edit are dropped", async () => {
     h.stored.block = { ...h.stored.block, mode: "galv" };
@@ -107,6 +122,30 @@ describe("EDIT with the rollout ON: the same rule, and the freeze", () => {
     expect(res.ok).toBe(false);
     expect(h.rpc).not.toHaveBeenCalled();
   });
+  it("FREEZE cannot be skipped by FORGING the entry id: omitted, swapped or foreign, the block's own readings still refuse the change", async () => {
+    h.stored.block = { ...h.stored.block, mode: "thermo" };
+    h.stored.entry = { thermolysis_intensity_percent: 40 };
+    for (const firstEntryId of [null, undefined, "11111111-1111-1111-1111-111111111111"]) {
+      h.rpc.mockReset();
+      const res = await update({ mode: "galv", firstEntryId });
+      expect(res.ok, `firstEntryId=${String(firstEntryId)}`).toBe(false);
+      expect(h.rpc).not.toHaveBeenCalled();
+    }
+  });
+  it("the freeze reads the entries BY BLOCK and STUDIO (not the client's entry id), and ANY live entry with readings freezes", async () => {
+    h.stored.block = { ...h.stored.block, mode: "thermo" };
+    h.stored.entry = { thermolysis_intensity_percent: 40 };
+    await update({ mode: "galv", firstEntryId: "someone-elses-entry" });
+    const f = h.filters.filter((x) => x[0] === "electrolysis_entries");
+    expect(f).toContainEqual(["electrolysis_entries", "block_id", "b1"]);
+    expect(f).toContainEqual(["electrolysis_entries", "studio_id", "st1"]);
+    expect(f.some((x) => x[1] === "id"), "never filtered by a client-supplied entry id").toBe(false);
+  });
+  it("a block that holds ONLY pulse values is not frozen (stated rule)", async () => {
+    h.stored.block = { ...h.stored.block, mode: "thermo" };
+    h.stored.entry = { thermolysis_intensity_percent: null, galvanic_ma: null };
+    expect((await update({ mode: "galv" })).ok).toBe(true);
+  });
   it("FREEZE control: the SAME mode on a block with readings saves", async () => {
     h.stored.block = { ...h.stored.block, mode: "thermo" };
     h.stored.entry = { thermolysis_intensity_percent: 40 };
@@ -119,6 +158,17 @@ describe("EDIT with the rollout ON: the same rule, and the freeze", () => {
     h.stored.entry = { thermolysis_intensity_percent: null };
     expect((await update({ mode: "thermo" })).ok).toBe(true);
   });
+});
+
+describe("xCell Pur's legacy modes are REFUSED once the redesign is on, never saved under the old xCell identity", () => {
+  for (const mode of ["thermo", "blend", "galv"]) {
+    it(`create ${mode} with the Pur model chosen: refused with the clear message, nothing written`, async () => {
+      const res = await create({ mode, machineIdentity: { machineId: null, modeKey: null, profileId: "dectro-apilus:xcell-pur" } });
+      expect(res.ok).toBe(false);
+      expect((res as { error: string }).error).toMatch(/xCell Pur's Thermolysis, Blend and Galvanic can't be recorded yet\. Nothing was saved/);
+      expect(h.rpc).not.toHaveBeenCalled();
+    });
+  }
 });
 
 describe("the rollout OFF: the request is used exactly as it always was", () => {

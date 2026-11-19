@@ -8,7 +8,7 @@
  *   no mode  -> no readings at all (no modality, no EL, nothing from any group); shared entries (hairs, notes, chips) are not readings
  *   thermo   -> modality, EL, thermolysis group, pulse
  *   blend    -> everything (thermolysis, galvanic, UL, modality, EL, pulse); OmniBlend has no thermolysis duration
- *   galv     -> galvanic group, UL and EL (Sam's ruling: Galvanic saves EL); no modality, no thermolysis, no pulse
+ *   galv     -> galvanic group, UL and EL (a deliberate behaviour change with the redesign on: the old path dropped Galvanic EL); no modality, no thermolysis, no pulse
  *
  * Pure. The caller decides whether the redesign is on; with it off this module is not called and every write is exactly as it was.
  */
@@ -69,6 +69,12 @@ export function scopeToMode<T extends ScopableInput>(input: T): T {
   };
 }
 
+/** The only modes a block can hold (or none). Anything else is a forged or stale value. */
+export function isKnownMode(mode: string | null | undefined): boolean {
+  const m = (mode ?? "").trim();
+  return m === "" || m === "thermo" || m === "galv" || m === "blend";
+}
+
 /** Does any reading group hold a value? (used by the freeze rule) */
 export function entryHasReadings(e: Record<string, unknown> | null | undefined): boolean {
   if (!e) return false;
@@ -78,7 +84,10 @@ export function entryHasReadings(e: Record<string, unknown> | null | undefined):
   ].some((k) => e[k] != null);
 }
 
-/** W4: a block that holds readings keeps its mode. */
+/**
+ * W4: a block that holds readings keeps its mode. "Readings" are the thermolysis, galvanic, UL, EL and modality columns of its entries; a block that holds ONLY
+ * pulse values (count/delay) is not frozen (the count is always at least the database default 1, so it cannot signal a recorded reading).
+ */
 export function modeChangeRefused(o: { storedMode: string | null; submittedMode: string | null; hasReadings: boolean }): boolean {
   const a = (o.storedMode ?? "") || null;
   const b = (o.submittedMode ?? "") || null;

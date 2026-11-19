@@ -17,7 +17,7 @@ import {
   currentProfile,
   type MachineProfile,
 } from "@/lib/machines/profile-contract";
-import { blockUsesXcellPur, checkIdentityChoice, storedIdentityMatches } from "@/lib/machines/identity-choice";
+import { blockHoldsReadings, blockUsesXcellPur, checkIdentityChoice, IDENTITY_FROZEN_MESSAGE, storedIdentityMatches } from "@/lib/machines/identity-choice";
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import {
@@ -76,7 +76,7 @@ import {
   listStudioDevices,
 } from "@/lib/machines/studio-devices";
 import { xcellRegistrationState } from "@/lib/machines/xcell-registration-gate";
-import { readChartingRollout, ROLLOUT_UNAVAILABLE_MESSAGE, xcellRouteDecision } from "@/lib/rollouts/charting-rollout";
+import { chartingRolloutFor, readChartingRollout, ROLLOUT_UNAVAILABLE_MESSAGE, xcellRouteDecision } from "@/lib/rollouts/charting-rollout";
 import { listStudioMachines, machinesByIds, recordBlockMachineIdentity } from "@/lib/machines/machine-queries";
 import {
   assertSessionForClient,
@@ -679,6 +679,14 @@ export async function recordBlockMachineIdentityAction(input: {
     if (alreadyStored || allowed.reason === "availability") deferredRefusal = allowed.error;
     else if (allowed.reason === "unreadable") return { ok: false, code: "unknown", error: allowed.error };
     else return { ok: false, code: "rejected", error: allowed.error };
+  }
+  // W4 (redesign on): a block that already holds readings keeps its machine; the server refuses a different choice, whatever the form allowed.
+  // A choice the block already stores (a lost-answer retry) is never refused. Off: unchanged.
+  if (await chartingRolloutFor(scope.studioId)) {
+    const same = await storedIdentityMatches(db, { blockId: input.blockId, sessionId: input.sessionId }, choice);
+    if (!same && (await blockHoldsReadings(db, input.blockId, input.sessionId))) {
+      return { ok: false, code: "rejected", error: IDENTITY_FROZEN_MESSAGE };
+    }
   }
   try {
     await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
