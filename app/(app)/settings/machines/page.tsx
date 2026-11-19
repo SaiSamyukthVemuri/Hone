@@ -1,3 +1,4 @@
+import { machineModelLabel, registrableProfiles } from "@/lib/machines/display-name";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
@@ -33,9 +34,9 @@ export default async function MachineSettingsPage() {
     if (!res.ok) checkFailed = true;
     published.set(`${p.profileId}@${p.version}`, res.ok ? res.value : null);
   }
-  const models = listableProfiles(active, (p) => published.get(`${p.profileId}@${p.version}`) ?? null).map((p) => ({
+  const models = registrableProfiles(listableProfiles(active, (p) => published.get(`${p.profileId}@${p.version}`) ?? null)).map((p) => ({
     profileId: p.profileId,
-    label: `${p.manufacturer} ${p.model}`,
+    label: machineModelLabel(p),
   }));
 
   const listed = await listStudioMachines(db, studio.id);
