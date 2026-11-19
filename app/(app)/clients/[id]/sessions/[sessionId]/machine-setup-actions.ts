@@ -831,8 +831,8 @@ export async function registerMachineAction(input: {
     installedOptions: input.installedOptions ?? [],
   });
   if (!made.ok) {
-    // The racing second insert: the unique name index refuses it. Same message as the read-time refusal.
-    if (isXcell && /duplicate key|studio_machines_studio_display_name_uniq|already exists|unique/i.test(made.error)) return { ok: false, code: "rejected", error: XCELL_ALREADY_REGISTERED };
+    // The racing second insert: ONLY the unique name index's violation (SQLSTATE 23505 on that constraint) is the race; any other error passes through. Same message as the read-time refusal.
+    if (isXcell && made.dbCode === "23505" && made.error.includes("studio_machines_studio_display_name_uniq")) return { ok: false, code: "rejected", error: XCELL_ALREADY_REGISTERED };
     return { ok: false, code: "rejected", error: made.error };
   }
 

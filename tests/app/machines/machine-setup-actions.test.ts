@@ -476,6 +476,21 @@ describe("the studio's one xCell: registration of the xCell Pur unit (HON-71)", 
     const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
     expect(r).toMatchObject({ ok: false, code: "rejected", error: "This studio already has its xCell registered." });
   });
+  it("RACE: an UNRELATED unique violation (23505 on another constraint) or a matching message without the code is NOT disguised", async () => {
+    for (const err of [
+      { message: 'duplicate key value violates unique constraint "some_other_uniq"', code: "23505" },
+      { message: 'duplicate key value violates unique constraint "studio_machines_studio_display_name_uniq"', code: "42501" },
+      { message: "already exists" },
+    ]) {
+      signIn("studio-fett", "pract-owner-a");
+      DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+      DB.rowsFor.studio_machines = [];
+      DB.rpcError = err;
+      const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.error).not.toBe("This studio already has its xCell registered.");
+    }
+  });
   it("RACE: another database error on the xCell is NOT disguised as 'already registered'", async () => {
     signIn("studio-fett", "pract-owner-a");
     DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);

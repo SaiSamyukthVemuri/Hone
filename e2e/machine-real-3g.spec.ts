@@ -112,8 +112,8 @@ for (const device of [
           expect(values.some((v) => v.startsWith("synthetic:")), "the app server must not offer a synthetic profile").toBe(false);
           // The two 3G models are offered exactly as before; the xCell Pur row is published in the same plan but is never offered here.
           expect([...values].filter((v) => v.endsWith("-3g")).sort()).toEqual(["dectro-apilus:junior-3g", "dectro-apilus:senior-3g"]);
-          // The xCell is offered ONLY to a studio on the rollout allowlist (HONE_CHARTING_NEW_VIEW_STUDIO_IDS) and only once published. This app server
-          // sets no allowlist, so the e2e studio is unlisted: the list is the two 3G models only. The listed-and-published case is proved in the unit
+          // The xCell is offered ONLY to a studio on the rollout allowlist and only once published. This app server
+          // sets no rollout allowlist, so the e2e studio is unlisted: the list is the two 3G models only. The listed-and-published case is proved in the unit
           // tests (tests/app/machines/machine-setup-actions.test.ts, tests/components/xcell-one-choice-mounted.test.ts).
           expect([...values].filter((v) => !v.endsWith("-3g"))).toEqual([]);
           if (REAL_PATH) {
