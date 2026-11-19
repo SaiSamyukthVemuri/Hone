@@ -43,6 +43,10 @@ describe("the session page's New view steps 4 and 5", () => {
     expect([photos, next, s4, finish, complete, postcare, s5, pay]).toEqual([photos, next, s4, finish, complete, postcare, s5, pay].sort((a, b) => a - b));
     expect(page).not.toContain('title="Next visit"');
   });
+  it("the card lists step 5 under the same condition as the payment card itself", () => {
+    expect(page).toContain("paymentStep={Boolean(isOwner && sessionPaymentEligibility)}");
+    expect(page).toContain("{isOwner && sessionPaymentEligibility && (");
+  });
   it("each step is used once, and nothing renders a step in Current view from the page itself", () => {
     expect((page.match(/<NewViewOnlyStep /g) ?? []).length).toBe(2);
     expect(page).not.toMatch(/<NewViewStep /);

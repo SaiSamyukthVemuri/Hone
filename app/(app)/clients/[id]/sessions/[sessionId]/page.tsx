@@ -1181,6 +1181,7 @@ export default async function SessionDetailPage({
           areas={visit.areas}
           count={visit.count}
           nextVisitNoteRecorded={visit.nextVisitNoteRecorded}
+          paymentStep={Boolean(isOwner && sessionPaymentEligibility)}
         />
       }
     >
