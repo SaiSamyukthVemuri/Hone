@@ -7,7 +7,13 @@ export const XCELL_ROLLOUT_OFF_MESSAGE = "That machine is not available for new 
 /** A failed rollout read: retryable, and nothing was sent. */
 export const ROLLOUT_UNAVAILABLE_MESSAGE_SAVE = `${ROLLOUT_UNAVAILABLE_MESSAGE} Nothing was saved.`;
 
-export type XcellRolloutGuard = { ok: true } | { ok: false; error: string; reason: "off" | "unavailable" };
+/** A refused create whose earlier attempt cannot be ruled out: it makes no claim about what was saved. */
+export const XCELL_RECEIPT_UNKNOWN_MESSAGE = "We could not check whether an earlier attempt saved. Reload the chart to check it.";
+
+export type XcellRolloutGuard = { ok: true } | { ok: false; error: string; reason: "off" | "unavailable" | "receipt" };
+
+/** Has a create under this key already committed? "unknown" is a failed read, never "none". */
+export type ReceiptLookup = () => Promise<"found" | "none" | "unknown">;
 
 /**
  * THE SERVER-SIDE HALF OF THE ROLLOUT GATE. The picker hides the xCell unit while the rollout is Off, but a form that was opened while it
@@ -29,10 +35,21 @@ export async function guardXcellRollout(
     deviceId: string | null;
     blockId?: string | null;
     sessionId?: string | null;
+    /**
+     * FOR A CREATE ONLY (there is no block yet to be "existing"). A create whose key already has a receipt is a lost-answer RETRY of an
+     * attempt that committed: replaying it creates nothing new and returns the original, so it must not be refused by a rollout that was
+     * switched Off in between. Looked up BEFORE the rollout is read; only a key with no receipt meets the rollout.
+     */
+    receipt?: ReceiptLookup;
   },
 ): Promise<XcellRolloutGuard> {
   if (where.deviceId === null || where.unitProfileId !== XCELL_PUR_PROFILE_ID) return { ok: true };
   const existing = where.blockId && where.sessionId ? await blockStoresUnit(db, where.blockId, where.sessionId, where.deviceId) : false;
+  if (!existing && where.receipt) {
+    const r = await where.receipt();
+    if (r === "found") return { ok: true };
+    if (r === "unknown") return { ok: false, error: XCELL_RECEIPT_UNKNOWN_MESSAGE, reason: "receipt" };
+  }
   const rollout = existing ? "on" : await readChartingRollout(where.studioId);
   const decision = xcellRouteDecision({ existingBlockUsesXcellPur: existing, rollout });
   if (decision === "offer") return { ok: true };
@@ -50,4 +67,18 @@ async function blockStoresUnit(db: MachineDb, blockId: string, sessionId: string
   } catch {
     return false;
   }
+}
+
+/** The create receipt for this session and key (the claim row 0223 writes with every create, readable by the studio's members). */
+export function createReceiptLookup(db: MachineDb, sessionId: string, key: string | null): ReceiptLookup {
+  return async () => {
+    if (key === null) return "none";
+    try {
+      const { data, error } = await db.from("treatment_area_create_claims").select("block_id").eq("session_id", sessionId).eq("idempotency_key", key).limit(1);
+      if (error || !Array.isArray(data)) return "unknown";
+      return data.length > 0 ? "found" : "none";
+    } catch {
+      return "unknown";
+    }
+  };
 }

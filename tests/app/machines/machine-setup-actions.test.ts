@@ -2986,7 +2986,7 @@ describe("loadMachineSetupContext and the platform rollout", () => {
 });
 
 // ===========================================================================
-// THE ROLLOUT, ASKED AGAIN AT WRITE TIME (Codex PRRT_kwDOSfSOys65vx7Z). A form opened while the xCell unit was offered can submit after
+// THE ROLLOUT, ASKED AGAIN AT WRITE TIME. A rollout read once when choices load is not enough, because a form opened while the unit was offered can submit after
 // it was switched Off, and a crafted call can name the unit at any time, so every action that creates or assigns an xCell identity
 // re-reads the rollout. Off and a failed read refuse before anything is sent; a block that already stores the unit is unaffected;
 // a unit that is not the xCell makes no rollout read at all.

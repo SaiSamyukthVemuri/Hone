@@ -20,7 +20,7 @@ import {
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import { checkIdentityChoice } from "@/lib/machines/identity-choice";
-import { guardXcellRollout } from "@/lib/machines/xcell-rollout-guard";
+import { createReceiptLookup, guardXcellRollout } from "@/lib/machines/xcell-rollout-guard";
 import { currentProfile } from "@/lib/machines/profile-contract";
 import { resolveWritingIdentity } from "@/lib/supabase/writing-identity";
 import { listStudioDevices } from "@/lib/machines/studio-devices";
@@ -1485,8 +1485,13 @@ export async function createTreatmentAreaWithEntryAction(
       };
     }
     // THE ROLLOUT, ASKED AGAIN AT WRITE TIME (a new area has no stored identity, so there is no existing-block exemption here).
-    const rolloutOk = await guardXcellRollout(db, { studioId: studio.id, unitProfileId: device.profileId, deviceId: setup.machineId });
-    if (!rolloutOk.ok) return { ok: false, error: rolloutOk.error, unresolved: false };
+    const rolloutOk = await guardXcellRollout(db, {
+      studioId: studio.id,
+      unitProfileId: device.profileId,
+      deviceId: setup.machineId,
+      receipt: createReceiptLookup(db, input.sessionId, setup.idempotencyKey),
+    });
+    if (!rolloutOk.ok) return { ok: false, error: rolloutOk.error, unresolved: rolloutOk.reason === "receipt" };
     // THE CURRENT VERSION (Codex, #860 4308488012), and here it decides
     // whether a CLINICAL VALUE is accepted: `validateSubmittedReadings` below
     // checks each reading against this profile's field contract, so a
@@ -1545,8 +1550,9 @@ export async function createTreatmentAreaWithEntryAction(
         studioId: studio.id,
         unitProfileId: allowed.unitProfileId,
         deviceId: identity.machineId,
+        receipt: createReceiptLookup(supabase as unknown as MachineDb, input.sessionId, bareKey),
       });
-      if (!rolloutOk.ok) return { ok: false, error: rolloutOk.error, unresolved: false };
+      if (!rolloutOk.ok) return { ok: false, error: rolloutOk.error, unresolved: rolloutOk.reason === "receipt" };
     }
   }
   // Built once so the older command can be called with the same arguments when
