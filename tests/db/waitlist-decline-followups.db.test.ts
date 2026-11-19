@@ -336,13 +336,17 @@ describe("D4: owner functions refuse non-owners and other studios", () => {
 });
 
 describe("link a booking (the narrow waiting -> converted edge)", () => {
+  // Each appointment gets its OWN day, from a counter, so two appointments of one studio can never overlap: the studio-wide
+  // exclusion constraint (no_overlapping_appointments_studio_wide) is left exactly as it is. A random hour offset collided
+  // whenever two draws in one test matched (CI run 44375993388).
+  let aptSeq = 0;
   async function apt(f: F, email: string, status = "confirmed") {
     const c = await q(`select id from public.clients where studio_id=$1 and lower(btrim(email))=lower($2)`, [f.studioId, email]).then(async (r) =>
       r.length ? r : q(`insert into public.clients (studio_id,name,email) values ($1,'Linked',$2) returning id`, [f.studioId, email]));
     const a = await q(
       `insert into public.appointments (studio_id,client_id,service_id,starts_at,ends_at,duration_minutes,status)
        values ($1,$2,$3, now()+($5||' hours')::interval, now()+($5||' hours')::interval+interval '30 minutes', 30, $4) returning id`,
-      [f.studioId, c[0].id, f.serviceId, status, String(72 + Math.floor(Math.random() * 400))],
+      [f.studioId, c[0].id, f.serviceId, status, String(72 + 24 * ++aptSeq)],
     );
     return a[0].id as string;
   }

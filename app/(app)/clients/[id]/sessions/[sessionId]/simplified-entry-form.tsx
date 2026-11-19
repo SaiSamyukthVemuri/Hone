@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import {
   AREAS,
   PULSE_COUNT_DEFAULT,
@@ -26,6 +26,9 @@ import {
 import { pickSavedLabel } from "@/lib/saved-label";
 import { MultiChipSelector } from "@/components/multi-chip-selector";
 import { addElectrolysisEntryAction } from "./actions";
+import { useReportVisitDraft, useVisitMachineContext, visitMachineLine } from "@/components/charting-visit-draft";
+import { useChartingView } from "@/components/charting-view-context";
+import { savedBlockMachineLabel } from "@/lib/machines/block-machine-label";
 import { SectionLabel } from "@/components/ui/section-label";
 
 // SimplifiedEntryForm is the primary entry-creation surface inside a block.
@@ -94,6 +97,20 @@ export function SimplifiedEntryForm({
   const [recovery, setRecovery] = useState<string | null>(null);
   const [savedLabel, setSavedLabel] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  // "This visit" (New view): an unsaved or failed pass shows as such. Display only: this form reports and never reads it back.
+  // The pass INHERITS the saved block's machine, so it reports that machine's label. Read only in New view (the context load is a read, and
+  // Current view stays exactly as it was), and only when the block carries one.
+  const isNewView = useChartingView() === "new";
+  const hasMachine = Boolean(block.studio_machine_id || block.machine_profile_id);
+  const machineCtx = useVisitMachineContext(isNewView && hasMachine ? { clientId, sessionId, blockId: block.id } : null);
+  const machineLabel = useMemo(() => (machineCtx ? savedBlockMachineLabel(block, machineCtx) : null), [machineCtx, block]);
+  useReportVisitDraft(`pass:${block.id}`, {
+    machine: visitMachineLine(machineLabel, block.machine_frequency),
+    draftAreas: [],
+    unsaved: JSON.stringify(draft) !== JSON.stringify(emptyDraft()),
+    attention: error !== null || recovery !== null,
+    activity: JSON.stringify(draft),
+  });
 
   function update<K extends keyof Draft>(key: K, value: Draft[K]) {
     setDraft((d) => ({ ...d, [key]: value }));

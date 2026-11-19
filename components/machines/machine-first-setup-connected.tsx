@@ -55,6 +55,9 @@ export const LEGACY_AREA_NATIVE_MACHINE_REFUSED =
   "This area already has xCell Pur readings. Add a new area to chart another machine.";
 
 export type MachineFirstSetupConnectedProps = {
+  /** MultiPlex as a mode of the ONE xCell choice: the host form's Mode control asks here, and learns whether it may offer it. */
+  multiplexRequest?: { seq: number; want: boolean } | null;
+  onMultiplexRoute?: (route: { deviceId: string } | null) => void;
   /** The treatment block being charted, from the host form. */
   blockId?: string | null;
   /**
@@ -119,6 +122,8 @@ export type MachineFirstSetupConnectedProps = {
     modeKey: string | null;
   } | null;
   /** Forwarded to the panel: which kind of machine is in force. */
+  /** The saved machine after a successful identity write, so the host's MultiPlex state follows the record rather than the first prop. */
+  onSavedDeviceChange?: (deviceId: string | null) => void;
   onKindChange?: NonNullable<
     Parameters<typeof MachineFirstSetupPanel>[0]["onKindChange"]
   >;
@@ -131,6 +136,8 @@ export type MachineFirstSetupConnectedProps = {
     /** True for a pick the practitioner made; false for one the panel resolved. */
     explicit: boolean,
   ) => void;
+  /** Forwarded to the panel: the model of the unit now chosen, for the New view's "This visit" card. Display only. */
+  onChosenModel?: (model: string | null) => void;
 };
 
 type MachineFirstSetupPanelRecord = NonNullable<
@@ -213,10 +220,14 @@ export function MachineFirstSetupConnected({
   holdAutoSelect = false,
   savedIdentity: savedIdentityProp = null,
   onKindChange,
+  onSavedDeviceChange,
   onIdentityDraft,
+  onChosenModel,
   blockVersion,
   onBlockVersion,
   legacyReadingsLocked = false,
+  multiplexRequest = null,
+  onMultiplexRoute,
 }: MachineFirstSetupConnectedProps) {
   // WHAT THIS AREA HAS PERSISTED, tracked from this panel's own successful
   // identity writes. The prop is the identity the page
@@ -244,7 +255,11 @@ export function MachineFirstSetupConnected({
           );
           return mod.loadMachineSetupContext({ clientId, sessionId, blockId });
         });
-      setCtx(await loader());
+      const loaded = await loader();
+      setCtx(loaded);
+      // The host form's Mode control learns whether MultiPlex may be offered, and under which unit a saved area is recognised.
+      // Reported where the context ARRIVES, not from an effect: the wrapper keeps its single open-on-saved-identity effect.
+      onMultiplexRoute?.(loaded.multiplexRoute ? { deviceId: loaded.multiplexRoute.deviceId } : null);
       setState("idle");
     } catch {
       // Charting below is unaffected by a failed identity read, so this is
@@ -499,6 +514,7 @@ export function MachineFirstSetupConnected({
       const adopt = (out: Extract<IdentityWriteOutcome, { ok: true }>, fallback: IdentityChoice) => {
         const stored = out.identity ?? fallback;
         setWritten({ profileId: stored.profileId, deviceId: stored.deviceId, modeKey: stored.modeKey });
+        onSavedDeviceChange?.(stored.deviceId ?? null);
         adopted = { profileId: stored.profileId, deviceId: stored.deviceId, modeKey: stored.modeKey };
         if (out.updatedAt) {
           version = out.updatedAt;
@@ -656,6 +672,8 @@ export function MachineFirstSetupConnected({
       // The existing workflow as a choice in THE selector, and whether this
       // area was saved as it.
       legacyMachine={ctx.legacyMachine}
+      multiplexRoute={ctx.multiplexRoute}
+      multiplexRequest={multiplexRequest}
       nativeLocked={Boolean(blockId) && legacyReadingsLocked}
       // THE SAVED UNIT, from the area's own record: not from the panel's current pick, which can be a remembered
       // preference on an area that never saved an identity.
@@ -684,6 +702,7 @@ export function MachineFirstSetupConnected({
               )
       }
       inventoryReason={ctx.inventoryReason}
+      onChosenModel={onChosenModel}
       persistence={ctx.persistence ?? NO_PERSISTENCE}
       // The catalogue is whatever the SERVER resolved, so the synthetic demo
       // profile reaches the client only when the server's gate allowed it.

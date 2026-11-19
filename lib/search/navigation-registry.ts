@@ -921,6 +921,11 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
       "Owner-only review of open appointments whose recorded practitioner may be wrong (HON-44, before completion becomes assigned-only). Reached from the owner's Calendar toolbar and Team settings (Review practitioner assignments), not a destination to search for.",
   },
   {
+    route: "/dashboard/unfinished",
+    reason:
+      "The full list behind the dashboard's 'N visits not finished · View all' line (HON-45). A drill-down from the dashboard, not a destination to search for.",
+  },
+  {
     route: "/records/print",
     reason:
       "Print/export view of whichever Records section you are already in. Not a destination on its own; reached from /records.",
@@ -976,6 +981,21 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
       "Owner-only list of the replies people left when the offered times did not suit them (0319). It holds clients' own words, appears only when the reply feature is switched on, and is reached from the count on the waitlist page, so listing it in Global Search would offer an empty or refused page to everyone else.",
   },
   {
+    route: "/settings/waitlist/search",
+    reason:
+      "Owner-only name search over the waitlist, reached from a link on the waitlist page. It follows its parent: the waitlist Settings tab appears only for a studio whose durable waitlist is switched on, so listing it in Global Search would offer an empty or refused page to everyone else.",
+  },
+  {
+    route: "/settings/waitlist/archived",
+    reason:
+      "Owner-only read-only view of waitlist entries an owner removed, reached from a link on the waitlist page. It follows its parent: listing it in Global Search would offer an empty or refused page to every studio that has not enabled the waitlist and to non-owners.",
+  },
+  {
+    route: "/settings/waitlist/released",
+    reason:
+      "Owner-only read-only history of released and expired waitlist entries, reached from a link on the waitlist page. It follows its parent: listing it in Global Search would offer an empty or refused page to every studio that has not enabled the waitlist and to non-owners.",
+  },
+  {
     route: "/settings/payments/refresh",
     reason:
       "Payment-provider onboarding callback landing page, not a navigable setting.",
@@ -989,6 +1009,11 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
     route: "/financials",
     reason:
       "FIN-01A Slice 1 establishes the owner financial truth surface and deliberately answers no money question yet: the disposition chain and the two money bridges say, on screen, that they are not supported in this release. Advertising it would resolve to a destination that names four figures it cannot show. It gains a NAV_ENTRIES row in its own registration slice, once those land.",
+  },
+  {
+    route: "/financials/statement",
+    reason:
+      "HON-64 Slice A: the owner-only money statement by month. Deliberately unadvertised, like /financials: it carries no navigation entry and is not searchable until the owner-facing wording and access have had their review. Navigation hiding is not authority: the page and its read refuse any role but owner before any query, and the money tables are owner-readable only (0254).",
   },
   {
     route: "/admin",

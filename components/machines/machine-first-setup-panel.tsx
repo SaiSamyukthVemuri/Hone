@@ -1,5 +1,7 @@
 "use client";
 
+import { machineModelLabel } from "@/lib/machines/display-name";
+import { XCELL_PUR_PROFILE_ID } from "@/lib/machines/xcell-pur";
 import { recordedSummary } from "@/lib/machines/recorded-count";
 import { useEffect, useRef, useState } from "react";
 import { LEGACY_MACHINE_OPTION_VALUE } from "@/lib/machines/legacy-machine";
@@ -131,6 +133,8 @@ export type MachineFirstSetupPanelProps = {
    * empty studio and an unreadable inventory are different situations.
    */
   inventoryReason?: string | null;
+  /** Reports the display label of the unit's model now chosen (machineModelLabel), or null. DISPLAY ONLY: read by the New view's "This visit" card. */
+  onChosenModel?: (model: string | null) => void;
   /** The treatment block being charted. Entry is impossible without it. */
   blockId?: string | null;
   /**
@@ -227,6 +231,17 @@ export type MachineFirstSetupPanelProps = {
    * the server says this studio has that workflow's history.
    */
   legacyMachine?: { profileId: string; label: string } | null;
+  /**
+   * MultiPlex as a MODE of the one xCell choice (HON-71): the studio's usable xCell Pur unit, present only when the server found the
+   * contract published. The unit is never listed as a second xCell; picking MultiPlex under xCell selects it, picking the existing
+   * settings returns to the existing workflow. Null means nothing about the xCell choice changes.
+   */
+  multiplexRoute?: { deviceId: string; modeKey: string } | null;
+  /**
+   * The host form's MULTIPLEX pick in its ONE Mode control (there is no second selector here). Each pick bumps `seq`: `want` true
+   * binds this NEW area to the routed unit, false returns it to the existing xCell workflow. Acted on only when the sequence changes.
+   */
+  multiplexRequest?: { seq: number; want: boolean } | null;
   /** The area was saved as that workflow: open on it. */
   initialLegacyChosen?: boolean;
   /** A saved area that already holds xCell Pur readings: native machines are listed but cannot be chosen. */
@@ -314,7 +329,7 @@ export function withheld(catalogue: readonly MachineProfile[]) {
     .filter((p) => p.availability !== "active")
     .map((p) => ({
       key: p.profileId,
-      name: `${p.manufacturer} ${p.model}${p.variant ? ` (${p.variant})` : ""}`,
+      name: machineModelLabel(p),
       availability: p.availability,
       reason: p.availabilityReason ?? "Not offered for new capture.",
       openQuestions: p.openQuestions.length,
@@ -329,6 +344,7 @@ function MachineFirstSetupPanelImpl({
   catalogue = MACHINE_CATALOGUE,
   persistence = NO_PERSISTENCE,
   inventoryReason = null,
+  onChosenModel,
   blockId = null,
   canManageMachines = false,
   priorSetup = [],
@@ -344,6 +360,8 @@ function MachineFirstSetupPanelImpl({
   unitNames = {},
   onSelectMachine,
   legacyMachine = null,
+  multiplexRoute = null,
+  multiplexRequest = null,
   initialLegacyChosen = false,
   nativeLocked = false,
   savedDeviceId = null,
@@ -427,6 +445,8 @@ function MachineFirstSetupPanelImpl({
   const [legacyChosen, setLegacyChosen] = useState(
     initialLegacyChosen && legacyMachine !== null,
   );
+  // The route applies only beside the existing xCell choice (never a second xCell on its own).
+  const xcellRouted = multiplexRoute !== null && legacyMachine !== null;
   /**
    * Choose (or clear) the machine.
    *
@@ -592,6 +612,19 @@ function MachineFirstSetupPanelImpl({
   // FROM THE PHYSICAL UNIT, not the model: a mode gated on an option this
   // device does not have is not a choice, and offering it only to have the
   // capture refused two layers down is worse than not offering it.
+  // The existing xCell choice (and a saved legacy block) has no unit, so it reports the picker's own label for it.
+  // A SAVED unit that is retired or unavailable is still this area's identity (the panel keeps it through savedUnavailable), so it is
+  // reported by the name the panel itself shows for it, not as no machine.
+  const chosenModel = legacyChosen
+    ? (legacyMachine?.label ?? null)
+    : chosen
+      ? machineModelLabel(chosen.profile)
+      : Boolean(blockId) && savedDeviceId !== null
+        ? `${unitNames[savedDeviceId] ?? "Saved machine"} (no longer available)`
+        : null;
+  useEffect(() => {
+    onChosenModel?.(chosenModel);
+  }, [onChosenModel, chosenModel]);
   const modes = chosen ? supportedModes(chosen.device, chosen.profile) : [];
   // A MODE KEY THIS UNIT DOES NOT OFFER IS NEVER SHOWN AS A DIFFERENT MODE (Vercel Security Review 01M6VEJJ83G4GZ10DFCKMJAEVP).
   // The old fallback (`?? modes[0]`) made a stored or remembered key that the unit does not offer appear as the unit's FIRST mode, so the
@@ -619,6 +652,19 @@ function MachineFirstSetupPanelImpl({
     : (chosen && mode) || savedUnavailable || modeUnresolved
       ? "native"
       : "none";
+  const lastMultiplexSeq = useRef(multiplexRequest?.seq ?? 0);
+  useEffect(() => {
+    if (!multiplexRequest || multiplexRequest.seq === lastMultiplexSeq.current) return;
+    lastMultiplexSeq.current = multiplexRequest.seq;
+    // A NEW area only: a saved area keeps the identity it was saved with.
+    if (!xcellRouted || !multiplexRoute || blockId) return;
+    // THE FREEZE WINS (Codex P1): a request that arrives while a create is pending or its response is unknown is dropped, never queued,
+    // so no click can move the identity under an unresolved save.
+    if (identityFrozen || selectionPending) return;
+    if (multiplexRequest.want) void chooseDevice(multiplexRoute.deviceId);
+    else if (deviceId === multiplexRoute.deviceId) void chooseDevice(null, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [multiplexRequest]);
   useEffect(() => {
     onKindChange?.(machineKind);
   }, [machineKind, onKindChange]);
@@ -717,7 +763,11 @@ function MachineFirstSetupPanelImpl({
           <select
             className={fieldControlClass()}
             ref={selectRef}
-            value={legacyChosen ? LEGACY_MACHINE_OPTION_VALUE : (deviceId ?? (savedUnavailable ? savedDeviceId : "") ?? "")}
+            value={
+              legacyChosen || (xcellRouted && deviceId === multiplexRoute?.deviceId)
+                ? LEGACY_MACHINE_OPTION_VALUE
+                : (deviceId ?? (savedUnavailable ? savedDeviceId : "") ?? "")
+            }
             onChange={(e) =>
               e.target.value === LEGACY_MACHINE_OPTION_VALUE
                 ? void chooseDevice(null, true)
@@ -753,10 +803,14 @@ function MachineFirstSetupPanelImpl({
               so clearing remains reachable.
             */}
             <option value="">Choose machine…</option>
-            {selectable.map(({ device, profile }) => (
+            {selectable
+              // ONE xCell CHOICE: the MultiPlex unit is reached through the xCell entry's mode, never listed as a second xCell.
+              // Hidden whenever the existing xCell is offered (even before a route exists), so there is never both; the exception keeps a unit that is
+              // already this area's chosen identity visible when no route is active.
+              .filter(({ device }) => !(legacyMachine !== null && device.profileId === XCELL_PUR_PROFILE_ID && (xcellRouted || device.deviceId !== deviceId)))
+              .map(({ device, profile }) => (
               <option key={device.deviceId} value={device.deviceId} disabled={nativeLocked}>
-                {device.displayName} — {profile.manufacturer} {profile.model}
-                {profile.variant ? ` (${profile.variant})` : ""}
+                {device.displayName} — {machineModelLabel(profile)}
               </option>
             ))}
             {savedUnavailable && savedDeviceId !== null && (
@@ -786,7 +840,7 @@ function MachineFirstSetupPanelImpl({
       )}
       {scope && nativeLocked && (
         <p className="text-sm text-neutral-600 dark:text-neutral-400" data-testid="machine-native-locked">
-          This area already has xCell Pur readings. Add a new area to chart another machine.
+          {xcellRouted ? "This area already has readings saved in the other xCell modes. Add a new area to chart MultiPlex." : "This area already has xCell Pur readings. Add a new area to chart another machine."}
         </p>
       )}
 
@@ -901,10 +955,9 @@ function MachineFirstSetupPanelImpl({
       ) : (
         <div className="flex flex-col gap-3" data-testid="machine-chosen">
           <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-            {chosen.device.displayName}
+            {xcellRouted && chosen.device.deviceId === multiplexRoute?.deviceId ? legacyMachine?.label : chosen.device.displayName}
             <span className="ml-2 font-normal text-neutral-600 dark:text-neutral-400">
-              {chosen.profile.manufacturer} {chosen.profile.model}
-              {chosen.profile.variant ? ` (${chosen.profile.variant})` : ""}
+              {xcellRouted && chosen.device.deviceId === multiplexRoute?.deviceId ? "" : machineModelLabel(chosen.profile)}
               {mode ? ` - ${mode.nativeLabel}` : ""}
             </span>
             {/* AN EXPLICIT WAY TO CHANGE IT: takes the practitioner to the one
