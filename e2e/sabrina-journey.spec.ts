@@ -178,6 +178,8 @@ test.describe("B. staff books, the practitioner charts (HON-45)", () => {
     );
     const total = Number(n);
     expect(total).toBeGreaterThanOrEqual(1);
+    // The dashboard was rendered BEFORE the clones were seeded; load it again so the page reads the seeded rows.
+    await ownerPage.goto("/dashboard");
     await expect(ownerPage.getByTestId("unfinished-total")).toContainText(`${total} ${total === 1 ? "visit" : "visits"} not finished`, { timeout: T });
     await ownerPage.getByTestId("unfinished-view-all").click();
     await ownerPage.waitForURL(/\/dashboard\/unfinished/, { timeout: T });
