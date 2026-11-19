@@ -44,10 +44,30 @@ describe("eligibility on real rows (the one function, applied)", () => {
     expect(r.feeItems.map((f) => [f.appointmentId, f.reason])).toEqual([[paidOpen.id, "uncompleted_booking_payment"]]);
     expect(r.offDocumentWithMoney).toBe(1);
   });
-  it("a cancelled or no-show booking with ANY recorded money is its fee line, with the reason from its status", () => {
+  it("a cancelled booking with ANY recorded money is a line item (a session payment there is a neutral payment line)", () => {
     const c = appt({ status: "cancelled" });
     const r = assembleClientInputs(base({ appointments: [c], cardRows: [card(c.id, { amountCents: 2000 })] }));
-    expect(r.feeItems.map((f) => f.reason)).toEqual(["late_cancellation_fee"]);
+    expect(r.feeItems.map((f) => f.reason)).toEqual(["cancelled_booking_payment"]);
+  });
+  it("an EXCLUDED-only row (a failed attempt) creates no fee line, no payment line and no off-document count, on cancelled, no-show, unfinished and future bookings", () => {
+    const failed = (id: string) => card(id, { status: "failed" });
+    const cancelled = appt({ status: "cancelled" });
+    const noShow = appt({ status: "no_show", startsAt: "2026-11-05T15:00:00Z" });
+    const unfinished = appt({ status: "confirmed", startsAt: "2026-11-07T15:00:00Z" });
+    const future = appt({ status: "confirmed", startsAt: "2026-12-07T15:00:00Z" });
+    const r = assembleClientInputs(base({ appointments: [cancelled, noShow, unfinished, future], cardRows: [cancelled, noShow, unfinished, future].map((a) => failed(a.id)) }));
+    expect(r.feeItems).toEqual([]);
+    expect(r.visits.map((v) => [v.appointmentId, v.eligibility])).toEqual([[unfinished.id, "not_completed"]]);
+    expect(r.offDocumentWithMoney).toBe(0);
+    const d = buildStatementDocument({ studioId: "s", identity: { studioName: "S", legalEntityName: null, address: null, contactEmail: null }, client: { id: "c1", name: "C" }, scope: { kind: "full_history" }, currency: "cad", preparedOn: "2026-11-19", visits: r.visits, feeItems: r.feeItems });
+    expect(d.ok && d.document.balanceDue).toEqual({ kind: "established", cents: 0 });
+  });
+  it("a session payment on a cancelled or no-show booking is a neutral payment line, never a fee label; a real fee row keeps its fee label", () => {
+    const c = appt({ status: "cancelled" });
+    const ns = appt({ status: "no_show", startsAt: "2026-11-05T15:00:00Z" });
+    const f = appt({ status: "cancelled", startsAt: "2026-11-06T15:00:00Z" });
+    const r = assembleClientInputs(base({ appointments: [c, ns, f], cardRows: [card(c.id), card(ns.id), card(f.id, { chargeReason: "late_cancellation_fee", amountCents: 1500 })] }));
+    expect(r.feeItems.map((x) => x.reason)).toEqual(["cancelled_booking_payment", "cancelled_booking_payment", "late_cancellation_fee"]);
   });
   it("a cancellation fee takes its reason from the card row, else from the status", () => {
     const c = appt({ status: "cancelled" });
