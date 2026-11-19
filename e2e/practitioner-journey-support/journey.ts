@@ -7,7 +7,7 @@ import { sql } from "../helpers/seed";
 import { dayUrl } from "../hon48-support/calendar-urls";
 import { DRAWER, SLOT, type User } from "../hon48-support/five-user-team";
 
-// The connected Sabrina journey: shared steps. Synthetic users, a local stack, captured transport only. Nothing here sends a
+// The connected practitioner journey: shared steps. Synthetic users, a local stack, captured transport only. Nothing here sends a
 // real message, invitation or charge: app email goes to the fake Resend ledger, sign-in mail goes to the local Mailpit.
 
 export const T = 20_000;

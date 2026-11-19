@@ -12,20 +12,20 @@ import { TZ, clientNameOf, reservationCount, rows, type User } from "./hon48-sup
 import {
   T, asAuthenticated, authUserId, chartOneBlock, fillManualBooking, inviteViaTeamPage, ledgerFor, openColumnDrawer,
   paymentFootprint, practitionerByEmail, sendPostcareViaDialog, signInAnywhere,
-} from "./sabrina-support/journey";
+} from "./practitioner-journey-support/journey";
 
-// CONNECTED SABRINA JOURNEY (HON-44 / HON-45 / HON-47 / HON-50). One serial run, one synthetic studio, captured transport only:
+// CONNECTED PRACTITIONER JOURNEY. One serial run, one synthetic studio, captured transport only:
 // invite a practitioner -> they accept -> staff books for them by hand -> they open the assigned appointment and chart ->
 // finish with no charge -> postcare through the captured transport -> the owner removes them and revokes a pending invitation ->
 // the removed user, an old invitation and a second studio are all refused -> failure and retry. A red step is a FINDING
 // against the issue named in its title; nothing here is bent to pass. Synthetic names and addresses only. No real message,
 // invitation or charge: app email goes to the fake Resend ledger, sign-in mail to the local Mailpit.
 //
-// Opt-in (a long multi-context run, so no lane carries it by default): SABRINA_JOURNEY_E2E=1.
+// Opt-in (a long multi-context run, so no lane carries it by default): MULTI_PRACTITIONER_JOURNEY_E2E=1.
 //
 // Fake Resend: the lane defaults the fake to `reject`; a recipient prefix chooses the mode (`success+`, `failonce+`, `reject+`).
 
-test.skip(process.env.SABRINA_JOURNEY_E2E !== "1", "opt-in Sabrina journey; set SABRINA_JOURNEY_E2E=1");
+test.skip(process.env.MULTI_PRACTITIONER_JOURNEY_E2E !== "1", "opt-in practitioner journey; set MULTI_PRACTITIONER_JOURNEY_E2E=1");
 test.describe.configure({ mode: "serial" });
 
 const run = randomUUID().slice(0, 8);
@@ -71,7 +71,7 @@ test.afterAll(async () => {
   await inviteeCtx?.close();
 });
 
-test.describe("A. invite and accept (HON-44)", () => {
+test.describe("A. invite and accept", () => {
   test("J1 the owner invites a practitioner: a pending invitation exists and the product says so", async () => {
     await inviteViaTeamPage(ownerPage, INVITEE_EMAIL, INVITEE_NAME);
     const pending = await sql<{ status: string; role: string }>(
@@ -113,7 +113,7 @@ test.describe("A. invite and accept (HON-44)", () => {
   });
 });
 
-test.describe("B. staff books, the practitioner charts (HON-45)", () => {
+test.describe("B. staff books, the practitioner charts", () => {
   test("J3 staff books a client by hand, assigned to the new practitioner: one row, one reservation", async () => {
     const { clientId } = await seedE2eClient(seed);
     const name = await clientNameOf(seed, clientId);
@@ -241,7 +241,8 @@ test.describe("B. staff books, the practitioner charts (HON-45)", () => {
     }
     // Finish wrote completion ONLY: this studio is on manual postcare, so nothing was claimed or sent, and nothing was charged.
     expect((await getAppointmentPostcareState(appointmentId)).sentAt).toBeNull();
-    expect(await ledgerFor(mark, client.email, 0, 1_500)).toHaveLength(0);
+    // minCount 1 with a 1.5 s window: a true absence waits the WHOLE window before reading (a minCount of 0 returns at once and proves nothing).
+    expect(await ledgerFor(mark, client.email, 1, 1_500)).toHaveLength(0);
     expect(await paymentFootprint(seed.studioId, appointmentId, sessionId)).toEqual({ appointmentPaymentRows: 0, chargeAttempts: 0, pricePaidCents: null });
     // Send postcare and Charge are still separate, labelled actions after Finish.
     await expect(inviteePage.getByRole("button", { name: "Send postcare", exact: true })).toBeVisible({ timeout: T });
@@ -259,7 +260,7 @@ test.describe("B. staff books, the practitioner charts (HON-45)", () => {
   });
 });
 
-test.describe("C. removal and revocation (HON-44)", () => {
+test.describe("C. removal and revocation", () => {
   test("J7 the owner revokes a pending invitation and removes the practitioner", async () => {
     await inviteViaTeamPage(ownerPage, SECOND_INVITEE, `Journey Late ${run}`);
     await ownerPage.goto("/settings/team");
@@ -278,7 +279,12 @@ test.describe("C. removal and revocation (HON-44)", () => {
   });
 
   test("J8b a direct database read as the removed user returns nothing (row-level security, not a hidden button)", async () => {
+    const ownerId = await authUserId(seed.ownerEmail);
     for (const table of ["appointments", "clients", "sessions"]) {
+      // Positive control: an ACTIVE member of the same studio reads the same query and sees rows, so a broken authenticated-role setup
+      // (which would also return 0) cannot pass this test silently.
+      const control = await asAuthenticated<{ n: number }>(ownerId, `select count(*)::int as n from public.${table} where studio_id=$1`, [seed.studioId]);
+      expect(control[0].n, `${table} visible to an active member (control)`).toBeGreaterThan(0);
       const got = await asAuthenticated<{ n: number }>(invitee.userId, `select count(*)::int as n from public.${table} where studio_id=$1`, [seed.studioId]);
       expect(got[0].n, `${table} visible to the removed user`).toBe(0);
     }
@@ -310,7 +316,7 @@ test.describe("C. removal and revocation (HON-44)", () => {
   });
 });
 
-test.describe("D. isolation (HON-44)", () => {
+test.describe("D. isolation", () => {
   test("J9a another studio's owner cannot read this studio's records, by page or by direct read", async ({ browser }) => {
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
@@ -321,6 +327,9 @@ test.describe("D. isolation (HON-44)", () => {
       await page.goto(`/clients/${client.clientId}`);
       await expect(page.getByText(client.name)).toHaveCount(0);
       const bOwner = await authUserId(studioB.ownerEmail);
+      // Positive control: studio B's owner reads studio B's own practitioners (more than 0), so a broken authenticated-role setup cannot pass.
+      const control = await asAuthenticated<{ n: number }>(bOwner, "select count(*)::int as n from public.practitioners where studio_id=$1", [studioB.studioId]);
+      expect(control[0].n, "the other studio's owner reads its OWN studio (control)").toBeGreaterThan(0);
       const got = await asAuthenticated<{ n: number }>(bOwner, "select count(*)::int as n from public.appointments where id=$1", [appointmentId]);
       expect(got[0].n).toBe(0);
     } finally {
@@ -345,7 +354,7 @@ test.describe("D. isolation (HON-44)", () => {
   });
 });
 
-test.describe("E. failure and retry (HON-50 / HON-45)", () => {
+test.describe("E. failure and retry", () => {
   test("J10 a failed postcare send is shown as failed, a retry sends once, completion never changes", async () => {
     const failOnce = `failonce+j-retry-${run}@harness.local`;
     const s = await seedE2eEndedAppointmentSession(seed, { charted: true, clientEmail: failOnce });
@@ -406,7 +415,7 @@ test.fixme("J11 staff-managed booking with the client portal OFF (blocked: no po
     const mark = markResendLedger();
     const s = await seedE2eEndedAppointmentSession(seed, { charted: true, clientEmail: `success+j11-${run}@harness.local` });
     expect(s.appointmentId).toBeTruthy();
-    const recs = await ledgerFor(mark, `success+j11-${run}@harness.local`, 0, 1_000);
+    const recs = await ledgerFor(mark, `success+j11-${run}@harness.local`, 1, 1_000);
     for (const r of recs) for (const h of r.hrefs ?? []) expect(h).not.toMatch(/\/portal|\/cancel\/|\/reschedule\//);
     // intake and consent links keep working with the portal off (they are care forms)
   } finally {
