@@ -365,7 +365,7 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   // -------------------------------------------------------------------------
-  // THE NUMBER ITSELF, REMEMBERED (migration 0358)
+  // THE NUMBER ITSELF, REMEMBERED (the SMS number-evidence migration)
   // -------------------------------------------------------------------------
   //
   // A STOP is a statement about a NUMBER. The client and prospect passes above stamp the rows that hold the number today;

@@ -99,7 +99,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       }
       if (fn === "record_sms_number_opt_out") {
         h.numberOptOuts.push({ phone: String(args?.p_phone), source: String(args?.p_source) });
-        if (h.failNumberOptOut) return Promise.resolve({ data: null, error: { code: "ZZ", message: "number boom" } });
+        if (h.failNumberOptOut) return Promise.resolve({ data: null, error: { code: "42501", message: "permission denied for +16475550123 (647) 555-0123" } });
         return Promise.resolve({ data: true, error: null });
       }
       return Promise.resolve({ data: null, error: null });
@@ -474,42 +474,64 @@ describe("MSG-007 success-path log privacy", () => {
 // whether or not any row holds it.
 describe("a STOP is remembered per number", () => {
   it("a number no client or prospect holds is still recorded, and the sender gets the STOP reply", async () => {
-    const res = await stop("+16475550199");
+    const res = await stop("+16475550123");
     expect(res.status).toBe(200);
-    expect(h.numberOptOuts).toEqual([{ phone: "+16475550199", source: "twilio_stop" }]);
+    expect(h.numberOptOuts).toEqual([{ phone: "+16475550123", source: "twilio_stop" }]);
     expect(h.clientUpdates).toEqual([]);
     expect(h.suppressCalls).toEqual([]);
   });
   it("a number held by rows is recorded too, once, alongside the row stamps (the list never depends on which rows matched)", async () => {
-    h.clients = [P("c1", "s1", "(647) 555-1234")];
-    h.prospects = [P("e1", "s1", "+16475551234")];
-    const res = await stop("+16475551234");
+    h.clients = [P("c1", "s1", "(647) 555-0123")];
+    h.prospects = [P("e1", "s1", "+16475550123")];
+    const res = await stop("+16475550123");
     expect(res.status).toBe(200);
     expect(h.clientUpdates).toEqual([{ id: "c1" }]);
     expect(h.suppressCalls.map((c) => c.ids)).toEqual([["e1"]]);
-    expect(h.numberOptOuts).toEqual([{ phone: "+16475551234", source: "twilio_stop" }]);
+    expect(h.numberOptOuts).toEqual([{ phone: "+16475550123", source: "twilio_stop" }]);
   });
   it("a retry records it again harmlessly (the command is idempotent)", async () => {
-    await stop("+16475550199");
-    await stop("+16475550199");
+    await stop("+16475550123");
+    await stop("+16475550123");
     expect(h.numberOptOuts).toHaveLength(2);
     expect(new Set(h.numberOptOuts.map((n) => n.phone)).size).toBe(1);
   });
   it("failing to remember the number is a 500 so Twilio retries, and rows already stamped stand", async () => {
-    h.clients = [P("c1", "s1", "+16475551234")];
+    h.clients = [P("c1", "s1", "+16475550123")];
     h.failNumberOptOut = true;
-    const res = await stop("+16475551234");
+    const res = await stop("+16475550123");
     expect(res.status).toBe(500);
     expect(h.clientUpdates).toEqual([{ id: "c1" }]);
     expect(h.numberOptOuts).toHaveLength(1);
   });
   it("a message that is not a STOP records nothing", async () => {
-    const res = await post({ From: "+16475551234", To: "+15550001111", Body: "hello", MessageSid: "SM2" });
+    const res = await post({ From: "+16475550123", To: "+15550001111", Body: "hello", MessageSid: "SM2" });
     expect(res.status).toBe(200);
     expect(h.numberOptOuts).toEqual([]);
   });
   it("a sender with no digits records nothing", async () => {
     await stop("anonymous");
     expect(h.numberOptOuts).toEqual([]);
+  });
+});
+
+// PRIVACY PIN: the failure to remember a number logs the database error CODE and the message sid, never the number.
+describe("the number-write failure log carries no phone number", () => {
+  it("logs exactly the event, the db error code, the message sid and a timestamp; no log line holds the number in any format", async () => {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => void lines.push(a.map(String).join(" ")));
+    try {
+      h.failNumberOptOut = true;
+      const res = await stop("+16475550123");
+      expect(res.status).toBe(500);
+    } finally {
+      spy.mockRestore();
+    }
+    const failure = lines.map((l) => JSON.parse(l)).find((o) => o.event === "twilio_inbound_number_optout_failed");
+    expect(failure).toBeDefined();
+    expect(Object.keys(failure).sort()).toEqual(["code", "event", "messageSid", "timestamp"]);
+    expect(failure.code).toBe("42501");
+    expect(failure.messageSid).toBe("SM1");
+    const all = lines.join("\n");
+    for (const form of ["6475550123", "647-555-0123", "(647) 555-0123", "+16475550123"]) expect(all).not.toContain(form);
   });
 });
