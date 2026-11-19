@@ -271,6 +271,36 @@ describe("0301: a create replay must ask for the identity the original save reco
     await expect(save(studio, sessionId, { profile: XCELL, key: "create-key-0004", groups: groups("7") })).rejects.toThrow();
   });
 
+  // THE RULE THE APPLICATION RELIES ON. A create whose key already has a receipt is replayed rather than refused when a rollout is Off, which
+  // is only safe if the command never lets a key that already exists carry a DIFFERENT unit. So under an existing key a new unit must create
+  // NO block and record NOTHING, whichever kind of create the original was.
+  it("a key that already created an area WITHOUT a unit cannot carry a registered unit: refused, no second area, no block holds the unit", async () => {
+    const studio = await seedStudio("create-replay-new-unit");
+    const { sessionId } = await seedSession(studio);
+    const machine = await register(studio);
+    const first = await save(studio, sessionId, { key: "create-key-0007" });
+    const before = await areas(studio.studioId);
+    await expect(save(studio, sessionId, { machine, mode: "galvanic", key: "create-key-0007" })).rejects.toThrow(/already used/);
+    expect(await areas(studio.studioId), "no second area").toBe(before);
+    expect((await identity(first.block_id)).studio_machine_id, "the original area was not given the unit").toBeNull();
+    const holders = await adminQuery(`select count(*)::int as n from public.session_blocks where studio_machine_id = $1`, [machine]);
+    expect(holders.rows[0].n, "no block holds the unit").toBe(0);
+  });
+
+  it("a key that already created an area with settings on one unit cannot carry another unit: refused, nothing new", async () => {
+    const studio = await seedStudio("create-replay-other-unit");
+    const { sessionId } = await seedSession(studio);
+    const one = await register(studio);
+    const two = await register(studio);
+    const first = await save(studio, sessionId, { machine: one, mode: "galvanic", key: "create-key-0008", groups: groups("7") });
+    const before = await areas(studio.studioId);
+    await expect(save(studio, sessionId, { machine: two, mode: "galvanic", key: "create-key-0008", groups: groups("7") })).rejects.toThrow(/already used/);
+    expect(await areas(studio.studioId), "no second area").toBe(before);
+    expect((await identity(first.block_id)).studio_machine_id, "the original unit is unchanged").toBe(one);
+    const holders = await adminQuery(`select count(*)::int as n from public.session_blocks where studio_machine_id = $1`, [two]);
+    expect(holders.rows[0].n, "no block holds the second unit").toBe(0);
+  });
+
   it("the receipt for a create is kind 'create' and a create with no identity leaves none", async () => {
     const studio = await seedStudio("create-replay-receipt");
     const { sessionId } = await seedSession(studio);

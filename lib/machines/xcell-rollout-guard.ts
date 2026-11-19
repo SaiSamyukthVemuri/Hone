@@ -69,7 +69,7 @@ async function blockStoresUnit(db: MachineDb, blockId: string, sessionId: string
   }
 }
 
-/** The create receipt for this session and key (the claim row 0223 writes with every create, readable by the studio's members). */
+/** The create receipt for this session and key (the claim row every create writes, readable by the studio's members). */
 export function createReceiptLookup(db: MachineDb, sessionId: string, key: string | null): ReceiptLookup {
   return async () => {
     if (key === null) return "none";
