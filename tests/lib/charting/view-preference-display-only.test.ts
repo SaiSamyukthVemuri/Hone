@@ -11,6 +11,11 @@ const ALLOWED = new Set([
   "tests/app/charting-view-actions.test.ts",
   "tests/app/sessions/charting-view-page-wiring.test.ts",
   "tests/lib/charting/page-view.test.ts",
+  // The xCell registration ROLLOUT gate (Sam's decision) reuses the allowlist parser. It decides what is OFFERED, never who is AUTHORIZED: the
+  // owner check stays in the database command. Named here on purpose so a reviewer sees it.
+  "lib/machines/xcell-registration-gate.ts",
+  "tests/lib/machines/xcell-registration-gate.test.ts",
+  "tests/app/machines/machine-setup-actions.test.ts",
 ]);
 
 // Files that may IMPORT the preference module at all. An authorization, permission, role or policy module is
@@ -27,6 +32,8 @@ const IMPORTERS = new Set([
   "tests/lib/charting/page-view.test.ts",
   "tests/lib/charting/view-preference-display-only.test.ts",
   "tests/lib/charting/view-preference.test.ts",
+  "lib/machines/xcell-registration-gate.ts", // the rollout gate for the xCell offer; not an authorization module
+  "tests/lib/machines/xcell-registration-gate.test.ts",
 ]);
 // Who may call the READERS. page-view.ts is the one runtime caller.
 const READER_USERS = new Set([
@@ -37,13 +44,36 @@ const READER_USERS = new Set([
   "tests/app/sessions/charting-view-page-wiring.test.ts",
 ]);
 
+// Tests may name the preference; they cannot authorize anything. These browser specs, Playwright configs and the one config pin are listed by exact path (never
+// by directory), so a new file naming the preference still has to be added here on purpose.
+const TESTS_MAY_NAME_IT = new Set([
+  "e2e/charting-new-view.spec.ts",
+  "e2e-payment/charting-new-view-payment.spec.ts",
+  "playwright.charting.config.ts",
+  "playwright.charting-payment.config.ts",
+  "tests/ci/charting-device-config.test.ts",
+]);
+function namedOutsideTheAllowedFiles(files: string[]): string[] {
+  return files.filter((f) => !ALLOWED.has(f) && !TESTS_MAY_NAME_IT.has(f));
+}
+
 describe("the charting view preference is display only", () => {
   it("is named in no other source file", () => {
-    const out = execFileSync("git", ["grep", "-l", "-E", "charting_view|CHARTING_VIEW_KEY|HONE_CHARTING_NEW_VIEW", "--", "app", "lib", "components", "tests", "middleware.ts"], {
+    const out = execFileSync("git", ["grep", "-l", "-E", "charting_view|CHARTING_VIEW_KEY|HONE_CHARTING_NEW_VIEW", "--", "app", "lib", "components", "tests", "middleware.ts", "e2e", "e2e-payment", "playwright.charting.config.ts", "playwright.charting-payment.config.ts"], {
       encoding: "utf8",
     }).trim();
     const files = out.split("\n").filter(Boolean);
-    expect(files.filter((f) => !ALLOWED.has(f))).toEqual([]);
+    expect(namedOutsideTheAllowedFiles(files)).toEqual([]);
+  });
+  it("the exemption is narrow: an app, lib or component file naming the preference still fails, and so does any other test file", () => {
+    expect(namedOutsideTheAllowedFiles(["lib/billing/permissions.ts", "app/(app)/settings/page.tsx", "components/anything.tsx", "tests/lib/other.test.ts", "e2e/another.spec.ts"])).toEqual([
+      "lib/billing/permissions.ts",
+      "app/(app)/settings/page.tsx",
+      "components/anything.tsx",
+      "tests/lib/other.test.ts",
+      "e2e/another.spec.ts",
+    ]);
+    expect(namedOutsideTheAllowedFiles([...TESTS_MAY_NAME_IT])).toEqual([]);
   });
   it("is imported only by the files that display or remember it, never by an authorization or permission module", () => {
     const out = execFileSync(
