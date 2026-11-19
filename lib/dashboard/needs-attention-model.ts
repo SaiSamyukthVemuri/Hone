@@ -39,6 +39,7 @@ export const CHECK_UNAVAILABLE = "unavailable" as const;
 export type AttentionIssueKind =
   | "intake_review"
   | "intake_incomplete"
+  | "unfinished"
   | "charting"
   | "aftercare"
   | "probe_lot"
@@ -242,6 +243,26 @@ export function buildNeedsAttention(input: {
         },
         {
           kind: "intake_incomplete",
+          label: item.chip,
+          href: item.href,
+          actionLabel: item.actionLabel,
+        },
+      );
+      continue;
+    }
+    // HON-45: a past CONFIRMED appointment with a chart is still open until the practitioner presses Finish.
+    if (item.type === "unfinished" && item.appointmentId) {
+      add(
+        {
+          id: `appointment:${item.clientId}:${item.appointmentId}`,
+          scope: "appointment",
+          tier: "documentation",
+          clientId: item.clientId,
+          clientName: item.clientName,
+          occurredAt: item.date,
+        },
+        {
+          kind: "unfinished",
           label: item.chip,
           href: item.href,
           actionLabel: item.actionLabel,
