@@ -25,7 +25,8 @@ import { createReceiptLookup, guardXcellRollout } from "@/lib/machines/xcell-rol
 import { currentProfile } from "@/lib/machines/profile-contract";
 import { resolveWritingIdentity } from "@/lib/supabase/writing-identity";
 import { chartingRolloutFor } from "@/lib/rollouts/charting-rollout";
-import { entryHasReadings, MODE_FROZEN_MESSAGE, modeChangeRefused, scopeToMode } from "@/lib/sessions/mode-scope";
+import { PUR_LEGACY_MODES_UNAVAILABLE_MESSAGE, purLegacyModeRefused } from "@/lib/machines/identity-choice";
+import { entryHasReadings, isKnownMode, MODE_FROZEN_MESSAGE, modeChangeRefused, scopeToMode } from "@/lib/sessions/mode-scope";
 import { listStudioDevices } from "@/lib/machines/studio-devices";
 import type {
   MachineDb,
@@ -1092,7 +1093,7 @@ function entryMachineSnapshot(input: {
   energyLevel: number | null;
   minutesPerformed: number | null;
   machineFrequency: MachineFrequency | null;
-  /** Redesign on: Galvanic keeps its EL (Sam's ruling). Off: dropped exactly as before. */
+  /** Redesign on: Galvanic keeps its EL (a deliberate behaviour change). Off: dropped exactly as before. */
   keepGalvanicEnergy?: boolean;
 }): {
   mode: SessionMode | null;
@@ -1273,8 +1274,16 @@ export async function createTreatmentAreaWithEntryAction(
 
   // CHART REDESIGN (W2): with the rollout on for this studio, drop every field that does not belong to the submitted mode BEFORE anything is shaped.
   // Off (or an unreadable rollout): the input is used exactly as it always was.
+  // A FAILED rollout read counts as Off (chartingRolloutFor answers false on an error): the write is then exactly today's. The scope and the freeze
+  // apply only when the rollout is positively on.
   const redesignOn = await chartingRolloutFor(studio.id);
+  // A mode outside thermolysis, galvanic and blend is refused up front (the database would refuse it too, but never reach the scope rule with it).
+  if (redesignOn && !isKnownMode(input.mode)) return { ok: false, error: "Choose a valid mode.", unresolved: false } as never;
   if (redesignOn) input = scopeToMode(input);
+  // Never save xCell Pur's legacy modes under the old xCell identity once the redesign is on: refuse, clearly, before anything is written.
+  if (purLegacyModeRefused({ redesignOn, mode: input.mode, profileId: input.machineIdentity?.profileId })) {
+    return { ok: false, error: PUR_LEGACY_MODES_UNAVAILABLE_MESSAGE, unresolved: false };
+  }
 
   const areaCheck = normalizeStructuredArea({
     primaryArea: input.primaryArea ?? null,
@@ -1857,7 +1866,11 @@ export async function updateTreatmentAreaWithEntryAction(
   }
   await assertSessionForClient(studio.id, input.clientId, input.sessionId);
   // CHART REDESIGN (W2): see the create action. Off: unchanged.
+  // A FAILED rollout read counts as Off (chartingRolloutFor answers false on an error): the write is then exactly today's. The scope and the freeze
+  // apply only when the rollout is positively on.
   const redesignOn = await chartingRolloutFor(studio.id);
+  // A mode outside thermolysis, galvanic and blend is refused up front (the database would refuse it too, but never reach the scope rule with it).
+  if (redesignOn && !isKnownMode(input.mode)) return { ok: false, error: "Choose a valid mode.", unresolved: false } as never;
   if (redesignOn) input = scopeToMode(input);
 
   const areaCheck = normalizeStructuredArea({
@@ -1931,19 +1944,20 @@ export async function updateTreatmentAreaWithEntryAction(
     return { ok: false, error: "Could not load the settings block to save." };
   }
 
-  // W4 (redesign on): a block that already holds readings keeps its MODE; the server refuses a change, whatever the form allowed.
-  if (redesignOn && input.firstEntryId) {
-    const { data: storedEntry, error: storedEntryErr } = await supabase
+  // W4 (redesign on): a block that already holds readings keeps its MODE; the server refuses a change, whatever the form allowed. The readings are
+  // read BY BLOCK, never through a client-supplied entry id, so an omitted, swapped or foreign id cannot skip the rule; an unreadable answer refuses.
+  if (redesignOn) {
+    const { data: storedEntries, error: storedEntryErr } = await supabase
       .from("electrolysis_entries")
       .select("thermolysis_intensity_percent, thermolysis_duration_seconds, galvanic_ma, galvanic_duration_seconds, units_of_lye, energy_level, apilus_modality")
-      .eq("id", input.firstEntryId)
+      .eq("block_id", input.blockId)
       .eq("studio_id", studio.id)
-      .maybeSingle();
-    if (storedEntryErr) return { ok: false, error: "Could not load the settings block to save." };
+      .is("deleted_at", null);
+    if (storedEntryErr || !Array.isArray(storedEntries)) return { ok: false, error: "Could not load the settings block to save." };
     if (modeChangeRefused({
       storedMode: (storedBlock?.mode as string | null) ?? null,
       submittedMode: input.mode ?? null,
-      hasReadings: entryHasReadings(storedEntry as Record<string, unknown> | null),
+      hasReadings: storedEntries.some((e) => entryHasReadings(e as Record<string, unknown>)),
     })) return { ok: false, error: MODE_FROZEN_MESSAGE };
   }
 
