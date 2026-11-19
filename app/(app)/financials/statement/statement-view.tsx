@@ -1,10 +1,13 @@
 import Link from "next/link";
 
+import { localDateString } from "@/lib/booking/tz";
+
 import { SectionLabel } from "@/components/ui/section-label";
 import { INSURER_FIELD_GAPS } from "@/lib/clinical-records/insurer-field-gaps";
 import { MONEY_FORMS } from "@/lib/dashboard/other-money-forms";
 import {
   ADJUSTMENT_KINDS,
+  AMOUNT_KINDS,
   COLLECTED_KINDS,
   type StatementBucket,
   type StatementKind,
@@ -15,6 +18,8 @@ import {
   STATEMENT_ADJUSTMENTS_NOTE,
   STATEMENT_FRAMING,
   STATEMENT_METHOD_LABELS,
+  STATEMENT_NO_TOTAL,
+  STATEMENT_UNNAMED_PRACTITIONER,
   STATEMENT_OUTSIDE_SCOPE,
   STATEMENT_PARTIAL_REFUND_NOTE,
   STATEMENT_PRACTITIONER_RULE,
@@ -41,7 +46,7 @@ function Rows({ bucket, kinds, format }: { bucket: StatementBucket; kinds: reado
               {STATEMENT_METHOD_LABELS[k]}
             </th>
             <td className="py-2 pr-3 text-right text-fg-muted">{bucket.kinds[k].count} {bucket.kinds[k].count === 1 ? "row" : "rows"}</td>
-            <td className="py-2 text-right tabular-nums text-fg">{k === "still_owes_note" ? "no amount" : format(bucket.kinds[k].cents)}</td>
+            <td className="py-2 text-right tabular-nums text-fg">{AMOUNT_KINDS.includes(k) ? format(bucket.kinds[k].cents) : STATEMENT_NO_TOTAL}</td>
           </tr>
         ))}
       </tbody>
@@ -106,9 +111,9 @@ export function StatementView({ view, currency, format }: { view: View; currency
         <h2 id="stmt-prac" className="text-lg font-medium text-fg">By practitioner</h2>
         <p className="text-sm text-fg-muted">{STATEMENT_PRACTITIONER_RULE}</p>
         {statement.byPractitioner.length === 0 ? <p className="text-sm text-fg">No recorded money for visits this month.</p> : null}
-        {statement.byPractitioner.map((p, i) => (
+        {statement.byPractitioner.map((p) => (
           <div key={p.practitionerId ?? "none"} className="rounded-lg border border-line p-4">
-            <h3 className="text-base font-medium text-fg">{p.practitionerId === null ? "Unattributed" : `Practitioner ${i + 1}`}</h3>
+            <h3 className="text-base font-medium text-fg">{p.practitionerId === null ? "Unattributed" : view.practitionerNames[p.practitionerId] ?? STATEMENT_UNNAMED_PRACTITIONER}</h3>
             <Section bucket={p.bucket} format={format} />
           </div>
         ))}
@@ -120,12 +125,12 @@ export function StatementView({ view, currency, format }: { view: View; currency
         {statement.visits.map((v) => (
           <details key={v.appointmentId} className="rounded-lg border border-line p-3">
             <summary className="cursor-pointer text-sm text-fg">
-              {v.startsAt.slice(0, 10)}: {nameOf(v.appointmentId)?.clientName}
+              {localDateString(new Date(v.startsAt), view.timezone)}: {nameOf(v.appointmentId)?.clientName}
               {nameOf(v.appointmentId)?.serviceName ? `, ${nameOf(v.appointmentId)?.serviceName}` : ""}
             </summary>
             <ul className="mt-2 space-y-1 text-sm text-fg">
               {v.lines.map((l, i) => (
-                <li key={i}>{STATEMENT_METHOD_LABELS[l.kind]}: {l.kind === "still_owes_note" || l.cents === null ? "no amount" : format(l.cents)}</li>
+                <li key={i}>{STATEMENT_METHOD_LABELS[l.kind]}: {AMOUNT_KINDS.includes(l.kind) && l.cents !== null ? format(l.cents) : STATEMENT_NO_TOTAL}</li>
               ))}
             </ul>
             <div className="mt-3 border-t border-line pt-2">
@@ -143,7 +148,7 @@ export function StatementView({ view, currency, format }: { view: View; currency
 
       <footer className="space-y-2 text-sm text-fg-muted">
         <p>
-          Reconciliation: {r.rowsIn} money {r.rowsIn === 1 ? "row" : "rows"} read, {r.rowsClassified} placed in exactly one line above
+          Reconciliation: {r.rowsClassified} money {r.rowsClassified === 1 ? "row" : "rows"} placed, each in exactly one line above
           {r.rowsWithoutAppointment > 0 ? `, ${r.rowsWithoutAppointment} not matched to a visit shown as Unattributed` : ""}.
         </p>
         <p>{STATEMENT_OUTSIDE_SCOPE}</p>

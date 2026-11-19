@@ -119,9 +119,13 @@ function emptyBucket(): StatementBucket {
   return { kinds, collectedCents: 0, rows: 0 };
 }
 
+/** Only collected and adjustment kinds carry an amount. Unresolved, other-currency, excluded, unreadable and still-owing rows are COUNTED and carry no
+ *  cents, so no figure for them can be formatted as a studio-currency total anywhere downstream. */
+export const AMOUNT_KINDS: readonly StatementKind[] = [...COLLECTED_KINDS, ...ADJUSTMENT_KINDS];
+
 function put(b: StatementBucket, kind: StatementKind, cents: number | null): void {
   b.kinds[kind].count += 1;
-  if (typeof cents === "number" && Number.isInteger(cents) && cents > 0) b.kinds[kind].cents += cents;
+  if (AMOUNT_KINDS.includes(kind) && typeof cents === "number" && Number.isInteger(cents) && cents > 0) b.kinds[kind].cents += cents;
   b.rows += 1;
   if (COLLECTED_KINDS.includes(kind) && typeof cents === "number" && Number.isInteger(cents) && cents > 0) b.collectedCents += cents;
 }
@@ -202,7 +206,7 @@ export function buildStatement(input: {
     if (appt) {
       let v = visitMap.get(appt.id);
       if (!v) visitMap.set(appt.id, (v = { appointmentId: appt.id, startsAt: appt.startsAt, practitionerId: pid, lines: [] }));
-      v.lines.push({ kind: c.kind, cents: c.cents, source });
+      v.lines.push({ kind: c.kind, cents: AMOUNT_KINDS.includes(c.kind) ? c.cents : null, source });
     }
   };
 

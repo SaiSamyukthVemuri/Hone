@@ -49,6 +49,8 @@ export type StatementView =
       endLocalExclusive: string;
       statement: Statement;
       visitInfo: Record<string, { clientName: string; serviceName: string | null }>;
+      /** Practitioner id -> display name, for the owner. A name that could not be read is simply absent (the page then says so); it never changes a figure. */
+      practitionerNames: Record<string, string>;
     };
 
 type ApptRow = {
@@ -91,7 +93,7 @@ export async function loadStatementView(
   const ids = appts.map((a) => a.id);
   const empty = buildStatement({ studioCurrency, appointments: [], cardRows: [], settlementRows: [], legacyFeeRows: [] });
   if (ids.length === 0) {
-    return { access: "granted", ok: true, month, label: range.label, timezone: studio.timezone, startLocal: range.startLocal, endLocalExclusive: range.endLocalExclusive, statement: empty, visitInfo: {} };
+    return { access: "granted", ok: true, month, label: range.label, timezone: studio.timezone, startLocal: range.startLocal, endLocalExclusive: range.endLocalExclusive, statement: empty, visitInfo: {}, practitionerNames: {} };
   }
 
   // Sessions of those appointments (deleted ones included: money on them is still money, attributed by appointment).
@@ -184,6 +186,13 @@ export async function loadStatementView(
     : { ok: true as const, rows: [] as { id: string; name: string }[] };
   const svcName = new Map(svc.ok ? svc.rows.map((s) => [s.id, s.name]) : []);
 
+  const practitionerIds = [...new Set(appts.map((a) => a.practitioner_id).filter(Boolean))] as string[];
+  const prac = practitionerIds.length
+    ? await readInChunks<{ id: string; display_name: string | null }>(practitionerIds, (chunk) => supabase.from("practitioners").select("id, display_name").eq("studio_id", studio.id).in("id", chunk))
+    : { ok: true as const, rows: [] as { id: string; display_name: string | null }[] };
+  const practitionerNames: Record<string, string> = {};
+  if (prac.ok) for (const r of prac.rows) if (r.display_name && r.display_name.trim()) practitionerNames[r.id] = r.display_name.trim();
+
   const visitInfo: Record<string, { clientName: string; serviceName: string | null }> = {};
   for (const a of appts) {
     const c = Array.isArray(a.clients) ? a.clients[0] : a.clients;
@@ -203,5 +212,6 @@ export async function loadStatementView(
     endLocalExclusive: range.endLocalExclusive,
     statement,
     visitInfo,
+    practitionerNames,
   };
 }

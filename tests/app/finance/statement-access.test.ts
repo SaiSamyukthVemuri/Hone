@@ -56,9 +56,13 @@ describe("a non-owner is refused before any client or query exists", () => {
       appointment_settlements: ok([]),
       manual_fee_charge_attempts: ok([]),
       services: ok([]),
+      practitioners: ok([]),
     };
-    const good = await loadStatementView({ role: "owner" }, { id: "s1", timezone: "America/Toronto" }, "2026-11", "cad", fake(healthy));
-    expect(good).toMatchObject({ access: "granted", ok: true });
+    const good = await loadStatementView({ role: "owner" }, { id: "s1", timezone: "America/Toronto" }, "2026-11", "cad", fake({ ...healthy, practitioners: ok([{ id: "p1", display_name: "  Synthetic Practitioner " }]) }));
+    expect(good).toMatchObject({ access: "granted", ok: true, practitionerNames: { p1: "Synthetic Practitioner" } });
+    // a failed NAME read never changes a figure and never fails the statement; the name is simply absent
+    const noNames = await loadStatementView({ role: "owner" }, { id: "s1", timezone: "America/Toronto" }, "2026-11", "cad", fake({ ...healthy, practitioners: { data: null, error: { message: "boom" } } }));
+    expect(noNames).toMatchObject({ access: "granted", ok: true, practitionerNames: {} });
     for (const t of ["sessions", "payment_charge_attempts", "appointment_settlements", "manual_fee_charge_attempts"] as const) {
       const v = await loadStatementView({ role: "owner" }, { id: "s1", timezone: "America/Toronto" }, "2026-11", "cad", fake({ ...healthy, [t]: { data: null, error: { message: "boom" } } }));
       expect(v, t).toEqual({ access: "granted", ok: false, reason: "read_failed" });
@@ -100,6 +104,6 @@ describe("source guards", () => {
   it("the money tables it reads are exactly the owner-readable ones, plus appointments, sessions and services", () => {
     const src = read("lib/finance/statement-read.ts");
     const tables = [...src.matchAll(/\.from\("([a-z_]+)"\)/g)].map((m) => m[1]).sort();
-    expect([...new Set(tables)]).toEqual(["appointment_settlements", "appointments", "manual_fee_charge_attempts", "payment_charge_attempts", "services", "sessions"]);
+    expect([...new Set(tables)]).toEqual(["appointment_settlements", "appointments", "manual_fee_charge_attempts", "payment_charge_attempts", "practitioners", "services", "sessions"]);
   });
 });

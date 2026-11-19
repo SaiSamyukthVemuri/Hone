@@ -10,7 +10,7 @@ export const STATEMENT_OUTSIDE_SCOPE =
   "Money that is not linked to a visit in this month (for example a payment taken for a session with no appointment) is not in this statement.";
 
 export const STATEMENT_ADJUSTMENTS_NOTE =
-  "Waived amounts and full refunds are shown as adjustments. They are not subtracted from Collected.";
+  "Waived amounts and full refunds are shown as adjustments. A fully refunded charge is already absent from Collected, and a waived amount was never collected, so nothing is subtracted twice.";
 
 export const STATEMENT_WRITE_OFFS_NOTE = "Write-offs are not recorded separately in Hone, so none are shown.";
 
@@ -18,7 +18,7 @@ export const STATEMENT_PARTIAL_REFUND_NOTE =
   "Partial refunds are not supported yet. A charge with a refund that cannot be proven in full is shown under Unresolved and is not counted as collected.";
 
 export const STATEMENT_UNRESOLVED_NOTE =
-  "Unresolved money may or may not have moved. It is counted and listed, and never added to any total.";
+  "Unresolved money may or may not have moved. It is counted and listed, and never added to Collected.";
 
 export const STATEMENT_METHOD_LABELS = {
   collected_card_session: "Card (Hone-verified): session payments",
@@ -47,3 +47,9 @@ export function unreadableFormsLine(forms: ReadonlyArray<{ table: string; form: 
   const names = [...new Set(forms.filter((f) => f.handling === "not_checked").map((f) => f.table))].sort();
   return `This statement shows the money Hone can see. These money records are not readable from an owner session, so any money in them is not included: ${names.join(", ")}.`;
 }
+
+/** Shown instead of an amount for every line that is counted but never totalled. */
+export const STATEMENT_NO_TOTAL = "no amount";
+
+/** A practitioner whose name could not be read. The id is never shown. */
+export const STATEMENT_UNNAMED_PRACTITIONER = "Practitioner (name not available)";
