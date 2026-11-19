@@ -1,5 +1,5 @@
 import { csvCell } from "@/lib/csv";
-import { CSV_COLUMNS, toCsvRows, type StatementDocument } from "@/lib/finance/statement-document";
+import { CSV_COLUMNS, UNKNOWN_REASON_COPY, toCsvRows, type StatementDocument } from "@/lib/finance/statement-document";
 import { monthRange } from "@/lib/finance/statement-period";
 
 // ===========================================================================
@@ -75,9 +75,12 @@ export function statementCsvLines(doc: StatementDocument): string[][] {
     [...STATEMENT_CSV_COLUMNS],
   ];
   const [, ...records] = toCsvRows(doc);
-  const body = records.map((row) => {
+  const reasonsAt = CSV_COLUMNS.indexOf("reasons");
+  const body = records.map((row, r) => {
     const cells = row.map((cell, i) => {
       if (MONEY_COLUMNS.has(CSV_COLUMNS[i])) return decimalAmount(typeof cell === "number" ? cell : null);
+      // The reasons a payment status is not confirmed are the SCREEN'S plain words (a person reads this in a spreadsheet), never the model's names.
+      if (i === reasonsAt && r < doc.visits.length) return doc.visits[r].reasons.map((x) => UNKNOWN_REASON_COPY[x]).join("; ");
       return cell === null ? "" : String(cell);
     });
     return [...cells, currency];

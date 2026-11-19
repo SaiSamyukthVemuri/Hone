@@ -134,6 +134,10 @@ describe("what the file never carries", () => {
     expect(rows).toHaveLength(2);
     expect(rows[0][[...STATEMENT_CSV_COLUMNS].indexOf("paid")]).toBe("60.00");
     expect(rows[1][[...STATEMENT_CSV_COLUMNS].indexOf("state")]).toBe("unknown");
+    // the reasons are the screen's plain words, never the model's enum names
+    const reasons = rows[1][[...STATEMENT_CSV_COLUMNS].indexOf("reasons")];
+    expect(reasons).toBe("No payment recorded");
+    expect(reasons).not.toMatch(/_/);
   });
 });
 
