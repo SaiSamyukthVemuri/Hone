@@ -34,4 +34,14 @@ describe("e2e/charting-new-view.spec.ts", () => {
     expect(spec).not.toMatch(/https?:\/\/(?!localhost|127\.0\.0\.1)/);
     expect(spec).not.toMatch(/supabase\.co|stripe\.com|vercel\.app/);
   });
+  it("the payment-lane spec is opt-in the same way and reaches no real provider", () => {
+    const pay = readFileSync("e2e-payment/charting-new-view-payment.spec.ts", "utf8");
+    expect(pay).toMatch(/test\.skip\(process\.env\.HONE_CHARTING_NEW_VIEW_STUDIO_IDS !== "all"/);
+    expect(pay).toMatch(/api\\\.stripe\\\.com/);
+    expect(pay).toMatch(/configureFakeStripeOutcome/);
+    expect(pay).not.toMatch(/supabase\.co|vercel\.app|sk_live|pk_live/);
+  });
+  it("proves the rollout setting reached the server instead of skipping silently", () => {
+    expect(spec).toMatch(/the switch must exist: start the app server with HONE_CHARTING_NEW_VIEW_STUDIO_IDS=all/);
+  });
 });
