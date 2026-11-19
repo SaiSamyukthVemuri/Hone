@@ -183,3 +183,29 @@ describe("Sam's rule end to end: one unfinished booking with a confirmed payment
     expect(done.notCompleted).toEqual([]);
   });
 });
+
+describe("only REAL rows are fee candidates", () => {
+  it("a failed session-payment attempt followed by a successful retry is ONE card payment, so its amount is the recorded fee", () => {
+    const a = appt();
+    const r = assembleClientInputs(base({ appointments: [a], cardRows: [card(a.id, { status: "failed", amountCents: 9999 }), card(a.id, { amountCents: 5000 })] }));
+    expect(r.visits[0].feeCandidates).toEqual([{ source: "card_attempt", cents: 5000 }]);
+  });
+  it("two real card payments are still not a sole payment: neither amount is the fee", () => {
+    const a = appt();
+    const r = assembleClientInputs(base({ appointments: [a], cardRows: [card(a.id, { amountCents: 3000 }), card(a.id, { amountCents: 2000 })] }));
+    expect(r.visits[0].feeCandidates).toEqual([]);
+  });
+  it("a failed or test-mode attempt alone is no candidate at all", () => {
+    const a = appt();
+    const b = appt();
+    const r = assembleClientInputs(base({ appointments: [a, b], cardRows: [card(a.id, { status: "failed" }), card(b.id, { stripeLivemode: false })] }));
+    expect(r.visits.map((v) => v.feeCandidates)).toEqual([[], []]);
+  });
+  it("a settlement quote in ANOTHER currency is not a candidate; a quote with no currency or the studio's currency is", () => {
+    const a = appt();
+    const b = appt();
+    const c = appt();
+    const r = assembleClientInputs(base({ appointments: [a, b, c], settlementRows: [settle(a.id, { currency: "usd", quotedAmountCents: 7000 }), settle(b.id, { currency: null, quotedAmountCents: 6000 }), settle(c.id, { currency: "CAD", quotedAmountCents: 5000 })] }));
+    expect(r.visits.map((v) => v.feeCandidates)).toEqual([[], [{ source: "settlement_quote", cents: 6000 }], [{ source: "settlement_quote", cents: 5000 }]]);
+  });
+});
