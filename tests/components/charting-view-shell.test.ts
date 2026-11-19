@@ -356,6 +356,42 @@ const areasEl = () => host!.querySelector('[data-testid="selected-areas"]') as H
 const machineOpenEl = () => host!.querySelector('[data-testid="machine-first-open"]') as HTMLElement;
 const before = (a: Node, b: Node) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
 
+describe('"Your machine is already selected." shows only when a machine really is selected', () => {
+  const hint = () => host!.querySelector('[data-testid="new-view-hint-machine"]');
+  it("New view, a machine selected: shown", async () => {
+    await mount("new");
+    await openPanel();
+    expect(machineSelect().value).toBe("room-9");
+    expect(hint()?.textContent).toBe("Your machine is already selected.");
+  });
+  it("New view, NO machine selected: not shown", async () => {
+    ctxBox.ctx = { ...CTX, remembered: null, legacyMachine: null };
+    await mount("new");
+    await openPanel();
+    expect(machineSelect().value).toBe("");
+    expect(hint()).toBeNull();
+  });
+  it("New view, the machine is cleared after being selected: the line goes away", async () => {
+    await mount("new");
+    await openPanel();
+    expect(hint()).not.toBeNull();
+    const sel = machineSelect();
+    const setSel = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+    await act(async () => {
+      setSel.call(sel, "");
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(machineSelect().value).toBe("");
+    expect(hint()).toBeNull();
+  });
+  it("Current view, a machine selected: never shown", async () => {
+    await mount("current");
+    await openPanel();
+    expect(machineSelect().value).toBe("room-9");
+    expect(hint()).toBeNull();
+  });
+});
+
 describe("block editing in New view", () => {
   it("Current view is exactly today's order with no step headings: machine first, then the areas", async () => {
     await mount();

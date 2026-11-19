@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
 import { act, createElement } from "react";
@@ -35,5 +36,13 @@ describe("NewViewHint", () => {
   });
   it("renders nothing outside the switch (every other page and bare form)", () => {
     expect(mount(null, hint()).querySelector('[data-testid="h"]')).toBeNull();
+  });
+});
+
+describe("the New view subtitle", () => {
+  const page = readFileSync("app/(app)/clients/[id]/sessions/[sessionId]/page.tsx", "utf8");
+  it("is present on the session page as a New-view-only hint under the title", () => {
+    expect(page).toContain('<NewViewHint testId="new-view-subtitle">Chart each area, then review the visit.</NewViewHint>');
+    expect(page.indexOf("new-view-subtitle")).toBeGreaterThan(page.indexOf("<h1"));
   });
 });
