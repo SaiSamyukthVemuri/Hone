@@ -133,6 +133,8 @@ export type MachineFirstSetupPanelProps = {
    * empty studio and an unreadable inventory are different situations.
    */
   inventoryReason?: string | null;
+  /** Reports the display label of the unit's model now chosen (machineModelLabel), or null. DISPLAY ONLY: read by the New view's "This visit" card. */
+  onChosenModel?: (model: string | null) => void;
   /** The treatment block being charted. Entry is impossible without it. */
   blockId?: string | null;
   /**
@@ -342,6 +344,7 @@ function MachineFirstSetupPanelImpl({
   catalogue = MACHINE_CATALOGUE,
   persistence = NO_PERSISTENCE,
   inventoryReason = null,
+  onChosenModel,
   blockId = null,
   canManageMachines = false,
   priorSetup = [],
@@ -609,6 +612,19 @@ function MachineFirstSetupPanelImpl({
   // FROM THE PHYSICAL UNIT, not the model: a mode gated on an option this
   // device does not have is not a choice, and offering it only to have the
   // capture refused two layers down is worse than not offering it.
+  // The existing xCell choice (and a saved legacy block) has no unit, so it reports the picker's own label for it.
+  // A SAVED unit that is retired or unavailable is still this area's identity (the panel keeps it through savedUnavailable), so it is
+  // reported by the name the panel itself shows for it, not as no machine.
+  const chosenModel = legacyChosen
+    ? (legacyMachine?.label ?? null)
+    : chosen
+      ? machineModelLabel(chosen.profile)
+      : Boolean(blockId) && savedDeviceId !== null
+        ? `${unitNames[savedDeviceId] ?? "Saved machine"} (no longer available)`
+        : null;
+  useEffect(() => {
+    onChosenModel?.(chosenModel);
+  }, [onChosenModel, chosenModel]);
   const modes = chosen ? supportedModes(chosen.device, chosen.profile) : [];
   // A MODE KEY THIS UNIT DOES NOT OFFER IS NEVER SHOWN AS A DIFFERENT MODE (Vercel Security Review 01M6VEJJ83G4GZ10DFCKMJAEVP).
   // The old fallback (`?? modes[0]`) made a stored or remembered key that the unit does not offer appear as the unit's FIRST mode, so the

@@ -136,6 +136,8 @@ export type MachineFirstSetupConnectedProps = {
     /** True for a pick the practitioner made; false for one the panel resolved. */
     explicit: boolean,
   ) => void;
+  /** Forwarded to the panel: the model of the unit now chosen, for the New view's "This visit" card. Display only. */
+  onChosenModel?: (model: string | null) => void;
 };
 
 type MachineFirstSetupPanelRecord = NonNullable<
@@ -220,6 +222,7 @@ export function MachineFirstSetupConnected({
   onKindChange,
   onSavedDeviceChange,
   onIdentityDraft,
+  onChosenModel,
   blockVersion,
   onBlockVersion,
   legacyReadingsLocked = false,
@@ -699,6 +702,7 @@ export function MachineFirstSetupConnected({
               )
       }
       inventoryReason={ctx.inventoryReason}
+      onChosenModel={onChosenModel}
       persistence={ctx.persistence ?? NO_PERSISTENCE}
       // The catalogue is whatever the SERVER resolved, so the synthetic demo
       // profile reaches the client only when the server's gate allowed it.
