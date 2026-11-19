@@ -256,3 +256,50 @@ describe("R4: copy-settings and a resumed (retained) draft are the same family a
     expect(p.readings.pulseDelaySeconds).toBeNull();
   });
 });
+
+describe("W1: Save asks before leaving readings behind, and says which mode (never the values)", () => {
+  const confirmEl = () => host!.querySelector('[data-testid="discard-readings-confirm"]');
+  it("a parked Thermolysis reading while Galvanic is shown: Save is held and nothing is sent until confirmed", async () => {
+    await mount({ rollout: true, create: true });
+    await click(pill("Thermolysis"));
+    await typeInto(labelInput("Thermolysis intensity"), "55");
+    await click(pill("Galvanic"));
+    await save();
+    expect(blockActions.createTreatmentAreaWithEntryAction).not.toHaveBeenCalled();
+    expect(confirmEl()!.textContent).toMatch(/Thermolysis readings is kept in this draft and will not be saved\. Save without them\?/);
+    expect(confirmEl()!.textContent).not.toMatch(/55/);
+    await click(host!.querySelector('[data-testid="discard-readings-save"]')!);
+    expect(blockActions.createTreatmentAreaWithEntryAction).toHaveBeenCalledTimes(1);
+    expect(sent(blockActions.createTreatmentAreaWithEntryAction).readings.thermolysisIntensityPercent).toBeNull();
+  });
+  it("Keep editing closes the question and still sends nothing", async () => {
+    await mount({ rollout: true, create: true });
+    await click(pill("Thermolysis"));
+    await typeInto(labelInput("Thermolysis intensity"), "55");
+    await click(pill("Galvanic"));
+    await save();
+    await click(host!.querySelector('[data-testid="discard-readings-keep"]')!);
+    expect(confirmEl()).toBeNull();
+    expect(blockActions.createTreatmentAreaWithEntryAction).not.toHaveBeenCalled();
+  });
+  it("readings typed with NO mode are asked about too", async () => {
+    await mount({ rollout: true, create: true });
+    await typeInto(labelInput("Energy level"), "14");
+    await save();
+    expect(blockActions.createTreatmentAreaWithEntryAction).not.toHaveBeenCalled();
+    expect(confirmEl()!.textContent).toMatch(/before a mode was chosen/);
+  });
+  it("CONTROL: nothing left behind, Save goes straight through; and with the rollout OFF there is never a question", async () => {
+    await mount({ rollout: true, create: true });
+    await save();
+    expect(confirmEl()).toBeNull();
+    expect(blockActions.createTreatmentAreaWithEntryAction).toHaveBeenCalledTimes(1);
+  });
+  it("rollout OFF with an orphan value: no question, the old save", async () => {
+    await mount({ rollout: false, create: true });
+    await typeInto(labelInput("Energy level"), "14");
+    await save();
+    expect(confirmEl()).toBeNull();
+    expect(blockActions.createTreatmentAreaWithEntryAction).toHaveBeenCalledTimes(1);
+  });
+});
