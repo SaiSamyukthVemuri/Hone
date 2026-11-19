@@ -16,10 +16,10 @@ vi.mock("@/lib/supabase/server", () => ({
     },
     from: (table: string) => {
       const chain: Record<string, unknown> = {};
-      for (const k of ["select", "eq", "is"]) chain[k] = () => chain;
+      for (const k of ["select", "eq", "is", "order", "limit"]) chain[k] = () => chain;
       chain.maybeSingle = async () => {
         if (table === "sessions") return { data: { id: "s1" }, error: null };
-        if (table === "session_blocks") return { data: h.blockFound ? { mode: h.storedMode } : null, error: null };
+        if (table === "session_blocks") return { data: h.blockFound ? { id: "primary1", mode: h.storedMode } : null, error: null };
         return { data: { observation_chips: [] }, error: null };
       };
       return chain;
@@ -70,7 +70,8 @@ describe("add-pass, rollout ON: the SAVED mode wins and only its fields travel",
     await addElectrolysisEntryAction(form({ apilus_modality: "Omniblend" }));
     expect(r()).toMatchObject({ mode: "blend", tdur: null, tint: 55, ma: 2.5, ul: 4 });
   });
-  it("N2: NO block id: the request's mode is used (there is no saved block to follow), but the pass is still scoped to that mode's fields and attaches to no existing block", async () => {
+  it("N2: NO block id and NO live block: the request's mode is used (nothing saved to follow), scoped to that mode's fields, and the command creates the block", async () => {
+    h.blockFound = false;
     const f = form({ mode: "thermo" });
     f.delete("block_id");
     await addElectrolysisEntryAction(f);
@@ -80,6 +81,14 @@ describe("add-pass, rollout ON: the SAVED mode wins and only its fields travel",
     g.delete("block_id");
     await addElectrolysisEntryAction(g);
     expect(r()).toMatchObject({ mode: "galv", mod: null, tint: null, tdur: null, ma: 2.5, ul: 4, delay: null });
+  });
+  it("N2b (Codex P2): NO block id but a live block exists: the command would attach to the session's first block, so the pass follows THAT block's saved mode and is sent to it by id", async () => {
+    h.storedMode = "thermo";
+    const f = form({ mode: "galv" });
+    f.delete("block_id");
+    await addElectrolysisEntryAction(f);
+    expect(r()).toMatchObject({ mode: "thermo", ma: null, ul: null, tint: 55, count: 7 });
+    expect(args().p_block_id).toBe("primary1");
   });
   it("an unknown block (or another studio's) is refused and nothing is written", async () => {
     h.blockFound = false;
