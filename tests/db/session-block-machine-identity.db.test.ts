@@ -591,9 +591,13 @@ describe("0301: a saved area with xCell Pur readings takes no native machine", (
       await q(`update public.session_blocks set ${sets} where id = $1`, [blockId, ...params]);
     });
   const blockColumns: Array<[string, string, unknown]> = [
-    ["mode", "mode", "thermo"],
     ["apilus_modality", "apilus_modality", "blend"],
     ["energy_level", "energy_level", 3],
+  ];
+  // The block's `mode` (a selection) and `machine_frequency` (a sticky per-practitioner default a save writes untouched) are NOT readings once the
+  // shared readings definition (machine switches, identity migration A) is in the chain; before it, 0310's inline list still counts them.
+  const selectionColumns: Array<[string, string, unknown]> = [
+    ["mode", "mode", "thermo"],
     ["machine_frequency", "machine_frequency", "13.56 MHz"],
   ];
   const entryColumns: Array<[string, unknown]> = [
@@ -618,6 +622,20 @@ describe("0301: a saved area with xCell Pur readings takes no native machine", (
     await setBlock(studio, blockId, `${col} = $2`, [value]);
     await expect(record(studio, sessionId, blockId, null, machine, "galvanic")).rejects.toThrow(REFUSED);
     expect(await identity(blockId)).toEqual({ machine_profile_id: null, studio_machine_id: null, machine_mode_key: null });
+  });
+
+  it.each(selectionColumns)("a block-level selection or sticky default (%s) is not a reading: a native unit is accepted once the shared readings definition is in the chain", async (_n, col, value) => {
+    const studio = await seedStudio("identity-lock-selection");
+    const { sessionId, blockId } = await seedSession(studio);
+    const machine = await register(studio);
+    await setBlock(studio, blockId, `${col} = $2`, [value]);
+    const shared = (await adminQuery(`select to_regprocedure('public.block_holds_legacy_readings(uuid)') as f`)).rows[0].f;
+    if (!shared) {
+      await expect(record(studio, sessionId, blockId, null, machine, "galvanic")).rejects.toThrow(REFUSED); // 0310's own inline list
+      return;
+    }
+    await record(studio, sessionId, blockId, null, machine, "galvanic");
+    expect((await identity(blockId)).studio_machine_id).toBe(machine);
   });
 
   it.each(entryColumns)("an entry-level legacy reading (%s) refuses a native unit and writes nothing", async (col, value) => {
