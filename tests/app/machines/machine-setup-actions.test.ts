@@ -2789,6 +2789,24 @@ describe("loadMachineSetupContext and the platform rollout", () => {
     expect(ctx.inventoryReason).not.toBe(ROLLOUT_UNAVAILABLE_MESSAGE);
   });
 
+  it("a route that EXISTS with the rollout On is withheld with it Off or errored (the fixture offers a real route, so the decision is what is tested)", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    HISTORY.value = true;
+    DB.rowsFor.machine_profile_mode_contract = [{ mode_key: "multiplex", machine_profile_version: 1 }];
+    DB.rowsFor.studio_machines = [{
+      id: "22222222-2222-4222-8222-222222222222", studio_id: "studio-fett", machine_profile_id: "dectro-apilus:xcell-pur",
+      machine_profile_version: 1, display_name: "Dectro xCell", installed_options: [], retired_at: null,
+    }];
+    ROLLOUT.value = "on";
+    const on = await actions.loadMachineSetupContext(NEW_SETUP);
+    expect(on.multiplexRoute).toEqual({ deviceId: "22222222-2222-4222-8222-222222222222", modeKey: "multiplex" });
+    for (const v of ["off", "error"] as const) {
+      ROLLOUT.value = v;
+      const ctx = await actions.loadMachineSetupContext(NEW_SETUP);
+      expect(ctx.multiplexRoute, v).toBeNull();
+    }
+  });
+
   it("a studio with NO legacy history makes no rollout read and keeps its own reason, whatever the rollout says (outage blast radius)", async () => {
     signIn("studio-one", "pract-a");
     for (const v of ["error", "off", "on"] as const) {
