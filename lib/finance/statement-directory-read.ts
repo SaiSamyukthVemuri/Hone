@@ -2,7 +2,6 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { readDirectoryClients, type DirectorySupabase } from "@/lib/clients/directory-read";
 import { clientDisplayName } from "@/lib/clients/identity";
 import { utcInstantFromLocal } from "@/lib/booking/tz";
 import { readInChunks } from "@/lib/dashboard/in-chunks";
@@ -82,7 +81,11 @@ export type FinderClientsRead =
   | { access: "granted"; ok: false; reason: "read_failed" }
   | { access: "granted"; ok: true; clients: FinderClient[] };
 
-/** Every client of the signed-in owner's studio (active and archived), for Find a client. Names only; no email, phone or clinical field is carried out. */
+const FINDER_COLUMNS = "id, name, preferred_name, archived_at"; // NARROW: no email, phone, pronouns or any other field is ever selected
+const FINDER_BLOCK = 500;
+const FINDER_MAX_BLOCKS = 50;
+
+/** Every client of the signed-in owner's studio (active and archived), for Find a client. Names only: the server never holds a client's email or phone for this read. */
 export async function loadFinderClients(
   practitioner: { readonly role: string },
   studio: Pick<Studio, "id">,
@@ -90,16 +93,25 @@ export async function loadFinderClients(
 ): Promise<FinderClientsRead> {
   if (practitioner.role !== "owner") return { access: "refused" };
   const supabase = supabaseClient ?? (await createClient());
-  try {
-    const source = supabase as unknown as DirectorySupabase;
-    const active = await readDirectoryClients(source, studio.id, false);
-    const archived = await readDirectoryClients(source, studio.id, true);
-    const clients: FinderClient[] = [
-      ...active.map((c) => ({ id: c.id, name: c.name, preferredName: c.preferred_name ?? null, archived: false })),
-      ...archived.map((c) => ({ id: c.id, name: c.name, preferredName: c.preferred_name ?? null, archived: true })),
-    ];
-    return { access: "granted", ok: true, clients };
-  } catch {
-    return { access: "granted", ok: false, reason: "read_failed" };
+  const failed = { access: "granted", ok: false, reason: "read_failed" } as const;
+  const clients: FinderClient[] = [];
+  const seen = new Set<string>();
+  let afterId: string | null = null;
+  for (let block = 0; ; block++) {
+    if (block >= FINDER_MAX_BLOCKS) return failed; // never a partial list as if whole
+    let q = supabase.from("clients").select(FINDER_COLUMNS).eq("studio_id", studio.id);
+    if (afterId !== null) q = q.gt("id", afterId);
+    const { data, error } = await q.order("id", { ascending: true }).limit(FINDER_BLOCK);
+    if (error) return failed;
+    const rows = (data ?? []) as unknown as { id: string; name: string | null; preferred_name: string | null; archived_at: string | null }[];
+    if (rows.length > FINDER_BLOCK) return failed;
+    for (const r of rows) {
+      if (seen.has(r.id)) return failed;
+      seen.add(r.id);
+      clients.push({ id: r.id, name: r.name ?? "", preferredName: r.preferred_name ?? null, archived: r.archived_at !== null && r.archived_at !== undefined });
+    }
+    if (rows.length < FINDER_BLOCK) break;
+    afterId = rows[rows.length - 1].id;
   }
+  return { access: "granted", ok: true, clients };
 }

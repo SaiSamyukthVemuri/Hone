@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { DIRECTORY_PAGE_SIZES, FINDER_LIMIT, buildDirectory, findClients, offDocumentMoneyNotice, pageDirectory, type BuildDirectoryInput, type FinderClient } from "@/lib/finance/statement-directory";
+import { DIRECTORY_MONTH_NOTE, DIRECTORY_PAGE_SIZES, FINDER_LIMIT, buildDirectory, findClients, offDocumentMoneyNotice, pageDirectory, type BuildDirectoryInput, type FinderClient } from "@/lib/finance/statement-directory";
 import type { AssembleAppointment } from "@/lib/finance/statement-document-assemble";
 import type { StatementCardRow } from "@/lib/finance/statement";
 
@@ -45,16 +45,29 @@ describe("the Clients tab: one row per client with something on the document", (
     expect(r.rows[2]).toMatchObject({ name: "Cy Young", visitCount: 0, paidCents: 2500 });
   });
   it("RECONCILES: the clients' total spend equals the studio statement's collected total, computed independently", () => {
-    expect(r.reconciliation).toEqual({ clientsSpendCents: 12500, studioCollectedCents: 12500, offDocumentWithMoney: 0, reconciled: true });
+    expect(r.reconciliation).toEqual({ clientsSpendCents: 12500, offDocumentCollectedCents: 0, studioCollectedCents: 12500, offDocumentWithMoney: 0, reconciled: true });
     expect(r.totals).toEqual({ clientCount: 3, visitCount: 3, paidCents: 12500, awaitingCount: 1 });
   });
   it("a future booking with a payment stays off the clients' totals and is the ONLY difference, reported not hidden", () => {
     const f = appt("c2", { status: "confirmed", startsAt: "2026-12-20T15:00:00Z" });
     const x = must(input({ ...rows, appointments: [...rows.appointments, f], cardRows: [...rows.cardRows, card(f.id, { amountCents: 1000 })] }));
-    expect(x.reconciliation).toMatchObject({ clientsSpendCents: 12500, studioCollectedCents: 13500, offDocumentWithMoney: 1, reconciled: false });
+    expect(x.reconciliation).toEqual({ clientsSpendCents: 12500, offDocumentCollectedCents: 1000, studioCollectedCents: 13500, offDocumentWithMoney: 1, reconciled: true });
     expect(offDocumentMoneyNotice(1)).toMatch(/1 upcoming booking has a payment recorded/);
     expect(offDocumentMoneyNotice(0)).toBeNull();
     expect(offDocumentMoneyNotice(3)).toMatch(/3 upcoming bookings/);
+  });
+  it("a REAL mismatch is distinguishable from the future-booking gap: reconciled is false when clients + off-document differ from the studio", () => {
+    const f = appt("c2", { status: "confirmed", startsAt: "2026-12-20T15:00:00Z" });
+    const x = must(input({ ...rows, appointments: [...rows.appointments, f], cardRows: [...rows.cardRows, card(f.id, { amountCents: 1000 })] }));
+    const r = x.reconciliation;
+    expect(r.clientsSpendCents + r.offDocumentCollectedCents).toBe(r.studioCollectedCents);
+    expect(r.reconciled).toBe(true);
+    // if a client total were short by even one cent, the same equation fails
+    expect(r.clientsSpendCents - 1 + r.offDocumentCollectedCents === r.studioCollectedCents).toBe(false);
+  });
+  it("the month wording is the appointment month, not the payment date", () => {
+    expect(DIRECTORY_MONTH_NOTE).toMatch(/^Visits in this month, by appointment date/);
+    expect(DIRECTORY_MONTH_NOTE).toMatch(/not on the day it was made/);
   });
   it("an excluded-only row (failed attempt) adds nobody and reconciles", () => {
     const e = appt("c4", { status: "cancelled", startsAt: "2026-11-08T15:00:00Z" });

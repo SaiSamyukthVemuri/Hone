@@ -118,21 +118,33 @@ describe("Find a client: the read", () => {
     const { loadFinderClients } = await import("@/lib/finance/statement-directory-read");
     return loadFinderClients({ role }, studio, client);
   };
-  const row = (id: string, name: string) => ({ id, name, preferred_name: null, pronouns: null, email: null, phone: null, archived_at: null });
+  const row = (id: string, name: string, archived = false) => ({ id, name, preferred_name: null, archived_at: archived ? "2026-01-01T00:00:00Z" : null });
   it("a non-owner is refused with no query", async () => {
     const { client, calls } = recording({ clients: ok([]) });
     expect(await load("practitioner", client)).toEqual({ access: "refused" });
     expect(calls).toEqual([]);
   });
-  it("reads the active studio's clients (active and archived) scoped by studio id and carries names only", async () => {
-    const { client, calls } = recording({ clients: [ok([row("c1", "Ada Lovelace")]), ok([]), ok([row("c9", "Old Client")]), ok([])] });
+  it("reads the active studio's clients (active and archived) in one traversal scoped by studio id; the four-field mapping only", async () => {
+    const { client, calls } = recording({ clients: ok([row("c1", "Ada Lovelace"), row("c9", "Old Client", true)]) });
     const r = await load("owner", client);
-    expect(r.access === "granted" && r.ok && r.clients.map((c) => [c.id, c.name, c.archived]).sort()).toEqual([["c1", "Ada Lovelace", false], ["c9", "Old Client", true]]);
-    const eqs = calls.filter((c) => c.method === "eq").map((c) => c.args.join("="));
-    expect(new Set(eqs)).toEqual(new Set([`studio_id=${studio.id}`]));
+    expect(r.access === "granted" && r.ok && r.clients.map((c) => [c.id, c.name, c.archived])).toEqual([["c1", "Ada Lovelace", false], ["c9", "Old Client", true]]);
+    expect(calls.filter((c) => c.method === "eq").map((c) => c.args.join("="))).toEqual([`studio_id=${studio.id}`]);
     if (r.access === "granted" && r.ok) expect(Object.keys(r.clients[0]).sort()).toEqual(["archived", "id", "name", "preferredName"]);
   });
-  it("a failed read is read_failed, never an empty list", async () => {
+  it("the select is NARROW: id, name, preferred_name, archived_at, and never an email, phone, pronouns or any other column", async () => {
+    const { client, calls } = recording({ clients: ok([row("c1", "Ada Lovelace")]) });
+    await load("owner", client);
+    const sel = calls.filter((c) => c.table === "clients" && c.method === "select").map((c) => String(c.args[0]));
+    expect(sel).toEqual(["id, name, preferred_name, archived_at"]);
+    for (const s of sel) expect(s).not.toMatch(/email|phone|pronoun|address|birth|\*/i);
+  });
+  it("keyset-pages by id across blocks, and a repeated row or an error is read_failed, never a shorter list", async () => {
+    const block = (k: number) => Array.from({ length: 500 }, (_, i) => row(`${String(k).padStart(2, "0")}-${String(i).padStart(4, "0")}`, `C ${k}-${i}`));
+    const { client, calls } = recording({ clients: [ok(block(1)), ok([row("99-0000", "Last")])] });
+    const r = await load("owner", client);
+    expect(r.access === "granted" && r.ok && r.clients.length).toBe(501);
+    expect(calls.filter((c) => c.method === "gt").map((c) => c.args[0])).toEqual(["id"]);
+    expect(await load("owner", recording({ clients: ok([row("c1", "A"), row("c1", "A")]) }).client)).toEqual({ access: "granted", ok: false, reason: "read_failed" });
     expect(await load("owner", recording({ clients: { data: null, error: { message: "x" } } }).client)).toEqual({ access: "granted", ok: false, reason: "read_failed" });
   });
 });
@@ -148,6 +160,12 @@ describe("source guard: read-only, no service role, no Stripe, no mail", () => {
       expect(code).not.toMatch(/new\s+Stripe|\bfetch\(/);
     });
   }
+  it("no client email or phone is selected anywhere in the statement reads", () => {
+    for (const f of ["lib/finance/statement-directory-read.ts", "lib/finance/client-statement-read.ts", "lib/finance/statement-money-read.ts"]) {
+      const selects = [...strip(f).matchAll(/\.select\(\s*([`"'])([^`"']*)\1/g)].map((m) => m[2]);
+      for (const sel of selects) expect(sel, f).not.toMatch(/\b(email|phone|pronouns|address|date_of_birth)\b/);
+    }
+  });
   it("the owner gate is the first statement of both exported loaders", () => {
     const code = strip("lib/finance/statement-directory-read.ts");
     for (const fn of ["loadStatementDirectory", "loadFinderClients"]) {

@@ -17,10 +17,13 @@ import { buildStatementDocument } from "./statement-document";
 // Counts and totals are computed over the FULL month, then paged: `pageDirectory` slices the finished rows and reports the unchanged totals.
 // Clients are identified by CLIENT ID everywhere; a name is only ever a label (two clients can share one).
 
+/** What a row's month means (the appointment month, not the payment date). The screen shows this wording. */
+export const DIRECTORY_MONTH_NOTE = "Visits in this month, by appointment date. A payment is counted with the visit it belongs to, not on the day it was made.";
+
 export type DirectoryRow = {
   clientId: string;
   name: string;
-  /** Eligible visits (completed treatments) in the month. */
+  /** Visits in this month: completed treatments whose APPOINTMENT falls in the month. */
   visitCount: number;
   /** Total spend in the month: confirmed collected money only (the document's definition). */
   paidCents: number;
@@ -35,9 +38,11 @@ export type DirectoryReconciliation = {
   clientsSpendCents: number;
   /** The studio statement's collected total over the same appointments, computed independently of the per-client documents. */
   studioCollectedCents: number;
-  /** Appointments left off the document that carry money (a future booking with a payment): the only legitimate difference. */
+  /** Appointments left off the document that carry money (a future booking with a payment). */
   offDocumentWithMoney: number;
-  /** True when the clients' totals equal the studio total. */
+  /** Their collected cents: the ONLY legitimate gap. */
+  offDocumentCollectedCents: number;
+  /** True when clients + off-document equals the studio total. A false here is a REAL mismatch, never the deliberate future-booking gap. */
   reconciled: boolean;
 };
 
@@ -62,6 +67,7 @@ export function buildDirectory(input: BuildDirectoryInput): { ok: true; value: D
   const rows: DirectoryRow[] = [];
   let clientsSpend = 0;
   let offDocument = 0;
+  let offDocumentCents = 0;
   for (const [clientId, appts] of byClient) {
     const ids = new Set(appts.map((a) => a.id));
     const assembled = assembleClientInputs({
@@ -72,6 +78,7 @@ export function buildDirectory(input: BuildDirectoryInput): { ok: true; value: D
       legacyFeeRows: input.legacyFeeRows.filter((l) => ids.has(l.appointmentId)),
     });
     offDocument += assembled.offDocumentWithMoney;
+    offDocumentCents += assembled.offDocumentCollectedCents;
     const name = input.clientNames.get(clientId) ?? FALLBACK_NAME;
     const built = buildStatementDocument({
       studioId: "directory",
@@ -108,7 +115,8 @@ export function buildDirectory(input: BuildDirectoryInput): { ok: true; value: D
         clientsSpendCents: clientsSpend,
         studioCollectedCents: studioCollected,
         offDocumentWithMoney: offDocument,
-        reconciled: clientsSpend === studioCollected,
+        offDocumentCollectedCents: offDocumentCents,
+        reconciled: clientsSpend + offDocumentCents === studioCollected,
       },
     },
   };

@@ -59,7 +59,8 @@ export async function readAppointmentsKeyset(
   }
   const seen = new Set<string>();
   for (const a of rows) {
-    if (seen.has(a.id) || !a.client_id) return { ok: false, reason: "read_failed" }; // a repeat, or a visit with no client, cannot be attributed
+    // appointments.client_id is NOT NULL in the schema, so a null here is a corrupt read, not a real visit: fail closed (never a guess, never a silent drop).
+    if (seen.has(a.id) || !a.client_id) return { ok: false, reason: "read_failed" };
     if (scope.clientId && a.client_id !== scope.clientId) return { ok: false, reason: "read_failed" };
     seen.add(a.id);
   }
