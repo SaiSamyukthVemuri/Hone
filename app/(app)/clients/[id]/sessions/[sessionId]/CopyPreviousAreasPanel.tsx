@@ -448,6 +448,7 @@ export function CopyPreviousAreasPanel({
             draft={d}
             onChange={updateDraft}
             onRemove={() => removeDraft(d.key)}
+            keepGalvanicEnergy={rollout}
           />
         ))}
       </ul>
