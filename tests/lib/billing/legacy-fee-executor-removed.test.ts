@@ -35,11 +35,11 @@ describe("legacy fee executor removed", () => {
       .filter(Boolean);
     // Exactly four READERS: the fee-eligibility helper, the dashboard's unpaid-balance check (#1356 AO2: a manual fee on the
     // appointment makes its amount unavailable), the owner-only HON-64 money statement (a succeeded real legacy fee is shown as
-    // UNRESOLVED there, since this ledger records no refund), and the owner-only client statement document read (a legacy fee is a
+    // UNRESOLVED there, since this ledger records no refund), and the owner-only statement money read shared by the client statement and the Clients tab (a legacy fee is a
     // recorded fee candidate there, never a charge). Each is a bare select; none writes.
     expect(out.length).toBe(4);
     const files = out.map((l) => l.split(":")[0]).sort();
-    expect(files).toEqual(["lib/billing/manual-fee-eligibility.ts", "lib/dashboard/other-money-forms.ts", "lib/finance/client-statement-read.ts", "lib/finance/statement-read.ts"]);
+    expect(files).toEqual(["lib/billing/manual-fee-eligibility.ts", "lib/dashboard/other-money-forms.ts", "lib/finance/statement-money-read.ts", "lib/finance/statement-read.ts"]);
     for (const f of files) {
       const src = read(f);
       const at = src.indexOf('from("manual_fee_charge_attempts")');
