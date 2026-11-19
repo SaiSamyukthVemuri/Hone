@@ -97,18 +97,18 @@ test("failure: a declined charge never shows Paid, and switching views changes n
     await region.getByRole("button", { name: /^run charge$/i }).click();
     await region.getByRole("button", { name: /confirm: run charge/i }).click();
 
-    // A declined charge is deliberately left pending_stripe with stripe_status requires_payment_method: that intent can still complete at Stripe, so
-    // recording it failed here could invite a double charge. Terminal failed comes from Stripe's payment_failed webhook, not from this path.
+    // The fake refuses a declined charge the way Stripe does: the create call throws a card error carrying the PaymentIntent, and a signed payment_failed event
+    // follows. The executor never records a terminal failure from the thrown error (the intent is not confirmed canceled), so the attempt waits as pending_stripe
+    // and the WEBHOOK moves it to failed. Polled from the database until it settles, never asserted at an instant that races the event.
     const attemptState = async () =>
       (await adminQuery(`select status, stripe_status from public.payment_charge_attempts where session_id = $1 order by created_at`, [seed.sessionId])).rows as Array<{ status: string; stripe_status: string | null }>;
-    await expect.poll(async () => (await attemptState())[0]?.stripe_status, { timeout: 30_000 }).toBe("requires_payment_method");
+    await expect.poll(async () => (await attemptState()).map((r) => r.status), { timeout: 30_000, intervals: [250] }).toEqual(["failed"]);
     const state = (await attemptState())[0];
-    expect(state.status).toBe("pending_stripe");
     expect(state.status).not.toBe("succeeded");
     await expect(page.getByTestId("payment-summary-paid")).toHaveCount(0);
     // The fake counts a processor "effect" for every NEW PaymentIntent create, captured or not. A decline therefore shows exactly ONE effect: one intent created and
-    // left uncaptured (requires_payment_method, asserted above). "No money moved" is that state plus no succeeded attempt, and "no retry" is that the count stays 1.
-    expect(countEffectsForAccount(seed.connectedAccountId), "a declined charge created exactly one uncaptured intent").toBe(1);
+    // left uncaptured. "No money moved" is that one intent plus no succeeded attempt (the attempt ends failed), and "no retry" is that the count stays 1.
+    expect(countEffectsForAccount(seed.connectedAccountId), "a declined charge created exactly one intent, which nothing captured").toBe(1);
     await expect(page.getByTestId("payment-summary-paid")).toHaveCount(0);
     const attempts = (await getSessionPaymentAttemptRows(seed.sessionId)).length;
 
@@ -117,7 +117,7 @@ test("failure: a declined charge never shows Paid, and switching views changes n
     await expect(page.getByTestId("payment-summary-paid")).toHaveCount(0);
     expect((await getSessionPaymentAttemptRows(seed.sessionId)).length, "no second attempt appeared").toBe(attempts);
     expect(countEffectsForAccount(seed.connectedAccountId), "switching views created no second intent (no retry)").toBe(1);
-    expect((await attemptState())[0].stripe_status, "and the intent is still uncaptured").toBe("requires_payment_method");
+    expect((await attemptState()).map((r) => r.status), "and the attempt is still the one failed attempt").toEqual(["failed"]);
   } finally {
     await cleanupPaymentScenario(seed.studioId);
     cleanupFakeStripeLedger();
