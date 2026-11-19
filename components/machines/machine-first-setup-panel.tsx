@@ -615,7 +615,8 @@ function MachineFirstSetupPanelImpl({
   // FROM THE PHYSICAL UNIT, not the model: a mode gated on an option this
   // device does not have is not a choice, and offering it only to have the
   // capture refused two layers down is worse than not offering it.
-  const chosenModel = chosen ? machineModelLabel(chosen.profile) : null;
+  // The existing xCell choice (and a saved legacy block) has no unit, so it reports the picker's own label for it.
+  const chosenModel = legacyChosen ? (legacyMachine?.label ?? null) : chosen ? machineModelLabel(chosen.profile) : null;
   useEffect(() => {
     onChosenModel?.(chosenModel);
   }, [onChosenModel, chosenModel]);
