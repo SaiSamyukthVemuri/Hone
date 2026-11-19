@@ -30,12 +30,17 @@ const CALL_SITES = [
     // getCurrentPractitionerWithStudio() before it does anything else.
     expected: "practitioner.id",
   },
-  {
-    file: "app/(app)/clients/[id]/sessions/new/actions.ts",
-    // The session-start path carries its own server-resolved practitioner.
-    expected: "args.practitionerId",
-  },
 ] as const;
+// HON-45: the session-start path (the second call site) was REMOVED with the PR #180 auto-complete.
+// It is pinned as absent below so it cannot quietly come back.
+
+describe("HON-45 — starting a chart never triggers postcare", () => {
+  it("the session-start action has no auto-send call and no completion command", () => {
+    const src = read("app/(app)/clients/[id]/sessions/new/actions.ts");
+    expect(src).not.toMatch(/autoSendPostcareOnComplete/);
+    expect(src).not.toMatch(/mark_appointment_complete/);
+  });
+});
 
 describe("B8 — auto-send receives a server-resolved practitioner at every call site", () => {
   it.each(CALL_SITES)(

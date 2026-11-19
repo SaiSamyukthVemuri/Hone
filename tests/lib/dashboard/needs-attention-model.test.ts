@@ -362,3 +362,22 @@ describe("buildNeedsAttention one card per client id", () => {
     expect(out.itemCount).toBe(out.issueCount + out.others.length);
   });
 });
+
+describe("buildNeedsAttention: unfinished visits (HON-45)", () => {
+  it("a past confirmed appointment with a chart appears as ONE documentation entry badged 'unfinished'", () => {
+    const assistant = buildMissingRecordsAssistant({
+      unchartedAppointments: [],
+      incompleteIntakes: [],
+      sessions: [],
+      unfinishedAppointments: [
+        { appointmentId: "ap1", sessionId: "s1", clientId: "c1", clientName: "Client One", startedAt: "2026-10-10T15:00:00.000Z" },
+      ],
+    });
+    const out = buildNeedsAttention({ assistant, intakesAwaitingReview: [], todo: NO_TODO });
+    expect(out.entries).toHaveLength(1);
+    expect(out.entries[0]).toMatchObject({ id: "appointment:c1:ap1", scope: "appointment", tier: "documentation" });
+    expect(out.entries[0].issues).toEqual([
+      { kind: "unfinished", label: "Not finished", href: "/clients/c1/sessions/s1", actionLabel: "Finish visit" },
+    ]);
+  });
+});

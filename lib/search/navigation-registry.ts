@@ -931,6 +931,11 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
       "Owner-only review of open appointments whose recorded practitioner may be wrong (HON-44, before completion becomes assigned-only). Reached from the owner's Calendar toolbar and Team settings (Review practitioner assignments), not a destination to search for.",
   },
   {
+    route: "/dashboard/unfinished",
+    reason:
+      "The full list behind the dashboard's 'N visits not finished · View all' line (HON-45). A drill-down from the dashboard, not a destination to search for.",
+  },
+  {
     route: "/records/print",
     reason:
       "Print/export view of whichever Records section you are already in. Not a destination on its own; reached from /records.",
