@@ -88,8 +88,20 @@ export function statementCsvLines(doc: StatementDocument): string[][] {
   return [...header, ...body];
 }
 
-/** The whole file: BOM, then one line per row. Every cell is escaped by csvCell. */
+const HEADER_ROWS = 9; // the header block, the blank line and the column header
+const MONEY_AT: ReadonlySet<number> = new Set(STATEMENT_CSV_COLUMNS.map((c, i) => (["fee", "paid", "refunded", "waived", "owed"].includes(c) ? i : -1)).filter((i) => i >= 0));
+const PURE_DECIMAL = /^-?\d+\.\d{2}$/;
+
+/**
+ * One line of the file. A MONEY cell that is exactly a signed decimal (60.00, -60.00) is written as a plain number so a spreadsheet can sum it:
+ * digits and one dot cannot be a formula. EVERY other cell, including a money cell that does not match, goes through csvCell and is neutralised.
+ */
+export function statementCsvLine(cells: readonly string[], moneyAt: ReadonlySet<number> = new Set()): string {
+  return cells.map((c, i) => (moneyAt.has(i) && PURE_DECIMAL.test(c) ? c : csvCell(c))).join(",");
+}
+
+/** The whole file: BOM, then one line per row. */
 export function statementCsv(doc: StatementDocument): string {
-  // The money cells are text, but they are digits and a dot (a negative would be neutralised by csvCell, which is the safe direction).
-  return `${CSV_BOM}${statementCsvLines(doc).map((row) => row.map((c) => csvCell(c)).join(",")).join("\n")}\n`;
+  const rows = statementCsvLines(doc);
+  return `${CSV_BOM}${rows.map((row, r) => statementCsvLine(row, r >= HEADER_ROWS ? MONEY_AT : new Set())).join("\n")}\n`;
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { CSV_BOM, STATEMENT_CSV_COLUMNS, STATEMENT_NOT_AN_INVOICE, decimalAmount, scopeLabel, statementCsv, statementCsvFileName, statementCsvLines } from "@/lib/finance/statement-csv";
+import { CSV_BOM, STATEMENT_CSV_COLUMNS, statementCsvLine, STATEMENT_NOT_AN_INVOICE, decimalAmount, scopeLabel, statementCsv, statementCsvFileName, statementCsvLines } from "@/lib/finance/statement-csv";
 import { buildStatementDocument, type BuildDocumentInput, type DocumentVisitInput } from "@/lib/finance/statement-document";
 
 // Synthetic records only.
@@ -109,6 +109,42 @@ describe("spreadsheet formulas never run from a name or a title", () => {
     const csv = statementCsv(d);
     expect(csv).toContain('Client,"Lovelace, ""Ada"""');
     expect(csv).toContain('"Line one\nLine two"');
+  });
+});
+
+describe("a negative amount stays a number (so the file sums to the screen), every text cell stays neutralised", () => {
+  const money = new Set([1]);
+  it("a pure signed decimal in a MONEY column is written plainly; the same text elsewhere is neutralised", () => {
+    expect(statementCsvLine(["x", "-60.00"], money)).toBe("x,-60.00");
+    expect(statementCsvLine(["x", "60.00"], money)).toBe("x,60.00");
+    expect(statementCsvLine(["-60.00", "x"], money)).toBe("'-60.00,x"); // a text column is never exempt
+  });
+  it("a money cell that is not exactly a signed two-place decimal is still neutralised", () => {
+    for (const v of ["-1+1", "=1", "+1.00", "-60", "-60.0", "-60.000", "1e3", "-60.00 ", "=1+1.00", "@SUM(1)", "-.50"]) {
+      const out = statementCsvLine(["x", v], money).split(",").slice(1).join(",");
+      expect(out.startsWith("'") || !/^[=+\-@\t\r]/.test(out), v).toBe(true);
+    }
+    expect(statementCsvLine(["x", "-1+1"], money)).toBe("x,'-1+1");
+    expect(statementCsvLine(["x", "=1"], money)).toBe("x,'=1");
+  });
+  it("a refund of -60.00 in a real document is emitted unprefixed, and the parsed file sums to the document's own totals", () => {
+    const d = doc([visit(), visit({ localDate: "2026-11-04" })]);
+    d.visits[1].refundedCents = -6000;
+    const csv = parse(statementCsv(d));
+    const head = csv[8].split(",");
+    const rows = csv.slice(9).map((l) => l.split(","));
+    expect(rows[1][head.indexOf("refunded")]).toBe("-60.00");
+    expect(csv.join("\n")).not.toContain("'-60.00");
+    const sum = (col: string) => rows.reduce((n, r) => n + Math.round(parseFloat(r[head.indexOf(col)] || "0") * 100), 0);
+    expect(sum("paid")).toBe(d.visits.reduce((n, v) => n + v.paidCents, 0));
+    expect(sum("refunded")).toBe(d.visits.reduce((n, v) => n + v.refundedCents, 0));
+    expect(sum("paid")).toBe(d.totals.paidCents);
+  });
+  it("names, reasons and service titles that look like numbers or formulas are still neutralised in the real file", () => {
+    const d = doc([visit({ serviceName: "-60.00" })], { client: { id: "client-SECRET-1", name: "=1" } });
+    const csv = statementCsv(d);
+    expect(csv).toContain("Client,'=1");
+    expect(csv).toContain(",'-60.00,"); // the service column
   });
 });
 
