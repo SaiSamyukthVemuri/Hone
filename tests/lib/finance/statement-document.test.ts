@@ -463,7 +463,9 @@ describe("money-rule hardening (Insurance F1 to F5)", () => {
     expect(v.reasons).toEqual(["partial_payment_unverified"]);
     expect(doc([visit({ feeCandidates: [quote(10000)], lines: [line("waived", 3000, "settlement")] })]).balanceDue.kind).toBe("not_established");
     expect(classifyVisit(visit({ feeCandidates: [quote(10000)], lines: [line("waived", 10000, "settlement")] })).state).toBe("adjusted");
-    expect(classifyVisit(visit({ feeCandidates: [quote(10000)], lines: [line("refunded_card_session", 10000)] })).state).toBe("adjusted");
+    // a refund is never a credit: a fully refunded payment against a recorded fee leaves the balance NOT established, never a settled visit
+    const refundedOnly = classifyVisit(visit({ feeCandidates: [quote(10000)], lines: [line("refunded_card_session", 10000)] }));
+    expect([refundedOnly.state, refundedOnly.reasons]).toEqual(["unknown", ["refund_credit_unverified"]]);
     const owes = classifyVisit(visit({ feeCandidates: [quote(10000)], lines: [line("waived", 3000, "settlement"), line("still_owes_note", null, "settlement")] }));
     expect([owes.state, owes.owedCents]).toEqual(["confirmed_unpaid", 7000]);
   });
@@ -507,6 +509,31 @@ describe("recorded-fee totals include cancellation and no-show fees", () => {
   it("a fee line outside the selected scope is not counted", () => {
     const d = doc([], { scope: { kind: "month", month: "2026-10" }, feeItems: [feeLine()] });
     expect(d.totals.recordedFeeCents).toBe(0);
+  });
+});
+
+describe("a refund is never a service credit: owed is the quote minus RETAINED money and waivers", () => {
+  it("quote 5000, a refunded 2000 payment, owner attests still owes: owed is 5000, not 3000", () => {
+    const v = classifyVisit(visit({ feeCandidates: [quote(5000)], lines: [line("refunded_card_session", 2000), line("still_owes_note", null, "settlement")] }));
+    expect([v.state, v.owedCents]).toEqual(["confirmed_unpaid", 5000]);
+  });
+  it("the same refund with nothing attested: the balance is not established", () => {
+    const v = classifyVisit(visit({ feeCandidates: [quote(5000)], lines: [line("refunded_card_session", 2000)] }));
+    expect([v.state, v.owedCents, v.reasons]).toEqual(["unknown", null, ["refund_credit_unverified"]]);
+    expect(doc([visit({ feeCandidates: [quote(5000)], lines: [line("refunded_card_session", 2000)] })]).balanceDue).toEqual({ kind: "not_established", because: "unknown_visits" });
+  });
+  it("retained money counts and refunded money does not: quote 5000, kept 1000, refunded 2000, attested owes: owed 4000", () => {
+    const v = classifyVisit(visit({ feeCandidates: [quote(5000)], lines: [line("collected_cash", 1000, "settlement"), line("refunded_card_session", 2000), line("still_owes_note", null, "settlement")] }));
+    expect([v.state, v.owedCents]).toEqual(["confirmed_unpaid", 4000]);
+  });
+  it("retained money that covers the fee is paid even beside a refund; a waiver that covers it is adjusted", () => {
+    expect(classifyVisit(visit({ feeCandidates: [quote(5000)], lines: [line("collected_cash", 5000, "settlement"), line("refunded_card_session", 2000)] })).state).toBe("paid");
+    expect(classifyVisit(visit({ feeCandidates: [quote(5000)], lines: [line("waived", 5000, "settlement"), line("refunded_card_session", 2000)] })).state).toBe("adjusted");
+  });
+  it("with no recorded fee there is nothing to measure: a refunded visit stays adjusted and the fee is flagged not recorded", () => {
+    const v = classifyVisit(visit({ lines: [line("refunded_card_session", 2000)] }));
+    expect(v.state).toBe("adjusted");
+    expect(v.flags).toContain("fee_not_recorded");
   });
 });
 
