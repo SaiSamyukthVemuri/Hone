@@ -281,11 +281,22 @@ Act only on its bounded `nextAction`, inside your own task's authorization:
 
 **Codex review comments and threads are evidence, not workspace** (operator
 policy, 2026-10-08). Agents never edit, delete, conceal, minimize or otherwise
-manipulate a Codex comment or review thread. Resolving any specific thread
-requires the operator's explicit authorization for that thread. The limitation
-behind this (SPEC-05A §7, R5-DELETE): the shepherd cannot see a deleted finding
-— a thread whose Codex comment was deleted disappears from FINDINGS_OPEN — and
-it cannot tell an agent using the operator's credential from the operator.
+manipulate a Codex comment or review thread. The limitation behind this
+(SPEC-05A §7, R5-DELETE): the shepherd cannot see a deleted finding — a thread
+whose Codex comment was deleted disappears from FINDINGS_OPEN — and it cannot
+tell an agent using the operator's credential from the operator.
+
+**Resolving a thread** (operator standing authorization, 2026-11-19, superseding
+the per-thread rule of 2026-10-08). The coordinator may resolve a review thread
+only after verifying, on the PR's current head commit, that the finding is fixed
+or no longer applies. Before resolving, it posts a reply in that thread naming
+the commit verified and the test or code evidence (file and line, or the test
+that pins it). That reply is public text: it carries no internal ids, private
+paths, tenant or person names, or review labels. When the evidence is
+incomplete the thread stays open. A
+resolution that needs a product decision or an exception to a release
+requirement goes to the operator first. Resolving is the only permitted change
+to a thread: its comments are never edited, deleted, hidden or minimized.
 
 It needs the dedicated read-only token in `HONE_ENG_READ_TOKEN`; without it,
 every answer is `UNKNOWN(read_failed)`. Until ENG-LOOP V1 is declared LIVE, its
