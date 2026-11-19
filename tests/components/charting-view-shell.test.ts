@@ -458,6 +458,32 @@ describe("the This visit card follows the open form", () => {
     await setInput(notesAt(0), "aa");
     expect(row("visit-summary-machine").textContent, "A edited again, B still dirty").toContain("Mounted");
   });
+  describe("a failed or unknown-outcome save of machine readings", () => {
+    async function fillAndSave() {
+      await mount("new");
+      await openPanel();
+      for (const input of Array.from(host!.querySelectorAll<HTMLInputElement>('[data-testid="machine-reading-entry"] input[type="number"], [data-testid="machine-reading-entry"] input:not([type])'))) {
+        if (!input.closest('[data-testid^="setting-group-"][data-testid$="no-channels"]')) await setInput(input, "5");
+      }
+      const save = host!.querySelector<HTMLButtonElement>('[data-testid="machine-reading-save"]')!;
+      expect(save.disabled, "the readings can be saved").toBe(false);
+      await click(save);
+    }
+    it("a refused save shows Needs attention", async () => {
+      actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: false, error: "Could not save." } as never);
+      await fillAndSave();
+      expect(row("visit-summary-status").textContent).toBe("Needs attention");
+    });
+    it("an unknown-outcome save (the answer was lost) shows Needs attention", async () => {
+      actions.recordSetupSubmissionAction.mockRejectedValueOnce(new Error("network") as never);
+      await fillAndSave();
+      expect(row("visit-summary-status").textContent).toBe("Needs attention");
+    });
+    it("a successful save does not", async () => {
+      await fillAndSave();
+      expect(row("visit-summary-status").textContent).not.toBe("Needs attention");
+    });
+  });
   it("shows the existing xCell by the picker's own label for a saved legacy block", async () => {
     ctxBox.ctx = { ...CTX, remembered: null, devices: [] };
     host = document.createElement("div");

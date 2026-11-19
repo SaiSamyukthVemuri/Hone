@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import {
   AREAS,
   PULSE_COUNT_DEFAULT,
@@ -26,7 +26,7 @@ import {
 import { pickSavedLabel } from "@/lib/saved-label";
 import { MultiChipSelector } from "@/components/multi-chip-selector";
 import { addElectrolysisEntryAction } from "./actions";
-import { useReportVisitDraft, visitMachineLine } from "@/components/charting-visit-draft";
+import { useReportVisitDraft, useVisitMachineContext, visitMachineLine } from "@/components/charting-visit-draft";
 import { useChartingView } from "@/components/charting-view-context";
 import { savedBlockMachineLabel } from "@/lib/machines/block-machine-label";
 import { SectionLabel } from "@/components/ui/section-label";
@@ -101,25 +101,9 @@ export function SimplifiedEntryForm({
   // The pass INHERITS the saved block's machine, so it reports that machine's label. Read only in New view (the context load is a read, and
   // Current view stays exactly as it was), and only when the block carries one.
   const isNewView = useChartingView() === "new";
-  const [machineLabel, setMachineLabel] = useState<string | null>(null);
   const hasMachine = Boolean(block.studio_machine_id || block.machine_profile_id);
-  useEffect(() => {
-    if (!isNewView || !hasMachine) return;
-    let live = true;
-    void (async () => {
-      try {
-        const mod = await import("@/app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions");
-        const ctx = await mod.loadMachineSetupContext({ clientId, sessionId, blockId: block.id });
-        if (live) setMachineLabel(savedBlockMachineLabel(block, ctx));
-      } catch {
-        // A failed read leaves the machine unreported; the form is unaffected.
-      }
-    })();
-    return () => {
-      live = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isNewView, hasMachine, block.studio_machine_id, block.machine_profile_id, block.id, clientId, sessionId]);
+  const machineCtx = useVisitMachineContext(isNewView && hasMachine ? { clientId, sessionId, blockId: block.id } : null);
+  const machineLabel = useMemo(() => (machineCtx ? savedBlockMachineLabel(block, machineCtx) : null), [machineCtx, block]);
   useReportVisitDraft(`pass:${block.id}`, {
     machine: visitMachineLine(machineLabel, block.machine_frequency),
     draftAreas: [],

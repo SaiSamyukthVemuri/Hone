@@ -125,10 +125,39 @@ describe("the add-pass form reports the machine it inherits from the saved block
     expect(add.load).not.toHaveBeenCalled();
     expect(out().dataset.m).toBe("");
   });
-  it("a failed read leaves the machine unreported and the form usable", async () => {
+  it("a failed read leaves the machine unreported, the form usable, and raises no unhandled rejection", async () => {
+    const rejections: unknown[] = [];
+    const onRej = (e: unknown) => rejections.push(e);
+    process.on("unhandledRejection", onRej);
     add.load.mockRejectedValue(new Error("nope"));
     await mount({ ...BLOCK, studio_machine_id: "room-9", machine_profile_id: "fixture:mounted" });
+    await act(async () => void (await new Promise((r) => setTimeout(r, 20))));
+    process.off("unhandledRejection", onRej);
     expect(out().dataset.m).toBe("");
     expect(form()).not.toBeNull();
+    expect(rejections).toEqual([]);
+  });
+  it("asks the machine-context action for exactly this visit's route values and this block, once", async () => {
+    add.load.mockResolvedValue(ctx());
+    await mount({ ...BLOCK, studio_machine_id: "room-9", machine_profile_id: "fixture:mounted" });
+    expect(add.load).toHaveBeenCalledTimes(1);
+    expect(add.load).toHaveBeenCalledWith({ clientId: "c1", sessionId: "s1", blockId: "b1" });
+  });
+  it("two passes on one visit share ONE read", async () => {
+    add.load.mockResolvedValue(ctx());
+    host = document.body.appendChild(document.createElement("div"));
+    root = createRoot(host);
+    const b = (id: string) => ({ ...BLOCK, id, studio_machine_id: "room-9", machine_profile_id: "fixture:mounted" });
+    await act(async () =>
+      root!.render(
+        createElement(
+          ChartingViewContext.Provider,
+          { value: { view: "new", setView: () => undefined, notice: null } },
+          createElement(ChartingVisitDraftProvider, null, createElement(SimplifiedEntryForm, { key: "1", block: b("b1") as never, sessionId: "s1", clientId: "c1" }), createElement(SimplifiedEntryForm, { key: "2", block: b("b2") as never, sessionId: "s1", clientId: "c1" }), createElement(Reader)),
+        ),
+      ),
+    );
+    expect(add.load).toHaveBeenCalledTimes(1);
+    expect(out().dataset.m).toBe("Fixture Mounted");
   });
 });
