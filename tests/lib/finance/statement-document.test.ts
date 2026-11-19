@@ -526,6 +526,15 @@ describe("a refund is never a service credit: owed is the quote minus RETAINED m
     const v = classifyVisit(visit({ feeCandidates: [quote(5000)], lines: [line("collected_cash", 1000, "settlement"), line("refunded_card_session", 2000), line("still_owes_note", null, "settlement")] }));
     expect([v.state, v.owedCents]).toEqual(["confirmed_unpaid", 4000]);
   });
+  it("an attestation measures against a RECORDED QUOTE only: a fee from any other source stays unknown, refunded or partly paid", () => {
+    const legacy: FeeCandidate = { source: "legacy_fee", cents: 5000 } as FeeCandidate;
+    for (const cand of [charged(5000), legacy]) {
+      const refunded = classifyVisit(visit({ feeCandidates: [cand], lines: [line("refunded_card_session", 2000), line("still_owes_note", null, "settlement")] }));
+      expect([refunded.state, refunded.owedCents, refunded.reasons]).toEqual(["unknown", null, ["refund_credit_unverified"]]);
+      const partial = classifyVisit(visit({ feeCandidates: [cand], lines: [line("collected_cash", 1000, "settlement"), line("still_owes_note", null, "settlement")] }));
+      expect([partial.state, partial.owedCents, partial.reasons]).toEqual(["unknown", null, ["partial_payment_unverified"]]);
+    }
+  });
   it("retained money that covers the fee is paid even beside a refund; a waiver that covers it is adjusted", () => {
     expect(classifyVisit(visit({ feeCandidates: [quote(5000)], lines: [line("collected_cash", 5000, "settlement"), line("refunded_card_session", 2000)] })).state).toBe("paid");
     expect(classifyVisit(visit({ feeCandidates: [quote(5000)], lines: [line("waived", 5000, "settlement"), line("refunded_card_session", 2000)] })).state).toBe("adjusted");
@@ -610,8 +619,8 @@ describe("identity and words", () => {
 describe("source guard: the model is pure and can never write, charge or message", () => {
   const src = readFileSync(path.join(ROOT, "lib/finance/statement-document.ts"), "utf8");
   const imports = [...src.matchAll(/^import .* from "([^"]+)";/gm)].map((m) => m[1]);
-  it("imports only the pure statement classifier", () => {
-    expect(imports).toEqual(["@/lib/finance/statement"]);
+  it("imports only the pure statement classifier and the pure name helper (no imports of its own)", () => {
+    expect([...imports].sort()).toEqual(["@/lib/clients/identity", "@/lib/finance/statement"]);
   });
   it("has no server-only, client, Stripe, mail, SMS, fetch, clock or random", () => {
     const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
@@ -621,5 +630,13 @@ describe("source guard: the model is pure and can never write, charge or message
   });
   it("has no write verbs", () => {
     expect(src).not.toMatch(/\.(insert|update|upsert|delete|rpc)\(/);
+  });
+});
+
+describe("the document shows the display name", () => {
+  it("the preferred name when set, else the stored name, never a legal name", () => {
+    expect(doc([], { client: { id: "c", name: "Alexandra Smith", preferred_name: "Alex" } }).client.name).toBe("Alex");
+    expect(doc([], { client: { id: "c", name: "Alexandra Smith", preferred_name: "  " } }).client.name).toBe("Alexandra Smith");
+    expect(doc([], { client: { id: "c", name: "Alexandra Smith" } }).client.name).toBe("Alexandra Smith");
   });
 });
