@@ -115,12 +115,15 @@ export function ChartingVisitSummary({
   areas,
   count,
   nextVisitNoteRecorded,
+  paymentStep = true,
 }: {
   clientName: string;
   kind: "electrolysis" | "laser";
   areas: string[];
   count: number;
   nextVisitNoteRecorded: boolean;
+  /** List step 5 (Session payment) only where the page renders the payment card (an eligible owner). */
+  paymentStep?: boolean;
 }) {
   const laser = kind === "laser";
   const draft = useVisitDraftSummary();
@@ -129,7 +132,7 @@ export function ChartingVisitSummary({
     <section className="rounded-lg border border-neutral-200 p-4 text-sm dark:border-neutral-800">
       <h2 className="text-base font-semibold">This visit</h2>
       <ol data-testid="visit-steps" className="mt-3 flex flex-col gap-1">
-        {VISIT_STEPS.map((st, i) => (
+        {VISIT_STEPS.filter((st) => paymentStep || st.label !== "Session payment").map((st, i) => (
           <li key={st.label} className="flex items-baseline gap-2">
             <span aria-hidden="true" className="w-4 text-xs text-neutral-500">
               {i + 1}
