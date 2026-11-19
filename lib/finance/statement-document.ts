@@ -21,7 +21,7 @@ import { AMOUNT_KINDS, COLLECTED_KINDS, type StatementKind, type StatementMoneyL
 // originally paid" distinguishable from "what was retained". A refund is never a service credit here: no record independently supports one.
 
 export const TOTAL_PAID_DEFINITION =
-  "Total paid is money recorded as collected and kept. A payment that was fully refunded is shown on its own line and is not in total paid.";
+  "Total spend is money recorded as collected and kept, including a cancellation or no-show fee only once its payment is confirmed. A payment that was fully refunded is shown on its own line and is not in total spend.";
 
 // ---------------------------------------------------------------------------
 // Closed vocabularies
@@ -63,6 +63,31 @@ export const UNKNOWN_REASON_COPY: Record<UnknownReason, string> = {
 };
 
 export const FEE_NOT_RECORDED_COPY = "Fee not recorded";
+export const NOT_COMPLETED_COPY = "Not completed";
+
+// ---------------------------------------------------------------------------
+// VISIT ELIGIBILITY (Sam, 19 Nov 2026, D4). ONE function, so a change of rule is a change here only.
+//   completed treatment                        -> a VISIT
+//   no-show or cancelled WITH a recorded fee   -> a fee LINE ITEM (never a visit, never counted as one)
+//   cancelled / no-show with no fee            -> off the document
+//   booked in the future                       -> off the document
+//   booked in the past, completion not recorded -> "Not completed": full-history view ONLY, no amount, never counted
+// ---------------------------------------------------------------------------
+export type Eligibility = "treatment" | "not_completed" | "fee_only" | "off_document";
+export function classifyEligibility(a: { status: string; startsAt: string; hasFeeRecord: boolean }, nowIso: string): Eligibility {
+  switch (a.status) {
+    case "completed":
+      return "treatment";
+    case "cancelled":
+    case "no_show":
+      return a.hasFeeRecord ? "fee_only" : "off_document";
+    case "confirmed":
+      return a.startsAt > nowIso ? "off_document" : "not_completed";
+    default:
+      return "off_document"; // an unknown status is never promoted onto a document
+  }
+}
+export type FeeReason = "late_cancellation_fee" | "no_show_fee";
 
 // ---------------------------------------------------------------------------
 // Input
@@ -84,6 +109,19 @@ export type DocumentVisitInput = {
   practitionerName: string | null;
   feeCandidates: readonly FeeCandidate[];
   /** The visit's money lines from buildStatement, already classified. */
+  lines: readonly StatementMoneyLine[];
+  /** From classifyEligibility. Absent means "treatment". `not_completed` rows carry no money and are shown only in the full-history scope. */
+  eligibility?: "treatment" | "not_completed";
+};
+
+/** A recorded cancellation or no-show fee: its own line item, not a visit. */
+export type FeeItemInput = {
+  appointmentId: string;
+  clientId: string;
+  localDate: string;
+  startsAt: string;
+  reason: FeeReason;
+  feeCandidates: readonly FeeCandidate[];
   lines: readonly StatementMoneyLine[];
 };
 
@@ -115,6 +153,8 @@ export type BuildDocumentInput = {
   preparedOn: string;
   /** EVERY visit of this client in this studio that the loader considers part of the record. Scope selects from it. */
   visits: readonly DocumentVisitInput[];
+  /** Recorded cancellation and no-show fees of this client (line items). Included in month, range and full-history scopes, never in a chosen-visits scope. */
+  feeItems?: readonly FeeItemInput[];
 };
 
 // ---------------------------------------------------------------------------
@@ -146,9 +186,23 @@ export type DocumentVisit = {
   lines: StatementMoneyLine[];
 };
 
+export type FeeItem = {
+  appointmentId: string;
+  localDate: string;
+  startsAt: string;
+  reason: FeeReason;
+  fee: RecordedFee;
+  /** `paid`: payment confirmed (counts toward total spend). `unconfirmed`: listed, adds nothing. */
+  state: "paid" | "unconfirmed";
+  paidCents: number;
+  lines: StatementMoneyLine[];
+};
+
+export type NotCompletedRow = { appointmentId: string; localDate: string; localTime: string; serviceName: string | null; practitionerName: string | null };
+
 export type BalanceDue =
   | { kind: "established"; cents: number }
-  | { kind: "not_established"; because: "unknown_visits" | "owed_amount_not_established" };
+  | { kind: "not_established"; because: "unknown_visits" | "unconfirmed_fee" | "fee_not_recorded" | "owed_amount_not_established" };
 
 export type StatementDocument = {
   studioId: string;
@@ -159,10 +213,16 @@ export type StatementDocument = {
   preparedOn: string;
   attribution: string;
   visits: DocumentVisit[];
+  /** Cancellation / no-show fees as separate line items. */
+  feeItems: FeeItem[];
+  /** Full-history scope ONLY. No amounts, never counted, never in a total. */
+  notCompleted: NotCompletedRow[];
   totals: {
     visitCount: number;
-    /** Money collected and kept (TOTAL_PAID_DEFINITION). */
+    /** TOTAL SPEND: money collected and kept, treatments plus confirmed fee payments (TOTAL_PAID_DEFINITION). */
     paidCents: number;
+    treatmentPaidCents: number;
+    feePaidCents: number;
     refundedCents: number;
     waivedCents: number;
     /** paid + fully refunded: what was originally paid, kept distinct from what was retained. */
@@ -363,11 +423,44 @@ function dedupe(visits: readonly DocumentVisitInput[]): DocumentVisitInput[] {
 export function buildStatementDocument(input: BuildDocumentInput): BuildDocumentResult {
   if (!isLocalDate(input.preparedOn)) return { ok: false, error: "invalid_date" };
   if (typeof input.currency !== "string" || input.currency.trim() === "") return { ok: false, error: "invalid_currency" };
-  const picked = selectVisits(input.client.id, input.visits, input.scope);
+  const isNotCompleted = (v: DocumentVisitInput) => v.eligibility === "not_completed";
+  const treatments = input.visits.filter((v) => !isNotCompleted(v));
+  const picked = selectVisits(input.client.id, treatments, input.scope);
   if (!picked.ok) return picked;
+  const feeInputs = input.feeItems ?? [];
+  if (feeInputs.some((f) => f.clientId !== input.client.id)) return { ok: false, error: "foreign_visit" };
+  if (input.visits.some((v) => v.clientId !== input.client.id)) return { ok: false, error: "foreign_visit" };
   // A scope that names no visit at all (an empty month, a range with none) is a valid, EMPTY document; only an empty explicit selection is refused above.
 
   const visits = picked.visits.map(classifyVisit);
+  const sc = input.scope;
+  const inScope = (d: string) =>
+    sc.kind === "full_history" || (sc.kind === "month" && d.slice(0, 7) === sc.month) || (sc.kind === "range" && d >= sc.startLocal && d <= sc.endLocalInclusive);
+  const feeItems: FeeItem[] = [];
+  const seenFee = new Set<string>();
+  for (const f of [...feeInputs].sort((a, b) => a.startsAt.localeCompare(b.startsAt) || a.appointmentId.localeCompare(b.appointmentId))) {
+    if (seenFee.has(f.appointmentId) || !inScope(f.localDate)) continue;
+    seenFee.add(f.appointmentId);
+    const lines = [...f.lines];
+    const paidFee = sumKinds(lines, COLLECTED_KINDS);
+    feeItems.push({
+      appointmentId: f.appointmentId,
+      localDate: f.localDate,
+      startsAt: f.startsAt,
+      reason: f.reason,
+      fee: resolveRecordedFee(f.feeCandidates),
+      state: paidFee > 0 && !lines.some((l) => l.kind === "unresolved" || l.kind === "other_currency" || l.kind === "unreadable") ? "paid" : "unconfirmed",
+      paidCents: paidFee,
+      lines,
+    });
+  }
+  const notCompleted: NotCompletedRow[] =
+    sc.kind === "full_history"
+      ? input.visits
+          .filter(isNotCompleted)
+          .sort((a, b) => a.startsAt.localeCompare(b.startsAt) || a.appointmentId.localeCompare(b.appointmentId))
+          .map((v) => ({ appointmentId: v.appointmentId, localDate: v.localDate, localTime: v.localTime, serviceName: v.serviceName, practitionerName: v.practitionerName }))
+      : [];
   const byState = Object.fromEntries(VISIT_STATES.map((s) => [s, 0])) as Record<VisitState, number>;
   let paid = 0;
   let refunded = 0;
@@ -385,8 +478,12 @@ export function buildStatementDocument(input: BuildDocumentInput): BuildDocument
     if (v.state === "unknown") awaiting.push({ appointmentId: v.appointmentId, localDate: v.localDate, reasons: v.reasons });
   }
 
+  const feePaid = feeItems.reduce((n, f) => n + (f.state === "paid" ? f.paidCents : 0), 0);
+  paid += feePaid;
   let balanceDue: BalanceDue;
   if (byState.unknown > 0) balanceDue = { kind: "not_established", because: "unknown_visits" };
+  else if (feeItems.some((f) => f.state === "unconfirmed")) balanceDue = { kind: "not_established", because: "unconfirmed_fee" };
+  else if (!feeComplete) balanceDue = { kind: "not_established", because: "fee_not_recorded" };
   else if (visits.some((v) => v.state === "confirmed_unpaid" && v.owedCents === null)) balanceDue = { kind: "not_established", because: "owed_amount_not_established" };
   else balanceDue = { kind: "established", cents: visits.reduce((n, v) => n + (v.owedCents ?? 0), 0) };
 
@@ -401,9 +498,13 @@ export function buildStatementDocument(input: BuildDocumentInput): BuildDocument
       preparedOn: input.preparedOn,
       attribution: documentAttribution(input.identity.studioName),
       visits,
+      feeItems,
+      notCompleted,
       totals: {
         visitCount: visits.length,
         paidCents: paid,
+        treatmentPaidCents: paid - feePaid,
+        feePaidCents: feePaid,
         refundedCents: refunded,
         waivedCents: waived,
         originalPaidCents: paid + refunded,

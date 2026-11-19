@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
   FEE_NOT_RECORDED_COPY,
+  NOT_COMPLETED_COPY,
   TOTAL_PAID_DEFINITION,
   UNKNOWN_REASONS,
   UNKNOWN_REASON_COPY,
@@ -10,6 +11,8 @@ import {
   VISIT_STATES,
   awaitingVisitLine,
   buildStatementDocument,
+  classifyEligibility,
+  type FeeItemInput,
   classifyVisit,
   formatLocalDate,
   isLocalDate,
@@ -177,8 +180,10 @@ describe("no balance while anything is unknown", () => {
     expect(d.balanceDue).toEqual({ kind: "established", cents: 7500 });
   });
   it("not established when an attested owed amount cannot be established", () => {
-    const d = doc([visit({ lines: [line("still_owes_note", null, "settlement")] })]);
+    const d = doc([visit({ feeCandidates: [charged(5000)], lines: [line("still_owes_note", null, "settlement")] })]);
     expect(d.balanceDue).toEqual({ kind: "not_established", because: "owed_amount_not_established" });
+    // with no recorded fee at all, D1 speaks first: no balance because the fee is not recorded
+    expect(doc([visit({ lines: [line("still_owes_note", null, "settlement")] })]).balanceDue).toEqual({ kind: "not_established", because: "fee_not_recorded" });
   });
 });
 
@@ -288,6 +293,79 @@ describe("scope: month, full history, inclusive range, chosen visits", () => {
   it("selectVisits never reaches outside the list it is given: an id of another client's visit is unknown", () => {
     const other = visit({ clientId: "client-2" });
     expect(selectVisits("client-1", all, { kind: "visits", appointmentIds: [other.appointmentId] })).toEqual({ ok: false, error: "unknown_visit" });
+  });
+});
+
+describe("D4: eligibility, fee line items, total spend, Not completed", () => {
+  const NOW = "2026-11-19T12:00:00Z";
+  const el = (status: string, startsAt: string, hasFeeRecord = false) => classifyEligibility({ status, startsAt, hasFeeRecord }, NOW);
+  it("completed is a treatment; fee-bearing cancel/no-show is a fee line item; fee-free ones and the future are off; a past confirmed booking is Not completed", () => {
+    expect(el("completed", "2026-11-01T10:00:00Z")).toBe("treatment");
+    expect(el("cancelled", "2026-11-01T10:00:00Z", true)).toBe("fee_only");
+    expect(el("no_show", "2026-11-01T10:00:00Z", true)).toBe("fee_only");
+    expect(el("cancelled", "2026-11-01T10:00:00Z", false)).toBe("off_document");
+    expect(el("no_show", "2026-11-01T10:00:00Z", false)).toBe("off_document");
+    expect(el("confirmed", "2026-12-01T10:00:00Z")).toBe("off_document");
+    expect(el("confirmed", "2026-11-01T10:00:00Z")).toBe("not_completed");
+    expect(el("mystery", "2026-11-01T10:00:00Z", true)).toBe("off_document");
+  });
+  const fee = (over: Partial<FeeItemInput> = {}): FeeItemInput => {
+    n += 1;
+    return { appointmentId: `fee-${n}`, clientId: "client-1", localDate: "2026-11-10", startsAt: "2026-11-10T15:00:00Z", reason: "no_show_fee", feeCandidates: [charged(3000)], lines: [], ...over };
+  };
+  it("a fee counts toward total spend ONLY when its payment is confirmed; an unconfirmed fee adds nothing and blocks the balance", () => {
+    const d = doc([visit({ feeCandidates: [quote(5000)], lines: [line("collected_card_session", 5000)] })], {
+      feeItems: [fee({ lines: [line("collected_card_fee", 3000)] }), fee({ localDate: "2026-11-11", startsAt: "2026-11-11T15:00:00Z", lines: [line("unresolved", 3000)] })],
+    });
+    expect(d.feeItems.map((f) => f.state)).toEqual(["paid", "unconfirmed"]);
+    expect(d.totals.paidCents).toBe(8000);
+    expect(d.totals.feePaidCents).toBe(3000);
+    expect(d.totals.treatmentPaidCents).toBe(5000);
+    expect(d.totals.visitCount).toBe(1);
+    expect(d.balanceDue).toEqual({ kind: "not_established", because: "unconfirmed_fee" });
+  });
+  it("fee items are separate line items: never in the visit list, count or states", () => {
+    const d = doc([], { feeItems: [fee({ lines: [line("collected_card_fee", 3000)] })] });
+    expect(d.visits).toEqual([]);
+    expect(d.totals.visitCount).toBe(0);
+    expect(d.feeItems).toHaveLength(1);
+  });
+  it("fee items follow the month and range scope, are absent from a chosen-visits scope, and a fee of another client is refused", () => {
+    const v = visit();
+    const f = fee({ localDate: "2026-10-05", startsAt: "2026-10-05T15:00:00Z", lines: [line("collected_card_fee", 3000)] });
+    expect(doc([v], { feeItems: [f], scope: { kind: "month", month: "2026-11" } }).feeItems).toEqual([]);
+    expect(doc([v], { feeItems: [f], scope: { kind: "month", month: "2026-10" } }).feeItems).toHaveLength(1);
+    expect(doc([v], { feeItems: [f], scope: { kind: "visits", appointmentIds: [v.appointmentId] } }).feeItems).toEqual([]);
+    expect(build([v], { feeItems: [fee({ clientId: "client-2" })] })).toEqual({ ok: false, error: "foreign_visit" });
+  });
+  it("a missing fee keeps the visit visible, labelled, and no balance is established for the period (D1)", () => {
+    const d = doc([visit({ lines: [line("collected_card_session", 4200)] })]);
+    expect(d.visits).toHaveLength(1);
+    expect(d.visits[0].fee).toEqual({ state: "not_recorded", ambiguous: false });
+    expect(FEE_NOT_RECORDED_COPY).toBe("Fee not recorded");
+    expect(d.balanceDue).toEqual({ kind: "not_established", because: "fee_not_recorded" });
+  });
+  describe("Not completed appears ONLY in the full-history view", () => {
+    const nc = visit({ eligibility: "not_completed", localDate: "2026-11-02", startsAt: "2026-11-02T15:00:00Z" });
+    const tr = visit({ localDate: "2026-11-03", startsAt: "2026-11-03T15:00:00Z", feeCandidates: [quote(5000)], lines: [line("collected_cash", 5000, "settlement")] });
+    it("listed in full history, with no amount, outside every count and total", () => {
+      const d = doc([nc, tr], { scope: { kind: "full_history" } });
+      expect(d.notCompleted.map((r) => r.appointmentId)).toEqual([nc.appointmentId]);
+      expect(d.visits.map((x) => x.appointmentId)).toEqual([tr.appointmentId]);
+      expect(d.totals.visitCount).toBe(1);
+      expect(d.awaiting).toEqual([]);
+      expect(d.totals.paidCents).toBe(5000);
+      expect(d.balanceDue).toEqual({ kind: "established", cents: 0 });
+      expect(Object.keys(d.notCompleted[0])).not.toEqual(expect.arrayContaining(["fee", "paidCents"]));
+    });
+    it("never in a month view, a range, or a chosen-visits selection (which refuses its id as unknown)", () => {
+      for (const scope of [{ kind: "month", month: "2026-11" }, { kind: "range", startLocal: "2026-11-01", endLocalInclusive: "2026-11-30" }] as const) {
+        expect(doc([nc, tr], { scope }).notCompleted).toEqual([]);
+        expect(doc([nc, tr], { scope }).visits).toHaveLength(1);
+      }
+      expect(build([nc, tr], { scope: { kind: "visits", appointmentIds: [nc.appointmentId] } })).toEqual({ ok: false, error: "unknown_visit" });
+    });
+    it("copy is exactly 'Not completed'", () => expect(NOT_COMPLETED_COPY).toBe("Not completed"));
   });
 });
 
