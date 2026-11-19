@@ -1535,6 +1535,21 @@ describe("the machine dropdown", () => {
     expect(render({ scope: SCOPE, devices: [DEVICE], catalogue: CAT })).not.toContain("machine-rollout-unavailable");
   });
 
+  it("a restored selection naming a unit that is NOT listed (the rollout is Off and the unit left the list) renders cleanly: no crash, no ghost option, nothing chosen", () => {
+    const html = render({
+      scope: SCOPE,
+      devices: [DEVICE],
+      catalogue: CAT,
+      restoredSelection: { deviceId: "unit-not-listed", modeKey: "multiplex" },
+    });
+    expect(html).toContain('data-testid="machine-select"');
+    expect(html).not.toContain("unit-not-listed"); // no option, no label, no leaked id
+    expect(html).not.toContain("no longer available"); // the saved-unit note belongs to a saved block, which this is not
+    expect(html).toContain("Choose machine"); // the empty "not chosen" option is still there
+    expect(html).toContain(DEVICE.displayName); // the listed machine is still offered
+    expect(html).not.toContain("machine-mode"); // no mode or readings surface is built on the unlisted unit
+  });
+
   it("with NOTHING selectable the reason shows once and the separate notice is absent", () => {
     const MSG = "We could not check whether this is available right now. Please try again in a moment.";
     const html = render({ scope: SCOPE, devices: [], catalogue: CAT, inventoryReason: MSG, rolloutNotice: MSG });
