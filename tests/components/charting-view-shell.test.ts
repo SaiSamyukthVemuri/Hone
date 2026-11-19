@@ -385,6 +385,50 @@ describe("the one-choice preselect (New view only)", () => {
     expect(host!.querySelector('[data-testid="new-view-hint-machine"]')).not.toBeNull();
     expect(saveCalls()).toBe(0);
   });
+  describe("Save visit", () => {
+    const saveBtn = () => host!.querySelector<HTMLButtonElement>('[data-testid="visit-save-button"]');
+    it("Current view renders no Save visit control", async () => {
+      await mountCreate("current", { devices: [only] });
+      expect(saveBtn()).toBeNull();
+    });
+    it("New view renders it; switching views, in either direction, calls no action", async () => {
+      const blocks = await import("@/app/(app)/clients/[id]/sessions/[sessionId]/block-actions");
+      await mountCreate("new", { devices: [only] });
+      expect(saveBtn()).not.toBeNull();
+      await click(toggle());
+      expect(saveBtn()).toBeNull();
+      await click(toggle());
+      expect(saveBtn()).not.toBeNull();
+      expect(blocks.createTreatmentAreaWithEntryAction).not.toHaveBeenCalled();
+      expect(blocks.updateTreatmentAreaWithEntryAction).not.toHaveBeenCalled();
+      expect(saveCalls()).toBe(0);
+    });
+    it("a lost create answer, then Save visit again: the SAME createKey is sent (no second area), exactly as the form's own button does", async () => {
+      const blocks = await import("@/app/(app)/clients/[id]/sessions/[sessionId]/block-actions");
+      const create = blocks.createTreatmentAreaWithEntryAction as unknown as ReturnType<typeof vi.fn>;
+      create.mockReset();
+      create.mockRejectedValueOnce(new Error("network")).mockResolvedValue({ ok: true });
+      await mountCreate("new", { devices: [only] });
+      const chip = Array.from(host!.querySelectorAll("button")).find((b) => /Upper lip/i.test(b.textContent ?? ""));
+      expect(chip, "an area chip exists").toBeTruthy();
+      await click(chip!);
+      await click(saveBtn()!);
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(host!.querySelector('[data-testid="visit-save-results"]')!.textContent).toContain("Not saved");
+      await click(saveBtn()!);
+      expect(create).toHaveBeenCalledTimes(2);
+      const k1 = create.mock.calls[0][0].createKey;
+      expect(k1, "the create is keyed").toBeTruthy();
+      expect(create.mock.calls[1][0].createKey).toBe(k1);
+    });
+    it("with nothing entered it makes no call, and says there was nothing to save", async () => {
+      const blocks = await import("@/app/(app)/clients/[id]/sessions/[sessionId]/block-actions");
+      await mountCreate("new", { devices: [only] });
+      await click(saveBtn()!);
+      expect(blocks.createTreatmentAreaWithEntryAction).not.toHaveBeenCalled();
+      expect(host!.querySelector('[data-testid="visit-save-results"]')!.textContent).toContain("Nothing to save");
+    });
+  });
   it("Current view is untouched: the same studio opens on no machine and says nothing", async () => {
     await mountCreate("current", { devices: [only] });
     expect(machineSelect().value).toBe("");
