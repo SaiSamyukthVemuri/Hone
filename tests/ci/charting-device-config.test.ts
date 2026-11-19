@@ -51,7 +51,7 @@ describe("e2e/charting-new-view.spec.ts", () => {
 // the guard must stay strict, so the child that only LISTS tests gets an environment with every Supabase, database and e2e origin override (and any Stripe live
 // switch) removed: the guard then falls back to its own local defaults.
 const DROPPED = /^(NEXT_PUBLIC_SUPABASE_.*|SUPABASE_.*|E2E_.*|HONE_LOCAL_DB_URL|STRIPE_SECRET_KEY|STRIPE_ALLOW_LIVE_MODE)$/;
-export function listEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+export function listEnv(base: Record<string, string | undefined> = process.env): Record<string, string | undefined> {
   return Object.fromEntries(Object.entries(base).filter(([k]) => !DROPPED.test(k)));
 }
 
