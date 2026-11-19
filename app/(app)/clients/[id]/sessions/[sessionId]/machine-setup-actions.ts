@@ -75,6 +75,7 @@ import {
   inventoryUnavailable,
   listStudioDevices,
 } from "@/lib/machines/studio-devices";
+import { xcellRegistrationAllowed } from "@/lib/machines/xcell-registration-gate";
 import { listStudioMachines, machinesByIds, recordBlockMachineIdentity } from "@/lib/machines/machine-queries";
 import {
   assertSessionForClient,
@@ -748,6 +749,12 @@ export async function registerMachineAction(input: {
       error:
         "That machine model is not offered yet. A model becomes available only after its evidence review.",
     };
+  }
+
+  // ROLLOUT GATE (Sam): only allowlisted studios may register the xCell. The same answer as the listing, enforced here so a forged form
+  // cannot bypass it; the message does not reveal the rollout.
+  if (profile.profileId === XCELL_PUR_PROFILE_ID && !xcellRegistrationAllowed(scope.studioId)) {
+    return { ok: false, code: "rejected", error: "That machine model is not offered yet. A model becomes available only after its evidence review." };
   }
 
   const name = input.displayName.trim();

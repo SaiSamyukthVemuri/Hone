@@ -167,14 +167,14 @@ describe("the panel acts on the host form's MultiPlex request (there is no secon
 });
 
 describe("Settings > Machines shows no second xCell", () => {
-  async function registerModels(publishedFor: (p: { profileId: string; modes: { key: string; availability: string }[] }) => string[], live: { profileId: string }[]) {
+  async function registerModels(publishedFor: (p: { profileId: string; modes: { key: string; availability: string }[] }) => string[], live: { profileId: string }[], allowed = true) {
     const { activeProfiles } = await import("@/lib/machines/profile-contract");
     const { listableProfiles } = await import("@/lib/machines/listable-profiles");
     const { machineModelLabel, registrableProfiles } = await import("@/lib/machines/display-name");
     const { renderToStaticMarkup } = await import("react-dom/server");
     const { MachineRegisterForm } = await import("@/components/machines/machine-register-form");
     const listable = listableProfiles(activeProfiles(MACHINE_CATALOGUE), publishedFor as never);
-    const models = registrableProfiles(listable, live).map((p) => ({ profileId: p.profileId, label: machineModelLabel(p) }));
+    const models = registrableProfiles(listable, live, allowed).map((p) => ({ profileId: p.profileId, label: machineModelLabel(p) }));
     const html = renderToStaticMarkup(createElement(MachineRegisterForm, { models, register: async () => ({ ok: true }) } as never));
     return { models, html };
   }
@@ -193,6 +193,11 @@ describe("Settings > Machines shows no second xCell", () => {
   it("a studio that already has its xCell unit is not offered a second", async () => {
     const { models } = await registerModels(allPublished, [{ profileId: "dectro-apilus:xcell-pur" }]);
     expect(models.map((m) => m.profileId)).not.toContain("dectro-apilus:xcell-pur");
+  });
+  it("a studio that is not on the rollout allowlist is offered no xCell even though it is published", async () => {
+    const { models } = await registerModels(allPublished, [], false);
+    expect(models.map((m) => m.profileId)).not.toContain("dectro-apilus:xcell-pur");
+    expect(models.map((m) => m.profileId)).toContain("dectro-apilus:senior-3g");
   });
   it("existing 3G models are offered exactly as before", async () => {
     const { models } = await registerModels(allPublished, []);

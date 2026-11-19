@@ -19,13 +19,15 @@ export function machineModelLabel(p: Named): string {
 
 /**
  * Models an owner may register by hand, from `profiles` (the caller passes only models whose contract is PUBLISHED, so an unpublished xCell
- * Pur stays hidden). The xCell Pur is the studio's one xCell (HON-71): it is offered, under the label "Dectro xCell", only while the studio
- * has no live unit of it, so a second registration is never offered. `registerMachineAction` refuses a duplicate as well.
+ * Pur stays hidden). The xCell Pur is the studio's one xCell (HON-71): it is offered, under the label "Dectro xCell", only to a studio on the
+ * rollout allowlist (`xcellAllowed`) and only while the studio has no live unit of it, so a second registration is never offered.
+ * `registerMachineAction` enforces the allowlist and refuses a duplicate as well.
  */
 export function registrableProfiles<T extends Pick<MachineProfile, "profileId">>(
   profiles: readonly T[],
   liveUnits: ReadonlyArray<{ profileId: string }>,
+  xcellAllowed: boolean,
 ): T[] {
   const hasXcellUnit = liveUnits.some((u) => u.profileId === XCELL_PUR_PROFILE_ID);
-  return profiles.filter((p) => !(p.profileId === XCELL_PUR_PROFILE_ID && hasXcellUnit));
+  return profiles.filter((p) => !(p.profileId === XCELL_PUR_PROFILE_ID && (hasXcellUnit || !xcellAllowed)));
 }

@@ -398,6 +398,10 @@ describe("the studio's one xCell: registration of the xCell Pur unit (HON-71)", 
     display_name: "Dectro xCell", installed_options: [], retired_at: null, ...over,
   });
   const wrote = () => DB.calls.some((c) => c.fn === "register_studio_machine");
+  const GATE = "HONE_CHARTING_NEW_VIEW_STUDIO_IDS";
+  const LISTED_STUDIO = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"; // synthetic
+  const OTHER_STUDIO = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"; // synthetic
+  beforeEach(() => { vi.stubEnv(GATE, "all"); }); // the cases below are about the registration rules; the gate cases set their own value
 
   it("registers it through the existing owner command once its contract is published and the studio has none", async () => {
     signIn("studio-fett", "pract-owner-a");
@@ -453,6 +457,59 @@ describe("the studio's one xCell: registration of the xCell Pur unit (HON-71)", 
     DB.rpcResult = "55555555-5555-4555-8555-555555555555";
     const r = await actions.registerMachineAction({ profileId: "dectro-apilus:senior-3g", displayName: "Room 2" });
     expect(r.ok).toBe(true);
+  });
+
+  it("ROLLOUT GATE: unset means nobody, and the refusal is the generic one, before any contract or inventory read", async () => {
+    vi.stubEnv(GATE, "");
+    signIn(LISTED_STUDIO, "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = []; // unpublished too: the generic gate message must win, so the gate ran first
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toMatch(/not offered yet/);
+      expect(r.error).not.toMatch(/No published field contract|allowlist|studio/i);
+    }
+    expect(wrote()).toBe(false);
+  });
+  it("ROLLOUT GATE: an UNLISTED studio is refused by the action even though the form was forged and the contract is published", async () => {
+    vi.stubEnv(GATE, LISTED_STUDIO);
+    signIn(OTHER_STUDIO, "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = [];
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/not offered yet/);
+    expect(wrote()).toBe(false);
+  });
+  it("ROLLOUT GATE: a LISTED studio may register it, and 'all' (a test value) also passes", async () => {
+    vi.stubEnv(GATE, `${LISTED_STUDIO},${OTHER_STUDIO}`);
+    signIn(LISTED_STUDIO, "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = [];
+    DB.rpcResult = "66666666-6666-4666-8666-666666666666";
+    expect((await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" })).ok).toBe(true);
+  });
+  it("ROLLOUT GATE: an unpublished contract is refused even for a listed studio", async () => {
+    vi.stubEnv(GATE, LISTED_STUDIO);
+    signIn(LISTED_STUDIO, "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = [];
+    DB.rowsFor.studio_machines = [];
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/No published field contract/);
+  });
+  it("ROLLOUT GATE: another model is not affected by the gate (3G registers with the gate unset)", async () => {
+    vi.stubEnv(GATE, "");
+    signIn(OTHER_STUDIO, "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["flash", "microflash", "multiplex", "blend", "omniblend", "multiblend", "electrolysis"]).map((r) => ({ ...r, machine_profile_version: 3 }));
+    DB.rowsFor.studio_machines = [];
+    DB.rpcResult = "77777777-7777-4777-8777-777777777777";
+    expect((await actions.registerMachineAction({ profileId: "dectro-apilus:senior-3g", displayName: "Room 2" })).ok).toBe(true);
+  });
+  it("the studio the gate tests is the authenticated scope's, never a posted value", () => {
+    const body = CODE.slice(CODE.indexOf("export async function registerMachineAction"));
+    expect(body).toContain("xcellRegistrationAllowed(scope.studioId)");
+    expect(body).not.toMatch(/xcellRegistrationAllowed\(input\./);
   });
 
   it("the owner check stays in the database command, and the settings page itself shows only the owner notice to anyone else", () => {

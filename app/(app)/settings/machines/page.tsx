@@ -1,4 +1,5 @@
 import { machineModelLabel, registrableProfiles } from "@/lib/machines/display-name";
+import { xcellRegistrationAllowed } from "@/lib/machines/xcell-registration-gate";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
@@ -38,6 +39,7 @@ export default async function MachineSettingsPage() {
   const models = registrableProfiles(
     listableProfiles(active, (p) => published.get(`${p.profileId}@${p.version}`) ?? null),
     listed.ok ? listed.value : [],
+    xcellRegistrationAllowed(studio.id),
   ).map((p) => ({
     profileId: p.profileId,
     label: machineModelLabel(p),
