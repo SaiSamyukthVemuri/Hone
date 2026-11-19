@@ -15,7 +15,7 @@ import {
   coreSave,
 } from "@/lib/settings/roles/core";
 import { enforcementRefusal } from "@/lib/settings/roles/model";
-import { chosenChanges, defaultsPolicy, savedChoicesFor } from "@/lib/settings/roles/diff";
+import { adoptTarget, chosenChanges, resetTarget, savedChoicesFor } from "@/lib/settings/roles/diff";
 import { ROLES, type Role, type Scope } from "@/lib/permissions/catalog";
 import { loadStudioPolicyState, type StudioPolicyState } from "@/lib/settings/roles/policy-store";
 import { reasonAcceptable, type AccessResult, type ActivationPreviewResult, type ChangeRoleResult, type CommandResult, type HistoryResult, type PreviewResult, type RoleError } from "@/lib/settings/roles/api";
@@ -98,7 +98,6 @@ async function withChoices(
   return { ok: true, preview: { ...result.preview, choices: choicesOf(state.policies) } };
 }
 
-const toDefaults = (p: StudioPolicyState["policies"]) => ({ practitioner: defaultsPolicy(p.practitioner), receptionist: defaultsPolicy(p.receptionist) });
 
 /** Pure preview of a draft's changed keys; returns the version it was computed against. Writes nothing. */
 export async function previewRoleChangesAction(edits: unknown): Promise<PreviewResult> {
@@ -115,13 +114,13 @@ export async function previewResetAction(role: unknown): Promise<PreviewResult> 
   const owner = await assertOwner();
   if (!owner) return refuse({ code: "refused" });
   if (!isRole(role)) return refuse({ code: "unknown_role" });
-  return withChoices(owner.studioId, await corePreviewReset(owner.studioId, role), (p) => chosenChanges([role], p, toDefaults(p)));
+  return withChoices(owner.studioId, await corePreviewReset(owner.studioId, role), (p) => chosenChanges([role], p, { ...p, [role]: resetTarget(p[role]) }));
 }
 
 export async function previewAdoptAction(): Promise<PreviewResult> {
   const owner = await assertOwner();
   if (!owner) return refuse({ code: "refused" });
-  return withChoices(owner.studioId, await corePreviewAdopt(owner.studioId), (p) => chosenChanges(ROLES, p, toDefaults(p)));
+  return withChoices(owner.studioId, await corePreviewAdopt(owner.studioId), (p) => chosenChanges(ROLES, p, { practitioner: adoptTarget(p.practitioner), receptionist: adoptTarget(p.receptionist) }));
 }
 
 /** Save the changed keys of both roles in one atomic request, bound to the version a preview returned. */
