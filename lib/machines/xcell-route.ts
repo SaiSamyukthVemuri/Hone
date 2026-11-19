@@ -14,7 +14,8 @@ import type { StudioDevice } from "./selection";
  *   * the xCell Pur profile is active in the catalogue and offers `multiplex`;
  *   * its contract row is PUBLISHED for that exact version and mode (the database validates against it);
  *   * the studio has a usable (not retired) unit of that profile.
- * The unit is created by the owner's reviewed publication step, never by the practitioner.
+ * The unit is registered by the studio OWNER in Settings > Machines (the existing owner command, once the contract is published; the model is
+ * shown there as 'Dectro xCell' and a second one is refused), never by the practitioner.
  */
 export type XcellMultiplexRoute = { deviceId: string; modeKey: "multiplex" };
 
