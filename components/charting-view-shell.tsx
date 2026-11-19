@@ -98,12 +98,15 @@ export function ChartingVisitSummary({
   areas,
   count,
   nextVisitNoteRecorded,
+  machineLine = null,
 }: {
   clientName: string;
   kind: "electrolysis" | "laser";
   areas: string[];
   count: number;
   nextVisitNoteRecorded: boolean;
+  /** The studio's remembered machine for this practitioner, e.g. "Room 1 · 27.12 MHz". Display only; null shows no row. */
+  machineLine?: string | null;
 }) {
   const laser = kind === "laser";
   return (
@@ -114,6 +117,12 @@ export function ChartingVisitSummary({
           <dt className="text-xs uppercase tracking-wide text-neutral-500">Client</dt>
           <dd>{clientName}</dd>
         </div>
+        {machineLine ? (
+          <div>
+            <dt className="text-xs uppercase tracking-wide text-neutral-500">Machine</dt>
+            <dd data-testid="visit-summary-machine">{machineLine}</dd>
+          </div>
+        ) : null}
         <div>
           <dt className="text-xs uppercase tracking-wide text-neutral-500">{laser ? "Zones treated" : "Areas treated"}</dt>
           <dd>{areas.length > 0 ? areas.join(", ") : "None saved yet"}</dd>

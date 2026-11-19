@@ -377,6 +377,16 @@ describe("block editing in New view", () => {
     expect(before(step(3)!, notes())).toBe(true);
   });
 
+  it("New view only: the one-block-covers-several-areas line sits under step 1; Current view has no such line", async () => {
+    await mount();
+    expect(host!.querySelector('[data-testid="new-view-hint-areas"]')).toBeNull();
+    await mount("new");
+    const hint = host!.querySelector('[data-testid="new-view-hint-areas"]') as HTMLElement;
+    expect(hint.textContent).toBe("One settings block can cover several areas.");
+    expect(before(step(1)!, hint)).toBe(true);
+    expect(before(hint, areasEl())).toBe(true);
+  });
+
   it("switching moves the machine panel and the area editor WITHOUT remounting them: same nodes, typed values kept, nothing sent", async () => {
     await mount();
     await openPanel();
@@ -408,12 +418,12 @@ describe("block editing in New view", () => {
     await mount();
     const idsCurrent = Array.from(host!.querySelectorAll("[data-testid]"))
       .map((e) => e.getAttribute("data-testid"))
-      .filter((t) => !t!.startsWith("new-view-step") && !t!.startsWith("charting-view-summary"))
+      .filter((t) => !t!.startsWith("new-view-step") && !t!.startsWith("new-view-hint") && !t!.startsWith("charting-view-summary"))
       .sort();
     await click(toggle());
     const idsNew = Array.from(host!.querySelectorAll("[data-testid]"))
       .map((e) => e.getAttribute("data-testid"))
-      .filter((t) => !t!.startsWith("new-view-step") && !t!.startsWith("charting-view-summary"))
+      .filter((t) => !t!.startsWith("new-view-step") && !t!.startsWith("new-view-hint") && !t!.startsWith("charting-view-summary"))
       .sort();
     expect(idsNew).toEqual(idsCurrent);
     expect(idsNew).toContain("save-treatment-area");
