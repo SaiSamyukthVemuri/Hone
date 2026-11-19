@@ -59,14 +59,21 @@ beforeEach(() => {
 });
 
 const BAD: Array<[string, Record<string, unknown>, Record<string, unknown>, string]> = [
-  ["negative energy level", { energyLevel: -1 }, {}, "Energy level"],
+  ["negative energy level", { energyLevel: -1 }, {}, "Energy level must be 0 or more"],
   ["minutes over 1440", { minutesPerformed: 1441 }, {}, "Minutes must be between 0 and 1440"],
   ["negative minutes", { minutesPerformed: -1 }, {}, "Minutes must be between 0 and 1440"],
   ["negative hairs treated", {}, { hairsTreated: -4 }, "Hairs treated"],
   ["pulse count 11", {}, { pulseCount: 11 }, "Pulse count must be between 1 and 10"],
   ["pulse count 0", {}, { pulseCount: 0 }, "Pulse count must be between 1 and 10"],
-  ["intensity 101", {}, { thermolysisIntensityPercent: 101 }, "between 0 and 100"],
-  ["negative thermolysis duration", {}, { thermolysisDurationSeconds: -1 }, "non-negative"],
+  ["intensity 101", {}, { thermolysisIntensityPercent: 101 }, "Thermolysis intensity must be between 0 and 100 (a whole number)"],
+  ["negative thermolysis duration", {}, { thermolysisDurationSeconds: -1 }, "Thermolysis duration must be 0 or more"],
+  ["decimal energy level (integer column)", { energyLevel: 2.5 }, {}, "Energy level must be 0 or more (a whole number)"],
+  ["decimal minutes", { minutesPerformed: 10.5 }, {}, "Minutes must be between 0 and 1440 (a whole number)"],
+  ["decimal hairs treated", {}, { hairsTreated: 1.5 }, "Hairs treated must be 0 or more (a whole number)"],
+  ["decimal pulse count", {}, { pulseCount: 2.5 }, "Pulse count must be between 1 and 10 (a whole number)"],
+  ["decimal intensity (integer column)", {}, { thermolysisIntensityPercent: 55.5 }, "Thermolysis intensity must be between 0 and 100 (a whole number)"],
+  ["decimal galvanic duration (integer column)", {}, { galvanicDurationSeconds: 1.5 }, "Galvanic duration must be 0 or more (a whole number)"],
+  ["negative galvanic mA", {}, { galvanicMa: -1 }, "Galvanic mA must be 0 or more"],
   ["not a number", { energyLevel: Number.NaN }, {}, "Energy level"],
 ];
 describe("CREATE refuses an out-of-range value, names it, and writes nothing", () => {
@@ -108,6 +115,14 @@ describe("the refusal says nothing was saved, and never echoes the submitted val
       });
     }
   }
+});
+describe("controls: numeric columns keep their decimals (thermolysis duration, mA, units of lye are numeric)", () => {
+  it("0.733 s, 7.5 mA and 2.5 units of lye are accepted on create and update", async () => {
+    const readings = { thermolysisDurationSeconds: 0.733, galvanicMa: 7.5, unitsOfLye: 2.5 };
+    expect((await create({ mode: "blend" }, readings)).ok).toBe(true);
+    h.rpc.mockReset();
+    expect((await update({ mode: "blend" }, readings)).ok).toBe(true);
+  });
 });
 describe("controls: the edges and blanks save", () => {
   it("energy 0, minutes 0 and 1440, hairs 0, pulse count 1 and 10, intensity 0 and 100", async () => {

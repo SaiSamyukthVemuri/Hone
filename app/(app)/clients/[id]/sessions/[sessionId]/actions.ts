@@ -260,7 +260,9 @@ export async function addElectrolysisEntryAction(
   const energyLevelRaw = pickInteger(formData.get("energy_level"), {
     min: 0,
   });
-  const energyLevel = mode === "galv" ? null : energyLevelRaw;
+  // The write and its range check use ONE rule, so they cannot drift: an energy level this mode will not store is not checked either.
+  const keepsEnergyLevel = mode !== "galv";
+  const energyLevel = keepsEnergyLevel ? energyLevelRaw : null;
   const minutesPerformed = pickInteger(formData.get("minutes_performed"), {
     min: 0,
   });
@@ -279,7 +281,7 @@ export async function addElectrolysisEntryAction(
   const wantGalv = mode === "galv" || mode === "blend";
   const wantThermo = mode === "thermo" || mode === "blend";
   const rangeRefusal = outOfRangeReading(formData, [
-    ...(mode === "galv" ? [] : [{ field: "energy_level", label: "Energy level", min: 0, integer: true }]),
+    ...(!keepsEnergyLevel ? [] : [{ field: "energy_level", label: "Energy level", min: 0, integer: true }]),
     { field: "minutes_performed", label: "Minutes performed", min: 0, max: 1440, integer: true },
     { field: "hairs_treated", label: "Hairs treated", min: 0, integer: true },
     ...(wantGalv

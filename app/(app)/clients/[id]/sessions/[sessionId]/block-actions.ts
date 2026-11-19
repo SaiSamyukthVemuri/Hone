@@ -980,27 +980,29 @@ function normalizedChips(r: EntryReadingsInput): string[] {
 // Server-side range validation mirroring the DB CHECK (migration 0042) so
 // the practitioner gets a clean message instead of an opaque constraint
 // violation. Empty/null values are always allowed.
+// One wording for every range refusal: field name, then the range, then (added by the caller) "Nothing was saved." The submitted value is never echoed.
+function rangeText(label: string, min: number, max?: number, whole?: boolean): string {
+  const range = max !== undefined ? `between ${min} and ${max}` : `${min} or more`;
+  return `${label} must be ${range}${whole ? " (a whole number)" : ""}.`;
+}
+function outside(v: number | null | undefined, min: number, max?: number, whole?: boolean): boolean {
+  if (v == null) return false;
+  return !Number.isFinite(v) || v < min || (max !== undefined && v > max) || (whole === true && !Number.isInteger(v));
+}
 function validateReadings(
   r: EntryReadingsInput,
 ): { ok: true } | { ok: false; error: string } {
-  const nonNeg: ReadonlyArray<[number | null | undefined, string]> = [
-    [r.galvanicMa, "Galvanic mA"],
-    [r.galvanicDurationSeconds, "Galvanic duration"],
-    [r.thermolysisDurationSeconds, "Thermolysis duration"],
-    [r.unitsOfLye, "Units of lye"],
+  // Column types (migrations 0042, 0166 and the numeric widening of thermolysis_duration_seconds): mA, thermolysis duration and units of lye
+  // are numeric (decimals are intended); galvanic duration and thermolysis intensity are integer, so a fraction is refused, not rounded.
+  const checks: ReadonlyArray<[number | null | undefined, string, number, number | undefined, boolean]> = [
+    [r.galvanicMa, "Galvanic mA", 0, undefined, false],
+    [r.galvanicDurationSeconds, "Galvanic duration", 0, undefined, true],
+    [r.thermolysisDurationSeconds, "Thermolysis duration", 0, undefined, false],
+    [r.unitsOfLye, "Units of lye", 0, undefined, false],
+    [r.thermolysisIntensityPercent, "Thermolysis intensity", 0, 100, true],
   ];
-  for (const [v, label] of nonNeg) {
-    if (v != null && (!Number.isFinite(v) || v < 0)) {
-      return { ok: false, error: `${label} must be a non-negative number.` };
-    }
-  }
-  const percent: ReadonlyArray<[number | null | undefined, string]> = [
-    [r.thermolysisIntensityPercent, "Thermolysis intensity"],
-  ];
-  for (const [v, label] of percent) {
-    if (v != null && (!Number.isFinite(v) || v < 0 || v > 100)) {
-      return { ok: false, error: `${label} must be between 0 and 100.` };
-    }
+  for (const [v, label, min, max, whole] of checks) {
+    if (outside(v, min, max, whole)) return { ok: false, error: rangeText(label, min, max, whole) };
   }
   // Pulse delay: validated only when multiple pulses were done (pulse_count >
   // 1). A single-pulse entry carries no delay, so a stale draft value is
@@ -1014,25 +1016,21 @@ function validateReadings(
   return { ok: true };
 }
 
-// THE SETUP NUMBERS THE FORM BOUNDS, checked on the server too. The form's own checks stop an honest browser; a forged or unchecked request used to
-// reach the database with a negative energy level, an impossible number of minutes or hairs, or a pulse count the code then quietly clamped, and the
-// save was reported as done. These are REFUSED instead, with the same words the form uses. Blank (null) is always fine.
 const MINUTES_MAX_SERVER = 1440; // the form's own ceiling (a day)
+// energy_level, minutes_performed, hairs_treated and pulse_count are integer columns, so a fraction is refused rather than left for the database
+// to reject or round. The block's energy level is written to the block as given (only the entry snapshot is mode-gated), so it is checked for every mode.
 function validateSetupNumbers(
   input: { energyLevel?: number | null; minutesPerformed?: number | null },
   r: EntryReadingsInput,
 ): { ok: true } | { ok: false; error: string } {
-  const e = input.energyLevel;
-  if (e != null && (!Number.isFinite(e) || e < 0)) return { ok: false, error: "Energy level must be a non-negative number." };
-  const m = input.minutesPerformed;
-  if (m != null && (!Number.isFinite(m) || m < 0 || m > MINUTES_MAX_SERVER)) {
-    return { ok: false, error: `Minutes must be between 0 and ${MINUTES_MAX_SERVER}.` };
-  }
-  const hairs = r.hairsTreated;
-  if (hairs != null && (!Number.isFinite(hairs) || hairs < 0)) return { ok: false, error: "Hairs treated must be a non-negative number." };
-  const pc = r.pulseCount;
-  if (pc != null && (!Number.isFinite(pc) || pc < PULSE_COUNT_MIN || pc > PULSE_COUNT_MAX)) {
-    return { ok: false, error: `Pulse count must be between ${PULSE_COUNT_MIN} and ${PULSE_COUNT_MAX}.` };
+  const checks: ReadonlyArray<[number | null | undefined, string, number, number | undefined]> = [
+    [input.energyLevel, "Energy level", 0, undefined],
+    [input.minutesPerformed, "Minutes", 0, MINUTES_MAX_SERVER],
+    [r.hairsTreated, "Hairs treated", 0, undefined],
+    [r.pulseCount, "Pulse count", PULSE_COUNT_MIN, PULSE_COUNT_MAX],
+  ];
+  for (const [v, label, min, max] of checks) {
+    if (outside(v, min, max, true)) return { ok: false, error: rangeText(label, min, max, true) };
   }
   return { ok: true };
 }

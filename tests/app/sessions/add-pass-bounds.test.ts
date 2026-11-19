@@ -67,6 +67,32 @@ describe("the error never echoes the submitted value", () => {
   });
 });
 
+describe("the energy-level check follows the SAME mode rule as the write", () => {
+  it("a mode that stores EL refuses a bad one (thermolysis, blend)", async () => {
+    for (const mode of ["thermo", "blend"]) {
+      h.rpc.mockReset();
+      const res = await addElectrolysisEntryAction(form({ mode, energy_level: "-5" }));
+      expect(res.ok, mode).toBe(false);
+      expect(h.rpc).not.toHaveBeenCalled();
+    }
+  });
+  it("a decimal EL (integer column) is refused, not rounded", async () => {
+    const res = (await addElectrolysisEntryAction(form({ mode: "thermo", energy_level: "2.5" }))) as { ok: boolean; error: string };
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe("Energy level must be 0 or more (a whole number). Nothing was saved.");
+  });
+  it("Galvanic does NOT store EL here, so a bad one is neither stored nor refused (the check and the write share one rule)", async () => {
+    const res = await addElectrolysisEntryAction(form({ mode: "galv", energy_level: "-5" }));
+    expect(res.ok).toBe(true);
+    expect(args().p_energy_level).toBeNull();
+  });
+  it("thermolysis duration is a numeric column: 0.733 s is stored as given", async () => {
+    const res = await addElectrolysisEntryAction(form({ mode: "thermo", thermolysis_duration_seconds: "0.733" }));
+    expect(res.ok).toBe(true);
+    expect(args().p_thermolysis_duration_seconds).toBe(0.733);
+  });
+});
+
 describe("controls: the bounds themselves, blanks, and fields the mode does not own", () => {
   it("the edges are accepted: intensity 0 and 100, pulse count 1 and 10, zero minutes", async () => {
     for (const v of ["0", "100"]) {
