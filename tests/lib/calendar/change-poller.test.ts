@@ -1,0 +1,352 @@
+import { describe, expect, it } from "vitest";
+import {
+  HOLD_OFF_RECHECK_MS,
+  LOOP_MAX_REFRESHES,
+  LOOP_SUSPEND_MS,
+  PROBE_BACKOFF_MAX_MS,
+  PROBE_INTERVAL_MS,
+  classifyProbeStatus,
+  UNAUTH_CONFIRM_STRIKES,
+  initialPollerState,
+  nextWakeDelayMs,
+  probeBackoffMs,
+  stepPoller,
+  type PollerEnv,
+  type PollerEvent,
+  type PollerState,
+} from "@/lib/calendar/change-poller";
+
+const OK: PollerEnv = { visible: true, online: true, dialogOpen: false, editing: false };
+const A = "a".repeat(32);
+const B = "b".repeat(32);
+const C = "c".repeat(32);
+
+/** Drives the machine and records every effect, like the component does. */
+function rig(baseline = A, t0 = 0) {
+  let state: PollerState = initialPollerState(baseline, t0);
+  const effects: string[] = [];
+  const send = (e: PollerEvent) => {
+    const out = stepPoller(state, e);
+    state = out.state;
+    for (const f of out.effects) effects.push(f.type);
+    return out.effects.map((f) => f.type);
+  };
+  return { get state() { return state; }, effects, send };
+}
+const tick = (nowMs: number, env = OK): PollerEvent => ({ type: "tick", nowMs, env });
+const ok = (nowMs: number, fingerprint: string, env = OK): PollerEvent => ({ type: "probed", nowMs, env, result: { kind: "ok", fingerprint }, jitter: 0.5 });
+const transient = (nowMs: number): PollerEvent => ({ type: "probed", nowMs, env: OK, result: { kind: "transient" }, jitter: 0.5 });
+
+describe("when it probes", () => {
+  it("not before the interval, then once", () => {
+    const r = rig();
+    expect(r.send(tick(PROBE_INTERVAL_MS - 1))).toEqual([]);
+    expect(r.send(tick(PROBE_INTERVAL_MS))).toEqual(["probe"]);
+  });
+  it("never two requests at once: a tick while one is in flight sends nothing", () => {
+    const r = rig();
+    r.send(tick(PROBE_INTERVAL_MS));
+    expect(r.send(tick(PROBE_INTERVAL_MS * 5))).toEqual([]);
+    expect(r.send({ type: "returned", nowMs: PROBE_INTERVAL_MS * 6, env: OK })).toEqual([]);
+  });
+  it("never while hidden or offline", () => {
+    const r = rig();
+    expect(r.send(tick(10_000, { ...OK, visible: false }))).toEqual([]);
+    expect(r.send(tick(10_000, { ...OK, online: false }))).toEqual([]);
+  });
+  it("hiding the tab aborts the request in flight, and its late answer decides nothing", () => {
+    const r = rig();
+    r.send(tick(PROBE_INTERVAL_MS));
+    expect(r.send({ type: "hidden" })).toEqual(["abort"]);
+    expect(r.send(ok(PROBE_INTERVAL_MS + 100, B))).toEqual([]);
+    expect(r.state.pending).toBeNull();
+  });
+  it("returning to the tab probes IMMEDIATELY, even inside a back-off window", () => {
+    const r = rig();
+    r.send(tick(PROBE_INTERVAL_MS));
+    r.send(transient(2_000));
+    r.send(transient(2_001)); // late duplicate is ignored: not in flight
+    expect(r.state.nextProbeAtMs).toBeGreaterThan(2_500); // backed off: the next scheduled probe is later than the return below
+    expect(r.send({ type: "returned", nowMs: 2_500, env: OK })).toEqual(["probe"]);
+  });
+});
+
+describe("when it refreshes", () => {
+  it("only when the server fingerprint differs from the baseline", () => {
+    const r = rig();
+    r.send(tick(PROBE_INTERVAL_MS));
+    expect(r.send(ok(1_600, A))).toEqual([]); // same: nothing
+    expect(r.effects).not.toContain("refresh");
+  });
+  it("on a change it refreshes once", () => {
+    const r = rig();
+    r.send(tick(PROBE_INTERVAL_MS));
+    expect(r.send(ok(1_600, B))).toEqual(["refresh"]);
+  });
+  it("a new render's fingerprint becomes the baseline: the same value is then no change", () => {
+    const r = rig();
+    r.send(tick(PROBE_INTERVAL_MS));
+    r.send(ok(1_600, B)); // refresh fired
+    r.send({ type: "baseline", fingerprint: B });
+    r.send(tick(4_000));
+    expect(r.send(ok(4_100, B))).toEqual([]);
+  });
+  it("own actions: a render that already carries the new fingerprint costs no refresh", () => {
+    const r = rig();
+    r.send({ type: "baseline", fingerprint: B });
+    r.send(tick(PROBE_INTERVAL_MS));
+    expect(r.send(ok(1_600, B))).toEqual([]);
+  });
+});
+
+describe("hold-offs keep a change pending, never drop it", () => {
+  for (const [name, env] of [
+    ["a dialog is open", { ...OK, dialogOpen: true }],
+    ["a field has focus", { ...OK, editing: true }],
+  ] as const) {
+    it(`${name}: no refresh, change stays pending, applied when it clears`, () => {
+      const r = rig();
+      r.send(tick(PROBE_INTERVAL_MS, env));
+      expect(r.send(ok(1_600, B, env))).toEqual([]);
+      expect(r.state.pending).toBe(B);
+      expect(r.state.baseline).toBe(A); // baseline never advances early
+      expect(nextWakeDelayMs(r.state, 1_700, env)).toBe(HOLD_OFF_RECHECK_MS);
+      expect(r.send(tick(2_200, env))).not.toContain("refresh");
+      expect(r.send(tick(2_700, OK))).toContain("refresh");
+      expect(r.state.pending).toBeNull();
+    });
+  }
+  it("hidden tab: a change seen while hidden is applied on return", () => {
+    const r = rig();
+    r.send(tick(PROBE_INTERVAL_MS));
+    r.send(ok(1_600, B, { ...OK, visible: false }));
+    expect(r.state.pending).toBe(B);
+    expect(r.send({ type: "returned", nowMs: 9_000, env: OK })).toContain("refresh");
+  });
+  it("a pending change that the next render already shows is cleared", () => {
+    const r = rig();
+    r.send(tick(PROBE_INTERVAL_MS, { ...OK, dialogOpen: true }));
+    r.send(ok(1_600, B, { ...OK, dialogOpen: true }));
+    r.send({ type: "baseline", fingerprint: B });
+    expect(r.state.pending).toBeNull();
+  });
+});
+
+describe("errors", () => {
+  it("back off exponentially to a cap, and reset on success", () => {
+    expect(probeBackoffMs(0)).toBe(PROBE_INTERVAL_MS);
+    expect(probeBackoffMs(1)).toBe(PROBE_INTERVAL_MS * 2);
+    expect(probeBackoffMs(2)).toBe(PROBE_INTERVAL_MS * 4);
+    expect(probeBackoffMs(50)).toBe(PROBE_BACKOFF_MAX_MS);
+    const r = rig();
+    let now = PROBE_INTERVAL_MS;
+    r.send(tick(now));
+    r.send(transient(now + 50));
+    expect(r.state.consecutiveErrors).toBe(1);
+    now = r.state.nextProbeAtMs;
+    r.send(tick(now));
+    r.send(transient(now + 50));
+    expect(r.state.consecutiveErrors).toBe(2);
+    expect(r.state.nextProbeAtMs - (now + 50)).toBe(probeBackoffMs(2));
+    now = r.state.nextProbeAtMs;
+    r.send(tick(now));
+    r.send(ok(now + 50, A));
+    expect(r.state.consecutiveErrors).toBe(0);
+  });
+  it("a failure never refreshes", () => {
+    const r = rig();
+    r.send(tick(PROBE_INTERVAL_MS));
+    r.send(transient(1_600));
+    expect(r.effects).not.toContain("refresh");
+  });
+  it("a refusal (403) stops polling for good", () => {
+    const r = rig();
+    r.send(tick(PROBE_INTERVAL_MS));
+    r.send({ type: "probed", nowMs: 1_600, env: OK, result: { kind: "refused" }, jitter: 0 });
+    expect(r.state.stopped).toBe(true);
+    expect(r.send(tick(999_999))).toEqual([]);
+    expect(r.send({ type: "returned", nowMs: 1_000_000, env: OK })).toEqual([]);
+    expect(nextWakeDelayMs(r.state, 1_000_000, OK)).toBeNull();
+  });
+});
+
+describe("the refresh loop it is built against", () => {
+  it("a mismatch that persists costs ONE refresh, not one per probe", () => {
+    const r = rig();
+    let now = PROBE_INTERVAL_MS;
+    let refreshes = 0;
+    for (let i = 0; i < 20; i += 1) {
+      r.send(tick(now));
+      refreshes += r.send(ok(now + 50, B)).filter((e) => e === "refresh").length;
+      // the render came back still carrying A (a disagreement between page and probe)
+      r.send({ type: "baseline", fingerprint: A });
+      now += 2_000;
+    }
+    expect(refreshes).toBe(1);
+  });
+  it("B -> local change C -> another session returns the server to B: that real change is NOT suppressed", () => {
+    const r = rig(); // baseline A
+    r.send(tick(PROBE_INTERVAL_MS));
+    expect(r.send(ok(1_600, B))).toEqual(["refresh"]); // another session's change; handled
+    r.send({ type: "baseline", fingerprint: B }); // the render caught up
+    r.send({ type: "baseline", fingerprint: C }); // this session's own action moved what it shows
+    r.send(tick(4_000));
+    expect(r.send(ok(4_100, B))).toEqual(["refresh"]); // the server is back at B, which differs from C: refresh
+  });
+  it("a persistent mismatch (the render keeps carrying the same baseline) still costs only one refresh", () => {
+    const r = rig();
+    r.send(tick(PROBE_INTERVAL_MS));
+    expect(r.send(ok(1_600, B))).toEqual(["refresh"]);
+    r.send({ type: "baseline", fingerprint: A }); // same baseline as held: nothing caught up
+    r.send(tick(4_000));
+    expect(r.send(ok(4_100, B))).toEqual([]);
+  });
+  it("REAL changes never trip the breaker: twenty genuine changes, each applied by its render, all refresh and probing continues", () => {
+    const r = rig();
+    let now = PROBE_INTERVAL_MS;
+    let refreshes = 0;
+    let prev = A;
+    for (let i = 0; i < 20; i += 1) {
+      const next = `${(i + 1).toString(16).padStart(2, "0")}${"1".repeat(30)}`;
+      r.send(tick(now));
+      refreshes += r.send(ok(now + 50, next)).filter((e) => e === "refresh").length;
+      r.send({ type: "baseline", fingerprint: next }); // the render caught up to what was handled
+      expect(r.state.suspendedUntilMs).toBe(0);
+      prev = next;
+      now += 2_000;
+    }
+    expect(refreshes).toBe(20);
+    expect(prev).not.toBe(A);
+    expect(r.effects).not.toContain("log");
+  });
+  it("a render that lands on an UNRELATED third value does not fulfil the refresh: it still counts", () => {
+    const r = rig(); // baseline A
+    r.send(tick(PROBE_INTERVAL_MS));
+    expect(r.send(ok(1_600, B))).toEqual(["refresh"]); // fired for B; the latest server value is B
+    expect(r.state.refreshTimesMs).toHaveLength(1);
+    const unrelated = "d".repeat(32); // neither the fired value (B) nor the latest server value (B), and not the old baseline (A)
+    r.send({ type: "baseline", fingerprint: unrelated });
+    expect(r.state.refreshTimesMs).toHaveLength(1); // not fulfilled: it still counts
+    // ...and so a page that keeps landing on unrelated values is still bounded by the breaker
+    const loop = rig();
+    let now = PROBE_INTERVAL_MS;
+    const seen: string[] = [];
+    for (let i = 0; i < 12; i += 1) {
+      loop.send(tick(now));
+      seen.push(...loop.send(ok(now + 10, `${(i + 1).toString(16).padStart(2, "0")}${"2".repeat(30)}`)));
+      loop.send({ type: "baseline", fingerprint: `${(i + 1).toString(16).padStart(2, "0")}${"3".repeat(30)}` });
+      now += 2_000;
+    }
+    expect(seen.filter((e) => e === "refresh")).toHaveLength(LOOP_MAX_REFRESHES);
+    expect(seen.filter((e) => e === "log")).toHaveLength(1);
+  });
+  it("the suspension is exactly two minutes: probing stays off until then and resumes at it", () => {
+    expect(LOOP_SUSPEND_MS).toBe(120_000);
+    const r = rig();
+    let now = PROBE_INTERVAL_MS;
+    for (let i = 0; i < LOOP_MAX_REFRESHES + 1; i += 1) {
+      r.send(tick(now));
+      r.send(ok(now + 10, `${(i + 1).toString(16).padStart(2, "0")}${"4".repeat(30)}`));
+      now += 2_000;
+    }
+    const until = r.state.suspendedUntilMs;
+    expect(until).toBeGreaterThan(0);
+    expect(r.send(tick(until - 1))).toEqual([]);
+    expect(r.send(tick(until))).toContain("probe");
+    expect(until - (now - 2_000 + 10)).toBeLessThanOrEqual(LOOP_SUSPEND_MS);
+  });
+  it("a fingerprint that keeps changing is capped by the breaker, which logs once and suspends", () => {
+    const r = rig();
+    let now = PROBE_INTERVAL_MS;
+    const seen: string[] = [];
+    for (let i = 0; i < 30; i += 1) {
+      r.send(tick(now));
+      seen.push(...r.send(ok(now + 10, `${i.toString(16).padStart(2, "0")}${"0".repeat(30)}`)));
+      now += 2_000;
+    }
+    expect(seen.filter((e) => e === "refresh")).toHaveLength(LOOP_MAX_REFRESHES);
+    expect(seen.filter((e) => e === "log")).toHaveLength(1);
+    expect(r.state.suspendedUntilMs).toBeGreaterThan(0);
+    expect(nextWakeDelayMs(r.state, now, OK)).toBeGreaterThan(0);
+    // after the suspension it resumes
+    const later = r.state.suspendedUntilMs + 1;
+    expect(r.send(tick(later))).toContain("probe");
+    expect(LOOP_SUSPEND_MS).toBeGreaterThanOrEqual(60_000);
+  });
+});
+
+describe("nextWakeDelayMs", () => {
+  it("sleeps while hidden or in flight; otherwise wakes at the next probe", () => {
+    const s = initialPollerState(A, 0);
+    expect(nextWakeDelayMs(s, 0, { ...OK, visible: false })).toBeNull();
+    expect(nextWakeDelayMs(s, 0, OK)).toBe(PROBE_INTERVAL_MS);
+    expect(nextWakeDelayMs({ ...s, inFlight: true }, 0, OK)).toBeNull();
+  });
+});
+
+describe("what a probe's HTTP status means (a database blip must never silence a screen for good)", () => {
+  it("403 is a definite refusal; 401 and a middleware redirect are only unauthenticated (ambiguous)", () => {
+    expect(classifyProbeStatus(403)).toBe("refused");
+    expect(classifyProbeStatus(401)).toBe("unauthenticated");
+    expect(classifyProbeStatus(307, "opaqueredirect")).toBe("unauthenticated");
+    expect(classifyProbeStatus(0)).toBe("transient");
+  });
+  it("a 5xx, including the route's 503, and a 4xx that is not authorization are transient", () => {
+    for (const s of [500, 502, 503, 504, 400, 404, 429]) expect(classifyProbeStatus(s)).toBe("transient");
+    expect(classifyProbeStatus(200)).toBe("ok");
+  });
+  it("after a 503 the screen backs off and RESUMES: the next probe fires and a change is then applied", () => {
+    const r = rig();
+    r.send(tick(PROBE_INTERVAL_MS));
+    r.send({ type: "probed", nowMs: 1_600, env: OK, result: { kind: classifyProbeStatus(503) === "transient" ? "transient" : "refused" }, jitter: 0 });
+    expect(r.state.stopped).toBe(false);
+    const due = r.state.nextProbeAtMs;
+    expect(r.send(tick(due))).toEqual(["probe"]);
+    expect(r.send(ok(due + 50, B))).toEqual(["refresh"]);
+  });
+  it("a 403 stops polling for good", () => {
+    const r = rig();
+    r.send(tick(PROBE_INTERVAL_MS));
+    r.send({ type: "probed", nowMs: 1_600, env: OK, result: { kind: classifyProbeStatus(403) === "refused" ? "refused" : "transient" }, jitter: 0 });
+    expect(r.state.stopped).toBe(true);
+    expect(r.send(tick(999_999))).toEqual([]);
+  });
+  it("a redirect blip (middleware could not read the session) does not stop polling: it backs off and resumes", () => {
+    const r = rig();
+    let now = PROBE_INTERVAL_MS;
+    for (let i = 0; i < 2; i += 1) {
+      r.send(tick(now));
+      r.send({ type: "probed", nowMs: now + 50, env: OK, result: { kind: "unauthenticated" }, jitter: 0 });
+      expect(r.state.stopped).toBe(false);
+      now = r.state.nextProbeAtMs;
+    }
+    r.send(tick(now));
+    expect(r.send(ok(now + 50, B))).toEqual(["refresh"]);
+    expect(r.state.unauthStrikes).toBe(0);
+  });
+  it("a transient answer in between resets the strikes (only CONSECUTIVE unauthenticated answers count)", () => {
+    const r = rig();
+    let now = PROBE_INTERVAL_MS;
+    const answer = (kind: "unauthenticated" | "transient") => {
+      r.send(tick(now));
+      r.send({ type: "probed", nowMs: now + 50, env: OK, result: { kind }, jitter: 0 });
+      now = r.state.nextProbeAtMs;
+    };
+    for (let i = 0; i < 5; i += 1) {
+      answer("unauthenticated");
+      answer("transient");
+    }
+    expect(r.state.stopped).toBe(false);
+  });
+  it("a real expired session (unauthenticated every time) stops after the confirming strikes", () => {
+    const r = rig();
+    let now = PROBE_INTERVAL_MS;
+    for (let i = 0; i < UNAUTH_CONFIRM_STRIKES; i += 1) {
+      r.send(tick(now));
+      r.send({ type: "probed", nowMs: now + 50, env: OK, result: { kind: "unauthenticated" }, jitter: 0 });
+      now = r.state.nextProbeAtMs;
+    }
+    expect(r.state.stopped).toBe(true);
+    expect(r.send(tick(999_999))).toEqual([]);
+  });
+});

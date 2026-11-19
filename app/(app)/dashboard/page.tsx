@@ -116,6 +116,7 @@ import {
   selectCurrentIntakeByClient,
   type TodayIntakeRow,
 } from "@/lib/dashboard/today-intake";
+import { UnfinishedVisitsNote } from "./unfinished-visits-note";
 import { getMissingRecordsAssistant } from "@/lib/dashboard/missing-records-assistant";
 import { currentAppointmentIds } from "@/lib/dashboard/current-appointment";
 import {
@@ -1018,6 +1019,7 @@ export default async function DashboardPage({
                   portalEnabled={clientSelfServicePolicyFromStudio(studio).portal}
                   historyAsked={viewingToday}
                   isCurrent={currentAppointmentIdSet.has(appt.id)}
+                  hasEnded={new Date(appt.ends_at).getTime() <= renderNow.getTime()}
                   cardOnFile={resolveCardOnFileStatus(
                     cardOnFileLoad,
                     appt.client_id,
@@ -1069,6 +1071,7 @@ export default async function DashboardPage({
           key={`needs:${selectedDayLocal}:${period}`}
           fallback={<NeedsAttentionSkeleton />}
         >
+          <UnfinishedVisitsNote studioId={studio.id} nowIso={renderNow.toISOString()} />
           <NeedsAttentionSection
             studioId={studio.id}
             studioTimezone={studio.timezone}
@@ -1166,6 +1169,7 @@ function AppointmentRow({
   prepSummary,
   historyAsked,
   isCurrent,
+  hasEnded,
   cardOnFile,
   tz,
   timeFormat,
@@ -1198,6 +1202,8 @@ function AppointmentRow({
   // Resolved ONCE for the whole page against one instant (see `renderNow`), not
   // re-derived per row from its own clock read.
   isCurrent: boolean;
+  // HON-45: the appointment's end has passed, judged against the same single `renderNow` as `isCurrent`.
+  hasEnded: boolean;
   // Three states, never two. `unavailable` means the card read failed, which is
   // NOT the same claim as "this client has no card".
   // `null` = this studio has no card-on-file route, so the row asks no card
@@ -1245,6 +1251,7 @@ function AppointmentRow({
           },
     sessionId: linkedSession?.sessionId ?? null,
     hasChartedArea: linkedSession?.hasChartedArea ?? false,
+    hasEnded,
   });
   // Review intake: the direct route from Today into the canonical
   // practitioner intake-review surface, replacing the
@@ -1366,7 +1373,7 @@ function AppointmentRow({
               {nextAction.chip && (
                 <span
                   className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] leading-3 font-medium uppercase tracking-wider ${
-                    nextAction.chip === "Charting needed"
+                    nextAction.chip === "Charting needed" || nextAction.chip === "Not finished"
                       ? "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200"
                       : "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-200"
                   }`}
