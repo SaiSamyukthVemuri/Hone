@@ -99,9 +99,10 @@ import { AreaPicker } from "@/components/area-picker";
 import { isCanonicalTreatmentArea } from "@/lib/sessions/area-validation";
 import { BodyMapAreaPicker } from "@/components/body-map-area-picker";
 import { MultiAreaEditor } from "@/components/multi-area-editor";
-import { resolveBlockAreas, type BlockArea } from "@/lib/sessions/block-areas";
+import { formatAreaLabel, resolveBlockAreas, type BlockArea } from "@/lib/sessions/block-areas";
 import { useRetainedState } from "@/components/charting-state-provider";
-import { NewViewHint, NewViewStep, useChartingView } from "@/components/charting-view-context";
+import { NewViewHint, NewViewStep, useChartingView } from "@/components/charting-view-context"
+import { useReportVisitDraft, visitMachineLine } from "@/components/charting-visit-draft";
 import { DraftRegistryProvider, useDraftRegistryState, useReportDraft } from "@/components/machines/draft-registry";
 import { MachineFirstSetupConnected } from "@/components/machines/machine-first-setup-connected";
 import { ProbePicker } from "@/components/probe-picker";
@@ -1100,6 +1101,15 @@ export function BlockSetupForm({
   const dirty =
     JSON.stringify(draft) !== initialDraftJson.current ||
     draftRegistry.view.anyDraft;
+  // WHAT THE NEW VIEW'S "This visit" CARD SHOWS ABOUT THIS FORM. Display only: the form reports and never reads it back.
+  const [chosenModel, setChosenModel] = useState<string | null>(null);
+  useReportVisitDraft(`block:${block?.id ?? "new"}`, {
+    machine: visitMachineLine(chosenModel, draft.machineFrequency),
+    draftAreas: block ? [] : draft.areas.map(formatAreaLabel),
+    unsaved: dirty,
+    attention: error !== null,
+    activity: `${JSON.stringify(draft)}|${chosenModel ?? ""}`,
+  });
   // THE LEAVE PROMPT is the app's own dialog (never a native confirm).
   const [leaveAttempt, setLeaveAttempt] = useState<{ proceed: () => void; dirtyCount: number } | null>(null);
   // ARMED UNTIL A SAVE IS CONFIRMED. It used to be disarmed while "Saving…" was pending, so closing, reloading or
@@ -1988,6 +1998,7 @@ export function BlockSetupForm({
         onMultiplexRoute={setMultiplexRoute}
         onSavedDeviceChange={setWrittenDeviceId}
         onIdentityDraft={block ? undefined : onIdentityDraft}
+        onChosenModel={setChosenModel}
         blockVersion={blockVersion}
         legacyReadingsLocked={legacyDataLocked}
         onBlockVersion={(token) => {
@@ -2072,14 +2083,14 @@ export function BlockSetupForm({
           are. */}
       {isNewView
         ? [
-            <NewViewStep key="step-areas" n={1} title="Areas treated" />,
+            <NewViewStep key="step-areas" n={1} title="Choose areas" />,
             <NewViewHint key="hint-areas" testId="new-view-hint-areas">
               One settings block can cover several areas.
             </NewViewHint>,
             areasSection,
-            <NewViewStep key="step-settings" n={2} title="Treatment settings" />,
+            <NewViewStep key="step-settings" n={2} title="Enter settings" />,
             // Shown only when a machine really is selected (a saved native unit, or the unit the panel reports).
-            machineKind === "native" ? (
+            machineKind !== "none" ? (
               <NewViewHint key="hint-machine" testId="new-view-hint-machine">
                 Your machine is already selected.
               </NewViewHint>
@@ -2369,7 +2380,7 @@ export function BlockSetupForm({
         </span>
       </label>
 
-      {isNewView ? <NewViewStep n={3} title="Client response" /> : null}
+      {isNewView ? <NewViewStep n={3} title="Record response" optional /> : null}
 
       {/* PR #279 (migration 0095): numbing record: a factual note of whether
           the client used numbing before treatment. "Not recorded" (NULL) is the

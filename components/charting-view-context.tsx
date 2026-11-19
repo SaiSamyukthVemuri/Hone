@@ -16,7 +16,7 @@ export function useChartingView(): ChartingView {
  * A numbered step heading that exists ONLY in New view. In Current view the caller renders nothing in its place, so
  * Current's markup is exactly what it always was. It is a heading and nothing else: it holds no state and no control.
  */
-export function NewViewStep({ n, title }: { n: number; title: string }) {
+export function NewViewStep({ n, title, optional = false }: { n: number; title: string; optional?: boolean }) {
   return (
     <h3
       data-testid={`new-view-step-${n}`}
@@ -29,6 +29,7 @@ export function NewViewStep({ n, title }: { n: number; title: string }) {
         {n}
       </span>
       {title}
+      {optional ? <span className="text-xs font-normal text-neutral-500">Optional</span> : null}
     </h3>
   );
 }

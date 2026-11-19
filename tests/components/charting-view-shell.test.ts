@@ -356,6 +356,275 @@ const areasEl = () => host!.querySelector('[data-testid="selected-areas"]') as H
 const machineOpenEl = () => host!.querySelector('[data-testid="machine-first-open"]') as HTMLElement;
 const before = (a: Node, b: Node) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
 
+describe("the one-choice preselect (New view only)", () => {
+  const only = { ...DEVICE };
+  async function mountCreate(view: "current" | "new", ctx: Record<string, unknown>) {
+    ctxBox.ctx = { ...CTX, remembered: null, legacyMachine: null, ...ctx };
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const el = createElement(ChartingViewShell, {
+      initialView: view,
+      summary: createElement(ChartingVisitSummary, { clientName: "Avery Example", kind: "electrolysis", areas: [], count: 0, nextVisitNoteRecorded: false }),
+      children: createElement(
+        "div",
+        null,
+        createElement(ChartingViewToggle),
+        createElement(BlockSetupForm, { sessionId: "s1", clientId: "c1", previousBlock: null, block: null as never, firstEntry: null, onCancel: () => undefined }),
+      ),
+    });
+    await act(async () => root!.render(el));
+    if (!host.querySelector('[data-testid="machine-select"]')) {
+      const open = host.querySelector('[data-testid="machine-first-open"]');
+      if (open) await click(open);
+    }
+  }
+  it("one live unit and nothing else chosen: New view opens on it and says so; nothing is saved", async () => {
+    await mountCreate("new", { devices: [only] });
+    expect(machineSelect().value).toBe("room-9");
+    expect(host!.querySelector('[data-testid="new-view-hint-machine"]')).not.toBeNull();
+    expect(saveCalls()).toBe(0);
+  });
+  it("Current view is untouched: the same studio opens on no machine and says nothing", async () => {
+    await mountCreate("current", { devices: [only] });
+    expect(machineSelect().value).toBe("");
+    expect(host!.querySelector('[data-testid="new-view-hint-machine"]')).toBeNull();
+  });
+  it("zero units, a retired unit, or two units preselect nothing", async () => {
+    await mountCreate("new", { devices: [] });
+    expect(host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')?.value ?? "").toBe("");
+    await act(async () => root!.unmount());
+    host!.remove();
+    await mountCreate("new", { devices: [{ ...only, retiredAt: "2026-01-01T00:00:00.000Z" }] });
+    expect(host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')?.value ?? "").toBe("");
+    await act(async () => root!.unmount());
+    host!.remove();
+    await mountCreate("new", { devices: [only, { ...only, deviceId: "room-10", displayName: "Room 10 unit" }] });
+    expect(machineSelect().value).toBe("");
+  });
+  it("a remembered machine still wins, and the existing xCell offered beside a unit makes two entries: nothing is preselected", async () => {
+    await mountCreate("new", { devices: [only], legacyMachine: CTX.legacyMachine });
+    expect(machineSelect().value).toBe("");
+  });
+  it("the existing xCell offered alone is the one entry and opens chosen", async () => {
+    await mountCreate("new", { devices: [], legacyMachine: CTX.legacyMachine });
+    expect(host!.querySelector('[data-testid="new-view-hint-machine"]')).not.toBeNull();
+    expect(saveCalls()).toBe(0);
+  });
+  it("a view switch after mount selects nothing and changes nothing", async () => {
+    await mountCreate("current", { devices: [only] });
+    await click(toggle());
+    expect(machineSelect().value).toBe("");
+    expect(saveCalls()).toBe(0);
+  });
+});
+
+describe("the This visit card follows the open form", () => {
+  const sum = () => host!.querySelector<HTMLElement>('[data-testid="charting-view-summary"]')!;
+  const row = (id: string) => sum().querySelector<HTMLElement>(`[data-testid="${id}"]`)!;
+  it("typed readings and notes never appear in the This visit markup", async () => {
+    await mount("new");
+    await setInput(notes(), "PRIVATE-NOTE-TEXT 4242");
+    await openPanel();
+    const field = reading();
+    if (field) await setInput(field, "7777");
+    const markup = sum().outerHTML;
+    expect(markup).not.toContain("PRIVATE-NOTE-TEXT");
+    expect(markup).not.toContain("4242");
+    if (field) expect(markup).not.toContain("7777");
+    expect(row("visit-summary-status").textContent).toBe("Not saved yet");
+  });
+  it("lists the five steps in the reference order, with Record response optional", async () => {
+    await mount("new");
+    const lis = Array.from(sum().querySelectorAll('[data-testid="visit-steps"] li'));
+    expect(lis.map((li) => li.querySelectorAll("span")[1].textContent)).toEqual(["Choose areas", "Enter settings", "Record response", "Review & finish", "Session payment"]);
+    expect(lis.map((li) => li.textContent!.includes("Optional"))).toEqual([false, false, true, false, false]);
+  });
+  it("shows the machine the form actually has selected, and the save status, without saving anything", async () => {
+    await mount("new");
+    expect(row("visit-summary-machine").textContent, "nothing chosen yet").toBe("None selected");
+    await openPanel();
+    expect(machineSelect().value).toBe("room-9");
+    expect(row("visit-summary-machine").textContent).toContain("Mounted");
+    expect(row("visit-summary-status").textContent, "one block saved and nothing unsaved").toBe("Saved");
+    await setInput(notes(), "an unsaved note");
+    expect(row("visit-summary-status").textContent).toBe("Not saved yet");
+    expect(saveCalls(), "reading the form saves nothing").toBe(0);
+  });
+  it("a registered xCell Pur unit (the native route) reads as the studio's xCell, never as the catalogue's model name", async () => {
+    const XPUR = { ...PROFILE, profileId: "dectro-apilus:xcell-pur", manufacturer: "Apilus", model: "xCell Pur" };
+    ctxBox.ctx = {
+      ...CTX,
+      legacyMachine: null,
+      catalogue: [XPUR],
+      devices: [{ ...DEVICE, profileId: XPUR.profileId, displayName: "Room 9 xCell" }],
+    };
+    await mount("new");
+    await openPanel();
+    expect(machineSelect().value).toBe("room-9");
+    const text = row("visit-summary-machine").textContent!;
+    expect(text).toContain("Dectro xCell");
+    expect(text).not.toContain("xCell Pur");
+  });
+  it("a saved block whose unit is retired still names that unit, as no longer available, and never reads None selected", async () => {
+    ctxBox.ctx = { ...CTX, remembered: null, legacyMachine: null, unitNames: { "room-9": "Room 9 unit" }, devices: [{ ...DEVICE, retiredAt: "2026-01-01T00:00:00.000Z" }] };
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const saved = { ...BLOCK, studio_machine_id: "room-9", machine_profile_id: "fixture:mounted", machine_mode_key: "galvanic" };
+    await act(async () =>
+      root!.render(
+        createElement(ChartingViewShell, {
+          initialView: "new",
+          summary: createElement(ChartingVisitSummary, { clientName: "Avery Example", kind: "electrolysis", areas: [], count: 1, nextVisitNoteRecorded: false }),
+          children: createElement(BlockSetupForm, { sessionId: "s1", clientId: "c1", previousBlock: null, block: saved as never, firstEntry: null, onCancel: () => undefined }),
+        }),
+      ),
+    );
+    if (host!.querySelector('[data-testid="machine-first-open"]')) await openPanel();
+    const text = row("visit-summary-machine").textContent!;
+    expect(text).toContain("Room 9 unit");
+    expect(text).toContain("no longer available");
+  });
+  it("with TWO real forms open, the Machine row follows the one last edited: A, then B, then A", async () => {
+    const P2 = { ...PROFILE, profileId: "fixture:zeta", model: "Zeta" };
+    ctxBox.ctx = {
+      ...CTX,
+      remembered: null,
+      legacyMachine: null,
+      catalogue: [PROFILE, P2],
+      devices: [DEVICE, { ...DEVICE, deviceId: "room-10", displayName: "Room 10 unit", profileId: "fixture:zeta" }],
+    };
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const A = { ...BLOCK, id: "bA", studio_machine_id: "room-9", machine_profile_id: "fixture:mounted", machine_mode_key: "galvanic" };
+    const B = null; // a NEW block form beside the saved one
+    const form = (b: unknown) => createElement(BlockSetupForm, { key: b ? (b as { id: string }).id : "new", sessionId: "s1", clientId: "c1", previousBlock: null, block: b as never, firstEntry: null, onCancel: () => undefined });
+    await act(async () =>
+      root!.render(
+        createElement(ChartingViewShell, {
+          initialView: "new",
+          summary: createElement(ChartingVisitSummary, { clientName: "Avery Example", kind: "electrolysis", areas: [], count: 2, nextVisitNoteRecorded: false }),
+          children: createElement("div", null, form(A), form(B)),
+        }),
+      ),
+    );
+    for (let i = 0; i < 6 && host.querySelectorAll('[data-testid="machine-select"]').length < 2; i++) {
+      const open = host.querySelector('[data-testid="machine-first-open"]');
+      if (open && !open.hasAttribute("disabled")) await click(open);
+      await act(async () => void (await new Promise((r) => setTimeout(r, 30))));
+    }
+    expect(host.querySelectorAll('[data-testid="machine-select"]').length, "both panels open").toBe(2);
+    // The new block's unit is picked explicitly (create mode applies a pick at once and writes nothing).
+    const sels = Array.from(host.querySelectorAll<HTMLSelectElement>('[data-testid="machine-select"]'));
+    const newSel = sels[sels.length - 1];
+    const setSel = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+    await act(async () => {
+      setSel.call(newSel, "room-10");
+      newSel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const notesAt = (i: number) => host!.querySelectorAll<HTMLTextAreaElement>('[data-testid="additional-notes"]')[i];
+    expect(notesAt(1), "two real forms").toBeTruthy();
+    await setInput(notesAt(0), "a");
+    expect(row("visit-summary-machine").textContent, "A edited").toContain("Mounted");
+    await setInput(notesAt(1), "b");
+    expect(row("visit-summary-machine").textContent, "B edited after A").toContain("Zeta");
+    await setInput(notesAt(0), "aa");
+    expect(row("visit-summary-machine").textContent, "A edited again, B still dirty").toContain("Mounted");
+  });
+  describe("a failed or unknown-outcome save of machine readings", () => {
+    async function fillAndSave() {
+      await mount("new");
+      await openPanel();
+      for (const input of Array.from(host!.querySelectorAll<HTMLInputElement>('[data-testid="machine-reading-entry"] input[type="number"], [data-testid="machine-reading-entry"] input:not([type])'))) {
+        if (!input.closest('[data-testid^="setting-group-"][data-testid$="no-channels"]')) await setInput(input, "5");
+      }
+      const save = host!.querySelector<HTMLButtonElement>('[data-testid="machine-reading-save"]')!;
+      expect(save.disabled, "the readings can be saved").toBe(false);
+      await click(save);
+    }
+    it("a refused save shows Needs attention", async () => {
+      actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: false, error: "Could not save." } as never);
+      await fillAndSave();
+      expect(row("visit-summary-status").textContent).toBe("Needs attention");
+    });
+    it("an unknown-outcome save (the answer was lost) shows Needs attention", async () => {
+      actions.recordSetupSubmissionAction.mockRejectedValueOnce(new Error("network") as never);
+      await fillAndSave();
+      expect(row("visit-summary-status").textContent).toBe("Needs attention");
+    });
+    it("while a save is in flight, a previous refusal is not shown as attention (the pending term)", async () => {
+      actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: false, error: "Could not save." } as never);
+      await fillAndSave();
+      expect(row("visit-summary-status").textContent).toBe("Needs attention");
+      let release!: (v: unknown) => void;
+      actions.recordSetupSubmissionAction.mockImplementationOnce((() => new Promise((r) => (release = r))) as never);
+      await click(host!.querySelector<HTMLButtonElement>('[data-testid="machine-reading-save"]')!);
+      expect(row("visit-summary-status").textContent).not.toBe("Needs attention");
+      await act(async () => release({ ok: true }));
+    });
+    it("a successful save does not", async () => {
+      await fillAndSave();
+      expect(row("visit-summary-status").textContent).not.toBe("Needs attention");
+    });
+  });
+  it("shows the existing xCell by the picker's own label for a saved legacy block", async () => {
+    ctxBox.ctx = { ...CTX, remembered: null, devices: [] };
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const legacyBlock = { ...BLOCK, machine_profile_id: "dectro-apilus:xcell" };
+    await act(async () =>
+      root!.render(
+        createElement(ChartingViewShell, {
+          initialView: "new",
+          summary: createElement(ChartingVisitSummary, { clientName: "Avery Example", kind: "electrolysis", areas: [], count: 1, nextVisitNoteRecorded: false }),
+          children: createElement(BlockSetupForm, { sessionId: "s1", clientId: "c1", previousBlock: null, block: legacyBlock as never, firstEntry: null, onCancel: () => undefined }),
+        }),
+      ),
+    );
+    expect(row("visit-summary-machine").textContent).toBe("Dectro xCell");
+  });
+  it("shows the existing xCell after the practitioner picks it", async () => {
+    await mount("new");
+    await openPanel();
+    const sel = machineSelect();
+    const setSel = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+    await act(async () => {
+      setSel.call(sel, "legacy:xcell");
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(row("visit-summary-machine").textContent).toBe("Dectro xCell");
+  });
+  it("editing a saved block shows no Areas in draft (they are saved), and a NEW block shows what is picked but unsaved", async () => {
+    await mount("new");
+    expect(row("visit-summary-draft-areas").textContent, "the fixture edits a saved block").toBe("None selected");
+    await act(async () => root!.unmount());
+    host!.remove();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const create = createElement(ChartingViewShell, {
+      initialView: "new",
+      summary: createElement(ChartingVisitSummary, { clientName: "Avery Example", kind: "electrolysis", areas: [], count: 0, nextVisitNoteRecorded: false }),
+      children: createElement(BlockSetupForm, { sessionId: "s1", clientId: "c1", previousBlock: null, block: null as never, firstEntry: null, defaultPrimaryArea: "chin", defaultMachineFrequency: "27.12", onCancel: () => undefined }),
+    });
+    await act(async () => root!.render(create));
+    expect(row("visit-summary-draft-areas").textContent!.toLowerCase()).toContain("chin");
+    expect(row("visit-summary-status").textContent, "unsaved picks, nothing saved").toBe("Not saved yet");
+  });
+  it("a view switch changes nothing the card says and sends nothing", async () => {
+    await mount("new");
+    await openPanel();
+    const before = sum().textContent;
+    await click(toggle());
+    await click(toggle());
+    expect(sum().textContent).toBe(before);
+    expect(saveCalls()).toBe(0);
+  });
+});
+
 describe('"Your machine is already selected." shows only when a machine really is selected', () => {
   const hint = () => host!.querySelector('[data-testid="new-view-hint-machine"]');
   it("New view, a machine selected: shown", async () => {
@@ -403,9 +672,10 @@ describe("block editing in New view", () => {
 
   it("New view: numbered steps; Areas treated first, then Treatment settings (the machine panel), then Client response", async () => {
     await mount("new");
-    expect(step(1)!.textContent).toContain("Areas treated");
-    expect(step(2)!.textContent).toContain("Treatment settings");
-    expect(step(3)!.textContent).toContain("Client response");
+    expect(step(1)!.textContent).toContain("Choose areas");
+    expect(step(2)!.textContent).toContain("Enter settings");
+    expect(step(3)!.textContent).toContain("Record response");
+    expect(step(3)!.textContent).toContain("Optional");
     expect(before(step(1)!, areasEl())).toBe(true);
     expect(before(areasEl(), step(2)!)).toBe(true);
     expect(before(step(2)!, machineOpenEl())).toBe(true);
@@ -454,12 +724,12 @@ describe("block editing in New view", () => {
     await mount();
     const idsCurrent = Array.from(host!.querySelectorAll("[data-testid]"))
       .map((e) => e.getAttribute("data-testid"))
-      .filter((t) => !t!.startsWith("new-view-step") && !t!.startsWith("new-view-hint") && !t!.startsWith("charting-view-summary"))
+      .filter((t) => !t!.startsWith("new-view-step") && !t!.startsWith("new-view-hint") && !t!.startsWith("visit-") && !t!.startsWith("charting-view-summary"))
       .sort();
     await click(toggle());
     const idsNew = Array.from(host!.querySelectorAll("[data-testid]"))
       .map((e) => e.getAttribute("data-testid"))
-      .filter((t) => !t!.startsWith("new-view-step") && !t!.startsWith("new-view-hint") && !t!.startsWith("charting-view-summary"))
+      .filter((t) => !t!.startsWith("new-view-step") && !t!.startsWith("new-view-hint") && !t!.startsWith("visit-") && !t!.startsWith("charting-view-summary"))
       .sort();
     expect(idsNew).toEqual(idsCurrent);
     expect(idsNew).toContain("save-treatment-area");
