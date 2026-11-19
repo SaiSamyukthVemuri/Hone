@@ -465,7 +465,7 @@ export async function loadMachineSetupContext(input: {
   // MULTIPLEX AS A MODE OF THE ONE xCELL CHOICE (HON-71). A route only where the existing choice is offered, the contract row is
   // PUBLISHED and the studio has a usable unit; a failed read means no route, and the studio's form is exactly what it was.
   let multiplexRoute: XcellMultiplexRoute | null = null;
-  // PLATFORM ROLLOUT (Insurance E1/E2, R2). Only a studio that is OFFERED the legacy xCell choice has anything to gate, so the rollout and
+  // PLATFORM ROLLOUT. Only a studio that is OFFERED the legacy xCell choice has anything to gate, so the rollout and
   // the existing-block read happen ONLY then: a studio with no xCell history makes no rollout read and keeps its own reason, so a rollout
   // outage (or a deploy ahead of the migration) cannot degrade machine setup for every studio. An EXISTING MultiPlex block keeps its route
   // whatever the rollout says. For a new setup: on = offer, off = no route, and a FAILED read must NOT degrade (that would save a new setup
@@ -538,11 +538,17 @@ export async function loadMachineSetupContext(input: {
     }
   }
 
+  // WHEN THE ROLLOUT COULD NOT BE READ, THE xCELL UNIT IS WITHHELD WHOLE, not only its legacy-choice wrapper: with the wrapper gone the picker
+  // would list a registered xCell Pur unit as an ordinary machine, and a new setup saved from it would be recorded under the native identity
+  // while it is unknown whether this studio may use it. Every selection that could point at such a unit is withheld with it.
+  const withheld = new Set(rolloutUnavailable ? inventory.devices.filter((d) => d.profileId === XCELL_PUR_PROFILE_ID).map((d) => d.deviceId) : []);
+  const keep = <T extends { deviceId: string | null } | null>(v: T): T | null => (v !== null && v.deviceId !== null && withheld.has(v.deviceId) ? null : v);
+
   return {
     scope,
-    devices: inventory.devices,
+    devices: withheld.size > 0 ? inventory.devices.filter((d) => !withheld.has(d.deviceId)) : inventory.devices,
     inventoryReason: rolloutUnavailable ? ROLLOUT_UNAVAILABLE_MESSAGE : inventory.reason,
-    remembered,
+    remembered: keep(remembered),
     rememberedUnavailable,
     persistence,
     catalogue,
@@ -552,11 +558,11 @@ export async function loadMachineSetupContext(input: {
     priorSetupUnavailable,
     recordedSetupUnavailable,
     unitNames,
-    suggestedMachine,
-    restoredSelection,
+    suggestedMachine: keep(suggestedMachine),
+    restoredSelection: keep(restoredSelection),
     legacyMachine,
     multiplexRoute,
-    clientLastMachine,
+    clientLastMachine: keep(clientLastMachine),
   };
 }
 

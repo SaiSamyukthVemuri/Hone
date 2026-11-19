@@ -116,7 +116,7 @@ export async function storedIdentityMatches(
 }
 
 /**
- * Whether this block ALREADY stores an xCell Pur unit (Insurance E1): re-saving it must keep its identity whatever the platform rollout says.
+ * Whether this block ALREADY stores an xCell Pur unit: re-saving it must keep its identity whatever the platform rollout says.
  * Reads the block's unit, then the unit's model. A failed or odd read is false (the rollout then decides, and an error refuses): never a guess.
  */
 export async function blockUsesXcellPur(db: MachineDb, blockId: string, sessionId: string): Promise<boolean> {

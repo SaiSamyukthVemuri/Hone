@@ -2807,6 +2807,32 @@ describe("loadMachineSetupContext and the platform rollout", () => {
     }
   });
 
+  it("a FAILED rollout read withholds a registered xCell unit from the choices altogether, not only the legacy offer (it must not appear as a standalone machine)", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    HISTORY.value = true;
+    const PUR_UNIT = "22222222-2222-4222-8222-222222222222";
+    DB.rowsFor.machine_profile_mode_contract = [{ mode_key: "multiplex", machine_profile_version: 1 }];
+    DB.rowsFor.studio_machines = [{
+      id: PUR_UNIT, studio_id: "studio-fett", machine_profile_id: "dectro-apilus:xcell-pur",
+      machine_profile_version: 1, display_name: "Dectro xCell", installed_options: [], retired_at: null,
+    }];
+    ROLLOUT.value = "on";
+    const on = await actions.loadMachineSetupContext(NEW_SETUP);
+    expect(on.devices.map((d) => d.deviceId)).toContain(PUR_UNIT);
+    ROLLOUT.value = "error";
+    const ctx = await actions.loadMachineSetupContext(NEW_SETUP);
+    expect(ctx.legacyMachine).toBeNull();
+    expect(ctx.devices.map((d) => d.deviceId)).not.toContain(PUR_UNIT);
+    expect(ctx.remembered?.deviceId).not.toBe(PUR_UNIT);
+    expect(ctx.suggestedMachine?.deviceId).not.toBe(PUR_UNIT);
+    expect(ctx.clientLastMachine?.deviceId).not.toBe(PUR_UNIT);
+    expect(ctx.inventoryReason).toBe(ROLLOUT_UNAVAILABLE_MESSAGE);
+    // OFF is different by design: the picker already hides the unit behind the legacy choice, and the device list is untouched.
+    ROLLOUT.value = "off";
+    const off = await actions.loadMachineSetupContext(NEW_SETUP);
+    expect(off.devices.map((d) => d.deviceId)).toContain(PUR_UNIT);
+  });
+
   it("a studio with NO legacy history makes no rollout read and keeps its own reason, whatever the rollout says (outage blast radius)", async () => {
     signIn("studio-one", "pract-a");
     for (const v of ["error", "off", "on"] as const) {

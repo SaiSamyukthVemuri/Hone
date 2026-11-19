@@ -53,7 +53,7 @@ export function resetRolloutAlertWindowForTests(): void {
 }
 
 /**
- * The NEW-SETUP route gate (Insurance E1, E2). An EXISTING MultiPlex block keeps its route whatever the rollout says (re-saving it while off keeps its
+ * The NEW-SETUP route gate. An EXISTING MultiPlex block keeps its route whatever the rollout says (re-saving it while off keeps its
  * saved identity). Otherwise: on = offer it, off = do not, error = REFUSE with a retryable message. It never degrades to the legacy machine.
  */
 export function xcellRouteDecision(o: { existingBlockUsesXcellPur: boolean; rollout: RolloutRead }): "offer" | "hide" | "refuse" {
