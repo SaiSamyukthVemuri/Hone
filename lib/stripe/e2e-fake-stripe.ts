@@ -104,9 +104,10 @@ function storePi(run: string, pi: FakePi): void {
     /* guard off or ledger unavailable → in-memory only */
   }
 }
+// The PERSISTED state is the truth: another route's bundle may have changed the intent (a webhook cancelling what a server
+// action created), so every read asks the ledger first and refreshes this bundle's cache from it. The in-memory copy is only
+// a fallback for when there is no ledger (fake mode off, as in an ordinary unit test).
 function storedPi(run: string, id: string): FakePi | null {
-  const local = piByIdByRun.get(run)?.get(id);
-  if (local) return local;
   try {
     const persisted = readFakePiState(run, id) as FakePi | null;
     if (persisted) {
@@ -116,9 +117,9 @@ function storedPi(run: string, id: string): FakePi | null {
       return persisted;
     }
   } catch {
-    /* guard off or ledger unavailable */
+    /* guard off or ledger unavailable: fall back to this bundle's memory */
   }
-  return null;
+  return piByIdByRun.get(run)?.get(id) ?? null;
 }
 // Statuses real Stripe lets a PaymentIntent be cancelled from.
 const CANCELLABLE = new Set(["requires_payment_method", "requires_capture", "requires_confirmation", "requires_action"]);
@@ -185,15 +186,28 @@ function localOriginOrNull(raw: string): string | null {
 const FAKE_WEBHOOK_REDELIVERIES = 8;
 const FAKE_WEBHOOK_REDELIVERY_GAP_MS = 1000;
 
+// Every deferred send is tracked per run, so resetting a run's state also cancels any send still waiting: a reset must not
+// leave an earlier scenario's event to fire into the next one.
+const timersByRun = new Map<string, Set<ReturnType<typeof setTimeout>>>();
+function schedule(run: string, fn: () => void, ms: number): void {
+  const set = timersByRun.get(run) ?? new Set<ReturnType<typeof setTimeout>>();
+  timersByRun.set(run, set);
+  const t = setTimeout(() => {
+    set.delete(t);
+    fn();
+  }, ms);
+  set.add(t);
+  if (typeof t === "object" && t && "unref" in t) (t as { unref: () => void }).unref();
+}
+
 function redeliverLater(run: string, piId: string, account: string | null, attempt: number): void {
   if (attempt > FAKE_WEBHOOK_REDELIVERIES) return;
-  const t = setTimeout(() => {
+  schedule(run, () => {
     void (async () => {
       const out = await deliverFakePaymentFailedWebhook(run, piId, account);
       if (!out.delivered) redeliverLater(run, piId, account, attempt + 1);
     })();
   }, FAKE_WEBHOOK_REDELIVERY_GAP_MS);
-  if (typeof t === "object" && t && "unref" in t) (t as { unref: () => void }).unref();
 }
 async function redeliverFromFirstAttempt(run: string, piId: string, account: string | null): Promise<void> {
   const out = await deliverFakePaymentFailedWebhook(run, piId, account);
@@ -288,6 +302,8 @@ export function resetFakeStripeState(run: string = runId()): void {
   seqByRun.delete(run);
   moneyByIdByRun.delete(run);
   piByIdByRun.delete(run);
+  for (const t of timersByRun.get(run) ?? []) clearTimeout(t);
+  timersByRun.delete(run);
 }
 
 // ---- The fake client -----------------------------------------------------------
@@ -369,10 +385,9 @@ async function synthPaymentIntent(run: string, opts: RequestOpts, params?: Creat
           const first = await deliverFakePaymentFailedWebhook(run, id, opts?.stripeAccount ?? null);
           if (!first.delivered) redeliverLater(run, id, opts?.stripeAccount ?? null, 1);
         } else {
-          const t = setTimeout(() => {
+          schedule(run, () => {
             void redeliverFromFirstAttempt(run, id, opts?.stripeAccount ?? null);
           }, FAKE_WEBHOOK_DELAY_MS);
-          if (typeof t === "object" && t && "unref" in t) (t as { unref: () => void }).unref();
         }
       }
       throw new Stripe.errors.StripeCardError({

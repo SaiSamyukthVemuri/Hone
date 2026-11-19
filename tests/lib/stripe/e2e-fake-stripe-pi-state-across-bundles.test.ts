@@ -55,9 +55,29 @@ describe("PaymentIntent state is shared across route bundles", () => {
     const canceled = await stripeB.paymentIntents.cancel(id, undefined, { stripeAccount: ACCOUNT });
     expect(canceled).toMatchObject({ id, status: "canceled" });
 
+    // The bundle that CREATED the intent must read the cancel made elsewhere, not its own cached requires_payment_method.
+    expect(await stripeA.paymentIntents.retrieve(id, undefined, { stripeAccount: ACCOUNT })).toMatchObject({ id, status: "canceled" });
+
     vi.resetModules(); // a third bundle sees the cancel
     const c = await import("@/lib/stripe/e2e-fake-stripe");
     const stripeC = c.createFakeStripe() as never as typeof stripeA;
     expect(await stripeC.paymentIntents.retrieve(id, undefined, { stripeAccount: ACCOUNT })).toMatchObject({ id, status: "canceled" });
+  });
+
+  it("two bundles writing DIFFERENT intents never lose each other's write (one file per intent, no shared read-modify-write)", async () => {
+    const ledger = await import("@/lib/stripe/e2e-fake-ledger");
+    ledger.resetFakeStripeLedger(RUN);
+    const mk = (id: string) => ({ id, status: "requires_payment_method", amount: 100, currency: "cad", metadata: {}, latestCharge: null });
+    // Interleave writes the way two routes would: neither write may replace the other's intent.
+    ledger.writeFakePiState(RUN, mk("pi_test_e2e_concurrent_a"));
+    ledger.writeFakePiState(RUN, mk("pi_test_e2e_concurrent_b"));
+    ledger.writeFakePiState(RUN, { ...mk("pi_test_e2e_concurrent_a"), status: "canceled" });
+    expect(ledger.readFakePiState(RUN, "pi_test_e2e_concurrent_a")).toMatchObject({ status: "canceled" });
+    expect(ledger.readFakePiState(RUN, "pi_test_e2e_concurrent_b")).toMatchObject({ status: "requires_payment_method" });
+    // an id cannot reach outside the temp directory
+    ledger.writeFakePiState(RUN, mk("../../etc/evil"));
+    expect(ledger.readFakePiState(RUN, "../../etc/evil")).toMatchObject({ id: "../../etc/evil" });
+    ledger.resetFakeStripeLedger(RUN);
+    expect(ledger.readFakePiState(RUN, "pi_test_e2e_concurrent_a")).toBeNull();
   });
 });

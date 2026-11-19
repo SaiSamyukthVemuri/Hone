@@ -1,5 +1,5 @@
 import "server-only";
-import { existsSync, readFileSync, appendFileSync, writeFileSync, renameSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, appendFileSync, writeFileSync, renameSync, rmSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -39,8 +39,20 @@ function ledgerPath(runId: string): string {
 function configPath(runId: string): string {
   return join(tmpdir(), `${PREFIX}${runId}.config.json`);
 }
-function piStatePath(runId: string): string {
-  return join(tmpdir(), `${PREFIX}${runId}.pis.json`);
+// One file PER intent: a write replaces only that intent's own file (atomic rename), so two writers can never lose each
+// other's update the way a shared read-modify-write map would. The id is reduced to [A-Za-z0-9_-] so no separator can
+// reach the path.
+function piStatePath(runId: string, id: string): string {
+  return join(tmpdir(), `${PREFIX}${runId}.pi.${id.replace(/[^A-Za-z0-9_-]/g, "_")}.json`);
+}
+function piStatePrefix(runId: string): string {
+  return `${PREFIX}${runId}.pi.`;
+}
+function removePiStateFiles(runId: string): void {
+  const prefix = piStatePrefix(runId);
+  for (const name of readdirSync(tmpdir())) {
+    if (name.startsWith(prefix) && name.endsWith(".json")) rmSync(join(tmpdir(), name), { force: true });
+  }
 }
 
 export type FakeOutcome = "success" | "decline" | "processing";
@@ -151,28 +163,18 @@ export function setFakeStripeWebhookTiming(runId: string, timing: FakeWebhookTim
 // Synthetic, test-safe fields only (id, status, amount, currency, metadata ids, customer id, charge id, synthetic error code).
 export function writeFakePiState(runId: string, pi: { id: string } & Record<string, unknown>): void {
   assertAllowed(runId);
-  const p = piStatePath(runId);
-  let all: Record<string, unknown> = {};
-  if (existsSync(p)) {
-    try {
-      all = JSON.parse(readFileSync(p, "utf8"));
-    } catch {
-      all = {};
-    }
-  }
-  all[pi.id] = pi;
-  const tmp = `${p}.${Math.abs(hashRun(runId))}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(all), { mode: 0o600 });
+  const p = piStatePath(runId, pi.id);
+  const tmp = `${p}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tmp, JSON.stringify(pi), { mode: 0o600 });
   renameSync(tmp, p);
 }
 
 export function readFakePiState(runId: string, id: string): Record<string, unknown> | null {
   assertAllowed(runId);
-  const p = piStatePath(runId);
+  const p = piStatePath(runId, id);
   if (!existsSync(p)) return null;
   try {
-    const all = JSON.parse(readFileSync(p, "utf8")) as Record<string, unknown>;
-    const pi = all[id];
+    const pi = JSON.parse(readFileSync(p, "utf8")) as unknown;
     return pi && typeof pi === "object" ? (pi as Record<string, unknown>) : null;
   } catch {
     return null;
@@ -189,15 +191,15 @@ export function resetFakeStripeLedger(runId: string): void {
   assertAllowed(runId);
   const p = ledgerPath(runId);
   if (existsSync(p)) rmSync(p, { force: true });
-  const pis = piStatePath(runId);
-  if (existsSync(pis)) rmSync(pis, { force: true });
+  removePiStateFiles(runId);
 }
 
 export function cleanupFakeStripeFiles(runId: string): void {
   assertAllowed(runId);
-  for (const p of [ledgerPath(runId), configPath(runId), piStatePath(runId)]) {
+  for (const p of [ledgerPath(runId), configPath(runId)]) {
     if (existsSync(p)) rmSync(p, { force: true });
   }
+  removePiStateFiles(runId);
 }
 
 // Deterministic tmp-suffix seed from the (already validated) run id, no Math.random.
