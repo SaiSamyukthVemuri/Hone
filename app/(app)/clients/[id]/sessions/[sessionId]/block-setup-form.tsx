@@ -104,7 +104,7 @@ import { useRetainedState } from "@/components/charting-state-provider";
 import { NewViewHint, NewViewStep, useChartingRollout, useChartingView } from "@/components/charting-view-context";
 import { useReportVisitDraft, visitMachineLine } from "@/components/charting-visit-draft";
 import { useRegisterVisitSaver, type SaveOutcome } from "@/components/charting-visit-save";
-import { bagHoldsValue, hiddenBagsNotice, readingsOf, hiddenModesWithValues, mergeTouched, pulseTouchedFromRecord, pulseRecordable, switchMode, type ModeBags, type PulseTouched } from "@/lib/sessions/mode-bags";
+import { bagHoldsValue, hiddenBagsNotice, readingsOf, hiddenModesWithValues, mergeTouched, pulseTouchedDiffersFromRecord, pulseTouchedFromRecord, pulseRecordable, switchMode, type ModeBags, type PulseTouched } from "@/lib/sessions/mode-bags";
 import { DraftRegistryProvider, useDraftRegistryState, useReportDraft } from "@/components/machines/draft-registry";
 import { MachineFirstSetupConnected } from "@/components/machines/machine-first-setup-connected";
 import { ProbePicker } from "@/components/probe-picker";
@@ -1118,6 +1118,9 @@ export function BlockSetupForm({
   const hiddenModes = rollout ? hiddenModesWithValues(modeBags, draft.mode) : [];
   const dirty =
     hiddenModes.length > 0 ||
+    // WHAT WILL BE RECORDED IS PART OF "UNSAVED" (Codex P2): clearing a pulse field and typing the shown default back leaves the draft equal to its
+    // baseline but marks the control as touched, so the save would now record a value it did not before.
+    (rollout && pulseTouchedDiffersFromRecord(pulseTouched, firstEntry)) ||
     JSON.stringify(draft) !== initialDraftJson.current ||
     draftRegistry.view.anyDraft;
   // WHAT THE NEW VIEW'S "This visit" CARD SHOWS ABOUT THIS FORM. Display only: the form reports and never reads it back.
