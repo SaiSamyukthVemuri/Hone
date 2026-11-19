@@ -92,7 +92,8 @@ export async function loadFinderClients(
   const supabase = supabaseClient ?? (await createClient());
   try {
     const source = supabase as unknown as DirectorySupabase;
-    const [active, archived] = await Promise.all([readDirectoryClients(source, studio.id, false), readDirectoryClients(source, studio.id, true)]);
+    const active = await readDirectoryClients(source, studio.id, false);
+    const archived = await readDirectoryClients(source, studio.id, true);
     const clients: FinderClient[] = [
       ...active.map((c) => ({ id: c.id, name: c.name, preferredName: c.preferred_name ?? null, archived: false })),
       ...archived.map((c) => ({ id: c.id, name: c.name, preferredName: c.preferred_name ?? null, archived: true })),

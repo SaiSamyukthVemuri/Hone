@@ -172,3 +172,11 @@ export function findClients(clients: readonly FinderClient[], rawQuery: string, 
     })),
   };
 }
+
+/** The screen states this whenever money sits on an appointment left off the document (a future booking with a payment); it is never only counted. */
+export function offDocumentMoneyNotice(count: number): string | null {
+  if (!Number.isInteger(count) || count <= 0) return null;
+  return count === 1
+    ? "1 upcoming booking has a payment recorded. It is not listed on this statement because the booking has not happened yet."
+    : `${count} upcoming bookings have payments recorded. They are not listed on this statement because the bookings have not happened yet.`;
+}
