@@ -157,6 +157,7 @@ describe("the add-pass form reports the machine it inherits from the saved block
         ),
       ),
     );
+    await act(async () => void (await new Promise((r) => setTimeout(r, 30)))); // let any second read land before counting
     expect(add.load).toHaveBeenCalledTimes(1);
     expect(out().dataset.m).toBe("Fixture Mounted");
   });
