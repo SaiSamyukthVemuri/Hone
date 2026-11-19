@@ -143,6 +143,7 @@ describe("with the REAL forms", () => {
     expect(add.fn).not.toHaveBeenCalled();
     expect(note).not.toHaveBeenCalled();
     expect(res("note")!.getAttribute("data-status")).toBe("nothing");
+    expect(res("pass:b1")!.getAttribute("data-status")).toBe("nothing");
   });
   it("an edited note is saved through the note's own action, once", async () => {
     await mountReal();
