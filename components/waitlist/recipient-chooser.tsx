@@ -38,6 +38,7 @@ export function RecipientChooser({
       <legend className="font-medium">Choose who to invite</legend>
       <input
         type="search"
+        autoComplete="off"
         aria-label="Search waiting people by name or email"
         placeholder="Search by name or email"
         value={state.query}

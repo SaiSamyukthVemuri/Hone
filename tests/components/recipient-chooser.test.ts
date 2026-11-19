@@ -45,4 +45,7 @@ describe("RecipientChooser", () => {
   it("a small list needs no cap and renders everyone", () => {
     expect((render(7).match(/type="checkbox"/g) ?? []).length).toBe(7);
   });
+  it("the search box opts out of browser autofill, so names typed here are not remembered by the browser", () => {
+    expect(render(10)).toMatch(/<input[^>]*type="search"[^>]*autoComplete="off"|<input[^>]*autoComplete="off"[^>]*type="search"/i);
+  });
 });
