@@ -64,7 +64,7 @@ function mountFinder(over: Partial<Parameters<typeof ClientFinder>[0]> = {}) {
   return el;
 }
 function type(el: HTMLElement, text: string) {
-  const input = el.querySelector("input") as HTMLInputElement;
+  const input = (el.querySelector("input[role=combobox]") ?? el.querySelector("input")) as HTMLInputElement;
   const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
   act(() => {
     set.call(input, text);
@@ -154,7 +154,7 @@ describe("Find a client (mounted)", () => {
   });
 });
 
-const rows = (over = {}) => ({ clientId: "c-ada-1", name: "Ada Lovelace", visitCount: 2, paidCents: 5000, awaitingCount: 1, ...over });
+const rows = (over = {}) => ({ clientId: "c-ada-1", name: "Ada Lovelace", visitCount: 2, paidCents: 5000, awaitingCount: 1, unconfirmedFeeCount: 0, ...over });
 const reconciliation = { clientsSpendCents: 5000, offDocumentCollectedCents: 0, studioCollectedCents: 5000, offDocumentWithMoney: 0, reconciled: true };
 const dirOk = (over: { rows?: ReturnType<typeof rows>[]; reconciliation?: typeof reconciliation } = {}) => {
   const r = over.rows ?? [rows()];
@@ -184,6 +184,27 @@ describe("the Clients tab", () => {
     expect(out).toContain('href="/financials/statement?month=2026-11"'); // the Studio tab keeps the month
     expect(out).toMatch(/Visits in this month, by appointment date/);
     expect(out).not.toMatch(/Invoice/); // no control promises what this change does not deliver
+  });
+  it("a client with an unconfirmed cancellation or no-show fee and no awaiting visit is NOT \"All confirmed\"", () => {
+    const out = html(createElement(ClientsView, viewProps({ directory: dirOk({ rows: [rows({ awaitingCount: 0, unconfirmedFeeCount: 1 }), rows({ clientId: "c2", name: "Bo Chen", awaitingCount: 0, unconfirmedFeeCount: 0 })] }) })));
+    expect(out).toMatch(/1 fee awaiting payment confirmation/);
+    expect(out.match(/All confirmed/g)?.length).toBe(1); // only the client with nothing outstanding
+    const both = html(createElement(ClientsView, viewProps({ directory: dirOk({ rows: [rows({ awaitingCount: 2, unconfirmedFeeCount: 2 })] }) })));
+    expect(both).toMatch(/2 visits awaiting payment confirmation · 2 fees awaiting payment confirmation/);
+  });
+  it("when the monthly read fails but the client list loads, the finder states NO visit count (never a false zero)", () => {
+    const el = document.createElement("div");
+    document.body.appendChild(el);
+    const root = createRoot(el);
+    act(() => {
+      root.render(createElement(ClientsView, viewProps({ directory: { ok: false, reason: "read_failed" } })));
+    });
+    mounted.push({ unmount: () => root.unmount(), el });
+    type(el, "grace");
+    const t = optionTexts(el);
+    expect(t).toHaveLength(1);
+    expect(t[0]).toMatch(/Visit count for November 2026 unavailable/);
+    expect(t[0]).not.toMatch(/No visits|opens full history|\b0 visits?\b/);
   });
   it("is empty with an explanation and the finder still available", () => {
     const out = html(createElement(ClientsView, viewProps({ directory: dirOk({ rows: [] }) })));

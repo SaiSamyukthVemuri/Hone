@@ -22,7 +22,8 @@ export type FinderProps = {
   monthLabel: string;
   clients: readonly FinderOption[];
   /** Eligible visits in the selected month, by client id; absent means none. */
-  monthVisits: Readonly<Record<string, number>>;
+  /** NULL when the month's counts could not be read: the finder then states no count at all (never a zero). */
+  monthVisits: Readonly<Record<string, number>> | null;
   /** Last visit dates (studio-local), only for clients that share a name; absent means the detail could not be read. */
   lastVisits: Readonly<Record<string, string | null>> | null;
 };
@@ -32,7 +33,7 @@ export function ClientFinder({ month, monthLabel, clients, monthVisits, lastVisi
   const listId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const [state, setState] = useState<FinderKeyState>(FINDER_INITIAL);
-  const counts = useMemo(() => new Map(Object.entries(monthVisits)), [monthVisits]);
+  const counts = useMemo(() => (monthVisits === null ? null : new Map(Object.entries(monthVisits))), [monthVisits]);
   // The matcher takes the shown name only; the options carry no stored or legal name to match against.
   const searchable = useMemo<FinderClient[]>(() => clients.map((c) => ({ id: c.id, name: c.displayName, preferredName: null, archived: c.archived })), [clients]);
   const outcome = useMemo(() => findClients(searchable, state.query, counts), [searchable, state.query, counts]);
@@ -102,7 +103,7 @@ export function ClientFinder({ month, monthLabel, clients, monthVisits, lastVisi
                 >
                   <span className="font-medium">{o.displayName}{o.archived ? " (archived)" : ""}</span>
                   <span className="text-xs text-fg-muted">
-                    {o.monthVisitCount === 0 ? `No visits in ${monthLabel} · opens full history` : `${o.monthVisitCount} ${o.monthVisitCount === 1 ? "visit" : "visits"} in ${monthLabel}`}
+                    {o.monthVisitCount === null ? `Visit count for ${monthLabel} unavailable` : o.monthVisitCount === 0 ? `No visits in ${monthLabel} · opens full history` : `${o.monthVisitCount} ${o.monthVisitCount === 1 ? "visit" : "visits"} in ${monthLabel}`}
                     {o.sameNameAsAnother ? ` · ${lastVisits ? lastVisitDetail(lastVisits[o.clientId]) : "Same name as another client"}` : ""}
                   </span>
                 </li>

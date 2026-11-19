@@ -20,10 +20,22 @@ export type ClientsViewProps = {
   finder: { state: "ok"; clients: readonly FinderOption[]; lastVisits: Record<string, string | null> | null } | { state: "too_many" } | { state: "unavailable" };
 };
 
+/** "All confirmed" only when nothing is awaiting: no unconfirmed visit AND no unconfirmed fee item (a cancellation or no-show fee not yet confirmed). */
+function rowStatusText(r: { awaitingCount: number; unconfirmedFeeCount: number }): string {
+  const parts: string[] = [];
+  if (r.awaitingCount > 0) parts.push(`${r.awaitingCount} ${r.awaitingCount === 1 ? "visit" : "visits"} awaiting payment confirmation`);
+  if (r.unconfirmedFeeCount > 0) parts.push(`${r.unconfirmedFeeCount} ${r.unconfirmedFeeCount === 1 ? "fee" : "fees"} awaiting payment confirmation`);
+  return parts.length > 0 ? parts.join(" · ") : "All confirmed";
+}
+
 export function ClientsView({ month, monthLabel, maxMonth, timezone, notice, page, format, directory, finder }: ClientsViewProps) {
   const paged = directory.ok ? pageDirectory(directory.value, page, CLIENTS_PAGE_SIZE) : null;
-  const monthVisits: Record<string, number> = {};
-  if (directory.ok) for (const r of directory.value.rows) monthVisits[r.clientId] = r.visitCount;
+  // A failed monthly read must not look like "no visits": the finder then gets NO counts (null), not zeros.
+  let monthVisits: Record<string, number> | null = null;
+  if (directory.ok) {
+    monthVisits = {};
+    for (const r of directory.value.rows) monthVisits[r.clientId] = r.visitCount;
+  }
   const offNotice = directory.ok ? offDocumentMoneyNotice(directory.value.reconciliation.offDocumentWithMoney) : null;
 
   return (
@@ -76,7 +88,7 @@ export function ClientsView({ month, monthLabel, maxMonth, timezone, notice, pag
                       </th>
                       <td className="py-2 pr-3 text-right tabular-nums">{r.visitCount}</td>
                       <td className="py-2 pr-3 text-right tabular-nums">{format(r.paidCents)}</td>
-                      <td className="py-2 text-fg-muted">{r.awaitingCount > 0 ? `${r.awaitingCount} ${r.awaitingCount === 1 ? "visit" : "visits"} awaiting payment confirmation` : "All confirmed"}</td>
+                      <td className="py-2 text-fg-muted">{rowStatusText(r)}</td>
                     </tr>
                   ))}
                 </tbody>
