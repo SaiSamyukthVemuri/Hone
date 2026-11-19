@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 278,
-    "last": "0360_roles_save_inert_denial.sql",
-    "sha256": "476bc2d4d225d4655a9b448598204ad79032ac8a409cc7739d69e32812ac09df"
+    "count": 279,
+    "last": "0361_roles_review_authority.sql",
+    "sha256": "2930a64641da144502a0456ec3ae08b4e12ce699de25bed256933908dfff2d61"
   },
   "public": {
     "tables": [
@@ -431,9 +431,14 @@
       "perm_fail",
       "perm_rank",
       "perm_reason_ok",
+      "perm_review_hash",
+      "perm_review_hash_input",
+      "perm_review_involved",
+      "perm_review_timing",
       "perm_run_activation",
       "perm_run_basis",
       "perm_run_changes",
+      "perm_run_changes_reviewed",
       "perm_scope_source",
       "permission_audit_append_only",
       "platform_lead_alerts_guard",
@@ -444,6 +449,7 @@
       "preview_adopt_new_defaults",
       "preview_reset",
       "preview_role_changes",
+      "preview_role_changes_at",
       "process_email_provider_event",
       "public_booking_local_to_utc",
       "public_booking_practitioner_options",
@@ -560,6 +566,7 @@
       "save_client_card_on_file",
       "save_client_card_on_file_ordered",
       "save_role_permissions",
+      "save_role_permissions_reviewed",
       "save_weekly_availability",
       "service_is_bookable_by_new_client",
       "session_actor_practitioner",
