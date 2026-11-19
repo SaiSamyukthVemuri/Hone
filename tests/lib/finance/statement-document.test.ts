@@ -10,6 +10,7 @@ import {
   VISIT_FLAGS,
   VISIT_STATES,
   awaitingVisitLine,
+  FEE_REASON_COPY,
   toCsvRows,
   toIssueSnapshot,
   toSnapshot,
@@ -266,8 +267,9 @@ describe("scope: month, full history, inclusive range, chosen visits", () => {
   it("a month holds only that studio-local month, in date order", () => {
     expect(doc(all, { scope: { kind: "month", month: "2026-11" } }).visits.map((v) => v.localDate)).toEqual(["2026-11-30"]);
   });
-  it("full history holds everything exactly once, in date order, even if the same visit was passed twice", () => {
-    expect(doc([...all, nov30], { scope: { kind: "full_history" } }).visits.map((v) => v.localDate)).toEqual(["2026-10-31", "2026-11-30", "2026-12-01"]);
+  it("full history holds everything exactly once, in date order; the same visit passed twice is REFUSED, not merged", () => {
+    expect(doc(all, { scope: { kind: "full_history" } }).visits.map((v) => v.localDate)).toEqual(["2026-10-31", "2026-11-30", "2026-12-01"]);
+    expect(build([...all, nov30], { scope: { kind: "full_history" } })).toEqual({ ok: false, error: "duplicate_appointment" });
   });
   it("a custom range is inclusive at BOTH ends", () => {
     const r = doc(all, { scope: { kind: "range", startLocal: "2026-10-31", endLocalInclusive: "2026-11-30" } });
@@ -420,6 +422,103 @@ describe("projections pick fields explicitly: no id ever reaches a snapshot or C
     const src = readFileSync(path.join(ROOT, "lib/finance/statement-document.ts"), "utf8");
     const tail = src.slice(src.indexOf("Output projections"));
     expect(tail.replace(/\[\.\.\.[a-z.]+\]/g, "")).not.toMatch(/\.\.\.(doc|v|f|i|r|body|input)\b/);
+  });
+});
+
+describe("money-rule hardening (Insurance F1 to F5)", () => {
+  const item = (over: Partial<FeeItemInput> = {}): FeeItemInput => {
+    n += 1;
+    return { appointmentId: `item-${n}`, clientId: "client-1", localDate: "2026-11-10", startsAt: "2026-11-10T15:00:00Z", reason: "no_show_fee", feeCandidates: [charged(3000)], lines: [], ...over };
+  };
+  it("F1/F4: one appointment id is ONE record: a repeat within visits, within items or across them is refused, whatever its lines", () => {
+    const v = visit({ lines: [line("collected_cash", 5000, "settlement")] });
+    const asItem = item({ appointmentId: v.appointmentId, lines: [line("collected_cash", 5000, "settlement")] });
+    expect(build([v], { feeItems: [asItem] })).toEqual({ ok: false, error: "duplicate_appointment" });
+    expect(build([v, { ...v, lines: [line("collected_cash", 1, "settlement")] }])).toEqual({ ok: false, error: "duplicate_appointment" });
+    const i1 = item({ lines: [line("collected_card_fee", 3000)] });
+    expect(build([], { feeItems: [i1, { ...i1, lines: [line("collected_card_fee", 9)] }] })).toEqual({ ok: false, error: "duplicate_appointment" });
+  });
+  it("F2: a waived fee is settled (does not block the balance); a fully refunded fee is settled and visible in refunded and original paid, CSV and snapshot", () => {
+    const d = doc([visit({ feeCandidates: [quote(5000)], lines: [line("collected_card_session", 5000)] })], {
+      feeItems: [item({ lines: [line("waived", 3000, "settlement")] }), item({ localDate: "2026-11-11", startsAt: "2026-11-11T15:00:00Z", lines: [line("refunded_card_fee", 3000)] })],
+    });
+    expect(d.feeItems.map((f) => f.state)).toEqual(["settled", "settled"]);
+    expect(d.balanceDue).toEqual({ kind: "established", cents: 0 });
+    expect(d.totals.waivedCents).toBe(3000);
+    expect(d.totals.refundedCents).toBe(3000);
+    expect(d.totals.originalPaidCents).toBe(5000 + 3000);
+    expect(toSnapshot(d).lineItems.map((l) => [l.state, l.paidCents, l.refundedCents, l.waivedCents])).toEqual([["settled", 0, 0, 3000], ["settled", 0, 3000, 0]]);
+    const rows = toCsvRows(d);
+    expect(rows[2].slice(9, 12)).toEqual([0, 0, 3000]);
+    expect(rows[3].slice(9, 12)).toEqual([0, 3000, 0]);
+  });
+  it("F2: a fee only partly waived is NOT settled (a recorded shortfall blocks the balance)", () => {
+    const d = doc([], { feeItems: [item({ lines: [line("waived", 1000, "settlement")] })] });
+    expect(d.feeItems[0].state).toBe("unconfirmed");
+    expect(d.balanceDue).toEqual({ kind: "not_established", because: "unconfirmed_fee" });
+  });
+  it("F3: a partial waiver with nothing paid is NOT a zero balance: fee 10000, waived 3000 leaves it unaccounted", () => {
+    const v = classifyVisit(visit({ feeCandidates: [quote(10000)], lines: [line("waived", 3000, "settlement")] }));
+    expect(v.state).toBe("unknown");
+    expect(v.reasons).toEqual(["partial_payment_unverified"]);
+    expect(doc([visit({ feeCandidates: [quote(10000)], lines: [line("waived", 3000, "settlement")] })]).balanceDue.kind).toBe("not_established");
+    expect(classifyVisit(visit({ feeCandidates: [quote(10000)], lines: [line("waived", 10000, "settlement")] })).state).toBe("adjusted");
+    expect(classifyVisit(visit({ feeCandidates: [quote(10000)], lines: [line("refunded_card_session", 10000)] })).state).toBe("adjusted");
+    const owes = classifyVisit(visit({ feeCandidates: [quote(10000)], lines: [line("waived", 3000, "settlement"), line("still_owes_note", null, "settlement")] }));
+    expect([owes.state, owes.owedCents]).toEqual(["confirmed_unpaid", 7000]);
+  });
+  it("F5: ONE rule for visits and items: confirmed collected lines count, unconfirmed lines never do, the state only decides the balance", () => {
+    const v = visit({ feeCandidates: [quote(5000)], lines: [line("collected_cash", 1000, "settlement"), line("unresolved", 4000)] });
+    const i = item({ lines: [line("collected_card_fee", 1000), line("unresolved", 2000)] });
+    const d = doc([v], { feeItems: [i] });
+    expect(d.visits[0].state).toBe("unknown");
+    expect(d.feeItems[0].state).toBe("unconfirmed");
+    expect(d.totals.paidCents).toBe(1000 + 1000); // the unresolved 4000 and 2000 are in neither
+    expect(d.balanceDue.kind).toBe("not_established");
+    const onlyUnresolved = doc([], { feeItems: [item({ lines: [line("unresolved", 3000)] })] });
+    expect(onlyUnresolved.totals.paidCents).toBe(0);
+  });
+});
+
+describe("a payment on an uncompleted booking (Sam's rule)", () => {
+  const unfinished = visit({ appointmentId: "unfinished-1", eligibility: "not_completed", localDate: "2026-11-02", startsAt: "2026-11-02T15:00:00Z" });
+  const pay: FeeItemInput = { appointmentId: "unfinished-1", clientId: "client-1", localDate: "2026-11-02", startsAt: "2026-11-02T15:00:00Z", reason: "uncompleted_booking_payment", feeCandidates: [], lines: [line("collected_card_session", 6000)] };
+  it("one unfinished booking with a confirmed payment: 0 completed visits, total spend of exactly that payment, no service line for it", () => {
+    const d = doc([unfinished], { feeItems: [pay], scope: { kind: "full_history" } });
+    expect(d.totals.visitCount).toBe(0);
+    expect(d.visits).toEqual([]);
+    expect(d.totals.paidCents).toBe(6000);
+    expect(d.feeItems).toHaveLength(1);
+    expect(FEE_REASON_COPY[d.feeItems[0].reason]).toBe("Payment on an uncompleted booking");
+    expect(d.notCompleted.map((r) => r.appointmentId)).toEqual(["unfinished-1"]);
+    const snap = toIssueSnapshot(d);
+    expect(snap.visits).toEqual([]); // no invoice service line
+    expect(JSON.stringify(snap)).not.toMatch(/notCompleted|Not completed/);
+  });
+  it("the payment line is dated and listed in a month view too (the Not completed row is not), counted once", () => {
+    const d = doc([unfinished], { feeItems: [pay], scope: { kind: "month", month: "2026-11" } });
+    expect(d.feeItems).toHaveLength(1);
+    expect(d.notCompleted).toEqual([]);
+    expect(d.totals.paidCents).toBe(6000);
+  });
+  it("a payment alone never makes a treatment or a charge: no visit, no recorded fee total, no state counts", () => {
+    const d = doc([unfinished], { feeItems: [pay] });
+    expect(d.totals.recordedFeeCents).toBe(0);
+    expect(Object.values(d.totals.byState).reduce((a, b) => a + b, 0)).toBe(0);
+  });
+  it("later marked completed: the same payment is on the visit and total spend is STILL 6000 (no double count)", () => {
+    const completed = visit({ appointmentId: "unfinished-1", localDate: "2026-11-02", startsAt: "2026-11-02T15:00:00Z", lines: [line("collected_card_session", 6000)] });
+    const d = doc([completed], { scope: { kind: "full_history" } });
+    expect(d.totals.visitCount).toBe(1);
+    expect(d.totals.paidCents).toBe(6000);
+    expect(d.feeItems).toEqual([]);
+    expect(d.notCompleted).toEqual([]);
+  });
+  it("the pairing is the ONLY allowed one: the payment line needs its Not completed row, and cannot share an id with a visit or another reason", () => {
+    expect(build([], { feeItems: [pay] })).toEqual({ ok: false, error: "duplicate_appointment" });
+    const completed = visit({ appointmentId: "unfinished-1" });
+    expect(build([completed], { feeItems: [pay] })).toEqual({ ok: false, error: "duplicate_appointment" });
+    expect(build([unfinished], { feeItems: [{ ...pay, reason: "no_show_fee" }] })).toEqual({ ok: false, error: "duplicate_appointment" });
   });
 });
 
