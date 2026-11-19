@@ -114,6 +114,25 @@ describe("B1: reopening a saved block and changing only hairs writes its pulse c
   });
 });
 
+describe("P2: a touch that leaves the visible draft unchanged is still an unsaved edit", () => {
+  const withCount3NoDelay = { rollout: true, entry: { ...ENTRY, pulse_count: 3, pulse_delay_seconds: null } };
+  it("CONTROL: reopening an area with count 3 and no saved delay holds nothing", async () => {
+    await mount(withCount3NoDelay);
+    expect(leaveIsHeld()).toBe(false);
+  });
+  it("clearing the delay and typing the SHOWN default back marks the form unsaved, and Save then records that delay", async () => {
+    await mount(withCount3NoDelay);
+    const delay = aria("Pulse delay in seconds") as HTMLInputElement;
+    const shown = delay.value;
+    await typeInto(delay, "");
+    await typeInto(aria("Pulse delay in seconds") as HTMLInputElement, shown);
+    expect((aria("Pulse delay in seconds") as HTMLInputElement).value, "the visible draft is back to what it was").toBe(shown);
+    expect(leaveIsHeld(), "but the recorded state changed, so it is unsaved").toBe(true);
+    await save();
+    expect(sent(blockActions.updateTreatmentAreaWithEntryAction).readings.pulseDelaySeconds).toBe(Number(shown));
+  });
+});
+
 describe("nothing touched sends no pulse reading", () => {
   it("a fresh block with only an area: null count and null delay, and no mode", async () => {
     await mount({ rollout: true, create: true });
