@@ -198,6 +198,24 @@ test.describe("B. staff books, the practitioner charts (HON-45)", () => {
 
   test("J5 Finish completes once, sends no postcare and takes no payment; reload changes nothing", async () => {
     const mark = markResendLedger();
+    // The Finish line is RENDERED from the same predicate the automatic send uses. Manual mode: no promise at all. Auto mode: the line
+    // says what WILL happen (client has an email, appointment is not a consultation), and says it will NOT when aftercare is not configured.
+    const note = inviteePage.getByTestId("finish-auto-postcare-note");
+    await expect(note).toHaveCount(0);
+    await sql("update public.studios set postcare_delivery_mode='auto_on_complete', postcare_aftercare_text=null where id=$1", [seed.studioId]);
+    try {
+      await inviteePage.reload();
+      await expect(note).toHaveAttribute("data-auto-postcare", "will_not_send", { timeout: T });
+      await expect(note).not.toContainText("will be sent automatically");
+      await sql("update public.studios set postcare_aftercare_text='Keep the area clean and dry.' where id=$1", [seed.studioId]);
+      await inviteePage.reload();
+      await expect(note).toHaveAttribute("data-auto-postcare", "will_send", { timeout: T });
+      await expect(note).toContainText("Charging is separate");
+    } finally {
+      await sql("update public.studios set postcare_delivery_mode='manual' where id=$1", [seed.studioId]);
+    }
+    await inviteePage.reload();
+    await expect(note).toHaveCount(0);
     await inviteePage.getByTestId("mark-appointment-complete").click();
     await inviteePage.getByTestId("confirm-dialog-confirm").click();
     await expect.poll(async () => (await getAppointmentPostcareState(appointmentId)).status, { timeout: T }).toBe("completed");
