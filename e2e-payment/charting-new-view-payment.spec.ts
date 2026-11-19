@@ -10,7 +10,7 @@ import {
   type PaymentSeed,
 } from "./helpers/payment-fixture";
 import { expectPreparedDurable, sessionPaymentRegion } from "./helpers/checkout-flow";
-import { seedE2eMember } from "../e2e/helpers/seed";
+import { seedE2eMember, setPlatformRolloutMode } from "../e2e/helpers/seed";
 import { loginByMagicLink } from "../e2e/helpers/flows";
 import {
   resetFakeStripeLedger,
@@ -23,10 +23,9 @@ import {
 // HON-80, payment states on the FAKE-STRIPE lane, from the session page in New view. Nothing real: the guarded fake processor is the only one that exists in
 // this lane, the browser is watched for any request to Stripe, and the synthetic seed is local.
 //
-// Opt-in like the charting spec: run with the app server started with HONE_CHARTING_NEW_VIEW_STUDIO_IDS=all in its environment (the payment config applies its
-// own server env over the inherited one, so the variable reaches the server), via
-//   HONE_CHARTING_NEW_VIEW_STUDIO_IDS=all npx playwright test --config playwright.charting-payment.config.ts   (after building with the payment config's server env)
-test.skip(process.env.HONE_CHARTING_NEW_VIEW_STUDIO_IDS !== "all", "needs the app server started with HONE_CHARTING_NEW_VIEW_STUDIO_IDS=all");
+// The rollout is a database row, set to "all" on the owned local stack for this file only and back to "off" after it (serial, one worker).
+test.beforeAll(async () => { await setPlatformRolloutMode("all"); });
+test.afterAll(async () => { await setPlatformRolloutMode("off"); });
 
 const T = 20_000;
 const stripeRequests: string[] = [];
@@ -38,7 +37,7 @@ async function openInNewView(page: import("@playwright/test").Page, seed: Paymen
   await loginAsOwner(page, seed);
   await page.goto(`/clients/${seed.clientId}/sessions/${seed.sessionId}`);
   const toggle = page.getByTestId("charting-view-toggle");
-  await expect(toggle, "the switch must exist: start the app server with HONE_CHARTING_NEW_VIEW_STUDIO_IDS=all in its environment").toBeVisible({ timeout: T });
+  await expect(toggle, "the switch must exist: the platform rollout row must be set to all").toBeVisible({ timeout: T });
   if ((await toggle.getAttribute("aria-checked")) !== "true") await toggle.click();
   await expect(page.getByTestId("charting-view-root")).toHaveAttribute("data-charting-view", "new", { timeout: T });
 }

@@ -6,7 +6,7 @@ import { adminQuery, adminTx, asRole, asUser, closePool, seedStudio, type Seeded
 // Platform rollout control: DB behaviour. While the proposal is unnumbered it is applied ONTO AN OWNED local stack once (skipped when numbered).
 // Synthetic data only. The service-role commands run in a COMMITTING transaction (asRole rolls back).
 const KEY = "charting_new_view_xcell";
-const SQL_PATH = "docs/proposals/platform-rollout-control.sql";
+const SQL_PATH = "supabase/migrations/0362_platform_rollout_control.sql";
 const ACTOR = randomUUID();
 const EMAIL = "operator@example.invalid";
 let A: SeededStudio;
@@ -217,7 +217,7 @@ describe("admin read", () => {
 
 describe("rollback", () => {
   it("is REFUSED while a mode is live or a pilot row exists, and drops cleanly once Off with no pilots", async () => {
-    const RB = readFileSync("docs/proposals/platform-rollout-control-rollback.sql", "utf8");
+    const RB = readFileSync("supabase/rollbacks/0362_platform_rollout_control.down.sql", "utf8");
     await setMode("pilot");
     await expect(adminQuery(RB)).rejects.toThrow(/REFUSED/);
     await add(A.studioId);

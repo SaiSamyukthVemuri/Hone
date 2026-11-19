@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 
-// Platform rollout control: the SOURCE CONTRACT of docs/proposals/platform-rollout-control.sql (it moves to supabase/migrations/<number>_... unchanged
+// Platform rollout control: the SOURCE CONTRACT of supabase/migrations/0362_platform_rollout_control.sql (it moves to supabase/migrations/<number>_... unchanged
 // at seal and this path is then updated). Unit lane, no database. Behaviour is proved by tests/db/platform-rollout-control.db.test.ts.
-const SQL = readFileSync("docs/proposals/platform-rollout-control.sql", "utf8");
+const SQL = readFileSync("supabase/migrations/0362_platform_rollout_control.sql", "utf8");
 const CODE = SQL.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
-const ROLLBACK = readFileSync("docs/proposals/platform-rollout-control-rollback.sql", "utf8");
+const ROLLBACK = readFileSync("supabase/rollbacks/0362_platform_rollout_control.down.sql", "utf8");
 
 const fns: { name: string; args: string; body: string }[] = [];
 for (const m of CODE.matchAll(/create function public\.(\w+)\(([\s\S]*?)\)\s*returns/g)) {
