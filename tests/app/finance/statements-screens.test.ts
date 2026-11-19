@@ -324,7 +324,7 @@ describe("a client's statement", () => {
   });
 });
 
-describe("Privacy pins: what reaches the browser, and where a last visit date may go", () => {
+describe("what reaches the browser, and where a last visit date may go", () => {
   const strip = (x: string) => x.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
   it("the finder's prop type carries ONLY an id, the shown name and the archived flag", () => {
     const src = read("app/(app)/financials/statements/client-finder.tsx");
