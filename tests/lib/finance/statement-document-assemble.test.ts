@@ -190,6 +190,29 @@ describe("only REAL rows are fee candidates", () => {
     const r = assembleClientInputs(base({ appointments: [a, b], cardRows: [card(a.id, { status: "failed" }), card(b.id, { stripeLivemode: false })] }));
     expect(r.visits.map((v) => v.feeCandidates)).toEqual([[], []]);
   });
+  it("a failed or test-mode LEGACY attempt is not a candidate and does not stop a real sole card payment being the fee", () => {
+    const a = appt();
+    const b = appt();
+    const legacy = (id: string, over = {}) => ({ appointmentId: id, status: "succeeded", amountCents: 9000, currency: "cad", stripeLivemode: true, ...over });
+    const r = assembleClientInputs(base({ appointments: [a, b], cardRows: [card(a.id, { amountCents: 5000 }), card(b.id, { amountCents: 5000 })], legacyFeeRows: [legacy(a.id, { status: "failed" }), legacy(b.id, { stripeLivemode: false })] }));
+    expect(r.visits.map((v) => v.feeCandidates)).toEqual([[{ source: "card_attempt", cents: 5000 }], [{ source: "card_attempt", cents: 5000 }]]);
+  });
+  it("a REAL legacy fee still blocks the sole-card rule and is a candidate", () => {
+    const a = appt();
+    const r = assembleClientInputs(base({ appointments: [a], cardRows: [card(a.id, { amountCents: 5000 })], legacyFeeRows: [{ appointmentId: a.id, status: "succeeded", amountCents: 9000, currency: "cad", stripeLivemode: true }] }));
+    expect(r.visits[0].feeCandidates).toEqual([{ source: "legacy_fee", cents: 9000 }]);
+  });
+  it("on a cancelled booking the fee label comes only from REAL rows: a failed cancellation-fee attempt beside a successful session payment is a neutral payment, not a fee", () => {
+    const c = appt({ status: "cancelled" });
+    const r = assembleClientInputs(base({ appointments: [c], cardRows: [card(c.id, { amountCents: 5000 }), card(c.id, { chargeReason: "late_cancellation_fee", status: "failed", amountCents: 3000 })] }));
+    expect(r.feeItems).toHaveLength(1);
+    expect(r.feeItems[0].reason).toBe("cancelled_booking_payment");
+  });
+  it("a failed LEGACY attempt does not make a cancelled booking's payment a fee either", () => {
+    const c = appt({ status: "cancelled" });
+    const r = assembleClientInputs(base({ appointments: [c], cardRows: [card(c.id, { amountCents: 5000 })], legacyFeeRows: [{ appointmentId: c.id, status: "failed", amountCents: 3000, currency: "cad", stripeLivemode: true }] }));
+    expect(r.feeItems[0].reason).toBe("cancelled_booking_payment");
+  });
   it("a settlement quote in ANOTHER currency is not a candidate; a quote with no currency or the studio's currency is", () => {
     const a = appt();
     const b = appt();
