@@ -94,7 +94,11 @@ export function ChartingVisitDraftProvider({ children }: { children: ReactNode }
   const [machineCtx, setMachineCtx] = useState<MachineSetupContext | null>(null);
   const inflight = useRef(false);
   const alive = useRef(true);
-  useEffect(() => () => void (alive.current = false), []);
+  // Set TRUE in the body: React StrictMode (the dev default) runs setup, cleanup, setup, and a cleanup-only reset would leave it false.
+  useEffect(() => {
+    alive.current = true;
+    return () => void (alive.current = false);
+  }, []);
   const ensureMachineCtx = useCallback((args: MachineContextArgs) => {
     if (inflight.current) return;
     inflight.current = true;

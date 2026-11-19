@@ -5,7 +5,7 @@ const add = vi.hoisted(() => ({ fn: vi.fn(), load: vi.fn() }));
 vi.mock("@/app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions", () => ({ loadMachineSetupContext: add.load }));
 vi.mock("@/app/(app)/clients/[id]/sessions/[sessionId]/actions", () => ({ addElectrolysisEntryAction: add.fn }));
 
-import { createElement, act } from "react";
+import { createElement, act, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { SimplifiedEntryForm } from "@/app/(app)/clients/[id]/sessions/[sessionId]/simplified-entry-form";
 import { ChartingVisitDraftProvider, useVisitDraftSummary } from "@/components/charting-visit-draft";
@@ -142,6 +142,41 @@ describe("the add-pass form reports the machine it inherits from the saved block
     await mount({ ...BLOCK, studio_machine_id: "room-9", machine_profile_id: "fixture:mounted" });
     expect(add.load).toHaveBeenCalledTimes(1);
     expect(add.load).toHaveBeenCalledWith({ clientId: "c1", sessionId: "s1", blockId: "b1" });
+  });
+  it("under React StrictMode (the dev default) the label still loads", async () => {
+    add.load.mockResolvedValue(ctx());
+    host = document.body.appendChild(document.createElement("div"));
+    root = createRoot(host);
+    const b = { ...BLOCK, studio_machine_id: "room-9", machine_profile_id: "fixture:mounted" };
+    await act(async () =>
+      root!.render(
+        createElement(StrictMode, null,
+          createElement(ChartingViewContext.Provider, { value: { view: "new", setView: () => undefined, notice: null } },
+            createElement(ChartingVisitDraftProvider, null, createElement(SimplifiedEntryForm, { block: b as never, sessionId: "s1", clientId: "c1" }), createElement(Reader)))),
+      ),
+    );
+    await act(async () => void (await new Promise((r) => setTimeout(r, 30))));
+    expect(out().dataset.m).toBe("Fixture Mounted");
+  });
+  it("a failed read is retried by a LATER ask (a pass mounted afterwards reads again)", async () => {
+    add.load.mockRejectedValueOnce(new Error("nope")).mockResolvedValue(ctx());
+    host = document.body.appendChild(document.createElement("div"));
+    root = createRoot(host);
+    const b = (id: string) => ({ ...BLOCK, id, studio_machine_id: "room-9", machine_profile_id: "fixture:mounted" });
+    const render = (...ids: string[]) =>
+      act(async () =>
+        root!.render(
+          createElement(ChartingViewContext.Provider, { value: { view: "new", setView: () => undefined, notice: null } },
+            createElement(ChartingVisitDraftProvider, null, ...ids.map((id) => createElement(SimplifiedEntryForm, { key: id, block: b(id) as never, sessionId: "s1", clientId: "c1" })), createElement(Reader))),
+        ),
+      );
+    await render("b1");
+    await act(async () => void (await new Promise((r) => setTimeout(r, 30))));
+    expect(out().dataset.m).toBe("");
+    await render("b1", "b2");
+    await act(async () => void (await new Promise((r) => setTimeout(r, 30))));
+    expect(add.load).toHaveBeenCalledTimes(2);
+    expect(out().dataset.m).toBe("Fixture Mounted");
   });
   it("two passes on one visit share ONE read", async () => {
     add.load.mockResolvedValue(ctx());
