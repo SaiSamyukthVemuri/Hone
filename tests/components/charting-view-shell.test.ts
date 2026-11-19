@@ -356,6 +356,54 @@ const areasEl = () => host!.querySelector('[data-testid="selected-areas"]') as H
 const machineOpenEl = () => host!.querySelector('[data-testid="machine-first-open"]') as HTMLElement;
 const before = (a: Node, b: Node) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
 
+describe("the This visit card follows the open form", () => {
+  const sum = () => host!.querySelector<HTMLElement>('[data-testid="charting-view-summary"]')!;
+  const row = (id: string) => sum().querySelector<HTMLElement>(`[data-testid="${id}"]`)!;
+  it("lists the five steps in the reference order, with Record response optional", async () => {
+    await mount("new");
+    const lis = Array.from(sum().querySelectorAll('[data-testid="visit-steps"] li'));
+    expect(lis.map((li) => li.querySelectorAll("span")[1].textContent)).toEqual(["Choose areas", "Enter settings", "Record response", "Review & finish", "Session payment"]);
+    expect(lis.map((li) => li.textContent!.includes("Optional"))).toEqual([false, false, true, false, false]);
+  });
+  it("shows the machine the form actually has selected, and the save status, without saving anything", async () => {
+    await mount("new");
+    expect(row("visit-summary-machine").textContent, "nothing chosen yet").toBe("None selected");
+    await openPanel();
+    expect(machineSelect().value).toBe("room-9");
+    expect(row("visit-summary-machine").textContent).toContain("Mounted");
+    expect(row("visit-summary-status").textContent, "one block saved and nothing unsaved").toBe("Saved");
+    await setInput(notes(), "an unsaved note");
+    expect(row("visit-summary-status").textContent).toBe("Not saved yet");
+    expect(saveCalls(), "reading the form saves nothing").toBe(0);
+  });
+  it("editing a saved block shows no Areas in draft (they are saved), and a NEW block shows what is picked but unsaved", async () => {
+    await mount("new");
+    expect(row("visit-summary-draft-areas").textContent, "the fixture edits a saved block").toBe("None selected");
+    await act(async () => root!.unmount());
+    host!.remove();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const create = createElement(ChartingViewShell, {
+      initialView: "new",
+      summary: createElement(ChartingVisitSummary, { clientName: "Avery Example", kind: "electrolysis", areas: [], count: 0, nextVisitNoteRecorded: false }),
+      children: createElement(BlockSetupForm, { sessionId: "s1", clientId: "c1", previousBlock: null, block: null as never, firstEntry: null, defaultPrimaryArea: "chin", defaultMachineFrequency: "27.12", onCancel: () => undefined }),
+    });
+    await act(async () => root!.render(create));
+    expect(row("visit-summary-draft-areas").textContent!.toLowerCase()).toContain("chin");
+    expect(row("visit-summary-status").textContent, "unsaved picks, nothing saved").toBe("Not saved yet");
+  });
+  it("a view switch changes nothing the card says and sends nothing", async () => {
+    await mount("new");
+    await openPanel();
+    const before = sum().textContent;
+    await click(toggle());
+    await click(toggle());
+    expect(sum().textContent).toBe(before);
+    expect(saveCalls()).toBe(0);
+  });
+});
+
 describe("block editing in New view", () => {
   it("Current view is exactly today's order with no step headings: machine first, then the areas", async () => {
     await mount();
@@ -367,9 +415,10 @@ describe("block editing in New view", () => {
 
   it("New view: numbered steps; Areas treated first, then Treatment settings (the machine panel), then Client response", async () => {
     await mount("new");
-    expect(step(1)!.textContent).toContain("Areas treated");
-    expect(step(2)!.textContent).toContain("Treatment settings");
-    expect(step(3)!.textContent).toContain("Client response");
+    expect(step(1)!.textContent).toContain("Choose areas");
+    expect(step(2)!.textContent).toContain("Enter settings");
+    expect(step(3)!.textContent).toContain("Record response");
+    expect(step(3)!.textContent).toContain("Optional");
     expect(before(step(1)!, areasEl())).toBe(true);
     expect(before(areasEl(), step(2)!)).toBe(true);
     expect(before(step(2)!, machineOpenEl())).toBe(true);
@@ -418,12 +467,12 @@ describe("block editing in New view", () => {
     await mount();
     const idsCurrent = Array.from(host!.querySelectorAll("[data-testid]"))
       .map((e) => e.getAttribute("data-testid"))
-      .filter((t) => !t!.startsWith("new-view-step") && !t!.startsWith("new-view-hint") && !t!.startsWith("charting-view-summary"))
+      .filter((t) => !t!.startsWith("new-view-step") && !t!.startsWith("new-view-hint") && !t!.startsWith("visit-") && !t!.startsWith("charting-view-summary"))
       .sort();
     await click(toggle());
     const idsNew = Array.from(host!.querySelectorAll("[data-testid]"))
       .map((e) => e.getAttribute("data-testid"))
-      .filter((t) => !t!.startsWith("new-view-step") && !t!.startsWith("new-view-hint") && !t!.startsWith("charting-view-summary"))
+      .filter((t) => !t!.startsWith("new-view-step") && !t!.startsWith("new-view-hint") && !t!.startsWith("visit-") && !t!.startsWith("charting-view-summary"))
       .sort();
     expect(idsNew).toEqual(idsCurrent);
     expect(idsNew).toContain("save-treatment-area");

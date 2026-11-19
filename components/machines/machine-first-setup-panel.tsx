@@ -132,6 +132,8 @@ export type MachineFirstSetupPanelProps = {
    * empty studio and an unreadable inventory are different situations.
    */
   inventoryReason?: string | null;
+  /** Reports the catalogue model name of the unit now chosen, or null. DISPLAY ONLY: read by the New view's "This visit" card. */
+  onChosenModel?: (model: string | null) => void;
   /** The treatment block being charted. Entry is impossible without it. */
   blockId?: string | null;
   /**
@@ -341,6 +343,7 @@ function MachineFirstSetupPanelImpl({
   catalogue = MACHINE_CATALOGUE,
   persistence = NO_PERSISTENCE,
   inventoryReason = null,
+  onChosenModel,
   blockId = null,
   canManageMachines = false,
   priorSetup = [],
@@ -608,6 +611,10 @@ function MachineFirstSetupPanelImpl({
   // FROM THE PHYSICAL UNIT, not the model: a mode gated on an option this
   // device does not have is not a choice, and offering it only to have the
   // capture refused two layers down is worse than not offering it.
+  const chosenModel = chosen ? chosen.profile.model : null;
+  useEffect(() => {
+    onChosenModel?.(chosenModel);
+  }, [onChosenModel, chosenModel]);
   const modes = chosen ? supportedModes(chosen.device, chosen.profile) : [];
   // A MODE KEY THIS UNIT DOES NOT OFFER IS NEVER SHOWN AS A DIFFERENT MODE (Vercel Security Review 01M6VEJJ83G4GZ10DFCKMJAEVP).
   // The old fallback (`?? modes[0]`) made a stored or remembered key that the unit does not offer appear as the unit's FIRST mode, so the
