@@ -84,9 +84,21 @@ describe("the session page asks the real predicate, not a copy", () => {
     expect(page).toMatch(/const eligibility = shouldAutoSendPostcare\(\{[\s\S]*?status: "completed"[\s\S]*?\}\);/);
     expect(page).toMatch(/autoPostcareNote\(studio\.postcare_delivery_mode, finishState\.completion\.kind, eligibility\)/);
   });
-  it("feeds it the appointment's modality, the client's email and the studio's aftercare text", () => {
-    expect(page).toMatch(/serviceModality: finishAppt\?\.serviceModality/);
-    expect(page).toMatch(/clientEmail: clientData\.client\.email/);
-    expect(page).toMatch(/aftercareText: studio\.postcare_aftercare_text/);
+  it("feeds it EXACTLY the appointment's modality, the client's email and the studio's aftercare text: no literal, no other source", () => {
+    // Anchored on the call itself: a bare "serviceModality: finishAppt?.serviceModality" appears elsewhere in the page, so an unanchored
+    // match would stay green when THIS call passes null or a made-up address.
+    const m = /const eligibility = shouldAutoSendPostcare\(\{([\s\S]*?)\}\);/.exec(page);
+    expect(m).not.toBeNull();
+    const props = m![1].split("\n").map((l) => l.trim()).filter(Boolean);
+    expect(props).toEqual([
+      "deliveryMode: studio.postcare_delivery_mode,",
+      'status: "completed",',
+      "serviceModality: finishAppt?.serviceModality ?? null,",
+      "clientEmail: clientData.client.email ?? null,",
+      "aftercareText: studio.postcare_aftercare_text,",
+    ]);
+  });
+  it("finishAppt.serviceModality itself comes from the appointment's own service, not a constant", () => {
+    expect(page).toMatch(/serviceModality: svcOne\?\.modality \?\? null,/);
   });
 });
