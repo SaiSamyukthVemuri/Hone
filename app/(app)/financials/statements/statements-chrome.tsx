@@ -5,16 +5,17 @@ import { STATEMENT_TABS, tabHref, type StatementsTab } from "@/lib/finance/state
 
 // The shared frame of the statements screens: the Studio | Clients tabs and the month controls. Both carry the SELECTED MONTH in their links.
 
+// One segmented control for the screens' tabs and period switches (Studio | Clients, Month | Full history). Presentation only: the links, labels and
+// aria-current are unchanged.
+export const SEGMENT_GROUP = "inline-flex gap-0.5 rounded-lg border border-line bg-surface-sunken p-0.5";
+export const segmentClass = (active: boolean) =>
+  cx("inline-flex items-center rounded-md px-3 text-sm", CONTROL_MIN_TOUCH, FOCUS_RING, active ? "bg-surface font-medium text-fg shadow-sm" : "text-fg-muted hover:text-fg");
+
 export function StatementsTabs({ active, month }: { active: StatementsTab; month: YearMonth }) {
   return (
-    <nav aria-label="Statements" className="flex gap-1 border-b border-line">
+    <nav aria-label="Statements" className={SEGMENT_GROUP}>
       {STATEMENT_TABS.map((t) => (
-        <PendingLink
-          key={t.key}
-          href={tabHref(t.key, month)}
-          aria-current={t.key === active ? "page" : undefined}
-          className={cx("px-4 text-sm", CONTROL_MIN_TOUCH, FOCUS_RING, t.key === active ? "border-b-2 border-fg font-medium text-fg" : "text-fg-muted underline")}
-        >
+        <PendingLink key={t.key} href={tabHref(t.key, month)} aria-current={t.key === active ? "page" : undefined} className={segmentClass(t.key === active)}>
           {t.label}
         </PendingLink>
       ))}
@@ -22,25 +23,33 @@ export function StatementsTabs({ active, month }: { active: StatementsTab; month
   );
 }
 
+const MONTH_STEP = cx("inline-flex items-center rounded-lg border border-line-strong bg-surface px-3 text-sm text-fg hover:bg-surface-sunken", CONTROL_MIN_TOUCH, FOCUS_RING);
+
 /** Previous / next month links and a month picker, all pointing at `base` (the page's own path, with any fixed query already in `extra`). */
 export function MonthControls({ base, month, maxMonth, extra = "" }: { base: string; month: YearMonth; maxMonth: YearMonth; extra?: string }) {
   const prev = shiftYearMonth(month, -1);
   const next = shiftYearMonth(month, 1);
   const href = (m: YearMonth) => `${base}?month=${m}${extra}`;
   return (
-    <div className="flex flex-wrap items-end gap-4 text-sm">
-      <form method="get" action={base} className="flex items-end gap-2" aria-label="Choose a month">
+    <div className="flex flex-wrap items-center gap-2 text-sm">
+      {prev >= STATEMENT_MIN_MONTH ? (
+        <PendingLink href={href(prev)} className={MONTH_STEP}>
+          <span aria-hidden="true">‹&nbsp;</span>Previous month
+        </PendingLink>
+      ) : null}
+      <form method="get" action={base} className="flex items-center gap-2" aria-label="Choose a month">
         {extra ? <input type="hidden" name="view" value="month" /> : null}
-        <label className="flex flex-col gap-1 text-fg">
-          Month
-          <input type="month" name="month" defaultValue={month} min={STATEMENT_MIN_MONTH} max={maxMonth} className={cx("rounded border border-line bg-surface px-2", CONTROL_MIN_TOUCH, FOCUS_RING)} />
+        <label className="text-fg">
+          <span className="sr-only">Month</span>
+          <input type="month" name="month" defaultValue={month} min={STATEMENT_MIN_MONTH} max={maxMonth} className={cx("rounded-lg border border-line-strong bg-surface px-2 text-fg", CONTROL_MIN_TOUCH, FOCUS_RING)} />
         </label>
-        <button type="submit" className={cx("rounded border border-line px-3", CONTROL_MIN_TOUCH, FOCUS_RING)}>Show month</button>
+        <button type="submit" className={MONTH_STEP}>Show month</button>
       </form>
-      <nav className="flex gap-4" aria-label="Month">
-        {prev >= STATEMENT_MIN_MONTH ? <PendingLink href={href(prev)} className={cx("underline", CONTROL_MIN_TOUCH, FOCUS_RING)}>Previous month</PendingLink> : null}
-        {next <= maxMonth ? <PendingLink href={href(next)} className={cx("underline", CONTROL_MIN_TOUCH, FOCUS_RING)}>Next month</PendingLink> : null}
-      </nav>
+      {next <= maxMonth ? (
+        <PendingLink href={href(next)} className={MONTH_STEP}>
+          Next month<span aria-hidden="true">&nbsp;›</span>
+        </PendingLink>
+      ) : null}
     </div>
   );
 }

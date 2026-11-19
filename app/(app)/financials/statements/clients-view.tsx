@@ -40,24 +40,27 @@ export function ClientsView({ month, monthLabel, maxMonth, timezone, notice, pag
 
   return (
     <div className="space-y-6">
-      <header className="space-y-3">
-        <h1 className="text-2xl font-semibold text-fg">Statements</h1>
-        <StatementsTabs active="clients" month={month} />
-        <MonthControls base="/financials/statements" month={month} maxMonth={maxMonth} />
+      <header className="space-y-4">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <h1 className="text-3xl font-semibold tracking-tight text-fg">Statements</h1>
+          <MonthControls base="/financials/statements" month={month} maxMonth={maxMonth} />
+        </div>
+        <div className="flex flex-wrap items-start gap-3">
+          <StatementsTabs active="clients" month={month} />
+          <section aria-labelledby="stmt-find" className="min-w-0 flex-1 basis-60 md:max-w-sm">
+            <h2 id="stmt-find" className="sr-only">Find a client</h2>
+            {finder.state === "ok" ? (
+              <ClientFinder month={month} monthLabel={monthLabel} clients={finder.clients} monthVisits={monthVisits} lastVisits={finder.lastVisits} />
+            ) : (
+              <p className="text-sm text-fg">{finder.state === "too_many" ? FINDER_TOO_MANY : STATEMENT_READ_UNAVAILABLE.read_failed}</p>
+            )}
+          </section>
+        </div>
         {notice ? <p className="text-sm text-fg" role="status">{notice}</p> : null}
       </header>
 
-      <section aria-labelledby="stmt-find" className="space-y-2">
-        <h2 id="stmt-find" className="sr-only">Find a client</h2>
-        {finder.state === "ok" ? (
-          <ClientFinder month={month} monthLabel={monthLabel} clients={finder.clients} monthVisits={monthVisits} lastVisits={finder.lastVisits} />
-        ) : (
-          <p className="text-sm text-fg">{finder.state === "too_many" ? FINDER_TOO_MANY : STATEMENT_READ_UNAVAILABLE.read_failed}</p>
-        )}
-      </section>
-
       <section aria-labelledby="stmt-clients" className="space-y-3">
-        <h2 id="stmt-clients" className="text-lg font-medium text-fg">Clients with visits in {monthLabel}</h2>
+        <h2 id="stmt-clients" className="text-xl font-semibold tracking-tight text-fg">Clients with visits in {monthLabel}</h2>
         <p className="text-sm text-fg-muted">{DIRECTORY_MONTH_NOTE} Month and day boundaries use the studio&apos;s timezone ({timezone}).</p>
         {!directory.ok ? (
           <p className="text-sm text-fg" role="alert">{STATEMENT_READ_UNAVAILABLE[directory.reason] ?? STATEMENT_READ_UNAVAILABLE.read_failed}</p>
@@ -65,30 +68,30 @@ export function ClientsView({ month, monthLabel, maxMonth, timezone, notice, pag
           <EmptyState title={`No client visits in ${monthLabel}.`} description="A client appears here once they have a completed visit, a fee or a payment recorded in the month. Use Find a client to open anyone's full history." />
         ) : paged ? (
           <>
-            <p className="text-sm text-fg" aria-live="polite">
+            <p className="rounded-xl border border-success-fg/15 bg-success-surface/50 px-4 py-3 text-sm font-medium text-fg" aria-live="polite">
               {paged.totals.clientCount} {paged.totals.clientCount === 1 ? "client" : "clients"} · {paged.totals.visitCount} {paged.totals.visitCount === 1 ? "visit" : "visits"} · {format(paged.totals.paidCents)} paid
               {paged.totals.awaitingCount > 0 ? ` · ${paged.totals.awaitingCount} ${paged.totals.awaitingCount === 1 ? "visit" : "visits"} awaiting payment confirmation` : ""}
             </p>
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto rounded-xl border border-line bg-surface">
               <table className="w-full text-sm">
                 <caption className="sr-only">Clients with visits in {monthLabel}</caption>
                 <thead>
-                  <tr className="text-left text-fg-muted">
-                    <th scope="col" className="py-2 pr-3 font-normal">Client</th>
-                    <th scope="col" className="py-2 pr-3 text-right font-normal">Visits</th>
-                    <th scope="col" className="py-2 pr-3 text-right font-normal">Total paid</th>
-                    <th scope="col" className="py-2 font-normal">Payment status</th>
+                  <tr className="bg-surface-sunken text-left text-xs font-semibold text-fg-muted">
+                    <th scope="col" className="px-4 py-2.5">Client</th>
+                    <th scope="col" className="px-3 py-2.5 text-right">Visits</th>
+                    <th scope="col" className="px-3 py-2.5 text-right">Total paid</th>
+                    <th scope="col" className="px-4 py-2.5">Payment status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {paged.rows.map((r) => (
-                    <tr key={r.clientId} className="border-t border-line">
-                      <th scope="row" className="py-1 pr-3 text-left font-normal">
-                        <PendingLink href={clientStatementHref(r.clientId, month)} className={cx("inline-flex items-center underline", CONTROL_MIN_TOUCH, FOCUS_RING)}>{r.name}</PendingLink>
+                    <tr key={r.clientId} className="border-t border-line hover:bg-surface-sunken">
+                      <th scope="row" className="px-4 py-1 text-left font-normal">
+                        <PendingLink href={clientStatementHref(r.clientId, month)} className={cx("inline-flex items-center font-medium text-fg underline decoration-line-strong underline-offset-4 hover:decoration-fg", CONTROL_MIN_TOUCH, FOCUS_RING)}>{r.name}</PendingLink>
                       </th>
-                      <td className="py-2 pr-3 text-right tabular-nums">{r.visitCount}</td>
-                      <td className="py-2 pr-3 text-right tabular-nums">{format(r.paidCents)}</td>
-                      <td className="py-2 text-fg-muted">{rowStatusText(r)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{r.visitCount}</td>
+                      <td className="px-3 py-2 text-right font-medium tabular-nums">{format(r.paidCents)}</td>
+                      <td className="px-4 py-2 text-fg-muted">{rowStatusText(r)}</td>
                     </tr>
                   ))}
                 </tbody>
