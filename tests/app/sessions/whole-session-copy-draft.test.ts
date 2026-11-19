@@ -20,7 +20,7 @@ const CARD = read("components/copy-draft-card.tsx");
 describe("preview is EPHEMERAL — building/refreshing/removing/cancelling writes nothing", () => {
   it("build uses the READ-ONLY source action + the pure builder; source is not browser-chosen", () => {
     expect(PANEL).toMatch(/getWholeSessionCopySourceAction\(\{ clientId, sessionId \}\)/);
-    expect(PANEL).toMatch(/buildCopyDrafts\(res\.source\)/);
+    expect(PANEL).toMatch(/buildCopyDrafts\(res\.source(, \{[^}]*\})?\)/);
     // The panel takes ONLY clientId + sessionId — no browser-supplied source id.
     expect(PANEL).not.toMatch(/previousSessionId/);
     expect(PANEL).toMatch(/data-testid="copy-previous-preview"/);
@@ -127,7 +127,7 @@ describe("server actions — read-only descriptor source; service-role RPC is th
   it("commitWholeSessionCopyAction validates canonically, then writes ONLY via the service-role RPC", () => {
     const fn = ACTIONS.slice(ACTIONS.indexOf("export async function commitWholeSessionCopyAction"));
     // Canonical server-side normalization BEFORE any DB call.
-    expect(fn).toMatch(/normalizeWholeSessionCopy\(input\.drafts\)/);
+    expect(fn).toMatch(/normalizeWholeSessionCopy\(input\.drafts(, \{[^}]*\})?\)/);
     // The single writer is the RPC, called through the service-role client.
     expect(fn).toMatch(/createAdminClient\(\)/);
     expect(fn).toMatch(/\.rpc\("copy_session_setup"/);

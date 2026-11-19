@@ -71,7 +71,7 @@ describe("PicoBlend precision — native input constraints accept the exact valu
     const ACTIONS = read(`${BASE}/actions.ts`);
     // Would fail if reverted to pickInteger (parseInt truncates 0.733 → 0).
     expect(ACTIONS).toMatch(
-      /thermolysisDurationSeconds\s*=\s*wantThermo\s*\?\s*nonNegNumber\(formData\.get\("thermolysis_duration_seconds"\)\)/,
+      /thermolysisDurationSeconds\s*=\s*wantThermo(?:\s*&&\s*!\(redesignOn && isOmniblend\(mode, apilusModality\)\))?\s*\?\s*nonNegNumber\(formData\.get\("thermolysis_duration_seconds"\)\)/,
     );
     expect(ACTIONS).toMatch(/nonNegNumber\(formData\.get\("galvanic_ma"\)\)/);
     expect(ACTIONS).not.toMatch(/pickInteger\(formData\.get\("thermolysis_duration_seconds"\)/);

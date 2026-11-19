@@ -395,7 +395,7 @@ describe("copy workflows carry the EXACT lot with the probe", () => {
 
   it("the form supplies only ACTIVE lots for the COPIED probe as linkable", () => {
     expect(FORM).toMatch(/activeProbeLotOptionsForProbe\(\s*probeLotInventory,\s*source\.probe_key \?\? "",\s*\)/);
-    expect(FORM).toMatch(/buildTreatmentSetupDraftPatch\(source, firstEntry, linkable\)/);
+    expect(FORM).toMatch(/buildTreatmentSetupDraftPatch\(source, firstEntry, linkable(, \{[^}]*\})?\)/);
   });
 
   it("a copied lot is bound to the copied probe, so the resolver cannot overwrite it", () => {

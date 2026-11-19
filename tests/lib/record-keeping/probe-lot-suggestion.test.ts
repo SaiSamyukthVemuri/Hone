@@ -170,7 +170,7 @@ describe("0155 hardening: no bypass of the validated resolver; frozen snapshot",
   it("the EDIT action reads the STORED probe + link + snapshot server-side and passes all three to the resolver (frozen snapshot; reclassification-safe)", () => {
     // Reads the block's own stored columns (not client-supplied) before resolving.
     expect(ACTIONS).toMatch(
-      /\.select\("probe_key, probe_inventory_item_id, probe_lot_number"\)/,
+      /\.select\("probe_key, probe_inventory_item_id, probe_lot_number(, mode)?"\)/,
     );
     expect(ACTIONS).toMatch(/existingProbeKey: \(storedBlock\?\.probe_key/);
     expect(ACTIONS).toMatch(/existingInventoryItemId:\s*\n?\s*\(storedBlock\?\.probe_inventory_item_id/);
