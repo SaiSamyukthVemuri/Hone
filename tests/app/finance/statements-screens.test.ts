@@ -126,6 +126,32 @@ describe("Find a client (mounted)", () => {
     expect(nav.push).toHaveBeenCalledTimes(1);
     expect(nav.push.mock.calls[0][0]).toBe("/financials/statements/c-ada-2?month=2026-11&view=history");
   });
+  it("keyboard movement scrolls the ACTIVE option into view (the list scrolls when it overflows)", () => {
+    const el = mountFinder();
+    const calls: { id: string; arg: unknown }[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element, arg?: boolean | ScrollIntoViewOptions) {
+      calls.push({ id: this.id, arg });
+    };
+    try {
+      const input = type(el, "ada");
+      press(input, "ArrowDown");
+      press(input, "End");
+      press(input, "ArrowUp");
+      press(input, "Home");
+      const ids = calls.map((c) => c.id.replace(/^.*-opt-/, ""));
+      expect(ids).toEqual(["0", "1", "0", "0"].slice(0, ids.length));
+      expect(ids.length).toBeGreaterThanOrEqual(3);
+      for (const c of calls) {
+        expect(c.arg).toEqual({ block: "nearest" });
+        expect(c.id).toMatch(/-opt-\d+$/);
+      }
+      // the element scrolled is the one aria-activedescendant names
+      expect(calls[calls.length - 1].id).toBe(input.getAttribute("aria-activedescendant"));
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
   it("Escape closes the list; no match shows the empty state with a way to the Clients list", () => {
     const el = mountFinder();
     const input = type(el, "grace");

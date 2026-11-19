@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { CONTROL_MIN_TOUCH, FOCUS_RING, cx } from "@/components/ui/control-base";
@@ -38,6 +38,12 @@ export function ClientFinder({ month, monthLabel, clients, monthVisits, lastVisi
   const searchable = useMemo<FinderClient[]>(() => clients.map((c) => ({ id: c.id, name: c.displayName, preferredName: null, archived: c.archived })), [clients]);
   const outcome = useMemo(() => findClients(searchable, state.query, counts), [searchable, state.query, counts]);
   const options = outcome.results;
+
+  // The list scrolls (max-h-80), so keyboard movement must bring the active option into view, not only mark it active.
+  useEffect(() => {
+    if (state.active === null) return;
+    document.getElementById(`${listId}-opt-${state.active}`)?.scrollIntoView?.({ block: "nearest" });
+  }, [state.active, listId]);
 
   const open = (index: number) => {
     const o = options[index];
