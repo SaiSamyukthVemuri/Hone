@@ -8,7 +8,7 @@ import { computeConsultationFit } from "@/lib/waitlist/send-time-fit";
 import { newBatchKey } from "@/lib/waitlist/over-invite-selection";
 import { previewSelection } from "@/lib/waitlist/over-invite-port";
 import type { Candidate } from "@/lib/waitlist/recipient-chooser";
-import { retryOverInviteDeliveriesAction, sendOverInviteAction } from "./actions";
+import { continueOverInviteAction, retryOverInviteDeliveriesAction, sendOverInviteAction } from "./actions";
 
 // Owner-only. NAMES ONLY go to the browser (no email, phone or token), and nothing on this page logs a name. The numbers are the server's: the fit
 // from the slot engine and the live count from the same database function the batch command re-checks under its lock.
@@ -115,6 +115,7 @@ export default async function OverInvitePage({
       <OverInviteForm
         action={sendOverInviteAction}
         retryAction={retryOverInviteDeliveriesAction}
+        continueAction={continueOverInviteAction}
         candidates={names}
         fit={fit.fit}
         active={live.liveCount}

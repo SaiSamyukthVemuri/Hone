@@ -846,6 +846,10 @@ describe("this module is UNREACHABLE from the application", () => {
   const SANCTIONED_INTEGRATION_ENTRY = [
     "app/(app)/settings/waitlist/invite-actions.ts",
     "app/(app)/settings/waitlist/page.tsx",
+    // The owner's over-invite surface: its delivery reuses today's `deliverInvitation` from the same adapter, so it reaches the contract through
+    // it. Two files only (the page and its server action); a third root still fails here.
+    "app/(app)/settings/waitlist/over-invite/actions.ts",
+    "app/(app)/settings/waitlist/over-invite/page.tsx",
   ];
 
   it("no prototype entry point is reachable from the SHIPPED APPLICATION, at ANY depth", { timeout: 30_000 }, () => {

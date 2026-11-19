@@ -162,15 +162,54 @@ export async function sendOverInviteAction(_prev: OverInviteResult, formData: Fo
     }
     revalidatePath("/settings/waitlist");
     const t = tally(outcomes);
+    const quantity = created.quantity ?? sub.entryIds.length;
     return {
       state: "progress",
-      quantity: created.quantity ?? sub.entryIds.length,
+      quantity,
+      // Whatever the chunks did not reach is still queued in the batch, and says so: nothing is dropped and nothing is capped.
+      pending: Math.max(0, quantity - outcomes.length),
       extraRequested: created.extraRequested ?? 0,
       ...t,
       refusedDeliveries: outcomes.flatMap((o) => (o.status === "failed" && o.reason === "delivery_refused" ? [{ entryId: o.entryId, itemId: o.itemId }] : [])),
     };
   } catch {
     // A fixed sentence: no name, id, token or provider text.
+    return { state: "notice", notice: N.unavailable };
+  }
+}
+
+/** Finish a confirmed batch: runs more chunks of the SAME queue. It confirms nothing new and adds no recipient. */
+export async function continueOverInviteAction(prev: OverInviteResult): Promise<OverInviteResult> {
+  try {
+    const { practitioner } = await getCurrentPractitionerWithStudio();
+    if (practitioner.role !== "owner" || !practitioner.user_id) return { state: "notice", notice: N.ownerOnly };
+    const outcomes: ItemOutcome[] = [];
+    const t0 = Date.now();
+    let claimedAny = true;
+    while (claimedAny && Date.now() - t0 < CHUNK_BUDGET_MS) {
+      const r = await runBatchChunk(workerDeps(sleepFor));
+      if (!r.ok) break;
+      outcomes.push(...r.outcomes);
+      claimedAny = r.claimed > 0;
+    }
+    revalidatePath("/settings/waitlist");
+    const t = tally(outcomes);
+    const base = prev.state === "progress" ? prev : null;
+    const settled = outcomes.length;
+    return {
+      state: "progress",
+      quantity: base?.quantity ?? settled,
+      extraRequested: base?.extraRequested ?? 0,
+      pending: Math.max(0, (base?.pending ?? 0) - settled),
+      sent: (base?.sent ?? 0) + t.sent,
+      skipped: (base?.skipped ?? 0) + t.skipped,
+      failed: (base?.failed ?? 0) + t.failed,
+      refusedDeliveries: [
+        ...(base?.refusedDeliveries ?? []),
+        ...outcomes.flatMap((o) => (o.status === "failed" && o.reason === "delivery_refused" ? [{ entryId: o.entryId, itemId: o.itemId }] : [])),
+      ],
+    };
+  } catch {
     return { state: "notice", notice: N.unavailable };
   }
 }
@@ -207,6 +246,7 @@ export async function retryOverInviteDeliveriesAction(_prev: OverInviteResult, f
       state: "progress",
       quantity: targets.length,
       extraRequested: 0,
+      pending: 0,
       sent: out.filter((o) => o.status === "sent").length,
       skipped: out.filter((o) => o.status === "skipped").length,
       failed: out.filter((o) => o.status === "failed").length,

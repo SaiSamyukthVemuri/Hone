@@ -24,6 +24,8 @@ export type OverInviteResult =
       state: "progress";
       quantity: number;
       extraRequested: number;
+      /** Confirmed recipients not yet processed. They stay queued in the batch; this is pagination, never a cap. */
+      pending: number;
       sent: number;
       skipped: number;
       failed: number;
