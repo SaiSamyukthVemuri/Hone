@@ -29,7 +29,7 @@ async function entry(studioId: string, phone: string | null, consent: boolean, o
     `insert into public.new_client_waitlist_entries
        (studio_id, name, email, phone, sms_consent_at, sms_consent_source, sms_consent_text_version, sms_opted_out_at, sms_opt_out_source)
      values ($1, 'Entry', $2, $3,
-             case when $4 then now() end, case when $4 then 'public_waitlist_form' end, case when $4 then '2' end,
+             case when $4 then now() end, case when $4 then 'public_form' end, case when $4 then 'waitlist_sms_operational_v2' end,
              case when $5 then now() end, case when $5 then 'twilio_stop' end)
      returning id`,
     [studioId, uniqueEmail(), phone, consent, optedOut],
@@ -48,7 +48,7 @@ describe("evidence is written by the triggers", () => {
     const n = nextNumber();
     const id = await entry(s.studioId, n, true);
     const rows = await consentRows("waitlist_entry_id", id);
-    expect(rows).toEqual([{ phone_e164: n, source: "public_waitlist_form", text_version: "2" }]);
+    expect(rows).toEqual([{ phone_e164: n, source: "public_form", text_version: "waitlist_sms_operational_v2" }]);
   });
 
   it("a client stamped with consent gets an evidence row; the number is stored normalized", async () => {
@@ -120,13 +120,19 @@ describe("erasure and removal", () => {
     expect(await optOutRows(n)).toHaveLength(1);
   });
 
-  it("erasing a waitlist entry cascades its evidence and keeps a number-level opt-out", async () => {
+  it("a waitlist entry is never hard-deleted (its lifecycle events are append-only): removing it keeps the consent evidence and the opt-out", async () => {
     const s = await seedStudio("sms-erase-entry");
     const n = nextNumber();
     const id = await entry(s.studioId, n, true);
     await adminQuery(`select public.record_sms_number_opt_out($1, 'twilio_stop')`, [n]);
-    await adminQuery(`delete from public.new_client_waitlist_entries where id = $1`, [id]);
-    expect(await consentRows("waitlist_entry_id", id)).toEqual([]);
+    // The existing guard: a direct delete is refused, so the evidence cannot be orphaned by one.
+    await expect(adminQuery(`delete from public.new_client_waitlist_entries where id = $1`, [id])).rejects.toThrow(/append-only evidence/);
+    await adminQuery(
+      `update public.new_client_waitlist_entries set status = 'removed', removed_at = now(), removed_by_practitioner_id = $2 where id = $1`,
+      [id, s.practitionerId],
+    );
+    // DOCUMENTED BEHAVIOUR for Sam: removal does not erase the number evidence; only a client's or a studio's deletion does.
+    expect(await consentRows("waitlist_entry_id", id)).toHaveLength(1);
     expect(await optOutRows(n)).toHaveLength(1);
   });
 
