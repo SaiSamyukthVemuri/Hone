@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Codex P1 on Save visit: an EXISTING area whose editor holds unsaved NATIVE-machine readings must be HELD, not saved (saving closes the form and
+// Save visit: an EXISTING area whose editor holds unsaved NATIVE-machine readings must be HELD, not saved (saving closes the form and
 // loses them). Mounted: the real BlockSetupForm, the real registry, the real Save visit; the machine panel is replaced by a stand-in that reports a
 // draft the way the real collector does.
 const nav = vi.hoisted(() => ({ refresh: vi.fn() }));

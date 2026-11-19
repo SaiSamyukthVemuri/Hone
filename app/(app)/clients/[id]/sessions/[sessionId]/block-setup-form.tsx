@@ -1779,7 +1779,7 @@ export function BlockSetupForm({
   const saveRootRef = useRef<HTMLDivElement>(null);
   useRegisterVisitSaver(`block:${block?.id ?? "new"}`, block ? "Treatment area" : "New treatment area", saveRootRef, () => {
     if (saveBlocked) return Promise.resolve<SaveOutcome>({ status: "held", message: "This area is not ready to save." });
-    // AN EXISTING AREA WITH UNSAVED MACHINE SETTINGS IS HELD (Codex P1): saving the area closes its form, which would unmount the readings entry and
+    // AN EXISTING AREA WITH UNSAVED MACHINE SETTINGS IS HELD: saving the area closes its form, which would unmount the readings entry and
     // lose what was typed there, and Save visit never drives that entry's own save. The practitioner saves or discards it with its own button first.
     if (block && draftRegistry.view.anyDraft) {
       const message = "This area has unsaved machine settings. Save or discard them first, then Save visit.";
