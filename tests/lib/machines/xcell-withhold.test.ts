@@ -59,10 +59,10 @@ describe("a failed rollout read withholds the xCell unit and every selection poi
   });
 });
 
-describe("with the rollout OFF for a new setup, the unit may be listed but nothing may preselect it", () => {
+describe("with the rollout OFF for a new setup, the unit is not offered and nothing may preselect it", () => {
   const off = (over: Partial<In> = {}) => withholdXcellUnits(base({ rollout: "off", ...over }));
-  it("the unit stays in the list", () => {
-    expect(off().devices.map((d) => d.deviceId)).toEqual(["unit-pur", "unit-other"]);
+  it("the unit leaves the list; another machine stays", () => {
+    expect(off().devices.map((d) => d.deviceId)).toEqual(["unit-other"]);
   });
   it("a remembered selection of the unit is cleared", () => {
     expect(off({ remembered: { deviceId: "unit-pur", modeKey: "multiplex" } }).remembered).toBeNull();

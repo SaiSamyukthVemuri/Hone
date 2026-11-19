@@ -2832,10 +2832,11 @@ describe("loadMachineSetupContext and the platform rollout", () => {
     expect(ctx.suggestedMachine?.deviceId).not.toBe(PUR_UNIT);
     expect(ctx.clientLastMachine?.deviceId).not.toBe(PUR_UNIT);
     expect(ctx.inventoryReason).toBe(ROLLOUT_UNAVAILABLE_MESSAGE);
-    // OFF is different by design: the picker already hides the unit behind the legacy choice, and the device list is untouched.
+    // OFF for a NEW setup also removes the unit (a retryable message is not needed: the rollout is known to be off).
     ROLLOUT.value = "off";
     const off = await actions.loadMachineSetupContext(NEW_SETUP);
-    expect(off.devices.map((d) => d.deviceId)).toContain(PUR_UNIT);
+    expect(off.devices.map((d) => d.deviceId)).not.toContain(PUR_UNIT);
+    expect(off.rolloutNotice).toBeNull();
   });
 
   it("WIRING: a remembered selection of the xCell unit is returned with the rollout On and withheld (null) when the read failed", async () => {
@@ -2896,7 +2897,7 @@ describe("loadMachineSetupContext and the platform rollout", () => {
       // OFF: a NEW area does not start on the unit (the rollout was turned off after a pilot practitioner charted it), though the unit is still listed.
       expect(off.remembered).toBeNull();
       expect(off.clientLastMachine).toBeNull();
-      expect(off.devices.map((d) => d.deviceId)).toContain(PUR_UNIT);
+      expect(off.devices.map((d) => d.deviceId)).not.toContain(PUR_UNIT);
     });
 
     it("the suggested machine (nothing remembered; the client's last recorded setup used the unit)", async () => {
@@ -2918,6 +2919,55 @@ describe("loadMachineSetupContext and the platform rollout", () => {
       expect(on.restoredSelection?.deviceId).toBe(PUR_UNIT);
       expect(failed.restoredSelection).toBeNull();
       expect(off.restoredSelection?.deviceId).toBe(PUR_UNIT); // an existing block keeps its own record when Off
+    });
+  });
+
+  describe("a studio that registered an xCell unit but has NO legacy xCell history", () => {
+    const PUR_UNIT = "22222222-2222-4222-8222-222222222222";
+    const arrange = () => {
+      signIn("studio-fett", "pract-owner-a");
+      HISTORY.value = false;
+      DB.rowsFor.machine_profile_mode_contract = [{ mode_key: "multiplex", machine_profile_version: 1 }];
+      DB.rowsFor.studio_machines = [{
+        id: PUR_UNIT, studio_id: "studio-fett", machine_profile_id: "dectro-apilus:xcell-pur",
+        machine_profile_version: 1, display_name: "Dectro xCell", installed_options: [], retired_at: null,
+      }];
+      DB.rowsFor.practitioners = [{ default_machine_id: PUR_UNIT, default_machine_mode: "multiplex" }];
+    };
+    it("reads the rollout; with it OFF a NEW setup cannot start on the unit (listed no more, not preselected)", async () => {
+      arrange();
+      ROLLOUT.value = "on";
+      const on = await actions.loadMachineSetupContext(NEW_SETUP);
+      expect(ROLLOUT.reads).toBe(1);
+      expect(on.devices.map((d) => d.deviceId)).toContain(PUR_UNIT);
+      expect(on.remembered?.deviceId).toBe(PUR_UNIT);
+      ROLLOUT.value = "off";
+      const off = await actions.loadMachineSetupContext(NEW_SETUP);
+      expect(off.devices.map((d) => d.deviceId)).not.toContain(PUR_UNIT);
+      expect(off.remembered).toBeNull();
+    });
+    it("a failed read withholds the unit with the retryable message", async () => {
+      arrange();
+      ROLLOUT.value = "error";
+      const ctx = await actions.loadMachineSetupContext(NEW_SETUP);
+      expect(ctx.devices.map((d) => d.deviceId)).not.toContain(PUR_UNIT);
+      expect(ctx.rolloutNotice).toBe(ROLLOUT_UNAVAILABLE_MESSAGE);
+    });
+    it("an EXISTING block already on the unit keeps it with the rollout OFF (no rollout read is needed)", async () => {
+      arrange();
+      existingPurBlock();
+      ROLLOUT.value = "off";
+      const before = ROLLOUT.reads;
+      const ctx = await actions.loadMachineSetupContext(EXISTING);
+      expect(ctx.devices.map((d) => d.deviceId)).toContain("unit-pur");
+      expect(ROLLOUT.reads).toBe(before); // an existing block on the unit keeps its route without a read
+    });
+    it("a RETIRED unit and no history means no rollout read at all", async () => {
+      arrange();
+      DB.rowsFor.studio_machines = [{ ...(DB.rowsFor.studio_machines as Array<Record<string, unknown>>)[0], retired_at: "2026-10-01T00:00:00Z" }];
+      ROLLOUT.value = "error";
+      await actions.loadMachineSetupContext(NEW_SETUP);
+      expect(ROLLOUT.reads).toBe(0);
     });
   });
 

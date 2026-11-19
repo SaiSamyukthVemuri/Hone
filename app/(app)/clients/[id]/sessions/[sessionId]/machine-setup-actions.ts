@@ -476,7 +476,11 @@ export async function loadMachineSetupContext(input: {
   // under the legacy machine): the context refuses retryably.
   let rolloutUnavailable = false;
   let rolloutOff = false;
-  if (legacyMachine) {
+  // THE ROLLOUT IS READ FOR A STUDIO THAT HAS THE xCELL IN ANY FORM: legacy xCell history OR a live registered xCell Pur unit. A studio with neither
+  // makes no read (an outage cannot touch it). Only pilot studios register a unit, so the extra reads stay few. Without this, a studio that registered
+  // a unit during the pilot kept starting new MultiPlex setups after the rollout was turned Off.
+  const hasLiveXcellUnit = inventory.devices.some((d) => d.profileId === XCELL_PUR_PROFILE_ID && d.retiredAt === null);
+  if (legacyMachine || hasLiveXcellUnit) {
     const existingUsesXcellPur = input.blockId ? await blockUsesXcellPur(db, input.blockId, input.sessionId) : false;
     const rollout = existingUsesXcellPur ? "on" : await readChartingRollout(scope.studioId);
     const routeDecision = xcellRouteDecision({ existingBlockUsesXcellPur: existingUsesXcellPur, rollout });
@@ -487,7 +491,7 @@ export async function loadMachineSetupContext(input: {
       rolloutUnavailable = true;
     } else if (routeDecision === "hide") {
       rolloutOff = true;
-    } else if (routeDecision === "offer") {
+    } else if (routeDecision === "offer" && legacyMachine) {
       try {
         const purProfile = currentProfile(catalogue, XCELL_PUR_PROFILE_ID);
         const published = purProfile ? await publishedModesFor(db, purProfile.profileId, purProfile.version) : null;

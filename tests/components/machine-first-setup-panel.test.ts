@@ -1535,6 +1535,13 @@ describe("the machine dropdown", () => {
     expect(render({ scope: SCOPE, devices: [DEVICE], catalogue: CAT })).not.toContain("machine-rollout-unavailable");
   });
 
+  it("with NOTHING selectable the reason shows once and the separate notice is absent", () => {
+    const MSG = "We could not check whether this is available right now. Please try again in a moment.";
+    const html = render({ scope: SCOPE, devices: [], catalogue: CAT, inventoryReason: MSG, rolloutNotice: MSG });
+    expect(html.split("We could not check whether this is available").length - 1).toBe(2); // the field hint and the empty-state line each carry the reason once
+    expect(html).not.toContain("machine-rollout-unavailable");
+  });
+
   it("uses the SHARED control classes, so the touch floor is not re-derived", () => {
     // fieldControlClass carries the 44px floor, the 16px type that stops iOS
     // zooming on focus, and the focus ring. The pills it replaced were
