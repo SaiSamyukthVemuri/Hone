@@ -3,6 +3,7 @@
 import { useRef, useState, useTransition } from "react";
 import { useRegisterVisitSaver, type SaveOutcome } from "@/components/charting-visit-save";
 import type { NextSessionNoteResult } from "./actions";
+import { useReportVisitDraft } from "@/components/charting-visit-draft";
 
 // PR #191 (Chloe smoke feedback). The "Plan for next visit" form
 // previously gave no feedback on save; Chloe could not tell whether
@@ -32,6 +33,14 @@ export function NextVisitNoteForm({
   const [note, setNote] = useState(initialNote);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [pending, startTransition] = useTransition();
+  // "This visit" (New view): a note with changes is unsaved (a failed save leaves it unsaved too), and a failed save needs attention. Display only.
+  useReportVisitDraft("next-visit-note", {
+    machine: null,
+    draftAreas: [],
+    unsaved: status.kind === "dirty" || status.kind === "saving" || status.kind === "error",
+    attention: status.kind === "error",
+    activity: note,
+  });
 
   // THE ONE SAVE. The button and Save visit both run it, so there is one path, and it returns what happened on every exit.
   async function runSave(): Promise<SaveOutcome> {
