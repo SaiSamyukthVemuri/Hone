@@ -158,6 +158,49 @@ describe("the signed payment_intent.payment_failed event", () => {
       delete process.env.STRIPE_WEBHOOK_SECRET;
     }
   });
+  it("a refused event (non-2xx) is REDELIVERED, as Stripe does, and stops at the first 2xx; an accepted one is sent once", async () => {
+    process.env.PORT = "3999";
+    process.env.STRIPE_WEBHOOK_SECRET = SECRET;
+    vi.useFakeTimers();
+    const statuses = [500, 500, 200];
+    const fetchStub = vi.fn(async () => new Response("x", { status: statuses.shift() ?? 200 }));
+    vi.stubGlobal("fetch", fetchStub);
+    try {
+      await caught();
+      expect(fetchStub).toHaveBeenCalledTimes(0); // first send is deferred
+      await vi.advanceTimersByTimeAsync(800);
+      expect(fetchStub).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(fetchStub).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(fetchStub).toHaveBeenCalledTimes(3);
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(fetchStub).toHaveBeenCalledTimes(3); // stopped at the 200
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+      delete process.env.PORT;
+      delete process.env.STRIPE_WEBHOOK_SECRET;
+    }
+  });
+  it("redelivery is bounded: an endpoint that never accepts is tried a fixed number of times, not forever", async () => {
+    process.env.PORT = "3999";
+    process.env.STRIPE_WEBHOOK_SECRET = SECRET;
+    vi.useFakeTimers();
+    const fetchStub = vi.fn(async () => new Response("x", { status: 500 }));
+    vi.stubGlobal("fetch", fetchStub);
+    try {
+      await caught();
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(fetchStub.mock.calls.length).toBeGreaterThan(1);
+      expect(fetchStub.mock.calls.length).toBeLessThanOrEqual(10);
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+      delete process.env.PORT;
+      delete process.env.STRIPE_WEBHOOK_SECRET;
+    }
+  });
   it("the DEFAULT secret is the environment's STRIPE_WEBHOOK_SECRET: the event verifies with it and with nothing else", async () => {
     const err = (await caught()) as unknown as { payment_intent: { id: string } };
     process.env.STRIPE_WEBHOOK_SECRET = "whsec_from_environment";

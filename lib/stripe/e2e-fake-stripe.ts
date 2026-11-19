@@ -157,6 +157,27 @@ function localOriginOrNull(raw: string): string | null {
   }
 }
 
+// Stripe redelivers an event whose endpoint did not answer 2xx, with backoff, for days. The application relies on that: a
+// decline event that arrives before the charge request has stored its intent id is refused with a 500 on purpose, so it
+// is sent again. The fake redelivers a bounded number of times, one second apart, and stops at the first 2xx.
+const FAKE_WEBHOOK_REDELIVERIES = 8;
+const FAKE_WEBHOOK_REDELIVERY_GAP_MS = 1000;
+
+function redeliverLater(run: string, piId: string, account: string | null, attempt: number): void {
+  if (attempt > FAKE_WEBHOOK_REDELIVERIES) return;
+  const t = setTimeout(() => {
+    void (async () => {
+      const out = await deliverFakePaymentFailedWebhook(run, piId, account);
+      if (!out.delivered) redeliverLater(run, piId, account, attempt + 1);
+    })();
+  }, FAKE_WEBHOOK_REDELIVERY_GAP_MS);
+  if (typeof t === "object" && t && "unref" in t) (t as { unref: () => void }).unref();
+}
+async function redeliverFromFirstAttempt(run: string, piId: string, account: string | null): Promise<void> {
+  const out = await deliverFakePaymentFailedWebhook(run, piId, account);
+  if (!out.delivered) redeliverLater(run, piId, account, 1);
+}
+
 export async function deliverFakePaymentFailedWebhook(
   run: string,
   piId: string,
@@ -322,11 +343,12 @@ async function synthPaymentIntent(run: string, opts: RequestOpts, params?: Creat
       if (!existing) {
         if (readFakeWebhookTiming(run) === "before_return") {
           // The event is delivered and processed before this call returns, so it reaches the application ahead of the
-          // intent being bound to its attempt.
-          await deliverFakePaymentFailedWebhook(run, id, opts?.stripeAccount ?? null);
+          // intent being bound to its attempt. A refusal is redelivered afterwards, as Stripe does.
+          const first = await deliverFakePaymentFailedWebhook(run, id, opts?.stripeAccount ?? null);
+          if (!first.delivered) redeliverLater(run, id, opts?.stripeAccount ?? null, 1);
         } else {
           const t = setTimeout(() => {
-            void deliverFakePaymentFailedWebhook(run, id, opts?.stripeAccount ?? null);
+            void redeliverFromFirstAttempt(run, id, opts?.stripeAccount ?? null);
           }, FAKE_WEBHOOK_DELAY_MS);
           if (typeof t === "object" && t && "unref" in t) (t as { unref: () => void }).unref();
         }
