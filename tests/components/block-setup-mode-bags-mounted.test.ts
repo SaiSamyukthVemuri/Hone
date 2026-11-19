@@ -182,6 +182,18 @@ describe("R2: the leave guard covers readings parked for another mode", () => {
   });
 });
 
+describe("R2 (isolated): parked readings ALONE keep the leave guard armed", () => {
+  it("readings typed under Thermolysis, then the mode cleared so the visible draft equals the baseline: leaving is STILL held", async () => {
+    await mount({ rollout: true, create: true });
+    expect(leaveIsHeld(), "control: a fresh form is not held").toBe(false);
+    await click(pill("Thermolysis"));
+    await typeInto(labelInput("Thermolysis intensity"), "55");
+    await click(pill("Thermolysis")); // clears the mode: the visible draft is back to the baseline
+    expect(host!.querySelector('[data-testid="hidden-mode-readings-notice"]')).not.toBeNull();
+    expect(leaveIsHeld()).toBe(true);
+  });
+});
+
 describe("R3: values typed with NO mode are parked at the first mode pick, never silently discarded", () => {
   it("typed EL with no mode, then Thermolysis picked: the draft is still unsaved, the notice says so, and clearing the mode restores it", async () => {
     await mount({ rollout: true, create: true });
