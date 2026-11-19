@@ -37,6 +37,33 @@ describe("a non-owner is refused before any client or query exists", () => {
     const v = await loadStatementView({ role: "owner" }, { id: "s1", timezone: "America/Toronto" }, "2026-11", "cad", failing);
     expect(v).toEqual({ access: "granted", ok: false, reason: "read_failed" });
   });
+  it("a failed read of ANY money table, the legacy manual-fee ledger included, makes the whole statement unavailable, never a partial month", async () => {
+    const { loadStatementView } = await import("@/lib/finance/statement-read");
+    const ok = (data: unknown[]) => ({ data, error: null });
+    const fake = (results: Record<string, { data: unknown[] | null; error: unknown }>) =>
+      ({
+        from: (t: string) => {
+          const chain: unknown = new Proxy(() => undefined, {
+            get: (_x, prop) => (prop === "then" ? (res: (v: unknown) => void) => res(results[t]) : () => chain),
+          });
+          return chain;
+        },
+      }) as unknown as SupabaseClient;
+    const healthy = {
+      appointments: ok([{ id: "a1", starts_at: "2026-11-03T15:00:00Z", practitioner_id: "p1", service_id: null, clients: null }]),
+      sessions: ok([{ id: "s1", appointment_id: "a1" }]),
+      payment_charge_attempts: ok([]),
+      appointment_settlements: ok([]),
+      manual_fee_charge_attempts: ok([]),
+      services: ok([]),
+    };
+    const good = await loadStatementView({ role: "owner" }, { id: "s1", timezone: "America/Toronto" }, "2026-11", "cad", fake(healthy));
+    expect(good).toMatchObject({ access: "granted", ok: true });
+    for (const t of ["sessions", "payment_charge_attempts", "appointment_settlements", "manual_fee_charge_attempts"] as const) {
+      const v = await loadStatementView({ role: "owner" }, { id: "s1", timezone: "America/Toronto" }, "2026-11", "cad", fake({ ...healthy, [t]: { data: null, error: { message: "boom" } } }));
+      expect(v, t).toEqual({ access: "granted", ok: false, reason: "read_failed" });
+    }
+  });
   it("an owner of a studio with no payment currency gets nothing totalled", async () => {
     const { loadStatementView } = await import("@/lib/finance/statement-read");
     expect(await loadStatementView({ role: "owner" }, { id: "s1", timezone: "America/Toronto" }, "2026-11", null)).toEqual({ access: "granted", ok: false, reason: "currency_unknown" });
