@@ -50,7 +50,7 @@ export function ClientsView({ month, monthLabel, maxMonth, timezone, notice, pag
         {!directory.ok ? (
           <p className="text-sm text-fg" role="alert">{STATEMENT_READ_UNAVAILABLE[directory.reason] ?? STATEMENT_READ_UNAVAILABLE.read_failed}</p>
         ) : paged && paged.totals.clientCount === 0 ? (
-          <EmptyState title={`No client visits in ${monthLabel}.`} description="A client appears here once they have a completed visit in the month. Use Find a client to open anyone's full history." />
+          <EmptyState title={`No client visits in ${monthLabel}.`} description="A client appears here once they have a completed visit, a fee or a payment recorded in the month. Use Find a client to open anyone's full history." />
         ) : paged ? (
           <>
             <p className="text-sm text-fg" aria-live="polite">

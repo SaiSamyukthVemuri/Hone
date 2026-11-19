@@ -134,6 +134,19 @@ describe("Find a client (mounted)", () => {
     expect(el.textContent).toMatch(/No client matches that name/);
     expect(el.querySelector("a")?.getAttribute("href")).toBe("/financials/statements?month=2026-11");
   });
+  it("with more than 40 clients sharing one name, no last-visit detail is loaded: each says only \"Same name as another client\"", () => {
+    const many = Array.from({ length: 41 }, (_, i) => ({ id: `c-dup-${i}`, displayName: "Pat Duplicate", archived: false }));
+    const el = mountFinder({ clients: many, monthVisits: {}, lastVisits: null });
+    type(el, "pat");
+    const t = optionTexts(el);
+    expect(t.length).toBeGreaterThan(0); // the finder caps how many results it lists
+    for (const x of t) {
+      expect(x).toMatch(/Same name as another client/);
+      expect(x).not.toMatch(/Last visit/);
+    }
+    // and the page itself withholds the lookup above the cap
+    expect(read("app/(app)/financials/statements/page.tsx")).toMatch(/sameName\.length <= LAST_VISIT_MAX_CLIENTS \? await loadLastVisitDates\([^)]*\) : null/);
+  });
   it("does not search email or phone: only the shown name is matched", () => {
     const el = mountFinder();
     type(el, "@");
@@ -175,6 +188,7 @@ describe("the Clients tab", () => {
   it("is empty with an explanation and the finder still available", () => {
     const out = html(createElement(ClientsView, viewProps({ directory: dirOk({ rows: [] }) })));
     expect(out).toMatch(/No client visits in November 2026/);
+    expect(out).toMatch(/completed visit, a fee or a payment recorded in the month/);
     expect(out).toMatch(/Find a client/);
   });
   it("pages without changing the counts or totals, and the paging links keep the month", () => {
