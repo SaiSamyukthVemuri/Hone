@@ -24,5 +24,7 @@ describe("booked-manually.ts has exactly one importer", () => {
     const s = readFileSync("app/(app)/settings/waitlist/booked-manually-actions.ts", "utf8");
     expect(s.indexOf('practitioner.role !== "owner"')).toBeGreaterThan(-1);
     expect(s.indexOf('practitioner.role !== "owner"')).toBeLessThan(s.indexOf("markEntryBookedManually("));
+    // ...and before the id check, so a bad id can never be answered to someone who is not the owner.
+    expect(s.indexOf('practitioner.role !== "owner"')).toBeLessThan(s.indexOf("if (!entryId || !appointmentId)"));
   });
 });

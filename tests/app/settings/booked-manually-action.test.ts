@@ -62,6 +62,12 @@ describe("bookedManuallyAction", () => {
     expect(await run(form({ entryId: E, appointmentId: A }))).toBe("/settings/waitlist?bm=not_owner");
     expect(h.command).not.toHaveBeenCalled();
   });
+  it.each(["practitioner", "receptionist", ""])("a %s session with a malformed id still gets not_owner: the role is checked before the ids", async (role) => {
+    h.role = role;
+    expect(await run(form({ entryId: "nope", appointmentId: "nope" }))).toBe("/settings/waitlist?bm=not_owner");
+    expect(await run(form({}))).toBe("/settings/waitlist?bm=not_owner");
+    expect(h.command).not.toHaveBeenCalled();
+  });
   it("an owner with no user id is refused", async () => {
     h.userId = null;
     expect(await run(form({ entryId: E, appointmentId: A }))).toBe("/settings/waitlist?bm=not_owner");
