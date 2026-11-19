@@ -104,7 +104,7 @@ import { useRetainedState } from "@/components/charting-state-provider";
 import { NewViewHint, NewViewStep, useChartingRollout, useChartingView } from "@/components/charting-view-context";
 import { useReportVisitDraft, visitMachineLine } from "@/components/charting-visit-draft";
 import { useRegisterVisitSaver, type SaveOutcome } from "@/components/charting-visit-save";
-import { hiddenBagsNotice, hiddenModesWithValues, mergeTouched, pulseTouchedFromRecord, pulseRecordable, switchMode, type ModeBags, type PulseTouched } from "@/lib/sessions/mode-bags";
+import { bagHoldsValue, hiddenBagsNotice, readingsOf, hiddenModesWithValues, mergeTouched, pulseTouchedFromRecord, pulseRecordable, switchMode, type ModeBags, type PulseTouched } from "@/lib/sessions/mode-bags";
 import { DraftRegistryProvider, useDraftRegistryState, useReportDraft } from "@/components/machines/draft-registry";
 import { MachineFirstSetupConnected } from "@/components/machines/machine-first-setup-connected";
 import { ProbePicker } from "@/components/probe-picker";
@@ -1480,6 +1480,10 @@ export function BlockSetupForm({
     // commit first, the identity write would then be refused as stale, and the choice would be lost silently.
     identityWritePending;
 
+  // W1 (redesign on): readings that will NOT be saved (parked for another mode, or typed with no mode) are never dropped silently. Save asks first.
+  const [discardPrompt, setDiscardPrompt] = useState<string | null>(null);
+  const discardAck = useRef(false);
+
   // THE ONE SAVE. The Save button and Save visit both run it, so there is ONE path (same gates, same retry key). It returns what happened on
   // EVERY exit: a validation refusal, a hold, a refusal, a lost answer or a save, never a promise that stays pending.
   function runSave(): Promise<SaveOutcome> {
@@ -1489,6 +1493,18 @@ export function BlockSetupForm({
       return Promise.resolve({ status: "failed", message });
     };
     setError(null);
+    const acked = discardAck.current;
+    discardAck.current = false;
+    if (rollout && !acked) {
+      const orphan = draft.mode === "" && bagHoldsValue({ readings: readingsOf(draft as unknown as Record<string, unknown>), pulseTouched });
+      const notice = hiddenBagsNotice([...hiddenModes, ...(orphan ? [""] : [])]);
+      if (notice) {
+        setDiscardPrompt(notice);
+        // HELD, not failed: nothing was sent. Save visit shows this and the visit stays open; the confirm below offers "Save without them".
+        return Promise.resolve({ status: "held", message: `${notice} Save without them?` });
+      }
+    }
+    setDiscardPrompt(null);
     // THE MACHINE DRAFT BLOCKS THE SAVE WHEN IT IS HALF-FINISHED, and says
     // which group and why. Skipping it would discard numbers she typed;
     // sending it would be refused by the command after a round trip.
@@ -2121,6 +2137,19 @@ export function BlockSetupForm({
           />
         ) : null;
       })()}
+      {rollout && discardPrompt && (
+        <div role="group" aria-label="Readings that will not be saved" data-testid="discard-readings-confirm" className="flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950">
+          <p>{discardPrompt} Save without them?</p>
+          <div className="flex gap-2">
+            <button type="button" data-testid="discard-readings-save" className="rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white" onClick={() => { discardAck.current = true; submit(); }}>
+              Save without them
+            </button>
+            <button type="button" data-testid="discard-readings-keep" className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium" onClick={() => setDiscardPrompt(null)}>
+              Keep editing
+            </button>
+          </div>
+        </div>
+      )}
       <div className="flex items-center justify-between gap-3">
         <h3 className="text-base font-medium">
           {isEdit ? "Edit settings block" : "Add settings block"}
