@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import { createRoot } from "react-dom/client";
 import { createElement, act } from "react";
 import { ChartingVisitDraftProvider, useVisitDraftSummary } from "@/components/charting-visit-draft";
@@ -9,7 +10,7 @@ import { readingsSaveNeedsAttention } from "@/components/machines/machine-readin
 
 function Reader() {
   const s = useVisitDraftSummary();
-  return createElement("output", { "data-u": String(s.unsaved), "data-a": String(s.attention) });
+  return createElement("output", { "data-u": String(s.unsaved), "data-a": String(s.attention), "data-all": JSON.stringify(s) });
 }
 let root: ReturnType<typeof createRoot> | null = null;
 let host: HTMLElement | null = null;
@@ -51,10 +52,18 @@ describe("the next-visit note reports to This visit", () => {
     await press();
     expect([out().dataset.u, out().dataset.a]).toEqual(["true", "true"]);
   });
-  it("the summary never carries the note text", async () => {
-    await mount(vi.fn());
-    await type("PRIVATE-NOTE-TEXT");
-    expect(host!.querySelector("output")!.outerHTML).not.toContain("PRIVATE-NOTE-TEXT");
+  it("NO summary field (machine, areas, unsaved, attention, anything) carries the note text, saved or not", async () => {
+    await mount(vi.fn(async () => ({ ok: true, cleared: false })));
+    await type("PRIVATE-NOTE-TEXT-7731");
+    expect(out().dataset.all).not.toContain("7731");
+    await press();
+    expect(out().dataset.all).not.toContain("7731");
+    expect(Object.keys(JSON.parse(out().dataset.all!)).sort()).toEqual(["attention", "draftAreas", "machine", "unsaved"]);
+  });
+  it("the recency token is the note's length and an edit counter, never its text", () => {
+    const src = readFileSync("app/(app)/clients/[id]/sessions/[sessionId]/NextVisitNoteForm.tsx", "utf8");
+    expect(src).toMatch(/activity: `\$\{note\.length\}:\$\{edits\}`/);
+    expect(src).not.toMatch(/activity: note\b/);
   });
 });
 
