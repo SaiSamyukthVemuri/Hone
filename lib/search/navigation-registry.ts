@@ -223,13 +223,13 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
   },
   {
     id: "financials-statement",
-    title: "Monthly statement",
+    title: "Statements",
     category: "Navigation",
     href: "/financials/statement",
     description: "Visits and money for one month",
     // Owner-only like Capacity, and advertised under Business. Presentation only: the page and its read refuse any role but owner
     // before any query, and the money tables are owner-readable only (0254).
-    keywords: ["monthly statement", "statement", "money statement", "business", "income", "revenue", "payments this month", "month end"],
+    keywords: ["statements", "monthly statement", "statement", "money statement", "business", "income", "revenue", "payments this month", "month end"],
     visibility: "owner",
     priority: 94,
   },

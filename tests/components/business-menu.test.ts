@@ -6,14 +6,14 @@ import { matchNavEntries, NAV_ENTRIES, NON_SEARCHABLE_ROUTES, type NavSearchCont
 
 const read = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
 
-// The owner's Business menu: Capacity and Monthly statement. Presentation only; the pages keep their own owner checks.
+// The owner's Business menu: Capacity and Statements. Presentation only; the pages keep their own owner checks.
 
 describe("the Business menu's destinations", () => {
-  it("has exactly two items, in order: Capacity, then Monthly statement, each pointing at its existing page", () => {
+  it("has exactly two items, in order: Capacity, then Statements, each pointing at its existing page", () => {
     expect(BUSINESS_MENU_LABEL).toBe("Business");
     expect(BUSINESS_MENU_ITEMS.map((i) => [i.label, i.href])).toEqual([
       ["Capacity", "/dashboard/capacity"],
-      ["Monthly statement", "/financials/statement"],
+      ["Statements", "/financials/statement"],
     ]);
   });
 
@@ -37,10 +37,10 @@ describe("who sees the menu (presentation only)", () => {
 
   it("the phone sheet lists the same two items for the owner role only, with a Business heading", () => {
     const mobile = read("app/(app)/MobileMenu.tsx");
-    expect(mobile).toMatch(/role === "owner"\s*\?\s*BUSINESS_MENU_ITEMS\.map/);
-    expect(mobile).toContain("groupHeading: n === 0 ? BUSINESS_MENU_LABEL : undefined");
-    // A practitioner's branch is the empty array: no Business item of any kind.
-    expect(mobile).toMatch(/BUSINESS_MENU_ITEMS\.map[\s\S]*?:\s*\[\]\)/);
+    expect(mobile).toMatch(/BUSINESS_MENU_ITEMS\.map\(\(item\) => workItem\(item, true\)\)/);
+    // The heading labels a real group (role=group + aria-labelledby), rendered only for the owner role.
+    expect(mobile).toMatch(/role === "owner" && \(\s*<div role="group" aria-labelledby="mobile-nav-business-heading"/);
+    expect(mobile).toContain('id="mobile-nav-business-heading"');
   });
 
   it("the page's own server-side owner check is untouched and still comes before any read", () => {
@@ -58,9 +58,11 @@ describe("the desktop menu is keyboard accessible", () => {
     expect(menu).toContain('e.key === "Escape"');
     expect(menu).toContain("buttonRef.current?.focus()");
   });
-  it("closes when focus leaves it and when a link is chosen", () => {
+  it("closes when focus leaves it, and is keyed to the path it was opened on", () => {
     expect(menu).toContain("onBlur=");
-    expect(menu).toContain("onClick={() => setOpen(false)}");
+    // ...but NOT by the click itself for another page: that would unmount the link carrying its "Opening…" mark. The mounted test
+    // (business-menu-mounted.test.ts) pins the behaviour; this pins that the open state is keyed to the path it was opened on.
+    expect(menu).toContain("openedOn === pathname");
   });
   it("links with ordinary anchors in tab order (no roving tabindex, no div links)", () => {
     expect(menu).not.toContain("tabIndex");

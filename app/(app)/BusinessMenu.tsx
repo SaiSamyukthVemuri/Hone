@@ -6,31 +6,36 @@ import { PendingLink } from "@/components/pending-link";
 import { cx } from "@/components/ui/control-base";
 import { BUSINESS_MENU_ITEMS, BUSINESS_MENU_LABEL, isBusinessPath } from "@/lib/nav/business-menu";
 
-// The owner's Business menu in the desktop primary navigation: one button, two destinations (Capacity, Monthly statement).
+// The owner's Business menu in the desktop primary navigation: one button, two destinations (Capacity, Statements).
 //
 // OWNER-ONLY PRESENTATION. The layout renders this only for the role it already resolved; the pages keep their own server-side owner
 // check, so hiding it protects nothing and showing it grants nothing.
 //
 // KEYBOARD: Enter or Space opens (it is a button); Escape closes and returns focus to the button; Tab moving focus out of the menu
 // closes it; the links are ordinary links in tab order. It follows the AccountMenu's pattern: a button with aria-expanded and a
-// labelled panel, closed by a press outside.
+// labelled panel, closed by a press outside. After choosing a page it stays open, showing the link's pending mark, until the
+// navigation commits.
 export function BusinessMenu() {
-  const [open, setOpen] = useState(false);
+  // The menu is open only for the path it was opened on. Choosing another page keeps it (and the link's "Opening…" mark) mounted
+  // until the navigation COMMITS and the pathname changes, so a slow page still shows its acknowledgement; no effect is needed.
+  const [openedOn, setOpenedOn] = useState<string | null | undefined>(undefined);
   const rootRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const pathname = usePathname();
+  const open = openedOn !== undefined && openedOn === pathname;
+  const setOpen = (next: boolean) => setOpenedOn(next ? pathname : undefined);
   const current = isBusinessPath(pathname);
 
   useEffect(() => {
     if (!open) return;
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
-        setOpen(false);
+        setOpenedOn(undefined);
         buttonRef.current?.focus();
       }
     }
     function onPointerDown(e: PointerEvent) {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpenedOn(undefined);
     }
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("pointerdown", onPointerDown);
@@ -46,7 +51,7 @@ export function BusinessMenu() {
       className="relative"
       onBlur={(e) => {
         // Focus left the whole menu (Tab past the last link, or Shift+Tab before the button): close it.
-        if (open && e.relatedTarget && !rootRef.current?.contains(e.relatedTarget as Node)) setOpen(false);
+        if (open && e.relatedTarget && !rootRef.current?.contains(e.relatedTarget as Node)) setOpenedOn(undefined);
       }}
     >
       <button
@@ -56,7 +61,7 @@ export function BusinessMenu() {
         aria-expanded={open}
         aria-controls="business-menu-panel"
         aria-current={current ? "page" : undefined}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setOpen(!open)}
         className={cx(
           "flex items-center gap-1 rounded-md px-3 py-2",
           current
@@ -94,7 +99,9 @@ export function BusinessMenu() {
                 data-testid={item.testId}
                 pendingLabel={`Opening ${item.label}…`}
                 aria-current={here ? "page" : undefined}
-                onClick={() => setOpen(false)}
+                // The page you are already on never changes the pathname, so nothing would ever close the menu: close it now.
+                // Any other destination stays open (acknowledging) until the navigation commits.
+                onClick={here ? () => setOpen(false) : undefined}
                 className={cx(
                   "flex min-h-[40px] items-center rounded-md px-3 py-2",
                   here ? "bg-neutral-100 dark:bg-neutral-800" : "hover:bg-neutral-100 dark:hover:bg-neutral-900",

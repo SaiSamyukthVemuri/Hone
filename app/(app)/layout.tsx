@@ -202,7 +202,7 @@ export default async function AppLayout({
                   intelligence can land behind this same word without
                   renaming the tab under owners who learned it. Today
                   it is a small menu of the two owner surfaces that exist,
-                  Capacity and Monthly statement; there is deliberately
+                  Capacity and Statements; there is deliberately
                   no /business hub standing empty.
 
                   OWNER-ONLY PRESENTATION, and only that. The role comes

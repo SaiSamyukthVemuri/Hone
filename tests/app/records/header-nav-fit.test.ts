@@ -82,16 +82,16 @@ describe("header fit", () => {
     }
   });
 
-  it("Business is an OWNER-ONLY menu on both breakpoints, listing Capacity and Monthly statement", () => {
+  it("Business is an OWNER-ONLY menu on both breakpoints, listing Capacity and Statements", () => {
     // OWNER-CAP follow-up, extended for the monthly statement. The browser spec proves what an owner and a practitioner each
     // actually SEE; this is the cheap source-level pin that the menu is role-gated at all, on both surfaces, and that both
     // surfaces take their destinations from ONE shared list. There is no /business hub.
     const MOBILE = read("app/(app)/MobileMenu.tsx");
     const LIST = read("lib/nav/business-menu.ts");
     expect(LAYOUT).toMatch(/\{practitioner\.role === "owner" && <BusinessMenu \/>\}/);
-    expect(MOBILE).toMatch(/role === "owner"\s*\?\s*BUSINESS_MENU_ITEMS\.map/);
+    expect(MOBILE).toMatch(/role === "owner" && \(\s*<div role="group"[\s\S]*?BUSINESS_MENU_ITEMS\.map/);
     expect(LIST).toContain('href: "/dashboard/capacity", label: "Capacity"');
-    expect(LIST).toContain('href: "/financials/statement", label: "Monthly statement"');
+    expect(LIST).toContain('href: "/financials/statement", label: "Statements"');
     // UNCONDITIONAL would be the defect: neither shell file may name either route outside the gated branch, so neither names it at all.
     for (const [name, src] of [
       ["layout", LAYOUT],

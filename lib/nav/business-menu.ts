@@ -7,7 +7,7 @@ export const BUSINESS_MENU_LABEL = "Business";
 
 export const BUSINESS_MENU_ITEMS = [
   { href: "/dashboard/capacity", label: "Capacity", testId: "nav-business-capacity" },
-  { href: "/financials/statement", label: "Monthly statement", testId: "nav-business-statement" },
+  { href: "/financials/statement", label: "Statements", testId: "nav-business-statement" },
 ] as const;
 
 /** Is `pathname` inside either Business destination (so the menu reads as the current section)? */
