@@ -9,6 +9,8 @@ import {
   type PaymentSeed,
 } from "./helpers/payment-fixture";
 import { expectPreparedDurable, sessionPaymentRegion } from "./helpers/checkout-flow";
+import { seedE2eMember } from "../e2e/helpers/seed";
+import { loginByMagicLink } from "../e2e/helpers/flows";
 import {
   resetFakeStripeLedger,
   clearFakeStripeOutcome,
@@ -97,6 +99,7 @@ test("failure: a declined charge never shows Paid, and switching views changes n
     await expect.poll(async () => (await getSessionPaymentAttemptRows(seed.sessionId))[0].status, { timeout: 30_000 }).not.toMatch(/^(ready|pending_stripe)$/);
     const status = (await getSessionPaymentAttemptRows(seed.sessionId))[0].status;
     expect(status).not.toBe("succeeded");
+    expect(countEffectsForAccount(seed.connectedAccountId), "a declined charge moved no money").toBe(0);
     await expect(page.getByTestId("payment-summary-paid")).toHaveCount(0);
     const attempts = (await getSessionPaymentAttemptRows(seed.sessionId)).length;
 
@@ -104,9 +107,45 @@ test("failure: a declined charge never shows Paid, and switching views changes n
     await expect(page.getByTestId("charting-view-root")).toHaveAttribute("data-charting-view", "current", { timeout: T });
     await expect(page.getByTestId("payment-summary-paid")).toHaveCount(0);
     expect((await getSessionPaymentAttemptRows(seed.sessionId)).length, "no second attempt appeared").toBe(attempts);
+    expect(countEffectsForAccount(seed.connectedAccountId), "and still no money moved after switching views").toBe(0);
   } finally {
     await cleanupPaymentScenario(seed.studioId);
     cleanupFakeStripeLedger();
     await closePool();
+  }
+});
+
+test("roles: the owner sees the Session payment region in both views (control); a practitioner in the same studio sees neither the region nor its controls", async ({ page, browser }) => {
+  resetFakeStripeLedger();
+  clearFakeStripeOutcome();
+  const seed = await seedEligiblePaymentWithLogin({ label: "view-roles", bookedService: { name: "View Roles", priceCents: 22500 } });
+  try {
+    // Owner: the SAME locator the practitioner assertion uses, so a renamed region cannot make the practitioner case pass.
+    await openInNewView(page, seed);
+    await expect(sessionPaymentRegion(page), "owner, New view: the region exists (positive control)").toBeVisible({ timeout: T });
+    await page.getByTestId("charting-view-toggle").click();
+    await expect(page.getByTestId("charting-view-root")).toHaveAttribute("data-charting-view", "current", { timeout: T });
+    await expect(sessionPaymentRegion(page), "owner, Current view: the region exists (positive control)").toBeVisible({ timeout: T });
+
+    const member = await seedE2eMember(seed);
+    const ctx = await browser.newContext();
+    try {
+      const p2 = await ctx.newPage();
+      await loginByMagicLink(p2, member.email);
+      await p2.goto(`/clients/${seed.clientId}/sessions/${seed.sessionId}`);
+      await expect(p2.getByTestId("charting-view-toggle"), "the practitioner reaches the chart, so an absent region is the role, not a refused page").toBeVisible({ timeout: T });
+      for (const view of ["current", "new"] as const) {
+        const toggle = p2.getByTestId("charting-view-toggle");
+        if ((await toggle.getAttribute("aria-checked")) !== String(view === "new")) await toggle.click();
+        await expect(p2.getByTestId("charting-view-root")).toHaveAttribute("data-charting-view", view, { timeout: T });
+        await expect(sessionPaymentRegion(p2), `${view}: no payment region for a practitioner`).toHaveCount(0);
+        await expect(p2.getByRole("button", { name: /prepare session payment|run charge/i })).toHaveCount(0);
+      }
+    } finally {
+      await ctx.close();
+    }
+  } finally {
+    await cleanupPaymentScenario(seed.studioId);
+    cleanupFakeStripeLedger();
   }
 });

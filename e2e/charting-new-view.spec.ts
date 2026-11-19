@@ -12,6 +12,7 @@ import {
   sql,
 } from "./helpers/seed";
 import { loginAsOwner, loginByMagicLink } from "./helpers/flows";
+import { sessionPaymentRegion } from "../e2e-payment/helpers/checkout-flow";
 import { listMessageIds, waitForMagicLink } from "./helpers/mail";
 import { E2E_APP_ORIGIN } from "./helpers/local-env";
 
@@ -245,16 +246,26 @@ test("history: sessions saved before the machine-first model, and an older machi
   const url = `/clients/${clientId}/sessions/${sessionId}`;
   await page.goto(url);
   await expect(page.getByTestId("charting-view-toggle"), "the switch must exist: start the app server with HONE_CHARTING_NEW_VIEW_STUDIO_IDS=all").toBeVisible({ timeout: T });
-  const read = async () => ({
-    edits: await page.getByTestId(/^edit-area-/).count(),
-    body: (await page.locator("main").innerText()).includes("Application error"),
-  });
+  // CONTENT, not counts: the text of every saved block section (area, machine, settings) is read in each view and must be identical.
+  const read = async () => {
+    // The nearest enclosing section of each Edit button is that block's own section, so view furniture around the list is not compared.
+    const sections = page.getByTestId(/^edit-area-/).locator("xpath=ancestor::section[1]");
+    return {
+      edits: await page.getByTestId(/^edit-area-/).count(),
+      sections: (await sections.allInnerTexts()).map((t) => t.replace(/\s+/g, " ").trim()),
+      body: (await page.locator("main").innerText()).includes("Application error"),
+    };
+  };
   await setView(page, "current");
   const current = await read();
   await setView(page, "new");
   const next = await read();
   expect(current.edits).toBe(2);
   expect(next.edits, "New view lists the same saved blocks as Current").toBe(current.edits);
+  expect(current.sections.length, "block sections were found").toBeGreaterThan(0);
+  expect(current.sections.join(" "), "the old-style area is shown").toContain("Chin");
+  expect(current.sections.join(" "), "the older machine block's area and frequency are shown").toMatch(/Upper lip[\s\S]*13\.56|13\.56[\s\S]*Upper lip/);
+  expect(next.sections, "each block's text (areas, machine, settings) is identical in New and Current").toEqual(current.sections);
   expect(current.body || next.body, "neither view shows an error screen").toBe(false);
   expect(await getSessionBlockCount(sessionId)).toBe(2);
   await expectTouchFloorAndNoOverflow(page, "new, historical blocks");
@@ -298,7 +309,7 @@ test("roles: a practitioner sees no payment or price in either view; a reception
   await expect(page.getByTestId("charting-view-toggle"), "the switch must exist for a practitioner: start the app server with HONE_CHARTING_NEW_VIEW_STUDIO_IDS=all").toBeVisible({ timeout: T });
   for (const view of ["current", "new"] as const) {
     await setView(page, view);
-    await expect(page.getByRole("region", { name: "Session payment" }), `${view}: no payment region for a practitioner`).toHaveCount(0);
+    await expect(sessionPaymentRegion(page), `${view}: no payment region for a practitioner (the owner positive control is in the payment-lane spec)`).toHaveCount(0);
     await expect(page.getByRole("button", { name: /prepare session payment|run charge/i }), `${view}: no charge controls`).toHaveCount(0);
     expect(await page.getByTestId("charting-view-root").innerText(), `${view}: no price shown`).not.toMatch(/\$\s?\d/);
     await expectTouchFloorAndNoOverflow(page, `${view}, practitioner`);
