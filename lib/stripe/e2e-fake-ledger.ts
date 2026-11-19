@@ -108,6 +108,39 @@ export function setFakeStripeBehavior(
   renameSync(tmp, p);
 }
 
+// When the fake sends the decline event: "after" (default) a moment after the charge call has returned, or
+// "before_return", sent and processed BEFORE the charge call returns, so the event reaches the application ahead of the
+// executor binding the intent to its attempt. Stripe does not promise an order; a lane can pin either.
+export type FakeWebhookTiming = "after" | "before_return";
+export function readFakeWebhookTiming(runId: string): FakeWebhookTiming {
+  try {
+    assertAllowed(runId);
+    const p = configPath(runId);
+    if (!existsSync(p)) return "after";
+    const cfg = JSON.parse(readFileSync(p, "utf8")) as { webhookTiming?: string };
+    return cfg.webhookTiming === "before_return" ? "before_return" : "after";
+  } catch {
+    return "after";
+  }
+}
+
+export function setFakeStripeWebhookTiming(runId: string, timing: FakeWebhookTiming): void {
+  assertAllowed(runId);
+  const p = configPath(runId);
+  let cfg: Record<string, unknown> = {};
+  if (existsSync(p)) {
+    try {
+      cfg = JSON.parse(readFileSync(p, "utf8"));
+    } catch {
+      cfg = {};
+    }
+  }
+  cfg.webhookTiming = timing;
+  const tmp = `${p}.${Math.abs(hashRun(runId))}.tmp`;
+  writeFileSync(tmp, JSON.stringify(cfg), { mode: 0o600 });
+  renameSync(tmp, p);
+}
+
 export function clearFakeStripeBehavior(runId: string): void {
   assertAllowed(runId);
   const p = configPath(runId);
