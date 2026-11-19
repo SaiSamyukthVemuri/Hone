@@ -24,6 +24,22 @@ function read(rel: string): string {
 describe("public booking form renders the 'How did you hear about us?' question", () => {
   const FORM = read("app/book/[slug]/PublicBookForm.tsx");
 
+  it("imports REFERRAL_SOURCE_OPTIONS from the shared helper", () => {
+    expect(FORM).toMatch(
+      /import \{ REFERRAL_SOURCE_OPTIONS \} from "@\/lib\/booking\/referral-source"/,
+    );
+  });
+
+  it("renders a Field labelled 'How did you hear about us?'", () => {
+    expect(FORM).toContain("How did you hear about us?");
+  });
+
+  it("renders a <select> bound to the referralSource state", () => {
+    expect(FORM).toMatch(
+      /<select[\s\S]*?name="referral_source"[\s\S]*?value=\{referralSource\}/,
+    );
+  });
+
   it("renders an option for each entry in REFERRAL_SOURCE_OPTIONS", () => {
     expect(FORM).toMatch(
       /REFERRAL_SOURCE_OPTIONS\.map\(\(opt\)[\s\S]*?<option key=\{opt\.value\}[\s\S]*?\{opt\.label\}/,

@@ -27,6 +27,13 @@ describe("bookAppointmentForClientAction — canonical command wiring", () => {
     expect(ACTIONS).not.toMatch(/capacityOn && practitioner\.role === "owner" && submittedPractitionerId/);
   });
 
+  it("never returns a raw DB message from the booking path", () => {
+    // No `${...message}` interpolation and no bare `error: <ident>.message`.
+    expect(ACTIONS.match(/error:\s*\w*Err\.message/g) ?? []).toEqual([]);
+    expect(ACTIONS).toMatch(/function logBookingDbError/);
+    expect(ACTIONS).toMatch(/booking_action_db_error:\$\{action\}:\$\{stage\}:\$\{code \?\? "unknown"\}/);
+  });
+
   it("maps the command's result codes to fixed owner-facing copy", () => {
     expect(ACTIONS).toMatch(/function bookingResultMessage/);
     for (const code of [

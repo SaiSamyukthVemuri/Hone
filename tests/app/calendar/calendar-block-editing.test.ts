@@ -28,6 +28,12 @@ describe("reuses the existing OWNER-GATED actions (no new action, no RLS change)
 });
 
 describe("owner: edit + delete controls", () => {
+  const ownerBranch = DRAWER.slice(DRAWER.indexOf("{!isOwner ? ("));
+  it("owner sees the editable form (date + start/end time inputs + category + note)", () => {
+    expect(ownerBranch).toMatch(/type="date"/);
+    expect(ownerBranch.match(/type="time"/g)?.length).toBe(2); // start + end
+    expect(ownerBranch).toMatch(/<select/); // category
+  });
   it("save calls the reused update action", () => {
     expect(DRAWER).toMatch(/await updateTimedBlockAction\(fd\)/);
   });

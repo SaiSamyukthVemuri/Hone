@@ -40,6 +40,33 @@ function codeOnly(src: string): string {
     .join("\n");
 }
 
+describe("AppointmentLifecycleActions: Mark completed button restoration", () => {
+  it("imports markAppointmentCompleteAction from the calendar actions module", () => {
+    expect(COMPONENT).toMatch(
+      /import \{\s*\n?\s*markAppointmentCompleteAction \} from "@\/app\/\(app\)\/calendar\/actions"/,
+    );
+    expect(CALENDAR).toMatch(
+      /import \{ markAppointmentNoShowAction \} from "\.\/actions"/,
+    );
+  });
+
+  it("renders a 'Mark completed' button", () => {
+    expect(COMPONENT).toMatch(/>\s*Mark completed\s*</);
+  });
+
+  it("the Mark completed button uses the primary (filled) styling so it is obvious", () => {
+    // The primary styling is `bg-neutral-900 ... text-white`; pin
+    // that the Mark completed button uses it rather than the
+    // outline-only variant used by Mark no-show.
+    const block =
+      COMPONENT.match(
+        /<button[\s\S]{0,2000}onClick=\{openConfirm\}[\s\S]{0,2000}Mark completed/,
+      )?.[0] ?? "";
+    expect(block).toMatch(/bg-neutral-900/);
+    expect(block).toMatch(/text-white/);
+  });
+});
+
 describe("AppointmentLifecycleActions: Mark completed gating", () => {
   it("the component returns null for non-confirmed statuses", () => {
     expect(CALENDAR).toMatch(/if \(status !== "confirmed"\) return null;/);
@@ -197,7 +224,29 @@ describe("AppointmentLifecycleActions: no way back from a terminal status", () =
   });
 });
 
-describe("markAppointmentCompleteAction: revalidation", () => {
+describe("markAppointmentCompleteAction (unchanged): RPC + scoping", () => {
+  it("still calls the mark_appointment_complete RPC with p_appointment_id / p_studio_id / p_practitioner_id", () => {
+    expect(ACTIONS).toMatch(
+      /admin\.rpc\("mark_appointment_complete",\s*\{[\s\S]{0,400}p_appointment_id:\s*appointmentId[\s\S]{0,200}p_studio_id:\s*studio\.id[\s\S]{0,200}p_practitioner_id:\s*practitioner\.id/,
+    );
+  });
+
+  it("still refuses inactive practitioners with a user-friendly message", () => {
+    expect(ACTIONS).toMatch(
+      /Inactive practitioners cannot mark appointments complete\./,
+    );
+  });
+
+  it("still maps 'not yet ended' to a user-friendly message", () => {
+    expect(ACTIONS).toMatch(/This appointment hasn't ended yet\./);
+  });
+
+  it("still maps 'not confirmed' to a user-friendly message", () => {
+    expect(ACTIONS).toMatch(
+      /Only confirmed appointments can be marked complete\./,
+    );
+  });
+
   it("still revalidates /calendar + /calendar/<id> on success", () => {
     expect(ACTIONS).toMatch(/revalidatePath\("\/calendar"\)/);
     expect(ACTIONS).toMatch(

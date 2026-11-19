@@ -17,6 +17,7 @@ const codeOnly = (src: string) =>
 const ACTIONS = read("app/(app)/calendar/actions.ts");
 const BUTTON = read("app/(app)/calendar/PostcareSendButton.tsx");
 const PAGE = read("app/(app)/calendar/[id]/page.tsx");
+const TYPES = read("lib/types/database.ts");
 
 // Scope to the postcare action body so other actions can't satisfy the greps.
 const ACTION = (() => {
@@ -110,7 +111,17 @@ describe("postcare UI states (PostcareSendButton)", () => {
   });
 });
 
-describe("the action read carries the claim columns", () => {
+describe("types + query carry the new columns", () => {
+  it("Appointment type gains the 4 columns", () => {
+    for (const c of [
+      "postcare_email_claimed_at",
+      "postcare_email_failed_at",
+      "postcare_email_last_error",
+      "postcare_email_last_attempt_at",
+    ]) {
+      expect(TYPES).toMatch(new RegExp(`${c}: string \\| null;`));
+    }
+  });
   it("the action select loads claimed_at + failed_at", () => {
     expect(ACTION).toMatch(/postcare_email_claimed_at, postcare_email_failed_at/);
   });

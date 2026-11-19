@@ -70,7 +70,11 @@ describe("G2 — pre-visit note context", () => {
   });
 });
 
-describe("G3 — the old tab link still resolves", () => {
+describe("G3 — the tab says what it holds, without changing its URL", () => {
+  it("consultation and skin/hair notes sit under the Treatment tab", () => {
+    expect(TABS).toMatch(/label: "Treatment"/);
+  });
+
   it("?tab=consultation is still a working link: it resolves to Treatment", () => {
     // ?tab=consultation is a real deep link used by the CTA and the Overview cards. It is no
     // longer a tab; the server redirects it (no anchor), so every existing link still lands.
@@ -115,6 +119,11 @@ describe("the clinical-note read stays inside the page's parallel wave (source s
   it("no standalone `await getClinicalNotesSummary(...)` remains", () => {
     // The exact shape that serialized before.
     expect(APPT).not.toMatch(/await\s+getClinicalNotesSummary\(/);
+  });
+
+  it("its result is consumed from the wave's destructuring, not re-fetched", () => {
+    expect(APPT).toMatch(/clinicalNotesRes,/);
+    expect(APPT).toMatch(/clinicalNotesSummary = clinicalNotesRes;/);
   });
 });
 
