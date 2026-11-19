@@ -7,7 +7,7 @@ const fake = (a: Answers) =>
   ({
     from: (t: string) => {
       const chain: Record<string, unknown> = {};
-      for (const k of ["select", "eq", "is", "limit"]) chain[k] = () => chain;
+      for (const k of ["select", "eq", "limit"]) chain[k] = () => chain;
       chain.then = (res: (v: unknown) => unknown) =>
         res(a.fail === t ? { data: null, error: { message: "x" } } : { data: t === "session_blocks" ? (a.block ?? [{ id: "b" }]) : t === "treatment_setup_readings" ? (a.native ?? []) : (a.entries ?? []), error: null });
       return chain;
@@ -20,6 +20,9 @@ describe("blockHoldsReadings (the server's machine freeze input)", () => {
   });
   it("a legacy reading holds it", async () => {
     expect(await blockHoldsReadings(fake({ entries: [{ galvanic_ma: 2 }] }), "b", "s")).toBe(true);
+  });
+  it("a REMOVED entry's reading does not hold it", async () => {
+    expect(await blockHoldsReadings(fake({ entries: [{ deleted_at: "2026-11-19T10:00:00Z", galvanic_ma: 2 }] }), "b", "s")).toBe(false);
   });
   it("a native setup reading holds it", async () => {
     expect(await blockHoldsReadings(fake({ native: [{ id: "r" }] }), "b", "s")).toBe(true);

@@ -148,12 +148,15 @@ export async function blockHoldsReadings(machineDb: MachineDb, blockId: string, 
     if (Array.isArray(native.data) && native.data.length > 0) return true;
     const entries = await db
       .from("electrolysis_entries")
-      .select("thermolysis_intensity_percent, thermolysis_duration_seconds, galvanic_ma, galvanic_duration_seconds, units_of_lye, energy_level, apilus_modality")
+      .select("deleted_at, thermolysis_intensity_percent, thermolysis_duration_seconds, galvanic_ma, galvanic_duration_seconds, units_of_lye, energy_level, apilus_modality")
       .eq("block_id", blockId)
-      .is("deleted_at", null)
-      .limit(50);
+      .limit(200);
     if (entries.error || !Array.isArray(entries.data)) return true;
-    return (entries.data as unknown[]).some((e) => Object.values(e as Record<string, unknown>).some((v) => v != null));
+    return (entries.data as Array<Record<string, unknown>>).some((e) => {
+      if (e.deleted_at != null) return false;
+      const { deleted_at: _removed, ...readings } = e;
+      return Object.values(readings).some((v) => v != null);
+    });
   } catch {
     return true;
   }
