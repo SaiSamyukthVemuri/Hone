@@ -3,7 +3,7 @@
   "migrations": {
     "count": 277,
     "last": "0362_platform_rollout_control.sql",
-    "sha256": "a2877ac778e3210551e6ad63f091f8c3fc3dbc4d2b4867ee0ab09bb01123769c"
+    "sha256": "a31bedce668461a14dd13de349ecfddc1a4f6b3d50500da3189cea49ffcaae0c"
   },
   "public": {
     "tables": [
