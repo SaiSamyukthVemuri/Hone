@@ -168,4 +168,16 @@ describe("client profile Sessions tab embeds the appointment timeline", () => {
       /<ClientAppointmentTimeline[\s\S]*?clientId=\{client\.id\}[\s\S]*?rows=\{appointmentTimeline\}/,
     );
   });
+
+  it("no longer renders the legacy 'Visits awaiting charting' section", () => {
+    expect(PAGE_SOURCE).not.toMatch(/Visits awaiting charting/);
+  });
+
+  it("top-level + Log session button carries the secondary-path helper text", () => {
+    // PR #233 shortened the helper for phones; same meaning: the
+    // button is the walk-in path, booked appointments chart from the
+    // Sessions tab row.
+    expect(PAGE_SOURCE).toMatch(/Log session is for walk-ins without a booked appointment/);
+    expect(PAGE_SOURCE).toMatch(/chart from the appointment row in Sessions/);
+  });
 });
