@@ -2984,3 +2984,90 @@ describe("loadMachineSetupContext and the platform rollout", () => {
     }
   });
 });
+
+// ===========================================================================
+// THE ROLLOUT, ASKED AGAIN AT WRITE TIME (Codex PRRT_kwDOSfSOys65vx7Z). A form opened while the xCell unit was offered can submit after
+// it was switched Off, and a crafted call can name the unit at any time, so every action that creates or assigns an xCell identity
+// re-reads the rollout. Off and a failed read refuse before anything is sent; a block that already stores the unit is unaffected;
+// a unit that is not the xCell makes no rollout read at all.
+// ===========================================================================
+describe("the rollout is re-read at write time by every path that assigns an xCell identity", async () => {
+  const { XCELL_ROLLOUT_OFF_MESSAGE, ROLLOUT_UNAVAILABLE_MESSAGE_SAVE } = await import("@/lib/machines/xcell-rollout-guard");
+  const PUR = { machine_profile_id: "dectro-apilus:xcell-pur", machine_profile_version: 1 };
+  const ROUTE_ARGS = { clientId: "client-ana", sessionId: "session-1", blockId: "block-1" };
+  const GROUP = { groupKey: null, newGroupRef: "n1", channels: [1], readings: [READING(1)] };
+  type Path = { name: string; rpc: string; run: (unitId: string, mode: string) => Promise<{ ok: boolean; error?: string }> };
+  const PATHS: Path[] = [
+    {
+      name: "the identity command",
+      rpc: "record_block_machine_identity",
+      run: (u, m) => actions.recordBlockMachineIdentityAction({ ...ROUTE_ARGS, deviceId: u, modeKey: m, profileId: null, idempotencyKey: "pick-key-0001" }) as never,
+    },
+    {
+      name: "the single group save",
+      rpc: "record_treatment_setup_group",
+      run: (u, m) => actions.recordReadingsAction({ ...ROUTE_ARGS, machineId: u, modeKey: m, ...GROUP }) as never,
+    },
+    {
+      name: "the whole-setup submission (also add-pass)",
+      rpc: "record_setup_submission_with_identity",
+      run: (u, m) => actions.recordSetupSubmissionAction({ ...ROUTE_ARGS, machineId: u, modeKey: m, idempotencyKey: "save-key-0001", groups: [GROUP] }) as never,
+    },
+  ];
+  const arrange = (profile: Record<string, unknown>) => {
+    vi.stubEnv("HONE_SYNTHETIC_MACHINE_PROFILE", "1");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "http://127.0.0.1:54321");
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rowsFor.studio_machines = [unitRow(profile)];
+    DB.rpcResult = RECEIPT("v2");
+  };
+  for (const p of PATHS) {
+    describe(p.name, () => {
+      it("Off: refused with the plain message, and no command is sent", async () => {
+        arrange(PUR); ROLLOUT.value = "off";
+        const out = await p.run(UNIT_ID, "multiplex");
+        expect(out.ok).toBe(false);
+        expect(out.error).toBe(XCELL_ROLLOUT_OFF_MESSAGE);
+        expect(DB.calls.filter((c) => c.fn === p.rpc)).toHaveLength(0);
+      });
+      it("a failed read: refused with the retryable message, and no command is sent", async () => {
+        arrange(PUR); ROLLOUT.value = "error";
+        const out = await p.run(UNIT_ID, "multiplex");
+        expect(out.ok).toBe(false);
+        expect(out.error).toBe(ROLLOUT_UNAVAILABLE_MESSAGE_SAVE);
+        expect(out.error).toContain("Nothing was saved.");
+        expect(DB.calls.filter((c) => c.fn === p.rpc)).toHaveLength(0);
+      });
+      it("On: reads the rollout once and is not refused by it", async () => {
+        arrange(PUR); ROLLOUT.value = "on";
+        const out = await p.run(UNIT_ID, "multiplex");
+        expect(ROLLOUT.reads).toBe(1);
+        expect(out.error).not.toBe(XCELL_ROLLOUT_OFF_MESSAGE);
+        expect(out.error).not.toBe(ROLLOUT_UNAVAILABLE_MESSAGE_SAVE);
+      });
+      it("EXISTING block already on this unit, with the rollout Off or failing: unaffected, and no rollout read", async () => {
+        for (const v of ["off", "error"] as const) {
+          arrange(PUR); ROLLOUT.value = v; ROLLOUT.reads = 0; DB.calls = [];
+          DB.rowsFor.session_blocks = [{ studio_machine_id: UNIT_ID, machine_profile_id: "dectro-apilus:xcell-pur", machine_mode_key: "multiplex" }];
+          const out = await p.run(UNIT_ID, "multiplex");
+          expect(ROLLOUT.reads, v).toBe(0);
+          expect(out.error, v).not.toBe(XCELL_ROLLOUT_OFF_MESSAGE);
+          expect(out.error, v).not.toBe(ROLLOUT_UNAVAILABLE_MESSAGE_SAVE);
+        }
+      });
+      it("a unit that is NOT the xCell makes no rollout read, whatever the rollout says", async () => {
+        for (const v of ["off", "error"] as const) {
+          arrange({}); ROLLOUT.value = v; ROLLOUT.reads = 0;
+          await p.run(UNIT_ID, UNIT_MODE);
+          expect(ROLLOUT.reads, v).toBe(0);
+        }
+      });
+    });
+  }
+  it("the identity command goes through when the rollout is On (a real write, not only 'not refused')", async () => {
+    arrange(PUR); ROLLOUT.value = "on";
+    const out = await actions.recordBlockMachineIdentityAction({ ...ROUTE_ARGS, deviceId: UNIT_ID, modeKey: "multiplex", profileId: null, idempotencyKey: "pick-key-0001" });
+    expect(out.ok, out.ok ? "" : out.error).toBe(true);
+    expect(DB.calls.filter((c) => c.fn === "record_block_machine_identity")).toHaveLength(1);
+  });
+});

@@ -29,7 +29,7 @@ export type IdentityChoice = { deviceId: string | null; modeKey: string | null; 
  *  - "unreadable": the inventory could not be read. Says nothing about the choice: the outcome is unknown, the key is kept.
  */
 export type IdentityRefusalReason = "contract" | "availability" | "unreadable";
-export type IdentityCheck = { ok: true } | { ok: false; error: string; reason: IdentityRefusalReason };
+export type IdentityCheck = { ok: true; unitProfileId: string | null } | { ok: false; error: string; reason: IdentityRefusalReason };
 
 /**
  * A MACHINE IDENTITY BEING SAVED ON A TREATMENT AREA MUST PASS THE CONTRACT A REMEMBERED CHOICE PASSES.
@@ -50,7 +50,7 @@ export async function checkIdentityChoice(
       return { ok: false, error: "That machine could not be checked.", reason: "contract" };
     }
     if (choice.modeKey !== null) return { ok: false, error: MACHINE_MODE_NOT_OFFERED, reason: "contract" };
-    return { ok: true };
+    return { ok: true, unitProfileId: null };
   }
   let devices: Awaited<ReturnType<typeof listStudioDevices>>["devices"];
   let inventorySource: string | undefined;
@@ -79,7 +79,7 @@ export async function checkIdentityChoice(
   if (choice.profileId !== null && unit && choice.profileId !== unit.profileId) {
     return { ok: false, error: MACHINE_MODE_NOT_OFFERED, reason: "contract" };
   }
-  return { ok: true };
+  return { ok: true, unitProfileId: unit?.profileId ?? null };
 }
 
 /**

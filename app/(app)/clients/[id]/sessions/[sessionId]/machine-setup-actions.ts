@@ -18,6 +18,7 @@ import {
   type MachineProfile,
 } from "@/lib/machines/profile-contract";
 import { blockUsesXcellPur, checkIdentityChoice, storedIdentityMatches } from "@/lib/machines/identity-choice";
+import { guardXcellRollout } from "@/lib/machines/xcell-rollout-guard";
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import {
@@ -701,6 +702,18 @@ export async function recordBlockMachineIdentityAction(input: {
     else if (allowed.reason === "unreadable") return { ok: false, code: "unknown", error: allowed.error };
     else return { ok: false, code: "rejected", error: allowed.error };
   }
+  // THE ROLLOUT, ASKED AGAIN AT WRITE TIME. Only a choice that passed the contract check is assigned a NEW identity here; a deferred
+  // refusal (a unit retired since, or a choice the block already stores) is the receipt-aware command's to answer.
+  if (allowed.ok) {
+    const rolloutOk = await guardXcellRollout(db, {
+      studioId: scope.studioId,
+      unitProfileId: allowed.unitProfileId,
+      deviceId: input.deviceId,
+      blockId: input.blockId,
+      sessionId: input.sessionId,
+    });
+    if (!rolloutOk.ok) return { ok: false, code: "rejected", error: rolloutOk.error };
+  }
   try {
     await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
     const out = await recordBlockMachineIdentity(db, {
@@ -945,6 +958,16 @@ export async function recordReadingsAction(input: {
       error: "That machine is not registered to this studio.",
     };
   }
+  // THE ROLLOUT, ASKED AGAIN AT WRITE TIME: a form opened while the xCell unit was offered can still submit after it was switched Off.
+  // A block that already stores this unit is unaffected. Asked before the readings are validated: a refusal here sends nothing.
+  const rolloutOk = await guardXcellRollout(db, {
+    studioId: scope.studioId,
+    unitProfileId: device.profileId,
+    deviceId: input.machineId,
+    blockId: input.blockId,
+    sessionId: input.sessionId,
+  });
+  if (!rolloutOk.ok) return { ok: false, code: "rejected", error: rolloutOk.error };
 
   // THE CURRENT VERSION (Codex, #860 4308488012): `activeModes` below reads
   // the modes OFF this profile, so a first-match v1 offers a superseded
@@ -1163,6 +1186,16 @@ export async function recordSetupSubmissionAction(input: {
       error: "That machine is not registered to this studio.",
     };
   }
+  // THE ROLLOUT, ASKED AGAIN AT WRITE TIME: a form opened while the xCell unit was offered can still submit after it was switched Off.
+  // A block that already stores this unit is unaffected. Asked before the readings are validated: a refusal here sends nothing.
+  const rolloutOk = await guardXcellRollout(db, {
+    studioId: scope.studioId,
+    unitProfileId: device.profileId,
+    deviceId: input.machineId,
+    blockId: input.blockId,
+    sessionId: input.sessionId,
+  });
+  if (!rolloutOk.ok) return { ok: false, code: "rejected", error: rolloutOk.error };
 
   // THE CURRENT VERSION (Codex, #860 4308488012): `activeModes` below reads
   // the modes OFF this profile, so a first-match v1 offers a superseded

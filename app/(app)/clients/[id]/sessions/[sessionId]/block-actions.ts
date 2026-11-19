@@ -20,6 +20,7 @@ import {
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import { checkIdentityChoice } from "@/lib/machines/identity-choice";
+import { guardXcellRollout } from "@/lib/machines/xcell-rollout-guard";
 import { currentProfile } from "@/lib/machines/profile-contract";
 import { resolveWritingIdentity } from "@/lib/supabase/writing-identity";
 import { listStudioDevices } from "@/lib/machines/studio-devices";
@@ -1483,6 +1484,9 @@ export async function createTreatmentAreaWithEntryAction(
         error: "That machine is not registered to this studio.",
       };
     }
+    // THE ROLLOUT, ASKED AGAIN AT WRITE TIME (a new area has no stored identity, so there is no existing-block exemption here).
+    const rolloutOk = await guardXcellRollout(db, { studioId: studio.id, unitProfileId: device.profileId, deviceId: setup.machineId });
+    if (!rolloutOk.ok) return { ok: false, error: rolloutOk.error, unresolved: false };
     // THE CURRENT VERSION (Codex, #860 4308488012), and here it decides
     // whether a CLINICAL VALUE is accepted: `validateSubmittedReadings` below
     // checks each reading against this profile's field contract, so a
@@ -1535,6 +1539,15 @@ export async function createTreatmentAreaWithEntryAction(
     // answers a repeated key first and refuses a NEW write itself; an unreadable inventory keeps the key (unknown).
     if (!allowed.ok && allowed.reason === "unreadable") return { ok: false, error: allowed.error, unresolved: true };
     if (!allowed.ok && allowed.reason !== "availability") return { ok: false, error: allowed.error, unresolved: false };
+    // THE ROLLOUT, ASKED AGAIN AT WRITE TIME: a form opened while the xCell unit was offered can still submit after it was switched Off.
+    if (allowed.ok) {
+      const rolloutOk = await guardXcellRollout(supabase as unknown as MachineDb, {
+        studioId: studio.id,
+        unitProfileId: allowed.unitProfileId,
+        deviceId: identity.machineId,
+      });
+      if (!rolloutOk.ok) return { ok: false, error: rolloutOk.error, unresolved: false };
+    }
   }
   // Built once so the older command can be called with the same arguments when
   // 0301 is not applied yet (see the fallback below).
