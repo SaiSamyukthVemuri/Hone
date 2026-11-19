@@ -10,7 +10,7 @@ import { AMOUNT_KINDS, COLLECTED_KINDS, type StatementKind, type StatementMoneyL
 //
 // WHAT IT NEVER DOES
 //   * Treat a current menu price, a duration or a payment amount as the original charge. A fee is "recorded" only when a stored record carries it
-//     (a settlement's quote snapshot, a card attempt's charged amount, a legacy fee row); otherwise it is "Fee not recorded" (decision D1 (a)).
+//     (a settlement's quote snapshot, a card attempt's charged amount, a legacy fee row); otherwise it is "Fee not recorded".
 //   * Invent a discount, a tax, a tax registration or a balance. There is no field for any of them.
 //   * Claim a balance while anything in scope is unknown. A paid visit, an unknown one and a confirmed unpaid one are DIFFERENT states.
 //   * Sum a row that carries no amount (unresolved, other currency, excluded, unreadable, still-owes note): only AMOUNT_KINDS carry cents.
@@ -619,7 +619,8 @@ export function toSnapshot(doc: StatementDocument) {
  */
 export function toIssueSnapshot(doc: StatementDocument) {
   const body = toSnapshot(doc);
-  return { snapshot_version: body.snapshot_version, preparedOn: body.preparedOn, currency: body.currency, attribution: body.attribution, identity: body.identity, client: { id: doc.client.id, name: body.client.name }, scope: body.scope, visits: body.visits, lineItems: body.lineItems, notCompleted: body.notCompleted, totals: body.totals, balance: body.balance };
+  // No `notCompleted`: a "Not completed" row never appears on an invoice.
+  return { snapshot_version: body.snapshot_version, preparedOn: body.preparedOn, currency: body.currency, attribution: body.attribution, identity: body.identity, client: { id: doc.client.id, name: body.client.name }, scope: body.scope, visits: body.visits, lineItems: body.lineItems, totals: body.totals, balance: body.balance };
 }
 
 export const CSV_COLUMNS = ["row_type", "date", "time", "service", "practitioner", "fee_state", "fee_cents", "state", "reasons", "paid_cents", "refunded_cents", "waived_cents", "owed_cents"] as const;

@@ -185,7 +185,7 @@ describe("no balance while anything is unknown", () => {
   it("not established when an attested owed amount cannot be established", () => {
     const d = doc([visit({ feeCandidates: [charged(5000)], lines: [line("still_owes_note", null, "settlement")] })]);
     expect(d.balanceDue).toEqual({ kind: "not_established", because: "owed_amount_not_established" });
-    // with no recorded fee at all, D1 speaks first: no balance because the fee is not recorded
+    // with no recorded fee at all, the missing fee speaks first: no balance because the fee is not recorded
     expect(doc([visit({ lines: [line("still_owes_note", null, "settlement")] })]).balanceDue).toEqual({ kind: "not_established", because: "fee_not_recorded" });
   });
 });
@@ -299,7 +299,7 @@ describe("scope: month, full history, inclusive range, chosen visits", () => {
   });
 });
 
-describe("D4: eligibility, fee line items, total spend, Not completed", () => {
+describe("visit rules: eligibility, fee line items, total spend, Not completed", () => {
   const NOW = "2026-11-19T12:00:00Z";
   const el = (status: string, startsAt: string, hasFeeRecord = false) => classifyEligibility({ status, startsAt, hasFeeRecord }, NOW);
   it("completed is a treatment; fee-bearing cancel/no-show is a fee line item; fee-free ones and the future are off; a past confirmed booking is Not completed", () => {
@@ -341,7 +341,7 @@ describe("D4: eligibility, fee line items, total spend, Not completed", () => {
     expect(doc([v], { feeItems: [f], scope: { kind: "visits", appointmentIds: [v.appointmentId] } }).feeItems).toEqual([]);
     expect(build([v], { feeItems: [fee({ clientId: "client-2" })] })).toEqual({ ok: false, error: "foreign_visit" });
   });
-  it("a missing fee keeps the visit visible, labelled, and no balance is established for the period (D1)", () => {
+  it("a missing fee keeps the visit visible, labelled, and no balance is established for the period", () => {
     const d = doc([visit({ lines: [line("collected_card_session", 4200)] })]);
     expect(d.visits).toHaveLength(1);
     expect(d.visits[0].fee).toEqual({ state: "not_recorded", ambiguous: false });
@@ -399,6 +399,12 @@ describe("projections pick fields explicitly: no id ever reaches a snapshot or C
     const text = JSON.stringify(issue);
     expect(text.split(ids.client)).toHaveLength(2);
     for (const f of [ids.appt, ids.prac, ids.studio, ids.fee, "appt-SECRET-2", "prac-SECRET-2"]) expect(text).not.toContain(f);
+  });
+  it("an issue snapshot NEVER carries Not completed rows (they are history only), even when the document has them", () => {
+    expect(d.notCompleted.length).toBe(1);
+    const issue = toIssueSnapshot(d) as Record<string, unknown>;
+    expect(Object.keys(issue)).not.toContain("notCompleted");
+    expect(JSON.stringify(issue)).not.toMatch(/not_completed|notCompleted|Not completed/);
   });
   it("the CSV rows hold no id, list every record exactly once, and keep the not-completed row amount-free", () => {
     const rows = toCsvRows(d);
