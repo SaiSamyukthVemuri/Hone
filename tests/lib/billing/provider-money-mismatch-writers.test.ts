@@ -1173,13 +1173,42 @@ describe("bound PI active-or-unknown failed-event retirement", () => {
   });
   it("ordinary authenticated card decline finishes the failed attempt without a false manual alert", async () => {
     h.rows = { payment_charge_attempts: attemptRow("cad", { status: "pending_stripe", stripe_payment_intent_id: PI_ID }) };
+    // What Stripe returns when the cleanup reads the intent back: this attempt's own, awaiting a payment method, nothing received.
+    h.pi = { id: PI_ID, status: "requires_payment_method", amount: AMOUNT, currency: "cad", livemode: h.livemode, amount_received: 0, metadata: META };
     await handlePaymentIntentPaymentFailed(event("payment_intent.payment_failed", {
       id: PI_ID, status: "requires_payment_method", amount: AMOUNT, currency: "cad", metadata: META,
       last_payment_error: { type: "card_error", code: "card_declined", message: "synthetic refusal" },
     }), CTX);
     expect(h.rows.payment_charge_attempts).toMatchObject({ status: "failed", stripe_payment_intent_id: PI_ID });
     expect(critical("session_payment_needs_manual_review")).toEqual([]);
-    expect(h.stripeCalls).toEqual([]);
+    // The original Stripe attempt is then closed: this attempt's own intent is read back and cancelled, nothing else.
+    expect(h.stripeCalls).toEqual(["pi_retrieve", "pi_cancel"]);
+  });
+  it("a cleanup that cannot confirm the cancel fails the event for redelivery AFTER the failed write, and the redelivery runs only the cancel", async () => {
+    h.rows = { payment_charge_attempts: attemptRow("cad", { status: "pending_stripe", stripe_payment_intent_id: PI_ID }) };
+    h.pi = { id: PI_ID, status: "requires_payment_method", amount: AMOUNT, currency: "cad", livemode: h.livemode, amount_received: 0, metadata: META };
+    // A fresh event: the cleanup retry window is measured from the event's creation (an old one gives up, see the helper suite).
+    const ev = () => ({ ...event("payment_intent.payment_failed", {
+      id: PI_ID, status: "requires_payment_method", amount: AMOUNT, currency: "cad", metadata: META,
+      last_payment_error: { type: "card_error", code: "card_declined", message: "synthetic refusal" },
+    }), created: Math.floor(Date.now() / 1000) }) as Stripe.Event;
+    h.cancelStatus = "requires_payment_method"; // Stripe does not confirm the cancel
+    await expect(handlePaymentIntentPaymentFailed(ev(), CTX)).rejects.toThrow("payment_intent_failed_cleanup_retry");
+    expect(h.rows.payment_charge_attempts).toMatchObject({ status: "failed", stripe_payment_intent_id: PI_ID });
+    expect(h.stripeCalls).toEqual(["pi_retrieve", "pi_cancel"]);
+    const failedWrites = h.updates.length;
+    h.stripeCalls = [];
+    h.cancelStatus = "canceled";
+    const second = await handlePaymentIntentPaymentFailed(ev(), CTX);
+    expect(second).toMatchObject({ alreadyFailed: true, declinedIntentCleanup: "canceled" });
+    expect(h.stripeCalls).toEqual(["pi_retrieve", "pi_cancel"]);
+    // the failed write was not repeated; only the stored cancel fact was added
+    expect(h.updates.length - failedWrites).toBeLessThanOrEqual(1);
+    expect(h.rows.payment_charge_attempts).toMatchObject({ status: "failed" });
+    // a duplicate after that is a no-op
+    h.stripeCalls = [];
+    const third = await handlePaymentIntentPaymentFailed(ev(), CTX);
+    expect(third).toMatchObject({ alreadyFailed: true });
   });
   it.each([null, { type: "api_error", code: "api_error" }])("requires_payment_method without card-decline evidence (%j) stays unresolved", async (error) => {
     h.rows = { payment_charge_attempts: attemptRow("cad", { status: "pending_stripe", stripe_payment_intent_id: PI_ID }) };

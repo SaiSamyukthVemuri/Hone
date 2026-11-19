@@ -1044,10 +1044,14 @@ export async function handlePaymentIntentPaymentFailed(
     // event's error, but we leave them alone for v1: a webhook
     // refresh on an already-failed row is rare and the action-
     // layer write is the canonical source.
+    //
+    // A redelivery lands here after a cleanup that could not finish: it runs ONLY the cancel again.
+    const cleanup = await closeDeclinedOriginalIntent(event, attempt, pi);
     return {
       eventType: event.type,
       attemptId: attempt.id,
       alreadyFailed: true,
+      ...cleanup,
     };
   }
 
@@ -1140,11 +1144,35 @@ export async function handlePaymentIntentPaymentFailed(
     };
   }
 
+  // The attempt is now failed. Close the ORIGINAL Stripe attempt so it cannot be completed later beside a replacement.
+  const cleanup = await closeDeclinedOriginalIntent(event, attempt, pi);
   return {
     eventType: event.type,
     attemptId: attempt.id,
     reconciledFromStatus: attempt.status,
+    ...cleanup,
   };
+}
+
+// Cancels the original PaymentIntent of a session payment that Hone has already recorded failed, only for a verified card
+// decline. It never repeats or changes the failed write. A cancel that could not finish throws, so the route releases the
+// claim and answers 500 and Stripe redelivers the same event; the redelivery runs only this cleanup (bounded by the helper).
+async function closeDeclinedOriginalIntent(
+  event: Stripe.Event,
+  attempt: { id: string; studio_id: string },
+  pi: Stripe.PaymentIntent,
+): Promise<Record<string, unknown>> {
+  if (pi.status !== "requires_payment_method" || pi.last_payment_error?.type !== "card_error") return {};
+  // Loaded when a decline needs it, so the webhook module does not pull the Stripe client in for every event type.
+  const { cancelDeclinedSessionIntent } = await import("@/lib/billing/cancel-declined-session-intent");
+  const result = await cancelDeclinedSessionIntent({
+    attemptId: attempt.id,
+    studioId: attempt.studio_id,
+    eventPaymentIntentId: pi.id,
+    eventCreatedSeconds: event.created,
+  });
+  if (result.outcome === "retry") throw new Error("payment_intent_failed_cleanup_retry");
+  return { declinedIntentCleanup: result.outcome };
 }
 
 // ---------------------------------------------------------------------------
