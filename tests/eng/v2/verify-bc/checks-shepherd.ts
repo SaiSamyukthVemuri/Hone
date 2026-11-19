@@ -594,13 +594,18 @@ export function checkLeftover(runCli: RunCli, readReceipts?: (dir: string) => an
 /** C-DOC-POLICY (final pass): SPEC-05A §7 R5-DELETE makes policy the mitigation for a deleted finding ("added to
  * CLAUDE.md with the shepherd"); CLAUDE.md §4 at 65511c09 carries the operator's 2026-10-08 Codex-thread policy. */
 export function checkClaudePolicy() {
-  const r = rowResult("C-DOC-POLICY", "SPEC-05A §7 R5-DELETE / CLAUDE.md §4 (operator policy 2026-10-08): agents never edit, delete, conceal, minimize or manipulate a Codex comment or thread; resolving one needs the operator's explicit authorization; the limitation is stated");
+  const r = rowResult("C-DOC-POLICY", "SPEC-05A §7 R5-DELETE / CLAUDE.md §4 (operator policy 2026-10-08): agents never edit, delete, conceal, minimize or manipulate a Codex comment or thread; resolving one needs verification on the current head with evidence posted in the thread (standing authorization 2026-11-19); the limitation is stated");
   const md = fs.readFileSync(path.resolve(__dirname, "../../../../CLAUDE.md"), "utf8");
   const start = md.indexOf("### ENG-LOOP shepherd");
   const sec = start >= 0 ? md.slice(start, md.indexOf("\n## ", start) > 0 ? md.indexOf("\n## ", start) : undefined).replace(/\s+/g, " ") : "";
   const need: [string, RegExp][] = [
     ["never manipulate (edit, delete, conceal, minimize)", /never edit, delete, conceal, minimize or otherwise manipulate a Codex comment or review thread/i],
-    ["explicit authorization to resolve a specific thread", /resolving any specific thread requires the operator's explicit authorization for that thread/i],
+    // Operator standing authorization (2026-11-19) replaced the per-thread rule; the guard pins its conditions instead.
+    ["resolve only after verifying on the current head", /resolve a review thread only after verifying, on the PR's current head commit, that the finding is fixed or no longer applies/i],
+    ["evidence posted in the thread first", /posts a reply in that thread naming the commit verified and the test or code evidence/i],
+    ["incomplete evidence keeps it open", /when the evidence is incomplete the thread stays open/i],
+    ["product decision or exception goes to the operator", /needs a product decision or an exception to a release requirement goes to the operator first/i],
+    ["resolving is the only permitted change", /resolving is the only permitted change to a thread/i],
     ["the R5-DELETE limitation", /R5-DELETE/],
     ["a deleted finding is invisible", /cannot see a deleted finding/i],
     ["credential indistinguishability", /cannot tell an agent using the operator's credential from the operator/i],
