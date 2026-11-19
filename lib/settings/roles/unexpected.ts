@@ -1,4 +1,5 @@
 import type { Role, Scope, StudioPolicy } from "@/lib/permissions/catalog";
+import { chosenScope } from "./model";
 
 // A request that ends in "unexpected" may or may not have committed. The page reads the policy back, and a moved version alone proves
 // nothing: another writer can commit while our request fails. Success is claimed only when the reloaded choices equal the exact set
@@ -50,7 +51,9 @@ export function rebaseDrafts(
   for (const role of Object.keys(fresh) as Role[]) {
     const values = { ...fresh[role].values } as Record<string, Scope>;
     for (const [key, scope] of Object.entries(drafts[role].values) as [string, Scope][]) {
-      if (oldSaved[role].values[key as keyof typeof oldSaved[Role]["values"]] !== scope) values[key] = scope;
+      // Compare what the owner CHOSE, not the raw override entries: a draft that picked a value and picked the original back holds an explicit
+      // basis value where the saved policy holds none, and that is not an edit (Codex P2 4620000808, same rule as dirty detection).
+      if (chosenScope(role, oldSaved[role], key) !== chosenScope(role, drafts[role], key)) values[key] = scope;
     }
     out[role] = { ...fresh[role], values: values as unknown as StudioPolicy["values"] };
   }
