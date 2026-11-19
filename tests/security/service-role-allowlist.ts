@@ -83,6 +83,17 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "p_actor_user_id",
   },
   {
+    path: "lib/waitlist/booked-manually.ts",
+    purpose: "HON-7: the owner's \"Booked manually\" command on a waiting list entry.",
+    why:
+      "One RPC to a service_role-only command (mark_waitlist_entry_booked_manually) that takes the studio and the verified actor user id " +
+      "and re-derives the owner role inside (new_client_waitlist_resolve_owner), and re-checks the entry, the appointment, its studio, " +
+      "its status and any existing link. The only caller, the owner-only settings action, takes both ids from the session (getUser), " +
+      "never from a form field, refuses a non-owner before calling, and is off unless its flag is exactly 1. Nothing is sent. An unreadable " +
+      "result is unavailable, never success, and nothing here logs a row or an error body.",
+    scopeGuard: "p_actor_user_id",
+  },
+  {
     path: "lib/waitlist/decline-owner-email.ts",
     purpose: "HON-7 item 4: send, retry and report the owner email on a waitlist decline.",
     why:
