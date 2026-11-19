@@ -514,8 +514,17 @@ describe("a payment on an uncompleted booking (Sam's rule)", () => {
     expect(d.feeItems).toEqual([]);
     expect(d.notCompleted).toEqual([]);
   });
+  it("a payment on a cancelled or no-show booking has its own neutral label (never a fee label)", () => {
+    expect(FEE_REASON_COPY.cancelled_booking_payment).toBe("Payment on a cancelled or no-show booking");
+    const d = doc([], { feeItems: [{ appointmentId: "c-1", clientId: "client-1", localDate: "2026-11-10", startsAt: "2026-11-10T15:00:00Z", reason: "cancelled_booking_payment", feeCandidates: [], lines: [line("collected_card_session", 4000)] }] });
+    expect(d.totals.paidCents).toBe(4000);
+    expect(toSnapshot(d).lineItems[0].reason).toBe("cancelled_booking_payment");
+  });
   it("the pairing is the ONLY allowed one: the payment line needs its Not completed row, and cannot share an id with a visit or another reason", () => {
-    expect(build([], { feeItems: [pay] })).toEqual({ ok: false, error: "duplicate_appointment" });
+    expect(build([], { feeItems: [pay] })).toEqual({ ok: false, error: "orphan_uncompleted_payment" });
+    // a repeat WITHIN the Not completed rows is refused too
+    const again = visit({ appointmentId: "unfinished-1", eligibility: "not_completed" });
+    expect(build([unfinished, again])).toEqual({ ok: false, error: "duplicate_appointment" });
     const completed = visit({ appointmentId: "unfinished-1" });
     expect(build([completed], { feeItems: [pay] })).toEqual({ ok: false, error: "duplicate_appointment" });
     expect(build([unfinished], { feeItems: [{ ...pay, reason: "no_show_fee" }] })).toEqual({ ok: false, error: "duplicate_appointment" });

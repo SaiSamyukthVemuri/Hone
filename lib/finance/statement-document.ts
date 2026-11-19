@@ -68,6 +68,7 @@ export const FEE_REASON_COPY: Record<FeeReason, string> = {
   late_cancellation_fee: "Late cancellation fee",
   no_show_fee: "No-show fee",
   uncompleted_booking_payment: "Payment on an uncompleted booking",
+  cancelled_booking_payment: "Payment on a cancelled or no-show booking",
 };
 
 // ---------------------------------------------------------------------------
@@ -93,7 +94,7 @@ export function classifyEligibility(a: { status: string; startsAt: string; hasFe
   }
 }
 /** A cancellation or no-show fee, or a payment recorded on a past booking that was never marked completed (shown apart from the visit line). */
-export type FeeReason = "late_cancellation_fee" | "no_show_fee" | "uncompleted_booking_payment";
+export type FeeReason = "late_cancellation_fee" | "no_show_fee" | "uncompleted_booking_payment" | "cancelled_booking_payment";
 
 // ---------------------------------------------------------------------------
 // Input
@@ -258,7 +259,8 @@ export type DocumentError =
   | "foreign_visit"
   | "invalid_date"
   | "invalid_currency"
-  | "duplicate_appointment";
+  | "duplicate_appointment"
+  | "orphan_uncompleted_payment";
 
 export type BuildDocumentResult = { ok: true; document: StatementDocument } | { ok: false; error: DocumentError };
 
@@ -464,7 +466,8 @@ export function buildStatementDocument(input: BuildDocumentInput): BuildDocument
     const pay = feeInputs.find((f) => f.appointmentId === v.appointmentId);
     if (pay && pay.reason !== "uncompleted_booking_payment") return { ok: false, error: "duplicate_appointment" };
   }
-  if (feeInputs.some((f) => f.reason === "uncompleted_booking_payment" && !seenNc.has(f.appointmentId))) return { ok: false, error: "duplicate_appointment" };
+  // A payment line for an uncompleted booking needs that booking's Not completed row: a distinct error, not a duplicate.
+  if (feeInputs.some((f) => f.reason === "uncompleted_booking_payment" && !seenNc.has(f.appointmentId))) return { ok: false, error: "orphan_uncompleted_payment" };
   const picked = selectVisits(input.client.id, treatments, input.scope);
   if (!picked.ok) return picked;
   if (feeInputs.some((f) => f.clientId !== input.client.id)) return { ok: false, error: "foreign_visit" };
