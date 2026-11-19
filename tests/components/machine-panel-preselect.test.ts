@@ -12,7 +12,7 @@ const { MachineFirstSetupPanel } = await import("@/components/machines/machine-f
 
 const SCOPE = { studioId: "studio-synthetic", practitionerId: "pract-synthetic" };
 const LEGACY = { profileId: "dectro-apilus:xcell", label: "Dectro xCell" };
-const unit = (id: string, profileId: string): StudioDevice => ({ deviceId: id, studioId: "studio-synthetic", profileId, profileVersion: 1, displayName: `Unit ${id}`, installedOptions: [], retiredAt: null });
+const unit = (id: string, profileId: string): StudioDevice => ({ deviceId: id, studioId: "studio-synthetic", profileId, profileVersion: MACHINE_CATALOGUE.find((p) => p.profileId === profileId && p.availability === "active")!.version, displayName: `Unit ${id}`, installedOptions: [], retiredAt: null });
 const PUR = "dectro-apilus:xcell-pur";
 const OTHER = MACHINE_CATALOGUE.find((p) => p.availability === "active" && p.profileId !== PUR && p.profileId !== LEGACY.profileId)!;
 
@@ -47,6 +47,7 @@ describe("the preselect counts exactly what the picker renders", () => {
   it.each(cases)("%s", (_name, run) => {
     const { onlyChoice, options, value } = run();
     // A preselect exists exactly when the picker renders ONE entry, and it is that entry.
+    expect(options.length, "control: the case renders at least one entry").toBeGreaterThan(0);
     expect(onlyChoice !== null, `rendered ${options.map((o) => o.value).join(",")}`).toBe(options.length === 1);
     if (onlyChoice) expect(value).toBe(options[0].value);
     else expect(value).toBe("");
