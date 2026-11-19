@@ -54,6 +54,7 @@ const BASELINE: ReadonlyArray<readonly [string, number, Status]> = [
   ["lib/clients/name-search.ts", 2, "fine"],
   ["lib/clinical-records/insurer-field-gaps.ts", 1, "helper"],
   ["lib/email/send-appointment.ts", 3, "fine"],
+  ["lib/finance/statement-document.ts", 2, "helper"],
   ["lib/notifications/appointment-cancel-notification.ts", 1, "gap"],
   ["lib/record-keeping/queries.ts", 2, "unreviewed"],
 ];
