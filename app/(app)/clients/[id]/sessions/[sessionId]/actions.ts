@@ -255,8 +255,27 @@ export async function addElectrolysisEntryAction(
   // CHART REDESIGN (W8): with the rollout on, a pass belongs to its block's SAVED mode, never to whatever mode the request names, and carries only the
   // fields that mode owns. A failed rollout read counts as Off: the pass is then exactly today's.
   const redesignOn = await chartingRolloutFor(studio.id);
+  let resolvedBlockId: string | null = nullableString(formData.get("block_id"));
   if (redesignOn) {
-    const blockIdForMode = nullableString(formData.get("block_id"));
+    // With no block named, add_electrolysis_pass (0166) attaches to the session's FIRST live block (lowest sort_order) and creates one only when
+    // there is none. Resolve that destination the same way, so the saved mode that scopes this pass is the mode of the block it will land on, and
+    // then pass that block's id explicitly so the write cannot land elsewhere. No live block: the request's mode stands and the command creates one.
+    if (!resolvedBlockId) {
+      const { data: primary, error: primaryErr } = await (await createClient())
+        .from("session_blocks")
+        .select("id")
+        .eq("session_id", sessionId)
+        .eq("studio_id", studio.id)
+        .is("deleted_at", null)
+        .order("sort_order", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      if (primaryErr) {
+        return { ok: false, code: "invalid_input", error: "Could not load this area to add a pass. Reload the chart and try again." };
+      }
+      resolvedBlockId = (primary as { id?: string } | null)?.id ?? null;
+    }
+    const blockIdForMode = resolvedBlockId;
     if (blockIdForMode) {
       const { data: storedBlock, error: storedBlockErr } = await (await createClient())
         .from("session_blocks")
@@ -351,7 +370,7 @@ export async function addElectrolysisEntryAction(
   // The simplified entry form passes block_id explicitly so multi-block
   // sessions target the correct block. Legacy form callers omit this; for
   // them we look up (or create) the primary block via ensureBlockForSession.
-  const explicitBlockId = nullableString(formData.get("block_id"));
+  const explicitBlockId = resolvedBlockId;
   // When absent, the command finds-or-creates the primary block itself; these
   // are only the values it uses if it has to create one.
   const blockDefaults = defaultBlockValues({
