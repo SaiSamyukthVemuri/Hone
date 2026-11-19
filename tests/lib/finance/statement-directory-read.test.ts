@@ -138,6 +138,14 @@ describe("Find a client: the read", () => {
     expect(sel).toEqual(["id, name, preferred_name, archived_at"]);
     for (const s of sel) expect(s).not.toMatch(/email|phone|pronoun|address|birth|\*/i);
   });
+  it("FAILS CLOSED at the block cap: a studio larger than the cap is read_failed, never a shortened list", async () => {
+    const blocks = Array.from({ length: 51 }, (_, k) => ok(Array.from({ length: 500 }, (_, i) => row(`b${String(k).padStart(3, "0")}-${String(i).padStart(4, "0")}`, `N ${k}-${i}`))));
+    expect(await load("owner", recording({ clients: blocks }).client)).toEqual({ access: "granted", ok: false, reason: "read_failed" });
+    const underCap = blocks.slice(0, 49);
+    underCap.push(ok([row("zzz", "Tail")]));
+    const r = await load("owner", recording({ clients: underCap }).client);
+    expect(r.access === "granted" && r.ok && r.clients.length).toBe(24501); // 49 full blocks + a short last one is read whole
+  });
   it("keyset-pages by id across blocks, and a repeated row or an error is read_failed, never a shorter list", async () => {
     const block = (k: number) => Array.from({ length: 500 }, (_, i) => row(`${String(k).padStart(2, "0")}-${String(i).padStart(4, "0")}`, `C ${k}-${i}`));
     const { client, calls } = recording({ clients: [ok(block(1)), ok([row("99-0000", "Last")])] });
