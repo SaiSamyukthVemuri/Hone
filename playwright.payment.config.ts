@@ -73,7 +73,10 @@ export default defineConfig({
       }
     : {}),
   webServer: {
-    command: "npm run e2e:payment-server",
+    // HONE_E2E_REUSE_BUILD=1 starts the build an EARLIER step already produced for this checkout instead of compiling
+    // it again inside the server-start timeout (a cold build on a busy host can exceed it before any test runs). With no
+    // .next present `next start` exits and the run fails loudly. Same switch as playwright.config.ts.
+    command: process.env.HONE_E2E_REUSE_BUILD === "1" ? "npm run start" : "npm run e2e:payment-server",
     url: PAYMENT_E2E_APP_ORIGIN,
     env: PAYMENT_WEB_SERVER_ENV,
     reuseExistingServer: false,

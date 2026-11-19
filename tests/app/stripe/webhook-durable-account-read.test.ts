@@ -1084,6 +1084,35 @@ describe("production failed-attempt status boundary", () => {
     expect(names(ADMIN.current!.rpcCalls)).toContain("release_stripe_event_claim_with_error");
     expect(names(ADMIN.current!.rpcCalls)).not.toContain("mark_stripe_event_processed");
   });
+  // The cleanup of a declined session payment retries through Stripe's redelivery. That is an EXPECTED retry (the cleanup
+  // itself raises one warning per retry and one critical alert when it gives up), so the route must not also raise a
+  // critical processing alert on every redelivery. It recognizes the exact class, never the message or name.
+  it("the dedicated cleanup-retry class releases the claim and answers 500 with NO processing alert", async () => {
+    prepare("requires_payment_method");
+    const { PaymentDeclineCleanupRetryError } = await import("@/lib/billing/payment-webhook-reconciliation");
+    const rpc = ADMIN.current!.admin.rpc;
+    ADMIN.current!.admin.rpc = async (name, args) => {
+      if (name === "reconcile_bound_payment_event") throw new PaymentDeclineCleanupRetryError();
+      return rpc(name, args);
+    };
+    expect((await callRoute()).status).toBe(500);
+    expect(RECORD_OPS_ALERT).not.toHaveBeenCalled();
+    expect(NOTIFY_CRITICAL_OPS_ALERT).not.toHaveBeenCalled();
+    expect(names(ADMIN.current!.rpcCalls)).toContain("release_stripe_event_claim_with_error");
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("mark_stripe_event_processed");
+  });
+  it.each(["same message", "same message and name"])("a plain Error with the cleanup-retry %s is still a critical processing failure", async (kind) => {
+    prepare("requires_payment_method");
+    const error = new Error("payment_intent_failed_cleanup_retry");
+    if (kind === "same message and name") error.name = "PaymentDeclineCleanupRetryError";
+    const rpc = ADMIN.current!.admin.rpc;
+    ADMIN.current!.admin.rpc = async (name, args) => {
+      if (name === "reconcile_bound_payment_event") throw error;
+      return rpc(name, args);
+    };
+    expect((await callRoute()).status).toBe(500);
+    expect(RECORD_OPS_ALERT).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ event: "stripe_webhook_processing_failed", severity: "critical" }));
+  });
 
 });
 

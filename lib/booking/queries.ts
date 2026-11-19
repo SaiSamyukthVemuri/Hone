@@ -188,7 +188,8 @@ export async function getRecurringBreakRules(
 // the UI renders a generic "Break" label.
 export type RecurringBreakOccurrenceWithRule =
   StudioRecurringBreakOccurrence & {
-    rule: { label: string } | null;
+    // id and updated_at ride along for the calendar's change fingerprint (HON-48); the UI reads only the label.
+    rule: { label: string; id?: string; updated_at?: string | null } | null;
   };
 
 export async function getRecurringBreakOccurrencesForRange(
@@ -199,15 +200,16 @@ export async function getRecurringBreakOccurrencesForRange(
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("studio_recurring_break_occurrences")
-    .select("*, rule:studio_recurring_break_rules(label)")
+    .select("*, rule:studio_recurring_break_rules(id, label, updated_at)")
     .eq("studio_id", studioId)
     .lt("starts_at", endIso)
     .gt("ends_at", startIso)
     .order("starts_at");
   if (error)
     throw new Error(`Failed to load recurring break occurrences: ${dbErrorCode(error)}`);
+  type RuleRef = { id?: string; label: string; updated_at?: string | null };
   type Raw = StudioRecurringBreakOccurrence & {
-    rule: { label: string } | { label: string }[] | null;
+    rule: RuleRef | RuleRef[] | null;
   };
   return ((data ?? []) as Raw[]).map((row) => ({
     ...row,

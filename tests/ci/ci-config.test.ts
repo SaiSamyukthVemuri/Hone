@@ -916,7 +916,11 @@ describe("PR CI — path-aware lane selection", () => {
     // 90 s: 3x the healthiest-slow install measured (26 s); the worst-case
     // guard above derives every step ceiling from these defaults.
     expect(script).toMatch(/FIRST="\$\{PW_DEPS_FIRST_TIMEOUT:-90\}"/);
-    expect(script).toMatch(/azure\\\.archive\\\.ubuntu\\\.com\|archive\.ubuntu\.com/);
+    // The retry rewrites ANY <region>.archive / <region>.ec2.archive host (not only azure) to archive.ubuntu.com; the behaviour is
+    // run for real in tests/ci/playwright-system-deps.test.ts, so this only pins that the rewrite exists.
+    expect(script).toMatch(/sed -i -E '[^']*archive\\\.ubuntu\\\.com[^']*archive\.ubuntu\.com/);
+    // And that apt never upgrades what the image already has (the 18 Nov mesa stall).
+    expect(script).toContain('APT::Get::Upgrade "false"');
   });
 
   it("emits timing diagnostics including a timeout hint", () => {
