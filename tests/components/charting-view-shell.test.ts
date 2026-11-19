@@ -479,6 +479,16 @@ describe("the This visit card follows the open form", () => {
       await fillAndSave();
       expect(row("visit-summary-status").textContent).toBe("Needs attention");
     });
+    it("while a save is in flight, a previous refusal is not shown as attention (the pending term)", async () => {
+      actions.recordSetupSubmissionAction.mockResolvedValueOnce({ ok: false, error: "Could not save." } as never);
+      await fillAndSave();
+      expect(row("visit-summary-status").textContent).toBe("Needs attention");
+      let release!: (v: unknown) => void;
+      actions.recordSetupSubmissionAction.mockImplementationOnce((() => new Promise((r) => (release = r))) as never);
+      await click(host!.querySelector<HTMLButtonElement>('[data-testid="machine-reading-save"]')!);
+      expect(row("visit-summary-status").textContent).not.toBe("Needs attention");
+      await act(async () => release({ ok: true }));
+    });
     it("a successful save does not", async () => {
       await fillAndSave();
       expect(row("visit-summary-status").textContent).not.toBe("Needs attention");
