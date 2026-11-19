@@ -1,3 +1,4 @@
+import { clientDisplayName } from "@/lib/clients/identity";
 import { AMOUNT_KINDS, COLLECTED_KINDS, type StatementKind, type StatementMoneyLine } from "@/lib/finance/statement";
 
 // ===========================================================================
@@ -155,7 +156,8 @@ export type DocumentIdentity = {
 export type BuildDocumentInput = {
   studioId: string;
   identity: DocumentIdentity;
-  client: { id: string; name: string };
+  /** The stored name and the name the client goes by: the document shows the DISPLAY name (preferred when set), never the legal name. */
+  client: { id: string; name: string; preferred_name?: string | null };
   scope: DocumentScope;
   /** Studio currency, lower or upper case. */
   currency: string;
@@ -546,7 +548,7 @@ export function buildStatementDocument(input: BuildDocumentInput): BuildDocument
     document: {
       studioId: input.studioId,
       identity: input.identity,
-      client: input.client,
+      client: { id: input.client.id, name: clientDisplayName(input.client) },
       scope: input.scope,
       currency: input.currency.toLowerCase(),
       preparedOn: input.preparedOn,
