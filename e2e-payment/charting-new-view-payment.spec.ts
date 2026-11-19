@@ -25,7 +25,7 @@ import {
 //
 // Opt-in like the charting spec: run with the app server started with HONE_CHARTING_NEW_VIEW_STUDIO_IDS=all in its environment (the payment config applies its
 // own server env over the inherited one, so the variable reaches the server), via
-//   HONE_CHARTING_NEW_VIEW_STUDIO_IDS=all npx playwright test --config playwright.payment.config.ts charting-new-view-payment
+//   HONE_CHARTING_NEW_VIEW_STUDIO_IDS=all npx playwright test --config playwright.charting-payment.config.ts   (after building with the payment config's server env)
 test.skip(process.env.HONE_CHARTING_NEW_VIEW_STUDIO_IDS !== "all", "needs the app server started with HONE_CHARTING_NEW_VIEW_STUDIO_IDS=all");
 
 const T = 20_000;
