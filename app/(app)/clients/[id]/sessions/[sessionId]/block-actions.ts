@@ -992,7 +992,7 @@ function outside(v: number | null | undefined, min: number, max?: number, whole?
 function validateReadings(
   r: EntryReadingsInput,
 ): { ok: true } | { ok: false; error: string } {
-  // Column types (migrations 0042, 0166 and the numeric widening of thermolysis_duration_seconds): mA, thermolysis duration and units of lye
+  // The column types: mA, thermolysis duration and units of lye
   // are numeric (decimals are intended); galvanic duration and thermolysis intensity are integer, so a fraction is refused, not rounded.
   const checks: ReadonlyArray<[number | null | undefined, string, number, number | undefined, boolean]> = [
     [r.galvanicMa, "Galvanic mA", 0, undefined, false],
@@ -1018,19 +1018,21 @@ function validateReadings(
 
 const MINUTES_MAX_SERVER = 1440; // the form's own ceiling (a day)
 // energy_level, minutes_performed, hairs_treated and pulse_count are integer columns, so a fraction is refused rather than left for the database
-// to reject or round. The block's energy level is written to the block as given (only the entry snapshot is mode-gated), so it is checked for every mode.
+// to reject or round. Energy level is a whole number only where the ENTRY stores it (the same rule as entryMachineSnapshot: not for Galvanic);
+// the block column itself is numeric, so a Galvanic block carrying a stale hidden fraction still saves, as it always did (a negative is still refused).
 function validateSetupNumbers(
-  input: { energyLevel?: number | null; minutesPerformed?: number | null },
+  input: { mode?: string | null; energyLevel?: number | null; minutesPerformed?: number | null },
   r: EntryReadingsInput,
 ): { ok: true } | { ok: false; error: string } {
-  const checks: ReadonlyArray<[number | null | undefined, string, number, number | undefined]> = [
-    [input.energyLevel, "Energy level", 0, undefined],
-    [input.minutesPerformed, "Minutes", 0, MINUTES_MAX_SERVER],
-    [r.hairsTreated, "Hairs treated", 0, undefined],
-    [r.pulseCount, "Pulse count", PULSE_COUNT_MIN, PULSE_COUNT_MAX],
+  const keepsEnergyLevel = input.mode !== "galv";
+  const checks: ReadonlyArray<[number | null | undefined, string, number, number | undefined, boolean]> = [
+    [input.energyLevel, "Energy level", 0, undefined, keepsEnergyLevel],
+    [input.minutesPerformed, "Minutes", 0, MINUTES_MAX_SERVER, true],
+    [r.hairsTreated, "Hairs treated", 0, undefined, true],
+    [r.pulseCount, "Pulse count", PULSE_COUNT_MIN, PULSE_COUNT_MAX, true],
   ];
-  for (const [v, label, min, max] of checks) {
-    if (outside(v, min, max, true)) return { ok: false, error: rangeText(label, min, max, true) };
+  for (const [v, label, min, max, whole] of checks) {
+    if (outside(v, min, max, whole)) return { ok: false, error: rangeText(label, min, max, whole) };
   }
   return { ok: true };
 }

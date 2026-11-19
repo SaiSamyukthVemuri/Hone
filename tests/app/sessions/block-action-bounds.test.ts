@@ -124,6 +124,19 @@ describe("controls: numeric columns keep their decimals (thermolysis duration, m
     expect((await update({ mode: "blend" }, readings)).ok).toBe(true);
   });
 });
+describe("energy level on the block follows where the entry STORES it", () => {
+  it("a Galvanic block carrying a fractional EL saves, as before (the entry does not store it), on create and update", async () => {
+    expect((await create({ mode: "galv", energyLevel: 2.5 }, {})).ok).toBe(true);
+    h.rpc.mockReset();
+    expect((await update({ mode: "galv", energyLevel: 2.5 }, {})).ok).toBe(true);
+  });
+  it("a Galvanic block still refuses a NEGATIVE EL", async () => {
+    expect((await create({ mode: "galv", energyLevel: -1 }, {})).ok).toBe(false);
+  });
+  it("Thermolysis and Blend refuse the same fraction", async () => {
+    for (const mode of ["thermo", "blend"]) expect((await create({ mode, energyLevel: 2.5 }, {})).ok, mode).toBe(false);
+  });
+});
 describe("controls: the edges and blanks save", () => {
   it("energy 0, minutes 0 and 1440, hairs 0, pulse count 1 and 10, intensity 0 and 100", async () => {
     for (const [input, readings] of [
