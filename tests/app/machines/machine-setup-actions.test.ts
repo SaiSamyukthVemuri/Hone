@@ -83,6 +83,9 @@ vi.mock("@/lib/rollouts/charting-rollout", async (orig) => {
   const real = await orig<typeof import("@/lib/rollouts/charting-rollout")>();
   return { ...real, readChartingRollout: async () => { ROLLOUT.reads += 1; return ROLLOUT.value; }, chartingRolloutFor: async () => ROLLOUT.value === "on" };
 });
+// The client's last machine is its own query (a chain this fake does not model, which answered null before); here it is a controlled value.
+const CLIENT_LAST = vi.hoisted(() => ({ value: null as { profileId: string | null; deviceId: string | null; modeKey: string | null } | null }));
+vi.mock("@/lib/sessions/client-last-machine", () => ({ readClientLastMachine: async () => CLIENT_LAST.value }));
 const revalidatePathMock = vi.hoisted(() => vi.fn());
 vi.mock("next/cache", () => ({ revalidatePath: revalidatePathMock }));
 vi.mock("@/lib/supabase/server", () => ({
@@ -196,6 +199,7 @@ beforeEach(() => {
   SESSION.current = null;
   DB.rows = [];
   DB.rpcResult = null;
+  CLIENT_LAST.value = null;
   DB.rpcError = null;
   DB.selectError = null;
   DB.rowsFor = {};
@@ -2847,6 +2851,65 @@ describe("loadMachineSetupContext and the platform rollout", () => {
     expect((await actions.loadMachineSetupContext(NEW_SETUP)).remembered?.deviceId).toBe(PUR_UNIT);
     ROLLOUT.value = "error";
     expect((await actions.loadMachineSetupContext(NEW_SETUP)).remembered).toBeNull();
+  });
+
+  // W1: EVERY selection is pinned at the LOADER level. They cannot all be non-null in one call (the prior-unit suggestion is offered only when
+  // nothing is remembered; a restored selection needs an existing block that does not itself use the unit), so three calls each arrange the
+  // selections that can coexist, and each asserts "returned with the rollout On, null with the read failed".
+  describe("every selection pointing at the xCell unit is withheld at the loader when the rollout read fails", () => {
+    const PUR_UNIT = "22222222-2222-4222-8222-222222222222";
+    const PUR_PROFILE = "dectro-apilus:xcell-pur";
+    const arrange = () => {
+      signIn("studio-fett", "pract-owner-a");
+      HISTORY.value = true;
+      DB.rowsFor.machine_profile_mode_contract = [{ mode_key: "multiplex", machine_profile_version: 1 }];
+      DB.rowsFor.studio_machines = [{
+        id: PUR_UNIT, studio_id: "studio-fett", machine_profile_id: PUR_PROFILE,
+        machine_profile_version: 1, display_name: "Dectro xCell", installed_options: [], retired_at: null,
+      }];
+    };
+    const reading = {
+      session_block_id: "block-1", machine_profile_id: PUR_PROFILE, machine_profile_version: 1, mode_key: "multiplex", group_key: "g1",
+      channels: [], stage_key: null, field_key: "slow_duration", value_numeric: 2, absence_reason: null, native_unit: "s", decimals: 0,
+      revision: 1, capture_id: "cap-1", studio_machine_id: PUR_UNIT, observation_source: "practitioner-entered", recorded_at: "2026-10-01T10:00:00Z",
+    };
+    const both = async (input: typeof NEW_SETUP | typeof EXISTING) => {
+      ROLLOUT.value = "on";
+      const on = await actions.loadMachineSetupContext(input);
+      ROLLOUT.value = "error";
+      const failed = await actions.loadMachineSetupContext(input);
+      return { on, failed };
+    };
+
+    it("remembered and the client's last machine (a new block)", async () => {
+      arrange();
+      DB.rowsFor.practitioners = [{ default_machine_id: PUR_UNIT, default_machine_mode: "multiplex" }];
+      CLIENT_LAST.value = { profileId: PUR_PROFILE, deviceId: PUR_UNIT, modeKey: "multiplex" };
+      const { on, failed } = await both(NEW_SETUP);
+      expect(on.remembered?.deviceId).toBe(PUR_UNIT);
+      expect(on.clientLastMachine?.deviceId).toBe(PUR_UNIT);
+      expect(failed.remembered).toBeNull();
+      expect(failed.clientLastMachine).toBeNull();
+    });
+
+    it("the suggested machine (nothing remembered; the client's last recorded setup used the unit)", async () => {
+      arrange();
+      DB.rowsFor.practitioners = [{ default_machine_id: null, default_machine_mode: null }];
+      DB.rpcResult = [reading];
+      const { on, failed } = await both(NEW_SETUP);
+      expect(on.suggestedMachine?.deviceId).toBe(PUR_UNIT);
+      expect(failed.suggestedMachine).toBeNull();
+    });
+
+    it("the restored selection (an existing block whose recorded readings used the unit)", async () => {
+      arrange();
+      DB.rowsFor.practitioners = [{ default_machine_id: null, default_machine_mode: null }];
+      DB.rowsFor.session_blocks = [{ studio_machine_id: null }];
+      DB.rowsFor.treatment_setup_readings = [reading];
+      const { on, failed } = await both(EXISTING);
+      expect(on.restoredSelection?.deviceId).toBe(PUR_UNIT);
+      expect(failed.restoredSelection).toBeNull();
+    });
   });
 
   it("a studio with NO legacy history makes no rollout read and keeps its own reason, whatever the rollout says (outage blast radius)", async () => {
