@@ -1,19 +1,22 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const add = vi.hoisted(() => ({ fn: vi.fn() }));
+const add = vi.hoisted(() => ({ fn: vi.fn(), load: vi.fn() }));
+vi.mock("@/app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions", () => ({ loadMachineSetupContext: add.load }));
 vi.mock("@/app/(app)/clients/[id]/sessions/[sessionId]/actions", () => ({ addElectrolysisEntryAction: add.fn }));
 
 import { createElement, act } from "react";
 import { createRoot } from "react-dom/client";
 import { SimplifiedEntryForm } from "@/app/(app)/clients/[id]/sessions/[sessionId]/simplified-entry-form";
 import { ChartingVisitDraftProvider, useVisitDraftSummary } from "@/components/charting-visit-draft";
+import { ChartingViewContext } from "@/components/charting-view-context";
+import type { StudioDevice } from "@/lib/machines/selection";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 function Reader() {
   const s = useVisitDraftSummary();
-  return createElement("output", { "data-u": String(s.unsaved), "data-a": String(s.attention) });
+  return createElement("output", { "data-u": String(s.unsaved), "data-a": String(s.attention), "data-m": s.machine ?? "" });
 }
 const BLOCK = { id: "b1", mode: null, apilus_modality: null, energy_level: null, minutes_performed: null, probe_type: null, probe_size: null, machine_frequency: null };
 
@@ -25,11 +28,17 @@ afterEach(() => {
   root = host = null;
   vi.clearAllMocks();
 });
-async function mount() {
+async function mount(block: Record<string, unknown> = BLOCK, view: "current" | "new" = "new") {
   host = document.body.appendChild(document.createElement("div"));
   root = createRoot(host);
   await act(async () =>
-    root!.render(createElement(ChartingVisitDraftProvider, null, createElement(SimplifiedEntryForm, { block: BLOCK as never, sessionId: "s1", clientId: "c1" }), createElement(Reader))),
+    root!.render(
+      createElement(
+        ChartingViewContext.Provider,
+        { value: { view, setView: () => undefined, notice: null } },
+        createElement(ChartingVisitDraftProvider, null, createElement(SimplifiedEntryForm, { block: block as never, sessionId: "s1", clientId: "c1" }), createElement(Reader)),
+      ),
+    ),
   );
 }
 const out = () => host!.querySelector("output")!;
@@ -60,6 +69,14 @@ describe('"Add another pass" reports to This visit', () => {
     expect(out().dataset.a).toBe("true");
     expect(out().dataset.u).toBe("true");
   });
+  it("the persisted-but-unverified recovery lock shows as needing attention", async () => {
+    await mount();
+    await act(async () => chip().click());
+    add.fn.mockResolvedValueOnce({ ok: false, code: "unverified", error: "Saved, but could not be confirmed. Reload and check." });
+    await submit();
+    expect(add.fn).toHaveBeenCalledTimes(1);
+    expect(out().dataset.a).toBe("true");
+  });
   it("a server refusal shows as needing attention; a successful pass clears both", async () => {
     await mount();
     const c = chip();
@@ -74,5 +91,44 @@ describe('"Add another pass" reports to This visit', () => {
     await submit();
     expect(out().dataset.u).toBe("false");
     expect(out().dataset.a).toBe("false");
+  });
+});
+
+const PROFILE = { profileId: "fixture:mounted", version: 1, manufacturer: "Fixture", model: "Mounted", availability: "active" };
+const DEVICE: StudioDevice = { deviceId: "room-9", studioId: "st", profileId: "fixture:mounted", profileVersion: 1, displayName: "Room 9 unit", installedOptions: [], retiredAt: null };
+const ctx = (over: Record<string, unknown> = {}) => ({ scope: { studioId: "st", practitionerId: "p" }, devices: [DEVICE], catalogue: [PROFILE], legacyMachine: { label: "Dectro xCell" }, unitNames: { "room-9": "Room 9 unit" }, ...over });
+
+describe("the add-pass form reports the machine it inherits from the saved block (New view)", () => {
+  it("a live saved unit: the model's display label, with the block's frequency as stored", async () => {
+    add.load.mockResolvedValue(ctx());
+    await mount({ ...BLOCK, studio_machine_id: "room-9", machine_profile_id: "fixture:mounted", machine_frequency: "27.12 MHz" });
+    expect(out().dataset.m).toBe("Fixture Mounted \u00b7 27.12 MHz");
+  });
+  it("a retired saved unit: its name, as no longer available", async () => {
+    add.load.mockResolvedValue(ctx({ devices: [{ ...DEVICE, retiredAt: "2026-01-01T00:00:00.000Z" }] }));
+    await mount({ ...BLOCK, studio_machine_id: "room-9", machine_profile_id: "fixture:mounted" });
+    expect(out().dataset.m).toBe("Room 9 unit (no longer available)");
+  });
+  it("the existing xCell saved without a unit: the picker's own label", async () => {
+    add.load.mockResolvedValue(ctx());
+    await mount({ ...BLOCK, studio_machine_id: null, machine_profile_id: "dectro-apilus:xcell" });
+    expect(out().dataset.m).toBe("Dectro xCell");
+  });
+  it("a block with no machine reports none, and reads nothing", async () => {
+    await mount({ ...BLOCK, studio_machine_id: null, machine_profile_id: null });
+    expect(add.load).not.toHaveBeenCalled();
+    expect(out().dataset.m).toBe("");
+  });
+  it("Current view reads nothing and reports no machine", async () => {
+    add.load.mockResolvedValue(ctx());
+    await mount({ ...BLOCK, studio_machine_id: "room-9", machine_profile_id: "fixture:mounted" }, "current");
+    expect(add.load).not.toHaveBeenCalled();
+    expect(out().dataset.m).toBe("");
+  });
+  it("a failed read leaves the machine unreported and the form usable", async () => {
+    add.load.mockRejectedValue(new Error("nope"));
+    await mount({ ...BLOCK, studio_machine_id: "room-9", machine_profile_id: "fixture:mounted" });
+    expect(out().dataset.m).toBe("");
+    expect(form()).not.toBeNull();
   });
 });

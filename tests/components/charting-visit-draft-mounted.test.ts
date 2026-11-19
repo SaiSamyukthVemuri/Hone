@@ -60,6 +60,14 @@ describe("with several open forms the Machine row follows the one most recently 
     await render([form("a", "Unit A", "a3"), form("b", "Unit B", "b2")]);
     expect(out().dataset.m, "A edited again while B is still dirty").toBe("Unit A");
   });
+  it("the unsaved flag flipping (a save completing) is not an edit and does not reorder the forms", async () => {
+    const f = (id: string, machine: string, activity: string, unsaved: boolean) =>
+      createElement(Form, { key: id, id: `block:${id}`, report: { ...base, machine, unsaved, activity } });
+    await render([f("a", "Unit A", "a1", true), f("b", "Unit B", "b1", true)]);
+    expect(out().dataset.m).toBe("Unit B");
+    await render([f("a", "Unit A", "a1", false), f("b", "Unit B", "b1", true)]);
+    expect(out().dataset.m, "A's save completed; B is still the form last edited").toBe("Unit B");
+  });
   it("a re-render with no edit does not reorder the forms", async () => {
     await render([form("a", "Unit A", "a1"), form("b", "Unit B", "b1")]);
     await render([form("a", "Unit A", "a1"), form("b", "Unit B", "b1")]);
