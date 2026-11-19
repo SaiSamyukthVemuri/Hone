@@ -2941,6 +2941,7 @@ describe("loadMachineSetupContext and the platform rollout", () => {
       expect(ROLLOUT.reads).toBe(1);
       expect(on.devices.map((d) => d.deviceId)).toContain(PUR_UNIT);
       expect(on.remembered?.deviceId).toBe(PUR_UNIT);
+      expect(on.multiplexRoute, "the route needs the legacy xCell choice; a studio without it keeps today's behaviour").toBeNull();
       ROLLOUT.value = "off";
       const off = await actions.loadMachineSetupContext(NEW_SETUP);
       expect(off.devices.map((d) => d.deviceId)).not.toContain(PUR_UNIT);
