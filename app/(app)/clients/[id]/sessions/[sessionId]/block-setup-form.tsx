@@ -1737,11 +1737,12 @@ export function BlockSetupForm({
           setError(CREATE_REFUSED_AFTER_LOST_ANSWER);
           setSaveUnresolved(true);
           return { status: "failed", message: CREATE_REFUSED_AFTER_LOST_ANSWER };
+        } else {
+          setError(res.error);
+          bareCreateKeyRef.current = null;
+          createAttemptRef.current = null;
+          return { status: "failed", message: res.error };
         }
-        setError(res.error);
-        bareCreateKeyRef.current = null;
-        createAttemptRef.current = null;
-        return { status: "failed", message: res.error };
       }
       bareCreateKeyRef.current = null;
       createAttemptRef.current = null;
