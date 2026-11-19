@@ -2833,6 +2833,22 @@ describe("loadMachineSetupContext and the platform rollout", () => {
     expect(off.devices.map((d) => d.deviceId)).toContain(PUR_UNIT);
   });
 
+  it("WIRING: a remembered selection of the xCell unit is returned with the rollout On and withheld (null) when the read failed", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    HISTORY.value = true;
+    const PUR_UNIT = "22222222-2222-4222-8222-222222222222";
+    DB.rowsFor.machine_profile_mode_contract = [{ mode_key: "multiplex", machine_profile_version: 1 }];
+    DB.rowsFor.studio_machines = [{
+      id: PUR_UNIT, studio_id: "studio-fett", machine_profile_id: "dectro-apilus:xcell-pur",
+      machine_profile_version: 1, display_name: "Dectro xCell", installed_options: [], retired_at: null,
+    }];
+    DB.rowsFor.practitioners = [{ default_machine_id: PUR_UNIT, default_machine_mode: "multiplex" }];
+    ROLLOUT.value = "on";
+    expect((await actions.loadMachineSetupContext(NEW_SETUP)).remembered?.deviceId).toBe(PUR_UNIT);
+    ROLLOUT.value = "error";
+    expect((await actions.loadMachineSetupContext(NEW_SETUP)).remembered).toBeNull();
+  });
+
   it("a studio with NO legacy history makes no rollout read and keeps its own reason, whatever the rollout says (outage blast radius)", async () => {
     signIn("studio-one", "pract-a");
     for (const v of ["error", "off", "on"] as const) {

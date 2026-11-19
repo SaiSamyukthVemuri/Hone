@@ -30,6 +30,7 @@ import {
   type LegacyMachineOffer,
 } from "@/lib/machines/legacy-machine";
 import { XCELL_PUR_PROFILE_ID } from "@/lib/machines/xcell-pur";
+import { withholdXcellUnits } from "@/lib/machines/xcell-withhold";
 import { xcellMultiplexRoute, type XcellMultiplexRoute } from "@/lib/machines/xcell-route";
 import {
   restoreSelectionFromRecordedSetup,
@@ -541,14 +542,13 @@ export async function loadMachineSetupContext(input: {
   // WHEN THE ROLLOUT COULD NOT BE READ, THE xCELL UNIT IS WITHHELD WHOLE, not only its legacy-choice wrapper: with the wrapper gone the picker
   // would list a registered xCell Pur unit as an ordinary machine, and a new setup saved from it would be recorded under the native identity
   // while it is unknown whether this studio may use it. Every selection that could point at such a unit is withheld with it.
-  const withheld = new Set(rolloutUnavailable ? inventory.devices.filter((d) => d.profileId === XCELL_PUR_PROFILE_ID).map((d) => d.deviceId) : []);
-  const keep = <T extends { deviceId: string | null } | null>(v: T): T | null => (v !== null && v.deviceId !== null && withheld.has(v.deviceId) ? null : v);
+  const offered = withholdXcellUnits({ withhold: rolloutUnavailable, devices: inventory.devices, remembered, suggestedMachine, restoredSelection, clientLastMachine });
 
   return {
     scope,
-    devices: withheld.size > 0 ? inventory.devices.filter((d) => !withheld.has(d.deviceId)) : inventory.devices,
+    devices: offered.devices,
     inventoryReason: rolloutUnavailable ? ROLLOUT_UNAVAILABLE_MESSAGE : inventory.reason,
-    remembered: keep(remembered),
+    remembered: offered.remembered,
     rememberedUnavailable,
     persistence,
     catalogue,
@@ -558,11 +558,11 @@ export async function loadMachineSetupContext(input: {
     priorSetupUnavailable,
     recordedSetupUnavailable,
     unitNames,
-    suggestedMachine: keep(suggestedMachine),
-    restoredSelection: keep(restoredSelection),
+    suggestedMachine: offered.suggestedMachine,
+    restoredSelection: offered.restoredSelection,
     legacyMachine,
     multiplexRoute,
-    clientLastMachine: keep(clientLastMachine),
+    clientLastMachine: offered.clientLastMachine,
   };
 }
 
