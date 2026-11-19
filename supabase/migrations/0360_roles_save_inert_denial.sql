@@ -11,7 +11,7 @@
 --
 -- SECOND FIX (same function). The prerequisite check used perm_effective_scope, which for an unreleased prerequisite returns its snapshot value, so on a
 -- new_studio studio an owner could not store an inert On (a receptionist's clin.view_photos) whose fixed prerequisite (client.view_directory) is On under the
--- chosen defaults, and a dependent could be stored On while its configurable prerequisite was stored Off. The check now judges the owner's INTENDED
+-- chosen defaults: the save was refused as prerequisite_unmet although the choice was valid. The check now judges the owner's INTENDED
 -- policy (stored choice, else the studio's basis default) over the whole requires chain, independent of release; enforcement is unchanged.
 --
 -- NOT CHANGED. perm_base_scope, perm_effective_scope and so effective access are untouched: a saved choice changes nobody's access until its key is
