@@ -376,6 +376,21 @@ describe("the This visit card follows the open form", () => {
     expect(row("visit-summary-status").textContent).toBe("Not saved yet");
     expect(saveCalls(), "reading the form saves nothing").toBe(0);
   });
+  it("a registered xCell Pur unit (the native route) reads as the studio's xCell, never as the catalogue's model name", async () => {
+    const XPUR = { ...PROFILE, profileId: "dectro-apilus:xcell-pur", manufacturer: "Apilus", model: "xCell Pur" };
+    ctxBox.ctx = {
+      ...CTX,
+      legacyMachine: null,
+      catalogue: [XPUR],
+      devices: [{ ...DEVICE, profileId: XPUR.profileId, displayName: "Room 9 xCell" }],
+    };
+    await mount("new");
+    await openPanel();
+    expect(machineSelect().value).toBe("room-9");
+    const text = row("visit-summary-machine").textContent!;
+    expect(text).toContain("Dectro xCell");
+    expect(text).not.toContain("xCell Pur");
+  });
   it("shows the existing xCell by the picker's own label for a saved legacy block", async () => {
     ctxBox.ctx = { ...CTX, remembered: null, devices: [] };
     host = document.createElement("div");
