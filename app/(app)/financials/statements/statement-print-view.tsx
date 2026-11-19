@@ -18,7 +18,8 @@ import { PrintButton } from "./print-button";
 // hidden by the print stylesheet below (it exists only while this page is mounted). A fixed label says what this is NOT, until issued invoices exist.
 export const PRINT_CSS = `
 @media print {
-  header, footer, nav, [data-print-hide] { display: none !important; }
+  /* the app shell's header, footer and navigation go; the statement's OWN header (marked) stays */
+  header:not([data-statement-header]), footer, nav, [data-print-hide] { display: none !important; }
   main { padding: 0 !important; }
   tr, li { break-inside: avoid; }
   thead { display: table-header-group; }
@@ -53,7 +54,7 @@ export function StatementPrintView({ document: doc, offDocumentWithMoney, backHr
         <a href={backHref} className="text-sm underline">Back to the statement</a>
         <PrintButton />
       </div>
-      <header className="space-y-1 border-b border-line pb-3">
+      <header data-statement-header className="space-y-1 border-b border-line pb-3">
         <p className="text-sm font-semibold uppercase tracking-wide">{STATEMENT_NOT_AN_INVOICE}</p>
         <h1 className="text-2xl font-semibold">{doc.client.name}</h1>
         <p className="text-sm">{doc.attribution}</p>

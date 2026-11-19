@@ -96,8 +96,8 @@ describe("the CSV route", () => {
     h.read.mockResolvedValue(granted({ visits: [visit(), visit({ appointmentId: "a2", eligibility: "not_completed", feeCandidates: [], lines: [], localDate: "2026-11-02" })] }));
     const hist = await call("?month=2026-11&view=history");
     expect(hist.headers.get("content-disposition")).toBe('attachment; filename="statement-full-history.csv"');
-    expect(await hist.text()).toContain("not_completed,2026-11-02");
-    expect(await (await call("?month=2026-11")).text()).not.toContain("not_completed,");
+    expect(await hist.text()).toContain("Not completed,2026-11-02");
+    expect(await (await call("?month=2026-11")).text()).not.toContain("Not completed,");
   });
   it("the file is built from the SAME loader the screen uses, for the client named in the URL only", async () => {
     await call("?month=2026-11");
@@ -169,7 +169,10 @@ describe("the print view", () => {
   });
   it("hides the app's chrome and its own controls when printed, and shows no internal id or contact detail", () => {
     const out = html(printDoc());
-    expect(PRINT_CSS).toMatch(/@media print[\s\S]*header, footer, nav, \[data-print-hide\] \{ display: none !important; \}/);
+    expect(PRINT_CSS).toMatch(/@media print[\s\S]*header:not\(\[data-statement-header\]\), footer, nav, \[data-print-hide\] \{ display: none !important; \}/);
+    // the statement's own header (client name, attribution, selection, prepared date, label) is NOT matched by the hiding rule
+    expect(out).toMatch(/<header data-statement-header[^>]*>[\s\S]*Statement — not an invoice[\s\S]*Ada Lovelace[\s\S]*Prepared by Hone for Studio One[\s\S]*<\/header>/);
+    expect(PRINT_CSS.replace(/\/\*[\s\S]*?\*\//g, "")).not.toMatch(/(^|[\s,{])header\s*[,{]/m); // no bare `header` selector
     expect(out).toContain("data-print-hide");
     expect(out).toContain("Print / Save as PDF");
     const visible = out.replace(/<style>[\s\S]*?<\/style>/, "").replace(/<[^>]*>/g, " ");

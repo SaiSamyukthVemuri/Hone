@@ -1,6 +1,7 @@
 import { csvCell } from "@/lib/csv";
-import { CSV_COLUMNS, UNKNOWN_REASON_COPY, toCsvRows, type StatementDocument } from "@/lib/finance/statement-document";
+import { CSV_COLUMNS, FEE_NOT_RECORDED_COPY, FEE_REASON_COPY, NOT_COMPLETED_COPY, UNKNOWN_REASON_COPY, toCsvRows, type StatementDocument } from "@/lib/finance/statement-document";
 import { monthRange } from "@/lib/finance/statement-period";
+import { FEE_ITEM_STATE_LABEL, VISIT_STATE_LABEL } from "@/lib/finance/statement-screen";
 
 // ===========================================================================
 // A client statement as a spreadsheet file. PURE: no I/O, no clock, no request.
@@ -75,14 +76,31 @@ export function statementCsvLines(doc: StatementDocument): string[][] {
     [...STATEMENT_CSV_COLUMNS],
   ];
   const [, ...records] = toCsvRows(doc);
-  const reasonsAt = CSV_COLUMNS.indexOf("reasons");
+  const col = (name: (typeof CSV_COLUMNS)[number]) => CSV_COLUMNS.indexOf(name);
+  const nVisits = doc.visits.length;
+  const nItems = doc.feeItems.length;
   const body = records.map((row, r) => {
     const cells = row.map((cell, i) => {
       if (MONEY_COLUMNS.has(CSV_COLUMNS[i])) return decimalAmount(typeof cell === "number" ? cell : null);
-      // The reasons a payment status is not confirmed are the SCREEN'S plain words (a person reads this in a spreadsheet), never the model's names.
-      if (i === reasonsAt && r < doc.visits.length) return doc.visits[r].reasons.map((x) => UNKNOWN_REASON_COPY[x]).join("; ");
       return cell === null ? "" : String(cell);
     });
+    // Text columns read EXACTLY as the screen does (a person opens this in a spreadsheet and compares it with the statement): the screen's labels
+    // for the row kind, the payment status, the fee state and the reasons, never the model's names.
+    if (r < nVisits) {
+      const v = doc.visits[r];
+      cells[col("row_type")] = "Visit";
+      cells[col("state")] = VISIT_STATE_LABEL[v.state];
+      cells[col("fee_state")] = v.fee.state === "recorded" ? "Fee recorded" : FEE_NOT_RECORDED_COPY;
+      cells[col("reasons")] = v.reasons.map((x) => UNKNOWN_REASON_COPY[x]).join("; ");
+    } else if (r < nVisits + nItems) {
+      const f = doc.feeItems[r - nVisits];
+      cells[col("row_type")] = FEE_REASON_COPY[f.reason];
+      cells[col("state")] = FEE_ITEM_STATE_LABEL[f.state];
+      cells[col("fee_state")] = f.fee.state === "recorded" ? "Fee recorded" : FEE_NOT_RECORDED_COPY;
+    } else {
+      cells[col("row_type")] = NOT_COMPLETED_COPY;
+      cells[col("state")] = NOT_COMPLETED_COPY;
+    }
     return [...cells, currency];
   });
   return [...header, ...body];

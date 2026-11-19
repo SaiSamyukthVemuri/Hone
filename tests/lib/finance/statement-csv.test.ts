@@ -86,12 +86,12 @@ describe("money is decimal with a separate currency column", () => {
     expect(row[header.indexOf("paid")]).toBe("60.00");
     expect(row[header.indexOf("fee")]).toBe("60.00");
     expect(row[header.indexOf("currency")]).toBe("CAD");
-    expect(parse(statementCsv(doc([visit()])))[9]).toBe("visit,2026-11-03,10:00,Service A,Practitioner One,recorded,60.00,paid,,60.00,0.00,0.00,,CAD");
+    expect(parse(statementCsv(doc([visit()])))[9]).toBe("Visit,2026-11-03,10:00,Service A,Practitioner One,Fee recorded,60.00,Paid,,60.00,0.00,0.00,,CAD");
   });
   it("a visit with no fee record has a blank fee, not 0.00", () => {
     const rows = statementCsvLines(doc([visit({ feeCandidates: [], lines: [] })]));
     expect(rows[9][rows[8].indexOf("fee")]).toBe("");
-    expect(rows[9][rows[8].indexOf("fee_state")]).toBe("not_recorded");
+    expect(rows[9][rows[8].indexOf("fee_state")]).toBe("Fee not recorded");
   });
 });
 
@@ -156,10 +156,10 @@ describe("what the file never carries", () => {
   it("Not completed rows appear in the full-history file only, with no amounts", () => {
     const nc = visit({ eligibility: "not_completed", feeCandidates: [], lines: [], localDate: "2026-11-02" });
     const history = parse(statementCsv(doc([visit(), nc], { scope: { kind: "full_history" } })));
-    expect(history.some((l) => l.startsWith("not_completed,2026-11-02"))).toBe(true);
+    expect(history.some((l) => l.startsWith("Not completed,2026-11-02"))).toBe(true);
     const month = parse(statementCsv(doc([visit(), nc])));
-    expect(month.some((l) => l.startsWith("not_completed"))).toBe(false);
-    const ncRow = statementCsvLines(doc([nc], { scope: { kind: "full_history" } })).find((r) => r[0] === "not_completed")!;
+    expect(month.some((l) => l.startsWith("Not completed,"))).toBe(false);
+    const ncRow = statementCsvLines(doc([nc], { scope: { kind: "full_history" } })).find((r) => r[0] === "Not completed")!;
     const h = [...STATEMENT_CSV_COLUMNS];
     for (const c of ["fee", "paid", "refunded", "waived", "owed"]) expect(ncRow[h.indexOf(c)]).toBe("");
   });
@@ -169,11 +169,29 @@ describe("what the file never carries", () => {
     const rows = statementCsvLines(doc([split, unpaid])).slice(9);
     expect(rows).toHaveLength(2);
     expect(rows[0][[...STATEMENT_CSV_COLUMNS].indexOf("paid")]).toBe("60.00");
-    expect(rows[1][[...STATEMENT_CSV_COLUMNS].indexOf("state")]).toBe("unknown");
+    expect(rows[1][[...STATEMENT_CSV_COLUMNS].indexOf("state")]).toBe("Payment not confirmed");
     // the reasons are the screen's plain words, never the model's enum names
     const reasons = rows[1][[...STATEMENT_CSV_COLUMNS].indexOf("reasons")];
     expect(reasons).toBe("No payment recorded");
     expect(reasons).not.toMatch(/_/);
+  });
+});
+
+describe("the text columns read exactly as the screen does", () => {
+  it("row type, payment status, fee state and reasons use the screen's labels, never the model's names", () => {
+    const unpaid = visit({ lines: [], localDate: "2026-11-07", feeCandidates: [] });
+    const nc = visit({ eligibility: "not_completed", feeCandidates: [], lines: [], localDate: "2026-11-02" });
+    const noShow = { appointmentId: "appt-SECRET-fee", clientId: "client-SECRET-1", localDate: "2026-11-05", startsAt: "2026-11-05T15:00:00Z", reason: "no_show_fee", feeCandidates: [{ source: "settlement_quote", cents: 2500 }], lines: [{ kind: "collected_card_fee", cents: 2500, source: "card" }] };
+    const d = doc([visit(), unpaid, nc], { scope: { kind: "full_history" }, feeItems: [noShow] } as never);
+    const rows = statementCsvLines(d).slice(9);
+    const at = (r: string[], c: string) => r[[...STATEMENT_CSV_COLUMNS].indexOf(c as never)];
+    const text = rows.flatMap((r) => [at(r, "row_type"), at(r, "state"), at(r, "fee_state"), at(r, "reasons")]);
+    for (const t of text) expect(t, t).not.toMatch(/^[a-z]+(_[a-z]+)+$|^(visit|paid|unknown|recorded|not_recorded|settled|unconfirmed)$/);
+    expect(rows.map((r) => at(r, "row_type"))).toEqual(["Visit", "Visit", "No-show fee", "Not completed"]);
+    expect(rows.map((r) => at(r, "state"))).toEqual(["Payment not confirmed", "Paid", "Paid", "Not completed"]);
+    expect(at(rows[1], "fee_state")).toBe("Fee recorded");
+    expect(at(rows[0], "fee_state")).toBe("Fee not recorded");
+    expect(at(rows[0], "reasons")).toBe("No payment recorded");
   });
 });
 
@@ -192,10 +210,10 @@ describe("the file name and encoding", () => {
 });
 
 describe("source guard: the serializer is pure", () => {
-  it("imports only the CSV helper, the document model and the period helper; no I/O, clock or request", () => {
+  it("imports only the CSV helper, the document model, the period helper and the screen's labels; no I/O, clock or request", () => {
     const src = readFileSync(path.join(ROOT, "lib/finance/statement-csv.ts"), "utf8").replace(/\/\/.*$/gm, "");
     const imports = [...src.matchAll(/from "([^"]+)"/g)].map((m) => m[1]).sort();
-    expect(imports).toEqual(["@/lib/csv", "@/lib/finance/statement-document", "@/lib/finance/statement-period"]);
+    expect(imports).toEqual(["@/lib/csv", "@/lib/finance/statement-document", "@/lib/finance/statement-period", "@/lib/finance/statement-screen"]);
     expect(src).not.toMatch(/Date\.now|new Date|fetch\(|process\.env|supabase|cookies\(|headers\(/);
   });
 });
