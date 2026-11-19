@@ -41,13 +41,15 @@ export type UnknownReason =
   | "payment_unresolved" //         a card or fee row that may or may not have moved money (in flight, unprovable or partial refund, legacy fee)
   | "other_currency" //             a row in a currency other than the studio's, never summed
   | "unreadable_record" //          a row that could not be read (unknown method, negative or non-integer amount)
-  | "partial_payment_unverified"; // money was collected, but less than the RECORDED fee, and nothing attests the rest is owed
+  | "partial_payment_unverified" //  money was collected, but less than the RECORDED fee, and nothing attests the rest is owed
+  | "refund_credit_unverified"; //   a refund was recorded and a recorded fee is not covered by retained money or a waiver: whether anything is still owed is not confirmed
 export const UNKNOWN_REASONS: readonly UnknownReason[] = [
   "no_payment_record",
   "payment_unresolved",
   "other_currency",
   "unreadable_record",
   "partial_payment_unverified",
+  "refund_credit_unverified",
 ];
 
 /** Facts about a visit that do not change its state but must be flagged where they appear. */
@@ -60,6 +62,7 @@ export const UNKNOWN_REASON_COPY: Record<UnknownReason, string> = {
   other_currency: "Paid in another currency",
   unreadable_record: "A payment record could not be read",
   partial_payment_unverified: "Part settled; the rest is not confirmed",
+  refund_credit_unverified: "A refund was recorded; what is still owed is not confirmed",
 };
 
 export const FEE_NOT_RECORDED_COPY = "Fee not recorded";
@@ -336,30 +339,21 @@ export function classifyVisit(v: DocumentVisitInput): DocumentVisit {
   if (uncertain.length > 0) {
     state = "unknown";
     reasons = uncertain;
-  } else if (paid > 0) {
-    if (feeCents !== null && paid + waived < feeCents) {
+  } else if (paid > 0 || waived > 0 || refunded > 0) {
+    // What the fee leaves unsettled is measured against RETAINED money and waivers ONLY. A refund is never treated as a service credit: nothing here says
+    // the returned money bought anything, so refunded cents never reduce the amount owed. With a refund on record and a recorded fee still uncovered, the
+    // amount owed is established only when the owner attested it against a recorded quote; otherwise the balance is not established.
+    const shortfall = feeCents === null ? 0 : feeCents - paid - waived;
+    if (feeCents !== null && shortfall > 0) {
       if (attestedOwes && quoteRecorded) {
         state = "confirmed_unpaid";
-        owed = feeCents - paid - waived;
+        owed = shortfall;
       } else {
         state = "unknown";
-        reasons = ["partial_payment_unverified"];
+        reasons = [refunded > 0 ? "refund_credit_unverified" : "partial_payment_unverified"];
       }
     } else {
-      state = "paid";
-    }
-  } else if (waived > 0 || refunded > 0) {
-    // A waiver or refund settles the visit only as far as it goes: a RECORDED fee larger than what was waived or returned leaves a shortfall nothing accounts for.
-    if (feeCents !== null && waived + refunded < feeCents) {
-      if (attestedOwes && quoteRecorded) {
-        state = "confirmed_unpaid";
-        owed = feeCents - waived - refunded;
-      } else {
-        state = "unknown";
-        reasons = ["partial_payment_unverified"];
-      }
-    } else {
-      state = "adjusted";
+      state = paid > 0 ? "paid" : "adjusted";
     }
   } else if (attestedOwes) {
     state = "confirmed_unpaid";
