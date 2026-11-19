@@ -2,6 +2,7 @@ import { localDateString, localTimeString } from "@/lib/booking/tz";
 import {
   AMOUNT_KINDS,
   buildStatement,
+  classifyCardRow,
   type Statement,
   type StatementCardRow,
   type StatementLegacyFeeRow,
@@ -102,10 +103,14 @@ export function assembleClientInputs(input: AssembleInput): AssembleResult {
       continue;
     }
 
-    const soleCard = cards.length === 1 && settlements.length === 0 && legacy.length === 0;
+    // Only REAL rows count as records: a failed, cancelled or test-mode attempt moved no money and is neither a fee nor the sole payment (a failed
+    // attempt followed by a successful retry is ONE card payment).
+    const realCards = cards.filter((c) => classifyCardRow(c, input.studioCurrency).kind !== "excluded");
+    const soleCard = realCards.length === 1 && settlements.length === 0 && legacy.length === 0;
     const candidates: FeeCandidate[] = [];
-    for (const s of settlements) candidates.push({ source: "settlement_quote", cents: isCents(s.quotedAmountCents) ? s.quotedAmountCents : null });
-    for (const c of cards) {
+    // A quote in ANOTHER currency is not an amount in the studio currency (a missing currency is the studio's, as the statement reads it).
+    for (const s of settlements) if (!s.currency || sameCurrency(s.currency, input.studioCurrency)) candidates.push({ source: "settlement_quote", cents: isCents(s.quotedAmountCents) ? s.quotedAmountCents : null });
+    for (const c of realCards) {
       if (!sameCurrency(c.currency, input.studioCurrency)) continue;
       const isFee = FEE_REASONS.includes(c.chargeReason as FeeReason);
       if (isFee || (c.chargeReason === "session_payment" && soleCard)) candidates.push({ source: "card_attempt", cents: isCents(c.amountCents) ? c.amountCents : null });
