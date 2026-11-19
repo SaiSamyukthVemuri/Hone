@@ -59,11 +59,16 @@ export const UNKNOWN_REASON_COPY: Record<UnknownReason, string> = {
   payment_unresolved: "A payment or refund is unresolved",
   other_currency: "Paid in another currency",
   unreadable_record: "A payment record could not be read",
-  partial_payment_unverified: "Part paid; the rest is not confirmed",
+  partial_payment_unverified: "Part settled; the rest is not confirmed",
 };
 
 export const FEE_NOT_RECORDED_COPY = "Fee not recorded";
 export const NOT_COMPLETED_COPY = "Not completed";
+export const FEE_REASON_COPY: Record<FeeReason, string> = {
+  late_cancellation_fee: "Late cancellation fee",
+  no_show_fee: "No-show fee",
+  uncompleted_booking_payment: "Payment on an uncompleted booking",
+};
 
 // ---------------------------------------------------------------------------
 // VISIT ELIGIBILITY (per the agreed visit rules). ONE function, so a change of rule is a change here only.
@@ -82,12 +87,13 @@ export function classifyEligibility(a: { status: string; startsAt: string; hasFe
     case "no_show":
       return a.hasFeeRecord ? "fee_only" : "off_document";
     case "confirmed":
-      return a.startsAt > nowIso ? "off_document" : "not_completed";
+      return a.startsAt > nowIso ? "off_document" : "not_completed"; // a payment on it is listed apart as a line item (the caller), never promoted to a visit
     default:
       return "off_document"; // an unknown status is never promoted onto a document
   }
 }
-export type FeeReason = "late_cancellation_fee" | "no_show_fee";
+/** A cancellation or no-show fee, or a payment recorded on a past booking that was never marked completed (shown apart from the visit line). */
+export type FeeReason = "late_cancellation_fee" | "no_show_fee" | "uncompleted_booking_payment";
 
 // ---------------------------------------------------------------------------
 // Input
@@ -192,9 +198,15 @@ export type FeeItem = {
   startsAt: string;
   reason: FeeReason;
   fee: RecordedFee;
-  /** `paid`: payment confirmed (counts toward total spend). `unconfirmed`: listed, adds nothing. */
-  state: "paid" | "unconfirmed";
+  /**
+   * `paid`: confirmed money was collected and nothing is uncertain or short. `settled`: nothing collected, but the amount was waived or fully refunded,
+   * so nothing is outstanding (does NOT block the balance). `unconfirmed`: no confirmed settlement, an uncertain row, or a shortfall (blocks the balance).
+   * The state decides the BALANCE only; total spend counts the confirmed collected lines of EVERY item, never an unconfirmed line (one rule, visits and items alike).
+   */
+  state: "paid" | "settled" | "unconfirmed";
   paidCents: number;
+  refundedCents: number;
+  waivedCents: number;
   lines: StatementMoneyLine[];
 };
 
@@ -245,7 +257,8 @@ export type DocumentError =
   | "unknown_visit"
   | "foreign_visit"
   | "invalid_date"
-  | "invalid_currency";
+  | "invalid_currency"
+  | "duplicate_appointment";
 
 export type BuildDocumentResult = { ok: true; document: StatementDocument } | { ok: false; error: DocumentError };
 
@@ -334,7 +347,18 @@ export function classifyVisit(v: DocumentVisitInput): DocumentVisit {
       state = "paid";
     }
   } else if (waived > 0 || refunded > 0) {
-    state = "adjusted";
+    // A waiver or refund settles the visit only as far as it goes: a RECORDED fee larger than what was waived or returned leaves a shortfall nothing accounts for.
+    if (feeCents !== null && waived + refunded < feeCents) {
+      if (attestedOwes && quoteRecorded) {
+        state = "confirmed_unpaid";
+        owed = feeCents - waived - refunded;
+      } else {
+        state = "unknown";
+        reasons = ["partial_payment_unverified"];
+      }
+    } else {
+      state = "adjusted";
+    }
   } else if (attestedOwes) {
     state = "confirmed_unpaid";
     owed = quoteRecorded && feeCents !== null && feeCents > 0 ? feeCents : null;
@@ -425,9 +449,24 @@ export function buildStatementDocument(input: BuildDocumentInput): BuildDocument
   if (typeof input.currency !== "string" || input.currency.trim() === "") return { ok: false, error: "invalid_currency" };
   const isNotCompleted = (v: DocumentVisitInput) => v.eligibility === "not_completed";
   const treatments = input.visits.filter((v) => !isNotCompleted(v));
+  const feeInputs = input.feeItems ?? [];
+  // One appointment is ONE record on a document: a repeated id (within visits, within line items, or across the two) is refused, never merged or counted twice.
+  // The ONE allowed pairing: an uncompleted booking's "Not completed" history row and its separate payment line (reason `uncompleted_booking_payment`).
+  const seenIds = new Set<string>();
+  for (const id of [...treatments.map((v) => v.appointmentId), ...feeInputs.map((f) => f.appointmentId)]) {
+    if (seenIds.has(id)) return { ok: false, error: "duplicate_appointment" };
+    seenIds.add(id);
+  }
+  const seenNc = new Set<string>();
+  for (const v of input.visits.filter(isNotCompleted)) {
+    if (seenNc.has(v.appointmentId) || treatments.some((t) => t.appointmentId === v.appointmentId)) return { ok: false, error: "duplicate_appointment" };
+    seenNc.add(v.appointmentId);
+    const pay = feeInputs.find((f) => f.appointmentId === v.appointmentId);
+    if (pay && pay.reason !== "uncompleted_booking_payment") return { ok: false, error: "duplicate_appointment" };
+  }
+  if (feeInputs.some((f) => f.reason === "uncompleted_booking_payment" && !seenNc.has(f.appointmentId))) return { ok: false, error: "duplicate_appointment" };
   const picked = selectVisits(input.client.id, treatments, input.scope);
   if (!picked.ok) return picked;
-  const feeInputs = input.feeItems ?? [];
   if (feeInputs.some((f) => f.clientId !== input.client.id)) return { ok: false, error: "foreign_visit" };
   if (input.visits.some((v) => v.clientId !== input.client.id)) return { ok: false, error: "foreign_visit" };
   // A scope that names no visit at all (an empty month, a range with none) is a valid, EMPTY document; only an empty explicit selection is refused above.
@@ -443,14 +482,22 @@ export function buildStatementDocument(input: BuildDocumentInput): BuildDocument
     seenFee.add(f.appointmentId);
     const lines = [...f.lines];
     const paidFee = sumKinds(lines, COLLECTED_KINDS);
+    const refundedFee = sumKinds(lines, REFUNDED_KINDS);
+    const waivedFee = sumKinds(lines, ["waived"]);
+    const feeRec = resolveRecordedFee(f.feeCandidates);
+    const uncertainLine = lines.some((l) => l.kind === "unresolved" || l.kind === "other_currency" || l.kind === "unreadable");
+    const short = feeRec.state === "recorded" && paidFee + waivedFee + refundedFee < feeRec.cents;
+    const state: FeeItem["state"] = uncertainLine || short ? "unconfirmed" : paidFee > 0 ? "paid" : waivedFee + refundedFee > 0 ? "settled" : "unconfirmed";
     feeItems.push({
       appointmentId: f.appointmentId,
       localDate: f.localDate,
       startsAt: f.startsAt,
       reason: f.reason,
-      fee: resolveRecordedFee(f.feeCandidates),
-      state: paidFee > 0 && !lines.some((l) => l.kind === "unresolved" || l.kind === "other_currency" || l.kind === "unreadable") ? "paid" : "unconfirmed",
+      fee: feeRec,
+      state,
       paidCents: paidFee,
+      refundedCents: refundedFee,
+      waivedCents: waivedFee,
       lines,
     });
   }
@@ -478,8 +525,11 @@ export function buildStatementDocument(input: BuildDocumentInput): BuildDocument
     if (v.state === "unknown") awaiting.push({ appointmentId: v.appointmentId, localDate: v.localDate, reasons: v.reasons });
   }
 
-  const feePaid = feeItems.reduce((n, f) => n + (f.state === "paid" ? f.paidCents : 0), 0);
+  // ONE rule for visits and line items: total spend is the confirmed collected lines, whatever else about the record is uncertain.
+  const feePaid = feeItems.reduce((n, f) => n + f.paidCents, 0);
   paid += feePaid;
+  refunded += feeItems.reduce((n, f) => n + f.refundedCents, 0);
+  waived += feeItems.reduce((n, f) => n + f.waivedCents, 0);
   let balanceDue: BalanceDue;
   if (byState.unknown > 0) balanceDue = { kind: "not_established", because: "unknown_visits" };
   else if (feeItems.some((f) => f.state === "unconfirmed")) balanceDue = { kind: "not_established", because: "unconfirmed_fee" };
@@ -596,7 +646,7 @@ export function toSnapshot(doc: StatementDocument) {
       waivedCents: v.waivedCents,
       owedCents: v.owedCents,
     })),
-    lineItems: doc.feeItems.map((f) => ({ localDate: f.localDate, reason: f.reason, fee: pickFee(f.fee), state: f.state, paidCents: f.paidCents })),
+    lineItems: doc.feeItems.map((f) => ({ localDate: f.localDate, reason: f.reason, fee: pickFee(f.fee), state: f.state, paidCents: f.paidCents, refundedCents: f.refundedCents, waivedCents: f.waivedCents })),
     notCompleted: doc.notCompleted.map((r) => ({ localDate: r.localDate, localTime: r.localTime, serviceName: r.serviceName, practitionerName: r.practitionerName })),
     totals: {
       visitCount: doc.totals.visitCount,
@@ -634,7 +684,7 @@ export function toCsvRows(doc: StatementDocument): Cell[][] {
   }
   for (const i of doc.feeItems) {
     const f = pickFee(i.fee);
-    rows.push([i.reason, i.localDate, null, null, null, f.state, f.cents, i.state, "", i.paidCents, 0, 0, null]);
+    rows.push([i.reason, i.localDate, null, null, null, f.state, f.cents, i.state, "", i.paidCents, i.refundedCents, i.waivedCents, null]);
   }
   for (const r of doc.notCompleted) rows.push(["not_completed", r.localDate, r.localTime, r.serviceName, r.practitionerName, null, null, "not_completed", "", null, null, null, null]);
   return rows;
