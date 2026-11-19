@@ -55,6 +55,20 @@ describe("the payment-method breakdown adds no rule: it regroups the lines and m
     expect(m.reduce((n, x) => n + x.cents, 0)).toBe(d.totals.paidCents);
     expect(m[0].label).toBe("Card (Hone-verified): session payments");
   });
+  it("includes collected money on a fee item (a no-show or cancellation fee), not only on visits", () => {
+    const noShow = { appointmentId: "f1", clientId: "c1", localDate: "2026-11-06", startsAt: "2026-11-06T15:00:00Z", reason: "no_show_fee", feeCandidates: [{ source: "settlement_quote", cents: 2500 }], lines: [{ kind: "collected_card_fee", cents: 2500, source: "card" }] };
+    const d = docFor([visit()], { feeItems: [noShow] });
+    expect(d.totals.paidCents).toBe(8500); // the visit's $60.00 plus the fee's $25.00
+    const m = methodBreakdown(d)!;
+    expect(m.map((x) => [x.kind, x.cents])).toEqual([["collected_card_session", 6000], ["collected_card_fee", 2500]]);
+    expect(m.reduce((n, x) => n + x.cents, 0)).toBe(d.totals.paidCents);
+  });
+  it("never counts a refunded line as money collected: a visit carrying a refunded line leaves the breakdown at the collected groups only", () => {
+    const refunded = visit({ appointmentId: "a7", localDate: "2026-11-07", lines: [{ kind: "refunded_card_session", cents: 6000, source: "card" }] });
+    const d = docFor([visit(), refunded]);
+    expect(d.totals.paidCents).toBe(6000);
+    expect(methodBreakdown(d)!.map((x) => [x.kind, x.cents])).toEqual([["collected_card_session", 6000]]);
+  });
   it("is null when nothing was collected, and null whenever the groups do not add up to the total (never a figure beside a different total)", () => {
     expect(methodBreakdown(docFor([visit({ lines: [], feeCandidates: [] })]))).toBeNull();
     const d = docFor([visit()]);
