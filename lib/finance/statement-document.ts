@@ -74,15 +74,17 @@ export const NOT_COMPLETED_COPY = "Not completed";
 //   booked in the past, completion not recorded -> "Not completed": full-history view ONLY, no amount, never counted
 // ---------------------------------------------------------------------------
 export type Eligibility = "treatment" | "not_completed" | "fee_only" | "off_document";
-export function classifyEligibility(a: { status: string; startsAt: string; hasFeeRecord: boolean }, nowIso: string): Eligibility {
+export function classifyEligibility(a: { status: string; startsAt: string; hasFeeRecord: boolean; hasMoneyRecord?: boolean }, nowIso: string): Eligibility {
   switch (a.status) {
     case "completed":
       return "treatment";
     case "cancelled":
     case "no_show":
-      return a.hasFeeRecord ? "fee_only" : "off_document";
+      return a.hasFeeRecord || a.hasMoneyRecord ? "fee_only" : "off_document";
     case "confirmed":
-      return a.startsAt > nowIso ? "off_document" : "not_completed";
+      if (a.startsAt > nowIso) return "off_document";
+      // Recorded money is never hidden behind a missing completion: a past booking WITH a payment record is shown as the visit it was paid as.
+      return a.hasMoneyRecord ? "treatment" : "not_completed";
     default:
       return "off_document"; // an unknown status is never promoted onto a document
   }
