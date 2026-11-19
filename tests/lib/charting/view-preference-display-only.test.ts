@@ -37,13 +37,36 @@ const READER_USERS = new Set([
   "tests/app/sessions/charting-view-page-wiring.test.ts",
 ]);
 
+// Tests may name the preference; they cannot authorize anything. These browser specs, Playwright configs and the one config pin are listed by exact path (never
+// by directory), so a new file naming the preference still has to be added here on purpose.
+const TESTS_MAY_NAME_IT = new Set([
+  "e2e/charting-new-view.spec.ts",
+  "e2e-payment/charting-new-view-payment.spec.ts",
+  "playwright.charting.config.ts",
+  "playwright.charting-payment.config.ts",
+  "tests/ci/charting-device-config.test.ts",
+]);
+function namedOutsideTheAllowedFiles(files: string[]): string[] {
+  return files.filter((f) => !ALLOWED.has(f) && !TESTS_MAY_NAME_IT.has(f));
+}
+
 describe("the charting view preference is display only", () => {
   it("is named in no other source file", () => {
-    const out = execFileSync("git", ["grep", "-l", "-E", "charting_view|CHARTING_VIEW_KEY|HONE_CHARTING_NEW_VIEW", "--", "app", "lib", "components", "tests", "middleware.ts"], {
+    const out = execFileSync("git", ["grep", "-l", "-E", "charting_view|CHARTING_VIEW_KEY|HONE_CHARTING_NEW_VIEW", "--", "app", "lib", "components", "tests", "middleware.ts", "e2e", "e2e-payment", "playwright.charting.config.ts", "playwright.charting-payment.config.ts"], {
       encoding: "utf8",
     }).trim();
     const files = out.split("\n").filter(Boolean);
-    expect(files.filter((f) => !ALLOWED.has(f))).toEqual([]);
+    expect(namedOutsideTheAllowedFiles(files)).toEqual([]);
+  });
+  it("the exemption is narrow: an app, lib or component file naming the preference still fails, and so does any other test file", () => {
+    expect(namedOutsideTheAllowedFiles(["lib/billing/permissions.ts", "app/(app)/settings/page.tsx", "components/anything.tsx", "tests/lib/other.test.ts", "e2e/another.spec.ts"])).toEqual([
+      "lib/billing/permissions.ts",
+      "app/(app)/settings/page.tsx",
+      "components/anything.tsx",
+      "tests/lib/other.test.ts",
+      "e2e/another.spec.ts",
+    ]);
+    expect(namedOutsideTheAllowedFiles([...TESTS_MAY_NAME_IT])).toEqual([]);
   });
   it("is imported only by the files that display or remember it, never by an authorization or permission module", () => {
     const out = execFileSync(

@@ -38,6 +38,9 @@ export const BROWSER_GROUPS = {
       // pattern at all.
       "ui06-dashboard-chrome.spec.ts",
       "charting-usability-polish.spec.ts",
+      // The optional New view of the session chart. Opt-in: it is skipped unless the app server is started with the rollout setting set to "all",
+      // so the ordinary lanes only list it; the device matrix runs it through playwright.charting.config.ts.
+      "charting-new-view.spec.ts",
       // Budget context is a peer section of the Consultation & Skin/Hair
       // surface, so it belongs with the clinical-notes coverage.
       "client-budget-context.spec.ts",
