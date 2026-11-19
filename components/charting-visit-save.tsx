@@ -21,6 +21,8 @@ export type SaveOutcome =
   | { status: "nothing" }
   /** Not attempted: the section is mid-save or holds an unresolved outcome. */
   | { status: "held"; message: string }
+  /** The answer was LOST (a thrown error, a dropped reply): a save may or may not have happened. Never retried by Save visit. */
+  | { status: "unknown" }
   | { status: "failed"; message: string };
 
 export type SectionSaver = () => Promise<SaveOutcome>;
@@ -81,7 +83,8 @@ export function ChartingVisitSaveProvider({ children }: { children: ReactNode })
           try {
             outcome = await live.saver.current();
           } catch {
-            outcome = { status: "failed", message: "That did not save." };
+            // A saver that THROWS gave no answer: a save may have happened. Unknown, never "did not save".
+            outcome = { status: "unknown" };
           }
         }
         done.push({ id, label, outcome });
@@ -114,7 +117,13 @@ export function useVisitSave() {
   return useContext(Ctx);
 }
 
-const STATUS_TEXT: Record<SaveOutcome["status"], string> = { saved: "Saved", nothing: "Nothing to save", held: "Not saved", failed: "Not saved" };
+const STATUS_TEXT: Record<SaveOutcome["status"], string> = {
+  saved: "Saved",
+  nothing: "Nothing entered",
+  held: "Not saved",
+  failed: "Not saved",
+  unknown: "Result unknown — check the section",
+};
 
 /** The Save visit control and each section's own result. Never contains what the practitioner typed, or any message text: labels and phrases are fixed. */
 export function VisitSaveControl() {

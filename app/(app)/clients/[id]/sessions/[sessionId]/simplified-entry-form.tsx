@@ -195,13 +195,13 @@ export function SimplifiedEntryForm({
         // retry; keep the form + draft as-is and show the error.
         setError(res.error);
         return { status: "failed", message: res.error };
-      } catch (err) {
+      } catch {
         // THE ANSWER WAS LOST: a row may exist. Save visit will not resubmit this pass (see `answerLost`).
         answerLost.current = true;
         // A fixed phrase: a thrown Error's own text is never shown.
         const message = "That did not save.";
         setError(message);
-        return { status: "failed", message };
+        return { status: "unknown" };
       }
     })();
   }

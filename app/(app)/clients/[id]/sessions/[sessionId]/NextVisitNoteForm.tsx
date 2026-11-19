@@ -64,7 +64,7 @@ export function NextVisitNoteForm({
   function guardedSave(): Promise<SaveOutcome> {
     return runSave().catch(() => {
       setStatus({ kind: "error", message: "That did not save." });
-      return { status: "failed", message: "That did not save." } as SaveOutcome;
+      return { status: "unknown" } as SaveOutcome;
     });
   }
   // Runs the save inside a transition (so `pending` engages exactly as for the button) and hands back its outcome.

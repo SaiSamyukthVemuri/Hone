@@ -136,6 +136,15 @@ import {
 } from "./block-actions";
 import { SectionLabel } from "@/components/ui/section-label";
 
+/**
+ * SAVE VISIT: has this area nothing to save? A change in the draft, a machine the practitioner PICKED (`identityDirty`; a one-choice preselect
+ * is display only and never counts), a shown error from the last attempt, or an unresolved create (its retry carries the same key) each mean there
+ * is something to do. Pure so the terms are pinned directly.
+ */
+export function blockNothingToSave(s: { dirty: boolean; identityDirty: boolean; error: string | null; saveUnresolved: boolean }): boolean {
+  return !s.dirty && !s.identityDirty && s.error === null && !s.saveUnresolved;
+}
+
 /** Whether the leave guard is armed: anything unsaved arms it, whether or not a request is in flight; only a CONFIRMED save releases it. */
 export function leaveGuardArmed(dirty: boolean, saveConfirmed: boolean): boolean {
   return dirty && !saveConfirmed;
@@ -1654,7 +1663,8 @@ export function BlockSetupForm({
         }));
         if (!res.ok) {
           setError(res.error);
-          return { status: "failed", message: res.error };
+          // A LOST ANSWER (the transport failed) is unknown, not "did not save": the edit may have committed.
+          return res.error === EDIT_SAVE_UNCONFIRMED ? { status: "unknown" } : { status: "failed", message: res.error };
         }
         setSaveConfirmed(true);
         closeForm();
@@ -1730,13 +1740,13 @@ export function BlockSetupForm({
           createAttemptRef.current.unresolved = true;
           setError(res.error);
           setSaveUnresolved(true);
-          return { status: "failed", message: res.error };
+          return { status: "unknown" };
         } else if (createAttemptRef.current.unresolved) {
           // A REFUSAL AFTER A LOST ANSWER IS NOT "NOTHING COMMITTED". The first attempt may have saved; the key stays so the
           // next retry cannot mint a second area, and the practitioner is told to reload and look.
           setError(CREATE_REFUSED_AFTER_LOST_ANSWER);
           setSaveUnresolved(true);
-          return { status: "failed", message: CREATE_REFUSED_AFTER_LOST_ANSWER };
+          return { status: "unknown" };
         } else {
           setError(res.error);
           bareCreateKeyRef.current = null;
@@ -1769,7 +1779,7 @@ export function BlockSetupForm({
   const saveRootRef = useRef<HTMLDivElement>(null);
   useRegisterVisitSaver(`block:${block?.id ?? "new"}`, block ? "Treatment area" : "New treatment area", saveRootRef, () => {
     if (saveBlocked) return Promise.resolve<SaveOutcome>({ status: "held", message: "This area is not ready to save." });
-    if (!dirty && error === null && !saveUnresolved) return Promise.resolve<SaveOutcome>({ status: "nothing" });
+    if (blockNothingToSave({ dirty, identityDirty, error, saveUnresolved })) return Promise.resolve<SaveOutcome>({ status: "nothing" });
     let p!: Promise<SaveOutcome>;
     startTransition(async () => {
       p = runSave();

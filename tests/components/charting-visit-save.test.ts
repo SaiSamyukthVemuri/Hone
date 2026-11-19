@@ -56,11 +56,12 @@ describe("Save visit runs each section's own save, in order, never forcing anyth
     expect(res("a")!.textContent).toContain("see the message on that section");
     expect(res("b")!.getAttribute("data-status")).toBe("saved");
   });
-  it("a saver that THROWS is a failed result, and the next section still runs", async () => {
+  it("a saver that THROWS is an UNKNOWN result (never \"did not save\"), and the next section still runs", async () => {
     const next = vi.fn(async (): Promise<SaveOutcome> => ({ status: "saved" }));
     await mount(createElement(Section, { id: "a", label: "A", saver: async () => { throw new Error("x"); } }), createElement(Section, { id: "b", label: "B", saver: next }));
     await click();
-    expect(res("a")!.getAttribute("data-status")).toBe("failed");
+    expect(res("a")!.getAttribute("data-status")).toBe("unknown");
+    expect(res("a")!.textContent).toContain("Result unknown — check the section");
     expect(next).toHaveBeenCalledTimes(1);
   });
   it("a double click calls each section exactly once, and the button is disabled while running", async () => {
@@ -81,7 +82,7 @@ describe("Save visit runs each section's own save, in order, never forcing anyth
     );
     await click();
     expect(res("a")!.textContent).toContain("Not saved");
-    expect(res("b")!.textContent).toContain("Nothing to save");
+    expect(res("b")!.textContent).toContain("Nothing entered");
   });
   it("sections run top to bottom on the page, whatever order they registered in", async () => {
     const order: string[] = [];
@@ -173,6 +174,48 @@ describe("with the REAL forms", () => {
     await click();
     expect(host!.querySelector('[data-testid="visit-save"]')!.innerHTML).not.toContain("PRIVATE-THROWN-TEXT");
     expect(host!.innerHTML, "the form itself shows a fixed phrase for a thrown error").not.toContain("PRIVATE-THROWN-TEXT");
+  });
+  it("C1 add-pass: while its OWN Add pass is pending, Save visit is HELD and the action is called ONCE", async () => {
+    let release!: (v: unknown) => void;
+    add.fn.mockImplementationOnce((() => new Promise((r) => (release = r))) as never);
+    await mountReal();
+    const chip = Array.from(host!.querySelectorAll("button")).find((b) => /Upper lip/i.test(b.textContent ?? ""));
+    await act(async () => void chip!.click());
+    await act(async () => void host!.querySelector<HTMLFormElement>('[data-testid="add-pass-form"]')!.requestSubmit());
+    expect(add.fn).toHaveBeenCalledTimes(1);
+    await click();
+    expect(res("pass:b1")!.getAttribute("data-status")).toBe("held");
+    expect(add.fn).toHaveBeenCalledTimes(1);
+    await act(async () => release({ ok: true }));
+  });
+  it("C1 note: while its OWN Save note is pending, Save visit is HELD and the action is called ONCE", async () => {
+    let release!: (v: unknown) => void;
+    note.mockImplementationOnce((() => new Promise((r) => (release = r))) as never);
+    await mountReal();
+    await type("x");
+    const own = Array.from(host!.querySelectorAll("button")).find((b) => /Save note/.test(b.textContent ?? ""))!;
+    await act(async () => void own.click());
+    expect(note).toHaveBeenCalledTimes(1);
+    await click();
+    expect(res("note")!.getAttribute("data-status")).toBe("held");
+    expect(note).toHaveBeenCalledTimes(1);
+    await act(async () => release({ ok: true, cleared: false }));
+  });
+  it("F2 note: a note save whose answer is lost shows RESULT UNKNOWN", async () => {
+    note.mockRejectedValueOnce(new Error("network"));
+    await mountReal();
+    await type("x");
+    await click();
+    expect(res("note")!.getAttribute("data-status")).toBe("unknown");
+  });
+  it("F2 add-pass: a lost answer shows RESULT UNKNOWN on the first Save visit too", async () => {
+    add.fn.mockRejectedValueOnce(new Error("network"));
+    await mountReal();
+    const chip = Array.from(host!.querySelectorAll("button")).find((b) => /Upper lip/i.test(b.textContent ?? ""));
+    await act(async () => void chip!.click());
+    await click();
+    expect(res("pass:b1")!.getAttribute("data-status")).toBe("unknown");
+    expect(add.fn).toHaveBeenCalledTimes(1);
   });
   it("an add-pass with a lost answer is HELD, never resubmitted by Save visit", async () => {
     add.fn.mockRejectedValueOnce(new Error("network"));

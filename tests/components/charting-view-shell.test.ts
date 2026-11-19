@@ -403,6 +403,49 @@ describe("the one-choice preselect (New view only)", () => {
       expect(blocks.updateTreatmentAreaWithEntryAction).not.toHaveBeenCalled();
       expect(saveCalls()).toBe(0);
     });
+    it("F1: a one-choice PRESELECT with nothing else entered is NOT something to save: no create, 'Nothing entered', form left open", async () => {
+      const blocks = await import("@/app/(app)/clients/[id]/sessions/[sessionId]/block-actions");
+      const create = blocks.createTreatmentAreaWithEntryAction as unknown as ReturnType<typeof vi.fn>;
+      create.mockReset();
+      await mountCreate("new", { devices: [only] });
+      expect(machineSelect().value, "the preselect applied").toBe("room-9");
+      await click(saveBtn()!);
+      expect(create).not.toHaveBeenCalled();
+      expect(host!.querySelector('[data-testid="visit-save-results"]')!.textContent).toContain("Nothing entered");
+      expect(machineSelect(), "the form is still open").not.toBeNull();
+    });
+    it("F1: a machine the practitioner PICKED is something to save: Save visit creates the area with it", async () => {
+      const blocks = await import("@/app/(app)/clients/[id]/sessions/[sessionId]/block-actions");
+      const create = blocks.createTreatmentAreaWithEntryAction as unknown as ReturnType<typeof vi.fn>;
+      create.mockReset();
+      create.mockResolvedValue({ ok: true });
+      const two = { ...DEVICE, deviceId: "room-10", displayName: "Room 10" };
+      await mountCreate("new", { devices: [only, two] });
+      const setSel = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+      await act(async () => {
+        setSel.call(machineSelect(), "room-10");
+        machineSelect().dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      await click(saveBtn()!);
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(create.mock.calls[0][0].machineIdentity?.machineId).toBe("room-10");
+    });
+    it("C1 block: while the form's OWN save is pending, Save visit is HELD and the create is called ONCE", async () => {
+      const blocks = await import("@/app/(app)/clients/[id]/sessions/[sessionId]/block-actions");
+      const create = blocks.createTreatmentAreaWithEntryAction as unknown as ReturnType<typeof vi.fn>;
+      create.mockReset();
+      let release!: (v: unknown) => void;
+      create.mockImplementationOnce(() => new Promise((r) => (release = r)));
+      await mountCreate("new", { devices: [only] });
+      const chip = Array.from(host!.querySelectorAll("button")).find((b) => /Upper lip/i.test(b.textContent ?? ""));
+      await click(chip!);
+      await click(host!.querySelector('[data-testid="save-treatment-area"]')!);
+      expect(create).toHaveBeenCalledTimes(1);
+      await click(saveBtn()!);
+      expect(host!.querySelector('[data-testid="visit-save-results"]')!.textContent).toContain("Not saved");
+      expect(create).toHaveBeenCalledTimes(1);
+      await act(async () => release({ ok: true }));
+    });
     it("a lost create answer, then Save visit again: the SAME createKey is sent (no second area), exactly as the form's own button does", async () => {
       const blocks = await import("@/app/(app)/clients/[id]/sessions/[sessionId]/block-actions");
       const create = blocks.createTreatmentAreaWithEntryAction as unknown as ReturnType<typeof vi.fn>;
@@ -414,7 +457,7 @@ describe("the one-choice preselect (New view only)", () => {
       await click(chip!);
       await click(saveBtn()!);
       expect(create).toHaveBeenCalledTimes(1);
-      expect(host!.querySelector('[data-testid="visit-save-results"]')!.textContent).toContain("Not saved");
+      expect(host!.querySelector('[data-testid="visit-save-results"]')!.textContent).toContain("Result unknown");
       await click(saveBtn()!);
       expect(create).toHaveBeenCalledTimes(2);
       const k1 = create.mock.calls[0][0].createKey;
@@ -426,7 +469,7 @@ describe("the one-choice preselect (New view only)", () => {
       await mountCreate("new", { devices: [only] });
       await click(saveBtn()!);
       expect(blocks.createTreatmentAreaWithEntryAction).not.toHaveBeenCalled();
-      expect(host!.querySelector('[data-testid="visit-save-results"]')!.textContent).toContain("Nothing to save");
+      expect(host!.querySelector('[data-testid="visit-save-results"]')!.textContent).toContain("Nothing entered");
     });
   });
   it("Current view is untouched: the same studio opens on no machine and says nothing", async () => {
@@ -781,3 +824,16 @@ describe("block editing in New view", () => {
   });
 });
 
+
+describe("blockNothingToSave: the terms", () => {
+  it.each([
+    [{ dirty: false, identityDirty: false, error: null, saveUnresolved: false }, true],
+    [{ dirty: true, identityDirty: false, error: null, saveUnresolved: false }, false],
+    [{ dirty: false, identityDirty: true, error: null, saveUnresolved: false }, false],
+    [{ dirty: false, identityDirty: false, error: "Could not save.", saveUnresolved: false }, false],
+    [{ dirty: false, identityDirty: false, error: null, saveUnresolved: true }, false],
+  ])("%j -> %s", async (state, want) => {
+    const { blockNothingToSave } = await import("@/app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form");
+    expect(blockNothingToSave(state)).toBe(want);
+  });
+});
