@@ -299,6 +299,8 @@ test("next-visit note: saved in one view, shown and recalled in the other", asyn
 });
 
 test("roles: a practitioner sees no payment or price in either view; a receptionist cannot open the chart at all", async ({ page, browser }, testInfo) => {
+  // Three magic-link sign-ins in one test: WebKit needs more than the 120 s default (the Chromium projects finish well inside it).
+  test.setTimeout(240_000);
   const seed = await seedE2eStudio();
   const { clientId, sessionId } = await seedE2eDraftElectrolysisSession(seed);
   const url = `/clients/${clientId}/sessions/${sessionId}`;
