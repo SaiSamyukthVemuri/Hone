@@ -1,6 +1,7 @@
 "use client";
 
 import { machineModelLabel } from "@/lib/machines/display-name";
+import { XCELL_PUR_PROFILE_ID } from "@/lib/machines/xcell-pur";
 import { recordedSummary } from "@/lib/machines/recorded-count";
 import { useEffect, useRef, useState } from "react";
 import { LEGACY_MACHINE_OPTION_VALUE } from "@/lib/machines/legacy-machine";
@@ -804,7 +805,9 @@ function MachineFirstSetupPanelImpl({
             <option value="">Choose machine…</option>
             {selectable
               // ONE xCell CHOICE: the MultiPlex unit is reached through the xCell entry's mode, never listed as a second xCell.
-              .filter(({ device }) => !(xcellRouted && device.deviceId === multiplexRoute?.deviceId))
+              // Hidden whenever the existing xCell is offered (even before a route exists), so there is never both; the exception keeps a unit that is
+              // already this area's chosen identity visible when no route is active.
+              .filter(({ device }) => !(legacyMachine !== null && device.profileId === XCELL_PUR_PROFILE_ID && (xcellRouted || device.deviceId !== deviceId)))
               .map(({ device, profile }) => (
               <option key={device.deviceId} value={device.deviceId} disabled={nativeLocked}>
                 {device.displayName} — {machineModelLabel(profile)}

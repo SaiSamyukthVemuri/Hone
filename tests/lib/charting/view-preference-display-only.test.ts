@@ -11,6 +11,11 @@ const ALLOWED = new Set([
   "tests/app/charting-view-actions.test.ts",
   "tests/app/sessions/charting-view-page-wiring.test.ts",
   "tests/lib/charting/page-view.test.ts",
+  // The xCell registration ROLLOUT gate (Sam's decision) reuses the allowlist parser. It decides what is OFFERED, never who is AUTHORIZED: the
+  // owner check stays in the database command. Named here on purpose so a reviewer sees it.
+  "lib/machines/xcell-registration-gate.ts",
+  "tests/lib/machines/xcell-registration-gate.test.ts",
+  "tests/app/machines/machine-setup-actions.test.ts",
 ]);
 
 // Files that may IMPORT the preference module at all. An authorization, permission, role or policy module is
@@ -27,6 +32,8 @@ const IMPORTERS = new Set([
   "tests/lib/charting/page-view.test.ts",
   "tests/lib/charting/view-preference-display-only.test.ts",
   "tests/lib/charting/view-preference.test.ts",
+  "lib/machines/xcell-registration-gate.ts", // the rollout gate for the xCell offer; not an authorization module
+  "tests/lib/machines/xcell-registration-gate.test.ts",
 ]);
 // Who may call the READERS. page-view.ts is the one runtime caller.
 const READER_USERS = new Set([
