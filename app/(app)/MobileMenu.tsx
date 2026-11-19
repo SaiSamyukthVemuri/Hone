@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { signOut } from "./dashboard/actions";
@@ -8,6 +8,7 @@ import { SignOutMenuItem } from "./SignOutMenuItem";
 import { useSetSignOutInFlight, useSignOutInFlight } from "./signout-flight";
 import { SignOutFlightReporter } from "./SignOutFlightReporter";
 import { cx, PRESS_TRANSITION } from "@/components/ui/control-base";
+import { BUSINESS_MENU_ITEMS, BUSINESS_MENU_LABEL } from "@/lib/nav/business-menu";
 import { spinnerClasses } from "@/components/ui/spinner";
 
 // PR #229: compact mobile menu, now a small client component instead
@@ -358,7 +359,7 @@ export function MobileMenu({
             )}
           </div>
           {[
-            { href: "/dashboard", label: "Dashboard" },
+            { href: "/dashboard", label: "Dashboard", groupHeading: undefined as string | undefined, nested: false },
             { href: "/clients", label: "Clients" },
             { href: "/calendar", label: "Calendar" },
             ...(showWaitlist ? [{ href: "/settings/waitlist", label: "Waitlist" }] : []),
@@ -374,28 +375,50 @@ export function MobileMenu({
             // practitioner, who simply has no such item. The presentation gate
             // is not the boundary: /dashboard/capacity keeps its own
             // server-side owner check.
+            // The Business menu is a labelled group of its two owner pages
+            // (Capacity, Monthly statement), listed flat in the sheet: a
+            // second tap to open a disclosure would only hide them.
             ...(role === "owner"
-              ? [{ href: "/dashboard/capacity", label: "Business" }]
+              ? BUSINESS_MENU_ITEMS.map((i, n) => ({
+                  href: i.href,
+                  label: i.label,
+                  groupHeading: n === 0 ? BUSINESS_MENU_LABEL : undefined,
+                  nested: true,
+                }))
               : []),
           ].map((item) => (
-            isHeld() ? (
-              <span
-                key={item.href}
-                aria-disabled="true"
-                className="flex min-h-[44px] cursor-not-allowed items-center rounded-md px-3 py-2 opacity-50"
-              >
-                {item.label}
-              </span>
-            ) : (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={(e) => navigate(e, item.href, item.label)}
-                className="flex min-h-[44px] items-center rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
-              >
-                {item.label}
-              </Link>
-            )
+            <Fragment key={item.href}>
+              {item.groupHeading ? (
+                <span
+                  data-testid="mobile-nav-business-heading"
+                  className="px-3 pb-0.5 pt-2 text-xs font-medium uppercase tracking-wide text-neutral-500"
+                >
+                  {item.groupHeading}
+                </span>
+              ) : null}
+              {isHeld() ? (
+                <span
+                  aria-disabled="true"
+                  className={cx(
+                    "flex min-h-[44px] cursor-not-allowed items-center rounded-md px-3 py-2 opacity-50",
+                    item.nested && "pl-6",
+                  )}
+                >
+                  {item.label}
+                </span>
+              ) : (
+                <Link
+                  href={item.href}
+                  onClick={(e) => navigate(e, item.href, item.label)}
+                  className={cx(
+                    "flex min-h-[44px] items-center rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900",
+                    item.nested && "pl-6",
+                  )}
+                >
+                  {item.label}
+                </Link>
+              )}
+            </Fragment>
           ))}
           <div className="mt-0.5 flex flex-col gap-0.5 border-t border-neutral-200 pt-1 dark:border-neutral-800">
             {[
