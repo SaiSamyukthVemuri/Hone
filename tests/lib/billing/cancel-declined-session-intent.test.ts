@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// Sam, 19 Nov: after Hone records a declined session payment failed, close the ORIGINAL Stripe attempt. Verify first,
+// The owner's decision: after Hone records a declined session payment failed, close the ORIGINAL Stripe attempt. Verify first,
 // retry only the cancel, never touch a replacement payment. Fake Stripe, synthetic rows, no network, no database.
 
 const ATTEMPT = "33333333-3333-4333-8333-333333333333";

@@ -8,7 +8,7 @@ import { cancelPaymentIntentConfirmed } from "@/lib/billing/session-payment-char
 import { thrownErrorClass, stripeErrorFields } from "@/lib/logging/error-class";
 
 // ---------------------------------------------------------------------------
-// Close the ORIGINAL Stripe attempt once Hone has recorded a session payment as failed (Sam, 19 Nov).
+// Close the ORIGINAL Stripe attempt once Hone has recorded a session payment as failed (the owner's decision).
 // ---------------------------------------------------------------------------
 //
 // A card decline leaves the PaymentIntent on Stripe in requires_payment_method, which Stripe can still complete
