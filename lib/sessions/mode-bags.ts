@@ -113,3 +113,9 @@ export function hiddenBagsNotice(modes: string[]): string | null {
   if (modes.includes("")) parts.push("Readings entered before a mode was chosen are kept in this draft and will not be saved.");
   return parts.length > 0 ? parts.join(" ") : null;
 }
+
+/** Whether the touched flags differ from what the saved record implies (so a touch with no visible change still counts as an unsaved edit). */
+export function pulseTouchedDiffersFromRecord(t: PulseTouched, entry: Parameters<typeof pulseTouchedFromRecord>[0]): boolean {
+  const base = pulseTouchedFromRecord(entry);
+  return t.count !== base.count || t.delay !== base.delay;
+}

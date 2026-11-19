@@ -102,7 +102,7 @@ import { MultiAreaEditor } from "@/components/multi-area-editor";
 import { resolveBlockAreas, type BlockArea } from "@/lib/sessions/block-areas";
 import { useRetainedState } from "@/components/charting-state-provider";
 import { NewViewHint, NewViewStep, useChartingRollout, useChartingView } from "@/components/charting-view-context";
-import { bagHoldsValue, hiddenBagsNotice, readingsOf, hiddenModesWithValues, mergeTouched, pulseTouchedFromRecord, pulseRecordable, switchMode, type ModeBags, type PulseTouched } from "@/lib/sessions/mode-bags";
+import { bagHoldsValue, hiddenBagsNotice, readingsOf, hiddenModesWithValues, mergeTouched, pulseTouchedDiffersFromRecord, pulseTouchedFromRecord, pulseRecordable, switchMode, type ModeBags, type PulseTouched } from "@/lib/sessions/mode-bags";
 import { DraftRegistryProvider, useDraftRegistryState, useReportDraft } from "@/components/machines/draft-registry";
 import { MachineFirstSetupConnected } from "@/components/machines/machine-first-setup-connected";
 import { ProbePicker } from "@/components/probe-picker";
@@ -1107,6 +1107,9 @@ export function BlockSetupForm({
   const hiddenModes = rollout ? hiddenModesWithValues(modeBags, draft.mode) : [];
   const dirty =
     hiddenModes.length > 0 ||
+    // WHAT WILL BE RECORDED IS PART OF "UNSAVED" (Codex P2): clearing a pulse field and typing the shown default back leaves the draft equal to its
+    // baseline but marks the control as touched, so the save would now record a value it did not before.
+    (rollout && pulseTouchedDiffersFromRecord(pulseTouched, firstEntry)) ||
     JSON.stringify(draft) !== initialDraftJson.current ||
     draftRegistry.view.anyDraft;
   // THE LEAVE PROMPT is the app's own dialog (never a native confirm).
