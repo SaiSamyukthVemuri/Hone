@@ -101,7 +101,8 @@ import { BodyMapAreaPicker } from "@/components/body-map-area-picker";
 import { MultiAreaEditor } from "@/components/multi-area-editor";
 import { resolveBlockAreas, type BlockArea } from "@/lib/sessions/block-areas";
 import { useRetainedState } from "@/components/charting-state-provider";
-import { NewViewHint, NewViewStep, useChartingView } from "@/components/charting-view-context";
+import { NewViewHint, NewViewStep, useChartingRollout, useChartingView } from "@/components/charting-view-context";
+import { hiddenBagsNotice, hiddenModesWithValues, pulseRecordable, switchMode, type ModeBags } from "@/lib/sessions/mode-bags";
 import { DraftRegistryProvider, useDraftRegistryState, useReportDraft } from "@/components/machines/draft-registry";
 import { MachineFirstSetupConnected } from "@/components/machines/machine-first-setup-connected";
 import { ProbePicker } from "@/components/probe-picker";
@@ -458,6 +459,11 @@ export function BlockSetupForm({
   const [draft, setDraftRaw] = useRetainedState<Draft>(retainKey ? `${retainKey}:draft` : null, () =>
     initialDraft(block, firstEntry, defaultPrimaryArea, defaultMachineFrequency, initialAreas),
   );
+  // CHART REDESIGN (server rollout, gated): each legacy mode keeps its OWN readings in memory while another mode is shown, and untouched pulse defaults
+  // are never recorded. With the rollout off none of this runs and the form behaves exactly as it did.
+  const rollout = useChartingRollout();
+  const [modeBags, setModeBags] = useRetainedState<ModeBags>(retainKey ? `${retainKey}:modeBags` : null, {});
+  const [pulseTouched, setPulseTouched] = useRetainedState<boolean>(retainKey ? `${retainKey}:pulseTouched` : null, false);
   // WHICH KIND OF MACHINE IS IN FORCE, so only that machine's fields show.
   // Opened from the area's SAVED identity (migration 0301), never inferred:
   // an area with no saved identity is "none", and "none" keeps the existing
@@ -1097,7 +1103,10 @@ export function BlockSetupForm({
   // already freezes the draft. The guard needs only the draft flag.
   const createAttemptOpen = !block && (pending || saveUnresolved);
   useReportDraft({ draft: createAttemptOpen, unresolved: false }, draftRegistry.api);
+  // Readings parked for another mode are unsaved work: leaving the form would lose them.
+  const hiddenModes = rollout ? hiddenModesWithValues(modeBags, draft.mode) : [];
   const dirty =
+    hiddenModes.length > 0 ||
     JSON.stringify(draft) !== initialDraftJson.current ||
     draftRegistry.view.anyDraft;
   // THE LEAVE PROMPT is the app's own dialog (never a native confirm).
@@ -1539,7 +1548,9 @@ export function BlockSetupForm({
     });
     if (!hairs.ok) return setError(hairs.error);
     const pulseStr = draft.pulseCount.trim();
-    const pulseCount = pulseStr === "" ? null : parseInt(pulseStr, 10);
+    // REDESIGN: the pulse controls are recorded only when TOUCHED and the shown mode has a thermolysis group; an untouched default is never a record.
+    const pulseHeld = rollout && !pulseRecordable(draft.mode, pulseTouched);
+    const pulseCount = pulseStr === "" || pulseHeld ? null : parseInt(pulseStr, 10);
     // Pulse delay is only recorded when multiple pulses were done. When
     // applicable, validate the range here so the practitioner gets the exact
     // message; the server re-validates (defense-in-depth).
@@ -1749,6 +1760,7 @@ export function BlockSetupForm({
       PULSE_COUNT_MAX,
       Math.max(PULSE_COUNT_MIN, base + delta),
     );
+    if (rollout) setPulseTouched(true);
     update("pulseCount", String(next));
   }
 
@@ -1834,7 +1846,10 @@ export function BlockSetupForm({
               min={PULSE_COUNT_MIN}
               max={PULSE_COUNT_MAX}
               value={draft.pulseCount}
-              onChange={(e) => update("pulseCount", e.target.value)}
+              onChange={(e) => {
+                if (rollout) setPulseTouched(true);
+                update("pulseCount", e.target.value);
+              }}
               className="w-20 rounded-md border border-neutral-300 bg-white px-3 py-3 text-center text-base tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
             />
             <button
@@ -1860,7 +1875,10 @@ export function BlockSetupForm({
                   min={PULSE_DELAY_MIN}
                   max={PULSE_DELAY_MAX}
                   value={draft.pulseDelay}
-                  onChange={(e) => update("pulseDelay", e.target.value)}
+                  onChange={(e) => {
+                    if (rollout) setPulseTouched(true);
+                    update("pulseDelay", e.target.value);
+                  }}
                   aria-label="Pulse delay in seconds"
                   className="w-24 rounded-md border border-neutral-300 bg-white px-3 py-3 text-center text-base tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
                 />
@@ -2238,7 +2256,12 @@ export function BlockSetupForm({
                 type="button"
                 disabled={multiplexSaved || draftFrozen || identityWritePending}
                 onClick={() => {
-                  update("mode", selected ? "" : m.value);
+                  if (rollout) {
+                    const next = switchMode({ draft, bags: modeBags, pulseTouched }, selected ? "" : m.value);
+                    setDraft(next.draft);
+                    setModeBags(next.bags);
+                    setPulseTouched(next.pulseTouched);
+                  } else update("mode", selected ? "" : m.value);
                   // Leaving MultiPlex returns the area to the existing xCell workflow.
                   if (multiplexSelected) setMultiplexRequest((r) => ({ seq: (r?.seq ?? 0) + 1, want: false }));
                 }}
@@ -2269,6 +2292,11 @@ export function BlockSetupForm({
             </button>
           )}
         </div>
+        {rollout && hiddenBagsNotice(hiddenModes) && (
+          <p className="text-xs text-neutral-500" role="status" data-testid="hidden-mode-readings-notice">
+            {hiddenBagsNotice(hiddenModes)}
+          </p>
+        )}
       </div>
       )}
 

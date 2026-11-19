@@ -3,13 +3,24 @@
 import { createContext, useContext, type ReactNode } from "react";
 import type { ChartingView } from "@/lib/charting/view-preference";
 
-export type ChartingViewValue = { view: ChartingView; setView: (v: ChartingView) => void; notice: string | null };
+export type ChartingViewValue = {
+  view: ChartingView;
+  setView: (v: ChartingView) => void;
+  notice: string | null;
+  /** The studio's chart-redesign rollout (the server's chartingRolloutFor) is ON. Absent or false means every form behaves exactly as it did. */
+  rolloutOn?: boolean;
+};
 
 export const ChartingViewContext = createContext<ChartingViewValue | null>(null);
 
 /** The view being shown. Outside the switch (every other page, every test that mounts a bare form) it is Current. */
 export function useChartingView(): ChartingView {
   return useContext(ChartingViewContext)?.view ?? "current";
+}
+
+/** True only when the server says the chart redesign is on for this studio. Outside the shell (every other page, every bare form) it is false. */
+export function useChartingRollout(): boolean {
+  return useContext(ChartingViewContext)?.rolloutOn === true;
 }
 
 /**
