@@ -59,7 +59,7 @@ describe("playwright.charting-payment.config.ts selects only the charting paymen
   const listed = (webkit: "0" | "1") => {
     const out = execFileSync("npx", ["playwright", "test", "--config", "playwright.charting-payment.config.ts", "--list", "--reporter=json"], {
       encoding: "utf8",
-      env: { ...listEnv(), HONE_E2E_WEBKIT: webkit },
+      env: { ...listEnv(), HONE_E2E_WEBKIT: webkit } as unknown as NodeJS.ProcessEnv,
       maxBuffer: 64 * 1024 * 1024,
     });
     const files = new Set<string>();
