@@ -181,7 +181,10 @@ describe("with the REAL forms", () => {
     expect(intensity, "the intensity input (max 100) must exist").not.toBeNull();
     const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
     await act(async () => { set.call(intensity, "101"); intensity.dispatchEvent(new Event("input", { bubbles: true })); });
+    const form = host!.querySelector<HTMLFormElement>('[data-testid="add-pass-form"]')!;
+    const reported = vi.spyOn(form, "reportValidity");
     await click();
+    expect(reported, "the browser's own validation message is shown on the invalid path").toHaveBeenCalledTimes(1);
     expect(add.fn, "nothing is sent").not.toHaveBeenCalled();
     expect(res("pass:b1")!.getAttribute("data-status")).toBe("failed");
     expect(res("pass:b1")!.textContent).toContain("see the message on that section");
