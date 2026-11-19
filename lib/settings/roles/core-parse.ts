@@ -195,6 +195,8 @@ function auditChanges(
     return { before: b, after: a, storedBefore: sb, storedAfter: sa };
   }
   for (const k of Object.keys(after)) {
+    // `_review` is the reviewed-save stamp ({version, hash}) the database adds beside the permission map: metadata, never a permission change.
+    if (k === "_review") continue;
     if (kind === "staff_role_changed") {
       if (k === "role") {
         b.Role = String(pre.role ?? "unset");
