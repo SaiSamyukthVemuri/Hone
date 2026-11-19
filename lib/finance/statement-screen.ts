@@ -49,6 +49,14 @@ export function parseClientsParams(
   return { month, fellBack, page: n >= 1 ? n : 1 };
 }
 
+/** The CSV download and the printable view of the same statement: the same month and view the screen shows, nothing else in the URL. */
+export function statementExportHref(clientId: string, month: string, view: ClientView): string {
+  return `${STATEMENTS_BASE}/${encodeURIComponent(clientId)}/export.csv?month=${month}${view === "history" ? "&view=history" : ""}`;
+}
+export function statementPrintHref(clientId: string, month: string, view: ClientView): string {
+  return `${STATEMENTS_BASE}/${encodeURIComponent(clientId)}/print?month=${month}${view === "history" ? "&view=history" : ""}`;
+}
+
 export function parseClientView(raw: string | string[] | undefined): ClientView {
   return one(raw) === "history" ? "history" : "month";
 }
