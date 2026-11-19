@@ -23,8 +23,20 @@ export const MODE_READING_KEYS = [
 export type ModeReadingKey = (typeof MODE_READING_KEYS)[number];
 export type ModeReadings = Record<ModeReadingKey, string>;
 
-/** One parked mode: its readings and whether the practitioner TOUCHED the pulse controls (typed, or used the − / + stepper). */
-export type ModeBag = { readings: ModeReadings; pulseTouched: boolean };
+/** Whether the practitioner TOUCHED each pulse control (typed, or used the − / + stepper). Tracked SEPARATELY: a touched count never records an untouched delay. */
+export type PulseTouched = { count: boolean; delay: boolean };
+export const NO_PULSE_TOUCHED: PulseTouched = { count: false, delay: false };
+
+/** A value that came FROM A RECORD (a saved entry, copy-settings, a resumed draft) is a recorded fact, so it counts as touched: an edit must write it back, never clear it. */
+export function pulseTouchedFromRecord(entry: { pulse_count?: number | null; pulse_delay_seconds?: number | null } | null | undefined): PulseTouched {
+  return { count: entry?.pulse_count != null, delay: entry?.pulse_delay_seconds != null };
+}
+export function mergeTouched(a: PulseTouched, b: PulseTouched): PulseTouched {
+  return { count: a.count || b.count, delay: a.delay || b.delay };
+}
+
+/** One parked mode: its readings and which pulse controls were touched. */
+export type ModeBag = { readings: ModeReadings; pulseTouched: PulseTouched };
 export type ModeBags = Record<string, ModeBag>;
 
 export const PULSE_UNTOUCHED_DEFAULTS = { pulseCount: "1", pulseDelay: "0.5" } as const;
@@ -56,7 +68,7 @@ export function readingsOf(draft: Record<string, unknown>): ModeReadings {
 /** Does a bag hold anything the practitioner entered? (A blank bag, or one at the untouched defaults, does not.) */
 export function bagHoldsValue(bag: ModeBag | undefined): boolean {
   if (!bag) return false;
-  if (bag.pulseTouched) return true;
+  if (bag.pulseTouched.count || bag.pulseTouched.delay) return true;
   return MODE_READING_KEYS.some((k) => {
     if (k === "pulseCount" || k === "pulseDelay") return false;
     return bag.readings[k].trim() !== "";
@@ -65,7 +77,7 @@ export function bagHoldsValue(bag: ModeBag | undefined): boolean {
 
 /** The modes (other than the shown one) whose parked readings hold a value. Names only, never values. */
 export function hiddenModesWithValues(bags: ModeBags, shown: string): string[] {
-  return Object.keys(bags).filter((m) => m !== shown && m !== "" && bagHoldsValue(bags[m]));
+  return Object.keys(bags).filter((m) => m !== shown && bagHoldsValue(bags[m]));
 }
 
 /**
@@ -73,27 +85,31 @@ export function hiddenModesWithValues(bags: ModeBags, shown: string): string[] {
  * (shared entries untouched, only the mode and the reading keys replaced), the new bags and the new touched flag.
  */
 export function switchMode<D extends Record<string, unknown>>(
-  s: { draft: D; bags: ModeBags; pulseTouched: boolean },
+  s: { draft: D; bags: ModeBags; pulseTouched: PulseTouched },
   to: string,
-): { draft: D; bags: ModeBags; pulseTouched: boolean } {
+): { draft: D; bags: ModeBags; pulseTouched: PulseTouched } {
   const from = String(s.draft.mode ?? "");
   if (from === to) return s;
   const bags: ModeBags = { ...s.bags };
-  if (from !== "") bags[from] = { readings: readingsOf(s.draft), pulseTouched: s.pulseTouched };
-  const incoming = to !== "" ? bags[to] : undefined;
+  // The NO-MODE state is parked too: readings typed before a mode was chosen are kept (and never saved), not silently discarded at the first pick.
+  bags[from] = { readings: readingsOf(s.draft), pulseTouched: s.pulseTouched };
+  const incoming = bags[to];
   const readings = incoming?.readings ?? emptyReadings();
-  return { draft: { ...s.draft, mode: to, ...readings }, bags, pulseTouched: incoming?.pulseTouched ?? false };
+  return { draft: { ...s.draft, mode: to, ...readings }, bags, pulseTouched: incoming?.pulseTouched ?? NO_PULSE_TOUCHED };
 }
 
-/** The pulse controls are RECORDED only when touched AND the shown mode has a thermolysis group. Untouched defaults are never a record. */
-export function pulseRecordable(mode: string, pulseTouched: boolean): boolean {
-  return pulseTouched && (mode === "thermo" || mode === "blend");
+/** Each pulse control is RECORDED only when ITS OWN control was touched AND the shown mode has a thermolysis group. Untouched defaults are never a record. */
+export function pulseRecordable(mode: string, t: PulseTouched): { count: boolean; delay: boolean } {
+  const has = mode === "thermo" || mode === "blend";
+  return { count: has && t.count, delay: has && t.delay };
 }
 
 const MODE_NAMES: Record<string, string> = { thermo: "Thermolysis", blend: "Blend", galv: "Galvanic" };
 /** "Blend readings are kept in this draft and will not be saved." No values, only the mode names. */
 export function hiddenBagsNotice(modes: string[]): string | null {
   const names = modes.map((m) => MODE_NAMES[m]).filter((n): n is string => typeof n === "string");
-  if (names.length === 0) return null;
-  return `${names.join(" and ")} readings ${names.length > 1 ? "are" : "is"} kept in this draft and will not be saved.`;
+  const parts: string[] = [];
+  if (names.length > 0) parts.push(`${names.join(" and ")} readings ${names.length > 1 ? "are" : "is"} kept in this draft and will not be saved.`);
+  if (modes.includes("")) parts.push("Readings entered before a mode was chosen are kept in this draft and will not be saved.");
+  return parts.length > 0 ? parts.join(" ") : null;
 }
