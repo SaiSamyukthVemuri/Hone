@@ -5,6 +5,7 @@ import {
   getSessionPaymentAttemptRows,
   idempotencySelectorForAttempt,
   cleanupPaymentScenario,
+  adminQuery,
   closePool,
   type PaymentSeed,
 } from "./helpers/payment-fixture";
@@ -62,9 +63,25 @@ async function declineScenario(timing: "after" | "before_return", label: string,
     await confirm.click();
 
     // The attempt ends failed, reconciled by the webhook. Polled from the database, never from the page.
-    await expect
-      .poll(async () => (await getSessionPaymentAttemptRows(seed.sessionId)).map((r) => r.status), { timeout: 30_000, intervals: [250] })
-      .toEqual(["failed"]);
+    try {
+      await expect
+        .poll(async () => (await getSessionPaymentAttemptRows(seed.sessionId)).map((r) => r.status), { timeout: 30_000, intervals: [250] })
+        .toEqual(["failed"]);
+    } finally {
+      // EVIDENCE, whatever the end state: the attempt's stored intent id (null = never bound) and the alerts raised.
+      const row = await adminQuery(
+        `select status, stripe_payment_intent_id is not null as pi_bound, stripe_status
+           from public.payment_charge_attempts where session_id = $1 and charge_reason = 'session_payment'`,
+        [seed.sessionId],
+      );
+      const alerts = await adminQuery(
+        `select event, severity from public.ops_alerts where studio_id = $1 order by created_at`,
+        [seed.studioId],
+      );
+      console.log(
+        `[decline ${timing}] attempt=${JSON.stringify(row.rows)} alerts=${JSON.stringify(alerts.rows.map((a) => `${a.severity}:${a.event}`))}`,
+      );
+    }
 
     // Exactly one attempt, no success row, no second charge, no cancel, no refund, no Paid.
     const rows = await getSessionPaymentAttemptRows(seed.sessionId);

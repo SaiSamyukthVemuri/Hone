@@ -43,7 +43,7 @@ const client = () =>
   fakeMod.createFakeStripe() as unknown as { paymentIntents: { create: (p: unknown, o: unknown) => Promise<unknown> } };
 const declinedCreate = () =>
   client().paymentIntents.create(
-    { amount: 5000, currency: "cad", metadata: { hone_session_payment_charge_attempt_id: "att-1" } },
+    { amount: 5000, currency: "cad", customer: "cus_test_decline", metadata: { hone_session_payment_charge_attempt_id: "att-1" } },
     { stripeAccount: ACCOUNT, idempotencyKey: KEY },
   );
 const caught = async (): Promise<InstanceType<typeof Stripe.errors.StripeCardError>> => {
@@ -63,7 +63,7 @@ describe("a declined create throws a card error carrying the PaymentIntent", () 
     expect(err.statusCode).toBe(402);
     const pi = (err as unknown as { payment_intent: Record<string, unknown> }).payment_intent;
     expect(pi).toMatchObject({
-      status: "requires_payment_method", amount: 5000, currency: "cad", amount_received: 0, latest_charge: null,
+      status: "requires_payment_method", amount: 5000, currency: "cad", amount_received: 0, latest_charge: null, customer: "cus_test_decline",
       metadata: { hone_session_payment_charge_attempt_id: "att-1" },
       last_payment_error: { type: "card_error", code: "card_declined" },
     });
@@ -96,6 +96,7 @@ describe("the signed payment_intent.payment_failed event", () => {
     expect(event.type).toBe("payment_intent.payment_failed");
     expect(event.account).toBe(ACCOUNT);
     expect(event.livemode).toBe(false);
+    expect((event.data.object as unknown as { customer: string }).customer).toBe("cus_test_decline");
     const obj = event.data.object as unknown as { id: string; status: string; last_payment_error: { type: string } };
     expect(obj).toMatchObject({ id: err.payment_intent.id, status: "requires_payment_method", last_payment_error: { type: "card_error" } });
   });
@@ -139,11 +140,62 @@ describe("the signed payment_intent.payment_failed event", () => {
       expect(fetchImpl).toHaveBeenCalledTimes(1);
     }
   });
+  it("a REPLAY of a declined create sends no second event (before_return timing makes the send observable)", async () => {
+    process.env.PORT = "3999";
+    process.env.STRIPE_WEBHOOK_SECRET = SECRET;
+    ledger.setFakeStripeWebhookTiming(RUN, "before_return");
+    const fetchStub = vi.fn(async () => new Response("ok", { status: 200 }));
+    vi.stubGlobal("fetch", fetchStub);
+    try {
+      await caught();
+      expect(fetchStub).toHaveBeenCalledTimes(1);
+      await caught();
+      await caught();
+      expect(fetchStub).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+      delete process.env.PORT;
+      delete process.env.STRIPE_WEBHOOK_SECRET;
+    }
+  });
+  it("the DEFAULT secret is the environment's STRIPE_WEBHOOK_SECRET: the event verifies with it and with nothing else", async () => {
+    const err = (await caught()) as unknown as { payment_intent: { id: string } };
+    process.env.STRIPE_WEBHOOK_SECRET = "whsec_from_environment";
+    try {
+      const fetchImpl = vi.fn(async () => new Response("ok", { status: 200 }));
+      await fakeMod.deliverFakePaymentFailedWebhook(RUN, err.payment_intent.id, ACCOUNT, {
+        fetchImpl: fetchImpl as unknown as typeof fetch, origin: "http://127.0.0.1:9",
+      });
+      const [, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit & { headers: Record<string, string> }];
+      expect(Stripe.webhooks.constructEvent(init.body as string, init.headers["stripe-signature"], "whsec_from_environment").type)
+        .toBe("payment_intent.payment_failed");
+      expect(() => Stripe.webhooks.constructEvent(init.body as string, init.headers["stripe-signature"], SECRET)).toThrow();
+    } finally {
+      delete process.env.STRIPE_WEBHOOK_SECRET;
+    }
+  });
+  it("with no secret at all nothing is sent (and that is not what the no-origin case relies on)", async () => {
+    const err = (await caught()) as unknown as { payment_intent: { id: string } };
+    const fetchImpl = vi.fn(async () => new Response("ok", { status: 200 }));
+    delete process.env.STRIPE_WEBHOOK_SECRET;
+    expect(await fakeMod.deliverFakePaymentFailedWebhook(RUN, err.payment_intent.id, ACCOUNT, {
+      fetchImpl: fetchImpl as unknown as typeof fetch, origin: "http://127.0.0.1:9",
+    })).toEqual({ delivered: false, status: null });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
   it("sends nothing without an origin (ordinary unit tests have no PORT) and records no money effect of its own", async () => {
     const err = (await caught()) as unknown as { payment_intent: { id: string } };
     const before = fakeMod.getFakeStripeCalls(RUN).length;
-    expect(await fakeMod.deliverFakePaymentFailedWebhook(RUN, err.payment_intent.id, ACCOUNT, { secret: SECRET }))
-      .toEqual({ delivered: false, status: null });
+    const fetchStub = vi.fn(async () => new Response("ok", { status: 200 }));
+    vi.stubGlobal("fetch", fetchStub);
+    try {
+      // the secret IS given, so only the missing origin can be what stops the send
+      expect(await fakeMod.deliverFakePaymentFailedWebhook(RUN, err.payment_intent.id, ACCOUNT, { secret: SECRET }))
+        .toEqual({ delivered: false, status: null });
+      expect(fetchStub).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
     // delivery is not a Stripe call: it adds no create, cancel or refund, and a decline is never retried by the fake
     expect(fakeMod.getFakeStripeCalls(RUN)).toHaveLength(before);
     expect(fakeMod.getFakeStripeCalls(RUN).filter((c) => c.method === "pi_create" && !c.replay)).toHaveLength(1);

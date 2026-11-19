@@ -124,6 +124,23 @@ export function readFakeWebhookTiming(runId: string): FakeWebhookTiming {
   }
 }
 
+export function setFakeStripeWebhookTiming(runId: string, timing: FakeWebhookTiming): void {
+  assertAllowed(runId);
+  const p = configPath(runId);
+  let cfg: Record<string, unknown> = {};
+  if (existsSync(p)) {
+    try {
+      cfg = JSON.parse(readFileSync(p, "utf8"));
+    } catch {
+      cfg = {};
+    }
+  }
+  cfg.webhookTiming = timing;
+  const tmp = `${p}.${Math.abs(hashRun(runId))}.tmp`;
+  writeFileSync(tmp, JSON.stringify(cfg), { mode: 0o600 });
+  renameSync(tmp, p);
+}
+
 export function clearFakeStripeBehavior(runId: string): void {
   assertAllowed(runId);
   const p = configPath(runId);

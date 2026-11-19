@@ -84,6 +84,8 @@ type FakePi = {
   currency: string | null;
   metadata: Record<string, string>;
   latestCharge: string | null;
+  // Real Stripe states the customer a PaymentIntent was created for; the application's webhook identity check compares it.
+  customer?: string | null;
   // Set only on a declined intent, as real Stripe states `last_payment_error` on a PaymentIntent whose attempt was refused.
   lastPaymentError?: { type: "card_error"; code: string; decline_code: string; message: string } | null;
 };
@@ -110,6 +112,7 @@ function piObject(pi: FakePi) {
     livemode: false, // the fake is test-mode only
     amount_received: captured ? (pi.amount ?? 0) : 0,
     latest_charge: pi.latestCharge,
+    ...(pi.customer ? { customer: pi.customer } : {}),
     ...(pi.status === "canceled" ? { cancellation_reason: "requested_by_customer" } : {}),
     ...(pi.lastPaymentError ? { last_payment_error: { ...pi.lastPaymentError } } : {}),
   };
@@ -249,6 +252,7 @@ type CreatePiParams = {
   amount?: number | null;
   currency?: string | null;
   metadata?: Record<string, string> | null;
+  customer?: string | null;
 };
 type RequestOpts = { stripeAccount?: string; idempotencyKey?: string } | undefined;
 
@@ -279,9 +283,10 @@ async function synthPaymentIntent(run: string, opts: RequestOpts, params?: Creat
     replay,
   });
   // Success → succeeded (+ latest_charge); decline → requires_payment_method, thrown as a card error carrying the intent
-  // (below). The executor does NOT persist that as failed on the immediate response: a PaymentIntent that is not
-  // confirmed canceled can still complete, so the attempt stays pending_stripe and the payment_intent.payment_failed
-  // webhook moves it to failed. processing → pending.
+  // (below). The executor does NOT write a terminal failure from that: a PaymentIntent that is not confirmed canceled can
+  // still complete, so the attempt stays pending_stripe, and the payment_intent.payment_failed event is what is meant to
+  // finish it. WHETHER it can is under review: a thrown decline may leave the intent id unbound on the attempt, in which
+  // case the event waits for a binding that never comes (see the handler-level test). processing → pending.
   const status =
     outcome === "decline"
       ? "requires_payment_method"
@@ -306,6 +311,7 @@ async function synthPaymentIntent(run: string, opts: RequestOpts, params?: Creat
       currency: money.currency,
       metadata: { ...(params?.metadata ?? {}) },
       latestCharge: outcome === "success" ? chargeId : null,
+      customer: params?.customer ?? null,
       lastPaymentError: outcome === "decline" ? { ...DECLINE_ERROR } : null,
     });
   }
