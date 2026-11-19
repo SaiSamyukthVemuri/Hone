@@ -528,6 +528,13 @@ export function buildStatementDocument(input: BuildDocumentInput): BuildDocument
     if (v.state === "unknown") awaiting.push({ appointmentId: v.appointmentId, localDate: v.localDate, reasons: v.reasons });
   }
 
+  // A cancellation or no-show FEE is a recorded fee like a visit's: it counts toward the recorded-fee total, and a fee line with no stored fee record makes the
+  // fee total incomplete. Payment-only lines (a payment on an uncompleted or cancelled booking) are not charges and carry no fee, so they are not part of it.
+  for (const f of feeItems) {
+    if (f.reason !== "late_cancellation_fee" && f.reason !== "no_show_fee") continue;
+    if (f.fee.state === "recorded") recordedFee += f.fee.cents;
+    else feeComplete = false;
+  }
   // ONE rule for visits and line items: total spend is the confirmed collected lines, whatever else about the record is uncertain.
   const feePaid = feeItems.reduce((n, f) => n + f.paidCents, 0);
   paid += feePaid;

@@ -480,6 +480,36 @@ describe("money-rule hardening (Insurance F1 to F5)", () => {
   });
 });
 
+describe("recorded-fee totals include cancellation and no-show fees", () => {
+  const feeLine = (over: Partial<FeeItemInput> = {}): FeeItemInput => {
+    n += 1;
+    return { appointmentId: `fl-${n}`, clientId: "client-1", localDate: "2026-11-10", startsAt: "2026-11-10T15:00:00Z", reason: "no_show_fee", feeCandidates: [charged(3000)], lines: [line("collected_card_fee", 3000)], ...over };
+  };
+  it("a recorded fee on a fee line counts toward the recorded-fee total, with the visits'", () => {
+    const d = doc([visit({ feeCandidates: [quote(5000)], lines: [line("collected_card_session", 5000)] })], { feeItems: [feeLine()] });
+    expect(d.totals.recordedFeeCents).toBe(8000);
+    expect(d.totals.feeTotalComplete).toBe(true);
+    expect(d.balanceDue).toEqual({ kind: "established", cents: 0 });
+  });
+  it("a fee line with a confirmed payment but NO recorded fee makes the fee total incomplete and blocks the balance", () => {
+    const d = doc([visit({ feeCandidates: [quote(5000)], lines: [line("collected_card_session", 5000)] })], { feeItems: [feeLine({ feeCandidates: [] })] });
+    expect(d.totals.feeTotalComplete).toBe(false);
+    expect(d.totals.recordedFeeCents).toBe(5000);
+    expect(d.balanceDue).toEqual({ kind: "not_established", because: "fee_not_recorded" });
+  });
+  it("payment-only lines are not charges: they never count a fee and never make the fee total incomplete", () => {
+    const pays = (reason: "uncompleted_booking_payment" | "cancelled_booking_payment") => feeLine({ reason, feeCandidates: [] });
+    const u = visit({ appointmentId: "u1", eligibility: "not_completed" });
+    const d = doc([u], { feeItems: [{ ...pays("uncompleted_booking_payment"), appointmentId: "u1" }, pays("cancelled_booking_payment")] });
+    expect(d.totals.feeTotalComplete).toBe(true);
+    expect(d.totals.recordedFeeCents).toBe(0);
+  });
+  it("a fee line outside the selected scope is not counted", () => {
+    const d = doc([], { scope: { kind: "month", month: "2026-10" }, feeItems: [feeLine()] });
+    expect(d.totals.recordedFeeCents).toBe(0);
+  });
+});
+
 describe("a payment on an uncompleted booking (Sam's rule)", () => {
   const unfinished = visit({ appointmentId: "unfinished-1", eligibility: "not_completed", localDate: "2026-11-02", startsAt: "2026-11-02T15:00:00Z" });
   const pay: FeeItemInput = { appointmentId: "unfinished-1", clientId: "client-1", localDate: "2026-11-02", startsAt: "2026-11-02T15:00:00Z", reason: "uncompleted_booking_payment", feeCandidates: [], lines: [line("collected_card_session", 6000)] };
