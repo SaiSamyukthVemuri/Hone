@@ -310,6 +310,8 @@ describe("the step that emits the matrix actually RUNS", () => {
       const js = expr
         .replace(/^\$\{\{\s*|\s*\}\}$/g, "")
         .replace(/github\.event\.pull_request\.draft != true/g, "true")
+        // CI-COST-03: these lanes run on the production push only; this evaluates that run.
+        .replace(/github\.event_name != 'pull_request'/g, "true")
         .replace(/needs\.changes\.outputs\.(\w+) == '(\w+)'/g, (_, k, v) => String(o[k] === v))
         .replace(/contains\(needs\.changes\.outputs\.(\w+), '([^']+)'\)/g, (_, k, v) => String((o[k] ?? "").includes(v)));
       expect(js, "only booleans and operators remain").toMatch(/^[\s()|&!truefals]*$/);
