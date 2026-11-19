@@ -106,7 +106,9 @@ test("failure: a declined charge never shows Paid, and switching views changes n
     expect(state.status).toBe("pending_stripe");
     expect(state.status).not.toBe("succeeded");
     await expect(page.getByTestId("payment-summary-paid")).toHaveCount(0);
-    expect(countEffectsForAccount(seed.connectedAccountId), "a declined charge moved no money").toBe(0);
+    // The fake counts a processor "effect" for every NEW PaymentIntent create, captured or not. A decline therefore shows exactly ONE effect: one intent created and
+    // left uncaptured (requires_payment_method, asserted above). "No money moved" is that state plus no succeeded attempt, and "no retry" is that the count stays 1.
+    expect(countEffectsForAccount(seed.connectedAccountId), "a declined charge created exactly one uncaptured intent").toBe(1);
     await expect(page.getByTestId("payment-summary-paid")).toHaveCount(0);
     const attempts = (await getSessionPaymentAttemptRows(seed.sessionId)).length;
 
@@ -114,7 +116,8 @@ test("failure: a declined charge never shows Paid, and switching views changes n
     await expect(page.getByTestId("charting-view-root")).toHaveAttribute("data-charting-view", "current", { timeout: T });
     await expect(page.getByTestId("payment-summary-paid")).toHaveCount(0);
     expect((await getSessionPaymentAttemptRows(seed.sessionId)).length, "no second attempt appeared").toBe(attempts);
-    expect(countEffectsForAccount(seed.connectedAccountId), "and still no money moved after switching views").toBe(0);
+    expect(countEffectsForAccount(seed.connectedAccountId), "switching views created no second intent (no retry)").toBe(1);
+    expect((await attemptState())[0].stripe_status, "and the intent is still uncaptured").toBe("requires_payment_method");
   } finally {
     await cleanupPaymentScenario(seed.studioId);
     cleanupFakeStripeLedger();
