@@ -93,6 +93,13 @@ create trigger sms_number_consents_no_update
 create trigger sms_number_opt_outs_no_change
   before update or delete on public.sms_number_opt_outs
   for each row execute function public.sms_number_evidence_append_only();
+-- TRUNCATE bypasses row triggers, so it is refused by its own statement-level guard.
+create trigger sms_number_consents_no_truncate
+  before truncate on public.sms_number_consents
+  for each statement execute function public.sms_number_evidence_append_only();
+create trigger sms_number_opt_outs_no_truncate
+  before truncate on public.sms_number_opt_outs
+  for each statement execute function public.sms_number_evidence_append_only();
 
 -- ---------------------------------------------------------------------------
 -- 3. Writers: AFTER triggers on the existing consent and opt-out columns

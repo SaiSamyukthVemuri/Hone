@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { adminQuery, asRole, closePool, seedStudio } from "@/tests/db/helpers/harness";
+import { adminQuery, adminTx, asRole, closePool, seedStudio } from "@/tests/db/helpers/harness";
 
 // ===========================================================================
 // PER-NUMBER SMS CONSENT EVIDENCE AND THE PHONE-WIDE STOP LIST (migration 0358)
@@ -231,5 +232,126 @@ describe("grants", () => {
     await expect(
       asRole("authenticated", async (q) => q(`select 1 from public.sms_number_consents limit 1`)),
     ).rejects.toThrow(/permission denied/i);
+  });
+});
+
+describe("TRUNCATE is refused on both tables", () => {
+  it("cannot be used to bypass the row guards", async () => {
+    await expect(adminQuery(`truncate public.sms_number_consents`)).rejects.toThrow(/append-only/);
+    await expect(adminQuery(`truncate public.sms_number_opt_outs`)).rejects.toThrow(/append-only/);
+  });
+});
+
+describe("the waitlist consent check is VALIDATED, not just added", () => {
+  it("is validated in the catalog", async () => {
+    const r = await adminQuery(
+      `select convalidated from pg_constraint where conname = 'new_client_waitlist_entries_consent_needs_phone_ck'`,
+    );
+    expect(r.rows).toEqual([{ convalidated: true }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE BACKFILL, replayed over seeded rows. A fresh chain runs it over empty tables, so it needs its own proof.
+// The two statements are read out of the migration file itself (never a copy). Rows are seeded with triggers off
+// (session_replication_role = replica) so only the backfill can have produced the evidence; everything is rolled back.
+// ---------------------------------------------------------------------------
+const migration = readFileSync("supabase/migrations/0358_sms_number_consent_evidence.sql", "utf8");
+const backfillSection = migration.slice(migration.indexOf("-- 5. Backfill"), migration.indexOf("-- 6. A waitlist consent needs a number"));
+const backfill = backfillSection
+  .split("\n")
+  .filter((l) => !l.startsWith("--"))
+  .join("\n")
+  .split(/;\s*\n/)
+  .map((x) => x.trim())
+  .filter((x) => x.length > 0);
+
+class Rollback extends Error {}
+
+describe("backfill", () => {
+  it("is exactly two statements", () => {
+    expect(backfill).toHaveLength(2);
+    expect(backfill[0]).toMatch(/^insert into public\.sms_number_consents/);
+    expect(backfill[1]).toMatch(/^insert into public\.sms_number_opt_outs/);
+  });
+
+  it("carries forward waitlist consents and every opt-out number with the minimum time and the right sources, and is idempotent", async () => {
+    const s = await seedStudio("sms-backfill");
+    const nA = nextNumber(); // consented entry, plain
+    const nB = nextNumber(); // two entries consented on the same number
+    const nC = nextNumber(); // opted out on two rows (earlier and later), one a client
+    const nD = nextNumber(); // consent with no phone number that normalizes
+    const early = "2026-01-01T00:00:00Z";
+    const late = "2026-06-01T00:00:00Z";
+    let result: Record<string, unknown> = {};
+    await adminTx(async (q) => {
+      await q(`set local session_replication_role = replica`);
+      const ins = async (phone: string | null, consent: boolean, outAt: string | null) =>
+        (
+          await q(
+            `insert into public.new_client_waitlist_entries
+               (studio_id, name, email, phone, sms_consent_at, sms_consent_source, sms_consent_text_version, sms_opted_out_at, sms_opt_out_source)
+             values ($1, 'Entry', $2, $3,
+                     case when $4 then '2026-03-01T00:00:00Z'::timestamptz end, case when $4 then 'public_form' end,
+                     case when $4 then 'waitlist_sms_operational_v2' end,
+                     $5::timestamptz, case when $5::timestamptz is not null then 'twilio_stop' end)
+             returning id`,
+            [s.studioId, uniqueEmail(), phone, consent, outAt],
+          )
+        ).rows[0].id as string;
+      const eA = await ins(nA, true, null);
+      const eB1 = await ins(nB, true, null);
+      const eB2 = await ins(nB, true, null);
+      await ins(nC, false, late);
+      await ins(nD, false, null);
+      await ins("n/a", false, null); // unnormalizable: never evidenced
+      await q(`update public.clients set phone = $2, sms_opted_out_at = $3::timestamptz, sms_opt_out_source = 'twilio_stop' where id = $1`, [
+        s.clientId,
+        nC,
+        early,
+      ]);
+      const counts = async () => ({
+        consents: (await q(`select count(*)::int n from public.sms_number_consents where studio_id = $1`, [s.studioId])).rows[0].n,
+        optOutsMine: (await q(`select count(*)::int n from public.sms_number_opt_outs where phone_e164 = any($1)`, [[nA, nB, nC, nD]])).rows[0].n,
+      });
+      const before = await counts();
+      for (const stmt of backfill) await q(stmt);
+      const after1 = await counts();
+      const consents = (
+        await q(`select waitlist_entry_id, phone_e164, source, text_version, consented_at from public.sms_number_consents where studio_id = $1 order by phone_e164, waitlist_entry_id`, [s.studioId])
+      ).rows;
+      const optC = (await q(`select source, opted_out_at from public.sms_number_opt_outs where phone_e164 = $1`, [nC])).rows[0];
+      for (const stmt of backfill) await q(stmt);
+      const after2 = await counts();
+      result = { before, after1, after2, consents, optC, eA, eB1, eB2 };
+      throw new Rollback();
+    }).catch((e) => {
+      if (!(e instanceof Rollback)) throw e;
+    });
+    const r = result as {
+      before: { consents: number; optOutsMine: number };
+      after1: { consents: number; optOutsMine: number };
+      after2: { consents: number; optOutsMine: number };
+      consents: Array<{ waitlist_entry_id: string; phone_e164: string; source: string; text_version: string; consented_at: Date }>;
+      optC: { source: string; opted_out_at: Date };
+      eA: string; eB1: string; eB2: string;
+    };
+    expect(r.before).toEqual({ consents: 0, optOutsMine: 0 });
+    // one consent row per consented entry with a normalizable number (A, B1, B2); none for no-consent or junk-phone entries
+    expect(r.after1.consents).toBe(3);
+    expect(r.consents.map((c) => c.waitlist_entry_id).sort()).toEqual([r.eA, r.eB1, r.eB2].sort());
+    for (const c of r.consents) {
+      expect(c.source).toBe("carried_forward_waitlist");
+      expect(c.text_version).toBe("waitlist_sms_operational_v2");
+      expect(c.consented_at.toISOString()).toBe("2026-03-01T00:00:00.000Z");
+    }
+    // every opted-out number (C from a row and a client, D and no others of mine are not opted out): only C is opted out
+    expect(r.after1.optOutsMine).toBe(1);
+    expect(r.optC.source).toBe("carried_forward");
+    expect(r.optC.opted_out_at.toISOString()).toBe("2026-01-01T00:00:00.000Z"); // the MINIMUM of the two
+    // a second run adds nothing
+    expect(r.after2).toEqual(r.after1);
+    // nothing leaked: the transaction was rolled back
+    expect((await adminQuery(`select count(*)::int n from public.sms_number_consents where studio_id = $1`, [s.studioId])).rows[0].n).toBe(0);
   });
 });

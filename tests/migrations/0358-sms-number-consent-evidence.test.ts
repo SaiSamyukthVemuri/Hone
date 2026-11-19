@@ -60,6 +60,44 @@ describe("0358 source contract", () => {
   });
 });
 
+describe("0358 pins the rules a quiet edit would weaken", () => {
+  const helper = sql.slice(sql.indexOf("create function public.waitlist_sms_number_consented"), sql.indexOf("revoke execute on function public.record_sms_number_opt_out"));
+  const backfill = sql.slice(sql.indexOf("-- 5. Backfill"), sql.indexOf("-- 6. A waitlist consent needs a number"));
+
+  it("the consent check is VALIDATED in the same migration, after it is added NOT VALID", () => {
+    expect(sql).toMatch(/add constraint new_client_waitlist_entries_consent_needs_phone_ck\s+check \(sms_consent_at is null or phone is not null\) not valid;/);
+    expect(sql).toMatch(/validate constraint new_client_waitlist_entries_consent_needs_phone_ck;/);
+    expect(sql.indexOf("not valid;")).toBeLessThan(sql.indexOf("validate constraint"));
+  });
+
+  it("an opt-out beats a consent in the helper: the opt-out test comes first and returns false", () => {
+    const optOut = helper.indexOf("from public.sms_number_opt_outs");
+    const consent = helper.indexOf("from public.sms_number_consents");
+    expect(optOut).toBeGreaterThan(-1);
+    expect(consent).toBeGreaterThan(optOut);
+    expect(helper).toMatch(/if exists \(select 1 from public\.sms_number_opt_outs o where o\.phone_e164 = v_number\) then\s+return false;\s+end if;/);
+  });
+
+  it("the backfill keeps the EARLIEST opt-out time and its two source labels", () => {
+    expect(backfill).toMatch(/select n, min\(at\), 'carried_forward'/);
+    expect(backfill).not.toMatch(/max\(at\)/);
+    expect(backfill).toContain("'carried_forward_waitlist'");
+    expect(backfill).toMatch(/on conflict do nothing;[\s\S]*on conflict do nothing;/);
+  });
+
+  it("both writers fire on INSERT and on UPDATE of consent, opt-out and phone, and handle both operations", () => {
+    expect(sql).toMatch(/after insert or update of sms_consent_at, sms_opted_out_at, phone on public\.clients/);
+    expect(sql).toMatch(/after insert or update of sms_consent_at, sms_opted_out_at, phone on public\.new_client_waitlist_entries/);
+    expect(sql.match(/tg_op = 'INSERT' or old\.sms_(consent|opted_out)_at is null/g)?.length).toBe(4);
+  });
+
+  it("TRUNCATE is refused by statement-level guards on both tables", () => {
+    for (const t of ["sms_number_consents", "sms_number_opt_outs"]) {
+      expect(sql).toMatch(new RegExp(`before truncate on public\\.${t}\\s+for each statement execute function public\\.sms_number_evidence_append_only\\(\\)`));
+    }
+  });
+});
+
 describe("the STOP route remembers the number", () => {
   it("calls record_sms_number_opt_out with the sender and the twilio_stop source", () => {
     expect(route).toMatch(/rpc\("record_sms_number_opt_out",\s*\{\s*p_phone: from,\s*p_source: "twilio_stop",?\s*\}\)/);
