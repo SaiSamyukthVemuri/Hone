@@ -11,6 +11,8 @@ import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { validateProbeLotId } from "@/lib/sessions/probe-lot-validation";
 import { normalizeChips, verifyStoredChips } from "@/lib/observation-chips";
 import type { ElectrolysisMode } from "@/lib/types/database";
+import { chartingRolloutFor } from "@/lib/rollouts/charting-rollout";
+import { groupsForMode, isOmniblend } from "@/lib/sessions/mode-scope";
 import {
   PULSE_COUNT_DEFAULT,
   PULSE_COUNT_MAX,
@@ -224,7 +226,7 @@ export async function addElectrolysisEntryAction(
   const observationChips = chipParse.chips;
 
   const modeRaw = formData.get("mode");
-  const mode =
+  let mode =
     typeof modeRaw === "string" && VALID_MODES.includes(modeRaw as ElectrolysisMode)
       ? (modeRaw as ElectrolysisMode)
       : null;
@@ -232,17 +234,40 @@ export async function addElectrolysisEntryAction(
   const { studio } = await getCurrentPractitionerWithStudio();
   await assertSessionVisible(studio.id, clientId, sessionId);
 
+  // CHART REDESIGN (W8): with the rollout on, a pass belongs to its block's SAVED mode, never to whatever mode the request names, and carries only the
+  // fields that mode owns. A failed rollout read counts as Off: the pass is then exactly today's.
+  const redesignOn = await chartingRolloutFor(studio.id);
+  if (redesignOn) {
+    const blockIdForMode = nullableString(formData.get("block_id"));
+    if (blockIdForMode) {
+      const { data: storedBlock, error: storedBlockErr } = await (await createClient())
+        .from("session_blocks")
+        .select("mode")
+        .eq("id", blockIdForMode)
+        .eq("studio_id", studio.id)
+        .eq("session_id", sessionId)
+        .is("deleted_at", null)
+        .maybeSingle();
+      if (storedBlockErr || !storedBlock) {
+        return { ok: false, code: "invalid_input", error: "Could not load this area to add a pass. Reload the chart and try again." };
+      }
+      const sm = (storedBlock as { mode?: string | null }).mode ?? null;
+      mode = sm && VALID_MODES.includes(sm as ElectrolysisMode) ? (sm as ElectrolysisMode) : null;
+    }
+  }
+  const passGroups = groupsForMode(mode);
+
   // Migration 0011: Apilus parameters are now per-entry. Galvanic carries
   // no apilus_modality or energy_level even if the form happens to submit one.
   const apilusModalityRaw = pickEnum(
     formData.get("apilus_modality"),
     APILUS_MODALITY_VALUES,
   );
-  const apilusModality = mode === "galv" ? null : apilusModalityRaw;
+  const apilusModality = redesignOn ? (passGroups.modality ? apilusModalityRaw : null) : mode === "galv" ? null : apilusModalityRaw;
   const energyLevelRaw = pickInteger(formData.get("energy_level"), {
     min: 0,
   });
-  const energyLevel = mode === "galv" ? null : energyLevelRaw;
+  const energyLevel = redesignOn ? (passGroups.energy ? energyLevelRaw : null) : mode === "galv" ? null : energyLevelRaw;
   const minutesPerformed = pickInteger(formData.get("minutes_performed"), {
     min: 0,
   });
@@ -276,9 +301,10 @@ export async function addElectrolysisEntryAction(
   // Thermolysis duration is fractional (e.g. PicoBlend 0.733s), parse as a
   // decimal, NOT pickInteger, or 0.733 would silently truncate to 0. Matches the
   // block form's write path and the numeric DB column.
-  const thermolysisDurationSeconds = wantThermo
-    ? nonNegNumber(formData.get("thermolysis_duration_seconds"))
-    : null;
+  const thermolysisDurationSeconds =
+    wantThermo && !(redesignOn && isOmniblend(mode, apilusModality))
+      ? nonNegNumber(formData.get("thermolysis_duration_seconds"))
+      : null;
   const unitsOfLye = wantGalv ? nonNegNumber(formData.get("units_of_lye")) : null;
 
   // The simplified entry form passes block_id explicitly so multi-block
@@ -298,7 +324,8 @@ export async function addElectrolysisEntryAction(
     machineFrequency,
   });
 
-  const pulseCount = clampedPulseCount(formData.get("pulse_count"));
+  // Redesign on: only thermolysis and blend carry a pulse; any other mode ignores a forged one.
+  const pulseCount = clampedPulseCount(redesignOn && !passGroups.pulse ? null : formData.get("pulse_count"));
   const pulseDelaySeconds = resolvePulseDelay(
     formData.get("pulse_delay_seconds"),
     pulseCount,

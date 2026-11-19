@@ -143,7 +143,7 @@ function normalizeAreas(
   return out;
 }
 
-function normalizeDraft(d: WholeSessionCopyDraftInput): WholeSessionCopySpec {
+function normalizeDraft(d: WholeSessionCopyDraftInput, keepGalvanicEnergy = false): WholeSessionCopySpec {
   if (!d || typeof d !== "object" || !d.setup) throw new CopyValidationError(INVALID);
   const s = d.setup;
 
@@ -168,7 +168,7 @@ function normalizeDraft(d: WholeSessionCopyDraftInput): WholeSessionCopySpec {
 
   // energy_level: cleared for galvanic; otherwise a non-negative integer within
   // a sane bound (the destination entry column is int4).
-  const energyLevel = isGalv ? null : intInRange(s.energyLevel, 0, ENERGY_LEVEL_MAX);
+  const energyLevel = isGalv && !keepGalvanicEnergy ? null : intInRange(s.energyLevel, 0, ENERGY_LEVEL_MAX);
 
   // Probe: derive the decomposition server-side from the validated key ONLY.
   const probeKey = (s.probeKey ?? "").trim();
@@ -249,6 +249,7 @@ function normalizeDraft(d: WholeSessionCopyDraftInput): WholeSessionCopySpec {
 // success, or a single safe error message on the first invalid value.
 export function normalizeWholeSessionCopy(
   drafts: readonly WholeSessionCopyDraftInput[],
+  opts: { keepGalvanicEnergy?: boolean } = {},
 ): WholeSessionCopyNormalizeResult {
   try {
     if (!Array.isArray(drafts) || drafts.length === 0) {
@@ -257,7 +258,7 @@ export function normalizeWholeSessionCopy(
     if (drafts.length > MAX_DRAFTS) {
       return { ok: false, error: INVALID };
     }
-    const specs = drafts.map(normalizeDraft);
+    const specs = drafts.map((d) => normalizeDraft(d, opts.keepGalvanicEnergy === true));
     return { ok: true, specs };
   } catch (e) {
     if (e instanceof CopyValidationError) return { ok: false, error: e.message };
