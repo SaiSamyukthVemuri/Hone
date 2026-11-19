@@ -439,6 +439,21 @@ describe("the This visit card follows the open form", () => {
     expect(row("visit-summary-status").textContent).toBe("Not saved yet");
     expect(saveCalls(), "reading the form saves nothing").toBe(0);
   });
+  it("a registered xCell Pur unit (the native route) reads as the studio's xCell, never as the catalogue's model name", async () => {
+    const XPUR = { ...PROFILE, profileId: "dectro-apilus:xcell-pur", manufacturer: "Apilus", model: "xCell Pur" };
+    ctxBox.ctx = {
+      ...CTX,
+      legacyMachine: null,
+      catalogue: [XPUR],
+      devices: [{ ...DEVICE, profileId: XPUR.profileId, displayName: "Room 9 xCell" }],
+    };
+    await mount("new");
+    await openPanel();
+    expect(machineSelect().value).toBe("room-9");
+    const text = row("visit-summary-machine").textContent!;
+    expect(text).toContain("Dectro xCell");
+    expect(text).not.toContain("xCell Pur");
+  });
   it("shows the existing xCell by the picker's own label for a saved legacy block", async () => {
     ctxBox.ctx = { ...CTX, remembered: null, devices: [] };
     host = document.createElement("div");
@@ -492,6 +507,42 @@ describe("the This visit card follows the open form", () => {
     await click(toggle());
     expect(sum().textContent).toBe(before);
     expect(saveCalls()).toBe(0);
+  });
+});
+
+describe('"Your machine is already selected." shows only when a machine really is selected', () => {
+  const hint = () => host!.querySelector('[data-testid="new-view-hint-machine"]');
+  it("New view, a machine selected: shown", async () => {
+    await mount("new");
+    await openPanel();
+    expect(machineSelect().value).toBe("room-9");
+    expect(hint()?.textContent).toBe("Your machine is already selected.");
+  });
+  it("New view, NO machine selected: not shown", async () => {
+    ctxBox.ctx = { ...CTX, remembered: null, legacyMachine: null };
+    await mount("new");
+    await openPanel();
+    expect(machineSelect().value).toBe("");
+    expect(hint()).toBeNull();
+  });
+  it("New view, the machine is cleared after being selected: the line goes away", async () => {
+    await mount("new");
+    await openPanel();
+    expect(hint()).not.toBeNull();
+    const sel = machineSelect();
+    const setSel = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+    await act(async () => {
+      setSel.call(sel, "");
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(machineSelect().value).toBe("");
+    expect(hint()).toBeNull();
+  });
+  it("Current view, a machine selected: never shown", async () => {
+    await mount("current");
+    await openPanel();
+    expect(machineSelect().value).toBe("room-9");
+    expect(hint()).toBeNull();
   });
 });
 

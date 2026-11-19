@@ -42,6 +42,10 @@ describe("visitMachineLine", () => {
     const line = visitMachineLine("Dectro xCell", "27.12 MHz")!;
     expect(line.match(/MHz/g)).toHaveLength(1);
   });
+  it("trims the stored frequency, and a blank one adds nothing", () => {
+    expect(visitMachineLine("Dectro xCell", "  27.12 MHz  ")).toBe("Dectro xCell \u00b7 27.12 MHz");
+    expect(visitMachineLine("Dectro xCell", "   ")).toBe("Dectro xCell");
+  });
   it("no frequency, or no machine", () => {
     expect(visitMachineLine("Dectro xCell", "")).toBe("Dectro xCell");
     expect(visitMachineLine("Dectro xCell", null)).toBe("Dectro xCell");
