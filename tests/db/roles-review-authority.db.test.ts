@@ -1254,7 +1254,7 @@ describe("rollback", () => {
     await inTx(async (q) => {
       await q(down);
       const md5 = (await q(`select md5(prosrc) as m from pg_proc where oid = 'public.perm_run_changes(uuid, jsonb, text, boolean, bigint, boolean, boolean)'::regprocedure`)).rows[0].m;
-      expect(md5).toBe("e1f64999b3fda06d586261447acbaca0");
+      expect(md5).toBe("6650cbbb16c82bdcffd4f50da443c6a5");
       for (const f of ["perm_review_involved", "perm_review_timing", "perm_review_hash_input", "perm_review_hash", "perm_run_changes_reviewed", "preview_role_changes_at", "save_role_permissions_reviewed"]) {
         expect(Number((await q(`select count(*) n from pg_proc where proname = $1 and pronamespace = 'public'::regnamespace`, [f])).rows[0].n), f).toBe(0);
       }

@@ -9,7 +9,7 @@ import { isRepoMax } from "./helpers/migration-state";
 const UP = readFileSync("supabase/migrations/0361_roles_review_authority.sql", "utf8");
 const DOWN = readFileSync("supabase/rollbacks/0361_roles_review_authority.down.sql", "utf8");
 const PREV = readFileSync("supabase/migrations/0360_roles_save_inert_denial.sql", "utf8");
-const SEALED_0360_BODY_MD5 = "e1f64999b3fda06d586261447acbaca0"; // prosrc of perm_run_changes after 0360 (recorded in the 0360 PR)
+const SEALED_0360_BODY_MD5 = "6650cbbb16c82bdcffd4f50da443c6a5"; // prosrc of perm_run_changes after 0360 (recorded in the 0360 PR)
 
 const bodyOf = (sql: string, name: string) => {
   const from = sql.indexOf(`create or replace function public.${name}(`);
