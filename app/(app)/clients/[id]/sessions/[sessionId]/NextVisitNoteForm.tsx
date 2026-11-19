@@ -33,13 +33,15 @@ export function NextVisitNoteForm({
   const [note, setNote] = useState(initialNote);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [pending, startTransition] = useTransition();
+  // An edit counter, so the visit card can order forms by recency WITHOUT holding a second copy of the note's text.
+  const [edits, setEdits] = useState(0);
   // "This visit" (New view): a note with changes is unsaved (a failed save leaves it unsaved too), and a failed save needs attention. Display only.
   useReportVisitDraft("next-visit-note", {
     machine: null,
     draftAreas: [],
     unsaved: status.kind === "dirty" || status.kind === "saving" || status.kind === "error",
     attention: status.kind === "error",
-    activity: note,
+    activity: `${note.length}:${edits}`,
   });
 
   // THE ONE SAVE. The button and Save visit both run it, so there is one path, and it returns what happened on every exit.
@@ -95,6 +97,7 @@ export function NextVisitNoteForm({
         value={note}
         onChange={(e) => {
           setNote(e.target.value);
+          setEdits((n) => n + 1);
           if (status.kind !== "dirty") setStatus({ kind: "dirty" });
         }}
         placeholder="e.g. Upper lip: start lower and check sensitivity. Chin: continue same settings."
