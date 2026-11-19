@@ -62,7 +62,6 @@ import { createClient } from "@/lib/supabase/server";
 import { CHARTING_VIEW_STUDIOS_ENV } from "@/lib/charting/view-preference";
 import { chartingViewForPage } from "@/lib/charting/page-view";
 import { NewViewHint, NewViewOnlyStep } from "@/components/charting-view-context";
-import { machinesByIds, type MachineDb } from "@/lib/machines/machine-queries";
 import { ChartingViewShell, ChartingViewToggle, ChartingVisitSummary } from "@/components/charting-view-shell";
 import { buildVisitSummary } from "@/lib/charting/visit-summary";
 import { loadPreviousVisitNote } from "@/lib/sessions/previous-visit-note";
@@ -607,19 +606,6 @@ export default async function SessionDetailPage({
       return authUser?.user_metadata;
     },
   });
-
-  // "This visit" machine line: the practitioner's remembered machine and frequency, read only for a studio the switch is
-  // available to. Display only: a failed or empty read just shows no line.
-  let chartingMachineLine: string | null = null;
-  if (chartingToggleVisible && practitioner.default_machine_id) {
-    try {
-      const named = await machinesByIds((await createClient()) as unknown as MachineDb, practitioner.studio_id, [practitioner.default_machine_id]);
-      const name = named.ok ? named.value[0]?.displayName?.trim() : "";
-      if (name) chartingMachineLine = practitioner.default_machine_frequency ? `${name} · ${practitioner.default_machine_frequency} MHz` : name;
-    } catch {
-      chartingMachineLine = null;
-    }
-  }
 
   // Everything above is server work the practitioner waits on; the render
   // below is what they finally see.
@@ -1195,7 +1181,6 @@ export default async function SessionDetailPage({
           areas={visit.areas}
           count={visit.count}
           nextVisitNoteRecorded={visit.nextVisitNoteRecorded}
-          machineLine={chartingMachineLine}
         />
       }
     >

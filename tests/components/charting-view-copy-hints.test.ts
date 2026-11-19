@@ -4,9 +4,8 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ChartingViewContext } from "@/components/charting-view-context";
 import { NewViewHint } from "@/components/charting-view-context";
-import { ChartingVisitSummary } from "@/components/charting-view-shell";
 
-// The New view copy: guidance lines that exist ONLY in New view, and the machine row of "This visit". Display only.
+// The New view copy: guidance lines that exist ONLY in New view. Display only.
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let root: Root | null = null;
@@ -36,17 +35,5 @@ describe("NewViewHint", () => {
   });
   it("renders nothing outside the switch (every other page and bare form)", () => {
     expect(mount(null, hint()).querySelector('[data-testid="h"]')).toBeNull();
-  });
-});
-
-describe("ChartingVisitSummary machine row", () => {
-  const base = { clientName: "Avery Fixture", kind: "electrolysis" as const, areas: [], count: 0, nextVisitNoteRecorded: false };
-  it("shows the machine line when there is one", () => {
-    const h = mount("new", createElement(ChartingVisitSummary, { ...base, machineLine: "Room 1 · 27.12 MHz" }));
-    expect(h.querySelector('[data-testid="visit-summary-machine"]')?.textContent).toBe("Room 1 · 27.12 MHz");
-  });
-  it("shows no machine row when there is none", () => {
-    expect(mount("new", createElement(ChartingVisitSummary, base)).querySelector('[data-testid="visit-summary-machine"]')).toBeNull();
-    expect(mount("new", createElement(ChartingVisitSummary, { ...base, machineLine: null })).textContent).not.toMatch(/Machine/);
   });
 });
