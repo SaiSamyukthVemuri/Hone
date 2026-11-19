@@ -465,30 +465,34 @@ export async function loadMachineSetupContext(input: {
   // MULTIPLEX AS A MODE OF THE ONE xCELL CHOICE (HON-71). A route only where the existing choice is offered, the contract row is
   // PUBLISHED and the studio has a usable unit; a failed read means no route, and the studio's form is exactly what it was.
   let multiplexRoute: XcellMultiplexRoute | null = null;
-  // PLATFORM ROLLOUT (Insurance E1/E2). An EXISTING MultiPlex block keeps its route whatever the rollout says. For a new setup: on = offer,
-  // off = no route, and a FAILED read must NOT degrade (that would save a new setup under the legacy machine): the context refuses retryably.
+  // PLATFORM ROLLOUT (Insurance E1/E2, R2). Only a studio that is OFFERED the legacy xCell choice has anything to gate, so the rollout and
+  // the existing-block read happen ONLY then: a studio with no xCell history makes no rollout read and keeps its own reason, so a rollout
+  // outage (or a deploy ahead of the migration) cannot degrade machine setup for every studio. An EXISTING MultiPlex block keeps its route
+  // whatever the rollout says. For a new setup: on = offer, off = no route, and a FAILED read must NOT degrade (that would save a new setup
+  // under the legacy machine): the context refuses retryably.
   let rolloutUnavailable = false;
-  const existingUsesXcellPur = input.blockId ? await blockUsesXcellPur(db, input.blockId, input.sessionId) : false;
-  const rollout = existingUsesXcellPur ? "on" : await readChartingRollout(scope.studioId);
-  const routeDecision = xcellRouteDecision({ existingBlockUsesXcellPur: existingUsesXcellPur, rollout });
-  if (routeDecision === "refuse") {
-    // WITHHOLD the legacy xCell offer too: with it on screen a new setup could be saved under the legacy machine, which may be the wrong
-    // machine on a clinical record. Nothing is lost: an existing block keeps its route, and a retry reads the rollout again.
-    legacyMachine = null;
-    rolloutUnavailable = true;
-  }
-  if (legacyMachine && routeDecision === "offer") {
-    try {
-      const purProfile = currentProfile(catalogue, XCELL_PUR_PROFILE_ID);
-      const published = purProfile ? await publishedModesFor(db, purProfile.profileId, purProfile.version) : null;
-      multiplexRoute = xcellMultiplexRoute({
-        legacyOffered: true,
-        catalogue,
-        devices: inventory.devices,
-        publishedModes: published && published.ok ? published.value : null,
-      });
-    } catch {
-      multiplexRoute = null;
+  if (legacyMachine) {
+    const existingUsesXcellPur = input.blockId ? await blockUsesXcellPur(db, input.blockId, input.sessionId) : false;
+    const rollout = existingUsesXcellPur ? "on" : await readChartingRollout(scope.studioId);
+    const routeDecision = xcellRouteDecision({ existingBlockUsesXcellPur: existingUsesXcellPur, rollout });
+    if (routeDecision === "refuse") {
+      // WITHHOLD the legacy xCell offer too: with it on screen a new setup could be saved under the legacy machine, which may be the wrong
+      // machine on a clinical record. Nothing is lost: an existing block keeps its route, and a retry reads the rollout again.
+      legacyMachine = null;
+      rolloutUnavailable = true;
+    } else if (routeDecision === "offer") {
+      try {
+        const purProfile = currentProfile(catalogue, XCELL_PUR_PROFILE_ID);
+        const published = purProfile ? await publishedModesFor(db, purProfile.profileId, purProfile.version) : null;
+        multiplexRoute = xcellMultiplexRoute({
+          legacyOffered: true,
+          catalogue,
+          devices: inventory.devices,
+          publishedModes: published && published.ok ? published.value : null,
+        });
+      } catch {
+        multiplexRoute = null;
+      }
     }
   }
 

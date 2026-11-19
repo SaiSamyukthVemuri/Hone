@@ -44,8 +44,11 @@ const DB = vi.hoisted(() => ({
   calls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
 }));
 
+/** Whether the studio has legacy xCell history (the offer's precondition); the default keeps every existing case as it was (no offer). */
+const HISTORY = vi.hoisted(() => ({ value: false }));
 vi.mock("@/lib/supabase/queries", () => ({
   getCurrentPractitionerWithStudio: async () => SESSION.current,
+  studioHasLegacyMachineHistory: async () => HISTORY.value,
 }));
 
 /**
@@ -75,10 +78,10 @@ const ROUTE = { clientId: "client-ana", sessionId: "session-1" };
 
 vi.mock("server-only", () => ({}));
 // The platform rollout is a database read through the service role; here it is a controlled value ("on" | "off" | "error").
-const ROLLOUT = vi.hoisted(() => ({ value: "on" as "on" | "off" | "error" }));
+const ROLLOUT = vi.hoisted(() => ({ value: "on" as "on" | "off" | "error", reads: 0 }));
 vi.mock("@/lib/rollouts/charting-rollout", async (orig) => {
   const real = await orig<typeof import("@/lib/rollouts/charting-rollout")>();
-  return { ...real, readChartingRollout: async () => ROLLOUT.value, chartingRolloutFor: async () => ROLLOUT.value === "on" };
+  return { ...real, readChartingRollout: async () => { ROLLOUT.reads += 1; return ROLLOUT.value; }, chartingRolloutFor: async () => ROLLOUT.value === "on" };
 });
 const revalidatePathMock = vi.hoisted(() => vi.fn());
 vi.mock("next/cache", () => ({ revalidatePath: revalidatePathMock }));
@@ -149,7 +152,7 @@ vi.mock("@/lib/supabase/server", () => ({
             // session instead, so the binding is a predicate on the read
             // itself. This branch stays for the other tables that use it.
             eq: () => ({
-              limit: async () => ({ data: (table === "session_blocks" ? DB.rowsFor.session_blocks : undefined) ?? [{ id: "block-1" }], error: null }),
+              limit: async () => ({ data: (table === "session_blocks" || table === "studio_machines" ? DB.rowsFor[table] : undefined) ?? [{ id: "block-1" }], error: null }),
             }),
             is: () => ({ order: result }),
             order: () => ({ limit: result }),
@@ -167,6 +170,7 @@ const actions = await import(
   "@/app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions"
 );
 const synthetic = await import("@/lib/machines/synthetic-profile");
+const { ROLLOUT_UNAVAILABLE_MESSAGE } = await import("@/lib/rollouts/charting-rollout");
 
 const ACTIONS_SRC = readFileSync(
   path.resolve(
@@ -187,6 +191,8 @@ function signIn(studioId: string, practitionerId: string, role = "owner") {
 }
 
 beforeEach(() => {
+  HISTORY.value = false;
+  ROLLOUT.reads = 0;
   SESSION.current = null;
   DB.rows = [];
   DB.rpcResult = null;
@@ -2732,5 +2738,66 @@ describe("callers of the area identity write", () => {
       "app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts",
       "lib/machines/machine-queries.ts",
     ]);
+  });
+});
+
+
+// PLATFORM ROLLOUT at the context level (Insurance R1/R2): the loader is where a failed read must refuse, an existing block must keep its
+// route, and a studio with no legacy history must make no rollout read at all.
+describe("loadMachineSetupContext and the platform rollout", () => {
+  const NEW_SETUP = { clientId: "client-ana", sessionId: "session-1" };
+  const EXISTING = { clientId: "client-ana", sessionId: "session-1", blockId: "block-1" };
+  const existingPurBlock = () => {
+    DB.rowsFor.session_blocks = [{ studio_machine_id: "unit-pur" }];
+    DB.rowsFor.studio_machines = [{ id: "unit-pur" }];
+  };
+
+  it("a FAILED rollout read for a studio with legacy history gives no route, withholds the legacy offer and returns the retryable message", async () => {
+    signIn("studio-one", "pract-a");
+    HISTORY.value = true; ROLLOUT.value = "error";
+    const ctx = await actions.loadMachineSetupContext(NEW_SETUP);
+    expect(ROLLOUT.reads).toBe(1);
+    expect(ctx.multiplexRoute).toBeNull();
+    expect(ctx.legacyMachine).toBeNull();
+    expect(ctx.inventoryReason).toBe(ROLLOUT_UNAVAILABLE_MESSAGE);
+  });
+
+  it("OFF keeps an EXISTING xCell Pur block's route: the rollout is not even read and the offer stays", async () => {
+    signIn("studio-one", "pract-a");
+    HISTORY.value = true; ROLLOUT.value = "off"; existingPurBlock();
+    const ctx = await actions.loadMachineSetupContext(EXISTING);
+    expect(ROLLOUT.reads).toBe(0);
+    expect(ctx.legacyMachine).not.toBeNull();
+    expect(ctx.inventoryReason).not.toBe(ROLLOUT_UNAVAILABLE_MESSAGE);
+  });
+
+  it("an ERROR keeps an EXISTING xCell Pur block's route: nothing is refused or withheld", async () => {
+    signIn("studio-one", "pract-a");
+    HISTORY.value = true; ROLLOUT.value = "error"; existingPurBlock();
+    const ctx = await actions.loadMachineSetupContext(EXISTING);
+    expect(ROLLOUT.reads).toBe(0);
+    expect(ctx.legacyMachine).not.toBeNull();
+    expect(ctx.inventoryReason).not.toBe(ROLLOUT_UNAVAILABLE_MESSAGE);
+  });
+
+  it("OFF for a NEW setup hides the MultiPlex route (and reads the rollout once)", async () => {
+    signIn("studio-one", "pract-a");
+    HISTORY.value = true; ROLLOUT.value = "off";
+    const ctx = await actions.loadMachineSetupContext(NEW_SETUP);
+    expect(ROLLOUT.reads).toBe(1);
+    expect(ctx.multiplexRoute).toBeNull();
+    expect(ctx.inventoryReason).not.toBe(ROLLOUT_UNAVAILABLE_MESSAGE);
+  });
+
+  it("a studio with NO legacy history makes no rollout read and keeps its own reason, whatever the rollout says (outage blast radius)", async () => {
+    signIn("studio-one", "pract-a");
+    for (const v of ["error", "off", "on"] as const) {
+      HISTORY.value = false; ROLLOUT.value = v; ROLLOUT.reads = 0;
+      const ctx = await actions.loadMachineSetupContext(NEW_SETUP);
+      expect(ROLLOUT.reads, v).toBe(0);
+      expect(ctx.legacyMachine, v).toBeNull();
+      expect(ctx.multiplexRoute, v).toBeNull();
+      expect(ctx.inventoryReason, v).not.toBe(ROLLOUT_UNAVAILABLE_MESSAGE);
+    }
   });
 });
