@@ -204,17 +204,30 @@ test.describe("B. staff books, the practitioner charts (HON-45)", () => {
     // says what WILL happen (client has an email, appointment is not a consultation), and says it will NOT when aftercare is not configured.
     const note = inviteePage.getByTestId("finish-auto-postcare-note");
     await expect(note).toHaveCount(0);
-    await sql("update public.studios set postcare_delivery_mode='auto_on_complete', postcare_aftercare_text=null where id=$1", [seed.studioId]);
+    const [svc] = await sql<{ id: string; modality: string | null }>(
+      "select sv.id, sv.modality from public.services sv join public.appointments a on a.service_id=sv.id where a.id=$1 and a.studio_id=$2",
+      [appointmentId, seed.studioId],
+    );
+    const [studioBefore] = await sql<{ t: string | null }>("select postcare_aftercare_text as t from public.studios where id=$1", [seed.studioId]);
+    await sql("update public.studios set postcare_delivery_mode='auto_on_complete', postcare_aftercare_text='Keep the area clean and dry.' where id=$1", [seed.studioId]);
     try {
+      // This journey's service is a CONSULTATION (the send skips those), so the page must say it will not send even with aftercare set.
+      expect(svc.modality).toBe("consultation");
       await inviteePage.reload();
       await expect(note).toHaveAttribute("data-auto-postcare", "will_not_send", { timeout: T });
       await expect(note).not.toContainText("will be sent automatically");
-      await sql("update public.studios set postcare_aftercare_text='Keep the area clean and dry.' where id=$1", [seed.studioId]);
+      // Same studio, same client with an email, but a treatment service: now the line promises the send.
+      await sql("update public.services set modality='electrolysis' where id=$1 and studio_id=$2", [svc.id, seed.studioId]);
       await inviteePage.reload();
       await expect(note).toHaveAttribute("data-auto-postcare", "will_send", { timeout: T });
       await expect(note).toContainText("Charging is separate");
+      // And with aftercare text removed it stops promising.
+      await sql("update public.studios set postcare_aftercare_text=null where id=$1", [seed.studioId]);
+      await inviteePage.reload();
+      await expect(note).toHaveAttribute("data-auto-postcare", "will_not_send", { timeout: T });
     } finally {
-      await sql("update public.studios set postcare_delivery_mode='manual' where id=$1", [seed.studioId]);
+      await sql("update public.services set modality=$3 where id=$1 and studio_id=$2", [svc.id, seed.studioId, svc.modality]);
+      await sql("update public.studios set postcare_delivery_mode='manual', postcare_aftercare_text=$2 where id=$1", [seed.studioId, studioBefore.t]);
     }
     await inviteePage.reload();
     await expect(note).toHaveCount(0);
