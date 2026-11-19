@@ -246,6 +246,8 @@ export function MachineFirstSetupConnected({
   const [refreshFailedAfterSave, setRefreshFailedAfterSave] = useState(false);
   const [refusedAfterSave, setRefusedAfterSave] = useState<"access" | "unavailable" | null>(null);
   const [state, setState] = useState<"idle" | "loading" | "failed">("idle");
+  // A hook: called here, before any early return, never conditionally. Read by the one-choice preselect below.
+  const isNewView = useChartingView() === "new";
 
   const open = useCallback(async () => {
     setState("loading");
@@ -629,7 +631,6 @@ export function MachineFirstSetupConnected({
   // THE ONE-CHOICE PRESELECT: New view only, a NEW area only, and only when nothing else would choose (no saved unit, no client-last, no
   // remembered machine, nothing held; the panel also ignores it when a restored or remembered-unavailable selection exists). Read once at mount by the panel's initial state, so a
   // later view switch or re-render never changes a selection. A display default: it saves nothing.
-  const isNewView = useChartingView() === "new";
   const onlyChoice =
     isNewView && !hold && !hasSaved && !blockId && !newAreaLast && !autoRemembered && ctx.scope
       ? preselectOnlyChoice(selectableDevices(ctx.scope, ctx.devices, ctx.catalogue.length > 0 ? ctx.catalogue : undefined), ctx.legacyMachine !== null)
