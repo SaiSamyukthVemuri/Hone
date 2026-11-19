@@ -61,7 +61,7 @@ import {
 import { createClient } from "@/lib/supabase/server";
 import { CHARTING_VIEW_STUDIOS_ENV } from "@/lib/charting/view-preference";
 import { chartingViewForPage } from "@/lib/charting/page-view";
-import { NewViewOnlyStep } from "@/components/charting-view-context";
+import { NewViewHint, NewViewOnlyStep } from "@/components/charting-view-context";
 import { ChartingViewShell, ChartingViewToggle, ChartingVisitSummary } from "@/components/charting-view-shell";
 import { buildVisitSummary } from "@/lib/charting/visit-summary";
 import { loadPreviousVisitNote } from "@/lib/sessions/previous-visit-note";
@@ -633,6 +633,7 @@ export default async function SessionDetailPage({
             startedAtIso={session.started_at}
           />
         </div>
+        <NewViewHint testId="new-view-subtitle">Chart each area, then review the visit.</NewViewHint>
         {/* PR #199 (Chloe iPad retest): the inline line under the
             title is the ONLY performer surface. The separate
             "Performed by" card/dropdown is gone; this line carries a
