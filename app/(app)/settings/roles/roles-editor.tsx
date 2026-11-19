@@ -244,13 +244,23 @@ export function RolesEditor(props: RolesEditorProps) {
     if (seq !== reviewSeq.current) return; // the draft changed (or the review was closed) while the core was answering
     if (r.ok) {
       reviewedEdits.current = edits;
-      setReviewChoices(storedChoices(saved, edits));
+      // The saved-choice summary comes from the server, read at the version this preview describes, never from this page's local state.
+      setReviewChoices((r.preview.choices ?? []) as StoredChoice[]);
       setReviewData(r.preview);
     } else {
       // A refused preview (unexpected, unavailable, a per-key refusal): leave the review, KEEP the draft, say why, and let the owner try again.
       leaveReview();
       handleError(r.error);
+      // The policy moved since this page loaded it: take the fresh saved state, with this owner's own choices kept on top, and ask for a new review.
+      if (r.error.code === "stale_version") await adoptFreshSaved();
     }
+  }
+  async function adoptFreshSaved() {
+    const fresh = await readBack();
+    if (!fresh.ok) return;
+    setSaved(fresh.state.policies);
+    setReviewed(fresh.state.reviewed);
+    setDrafts((current) => rebaseDrafts(current, saved, fresh.state.policies));
   }
   function leaveReview() {
     setReviewing(false);
@@ -1213,17 +1223,6 @@ function ReasonField({ id, value, onChange, required }: { id: string; value: str
 }
 
 type StoredChoice = { role: Role; key: string; label: string; from: Scope | null; to: Scope };
-const CHOICE_LABEL = new Map<string, string>((CATALOG as readonly PermissionDef[]).map((d) => [d.key, d.label]));
-function storedChoices(saved: Record<Role, StudioPolicy>, edits: Partial<Record<Role, Record<string, Scope>>>): StoredChoice[] {
-  const out: StoredChoice[] = [];
-  for (const r of ROLES) {
-    for (const [key, to] of Object.entries(edits[r] ?? {})) {
-      out.push({ role: r, key, label: CHOICE_LABEL.get(key) ?? key, from: saved[r].values[key] ?? null, to });
-    }
-  }
-  return out;
-}
-
 function ReviewPanel({
   data,
   choices,
@@ -1506,7 +1505,7 @@ function PreviewPanel({
   onCancel: () => void;
 }) {
   const id = useId();
-  const empty = data.roles.every((r) => r.diff.changes.length === 0 && r.diff.fixedNarrowings.length === 0 && r.storedRemoved.length === 0);
+  const empty = data.roles.every((r) => r.diff.changes.length === 0 && r.diff.fixedNarrowings.length === 0 && r.storedRemoved.length === 0) && (data.choices ?? []).length === 0;
   return (
     <section data-testid="roles-preview" aria-label={kind === "adopt" ? "Review new defaults" : "Reset to defaults"} className="flex min-w-0 flex-col gap-3 rounded-lg border border-neutral-300 p-4 dark:border-neutral-700">
       <h3 className="text-base font-medium">
@@ -1536,6 +1535,19 @@ function PreviewPanel({
             )}
           </div>
         ))
+      )}
+      {(data.choices ?? []).length > 0 && (
+        <div data-testid="preview-saved-choices" className="rounded-md bg-neutral-50 p-2 text-sm text-neutral-800 dark:bg-neutral-900 dark:text-neutral-200">
+          <p className="font-medium">Your saved choices that change:</p>
+          <p className="text-xs text-neutral-600 dark:text-neutral-400">These are choices stored with your settings. While a setting is not released, changing a choice does not change anyone&rsquo;s access today.</p>
+          <ul className="mt-1 list-disc pl-5">
+            {(data.choices ?? []).map((c) => (
+              <li key={`${c.role}:${c.key}`} data-choice-change={`${c.role}:${c.key}`} className="break-words">
+                {ROLE_LABELS[c.role]}s, {c.label}: {c.from ? `${scopeText(c.from)} to ${scopeText(c.to)}` : `set to ${scopeText(c.to)}`}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
       {sensitiveCount > 0 && (
         <label className="flex items-start gap-2 text-sm font-medium">
