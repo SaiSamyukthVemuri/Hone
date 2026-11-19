@@ -108,6 +108,37 @@ describe("the signed payment_intent.payment_failed event", () => {
     const [, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit & { headers: Record<string, string> }];
     expect(() => Stripe.webhooks.constructEvent(init.body as string, init.headers["stripe-signature"], "whsec_other")).toThrow();
   });
+  it("sends nothing to a non-local origin, whatever way it is spelled", async () => {
+    const err = (await caught()) as unknown as { payment_intent: { id: string } };
+    for (const origin of [
+      "https://example.com", "http://example.com:3000", "http://127.0.0.1.evil.test", "http://localhost.evil.test",
+      "http://user:pw@127.0.0.1:3000", "https://127.0.0.1:3000", "http://10.0.0.5:3000", "http://[::1]:3000", "not a url",
+    ]) {
+      const fetchImpl = vi.fn(async () => new Response("ok", { status: 200 }));
+      const out = await fakeMod.deliverFakePaymentFailedWebhook(RUN, err.payment_intent.id, ACCOUNT, {
+        fetchImpl: fetchImpl as unknown as typeof fetch, origin, secret: SECRET,
+      });
+      expect(out, origin).toEqual({ delivered: false, status: null });
+      expect(fetchImpl, origin).not.toHaveBeenCalled();
+    }
+    // and the same holds when the origin comes from the environment
+    process.env.HONE_E2E_APP_ORIGIN = "https://example.com";
+    const fetchImpl = vi.fn(async () => new Response("ok", { status: 200 }));
+    expect(await fakeMod.deliverFakePaymentFailedWebhook(RUN, err.payment_intent.id, ACCOUNT, { fetchImpl: fetchImpl as unknown as typeof fetch, secret: SECRET }))
+      .toEqual({ delivered: false, status: null });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    delete process.env.HONE_E2E_APP_ORIGIN;
+  });
+  it("sends to 127.0.0.1 and localhost", async () => {
+    const err = (await caught()) as unknown as { payment_intent: { id: string } };
+    for (const origin of ["http://127.0.0.1:3000", "http://localhost:3000"]) {
+      const fetchImpl = vi.fn(async () => new Response("ok", { status: 200 }));
+      expect(await fakeMod.deliverFakePaymentFailedWebhook(RUN, err.payment_intent.id, ACCOUNT, {
+        fetchImpl: fetchImpl as unknown as typeof fetch, origin, secret: SECRET,
+      })).toEqual({ delivered: true, status: 200 });
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    }
+  });
   it("sends nothing without an origin (ordinary unit tests have no PORT) and records no money effect of its own", async () => {
     const err = (await caught()) as unknown as { payment_intent: { id: string } };
     const before = fakeMod.getFakeStripeCalls(RUN).length;

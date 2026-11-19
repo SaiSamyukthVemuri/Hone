@@ -3,6 +3,7 @@ import Stripe from "stripe";
 import {
   appendFakeCallToLedger,
   readFakeOutcome,
+  readFakeWebhookTiming,
 } from "@/lib/stripe/e2e-fake-ledger";
 
 // Minimal, server-only FAKE Stripe processor for the disposable E2E stack. It
@@ -142,6 +143,17 @@ export function buildFakePaymentFailedEvent(pi: FakePi, stripeAccount: string | 
 
 // Posts the event, signed with the lane's webhook secret, to the application's own webhook route. A deferred send, after the
 // charge call has returned and the executor has bound the intent to its attempt, which is the order real Stripe produces.
+function localOriginOrNull(raw: string): string | null {
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== "http:" || (u.hostname !== "127.0.0.1" && u.hostname !== "localhost")) return null;
+    if (u.username || u.password) return null;
+    return u.origin;
+  } catch {
+    return null;
+  }
+}
+
 export async function deliverFakePaymentFailedWebhook(
   run: string,
   piId: string,
@@ -153,11 +165,13 @@ export async function deliverFakePaymentFailedWebhook(
   if (!pi || !secret) return { delivered: false, status: null };
   const payload = JSON.stringify(buildFakePaymentFailedEvent(pi, stripeAccount));
   const signature = Stripe.webhooks.generateTestHeaderString({ payload, secret });
-  // The lane's server sets PORT; with neither an origin nor a PORT (an ordinary unit test) nothing is sent.
-  const origin =
+  // The lane's server sets PORT; with neither an origin nor a PORT (an ordinary unit test) nothing is sent. A signed event
+  // is only ever sent to this machine: any origin whose hostname is not exactly 127.0.0.1 or localhost sends nothing.
+  const candidate =
     deps.origin ??
     process.env.HONE_E2E_APP_ORIGIN ??
-    (process.env.PORT ? `http://127.0.0.1:${process.env.PORT}` : null);
+    (process.env.PORT && /^[0-9]{2,5}$/.test(process.env.PORT) ? `http://127.0.0.1:${process.env.PORT}` : null);
+  const origin = candidate ? localOriginOrNull(candidate) : null;
   if (!origin) return { delivered: false, status: null };
   try {
     const res = await (deps.fetchImpl ?? fetch)(`${origin}/api/stripe/webhook`, {
@@ -238,7 +252,7 @@ type CreatePiParams = {
 };
 type RequestOpts = { stripeAccount?: string; idempotencyKey?: string } | undefined;
 
-function synthPaymentIntent(run: string, opts: RequestOpts, params?: CreatePiParams) {
+async function synthPaymentIntent(run: string, opts: RequestOpts, params?: CreatePiParams) {
   const key = opts?.idempotencyKey ?? null;
   const existing = idempotentResult(run, key);
   // A replay is a create whose idempotency key already produced an effect. It
@@ -300,10 +314,16 @@ function synthPaymentIntent(run: string, opts: RequestOpts, params?: CreatePiPar
     if (declined) {
       // Only the FIRST send of a key is an effect: Stripe replays the same 402 for a repeated key and sends one event.
       if (!existing) {
-        const t = setTimeout(() => {
-          void deliverFakePaymentFailedWebhook(run, id, opts?.stripeAccount ?? null);
-        }, FAKE_WEBHOOK_DELAY_MS);
-        if (typeof t === "object" && t && "unref" in t) (t as { unref: () => void }).unref();
+        if (readFakeWebhookTiming(run) === "before_return") {
+          // The event is delivered and processed before this call returns, so it reaches the application ahead of the
+          // intent being bound to its attempt.
+          await deliverFakePaymentFailedWebhook(run, id, opts?.stripeAccount ?? null);
+        } else {
+          const t = setTimeout(() => {
+            void deliverFakePaymentFailedWebhook(run, id, opts?.stripeAccount ?? null);
+          }, FAKE_WEBHOOK_DELAY_MS);
+          if (typeof t === "object" && t && "unref" in t) (t as { unref: () => void }).unref();
+        }
       }
       throw new Stripe.errors.StripeCardError({
         type: "card_error",
