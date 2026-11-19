@@ -2,17 +2,17 @@ import { readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { isRepoMax } from "./helpers/migration-state";
 
-// SOURCE CONTRACT for 0358 (per-number SMS consent evidence and the phone-wide STOP list). Behaviour is proven against a
+// SOURCE CONTRACT for 0362 (per-number SMS consent evidence and the phone-wide STOP list). Behaviour is proven against a
 // real database in tests/db/sms-number-consent-evidence.db.test.ts; this file pins the shape that must not drift and the
 // route wiring that makes a STOP remembered per number.
 
-const FILE = "supabase/migrations/0358_sms_number_consent_evidence.sql";
+const FILE = "supabase/migrations/0362_sms_number_consent_evidence.sql";
 const sql = readFileSync(FILE, "utf8");
 const route = readFileSync("app/api/twilio/inbound-sms/route.ts", "utf8");
 
-describe("0358 source contract", () => {
+describe("0362 source contract", () => {
   it("is the current maximum migration", () => {
-    expect(isRepoMax("0358")).toBe(true);
+    expect(isRepoMax("0362")).toBe(true);
   });
 
   it("opens its own transaction and arms lock_timeout inside it", () => {
@@ -60,7 +60,7 @@ describe("0358 source contract", () => {
   });
 });
 
-describe("0358 pins the rules a quiet edit would weaken", () => {
+describe("0362 pins the rules a quiet edit would weaken", () => {
   const helper = sql.slice(sql.indexOf("create function public.waitlist_sms_number_consented"), sql.indexOf("revoke execute on function public.record_sms_number_opt_out"));
   const backfill = sql.slice(sql.indexOf("-- 5. Backfill"), sql.indexOf("-- 6. A waitlist consent needs a number"));
 
@@ -109,10 +109,10 @@ describe("the STOP route remembers the number", () => {
 });
 
 describe("no later migration redefines the evidence tables silently", () => {
-  it("only 0358 creates them", () => {
+  it("only 0362 creates them", () => {
     const creators = readdirSync("supabase/migrations").filter((f) =>
       /create table public\.sms_number_(consents|opt_outs)/.test(readFileSync(`supabase/migrations/${f}`, "utf8")),
     );
-    expect(creators).toEqual(["0358_sms_number_consent_evidence.sql"]);
+    expect(creators).toEqual(["0362_sms_number_consent_evidence.sql"]);
   });
 });

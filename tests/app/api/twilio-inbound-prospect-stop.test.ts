@@ -41,7 +41,7 @@ const h: {
   failClientScan: boolean;
   failProspectScan: boolean;
   failProspectSuppress: boolean;
-  /** The phone-wide number list (0358): what the route asked to remember, and whether the write fails. */
+  /** The phone-wide number list (0362): what the route asked to remember, and whether the write fails. */
   numberOptOuts: Array<{ phone: string; source: string }>;
   failNumberOptOut: boolean;
 } = {
@@ -470,7 +470,7 @@ describe("MSG-007 success-path log privacy", () => {
   });
 });
 
-// A STOP is about a NUMBER (0358). The rows are stamped as before; the number is ALSO remembered in the phone-wide list,
+// A STOP is about a NUMBER (0362). The rows are stamped as before; the number is ALSO remembered in the phone-wide list,
 // whether or not any row holds it.
 describe("a STOP is remembered per number", () => {
   it("a number no client or prospect holds is still recorded, and the sender gets the STOP reply", async () => {

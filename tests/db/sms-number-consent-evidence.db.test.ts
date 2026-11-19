@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { adminQuery, adminTx, asRole, closePool, seedStudio } from "@/tests/db/helpers/harness";
 
 // ===========================================================================
-// PER-NUMBER SMS CONSENT EVIDENCE AND THE PHONE-WIDE STOP LIST (migration 0358)
+// PER-NUMBER SMS CONSENT EVIDENCE AND THE PHONE-WIDE STOP LIST (migration 0362)
 // ===========================================================================
 //
 // Proven against a real database: evidence is written by the triggers for every
@@ -256,7 +256,7 @@ describe("the waitlist consent check is VALIDATED, not just added", () => {
 // The two statements are read out of the migration file itself (never a copy). Rows are seeded with triggers off
 // (session_replication_role = replica) so only the backfill can have produced the evidence; everything is rolled back.
 // ---------------------------------------------------------------------------
-const migration = readFileSync("supabase/migrations/0358_sms_number_consent_evidence.sql", "utf8");
+const migration = readFileSync("supabase/migrations/0362_sms_number_consent_evidence.sql", "utf8");
 const backfillSection = migration.slice(migration.indexOf("-- 5. Backfill"), migration.indexOf("-- 6. A waitlist consent needs a number"));
 const backfill = backfillSection
   .split("\n")
