@@ -1108,6 +1108,7 @@ export function BlockSetupForm({
     draftAreas: block ? [] : draft.areas.map(formatAreaLabel),
     unsaved: dirty,
     attention: error !== null,
+    activity: `${JSON.stringify(draft)}|${chosenModel ?? ""}`,
   });
   // THE LEAVE PROMPT is the app's own dialog (never a native confirm).
   const [leaveAttempt, setLeaveAttempt] = useState<{ proceed: () => void; dirtyCount: number } | null>(null);

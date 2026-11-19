@@ -616,7 +616,15 @@ function MachineFirstSetupPanelImpl({
   // device does not have is not a choice, and offering it only to have the
   // capture refused two layers down is worse than not offering it.
   // The existing xCell choice (and a saved legacy block) has no unit, so it reports the picker's own label for it.
-  const chosenModel = legacyChosen ? (legacyMachine?.label ?? null) : chosen ? machineModelLabel(chosen.profile) : null;
+  // A SAVED unit that is retired or unavailable is still this area's identity (the panel keeps it through savedUnavailable), so it is
+  // reported by the name the panel itself shows for it, not as no machine.
+  const chosenModel = legacyChosen
+    ? (legacyMachine?.label ?? null)
+    : chosen
+      ? machineModelLabel(chosen.profile)
+      : Boolean(blockId) && savedDeviceId !== null
+        ? `${unitNames[savedDeviceId] ?? "Saved machine"} (no longer available)`
+        : null;
   useEffect(() => {
     onChosenModel?.(chosenModel);
   }, [onChosenModel, chosenModel]);

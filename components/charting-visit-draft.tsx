@@ -18,9 +18,14 @@ export type VisitDraftReport = {
   unsaved: boolean;
   /** The form is showing an error from its last attempt. */
   attention: boolean;
+  /**
+   * An opaque token that changes whenever the practitioner EDITS this form (any change to what the form holds, even one that leaves the summary
+   * values the same). It orders the forms by recency; it is never shown.
+   */
+  activity?: string;
 };
 
-/** A report as the provider keeps it: `seq` orders reports by when each last CHANGED (most recent edit or focus change wins). */
+/** A report as the provider keeps it: `seq` orders reports by when each last had an EDIT (its activity token changed). */
 type Kept = VisitDraftReport & { seq: number };
 
 export type VisitDraftSummary = {
@@ -69,8 +74,10 @@ export function ChartingVisitDraftProvider({ children }: { children: ReactNode }
         return next;
       }
       const old = prev[id];
-      if (old && old.machine === r.machine && old.unsaved === r.unsaved && old.attention === r.attention && old.draftAreas.join("\u0001") === r.draftAreas.join("\u0001")) return prev;
-      return { ...prev, [id]: { ...r, seq: ++seqRef.current } };
+      if (old && old.machine === r.machine && old.unsaved === r.unsaved && old.attention === r.attention && old.activity === r.activity && old.draftAreas.join("\u0001") === r.draftAreas.join("\u0001")) return prev;
+      // Recency moves on EDITS (the activity token), not on whether the summary values changed, so editing A again after B is A's turn.
+      const seq = old && old.activity === r.activity ? old.seq : ++seqRef.current;
+      return { ...prev, [id]: { ...r, seq } };
     });
   }, []);
   const summary = useMemo(() => summarizeReports(reports), [reports]);
