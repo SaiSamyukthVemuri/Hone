@@ -1210,10 +1210,6 @@ export async function createTreatmentAreaWithEntryAction(
   if (!practitioner.active) {
     return { ok: false, error: "Inactive practitioners cannot log sessions." };
   }
-  // CHART REDESIGN (W2): with the rollout on for this studio, drop every field that does not belong to the submitted mode BEFORE anything is shaped.
-  // Off (or an unreadable rollout): the input is used exactly as it always was.
-  const redesignOn = await chartingRolloutFor(studio.id);
-  if (redesignOn) input = scopeToMode(input);
   // A pre-write refusal is a refusal, not an unknown outcome (Codex, #860
   // 4305702526). Full reasoning below the catch — it is kept there so this
   // assertion stays inside the 1400-character window PR #286's lineage guard
@@ -1247,6 +1243,11 @@ export async function createTreatmentAreaWithEntryAction(
   // anonymous session, and a redirect PROPAGATES BY THROWING - swallowing it
   // to report a "definitive failure" would leave her on a dead form instead of
   // the login page.
+
+  // CHART REDESIGN (W2): with the rollout on for this studio, drop every field that does not belong to the submitted mode BEFORE anything is shaped.
+  // Off (or an unreadable rollout): the input is used exactly as it always was.
+  const redesignOn = await chartingRolloutFor(studio.id);
+  if (redesignOn) input = scopeToMode(input);
 
   const areaCheck = normalizeStructuredArea({
     primaryArea: input.primaryArea ?? null,
