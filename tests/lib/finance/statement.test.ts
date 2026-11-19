@@ -257,18 +257,24 @@ describe("group 7: copy guard", () => {
 });
 
 describe("group 8: the 'amount Hone can see' limitation tracks MONEY_FORMS", () => {
-  it("names exactly the not_checked tables of MONEY_FORMS, sorted and de-duplicated", () => {
-    const names = [...new Set(MONEY_FORMS.filter((f) => f.handling === "not_checked").map((f) => f.table))].sort();
-    expect(names.length).toBeGreaterThan(0);
+  it("names, in plain words, every kind of record behind the not_checked tables, and never a table name", () => {
+    const tables = [...new Set(MONEY_FORMS.filter((f) => f.handling === "not_checked").map((f) => f.table))].sort();
+    expect(tables.length).toBeGreaterThan(0);
     const line = copy.unreadableFormsLine(MONEY_FORMS);
-    for (const n of names) expect(line).toContain(n);
-    expect(line.endsWith(names.join(", ") + ".")).toBe(true);
+    for (const t of tables) {
+      expect(copy.UNREADABLE_PLAIN_KINDS[t], `${t} needs a plain-word name`).toBeTruthy();
+      expect(line).toContain(copy.UNREADABLE_PLAIN_KINDS[t]);
+      expect(line).not.toContain(t);
+    }
+    expect(line).not.toMatch(/stripe_|appointment_payments|_/);
     expect(line).toMatch(/shows the money Hone can see/);
+    expect(line).toMatch(/cannot see these kinds of payment record yet/);
   });
-  it("changes when a form is added or removed (no hard-coded list)", () => {
+  it("changes when a form is added or removed (no hard-coded list), and an undescribed table still gets a plain sentence", () => {
     const more = [...MONEY_FORMS, { table: "brand_new_table", form: "x", handling: "not_checked", note: "" }];
-    expect(copy.unreadableFormsLine(more)).toContain("brand_new_table");
-    expect(copy.unreadableFormsLine(MONEY_FORMS.filter((f) => f.handling !== "not_checked"))).not.toContain("stripe_refunds");
+    expect(copy.unreadableFormsLine(more)).toContain(copy.UNREADABLE_FALLBACK_KIND);
+    expect(copy.unreadableFormsLine(more)).not.toContain("brand_new_table");
+    expect(copy.unreadableFormsLine(MONEY_FORMS.filter((f) => f.handling !== "not_checked"))).not.toContain("disputes");
   });
   it("the view builds the line from MONEY_FORMS", () => {
     expect(read("app/(app)/financials/statement/statement-view.tsx")).toContain("unreadableFormsLine(MONEY_FORMS)");

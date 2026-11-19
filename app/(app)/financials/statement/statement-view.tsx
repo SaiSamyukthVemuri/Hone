@@ -94,6 +94,13 @@ export function StatementView({ view, currency, format }: { view: View; currency
           Visits that started {view.startLocal} to the end of the month, in the studio&apos;s timezone ({view.timezone}). Currency: {currency?.toUpperCase()}.
         </p>
         <p className="text-sm text-fg">{STATEMENT_FRAMING}</p>
+        <form method="get" action="/financials/statement" className="flex items-end gap-2 text-sm" aria-label="Choose a month">
+          <label className="flex flex-col gap-1 text-fg">
+            Month
+            <input type="month" name="month" defaultValue={view.month} className="rounded border border-line px-2 py-1" />
+          </label>
+          <button type="submit" className="rounded border border-line px-3 py-1">Show month</button>
+        </form>
         <nav className="flex gap-4 text-sm" aria-label="Month">
           <Link href={`/financials/statement?month=${prev}`} className="underline">Previous month</Link>
           <Link href={`/financials/statement?month=${next}`} className="underline">Next month</Link>

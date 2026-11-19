@@ -28,8 +28,8 @@ async function render(opts: { names?: Record<string, string>; startsAt?: string 
   const statement = buildStatement({
     studioCurrency: "cad",
     appointments: [
-      { id: "a1", practitionerId: "p-1", startsAt: opts.startsAt ?? "2026-12-01T03:30:00Z" },
-      { id: "a2", practitionerId: "p-2", startsAt: "2026-11-10T15:00:00Z" },
+      { id: "a1", practitionerId: "pract-one", startsAt: opts.startsAt ?? "2026-12-01T03:30:00Z" },
+      { id: "a2", practitionerId: "pract-two", startsAt: "2026-11-10T15:00:00Z" },
     ],
     cardRows: [
       row({}),
@@ -55,7 +55,7 @@ async function render(opts: { names?: Record<string, string>; startsAt?: string 
         endLocalExclusive: "2026-12-01",
         statement,
         visitInfo: { a1: { clientName: "Synthetic Client", serviceName: "Service" }, a2: { clientName: "Other Client", serviceName: null } },
-        practitionerNames: opts.names ?? { "p-1": "Pat Synthetic", "p-2": "Sam Example" },
+        practitionerNames: opts.names ?? { "pract-one": "Pat Synthetic", "pract-two": "Robin Example" },
       },
       currency: "cad",
       format: fmt,
@@ -67,14 +67,14 @@ describe("review finding: practitioner subtotals are named, never an array index
   it("shows each practitioner's display name and never 'Practitioner 1'", async () => {
     const html = await render({});
     expect(html).toContain("Pat Synthetic");
-    expect(html).toContain("Sam Example");
+    expect(html).toContain("Robin Example");
     expect(html).not.toMatch(/Practitioner \d/);
   });
   it("a name that could not be read gets the explained fallback, and the id is never printed", async () => {
     const html = await render({ names: {} });
     expect(html).toContain(STATEMENT_UNNAMED_PRACTITIONER);
-    expect(html).not.toContain("p-1");
-    expect(html).not.toContain("p-2");
+    expect(html).not.toContain("pract-one");
+    expect(html).not.toContain("pract-two");
   });
 });
 
@@ -123,6 +123,17 @@ describe("review finding: visit dates are in the studio's timezone", () => {
   it("the view never slices an ISO string for a date", () => {
     const src = readFileSync("app/(app)/financials/statement/statement-view.tsx", "utf8");
     expect(src).not.toMatch(/startsAt\.slice|\.slice\(0, 10\)/);
+  });
+});
+
+describe("month picker", () => {
+  it("renders one GET form with a single month field preset to the viewed month, plus the previous/next links", async () => {
+    const html = await render({});
+    expect(html).toMatch(/<form [^>]*action="\/financials\/statement"[^>]*method="get"|<form [^>]*method="get"[^>]*action="\/financials\/statement"/);
+    expect(html).toMatch(/<input [^>]*type="month"[^>]*name="month"[^>]*value="2026-11"|<input [^>]*type="month"[^>]*value="2026-11"[^>]*name="month"/);
+    expect(html).toContain("Previous month");
+    expect(html).toContain("Next month");
+    expect((html.match(/<form/g) ?? []).length).toBe(1);
   });
 });
 
