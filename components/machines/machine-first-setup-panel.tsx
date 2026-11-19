@@ -3,6 +3,7 @@
 import { machineModelLabel } from "@/lib/machines/display-name";
 import { recordedSummary } from "@/lib/machines/recorded-count";
 import { useEffect, useRef, useState } from "react";
+import type { Preselect } from "@/lib/machines/preselect";
 import { LEGACY_MACHINE_OPTION_VALUE } from "@/lib/machines/legacy-machine";
 
 import { unsupportedModes } from "@/lib/machines/unsupported-modes";
@@ -134,6 +135,8 @@ export type MachineFirstSetupPanelProps = {
   inventoryReason?: string | null;
   /** Reports the display label of the unit's model now chosen (machineModelLabel), or null. DISPLAY ONLY: read by the New view's "This visit" card. */
   onChosenModel?: (model: string | null) => void;
+  /** The ONE-CHOICE PRESELECT (New view): used only as the INITIAL state, and only when no restored, remembered or unavailable selection applies. */
+  onlyChoice?: Preselect;
   /** The treatment block being charted. Entry is impossible without it. */
   blockId?: string | null;
   /**
@@ -344,6 +347,7 @@ function MachineFirstSetupPanelImpl({
   persistence = NO_PERSISTENCE,
   inventoryReason = null,
   onChosenModel,
+  onlyChoice = null,
   blockId = null,
   canManageMachines = false,
   priorSetup = [],
@@ -426,7 +430,7 @@ function MachineFirstSetupPanelImpl({
     // keeps all three facts straight; see lib/machines/selection-state.
     unavailableSelection
       ? unusableSelection(unavailableSelection.deviceId, unavailableSelection.reason)
-      : initialSelection(initialDeviceId),
+      : initialSelection(initialDeviceId ?? (onlyChoice?.kind === "native" ? onlyChoice.deviceId : null)),
   );
   const deviceId = selection.selected;
   const selectionNote = selection.note;
@@ -442,7 +446,7 @@ function MachineFirstSetupPanelImpl({
   const [savedAgainst, setSavedAgainst] = useState<{ list: typeof recordedSetup } | null>(null);
   const selectRef = useRef<HTMLSelectElement | null>(null);
   const [legacyChosen, setLegacyChosen] = useState(
-    initialLegacyChosen && legacyMachine !== null,
+    (initialLegacyChosen || (onlyChoice?.kind === "legacy" && !restored && !unavailableSelection && initialDeviceId == null)) && legacyMachine !== null,
   );
   // The route applies only beside the existing xCell choice (never a second xCell on its own).
   const xcellRouted = multiplexRoute !== null && legacyMachine !== null;
