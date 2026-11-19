@@ -30,11 +30,13 @@ const people = [{ id: "p2", name: "Alex Practitioner", email: "alex@example.test
 const failing = async () => ({ ok: false as const, error: { code: "unavailable" as const } });
 const previewOk = async () => ({ ok: true as const, preview: { version: 3, roles: [] } });
 const emptyDiff = { changes: [], fixedNarrowings: [], widened: 0, narrowed: 0, newlyEnabledSensitive: 0 };
+// The saved-choice summary now comes from the SERVER (read at the previewed version), so a preview carries `choices`.
+const serverChoices = [{ role: "practitioner" as const, key: KEY, label: "Cancel appointments", from: "studio" as const, to: "off" as const }];
 const effectivePreview = {
   ok: true as const,
-  preview: { version: 7, roles: [{ role: "practitioner" as const, diff: { ...emptyDiff, narrowed: 1 }, people: [{ id: "p2", name: "Alex Practitioner", state: "active" as const }], count: 1, storedRemoved: [] }] },
+  preview: { version: 7, roles: [{ role: "practitioner" as const, diff: { ...emptyDiff, narrowed: 1 }, people: [{ id: "p2", name: "Alex Practitioner", state: "active" as const }], count: 1, storedRemoved: [] }], choices: serverChoices },
 };
-const inertPreview = { ok: true as const, preview: { version: 7, roles: [{ role: "practitioner" as const, diff: emptyDiff, people: [], count: 0, storedRemoved: [] }] } };
+const inertPreview = { ok: true as const, preview: { version: 7, roles: [{ role: "practitioner" as const, diff: emptyDiff, people: [], count: 0, storedRemoved: [] }], choices: serverChoices } };
 
 let root: ReturnType<typeof createRoot> | null = null;
 let host: HTMLElement | null = null;
@@ -182,5 +184,28 @@ describe("Codex 4582593018: change and revert is not an unsaved change", () => {
     await act(async () => radio("studio").click());
     expect(button(/^Review changes/)!.disabled).toBe(true);
     expect(previewSave).not.toHaveBeenCalled();
+  });
+});
+
+describe("Codex 4584603808: a preview the server refuses as stale never shows a summary built on old saved values", () => {
+  it("stale_version: no review panel, the draft is kept, the page takes the fresh saved state and the owner can review again", async () => {
+    // Another owner saved appt.cancel = own for the practitioner while this tab was open; our edit is Off.
+    const fresh = {
+      ...state,
+      version: 8,
+      policies: { ...state.policies, practitioner: { ...state.policies.practitioner, values: { ...state.policies.practitioner.values, [KEY]: "own" } } },
+    };
+    const previewSave = vi.fn().mockResolvedValueOnce({ ok: false as const, error: { code: "stale_version" as const } }).mockResolvedValueOnce(inertPreview);
+    const reload = vi.fn().mockResolvedValue({ ok: true as const, state: fresh });
+    await mount({ previewSave, reload });
+    await chooseOff();
+    await review();
+    expect(q('[data-testid="roles-review"]')).toBeNull();
+    expect(reload).toHaveBeenCalled();
+    expect(q('[role="alert"]')?.textContent ?? "").not.toBe("");
+    expect((q(`input[type="radio"][name$="-practitioner-${KEY}"][value="off"]`) as HTMLInputElement).checked).toBe(true); // the owner's own edit is kept
+    expect(button(/^Review changes/)!.disabled).toBe(false);
+    await review(); // a fresh review is possible
+    expect(q('[data-testid="roles-review"]')).toBeTruthy();
   });
 });
