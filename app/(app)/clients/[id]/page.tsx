@@ -1007,12 +1007,23 @@ export default async function ClientCheatSheetPage({
               </p>
             )}
           </div>
-          <Link
-            href={`/clients/${client.id}/edit`}
-            className="shrink-0 rounded-md border border-neutral-300 px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
-          >
-            Edit
-          </Link>
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {/* Owner only (the statements are an owner screen): this client's full payment history, read-only. */}
+            {isOwner && (
+              <Link
+                href={`/financials/statements/${encodeURIComponent(client.id)}?view=history`}
+                className="shrink-0 rounded-md border border-neutral-300 px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
+              >
+                View statement
+              </Link>
+            )}
+            <Link
+              href={`/clients/${client.id}/edit`}
+              className="shrink-0 rounded-md border border-neutral-300 px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
+            >
+              Edit
+            </Link>
+          </div>
         </div>
         <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
           {/* RESP-CLIENT-INTAKE-01 RANK 1. The entry to charting, and the

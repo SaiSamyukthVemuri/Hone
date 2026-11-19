@@ -99,9 +99,11 @@ import { AreaPicker } from "@/components/area-picker";
 import { isCanonicalTreatmentArea } from "@/lib/sessions/area-validation";
 import { BodyMapAreaPicker } from "@/components/body-map-area-picker";
 import { MultiAreaEditor } from "@/components/multi-area-editor";
-import { resolveBlockAreas, type BlockArea } from "@/lib/sessions/block-areas";
+import { formatAreaLabel, resolveBlockAreas, type BlockArea } from "@/lib/sessions/block-areas";
 import { useRetainedState } from "@/components/charting-state-provider";
-import { NewViewStep, useChartingView } from "@/components/charting-view-context";
+import { NewViewHint, NewViewStep, useChartingView } from "@/components/charting-view-context"
+import { useReportVisitDraft, visitMachineLine } from "@/components/charting-visit-draft";
+import { useRegisterVisitSaver, type SaveOutcome } from "@/components/charting-visit-save";
 import { DraftRegistryProvider, useDraftRegistryState, useReportDraft } from "@/components/machines/draft-registry";
 import { MachineFirstSetupConnected } from "@/components/machines/machine-first-setup-connected";
 import { ProbePicker } from "@/components/probe-picker";
@@ -133,6 +135,15 @@ import {
   updateTreatmentAreaWithEntryAction,
 } from "./block-actions";
 import { SectionLabel } from "@/components/ui/section-label";
+
+/**
+ * SAVE VISIT: has this area nothing to save? A change in the draft, a machine the practitioner PICKED (`identityDirty`; a one-choice preselect
+ * is display only and never counts), a shown error from the last attempt, or an unresolved create (its retry carries the same key) each mean there
+ * is something to do. Pure so the terms are pinned directly.
+ */
+export function blockNothingToSave(s: { dirty: boolean; identityDirty: boolean; error: string | null; saveUnresolved: boolean }): boolean {
+  return !s.dirty && !s.identityDirty && s.error === null && !s.saveUnresolved;
+}
 
 /** Whether the leave guard is armed: anything unsaved arms it, whether or not a request is in flight; only a CONFIRMED save releases it. */
 export function leaveGuardArmed(dirty: boolean, saveConfirmed: boolean): boolean {
@@ -1100,6 +1111,15 @@ export function BlockSetupForm({
   const dirty =
     JSON.stringify(draft) !== initialDraftJson.current ||
     draftRegistry.view.anyDraft;
+  // WHAT THE NEW VIEW'S "This visit" CARD SHOWS ABOUT THIS FORM. Display only: the form reports and never reads it back.
+  const [chosenModel, setChosenModel] = useState<string | null>(null);
+  useReportVisitDraft(`block:${block?.id ?? "new"}`, {
+    machine: visitMachineLine(chosenModel, draft.machineFrequency),
+    draftAreas: block ? [] : draft.areas.map(formatAreaLabel),
+    unsaved: dirty,
+    attention: error !== null,
+    activity: `${JSON.stringify(draft)}|${chosenModel ?? ""}`,
+  });
   // THE LEAVE PROMPT is the app's own dialog (never a native confirm).
   const [leaveAttempt, setLeaveAttempt] = useState<{ proceed: () => void; dirtyCount: number } | null>(null);
   // ARMED UNTIL A SAVE IS CONFIRMED. It used to be disarmed while "Saving…" was pending, so closing, reloading or
@@ -1450,15 +1470,20 @@ export function BlockSetupForm({
     // commit first, the identity write would then be refused as stale, and the choice would be lost silently.
     identityWritePending;
 
-  function submit() {
-    if (saveBlocked) return;
+  // THE ONE SAVE. The Save button and Save visit both run it, so there is ONE path (same gates, same retry key). It returns what happened on
+  // EVERY exit: a validation refusal, a hold, a refusal, a lost answer or a save, never a promise that stays pending.
+  function runSave(): Promise<SaveOutcome> {
+    if (saveBlocked) return Promise.resolve({ status: "held", message: "This area is not ready to save." });
+    const fail = (message: string): Promise<SaveOutcome> => {
+      setError(message);
+      return Promise.resolve({ status: "failed", message });
+    };
     setError(null);
     // THE MACHINE DRAFT BLOCKS THE SAVE WHEN IT IS HALF-FINISHED, and says
     // which group and why. Skipping it would discard numbers she typed;
     // sending it would be refused by the command after a round trip.
     if (machineDraft?.blocking) {
-      setError(machineDraft.blocking);
-      return;
+      return fail(machineDraft.blocking);
     }
     // AN UNRESOLVED INITIAL SAVE IS RETRYABLE, and this is where it used to be
     // refused: the form returned early and told her to reload the chart,
@@ -1467,8 +1492,7 @@ export function BlockSetupForm({
     const el = draft.energyLevel.trim();
     const elNum = el === "" ? null : Number(el);
     if (el !== "" && (!Number.isFinite(elNum) || (elNum as number) < 0)) {
-      setError("Energy level must be a non-negative number.");
-      return;
+      return fail("Energy level must be a non-negative number.");
     }
     const min = draft.minutes.trim();
     const minutesNum = min === "" ? null : parseInt(min, 10);
@@ -1478,13 +1502,11 @@ export function BlockSetupForm({
         (minutesNum as number) < 0 ||
         (minutesNum as number) > MINUTES_MAX)
     ) {
-      setError(`Minutes must be between 0 and ${MINUTES_MAX}.`);
-      return;
+      return fail(`Minutes must be between 0 and ${MINUTES_MAX}.`);
     }
     const trimmedArea = draft.primaryArea.trim();
     if (trimmedArea.length > PRIMARY_AREA_MAX) {
-      setError(`Treatment area must be ${PRIMARY_AREA_MAX} characters or fewer.`);
-      return;
+      return fail(`Treatment area must be ${PRIMARY_AREA_MAX} characters or fewer.`);
     }
     // PR 2: explicit custom-area intent. A non-empty area that isn't canonical
     // can only come from the picker's "Other" free-text path, so flag it so the
@@ -1493,8 +1515,7 @@ export function BlockSetupForm({
       trimmedArea.length > 0 && !isCanonicalTreatmentArea(trimmedArea);
     const trimmedDetail = draft.customAreaDetail.trim();
     if (trimmedDetail.length > CUSTOM_AREA_DETAIL_MAX) {
-      setError(`Specifics must be ${CUSTOM_AREA_DETAIL_MAX} characters or fewer.`);
-      return;
+      return fail(`Specifics must be ${CUSTOM_AREA_DETAIL_MAX} characters or fewer.`);
     }
 
     // Readings (the first pass). All optional except pulse, which defaults
@@ -1506,7 +1527,7 @@ export function BlockSetupForm({
       max: 100,
       label: "Thermolysis intensity",
     });
-    if (!tInt.ok) return setError(tInt.error);
+    if (!tInt.ok) return fail(tInt.error);
     // PR #165. Drop int: true so the parser preserves fractional
     // seconds like 0.15 / 0.2. Migration 0071 widened the DB
     // column to numeric so the round trip is now lossless.
@@ -1514,30 +1535,30 @@ export function BlockSetupForm({
       min: 0,
       label: "Thermolysis duration",
     });
-    if (!tDur.ok) return setError(tDur.error);
+    if (!tDur.ok) return fail(tDur.error);
     const gMa = parseOptionalNumber(draft.galvanicMa, {
       min: 0,
       label: "Galvanic mA",
     });
-    if (!gMa.ok) return setError(gMa.error);
+    if (!gMa.ok) return fail(gMa.error);
     const gDur = parseOptionalNumber(draft.galvanicDurationSeconds, {
       int: true,
       min: 0,
       label: "Galvanic duration",
     });
-    if (!gDur.ok) return setError(gDur.error);
+    if (!gDur.ok) return fail(gDur.error);
     // galvanic_intensity_percent is retired: not parsed, not validated, not sent.
     const ul = parseOptionalNumber(draft.unitsOfLye, {
       min: 0,
       label: "Units of lye",
     });
-    if (!ul.ok) return setError(ul.error);
+    if (!ul.ok) return fail(ul.error);
     const hairs = parseOptionalNumber(draft.hairsTreated, {
       int: true,
       min: 0,
       label: "Total hairs treated",
     });
-    if (!hairs.ok) return setError(hairs.error);
+    if (!hairs.ok) return fail(hairs.error);
     const pulseStr = draft.pulseCount.trim();
     const pulseCount = pulseStr === "" ? null : parseInt(pulseStr, 10);
     // Pulse delay is only recorded when multiple pulses were done. When
@@ -1547,7 +1568,7 @@ export function BlockSetupForm({
     if (pulseCount != null && pulseCount > 1 && draft.pulseDelay.trim() !== "") {
       const pd = Number(draft.pulseDelay);
       if (!Number.isFinite(pd) || pd < PULSE_DELAY_MIN || pd > PULSE_DELAY_MAX) {
-        return setError("Pulse delay must be between 0.03 and 1.90 seconds.");
+        return fail("Pulse delay must be between 0.03 and 1.90 seconds.");
       }
       pulseDelaySeconds = Math.round(pd * 100) / 100;
     }
@@ -1600,7 +1621,7 @@ export function BlockSetupForm({
     // the catch would mint a SECOND retry key for the same save, which is the
     // defect the key exists to prevent.
     const attachedSetup = machineSetupForSave();
-    startTransition(async () => {
+    return (async (): Promise<SaveOutcome> => {
       if (block) {
         // Edit: update the treatment area + its first entry's readings.
         // block_name/block_notes are preserved (the combined action never
@@ -1642,11 +1663,12 @@ export function BlockSetupForm({
         }));
         if (!res.ok) {
           setError(res.error);
-          return;
+          // A LOST ANSWER (the transport failed) is unknown, not "did not save": the edit may have committed.
+          return res.error === EDIT_SAVE_UNCONFIRMED ? { status: "unknown" } : { status: "failed", message: res.error };
         }
         setSaveConfirmed(true);
         closeForm();
-        return;
+        return { status: "saved" };
       }
       // Create: one save → treatment area + first entry. block_name omitted
       // (null), the section title falls back to the area, then a muted
@@ -1718,17 +1740,19 @@ export function BlockSetupForm({
           createAttemptRef.current.unresolved = true;
           setError(res.error);
           setSaveUnresolved(true);
+          return { status: "unknown" };
         } else if (createAttemptRef.current.unresolved) {
           // A REFUSAL AFTER A LOST ANSWER IS NOT "NOTHING COMMITTED". The first attempt may have saved; the key stays so the
           // next retry cannot mint a second area, and the practitioner is told to reload and look.
           setError(CREATE_REFUSED_AFTER_LOST_ANSWER);
           setSaveUnresolved(true);
+          return { status: "unknown" };
         } else {
           setError(res.error);
           bareCreateKeyRef.current = null;
           createAttemptRef.current = null;
+          return { status: "failed", message: res.error };
         }
-        return;
       }
       bareCreateKeyRef.current = null;
       createAttemptRef.current = null;
@@ -1739,8 +1763,37 @@ export function BlockSetupForm({
       setSaveUnresolved(false);
       setSaveConfirmed(true);
       closeForm();
+      return { status: "saved" };
+    })();
+  }
+
+  // The button: the same save, inside a transition so `pending` engages (it is part of `saveBlocked`).
+  function submit() {
+    startTransition(async () => {
+      await runSave();
     });
   }
+
+  // SAVE VISIT runs the same save through the same transition. `runSave` itself refuses (held) under every gate in `saveBlocked`, and a
+  // retry after a lost create answer carries the same key, exactly as the button does. Nothing unsaved and no error: no call is made.
+  const saveRootRef = useRef<HTMLDivElement>(null);
+  useRegisterVisitSaver(`block:${block?.id ?? "new"}`, block ? "Treatment area" : "New treatment area", saveRootRef, () => {
+    if (saveBlocked) return Promise.resolve<SaveOutcome>({ status: "held", message: "This area is not ready to save." });
+    // AN EXISTING AREA WITH UNSAVED MACHINE SETTINGS IS HELD: saving the area closes its form, which would unmount the readings entry and
+    // lose what was typed there, and Save visit never drives that entry's own save. The practitioner saves or discards it with its own button first.
+    if (block && draftRegistry.view.anyDraft) {
+      const message = "This area has unsaved machine settings. Save or discard them first, then Save visit.";
+      setError(message); // shown on this section, where the result line sends the practitioner
+      return Promise.resolve<SaveOutcome>({ status: "held", message });
+    }
+    if (blockNothingToSave({ dirty, identityDirty, error, saveUnresolved })) return Promise.resolve<SaveOutcome>({ status: "nothing" });
+    let p!: Promise<SaveOutcome>;
+    startTransition(async () => {
+      p = runSave();
+      await p;
+    });
+    return p;
+  });
 
   function bumpPulse(delta: number) {
     const current = parseInt(draft.pulseCount, 10);
@@ -1988,6 +2041,7 @@ export function BlockSetupForm({
         onMultiplexRoute={setMultiplexRoute}
         onSavedDeviceChange={setWrittenDeviceId}
         onIdentityDraft={block ? undefined : onIdentityDraft}
+        onChosenModel={setChosenModel}
         blockVersion={blockVersion}
         legacyReadingsLocked={legacyDataLocked}
         onBlockVersion={(token) => {
@@ -2072,9 +2126,18 @@ export function BlockSetupForm({
           are. */}
       {isNewView
         ? [
-            <NewViewStep key="step-areas" n={1} title="Areas treated" />,
+            <NewViewStep key="step-areas" n={1} title="Choose areas" />,
+            <NewViewHint key="hint-areas" testId="new-view-hint-areas">
+              One settings block can cover several areas.
+            </NewViewHint>,
             areasSection,
-            <NewViewStep key="step-settings" n={2} title="Treatment settings" />,
+            <NewViewStep key="step-settings" n={2} title="Enter settings" />,
+            // Shown only when a machine really is selected (a saved native unit, or the unit the panel reports).
+            machineKind !== "none" ? (
+              <NewViewHint key="hint-machine" testId="new-view-hint-machine">
+                Your machine is already selected.
+              </NewViewHint>
+            ) : null,
             machineSection,
           ]
         : [machineSection, areasSection]}
@@ -2360,7 +2423,7 @@ export function BlockSetupForm({
         </span>
       </label>
 
-      {isNewView ? <NewViewStep n={3} title="Client response" /> : null}
+      {isNewView ? <NewViewStep n={3} title="Record response" optional /> : null}
 
       {/* PR #279 (migration 0095): numbing record: a factual note of whether
           the client used numbing before treatment. "Not recorded" (NULL) is the
@@ -2636,7 +2699,7 @@ export function BlockSetupForm({
         </p>
       )}
 
-      <div className="flex flex-wrap items-center gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+      <div ref={saveRootRef} className="flex flex-wrap items-center gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
         <button
           type="button"
           onClick={submit}

@@ -221,6 +221,18 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     visibility: "owner",
     priority: 95,
   },
+  {
+    id: "financials-statement",
+    title: "Statements",
+    category: "Navigation",
+    href: "/financials/statement",
+    description: "Visits and money for one month",
+    // Owner-only like Capacity, and advertised under Business. Presentation only: the page and its read refuse any role but owner
+    // before any query, and the money tables are owner-readable only (0254).
+    keywords: ["statements", "monthly statement", "statement", "money statement", "business", "income", "revenue", "payments this month", "month end"],
+    visibility: "owner",
+    priority: 94,
+  },
 
   // --- Record Keeping sections ------------------------------------------
   // Exposure Incidents is deliberately absent; see NON_SEARCHABLE_ROUTES.
@@ -915,6 +927,10 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
   route: string;
   reason: string;
 }> = [
+  {
+    route: "/financials/statements",
+    reason: "The Clients statements screens are new and are not yet reachable from the menu or Global Search; the search entry ships with the menu entry in the navigation change, so a destination is never searchable before it is linkable.",
+  },
   {
     route: "/calendar/check-practitioner",
     reason:

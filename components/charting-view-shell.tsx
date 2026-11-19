@@ -17,6 +17,8 @@ import { useContext, type ReactNode } from "react";
 import { setChartingViewAction } from "@/app/(app)/charting-view-actions";
 import { useChartingViewPreference } from "@/components/use-charting-view-preference";
 import { ChartingViewContext } from "@/components/charting-view-context";
+import { ChartingVisitDraftProvider, useVisitDraftSummary } from "@/components/charting-visit-draft";
+import { ChartingVisitSaveProvider, VisitSaveControl } from "@/components/charting-visit-save";
 import type { ChartingView } from "@/lib/charting/view-preference";
 
 export function ChartingViewShell({
@@ -33,6 +35,8 @@ export function ChartingViewShell({
   const isNew = state.view === "new";
   return (
     <ChartingViewContext.Provider value={state}>
+      <ChartingVisitDraftProvider>
+      <ChartingVisitSaveProvider>
       <div
         data-testid="charting-view-root"
         data-charting-view={state.view}
@@ -52,6 +56,8 @@ export function ChartingViewShell({
           </aside>
         ) : null}
       </div>
+      </ChartingVisitSaveProvider>
+      </ChartingVisitDraftProvider>
     </ChartingViewContext.Provider>
   );
 }
@@ -92,41 +98,90 @@ export function ChartingViewToggle() {
 }
 
 /** "This visit": a read-only summary of values the page already has. It reads and writes nothing. */
+export const VISIT_STEPS: ReadonlyArray<{ label: string; optional?: boolean }> = [
+  { label: "Choose areas" },
+  { label: "Enter settings" },
+  { label: "Record response", optional: true },
+  { label: "Review & finish" },
+  { label: "Session payment" },
+];
+
+export function visitSaveStatus(o: { attention: boolean; unsaved: boolean; savedCount: number }): "Needs attention" | "Not saved yet" | "Saved" {
+  if (o.attention) return "Needs attention";
+  if (o.unsaved || o.savedCount === 0) return "Not saved yet";
+  return "Saved";
+}
+
 export function ChartingVisitSummary({
   clientName,
   kind,
   areas,
   count,
   nextVisitNoteRecorded,
+  paymentStep = true,
 }: {
   clientName: string;
   kind: "electrolysis" | "laser";
   areas: string[];
   count: number;
   nextVisitNoteRecorded: boolean;
+  /** List step 5 (Session payment) only where the page renders the payment card (an eligible owner). */
+  paymentStep?: boolean;
 }) {
   const laser = kind === "laser";
+  const draft = useVisitDraftSummary();
+  const label = "text-xs uppercase tracking-wide text-neutral-500";
   return (
     <section className="rounded-lg border border-neutral-200 p-4 text-sm dark:border-neutral-800">
       <h2 className="text-base font-semibold">This visit</h2>
-      <dl className="mt-3 flex flex-col gap-2">
+      <ol data-testid="visit-steps" className="mt-3 flex flex-col gap-1">
+        {VISIT_STEPS.filter((st) => paymentStep || st.label !== "Session payment").map((st, i) => (
+          <li key={st.label} className="flex items-baseline gap-2">
+            <span aria-hidden="true" className="w-4 text-xs text-neutral-500">
+              {i + 1}
+            </span>
+            <span>{st.label}</span>
+            {st.optional ? <span className="text-xs text-neutral-500">Optional</span> : null}
+          </li>
+        ))}
+      </ol>
+      <dl className="mt-4 flex flex-col gap-2">
         <div>
-          <dt className="text-xs uppercase tracking-wide text-neutral-500">Client</dt>
+          <dt className={label}>Client</dt>
           <dd>{clientName}</dd>
         </div>
+        {!laser ? (
+          <div>
+            <dt className={label}>Machine</dt>
+            <dd data-testid="visit-summary-machine">{draft.machine ?? "None selected"}</dd>
+          </div>
+        ) : null}
+        {!laser ? (
+          <div>
+            <dt className={label}>Areas in draft</dt>
+            <dd data-testid="visit-summary-draft-areas">{draft.draftAreas.length > 0 ? draft.draftAreas.join(", ") : "None selected"}</dd>
+          </div>
+        ) : null}
         <div>
-          <dt className="text-xs uppercase tracking-wide text-neutral-500">{laser ? "Zones treated" : "Areas treated"}</dt>
+          <dt className={label}>{laser ? "Zones treated" : "Areas treated"}</dt>
           <dd>{areas.length > 0 ? areas.join(", ") : "None saved yet"}</dd>
         </div>
         <div>
-          <dt className="text-xs uppercase tracking-wide text-neutral-500">{laser ? "Passes saved" : "Settings blocks saved"}</dt>
+          <dt className={label}>{laser ? "Passes saved" : "Saved blocks"}</dt>
           <dd>{count}</dd>
         </div>
+        {!laser ? (
+          <div>
+            <dt className={label}>Save status</dt>
+            <dd data-testid="visit-summary-status">{visitSaveStatus({ attention: draft.attention, unsaved: draft.unsaved, savedCount: count })}</dd>
+          </div>
+        ) : null}
         <div>
-          <dt className="text-xs uppercase tracking-wide text-neutral-500">Next-visit note</dt>
+          <dt className={label}>Next-visit note</dt>
           <dd>{nextVisitNoteRecorded ? "Recorded" : "Not recorded"}</dd>
         </div>
       </dl>
+      <VisitSaveControl />
     </section>
   );
 }

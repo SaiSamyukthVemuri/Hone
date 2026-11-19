@@ -499,7 +499,7 @@ describe("the create path's `saveUnresolved` is monotonic too", () => {
    */
   const call = code.indexOf("createTreatmentAreaWithEntryAction({");
   const from = call === -1 ? -1 : code.indexOf("if (!res.ok) {", call);
-  const branch = from === -1 ? "" : code.slice(from, code.indexOf("return;", from));
+  const branch = from === -1 ? "" : code.slice(from, code.indexOf("setPendingSaveKey(null)", from));
 
   /** The EDIT call's branch, kept only to prove the two are not confused. */
   const editCall = code.indexOf("updateTreatmentAreaWithEntryAction({");
