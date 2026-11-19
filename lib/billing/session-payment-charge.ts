@@ -1873,6 +1873,22 @@ export async function runSessionPaymentCharge(args: {
         // An attached actionable/unknown intent is not proof that no money can
         // move. Its partial error shape is not sufficient to bind new identity;
         // keep the claim unresolved for verified retrieve/webhook reconciliation.
+        //
+        // BIND THE INTENT ID, NOTHING ELSE. The row has to carry the id Stripe returned or the decline event that finishes
+        // it can never match: with the id unstored the webhook handler waits for a binding that never comes and Stripe
+        // redelivers forever, so an ordinary card decline stayed pending_stripe. This is the same write a RETURNED
+        // non-terminal intent already gets (retainNonterminalPaymentIntent): only the existing pending claim is updated,
+        // only to this id and status, and a different id or a concurrent terminal writer is never overwritten. It writes
+        // no failure and cancels nothing; the critical alert below stays.
+        if (piId) {
+          await retainNonterminalPaymentIntent({
+            attemptId: attemptRow.id,
+            studioId: attemptRow.studio_id,
+            clientId: attemptRow.client_id,
+            pi: { id: piId, status: piStatus } as unknown as Stripe.PaymentIntent,
+            expectedPaymentIntentId: attemptRow.stripe_payment_intent_id,
+          });
+        }
         await recordOpsAlert({ severity: "critical", event: "session_payment_needs_manual_review",
           message: "Stripe returned an error with an intent that is not confirmed canceled. No terminal failure was recorded.",
           studioId: attemptRow.studio_id, clientId: attemptRow.client_id,
