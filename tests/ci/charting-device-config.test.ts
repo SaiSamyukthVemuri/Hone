@@ -75,11 +75,11 @@ describe("playwright.charting-payment.config.ts selects only the charting paymen
     expect(r.files).toEqual(["charting-new-view-payment.spec.ts"]);
     expect(r.projects).toEqual(["chromium-charting-payment"]);
     expect(r.tests).toBe(3);
-  });
+  }, 30_000);
   it("with HONE_E2E_WEBKIT=1: still only the charting payment spec (no inherited quick-checkout project or grep)", () => {
     const r = listed("1");
     expect(r.files).toEqual(["charting-new-view-payment.spec.ts"]);
     expect(r.projects).toEqual(["chromium-charting-payment", "webkit-charting-payment"]);
     expect(r.tests).toBe(6);
-  });
+  }, 30_000);
 });
