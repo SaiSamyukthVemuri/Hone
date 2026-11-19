@@ -98,6 +98,10 @@ describe("the panel itself: a preselect never beats a remembered, restored or re
     expect(r.value).not.toBe("live1");
     expect(r.value).toBe("");
   });
+  it("a retired remembered unit with NO initialDeviceId still blocks the native preselect (the retired layer alone)", () => {
+    const r = panel({ onlyChoice: NATIVE, unavailableSelection: { deviceId: "gone1", reason: "retired" }, unitNames: { gone1: "Old unit" } });
+    expect(r.value).toBe("");
+  });
   it("control: the legacy preselect applies when nothing else chooses", () => {
     expect(panel({ onlyChoice: { kind: "legacy" }, legacyMachine: LEGACY }, []).value).toBe("legacy:xcell");
   });
