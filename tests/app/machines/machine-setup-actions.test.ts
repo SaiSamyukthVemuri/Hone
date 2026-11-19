@@ -390,6 +390,78 @@ describe("registration refuses a profile the server does not offer", () => {
   });
 });
 
+describe("the studio's one xCell: registration of the xCell Pur unit (HON-71)", () => {
+  const PUR = "dectro-apilus:xcell-pur";
+  const published = (modes: string[]) => modes.map((m) => ({ mode_key: m, machine_profile_version: 1 }));
+  const purRow = (over: Record<string, unknown> = {}) => ({
+    id: "22222222-2222-4222-8222-222222222222", studio_id: "studio-fett", machine_profile_id: PUR, machine_profile_version: 1,
+    display_name: "Dectro xCell", installed_options: [], retired_at: null, ...over,
+  });
+  const wrote = () => DB.calls.some((c) => c.fn === "register_studio_machine");
+
+  it("registers it through the existing owner command once its contract is published and the studio has none", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = [];
+    DB.rpcResult = "33333333-3333-4333-8333-333333333333";
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r).toMatchObject({ ok: true, machineId: "33333333-3333-4333-8333-333333333333" });
+    expect(wrote()).toBe(true);
+  });
+
+  it("UNPUBLISHED stays unregisterable: no contract rows, no write", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = [];
+    DB.rowsFor.studio_machines = [];
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/No published field contract/);
+    expect(wrote()).toBe(false);
+  });
+
+  it("a SECOND registration is refused with a clear message, and nothing is written", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = [purRow()];
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "xCell second room" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/already has its xCell registered/);
+    expect(wrote()).toBe(false);
+  });
+
+  it("an unreadable inventory refuses too (it cannot be shown that none exists)", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.errorFor.studio_machines = { message: "connection reset" };
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r.ok).toBe(false);
+    expect(wrote()).toBe(false);
+  });
+
+  it("a RETIRED xCell does not block a new one (the inventory read excludes retired units)", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = []; // listStudioMachines filters retired units in SQL
+    DB.rpcResult = "44444444-4444-4444-8444-444444444444";
+    expect((await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" })).ok).toBe(true);
+  });
+
+  it("the guard is specific to the xCell: another model's registration is not blocked by an existing xCell", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["flash", "microflash", "multiplex", "blend", "omniblend", "multiblend", "electrolysis"]).map((r) => ({ ...r, machine_profile_version: 3 }));
+    DB.rowsFor.studio_machines = [purRow()];
+    DB.rpcResult = "55555555-5555-4555-8555-555555555555";
+    const r = await actions.registerMachineAction({ profileId: "dectro-apilus:senior-3g", displayName: "Room 2" });
+    expect(r.ok).toBe(true);
+  });
+
+  it("the owner check stays in the database command, and the settings page itself shows only the owner notice to anyone else", () => {
+    expect(CODE).toContain("registerStudioMachine(db");
+    const page = readFileSync(path.resolve(__dirname, "../../../app/(app)/settings/machines/page.tsx"), "utf8");
+    expect(page).toMatch(/role !== "owner"[\s\S]{0,120}OwnerOnlyNotice/);
+  });
+});
+
 describe("the prior-setup read is scoped to the ROUTE CLIENT, not the studio", () => {
   // The defect this replaced: latestRecordedSetup took only a studio id, so in
   // a studio with more than one client the panel showed whichever block was

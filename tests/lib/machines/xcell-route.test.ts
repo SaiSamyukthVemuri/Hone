@@ -58,10 +58,21 @@ describe("one xCell, one name", () => {
       expect(machineModelLabel(p), p.profileId).toBe(`${p.manufacturer} ${p.model}${p.variant ? ` (${p.variant})` : ""}`);
     }
   });
-  it("is not in the list an owner registers from: the unit is created by the reviewed publication step", () => {
-    const ids = registrableProfiles(MACHINE_CATALOGUE).map((p) => p.profileId);
-    expect(ids).not.toContain(XCELL_PUR_PROFILE_ID);
-    expect(ids.length).toBe(MACHINE_CATALOGUE.length - 1);
+  it("is offered for registration while the studio has no live xCell unit, and only then (one xCell, no duplicate)", () => {
+    const none = registrableProfiles(MACHINE_CATALOGUE, []).map((p) => p.profileId);
+    expect(none).toContain(XCELL_PUR_PROFILE_ID);
+    expect(none.length).toBe(MACHINE_CATALOGUE.length);
+    const has = registrableProfiles(MACHINE_CATALOGUE, [{ profileId: XCELL_PUR_PROFILE_ID }]).map((p) => p.profileId);
+    expect(has).not.toContain(XCELL_PUR_PROFILE_ID);
+    expect(has.length).toBe(MACHINE_CATALOGUE.length - 1);
+    // another model's unit does not hide it
+    expect(registrableProfiles(MACHINE_CATALOGUE, [{ profileId: "dectro-apilus:senior-3g" }]).map((p) => p.profileId)).toContain(XCELL_PUR_PROFILE_ID);
+  });
+  it("the settings page builds its list from the PUBLISHED models and the studio's live units", async () => {
+    const { readFileSync } = await import("node:fs");
+    const page = readFileSync("app/(app)/settings/machines/page.tsx", "utf8");
+    expect(page).toMatch(/registrableProfiles\(\s*listableProfiles\(/);
+    expect(page).toMatch(/listed\.ok \? listed\.value : \[\]/);
   });
   it("no user-facing file composes a model name by hand any more", async () => {
     const { readFileSync } = await import("node:fs");

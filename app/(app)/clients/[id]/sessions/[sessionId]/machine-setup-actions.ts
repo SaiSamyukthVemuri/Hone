@@ -75,7 +75,7 @@ import {
   inventoryUnavailable,
   listStudioDevices,
 } from "@/lib/machines/studio-devices";
-import { machinesByIds, recordBlockMachineIdentity } from "@/lib/machines/machine-queries";
+import { listStudioMachines, machinesByIds, recordBlockMachineIdentity } from "@/lib/machines/machine-queries";
 import {
   assertSessionForClient,
   SessionLineageError,
@@ -795,6 +795,16 @@ export async function registerMachineAction(input: {
         `registered until its contract is published, because its settings could ` +
         `not then be recorded.`,
     };
+  }
+
+  // ONE xCell (HON-71): a studio has one xCell Pur unit. A second registration is refused with a clear message, and a failed read refuses
+  // too (it cannot be shown that none exists). The owner check itself stays in the database command.
+  if (profile.profileId === XCELL_PUR_PROFILE_ID) {
+    const existing = await listStudioMachines(db, scope.studioId);
+    if (!existing.ok) return { ok: false, code: "rejected", error: existing.error };
+    if (existing.value.some((m) => m.profileId === XCELL_PUR_PROFILE_ID)) {
+      return { ok: false, code: "rejected", error: "This studio already has its xCell registered. Use it, or take it out of service before registering another." };
+    }
   }
 
   const made = await registerStudioMachine(db, {

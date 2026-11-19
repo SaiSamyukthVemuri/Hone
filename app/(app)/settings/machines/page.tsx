@@ -34,12 +34,14 @@ export default async function MachineSettingsPage() {
     if (!res.ok) checkFailed = true;
     published.set(`${p.profileId}@${p.version}`, res.ok ? res.value : null);
   }
-  const models = registrableProfiles(listableProfiles(active, (p) => published.get(`${p.profileId}@${p.version}`) ?? null)).map((p) => ({
+  const listed = await listStudioMachines(db, studio.id);
+  const models = registrableProfiles(
+    listableProfiles(active, (p) => published.get(`${p.profileId}@${p.version}`) ?? null),
+    listed.ok ? listed.value : [],
+  ).map((p) => ({
     profileId: p.profileId,
     label: machineModelLabel(p),
   }));
-
-  const listed = await listStudioMachines(db, studio.id);
 
   async function register(input: {
     profileId: string;

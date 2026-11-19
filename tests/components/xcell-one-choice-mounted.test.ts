@@ -52,10 +52,26 @@ describe("the charting selector offers ONE xCell", () => {
     expect([...machineSelect().options].map((o) => o.value)).not.toContain("unit-1");
     expect(visibleOutsideProvenance()).not.toMatch(/xCell Pur/i);
   });
-  it("without a route nothing changes: the unit is just a unit", () => {
+  it("without a route there is STILL one xCell: the existing choice is offered and the unit is not listed beside it", () => {
     mount({ multiplexRoute: null });
     expect(modeSelect()).toBeNull();
+    const labels = [...machineSelect().options].map((o) => o.textContent ?? "");
+    expect(labels.filter((l) => /xcell/i.test(l))).toEqual(["Dectro xCell"]);
+    expect([...machineSelect().options].map((o) => o.value)).not.toContain("unit-1");
+  });
+  it("a second xCell unit (should one ever exist) is not listed either", () => {
+    mount({ devices: [UNIT, { ...UNIT, deviceId: "unit-2", displayName: "Dectro xCell 2" }] });
+    expect([...machineSelect().options].map((o) => o.textContent ?? "").filter((l) => /xcell/i.test(l))).toEqual(["Dectro xCell"]);
+  });
+  it("a studio with the unit and no existing xCell history sees exactly one xCell: the unit", () => {
+    mount({ legacyMachine: null, multiplexRoute: null });
+    expect([...machineSelect().options].map((o) => o.textContent ?? "").filter((l) => /xcell/i.test(l)).length).toBe(1);
     expect([...machineSelect().options].map((o) => o.value)).toContain("unit-1");
+  });
+  it("other machines are listed as before beside the xCell", () => {
+    const other: StudioDevice = { deviceId: "unit-3g", studioId: "studio-synthetic", profileId: "dectro-apilus:senior-3g", profileVersion: 3, displayName: "Room 2", installedOptions: [], retiredAt: null };
+    mount({ devices: [UNIT, other] });
+    expect([...machineSelect().options].map((o) => o.value)).toContain("unit-3g");
   });
 });
 
@@ -151,20 +167,38 @@ describe("the panel acts on the host form's MultiPlex request (there is no secon
 });
 
 describe("Settings > Machines shows no second xCell", () => {
-  it("the register list (built exactly as the page builds it, every row published) offers no xCell Pur", async () => {
+  async function registerModels(publishedFor: (p: { profileId: string; modes: { key: string; availability: string }[] }) => string[], live: { profileId: string }[]) {
     const { activeProfiles } = await import("@/lib/machines/profile-contract");
     const { listableProfiles } = await import("@/lib/machines/listable-profiles");
     const { machineModelLabel, registrableProfiles } = await import("@/lib/machines/display-name");
     const { renderToStaticMarkup } = await import("react-dom/server");
     const { MachineRegisterForm } = await import("@/components/machines/machine-register-form");
-    const published = (p: { modes: { key: string; availability: string }[] }) => p.modes.filter((m) => m.availability === "active").map((m) => m.key);
-    const listable = listableProfiles(activeProfiles(MACHINE_CATALOGUE), published as never);
-    // The Pur IS listable by the generic rule (active, published): only the one-xCell rule removes it.
-    expect(listable.map((p) => p.profileId)).toContain("dectro-apilus:xcell-pur");
-    const models = registrableProfiles(listable).map((p) => ({ profileId: p.profileId, label: machineModelLabel(p) }));
+    const listable = listableProfiles(activeProfiles(MACHINE_CATALOGUE), publishedFor as never);
+    const models = registrableProfiles(listable, live).map((p) => ({ profileId: p.profileId, label: machineModelLabel(p) }));
     const html = renderToStaticMarkup(createElement(MachineRegisterForm, { models, register: async () => ({ ok: true }) } as never));
-    expect(models.map((m) => m.profileId)).not.toContain("dectro-apilus:xcell-pur");
+    return { models, html };
+  }
+  const allPublished = (p: { modes: { key: string; availability: string }[] }) => p.modes.filter((m) => m.availability === "active").map((m) => m.key);
+  it("PUBLISHED and none registered: the owner is offered ONE model, labelled 'Dectro xCell' (never 'xCell Pur')", async () => {
+    const { models, html } = await registerModels(allPublished, []);
+    expect(models.filter((m) => m.profileId === "dectro-apilus:xcell-pur").map((m) => m.label)).toEqual(["Dectro xCell"]);
+    expect(html).toContain("Dectro xCell");
     expect(html).not.toMatch(/xCell Pur/i);
+  });
+  it("UNPUBLISHED: stays hidden", async () => {
+    const { models } = await registerModels((p) => (p.profileId === "dectro-apilus:xcell-pur" ? [] : allPublished(p)), []);
+    expect(models.map((m) => m.profileId)).not.toContain("dectro-apilus:xcell-pur");
+    expect(models.length).toBeGreaterThan(0); // the other models are unaffected
+  });
+  it("a studio that already has its xCell unit is not offered a second", async () => {
+    const { models } = await registerModels(allPublished, [{ profileId: "dectro-apilus:xcell-pur" }]);
+    expect(models.map((m) => m.profileId)).not.toContain("dectro-apilus:xcell-pur");
+  });
+  it("existing 3G models are offered exactly as before", async () => {
+    const { models } = await registerModels(allPublished, []);
+    const ids = models.map((m) => m.profileId);
+    expect(ids).toContain("dectro-apilus:senior-3g");
+    expect(ids).toContain("dectro-apilus:junior-3g");
   });
   it("a registered unit is listed by its own name, which the publication step sets to the studio's xCell", async () => {
     const { readFileSync } = await import("node:fs");

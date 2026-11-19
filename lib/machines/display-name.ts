@@ -18,9 +18,14 @@ export function machineModelLabel(p: Named): string {
 }
 
 /**
- * Models an owner may register by hand. The xCell Pur unit is created once, by the reviewed publication step, as the owner's existing
- * xCell: offering it here would be a second, separately registerable "xCell".
+ * Models an owner may register by hand, from `profiles` (the caller passes only models whose contract is PUBLISHED, so an unpublished xCell
+ * Pur stays hidden). The xCell Pur is the studio's one xCell (HON-71): it is offered, under the label "Dectro xCell", only while the studio
+ * has no live unit of it, so a second registration is never offered. `registerMachineAction` refuses a duplicate as well.
  */
-export function registrableProfiles<T extends Pick<MachineProfile, "profileId">>(profiles: readonly T[]): T[] {
-  return profiles.filter((p) => p.profileId !== XCELL_PUR_PROFILE_ID);
+export function registrableProfiles<T extends Pick<MachineProfile, "profileId">>(
+  profiles: readonly T[],
+  liveUnits: ReadonlyArray<{ profileId: string }>,
+): T[] {
+  const hasXcellUnit = liveUnits.some((u) => u.profileId === XCELL_PUR_PROFILE_ID);
+  return profiles.filter((p) => !(p.profileId === XCELL_PUR_PROFILE_ID && hasXcellUnit));
 }
