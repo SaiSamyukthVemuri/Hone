@@ -157,6 +157,31 @@ describe("Find a client: the read", () => {
   });
 });
 
+const loadLastVisitDates = async (...args: Parameters<typeof import("@/lib/finance/statement-directory-read").loadLastVisitDates>) => {
+  const m = await import("@/lib/finance/statement-directory-read");
+  return m.loadLastVisitDates(...args);
+};
+
+describe("last visit dates for same-name clients", () => {
+  const studioTz = { id: "s1", timezone: "America/Toronto" };
+  it("refuses a non-owner before any query", async () => {
+    const { client, calls } = recording({});
+    expect(await loadLastVisitDates({ role: "practitioner" }, studioTz, ["c1"], client)).toEqual({ access: "refused" });
+    expect(calls).toEqual([]);
+  });
+  it("reads each client's latest completed visit as a studio-local date, null when none, scoped by studio and client", async () => {
+    const { client, calls } = recording({ appointments: [ok([{ starts_at: "2026-11-04T02:30:00Z" }]), ok([])] });
+    const r = await loadLastVisitDates({ role: "owner" }, studioTz, ["c1", "c2"], client);
+    expect(r).toEqual({ access: "granted", ok: true, lastVisit: { c1: "2026-11-03", c2: null } }); // 02:30Z is the evening of the 3rd in Toronto
+    expect(calls.filter((c) => c.method === "eq").map((c) => c.args.join("="))).toEqual(["studio_id=s1", "client_id=c1", "status=completed", "studio_id=s1", "client_id=c2", "status=completed"]);
+  });
+  it("beyond the cap, or on any error, it is not-ok: never a partial answer", async () => {
+    const many = Array.from({ length: 41 }, (_, i) => `c${i}`);
+    expect(await loadLastVisitDates({ role: "owner" }, studioTz, many, recording({}).client)).toEqual({ access: "granted", ok: false });
+    expect(await loadLastVisitDates({ role: "owner" }, studioTz, ["c1"], recording({ appointments: { data: null, error: { message: "x" } } }).client)).toEqual({ access: "granted", ok: false });
+  });
+});
+
 describe("source guard: read-only, no service role, no Stripe, no mail", () => {
   const strip = (f: string) => readFileSync(path.join(ROOT, f), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
   for (const f of ["lib/finance/statement-money-read.ts", "lib/finance/statement-directory-read.ts"]) {
@@ -176,7 +201,7 @@ describe("source guard: read-only, no service role, no Stripe, no mail", () => {
   });
   it("the owner gate is the first statement of both exported loaders", () => {
     const code = strip("lib/finance/statement-directory-read.ts");
-    for (const fn of ["loadStatementDirectory", "loadFinderClients"]) {
+    for (const fn of ["loadStatementDirectory", "loadFinderClients", "loadLastVisitDates"]) {
       const body = code.slice(code.indexOf(`export async function ${fn}`));
       const open = body.indexOf("): Promise<");
       const afterSig = body.slice(body.indexOf("{\n", open) + 2);

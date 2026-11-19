@@ -3,7 +3,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { clientDisplayName } from "@/lib/clients/identity";
-import { utcInstantFromLocal } from "@/lib/booking/tz";
+import { localDateString, utcInstantFromLocal } from "@/lib/booking/tz";
 import { readInChunks } from "@/lib/dashboard/in-chunks";
 import { createClient } from "@/lib/supabase/server";
 import type { Studio } from "@/lib/types/database";
@@ -114,4 +114,41 @@ export async function loadFinderClients(
     afterId = rows[rows.length - 1].id;
   }
   return { access: "granted", ok: true, clients };
+}
+
+// ---------------------------------------------------------------------------
+// Last visit dates, ONLY for clients that share a name with another (so the finder can tell them apart by something that is not identifying).
+// ---------------------------------------------------------------------------
+export const LAST_VISIT_MAX_CLIENTS = 40;
+
+export type LastVisitsRead =
+  | { access: "refused" }
+  | { access: "granted"; ok: false }
+  | { access: "granted"; ok: true; lastVisit: Record<string, string | null> };
+
+/** The latest completed visit's studio-local date for each given client (null when none). One bounded query per client; more than the cap, or any failure, is not-ok (the screen then says the detail is unavailable). */
+export async function loadLastVisitDates(
+  practitioner: { readonly role: string },
+  studio: Pick<Studio, "id" | "timezone">,
+  clientIds: readonly string[],
+  supabaseClient: SupabaseClient | undefined = undefined,
+): Promise<LastVisitsRead> {
+  if (practitioner.role !== "owner") return { access: "refused" };
+  if (clientIds.length > LAST_VISIT_MAX_CLIENTS) return { access: "granted", ok: false };
+  const supabase = supabaseClient ?? (await createClient());
+  const lastVisit: Record<string, string | null> = {};
+  for (const id of clientIds) {
+    const { data, error } = await supabase
+      .from("appointments")
+      .select("starts_at")
+      .eq("studio_id", studio.id)
+      .eq("client_id", id)
+      .eq("status", "completed")
+      .order("starts_at", { ascending: false })
+      .limit(1);
+    if (error) return { access: "granted", ok: false };
+    const row = ((data ?? []) as unknown as { starts_at: string }[])[0];
+    lastVisit[id] = row ? localDateString(new Date(row.starts_at), studio.timezone) : null;
+  }
+  return { access: "granted", ok: true, lastVisit };
 }
