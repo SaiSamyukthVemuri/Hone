@@ -1,0 +1,5 @@
+-- Synthetic baseline seed: intentionally NO rows.
+-- Hone has no supabase/seed.sql; every database test seeds its own studio through
+-- tests/db/helpers/harness (seedStudio), and a shared row would change the counts
+-- those tests assume. The seed is still a keyed input: changing this file
+-- invalidates every cached baseline.

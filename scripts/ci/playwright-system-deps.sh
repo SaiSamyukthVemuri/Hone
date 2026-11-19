@@ -28,6 +28,21 @@
 #      mirror.
 #   3. SAVE: apt's downloaded .debs are copied back for actions/cache/save.
 #
+# TWO CAUSES THE CACHE ALONE DID NOT FIX (2026-11-18, runs 44343337165, 44374723706, 44358611145, 44359058464, and the WebKit
+# job on #1584 and #1587; 0 tests run in each):
+#   a. APT UPGRADED PACKAGES THE IMAGE ALREADY HAS. `npx playwright install-deps` is `apt-get install` of a package list, and
+#      `apt-get install` upgrades an already-installed package when the mirror has a newer one. The runner image carries the
+#      mesa libraries; the mirror's noble-updates moved ahead (25.2.8-0ubuntu0.24.04.5), so "4 upgraded" (libgbm1,
+#      libgl1-mesa-dri, libglx-mesa0, mesa-libgallium) came on top of the cached packages: restored 9 .debs, still "Need to get
+#      11.0 MB", the 10.8 MB mesa-libgallium .deb crawling at 60-70 kB/s, cut at 90 s and again at 150 s. The cache key is
+#      saved once (the save step is skipped on a hit), so it can never learn the newer .deb. Playwright needs those libraries
+#      PRESENT, not newest, so the install now runs with APT::Get::Upgrade "false" (the config item of apt-get's --no-upgrade):
+#      packages named on the command line are never upgraded when already installed. A genuinely NEW package that needs a
+#      newer version of an installed one still pulls it in as a dependency. Everything else is the cached .debs.
+#   b. THE RETRY'S MIRROR SWITCH WAS A NO-OP. It rewrote only azure.archive.ubuntu.com; these runners use a regional mirror
+#      (us-east-2.ec2.archive.ubuntu.com), so the "retry on archive.ubuntu.com" hit the same slow host. Any <region>.archive
+#      or <region>.ec2.archive host is now rewritten to archive.ubuntu.com.
+#
 # THE BOUNDS. 2026-10-23's apt step was bimodal: every healthy install
 # (154 of 206 jobs, including the ~26 MB download) took <= 26 s and every
 # stall took >= 150 s, nothing in between. 90 s is 3x the healthy maximum;
@@ -55,6 +70,7 @@ esac
 
 CACHE_DIR="${PW_DEB_CACHE_DIR:-$HOME/apt-debs}"
 ARCHIVES="${APT_ARCHIVES_DIR:-/var/cache/apt/archives}"
+APT_CONF_DIR="${APT_CONF_DIR:-/etc/apt/apt.conf.d}"
 MIRROR_FILES="${APT_MIRROR_FILES:-/etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources}"
 FIRST="${PW_DEPS_FIRST_TIMEOUT:-90}"
 RETRY="${PW_DEPS_RETRY_TIMEOUT:-150}"
@@ -81,6 +97,9 @@ apt_busy() {
 }
 
 mkdir -p "$CACHE_DIR"
+
+# Never upgrade a package the image already has (cause a. above). Written before anything runs apt.
+echo 'APT::Get::Upgrade "false";' | sudo tee "$APT_CONF_DIR/99playwright-no-upgrade" > /dev/null
 
 restored=0
 if compgen -G "$CACHE_DIR/*.deb" > /dev/null; then
@@ -109,7 +128,7 @@ if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
   # A kill mid-install can leave dpkg half-configured; finish it first.
   sudo timeout --kill-after="$KILL_AFTER" "$REPAIR" dpkg --configure -a
   for f in $MIRROR_FILES; do
-    if [ -f "$f" ]; then sudo sed -i 's|azure\.archive\.ubuntu\.com|archive.ubuntu.com|g' "$f"; fi
+    if [ -f "$f" ]; then sudo sed -i -E 's#([a-z0-9-]+\.)+archive\.ubuntu\.com#archive.ubuntu.com#g' "$f"; fi
   done
   install_deps "$RETRY"
 elif [ "$status" -ne 0 ]; then

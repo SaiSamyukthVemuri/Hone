@@ -86,13 +86,24 @@ const create = (attempt: string, amount = 5000) =>
       { amount, currency: "cad", metadata: { hone_session_payment_charge_attempt_id: attempt, hone_charge_reason: "no_show_fee" } },
       { stripeAccount: ACCOUNT, idempotencyKey: key(attempt) },
     );
+// A declined create THROWS a card error that carries the PaymentIntent, as real Stripe does; this returns that intent.
+const createDeclined = async (attempt: string, amount = 5000): Promise<Record<string, unknown>> => {
+  try {
+    await create(attempt, amount);
+  } catch (e) {
+    const pi = (e as { payment_intent?: Record<string, unknown> }).payment_intent;
+    if (pi) return pi;
+    throw e;
+  }
+  throw new Error("expected a decline to throw");
+};
 const pis = () =>
   (fakeMod.createFakeStripe() as unknown as { paymentIntents: Record<string, (...a: unknown[]) => Promise<Record<string, unknown>>> }).paymentIntents;
 
 describe("retrieve states the stored PaymentIntent", () => {
   it("a declined create is retrieved as requires_payment_method with its metadata, money, mode and nothing received", async () => {
     ledger.setFakeStripeBehavior(RUN, key(ATTEMPT), "decline");
-    const made = await create(ATTEMPT);
+    const made = await createDeclined(ATTEMPT);
     const got = await pis().retrieve(made.id as string, undefined, { stripeAccount: ACCOUNT });
     expect(got).toMatchObject({
       id: made.id, status: "requires_payment_method", amount: 5000, currency: "cad", livemode: false, amount_received: 0,
@@ -115,8 +126,8 @@ describe("retrieve states the stored PaymentIntent", () => {
   });
   it("a replayed create returns the stored object, not a new one", async () => {
     ledger.setFakeStripeBehavior(RUN, key(ATTEMPT), "decline");
-    const a = await create(ATTEMPT);
-    const b = await create(ATTEMPT);
+    const a = await createDeclined(ATTEMPT);
+    const b = await createDeclined(ATTEMPT);
     expect(b.id).toBe(a.id);
     expect(b.status).toBe("requires_payment_method");
   });
@@ -125,7 +136,7 @@ describe("retrieve states the stored PaymentIntent", () => {
 describe("cancel moves the SAME PaymentIntent to canceled, as Stripe does", () => {
   it("a declined PaymentIntent is canceled with its money, metadata and amount_received 0 intact; a later retrieve says canceled", async () => {
     ledger.setFakeStripeBehavior(RUN, key(ATTEMPT), "decline");
-    const made = await create(ATTEMPT);
+    const made = await createDeclined(ATTEMPT);
     const canceled = await pis().cancel(made.id as string, undefined, { stripeAccount: ACCOUNT });
     expect(canceled).toMatchObject({ id: made.id, status: "canceled", amount: 5000, currency: "cad", amount_received: 0, livemode: false });
     expect(canceled.metadata).toEqual({ hone_session_payment_charge_attempt_id: ATTEMPT, hone_charge_reason: "no_show_fee" });
@@ -133,7 +144,7 @@ describe("cancel moves the SAME PaymentIntent to canceled, as Stripe does", () =
   });
   it("canceling again is idempotent; canceling a succeeded PaymentIntent is refused (a captured charge cannot be canceled)", async () => {
     ledger.setFakeStripeBehavior(RUN, key(ATTEMPT), "decline");
-    const declined = await create(ATTEMPT);
+    const declined = await createDeclined(ATTEMPT);
     await pis().cancel(declined.id as string);
     expect(await pis().cancel(declined.id as string)).toMatchObject({ status: "canceled" });
     const paid = await create(REPLACEMENT);
@@ -149,7 +160,7 @@ describe("END TO END against the fake: decline, Close declined attempt, then the
   it("the declined attempt blocks, Close cancels it on the fake and records canceled, the appointment is freed, and the replacement charges once", async () => {
     // 1. the fee is declined: the fake leaves a PaymentIntent in requires_payment_method
     ledger.setFakeStripeBehavior(RUN, key(ATTEMPT), "decline");
-    const declined = await create(ATTEMPT);
+    const declined = await createDeclined(ATTEMPT);
     expect(declined.status).toBe("requires_payment_method");
     // the refresh/webhook outcome that turns the decline into a failed row (the stored provider status is not canceled yet)
     h.row = {
@@ -181,7 +192,7 @@ describe("END TO END against the fake: decline, Close declined attempt, then the
   });
   it("identity mismatch end to end: a PaymentIntent whose metadata names ANOTHER attempt is not canceled and the appointment stays blocked", async () => {
     ledger.setFakeStripeBehavior(RUN, key(REPLACEMENT), "decline");
-    const other = await create(REPLACEMENT); // metadata names REPLACEMENT, not ATTEMPT
+    const other = await createDeclined(REPLACEMENT); // metadata names REPLACEMENT, not ATTEMPT
     h.row = {
       id: ATTEMPT, studio_id: STUDIO, client_id: "c1", appointment_id: "a1", charge_reason: "no_show_fee", status: "failed",
       amount_cents: 5000, currency: "cad", stripe_livemode: false, stripe_account_id: ACCOUNT, stripe_payment_intent_id: other.id,

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FIRST_SLICE_ACTIVE_MODES } from "@/lib/machines/apilus-3g";
+import { XCELL_PUR_ACTIVE_MODES } from "@/lib/machines/xcell-pur";
 
 import {
   MACHINE_CATALOGUE,
@@ -222,13 +223,13 @@ describe("nothing is offered that is not yet verified", () => {
     // permits it.
     // First slice (HON-8): only the two Apilus 3G v3 text/choice contracts.
     expect(activeProfiles(MACHINE_CATALOGUE).map((p) => `${p.profileId}@${p.version}`).sort()).toEqual([
-      "dectro-apilus:junior-3g@3", "dectro-apilus:senior-3g@3",
+      "dectro-apilus:junior-3g@3", "dectro-apilus:senior-3g@3", "dectro-apilus:xcell-pur@1",
     ]);
   });
 
   it("offers no mode through a blocked profile", () => {
     for (const p of MACHINE_CATALOGUE) {
-      const allowed = p.version === 3 ? FIRST_SLICE_ACTIVE_MODES[p.profileId] ?? [] : [];
+      const allowed = p.profileId === "dectro-apilus:xcell-pur" ? XCELL_PUR_ACTIVE_MODES : p.version === 3 ? FIRST_SLICE_ACTIVE_MODES[p.profileId] ?? [] : [];
       expect(activeModes(p).map((m) => m.key), `${p.profileId}@${p.version} leaked a mode`).toEqual([...allowed]);
     }
   });
@@ -726,10 +727,10 @@ describe("contract readiness is derived separately from activation authority", (
     const ready = MACHINE_CATALOGUE.filter((p) => activationReadiness(p).ready).map(
       (p) => `${p.profileId}@${p.version}`,
     );
-    expect([...ready].sort()).toEqual(["dectro-apilus:junior-3g@3", "dectro-apilus:senior-3g@3"]);
+    expect([...ready].sort()).toEqual(["dectro-apilus:junior-3g@3", "dectro-apilus:senior-3g@3", "dectro-apilus:xcell-pur@1"]);
     // Readiness is not authority: the first slice activates by explicit mode list only.
     expect(MACHINE_CATALOGUE.filter((p) => p.availability === "active").map((p) => `${p.profileId}@${p.version}`).sort()).toEqual([
-      "dectro-apilus:junior-3g@3", "dectro-apilus:senior-3g@3",
+      "dectro-apilus:junior-3g@3", "dectro-apilus:senior-3g@3", "dectro-apilus:xcell-pur@1",
     ]);
   });
 
@@ -2162,14 +2163,17 @@ describe("EVERY offered profile has a mode a reading is accepted against", () =>
   const readAgainst = (prof: MachineProfile, modeKey: string, catalogue: MachineProfile[]) => {
     // Native text/choice contracts (v3) carry no numeric "current" field.
     const text = prof.modes.find((m) => m.key === modeKey)?.fields.find((f) => f.valueKind === "text");
+    // A model with no "current" field (xCell Pur) is read through its first mode-level numeric field, at its own precision.
+    const numeric = prof.modes.find((m) => m.key === modeKey)?.fields.find((f) => f.valueKind === undefined || f.valueKind === "number");
+    const useOwn = !text && numeric && numeric.key !== "current" && !prof.modes.find((m) => m.key === modeKey)?.fields.some((f) => f.key === "current");
     return validateReading(
       {
         profileId: prof.profileId,
         version: prof.version,
         modeKey,
-        fieldKey: text ? text.key : "current",
+        fieldKey: text ? text.key : useOwn ? numeric!.key : "current",
         source: "practitioner-entered",
-        value: text ? { kind: "text", value: "003i" } : { kind: "value", value: 1.2 },
+        value: text ? { kind: "text", value: "003i" } : { kind: "value", value: useOwn ? 1 : 1.2 },
       },
       { catalogue },
     );

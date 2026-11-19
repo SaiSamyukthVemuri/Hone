@@ -54,8 +54,8 @@ describe("completion hooks call auto-send after the RPC succeeds (fail-soft)", (
     expect(idx).toBeGreaterThan(-1);
     expect(hookIdx).toBeGreaterThan(idx); // called after the RPC
   });
-  it("session-start auto-complete also triggers auto-send (only when the RPC did not error)", () => {
-    expect(SESSION_ACTIONS).toMatch(/} else \{[\s\S]*autoSendPostcareOnComplete\(args\.appointmentId, args\.studioId, args\.practitionerId\)/);
+  it("HON-45: starting a chart no longer completes the appointment, so it never triggers auto-send", () => {
+    expect(SESSION_ACTIONS).not.toMatch(/autoSendPostcareOnComplete/);
   });
 });
 

@@ -557,6 +557,7 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
     if (client?.email) {
       try {
         await sendCancellationEmail({
+      nameReader: admin,
           appointmentId,
           to: client.email,
           recipientName: client.name,
@@ -1006,6 +1007,7 @@ async function dispatchBookingEmails(p: DispatchParams) {
     // confirmation_sent_at only when Resend actually delivered. The old
     // code path stamped on every booking, falsely advertising delivery.
     const result = await sendBookingConfirmationToClient({
+      nameReader: createAdminClient(),
       appointment: p.appointment,
       service: p.service,
       studio: p.studio,
@@ -1059,6 +1061,7 @@ async function dispatchBookingEmails(p: DispatchParams) {
     return;
   }
   await sendBookingNotificationToPractitioner({
+      nameReader: createAdminClient(),
     appointment: p.appointment,
     service: p.service,
     studio: p.studio,

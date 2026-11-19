@@ -286,11 +286,11 @@ describe("identity comes from the session, per call", () => {
   });
 
   it("an authenticated request gets ITS OWN scope, derived not supplied", async () => {
-    signIn("studio-fett", "pract-sabrina");
+    signIn("studio-fett", "pract-owner-a");
     const ctx = await actions.loadMachineSetupContext(ROUTE);
     expect(ctx.scope).toEqual({
       studioId: "studio-fett",
-      practitionerId: "pract-sabrina",
+      practitionerId: "pract-owner-a",
     });
   });
 
@@ -302,14 +302,14 @@ describe("identity comes from the session, per call", () => {
   });
 
   it("reports DATABASE persistence when the remembered read succeeds", async () => {
-    signIn("studio-fett", "pract-sabrina");
+    signIn("studio-fett", "pract-owner-a");
     const ctx = await actions.loadMachineSetupContext(ROUTE);
     expect(ctx.persistence.kind).toBe("database");
     expect(ctx.persistence.persisted).toBe(true);
   });
 
   it("falls back to NO persistence when that read FAILS, rather than claiming it", async () => {
-    signIn("studio-fett", "pract-sabrina");
+    signIn("studio-fett", "pract-owner-a");
     DB.selectError = { message: "connection reset" };
     const ctx = await actions.loadMachineSetupContext(ROUTE);
     expect(ctx.persistence.kind).toBe("none");
@@ -318,15 +318,15 @@ describe("identity comes from the session, per call", () => {
   });
 
   it("an empty studio is reported as empty, not unreadable", async () => {
-    signIn("studio-fett", "pract-sabrina");
+    signIn("studio-fett", "pract-owner-a");
     const ctx = await actions.loadMachineSetupContext(ROUTE);
     expect(ctx.inventoryReason).toMatch(/no machine registered yet/i);
   });
 
   it("only an owner may manage machines", async () => {
-    signIn("studio-fett", "pract-sabrina", "practitioner");
+    signIn("studio-fett", "pract-owner-a", "practitioner");
     expect((await actions.loadMachineSetupContext(ROUTE)).canManageMachines).toBe(false);
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     expect((await actions.loadMachineSetupContext(ROUTE)).canManageMachines).toBe(true);
   });
 });
@@ -342,7 +342,7 @@ describe("registration refuses a profile the server does not offer", () => {
   });
 
   it("refuses a BLOCKED real profile, so no model is activated by registering it", async () => {
-    signIn("studio-fett", "pract-sabrina");
+    signIn("studio-fett", "pract-owner-a");
     for (const id of [
       "silhouettone:evolution-st-350",
       "permanence-gemm:gemm-16",
@@ -360,7 +360,7 @@ describe("registration refuses a profile the server does not offer", () => {
   });
 
   it("refuses an invented profile id", async () => {
-    signIn("studio-fett", "pract-sabrina");
+    signIn("studio-fett", "pract-owner-a");
     const r = await actions.registerMachineAction({
       profileId: "acme:whatever",
       displayName: "Room 1",
@@ -370,7 +370,7 @@ describe("registration refuses a profile the server does not offer", () => {
   });
 
   it("refuses an empty or over-long name before any write", async () => {
-    signIn("studio-fett", "pract-sabrina");
+    signIn("studio-fett", "pract-owner-a");
     for (const name of ["", "   ", "x".repeat(81)]) {
       const r = await actions.registerMachineAction({
         profileId: "synthetic:demo-multineedle",
@@ -402,7 +402,7 @@ describe("the prior-setup read is scoped to the ROUTE CLIENT, not the studio", (
   });
 
   it("AUTHORIZES the route client against the server-derived studio", async () => {
-    signIn("studio-fett", "pract-sabrina");
+    signIn("studio-fett", "pract-owner-a");
     await actions.loadMachineSetupContext(ROUTE);
     expect(LINEAGE.calls).toEqual([
       {
@@ -415,7 +415,7 @@ describe("the prior-setup read is scoped to the ROUTE CLIENT, not the studio", (
   });
 
   it("refuses rather than reading when the session is not this client's", async () => {
-    signIn("studio-fett", "pract-sabrina");
+    signIn("studio-fett", "pract-owner-a");
     LINEAGE.throws = new Error("Session does not belong to this client.");
     await expect(
       actions.loadMachineSetupContext(ROUTE),
@@ -423,7 +423,7 @@ describe("the prior-setup read is scoped to the ROUTE CLIENT, not the studio", (
   });
 
   it("asks the database for THIS CLIENT's latest setup, by name", async () => {
-    signIn("studio-fett", "pract-sabrina");
+    signIn("studio-fett", "pract-owner-a");
     DB.calls.length = 0;
     await actions.loadMachineSetupContext(ROUTE);
     const call = DB.calls.find((c) => c.fn === "latest_setup_for_client");
@@ -472,7 +472,7 @@ describe("the prior-setup read is scoped to the ROUTE CLIENT, not the studio", (
 function synthDevice() {
   vi.stubEnv("HONE_SYNTHETIC_MACHINE_PROFILE", "1");
   vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "http://127.0.0.1:54321");
-  signIn("studio-fett", "pract-sabrina", "owner");
+  signIn("studio-fett", "pract-owner-a", "owner");
   DB.rows = [
     {
       id: "dev-1",
@@ -915,7 +915,7 @@ describe("reading metadata is DERIVED from the profile, never accepted", () => {
     // flag.
     vi.stubEnv("HONE_SYNTHETIC_MACHINE_PROFILE", "1");
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "http://127.0.0.1:54321");
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.rows = [
       {
         id: "dev-1",
@@ -1156,7 +1156,7 @@ describe("the synthetic demo profile cannot reach production", () => {
     // The REAL profiles that are active on their own merits (HON-8's first slice): the gate neither adds nor removes them. Pinned by
     // id so a stray activation of any other real profile still fails here, and so these two are never read as synthetic.
     const realActiveIds = realBefore.filter((p) => p.availability === "active").map((p) => p.profileId).sort();
-    expect(realActiveIds).toEqual(["dectro-apilus:junior-3g", "dectro-apilus:senior-3g"]);
+    expect(realActiveIds).toEqual(["dectro-apilus:junior-3g", "dectro-apilus:senior-3g", "dectro-apilus:xcell-pur"]);
     const on = synthetic.catalogueForRuntime(base);
     const fixtures = on.filter((p) => p.profileId.startsWith("synthetic:"));
     expect(fixtures.map((p) => p.profileId).sort()).toEqual(expectedSyntheticIds);
@@ -1470,7 +1470,7 @@ describe("a failed recorded-captures read is reported, not flattened", () => {
   // captures exist, no captures exist, and the question could not be answered.
 
   it("reports unavailable when the read fails", async () => {
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.errorFor.treatment_setup_readings = { message: "connection reset" };
 
     const ctx = await actions.loadMachineSetupContext({
@@ -1487,7 +1487,7 @@ describe("a failed recorded-captures read is reported, not flattened", () => {
   it("does NOT report unavailable when the block simply has nothing", async () => {
     // The ordinary empty case must stay empty, or every first capture would
     // carry a warning about a failure that did not happen.
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.rowsFor.treatment_setup_readings = [];
 
     const ctx = await actions.loadMachineSetupContext({
@@ -1503,7 +1503,7 @@ describe("a failed recorded-captures read is reported, not flattened", () => {
     // A third state again: no block means nothing is recorded against it and
     // nothing failed. Reporting a failure here would warn her on every new
     // treatment area.
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     const ctx = await actions.loadMachineSetupContext(ROUTE);
     expect(ctx.recordedSetupUnavailable).toBe(false);
   });
@@ -1584,7 +1584,7 @@ describe("previous-treatment guidance excludes the session being charted", () =>
   // that the action hands the authorized route session down rather than
   // omitting it or inventing one.
   it("passes the ROUTE's sessionId as the exclusion", async () => {
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     await actions.loadMachineSetupContext(ROUTE);
 
     const call = DB.calls.find((c) => c.fn === "latest_setup_for_client");
@@ -1602,7 +1602,7 @@ describe("previous-treatment guidance excludes the session being charted", () =>
     // Guards the shape of the fix rather than its presence: passing null or
     // an empty string would satisfy "a third argument exists" while excluding
     // nothing, and `is distinct from null` excludes no row.
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     await actions.loadMachineSetupContext(ROUTE);
     const call = DB.calls.find((c) => c.fn === "latest_setup_for_client");
     expect(call!.args.p_exclude_session_id).toBeTruthy();
@@ -1618,7 +1618,7 @@ describe("readingsForBlockAction reports a DEFINITIVE refusal apart from a trans
   });
 
   it("a refused route (the session is not this client's, or a lineage lookup error) is UNAVAILABLE, not an accusation of access", async () => {
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     const { SessionLineageError } = await import("@/lib/sessions/session-lineage");
     LINEAGE.throws = new SessionLineageError("Treatment session not found.");
     try {
@@ -1629,13 +1629,13 @@ describe("readingsForBlockAction reports a DEFINITIVE refusal apart from a trans
   });
 
   it("the database's not-found for the block (deleted in another tab) is UNAVAILABLE", async () => {
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.errorFor.treatment_setup_readings = { message: "Unknown treatment block for this session.", code: "P0002" } as never;
     expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false, refused: "unavailable" });
   });
 
   it("an insufficient-privilege error from the database is an ACCESS refusal", async () => {
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.errorFor.treatment_setup_readings = { message: "permission denied", code: "42501" } as never;
     expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false, refused: "access" });
   });
@@ -1643,7 +1643,7 @@ describe("readingsForBlockAction reports a DEFINITIVE refusal apart from a trans
   // ONE retry of the (STABLE, side-effect-free) read, only for a CODE-LESS error.
   const readCalls = () => DB.calls.filter((c) => c.fn === "setup_readings_for_block").length;
   it("RETRY: a code-less error then success returns the readings (no failure for the caller), after exactly two reads", async () => {
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.readSequence = [{ message: "FetchError: socket hang up" }, null];
     const out = await actions.readingsForBlockAction(input);
     expect(out.ok).toBe(true);
@@ -1651,14 +1651,14 @@ describe("readingsForBlockAction reports a DEFINITIVE refusal apart from a trans
   });
 
   it("RETRY: two code-less failures are reported as a failure (not a refusal), after exactly two reads", async () => {
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.readSequence = [{ message: "Unexpected token < in JSON" }, { message: "Unexpected token < in JSON" }];
     expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false });
     expect(readCalls()).toBe(2);
   });
 
   it("RETRY NEGATIVE CONTROL: a CODED error is a definite database answer and is never retried", async () => {
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.readSequence = [{ message: "boom", code: "XX000" }, null];
     expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false });
     expect(readCalls(), "one read only").toBe(1);
@@ -1669,7 +1669,7 @@ describe("readingsForBlockAction reports a DEFINITIVE refusal apart from a trans
   });
 
   it("NEGATIVE CONTROL: a transient database failure is NOT a refusal", async () => {
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.errorFor.treatment_setup_readings = { message: "connection reset", code: "08006" } as never;
     expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false });
   });
@@ -1698,11 +1698,11 @@ describe("loadMachineSetupContext reads the block's recorded captures", () => {
     decimals: 0,
     observation_source: "practitioner-entered",
     recorded_at: "2026-10-14T14:00:00Z",
-    recorded_by_practitioner_id: "pract-sabrina",
+    recorded_by_practitioner_id: "pract-owner-a",
   };
 
   it("returns them when a block is being charted", async () => {
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.rowsFor = { treatment_setup_readings: [READING_ROW] };
     const ctx = await actions.loadMachineSetupContext({
       clientId: "client-1",
@@ -1717,7 +1717,7 @@ describe("loadMachineSetupContext reads the block's recorded captures", () => {
   it("returns NONE without a block, which in create mode is simply true", async () => {
     // The block has no row yet, so nothing is recorded against it. The read
     // must not happen at all rather than returning something arbitrary.
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.rowsFor = { treatment_setup_readings: [READING_ROW] };
     const ctx = await actions.loadMachineSetupContext({
       clientId: "client-1",
@@ -1729,7 +1729,7 @@ describe("loadMachineSetupContext reads the block's recorded captures", () => {
   it("degrades to EMPTY when the read fails, rather than losing the chart", async () => {
     // This surface is reassurance. A failed cosmetic read must not cost her
     // the machine panel, so it must not throw.
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.errorFor = { treatment_setup_readings: { message: "boom" } };
     const ctx = await actions.loadMachineSetupContext({
       clientId: "client-1",
@@ -1745,7 +1745,7 @@ describe("loadMachineSetupContext reads the block's recorded captures", () => {
     // A treatment recorded on a unit that has since been retired is exactly
     // the case that must still name it, and only the server can see one.
     // `machinesByIds` has no retired filter; the device list does.
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.rowsFor = {
       treatment_setup_readings: [READING_ROW],
       studio_machines: [
@@ -2133,6 +2133,36 @@ describe("recordBlockMachineIdentityAction without 0301", () => {
   });
 });
 
+
+// ===========================================================================
+// MULTIPLEX ON AN AREA THAT ALREADY HOLDS xCELL VALUES IS REFUSED BY THE SERVER (one xCell, one Mode control).
+// The Mode control hides MultiPlex for such an area, but a stale tab or a crafted request must not reach the area's identity: the
+// command refuses it inside its transaction and the action reports it as rejected, never saved.
+// ===========================================================================
+describe("recordBlockMachineIdentityAction refuses MultiPlex on a legacy-valued area (server side)", () => {
+  const multiplex = {
+    clientId: "client-ana", sessionId: "session-1", blockId: "block-legacy",
+    deviceId: UNIT_ID, modeKey: "multiplex", profileId: null as string | null, idempotencyKey: "pick-key-0002",
+  };
+  beforeEach(() => arrangeUnit({ machine_profile_id: "dectro-apilus:xcell-pur", machine_profile_version: 1 }));
+
+  it("the command's refusal is returned as rejected: no identity is reported as stored", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcError = { code: "P0001", message: "This area already holds xCell Pur readings; add a new area for another machine." };
+    const out = await actions.recordBlockMachineIdentityAction(multiplex);
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.code).toBe("rejected");
+    expect((out as { identity?: unknown }).identity).toBeUndefined();
+    expect(DB.calls.some((c) => c.fn === "record_block_machine_identity")).toBe(true);
+  });
+
+  it("NEGATIVE CONTROL: the same request on an area with no legacy values is stored", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcResult = { ...RECEIPT("v3"), machine_profile_id: "dectro-apilus:xcell-pur", machine_mode_key: "multiplex" };
+    expect((await actions.recordBlockMachineIdentityAction(multiplex)).ok).toBe(true);
+  });
+});
 
 // ===========================================================================
 // AN IMPOSSIBLE UNIT / MODE PAIR IS REFUSED BEFORE ANYTHING IS WRITTEN

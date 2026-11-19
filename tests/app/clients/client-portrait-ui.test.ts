@@ -34,7 +34,8 @@ describe("0231 portrait UI", () => {
 
   it("the page marks client scope from BOTH links being empty, and passes the pointer", () => {
     const page = read("page.tsx");
-    expect(page).toMatch(/\.select\("id, name, portrait_image_id"\)/);
+    // the select now also reads preferred_name (through the shared fallback); portrait_image_id is still selected
+    expect(page).toMatch(/\.select\(`id, \$\{preferredNameColumn\(includePreferred\)\}name, portrait_image_id`\)/);
     expect(page).toMatch(/clientScope: m\.session_id == null && m\.session_block_id == null/);
     expect(page).toMatch(/portraitImageId=\{portraitEnabled \? \(client\.portrait_image_id \?\? null\) : null\}/);
     const mgr = read("TreatmentImagesManager.tsx");

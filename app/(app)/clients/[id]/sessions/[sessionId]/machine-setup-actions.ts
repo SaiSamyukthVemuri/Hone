@@ -1,5 +1,6 @@
 "use server";
 
+import { machineModelLabel } from "@/lib/machines/display-name";
 import { revalidatePath } from "next/cache";
 import { readClientLastMachine } from "@/lib/sessions/client-last-machine";
 import { validateClientLastMachine } from "@/lib/machines/client-last-machine";
@@ -28,6 +29,8 @@ import {
   legacyMachineOffer,
   type LegacyMachineOffer,
 } from "@/lib/machines/legacy-machine";
+import { XCELL_PUR_PROFILE_ID } from "@/lib/machines/xcell-pur";
+import { xcellMultiplexRoute, type XcellMultiplexRoute } from "@/lib/machines/xcell-route";
 import {
   restoreSelectionFromRecordedSetup,
   type RestoredSelection,
@@ -229,6 +232,8 @@ export type MachineSetupContext = {
    * that has never charted that way; nothing tenant-specific lives in code.
    */
   legacyMachine: LegacyMachineOffer | null;
+  /** MultiPlex as a mode of the one xCell choice: the xCell Pur unit to route it through, or null (nothing changes). */
+  multiplexRoute: XcellMultiplexRoute | null;
 };
 
 const ANONYMOUS: MachineSetupContext = {
@@ -249,6 +254,7 @@ const ANONYMOUS: MachineSetupContext = {
   clientLastMachine: null,
   restoredSelection: null,
   legacyMachine: null,
+  multiplexRoute: null,
 };
 
 /** Everything the panel needs, derived entirely on the server. */
@@ -454,6 +460,24 @@ export async function loadMachineSetupContext(input: {
     legacyMachine = null;
   }
 
+  // MULTIPLEX AS A MODE OF THE ONE xCELL CHOICE (HON-71). A route only where the existing choice is offered, the contract row is
+  // PUBLISHED and the studio has a usable unit; a failed read means no route, and the studio's form is exactly what it was.
+  let multiplexRoute: XcellMultiplexRoute | null = null;
+  if (legacyMachine) {
+    try {
+      const purProfile = currentProfile(catalogue, XCELL_PUR_PROFILE_ID);
+      const published = purProfile ? await publishedModesFor(db, purProfile.profileId, purProfile.version) : null;
+      multiplexRoute = xcellMultiplexRoute({
+        legacyOffered: true,
+        catalogue,
+        devices: inventory.devices,
+        publishedModes: published && published.ok ? published.value : null,
+      });
+    } catch {
+      multiplexRoute = null;
+    }
+  }
+
   // THE CLIENT'S OWN LAST MACHINE, validated like any other choice.
   let clientLastMachine: MachineSetupContext["clientLastMachine"] = null;
   try {
@@ -513,6 +537,7 @@ export async function loadMachineSetupContext(input: {
     suggestedMachine,
     restoredSelection,
     legacyMachine,
+    multiplexRoute,
     clientLastMachine,
   };
 }
@@ -765,7 +790,7 @@ export async function registerMachineAction(input: {
       ok: false,
       code: "rejected",
       error:
-        `No published field contract covers ${profile.manufacturer} ${profile.model} ` +
+        `No published field contract covers ${machineModelLabel(profile)} ` +
         `version ${profile.version} (${missing.join(", ")}). A machine cannot be ` +
         `registered until its contract is published, because its settings could ` +
         `not then be recorded.`,
