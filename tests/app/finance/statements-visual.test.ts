@@ -95,6 +95,16 @@ describe("the client statement, restyled", () => {
     expect(out).toMatch(/No payment recorded/);
     expect(out).toMatch(/normal-case[^"]*"[^>]*>Paid</);
   });
+  it("the wide table and the stacked phone list EACH carry the badge, the unchanged label and the details (neither is a copy of the other's text)", () => {
+    const out = html(docFor([visit()]));
+    const table = out.slice(out.indexOf("<table"), out.indexOf("</table>"));
+    const list = out.slice(out.indexOf("</table>"));
+    for (const part of [table, list]) {
+      expect(part).toMatch(/normal-case[^"]*"[^>]*>Paid</);
+      expect(part).toMatch(/<details/);
+      expect(part).toMatch(/Practitioner One/);
+    }
+  });
   it("fees are right-aligned numbers in a bordered table with one header row plus one row per visit", () => {
     const out = html(docFor([visit(), visit({ appointmentId: "a2", localDate: "2026-11-04" })]));
     expect(out.match(/<tr /g)?.length).toBe(3);
