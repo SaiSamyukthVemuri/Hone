@@ -34,10 +34,13 @@ export function CopyDraftCard({
   draft,
   onChange,
   onRemove,
+  keepGalvanicEnergy = false,
 }: {
   draft: CopyAreaDraft;
   onChange: (next: CopyAreaDraft) => void;
   onRemove: () => void;
+  // Redesign on: a Galvanic area's Energy level is kept by the copy, so the card shows it (and the server writes it). Off: exactly as before.
+  keepGalvanicEnergy?: boolean;
 }) {
   const idp = useId();
   const s = draft.setup;
@@ -47,6 +50,7 @@ export function CopyDraftCard({
   // any typed value when the practitioner switches to OmniBlend, so a reviewed copy
   // card can't persist a thermolysis duration on an OmniBlend entry.
   const isOmniblend = s.apilusModality === "Omniblend";
+  const showEnergy = sections.showModality || (keepGalvanicEnergy && s.mode === "galv");
 
   function patchSetup(patch: Partial<CopyAreaDraft["setup"]>) {
     onChange({ ...draft, setup: { ...draft.setup, ...patch } });
@@ -62,7 +66,7 @@ export function CopyDraftCard({
         ...draft.setup,
         mode,
         apilusModality: next.showModality ? draft.setup.apilusModality : "",
-        energyLevel: next.showModality ? draft.setup.energyLevel : "",
+        energyLevel: next.showModality || (keepGalvanicEnergy && mode === "galv") ? draft.setup.energyLevel : "",
         thermolysisIntensityPercent: next.showThermo ? draft.setup.thermolysisIntensityPercent : "",
         thermolysisDurationSeconds: next.showThermo ? draft.setup.thermolysisDurationSeconds : "",
         galvanicMa: next.showGalv ? draft.setup.galvanicMa : "",
@@ -163,8 +167,9 @@ export function CopyDraftCard({
       </div>
 
       {/* Apilus modality + energy (thermo/blend only). */}
-      {sections.showModality && (
+      {showEnergy && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {sections.showModality && (
           <label className="flex flex-col gap-1.5">
             <span className="text-sm font-medium">Apilus modality</span>
             <select
@@ -189,6 +194,7 @@ export function CopyDraftCard({
               ))}
             </select>
           </label>
+          )}
           <label className="flex flex-col gap-1.5">
             <span className="text-sm font-medium">Energy level</span>
             <input

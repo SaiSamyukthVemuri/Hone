@@ -48,6 +48,7 @@ describe("the list of places is pinned (a new place cannot be added silently)", 
     ["app/(app)/clients/[id]/sessions/[sessionId]/whole-session-copy-actions.ts", /keepGalvanicEnergy: await chartingRolloutFor\(studio\.id\)/],
     ["app/(app)/clients/[id]/sessions/[sessionId]/CopyPreviousAreasPanel.tsx", /keepGalvanicEnergy: rollout/],
     ["app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx", /keepGalvanicEnergy: rollout/],
+    ["components/copy-draft-card.tsx", /keepGalvanicEnergy && s\.mode === "galv"/],
     ["lib/sessions/reading-field-order.ts", /opts\.keepGalvanicEnergy === true/],
   ];
   for (const [f, re] of places) it(`${f} carries the rollout-gated Galvanic EL rule`, () => expect(readFileSync(f, "utf8")).toMatch(re));
