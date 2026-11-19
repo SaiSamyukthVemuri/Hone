@@ -376,6 +376,34 @@ describe("the This visit card follows the open form", () => {
     expect(row("visit-summary-status").textContent).toBe("Not saved yet");
     expect(saveCalls(), "reading the form saves nothing").toBe(0);
   });
+  it("shows the existing xCell by the picker's own label for a saved legacy block", async () => {
+    ctxBox.ctx = { ...CTX, remembered: null, devices: [] };
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const legacyBlock = { ...BLOCK, machine_profile_id: "dectro-apilus:xcell" };
+    await act(async () =>
+      root!.render(
+        createElement(ChartingViewShell, {
+          initialView: "new",
+          summary: createElement(ChartingVisitSummary, { clientName: "Avery Example", kind: "electrolysis", areas: [], count: 1, nextVisitNoteRecorded: false }),
+          children: createElement(BlockSetupForm, { sessionId: "s1", clientId: "c1", previousBlock: null, block: legacyBlock as never, firstEntry: null, onCancel: () => undefined }),
+        }),
+      ),
+    );
+    expect(row("visit-summary-machine").textContent).toBe("Dectro xCell");
+  });
+  it("shows the existing xCell after the practitioner picks it", async () => {
+    await mount("new");
+    await openPanel();
+    const sel = machineSelect();
+    const setSel = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+    await act(async () => {
+      setSel.call(sel, "legacy:xcell");
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(row("visit-summary-machine").textContent).toBe("Dectro xCell");
+  });
   it("editing a saved block shows no Areas in draft (they are saved), and a NEW block shows what is picked but unsaved", async () => {
     await mount("new");
     expect(row("visit-summary-draft-areas").textContent, "the fixture edits a saved block").toBe("None selected");
