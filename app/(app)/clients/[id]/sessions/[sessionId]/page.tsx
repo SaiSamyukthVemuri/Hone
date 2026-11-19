@@ -82,6 +82,7 @@ import {
 } from "@/lib/sessions/finish-appointment";
 import { MarkAppointmentCompleteControl } from "@/components/appointment/mark-complete-control";
 import { PostcareSection } from "@/components/appointment/postcare-section";
+import { shouldAutoSendPostcare } from "@/app/(app)/calendar/postcare-auto-send";
 import { ClinicalNotesSection } from "@/components/clinical-notes-section";
 import { getAppointmentSettlements } from "@/lib/billing/appointment-settlement";
 import {
@@ -951,9 +952,21 @@ export default async function SessionDetailPage({
             {completionLabel(finishState.completion)}
           </span>
           {(() => {
-            const note = autoPostcareNote(studio.postcare_delivery_mode, finishState.completion.kind);
+            // The SAME predicate the automatic send uses, asked with the status Finish will produce.
+            const eligibility = shouldAutoSendPostcare({
+              deliveryMode: studio.postcare_delivery_mode,
+              status: "completed",
+              serviceModality: finishAppt?.serviceModality ?? null,
+              clientEmail: clientData.client.email ?? null,
+              aftercareText: studio.postcare_aftercare_text,
+            });
+            const note = autoPostcareNote(studio.postcare_delivery_mode, finishState.completion.kind, eligibility);
             return note ? (
-              <p data-testid="finish-auto-postcare-note" className="text-xs text-neutral-600 dark:text-neutral-400">
+              <p
+                data-testid="finish-auto-postcare-note"
+                data-auto-postcare={eligibility.ok ? "will_send" : "will_not_send"}
+                className="text-xs text-neutral-600 dark:text-neutral-400"
+              >
                 {note}
               </p>
             ) : null;
