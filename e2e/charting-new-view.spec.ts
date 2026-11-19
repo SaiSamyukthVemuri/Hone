@@ -1,4 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
+import path from "node:path";
+import { test, expect, type Page, type TestInfo } from "@playwright/test";
 import { seedE2eStudio, seedE2eDraftElectrolysisSession, getSessionBlockCount, getSavedBlockSetup, sql } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
@@ -22,12 +23,20 @@ async function expectNoHorizontalOverflow(page: Page) {
   expect(scrollW, `no horizontal scroll (scrollWidth ${scrollW} vs clientWidth ${clientW})`).toBeLessThanOrEqual(clientW);
 }
 
+// Reviewer screenshots. Opt-in: only when HONE_E2E_SHOTS_DIR names a directory. They capture the charting region only (the element, never the browser chrome,
+// so no address bar, path or host), on the synthetic seed. Nothing is taken from a trace.
+async function shot(page: Page, info: TestInfo, name: string) {
+  const dir = process.env.HONE_E2E_SHOTS_DIR;
+  if (!dir) return;
+  await root(page).screenshot({ path: path.join(dir, `${info.project.name}-${name}.png`) });
+}
+
 async function storedView(email: string): Promise<string | null> {
   const rows = await sql<{ v: string | null }>(`select raw_user_meta_data->>'charting_view' as v from auth.users where email = $1`, [email]);
   return rows[0]?.v ?? null;
 }
 
-test("the switch: Current by default, steps and summary only in New, unsaved values and DOM nodes survive, one record saves from either view, the choice is remembered", async ({ page }) => {
+test("the switch: Current by default, steps and summary only in New, unsaved values and DOM nodes survive, one record saves from either view, the choice is remembered", async ({ page }, testInfo) => {
   const seed = await seedE2eStudio();
   const { clientId, sessionId } = await seedE2eDraftElectrolysisSession(seed);
   await loginAsOwner(page, seed);
@@ -44,6 +53,7 @@ test("the switch: Current by default, steps and summary only in New, unsaved val
     for (const n of [1, 2, 3, 4, 5]) await expect(page.getByTestId(`new-view-step-${n}`)).toHaveCount(0);
     await expect(page.getByTestId("charting-view-summary")).toHaveCount(0);
     await expectNoHorizontalOverflow(page);
+    await shot(page, testInfo, "1-current-default");
   });
 
   await test.step("open the block form and type unsaved values", async () => {
@@ -69,6 +79,7 @@ test("the switch: Current by default, steps and summary only in New, unsaved val
     await expect(page.getByTestId("additional-notes")).toHaveValue("unsaved note, not yet saved");
     await expect(page.getByTestId("obs-chip-Coarse hair")).toHaveAttribute("aria-pressed", "true");
     expect(await getSessionBlockCount(sessionId)).toBe(0);
+    await shot(page, testInfo, "2-new-after-switch-unsaved-kept");
   });
 
   await test.step("New view shows steps 1-5 in order and the read-only This visit summary", async () => {
@@ -78,6 +89,7 @@ test("the switch: Current by default, steps and summary only in New, unsaved val
     await expectNoHorizontalOverflow(page);
     const ys = await Promise.all([1, 2, 3, 4, 5].map(async (n) => (await page.getByTestId(`new-view-step-${n}`).boundingBox())!.y));
     expect([...ys].sort((a, b) => a - b)).toEqual(ys);
+    await shot(page, testInfo, "3-new-steps-and-summary");
   });
 
   await test.step("the choice is remembered: stored for the user, and still New after a reload", async () => {
