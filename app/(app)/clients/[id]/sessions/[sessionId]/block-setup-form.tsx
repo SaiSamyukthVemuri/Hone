@@ -101,7 +101,7 @@ import { BodyMapAreaPicker } from "@/components/body-map-area-picker";
 import { MultiAreaEditor } from "@/components/multi-area-editor";
 import { resolveBlockAreas, type BlockArea } from "@/lib/sessions/block-areas";
 import { useRetainedState } from "@/components/charting-state-provider";
-import { NewViewStep, useChartingView } from "@/components/charting-view-context";
+import { NewViewHint, NewViewStep, useChartingView } from "@/components/charting-view-context";
 import { DraftRegistryProvider, useDraftRegistryState, useReportDraft } from "@/components/machines/draft-registry";
 import { MachineFirstSetupConnected } from "@/components/machines/machine-first-setup-connected";
 import { ProbePicker } from "@/components/probe-picker";
@@ -2073,8 +2073,17 @@ export function BlockSetupForm({
       {isNewView
         ? [
             <NewViewStep key="step-areas" n={1} title="Areas treated" />,
+            <NewViewHint key="hint-areas" testId="new-view-hint-areas">
+              One settings block can cover several areas.
+            </NewViewHint>,
             areasSection,
             <NewViewStep key="step-settings" n={2} title="Treatment settings" />,
+            // Shown only when a machine really is selected (a saved native unit, or the unit the panel reports).
+            machineKind === "native" ? (
+              <NewViewHint key="hint-machine" testId="new-view-hint-machine">
+                Your machine is already selected.
+              </NewViewHint>
+            ) : null,
             machineSection,
           ]
         : [machineSection, areasSection]}

@@ -44,3 +44,15 @@ export function NewViewOnlyStep({ n, title }: { n: number; title: string }) {
 export function ChartingViewProvider({ value, children }: { value: ChartingViewValue; children: ReactNode }) {
   return <ChartingViewContext.Provider value={value}>{children}</ChartingViewContext.Provider>;
 }
+
+/**
+ * A line of guidance that exists ONLY in New view: Current renders nothing in its place. Display only; it holds no state and no control.
+ */
+export function NewViewHint({ testId, children }: { testId: string; children: ReactNode }) {
+  if (useChartingView() !== "new") return null;
+  return (
+    <p data-testid={testId} className="text-sm text-neutral-600 dark:text-neutral-400">
+      {children}
+    </p>
+  );
+}

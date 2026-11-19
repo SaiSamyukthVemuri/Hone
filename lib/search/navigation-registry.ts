@@ -1021,6 +1021,11 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
       "FIN-01A Slice 1 establishes the owner financial truth surface and deliberately answers no money question yet: the disposition chain and the two money bridges say, on screen, that they are not supported in this release. Advertising it would resolve to a destination that names four figures it cannot show. It gains a NAV_ENTRIES row in its own registration slice, once those land.",
   },
   {
+    route: "/financials/statement",
+    reason:
+      "HON-64 Slice A: the owner-only money statement by month. Deliberately unadvertised, like /financials: it carries no navigation entry and is not searchable until the owner-facing wording and access have had their review. Navigation hiding is not authority: the page and its read refuse any role but owner before any query, and the money tables are owner-readable only (0254).",
+  },
+  {
     route: "/admin",
     reason:
       "Platform administration, authorized by an email allowlist and scoped ACROSS studios. Out of scope for studio search, which is deliberately single-studio.",
