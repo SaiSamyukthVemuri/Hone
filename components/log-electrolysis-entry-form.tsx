@@ -455,6 +455,7 @@ export function LogElectrolysisEntryForm({
             onChange={(v) => update("minutes_performed", v)}
             step="1"
             min={0}
+            max={1440}
             integer
           />
           <SuffixField
