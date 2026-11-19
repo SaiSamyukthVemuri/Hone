@@ -8,7 +8,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const rpc = vi.fn();
 const ROLLOUT = vi.hoisted(() => ({ value: "on" as "on" | "off" | "error", reads: 0 }));
 const UNIT = vi.hoisted(() => ({ profileId: "dectro-apilus:xcell-pur" }));
-const CLAIM = vi.hoisted(() => ({ result: { data: [] as unknown[], error: null as null | { message: string } }, reads: 0 }));
+const CLAIM = vi.hoisted(() => ({
+  rows: [] as Array<{ session_id: string; idempotency_key: string }>,
+  error: null as null | { message: string },
+  throws: false,
+  reads: 0,
+  filters: {} as Record<string, unknown>,
+}));
 
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("@/lib/supabase/server", () => ({
@@ -16,9 +22,18 @@ vi.mock("@/lib/supabase/server", () => ({
     rpc: (name: string, args: unknown) => rpc(name, args),
     from: () => ({
       select: () => ({
-        eq: () => ({
+        eq: (c1: string, v1: unknown) => ({
           single: async () => ({ data: null, error: null }),
-          eq: () => ({ limit: async () => { CLAIM.reads += 1; return CLAIM.result; } }),
+          eq: (c2: string, v2: unknown) => ({
+            limit: async () => {
+              CLAIM.reads += 1;
+              if (CLAIM.throws) throw new Error("lookup threw");
+              if (CLAIM.error) return { data: [], error: CLAIM.error };
+              // Filtered by the columns the code names, so a lookup that leaves out the session cannot find another session's receipt.
+              CLAIM.filters = { [c1]: v1, [c2]: v2 };
+              return { data: CLAIM.rows.filter((r) => Object.entries(CLAIM.filters).every(([k, v]) => (r as Record<string, unknown>)[k] === v)), error: null };
+            },
+          }),
         }),
       }),
     }),
@@ -55,6 +70,10 @@ const WITH_SETUP = {
     groups: [{ groupKey: null, newGroupRef: "n1", channels: [1], readings: [] }],
   },
 };
+const RECEIPTS = (session: string) => [
+  { session_id: session, idempotency_key: "create-key-0001" },
+  { session_id: session, idempotency_key: "setup-key-0001" },
+];
 const ROUTES = [
   ["the identity-only save", IDENTITY_ONLY],
   ["the save with settings", WITH_SETUP],
@@ -65,7 +84,10 @@ beforeEach(() => {
   rpc.mockResolvedValue({ data: null, error: { message: "stop here" } });
   ROLLOUT.value = "on";
   ROLLOUT.reads = 0;
-  CLAIM.result = { data: [], error: null };
+  CLAIM.rows = [];
+  CLAIM.error = null;
+  CLAIM.throws = false;
+  CLAIM.filters = {};
   CLAIM.reads = 0;
   UNIT.profileId = "dectro-apilus:xcell-pur";
 });
@@ -111,7 +133,7 @@ describe("a NEW area with the xCell unit re-reads the rollout before anything is
       it("Off or a failed read, WITH a receipt for the key: replayed, never refused, never says nothing was saved", async () => {
         for (const v of ["off", "error"] as const) {
           rpc.mockClear(); ROLLOUT.value = v; ROLLOUT.reads = 0;
-          CLAIM.result = { data: [{ block_id: "b1" }], error: null };
+          CLAIM.rows = RECEIPTS("s1");
           const out = await createTreatmentAreaWithEntryAction(input as never);
           expect(rpc, v).toHaveBeenCalledTimes(1); // the command answers the retry from its own receipt
           expect(ROLLOUT.reads, v).toBe(0); // the receipt is looked up BEFORE the rollout is read
@@ -128,13 +150,32 @@ describe("a NEW area with the xCell unit re-reads the rollout before anything is
       });
       it("a FAILED receipt lookup is not 'no receipt': refused without claiming nothing was saved, and the outcome stays unresolved", async () => {
         ROLLOUT.value = "off";
-        CLAIM.result = { data: [], error: { message: "boom" } };
+        CLAIM.error = { message: "boom" };
         const out = await createTreatmentAreaWithEntryAction(input as never);
         expect(out.ok).toBe(false);
         if (out.ok) return;
         expect(out.error).toBe(XCELL_RECEIPT_UNKNOWN_MESSAGE);
         expect(out.error).not.toContain("Nothing was saved");
         expect(out.unresolved).toBe(true);
+        expect(rpc).not.toHaveBeenCalled();
+      });
+      it("a lookup that THROWS is 'unknown', not 'none': refused without claiming anything was saved, and unresolved", async () => {
+        ROLLOUT.value = "off";
+        CLAIM.throws = true;
+        const out = await createTreatmentAreaWithEntryAction(input as never);
+        expect(out.ok).toBe(false);
+        if (out.ok) return;
+        expect(out.error).toBe(XCELL_RECEIPT_UNKNOWN_MESSAGE);
+        expect(out.unresolved).toBe(true);
+        expect(rpc).not.toHaveBeenCalled();
+      });
+      it("a receipt under ANOTHER session's key leaves the rollout to decide (the lookup is scoped to this session)", async () => {
+        ROLLOUT.value = "off";
+        CLAIM.rows = RECEIPTS("another-session");
+        const out = await createTreatmentAreaWithEntryAction(input as never);
+        expect(CLAIM.filters.session_id).toBe("s1");
+        expect(out.ok).toBe(false);
+        if (!out.ok) expect(out.error).toBe(XCELL_ROLLOUT_OFF_MESSAGE);
         expect(rpc).not.toHaveBeenCalled();
       });
       it("a unit that is NOT the xCell looks up no receipt", async () => {
@@ -144,4 +185,14 @@ describe("a NEW area with the xCell unit re-reads the rollout before anything is
       });
     });
   }
+
+  it("a create with NO key has no receipt to find: the rollout decides, and no lookup is made", async () => {
+    ROLLOUT.value = "off";
+    CLAIM.rows = RECEIPTS("s1");
+    const out = await createTreatmentAreaWithEntryAction({ ...IDENTITY_ONLY, createKey: undefined } as never);
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.error).toBe(XCELL_ROLLOUT_OFF_MESSAGE);
+    expect(CLAIM.reads).toBe(0);
+    expect(rpc).not.toHaveBeenCalled();
+  });
 });
