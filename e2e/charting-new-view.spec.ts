@@ -298,7 +298,7 @@ test("next-visit note: saved in one view, shown and recalled in the other", asyn
   await expectTouchFloorAndNoOverflow(page, "new, next-visit note");
 });
 
-test("roles: a practitioner sees no payment or price in either view; a receptionist cannot open the chart at all", async ({ page, browser }) => {
+test("roles: a practitioner sees no payment or price in either view; a receptionist cannot open the chart at all", async ({ page, browser }, testInfo) => {
   const seed = await seedE2eStudio();
   const { clientId, sessionId } = await seedE2eDraftElectrolysisSession(seed);
   const url = `/clients/${clientId}/sessions/${sessionId}`;
@@ -319,7 +319,8 @@ test("roles: a practitioner sees no payment or price in either view; a reception
   const r = await seedNoStudioAuthUser();
   const uid = (await sql<{ id: string }>(`select id from auth.users where lower(email) = lower($1)`, [r.email]))[0]!.id;
   await sql(`insert into public.studio_receptionists (studio_id, user_id, display_name, active) values ($1, $2, 'Synthetic Front Desk', true)`, [seed.studioId, uid]);
-  const ctx = await browser.newContext();
+  // A second context does not inherit the project's browser options: WebKit needs the same CSP bypass the webkit projects set (see the config).
+  const ctx = await browser.newContext({ bypassCSP: testInfo.project.name.startsWith("webkit") });
   try {
     const p2 = await ctx.newPage();
     await p2.goto("/login");

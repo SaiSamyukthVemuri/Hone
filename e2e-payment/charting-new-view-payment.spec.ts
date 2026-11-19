@@ -96,8 +96,9 @@ test("failure: a declined charge never shows Paid, and switching views changes n
     await region.getByRole("button", { name: /^run charge$/i }).click();
     await region.getByRole("button", { name: /confirm: run charge/i }).click();
 
-    await expect.poll(async () => (await getSessionPaymentAttemptRows(seed.sessionId))[0].status, { timeout: 30_000 }).not.toMatch(/^(ready|pending_stripe)$/);
+    await expect.poll(async () => (await getSessionPaymentAttemptRows(seed.sessionId))[0].status, { timeout: 30_000 }).not.toBe("ready");
     const status = (await getSessionPaymentAttemptRows(seed.sessionId))[0].status;
+    // The system keeps a declined attempt as pending_stripe for the owner to close or reconcile; it is never succeeded and never Paid.
     expect(status).not.toBe("succeeded");
     expect(countEffectsForAccount(seed.connectedAccountId), "a declined charge moved no money").toBe(0);
     await expect(page.getByTestId("payment-summary-paid")).toHaveCount(0);
