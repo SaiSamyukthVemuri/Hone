@@ -102,6 +102,7 @@ describe("Find a client (mounted)", () => {
     expect(t).toHaveLength(2);
     expect(t.some((x) => x.includes("Last visit Nov 3, 2026"))).toBe(true);
     expect(t.some((x) => x.includes("No visits"))).toBe(true);
+    for (const x of t) expect(x.match(/No visits/g)?.length ?? 0).toBeLessThanOrEqual(1); // never "No visits … · No visits"
     expect(el.innerHTML).not.toMatch(/c-ada|@|\+\d/);
   });
   it("keyboard: arrows highlight, Enter opens THAT client by id (the month view when it has visits)", () => {

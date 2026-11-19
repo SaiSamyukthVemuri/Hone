@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { CONTROL_MIN_TOUCH, FOCUS_RING, cx } from "@/components/ui/control-base";
 import { findClients, type FinderClient } from "@/lib/finance/statement-directory";
 import { FINDER_INITIAL, onFinderInput, onFinderKey, type FinderKey, type FinderKeyState } from "@/lib/finance/statement-finder-keys";
-import { FINDER_NO_MATCH, FINDER_PROMPT, clientStatementHref, clientsListHref, lastVisitDetail } from "@/lib/finance/statement-screen";
+import { FINDER_NO_MATCH, FINDER_PROMPT, clientStatementHref, clientsListHref, finderOptionLine } from "@/lib/finance/statement-screen";
 import type { YearMonth } from "@/lib/finance/statement-period";
 
 // Find a client: a combobox over the studio's clients (names only). Typing matches partial names in any order; ArrowUp/ArrowDown/Home/End move the
@@ -103,8 +103,7 @@ export function ClientFinder({ month, monthLabel, clients, monthVisits, lastVisi
                 >
                   <span className="font-medium">{o.displayName}{o.archived ? " (archived)" : ""}</span>
                   <span className="text-xs text-fg-muted">
-                    {o.monthVisitCount === null ? `Visit count for ${monthLabel} unavailable` : o.monthVisitCount === 0 ? `No visits in ${monthLabel} · opens full history` : `${o.monthVisitCount} ${o.monthVisitCount === 1 ? "visit" : "visits"} in ${monthLabel}`}
-                    {o.sameNameAsAnother ? ` · ${lastVisits ? lastVisitDetail(lastVisits[o.clientId]) : "Same name as another client"}` : ""}
+                    {finderOptionLine({ monthLabel, monthVisitCount: o.monthVisitCount, sameNameAsAnother: o.sameNameAsAnother, lastVisit: lastVisits?.[o.clientId], lastVisitsLoaded: lastVisits !== null })}
                   </span>
                 </li>
               ))}

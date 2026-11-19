@@ -12,6 +12,7 @@ import {
   parseClientsParams,
   sameNameClientIds,
   tabHref,
+  finderOptionLine,
 } from "@/lib/finance/statement-screen";
 
 const fmt = (c: number) => `$${(c / 100).toFixed(2)}`;
@@ -82,5 +83,27 @@ describe("what the screen says about money", () => {
     for (const text of Object.values(STATEMENT_READ_UNAVAILABLE)) {
       expect(text).not.toMatch(/_|supabase|postgres|RLS|uuid|status code|\b[45]\d\d\b/i);
     }
+  });
+});
+
+describe("the Find a client option line", () => {
+  const base = { monthLabel: "November 2026", sameNameAsAnother: true, lastVisitsLoaded: true } as const;
+  it("a same-name client with NO visit this month and none ever says so once, never \"No visits\" twice", () => {
+    const line = finderOptionLine({ ...base, monthVisitCount: 0, lastVisit: null });
+    expect(line).toBe("No visits in November 2026 · opens full history · Same name as another client");
+    expect(line.match(/No visits/g)?.length).toBe(1);
+  });
+  it("a same-name client with no visit this month but an earlier one is told apart by the last visit date", () => {
+    expect(finderOptionLine({ ...base, monthVisitCount: 0, lastVisit: "2026-09-04" })).toBe("No visits in November 2026 · opens full history · Last visit Sep 4, 2026");
+  });
+  it("a same-name client with visits shows the count and the last visit date", () => {
+    expect(finderOptionLine({ ...base, monthVisitCount: 2, lastVisit: "2026-11-03" })).toBe("2 visits in November 2026 · Last visit Nov 3, 2026");
+  });
+  it("when the last-visit lookup was not made, only the plain same-name wording follows", () => {
+    expect(finderOptionLine({ ...base, monthVisitCount: 1, lastVisit: undefined, lastVisitsLoaded: false })).toBe("1 visit in November 2026 · Same name as another client");
+  });
+  it("a unique name has no same-name detail; an unavailable count is stated, never a number", () => {
+    expect(finderOptionLine({ ...base, sameNameAsAnother: false, monthVisitCount: 0, lastVisit: null })).toBe("No visits in November 2026 · opens full history");
+    expect(finderOptionLine({ ...base, sameNameAsAnother: false, monthVisitCount: null, lastVisit: null })).toBe("Visit count for November 2026 unavailable");
   });
 });

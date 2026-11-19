@@ -58,6 +58,24 @@ export function lastVisitDetail(lastVisitLocalDate: string | null | undefined): 
   return lastVisitLocalDate ? `Last visit ${formatLocalDate(lastVisitLocalDate)}` : "No visits";
 }
 
+/**
+ * The second line of a Find a client option. The month part says how many visits (or that the count is unavailable); for a client who shares a
+ * name with another result it then adds what tells them apart: the last visit date, or, when the last-visit lookup was not made or the client has
+ * never had a visit, the plain "Same name as another client" (never a second "No visits" after "No visits in <month>").
+ */
+export function finderOptionLine(args: { monthLabel: string; monthVisitCount: number | null; sameNameAsAnother: boolean; lastVisit: string | null | undefined; lastVisitsLoaded: boolean }): string {
+  const { monthLabel, monthVisitCount, sameNameAsAnother, lastVisit, lastVisitsLoaded } = args;
+  const month =
+    monthVisitCount === null
+      ? `Visit count for ${monthLabel} unavailable`
+      : monthVisitCount === 0
+        ? `No visits in ${monthLabel} · opens full history`
+        : `${monthVisitCount} ${monthVisitCount === 1 ? "visit" : "visits"} in ${monthLabel}`;
+  if (!sameNameAsAnother) return month;
+  const detail = lastVisitsLoaded && lastVisit ? lastVisitDetail(lastVisit) : "Same name as another client";
+  return `${month} · ${detail}`;
+}
+
 export const VISIT_STATE_LABEL: Record<VisitState, string> = {
   paid: "Paid",
   unknown: "Payment not confirmed",
