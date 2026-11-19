@@ -6,7 +6,7 @@ import { cleanupPaymentScenario, seedEligibleQuickCheckoutScenario, type Payment
 import { asUser } from "./helpers/harness";
 import { loadClientStatementRead } from "@/lib/finance/client-statement-read";
 import { loadFinderClients, loadStatementDirectory } from "@/lib/finance/statement-directory-read";
-import { readMoneyForAppointments } from "@/lib/finance/statement-money-read";
+import { readAppointmentsKeyset, readMoneyForAppointments } from "@/lib/finance/statement-money-read";
 import { localDateString } from "@/lib/booking/tz";
 import { yearMonthOf } from "@/lib/finance/statement-period";
 
@@ -169,6 +169,11 @@ describe("the studio-local month across daylight-saving changes", () => {
     if (!(r.access === "granted" && r.ok)) throw new Error("expected ok");
     return r.directory.rows.find((x) => x.clientId === dst)?.visitCount ?? 0;
   };
+  it("the query's own window is half-open: an appointment starting exactly at the end instant is NOT read, one at the start instant is", async () => {
+    const r = await readAppointmentsKeyset(restAs(a.practitionerUserId), a.studioId, { clientId: dst, startUtc: "2026-03-01T05:00:00.000Z", endUtc: "2026-04-01T04:00:00.000Z" });
+    if (!r.ok) throw new Error("expected ok");
+    expect(r.rows).toHaveLength(2);
+  });
   it("each month holds exactly the appointments between its two local midnights, whatever the offset", async () => {
     expect(await countFor("2026-02")).toBe(1); // 04:55Z on 1 March is still 28 February at 23:55 local
     expect(await countFor("2026-03")).toBe(2); // 05:00Z on 1 March .. 04:00Z on 1 April (a 743-hour month): the 1 March start and the 31 March one
