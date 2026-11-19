@@ -459,6 +459,40 @@ describe("the studio's one xCell: registration of the xCell Pur unit (HON-71)", 
     expect(r.ok).toBe(true);
   });
 
+  it("the xCell's name is FIXED: a posted name is ignored, so the unique name index is the atomic one-per-studio guarantee", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = [];
+    DB.rpcResult = "88888888-8888-4888-8888-888888888888";
+    expect((await actions.registerMachineAction({ profileId: PUR, displayName: "Room 4 laser" })).ok).toBe(true);
+    const call = DB.calls.find((c) => c.fn === "register_studio_machine");
+    expect(call?.args.p_display_name).toBe("Dectro xCell");
+  });
+  it("RACE: two owner tabs both pass the inventory read; the second insert hits the unique name index and gets the same clear message", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = []; // both tabs saw none
+    DB.rpcError = { message: 'duplicate key value violates unique constraint "studio_machines_studio_display_name_uniq"', code: "23505" };
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r).toMatchObject({ ok: false, code: "rejected", error: "This studio already has its xCell registered." });
+  });
+  it("RACE: another database error on the xCell is NOT disguised as 'already registered'", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = [];
+    DB.rpcError = { message: "Only the studio owner may register a machine.", code: "42501" };
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/Only the studio owner/);
+  });
+  it("a non-xCell model keeps the name the owner typed", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["flash", "microflash", "multiplex", "blend", "omniblend", "multiblend", "electrolysis"]).map((r) => ({ ...r, machine_profile_version: 3 }));
+    DB.rowsFor.studio_machines = [];
+    DB.rpcResult = "99999999-9999-4999-8999-999999999999";
+    await actions.registerMachineAction({ profileId: "dectro-apilus:senior-3g", displayName: "Room 2" });
+    expect(DB.calls.find((c) => c.fn === "register_studio_machine")?.args.p_display_name).toBe("Room 2");
+  });
   it("ROLLOUT GATE: unset means nobody, and the refusal is the generic one, before any contract or inventory read", async () => {
     vi.stubEnv(GATE, "");
     signIn(LISTED_STUDIO, "pract-owner-a");

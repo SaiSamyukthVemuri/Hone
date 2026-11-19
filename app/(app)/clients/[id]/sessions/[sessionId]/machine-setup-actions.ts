@@ -1,6 +1,6 @@
 "use server";
 
-import { machineModelLabel } from "@/lib/machines/display-name";
+import { machineModelLabel, XCELL_ONE_CHOICE_LABEL } from "@/lib/machines/display-name";
 import { revalidatePath } from "next/cache";
 import { readClientLastMachine } from "@/lib/sessions/client-last-machine";
 import { validateClientLastMachine } from "@/lib/machines/client-last-machine";
@@ -719,6 +719,8 @@ export async function recordBlockMachineIdentityAction(input: {
  * The profile must be one the server's own catalogue offers, so a client cannot
  * register a unit against an unverified or invented profile id.
  */
+const XCELL_ALREADY_REGISTERED = "This studio already has its xCell registered.";
+
 export async function registerMachineAction(input: {
   profileId: string;
   displayName: string;
@@ -810,10 +812,14 @@ export async function registerMachineAction(input: {
     const existing = await listStudioMachines(db, scope.studioId);
     if (!existing.ok) return { ok: false, code: "rejected", error: existing.error };
     if (existing.value.some((m) => m.profileId === XCELL_PUR_PROFILE_ID)) {
-      return { ok: false, code: "rejected", error: "This studio already has its xCell registered. Use it, or take it out of service before registering another." };
+      return { ok: false, code: "rejected", error: XCELL_ALREADY_REGISTERED };
     }
   }
 
+  // THE xCell'S NAME IS FIXED, so the database's unique name index (studio_machines_studio_display_name_uniq, 0223) is the atomic
+  // one-xCell-per-studio guarantee: two owner tabs that both pass the inventory read above cannot both insert it. (A retired unit keeps
+  // its name reserved, so retiring it is not an undo that frees the name.)
+  const isXcell = profile.profileId === XCELL_PUR_PROFILE_ID;
   const made = await registerStudioMachine(db, {
     studioId: scope.studioId,
     profileId: profile.profileId,
@@ -821,10 +827,14 @@ export async function registerMachineAction(input: {
     // a unit cannot be registered against a contract version that does not
     // exist.
     profileVersion: profile.version,
-    displayName: name,
+    displayName: isXcell ? XCELL_ONE_CHOICE_LABEL : name,
     installedOptions: input.installedOptions ?? [],
   });
-  if (!made.ok) return { ok: false, code: "rejected", error: made.error };
+  if (!made.ok) {
+    // The racing second insert: the unique name index refuses it. Same message as the read-time refusal.
+    if (isXcell && /duplicate key|studio_machines_studio_display_name_uniq|already exists|unique/i.test(made.error)) return { ok: false, code: "rejected", error: XCELL_ALREADY_REGISTERED };
+    return { ok: false, code: "rejected", error: made.error };
+  }
 
   return { ok: true, machineId: made.value };
 }
