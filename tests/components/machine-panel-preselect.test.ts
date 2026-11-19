@@ -69,3 +69,45 @@ describe("a preselect is not a remembered choice", () => {
     expect(host.querySelector('[data-testid="machine-first-status"]')!.textContent).toContain("yes, for you");
   });
 });
+
+describe("the panel itself: a preselect never beats a remembered, restored or retired identity", () => {
+  const LIVE = unit("live1", OTHER.profileId);
+  const NATIVE = { kind: "native", deviceId: "live1" } as const;
+  function panel(props: Record<string, unknown>, devices: StudioDevice[] = [LIVE]) {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    act(() => root!.render(createElement(MachineFirstSetupPanel, { devices, scope: SCOPE, catalogue: MACHINE_CATALOGUE, persistence: DB, ...props } as never)));
+    const sel = host.querySelector<HTMLSelectElement>('[data-testid="machine-select"]');
+    return { value: sel?.value ?? null, text: host.textContent ?? "" };
+  }
+  it("control: with nothing else, the native preselect applies", () => {
+    expect(panel({ onlyChoice: NATIVE }).value).toBe("live1");
+  });
+  it("an initialDeviceId wins", () => {
+    const other = unit("live2", OTHER.profileId);
+    expect(panel({ onlyChoice: NATIVE, initialDeviceId: "live2" }, [LIVE, other]).value).toBe("live2");
+  });
+  it("a restored selection wins", () => {
+    const other = unit("live2", OTHER.profileId);
+    const r = panel({ onlyChoice: NATIVE, restoredSelection: { deviceId: "live2", modeKey: "x" } }, [LIVE, other]);
+    expect(r.value).toBe("live2");
+  });
+  it("KEY CASE: a retired remembered unit plus ONE other live unit shows the unusable state and does NOT preselect the live unit", () => {
+    const r = panel({ onlyChoice: NATIVE, unavailableSelection: { deviceId: "gone1", reason: "retired" }, initialDeviceId: "gone1", unitNames: { gone1: "Old unit" } });
+    expect(r.value).not.toBe("live1");
+    expect(r.value).toBe("");
+  });
+  it("control: the legacy preselect applies when nothing else chooses", () => {
+    expect(panel({ onlyChoice: { kind: "legacy" }, legacyMachine: LEGACY }, []).value).toBe("legacy:xcell");
+  });
+  it("the same for the legacy preselect: a retired remembered unit blocks it", () => {
+    const r = panel({ onlyChoice: { kind: "legacy" }, legacyMachine: LEGACY, unavailableSelection: { deviceId: "gone1", reason: "retired" }, initialDeviceId: "gone1" }, []);
+    expect(r.value).not.toBe("legacy:xcell");
+    expect(r.value).toBe("");
+  });
+  it("the legacy preselect yields to an initialDeviceId and to a restored selection", () => {
+    expect(panel({ onlyChoice: { kind: "legacy" }, legacyMachine: LEGACY, initialDeviceId: "live1" }, [LIVE]).value).toBe("live1");
+    expect(panel({ onlyChoice: { kind: "legacy" }, legacyMachine: LEGACY, restoredSelection: { deviceId: "live1", modeKey: "x" } }, [LIVE]).value).toBe("live1");
+  });
+});
