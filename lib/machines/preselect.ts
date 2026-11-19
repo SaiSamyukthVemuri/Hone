@@ -1,4 +1,4 @@
-import { XCELL_PUR_PROFILE_ID } from "./xcell-pur";
+import { pickerUnits } from "./picker-entries";
 import type { MachineProfile } from "./profile-contract";
 import type { StudioDevice } from "./selection";
 
@@ -20,8 +20,10 @@ export type Preselect = { kind: "native"; deviceId: string } | { kind: "legacy" 
 export function preselectOnlyChoice(
   selectable: ReadonlyArray<{ device: Pick<StudioDevice, "deviceId" | "profileId">; profile: Pick<MachineProfile, "profileId"> }>,
   legacyOffered: boolean,
+  xcellRouted = false,
 ): Preselect {
-  const natives = selectable.filter(({ device }) => !(legacyOffered && device.profileId === XCELL_PUR_PROFILE_ID));
+  // Nothing is chosen yet, so no unit is "already this area's identity": exactly the units the picker lists for an empty selection.
+  const natives = pickerUnits(selectable, { legacyOffered, xcellRouted, currentDeviceId: null });
   const total = natives.length + (legacyOffered ? 1 : 0);
   if (total !== 1) return null;
   if (legacyOffered) return { kind: "legacy" };

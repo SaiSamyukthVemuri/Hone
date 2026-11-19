@@ -1,10 +1,10 @@
 "use client";
 
 import { machineModelLabel } from "@/lib/machines/display-name";
-import { XCELL_PUR_PROFILE_ID } from "@/lib/machines/xcell-pur";
 import { recordedSummary } from "@/lib/machines/recorded-count";
 import { useEffect, useRef, useState } from "react";
 import type { Preselect } from "@/lib/machines/preselect";
+import { pickerUnits } from "@/lib/machines/picker-entries";
 import { LEGACY_MACHINE_OPTION_VALUE } from "@/lib/machines/legacy-machine";
 
 import { unsupportedModes } from "@/lib/machines/unsupported-modes";
@@ -431,7 +431,10 @@ function MachineFirstSetupPanelImpl({
     // keeps all three facts straight; see lib/machines/selection-state.
     unavailableSelection
       ? unusableSelection(unavailableSelection.deviceId, unavailableSelection.reason)
-      : initialSelection(initialDeviceId ?? (onlyChoice?.kind === "native" ? onlyChoice.deviceId : null)),
+      : initialDeviceId == null && onlyChoice?.kind === "native"
+        // A PRESELECT IS NOT A REMEMBERED CHOICE: it selects the only unit and claims nothing is stored.
+        ? restoredSelection(onlyChoice.deviceId, null)
+        : initialSelection(initialDeviceId),
   );
   const deviceId = selection.selected;
   const selectionNote = selection.note;
@@ -807,11 +810,10 @@ function MachineFirstSetupPanelImpl({
               so clearing remains reachable.
             */}
             <option value="">Choose machine…</option>
-            {selectable
+            {pickerUnits(selectable, { legacyOffered: legacyMachine !== null, xcellRouted, currentDeviceId: deviceId })
               // ONE xCell CHOICE: the MultiPlex unit is reached through the xCell entry's mode, never listed as a second xCell.
               // Hidden whenever the existing xCell is offered (even before a route exists), so there is never both; the exception keeps a unit that is
               // already this area's chosen identity visible when no route is active.
-              .filter(({ device }) => !(legacyMachine !== null && device.profileId === XCELL_PUR_PROFILE_ID && (xcellRouted || device.deviceId !== deviceId)))
               .map(({ device, profile }) => (
               <option key={device.deviceId} value={device.deviceId} disabled={nativeLocked}>
                 {device.displayName} — {machineModelLabel(profile)}

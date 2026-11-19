@@ -633,7 +633,7 @@ export function MachineFirstSetupConnected({
   // later view switch or re-render never changes a selection. A display default: it saves nothing.
   const onlyChoice =
     isNewView && !hold && !hasSaved && !blockId && !newAreaLast && !autoRemembered && ctx.scope
-      ? preselectOnlyChoice(selectableDevices(ctx.scope, ctx.devices, ctx.catalogue.length > 0 ? ctx.catalogue : undefined), ctx.legacyMachine !== null)
+      ? preselectOnlyChoice(selectableDevices(ctx.scope, ctx.devices, ctx.catalogue.length > 0 ? ctx.catalogue : undefined), ctx.legacyMachine !== null, ctx.multiplexRoute !== null && ctx.legacyMachine !== null)
       : null;
 
   if (refusedAfterSave) {
