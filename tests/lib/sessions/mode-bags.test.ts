@@ -44,6 +44,17 @@ describe("switchMode: shared entries survive, each mode keeps its own readings",
     expect(s.draft.energyLevel).toBe("");
     expect(s.bags.thermo.readings.energyLevel).toBe("9");
   });
+  it("Hairs treated and Minutes performed are SHARED: four blocks' pairs survive every mode switch, there and back", () => {
+    const pairs = [["31", "12"], ["47", "9"], ["58", "21"], ["64", "15"]];
+    for (const [hairs, minutes] of pairs) {
+      let st = { draft: { ...base(), hairsTreated: hairs, minutes }, bags: {} as ModeBags, pulseTouched: false };
+      for (const to of ["galv", "blend", "", "thermo", "galv"]) {
+        st = switchMode(st, to);
+        expect(st.draft.hairsTreated).toBe(hairs);
+        expect(st.draft.minutes).toBe(minutes);
+      }
+    }
+  });
   it("same mode is a no-op", () => {
     const st = { draft: base(), bags: {}, pulseTouched: false };
     expect(switchMode(st, "thermo")).toBe(st);
