@@ -36,13 +36,29 @@ describe("previews carry server-read saved choices", () => {
     expect(r.preview.version).toBe(4);
     expect(r.preview.choices?.some((c) => c.role === "receptionist" && c.key === "appt.cancel" && c.from === "off" && c.to === "studio")).toBe(true);
   });
-  it("reset: only the previewed role's choices", async () => {
+  it("reset: only the previewed role's stored overrides are reverted, to the studio's own basis (Codex 4623900551)", async () => {
+    core.corePreviewReset.mockResolvedValue(corePreview(4));
+    const st = state(4, true, { "appt.cancel": "off" });
+    st.policies.receptionist = snapshot({ "appt.cancel": "studio" });
+    store.loadStudioPolicyState.mockResolvedValue(st);
+    const r = await previewResetAction("receptionist");
+    if (!r.ok) throw new Error("expected ok");
+    expect(r.preview.choices).toEqual([{ role: "receptionist", key: "appt.cancel", label: "Cancel appointments", from: "studio", to: "off" }]);
+  });
+  it("reset of a role with no stored overrides lists nothing: a reset keeps the basis and never applies new-studio defaults (Codex 4623900551)", async () => {
     core.corePreviewReset.mockResolvedValue(corePreview(4));
     store.loadStudioPolicyState.mockResolvedValue(state(4));
     const r = await previewResetAction("receptionist");
     if (!r.ok) throw new Error("expected ok");
-    expect(r.preview.choices?.length).toBeGreaterThan(0);
-    expect(r.preview.choices?.every((c) => c.role === "receptionist")).toBe(true);
+    expect(r.preview.choices).toEqual([]);
+  });
+  it("adopt keeps a stored override: a practitioner appt.cancel = off is not previewed as a move (Codex 4623900551)", async () => {
+    core.corePreviewAdopt.mockResolvedValue(corePreview(4));
+    store.loadStudioPolicyState.mockResolvedValue(state(4, true, { "appt.cancel": "off" }));
+    const r = await previewAdoptAction();
+    if (!r.ok) throw new Error("expected ok");
+    expect(r.preview.choices?.some((c) => c.role === "practitioner" && c.key === "appt.cancel")).toBe(false);
+    expect(r.preview.choices?.some((c) => c.role === "receptionist" && c.key === "appt.cancel" && c.to === "studio")).toBe(true);
   });
   it("save: before-values are the server's, not the page's", async () => {
     core.corePreviewChanges.mockResolvedValue(corePreview(5));

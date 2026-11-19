@@ -91,6 +91,14 @@ export function diffPolicies(role: Role, before: StudioPolicy, after: StudioPoli
 /** The policy Reset to defaults and Adopt would set: the new-studio basis with no stored overrides. Gates stay as the operator set them. */
 export const defaultsPolicy = (current: StudioPolicy): StudioPolicy => ({ basis: "new_studio", values: {}, gates: current.gates });
 
+/**
+ * The policy each command actually leaves behind, for the saved-choice side of a preview (Codex P2 4623900551). They are NOT the same target:
+ * Reset deletes one role's stored overrides and KEEPS the studio's basis; Adopt moves the basis to new_studio and KEEPS every stored override
+ * (0287 perm_run_basis). A shared "new defaults with no overrides" target described neither.
+ */
+export const resetTarget = (current: StudioPolicy): StudioPolicy => ({ basis: current.basis, values: {}, gates: current.gates });
+export const adoptTarget = (current: StudioPolicy): StudioPolicy => ({ basis: "new_studio", values: { ...current.values }, gates: current.gates });
+
 export type ChoiceChange = { role: Role; key: string; label: string; from: Scope | null; to: Scope };
 
 /**
