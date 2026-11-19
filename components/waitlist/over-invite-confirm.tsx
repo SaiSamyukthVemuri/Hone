@@ -1,3 +1,6 @@
+"use client";
+
+import type { KeyboardEvent, ReactNode } from "react";
 import { expiringSoonLabel, type OverInvitePreview } from "@/lib/waitlist/over-invite-preview";
 
 // The owner's "Invite beyond estimated capacity" confirmation. Presentational: the page decides whether to render it (owner only) and passes the
@@ -14,24 +17,37 @@ import { expiringSoonLabel, type OverInvitePreview } from "@/lib/waitlist/over-i
 export const OVER_INVITE_CONFIRM_LABEL = "I understand some clients may find no availability";
 export const OVER_INVITE_SUBMIT_LABEL = "Send invitations";
 
-export type OverInviteRecipient = { entryId: string; name: string };
+/**
+ * Enter on a focused checkbox or text box can submit a form in some browsers. Only the submit button may: any other Enter inside this form is
+ * ignored, so an invitation batch is never sent by a stray keypress. (Space on a checkbox and Enter on a button still work as normal.)
+ */
+export function blockImplicitSubmit(e: KeyboardEvent<HTMLFormElement>) {
+  if (e.key !== "Enter") return;
+  const t = e.target as HTMLElement;
+  if (t instanceof HTMLButtonElement || t instanceof HTMLTextAreaElement) return;
+  e.preventDefault();
+}
 
 export function OverInviteConfirm({
   action,
   preview,
-  recipients,
+  recipientChooser,
   batchKey,
   notice,
 }: {
   action: (formData: FormData) => void | Promise<void>;
   preview: OverInvitePreview;
-  recipients: readonly OverInviteRecipient[];
+  /**
+   * The recipient list, supplied by the caller (the chooser). THIS FORM RENDERS NO entryId INPUTS OF ITS OWN: the chooser is the one source of
+   * `entryId`, so combining the two can never post a person twice.
+   */
+  recipientChooser: ReactNode;
   /** Generated once per page render, so a double submit is one batch. */
   batchKey: string;
   notice?: string | null;
 }) {
   return (
-    <form action={action} data-testid="over-invite-confirm" className="flex flex-col gap-3 text-sm">
+    <form action={action} onKeyDown={blockImplicitSubmit} data-testid="over-invite-confirm" className="flex flex-col gap-3 text-sm">
       <input type="hidden" name="batchKey" value={batchKey} />
       <input type="hidden" name="shownFit" value={preview.fit} />
       <input type="hidden" name="shownActive" value={preview.active} />
@@ -39,15 +55,7 @@ export function OverInviteConfirm({
       <p data-testid="over-invite-line" className="font-medium">{preview.line}</p>
       <p data-testid="over-invite-expiring" className="text-neutral-600 dark:text-neutral-400">{expiringSoonLabel(preview.expiringSoon)}</p>
       <p data-testid="over-invite-warning" role="note">{preview.ownerCopy}</p>
-      <fieldset className="flex flex-col gap-1">
-        <legend className="font-medium">Choose who to invite</legend>
-        {recipients.map((r) => (
-          <label key={r.entryId} className="flex min-h-11 items-center gap-2">
-            <input type="checkbox" name="entryId" value={r.entryId} />
-            <span className="break-words">{r.name}</span>
-          </label>
-        ))}
-      </fieldset>
+      {recipientChooser}
       <label className="flex min-h-11 items-start gap-2">
         <input type="checkbox" name="confirmed" className="mt-1" />
         <span>{OVER_INVITE_CONFIRM_LABEL}</span>

@@ -9,7 +9,7 @@ const render = (over: { fit?: number; extra?: number; n?: number; notice?: strin
     createElement(OverInviteConfirm, {
       action: () => undefined,
       preview: buildOverInvitePreview({ fit: over.fit ?? 0, active: 3, expiringSoon: 6, extra: over.extra ?? 10 }),
-      recipients: Array.from({ length: over.n ?? 10 }, (_, i) => ({ entryId: `e${i}`, name: `Person ${i}` })),
+      recipientChooser: createElement("div", { "data-testid": "stub-chooser" }),
       batchKey: "key-1",
       notice: over.notice ?? null,
     }),
@@ -28,11 +28,14 @@ describe("OverInviteConfirm", () => {
     expect(h).toContain("5 estimated appointments available · 3 invitations active · Send 10 more → 13 active invitations");
     expect(h).toContain("6 invitations across the studio expire within 24 hours");
   });
-  it("selects nobody by default and has no ceiling on how many can be chosen", () => {
-    const h = render({ n: 1200 });
-    expect((h.match(/name="entryId"/g) ?? []).length).toBe(1200);
-    expect(h).not.toMatch(/name="entryId"[^>]*checked/);
-    expect(h).not.toMatch(/maxLength|max="/);
+  it("renders no entryId input of its own: the supplied chooser is the one source, so combining them never posts a person twice", () => {
+    const stub = createElement("div", null, ...["e0", "e1", "e2"].map((id) => createElement("input", { key: id, type: "hidden", name: "entryId", value: id })));
+    const h = renderToStaticMarkup(
+      createElement(OverInviteConfirm, { action: () => undefined, preview: buildOverInvitePreview({ fit: 0, active: 0, expiringSoon: 0, extra: 3 }), recipientChooser: stub, batchKey: "k" }),
+    );
+    expect((h.match(/name="entryId"/g) ?? []).length).toBe(3);
+    expect(render()).not.toMatch(/name="entryId"/);
+    expect(render()).toContain("stub-chooser");
   });
   it("the confirmation is an explicit, unticked box with the agreed wording", () => {
     const h = render();
