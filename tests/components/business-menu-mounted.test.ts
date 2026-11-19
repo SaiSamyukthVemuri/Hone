@@ -124,4 +124,18 @@ describe("the Business menu, mounted", () => {
     click(link("Capacity"));
     expect(panel()).toBeNull();
   });
+
+  it("does not pop open by itself when you come back to the page it was opened on (Back)", () => {
+    mount();
+    click(trigger());
+    click(link("Capacity"));
+    state.path = "/dashboard/capacity";
+    rerender();
+    expect(panel()).toBeNull();
+    // Back: the pathname returns to where the menu was opened. It must still be closed.
+    state.path = "/dashboard";
+    rerender();
+    expect(panel()).toBeNull();
+    expect(trigger().getAttribute("aria-expanded")).toBe("false");
+  });
 });

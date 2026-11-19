@@ -18,10 +18,17 @@ import { BUSINESS_MENU_ITEMS, BUSINESS_MENU_LABEL, isBusinessPath } from "@/lib/
 export function BusinessMenu() {
   // The menu is open only for the path it was opened on. Choosing another page keeps it (and the link's "Opening…" mark) mounted
   // until the navigation COMMITS and the pathname changes, so a slow page still shows its acknowledgement; no effect is needed.
+  const pathname = usePathname();
   const [openedOn, setOpenedOn] = useState<string | null | undefined>(undefined);
+  // Derived during render: when the pathname changes (a navigation committed, or Back/Forward), forget the open state. Without this
+  // a stale "opened on /dashboard" would pop the menu open again on its own when you return to /dashboard.
+  const [seenPath, setSeenPath] = useState(pathname);
+  if (seenPath !== pathname) {
+    setSeenPath(pathname);
+    setOpenedOn(undefined);
+  }
   const rootRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
-  const pathname = usePathname();
   const open = openedOn !== undefined && openedOn === pathname;
   const setOpen = (next: boolean) => setOpenedOn(next ? pathname : undefined);
   const current = isBusinessPath(pathname);

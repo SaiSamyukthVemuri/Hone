@@ -848,6 +848,15 @@ test("an owner's desktop navigation carries the Business menu, once, and it reac
   await page.getByRole("main").click({ position: { x: 5, y: 5 } });
   await expect(panel).toHaveCount(0);
 
+  // BACK does not reopen it: choose Capacity, come back, and the menu is closed.
+  await business.click();
+  await panel.getByRole("link", { name: "Capacity", exact: true }).click();
+  await page.waitForURL("**/dashboard/capacity");
+  await page.goBack();
+  await page.waitForURL("**/dashboard");
+  await expect(business).toHaveAttribute("aria-expanded", "false");
+  await expect(panel).toHaveCount(0);
+
   // THE CTA CANNOT SATISFY THE NAV LOCATOR — the negative control, run inline
   // against the real page: the dashboard's own link to the capacity route
   // exists right now, in <main>, and the nav locator does not see it.
@@ -893,6 +902,29 @@ test("an owner starts on the dashboard, opens Business, then Statements, and cho
   await page.waitForURL("**/financials/statement?month=2026-01");
   await expect(page.getByRole("heading", { name: /^Money statement: .*2026/ })).toBeVisible();
   await expect(page.getByLabel("Month")).toHaveValue("2026-01");
+});
+
+test("a slow navigation from the Business menu keeps its pending mark visible, then the menu closes", async ({ page }) => {
+  await loginAsOwner(page, seed);
+  await page.goto("/dashboard");
+  // Slow the destination's page request (not its prefetch) so the pending state is observable.
+  await page.route("**/financials/statement**", async (route) => {
+    const h = route.request().headers();
+    if (h["rsc"] && !h["next-router-prefetch"]) await new Promise((r) => setTimeout(r, 4000));
+    await route.continue();
+  });
+  const nav = primaryNav(page);
+  await nav.getByRole("button", { name: "Business", exact: true }).click();
+  const statements = nav.locator('a[href="/financials/statement"]');
+  await statements.click();
+  // WHILE SLOW: the menu is still open and the link still carries its mark and its spoken status.
+  await expect(nav.getByRole("group", { name: "Business" })).toBeVisible();
+  await expect(statements.locator('[data-link-pending="true"]')).toBeVisible();
+  await expect(statements.getByRole("status")).toHaveText("Opening Statements…");
+  await page.screenshot({ path: process.env.HONE_SHOT_DIR ? `${process.env.HONE_SHOT_DIR}/05-pending-mark-1440.png` : undefined });
+  // THEN: the navigation commits and the menu closes.
+  await page.waitForURL("**/financials/statement");
+  await expect(nav.getByRole("group", { name: "Business" })).toHaveCount(0);
 });
 
 test("a practitioner typing the statement URL is refused, with no money shown", async ({ page }) => {
@@ -977,6 +1009,8 @@ test("an owner's mobile menu carries the Business group, and tapping an item clo
 
   await expect(nav.getByTestId("mobile-nav-business-heading")).toHaveText("Business");
   await expect(nav.getByRole("group", { name: "Business" })).toHaveCount(1);
+  // ANNOUNCED: the group has its accessible name in the accessibility tree.
+  expect(await nav.ariaSnapshot()).toContain('group "Business"');
   const business = nav.getByRole("link", { name: "Capacity", exact: true });
   await expect(business).toHaveCount(1);
   await expect(business).toHaveAttribute("href", "/dashboard/capacity");
