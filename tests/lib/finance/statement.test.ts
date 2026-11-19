@@ -261,11 +261,11 @@ describe("group 8: the 'amount Hone can see' limitation tracks MONEY_FORMS", () 
     const tables = [...new Set(MONEY_FORMS.filter((f) => f.handling === "not_checked").map((f) => f.table))].sort();
     expect(tables.length).toBeGreaterThan(0);
     const line = copy.unreadableFormsLine(MONEY_FORMS);
-    for (const t of tables) {
-      expect(copy.UNREADABLE_PLAIN_KINDS[t], `${t} needs a plain-word name`).toBeTruthy();
-      expect(line).toContain(copy.UNREADABLE_PLAIN_KINDS[t]);
-      expect(line).not.toContain(t);
+    for (const f of MONEY_FORMS.filter((x) => x.handling === "not_checked")) {
+      expect(f.plain, `${f.table} needs a plain-word name`).toBeTruthy();
+      expect(line).toContain(f.plain as string);
     }
+    for (const t of tables) expect(line).not.toContain(t);
     expect(line).not.toMatch(/stripe_|appointment_payments|_/);
     expect(line).toMatch(/shows the money Hone can see/);
     expect(line).toMatch(/cannot see these kinds of payment record yet/);

@@ -42,20 +42,15 @@ export const INSURER_NOT_RECORDED = "Not recorded";
 export const INSURER_BLOCK_NOTE =
   "Hone does not record these fields yet. They are shown as not recorded and are never inferred from a visit, a payment or a name.";
 
-/** Plain-word names for the money records an owner session cannot read. Keyed by table so a new unreadable table is noticed by a test. */
-export const UNREADABLE_PLAIN_KINDS: Readonly<Record<string, string>> = {
-  appointment_payments: "card charges taken when a booking was made, and their refunds",
-  stripe_charge_attempts: "older card charges recorded against an appointment",
-  stripe_refund_attempts: "card refunds that were attempted for an appointment",
-  stripe_refunds: "card refunds recorded against an appointment",
-  stripe_disputes: "card disputes and chargebacks",
-};
 export const UNREADABLE_FALLBACK_KIND = "another kind of payment record";
 
-/** The limitation line, built from the money forms Hone cannot read from an owner session (so it cannot drift from MONEY_FORMS), in plain words. */
-export function unreadableFormsLine(forms: ReadonlyArray<{ table: string; form: string; handling: string }>): string {
-  const tables = [...new Set(forms.filter((f) => f.handling === "not_checked").map((f) => f.table))].sort();
-  const kinds = [...new Set(tables.map((t) => UNREADABLE_PLAIN_KINDS[t] ?? UNREADABLE_FALLBACK_KIND))];
+/**
+ * The limitation line, built from the money forms Hone cannot read from an owner session (so it cannot drift from MONEY_FORMS), in plain words.
+ * The plain-word name of each kind lives on its MONEY_FORMS entry (`plain`), so this file never names those tables.
+ */
+export function unreadableFormsLine(forms: ReadonlyArray<{ table: string; form: string; handling: string; plain?: string }>): string {
+  const unreadable = forms.filter((f) => f.handling === "not_checked");
+  const kinds = [...new Set(unreadable.map((f) => f.plain ?? UNREADABLE_FALLBACK_KIND))];
   if (kinds.length === 0) return "This statement shows the money Hone can see.";
   return `This statement shows the money Hone can see. It cannot see these kinds of payment record yet, so any money in them is not included: ${kinds.join("; ")}.`;
 }
