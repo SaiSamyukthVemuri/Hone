@@ -1014,6 +1014,29 @@ function validateReadings(
   return { ok: true };
 }
 
+// THE SETUP NUMBERS THE FORM BOUNDS, checked on the server too. The form's own checks stop an honest browser; a forged or unchecked request used to
+// reach the database with a negative energy level, an impossible number of minutes or hairs, or a pulse count the code then quietly clamped, and the
+// save was reported as done. These are REFUSED instead, with the same words the form uses. Blank (null) is always fine.
+const MINUTES_MAX_SERVER = 1440; // the form's own ceiling (a day)
+function validateSetupNumbers(
+  input: { energyLevel?: number | null; minutesPerformed?: number | null },
+  r: EntryReadingsInput,
+): { ok: true } | { ok: false; error: string } {
+  const e = input.energyLevel;
+  if (e != null && (!Number.isFinite(e) || e < 0)) return { ok: false, error: "Energy level must be a non-negative number." };
+  const m = input.minutesPerformed;
+  if (m != null && (!Number.isFinite(m) || m < 0 || m > MINUTES_MAX_SERVER)) {
+    return { ok: false, error: `Minutes must be between 0 and ${MINUTES_MAX_SERVER}.` };
+  }
+  const hairs = r.hairsTreated;
+  if (hairs != null && (!Number.isFinite(hairs) || hairs < 0)) return { ok: false, error: "Hairs treated must be a non-negative number." };
+  const pc = r.pulseCount;
+  if (pc != null && (!Number.isFinite(pc) || pc < PULSE_COUNT_MIN || pc > PULSE_COUNT_MAX)) {
+    return { ok: false, error: `Pulse count must be between ${PULSE_COUNT_MIN} and ${PULSE_COUNT_MAX}.` };
+  }
+  return { ok: true };
+}
+
 // Mode-aware structured reading columns: galvanic fields apply to galvanic
 // and blend; thermolysis fields apply to thermolysis and blend. Anything
 // outside the mode is stored as null so a thermolysis entry never carries
@@ -1278,6 +1301,8 @@ export async function createTreatmentAreaWithEntryAction(
 
   const readingsCheck = validateReadings(readings);
   if (!readingsCheck.ok) return readingsCheck;
+  const setupCheck = validateSetupNumbers(input, readings);
+  if (!setupCheck.ok) return setupCheck;
 
   // The first entry's area is the treatment area. An entry needs a (NOT
   // NULL) area, so readings can't be saved without one.
@@ -1829,6 +1854,8 @@ export async function updateTreatmentAreaWithEntryAction(
 
   const readingsCheck = validateReadings(readings);
   if (!readingsCheck.ok) return readingsCheck;
+  const setupCheck = validateSetupNumbers(input, readings);
+  if (!setupCheck.ok) return setupCheck;
 
   // Creating a new first entry (block had none) needs an area, same NOT NULL
   // reason as create. Updating an existing entry keeps its current area when
