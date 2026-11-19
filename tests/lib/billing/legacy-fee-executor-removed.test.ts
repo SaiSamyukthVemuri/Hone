@@ -34,7 +34,7 @@ describe("legacy fee executor removed", () => {
       .split("\n")
       .filter(Boolean);
     // Exactly four READERS: the fee-eligibility helper, the dashboard's unpaid-balance check (#1356 AO2: a manual fee on the
-    // appointment makes its amount unavailable), the owner-only HON-64 money statement (a succeeded real legacy fee is shown as
+    // appointment makes its amount unavailable), the owner-only monthly statement (a succeeded real legacy fee is shown as
     // UNRESOLVED there, since this ledger records no refund), and the owner-only statement money read shared by the client statement and the Clients tab (a legacy fee is a
     // recorded fee candidate there, never a charge). Each is a bare select; none writes.
     expect(out.length).toBe(4);
