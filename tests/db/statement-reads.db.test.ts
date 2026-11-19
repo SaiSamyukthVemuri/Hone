@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createHmac } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { adminQuery, closePool, seedMember } from "./helpers/harness";
+import { adminQuery, adminTx, closePool, seedMember } from "./helpers/harness";
 import { cleanupPaymentScenario, seedEligibleQuickCheckoutScenario, type PaymentScenario } from "./helpers/payment-seed";
 import { asUser } from "./helpers/harness";
 import { loadClientStatementRead } from "@/lib/finance/client-statement-read";
@@ -74,7 +74,7 @@ beforeAll(async () => {
 afterAll(async () => {
   for (const id of created) await cleanupPaymentScenario(id).catch(() => undefined);
   await closePool();
-});
+}, 300_000);
 
 const studioA = () => ({ id: a.studioId, timezone: tz });
 
@@ -136,7 +136,7 @@ describe("the Clients tab and finder reads through the real REST layer", () => {
     const ids = r.clients.map((c) => c.id);
     expect(ids).toContain(a.clientId);
     expect(ids).not.toContain(b.clientId);
-    expect(loadFinderClients({ role: "practitioner" }, { id: a.studioId }, restAs(member.userId))).resolves.toEqual({ access: "refused" });
+    await expect(loadFinderClients({ role: "practitioner" }, { id: a.studioId }, restAs(member.userId))).resolves.toEqual({ access: "refused" });
   });
 });
 
@@ -147,4 +147,104 @@ describe("the owner gate is load-bearing: a non-owner's database session reads N
     const memberRows = await readMoneyForAppointments(restAs(member.userId), a.studioId, [a.appointmentId]);
     expect(memberRows).toMatchObject({ ok: true, settlementRows: [], cardRows: [], legacyFeeRows: [] });
   });
+});
+
+describe("the studio-local month across daylight-saving changes", () => {
+  let dst: string;
+  beforeAll(async () => {
+    const c = await adminQuery(`insert into public.clients (studio_id, name) values ($1, 'Dst Client') returning id`, [a.studioId]);
+    dst = (c.rows[0] as { id: string }).id;
+    // Toronto: spring forward 8 March, fall back 1 November 2026. Local midnight is 05:00Z on 1 March (EST), 04:00Z on 1 April (EDT),
+    // 04:00Z on 1 November (EDT) and 05:00Z on 1 December (EST). A five-minute appointment ending exactly at each boundary, and one starting on it.
+    for (const iso of ["2026-03-01T04:55:00Z", "2026-03-01T05:00:00Z", "2026-03-31T03:55:00Z", "2026-04-01T04:00:00Z", "2026-11-01T03:55:00Z", "2026-11-01T04:00:00Z", "2026-12-01T04:55:00Z", "2026-12-01T05:00:00Z"]) {
+      await adminQuery(
+        `insert into public.appointments (studio_id, practitioner_id, client_id, starts_at, ends_at, duration_minutes, status)
+         values ($1,$2,$3,$4::timestamptz, $4::timestamptz + interval '5 minutes', 5, 'completed')`,
+        [a.studioId, a.practitionerId, dst, iso],
+      );
+    }
+  });
+  const countFor = async (month: string) => {
+    const r = await loadStatementDirectory({ role: "owner" }, studioA(), "cad", month, NOW, restAs(a.practitionerUserId));
+    if (!(r.access === "granted" && r.ok)) throw new Error("expected ok");
+    return r.directory.rows.find((x) => x.clientId === dst)?.visitCount ?? 0;
+  };
+  it("each month holds exactly the appointments between its two local midnights, whatever the offset", async () => {
+    expect(await countFor("2026-02")).toBe(1); // 04:55Z on 1 March is still 28 February at 23:55 local
+    expect(await countFor("2026-03")).toBe(2); // 05:00Z on 1 March .. 04:00Z on 1 April (a 743-hour month): the 1 March start and the 31 March one
+    expect(await countFor("2026-04")).toBe(1); // 04:00Z on 1 April is local midnight
+    expect(await countFor("2026-10")).toBe(1); // 03:55Z on 1 November is 31 October at 23:55 local
+    expect(await countFor("2026-11")).toBe(2); // 04:00Z on 1 November .. 05:00Z on 1 December (a 721-hour month)
+    expect(await countFor("2026-12")).toBe(1);
+  });
+});
+
+describe("the caps fail closed against the real REST layer", () => {
+  let capClient: string;
+  beforeAll(async () => {
+    const c = await adminQuery(`insert into public.clients (studio_id, name) values ($1, 'Cap Client') returning id`, [b.studioId]);
+    capClient = (c.rows[0] as { id: string }).id;
+    // 10,001 appointments in one month: one past the 20-page appointment cap.
+    // Bulk rows are inserted with triggers off (replica role): the calendar-reservation sync would reject one-minute-apart rows, and none of it is under test.
+    await adminTx(async (q) => {
+      await q(`set local session_replication_role = replica`);
+      await q(
+        `insert into public.appointments (studio_id, practitioner_id, client_id, starts_at, ends_at, duration_minutes, status, buffer_minutes_snapshot, blocked_ends_at)
+         select $1, $2, $3, ts, ts + interval '5 minutes', 5, 'completed', 0, ts + interval '5 minutes'
+           from generate_series(timestamptz '2026-05-01 12:00+00', timestamptz '2026-05-01 12:00+00' + 10000 * interval '1 minute', interval '1 minute') ts`,
+        [b.studioId, b.practitionerId, capClient],
+      );
+      // 25,001 clients with the one above: one past the finder's 50-block cap.
+      await q(`insert into public.clients (studio_id, name) select $1, 'Bulk ' || g from generate_series(1, 25000) g`, [b.studioId]);
+    });
+  }, 180_000);
+  const studioB = () => ({ id: b.studioId, timezone: tz });
+  it("a month with more appointments than the cap is refused, never a shortened statement", async () => {
+    const r = await loadStatementDirectory({ role: "owner" }, studioB(), "cad", "2026-05", NOW, restAs(b.practitionerUserId));
+    expect(r).toEqual({ access: "granted", ok: false, reason: "too_many_appointments" });
+  }, 120_000);
+  it("a client history beyond the cap is refused the same way", async () => {
+    const r = await loadClientStatementRead({ role: "owner" }, studioB(), "cad", capClient, NOW, restAs(b.practitionerUserId));
+    expect(r).toEqual({ access: "granted", ok: false, reason: "too_many_appointments" });
+  }, 120_000);
+  it("the finder refuses a studio larger than its cap instead of listing part of it", async () => {
+    const r = await loadFinderClients({ role: "owner" }, { id: b.studioId }, restAs(b.practitionerUserId));
+    expect(r).toEqual({ access: "granted", ok: false, reason: "read_failed" });
+  }, 120_000);
+});
+
+describe("a non-owner is refused, not shown an empty page", () => {
+  it("every loader returns the refusal for a practitioner role, and the member's own session would have read nothing anyway", async () => {
+    const m = restAs(member.userId);
+    expect(await loadStatementDirectory({ role: "practitioner" }, studioA(), "cad", "2026-03", NOW, m)).toEqual({ access: "refused" });
+    expect(await loadClientStatementRead({ role: "practitioner" }, studioA(), "cad", a.clientId, NOW, m)).toEqual({ access: "refused" });
+    expect(await loadFinderClients({ role: "practitioner" }, { id: a.studioId }, m)).toEqual({ access: "refused" });
+  });
+});
+
+describe("the keyset page boundary falls INSIDE a run of identical start times", () => {
+  it("no appointment is skipped or repeated when four share one start and the 500-row page ends between them", async () => {
+    const c = await adminQuery(`insert into public.clients (studio_id, name) values ($1, 'Tie Client') returning id`, [a.studioId]);
+    const tie = (c.rows[0] as { id: string }).id;
+    await adminTx(async (q) => {
+      await q(`set local session_replication_role = replica`);
+      // 498 distinct hourly starts, then four appointments on ONE start: rows 499-502, so the first page (500) ends after the second of them.
+      await q(
+        `insert into public.appointments (studio_id, practitioner_id, client_id, starts_at, ends_at, duration_minutes, status, buffer_minutes_snapshot, blocked_ends_at)
+         select $1, $2, $3, ts, ts + interval '5 minutes', 5, 'completed', 0, ts + interval '5 minutes'
+           from generate_series(timestamptz '2025-01-01 12:00+00', timestamptz '2025-01-01 12:00+00' + 497 * interval '1 hour', interval '1 hour') ts`,
+        [a.studioId, a.practitionerId, tie],
+      );
+      await q(
+        `insert into public.appointments (studio_id, practitioner_id, client_id, starts_at, ends_at, duration_minutes, status, buffer_minutes_snapshot, blocked_ends_at)
+         select $1, $2, $3, timestamptz '2025-03-01 12:00+00', timestamptz '2025-03-01 12:05+00', 5, 'completed', 0, timestamptz '2025-03-01 12:05+00' from generate_series(1, 4)`,
+        [a.studioId, a.practitionerId, tie],
+      );
+    });
+    const r = await loadClientStatementRead({ role: "owner" }, studioA(), "cad", tie, NOW, restAs(a.practitionerUserId));
+    if (!(r.access === "granted" && r.ok)) throw new Error("expected ok");
+    expect(r.visits.length).toBe(502);
+    expect(new Set(r.visits.map((v) => v.appointmentId)).size).toBe(502);
+    expect(r.visits.filter((v) => v.startsAt.startsWith("2025-03-01T12:00")).length).toBe(4);
+  }, 60_000);
 });
