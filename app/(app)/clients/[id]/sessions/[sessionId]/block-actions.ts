@@ -1251,7 +1251,7 @@ export async function createTreatmentAreaWithEntryAction(
   // apply only when the rollout is positively on.
   const redesignOn = await chartingRolloutFor(studio.id);
   // A mode outside thermolysis, galvanic and blend is refused up front (the database would refuse it too, but never reach the scope rule with it).
-  if (redesignOn && !isKnownMode(input.mode)) return { ok: false, error: "Choose a valid mode.", unresolved: false } as never;
+  if (redesignOn && !isKnownMode(input.mode)) return { ok: false, error: "Choose a valid mode.", unresolved: false };
   if (redesignOn) input = scopeToMode(input);
   // Never save xCell Pur's legacy modes under the old xCell identity once the redesign is on: refuse, clearly, before anything is written.
   if (purLegacyModeRefused({ redesignOn, mode: input.mode, profileId: input.machineIdentity?.profileId })) {
@@ -1814,7 +1814,7 @@ export async function updateTreatmentAreaWithEntryAction(
   // apply only when the rollout is positively on.
   const redesignOn = await chartingRolloutFor(studio.id);
   // A mode outside thermolysis, galvanic and blend is refused up front (the database would refuse it too, but never reach the scope rule with it).
-  if (redesignOn && !isKnownMode(input.mode)) return { ok: false, error: "Choose a valid mode.", unresolved: false } as never;
+  if (redesignOn && !isKnownMode(input.mode)) return { ok: false, error: "Choose a valid mode.", unresolved: false };
   if (redesignOn) input = scopeToMode(input);
 
   const areaCheck = normalizeStructuredArea({
