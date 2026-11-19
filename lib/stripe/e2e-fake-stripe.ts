@@ -1,5 +1,5 @@
 import "server-only";
-import type Stripe from "stripe";
+import Stripe from "stripe";
 import {
   appendFakeCallToLedger,
   readFakeOutcome,
@@ -83,6 +83,8 @@ type FakePi = {
   currency: string | null;
   metadata: Record<string, string>;
   latestCharge: string | null;
+  // Set only on a declined intent, as real Stripe states `last_payment_error` on a PaymentIntent whose attempt was refused.
+  lastPaymentError?: { type: "card_error"; code: string; decline_code: string; message: string } | null;
 };
 const piByIdByRun = new Map<string, Map<string, FakePi>>();
 function storePi(run: string, pi: FakePi): void {
@@ -108,7 +110,65 @@ function piObject(pi: FakePi) {
     amount_received: captured ? (pi.amount ?? 0) : 0,
     latest_charge: pi.latestCharge,
     ...(pi.status === "canceled" ? { cancellation_reason: "requested_by_customer" } : {}),
+    ...(pi.lastPaymentError ? { last_payment_error: { ...pi.lastPaymentError } } : {}),
   };
+}
+
+// A declined card. Real Stripe answers a declined off-session confirm with HTTP 402 and a card error that CARRIES the
+// PaymentIntent (status requires_payment_method), and it later sends payment_intent.payment_failed. The fake does both,
+// so the application's thrown-error branch and its webhook reconciliation both run, as they would against Stripe.
+const DECLINE_ERROR = {
+  type: "card_error" as const,
+  code: "card_declined",
+  decline_code: "generic_decline",
+  message: "Your card was declined.",
+};
+const FAKE_WEBHOOK_DELAY_MS = 750;
+
+export function buildFakePaymentFailedEvent(pi: FakePi, stripeAccount: string | null) {
+  return {
+    id: `evt_test_e2e_${pi.id}`,
+    object: "event",
+    api_version: "2024-06-20",
+    created: Math.floor(Date.now() / 1000),
+    livemode: false,
+    type: "payment_intent.payment_failed",
+    pending_webhooks: 1,
+    request: { id: null, idempotency_key: null },
+    ...(stripeAccount ? { account: stripeAccount } : {}),
+    data: { object: piObject(pi) },
+  };
+}
+
+// Posts the event, signed with the lane's webhook secret, to the application's own webhook route. A deferred send, after the
+// charge call has returned and the executor has bound the intent to its attempt, which is the order real Stripe produces.
+export async function deliverFakePaymentFailedWebhook(
+  run: string,
+  piId: string,
+  stripeAccount: string | null,
+  deps: { fetchImpl?: typeof fetch; origin?: string; secret?: string } = {},
+): Promise<{ delivered: boolean; status: number | null }> {
+  const pi = storedPi(run, piId);
+  const secret = deps.secret ?? process.env.STRIPE_WEBHOOK_SECRET;
+  if (!pi || !secret) return { delivered: false, status: null };
+  const payload = JSON.stringify(buildFakePaymentFailedEvent(pi, stripeAccount));
+  const signature = Stripe.webhooks.generateTestHeaderString({ payload, secret });
+  // The lane's server sets PORT; with neither an origin nor a PORT (an ordinary unit test) nothing is sent.
+  const origin =
+    deps.origin ??
+    process.env.HONE_E2E_APP_ORIGIN ??
+    (process.env.PORT ? `http://127.0.0.1:${process.env.PORT}` : null);
+  if (!origin) return { delivered: false, status: null };
+  try {
+    const res = await (deps.fetchImpl ?? fetch)(`${origin}/api/stripe/webhook`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "stripe-signature": signature },
+      body: payload,
+    });
+    return { delivered: res.ok, status: res.status };
+  } catch {
+    return { delivered: false, status: null };
+  }
 }
 
 function runId(): string {
@@ -204,8 +264,10 @@ function synthPaymentIntent(run: string, opts: RequestOpts, params?: CreatePiPar
     resultId: id,
     replay,
   });
-  // Success → succeeded (+ latest_charge); decline → non-succeeded status the
-  // real executor persists as failed; processing → pending.
+  // Success → succeeded (+ latest_charge); decline → requires_payment_method, thrown as a card error carrying the intent
+  // (below). The executor does NOT persist that as failed on the immediate response: a PaymentIntent that is not
+  // confirmed canceled can still complete, so the attempt stays pending_stripe and the payment_intent.payment_failed
+  // webhook moves it to failed. processing → pending.
   const status =
     outcome === "decline"
       ? "requires_payment_method"
@@ -230,7 +292,28 @@ function synthPaymentIntent(run: string, opts: RequestOpts, params?: CreatePiPar
       currency: money.currency,
       metadata: { ...(params?.metadata ?? {}) },
       latestCharge: outcome === "success" ? chargeId : null,
+      lastPaymentError: outcome === "decline" ? { ...DECLINE_ERROR } : null,
     });
+  }
+  if (outcome === "decline") {
+    const declined = storedPi(run, id);
+    if (declined) {
+      // Only the FIRST send of a key is an effect: Stripe replays the same 402 for a repeated key and sends one event.
+      if (!existing) {
+        const t = setTimeout(() => {
+          void deliverFakePaymentFailedWebhook(run, id, opts?.stripeAccount ?? null);
+        }, FAKE_WEBHOOK_DELAY_MS);
+        if (typeof t === "object" && t && "unref" in t) (t as { unref: () => void }).unref();
+      }
+      throw new Stripe.errors.StripeCardError({
+        type: "card_error",
+        code: DECLINE_ERROR.code,
+        decline_code: DECLINE_ERROR.decline_code,
+        message: DECLINE_ERROR.message,
+        statusCode: 402,
+        payment_intent: piObject(declined),
+      } as unknown as ConstructorParameters<typeof Stripe.errors.StripeCardError>[0]);
+    }
   }
   const stored = storedPi(run, id);
   return {
