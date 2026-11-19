@@ -100,6 +100,12 @@ describe("appointment-first, keyset paged over the full history", () => {
     expect(String(ors[0].args[0])).toContain(`id.gt."${page1[499].id}"`);
     expect(String(ors[0].args[0])).toContain('starts_at.gt."2026-01-01T00:00:00+00:00"');
   });
+  it("a page one row short of full is the LAST page: no second request", async () => {
+    const { client, calls } = recording({ ...healthy(), appointments: ok(Array.from({ length: 499 }, (_, i) => appt(i + 1))) });
+    await load("owner", client);
+    expect(calls.filter((c) => c.table === "appointments" && c.method === "or")).toEqual([]);
+    expect(calls.filter((c) => c.table === "appointments" && c.method === "limit")).toHaveLength(1);
+  });
   it("every appointment read is scoped by studio AND client, ordered by (starts_at, id)", async () => {
     const { client, calls } = recording(healthy());
     await load("owner", client);
