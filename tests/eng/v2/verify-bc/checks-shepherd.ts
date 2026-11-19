@@ -603,6 +603,7 @@ export function checkClaudePolicy() {
     // Operator standing authorization (2026-11-19) replaced the per-thread rule; the guard pins its conditions instead.
     ["resolve only after verifying on the current head", /resolve a review thread only after verifying, on the PR's current head commit, that the finding is fixed or no longer applies/i],
     ["evidence posted in the thread first", /posts a reply in that thread naming the commit verified and the test or code evidence/i],
+    ["the evidence reply is public text with no ids, paths or names", /that reply is public text: it carries no internal ids, private paths, tenant or person names, or review labels/i],
     ["incomplete evidence keeps it open", /when the evidence is incomplete the thread stays open/i],
     ["product decision or exception goes to the operator", /needs a product decision or an exception to a release requirement goes to the operator first/i],
     ["resolving is the only permitted change", /resolving is the only permitted change to a thread/i],

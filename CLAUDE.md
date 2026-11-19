@@ -291,7 +291,9 @@ the per-thread rule of 2026-10-08). The coordinator may resolve a review thread
 only after verifying, on the PR's current head commit, that the finding is fixed
 or no longer applies. Before resolving, it posts a reply in that thread naming
 the commit verified and the test or code evidence (file and line, or the test
-that pins it). When the evidence is incomplete the thread stays open. A
+that pins it). That reply is public text: it carries no internal ids, private
+paths, tenant or person names, or review labels. When the evidence is
+incomplete the thread stays open. A
 resolution that needs a product decision or an exception to a release
 requirement goes to the operator first. Resolving is the only permitted change
 to a thread: its comments are never edited, deleted, hidden or minimized.
