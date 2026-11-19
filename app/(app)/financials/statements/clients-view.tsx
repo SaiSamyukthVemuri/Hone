@@ -94,7 +94,7 @@ export function ClientsView({ month, monthLabel, maxMonth, timezone, notice, pag
         ) : null}
         {offNotice ? <p className="text-sm text-fg" role="status">{offNotice}</p> : null}
         {directory.ok && !directory.value.reconciliation.reconciled ? (
-          <p className="text-sm text-fg" role="alert">These client totals do not match the studio statement for this month, so do not rely on them. The Studio tab shows the month's collected total.</p>
+          <p className="text-sm text-fg" role="alert">These client totals do not match the studio statement for this month, so do not rely on them. The Studio tab shows the month&apos;s collected total.</p>
         ) : null}
       </section>
     </div>

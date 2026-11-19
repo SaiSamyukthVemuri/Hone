@@ -7,13 +7,13 @@ import path from "node:path";
 // The pure model is proved in the lib tests; this file proves what the screens SHOW and DO with it, and that they are read-only.
 const nav = vi.hoisted(() => ({ push: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: nav.push, replace: vi.fn(), refresh: vi.fn() }), usePathname: () => "/financials/statements", useSearchParams: () => new URLSearchParams() }));
-vi.mock("next/link", () => ({
-  default: ({ href, children, ...rest }: { href: string; children: unknown } & Record<string, unknown>) => {
-    const { createElement } = require("react") as typeof import("react");
-    return createElement("a", { href, ...rest }, children as never);
-  },
-  useLinkStatus: () => ({ pending: false }),
-}));
+vi.mock("next/link", async () => {
+  const { createElement: h } = await import("react");
+  return {
+    default: ({ href, children, ...rest }: { href: string; children: unknown } & Record<string, unknown>) => h("a", { href, ...rest }, children as never),
+    useLinkStatus: () => ({ pending: false }),
+  };
+});
 
 const { createElement } = await import("react");
 const { act } = await import("react");
