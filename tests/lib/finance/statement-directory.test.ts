@@ -44,6 +44,13 @@ describe("the Clients tab: one row per client with something on the document", (
     expect(r.rows[1]).toMatchObject({ name: "Bo Chen", visitCount: 1, paidCents: 0, awaitingCount: 1 }); // visit with no payment record
     expect(r.rows[2]).toMatchObject({ name: "Cy Young", visitCount: 0, paidCents: 2500 });
   });
+  it("counts a fee item whose payment is unconfirmed (a legacy-ledger fee cannot be proven un-refunded), so a client with no awaiting visit is not shown as all confirmed", () => {
+    const ns = appt("c3", { status: "no_show", startsAt: "2026-11-06T15:00:00Z" });
+    const r2 = must(input({ appointments: [ns], legacyFeeRows: [{ appointmentId: ns.id, status: "succeeded", amountCents: 3000, currency: "cad", stripeLivemode: true }] }));
+    expect(r2.rows).toHaveLength(1);
+    expect(r2.rows[0]).toMatchObject({ visitCount: 0, awaitingCount: 0, unconfirmedFeeCount: 1 });
+    expect(r.rows.every((x) => x.unconfirmedFeeCount === 0)).toBe(true); // a confirmed paid fee is not counted
+  });
   it("RECONCILES: the clients' total spend equals the studio statement's collected total, computed independently", () => {
     expect(r.reconciliation).toEqual({ clientsSpendCents: 12500, offDocumentCollectedCents: 0, studioCollectedCents: 12500, offDocumentWithMoney: 0, reconciled: true });
     expect(r.totals).toEqual({ clientCount: 3, visitCount: 3, paidCents: 12500, awaitingCount: 1 });
@@ -150,6 +157,11 @@ describe("Find a client", () => {
   it("it never matches email or phone (those fields are not even in the input)", () => {
     expect(Object.keys(clients[0]).sort()).toEqual(["archived", "id", "name", "preferredName"]);
     expect(findClients(clients, "555-0100", counts).state).toBe("none");
+  });
+  it("when the month's counts could not be read, a result carries NO count (null), never a false zero", () => {
+    const r = findClients(clients, "jane smith", null);
+    expect(r.state).toBe("results");
+    if (r.state === "results") for (const x of r.results) expect(x.monthVisitCount).toBeNull();
   });
   it("no match is the empty state; results are capped and say so", () => {
     expect(findClients(clients, "zzzz", counts)).toEqual({ state: "none", results: [] });
