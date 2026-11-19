@@ -887,21 +887,39 @@ test("an owner starts on the dashboard, opens Business, then Statements, and cho
   await nav.getByRole("button", { name: "Business", exact: true }).click();
   await nav.getByRole("link", { name: "Statements", exact: true }).click();
   await page.waitForURL("**/financials/statement");
-  await expect(page.getByRole("heading", { name: /^Money statement:/ })).toBeVisible();
-  // The menu reads as the current section on the statement page too: the button, and the item inside the open menu.
+  // This seeded studio has NO payment jurisdiction yet, so the owner reaches the page's own honest "currency not set" state: no
+  // heading, no month picker, no figure. The owner check is the one the page always had; nothing is loosened here.
+  await expect(page.getByText("This studio's payment currency is not set, so money cannot be totalled. Nothing is shown.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: /^Money statement:/ })).toHaveCount(0);
+  // The menu reads as the current section on the statement page in either state.
   await expect(nav.getByRole("button", { name: "Business", exact: true })).toHaveAttribute("aria-current", "page");
-  await nav.getByRole("button", { name: "Business", exact: true }).click();
-  await expect(nav.getByRole("link", { name: "Statements", exact: true })).toHaveAttribute("aria-current", "page");
-  await expect(nav.getByRole("link", { name: "Capacity", exact: true })).not.toHaveAttribute("aria-current", "page");
-  await page.keyboard.press("Escape");
 
-  // Choose a month with the picker; the page answers for exactly that month.
-  const picker = page.getByRole("form", { name: "Choose a month" });
-  await picker.getByLabel("Month").fill("2026-01");
-  await picker.getByRole("button", { name: "Show month" }).click();
-  await page.waitForURL("**/financials/statement?month=2026-01");
-  await expect(page.getByRole("heading", { name: /^Money statement: .*2026/ })).toBeVisible();
-  await expect(page.getByLabel("Month")).toHaveValue("2026-01");
+  // Give the studio a payment jurisdiction (local synthetic row), then the statement renders and a month can be chosen.
+  await sql(
+    `insert into public.studio_payment_jurisdictions (studio_id, payment_country, payment_currency, source, verification_reference)
+     values ($1,'CA','cad','operator','e2e business menu statement')
+     on conflict (studio_id) do nothing`,
+    [seed.studioId],
+  );
+  try {
+    await page.goto("/financials/statement");
+    await expect(page.getByRole("heading", { name: /^Money statement:/ })).toBeVisible();
+    // The item inside the open menu is the current one.
+    await nav.getByRole("button", { name: "Business", exact: true }).click();
+    await expect(nav.getByRole("link", { name: "Statements", exact: true })).toHaveAttribute("aria-current", "page");
+    await expect(nav.getByRole("link", { name: "Capacity", exact: true })).not.toHaveAttribute("aria-current", "page");
+    await page.keyboard.press("Escape");
+
+    // Choose a month with the picker; the page answers for exactly that month.
+    const picker = page.getByRole("form", { name: "Choose a month" });
+    await picker.getByLabel("Month").fill("2026-01");
+    await picker.getByRole("button", { name: "Show month" }).click();
+    await page.waitForURL("**/financials/statement?month=2026-01");
+    await expect(page.getByRole("heading", { name: /^Money statement: January 2026/ })).toBeVisible();
+    await expect(page.getByLabel("Month")).toHaveValue("2026-01");
+  } finally {
+    await sql(`delete from public.studio_payment_jurisdictions where studio_id = $1 and verification_reference = 'e2e business menu statement'`, [seed.studioId]);
+  }
 });
 
 test("a slow navigation from the Business menu keeps its pending mark visible, then the menu closes", async ({ page }) => {
