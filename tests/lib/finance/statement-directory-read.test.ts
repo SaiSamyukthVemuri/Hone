@@ -73,7 +73,7 @@ describe("the Clients tab read: the studio's month, whole or nothing", () => {
     const r = await loadDir("owner", recording(healthy()).client);
     expect(r).toMatchObject({ access: "granted", ok: true, month: "2026-11", label: "November 2026" });
     if (r.access === "granted" && r.ok) {
-      expect(r.directory.rows).toEqual([{ clientId: "c1", name: "Ada Lovelace", visitCount: 1, paidCents: 0, awaitingCount: 1 }]);
+      expect(r.directory.rows).toEqual([{ clientId: "c1", name: "Ada Lovelace", visitCount: 1, paidCents: 0, awaitingCount: 1, unconfirmedFeeCount: 0 }]);
       expect(r.directory.reconciliation.reconciled).toBe(true);
     }
   });

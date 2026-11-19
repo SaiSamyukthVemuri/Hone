@@ -29,6 +29,8 @@ export type DirectoryRow = {
   paidCents: number;
   /** Visits whose payment status is unknown (shown as awaiting payment confirmation). */
   awaitingCount: number;
+  /** Cancellation, no-show and other fee items whose payment is not confirmed (they block a balance like an awaiting visit does). */
+  unconfirmedFeeCount: number;
 };
 
 export type DirectoryTotals = { clientCount: number; visitCount: number; paidCents: number; awaitingCount: number };
@@ -94,7 +96,7 @@ export function buildDirectory(input: BuildDirectoryInput): { ok: true; value: D
     const d = built.document;
     clientsSpend += d.totals.paidCents;
     if (d.totals.visitCount > 0 || d.feeItems.length > 0) {
-      rows.push({ clientId, name, visitCount: d.totals.visitCount, paidCents: d.totals.paidCents, awaitingCount: d.awaiting.length });
+      rows.push({ clientId, name, visitCount: d.totals.visitCount, paidCents: d.totals.paidCents, awaitingCount: d.awaiting.length, unconfirmedFeeCount: d.feeItems.filter((f) => f.state === "unconfirmed").length });
     }
   }
   rows.sort((a, b) => foldForSearch(a.name).localeCompare(foldForSearch(b.name)) || a.clientId.localeCompare(b.clientId));
@@ -140,8 +142,8 @@ export type FinderResult = {
   clientId: string;
   displayName: string;
   archived: boolean;
-  /** Eligible visits in the selected month; 0 for a client with none (still listed, with its Full history link). */
-  monthVisitCount: number;
+  /** Eligible visits in the selected month; 0 for a client with none (still listed, with its Full history link). NULL when the month's counts could not be read: never shown as a number. */
+  monthVisitCount: number | null;
   /** Another result shares this display name: the screen must show something beyond the name; selection is by client id. */
   sameNameAsAnother: boolean;
 };
@@ -156,7 +158,7 @@ export const FINDER_LIMIT = 20;
  * Matches the typed term against the clients' SHOWN names only (never email, phone or anything else: the same narrow rule as the clients directory).
  * Partial words match in any order. Every client of the studio is searched, whether or not they had a visit in the month.
  */
-export function findClients(clients: readonly FinderClient[], rawQuery: string, monthVisitCounts: ReadonlyMap<string, number>): FinderOutcome {
+export function findClients(clients: readonly FinderClient[], rawQuery: string, monthVisitCounts: ReadonlyMap<string, number> | null): FinderOutcome {
   const query = normalizeDirectoryQuery(rawQuery);
   if (query.length === 0) return { state: "prompt", results: [] };
   const scored = clients
@@ -175,7 +177,7 @@ export function findClients(clients: readonly FinderClient[], rawQuery: string, 
       clientId: c.id,
       displayName,
       archived: c.archived,
-      monthVisitCount: monthVisitCounts.get(c.id) ?? 0,
+      monthVisitCount: monthVisitCounts === null ? null : monthVisitCounts.get(c.id) ?? 0,
       sameNameAsAnother: (nameCount.get(foldForSearch(displayName)) ?? 0) > 1,
     })),
   };
