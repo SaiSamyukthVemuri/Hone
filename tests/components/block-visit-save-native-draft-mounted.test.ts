@@ -98,4 +98,16 @@ describe("Save visit on an existing area", () => {
     expect(blockActions.updateTreatmentAreaWithEntryAction).not.toHaveBeenCalled();
     expect(status()).toBe("held");
   });
+  it("OUT-OF-RANGE VALUE through Save visit: the form's own checks refuse it, the action is never called", async () => {
+    await mount();
+    const thermo = [...host!.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Thermolysis") as HTMLButtonElement;
+    await act(async () => void thermo.click());
+    const intensity = host!.querySelector<HTMLInputElement>('input[type="number"][max="100"]')!;
+    expect(intensity, "the intensity input (max 100) must exist").not.toBeNull();
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => { set.call(intensity, "101"); intensity.dispatchEvent(new Event("input", { bubbles: true })); });
+    await saveVisit();
+    expect(blockActions.updateTreatmentAreaWithEntryAction).not.toHaveBeenCalled();
+    expect(status()).toBe("failed");
+  });
 });

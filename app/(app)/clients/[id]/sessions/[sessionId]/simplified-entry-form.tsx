@@ -135,6 +135,15 @@ export function SimplifiedEntryForm({
     // row may already exist and a second insert would duplicate it.
     if (recovery) return Promise.resolve({ status: "held", message: recovery });
     setError(null);
+    // THE FORM'S OWN CONSTRAINTS (min, max, step) apply on EVERY path. The button gets them from the browser's submit; Save visit calls this
+    // function directly, so it checks them here. An out-of-range value is a refusal the practitioner sees, never a silently dropped reading.
+    const formEl = rootRef.current;
+    if (formEl && !formEl.checkValidity()) {
+      formEl.reportValidity();
+      const message = "Check the highlighted fields: a value is out of range.";
+      setError(message);
+      return Promise.resolve({ status: "failed", message });
+    }
     if (draft.areas.length === 0) {
       setError("Pick at least one area.");
       return Promise.resolve({ status: "failed", message: "Pick at least one area." });

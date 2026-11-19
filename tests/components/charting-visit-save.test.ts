@@ -165,6 +165,33 @@ describe("with the REAL forms", () => {
     expect(note).toHaveBeenCalledTimes(2);
     expect(res("note")!.getAttribute("data-status")).toBe("saved");
   });
+  it("OUT-OF-RANGE VALUE: Save visit runs the form's own constraints, so an intensity of 101 (max 100) is refused, not sent", async () => {
+    host = document.body.appendChild(document.createElement("div"));
+    root = createRoot(host);
+    await act(async () =>
+      root!.render(
+        createElement(ChartingVisitDraftProvider, null, createElement(ChartingVisitSaveProvider, null,
+          createElement(SimplifiedEntryForm, { block: { ...BLOCK, mode: "thermo" } as never, sessionId: "s1", clientId: "c1" }),
+          createElement(VisitSaveControl))),
+      ),
+    );
+    const chip = Array.from(host!.querySelectorAll("button")).find((b) => /Upper lip/i.test(b.textContent ?? ""));
+    await act(async () => void chip!.click());
+    const intensity = host!.querySelector<HTMLInputElement>('input[type="number"][max="100"]')!;
+    expect(intensity, "the intensity input (max 100) must exist").not.toBeNull();
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => { set.call(intensity, "101"); intensity.dispatchEvent(new Event("input", { bubbles: true })); });
+    await click();
+    expect(add.fn, "nothing is sent").not.toHaveBeenCalled();
+    expect(res("pass:b1")!.getAttribute("data-status")).toBe("failed");
+    expect(res("pass:b1")!.textContent).toContain("see the message on that section");
+    expect(host!.textContent, "the message is on the section").toContain("Check the highlighted fields");
+    // CONTROL: back in range, the same Save visit sends it.
+    await act(async () => { set.call(intensity, "100"); intensity.dispatchEvent(new Event("input", { bubbles: true })); });
+    add.fn.mockResolvedValueOnce({ ok: true, entryId: "e1" } as never);
+    await click();
+    expect(add.fn).toHaveBeenCalledTimes(1);
+  });
   it("a thrown Error's text and a server refusal that names an area are never shown in the Save visit results", async () => {
     add.fn.mockRejectedValueOnce(new Error("PRIVATE-THROWN-TEXT"));
     await mountReal();
