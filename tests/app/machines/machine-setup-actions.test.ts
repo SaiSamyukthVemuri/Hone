@@ -74,6 +74,12 @@ vi.mock("@/lib/sessions/session-lineage", () => ({
 const ROUTE = { clientId: "client-ana", sessionId: "session-1" };
 
 vi.mock("server-only", () => ({}));
+// The platform rollout is a database read through the service role; here it is a controlled value ("on" | "off" | "error").
+const ROLLOUT = vi.hoisted(() => ({ value: "on" as "on" | "off" | "error" }));
+vi.mock("@/lib/rollouts/charting-rollout", async (orig) => {
+  const real = await orig<typeof import("@/lib/rollouts/charting-rollout")>();
+  return { ...real, readChartingRollout: async () => ROLLOUT.value, chartingRolloutFor: async () => ROLLOUT.value === "on" };
+});
 const revalidatePathMock = vi.hoisted(() => vi.fn());
 vi.mock("next/cache", () => ({ revalidatePath: revalidatePathMock }));
 vi.mock("@/lib/supabase/server", () => ({
@@ -398,10 +404,9 @@ describe("the studio's one xCell: registration of the xCell Pur unit (HON-71)", 
     display_name: "Dectro xCell", installed_options: [], retired_at: null, ...over,
   });
   const wrote = () => DB.calls.some((c) => c.fn === "register_studio_machine");
-  const GATE = "HONE_CHARTING_NEW_VIEW_STUDIO_IDS";
   const LISTED_STUDIO = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"; // synthetic
   const OTHER_STUDIO = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"; // synthetic
-  beforeEach(() => { vi.stubEnv(GATE, "all"); }); // the cases below are about the registration rules; the gate cases set their own value
+  beforeEach(() => { ROLLOUT.value = "on"; }); // the cases below are about the registration rules; the gate cases set their own value
 
   it("registers it through the existing owner command once its contract is published and the studio has none", async () => {
     signIn("studio-fett", "pract-owner-a");
@@ -508,8 +513,8 @@ describe("the studio's one xCell: registration of the xCell Pur unit (HON-71)", 
     await actions.registerMachineAction({ profileId: "dectro-apilus:senior-3g", displayName: "Room 2" });
     expect(DB.calls.find((c) => c.fn === "register_studio_machine")?.args.p_display_name).toBe("Room 2");
   });
-  it("ROLLOUT GATE: unset means nobody, and the refusal is the generic one, before any contract or inventory read", async () => {
-    vi.stubEnv(GATE, "");
+  it("ROLLOUT GATE: off means nobody, and the refusal is the generic one, before any contract or inventory read", async () => {
+    ROLLOUT.value = "off";
     signIn(LISTED_STUDIO, "pract-owner-a");
     DB.rowsFor.machine_profile_mode_contract = []; // unpublished too: the generic gate message must win, so the gate ran first
     const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
@@ -520,8 +525,8 @@ describe("the studio's one xCell: registration of the xCell Pur unit (HON-71)", 
     }
     expect(wrote()).toBe(false);
   });
-  it("ROLLOUT GATE: an UNLISTED studio is refused by the action even though the form was forged and the contract is published", async () => {
-    vi.stubEnv(GATE, LISTED_STUDIO);
+  it("ROLLOUT GATE: a studio the rollout is OFF for is refused by the action even though the form was forged and the contract is published", async () => {
+    ROLLOUT.value = "off";
     signIn(OTHER_STUDIO, "pract-owner-a");
     DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
     DB.rowsFor.studio_machines = [];
@@ -530,16 +535,16 @@ describe("the studio's one xCell: registration of the xCell Pur unit (HON-71)", 
     if (!r.ok) expect(r.error).toMatch(/not offered yet/);
     expect(wrote()).toBe(false);
   });
-  it("ROLLOUT GATE: a LISTED studio may register it, and 'all' (a test value) also passes", async () => {
-    vi.stubEnv(GATE, `${LISTED_STUDIO},${OTHER_STUDIO}`);
+  it("ROLLOUT GATE: a studio the rollout is ON for may register it", async () => {
+    ROLLOUT.value = "on";
     signIn(LISTED_STUDIO, "pract-owner-a");
     DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
     DB.rowsFor.studio_machines = [];
     DB.rpcResult = "66666666-6666-4666-8666-666666666666";
     expect((await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" })).ok).toBe(true);
   });
-  it("ROLLOUT GATE: an unpublished contract is refused even for a listed studio", async () => {
-    vi.stubEnv(GATE, LISTED_STUDIO);
+  it("ROLLOUT GATE: an unpublished contract is refused even when the rollout is on", async () => {
+    ROLLOUT.value = "on";
     signIn(LISTED_STUDIO, "pract-owner-a");
     DB.rowsFor.machine_profile_mode_contract = [];
     DB.rowsFor.studio_machines = [];
@@ -548,17 +553,37 @@ describe("the studio's one xCell: registration of the xCell Pur unit (HON-71)", 
     if (!r.ok) expect(r.error).toMatch(/No published field contract/);
   });
   it("ROLLOUT GATE: another model is not affected by the gate (3G registers with the gate unset)", async () => {
-    vi.stubEnv(GATE, "");
+    ROLLOUT.value = "off";
     signIn(OTHER_STUDIO, "pract-owner-a");
     DB.rowsFor.machine_profile_mode_contract = published(["flash", "microflash", "multiplex", "blend", "omniblend", "multiblend", "electrolysis"]).map((r) => ({ ...r, machine_profile_version: 3 }));
     DB.rowsFor.studio_machines = [];
     DB.rpcResult = "77777777-7777-4777-8777-777777777777";
     expect((await actions.registerMachineAction({ profileId: "dectro-apilus:senior-3g", displayName: "Room 2" })).ok).toBe(true);
   });
+  it("ROLLOUT OFF: the xCell is refused with the generic not-offered message and nothing is written", async () => {
+    ROLLOUT.value = "off";
+    signIn(OTHER_STUDIO, "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = [];
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r).toMatchObject({ ok: false, code: "rejected" });
+    if (!r.ok) expect(r.error).toMatch(/not offered yet/);
+    expect(wrote()).toBe(false);
+  });
+  it("ROLLOUT READ FAILED: a retryable refusal that is NOT 'not offered', and nothing is written", async () => {
+    ROLLOUT.value = "error";
+    signIn(LISTED_STUDIO, "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = [];
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r).toMatchObject({ ok: false, code: "unknown" });
+    if (!r.ok) expect(r.error).toMatch(/try again/i);
+    expect(wrote()).toBe(false);
+  });
   it("the studio the gate tests is the authenticated scope's, never a posted value", () => {
     const body = CODE.slice(CODE.indexOf("export async function registerMachineAction"));
-    expect(body).toContain("xcellRegistrationAllowed(scope.studioId)");
-    expect(body).not.toMatch(/xcellRegistrationAllowed\(input\./);
+    expect(body).toContain("xcellRegistrationState(scope.studioId)");
+    expect(body).not.toMatch(/xcellRegistrationState\(input\./);
   });
 
   it("the owner check stays in the database command, and the settings page itself shows only the owner notice to anyone else", () => {

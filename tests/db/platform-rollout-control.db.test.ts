@@ -88,7 +88,7 @@ describe("the resolver (fails closed)", () => {
 
 describe("only the service role can use any of it", () => {
   it("authenticated and anon cannot call a command or read either table; service_role cannot read the tables directly either", async () => {
-    for (const fn of [`set_platform_rollout_mode('${KEY}','all','${ACTOR}','${EMAIL}')`, `add_platform_rollout_studio('${KEY}','${A.studioId}','${ACTOR}','${EMAIL}')`, `remove_platform_rollout_studio('${KEY}','${A.studioId}','${ACTOR}','${EMAIL}')`, `platform_rollout_enabled_for('${KEY}','${A.studioId}')`, `list_platform_rollout('${KEY}')`, `log_blocked_platform_rollout_attempt('${ACTOR}','platform_rollout_mode_set')`]) {
+    for (const fn of [`set_platform_rollout_mode('${KEY}','all','${ACTOR}','${EMAIL}')`, `add_platform_rollout_studio('${KEY}','${A.studioId}','${ACTOR}','${EMAIL}')`, `remove_platform_rollout_studio('${KEY}','${A.studioId}','${ACTOR}','${EMAIL}')`, `platform_rollout_enabled_for('${KEY}','${A.studioId}')`, `list_platform_rollout('${KEY}')`, `log_refused_platform_rollout_attempt('${ACTOR}','platform_rollout_mode_set')`]) {
       await expect(asUser(A.userId, (q) => q(`select public.${fn}`)), fn).rejects.toThrow(/permission denied/);
       await expect(asRole("anon", (q) => q(`select public.${fn}`)), fn).rejects.toThrow(/permission denied/);
     }
@@ -158,7 +158,7 @@ describe("the audit row", () => {
   it("a blocked non-admin attempt: user id only, ONE row per user per action per 10 minutes, none for an unknown action or no user", async () => {
     await adminQuery(`delete from public.admin_action_events where target_type='platform_rollout'`);
     const user = randomUUID();
-    const log = (u: string | null, a: string) => svc(async (q) => (await q(`select public.log_blocked_platform_rollout_attempt($1,$2) as r`, [u, a])).rows[0].r as boolean);
+    const log = (u: string | null, a: string) => svc(async (q) => (await q(`select public.log_refused_platform_rollout_attempt($1,$2) as r`, [u, a])).rows[0].r as boolean);
     expect(await log(user, "platform_rollout_mode_set")).toBe(true);
     for (let i = 0; i < 5; i++) expect(await log(user, "platform_rollout_mode_set")).toBe(false);
     expect(await log(user, "platform_rollout_studio_added")).toBe(true); // a different action is its own bucket
@@ -175,7 +175,7 @@ describe("the audit row", () => {
   it("concurrent blocked attempts by one user still write only one row", async () => {
     await adminQuery(`delete from public.admin_action_events where target_type='platform_rollout'`);
     const user = randomUUID();
-    const log = () => svc(async (q) => (await q(`select public.log_blocked_platform_rollout_attempt($1,'platform_rollout_mode_set') as r`, [user])).rows[0].r as boolean);
+    const log = () => svc(async (q) => (await q(`select public.log_refused_platform_rollout_attempt($1,'platform_rollout_mode_set') as r`, [user])).rows[0].r as boolean);
     const results = await Promise.all([log(), log(), log(), log()]);
     expect(results.filter(Boolean)).toHaveLength(1);
     expect((await audit()).length).toBe(1);

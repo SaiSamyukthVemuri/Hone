@@ -145,7 +145,7 @@ $$;
 
 -- A signed-in NON-ADMIN's attempt: ONE blocked row per user per action per 10 minutes, so a loop cannot grow the table. The row carries the user id
 -- only (never an email), a constant action and target_type, and no body or free text. A request with no session writes nothing (the server never calls this).
-create function public.log_blocked_platform_rollout_attempt(p_actor_user_id uuid, p_action text)
+create function public.log_refused_platform_rollout_attempt(p_actor_user_id uuid, p_action text)
 returns boolean
 language plpgsql
 security definer
@@ -192,13 +192,13 @@ revoke all on function public.set_platform_rollout_mode(text, text, uuid, text) 
 revoke all on function public.add_platform_rollout_studio(text, uuid, uuid, text) from public, anon, authenticated, service_role;
 revoke all on function public.remove_platform_rollout_studio(text, uuid, uuid, text) from public, anon, authenticated, service_role;
 revoke all on function public.list_platform_rollout(text) from public, anon, authenticated, service_role;
-revoke all on function public.log_blocked_platform_rollout_attempt(uuid, text) from public, anon, authenticated, service_role;
+revoke all on function public.log_refused_platform_rollout_attempt(uuid, text) from public, anon, authenticated, service_role;
 grant execute on function public.platform_rollout_enabled_for(text, uuid) to service_role;
 grant execute on function public.set_platform_rollout_mode(text, text, uuid, text) to service_role;
 grant execute on function public.add_platform_rollout_studio(text, uuid, uuid, text) to service_role;
 grant execute on function public.remove_platform_rollout_studio(text, uuid, uuid, text) to service_role;
 grant execute on function public.list_platform_rollout(text) to service_role;
-grant execute on function public.log_blocked_platform_rollout_attempt(uuid, text) to service_role;
+grant execute on function public.log_refused_platform_rollout_attempt(uuid, text) to service_role;
 -- platform_rollout_check_actor is an internal helper: no role may call it directly (the definer commands run as the owner).
 
 comment on table public.platform_rollouts is 'Platform feature rollout mode (off, pilot, all). Changed only by the admin commands, which audit every change.';

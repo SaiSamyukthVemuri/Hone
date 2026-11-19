@@ -59,7 +59,7 @@ import {
   updateSessionPerformerAction,
 } from "./actions";
 import { createClient } from "@/lib/supabase/server";
-import { CHARTING_VIEW_STUDIOS_ENV } from "@/lib/charting/view-preference";
+import { chartingRolloutFor } from "@/lib/rollouts/charting-rollout";
 import { chartingViewForPage } from "@/lib/charting/page-view";
 import { NewViewHint, NewViewOnlyStep } from "@/components/charting-view-context";
 import { ChartingViewShell, ChartingViewToggle, ChartingVisitSummary } from "@/components/charting-view-shell";
@@ -597,8 +597,7 @@ export default async function SessionDetailPage({
   // below changes at all and no extra read happens. When it is available, the person's own saved choice is read from
   // their sign-in profile (a failed read means Current). It is a display choice only and decides nothing else.
   const { toggleVisible: chartingToggleVisible, view: chartingInitialView } = await chartingViewForPage({
-    studioId: practitioner.studio_id,
-    rawGate: process.env[CHARTING_VIEW_STUDIOS_ENV],
+    rolloutOn: await chartingRolloutFor(practitioner.studio_id),
     readMetadata: async () => {
       const {
         data: { user: authUser },

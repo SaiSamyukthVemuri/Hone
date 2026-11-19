@@ -14,7 +14,7 @@ begin
     raise exception 'REFUSED: a rollout is live or has pilot studios (non-off modes: %, pilot rows: %). Set Off and remove the pilots first.', coalesce(v_mode, 'none'), n;
   end if;
 end $$;
-drop function if exists public.log_blocked_platform_rollout_attempt(uuid, text);
+drop function if exists public.log_refused_platform_rollout_attempt(uuid, text);
 drop function if exists public.list_platform_rollout(text);
 drop function if exists public.remove_platform_rollout_studio(text, uuid, uuid, text);
 drop function if exists public.add_platform_rollout_studio(text, uuid, uuid, text);

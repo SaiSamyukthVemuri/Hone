@@ -17,7 +17,7 @@ import {
   currentProfile,
   type MachineProfile,
 } from "@/lib/machines/profile-contract";
-import { checkIdentityChoice, storedIdentityMatches } from "@/lib/machines/identity-choice";
+import { blockUsesXcellPur, checkIdentityChoice, storedIdentityMatches } from "@/lib/machines/identity-choice";
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import {
@@ -75,7 +75,8 @@ import {
   inventoryUnavailable,
   listStudioDevices,
 } from "@/lib/machines/studio-devices";
-import { xcellRegistrationAllowed } from "@/lib/machines/xcell-registration-gate";
+import { xcellRegistrationState } from "@/lib/machines/xcell-registration-gate";
+import { readChartingRollout, ROLLOUT_UNAVAILABLE_MESSAGE, xcellRouteDecision } from "@/lib/rollouts/charting-rollout";
 import { listStudioMachines, machinesByIds, recordBlockMachineIdentity } from "@/lib/machines/machine-queries";
 import {
   assertSessionForClient,
@@ -464,7 +465,19 @@ export async function loadMachineSetupContext(input: {
   // MULTIPLEX AS A MODE OF THE ONE xCELL CHOICE (HON-71). A route only where the existing choice is offered, the contract row is
   // PUBLISHED and the studio has a usable unit; a failed read means no route, and the studio's form is exactly what it was.
   let multiplexRoute: XcellMultiplexRoute | null = null;
-  if (legacyMachine) {
+  // PLATFORM ROLLOUT (Insurance E1/E2). An EXISTING MultiPlex block keeps its route whatever the rollout says. For a new setup: on = offer,
+  // off = no route, and a FAILED read must NOT degrade (that would save a new setup under the legacy machine): the context refuses retryably.
+  let rolloutUnavailable = false;
+  const existingUsesXcellPur = input.blockId ? await blockUsesXcellPur(db, input.blockId, input.sessionId) : false;
+  const rollout = existingUsesXcellPur ? "on" : await readChartingRollout(scope.studioId);
+  const routeDecision = xcellRouteDecision({ existingBlockUsesXcellPur: existingUsesXcellPur, rollout });
+  if (routeDecision === "refuse") {
+    // WITHHOLD the legacy xCell offer too: with it on screen a new setup could be saved under the legacy machine, which may be the wrong
+    // machine on a clinical record. Nothing is lost: an existing block keeps its route, and a retry reads the rollout again.
+    legacyMachine = null;
+    rolloutUnavailable = true;
+  }
+  if (legacyMachine && routeDecision === "offer") {
     try {
       const purProfile = currentProfile(catalogue, XCELL_PUR_PROFILE_ID);
       const published = purProfile ? await publishedModesFor(db, purProfile.profileId, purProfile.version) : null;
@@ -524,7 +537,7 @@ export async function loadMachineSetupContext(input: {
   return {
     scope,
     devices: inventory.devices,
-    inventoryReason: inventory.reason,
+    inventoryReason: rolloutUnavailable ? ROLLOUT_UNAVAILABLE_MESSAGE : inventory.reason,
     remembered,
     rememberedUnavailable,
     persistence,
@@ -755,8 +768,11 @@ export async function registerMachineAction(input: {
 
   // ROLLOUT GATE (Sam): only allowlisted studios may register the xCell. The same answer as the listing, enforced here so a forged form
   // cannot bypass it; the message does not reveal the rollout.
-  if (profile.profileId === XCELL_PUR_PROFILE_ID && !xcellRegistrationAllowed(scope.studioId)) {
-    return { ok: false, code: "rejected", error: "That machine model is not offered yet. A model becomes available only after its evidence review." };
+  if (profile.profileId === XCELL_PUR_PROFILE_ID) {
+    const rollout = await xcellRegistrationState(scope.studioId);
+    // A failed read is NOT "off": say so, retryably, rather than pretend the model does not exist.
+    if (rollout === "error") return { ok: false, code: "unknown", error: ROLLOUT_UNAVAILABLE_MESSAGE };
+    if (rollout !== "on") return { ok: false, code: "rejected", error: "That machine model is not offered yet. A model becomes available only after its evidence review." };
   }
 
   const name = input.displayName.trim();

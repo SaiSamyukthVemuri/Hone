@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   CHARTING_VIEW_KEY,
   chartingViewFromMetadata,
-  parseChartingViewGate,
   readChartingView,
   resolveChartingView,
   strictChartingView,
@@ -59,26 +58,16 @@ describe("the write merges: every other profile key survives", () => {
   });
 });
 
-describe("who sees the toggle: the rollout and the kill switch", () => {
-  it("empty, missing or garbage is OFF", () => {
-    for (const raw of [undefined, null, "", "  ", "none", "ALLOW", "not-a-uuid", "*"]) {
-      expect(parseChartingViewGate(raw)).toEqual({ kind: "off" });
-    }
-  });
-  it('"all" (any case, padded) is every studio', () => {
-    for (const raw of ["all", " ALL ", "All"]) expect(parseChartingViewGate(raw)).toEqual({ kind: "all" });
-  });
-  it("a list names studios; a malformed token only shrinks it", () => {
-    const g = parseChartingViewGate(` ${A.toUpperCase()}, nope ,${B}, ${A.slice(0, 8)}`);
-    expect(g.kind).toBe("list");
-    expect(g.kind === "list" && [...g.ids].sort()).toEqual([A, B]);
-  });
+describe("who sees the toggle: the server's rollout answer, passed in", () => {
   it("resolves the view: a hidden toggle always means Current, even when the profile says new", () => {
     const meta = { [CHARTING_VIEW_KEY]: "new" };
-    expect(resolveChartingView(meta, A, "")).toEqual({ toggleVisible: false, view: "current" });
-    expect(resolveChartingView(meta, A, B)).toEqual({ toggleVisible: false, view: "current" });
-    expect(resolveChartingView(meta, A, A)).toEqual({ toggleVisible: true, view: "new" });
-    expect(resolveChartingView(meta, null, "all")).toEqual({ toggleVisible: true, view: "new" });
-    expect(resolveChartingView(undefined, A, "all")).toEqual({ toggleVisible: true, view: "current" });
+    expect(resolveChartingView(meta, false)).toEqual({ toggleVisible: false, view: "current" });
+    expect(resolveChartingView(meta, true)).toEqual({ toggleVisible: true, view: "new" });
+    expect(resolveChartingView(undefined, true)).toEqual({ toggleVisible: true, view: "current" });
+  });
+  it("the module reads no environment variable and no database (it is client-safe)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("lib/charting/view-preference.ts", "utf8").replace(/\/\/.*$/gm, "");
+    expect(src).not.toMatch(/process\.env|HONE_CHARTING|createClient|server-only/);
   });
 });

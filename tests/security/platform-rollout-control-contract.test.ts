@@ -13,7 +13,7 @@ for (const m of CODE.matchAll(/create function public\.(\w+)\(([\s\S]*?)\)\s*ret
   fns.push({ name: m[1], args: m[2].replace(/\s+/g, " ").trim(), body: CODE.slice(m.index!, end) });
 }
 const find = (n: string) => fns.find((f) => f.name === n)!;
-const CALLABLE = ["platform_rollout_enabled_for", "set_platform_rollout_mode", "add_platform_rollout_studio", "remove_platform_rollout_studio", "list_platform_rollout", "log_blocked_platform_rollout_attempt"];
+const CALLABLE = ["platform_rollout_enabled_for", "set_platform_rollout_mode", "add_platform_rollout_studio", "remove_platform_rollout_studio", "list_platform_rollout", "log_refused_platform_rollout_attempt"];
 
 describe("grants: every function revoked from ALL FOUR roles by name; the callable ones to service_role ONLY", () => {
   it("each function has the by-name revoke", () => {
@@ -78,7 +78,7 @@ describe("the audit rules inside the commands (Privacy 1 to 3, Insurance S2)", (
     expect(tables).toMatch(/added_by\s+uuid/);
   });
   it("a blocked attempt: user id only (NO email column written), constant actions, de-duplicated to one per user per action per 10 minutes", () => {
-    const b = find("log_blocked_platform_rollout_attempt").body;
+    const b = find("log_refused_platform_rollout_attempt").body;
     expect(b).toMatch(/insert into public\.admin_action_events \(actor_user_id, target_type, action, outcome, source\)/);
     expect(b).not.toMatch(/actor_email|metadata/);
     expect(b).toContain("interval '10 minutes'");
