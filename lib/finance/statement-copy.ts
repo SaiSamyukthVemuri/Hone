@@ -60,3 +60,6 @@ export const STATEMENT_NO_TOTAL = "no amount";
 
 /** A practitioner whose name could not be read. The id is never shown. */
 export const STATEMENT_UNNAMED_PRACTITIONER = "Practitioner (name not available)";
+
+/** Shown when the requested month is malformed or outside the covered range and the current month is shown instead. */
+export const STATEMENT_MONTH_NOTICE = "That month is not available, so the current month is shown. Choose a month from January 2000 to the current month.";

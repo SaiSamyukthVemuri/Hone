@@ -27,13 +27,14 @@ import {
   STATEMENT_WRITE_OFFS_NOTE,
   unreadableFormsLine,
 } from "@/lib/finance/statement-copy";
-import { shiftYearMonth } from "@/lib/finance/statement-period";
+import { shiftYearMonth, STATEMENT_MIN_MONTH } from "@/lib/finance/statement-period";
 import type { StatementView as View } from "@/lib/finance/statement-read";
 
 const UNAVAILABLE: Record<string, string> = {
   read_failed: "The statement could not be read, so nothing is shown. No figure is guessed. Try again.",
   too_many_appointments: "This month has more appointments than this statement can read exactly, so it shows nothing rather than part of a month.",
   currency_unknown: "This studio's payment currency is not set, so money cannot be totalled. Nothing is shown.",
+  month_out_of_range: "That month is outside the range this statement covers (January 2000 to the current month). Nothing is shown.",
 };
 
 function Rows({ bucket, kinds, format }: { bucket: StatementBucket; kinds: readonly StatementKind[]; format: (c: number) => string }) {
@@ -74,7 +75,7 @@ function Section({ bucket, format }: { bucket: StatementBucket; format: (c: numb
   );
 }
 
-export function StatementView({ view, currency, format }: { view: View; currency: string | null; format: (c: number) => string }) {
+export function StatementView({ view, currency, format, maxMonth, notice }: { view: View; currency: string | null; format: (c: number) => string; maxMonth?: string; notice?: string | null }) {
   if (view.access === "refused") {
     return <section className="rounded-lg border border-line bg-surface-sunken p-6 text-sm text-fg">Only the studio owner can see the money statement.</section>;
   }
@@ -93,17 +94,18 @@ export function StatementView({ view, currency, format }: { view: View; currency
         <p className="text-sm text-fg-muted">
           Visits that started {view.startLocal} to the end of the month, in the studio&apos;s timezone ({view.timezone}). Currency: {currency?.toUpperCase()}.
         </p>
+        {notice ? <p className="text-sm text-fg" role="status">{notice}</p> : null}
         <p className="text-sm text-fg">{STATEMENT_FRAMING}</p>
         <form method="get" action="/financials/statement" className="flex items-end gap-2 text-sm" aria-label="Choose a month">
           <label className="flex flex-col gap-1 text-fg">
             Month
-            <input type="month" name="month" defaultValue={view.month} className="rounded border border-line px-2 py-1" />
+            <input type="month" name="month" defaultValue={view.month} min={STATEMENT_MIN_MONTH} max={maxMonth} className="rounded border border-line px-2 py-1" />
           </label>
           <button type="submit" className="rounded border border-line px-3 py-1">Show month</button>
         </form>
         <nav className="flex gap-4 text-sm" aria-label="Month">
-          <Link href={`/financials/statement?month=${prev}`} className="underline">Previous month</Link>
-          <Link href={`/financials/statement?month=${next}`} className="underline">Next month</Link>
+          {prev >= STATEMENT_MIN_MONTH ? <Link href={`/financials/statement?month=${prev}`} className="underline">Previous month</Link> : null}
+          {maxMonth === undefined || next <= maxMonth ? <Link href={`/financials/statement?month=${next}`} className="underline">Next month</Link> : null}
         </nav>
       </header>
 

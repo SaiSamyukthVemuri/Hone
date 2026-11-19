@@ -2,7 +2,8 @@ import { formatMoney, type PaymentCurrency } from "@/lib/billing/payment-jurisdi
 import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
 import { localDateString } from "@/lib/booking/tz";
 import { loadStatementView } from "@/lib/finance/statement-read";
-import { isYearMonth, yearMonthOf } from "@/lib/finance/statement-period";
+import { isStatementMonth, yearMonthOf } from "@/lib/finance/statement-period";
+import { STATEMENT_MONTH_NOTICE } from "@/lib/finance/statement-copy";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 
 import { StatementView } from "./statement-view";
@@ -33,11 +34,14 @@ export default async function StatementPage({ searchParams }: { searchParams: Pr
   const sp = await searchParams;
   const requested = Array.isArray(sp.month) ? sp.month[0] : sp.month;
   // An unrecognised month falls back to the current one; it is never an unbounded window.
-  const month = isYearMonth(requested) ? requested : yearMonthOf(localDateString(new Date(), studio.timezone));
+  const current = yearMonthOf(localDateString(new Date(), studio.timezone));
+  const valid = isStatementMonth(requested, current);
+  const month = valid ? requested : current;
+  const notice = requested !== undefined && !valid ? STATEMENT_MONTH_NOTICE : null;
 
   const jurisdiction = await getStudioPaymentJurisdiction(studio.id);
   const currency: PaymentCurrency | null = jurisdiction.ok ? jurisdiction.jurisdiction.currency : null;
 
   const view = await loadStatementView(practitioner, studio, month, currency);
-  return <StatementView view={view} currency={currency} format={(c) => formatMoney(c, currency)} />;
+  return <StatementView view={view} currency={currency} format={(c) => formatMoney(c, currency)} maxMonth={current} notice={notice} />;
 }

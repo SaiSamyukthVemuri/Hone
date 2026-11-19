@@ -116,3 +116,21 @@ describe("source guards", () => {
     expect([...new Set(tables)]).toEqual(["appointment_settlements", "appointments", "manual_fee_charge_attempts", "payment_charge_attempts", "practitioners", "services", "sessions"]);
   });
 });
+
+describe("month range (Insurance P1): an absurd month never reaches date arithmetic or a query", () => {
+  const owner = { role: "owner" };
+  const studio = { id: "s1", timezone: "America/Toronto" };
+  const noQuery = { from: () => { throw new Error("no query may run for an out-of-range month"); } } as unknown as SupabaseClient;
+  it("9999-12, 0000-01, 0001-01 and 1999-12 are refused as out of range, with no throw and no query", async () => {
+    const { loadStatementView } = await import("@/lib/finance/statement-read");
+    for (const m of ["9999-12", "0000-01", "0001-01", "1999-12", "3000-01"]) {
+      expect(await loadStatementView(owner, studio, m, "cad", noQuery), m).toEqual({ access: "granted", ok: false, reason: "month_out_of_range" });
+    }
+  });
+  it("isStatementMonth accepts 2000-01 through the current month and nothing else", async () => {
+    const { isStatementMonth } = await import("@/lib/finance/statement-period");
+    expect(isStatementMonth("2000-01", "2026-11")).toBe(true);
+    expect(isStatementMonth("2026-11", "2026-11")).toBe(true);
+    for (const m of ["2026-12", "9999-12", "0000-01", "0001-12", "1999-12", "2026-13", "2026-1", "abc", undefined]) expect(isStatementMonth(m, "2026-11"), String(m)).toBe(false);
+  });
+});

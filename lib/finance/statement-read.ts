@@ -8,7 +8,7 @@ import { createClient } from "@/lib/supabase/server";
 import { readInChunks } from "@/lib/dashboard/in-chunks";
 import type { Studio } from "@/lib/types/database";
 
-import { monthRange, type YearMonth } from "./statement-period";
+import { isYearMonth, monthRange, STATEMENT_MAX_SANE_MONTH, STATEMENT_MIN_MONTH, type YearMonth } from "./statement-period";
 import {
   buildStatement,
   type Statement,
@@ -38,7 +38,7 @@ const APPT_CAP = 1000;
 
 export type StatementView =
   | { access: "refused" }
-  | { access: "granted"; ok: false; reason: "read_failed" | "too_many_appointments" | "currency_unknown" }
+  | { access: "granted"; ok: false; reason: "read_failed" | "too_many_appointments" | "currency_unknown" | "month_out_of_range" }
   | {
       access: "granted";
       ok: true;
@@ -70,6 +70,7 @@ export async function loadStatementView(
 ): Promise<StatementView> {
   // FIRST STATEMENT. Nothing below runs for a non-owner: no client, no query.
   if (practitioner.role !== "owner") return { access: "refused" };
+  if (!isYearMonth(month) || month < STATEMENT_MIN_MONTH || month > STATEMENT_MAX_SANE_MONTH) return { access: "granted", ok: false, reason: "month_out_of_range" };
   if (!studioCurrency) return { access: "granted", ok: false, reason: "currency_unknown" };
 
   const supabase = supabaseClient ?? (await createClient());

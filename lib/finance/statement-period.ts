@@ -11,6 +11,16 @@ export function isYearMonth(v: string | undefined): v is YearMonth {
   return typeof v === "string" && YM.test(v);
 }
 
+/** The statement's calendar: from this month to the studio's current month. Wider values are never read. */
+export const STATEMENT_MIN_MONTH: YearMonth = "2000-01";
+/** A sanity ceiling for the loader only (the page's ceiling is the studio's current month). Keeps every date arithmetic call in range. */
+export const STATEMENT_MAX_SANE_MONTH: YearMonth = "2999-12";
+
+/** True for a well-formed month from January 2000 to `currentMonth` (the studio's current month, supplied by the caller). */
+export function isStatementMonth(v: string | undefined, currentMonth: YearMonth): v is YearMonth {
+  return isYearMonth(v) && v >= STATEMENT_MIN_MONTH && v <= currentMonth;
+}
+
 export function yearMonthOf(localDate: string): YearMonth {
   return localDate.slice(0, 7);
 }

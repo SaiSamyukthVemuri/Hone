@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { readFileSync } from "node:fs";
 import { buildStatement, type StatementCardRow } from "@/lib/finance/statement";
-import { STATEMENT_NO_TOTAL, STATEMENT_UNNAMED_PRACTITIONER } from "@/lib/finance/statement-copy";
+import { STATEMENT_MONTH_NOTICE, STATEMENT_NO_TOTAL, STATEMENT_UNNAMED_PRACTITIONER } from "@/lib/finance/statement-copy";
 
 vi.mock("server-only", () => ({}));
 
@@ -23,7 +23,7 @@ const row = (over: Partial<StatementCardRow>): StatementCardRow => ({
 });
 const fmt = (c: number) => `$${Math.trunc(c / 100)}.${String(c % 100).padStart(2, "0")} CAD`;
 
-async function render(opts: { names?: Record<string, string>; startsAt?: string }) {
+async function render(opts: { names?: Record<string, string>; startsAt?: string; maxMonth?: string; notice?: string | null }) {
   const { StatementView } = await import("@/app/(app)/financials/statement/statement-view");
   const statement = buildStatement({
     studioCurrency: "cad",
@@ -59,6 +59,8 @@ async function render(opts: { names?: Record<string, string>; startsAt?: string 
       },
       currency: "cad",
       format: fmt,
+      maxMonth: opts.maxMonth,
+      notice: opts.notice,
     }),
   );
 }
@@ -145,5 +147,28 @@ describe("review findings: wording", () => {
     expect(html).toContain("never added to Collected");
     expect(html).toContain("A fully refunded charge is already absent from Collected");
     expect(html).not.toMatch(/not subtracted from Collected|never added to any total/i);
+  });
+});
+
+describe("month bounds (Insurance P1)", () => {
+  it("the input carries min 2000-01 and max = the studio's current month, and Next is hidden at the bound", async () => {
+    const html = await render({ maxMonth: "2026-11" });
+    expect(html).toMatch(/min="2000-01"/);
+    expect(html).toMatch(/max="2026-11"/);
+    expect(html).not.toContain("Next month");
+    expect(html).toContain("Previous month");
+    const earlier = await render({ maxMonth: "2026-12" });
+    expect(earlier).toContain("Next month");
+  });
+  it("a fallback notice is shown when the requested month was not available", async () => {
+    const html = await render({ maxMonth: "2026-11", notice: STATEMENT_MONTH_NOTICE });
+    expect(html).toContain("not available, so the current month is shown");
+    expect(await render({ maxMonth: "2026-11" })).not.toContain("current month is shown");
+  });
+  it("the page uses the bounded check and passes the bound and notice to the view", () => {
+    const src = readFileSync("app/(app)/financials/statement/page.tsx", "utf8");
+    expect(src).toContain("isStatementMonth(requested, current)");
+    expect(src).toMatch(/maxMonth=\{current\}/);
+    expect(src).not.toMatch(/isYearMonth\(requested\)/);
   });
 });
