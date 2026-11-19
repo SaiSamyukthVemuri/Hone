@@ -21,6 +21,12 @@ describe("Done-charting guard: non-blocking aftercare prompt", () => {
     // not marked -> open the dialog
     expect(GUARD).toMatch(/setOpen\(true\)/);
   });
+  it("uses the exact warning copy", () => {
+    expect(GUARD).toMatch(/Aftercare not marked/);
+    expect(GUARD).toMatch(
+      /You can continue, but this session does not show that aftercare\s*\n?\s*and risks were explained\./,
+    );
+  });
   it("offers exactly the two choices and never blocks", () => {
     expect(GUARD).toMatch(/Mark aftercare explained/);
     expect(GUARD).toMatch(/Continue without marking/);

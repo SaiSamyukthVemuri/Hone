@@ -40,6 +40,30 @@ describe("Resend intake link CTA wiring (PR #293)", () => {
     expect(CARD_CODE).not.toMatch(/requestIntakeUpdateAction/);
   });
 
+  it("provides a Copy link fallback via the existing getIntakeLinkAction", () => {
+    expect(CARD).toMatch(/getIntakeLinkAction/);
+    expect(CARD).toMatch(/Copy link/);
+  });
+
+  it("copy says saved answers are kept and links expire after 14 days", () => {
+    expect(CARD).toMatch(/keeps any answers they/);
+    expect(CARD).toMatch(/Links expire after 14 days/);
+  });
+
+  it("uses the approved generic success and error copy", () => {
+    expect(CARD).toMatch(/Intake link sent\./);
+    expect(CARD).toMatch(/Could not send the intake link\. Please try again\./);
+  });
+
+  it("no-email state disables resend and points to Copy link", () => {
+    expect(CARD).toMatch(/disabled=\{isPending \|\| !clientHasEmail\}/);
+    expect(CARD).toMatch(/No email on file\. Use Copy link to share it manually\./);
+  });
+
+  it("shows the best-effort 'previous link may have expired' hint", () => {
+    expect(CARD).toMatch(/The previous link may have expired\./);
+  });
+
   it("adds no token/PII logging (no console / ops-alert in the card)", () => {
     expect(CARD).not.toMatch(/console\./);
     expect(CARD).not.toMatch(/recordOpsAlert/);

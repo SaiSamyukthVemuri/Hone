@@ -62,7 +62,30 @@ describe("forbidden clinical-decision wording (new code only)", () => {
   }
 });
 
+describe("allowed wording is present", () => {
+  it("module exposes the allowed level wording", () => {
+    expect(MODULE).toMatch(/Medical authorization may be required/);
+    expect(MODULE).toMatch(/Review before treatment/);
+    expect(MODULE).toMatch(/Precaution noted/);
+    expect(MODULE).toMatch(/Based on intake response/);
+  });
+
+  it("card uses the allowed header + professional-judgment caveat", () => {
+    expect(PAGE).toMatch(/Intake review needed/);
+    expect(PAGE).toMatch(/Use professional judgment and clinic policy\./);
+    expect(PAGE).toMatch(/latest recorded intake/i);
+  });
+});
+
 describe("practitioner-only surface", () => {
+  it("the review page mounts the derived flags card", () => {
+    expect(PAGE).toMatch(/deriveIntakeReviewFlags/);
+    expect(PAGE).toContain("const catalogue = questionnaireForRow(intake.questionnaire_snapshot)");
+    expect(PAGE).toContain("const INTAKE_STEPS = catalogue.steps");
+    expect(PAGE).toMatch(/<IntakeReviewFlags responses=\{responses\} steps=\{INTAKE_STEPS\} \/>/);
+    expect(PAGE).toContain("deriveIntakeReviewFlags(responses, steps)");
+  });
+
   it("the public client-facing intake route does NOT render review flags", () => {
     expect(PUBLIC_INTAKE).not.toMatch(/deriveIntakeReviewFlags|IntakeReviewFlags/);
   });

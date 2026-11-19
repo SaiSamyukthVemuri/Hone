@@ -29,3 +29,14 @@ describe("UI-only: no storage/security change, no annotation/OCR/AI, no exposure
     expect(MANAGER).not.toMatch(/jane\.app|\/thumbs\//i);
   });
 });
+
+
+describe("phone photo acquisition", () => {
+  it("offers separate camera and multi-image library inputs through the same upload path", () => {
+    expect(MANAGER).toContain("Take photo");
+    expect(MANAGER).toMatch(/aria-label="Take a treatment photo"[\s\S]*?capture="environment"[\s\S]*?onChange=\{onPick\}/);
+    expect(MANAGER).toMatch(/aria-label="Choose treatment images"[\s\S]*?multiple[\s\S]*?onChange=\{onPick\}/);
+    expect(MANAGER).toMatch(/focus-within:outline-2/);
+    expect(MANAGER).toMatch(/disabled=\{uploading\}/);
+  });
+});

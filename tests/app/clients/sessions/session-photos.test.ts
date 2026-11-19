@@ -59,6 +59,10 @@ describe("session photos on the chart page", () => {
     expect(section).toMatch(/if \(photos\.length === 0\) return null;/);
     expect(page).toMatch(/<SessionPhotos clientId=\{id\} photos=\{sessionPhotos\} \/>/);
   });
+
+  it("the link back to Photos is on the 44px touch floor", () => {
+    expect(section).toMatch(/className="inline-flex min-h-\[44px\] items-center/);
+  });
 });
 
 describe("session photos: Codex P1 4301862700 / P2 4301862702", () => {

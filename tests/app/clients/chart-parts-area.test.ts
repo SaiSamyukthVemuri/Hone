@@ -8,6 +8,43 @@ function read(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf8");
 }
 
+const BEFORE_TODAY_CARD = read("components/before-today-card.tsx");
+const SESSION_BLOCKS_VIEW = read(
+  "app/(app)/clients/[id]/sessions/[sessionId]/session-blocks-view.tsx",
+);
+const BEFORE_TODAY_BUILDER = read("lib/sessions/before-today.ts");
+
+describe("treatment-memory card names the area (chart parts)", () => {
+  it("labels the last treatment's area with an 'Area not recorded' fallback", () => {
+    expect(BEFORE_TODAY_CARD).toMatch(/Treatment area:/);
+    expect(BEFORE_TODAY_CARD).toMatch(/Area not recorded/);
+  });
+
+  it("ties the latest recorded setup to its area", () => {
+    expect(BEFORE_TODAY_CARD).toMatch(/Latest recorded setup:/);
+    expect(BEFORE_TODAY_BUILDER).toMatch(/areaName/);
+  });
+
+  it("keeps imported area separate and explicitly labeled", () => {
+    expect(BEFORE_TODAY_CARD).toMatch(/Imported area:/);
+    // imported area still reads off treatment_area_text (imported provenance)
+    expect(BEFORE_TODAY_CARD).toMatch(/treatmentAreaText/);
+  });
+});
+
+describe("saved charted entries name the recorded area", () => {
+  it("shows a 'Recorded area' / 'Area not recorded' eyebrow", () => {
+    expect(SESSION_BLOCKS_VIEW).toMatch(/Recorded area/);
+    expect(SESSION_BLOCKS_VIEW).toMatch(/Area not recorded/);
+  });
+
+  it("still resolves the area from the existing structured fields (no new schema)", () => {
+    expect(SESSION_BLOCKS_VIEW).toMatch(/primary_area/);
+    expect(SESSION_BLOCKS_VIEW).toMatch(/custom_area_detail/);
+    expect(SESSION_BLOCKS_VIEW).toMatch(/sessionBlockSideLabel/);
+  });
+});
+
 describe("no copied Jane assets (inspiration only)", () => {
   // Walk app/, components/, lib/, docs/ and assert no Jane CDN/thumbnail URL or
   // image path is referenced. The product-category word "Jane" (import-source
