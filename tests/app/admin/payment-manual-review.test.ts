@@ -257,6 +257,7 @@ function read(rel: string): string {
 }
 const PAGE = read("app/admin/payments/manual-review/page.tsx");
 const HELPER = read("lib/billing/payment-manual-review.ts");
+const ADMIN_INDEX = read("app/admin/page.tsx");
 const ADMIN_LAYOUT = read("app/admin/layout.tsx");
 const codeOnly = (s: string) =>
   s.split("\n").filter((l) => !/^\s*\/\//.test(l) && !/^\s*\*/.test(l)).join("\n");
@@ -321,5 +322,12 @@ describe("manual-review page: queue selection mirrors docs/16 §17.7", () => {
     const throwCount = (PAGE.match(/throw new Error\("Could not load the payment manual-review queue\."\)/g) ?? []).length;
     expect(throwCount).toBe(2);
     expect(PAGE).not.toMatch(/throw new Error\(`?[^"]*\$\{[^}]*Err[^}]*\}/); // no interpolated provider message
+  });
+});
+
+describe("admin index links to the manual-review queue", () => {
+  it("has a QuickLink to /admin/payments/manual-review", () => {
+    expect(ADMIN_INDEX).toMatch(/href="\/admin\/payments\/manual-review"/);
+    expect(ADMIN_INDEX).toMatch(/Payment manual review/);
   });
 });

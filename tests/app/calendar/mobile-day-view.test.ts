@@ -66,6 +66,9 @@ describe("mobile navigation: today / prev day / next day / week strip", () => {
 });
 
 describe("mobile timeline: labels, now-line, timezone + 12h/24h", () => {
+  it("renders hour labels via formatHourLabel", () => {
+    expect(TIMELINE).toMatch(/formatHourLabel\(h\)/);
+  });
   it("shows the now-line only for today (existing pattern)", () => {
     expect(TIMELINE).toMatch(/isToday && <NowLine tz=\{tz\}/);
   });
@@ -118,6 +121,14 @@ describe("month view tapping a date preserves the EXACT date (not the week start
     expect(MONTHVIEW).toMatch(/const dayHref = withSelection\(\s*`\/calendar\?view=week&week=\$\{startOfWeek\(cellDate\)\}&day=\$\{cellDate\}`,\s*selectionParam,?\s*\)/);
     expect(MONTHVIEW).not.toMatch(/href=\{weekHref\}/); // old week-only href is gone
     expect(MONTHVIEW).toMatch(/href=\{dayHref\}/);
+  });
+  it("page consumes ?day= as the selected day (already wired), anchoring the containing week", () => {
+    expect(PAGE).toMatch(/params\.day \?\? params\.week \?\? startOfWeek\(today\)/);
+  });
+  it("today is unmistakable in the month grid (filled badge + accent), distinct from other days", () => {
+    expect(MONTHVIEW).toMatch(/aria-label="Today"/);
+    expect(MONTHVIEW).toMatch(/rounded-full bg-sky-600/);
+    expect(MONTHVIEW).toMatch(/border-t-2 border-t-sky-500/);
   });
 });
 

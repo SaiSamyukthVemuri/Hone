@@ -55,6 +55,19 @@ describe("unresolved alerts rendering", () => {
     );
   });
 
+  it("renders severity, event, created time, message, ids, and a details expander", () => {
+    for (const pin of [
+      "severityBadge(alert.severity)",
+      "{alert.event}",
+      "{alert.message}",
+      "idLines(alert)",
+      "Details (redacted at write time)",
+      "JSON.stringify(alert.safe_details, null, 2)",
+    ]) {
+      expect(PAGE).toContain(pin);
+    }
+  });
+
   it("safe metadata only: page renders columns + safe_details (redacted at write), nothing clinical or card-shaped", () => {
     expect(PAGE).not.toMatch(/allergies|intake|skin_notes|session_notes/);
     expect(PAGE).not.toMatch(/card_number|cvc|last4|client_secret/);
@@ -100,6 +113,22 @@ describe("PR #195: app-path smoke action", () => {
     expect(ACTIONS).toMatch(/import \{ recordOpsAlert \} from "@\/lib\/ops\/alerts"/);
   });
 
+  it("the payload is exactly the agreed smoke shape", () => {
+    expect(ACTIONS_CODE).toMatch(/severity: "critical",/);
+    expect(ACTIONS_CODE).toMatch(/event: "smoke_test_critical_alert_app_path",/);
+    expect(ACTIONS_CODE).toMatch(
+      /message: "PR #195 app-path smoke test critical alert",/,
+    );
+    expect(ACTIONS_CODE).toMatch(
+      /safeDetails: \{\s*\n?\s*smoke: true,\s*\n?\s*pr: 195,\s*\n?\s*path: "app",\s*\n?\s*\}/,
+    );
+  });
+
+  it("the button renders on the admin page bound to the action", () => {
+    expect(PAGE).toMatch(/action=\{sendTestCriticalAlertAction\}/);
+    expect(PAGE).toMatch(/Send test critical alert/);
+  });
+
   it("the smoke touches no Stripe/payment/client surface", () => {
     expect(ACTIONS_CODE).not.toMatch(
       /paymentIntents|stripe|charge|client_payment|clients\b/i,
@@ -115,6 +144,10 @@ describe("PR #193 boundaries", () => {
     );
   });
 
+  it("no public access: route lives under the guarded /admin tree", () => {
+    expect(PAGE).not.toMatch(/export const runtime/);
+    expect(ACTIONS).toMatch(/"use server"/);
+  });
 });
 
 // SEC-002: these loaders must refuse before constructing a privileged client,

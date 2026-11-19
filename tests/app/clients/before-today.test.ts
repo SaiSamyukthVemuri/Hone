@@ -230,6 +230,51 @@ describe("placement + card", () => {
     expect(reminders).toBeGreaterThan(response);
   });
 
+  it("title, helper, and the required empty states render", () => {
+    expect(CARD).toMatch(/>\s*\n?\s*Before today\s*\n?\s*<\/h2>/);
+    expect(CARD).toMatch(
+      /Key reminders from recorded history before starting this client\./,
+    );
+    expect(CARD).toMatch(
+      /Use\s*\n?\s*professional judgment\. This reflects recorded history only\./,
+    );
+    expect(CARD).toMatch(/No charted treatment history yet\./);
+    expect(CARD).toMatch(
+      /Treatment memory will appear here after the first charted session\./,
+    );
+    expect(CARD).toMatch(
+      /Use intake, consultation notes, and professional judgment\./,
+    );
+    expect(CARD).toMatch(
+      /No watch or plan notes recorded from the last treatment\./,
+    );
+    expect(CARD).toMatch(/Not recorded/);
+    expect(CARD).toMatch(/Setup not recorded/);
+    expect(CARD).toMatch(
+      /Procedure record looks complete based on recorded fields\./,
+    );
+  });
+
+  it("uses the blue treatment-memory styling for Remember today, first in the body", () => {
+    expect(CARD).toMatch(/Remember today/);
+    expect(CARD).toMatch(/border-blue-200 bg-blue-50/);
+    expect(CARD).toMatch(/Watch:<\/span>/);
+    expect(CARD).toMatch(/For next visit:<\/span>/);
+  });
+
+  it("snapshot and response render as wrapping chips; long notes wrap", () => {
+    expect(CARD).toMatch(/flex flex-wrap gap-1\.5/);
+    expect(CARD).toMatch(/Lot \{last\.probeLot\}/);
+    expect(CARD).toMatch(/EL \{setup\.energyLevel\}/);
+    expect(CARD).toMatch(/\{last\.minutes\} min/);
+    expect(CARD).toMatch(/Tolerance \{response\.toleranceRating\}\/5/);
+    expect(CARD).toMatch(/\{response\.reactionLabel\}/);
+    expect(CARD).toMatch(/\{response\.reactionNotes\}/);
+    // Notes and reminders wrap instead of overflowing on phones.
+    expect(CARD.match(/break-words/g)?.length).toBeGreaterThanOrEqual(4);
+    expect(CARD).toMatch(/whitespace-pre-wrap break-words/);
+  });
+
   it("callsites pass the last treatment's minutes and reaction notes through", () => {
     expect(PAGE).toMatch(/blockMinutes: lastTreatmentBlocks\.map/);
     expect(PAGE).toMatch(/blockReactionNotes: lastTreatmentBlocks\.map/);
@@ -285,6 +330,24 @@ describe("imported treatment memory in Before Today (PR #259)", () => {
     expect(importedStart).toBeGreaterThan(
       CARD.indexOf("Procedure record looks complete"),
     );
+  });
+
+  it("shows safe useful fields and skips empties", () => {
+    for (const field of [
+      "m.sourceLabel",
+      "m.dateLabel",
+      "m.treatmentAreaText",
+      "m.modality",
+      "m.probeLot",
+      "m.toleranceText",
+      "m.reactionText",
+      "m.cautionNote",
+      "m.nextVisitNote",
+      "m.importedNote",
+      "m.aftercareMarked === true",
+    ]) {
+      expect(importedSection).toContain(field);
+    }
   });
 
   it("shows a 'latest N of M' line only when more imported records exist than displayed", () => {

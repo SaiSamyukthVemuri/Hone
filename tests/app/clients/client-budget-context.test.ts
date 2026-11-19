@@ -534,6 +534,21 @@ describe("consultation surface", () => {
     }
   });
 
+  it("M. chips meet the 44px touch-target floor", () => {
+    // min-h-11 == 2.75rem == 44px.
+    const chipBlock = BUDGET_CARD.slice(
+      BUDGET_CARD.indexOf("CLIENT_BUDGET_LEVELS.map"),
+    );
+    expect(chipBlock).toContain("min-h-11");
+    // Chips wrap rather than overflow a 390px viewport.
+    expect(BUDGET_CARD).toContain("flex flex-wrap gap-2");
+  });
+
+  it("M. chips are real buttons with an accessible pressed state", () => {
+    expect(BUDGET_CARD).toContain('type="button"');
+    expect(BUDGET_CARD).toContain("aria-pressed={selected}");
+  });
+
   it("selecting a chip does NOT inject boilerplate into the textarea", () => {
     // The chip only sets state; the textarea stays uncontrolled on its own
     // defaultValue. Any setNotes(...) driven by a chip would be the bug.
@@ -557,5 +572,9 @@ describe("N. budget context never reaches a client-facing surface", () => {
       )
       .trim();
     expect(out).toBe("");
+  });
+
+  it("the card documents itself as practitioner-only", () => {
+    expect(BUDGET_CARD).toContain("never shown to the client");
   });
 });

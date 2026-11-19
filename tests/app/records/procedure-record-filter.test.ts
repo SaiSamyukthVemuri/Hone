@@ -183,6 +183,26 @@ describe("query layer: filter shape and scoping", () => {
 });
 
 describe("Records page: filter UI", () => {
+  it("renders a GET filter form with client select and date inputs", () => {
+    expect(PAGE).toMatch(/<input type="hidden" name="section" value="procedures" \/>/);
+    expect(PAGE).toMatch(/name="clientId"/);
+    expect(PAGE).toMatch(/All clients \(most recent sessions\)/);
+    expect(PAGE).toMatch(/type="date"\s+name="from"/);
+    expect(PAGE).toMatch(/type="date"\s+name="to"/);
+    expect(PAGE).toMatch(/Apply filter/);
+  });
+
+  it("Clear filters restores the unfiltered section", () => {
+    expect(PAGE).toMatch(
+      /href="\/records\?section=procedures"[\s\S]{0,200}Clear filters/,
+    );
+  });
+
+  it("the active filter is announced and the cap is explained", () => {
+    expect(PAGE).toMatch(/Showing \{records\.length\} recorded session/);
+    expect(PAGE).toMatch(/capped at the \$\{FILTERED_PROCEDURE_RECORD_LIMIT\} most recent/);
+  });
+
   it("the Print / Export link carries the procedure filter", () => {
     expect(PAGE).toMatch(
       /\/records\/print\?section=\$\{section\}\$\{section === "procedures" \? procedureFilterQuery : ""\}/,
@@ -209,6 +229,16 @@ describe("print route: filter parity", () => {
     expect(PRINT).toMatch(
       /\/records\?section=\$\{section\}\$\{section === "procedures" \? procedureFilterQuery : ""\}/,
     );
+  });
+
+  it("document header names the filtered client and date range", () => {
+    expect(PRINT).toMatch(/Filtered: client/);
+    expect(PRINT).toMatch(/filteredClient\?\.name/);
+    expect(PRINT).toMatch(/recorded sessions from \$\{procedureFilter\.from/);
+  });
+
+  it("filtered empty state renders instead of a broken page", () => {
+    expect(PRINT).toMatch(/No recorded sessions match this filter\./);
   });
 
   it("print stays practitioner-authenticated (no public/anon path)", () => {

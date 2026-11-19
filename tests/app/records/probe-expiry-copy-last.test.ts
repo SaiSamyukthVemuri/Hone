@@ -68,7 +68,23 @@ describe("copy-last never copies the lot number", () => {
   });
 });
 
-describe("Records page expiry states", () => {
+describe("Records page expiry states + banner", () => {
+  it("computes state per row and styles expired red / expiring amber with a helper-driven badge", () => {
+    expect(PAGE).toMatch(/supplyExpiryState\(r\.expiry_date, today\)/);
+    // Badge text comes from supplyExpiryLabel (one source of truth incl. the
+    // PR #317 "Expires today" state) — not hardcoded literals in the page.
+    expect(PAGE).toMatch(/supplyExpiryLabel\(expiry\)/);
+    expect(PAGE).toMatch(/\{expiryLabel\}/);
+    expect(PAGE).toMatch(/bg-red-50/);
+    expect(PAGE).toMatch(/bg-amber-50/);
+    // "today" and "expiring" share the amber row treatment.
+    expect(PAGE).toMatch(/expiry === "today" \|\| expiry === "expiring"/);
+  });
+  it("shows a summary banner with expired + expiring-within-30 counts", () => {
+    expect(PAGE).toMatch(/summarizeSupplyExpiry\(records, today\)/);
+    expect(PAGE).toMatch(/expiring within 30 days/);
+    expect(PAGE).toMatch(/\$\{expirySummary\.expired\} expired/);
+  });
   it("uses studio-local today", () => {
     expect(PAGE).toMatch(/const today = todayInTz\(timezone\)/);
   });

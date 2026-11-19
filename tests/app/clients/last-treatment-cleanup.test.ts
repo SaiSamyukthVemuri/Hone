@@ -27,8 +27,14 @@ const SESSION_PAGE = read(
 const FORM = read(
   "app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx",
 );
+const NOTE_FORM = read(
+  "app/(app)/clients/[id]/sessions/[sessionId]/NextVisitNoteForm.tsx",
+);
 const PERFORMER_LINE = read("components/session-performer-line.tsx");
+const BANNER = read("components/treatment-plan-banner.tsx");
+const ATTACHMENT = read("components/treatment-plan-attachment.tsx");
 const BIRTHDAY = read("components/client-birthday-card.tsx");
+const SUMMARY = read("components/last-session-summary.tsx");
 
 // ---------------------------------------------------------------------------
 // 1. Last treatment selection (pure helper, behavioral)
@@ -142,6 +148,30 @@ describe("Last treatment card (Sessions tab)", () => {
     expect(pickNewestNonVoidSession([{ ...treated, record_status: "finalized" }])?.id).toBe("treated");
   });
 
+  it("empty state says no charted treatments yet; 'No entries logged' is gone", () => {
+    expect(PAGE).toMatch(/No charted treatments yet\./);
+    expect(PAGE).not.toMatch(/No entries logged/);
+  });
+
+  it("the card shows date, modality, performer, per-area summary, watch/plan, and Open", () => {
+    expect(PAGE).toMatch(/<FormattedDateTime iso=\{lastTreatment\.started_at\}/);
+    expect(PAGE).toMatch(/\{lastTreatment\.modality\}/);
+    expect(PAGE).toMatch(/lastTreatmentPerformer/);
+    expect(PAGE).toMatch(/<AreaSummaries summary=\{lastTreatmentSummary\}/);
+    expect(PAGE).toMatch(
+      /<FromLastVisitForToday[\s\S]{0,40}summary=\{preClientWatchPlan\}/,
+    );
+    expect(PAGE).toMatch(
+      /href=\{`\/clients\/\$\{client\.id\}\/sessions\/\$\{lastTreatment\.id\}`\}/,
+    );
+    // Settings / Probe / Tolerance / Watch / Plan all come from the
+    // shared summary components the card renders.
+    expect(SUMMARY).toMatch(/Settings/);
+    expect(SUMMARY).toMatch(/Probe/);
+    expect(SUMMARY).toMatch(/Tolerance/);
+    expect(SUMMARY).toMatch(/Watch:<\/span>/);
+    expect(SUMMARY).toMatch(/Plan:<\/span>/);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -202,8 +232,18 @@ describe("Performed by appears once on the session page", () => {
 // ---------------------------------------------------------------------------
 
 describe("Detach from this plan lives inside the plan card", () => {
+  it("the banner accepts a detachSlot and renders it inside its section", () => {
+    expect(BANNER).toMatch(/detachSlot\?: ReactNode/);
+    expect(BANNER).toMatch(/\{detachSlot && <div className="mt-2">\{detachSlot\}<\/div>\}/);
+  });
+
   it("the session page passes the attachment widget into the banner when attached", () => {
     expect(SESSION_PAGE).toMatch(/detachSlot=\{\s*<TreatmentPlanAttachment/);
+  });
+
+  it("the detach affordance no longer floats right/outside the card", () => {
+    expect(ATTACHMENT).toMatch(/Detach from this plan/);
+    expect(ATTACHMENT).not.toMatch(/-mt-1 flex flex-col items-end/);
   });
 });
 

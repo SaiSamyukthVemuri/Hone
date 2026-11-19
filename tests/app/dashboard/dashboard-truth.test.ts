@@ -39,6 +39,10 @@ describe("DASH-TRUTH-02 disclosure", () => {
     expect(LIST_CODE).toMatch(/href=\{item\.action\.href\}/);
   });
 
+  it("M4 collapse is the same control, toggled", () => {
+    expect(LIST_CODE).toMatch(/setExpanded\(\(v\) => !v\)/);
+  });
+
   it("the count can only ever name rows that are actually loaded", () => {
     expect(LIST_CODE).toMatch(/todo\.items\.length - TODO_COMPACT_COUNT/);
     expect(TODO_COMPACT_COUNT).toBeLessThan(TODO_DISCLOSURE_LIMIT);
