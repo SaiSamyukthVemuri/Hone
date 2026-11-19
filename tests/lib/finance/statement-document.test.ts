@@ -10,6 +10,9 @@ import {
   VISIT_FLAGS,
   VISIT_STATES,
   awaitingVisitLine,
+  toCsvRows,
+  toIssueSnapshot,
+  toSnapshot,
   buildStatementDocument,
   classifyEligibility,
   type FeeItemInput,
@@ -25,7 +28,7 @@ import {
 } from "@/lib/finance/statement-document";
 import { AMOUNT_KINDS, type StatementKind, type StatementMoneyLine } from "@/lib/finance/statement";
 
-// Synthetic rows only. Amounts are chosen by each test; nothing here is a real price. The one pinned example is Sam's approved wording.
+// Synthetic rows only. Amounts are chosen by each test; nothing here is a real price. The one pinned example is the agreed missing-payment wording.
 const ROOT = path.resolve(__dirname, "../../..");
 const fmt = (c: number) => `$${(c / 100).toFixed(0)}`;
 
@@ -188,7 +191,7 @@ describe("no balance while anything is unknown", () => {
 });
 
 describe("the approved missing-payment example is representable exactly", () => {
-  // Sam's wording, with synthetic ids: five visits, 57000 in recorded fees, 51000 confirmed, one visit on 19 Nov with a recorded 6000 fee and no payment row.
+  // The agreed wording, with synthetic ids: five visits, 57000 in recorded fees, 51000 confirmed, one visit on 19 Nov with a recorded 6000 fee and no payment row.
   const four = [10000, 20000, 11000, 10000].map((c, i) =>
     visit({ localDate: `2026-11-0${i + 1}`, startsAt: `2026-11-0${i + 1}T15:00:00Z`, feeCandidates: [quote(c)], lines: [line("collected_card_session", c)] }),
   );
@@ -366,6 +369,51 @@ describe("D4: eligibility, fee line items, total spend, Not completed", () => {
       expect(build([nc, tr], { scope: { kind: "visits", appointmentIds: [nc.appointmentId] } })).toEqual({ ok: false, error: "unknown_visit" });
     });
     it("copy is exactly 'Not completed'", () => expect(NOT_COMPLETED_COPY).toBe("Not completed"));
+  });
+});
+
+describe("projections pick fields explicitly: no id ever reaches a snapshot or CSV", () => {
+  const ids = { client: "client-SECRET-1", appt: "appt-SECRET-1", prac: "prac-SECRET-1", studio: "studio-SECRET-1", fee: "fee-SECRET-1" };
+  const v1 = visit({ appointmentId: ids.appt, clientId: ids.client, practitionerId: ids.prac, feeCandidates: [quote(5000)], lines: [line("collected_card_session", 5000)] });
+  const nc = visit({ appointmentId: "appt-SECRET-2", clientId: ids.client, practitionerId: "prac-SECRET-2", eligibility: "not_completed" });
+  const d = doc([v1, nc], {
+    studioId: ids.studio,
+    client: { id: ids.client, name: "Client One" },
+    feeItems: [{ appointmentId: ids.fee, clientId: ids.client, localDate: "2026-11-10", startsAt: "2026-11-10T15:00:00Z", reason: "no_show_fee", feeCandidates: [charged(3000)], lines: [line("collected_card_fee", 3000)] }],
+  });
+  const FORBIDDEN = ["SECRET", ids.client, ids.appt, ids.prac, ids.studio];
+  it("toSnapshot holds no id of any kind, and the client is the name only", () => {
+    const text = JSON.stringify(toSnapshot(d));
+    for (const f of FORBIDDEN) expect(text).not.toContain(f);
+    expect(toSnapshot(d).client).toEqual({ name: "Client One" });
+    expect(text).not.toMatch(/appointmentId|practitionerId|clientId|studioId/);
+  });
+  it("a chosen-visits scope exports a count, never the ids", () => {
+    const s = doc([v1], { scope: { kind: "visits", appointmentIds: [v1.appointmentId] }, client: { id: ids.client, name: "Client One" } });
+    expect(toSnapshot(s).scope).toEqual({ kind: "visits", visitCount: 1 });
+    expect(JSON.stringify(toSnapshot(s))).not.toContain(ids.appt);
+  });
+  it("toIssueSnapshot carries the client id in exactly one place (client.id) and no other id", () => {
+    const issue = toIssueSnapshot(d);
+    expect(issue.client).toEqual({ id: ids.client, name: "Client One" });
+    const text = JSON.stringify(issue);
+    expect(text.split(ids.client)).toHaveLength(2);
+    for (const f of [ids.appt, ids.prac, ids.studio, ids.fee, "appt-SECRET-2", "prac-SECRET-2"]) expect(text).not.toContain(f);
+  });
+  it("the CSV rows hold no id, list every record exactly once, and keep the not-completed row amount-free", () => {
+    const rows = toCsvRows(d);
+    const text = JSON.stringify(rows);
+    for (const f of FORBIDDEN) expect(text).not.toContain(f);
+    expect(rows[0]).toEqual([...rows[0]]);
+    expect(rows.slice(1).map((r) => r[0])).toEqual(["visit", "no_show_fee", "not_completed"]);
+    const ncRow = rows[3];
+    expect(ncRow.slice(5).every((c, i) => (i === 2 ? c === "not_completed" : c === null || c === ""))).toBe(true);
+    for (const r of rows) expect(r).toHaveLength(rows[0].length);
+  });
+  it("the projections never spread: no `...` over a document value in the source", () => {
+    const src = readFileSync(path.join(ROOT, "lib/finance/statement-document.ts"), "utf8");
+    const tail = src.slice(src.indexOf("Output projections"));
+    expect(tail.replace(/\[\.\.\.[a-z.]+\]/g, "")).not.toMatch(/\.\.\.(doc|v|f|i|r|body|input)\b/);
   });
 });
 

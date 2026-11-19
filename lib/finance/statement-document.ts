@@ -66,7 +66,7 @@ export const FEE_NOT_RECORDED_COPY = "Fee not recorded";
 export const NOT_COMPLETED_COPY = "Not completed";
 
 // ---------------------------------------------------------------------------
-// VISIT ELIGIBILITY (Sam, 19 Nov 2026, D4). ONE function, so a change of rule is a change here only.
+// VISIT ELIGIBILITY (per the agreed visit rules). ONE function, so a change of rule is a change here only.
 //   completed treatment                        -> a VISIT
 //   no-show or cancelled WITH a recorded fee   -> a fee LINE ITEM (never a visit, never counted as one)
 //   cancelled / no-show with no fee            -> off the document
@@ -537,4 +537,104 @@ export function awaitingVisitLine(visit: DocumentVisit, fmt: (cents: number) => 
   const fee = visit.fee.state === "recorded" ? `${fmt(visit.fee.cents)} fee` : FEE_NOT_RECORDED_COPY;
   const why = visit.reasons.map((r) => UNKNOWN_REASON_COPY[r]).join("; ");
   return `${formatLocalDate(visit.localDate)} · ${fee} · ${why}`;
+}
+
+// ---------------------------------------------------------------------------
+// Output projections: the ONLY ways a document leaves this module for a snapshot, a preview or a CSV.
+// Each field is picked EXPLICITLY. Nothing is spread (`...`) and no object is passed through whole, so an id (client, appointment, practitioner,
+// studio) or any later-added field cannot reach the output by accident. Treatment areas, notes, machine settings, observations and clinical tags
+// are not in the document and have no place here.
+// ---------------------------------------------------------------------------
+type Cell = string | number | null;
+
+function pickFee(f: RecordedFee) {
+  return f.state === "recorded"
+    ? { state: "recorded" as const, cents: f.cents, source: f.source }
+    : { state: "not_recorded" as const, cents: null, source: null };
+}
+
+function pickScope(sc: DocumentScope) {
+  switch (sc.kind) {
+    case "month":
+      return { kind: "month" as const, month: sc.month };
+    case "range":
+      return { kind: "range" as const, startLocal: sc.startLocal, endLocalInclusive: sc.endLocalInclusive };
+    case "visits":
+      return { kind: "visits" as const, visitCount: new Set(sc.appointmentIds).size }; // the ids themselves never leave
+    default:
+      return { kind: "full_history" as const };
+  }
+}
+
+/** The document as a plain, id-free value (preview, print data, snapshot body). The client is the NAME only. */
+export function toSnapshot(doc: StatementDocument) {
+  return {
+    snapshot_version: 1 as const,
+    preparedOn: doc.preparedOn,
+    currency: doc.currency,
+    attribution: doc.attribution,
+    identity: {
+      studioName: doc.identity.studioName,
+      legalEntityName: doc.identity.legalEntityName,
+      address: doc.identity.address,
+      contactEmail: doc.identity.contactEmail,
+      phone: doc.identity.phone ?? null,
+      website: doc.identity.website ?? null,
+    },
+    client: { name: doc.client.name },
+    scope: pickScope(doc.scope),
+    visits: doc.visits.map((v) => ({
+      localDate: v.localDate,
+      localTime: v.localTime,
+      serviceName: v.serviceName,
+      practitionerName: v.practitionerName,
+      fee: pickFee(v.fee),
+      state: v.state,
+      reasons: [...v.reasons],
+      paidCents: v.paidCents,
+      refundedCents: v.refundedCents,
+      waivedCents: v.waivedCents,
+      owedCents: v.owedCents,
+    })),
+    lineItems: doc.feeItems.map((f) => ({ localDate: f.localDate, reason: f.reason, fee: pickFee(f.fee), state: f.state, paidCents: f.paidCents })),
+    notCompleted: doc.notCompleted.map((r) => ({ localDate: r.localDate, localTime: r.localTime, serviceName: r.serviceName, practitionerName: r.practitionerName })),
+    totals: {
+      visitCount: doc.totals.visitCount,
+      paidCents: doc.totals.paidCents,
+      treatmentPaidCents: doc.totals.treatmentPaidCents,
+      feePaidCents: doc.totals.feePaidCents,
+      refundedCents: doc.totals.refundedCents,
+      waivedCents: doc.totals.waivedCents,
+      originalPaidCents: doc.totals.originalPaidCents,
+      recordedFeeCents: doc.totals.recordedFeeCents,
+      feeTotalComplete: doc.totals.feeTotalComplete,
+    },
+    balance: doc.balanceDue.kind === "established" ? { kind: "established" as const, cents: doc.balanceDue.cents, because: null } : { kind: "not_established" as const, cents: null, because: doc.balanceDue.because },
+  };
+}
+
+/**
+ * The value handed to the issue command. It is `toSnapshot` plus the client id in ONE place (`client.id`), only so the database can check it against its
+ * own client argument; the command removes it before storing, so a stored snapshot holds the client name only.
+ */
+export function toIssueSnapshot(doc: StatementDocument) {
+  const body = toSnapshot(doc);
+  return { snapshot_version: body.snapshot_version, preparedOn: body.preparedOn, currency: body.currency, attribution: body.attribution, identity: body.identity, client: { id: doc.client.id, name: body.client.name }, scope: body.scope, visits: body.visits, lineItems: body.lineItems, notCompleted: body.notCompleted, totals: body.totals, balance: body.balance };
+}
+
+export const CSV_COLUMNS = ["row_type", "date", "time", "service", "practitioner", "fee_state", "fee_cents", "state", "reasons", "paid_cents", "refunded_cents", "waived_cents", "owed_cents"] as const;
+
+/** CSV rows (header first), every record exactly once, columns picked explicitly. Serialising and quoting is the caller's, through lib/csv. */
+export function toCsvRows(doc: StatementDocument): Cell[][] {
+  const rows: Cell[][] = [[...CSV_COLUMNS]];
+  for (const v of doc.visits) {
+    const f = pickFee(v.fee);
+    rows.push(["visit", v.localDate, v.localTime, v.serviceName, v.practitionerName, f.state, f.cents, v.state, v.reasons.join("|"), v.paidCents, v.refundedCents, v.waivedCents, v.owedCents]);
+  }
+  for (const i of doc.feeItems) {
+    const f = pickFee(i.fee);
+    rows.push([i.reason, i.localDate, null, null, null, f.state, f.cents, i.state, "", i.paidCents, 0, 0, null]);
+  }
+  for (const r of doc.notCompleted) rows.push(["not_completed", r.localDate, r.localTime, r.serviceName, r.practitionerName, null, null, "not_completed", "", null, null, null, null]);
+  return rows;
 }
