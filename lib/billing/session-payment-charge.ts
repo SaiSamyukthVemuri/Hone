@@ -928,7 +928,11 @@ async function retainNonterminalPaymentIntent(args: {
   }
   const admin = createAdminClient();
   let query = admin.from("payment_charge_attempts")
-    .update({ stripe_payment_intent_id: args.pi.id, stripe_status: args.pi.status })
+    // A status is written only when one is stated: an error that names an id but no status must not blank what is stored.
+    .update({
+      stripe_payment_intent_id: args.pi.id,
+      ...(typeof args.pi.status === "string" && args.pi.status.length > 0 ? { stripe_status: args.pi.status } : {}),
+    })
     .eq("id", args.attemptId).eq("studio_id", args.studioId)
     .eq("stripe_livemode", inferStripeLivemode()).eq("status", "pending_stripe");
   query = args.expectedPaymentIntentId === null
@@ -1870,16 +1874,15 @@ export async function runSessionPaymentCharge(args: {
       const piId = paymentIntent?.id ?? null;
       const piStatus = paymentIntent?.status ?? null;
       if ((piId || piStatus) && piStatus !== "canceled") {
-        // An attached actionable/unknown intent is not proof that no money can
-        // move. Its partial error shape is not sufficient to bind new identity;
-        // keep the claim unresolved for verified retrieve/webhook reconciliation.
+        // An attached actionable/unknown intent is not proof that no money can move, so no terminal outcome is written
+        // and the claim stays unresolved for the decline event or a verified retrieve to finish.
         //
-        // BIND THE INTENT ID, NOTHING ELSE. The row has to carry the id Stripe returned or the decline event that finishes
-        // it can never match: with the id unstored the webhook handler waits for a binding that never comes and Stripe
-        // redelivers forever, so an ordinary card decline stayed pending_stripe. This is the same write a RETURNED
-        // non-terminal intent already gets (retainNonterminalPaymentIntent): only the existing pending claim is updated,
-        // only to this id and status, and a different id or a concurrent terminal writer is never overwritten. It writes
-        // no failure and cancels nothing; the critical alert below stays.
+        // WHAT IS BOUND: the intent id and its status, and nothing else. The row has to carry the id Stripe returned or
+        // the decline event that finishes it can never match: with the id unstored the webhook handler waits for a binding
+        // that never comes and Stripe redelivers forever. This is the same write a RETURNED non-terminal intent already
+        // gets (retainNonterminalPaymentIntent): only the existing pending claim is updated, a different id or a
+        // concurrent terminal writer is never overwritten, a missing status is left as it was, no failure is written and
+        // nothing is cancelled. The critical alert below stays.
         if (piId) {
           await retainNonterminalPaymentIntent({
             attemptId: attemptRow.id,

@@ -494,6 +494,15 @@ describe("a thrown decline that carries a live PaymentIntent binds the intent id
     expect(wroteFailed(), "never a terminal failure from a non-canceled intent").toBe(false);
     expect(raisedManualReview()).toBe(true);
   });
+  it("an error that names an intent id but NO status binds the id and does not write a status (nothing is blanked)", async () => {
+    h.createError = declineWith({ id: "pi_thrown_no_status", amount: AMOUNT, currency: "cad" });
+    const r = await run();
+    expect(r).toMatchObject({ ok: false, outcome: "needs_manual_review", stripePaymentIntentId: "pi_thrown_no_status" });
+    expect(bindWrites()).toEqual([{ stripe_payment_intent_id: "pi_thrown_no_status" }]);
+    expect(bindWrites()[0]).not.toHaveProperty("stripe_status");
+    expect(wroteFailed()).toBe(false);
+    expect(raisedManualReview()).toBe(true);
+  });
   it("a requires_action intent on a thrown error binds too, and is not written failed", async () => {
     h.createError = declineWith({ ...PI, id: "pi_thrown_action", status: "requires_action" });
     await run();
