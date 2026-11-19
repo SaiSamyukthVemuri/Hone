@@ -5,6 +5,7 @@ import {
   getSessionPaymentAttemptRows,
   idempotencySelectorForAttempt,
   cleanupPaymentScenario,
+  adminQuery,
   closePool,
   type PaymentSeed,
 } from "./helpers/payment-fixture";
@@ -96,13 +97,15 @@ test("failure: a declined charge never shows Paid, and switching views changes n
     await region.getByRole("button", { name: /^run charge$/i }).click();
     await region.getByRole("button", { name: /confirm: run charge/i }).click();
 
-    await expect.poll(async () => (await getSessionPaymentAttemptRows(seed.sessionId))[0].status, { timeout: 30_000 }).not.toBe("ready");
-    const status = (await getSessionPaymentAttemptRows(seed.sessionId))[0].status;
-    // OPEN PAYMENT-SIDE QUESTION, NOT AN ACCEPTANCE. In this lane a fake decline leaves the attempt at pending_stripe, although the fake's own comment says
-    // the real executor persists a decline as failed. Whether that is a gap in the fake or a payment-path behaviour is being diagnosed outside HON-80.
-    // Nobody should read "pending" here as the intended end state of a decline. This test asserts only what HON-80 owns: the attempt is never succeeded, the
-    // page never shows Paid, no money moved, no second attempt appears, and switching views changes none of that.
-    expect(status).not.toBe("succeeded");
+    // A declined charge is deliberately left pending_stripe with stripe_status requires_payment_method: that intent can still complete at Stripe, so
+    // recording it failed here could invite a double charge. Terminal failed comes from Stripe's payment_failed webhook, not from this path.
+    const attemptState = async () =>
+      (await adminQuery(`select status, stripe_status from public.payment_charge_attempts where session_id = $1 order by created_at`, [seed.sessionId])).rows as Array<{ status: string; stripe_status: string | null }>;
+    await expect.poll(async () => (await attemptState())[0]?.stripe_status, { timeout: 30_000 }).toBe("requires_payment_method");
+    const state = (await attemptState())[0];
+    expect(state.status).toBe("pending_stripe");
+    expect(state.status).not.toBe("succeeded");
+    await expect(page.getByTestId("payment-summary-paid")).toHaveCount(0);
     expect(countEffectsForAccount(seed.connectedAccountId), "a declined charge moved no money").toBe(0);
     await expect(page.getByTestId("payment-summary-paid")).toHaveCount(0);
     const attempts = (await getSessionPaymentAttemptRows(seed.sessionId)).length;
