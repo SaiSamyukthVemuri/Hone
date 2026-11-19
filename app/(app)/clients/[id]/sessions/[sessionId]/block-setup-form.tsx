@@ -102,7 +102,7 @@ import { MultiAreaEditor } from "@/components/multi-area-editor";
 import { formatAreaLabel, resolveBlockAreas, type BlockArea } from "@/lib/sessions/block-areas";
 import { useRetainedState } from "@/components/charting-state-provider";
 import { NewViewHint, NewViewStep, useChartingView } from "@/components/charting-view-context"
-import { useReportVisitDraft } from "@/components/charting-visit-draft";
+import { useReportVisitDraft, visitMachineLine } from "@/components/charting-visit-draft";
 import { DraftRegistryProvider, useDraftRegistryState, useReportDraft } from "@/components/machines/draft-registry";
 import { MachineFirstSetupConnected } from "@/components/machines/machine-first-setup-connected";
 import { ProbePicker } from "@/components/probe-picker";
@@ -1104,7 +1104,7 @@ export function BlockSetupForm({
   // WHAT THE NEW VIEW'S "This visit" CARD SHOWS ABOUT THIS FORM. Display only: the form reports and never reads it back.
   const [chosenModel, setChosenModel] = useState<string | null>(null);
   useReportVisitDraft(`block:${block?.id ?? "new"}`, {
-    machine: chosenModel ? (draft.machineFrequency ? `${chosenModel} · ${draft.machineFrequency} MHz` : chosenModel) : null,
+    machine: visitMachineLine(chosenModel, draft.machineFrequency),
     draftAreas: block ? [] : draft.areas.map(formatAreaLabel),
     unsaved: dirty,
     attention: error !== null,

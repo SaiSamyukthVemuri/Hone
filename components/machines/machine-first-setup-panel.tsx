@@ -132,7 +132,7 @@ export type MachineFirstSetupPanelProps = {
    * empty studio and an unreadable inventory are different situations.
    */
   inventoryReason?: string | null;
-  /** Reports the catalogue model name of the unit now chosen, or null. DISPLAY ONLY: read by the New view's "This visit" card. */
+  /** Reports the display label of the unit's model now chosen (machineModelLabel), or null. DISPLAY ONLY: read by the New view's "This visit" card. */
   onChosenModel?: (model: string | null) => void;
   /** The treatment block being charted. Entry is impossible without it. */
   blockId?: string | null;
@@ -611,7 +611,7 @@ function MachineFirstSetupPanelImpl({
   // FROM THE PHYSICAL UNIT, not the model: a mode gated on an option this
   // device does not have is not a choice, and offering it only to have the
   // capture refused two layers down is worse than not offering it.
-  const chosenModel = chosen ? chosen.profile.model : null;
+  const chosenModel = chosen ? machineModelLabel(chosen.profile) : null;
   useEffect(() => {
     onChosenModel?.(chosenModel);
   }, [onChosenModel, chosenModel]);

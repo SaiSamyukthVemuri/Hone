@@ -30,6 +30,13 @@ export type VisitDraftSummary = {
 type Api = { report: (id: string, r: VisitDraftReport | null) => void; summary: VisitDraftSummary };
 const Ctx = createContext<Api | null>(null);
 
+/** The machine line: the model's display label, then the stored frequency exactly as stored (it already carries its unit, e.g. "27.12 MHz"). */
+export function visitMachineLine(label: string | null, frequency: string | null | undefined): string | null {
+  if (!label) return null;
+  const f = (frequency ?? "").trim();
+  return f ? `${label} · ${f}` : label;
+}
+
 export const EMPTY_VISIT_DRAFT: VisitDraftSummary = { machine: null, draftAreas: [], unsaved: false, attention: false };
 
 export function summarizeReports(reports: Record<string, VisitDraftReport>): VisitDraftSummary {

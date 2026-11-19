@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { summarizeReports } from "@/components/charting-visit-draft";
+import { summarizeReports, visitMachineLine } from "@/components/charting-visit-draft";
+import { machineModelLabel } from "@/lib/machines/display-name";
+import { XCELL_PUR_PROFILE_ID } from "@/lib/machines/xcell-pur";
 import { visitSaveStatus } from "@/components/charting-view-shell";
 
 const r = (o: Partial<Parameters<typeof summarizeReports>[0][string]> = {}) => ({ machine: null, draftAreas: [], unsaved: false, attention: false, ...o });
@@ -27,5 +29,22 @@ describe("visitSaveStatus", () => {
   });
   it("saved blocks and no unsaved work is Saved", () => {
     expect(visitSaveStatus({ attention: false, unsaved: false, savedCount: 2 })).toBe("Saved");
+  });
+});
+
+describe("visitMachineLine", () => {
+  it("shows the xCell Pur unit under the studio's own name, not the catalogue's raw model", () => {
+    const label = machineModelLabel({ profileId: XCELL_PUR_PROFILE_ID, manufacturer: "Apilus", model: "xCell Pur", variant: undefined });
+    expect(visitMachineLine(label, "27.12 MHz")).toBe("Dectro xCell \u00b7 27.12 MHz");
+    expect(visitMachineLine(label, "27.12 MHz")).not.toContain("xCell Pur");
+  });
+  it("renders the stored frequency as stored: exactly one MHz", () => {
+    const line = visitMachineLine("Dectro xCell", "27.12 MHz")!;
+    expect(line.match(/MHz/g)).toHaveLength(1);
+  });
+  it("no frequency, or no machine", () => {
+    expect(visitMachineLine("Dectro xCell", "")).toBe("Dectro xCell");
+    expect(visitMachineLine("Dectro xCell", null)).toBe("Dectro xCell");
+    expect(visitMachineLine(null, "27.12 MHz")).toBeNull();
   });
 });
