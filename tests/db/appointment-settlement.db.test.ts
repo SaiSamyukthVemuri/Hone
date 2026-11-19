@@ -18,8 +18,7 @@ import {
 
 // PAY-SETTLE / 0187 — the BEHAVIOURAL half.
 //
-// The source-contract half (tests/migrations/0187-appointment-settlement.test.ts)
-// proves what the migration SAYS. This file proves what the migrated database
+// This file proves what the migrated database
 // DOES, against the real local Postgres: that authority is re-derived rather
 // than trusted, that financial history is genuinely append-only, and — the part
 // no static test can reach — that settlement and card charging exclude each

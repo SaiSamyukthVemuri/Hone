@@ -31,6 +31,7 @@ import { createClient } from "@/lib/supabase/server";
 // JSON) and writes nothing. Recorded-history wording only.
 
 export type MissingRecordType =
+  | "unfinished"
   | "charting"
   | "aftercare"
   | "probe_lot"
@@ -52,7 +53,7 @@ export type MissingRecordItem = {
   date: string | null;
   // Existing, safe, studio-scoped route.
   href: string;
-  actionLabel: "Chart appointment" | "Review session" | "Open client";
+  actionLabel: "Chart appointment" | "Review session" | "Open client" | "Finish visit";
   // Short status chip.
   chip: string;
   // Structured source ids so a consumer can group by client + session without
@@ -66,6 +67,17 @@ export type MissingRecordItem = {
 // "Charting needed" gap, extended past today's roster).
 export type UnchartedAppointment = {
   appointmentId: string;
+  clientId: string;
+  clientName: string;
+  startedAt: string;
+};
+
+// HON-45: starting a chart no longer completes the appointment, so a PAST appointment that is still CONFIRMED and has a
+// chart (or a chart in progress) is OPEN until the practitioner presses Finish. Without this row it would drop out of every
+// to-do list and stay confirmed forever. A pointer only: it completes, sends and charges nothing.
+export type UnfinishedAppointment = {
+  appointmentId: string;
+  sessionId: string;
   clientId: string;
   clientName: string;
   startedAt: string;
@@ -92,6 +104,8 @@ export type IncompleteIntake = {
 
 export type MissingRecordsInput = {
   unchartedAppointments: ReadonlyArray<UnchartedAppointment>;
+  // Optional so every existing caller keeps its exact behaviour; omitted means "none".
+  unfinishedAppointments?: ReadonlyArray<UnfinishedAppointment>;
   sessions: ReadonlyArray<RecordedSession>;
   incompleteIntakes: ReadonlyArray<IncompleteIntake>;
   limit?: number;
@@ -138,6 +152,24 @@ export function buildMissingRecordsAssistant(
 ): MissingRecordsAssistant {
   const limit = input.limit ?? DEFAULT_LIMIT;
   const candidates: MissingRecordItem[] = [];
+
+  for (const a of input.unfinishedAppointments ?? []) {
+    candidates.push({
+      id: `unfinished:${a.appointmentId}`,
+      type: "unfinished",
+      priority: 1,
+      clientId: a.clientId,
+      clientName: a.clientName,
+      reason: "Appointment is past but not marked finished.",
+      date: a.startedAt,
+      // The session page, where the explicit Finish appointment control lives.
+      href: `${clientHref(a.clientId)}/sessions/${a.sessionId}`,
+      actionLabel: "Finish visit",
+      chip: "Not finished",
+      sessionId: a.sessionId,
+      appointmentId: a.appointmentId,
+    });
+  }
 
   for (const a of input.unchartedAppointments) {
     candidates.push({
@@ -383,6 +415,49 @@ export async function getMissingRecordsAssistant(
     }
   }
 
+  // 3b) HON-45: PAST appointments that are still CONFIRMED and have a (non-deleted) session. Starting a chart no longer
+  //     completes the appointment, so these are open until Finish. ONE query FROM appointments (sessions embedded inner), so
+  //     the cap applies to appointments and the order is deterministic: most recently ended first, id as the tie-break.
+  //     (Past the cap the rows shown are the newest, never an arbitrary subset.)
+  const { data: openRows, error: openError } = await readWithPreferredName((withPreferred) =>
+    supabase
+      .from("appointments")
+      .select(
+        `id, client_id, starts_at, ends_at, status, client:clients(id, name, ${preferredNameColumn(withPreferred)}archived_at), sessions!inner(id, studio_id, deleted_at)`,
+      )
+      .eq("studio_id", studioId)
+      .eq("status", "confirmed")
+      .gte("starts_at", windowStartIso)
+      .lte("ends_at", nowUtcIso)
+      .eq("sessions.studio_id", studioId)
+      .is("sessions.deleted_at", null)
+      .order("ends_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(COMPLETED_APPT_CAP),
+  );
+  if (openError) throw new Error("Failed to load missing records");
+  type OpenApptRow = {
+    id: string;
+    client_id: string;
+    starts_at: string;
+    client: SessionScanRow["client"];
+    sessions: Array<{ id: string }> | { id: string } | null;
+  };
+  const unfinishedAppointments: UnfinishedAppointment[] = [];
+  for (const appt of (openRows ?? []) as unknown as OpenApptRow[]) {
+    const sess = Array.isArray(appt.sessions) ? (appt.sessions[0] ?? null) : appt.sessions;
+    if (!sess) continue;
+    const client = joinedClient(appt.client);
+    if (!client || client.archived_at) continue;
+    unfinishedAppointments.push({
+      appointmentId: appt.id,
+      sessionId: sess.id,
+      clientId: appt.client_id,
+      clientName: clientDisplayName(client),
+      startedAt: appt.starts_at,
+    });
+  }
+
   // Review 3779063526. The follow-up gap ("a plan exists but nothing is on the
   // calendar") was retired with the `follow_up` To-do kind: a plan for the next
   // visit is clinical memory, not unresolved work, so not having rebooked yet
@@ -462,6 +537,7 @@ export async function getMissingRecordsAssistant(
 
   return buildMissingRecordsAssistant({
     unchartedAppointments,
+    unfinishedAppointments,
     sessions: recordedSessions,
     incompleteIntakes,
     limit: options.limit,

@@ -279,12 +279,6 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
-    path: "app/(app)/clients/[id]/sessions/new/actions.ts",
-    purpose: "Authenticated practitioner server action/query.",
-    why: "Service-role write/read-through after the caller's studio is resolved via getCurrentPractitionerWithStudio(); every query is scoped to that studio.id.",
-    scopeGuard: "getCurrentPractitionerWithStudio",
-  },
-  {
     path: "app/(app)/settings/availability/actions.ts",
     purpose: "Authenticated practitioner server action/query.",
     why: "Service-role write/read-through after the caller's studio is resolved via getCurrentPractitionerWithStudio(); every query is scoped to that studio.id.",
@@ -699,6 +693,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     path: "lib/billing/close-declined-fee-attempt.ts",
     purpose: "Payment ledger helper (owner-only Close declined attempt).",
     why: "Invoked only by the owner-authenticated closeDeclinedFeeAttemptAction; uses service-role to read and update the one payment_charge_attempts row. Scoped by studio_id and attempt id; it cancels only the PaymentIntent already stored on that row (never creates one) through the single cancelPaymentIntentConfirmed call site.",
+    scopeGuard: '.eq("studio_id"',
+  },
+  {
+    path: "lib/billing/cancel-declined-session-intent.ts",
+    purpose: "Payment ledger helper (close the original Stripe attempt of a failed, declined session payment).",
+    why: "Invoked only by the signature-verified payment_intent.payment_failed handler after the attempt is recorded failed; uses service-role to read the one payment_charge_attempts row and record stripe_status canceled on it. Scoped by studio_id and attempt id; it cancels only the intent stored on that row after verifying identity, never another attempt, and never writes the failed status.",
     scopeGuard: '.eq("studio_id"',
   },
   {

@@ -93,6 +93,7 @@ export const PERF_SPAN_IDS = [
   "shell.identity",
   "shell.memberships",
   "shell.support-reads",
+  "shell.waitlist-nav",
   // Per-surface page work. `.identity` is the page's own practitioner/studio
   // resolution; `.domain` is everything the page reads for its own content.
   "clients.identity",

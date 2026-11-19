@@ -50,25 +50,13 @@ describe("startSessionAction lineage + safety contract for appointment_id", () =
     // therefore happen via the createClient from lib/supabase/server,
     // not the service-role admin client.
     //
-    // PR #180 introduces a SEPARATE, cold-path RPC call to the
-    // SECURITY DEFINER mark_appointment_complete from the auto-
-    // complete helper at the bottom of the action. That helper does
-    // require the admin client (the RPC expects the service-role
-    // context). To preserve the original safety guarantee we now
-    // pin: (1) the lineage SELECT still uses the RLS client (the
-    // .from("appointments") call appears in the action body BEFORE
-    // any admin import); (2) the only admin-client reference is
-    // inside the maybeMarkAppointmentCompletedOnSessionStart helper
-    // (audited separately in tests/app/sessions/start-session-auto-
-    // complete.test.ts).
+    // HON-45 (Sam's decision) REMOVED the PR #180 auto-complete helper, which was the only
+    // reason this action ever touched the admin client. Starting a chart no longer completes
+    // the appointment, so the action must hold NO admin client and name no completion command.
     expect(SOURCE).toMatch(/from\("appointments"\)/);
-    // The admin import is dynamic + scoped to the auto-complete helper.
-    const adminImportMatches =
-      SOURCE.match(/import\("@\/lib\/supabase\/admin-server"\)/g) ?? [];
-    expect(adminImportMatches.length).toBe(1);
-    expect(SOURCE).toMatch(
-      /maybeMarkAppointmentCompletedOnSessionStart[\s\S]{0,2000}await import\("@\/lib\/supabase\/admin-server"\)/,
-    );
+    expect(SOURCE).not.toMatch(/admin-server/);
+    expect(SOURCE).not.toMatch(/mark_appointment_complete/);
+    expect(SOURCE).not.toMatch(/autoSendPostcareOnComplete/);
   });
 
   it("selects studio_id, client_id, practitioner_id (and PR #180 also status + ends_at) from the appointment row", () => {
@@ -373,12 +361,13 @@ describe("CLN-002 committed appointment lineage before action side effects", () 
     expect(runtime.revalidate).not.toHaveBeenCalled();
     expect(sessionFilters).toEqual([["id", "chart"], ["studio_id", "studio"], ["client_id", "client"]]);
   });
-  it("continues matching appointment B including reused-chart completion recovery", async () => {
+  it("opens the chart for a PAST CONFIRMED appointment B without completing it, sending postcare or touching payment", async () => {
     await expect(startSessionAction(form())).rejects.toThrow("REDIRECT:/clients/client/sessions/chart");
-    expect(runtime.adminRpc).toHaveBeenCalledWith("mark_appointment_complete", {
-      p_appointment_id: appointmentB, p_studio_id: "studio", p_practitioner_id: "practitioner",
-    });
-    expect(runtime.postcare).toHaveBeenCalledWith(appointmentB, "studio", "practitioner");
+    // HON-45: completion is a separate, explicit act. Charting changes nothing about the appointment's status.
+    expect(runtime.adminRpc).not.toHaveBeenCalled();
+    expect(runtime.postcare).not.toHaveBeenCalled();
+    // ...but the appointment page is refreshed so it shows the linked chart.
+    expect(runtime.revalidate).toHaveBeenCalledWith(`/calendar/${appointmentB}`);
   });
   it("preserves chart-without-appointment starts without an appointment side effect", async () => {
     await expect(startSessionAction(form(""))).rejects.toThrow("REDIRECT:/clients/client/sessions/chart");

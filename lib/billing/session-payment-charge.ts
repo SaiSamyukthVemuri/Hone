@@ -928,7 +928,11 @@ async function retainNonterminalPaymentIntent(args: {
   }
   const admin = createAdminClient();
   let query = admin.from("payment_charge_attempts")
-    .update({ stripe_payment_intent_id: args.pi.id, stripe_status: args.pi.status })
+    // A status is written only when one is stated: an error that names an id but no status must not blank what is stored.
+    .update({
+      stripe_payment_intent_id: args.pi.id,
+      ...(typeof args.pi.status === "string" && args.pi.status.length > 0 ? { stripe_status: args.pi.status } : {}),
+    })
     .eq("id", args.attemptId).eq("studio_id", args.studioId)
     .eq("stripe_livemode", inferStripeLivemode()).eq("status", "pending_stripe");
   query = args.expectedPaymentIntentId === null
@@ -1870,9 +1874,24 @@ export async function runSessionPaymentCharge(args: {
       const piId = paymentIntent?.id ?? null;
       const piStatus = paymentIntent?.status ?? null;
       if ((piId || piStatus) && piStatus !== "canceled") {
-        // An attached actionable/unknown intent is not proof that no money can
-        // move. Its partial error shape is not sufficient to bind new identity;
-        // keep the claim unresolved for verified retrieve/webhook reconciliation.
+        // An attached actionable/unknown intent is not proof that no money can move, so no terminal outcome is written
+        // and the claim stays unresolved for the decline event or a verified retrieve to finish.
+        //
+        // WHAT IS BOUND: the intent id and its status, and nothing else. The row has to carry the id Stripe returned or
+        // the decline event that finishes it can never match: with the id unstored the webhook handler waits for a binding
+        // that never comes and Stripe redelivers forever. This is the same write a RETURNED non-terminal intent already
+        // gets (retainNonterminalPaymentIntent): only the existing pending claim is updated, a different id or a
+        // concurrent terminal writer is never overwritten, a missing status is left as it was, no failure is written and
+        // nothing is cancelled. The critical alert below stays.
+        if (piId) {
+          await retainNonterminalPaymentIntent({
+            attemptId: attemptRow.id,
+            studioId: attemptRow.studio_id,
+            clientId: attemptRow.client_id,
+            pi: { id: piId, status: piStatus } as unknown as Stripe.PaymentIntent,
+            expectedPaymentIntentId: attemptRow.stripe_payment_intent_id,
+          });
+        }
         await recordOpsAlert({ severity: "critical", event: "session_payment_needs_manual_review",
           message: "Stripe returned an error with an intent that is not confirmed canceled. No terminal failure was recorded.",
           studioId: attemptRow.studio_id, clientId: attemptRow.client_id,

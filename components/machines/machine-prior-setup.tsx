@@ -1,3 +1,4 @@
+import { machineModelLabel } from "@/lib/machines/display-name";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { SectionLabel } from "@/components/ui/section-label";
 import {
@@ -168,7 +169,7 @@ export function MachinePriorSetup({
   }
 
   const machine = profile
-    ? `${profile.manufacturer} ${profile.model}${profile.variant ? ` (${profile.variant})` : ""}`
+    ? machineModelLabel(profile)
     : first.profileId;
 
   // THE PHYSICAL UNIT, named where the studio can recognise it. The id itself

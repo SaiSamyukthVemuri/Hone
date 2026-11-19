@@ -17,17 +17,20 @@ import type { AppointmentPrepMemory } from "@/lib/sessions/appointment-prep-memo
  * "recorded as zero" (totalMinutes is `null` vs `0`) and this preserves that
  * distinction rather than flattening it with a falsy check.
  */
-export function compactSummary(memory: AppointmentPrepMemory): string {
+export function compactSummary(memory: AppointmentPrepMemory, timeZone?: string): string {
   const date = new Date(memory.startedAt);
-  const parts: string[] = [
-    Number.isNaN(date.getTime())
-      ? "Date not recorded"
-      : date.toLocaleDateString(undefined, {
-          year: "numeric",
-          month: "short",
-          day: "numeric",
-        }),
-  ];
+  // With a studio timezone the day is the STUDIO's calendar day, the same on every server and device. Without
+  // one (a caller that has no studio) it is the old runtime-locale rendering, unchanged.
+  const dayText = (): string => {
+    const opts: Intl.DateTimeFormatOptions = { year: "numeric", month: "short", day: "numeric" };
+    if (!timeZone) return date.toLocaleDateString(undefined, opts);
+    try {
+      return new Intl.DateTimeFormat("en-US", { ...opts, timeZone }).format(date);
+    } catch {
+      return new Intl.DateTimeFormat("en-US", { ...opts, timeZone: "UTC" }).format(date);
+    }
+  };
+  const parts: string[] = [Number.isNaN(date.getTime()) ? "Date not recorded" : dayText()];
   if (memory.modality) parts.push(memory.modality);
   if (memory.areaHeadline) parts.push(memory.areaHeadline);
   // `!= null` on purpose: 0 is a real measurement and must survive.

@@ -437,6 +437,7 @@ export async function publicCancelAppointmentAction(
         .maybeSingle();
       if (owner?.email && apptStudio) {
         const sent = await sendCancellationEmail({
+      nameReader: admin,
           appointmentId: resolved.appointment_id,
           to: owner.email,
           recipientName: owner.display_name?.trim() || owner.email,

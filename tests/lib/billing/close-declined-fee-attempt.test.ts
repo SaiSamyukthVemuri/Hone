@@ -306,7 +306,7 @@ describe("source shape: one cancel site, no create, owner-only action", () => {
   it("the close function never creates, confirms, captures or refunds anything", () => {
     expect(close).not.toMatch(/paymentIntents\.(create|confirm|capture)|refunds\.create|charges\.create/);
   });
-  it("J1: exactly the finalizer and close-declined import/use cancelPaymentIntentConfirmed - a new caller fails this test", () => {
+  it("J1: exactly the finalizer, close-declined and the declined-session cleanup import/use cancelPaymentIntentConfirmed - a new caller fails this test", () => {
     const files: string[] = [];
     const walk = (dir: string) => {
       for (const e of readdirSync(path.join(root, dir), { withFileTypes: true })) {
@@ -316,7 +316,11 @@ describe("source shape: one cancel site, no create, owner-only action", () => {
       }
     };
     for (const d of ["app", "lib", "components"]) walk(d);
-    expect(files.sort()).toEqual(["lib/billing/close-declined-fee-attempt.ts", "lib/billing/session-payment-charge.ts"]);
+    expect(files.sort()).toEqual([
+      "lib/billing/cancel-declined-session-intent.ts",
+      "lib/billing/close-declined-fee-attempt.ts",
+      "lib/billing/session-payment-charge.ts",
+    ]);
   });
   it("J2: the manual-review queue surfaces a webhook terminal_mismatch for FEE rows (reason-agnostic) and this module's own critical alerts", async () => {
     const wh = readFileSync(path.join(root, "lib/billing/payment-webhook-reconciliation.ts"), "utf8");

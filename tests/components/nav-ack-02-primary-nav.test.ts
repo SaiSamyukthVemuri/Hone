@@ -56,12 +56,14 @@ const codeOnly = (source: string) =>
 const code = codeOnly(raw);
 const navCode = codeOnly(read(NAVLINK));
 
-/** The seven anchors, and the form each one must take. */
+/** The eight anchors (one of them conditional), and the form each one must take. */
 const ANCHORS = [
   { testId: "nav-wordmark", href: "/dashboard", form: "label", attr: "data-testid" },
   { testId: "nav-dashboard", href: "/dashboard", form: "label", attr: "testId" },
   { testId: "nav-clients", href: "/clients", form: "label", attr: "testId" },
   { testId: "nav-calendar", href: "/calendar", form: "label", attr: "testId" },
+  // Rendered only where the Settings Waitlist tab's own rule allows it; still one acknowledging anchor in the source.
+  { testId: "nav-waitlist", href: "/settings/waitlist", form: "label", attr: "testId" },
   { testId: "nav-records", href: "/records", form: "label", attr: "testId" },
   { testId: "nav-business", href: "/dashboard/capacity", form: "label", attr: "testId" },
   { testId: "nav-notifications", href: "/notifications", form: "container", attr: "data-testid" },
@@ -89,7 +91,7 @@ describe("NAV-ACK-02 · the primary navigation acknowledges", () => {
     expect(code).not.toMatch(/<Link[\s>]/);
   });
 
-  it("renders exactly seven acknowledging anchors — six labels, one container", () => {
+  it("renders exactly eight acknowledging anchors — seven labels, one container", () => {
     // UX-01 QW2 moved the five SECTION links into `PrimaryNavLink`, a client
     // leaf that renders `PendingLink` itself (it needs `usePathname`, which a
     // server layout cannot call). The count below therefore treats a
@@ -102,7 +104,7 @@ describe("NAV-ACK-02 · the primary navigation acknowledges", () => {
     const labels = code.match(/<PendingLink[\s>]/g) ?? [];
     const sections = code.match(/<PrimaryNavLink[\s>]/g) ?? [];
     const containers = code.match(/<PendingContainerLink[\s>]/g) ?? [];
-    expect(labels.length + sections.length).toBe(6);
+    expect(labels.length + sections.length).toBe(7);
     expect(containers).toHaveLength(1);
   });
 
@@ -175,7 +177,7 @@ describe("NAV-ACK-02 · a pending label describes the REQUEST, never the outcome
     }
     // Distinct destinations get distinct sentences; the two /dashboard anchors
     // (wordmark + tab) legitimately share one.
-    expect(new Set(labels).size).toBe(6);
+    expect(new Set(labels).size).toBe(7);
   });
 });
 
