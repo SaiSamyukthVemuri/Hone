@@ -7,14 +7,14 @@ const dev = (deviceId: string, profileId: string) => ({ deviceId, profileId, pro
 const PUR = dev("unit-pur", XCELL_PUR_PROFILE_ID);
 const OTHER = dev("unit-other", "some:other-model");
 type In = {
-  withhold: boolean; devices: StudioDevice[];
+  rollout: "available" | "off" | "unavailable"; devices: StudioDevice[];
   remembered: { deviceId: string; modeKey: string | null } | null;
   suggestedMachine: { deviceId: string; displayName: string } | null;
   restoredSelection: { deviceId: string; modeKey: string } | null;
   clientLastMachine: { deviceId: string | null; modeKey: string | null; legacy: boolean } | null;
 };
 const base = (over: Partial<In> = {}): In => ({
-  withhold: true,
+  rollout: "unavailable",
   devices: [PUR, OTHER],
   remembered: null,
   suggestedMachine: null,
@@ -51,10 +51,33 @@ describe("a failed rollout read withholds the xCell unit and every selection poi
     expect(r.restoredSelection?.deviceId).toBe("unit-other");
     expect(r.clientLastMachine?.legacy).toBe(true);
   });
-  it("with the read NOT failed (withhold false) nothing is changed, including a selection of the unit", () => {
-    const input = base({ withhold: false, remembered: { deviceId: "unit-pur", modeKey: "multiplex" } });
+  it("with the rollout available nothing is changed, including a selection of the unit", () => {
+    const input = base({ rollout: "available", remembered: { deviceId: "unit-pur", modeKey: "multiplex" } });
     const r = withholdXcellUnits(input);
     expect(r.devices).toHaveLength(2);
     expect(r.remembered?.deviceId).toBe("unit-pur");
+  });
+});
+
+describe("with the rollout OFF for a new setup, the unit may be listed but nothing may preselect it", () => {
+  const off = (over: Partial<In> = {}) => withholdXcellUnits(base({ rollout: "off", ...over }));
+  it("the unit stays in the list", () => {
+    expect(off().devices.map((d) => d.deviceId)).toEqual(["unit-pur", "unit-other"]);
+  });
+  it("a remembered selection of the unit is cleared", () => {
+    expect(off({ remembered: { deviceId: "unit-pur", modeKey: "multiplex" } }).remembered).toBeNull();
+  });
+  it("a suggested machine that is the unit is cleared", () => {
+    expect(off({ suggestedMachine: { deviceId: "unit-pur", displayName: "x" } }).suggestedMachine).toBeNull();
+  });
+  it("a last-used machine that is the unit is cleared", () => {
+    expect(off({ clientLastMachine: { deviceId: "unit-pur", modeKey: "multiplex", legacy: false } }).clientLastMachine).toBeNull();
+  });
+  it("a restored selection (an existing block's own record) is kept", () => {
+    expect(off({ restoredSelection: { deviceId: "unit-pur", modeKey: "multiplex" } }).restoredSelection?.deviceId).toBe("unit-pur");
+  });
+  it("selections of other machines are kept", () => {
+    const r = off({ remembered: { deviceId: "unit-other", modeKey: null }, suggestedMachine: { deviceId: "unit-other", displayName: "o" }, clientLastMachine: { deviceId: "unit-other", modeKey: null, legacy: false } });
+    expect([r.remembered?.deviceId, r.suggestedMachine?.deviceId, r.clientLastMachine?.deviceId]).toEqual(["unit-other", "unit-other", "unit-other"]);
   });
 });

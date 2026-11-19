@@ -134,6 +134,8 @@ export type MachineFirstSetupPanelProps = {
    * empty studio and an unreadable inventory are different situations.
    */
   inventoryReason?: string | null;
+  /** The platform rollout could not be read: said beside the choices even when the studio has another machine (an empty list already says it through inventoryReason). */
+  rolloutNotice?: string | null;
   /** Reports the display label of the unit's model now chosen (machineModelLabel), or null. DISPLAY ONLY: read by the New view's "This visit" card. */
   onChosenModel?: (model: string | null) => void;
   /** The ONE-CHOICE PRESELECT (New view): used only as the INITIAL state, and only when no restored, remembered or unavailable selection applies. */
@@ -347,6 +349,7 @@ function MachineFirstSetupPanelImpl({
   catalogue = MACHINE_CATALOGUE,
   persistence = NO_PERSISTENCE,
   inventoryReason = null,
+  rolloutNotice = null,
   onChosenModel,
   onlyChoice = null,
   blockId = null,
@@ -831,6 +834,11 @@ function MachineFirstSetupPanelImpl({
             )}
           </select>
         </FieldLabel>
+      )}
+      {scope && rolloutNotice && selectable.length > 0 && (
+        <p className="text-sm text-amber-800 dark:text-amber-300" role="status" data-testid="machine-rollout-unavailable">
+          {rolloutNotice}
+        </p>
       )}
       {modeUnresolved && (
         <p className="text-sm text-amber-800 dark:text-amber-300" role="status" data-testid="machine-mode-unresolved">

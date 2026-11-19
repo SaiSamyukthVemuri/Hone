@@ -2764,6 +2764,7 @@ describe("loadMachineSetupContext and the platform rollout", () => {
     expect(ctx.multiplexRoute).toBeNull();
     expect(ctx.legacyMachine).toBeNull();
     expect(ctx.inventoryReason).toBe(ROLLOUT_UNAVAILABLE_MESSAGE);
+    expect(ctx.rolloutNotice).toBe(ROLLOUT_UNAVAILABLE_MESSAGE);
   });
 
   it("OFF keeps an EXISTING xCell Pur block's route: the rollout is not even read and the offer stays", async () => {
@@ -2878,27 +2879,34 @@ describe("loadMachineSetupContext and the platform rollout", () => {
       const on = await actions.loadMachineSetupContext(input);
       ROLLOUT.value = "error";
       const failed = await actions.loadMachineSetupContext(input);
-      return { on, failed };
+      ROLLOUT.value = "off";
+      const off = await actions.loadMachineSetupContext(input);
+      return { on, failed, off };
     };
 
     it("remembered and the client's last machine (a new block)", async () => {
       arrange();
       DB.rowsFor.practitioners = [{ default_machine_id: PUR_UNIT, default_machine_mode: "multiplex" }];
       CLIENT_LAST.value = { profileId: PUR_PROFILE, deviceId: PUR_UNIT, modeKey: "multiplex" };
-      const { on, failed } = await both(NEW_SETUP);
+      const { on, failed, off } = await both(NEW_SETUP);
       expect(on.remembered?.deviceId).toBe(PUR_UNIT);
       expect(on.clientLastMachine?.deviceId).toBe(PUR_UNIT);
       expect(failed.remembered).toBeNull();
       expect(failed.clientLastMachine).toBeNull();
+      // OFF: a NEW area does not start on the unit (the rollout was turned off after a pilot practitioner charted it), though the unit is still listed.
+      expect(off.remembered).toBeNull();
+      expect(off.clientLastMachine).toBeNull();
+      expect(off.devices.map((d) => d.deviceId)).toContain(PUR_UNIT);
     });
 
     it("the suggested machine (nothing remembered; the client's last recorded setup used the unit)", async () => {
       arrange();
       DB.rowsFor.practitioners = [{ default_machine_id: null, default_machine_mode: null }];
       DB.rpcResult = [reading];
-      const { on, failed } = await both(NEW_SETUP);
+      const { on, failed, off } = await both(NEW_SETUP);
       expect(on.suggestedMachine?.deviceId).toBe(PUR_UNIT);
       expect(failed.suggestedMachine).toBeNull();
+      expect(off.suggestedMachine).toBeNull();
     });
 
     it("the restored selection (an existing block whose recorded readings used the unit)", async () => {
@@ -2906,9 +2914,10 @@ describe("loadMachineSetupContext and the platform rollout", () => {
       DB.rowsFor.practitioners = [{ default_machine_id: null, default_machine_mode: null }];
       DB.rowsFor.session_blocks = [{ studio_machine_id: null }];
       DB.rowsFor.treatment_setup_readings = [reading];
-      const { on, failed } = await both(EXISTING);
+      const { on, failed, off } = await both(EXISTING);
       expect(on.restoredSelection?.deviceId).toBe(PUR_UNIT);
       expect(failed.restoredSelection).toBeNull();
+      expect(off.restoredSelection?.deviceId).toBe(PUR_UNIT); // an existing block keeps its own record when Off
     });
   });
 

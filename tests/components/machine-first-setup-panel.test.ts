@@ -1527,6 +1527,14 @@ describe("the machine dropdown", () => {
     expect(html).toContain("no machine registered yet");
   });
 
+  it("says the rollout could not be read beside the choices, even when the studio HAS another selectable machine", () => {
+    const MSG = "We could not check whether this is available right now. Please try again in a moment.";
+    const withUnit = render({ scope: SCOPE, devices: [DEVICE], catalogue: CAT, rolloutNotice: MSG });
+    expect(withUnit).toContain('data-testid="machine-rollout-unavailable"');
+    expect(withUnit).toContain("We could not check whether this is available");
+    expect(render({ scope: SCOPE, devices: [DEVICE], catalogue: CAT })).not.toContain("machine-rollout-unavailable");
+  });
+
   it("uses the SHARED control classes, so the touch floor is not re-derived", () => {
     // fieldControlClass carries the 44px floor, the 16px type that stops iOS
     // zooming on focus, and the focus ring. The pills it replaced were

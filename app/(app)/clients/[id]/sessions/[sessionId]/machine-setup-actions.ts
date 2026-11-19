@@ -146,6 +146,8 @@ export type MachineSetupContext = {
   devices: StudioDevice[];
   /** Set when there is nothing to offer and the reason is worth showing. */
   inventoryReason: string | null;
+  /** Set when the platform rollout could not be read for this studio: shown beside the machine choices whether or not the studio has another machine. */
+  rolloutNotice: string | null;
   /** The stored selection, ONLY when it is actually usable for charting. */
   remembered: { deviceId: string; modeKey: string | null } | null;
   /**
@@ -243,6 +245,7 @@ const ANONYMOUS: MachineSetupContext = {
   scope: null,
   devices: [],
   inventoryReason: null,
+  rolloutNotice: null,
   remembered: null,
   rememberedUnavailable: null,
   persistence: NO_PERSISTENCE,
@@ -472,6 +475,7 @@ export async function loadMachineSetupContext(input: {
   // whatever the rollout says. For a new setup: on = offer, off = no route, and a FAILED read must NOT degrade (that would save a new setup
   // under the legacy machine): the context refuses retryably.
   let rolloutUnavailable = false;
+  let rolloutOff = false;
   if (legacyMachine) {
     const existingUsesXcellPur = input.blockId ? await blockUsesXcellPur(db, input.blockId, input.sessionId) : false;
     const rollout = existingUsesXcellPur ? "on" : await readChartingRollout(scope.studioId);
@@ -481,6 +485,8 @@ export async function loadMachineSetupContext(input: {
       // machine on a clinical record. Nothing is lost: an existing block keeps its route, and a retry reads the rollout again.
       legacyMachine = null;
       rolloutUnavailable = true;
+    } else if (routeDecision === "hide") {
+      rolloutOff = true;
     } else if (routeDecision === "offer") {
       try {
         const purProfile = currentProfile(catalogue, XCELL_PUR_PROFILE_ID);
@@ -542,12 +548,13 @@ export async function loadMachineSetupContext(input: {
   // WHEN THE ROLLOUT COULD NOT BE READ, THE xCELL UNIT IS WITHHELD WHOLE, not only its legacy-choice wrapper: with the wrapper gone the picker
   // would list a registered xCell Pur unit as an ordinary machine, and a new setup saved from it would be recorded under the native identity
   // while it is unknown whether this studio may use it. Every selection that could point at such a unit is withheld with it.
-  const offered = withholdXcellUnits({ withhold: rolloutUnavailable, devices: inventory.devices, remembered, suggestedMachine, restoredSelection, clientLastMachine });
+  const offered = withholdXcellUnits({ rollout: rolloutUnavailable ? "unavailable" : rolloutOff ? "off" : "available", devices: inventory.devices, remembered, suggestedMachine, restoredSelection, clientLastMachine });
 
   return {
     scope,
     devices: offered.devices,
     inventoryReason: rolloutUnavailable ? ROLLOUT_UNAVAILABLE_MESSAGE : inventory.reason,
+    rolloutNotice: rolloutUnavailable ? ROLLOUT_UNAVAILABLE_MESSAGE : null,
     remembered: offered.remembered,
     rememberedUnavailable,
     persistence,

@@ -715,6 +715,7 @@ export function MachineFirstSetupConnected({
               )
       }
       inventoryReason={ctx.inventoryReason}
+      rolloutNotice={ctx.rolloutNotice}
       onChosenModel={onChosenModel}
       persistence={ctx.persistence ?? NO_PERSISTENCE}
       // The catalogue is whatever the SERVER resolved, so the synthetic demo
