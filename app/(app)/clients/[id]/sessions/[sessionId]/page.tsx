@@ -61,6 +61,7 @@ import {
 import { createClient } from "@/lib/supabase/server";
 import { CHARTING_VIEW_STUDIOS_ENV } from "@/lib/charting/view-preference";
 import { chartingViewForPage } from "@/lib/charting/page-view";
+import { NewViewOnlyStep } from "@/components/charting-view-context";
 import { ChartingViewShell, ChartingViewToggle, ChartingVisitSummary } from "@/components/charting-view-shell";
 import { buildVisitSummary } from "@/lib/charting/visit-summary";
 import { loadPreviousVisitNote } from "@/lib/sessions/previous-visit-note";
@@ -852,6 +853,9 @@ export default async function SessionDetailPage({
 
       <SessionPhotos clientId={id} photos={sessionPhotos} />
 
+      {/* New view only (nothing renders in Current view): step 4. The section below is the existing next-visit form, unchanged. */}
+      <NewViewOnlyStep n={4} title="Next visit" />
+
       {/* PR #190 (clinical memory): plan for the NEXT visit. Saved on
           sessions.next_session_note and shown as "From last visit"
           when the client returns. Optional; empty save clears it. */}
@@ -893,6 +897,8 @@ export default async function SessionDetailPage({
 
           Everything above still saves as you go; nothing here is a new
           lifecycle system. */}
+      {/* New view only: step 5. The finish checklist, postcare and payment below are the existing controls, unchanged and in their existing order. */}
+      <NewViewOnlyStep n={5} title="Review & finish" />
       <section
         data-testid="finish-appointment"
         className="flex flex-col gap-4 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800"

@@ -33,6 +33,14 @@ export function NewViewStep({ n, title }: { n: number; title: string }) {
   );
 }
 
+/**
+ * The same heading for a SERVER-rendered page, which cannot read the view itself: it renders the step in New view and NOTHING in Current view,
+ * so Current's markup is exactly what it always was. Like NewViewStep it holds no state and no control.
+ */
+export function NewViewOnlyStep({ n, title }: { n: number; title: string }) {
+  return useChartingView() === "new" ? <NewViewStep n={n} title={title} /> : null;
+}
+
 export function ChartingViewProvider({ value, children }: { value: ChartingViewValue; children: ReactNode }) {
   return <ChartingViewContext.Provider value={value}>{children}</ChartingViewContext.Provider>;
 }
