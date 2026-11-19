@@ -16,6 +16,8 @@ vi.mock("@/lib/supabase/queries", () => ({ getCurrentPractitionerWithStudio: h.w
 vi.mock("@/lib/billing/payment-jurisdiction-server", () => ({ getStudioPaymentJurisdiction: h.jurisdiction }));
 vi.mock("@/lib/finance/client-statement-read", () => ({ loadClientStatementRead: h.read }));
 
+import * as csvModule from "@/lib/finance/statement-csv";
+import { IdentityRefusalError } from "@/lib/supabase/identity-refusal";
 import { GET } from "@/app/(app)/financials/statements/[clientId]/export.csv/route";
 import { loadOwnerClientStatement } from "@/lib/finance/owner-client-statement";
 import { StatementPrintView, PRINT_CSS } from "@/app/(app)/financials/statements/statement-print-view";
@@ -52,10 +54,33 @@ describe("the CSV route", () => {
     expect(h.jurisdiction).not.toHaveBeenCalled();
     expect(h.read).not.toHaveBeenCalled();
   });
-  it("an unsigned or inactive caller is refused (the identity read throws)", async () => {
-    h.who.mockRejectedValue(new Error("no session"));
+  it("a caller who is refused (signed out, no studio, a studio to choose) is a 403; a FAILED read (database outage) is a 503, not a 403", async () => {
+    h.who.mockRejectedValue(new IdentityRefusalError("no-active-practitioner", "none"));
     expect((await call()).status).toBe(403);
+    h.who.mockRejectedValue(Object.assign(new Error("NEXT_REDIRECT"), { digest: "NEXT_REDIRECT;replace;/login;307;" }));
+    expect((await call()).status).toBe(403);
+    h.who.mockRejectedValue(new Error("connection terminated"));
+    const r = await call();
+    expect(r.status).toBe(503);
+    expect(r.headers.get("cache-control")).toBe("no-store, private");
     expect(h.read).not.toHaveBeenCalled();
+  });
+  it("a file that cannot be built is a 503, never an unexplained 500", async () => {
+    const spy = vi.spyOn(csvModule, "statementCsv").mockImplementationOnce(() => {
+      throw new Error("boom");
+    });
+    const r = await call("?month=2026-11");
+    expect(r.status).toBe(503);
+    expect(await r.text()).not.toMatch(/boom|Ada/);
+    spy.mockRestore();
+  });
+  it("the file carries the screen's totals, balance and the off-document notice", async () => {
+    h.read.mockResolvedValue(granted({ offDocumentWithMoney: 2 }));
+    const body = await (await call("?month=2026-11")).text();
+    expect(body).toContain("Paid,60.00");
+    expect(body).toContain("Visits,1");
+    expect(body).toMatch(/Balance,/);
+    expect(body).toContain("Note,2 upcoming bookings have payments recorded.");
   });
   it("a client id that is not an id is the same 404 as an unknown client, with nothing read", async () => {
     expect((await call("", "not-a-uuid")).status).toBe(404);

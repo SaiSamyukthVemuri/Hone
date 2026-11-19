@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { loadOwnerClientStatement } from "@/lib/finance/owner-client-statement";
 import { statementCsv, statementCsvFileName } from "@/lib/finance/statement-csv";
+import { IdentityRefusalError } from "@/lib/supabase/identity-refusal";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 
 // ===========================================================================
@@ -21,8 +22,11 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   let who: Awaited<ReturnType<typeof getCurrentPractitionerWithStudio>>;
   try {
     who = await getCurrentPractitionerWithStudio();
-  } catch {
-    return refuse(403, "forbidden");
+  } catch (error) {
+    // A caller who is refused (signed out, no active studio, or a studio to choose) is a 403. A FAILED READ (a database outage) is not a refusal and
+    // must not read as one: it is a 503, so the owner retries rather than concluding they have no access.
+    const redirected = typeof (error as { digest?: unknown })?.digest === "string" && String((error as { digest: string }).digest).startsWith("NEXT_REDIRECT");
+    return error instanceof IdentityRefusalError || redirected ? refuse(403, "forbidden") : refuse(503, "unavailable");
   }
   const { practitioner, studio } = who;
   if (practitioner.role !== "owner") return refuse(403, "forbidden");
@@ -47,7 +51,14 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     return refuse(503, "unavailable");
   }
 
-  return new NextResponse(statementCsv(result.document), {
+  let body: string;
+  try {
+    body = statementCsv(result.document, result.offDocumentWithMoney);
+  } catch {
+    return refuse(503, "unavailable"); // a file that cannot be built is not produced, and is not an unexplained 500
+  }
+
+  return new NextResponse(body, {
     status: 200,
     headers: {
       "Content-Type": "text/csv; charset=utf-8",

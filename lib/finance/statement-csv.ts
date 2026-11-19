@@ -1,7 +1,8 @@
 import { csvCell } from "@/lib/csv";
 import { CSV_COLUMNS, FEE_NOT_RECORDED_COPY, FEE_REASON_COPY, NOT_COMPLETED_COPY, UNKNOWN_REASON_COPY, toCsvRows, type StatementDocument } from "@/lib/finance/statement-document";
 import { monthRange } from "@/lib/finance/statement-period";
-import { FEE_ITEM_STATE_LABEL, VISIT_STATE_LABEL } from "@/lib/finance/statement-screen";
+import { offDocumentMoneyNotice } from "@/lib/finance/statement-directory";
+import { FEE_ITEM_STATE_LABEL, VISIT_STATE_LABEL, balanceText } from "@/lib/finance/statement-screen";
 
 // ===========================================================================
 // A client statement as a spreadsheet file. PURE: no I/O, no clock, no request.
@@ -62,8 +63,12 @@ export function statementCsvFileName(scope: StatementDocument["scope"]): string 
 
 export const STATEMENT_CSV_COLUMNS = [...CSV_COLUMNS.map((c) => (MONEY_COLUMNS.has(c) ? c.replace(/_cents$/, "") : c)), "currency"] as const;
 
-export function statementCsvLines(doc: StatementDocument): string[][] {
+/** `offDocumentWithMoney` is the count the screen shows its notice for (upcoming bookings with a payment, which no statement lists). */
+export function statementCsvLines(doc: StatementDocument, offDocumentWithMoney = 0): string[][] {
   const currency = doc.currency.toUpperCase();
+  const balance = balanceText(doc.balanceDue, decimalAmount);
+  const balanceLine = balance.hint ? `${balance.text} ${balance.hint}` : balance.text;
+  const notice = offDocumentMoneyNotice(offDocumentWithMoney);
   const header: string[][] = [
     [STATEMENT_NOT_AN_INVOICE],
     [doc.attribution],
@@ -72,6 +77,14 @@ export function statementCsvLines(doc: StatementDocument): string[][] {
     ["Selection", scopeLabel(doc.scope)],
     ["Prepared", doc.preparedOn],
     ["Currency", currency],
+    // The same figures the screen shows, from the same document, so the file can be compared with it. A balance that is not established is WORDS
+    // (the screen's own sentence), never 0.00.
+    ["Visits", String(doc.totals.visitCount)],
+    ["Paid", decimalAmount(doc.totals.paidCents)],
+    ["Refunded", decimalAmount(doc.totals.refundedCents)],
+    ["Waived", decimalAmount(doc.totals.waivedCents)],
+    ["Balance", balanceLine],
+    ...(notice ? [["Note", notice]] : []),
     [],
     [...STATEMENT_CSV_COLUMNS],
   ];
@@ -106,7 +119,6 @@ export function statementCsvLines(doc: StatementDocument): string[][] {
   return [...header, ...body];
 }
 
-const HEADER_ROWS = 9; // the header block, the blank line and the column header
 const MONEY_AT: ReadonlySet<number> = new Set(STATEMENT_CSV_COLUMNS.map((c, i) => (["fee", "paid", "refunded", "waived", "owed"].includes(c) ? i : -1)).filter((i) => i >= 0));
 const PURE_DECIMAL = /^-?\d+\.\d{2}$/;
 
@@ -119,7 +131,8 @@ export function statementCsvLine(cells: readonly string[], moneyAt: ReadonlySet<
 }
 
 /** The whole file: BOM, then one line per row. */
-export function statementCsv(doc: StatementDocument): string {
-  const rows = statementCsvLines(doc);
+export function statementCsv(doc: StatementDocument, offDocumentWithMoney = 0): string {
+  const rows = statementCsvLines(doc, offDocumentWithMoney);
+  const HEADER_ROWS = rows.findIndex((r) => r[0] === STATEMENT_CSV_COLUMNS[0]) + 1; // everything up to and including the column header
   return `${CSV_BOM}${rows.map((row, r) => statementCsvLine(row, r >= HEADER_ROWS ? MONEY_AT : new Set())).join("\n")}\n`;
 }
