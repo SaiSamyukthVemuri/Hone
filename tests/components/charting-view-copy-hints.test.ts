@@ -5,7 +5,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { ChartingViewContext } from "@/components/charting-view-context";
 import { NewViewHint } from "@/components/charting-view-context";
 import { ChartingVisitSummary } from "@/components/charting-view-shell";
-import type { ChartingView } from "@/lib/charting/view-preference";
 
 // The New view copy: guidance lines that exist ONLY in New view, and the machine row of "This visit". Display only.
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -18,7 +17,7 @@ afterEach(() => {
   root = null;
   host = null;
 });
-function mount(view: ChartingView | null, child: ReturnType<typeof createElement>) {
+function mount(view: "current" | "new" | null, child: ReturnType<typeof createElement>) {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -28,7 +27,7 @@ function mount(view: ChartingView | null, child: ReturnType<typeof createElement
 }
 
 describe("NewViewHint", () => {
-  const hint = () => createElement(NewViewHint, { testId: "h" }, "Blank stays blank.");
+  const hint = () => createElement(NewViewHint, { testId: "h", children: "Blank stays blank." });
   it("renders its text in New view", () => {
     expect(mount("new", hint()).querySelector('[data-testid="h"]')?.textContent).toBe("Blank stays blank.");
   });
