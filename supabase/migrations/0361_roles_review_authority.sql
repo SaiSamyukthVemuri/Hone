@@ -13,6 +13,8 @@
 --       (4) a commit that carries a review hash refuses with review_changed if the recomputed hash differs;
 --       (5) the result gains `review`, `review_version`, `review_hash`; every existing result key keeps its name and type;
 --       (6) a reviewed commit records {version, hash} under `_review` inside the audit row's `after`; with no hash nothing is added.
+--       (7) a released row whose stored value is not in force because a direct prerequisite is below it gets the timing value capped_by_prerequisite (decided
+--           before perm_review_timing is asked), so a valid choice is saved and labelled instead of being refused as a race on every try.
 --   perm_run_changes(7 args)  unchanged head and ACL; it delegates with a null hash and strips the three new keys, so its callers (the old preview and
 --       save commands) see exactly what 0360 returned.
 --   preview_role_changes_at(uuid, jsonb, bigint)  the preview WITH the page's expected version (the version check runs when commit is false) and the table.
@@ -353,12 +355,24 @@ begin
              'written', (r.value ->> 'written')::boolean,
              'effective_before', v_before_eff -> (r.value ->> 'role') ->> (r.value ->> 'key'),
              'effective_after', v_after_eff -> (r.value ->> 'role') ->> (r.value ->> 'key'),
-             'timing', public.perm_review_timing(
+             -- capped_by_prerequisite: a released key whose stored value is NOT in force because a direct prerequisite's effective value is below it
+             -- (the prerequisite is unreleased or can never be released). The value is saved and labelled as stored; it is not a race, so perm_review_timing
+             -- (which still raises review_changed for a real race) is not asked. A narrow release's raise is labelled by perm_review_timing as before.
+             'timing', case
+                         when (r.value ->> 'written')::boolean and rel.released_at is not null
+                              and not (rel.release_kind = 'narrow' and public.perm_rank(r.value ->> 'requested') > public.perm_rank(r.value ->> 'snapshot'))
+                              and v_after_eff -> (r.value ->> 'role') ->> (r.value ->> 'key') <> r.value ->> 'requested'
+                              and exists (select 1 from public.permission_catalog pcc, unnest(pcc.requires) rq(k)
+                                           where pcc.key = r.value ->> 'key'
+                                             and public.perm_rank(v_after_eff -> (r.value ->> 'role') ->> rq.k) < public.perm_rank(r.value ->> 'requested'))
+                         then 'capped_by_prerequisite'
+                         else public.perm_review_timing(
                          rel.released_at is not null, rel.release_kind, r.value ->> 'snapshot', r.value ->> 'requested',
                          v_before_eff -> (r.value ->> 'role') ->> (r.value ->> 'key'),
                          v_after_eff -> (r.value ->> 'role') ->> (r.value ->> 'key'), (r.value ->> 'written')::boolean,
                          exists (select 1 from public.permission_key_activation k
                                   where k.studio_id = p_studio and k.key = r.value ->> 'key' and k.release_tag = rel.release_tag))
+                       end
            ) order by r.value ->> 'role', r.value ->> 'key'), '[]'::jsonb)
       into v_review
       from jsonb_array_elements(v_rows) r(value)

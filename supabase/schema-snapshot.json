@@ -3,7 +3,7 @@
   "migrations": {
     "count": 279,
     "last": "0361_roles_review_authority.sql",
-    "sha256": "ef64bb7acde7fc1fbf1e77ae4becef456f2890ebe84d94b5bff73d8da5a23677"
+    "sha256": "2930a64641da144502a0456ec3ae08b4e12ce699de25bed256933908dfff2d61"
   },
   "public": {
     "tables": [
