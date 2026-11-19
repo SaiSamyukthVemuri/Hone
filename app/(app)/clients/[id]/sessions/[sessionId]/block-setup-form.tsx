@@ -1416,7 +1416,7 @@ export function BlockSetupForm({
         source.probe_key ?? "",
       ).map((o) => o.id),
     );
-    const patch = buildTreatmentSetupDraftPatch(source, firstEntry, linkable);
+    const patch = buildTreatmentSetupDraftPatch(source, firstEntry, linkable, { keepGalvanicEnergy: rollout });
     // With a native machine in force only the SHARED fields (probe and lot) are copied; the hidden legacy fields stay
     // cleared, so nothing legacy is ever submitted.
     setDraft((d) => ({ ...d, ...copyPatchForMachine(machineKind, patch) }));
