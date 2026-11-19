@@ -916,7 +916,7 @@ test("an owner starts on the dashboard, opens Business, then Statements, and cho
     await picker.getByRole("button", { name: "Show month" }).click();
     await page.waitForURL("**/financials/statement?month=2026-01");
     await expect(page.getByRole("heading", { name: /^Money statement: January 2026/ })).toBeVisible();
-    await expect(page.getByLabel("Month")).toHaveValue("2026-01");
+    await expect(picker.getByLabel("Month")).toHaveValue("2026-01");
   } finally {
     await sql(`delete from public.studio_payment_jurisdictions where studio_id = $1 and verification_reference = 'e2e business menu statement'`, [seed.studioId]);
   }
