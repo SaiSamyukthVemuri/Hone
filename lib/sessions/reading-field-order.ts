@@ -87,13 +87,13 @@ const THERMOLYSIS_FIELDS: ReadonlySet<ReadingField> = new Set([
 // e2e/blend-machine-order-mobile.spec.ts so it stays visible rather than assumed.
 export function readingFieldOrder(
   mode: string | null | undefined,
-  opts: { omniblend?: boolean } = {},
+  opts: { omniblend?: boolean; keepGalvanicEnergy?: boolean } = {},
 ): ReadingField[] {
   const m = (mode ?? "").trim();
   const wantGalv = m === "galv" || m === "blend";
   const wantThermo = m === "thermo" || m === "blend";
   return MACHINE_READING_ORDER.filter((f) => {
-    if (f === "energyLevel") return m !== "galv";
+    if (f === "energyLevel") return m !== "galv" || opts.keepGalvanicEnergy === true;
     if (GALVANIC_FIELDS.has(f)) return wantGalv;
     if (THERMOLYSIS_FIELDS.has(f)) {
       if (!wantThermo) return false;

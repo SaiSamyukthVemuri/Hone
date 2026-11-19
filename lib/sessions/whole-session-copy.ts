@@ -72,6 +72,7 @@ export type CopyAreaDraft = {
 // Pure, no I/O.
 export function buildCopyDrafts(
   source: readonly CopySourceBlock[],
+  opts: { keepGalvanicEnergy?: boolean } = {},
 ): CopyAreaDraft[] {
   const drafts: CopyAreaDraft[] = [];
   for (let i = 0; i < source.length; i++) {
@@ -85,6 +86,8 @@ export function buildCopyDrafts(
     const setup = buildTreatmentSetupDraftPatch(
       b.block,
       firstLiveEntry(b.firstEntry ? [b.firstEntry] : []),
+      undefined,
+      opts,
     );
     if (!COPYABLE_MODES.has(setup.mode as "thermo" | "galv" | "blend")) continue; // no reusable setup
     drafts.push({

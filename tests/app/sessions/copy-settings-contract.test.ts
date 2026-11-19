@@ -34,7 +34,7 @@ describe("in-form Copy settings uses the shared canonical contract", () => {
     // The third argument is the set of inventory ids still LINKABLE for the
     // copied probe, so a copy never resurrects an expired/reclassified link.
     expect(FORM).toMatch(
-      /buildTreatmentSetupDraftPatch\(source, firstEntry, linkable\)/,
+      /buildTreatmentSetupDraftPatch\(source, firstEntry, linkable(, \{[^}]*\})?\)/,
     );
     // It spreads the patch onto the existing draft (preserving all other keys).
     expect(FORM).toMatch(/setDraft\(\(d\) => \(\{ \.\.\.d, \.\.\.patch \}\)\)/);

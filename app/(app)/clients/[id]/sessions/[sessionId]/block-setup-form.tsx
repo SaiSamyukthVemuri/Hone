@@ -101,7 +101,8 @@ import { BodyMapAreaPicker } from "@/components/body-map-area-picker";
 import { MultiAreaEditor } from "@/components/multi-area-editor";
 import { resolveBlockAreas, type BlockArea } from "@/lib/sessions/block-areas";
 import { useRetainedState } from "@/components/charting-state-provider";
-import { NewViewHint, NewViewStep, useChartingView } from "@/components/charting-view-context";
+import { NewViewHint, NewViewStep, useChartingRollout, useChartingView } from "@/components/charting-view-context";
+import { bagHoldsValue, hiddenBagsNotice, readingsOf, hiddenModesWithValues, mergeTouched, pulseTouchedDiffersFromRecord, pulseTouchedFromRecord, pulseRecordable, switchMode, type ModeBags, type PulseTouched } from "@/lib/sessions/mode-bags";
 import { DraftRegistryProvider, useDraftRegistryState, useReportDraft } from "@/components/machines/draft-registry";
 import { MachineFirstSetupConnected } from "@/components/machines/machine-first-setup-connected";
 import { ProbePicker } from "@/components/probe-picker";
@@ -458,6 +459,11 @@ export function BlockSetupForm({
   const [draft, setDraftRaw] = useRetainedState<Draft>(retainKey ? `${retainKey}:draft` : null, () =>
     initialDraft(block, firstEntry, defaultPrimaryArea, defaultMachineFrequency, initialAreas),
   );
+  // CHART REDESIGN (server rollout, gated): each legacy mode keeps its OWN readings in memory while another mode is shown, and untouched pulse defaults
+  // are never recorded. With the rollout off none of this runs and the form behaves exactly as it did.
+  const rollout = useChartingRollout();
+  const [modeBags, setModeBags] = useRetainedState<ModeBags>(retainKey ? `${retainKey}:modeBags` : null, {});
+  const [pulseTouched, setPulseTouched] = useRetainedState<PulseTouched>(retainKey ? `${retainKey}:pulseTouched` : null, () => pulseTouchedFromRecord(firstEntry));
   // WHICH KIND OF MACHINE IS IN FORCE, so only that machine's fields show.
   // Opened from the area's SAVED identity (migration 0301), never inferred:
   // an area with no saved identity is "none", and "none" keeps the existing
@@ -1097,7 +1103,13 @@ export function BlockSetupForm({
   // already freezes the draft. The guard needs only the draft flag.
   const createAttemptOpen = !block && (pending || saveUnresolved);
   useReportDraft({ draft: createAttemptOpen, unresolved: false }, draftRegistry.api);
+  // Readings parked for another mode are unsaved work: leaving the form would lose them.
+  const hiddenModes = rollout ? hiddenModesWithValues(modeBags, draft.mode) : [];
   const dirty =
+    hiddenModes.length > 0 ||
+    // WHAT WILL BE RECORDED IS PART OF "UNSAVED" (Codex P2): clearing a pulse field and typing the shown default back leaves the draft equal to its
+    // baseline but marks the control as touched, so the save would now record a value it did not before.
+    (rollout && pulseTouchedDiffersFromRecord(pulseTouched, firstEntry)) ||
     JSON.stringify(draft) !== initialDraftJson.current ||
     draftRegistry.view.anyDraft;
   // THE LEAVE PROMPT is the app's own dialog (never a native confirm).
@@ -1387,10 +1399,11 @@ export function BlockSetupForm({
         source.probe_key ?? "",
       ).map((o) => o.id),
     );
-    const patch = buildTreatmentSetupDraftPatch(source, firstEntry, linkable);
+    const patch = buildTreatmentSetupDraftPatch(source, firstEntry, linkable, { keepGalvanicEnergy: rollout });
     // With a native machine in force only the SHARED fields (probe and lot) are copied; the hidden legacy fields stay
     // cleared, so nothing legacy is ever submitted.
     setDraft((d) => ({ ...d, ...copyPatchForMachine(machineKind, patch) }));
+    if (rollout) setPulseTouched((t) => mergeTouched(t, pulseTouchedFromRecord(firstEntry)));
     // Bind the copied lot to the copied probe, so the probe-change effect does
     // NOT then overwrite it with an unrelated historical suggestion. Selecting a
     // different probe afterwards still runs the normal resolver for that probe.
@@ -1450,9 +1463,24 @@ export function BlockSetupForm({
     // commit first, the identity write would then be refused as stale, and the choice would be lost silently.
     identityWritePending;
 
+  // W1 (redesign on): readings that will NOT be saved (parked for another mode, or typed with no mode) are never dropped silently. Save asks first.
+  const [discardPrompt, setDiscardPrompt] = useState<string | null>(null);
+  const discardAck = useRef(false);
+
   function submit() {
     if (saveBlocked) return;
     setError(null);
+    const acked = discardAck.current;
+    discardAck.current = false;
+    if (rollout && !acked) {
+      const orphan = draft.mode === "" && bagHoldsValue({ readings: readingsOf(draft as unknown as Record<string, unknown>), pulseTouched });
+      const notice = hiddenBagsNotice([...hiddenModes, ...(orphan ? [""] : [])]);
+      if (notice) {
+        setDiscardPrompt(notice);
+        return;
+      }
+    }
+    setDiscardPrompt(null);
     // THE MACHINE DRAFT BLOCKS THE SAVE WHEN IT IS HALF-FINISHED, and says
     // which group and why. Skipping it would discard numbers she typed;
     // sending it would be refused by the command after a round trip.
@@ -1539,12 +1567,14 @@ export function BlockSetupForm({
     });
     if (!hairs.ok) return setError(hairs.error);
     const pulseStr = draft.pulseCount.trim();
-    const pulseCount = pulseStr === "" ? null : parseInt(pulseStr, 10);
+    // REDESIGN: the pulse controls are recorded only when TOUCHED and the shown mode has a thermolysis group; an untouched default is never a record.
+    const pulseOk = rollout ? pulseRecordable(draft.mode, pulseTouched) : { count: true, delay: true };
+    const pulseCount = pulseStr === "" || !pulseOk.count ? null : parseInt(pulseStr, 10);
     // Pulse delay is only recorded when multiple pulses were done. When
     // applicable, validate the range here so the practitioner gets the exact
     // message; the server re-validates (defense-in-depth).
     let pulseDelaySeconds: number | null = null;
-    if (pulseCount != null && pulseCount > 1 && draft.pulseDelay.trim() !== "") {
+    if (pulseCount != null && pulseCount > 1 && pulseOk.delay && draft.pulseDelay.trim() !== "") {
       const pd = Number(draft.pulseDelay);
       if (!Number.isFinite(pd) || pd < PULSE_DELAY_MIN || pd > PULSE_DELAY_MAX) {
         return setError("Pulse delay must be between 0.03 and 1.90 seconds.");
@@ -1749,6 +1779,7 @@ export function BlockSetupForm({
       PULSE_COUNT_MAX,
       Math.max(PULSE_COUNT_MIN, base + delta),
     );
+    if (rollout) setPulseTouched((t) => ({ ...t, count: true }));
     update("pulseCount", String(next));
   }
 
@@ -1834,7 +1865,10 @@ export function BlockSetupForm({
               min={PULSE_COUNT_MIN}
               max={PULSE_COUNT_MAX}
               value={draft.pulseCount}
-              onChange={(e) => update("pulseCount", e.target.value)}
+              onChange={(e) => {
+                if (rollout) setPulseTouched((t) => ({ ...t, count: true }));
+                update("pulseCount", e.target.value);
+              }}
               className="w-20 rounded-md border border-neutral-300 bg-white px-3 py-3 text-center text-base tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
             />
             <button
@@ -1860,7 +1894,10 @@ export function BlockSetupForm({
                   min={PULSE_DELAY_MIN}
                   max={PULSE_DELAY_MAX}
                   value={draft.pulseDelay}
-                  onChange={(e) => update("pulseDelay", e.target.value)}
+                  onChange={(e) => {
+                    if (rollout) setPulseTouched((t) => ({ ...t, delay: true }));
+                    update("pulseDelay", e.target.value);
+                  }}
                   aria-label="Pulse delay in seconds"
                   className="w-24 rounded-md border border-neutral-300 bg-white px-3 py-3 text-center text-base tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
                 />
@@ -2048,6 +2085,19 @@ export function BlockSetupForm({
           />
         ) : null;
       })()}
+      {rollout && discardPrompt && (
+        <div role="group" aria-label="Readings that will not be saved" data-testid="discard-readings-confirm" className="flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950">
+          <p>{discardPrompt} Save without them?</p>
+          <div className="flex gap-2">
+            <button type="button" data-testid="discard-readings-save" className="rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white" onClick={() => { discardAck.current = true; submit(); }}>
+              Save without them
+            </button>
+            <button type="button" data-testid="discard-readings-keep" className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium" onClick={() => setDiscardPrompt(null)}>
+              Keep editing
+            </button>
+          </div>
+        </div>
+      )}
       <div className="flex items-center justify-between gap-3">
         <h3 className="text-base font-medium">
           {isEdit ? "Edit settings block" : "Add settings block"}
@@ -2238,7 +2288,12 @@ export function BlockSetupForm({
                 type="button"
                 disabled={multiplexSaved || draftFrozen || identityWritePending}
                 onClick={() => {
-                  update("mode", selected ? "" : m.value);
+                  if (rollout) {
+                    const next = switchMode({ draft, bags: modeBags, pulseTouched }, selected ? "" : m.value);
+                    setDraft(next.draft);
+                    setModeBags(next.bags);
+                    setPulseTouched(next.pulseTouched);
+                  } else update("mode", selected ? "" : m.value);
                   // Leaving MultiPlex returns the area to the existing xCell workflow.
                   if (multiplexSelected) setMultiplexRequest((r) => ({ seq: (r?.seq ?? 0) + 1, want: false }));
                 }}
@@ -2269,6 +2324,11 @@ export function BlockSetupForm({
             </button>
           )}
         </div>
+        {rollout && hiddenBagsNotice(hiddenModes) && (
+          <p className="text-xs text-neutral-500" role="status" data-testid="hidden-mode-readings-notice">
+            {hiddenBagsNotice(hiddenModes)}
+          </p>
+        )}
       </div>
       )}
 

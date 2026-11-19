@@ -22,6 +22,9 @@ import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import { checkIdentityChoice } from "@/lib/machines/identity-choice";
 import { currentProfile } from "@/lib/machines/profile-contract";
 import { resolveWritingIdentity } from "@/lib/supabase/writing-identity";
+import { chartingRolloutFor } from "@/lib/rollouts/charting-rollout";
+import { PUR_LEGACY_MODES_UNAVAILABLE_MESSAGE, purLegacyModeRefused } from "@/lib/machines/identity-choice";
+import { entryHasReadings, isKnownMode, MODE_FROZEN_MESSAGE, modeChangeRefused, scopeToMode } from "@/lib/sessions/mode-scope";
 import { listStudioDevices } from "@/lib/machines/studio-devices";
 import type {
   MachineDb,
@@ -1063,6 +1066,8 @@ function entryMachineSnapshot(input: {
   energyLevel: number | null;
   minutesPerformed: number | null;
   machineFrequency: MachineFrequency | null;
+  /** Redesign on: Galvanic keeps its EL (a deliberate behaviour change). Off: dropped exactly as before. */
+  keepGalvanicEnergy?: boolean;
 }): {
   mode: SessionMode | null;
   apilus_modality: ApilusModality | null;
@@ -1074,7 +1079,7 @@ function entryMachineSnapshot(input: {
   return {
     mode: input.mode,
     apilus_modality: isGalv ? null : input.apilusModality,
-    energy_level: isGalv ? null : input.energyLevel,
+    energy_level: isGalv && !input.keepGalvanicEnergy ? null : input.energyLevel,
     minutes_performed: input.minutesPerformed,
     machine_frequency: input.machineFrequency,
   };
@@ -1240,6 +1245,19 @@ export async function createTreatmentAreaWithEntryAction(
   // to report a "definitive failure" would leave her on a dead form instead of
   // the login page.
 
+  // CHART REDESIGN (W2): with the rollout on for this studio, drop every field that does not belong to the submitted mode BEFORE anything is shaped.
+  // Off (or an unreadable rollout): the input is used exactly as it always was.
+  // A FAILED rollout read counts as Off (chartingRolloutFor answers false on an error): the write is then exactly today's. The scope and the freeze
+  // apply only when the rollout is positively on.
+  const redesignOn = await chartingRolloutFor(studio.id);
+  // A mode outside thermolysis, galvanic and blend is refused up front (the database would refuse it too, but never reach the scope rule with it).
+  if (redesignOn && !isKnownMode(input.mode)) return { ok: false, error: "Choose a valid mode.", unresolved: false };
+  if (redesignOn) input = scopeToMode(input);
+  // Never save xCell Pur's legacy modes under the old xCell identity once the redesign is on: refuse, clearly, before anything is written.
+  if (purLegacyModeRefused({ redesignOn, mode: input.mode, profileId: input.machineIdentity?.profileId })) {
+    return { ok: false, error: PUR_LEGACY_MODES_UNAVAILABLE_MESSAGE, unresolved: false };
+  }
+
   const areaCheck = normalizeStructuredArea({
     primaryArea: input.primaryArea ?? null,
     side: input.side ?? null,
@@ -1342,6 +1360,7 @@ export async function createTreatmentAreaWithEntryAction(
     energyLevel: input.energyLevel ?? null,
     minutesPerformed: input.minutesPerformed ?? null,
     machineFrequency: (input.machineFrequency ?? null) as MachineFrequency | null,
+    keepGalvanicEnergy: redesignOn,
   });
   const readingCols = structuredReadingColumns(
     (input.mode ?? null) as SessionMode | null,
@@ -1790,6 +1809,13 @@ export async function updateTreatmentAreaWithEntryAction(
     return { ok: false, error: "Inactive practitioners cannot edit sessions." };
   }
   await assertSessionForClient(studio.id, input.clientId, input.sessionId);
+  // CHART REDESIGN (W2): see the create action. Off: unchanged.
+  // A FAILED rollout read counts as Off (chartingRolloutFor answers false on an error): the write is then exactly today's. The scope and the freeze
+  // apply only when the rollout is positively on.
+  const redesignOn = await chartingRolloutFor(studio.id);
+  // A mode outside thermolysis, galvanic and blend is refused up front (the database would refuse it too, but never reach the scope rule with it).
+  if (redesignOn && !isKnownMode(input.mode)) return { ok: false, error: "Choose a valid mode.", unresolved: false };
+  if (redesignOn) input = scopeToMode(input);
 
   const areaCheck = normalizeStructuredArea({
     primaryArea: input.primaryArea ?? null,
@@ -1849,7 +1875,7 @@ export async function updateTreatmentAreaWithEntryAction(
   // defeat snapshot immutability).
   const { data: storedBlock, error: storedErr } = await supabase
     .from("session_blocks")
-    .select("probe_key, probe_inventory_item_id, probe_lot_number")
+    .select("probe_key, probe_inventory_item_id, probe_lot_number, mode")
     .eq("id", input.blockId)
     .eq("studio_id", studio.id)
     .eq("session_id", input.sessionId)
@@ -1857,6 +1883,23 @@ export async function updateTreatmentAreaWithEntryAction(
     .maybeSingle();
   if (storedErr) {
     return { ok: false, error: "Could not load the settings block to save." };
+  }
+
+  // W4 (redesign on): a block that already holds readings keeps its MODE; the server refuses a change, whatever the form allowed. The readings are
+  // read BY BLOCK, never through a client-supplied entry id, so an omitted, swapped or foreign id cannot skip the rule; an unreadable answer refuses.
+  if (redesignOn) {
+    const { data: storedEntries, error: storedEntryErr } = await supabase
+      .from("electrolysis_entries")
+      .select("thermolysis_intensity_percent, thermolysis_duration_seconds, galvanic_ma, galvanic_duration_seconds, units_of_lye, energy_level, apilus_modality")
+      .eq("block_id", input.blockId)
+      .eq("studio_id", studio.id)
+      .is("deleted_at", null);
+    if (storedEntryErr || !Array.isArray(storedEntries)) return { ok: false, error: "Could not load the settings block to save." };
+    if (modeChangeRefused({
+      storedMode: (storedBlock?.mode as string | null) ?? null,
+      submittedMode: input.mode ?? null,
+      hasReadings: storedEntries.some((e) => entryHasReadings(e as Record<string, unknown>)),
+    })) return { ok: false, error: MODE_FROZEN_MESSAGE };
   }
 
   // Migration 0155: resolve the probe-lot selection (see create action). When the
@@ -1916,6 +1959,7 @@ export async function updateTreatmentAreaWithEntryAction(
     energyLevel: input.energyLevel ?? null,
     minutesPerformed: input.minutesPerformed ?? null,
     machineFrequency: (input.machineFrequency ?? null) as MachineFrequency | null,
+    keepGalvanicEnergy: redesignOn,
   });
   const readingCols = structuredReadingColumns(
     (input.mode ?? null) as SessionMode | null,

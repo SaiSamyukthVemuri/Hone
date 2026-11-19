@@ -131,3 +131,43 @@ export async function blockUsesXcellPur(db: MachineDb, blockId: string, sessionI
     return false;
   }
 }
+
+/**
+ * W4 (redesign on): does this block already hold readings, legacy or native? A block that does keeps its machine identity. Reads the first live
+ * entry's reading columns and any native setup reading. A failed read answers TRUE (hold): never a guess that would let a change through.
+ */
+type Rows = PromiseLike<{ data: unknown; error: unknown }>;
+type LooseDb = { from: (t: string) => { select: (c: string) => { eq: (c: string, v: unknown) => { eq: (c: string, v: unknown) => { limit: (n: number) => Rows }; is: (c: string, v: null) => { limit: (n: number) => Rows }; limit: (n: number) => Rows } } } };
+export async function blockHoldsReadings(machineDb: MachineDb, blockId: string, sessionId: string): Promise<boolean> {
+  const db = machineDb as unknown as LooseDb;
+  try {
+    const blk = await db.from("session_blocks").select("id").eq("id", blockId).eq("session_id", sessionId).limit(1);
+    if (blk.error || !Array.isArray(blk.data) || blk.data.length !== 1) return true;
+    const native = await db.from("treatment_setup_readings").select("id").eq("session_block_id", blockId).limit(1);
+    if (native.error) return true;
+    if (Array.isArray(native.data) && native.data.length > 0) return true;
+    const entries = await db
+      .from("electrolysis_entries")
+      .select("deleted_at, thermolysis_intensity_percent, thermolysis_duration_seconds, galvanic_ma, galvanic_duration_seconds, units_of_lye, energy_level, apilus_modality")
+      .eq("block_id", blockId)
+      .limit(200);
+    if (entries.error || !Array.isArray(entries.data)) return true;
+    return (entries.data as Array<Record<string, unknown>>).some((e) => {
+      if (e.deleted_at != null) return false;
+      const { deleted_at: _removed, ...readings } = e;
+      return Object.values(readings).some((v) => v != null);
+    });
+  } catch {
+    return true;
+  }
+}
+
+export const IDENTITY_FROZEN_MESSAGE = "This area already has readings recorded, so its machine can't be changed. Add a new settings block for a different machine.";
+
+/** With the redesign on, xCell Pur's Thermolysis, Blend and Galvanic cannot be recorded faithfully yet; never fall back to the old xCell identity. */
+export const PUR_LEGACY_MODES_UNAVAILABLE_MESSAGE =
+  "xCell Pur's Thermolysis, Blend and Galvanic can't be recorded yet. Nothing was saved. Choose MultiPlex, or another machine.";
+export function purLegacyModeRefused(o: { redesignOn: boolean; mode: string | null | undefined; profileId: string | null | undefined }): boolean {
+  const m = (o.mode ?? "").trim();
+  return o.redesignOn && o.profileId === XCELL_PUR_PROFILE_ID && (m === "thermo" || m === "blend" || m === "galv");
+}

@@ -1,5 +1,6 @@
 "use server";
 
+import { chartingRolloutFor } from "@/lib/rollouts/charting-rollout";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
@@ -279,7 +280,8 @@ export async function commitWholeSessionCopyAction(input: {
   }
 
   // Canonical server-side validation of the browser draft BEFORE any DB write.
-  const normalized = normalizeWholeSessionCopy(input.drafts);
+  // Redesign on: a Galvanic area's EL is carried into the copy (a deliberate behaviour change). Off: cleared as before.
+  const normalized = normalizeWholeSessionCopy(input.drafts, { keepGalvanicEnergy: await chartingRolloutFor(studio.id) });
   if (!normalized.ok) return { ok: false, error: normalized.error };
 
   // The RPC is the single writer, callable ONLY by service_role. We pass a
