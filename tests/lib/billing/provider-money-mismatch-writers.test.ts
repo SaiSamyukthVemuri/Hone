@@ -1193,7 +1193,8 @@ describe("bound PI active-or-unknown failed-event retirement", () => {
       last_payment_error: { type: "card_error", code: "card_declined", message: "synthetic refusal" },
     }), created: Math.floor(Date.now() / 1000) }) as Stripe.Event;
     h.cancelStatus = "requires_payment_method"; // Stripe does not confirm the cancel
-    await expect(handlePaymentIntentPaymentFailed(ev(), CTX)).rejects.toThrow("payment_intent_failed_cleanup_retry");
+    const { PaymentDeclineCleanupRetryError } = await import("@/lib/billing/payment-webhook-reconciliation");
+    await expect(handlePaymentIntentPaymentFailed(ev(), CTX)).rejects.toBeInstanceOf(PaymentDeclineCleanupRetryError);
     expect(h.rows.payment_charge_attempts).toMatchObject({ status: "failed", stripe_payment_intent_id: PI_ID });
     expect(h.stripeCalls).toEqual(["pi_retrieve", "pi_cancel"]);
     const failedWrites = h.updates.length;

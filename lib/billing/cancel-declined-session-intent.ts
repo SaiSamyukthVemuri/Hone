@@ -72,13 +72,10 @@ export async function cancelDeclinedSessionIntent(args: {
     .eq("id", args.attemptId)
     .eq("studio_id", args.studioId)
     .maybeSingle();
-  if (error) return { outcome: "retry", reason: "attempt_read_failed" };
-  if (!row) return { outcome: "not_applicable" };
 
-  const piId = row.stripe_payment_intent_id as string | null;
   const base = {
-    studioId: row.studio_id as string,
-    clientId: (row.client_id as string | null) ?? undefined,
+    studioId: args.studioId,
+    clientId: (row?.client_id as string | null | undefined) ?? undefined,
     stripePaymentIntentId: args.eventPaymentIntentId,
     route: ROUTE,
   };
@@ -89,10 +86,46 @@ export async function cancelDeclinedSessionIntent(args: {
       event: "session_payment_decline_cleanup_refused",
       message:
         "Hone did not cancel the original PaymentIntent of a failed session payment because it could not prove the intent is this attempt's and still awaiting a payment method.",
-      safeDetails: { attempt_id: row.id, reason },
+      safeDetails: { attempt_id: args.attemptId, reason },
     });
     return { outcome: "refused", reason };
   };
+  // EVERY retry path is bounded the same way: past the window it stops with one critical alert instead of retrying on.
+  const failed = async (reason: string, cause?: unknown): Promise<DeclinedSessionCleanupResult> => {
+    if (cause !== undefined) {
+      logInternal("session_payment_decline_cleanup_failed", {
+        attemptId: args.attemptId,
+        paymentIntentId: args.eventPaymentIntentId,
+        reason,
+        errorClass: thrownErrorClass(cause),
+        ...stripeErrorFields(cause),
+      });
+    }
+    const ageMs = now() - args.eventCreatedSeconds * 1000;
+    if (ageMs > CLEANUP_RETRY_WINDOW_MS) {
+      await recordOpsAlert({
+        ...base,
+        severity: "critical",
+        event: "session_payment_decline_cleanup_gave_up",
+        message:
+          "Hone could not cancel the original PaymentIntent of a failed session payment within the retry window. It may still be completable on Stripe and needs a manual cancel.",
+        safeDetails: { attempt_id: args.attemptId, reason },
+      });
+      return { outcome: "gave_up", reason };
+    }
+    await recordOpsAlert({
+      ...base,
+      severity: "warning",
+      event: "session_payment_decline_cleanup_retrying",
+      message: "Hone could not yet cancel the original PaymentIntent of a failed session payment; only the cancel is retried.",
+      safeDetails: { attempt_id: args.attemptId, reason },
+    });
+    return { outcome: "retry", reason };
+  };
+  if (error) return failed("attempt_read_failed", error);
+  if (!row) return { outcome: "not_applicable" };
+
+  const piId = row.stripe_payment_intent_id as string | null;
 
   // Not a failed, uncharged session payment of this mode and intent: nothing to clean up here.
   if (
@@ -109,38 +142,6 @@ export async function cancelDeclinedSessionIntent(args: {
   }
   if (row.stripe_status === "canceled") return { outcome: "already_canceled" };
 
-  const failed = async (reason: string, cause?: unknown): Promise<DeclinedSessionCleanupResult> => {
-    if (cause !== undefined) {
-      logInternal("session_payment_decline_cleanup_failed", {
-        attemptId: row.id as string,
-        paymentIntentId: piId,
-        reason,
-        errorClass: thrownErrorClass(cause),
-        ...stripeErrorFields(cause),
-      });
-    }
-    const ageMs = now() - args.eventCreatedSeconds * 1000;
-    if (ageMs > CLEANUP_RETRY_WINDOW_MS) {
-      await recordOpsAlert({
-        ...base,
-        severity: "critical",
-        event: "session_payment_decline_cleanup_gave_up",
-        message:
-          "Hone could not cancel the original PaymentIntent of a failed session payment within the retry window. It may still be completable on Stripe and needs a manual cancel.",
-        safeDetails: { attempt_id: row.id, reason },
-      });
-      return { outcome: "gave_up", reason };
-    }
-    await recordOpsAlert({
-      ...base,
-      severity: "warning",
-      event: "session_payment_decline_cleanup_retrying",
-      message: "Hone could not yet cancel the original PaymentIntent of a failed session payment; only the cancel is retried.",
-      safeDetails: { attempt_id: row.id, reason },
-    });
-    return { outcome: "retry", reason };
-  };
-
   const stripe = getSessionPaymentStripe();
   const account = row.stripe_account_id as string;
   let pi: Stripe.PaymentIntent;
@@ -156,8 +157,8 @@ export async function cancelDeclinedSessionIntent(args: {
     String(pi.currency ?? "").toLowerCase() === String(row.currency ?? "").toLowerCase() &&
     pi.livemode === livemode &&
     metadataNamesOnly(pi.metadata, row.id as string);
-  if (!sameIntent) return refuse("payment_intent_identity_mismatch");
-  if (typeof pi.amount_received !== "number" || pi.amount_received !== 0) return refuse("amount_received_not_zero");
+  if (!sameIntent) return refuse("identity_mismatch");
+  if (typeof pi.amount_received !== "number" || pi.amount_received !== 0) return refuse("amount_received");
 
   let confirmed: Stripe.PaymentIntent;
   if (pi.status === "canceled") {
@@ -170,10 +171,10 @@ export async function cancelDeclinedSessionIntent(args: {
     }
   } else {
     // Succeeded, processing, requires_action, requires_capture, ...: money may be moving. Never cancel.
-    return refuse("payment_intent_not_awaiting_payment_method");
+    return refuse("not_awaiting_method");
   }
   if (confirmed.status !== "canceled" || confirmed.amount_received !== 0) {
-    return refuse("cancel_response_not_canceled_uncaptured");
+    return refuse("cancel_unconfirmed");
   }
 
   // Record the confirmed cancel on THIS row only. The failed status is not touched.

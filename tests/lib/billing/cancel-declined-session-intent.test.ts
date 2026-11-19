@@ -169,12 +169,12 @@ describe("verify first: anything unproven cancels nothing", () => {
   for (const status of ["succeeded", "processing", "requires_action", "requires_capture", "requires_confirmation"]) {
     it(`an intent that is ${status} is NOT cancelled`, async () => {
       h.retrieveReply = pi({ status });
-      await refused("payment_intent_not_awaiting_payment_method");
+      await refused("not_awaiting_method");
     });
   }
   it("wrong metadata attempt id refuses", async () => {
     h.retrieveReply = pi({ metadata: { hone_session_payment_charge_attempt_id: REPLACEMENT } });
-    await refused("payment_intent_identity_mismatch");
+    await refused("identity_mismatch");
   });
   it("the canonical key alone is accepted, and a conflicting second key refuses", async () => {
     h.retrieveReply = pi({ metadata: { hone_payment_charge_attempt_id: ATTEMPT } });
@@ -184,29 +184,29 @@ describe("verify first: anything unproven cancels nothing", () => {
     h.updates = [];
     h.alerts = [];
     h.retrieveReply = pi({ metadata: { hone_payment_charge_attempt_id: ATTEMPT, hone_session_payment_charge_attempt_id: REPLACEMENT } });
-    await refused("payment_intent_identity_mismatch");
+    await refused("identity_mismatch");
   });
   it("missing metadata refuses", async () => {
     h.retrieveReply = pi({ metadata: {} });
-    await refused("payment_intent_identity_mismatch");
+    await refused("identity_mismatch");
   });
   it("a different id returned by Stripe refuses", async () => {
     h.retrieveReply = pi({ id: "pi_other" });
-    await refused("payment_intent_identity_mismatch");
+    await refused("identity_mismatch");
   });
   it("wrong amount, currency or mode refuses", async () => {
     h.retrieveReply = pi({ amount: 1 });
-    await refused("payment_intent_identity_mismatch");
+    await refused("identity_mismatch");
     h.alerts = [];
     h.retrieveReply = pi({ currency: "usd" });
-    await refused("payment_intent_identity_mismatch");
+    await refused("identity_mismatch");
     h.alerts = [];
     h.retrieveReply = pi({ livemode: true });
-    await refused("payment_intent_identity_mismatch");
+    await refused("identity_mismatch");
   });
   it("anything received refuses", async () => {
     h.retrieveReply = pi({ amount_received: 100 });
-    await refused("amount_received_not_zero");
+    await refused("amount_received");
   });
   it("a cancel response that is not a confirmed cancel refuses and writes nothing", async () => {
     h.cancelReply = pi({ status: "requires_payment_method" });
@@ -281,6 +281,28 @@ describe("retry only the cancel, bounded, with an alert on final failure", () =>
     h.readError = { code: "XX000" };
     expect(await run()).toEqual({ outcome: "retry", reason: "attempt_read_failed" });
     expect(h.retrieveIds).toEqual([]);
+    expect(h.alerts).toContainEqual({ severity: "warning", event: "session_payment_decline_cleanup_retrying" });
+  });
+  it("an attempt read error is bounded like every other retry: past the window it stops with the critical alert", async () => {
+    h.readError = { code: "XX000" };
+    const r = await run({ eventCreatedSeconds: (NOW - CLEANUP_RETRY_WINDOW_MS - 1000) / 1000 });
+    expect(r).toEqual({ outcome: "gave_up", reason: "attempt_read_failed" });
+    expect(h.alerts).toContainEqual({ severity: "critical", event: "session_payment_decline_cleanup_gave_up" });
+    expect(h.retrieveIds).toEqual([]);
+  });
+});
+
+describe("the reasons survive the alert redactor", () => {
+  // Found on the browser lane: a reason of 32 or more token characters is treated as a secret-shaped value and stored as
+  // "[redacted]", which left an operator with no reason. Every reason string the helper can emit must come back unchanged.
+  it("every reason literal passes redactOpsAlertDetails unchanged", async () => {
+    const { redactOpsAlertDetails } = await import("@/lib/ops/redact");
+    const src = readFileSync(path.join(__dirname, "../../..", "lib/billing/cancel-declined-session-intent.ts"), "utf8");
+    const reasons = [...src.matchAll(/\b(?:refuse|failed)\("([a-z_]+)"/g)].map((m) => m[1]);
+    expect(reasons.length).toBeGreaterThanOrEqual(8);
+    for (const reason of reasons) {
+      expect(redactOpsAlertDetails({ attempt_id: ATTEMPT, reason }), reason).toEqual({ attempt_id: ATTEMPT, reason });
+    }
   });
 });
 
@@ -293,7 +315,7 @@ describe("source shape: where the cleanup is wired", () => {
     expect(webhook).toMatch(/closeDeclinedOriginalIntent\(event, attempt, pi\)/g);
     expect((webhook.match(/closeDeclinedOriginalIntent\(event, attempt, pi\)/g) ?? []).length).toBe(2);
     expect(webhook).toMatch(/pi\.status !== "requires_payment_method" \|\| pi\.last_payment_error\?\.type !== "card_error"\) return \{\}/);
-    expect(webhook).toMatch(/if \(result\.outcome === "retry"\) throw new Error\("payment_intent_failed_cleanup_retry"\)/);
+    expect(webhook).toMatch(/if \(result\.outcome === "retry"\) throw new PaymentDeclineCleanupRetryError\(\)/);
   });
   it("the helper reuses the single cancel site, never creates or writes failed, and only updates stripe_status", () => {
     expect(helper).toContain("cancelPaymentIntentConfirmed(");

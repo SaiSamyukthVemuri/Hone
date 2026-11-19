@@ -412,6 +412,16 @@ export class PaymentOriginalBindingPendingError extends Error {
   }
 }
 
+// The cleanup of a declined session payment could not finish yet and is retried by Stripe's own redelivery. Like the binding
+// race above it is an EXPECTED retry, not a handler failure: the route recognizes this exact type, never message text, and
+// raises no critical processing alert for it (the cleanup raises one warning per retry and one critical alert when it gives up).
+export class PaymentDeclineCleanupRetryError extends Error {
+  constructor() {
+    super("payment_intent_failed_cleanup_retry");
+    this.name = "PaymentDeclineCleanupRetryError";
+  }
+}
+
 // The signature proves the event came from Stripe. It does not let metadata
 // replace the account/customer/provider object stamped on this durable attempt.
 async function verifyPaymentEventIdentity(args: {
@@ -1171,7 +1181,7 @@ async function closeDeclinedOriginalIntent(
     eventPaymentIntentId: pi.id,
     eventCreatedSeconds: event.created,
   });
-  if (result.outcome === "retry") throw new Error("payment_intent_failed_cleanup_retry");
+  if (result.outcome === "retry") throw new PaymentDeclineCleanupRetryError();
   return { declinedIntentCleanup: result.outcome };
 }
 
