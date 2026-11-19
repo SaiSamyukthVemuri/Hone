@@ -47,11 +47,19 @@ describe("e2e/charting-new-view.spec.ts", () => {
   });
 });
 
+// Loading a Playwright config imports e2e/helpers/local-env.ts, which REFUSES a non-local Supabase URL. A CI job's environment legitimately carries one, and
+// the guard must stay strict, so the child that only LISTS tests gets an environment with every Supabase, database and e2e origin override (and any Stripe live
+// switch) removed: the guard then falls back to its own local defaults.
+const DROPPED = /^(NEXT_PUBLIC_SUPABASE_.*|SUPABASE_.*|E2E_.*|HONE_LOCAL_DB_URL|STRIPE_SECRET_KEY|STRIPE_ALLOW_LIVE_MODE)$/;
+export function listEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(base).filter(([k]) => !DROPPED.test(k)));
+}
+
 describe("playwright.charting-payment.config.ts selects only the charting payment spec", () => {
   const listed = (webkit: "0" | "1") => {
     const out = execFileSync("npx", ["playwright", "test", "--config", "playwright.charting-payment.config.ts", "--list", "--reporter=json"], {
       encoding: "utf8",
-      env: { ...process.env, HONE_E2E_WEBKIT: webkit },
+      env: { ...listEnv(), HONE_E2E_WEBKIT: webkit },
       maxBuffer: 64 * 1024 * 1024,
     });
     const files = new Set<string>();
@@ -82,4 +90,13 @@ describe("playwright.charting-payment.config.ts selects only the charting paymen
     expect(r.projects).toEqual(["chromium-charting-payment", "webkit-charting-payment"]);
     expect(r.tests).toBe(6);
   }, 30_000);
+});
+
+describe("the child environment of the --list cases", () => {
+  it("carries no Supabase, database or e2e origin override, whatever the parent has", () => {
+    const hostile = { PATH: "/usr/bin", NEXT_PUBLIC_SUPABASE_URL: "https://x.example", SUPABASE_DB_URL: "postgres://x", E2E_SUPABASE_URL: "https://x.example", HONE_LOCAL_DB_URL: "postgres://x", SUPABASE_SERVICE_ROLE_KEY: "k", STRIPE_SECRET_KEY: "sk_live_x" };
+    const env = listEnv(hostile);
+    expect(Object.keys(env)).toEqual(["PATH"]);
+    expect(Object.values(listEnv()).join("\n")).not.toMatch(/supabase\.co/);
+  });
 });
