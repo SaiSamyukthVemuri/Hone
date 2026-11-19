@@ -1709,6 +1709,19 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "The outbound SMS delivery ledger, live since migration 0206 (SMS-00): one row per appointment or waitlist-invitation text attempt, with its purpose, status, skip reason and timestamps. It holds no message body and no phone number. Studio-scoped operational history, so PENDING rather than EXCLUDED, and field-review-required for the same reason as studio_sms_senders: provider_message_sid is Hone's provider identifier for one message and carries no customer meaning, while the status history is what a studio would recognise (whether a reminder reached a client). No export surface ships in SMS-00.",
   },
+  sms_number_consents: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 1,
+    reason:
+      "Append-only evidence of WHICH number a client or waitlist entry consented to be texted on, when, from which source slug and under which consent text version, live since migration 0358. Studio-owned personal data about the person (it states the number they gave and the moment they agreed), so it belongs in the export once its file is decided; it is not exported today. Not a secret and holds no message body. It is deleted with the client, the waitlist entry or the studio (cascade), so erasing a client removes their consent evidence while the number-level opt-out below survives on purpose.",
+  },
+  sms_number_opt_outs: {
+    kind: "excluded",
+    category: "deliberate_privacy",
+    reason:
+      "The phone-wide suppression list, live since migration 0358: one row per number that replied STOP, with when and from which source. It is NOT studio content. A STOP applies to the number across every studio, and the row is kept on purpose after the client or studio that received it is erased, so the number stays suppressed; exporting it with one studio's archive would hand that studio the numbers other studios' clients opted out on. It holds a phone number and nothing else about a person. Retention and erasure-by-number are open product questions recorded in the SMS evidence runbook, not decided here.",
+  },
   email_outbound_messages: {
     kind: "pending",
     ticket: "TRUTH-01B",
