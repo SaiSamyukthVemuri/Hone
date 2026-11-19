@@ -4,6 +4,7 @@ import {
   COLLECTED_KINDS,
   buildStatement,
   classifyCardRow,
+  classifyLegacyFeeRow,
   type Statement,
   type StatementCardRow,
   type StatementLegacyFeeRow,
@@ -113,7 +114,8 @@ export function assembleClientInputs(input: AssembleInput): AssembleResult {
     // Only REAL rows count as records: a failed, cancelled or test-mode attempt moved no money and is neither a fee nor the sole payment (a failed
     // attempt followed by a successful retry is ONE card payment).
     const realCards = cards.filter((c) => classifyCardRow(c, input.studioCurrency).kind !== "excluded");
-    const soleCard = realCards.length === 1 && settlements.length === 0 && legacy.length === 0;
+    const realLegacy = legacy.filter((l) => classifyLegacyFeeRow(l, input.studioCurrency).kind !== "excluded");
+    const soleCard = realCards.length === 1 && settlements.length === 0 && realLegacy.length === 0;
     const candidates: FeeCandidate[] = [];
     // A quote in ANOTHER currency is not an amount in the studio currency (a missing currency is the studio's, as the statement reads it).
     for (const s of settlements) if (!s.currency || sameCurrency(s.currency, input.studioCurrency)) candidates.push({ source: "settlement_quote", cents: isCents(s.quotedAmountCents) ? s.quotedAmountCents : null });
@@ -122,15 +124,15 @@ export function assembleClientInputs(input: AssembleInput): AssembleResult {
       const isFee = FEE_REASONS.includes(c.chargeReason as FeeReason);
       if (isFee || (c.chargeReason === "session_payment" && soleCard)) candidates.push({ source: "card_attempt", cents: isCents(c.amountCents) ? c.amountCents : null });
     }
-    for (const l of legacy) if (sameCurrency(l.currency, input.studioCurrency)) candidates.push({ source: "legacy_fee", cents: isCents(l.amountCents) ? l.amountCents : null });
+    for (const l of realLegacy) if (sameCurrency(l.currency, input.studioCurrency)) candidates.push({ source: "legacy_fee", cents: isCents(l.amountCents) ? l.amountCents : null });
 
     const start = new Date(a.startsAt);
     const localDate = localDateString(start, input.timezone);
 
     if (eligibility === "fee_only") {
       // A fee label only when a FEE record exists; any other money on a cancelled or no-show booking is a neutral "payment" line, never called a fee.
-      const cardReason = cards.map((c) => c.chargeReason).find((r) => FEE_REASONS.includes(r as FeeReason)) as FeeReason | undefined;
-      const isFee = cardReason !== undefined || legacy.length > 0;
+      const cardReason = realCards.map((c) => c.chargeReason).find((r) => FEE_REASONS.includes(r as FeeReason)) as FeeReason | undefined;
+      const isFee = cardReason !== undefined || realLegacy.length > 0;
       const reason: FeeReason = cardReason ?? (isFee ? (a.status === "no_show" ? "no_show_fee" : "late_cancellation_fee") : "cancelled_booking_payment");
       feeItems.push({ appointmentId: a.id, clientId: a.clientId, localDate, startsAt: a.startsAt, reason, feeCandidates: candidates, lines });
       continue;
