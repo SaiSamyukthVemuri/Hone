@@ -58,4 +58,10 @@ describe("OverInviteConfirm", () => {
     const b = buildOverInvitePreview({ fit: 2, active: 3, expiringSoon: 9, extra: 4 });
     expect(recheckBeforeSend(a, b)).toBe("send");
   });
+  it("carries EXACTLY the shown numbers and the batch key as hidden inputs, and nothing else (recipient ids are checkboxes, not hidden fields)", () => {
+    const h = render({ fit: 3, extra: 4 });
+    const names = [...h.matchAll(/<input[^>]*type="hidden"[^>]*>/g)].map((m) => /name="([^"]+)"/.exec(m[0])?.[1]).sort();
+    expect(names).toEqual(["batchKey", "shownActive", "shownExtra", "shownFit"]);
+    expect(h).not.toMatch(/name="(shownExpiring|expiringSoon|expiring)/i);
+  });
 });
