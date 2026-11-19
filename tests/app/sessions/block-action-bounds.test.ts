@@ -89,6 +89,26 @@ describe("UPDATE refuses the same values, and writes nothing", () => {
     });
   }
 });
+describe("the refusal says nothing was saved, and never echoes the submitted value", () => {
+  const SUBMITTED: Array<[string, Record<string, unknown>, Record<string, unknown>, string]> = [
+    ["minutes 1441", { minutesPerformed: 1441 }, {}, "1441"],
+    ["intensity 101", {}, { thermolysisIntensityPercent: 101 }, "101"],
+    ["pulse count 11", {}, { pulseCount: 11 }, "11"],
+    ["energy level -7", { energyLevel: -7 }, {}, "-7"],
+    ["hairs -4", {}, { hairsTreated: -4 }, "-4"],
+  ];
+  for (const [name, input, readings, value] of SUBMITTED) {
+    for (const [which, run] of [["create", create], ["update", update]] as const) {
+      it(`${which}: ${name}`, async () => {
+        const res = (await run(input, readings)) as { ok: boolean; error: string };
+        expect(res.ok).toBe(false);
+        expect(res.error).toMatch(/Nothing was saved\.$/);
+        expect(res.error.replace(/between \d+ and \d+/g, "")).not.toContain(value);
+        expect(h.rpc).not.toHaveBeenCalled();
+      });
+    }
+  }
+});
 describe("controls: the edges and blanks save", () => {
   it("energy 0, minutes 0 and 1440, hairs 0, pulse count 1 and 10, intensity 0 and 100", async () => {
     for (const [input, readings] of [

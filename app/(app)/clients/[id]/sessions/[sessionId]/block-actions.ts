@@ -1299,10 +1299,11 @@ export async function createTreatmentAreaWithEntryAction(
   const readings = input.readings ?? {};
   const area = blockPrimaryArea;
 
+  // Both checks run before anything is written (only reads precede them), so a refusal writes nothing, and says so.
   const readingsCheck = validateReadings(readings);
-  if (!readingsCheck.ok) return readingsCheck;
+  if (!readingsCheck.ok) return { ok: false, error: `${readingsCheck.error} Nothing was saved.` };
   const setupCheck = validateSetupNumbers(input, readings);
-  if (!setupCheck.ok) return setupCheck;
+  if (!setupCheck.ok) return { ok: false, error: `${setupCheck.error} Nothing was saved.` };
 
   // The first entry's area is the treatment area. An entry needs a (NOT
   // NULL) area, so readings can't be saved without one.
@@ -1852,10 +1853,11 @@ export async function updateTreatmentAreaWithEntryAction(
   const readings = input.readings ?? {};
   const area = blockPrimaryArea;
 
+  // Both checks run before anything is written (only reads precede them), so a refusal writes nothing, and says so.
   const readingsCheck = validateReadings(readings);
-  if (!readingsCheck.ok) return readingsCheck;
+  if (!readingsCheck.ok) return { ok: false, error: `${readingsCheck.error} Nothing was saved.` };
   const setupCheck = validateSetupNumbers(input, readings);
-  if (!setupCheck.ok) return setupCheck;
+  if (!setupCheck.ok) return { ok: false, error: `${setupCheck.error} Nothing was saved.` };
 
   // Creating a new first entry (block had none) needs an area, same NOT NULL
   // reason as create. Updating an existing entry keeps its current area when

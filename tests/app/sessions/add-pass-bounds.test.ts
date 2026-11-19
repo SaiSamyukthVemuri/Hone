@@ -58,6 +58,15 @@ describe("an out-of-range reading is refused, with the field named and nothing w
   }
 });
 
+describe("the error never echoes the submitted value", () => {
+  it("101 and 1441 are absent from the text", async () => {
+    for (const [field, v] of [["thermolysis_intensity_percent", "101"], ["minutes_performed", "1441"], ["hairs_treated", "-4"]] as const) {
+      const res = (await addElectrolysisEntryAction(form({ mode: "thermo", [field]: v }))) as { error: string };
+      expect(res.error.replace(/between \d+ and \d+/g, ""), field).not.toContain(v);
+    }
+  });
+});
+
 describe("controls: the bounds themselves, blanks, and fields the mode does not own", () => {
   it("the edges are accepted: intensity 0 and 100, pulse count 1 and 10, zero minutes", async () => {
     for (const v of ["0", "100"]) {

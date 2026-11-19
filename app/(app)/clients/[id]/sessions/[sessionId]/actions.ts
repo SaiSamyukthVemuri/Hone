@@ -280,7 +280,7 @@ export async function addElectrolysisEntryAction(
   const wantThermo = mode === "thermo" || mode === "blend";
   const rangeRefusal = outOfRangeReading(formData, [
     ...(mode === "galv" ? [] : [{ field: "energy_level", label: "Energy level", min: 0, integer: true }]),
-    { field: "minutes_performed", label: "Minutes performed", min: 0, integer: true },
+    { field: "minutes_performed", label: "Minutes performed", min: 0, max: 1440, integer: true },
     { field: "hairs_treated", label: "Hairs treated", min: 0, integer: true },
     ...(wantGalv
       ? [
