@@ -98,7 +98,10 @@ test("failure: a declined charge never shows Paid, and switching views changes n
 
     await expect.poll(async () => (await getSessionPaymentAttemptRows(seed.sessionId))[0].status, { timeout: 30_000 }).not.toBe("ready");
     const status = (await getSessionPaymentAttemptRows(seed.sessionId))[0].status;
-    // The system keeps a declined attempt as pending_stripe for the owner to close or reconcile; it is never succeeded and never Paid.
+    // OPEN PAYMENT-SIDE QUESTION, NOT AN ACCEPTANCE. In this lane a fake decline leaves the attempt at pending_stripe, although the fake's own comment says
+    // the real executor persists a decline as failed. Whether that is a gap in the fake or a payment-path behaviour is being diagnosed outside HON-80.
+    // Nobody should read "pending" here as the intended end state of a decline. This test asserts only what HON-80 owns: the attempt is never succeeded, the
+    // page never shows Paid, no money moved, no second attempt appears, and switching views changes none of that.
     expect(status).not.toBe("succeeded");
     expect(countEffectsForAccount(seed.connectedAccountId), "a declined charge moved no money").toBe(0);
     await expect(page.getByTestId("payment-summary-paid")).toHaveCount(0);
