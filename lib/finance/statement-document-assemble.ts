@@ -93,7 +93,8 @@ export function assembleClientInputs(input: AssembleInput): AssembleResult {
     const cards = cardsBy.get(a.id) ?? [];
     const settlements = settlementsBy.get(a.id) ?? [];
     const legacy = legacyBy.get(a.id) ?? [];
-    const hasMoney = lines.length > 0;
+    // An EXCLUDED row (a failed or test-mode attempt) moved no money and is not a record of any: it never makes a fee line or a payment line.
+    const hasMoney = lines.some((l) => l.kind !== "excluded");
     // On a cancelled or no-show booking, ANY recorded money is its fee line.
     const eligibility = classifyEligibility({ status: a.status, startsAt: a.startsAt, hasFeeRecord: hasMoney }, input.nowIso);
     if (eligibility === "off_document") {
@@ -115,8 +116,10 @@ export function assembleClientInputs(input: AssembleInput): AssembleResult {
     const localDate = localDateString(start, input.timezone);
 
     if (eligibility === "fee_only") {
+      // A fee label only when a FEE record exists; any other money on a cancelled or no-show booking is a neutral "payment" line, never called a fee.
       const cardReason = cards.map((c) => c.chargeReason).find((r) => FEE_REASONS.includes(r as FeeReason)) as FeeReason | undefined;
-      const reason: FeeReason = cardReason ?? (a.status === "no_show" ? "no_show_fee" : "late_cancellation_fee");
+      const isFee = cardReason !== undefined || legacy.length > 0;
+      const reason: FeeReason = cardReason ?? (isFee ? (a.status === "no_show" ? "no_show_fee" : "late_cancellation_fee") : "cancelled_booking_payment");
       feeItems.push({ appointmentId: a.id, clientId: a.clientId, localDate, startsAt: a.startsAt, reason, feeCandidates: candidates, lines });
       continue;
     }
