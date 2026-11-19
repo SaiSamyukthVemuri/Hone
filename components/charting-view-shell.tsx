@@ -23,10 +23,13 @@ import type { ChartingView } from "@/lib/charting/view-preference";
 
 export function ChartingViewShell({
   initialView,
+  rolloutOn = false,
   summary,
   children,
 }: {
   initialView: ChartingView;
+  /** The server's rollout decision for this studio, passed down as a plain boolean (display and form behaviour only; the server re-checks every write). */
+  rolloutOn?: boolean;
   /** Server-rendered "This visit" card, shown only in New view. Display only. */
   summary: ReactNode;
   children: ReactNode;
@@ -34,7 +37,7 @@ export function ChartingViewShell({
   const state = useChartingViewPreference(initialView, setChartingViewAction);
   const isNew = state.view === "new";
   return (
-    <ChartingViewContext.Provider value={state}>
+    <ChartingViewContext.Provider value={{ ...state, rolloutOn }}>
       <ChartingVisitDraftProvider>
       <ChartingVisitSaveProvider>
       <div
