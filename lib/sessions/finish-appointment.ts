@@ -223,3 +223,34 @@ export function postcareLabel(state: FinishPostcareState): string {
       return "Not sent yet";
   }
 }
+
+// HON-45 (Sam's decision): Finish writes COMPLETION and nothing else, EXCEPT that a studio which explicitly opted into
+// `postcare_delivery_mode = 'auto_on_complete'` keeps its automatic postcare. That opt-in is honoured, never hidden: while the
+// appointment can still be completed, the Finish panel says, beforehand and in plain words, what completing will also do.
+// Charging is never part of Finish, in any mode. Pure: no I/O, no clock.
+export const AUTO_POSTCARE_NOTE =
+  "Postcare will be sent automatically when you mark this completed (studio setting). Charging is separate and is never done here.";
+
+// The line is only true when the automatic send would actually go out. The PAGE asks the very same predicate the send uses
+// (shouldAutoSendPostcare, with the status Finish will produce) and passes its answer in: this module never copies that rule, so the
+// promise and the send cannot drift apart. When the send would be skipped the line says so and points at the manual button.
+export type AutoPostcareEligibility = { ok: true } | { ok: false; reason: string };
+
+const SKIPPED_TAIL = " Use Send postcare after finishing if you want to send it. Charging is separate and is never done here.";
+const SKIPPED_BY_REASON: Record<string, string> = {
+  skipped_consultation: "Postcare isn't sent automatically for this visit: it is a consultation.",
+  skipped_no_email: "Postcare isn't sent automatically for this visit: the client has no email address on file.",
+  skipped_no_aftercare: "Postcare isn't sent automatically for this visit: no aftercare text is set in your postcare settings.",
+};
+const SKIPPED_GENERIC = "Postcare isn't sent automatically for this visit.";
+
+export function autoPostcareNote(
+  deliveryMode: string | null | undefined,
+  completionKind: FinishCompletionState["kind"],
+  eligibility: AutoPostcareEligibility,
+): string | null {
+  if (deliveryMode !== "auto_on_complete") return null;
+  if (completionKind !== "ready" && completionKind !== "before_start") return null;
+  if (eligibility.ok) return AUTO_POSTCARE_NOTE;
+  return (SKIPPED_BY_REASON[eligibility.reason] ?? SKIPPED_GENERIC) + SKIPPED_TAIL;
+}

@@ -13,6 +13,8 @@ import { buildPortalMessageNotificationEmail } from "@/lib/email/templates/porta
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { safeLog } from "@/lib/logging/safe-log";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { studioPortalAccess } from "@/lib/portal/portal-access-gate";
+import { clientPortalDisabledMessage } from "@/lib/booking/client-self-service-policy";
 
 const SUBJECT_MIN = 1;
 const SUBJECT_MAX = 160;
@@ -97,6 +99,20 @@ export async function createPortalMessageAction(
   }
 
   const admin = createAdminClient();
+
+  // HON-47. A studio that has turned client portal access off (or whose policy cannot be read) writes no portal message
+  // and sends no portal notification: the portal would refuse the client, so the message could never be read and the
+  // email's sign-in link would lead to a refusal. Checked HERE, on the server, before any write, whatever the UI shows.
+  // Fail closed, the same decision issuePortalMagicLink makes for the staff "send portal link" action.
+  const access = await studioPortalAccess(admin, studio.id);
+  if (!access.allowed) {
+    return {
+      ok: false,
+      error: access.studioName
+        ? clientPortalDisabledMessage(access.studioName)
+        : "Client portal access is off for this studio, or could not be confirmed. No message was sent.",
+    };
+  }
 
   // Defense in depth: verify the client belongs to this studio and
   // is not archived. The admin client bypasses RLS so the studio
