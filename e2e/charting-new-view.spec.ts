@@ -298,7 +298,7 @@ test("next-visit note: saved in one view, shown and recalled in the other", asyn
   await expectTouchFloorAndNoOverflow(page, "new, next-visit note");
 });
 
-test("roles: a practitioner sees no payment or price in either view; a receptionist cannot open the chart at all", async ({ page, browser }, testInfo) => {
+test("roles: a practitioner sees no payment or price in either view; a receptionist cannot open the chart at all", async ({ page }) => {
   // Three magic-link sign-ins in one test: WebKit needs more than the 120 s default (the Chromium projects finish well inside it).
   test.setTimeout(240_000);
   const seed = await seedE2eStudio();
@@ -321,21 +321,17 @@ test("roles: a practitioner sees no payment or price in either view; a reception
   const r = await seedNoStudioAuthUser();
   const uid = (await sql<{ id: string }>(`select id from auth.users where lower(email) = lower($1)`, [r.email]))[0]!.id;
   await sql(`insert into public.studio_receptionists (studio_id, user_id, display_name, active) values ($1, $2, 'Synthetic Front Desk', true)`, [seed.studioId, uid]);
-  // A second context does not inherit the project's browser options: WebKit needs the same CSP bypass the webkit projects set (see the config).
-  const ctx = await browser.newContext({ bypassCSP: testInfo.project.name.startsWith("webkit") });
-  try {
-    const p2 = await ctx.newPage();
-    await p2.goto("/login");
-    await p2.getByLabel("I am using my invited email address").check();
-    await p2.locator("#login-email").fill(r.email);
-    const seen = await listMessageIds(r.email);
-    await p2.getByRole("button", { name: /send magic link/i }).click();
-    await p2.goto(await waitForMagicLink(r.email, E2E_APP_ORIGIN, { excludeIds: seen }));
-    await p2.waitForURL(/\/no-access/, { timeout: 30_000 });
-    await p2.goto(url);
-    await p2.waitForURL(/\/no-access/, { timeout: 30_000 });
-    await expect(p2.getByTestId("charting-view-toggle")).toHaveCount(0);
-  } finally {
-    await ctx.close();
-  }
+  // The receptionist signs in on the SAME page after the practitioner's cookies are cleared. A second browser context does not behave like the project's own
+  // under WebKit (its stylesheet and scripts never load), so the proven context is reused.
+  await page.context().clearCookies();
+  await page.goto("/login");
+  await page.getByLabel("I am using my invited email address").check();
+  await page.locator("#login-email").fill(r.email);
+  const seen = await listMessageIds(r.email);
+  await page.getByRole("button", { name: /send magic link/i }).click();
+  await page.goto(await waitForMagicLink(r.email, E2E_APP_ORIGIN, { excludeIds: seen }));
+  await page.waitForURL(/\/no-access/, { timeout: 30_000 });
+  await page.goto(url);
+  await page.waitForURL(/\/no-access/, { timeout: 30_000 });
+  await expect(page.getByTestId("charting-view-toggle")).toHaveCount(0);
 });
