@@ -60,6 +60,14 @@ describe('"Add another pass" reports to This visit', () => {
     expect(out().dataset.a).toBe("true");
     expect(out().dataset.u).toBe("true");
   });
+  it("the persisted-but-unverified recovery lock shows as needing attention", async () => {
+    await mount();
+    await act(async () => chip().click());
+    add.fn.mockResolvedValueOnce({ ok: false, code: "unverified", error: "Saved, but could not be confirmed. Reload and check." });
+    await submit();
+    expect(add.fn).toHaveBeenCalledTimes(1);
+    expect(out().dataset.a).toBe("true");
+  });
   it("a server refusal shows as needing attention; a successful pass clears both", async () => {
     await mount();
     const c = chip();

@@ -411,6 +411,53 @@ describe("the This visit card follows the open form", () => {
     expect(text).toContain("Room 9 unit");
     expect(text).toContain("no longer available");
   });
+  it("with TWO real forms open, the Machine row follows the one last edited: A, then B, then A", async () => {
+    const P2 = { ...PROFILE, profileId: "fixture:zeta", model: "Zeta" };
+    ctxBox.ctx = {
+      ...CTX,
+      remembered: null,
+      legacyMachine: null,
+      catalogue: [PROFILE, P2],
+      devices: [DEVICE, { ...DEVICE, deviceId: "room-10", displayName: "Room 10 unit", profileId: "fixture:zeta" }],
+    };
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const A = { ...BLOCK, id: "bA", studio_machine_id: "room-9", machine_profile_id: "fixture:mounted", machine_mode_key: "galvanic" };
+    const B = null; // a NEW block form beside the saved one
+    const form = (b: unknown) => createElement(BlockSetupForm, { key: b ? (b as { id: string }).id : "new", sessionId: "s1", clientId: "c1", previousBlock: null, block: b as never, firstEntry: null, onCancel: () => undefined });
+    await act(async () =>
+      root!.render(
+        createElement(ChartingViewShell, {
+          initialView: "new",
+          summary: createElement(ChartingVisitSummary, { clientName: "Avery Example", kind: "electrolysis", areas: [], count: 2, nextVisitNoteRecorded: false }),
+          children: createElement("div", null, form(A), form(B)),
+        }),
+      ),
+    );
+    for (let i = 0; i < 6 && host.querySelectorAll('[data-testid="machine-select"]').length < 2; i++) {
+      const open = host.querySelector('[data-testid="machine-first-open"]');
+      if (open && !open.hasAttribute("disabled")) await click(open);
+      await act(async () => void (await new Promise((r) => setTimeout(r, 30))));
+    }
+    expect(host.querySelectorAll('[data-testid="machine-select"]').length, "both panels open").toBe(2);
+    // The new block's unit is picked explicitly (create mode applies a pick at once and writes nothing).
+    const sels = Array.from(host.querySelectorAll<HTMLSelectElement>('[data-testid="machine-select"]'));
+    const newSel = sels[sels.length - 1];
+    const setSel = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+    await act(async () => {
+      setSel.call(newSel, "room-10");
+      newSel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const notesAt = (i: number) => host!.querySelectorAll<HTMLTextAreaElement>('[data-testid="additional-notes"]')[i];
+    expect(notesAt(1), "two real forms").toBeTruthy();
+    await setInput(notesAt(0), "a");
+    expect(row("visit-summary-machine").textContent, "A edited").toContain("Mounted");
+    await setInput(notesAt(1), "b");
+    expect(row("visit-summary-machine").textContent, "B edited after A").toContain("Zeta");
+    await setInput(notesAt(0), "aa");
+    expect(row("visit-summary-machine").textContent, "A edited again, B still dirty").toContain("Mounted");
+  });
   it("shows the existing xCell by the picker's own label for a saved legacy block", async () => {
     ctxBox.ctx = { ...CTX, remembered: null, devices: [] };
     host = document.createElement("div");
