@@ -18,6 +18,55 @@ function read(rel: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Migration 0069 textual invariants.
+// ---------------------------------------------------------------------------
+
+describe("migration 0069 adds appointments.referral_source as nullable text", () => {
+  const SQL = read("supabase/migrations/0069_appointment_referral_source.sql");
+
+  it("adds a nullable text column on public.appointments", () => {
+    expect(SQL).toMatch(
+      /alter table public\.appointments[\s\S]*add column if not exists referral_source text/i,
+    );
+  });
+
+  it("does NOT add a CHECK constraint on referral_source", () => {
+    // The allowed value set is enforced at the action layer (see
+    // lib/booking/referral-source.ts:parseReferralSource), not at
+    // the DB layer. Pinning the option set at the DB would force a
+    // migration every time the list grows.
+    expect(SQL).not.toMatch(/check\s*\([^)]*referral_source/i);
+  });
+
+  it("does NOT run an UPDATE backfill on historical rows", () => {
+    // Historical rows legitimately have no answer; null is the
+    // honest representation. A backfill that invents values would
+    // corrupt the attribution data this column exists to capture.
+    expect(SQL).not.toMatch(/update\s+public\.appointments\s+set\s+referral_source/i);
+  });
+
+  it("documents the verification SQL the operator should run", () => {
+    expect(SQL).toMatch(/information_schema\.columns/);
+    expect(SQL).toMatch(/answered/);
+    expect(SQL).toMatch(/unanswered/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Appointment TS type carries the new field.
+// ---------------------------------------------------------------------------
+
+describe("Appointment TS type carries referral_source", () => {
+  const DATABASE = read("lib/types/database.ts");
+
+  it("Appointment type declares referral_source: string | null", () => {
+    const apptBlock =
+      DATABASE.match(/export type Appointment = \{[\s\S]*?\};/)?.[0] ?? "";
+    expect(apptBlock).toMatch(/referral_source:\s*string\s*\|\s*null/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Public booking form renders the dropdown bound to the shared helper.
 // ---------------------------------------------------------------------------
 
