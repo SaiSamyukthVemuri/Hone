@@ -94,8 +94,8 @@ export function assembleClientInputs(input: AssembleInput): AssembleResult {
     const settlements = settlementsBy.get(a.id) ?? [];
     const legacy = legacyBy.get(a.id) ?? [];
     const hasMoney = lines.length > 0;
-    const hasFeeRecord = cards.some((c) => FEE_REASONS.includes(c.chargeReason as FeeReason)) || legacy.length > 0;
-    const eligibility = classifyEligibility({ status: a.status, startsAt: a.startsAt, hasFeeRecord, hasMoneyRecord: hasMoney }, input.nowIso);
+    // On a cancelled or no-show booking, ANY recorded money is its fee line.
+    const eligibility = classifyEligibility({ status: a.status, startsAt: a.startsAt, hasFeeRecord: hasMoney }, input.nowIso);
     if (eligibility === "off_document") {
       if (hasMoney) offDocumentWithMoney += 1;
       continue;
@@ -119,6 +119,12 @@ export function assembleClientInputs(input: AssembleInput): AssembleResult {
       const reason: FeeReason = cardReason ?? (a.status === "no_show" ? "no_show_fee" : "late_cancellation_fee");
       feeItems.push({ appointmentId: a.id, clientId: a.clientId, localDate, startsAt: a.startsAt, reason, feeCandidates: candidates, lines });
       continue;
+    }
+
+    // A past booking never marked completed stays "Not completed" (no charge on it). Any recorded payment is listed APART, once, as a payment on an
+    // uncompleted booking; a payment alone never completes a visit or creates a treatment charge.
+    if (eligibility === "not_completed" && hasMoney) {
+      feeItems.push({ appointmentId: a.id, clientId: a.clientId, localDate, startsAt: a.startsAt, reason: "uncompleted_booking_payment", feeCandidates: [], lines });
     }
 
     visits.push({

@@ -36,12 +36,18 @@ describe("eligibility on real rows (the one function, applied)", () => {
     expect(r.feeItems.map((f) => [f.appointmentId, f.reason])).toEqual([[noShow.id, "no_show_fee"]]);
     expect(r.offDocumentWithMoney).toBe(0);
   });
-  it("money is never hidden: a past booking with a payment is a visit; a future booking with a payment stays off but is COUNTED", () => {
+  it("money is never lost: a past unfinished booking with a payment stays Not completed and its payment is a separate line; a future booking with a payment stays off but is COUNTED", () => {
     const paidOpen = appt({ status: "confirmed", startsAt: "2026-11-07T15:00:00Z" });
     const paidFuture = appt({ status: "confirmed", startsAt: "2026-12-07T15:00:00Z" });
     const r = assembleClientInputs(base({ appointments: [paidOpen, paidFuture], cardRows: [card(paidOpen.id), card(paidFuture.id)] }));
-    expect(r.visits.map((v) => [v.appointmentId, v.eligibility])).toEqual([[paidOpen.id, "treatment"]]);
+    expect(r.visits.map((v) => [v.appointmentId, v.eligibility])).toEqual([[paidOpen.id, "not_completed"]]);
+    expect(r.feeItems.map((f) => [f.appointmentId, f.reason])).toEqual([[paidOpen.id, "uncompleted_booking_payment"]]);
     expect(r.offDocumentWithMoney).toBe(1);
+  });
+  it("a cancelled or no-show booking with ANY recorded money is its fee line, with the reason from its status", () => {
+    const c = appt({ status: "cancelled" });
+    const r = assembleClientInputs(base({ appointments: [c], cardRows: [card(c.id, { amountCents: 2000 })] }));
+    expect(r.feeItems.map((f) => f.reason)).toEqual(["late_cancellation_fee"]);
   });
   it("a cancellation fee takes its reason from the card row, else from the status", () => {
     const c = appt({ status: "cancelled" });
@@ -120,5 +126,29 @@ describe("studio reconcile: the clients' documents add up to the studio statemen
     expect(waived).toBe(1500);
     expect(whole.statement.reconciliation.rowsIn).toBe(whole.statement.reconciliation.rowsClassified);
     expect(whole.offDocumentWithMoney).toBe(0);
+  });
+});
+
+describe("Sam's rule end to end: one unfinished booking with a confirmed payment", () => {
+  const ident = { studioName: "S", legalEntityName: null, address: null, contactEmail: null };
+  const docFor = (r: ReturnType<typeof assembleClientInputs>) => {
+    const d = buildStatementDocument({ studioId: "s", identity: ident, client: { id: "c1", name: "C" }, scope: { kind: "full_history" }, currency: "cad", preparedOn: "2026-11-19", visits: r.visits, feeItems: r.feeItems });
+    if (!d.ok) throw new Error(d.error);
+    return d.document;
+  };
+  it("0 completed visits, total spend equal to the payment, no service line; completed later: spend is still the same, no double count", () => {
+    const a = appt({ status: "confirmed", startsAt: "2026-11-02T15:00:00Z" });
+    const rows = { cardRows: [card(a.id, { amountCents: 6000 })] };
+    const open = docFor(assembleClientInputs(base({ appointments: [a], ...rows })));
+    expect(open.totals.visitCount).toBe(0);
+    expect(open.totals.paidCents).toBe(6000);
+    expect(open.visits).toEqual([]);
+    expect(open.notCompleted).toHaveLength(1);
+    expect(open.feeItems.map((f) => f.reason)).toEqual(["uncompleted_booking_payment"]);
+    const done = docFor(assembleClientInputs(base({ appointments: [{ ...a, status: "completed" }], ...rows })));
+    expect(done.totals.visitCount).toBe(1);
+    expect(done.totals.paidCents).toBe(6000);
+    expect(done.feeItems).toEqual([]);
+    expect(done.notCompleted).toEqual([]);
   });
 });
