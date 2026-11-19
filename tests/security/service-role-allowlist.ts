@@ -696,6 +696,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: '.eq("studio_id"',
   },
   {
+    path: "lib/billing/cancel-declined-session-intent.ts",
+    purpose: "Payment ledger helper (close the original Stripe attempt of a failed, declined session payment).",
+    why: "Invoked only by the signature-verified payment_intent.payment_failed handler after the attempt is recorded failed; uses service-role to read the one payment_charge_attempts row and record stripe_status canceled on it. Scoped by studio_id and attempt id; it cancels only the intent stored on that row after verifying identity, never another attempt, and never writes the failed status.",
+    scopeGuard: '.eq("studio_id"',
+  },
+  {
     path: "lib/billing/session-payment-eligibility.ts",
     purpose: "Payment / consent ledger helper.",
     why: "Invoked by authenticated actions and the signature-verified webhook; uses service-role for the payment_charge_attempts / consent RPCs and write-throughs. Scoped by the caller-supplied studio_id/client_id/appointment_id.",

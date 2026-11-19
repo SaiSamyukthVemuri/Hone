@@ -67,6 +67,10 @@ vi.mock("@/lib/supabase/admin-server", () => ({
 vi.mock("@/lib/stripe/server", () => ({
   inferStripeLivemode: () => h.state.livemode,
 }));
+// The decline cleanup has its own suites (cancel-declined-session-intent.test.ts, the cleanup lane spec); this file is about binding.
+vi.mock("@/lib/billing/cancel-declined-session-intent", () => ({
+  cancelDeclinedSessionIntent: async () => ({ outcome: "not_applicable" }),
+}));
 vi.mock("@/lib/ops/alerts", () => ({
   recordOpsAlert: async (a: Record<string, unknown>) => {
     h.state.alerts.push(a);
