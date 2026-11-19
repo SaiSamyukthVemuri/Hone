@@ -69,6 +69,17 @@ describe("eligibility on real rows (the one function, applied)", () => {
     const r = assembleClientInputs(base({ appointments: [c, ns, f], cardRows: [card(c.id), card(ns.id), card(f.id, { chargeReason: "late_cancellation_fee", amountCents: 1500 })] }));
     expect(r.feeItems.map((x) => x.reason)).toEqual(["cancelled_booking_payment", "cancelled_booking_payment", "late_cancellation_fee"]);
   });
+  it("low edge: a session payment PLUS a legacy fee on a cancelled booking is a fee line, and the balance is not established", () => {
+    const c = appt({ status: "cancelled" });
+    const r = assembleClientInputs(base({
+      appointments: [c],
+      cardRows: [card(c.id, { amountCents: 4000 })],
+      legacyFeeRows: [{ appointmentId: c.id, status: "succeeded", amountCents: 2500, currency: "cad", stripeLivemode: true }],
+    }));
+    expect(r.feeItems.map((f) => f.reason)).toEqual(["late_cancellation_fee"]);
+    const d = buildStatementDocument({ studioId: "s", identity: { studioName: "S", legalEntityName: null, address: null, contactEmail: null }, client: { id: "c1", name: "C" }, scope: { kind: "full_history" }, currency: "cad", preparedOn: "2026-11-19", visits: r.visits, feeItems: r.feeItems });
+    expect(d.ok && d.document.balanceDue.kind).toBe("not_established");
+  });
   it("a cancellation fee takes its reason from the card row, else from the status", () => {
     const c = appt({ status: "cancelled" });
     const r = assembleClientInputs(base({ appointments: [c], legacyFeeRows: [{ appointmentId: c.id, status: "succeeded", amountCents: 2500, currency: "cad", stripeLivemode: true }] }));

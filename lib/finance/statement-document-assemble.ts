@@ -1,6 +1,7 @@
 import { localDateString, localTimeString } from "@/lib/booking/tz";
 import {
   AMOUNT_KINDS,
+  COLLECTED_KINDS,
   buildStatement,
   classifyCardRow,
   classifyLegacyFeeRow,
@@ -66,6 +67,8 @@ export type AssembleResult = {
   statement: Statement;
   /** Appointments kept OFF the document that nevertheless carry money (a future booking with a payment). Reported, never silently dropped. */
   offDocumentWithMoney: number;
+  /** The collected-and-kept cents on those same appointments: the deliberate gap between the clients' totals and the studio statement. */
+  offDocumentCollectedCents: number;
 };
 
 const isCents = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0;
@@ -89,6 +92,7 @@ export function assembleClientInputs(input: AssembleInput): AssembleResult {
   const visits: DocumentVisitInput[] = [];
   const feeItems: FeeItemInput[] = [];
   let offDocumentWithMoney = 0;
+  let offDocumentCollectedCents = 0;
 
   for (const a of input.appointments) {
     const lines = linesByAppt.get(a.id) ?? [];
@@ -100,7 +104,10 @@ export function assembleClientInputs(input: AssembleInput): AssembleResult {
     // On a cancelled or no-show booking, ANY recorded money is its fee line.
     const eligibility = classifyEligibility({ status: a.status, startsAt: a.startsAt, hasFeeRecord: hasMoney }, input.nowIso);
     if (eligibility === "off_document") {
-      if (hasMoney) offDocumentWithMoney += 1;
+      if (hasMoney) {
+        offDocumentWithMoney += 1;
+        for (const l of lines) if (COLLECTED_KINDS.includes(l.kind) && typeof l.cents === "number") offDocumentCollectedCents += l.cents;
+      }
       continue;
     }
 
@@ -152,7 +159,7 @@ export function assembleClientInputs(input: AssembleInput): AssembleResult {
       eligibility,
     });
   }
-  return { visits, feeItems, statement, offDocumentWithMoney };
+  return { visits, feeItems, statement, offDocumentWithMoney, offDocumentCollectedCents };
 }
 
 function group<T>(rows: readonly T[], key: (r: T) => string): Map<string, T[]> {
