@@ -1,5 +1,5 @@
 -- MACHINE SWITCHES (provisional number; assigned at seal). Forward migration. NOT APPLIED. Lives under docs/proposals until numbered.
--- Design: machines/MACHINE-SWITCHES-DESIGN-NOTE-20261119.md (revision 2.2, reviewed). Depends on 0362 (platform_rollout_enabled_for).
+-- Depends on 0362 (platform_rollout_enabled_for).
 --
 -- ONE SETTING PER STUDIO: which machine models are ON, and the default (a model or "Ask at each visit"). Turning a model on creates NO machine
 -- record; a unit is made lazily, inside a real block save, by ensure_studio_machine_for_save. Every studio is seeded ONCE (here for existing
@@ -9,7 +9,7 @@
 begin;
 set local lock_timeout = '5s';
 
--- N3: the lazy-unit rule assumes at most one live xCell Pur unit per studio. Two or more is a product decision, never worked around.
+-- The lazy-unit rule assumes at most one live xCell Pur unit per studio. Two or more is a product decision, never worked around.
 do $$
 declare v_n integer;
 begin
@@ -22,6 +22,12 @@ begin
       using errcode = 'check_violation';
   end if;
 end $$;
+
+-- AT MOST ONE LIVE xCell Pur UNIT PER STUDIO, enforced by the database. The owner registration path takes no advisory lock, so only a unique
+-- index closes the race between two registrations (and the lazy unit command, which relies on this rule).
+create unique index if not exists studio_machines_one_live_xcell_pur
+  on public.studio_machines (studio_id)
+  where machine_profile_id = 'dectro-apilus:xcell-pur' and retired_at is null;
 
 create table if not exists public.studio_machine_models (
   studio_id  uuid not null references public.studios (id) on delete cascade,
@@ -86,6 +92,9 @@ create trigger studio_machine_setting_events_truncate_guard before truncate on p
 alter table public.studio_machine_models enable row level security;
 alter table public.studio_machine_default enable row level security;
 alter table public.studio_machine_setting_events enable row level security;
+alter table public.studio_machine_models force row level security;
+alter table public.studio_machine_default force row level security;
+alter table public.studio_machine_setting_events force row level security;
 revoke all on public.studio_machine_models from public, anon, authenticated, service_role;
 revoke all on public.studio_machine_default from public, anon, authenticated, service_role;
 revoke all on public.studio_machine_setting_events from public, anon, authenticated, service_role;
@@ -210,7 +219,7 @@ language sql stable security definer set search_path = pg_catalog, pg_temp as $$
     from public.studio_machine_models m
     join public.studio_machine_default d on d.studio_id = m.studio_id
    where m.enabled
-     and exists (select 1 from public.practitioners pr where pr.studio_id = m.studio_id and pr.user_id = auth.uid() and pr.active)
+     and exists (select 1 from public.practitioners pr where pr.studio_id = m.studio_id and pr.user_id = auth.uid() and pr.active and pr.role in ('owner', 'practitioner'))
      and public.platform_rollout_enabled_for('charting_new_view_xcell', m.studio_id)
 $$;
 
@@ -224,18 +233,23 @@ declare
   v_unit uuid;
   v_version integer;
   v_label text;
+  v_session uuid;
+  v_client uuid;
 begin
   if v_uid is null or p_block_id is null
      or p_profile not in ('dectro-apilus:xcell-pur', 'dectro-apilus:senior-3g', 'dectro-apilus:junior-3g') then
     raise exception 'Not available.' using errcode = '42501';
   end if;
-  select b.studio_id into v_studio
+  select b.studio_id, s.id, s.client_id into v_studio, v_session, v_client
     from public.session_blocks b join public.sessions s on s.id = b.session_id and s.studio_id = b.studio_id
-   where b.id = p_block_id and b.deleted_at is null and s.deleted_at is null;
+   where b.id = p_block_id and b.deleted_at is null and s.deleted_at is null
+     and s.record_status not in ('finalized', 'void');
   if v_studio is null
-     or not exists (select 1 from public.practitioners pr where pr.studio_id = v_studio and pr.user_id = v_uid and pr.active) then
+     or not exists (select 1 from public.practitioners pr where pr.studio_id = v_studio and pr.user_id = v_uid and pr.active and pr.role in ('owner', 'practitioner')) then
     raise exception 'Not available.' using errcode = '42501';
   end if;
+  -- the same writability guard every block write uses (an active practitioner of the session's studio, the session belonging to its client)
+  perform public.assert_session_writable(v_session, v_client);
   if not public.platform_rollout_enabled_for('charting_new_view_xcell', v_studio) then
     raise exception 'Machine switches are not available yet.' using errcode = 'check_violation';
   end if;
@@ -265,31 +279,49 @@ end $$;
 
 -- PILOT ORDER: migration A (the amended apply_block_machine_identity below) is part of THIS apply. Until it is applied a pilot studio cannot save
 -- xCell Pur Thermolysis, Blend or Galvanic (the application refuses it by design), so the pilot starts only after this migration is applied.
--- REVIEWER NOTES (T3), explicit:
+-- NOTES for reviewers:
 --  (a) The legacy `mode` column on session_blocks is NOT frozen at DB level: practitioners legitimately edit it today. The mode freeze for
 --      legacy modes is application-only (the charting action refuses it on the server behind the rollout); the race there is narrow.
 --      Only machine_profile_id, studio_machine_id and machine_mode_key are frozen here.
 --  (b) Every reading write (electrolysis_entries, treatment_setup_readings insert/update) now takes FOR SHARE on its block row. The cost is
 --      measured in tests/db/machine-switches.db.test.ts (a burst of reading writes timed with the trigger and with it dropped).
 -- ---------------------------------------------------------------------------
--- DB-LEVEL FREEZE (OPS request after the application freeze in the charting actions, which is read-then-write and can race).
+-- DB-LEVEL FREEZE (the application freeze in the charting actions is read-then-write and can race; this closes the race in the database).
 -- A block that already holds readings may not CHANGE its machine identity (model, unit or machine mode) once one is set. First assignment
 -- (null to a value) stays allowed; 0310 already limits what may be assigned. Always on, not behind the rollout: no existing path changes an
 -- identity under readings (0310 refuses it), so there is nothing for an Off state to preserve, and the protection is for existing records.
 -- RACE: the identity UPDATE holds the block row lock when this trigger runs; every reading write takes FOR SHARE on its block row first
--- (the second trigger), so a reading cannot commit between this check and the identity update, and the check then sees committed readings.
+-- (the second trigger, SECURITY INVOKER so it locks only a block the caller may write), so a reading cannot commit between this check and the identity update, and the check then sees committed readings.
 -- ---------------------------------------------------------------------------
+-- ONE DEFINITION of "this block holds legacy readings", shared by the freeze trigger below, identity migration A (the area guard in
+-- apply_block_machine_identity) and the application (a test pins the agreement): the legacy block columns, and the live entry reading columns
+-- including energy level and modality. A soft-deleted entry is not a reading. Native MultiPlex readings (treatment_setup_readings) are NOT part of
+-- it and do not freeze the identity: each native reading carries the unit, model and mode it was recorded under (the capture key), so a later
+-- unit correction cannot rewrite what a reading says, and the existing submission commands already allow that correction.
+create or replace function public.block_holds_legacy_readings(p_block_id uuid)
+returns boolean language sql stable security definer set search_path = pg_catalog, pg_temp as $$
+  select exists (select 1 from public.session_blocks b
+                  where b.id = p_block_id
+                    and (nullif(btrim(b.mode::text), '') is not null
+                         or nullif(btrim(b.apilus_modality::text), '') is not null
+                         or b.energy_level is not null
+                         or nullif(btrim(b.machine_frequency::text), '') is not null))
+      or exists (select 1 from public.electrolysis_entries e
+                  where e.block_id = p_block_id and e.deleted_at is null
+                    and (e.thermolysis_intensity_percent is not null or e.thermolysis_duration_seconds is not null
+                         or e.galvanic_ma is not null or e.galvanic_duration_seconds is not null or e.units_of_lye is not null
+                         or e.energy_level is not null or nullif(btrim(e.apilus_modality::text), '') is not null))
+$$;
+
+-- SECURITY DEFINER: the freeze must see EVERY entry of the block whatever the caller's row-level access, so it cannot be fooled by a role that
+-- sees fewer rows. The only way to reach it is an UPDATE of the three identity columns, and the trigger function itself is not callable.
 create or replace function public.session_blocks_machine_identity_freeze()
-returns trigger language plpgsql set search_path = pg_catalog, pg_temp as $$
+returns trigger language plpgsql security definer set search_path = pg_catalog, pg_temp as $$
 begin
   if (old.machine_profile_id is not null and new.machine_profile_id is distinct from old.machine_profile_id)
      or (old.studio_machine_id is not null and new.studio_machine_id is distinct from old.studio_machine_id)
      or (old.machine_mode_key is not null and new.machine_mode_key is distinct from old.machine_mode_key) then
-    if exists (select 1 from public.electrolysis_entries e
-                where e.block_id = old.id and e.deleted_at is null
-                  and (e.thermolysis_intensity_percent is not null or e.thermolysis_duration_seconds is not null
-                       or e.galvanic_ma is not null or e.galvanic_duration_seconds is not null or e.units_of_lye is not null))
-       or exists (select 1 from public.treatment_setup_readings r where r.session_block_id = old.id) then
+    if public.block_holds_legacy_readings(old.id) then
       raise exception 'This area already holds readings; its machine and mode can no longer change.'
         using errcode = 'check_violation';
     end if;
@@ -301,7 +333,7 @@ create trigger session_blocks_machine_identity_freeze before update of machine_p
   on public.session_blocks for each row execute function public.session_blocks_machine_identity_freeze();
 
 create or replace function public.reading_write_share_lock_block()
-returns trigger language plpgsql security definer set search_path = pg_catalog, pg_temp as $$
+returns trigger language plpgsql set search_path = pg_catalog, pg_temp as $$
 declare v_block uuid;
 begin
   -- one branch per table: plpgsql resolves NEW's fields at evaluation, so a CASE naming both columns fails on either table
@@ -537,25 +569,7 @@ begin
   -- A soft-deleted entry is not a reading (OPS decision on Insurance LK-1).
   -- Choosing the legacy xCell Pur machine itself stays allowed. The block row is already locked above, so this read is
   -- consistent with the write below. A new area (create wrapper) has no readings at this point.
-  if v_profile <> 'dectro-apilus:xcell' and not v_pur_legacy and (
-       exists (
-         select 1
-           from public.session_blocks b
-          where b.id = p_block_id
-            and (nullif(btrim(b.mode::text), '') is not null
-                 or nullif(btrim(b.apilus_modality::text), '') is not null
-                 or b.energy_level is not null
-                 or nullif(btrim(b.machine_frequency::text), '') is not null))
-       or exists (
-         select 1
-           from public.electrolysis_entries e
-          where e.block_id = p_block_id
-            and e.deleted_at is null
-            and (e.thermolysis_intensity_percent is not null
-                 or e.thermolysis_duration_seconds is not null
-                 or e.galvanic_ma is not null
-                 or e.galvanic_duration_seconds is not null
-                 or e.units_of_lye is not null))) then
+  if v_profile <> 'dectro-apilus:xcell' and not v_pur_legacy and public.block_holds_legacy_readings(p_block_id) then
     raise exception 'This area already holds xCell Pur readings; add a new area for another machine.'
       using errcode = 'check_violation';
   end if;
@@ -592,6 +606,7 @@ $$;
 revoke execute on function public.apply_block_machine_identity(uuid, uuid, text, uuid, text, timestamptz, text, text) from public, anon, authenticated, service_role;
 
 revoke all on function public.session_blocks_machine_identity_freeze() from public, anon, authenticated, service_role;
+revoke all on function public.block_holds_legacy_readings(uuid) from public, anon, authenticated, service_role;
 revoke all on function public.reading_write_share_lock_block() from public, anon, authenticated, service_role;
 revoke all on function public.seed_studio_machine_settings(uuid) from public, anon, authenticated, service_role;
 revoke all on function public.studios_seed_machine_settings_trigger() from public, anon, authenticated, service_role;

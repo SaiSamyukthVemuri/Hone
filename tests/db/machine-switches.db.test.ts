@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { adminQuery, adminTx, asRole, asUser, closePool, seedMember, seedSession, seedStudio, type SeededStudio } from "./helpers/harness";
+import { adminQuery, adminTx, asRole, asUser, closePool, seedLegacyRecordStatus, seedMember, seedSession, seedStudio, type SeededStudio } from "./helpers/harness";
+import { blockHoldsLegacyReadings } from "../../lib/sessions/holds-legacy-readings";
 
 // Machine switches: the DB behaviour of the settings tables, the owner and lazy-unit commands, the seed, and the amended identity command.
 // Synthetic data only. While the SQL is unnumbered this applies it onto an OWNED local stack once; when numbered it is part of the chain.
@@ -490,6 +491,199 @@ describe("DB-level freeze: a block holding readings cannot change its machine id
     expect((await blockIdentity(s.blockId)).machine_mode_key).toBe("galvanic");
     // and now that readings exist the identity is frozen
     expect((await failure(adminQuery(`update public.session_blocks set machine_mode_key='blend' where id=$1`, [s.blockId])))?.message).toMatch(/already holds readings/);
+  });
+});
+
+describe("Privacy conditions: role gate, invoker lock, freeze as the lowest writing role", () => {
+  it("A: a practitioner-role member may use choices and ensure; a user whose practitioners row has any other role is refused (receptionist, when the chain allows that role)", async () => {
+    const S = await seedStudio("sw-role");
+    const sess = await seedSession(S);
+    const mem = await seedMember(S, "sw-role-m");
+    expect((await choices(mem.userId)).length).toBeGreaterThan(0);
+    expect(await ensure(mem.userId, sess.blockId, PUR)).toMatch(/^[0-9a-f-]{36}$/);
+    const rec = await seedMember(S, "sw-role-r");
+    const set = await failure(adminQuery(`update public.practitioners set role = 'receptionist' where id = $1`, [rec.practitionerId]));
+    if (set) { console.log("receptionist role not allowed on practitioners in this chain; the stacked run (roles migrations) must exercise this case"); return; }
+    expect(await choices(rec.userId)).toEqual([]);
+    expect((await failure(ensure(rec.userId, sess.blockId, PUR)))?.message).toBe("Not available.");
+  });
+
+  it("A (receptionist): a user who is an active studio receptionist and has NO practitioners row is refused by choices and ensure; practitioners.role never holds 'receptionist' in any chain", async () => {
+    const have = (await adminQuery(`select to_regclass('public.studio_receptionists') t`)).rows[0].t;
+    if (!have) { console.log("studio_receptionists is not in this chain; the stacked run exercises this case"); return; }
+    const S = await seedStudio("sw-recep");
+    const sess = await seedSession(S);
+    const u = randomUUID();
+    await adminQuery(`insert into auth.users (id, email) values ($1,$2)`, [u, `sw-recep-${u.slice(0, 8)}@harness.local`]);
+    await adminQuery(`insert into public.studio_receptionists (studio_id, user_id, display_name, active) values ($1,$2,'Front desk',true)`, [S.studioId, u]);
+    expect(await choices(u)).toEqual([]);
+    expect((await failure(ensure(u, sess.blockId, PUR)))?.message).toBe("Not available.");
+    const chk = (await adminQuery(`select pg_get_constraintdef(oid) d from pg_constraint where conrelid='public.practitioners'::regclass and conname='practitioners_role_check'`)).rows[0].d as string;
+    expect(chk).not.toMatch(/receptionist/);
+  });
+
+  it("B: the share-lock trigger is SECURITY INVOKER, and another studio's caller cannot lock this studio's block (even through a failing insert held open)", async () => {
+    expect((await adminQuery(`select prosecdef from pg_proc where proname='reading_write_share_lock_block'`)).rows[0].prosecdef).toBe(false);
+    const S = await seedStudio("sw-lock-a");
+    const O = await seedStudio("sw-lock-b");
+    const s = await seedSession(S);
+    let blockedByLock: unknown = "not run";
+    await adminTx(async (q) => {
+      await q(`set local role authenticated`);
+      await q(`select set_config('request.jwt.claims', $1, true)`, [JSON.stringify({ sub: O.userId, role: "authenticated" })]);
+      await failure(q(`insert into public.electrolysis_entries (session_id, block_id, area, mode, thermolysis_intensity_percent) values ($1,$2,'Upper lip','thermo',40)`, [s.sessionId, s.blockId]) as Promise<unknown>);
+      // this transaction is now open (aborted) and would still hold any row lock the trigger took
+      blockedByLock = await failure(adminTx(async (q2) => {
+        await q2(`set local lock_timeout = '1500ms'`);
+        await q2(`update public.session_blocks set machine_mode_key = machine_mode_key where id = $1`, [s.blockId]);
+      }));
+    }).catch(() => undefined);
+    expect(blockedByLock, "a foreign caller must not hold a lock on this studio's block").toBeNull();
+  });
+
+  it("C: the freeze sees every entry as the lowest writing role (a practitioner member): the member can read the block's entries, and a direct identity change is refused by the freeze or by privileges, never silently allowed", async () => {
+    const S = await seedStudio("sw-frz-role");
+    const mem = await seedMember(S, "sw-frz-m");
+    const s = await seedSession(S);
+    await adminQuery(`update public.session_blocks set machine_profile_id=$2, machine_mode_key='thermolysis' where id=$1`, [s.blockId, PUR]);
+    await adminQuery(`insert into public.electrolysis_entries (session_id, block_id, area, mode, thermolysis_intensity_percent) values ($1,$2,'Upper lip','thermo',40)`, [s.sessionId, s.blockId]);
+    const seen = await asUser(mem.userId, async (q) => Number((await q(`select count(*)::int n from public.electrolysis_entries where block_id=$1`, [s.blockId])).rows[0].n));
+    expect(seen, "the member must see the entry the freeze has to find").toBe(1);
+    const e = await failure(asUser(mem.userId, async (q) => { await q(`update public.session_blocks set machine_mode_key='galvanic' where id=$1`, [s.blockId]); }));
+    expect(e?.message ?? "no error").toMatch(/already holds readings|permission denied/);
+    expect((await blockIdentity(s.blockId)).machine_mode_key).toBe("thermolysis");
+  });
+
+  it("down: carries a rollout-Off refusal (the behavioural run is the manual down rehearsal: data checks fire first, so a populated test database cannot reach it)", () => {
+    const d = readFileSync("docs/proposals/machine-switches.down.sql", "utf8");
+    expect(d).toMatch(/platform_rollouts r where r\.key = 'charting_new_view_xcell' and r\.mode <> 'off'/);
+    expect(d).toMatch(/rollout is not Off/);
+  });
+});
+
+describe("Insurance conditions: one live Pur unit, forced RLS, one readings definition, no deadlock, writable session, text codes", () => {
+  const register = (user: string, studio: string, name: string) =>
+    asUser(user, async (q) => (await q(`select public.register_studio_machine($1,$2,1,$3,'{}') as r`, [studio, PUR, name])).rows[0].r as string);
+  const liveXcell = async (studio: string) =>
+    Number((await adminQuery(`select count(*)::int n from public.studio_machines where studio_id=$1 and machine_profile_id=$2 and retired_at is null`, [studio, PUR])).rows[0].n);
+
+  it("R1: the database holds at most one live xCell Pur unit per studio; two concurrent owner registrations leave exactly one; a retired unit frees the slot", async () => {
+    const S = await seedStudio("sw-uniq");
+    const results = await Promise.allSettled([register(S.userId, S.studioId, "Room 1 xCell"), register(S.userId, S.studioId, "Room 2 xCell")]);
+    expect(results.filter((r) => r.status === "fulfilled").length).toBe(1);
+    expect(await liveXcell(S.studioId)).toBe(1);
+    expect(await failure(register(S.userId, S.studioId, "Room 3 xCell"))).not.toBeNull();
+    const idx = (await adminQuery(`select indexdef from pg_indexes where indexname='studio_machines_one_live_xcell_pur'`)).rows[0]?.indexdef as string;
+    expect(idx).toMatch(/UNIQUE/);
+    expect(idx).toMatch(/retired_at IS NULL/);
+    await adminQuery(`update public.studio_machines set retired_at = now() where studio_id=$1 and machine_profile_id=$2`, [S.studioId, PUR]);
+    expect(await register(S.userId, S.studioId, "Room 4 xCell")).toMatch(/^[0-9a-f-]{36}$/);
+    expect(await liveXcell(S.studioId)).toBe(1);
+  });
+
+  it("C1: row level security is FORCED on the three tables", async () => {
+    for (const t of ["studio_machine_models", "studio_machine_default", "studio_machine_setting_events"]) {
+      const c = (await adminQuery(`select relrowsecurity, relforcerowsecurity from pg_class where oid = $1::regclass`, [`public.${t}`])).rows[0];
+      expect(c, t).toEqual({ relrowsecurity: true, relforcerowsecurity: true });
+    }
+  });
+
+  it("C2: the freeze trigger is SECURITY DEFINER and not callable by any role", async () => {
+    expect((await adminQuery(`select prosecdef from pg_proc where proname='session_blocks_machine_identity_freeze'`)).rows[0].prosecdef).toBe(true);
+    for (const r of ["anon", "authenticated", "service_role"]) {
+      expect((await adminQuery(`select has_function_privilege($1,'public.session_blocks_machine_identity_freeze()','execute') p`, [r])).rows[0].p, r).toBe(false);
+    }
+  });
+
+  it("C3: the database function and the application helper agree on what 'holds legacy readings' means, case by case", async () => {
+    const S = await seedStudio("sw-agree");
+    type Case = { name: string; block?: Record<string, unknown>; entry?: Record<string, unknown>; deleted?: boolean; reading: boolean };
+    const cases: Case[] = [
+      { name: "empty", reading: false },
+      { name: "block mode", block: { mode: "thermo" }, reading: true },
+      { name: "block modality", block: { apilus_modality: "Synchro" }, reading: true },
+      { name: "block energy level", block: { energy_level: 3 }, reading: true },
+      { name: "block frequency", block: { machine_frequency: "27.12 MHz" }, reading: true },
+      { name: "entry thermolysis intensity", entry: { thermolysis_intensity_percent: 30 }, reading: true },
+      { name: "entry thermolysis duration", entry: { thermolysis_duration_seconds: 2 }, reading: true },
+      { name: "entry galvanic ma", entry: { galvanic_ma: 1.5 }, reading: true },
+      { name: "entry galvanic duration", entry: { galvanic_duration_seconds: 5 }, reading: true },
+      { name: "entry units of lye", entry: { units_of_lye: 2 }, reading: true },
+      { name: "entry energy level", entry: { energy_level: 4 }, reading: true },
+      { name: "entry modality", entry: { apilus_modality: "Synchro" }, reading: true },
+      { name: "entry pulse count only (not a reading)", entry: { pulse_count: 3 }, reading: false },
+      { name: "entry with nothing", entry: {}, reading: false },
+      { name: "soft-deleted entry with a reading", entry: { thermolysis_intensity_percent: 30 }, deleted: true, reading: false },
+    ];
+    for (const c of cases) {
+      const s = await seedSession(S);
+      if (c.block) {
+        const cols = Object.keys(c.block);
+        await adminTx(async (q) => {
+          await q(`set local session_replication_role = replica`);
+          await q(`update public.session_blocks set ${cols.map((k, i) => `${k} = $${i + 2}`).join(", ")} where id = $1`, [s.blockId, ...cols.map((k) => (c.block as Record<string, unknown>)[k])]);
+        });
+      }
+      let entryRow: Record<string, unknown> | undefined;
+      if (c.entry) {
+        const cols = ["session_id", "block_id", "area", "mode", ...Object.keys(c.entry)];
+        const vals = [s.sessionId, s.blockId, "Upper lip", "thermo", ...Object.values(c.entry)];
+        await adminQuery(`insert into public.electrolysis_entries (${cols.join(",")}) values (${vals.map((_, i) => `$${i + 1}`).join(",")})`, vals);
+        if (c.deleted) await adminQuery(`update public.electrolysis_entries set deleted_at = now() where block_id = $1`, [s.blockId]);
+        entryRow = { ...c.entry, deleted_at: c.deleted ? new Date() : null };
+      }
+      const db = (await adminQuery(`select public.block_holds_legacy_readings($1) h`, [s.blockId])).rows[0].h as boolean;
+      const blockRow = (await adminQuery(`select mode, apilus_modality, energy_level, machine_frequency from public.session_blocks where id=$1`, [s.blockId])).rows[0];
+      expect(blockHoldsLegacyReadings(blockRow, entryRow ? [entryRow] : []), `${c.name}: application vs database`).toBe(db);
+      expect(db, c.name).toBe(c.reading);
+    }
+  });
+
+  it("C4: concurrent saves on one block never deadlock (no 40P01), across reading writes and identity changes in both orders", async () => {
+    const S = await seedStudio("sw-deadlock");
+    for (let round = 0; round < 6; round++) {
+      const s = await seedSession(S);
+      await adminQuery(`update public.session_blocks set machine_profile_id=$2, machine_mode_key='thermolysis' where id=$1`, [s.blockId, PUR]);
+      const ins = () => adminQuery(`insert into public.electrolysis_entries (session_id, block_id, area, mode, thermolysis_intensity_percent) values ($1,$2,'Upper lip','thermo',40)`, [s.sessionId, s.blockId]);
+      const chg = (mode: string) => adminQuery(`update public.session_blocks set machine_mode_key=$2 where id=$1`, [s.blockId, mode]);
+      const out = await Promise.allSettled([ins(), chg("galvanic"), ins(), chg("blend"), ins(), chg("thermolysis")]);
+      for (const r of out) if (r.status === "rejected") expect((r.reason as { code?: string }).code, String((r.reason as Error).message)).not.toBe("40P01");
+    }
+  });
+
+  it("C5: ensure goes through the shared writability guard and refuses a finalized or void session", async () => {
+    const src = (await adminQuery(`select prosrc from pg_proc where proname='ensure_studio_machine_for_save'`)).rows[0].prosrc as string;
+    expect(src).toMatch(/assert_session_writable/);
+    const S = await seedStudio("sw-final");
+    const s = await seedSession(S);
+    expect(await ensure(S.userId, s.blockId, PUR)).toMatch(/^[0-9a-f-]{36}$/);
+    const S2 = await seedStudio("sw-final2");
+    const s2 = await seedSession(S2);
+    await seedLegacyRecordStatus(s2.sessionId, "finalized");
+    expect((await failure(ensure(S2.userId, s2.blockId, PUR)))?.message).toBe("Not available.");
+    expect(Number((await adminQuery(`select count(*)::int n from public.studio_machines where studio_id=$1`, [S2.studioId])).rows[0].n)).toBe(0);
+  });
+
+  it("native MultiPlex readings do NOT freeze the identity (each reading carries its own unit, model and mode; the existing unit correction stays possible)", async () => {
+    const S = await seedStudio("sw-native");
+    const s = await seedSession(S);
+    const unit = await unitOf(S.studioId, PUR, 1);
+    await adminQuery(`update public.session_blocks set machine_profile_id=$2, studio_machine_id=$3, machine_mode_key='multiplex' where id=$1`, [s.blockId, PUR, unit]);
+    await adminTx(async (q) => {
+      await q(`set local session_replication_role = replica`); // a bare reading row; the capture parent is not the subject here
+      await q(`insert into public.treatment_setup_readings (studio_id, session_block_id, studio_machine_id, machine_profile_id, machine_profile_version, mode_key, group_key, field_key, value_numeric, native_unit, decimals, observation_source, capture_id)
+               values ($1,$2,$3,$4,1,'multiplex','g','slow_duration',2,'s',0,'practitioner-entered',$5)`, [S.studioId, s.blockId, unit, PUR, randomUUID()]);
+    });
+    expect((await adminQuery(`select public.block_holds_legacy_readings($1) h`, [s.blockId])).rows[0].h).toBe(false);
+    expect(await failure(adminQuery(`update public.session_blocks set machine_mode_key='flash' where id=$1`, [s.blockId]))).toBeNull();
+  });
+
+  it("C6: ensure answers a unit id or one of three refusal codes (name_taken shown here; retired and unpublished above); the application treats any non-id text as a refusal", async () => {
+    const S = await seedStudio("sw-codes");
+    const s = await seedSession(S);
+    const other = await unitOf(S.studioId, SEN, 3);
+    await adminQuery(`update public.studio_machines set display_name = 'Dectro xCell' where id = $1`, [other]);
+    expect(await ensure(S.userId, s.blockId, PUR)).toBe("name_taken");
   });
 });
 

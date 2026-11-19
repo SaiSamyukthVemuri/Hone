@@ -1,4 +1,4 @@
--- DOWN for the machine switches migration. REFUSES while any block holds an xCell Pur identity (N1: dropping the amended identity command would
+-- DOWN for the machine switches migration. REFUSES while any block holds an xCell Pur identity (dropping the amended identity command would
 -- strand records that name a model the old command refuses), while any owner change or lazy unit is on record, or while the rollout is on.
 -- Set the rollout Off first. Restores 0310's apply_block_machine_identity byte for byte (md5 asserted by the test), then drops the objects.
 begin;
@@ -17,13 +17,18 @@ begin
      or exists (select 1 from public.studio_machine_models where updated_by is not null) then
     raise exception 'machine switches down refused: non-default switch rows exist' using errcode = 'check_violation';
   end if;
+  if exists (select 1 from public.platform_rollouts r where r.key = 'charting_new_view_xcell' and r.mode <> 'off') then
+    raise exception 'machine switches down refused: the rollout is not Off; set it Off first' using errcode = 'check_violation';
+  end if;
 end $$;
 
+drop index if exists public.studio_machines_one_live_xcell_pur;
 drop trigger if exists treatment_setup_readings_share_lock_block on public.treatment_setup_readings;
 drop trigger if exists electrolysis_entries_share_lock_block on public.electrolysis_entries;
 drop trigger if exists session_blocks_machine_identity_freeze on public.session_blocks;
 drop function if exists public.reading_write_share_lock_block();
 drop function if exists public.session_blocks_machine_identity_freeze();
+drop function if exists public.block_holds_legacy_readings(uuid);
 drop trigger if exists studios_seed_machine_settings on public.studios;
 drop function if exists public.studios_seed_machine_settings_trigger();
 drop function if exists public.ensure_studio_machine_for_save(uuid, text);
