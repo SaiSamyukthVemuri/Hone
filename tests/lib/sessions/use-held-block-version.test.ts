@@ -58,7 +58,7 @@ describe("the held block version", () => {
   // Every successful block save closes the editor, so the next open starts from the fresh prop and nothing needs adopting.
   it("a successful update save and a successful create save both close the form, and both mount sites close on it", () => {
     const form = readFileSync("app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx", "utf8");
-    expect(form).toMatch(/if \(!res\.ok\) \{\s*setError\(res\.error\);\s*return res\.error === EDIT_SAVE_UNCONFIRMED \? \{ status: "unknown" \} : \{ status: "failed", message: res\.error \};\s*\}\s*setSaveConfirmed\(true\);\s*closeForm\(\);\s*return \{ status: "saved" \};/);
+    expect(form).toMatch(/if \(!res\.ok\) \{\s*setError\(res\.error\);(?:\s*\/\/[^\n]*)*\s*return res\.error === EDIT_SAVE_UNCONFIRMED \? \{ status: "unknown" \} : \{ status: "failed", message: res\.error \};\s*\}\s*setSaveConfirmed\(true\);\s*closeForm\(\);\s*return \{ status: "saved" \};/);
     expect(form).toMatch(/setSaveUnresolved\(false\);\s*setSaveConfirmed\(true\);\s*closeForm\(\);/);
     expect(form).toMatch(/const closeForm = \(\) => \{[\s\S]*?\n {4}onCancel\(\);\n {2}\};/);
     const view = readFileSync("app/(app)/clients/[id]/sessions/[sessionId]/session-blocks-view.tsx", "utf8");
