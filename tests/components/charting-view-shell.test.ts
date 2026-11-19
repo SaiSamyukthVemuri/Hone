@@ -391,6 +391,26 @@ describe("the This visit card follows the open form", () => {
     expect(text).toContain("Dectro xCell");
     expect(text).not.toContain("xCell Pur");
   });
+  it("a saved block whose unit is retired still names that unit, as no longer available, and never reads None selected", async () => {
+    ctxBox.ctx = { ...CTX, remembered: null, legacyMachine: null, unitNames: { "room-9": "Room 9 unit" }, devices: [{ ...DEVICE, retiredAt: "2026-01-01T00:00:00.000Z" }] };
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const saved = { ...BLOCK, studio_machine_id: "room-9", machine_profile_id: "fixture:mounted", machine_mode_key: "galvanic" };
+    await act(async () =>
+      root!.render(
+        createElement(ChartingViewShell, {
+          initialView: "new",
+          summary: createElement(ChartingVisitSummary, { clientName: "Avery Example", kind: "electrolysis", areas: [], count: 1, nextVisitNoteRecorded: false }),
+          children: createElement(BlockSetupForm, { sessionId: "s1", clientId: "c1", previousBlock: null, block: saved as never, firstEntry: null, onCancel: () => undefined }),
+        }),
+      ),
+    );
+    if (host!.querySelector('[data-testid="machine-first-open"]')) await openPanel();
+    const text = row("visit-summary-machine").textContent!;
+    expect(text).toContain("Room 9 unit");
+    expect(text).toContain("no longer available");
+  });
   it("shows the existing xCell by the picker's own label for a saved legacy block", async () => {
     ctxBox.ctx = { ...CTX, remembered: null, devices: [] };
     host = document.createElement("div");

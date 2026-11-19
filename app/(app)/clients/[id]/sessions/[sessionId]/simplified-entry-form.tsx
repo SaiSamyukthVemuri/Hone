@@ -26,6 +26,7 @@ import {
 import { pickSavedLabel } from "@/lib/saved-label";
 import { MultiChipSelector } from "@/components/multi-chip-selector";
 import { addElectrolysisEntryAction } from "./actions";
+import { useReportVisitDraft } from "@/components/charting-visit-draft";
 import { SectionLabel } from "@/components/ui/section-label";
 
 // SimplifiedEntryForm is the primary entry-creation surface inside a block.
@@ -94,6 +95,14 @@ export function SimplifiedEntryForm({
   const [recovery, setRecovery] = useState<string | null>(null);
   const [savedLabel, setSavedLabel] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  // "This visit" (New view): an unsaved or failed pass shows as such. Display only: this form reports and never reads it back.
+  useReportVisitDraft(`pass:${block.id}`, {
+    machine: null,
+    draftAreas: [],
+    unsaved: JSON.stringify(draft) !== JSON.stringify(emptyDraft()),
+    attention: error !== null || recovery !== null,
+    activity: JSON.stringify(draft),
+  });
 
   function update<K extends keyof Draft>(key: K, value: Draft[K]) {
     setDraft((d) => ({ ...d, [key]: value }));

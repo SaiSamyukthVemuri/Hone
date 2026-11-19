@@ -45,19 +45,26 @@ describe("a closed form's report", () => {
   });
 });
 
-describe("with several open forms the Machine row follows the one most recently changed", () => {
-  it("shows the form last edited, not the first by id", async () => {
-    const a = (m: string, u = false) => createElement(Form, { key: "a", id: "block:a", report: { ...base, machine: m, unsaved: u } });
-    const b = (m: string, u = false) => createElement(Form, { key: "b", id: "block:b", report: { ...base, machine: m, unsaved: u } });
-    await render([a("Unit A"), b("Unit B")]);
+describe("with several open forms the Machine row follows the one most recently EDITED", () => {
+  const form = (id: string, machine: string, activity: string) =>
+    createElement(Form, { key: id, id: `block:${id}`, report: { ...base, machine, unsaved: true, activity } });
+  it("A, then B, then A again, with both forms dirty and every summary value unchanged", async () => {
+    await render([form("a", "Unit A", "a1"), form("b", "Unit B", "b1")]);
     expect(out().dataset.m, "b reported last").toBe("Unit B");
-    await render([a("Unit A", true), b("Unit B")]);
-    expect(out().dataset.m, "a was edited most recently").toBe("Unit A");
-    await render([a("Unit A", true), b("Unit B2")]);
-    expect(out().dataset.m).toBe("Unit B2");
+    await render([form("a", "Unit A", "a2"), form("b", "Unit B", "b1")]);
+    expect(out().dataset.m, "A was edited after B").toBe("Unit A");
+    await render([form("a", "Unit A", "a2"), form("b", "Unit B", "b2")]);
+    expect(out().dataset.m, "B was edited after A").toBe("Unit B");
+    await render([form("a", "Unit A", "a3"), form("b", "Unit B", "b2")]);
+    expect(out().dataset.m, "A edited again while B is still dirty").toBe("Unit A");
+  });
+  it("a re-render with no edit does not reorder the forms", async () => {
+    await render([form("a", "Unit A", "a1"), form("b", "Unit B", "b1")]);
+    await render([form("a", "Unit A", "a1"), form("b", "Unit B", "b1")]);
+    expect(out().dataset.m).toBe("Unit B");
   });
   it("a most-recent form with no machine does not hide another form's machine", async () => {
-    await render([createElement(Form, { key: "a", id: "block:a", report: { ...base, machine: "Unit A" } }), createElement(Form, { key: "b", id: "block:b", report: { ...base, draftAreas: ["Chin"] } })]);
+    await render([createElement(Form, { key: "a", id: "block:a", report: { ...base, machine: "Unit A", activity: "1" } }), createElement(Form, { key: "b", id: "block:b", report: { ...base, draftAreas: ["Chin"], activity: "1" } })]);
     expect(out().dataset.m).toBe("Unit A");
   });
 });
