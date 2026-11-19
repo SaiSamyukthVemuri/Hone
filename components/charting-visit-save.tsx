@@ -116,7 +116,7 @@ export function useVisitSave() {
 
 const STATUS_TEXT: Record<SaveOutcome["status"], string> = { saved: "Saved", nothing: "Nothing to save", held: "Not saved", failed: "Not saved" };
 
-/** The Save visit control and each section's own result. Never contains what the practitioner typed: labels are fixed and messages are the forms' own. */
+/** The Save visit control and each section's own result. Never contains what the practitioner typed, or any message text: labels and phrases are fixed. */
 export function VisitSaveControl() {
   const api = useContext(Ctx);
   if (!api || !api.hasSections) return null;
@@ -137,7 +137,9 @@ export function VisitSaveControl() {
           {api.results.map((r) => (
             <li key={r.id} data-testid={`visit-save-result-${r.id}`} data-status={r.outcome.status}>
               <span className="font-medium">{r.label}:</span> {STATUS_TEXT[r.outcome.status]}
-              {"message" in r.outcome ? ` — ${r.outcome.message}` : ""}
+              {/* FIXED PHRASES ONLY. A section's own message can name what was typed (an area, a value) or come from a thrown error, so the
+                  detail stays on that section, where the form already shows it. */}
+              {r.outcome.status === "held" || r.outcome.status === "failed" ? " — see the message on that section." : ""}
             </li>
           ))}
         </ul>

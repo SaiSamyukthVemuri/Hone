@@ -198,7 +198,8 @@ export function SimplifiedEntryForm({
       } catch (err) {
         // THE ANSWER WAS LOST: a row may exist. Save visit will not resubmit this pass (see `answerLost`).
         answerLost.current = true;
-        const message = err instanceof Error ? err.message : "Failed to add entry.";
+        // A fixed phrase: a thrown Error's own text is never shown.
+        const message = "That did not save.";
         setError(message);
         return { status: "failed", message };
       }

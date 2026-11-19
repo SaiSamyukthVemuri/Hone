@@ -52,7 +52,8 @@ describe("Save visit runs each section's own save, in order, never forcing anyth
     );
     await click();
     expect(res("a")!.getAttribute("data-status")).toBe("failed");
-    expect(res("a")!.textContent).toContain("Could not save.");
+    expect(res("a")!.textContent).not.toContain("Could not save.");
+    expect(res("a")!.textContent).toContain("see the message on that section");
     expect(res("b")!.getAttribute("data-status")).toBe("saved");
   });
   it("a saver that THROWS is a failed result, and the next section still runs", async () => {
@@ -162,6 +163,16 @@ describe("with the REAL forms", () => {
     await click();
     expect(note).toHaveBeenCalledTimes(2);
     expect(res("note")!.getAttribute("data-status")).toBe("saved");
+  });
+  it("a thrown Error's text and a server refusal that names an area are never shown in the Save visit results", async () => {
+    add.fn.mockRejectedValueOnce(new Error("PRIVATE-THROWN-TEXT"));
+    await mountReal();
+    const chip = Array.from(host!.querySelectorAll("button")).find((b) => /Upper lip/i.test(b.textContent ?? ""));
+    await act(async () => void chip!.click());
+    await act(async () => void host!.querySelector<HTMLFormElement>('[data-testid="add-pass-form"]')!.requestSubmit());
+    await click();
+    expect(host!.querySelector('[data-testid="visit-save"]')!.innerHTML).not.toContain("PRIVATE-THROWN-TEXT");
+    expect(host!.innerHTML, "the form itself shows a fixed phrase for a thrown error").not.toContain("PRIVATE-THROWN-TEXT");
   });
   it("an add-pass with a lost answer is HELD, never resubmitted by Save visit", async () => {
     add.fn.mockRejectedValueOnce(new Error("network"));
