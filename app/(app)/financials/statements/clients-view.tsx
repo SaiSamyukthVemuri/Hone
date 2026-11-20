@@ -6,7 +6,7 @@ import type { YearMonth } from "@/lib/finance/statement-period";
 import { FINDER_TOO_MANY, STATEMENT_READ_UNAVAILABLE, clientStatementHref, clientsListHref, CLIENTS_PAGE_SIZE } from "@/lib/finance/statement-screen";
 
 import { ClientFinder, type FinderOption } from "./client-finder";
-import { MonthControls, StatementsTabs } from "./statements-chrome";
+import { MonthControls, StatementsTabs, SUMMARY_TONE } from "./statements-chrome";
 
 export type ClientsViewProps = {
   month: YearMonth;
@@ -68,7 +68,7 @@ export function ClientsView({ month, monthLabel, maxMonth, timezone, notice, pag
           <EmptyState title={`No client visits in ${monthLabel}.`} description="A client appears here once they have a completed visit, a fee or a payment recorded in the month. Use Find a client to open anyone's full history." />
         ) : paged ? (
           <>
-            <p className="rounded-xl border border-success-fg/15 bg-success-surface/50 px-4 py-3 text-sm font-medium text-fg" aria-live="polite">
+            <p className={cx("rounded-xl px-4 py-3 text-sm font-medium text-fg", SUMMARY_TONE)} aria-live="polite">
               {paged.totals.clientCount} {paged.totals.clientCount === 1 ? "client" : "clients"} · {paged.totals.visitCount} {paged.totals.visitCount === 1 ? "visit" : "visits"} · {format(paged.totals.paidCents)} paid
               {paged.totals.awaitingCount > 0 ? ` · ${paged.totals.awaitingCount} ${paged.totals.awaitingCount === 1 ? "visit" : "visits"} awaiting payment confirmation` : ""}
             </p>

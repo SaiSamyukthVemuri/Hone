@@ -121,6 +121,14 @@ describe("the client statement, restyled", () => {
       expect(part).toMatch(/Practitioner One/);
     }
   });
+  it("the summary card, the Clients totals line and the Studio collected total share ONE muted-sage tone (not the full success surface)", () => {
+    const out = html(docFor([visit()]));
+    expect(out).toMatch(/bg-\[color-mix\(in_oklch,var\(--color-success-surface\)_30%,var\(--color-surface-sunken\)\)\]/);
+    for (const f of ["client-statement-view.tsx", "clients-view.tsx", "../statement/statement-view.tsx"]) {
+      expect(read("app/(app)/financials/statements/" + f), f).not.toMatch(/bg-success-surface\/\d+/);
+      expect(read("app/(app)/financials/statements/" + f), f).toMatch(/SUMMARY_TONE/);
+    }
+  });
   it("fees are right-aligned numbers in a bordered table with one header row plus one row per visit", () => {
     const out = html(docFor([visit(), visit({ appointmentId: "a2", localDate: "2026-11-04" })]));
     expect(out.match(/<tr /g)?.length).toBe(3);

@@ -7,6 +7,8 @@ import { STATEMENT_TABS, tabHref, type StatementsTab } from "@/lib/finance/state
 
 // One segmented control for the screens' tabs and period switches (Studio | Clients, Month | Full history). Presentation only: the links, labels and
 // aria-current are unchanged.
+// The summary tone: a muted sage (the success tint mixed into the page's sunken neutral), not the full success surface, so a card reads restrained.
+export const SUMMARY_TONE = "border border-line bg-[color-mix(in_oklch,var(--color-success-surface)_30%,var(--color-surface-sunken))]";
 export const SEGMENT_GROUP = "inline-flex gap-0.5 rounded-lg border border-line bg-surface-sunken p-0.5";
 export const segmentClass = (active: boolean) =>
   cx("inline-flex items-center rounded-md px-3 text-sm", CONTROL_MIN_TOUCH, FOCUS_RING, active ? "bg-surface font-medium text-fg shadow-sm" : "text-fg-muted hover:text-fg");

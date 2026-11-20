@@ -2,6 +2,8 @@ import Link from "next/link";
 
 import { CONTROL_MIN_TOUCH, FOCUS_RING, cx } from "@/components/ui/control-base";
 
+import { SUMMARY_TONE } from "../statements/statements-chrome";
+
 import { localDateString } from "@/lib/booking/tz";
 
 import { SectionLabel } from "@/components/ui/section-label";
@@ -65,7 +67,7 @@ function Section({ bucket, format }: { bucket: StatementBucket; format: (c: numb
       <div>
         <SectionLabel>Collected</SectionLabel>
         <Rows bucket={bucket} kinds={COLLECTED_KINDS} format={format} />
-        <p className="mt-2 rounded-xl border border-success-fg/15 bg-success-surface/50 px-4 py-3 text-base font-semibold tabular-nums text-fg">Collected in total: {format(bucket.collectedCents)}</p>
+        <p className={cx("mt-2 rounded-xl px-4 py-3 text-base font-semibold tabular-nums text-fg", SUMMARY_TONE)}>Collected in total: {format(bucket.collectedCents)}</p>
       </div>
       <div>
         <SectionLabel>Adjustments</SectionLabel>

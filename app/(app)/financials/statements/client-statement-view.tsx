@@ -30,7 +30,7 @@ import {
 
 import { methodBreakdown } from "@/lib/finance/statement-methods";
 
-import { MonthControls, SEGMENT_GROUP, segmentClass } from "./statements-chrome";
+import { MonthControls, SEGMENT_GROUP, SUMMARY_TONE, segmentClass } from "./statements-chrome";
 
 export type ClientStatementViewProps = {
   document: StatementDocument;
@@ -104,7 +104,7 @@ export function ClientStatementView({ document: doc, month, monthLabel, maxMonth
         {notice ? <p className="text-sm text-fg" role="status">{notice}</p> : null}
       </header>
 
-      <section aria-labelledby="cs-summary" className="rounded-2xl border border-success-fg/15 bg-success-surface/50 p-5 md:p-6">
+      <section aria-labelledby="cs-summary" className={cx("rounded-2xl p-5 md:p-6", SUMMARY_TONE)}>
         <h2 id="cs-summary" className="sr-only">Summary</h2>
         <div className={cx("grid gap-5", methods ? "md:grid-cols-2 md:gap-8" : "")}>
           <div className="space-y-2">
@@ -115,7 +115,7 @@ export function ClientStatementView({ document: doc, month, monthLabel, maxMonth
             <p className="text-sm text-fg-muted">{visitCountPhrase(doc.totals.visitCount)}</p>
           </div>
           {methods ? (
-            <div className="space-y-2 md:border-l md:border-success-fg/15 md:pl-8">
+            <div className="space-y-2 md:border-l md:border-line md:pl-8">
               <p className="text-sm font-medium text-fg">How it was paid</p>
               <div className="flex h-2 overflow-hidden rounded-full bg-success-fg/10" aria-hidden="true">
                 {methods.map((m, i) => <span key={m.kind} className="h-full bg-success-fg" style={{ width: `${(m.cents / doc.totals.paidCents) * 100}%`, opacity: 1 - i * 0.22 }} />)}
@@ -128,7 +128,7 @@ export function ClientStatementView({ document: doc, month, monthLabel, maxMonth
             </div>
           ) : null}
         </div>
-        <div className="mt-4 space-y-2 border-t border-success-fg/15 pt-4">
+        <div className="mt-4 space-y-2 border-t border-line pt-4">
           <p className="text-sm text-fg">{balance.text}{balance.hint ? ` ${balance.hint}` : ""}</p>
           {awaitingLines.length > 0 ? (
             <ul className="space-y-1 text-sm text-fg">
