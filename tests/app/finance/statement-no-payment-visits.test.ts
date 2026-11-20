@@ -161,7 +161,7 @@ async function renderRows(noPayment: ReturnType<typeof noPay>[], page = 1) {
   for (const n of noPayment) visitInfo[n.appointmentId] = { clientName: `Client ${n.appointmentId}`, serviceName: "Service" };
   return renderToStaticMarkup(
     createElement(StatementView as never, {
-      view: { access: "granted", ok: true, month: "2026-11", label: "November 2026", timezone: "America/Toronto", startLocal: "2026-11-01", endLocalExclusive: "2026-12-01", statement, visitInfo, practitionerNames: { "pract-one": "Pat Synthetic" }, noPaymentVisits: noPayment },
+      view: { access: "granted", ok: true, month: "2026-11", label: "November 2026", timezone: "America/Toronto", startLocal: "2026-11-01", endLocalExclusive: "2026-12-01", statement, visitInfo, practitionerNames: { "pract-one": "Pat Synthetic" }, settlementQuotes: {}, noPaymentVisits: noPayment },
       currency: "cad",
       format: (c: number) => formatStatementMoney(c, "cad"),
       maxMonth: "2026-11",
