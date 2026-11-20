@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { barLayout, lineLayout, linePathD, niceAxis, segmentShares, truncateLabel } from "@/lib/business-analytics/chart-geometry";
+import { barLayout, isolatedPoints, lineLayout, linePathD, niceAxis, segmentShares, truncateLabel } from "@/lib/business-analytics/chart-geometry";
 
 describe("axis", () => {
   it("is zero-based and covers the data in at most the requested steps", () => {
@@ -89,5 +89,21 @@ describe("line layout", () => {
   it("consecutive values join with a line", () => {
     expect(linePathD(lineLayout([10, 20, 30], axis, 3, 200, 100))).toMatch(/^M[\d. ]+L[\d. ]+L[\d. ]+$/);
     expect(linePathD([])).toBe("");
+  });
+});
+
+describe("line layout: slots and isolated points (A4 review)", () => {
+  const axis = niceAxis(100, 4);
+  it("values beyond the slots are not drawn: only the first `slots` values are laid out", () => {
+    const pts = lineLayout([10, 20, 30, 40, 50], axis, 3, 300, 100);
+    expect(pts).toHaveLength(3);
+    expect(pts[2]?.x).toBe(300);
+  });
+  it("a single point and a point between breaks are isolated, and a point inside a stroke is not", () => {
+    expect(isolatedPoints(lineLayout([40], axis, 1, 200, 100))).toHaveLength(1);
+    const layout = lineLayout([10, null, 20, null, 30, 40], axis, 6, 500, 100);
+    expect(isolatedPoints(layout).map((p) => p.x)).toEqual([0, 200]); // the 10 and the 20; 30 and 40 are joined
+    expect(isolatedPoints([])).toEqual([]);
+    expect(isolatedPoints([null, null])).toEqual([]);
   });
 });

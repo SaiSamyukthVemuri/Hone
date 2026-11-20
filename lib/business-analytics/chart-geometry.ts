@@ -67,6 +67,15 @@ export function lineLayout(values: ReadonlyArray<number | null>, axis: AxisScale
   });
 }
 
+/** The points a stroke cannot show: a point with no drawn neighbour on either side (a single point, or one between breaks) has no segment, so it is marked on its own. */
+export function isolatedPoints(points: ReadonlyArray<LinePoint | null>): LinePoint[] {
+  const out: LinePoint[] = [];
+  points.forEach((p, i) => {
+    if (p !== null && (i === 0 || points[i - 1] === null) && (i === points.length - 1 || points[i + 1] === null)) out.push(p);
+  });
+  return out;
+}
+
 /** An SVG path for a line that breaks at every null. Coordinates are rounded to two places so the markup is stable. */
 export function linePathD(points: ReadonlyArray<LinePoint | null>): string {
   let d = "";

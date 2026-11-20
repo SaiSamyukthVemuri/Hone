@@ -5,6 +5,7 @@ vi.mock("server-only", () => ({}));
 import { FIGURE_UNAVAILABLE_COPY, unavailableText, type ReadFailure } from "@/lib/business-analytics/figure";
 import { overviewCsv, overviewCsvFileName } from "@/lib/business-analytics/overview-csv";
 import { buildOverview, type OverviewInput, type OverviewView } from "@/lib/business-analytics/overview-model";
+import { DEFAULT_BEYOND_USUAL_FACTOR } from "@/lib/business-analytics/visit-metrics";
 import { resolvePeriod } from "@/lib/business-analytics/period";
 import { CSV_BOM } from "@/lib/finance/statement-csv";
 
@@ -194,5 +195,19 @@ describe("the figures the layout correction draws are in the file too (A4)", () 
     const readable = csv(buildOverview(input({ comparison: { ok: true, value: { appointments: [appt("p1", "completed", "2026-10-05T15:00:00Z", "pr-1")], money: { ok: true, value: { cardRows: [], settlementRows: [], legacyFeeRows: [] } as never } } } })));
     expect(readable).toMatch(/Comparison by date,2026-10-05 collected,0\.00,/);
     expect(readable).toMatch(/Comparison by date,2026-10-05 completed visits,1,/);
+  });
+});
+
+describe("the beyond-usual CSV row (A4 review)", () => {
+  it("is a count row with the factor from the one constant, the notes, and the filter scope when filtered", () => {
+    const all = csv(healthy()).split("\n").find((l) => l.startsWith("Clients,Beyond their usual visit interval,")) ?? "";
+    expect(all).toMatch(/^Clients,Beyond their usual visit interval,\d+,,/);
+    expect(all).toContain(`than ${DEFAULT_BEYOND_USUAL_FACTOR} times`);
+    expect(all).not.toContain("ever seen");
+    const one = csv(buildOverview(input({ filter: { kind: "one", practitionerId: "pr-1" } }))).split("\n").find((l) => l.startsWith("Clients,Beyond their usual visit interval,")) ?? "";
+    expect(one).toContain("ever seen, not only those seen in this period");
+  });
+  it("the collected row's change and the comparison series do not use a leading sign", () => {
+    for (const line of csv(healthy()).split("\n").slice(1)) for (const cellText of line.split(",")) expect(cellText).not.toMatch(/^[+@=]/);
   });
 });

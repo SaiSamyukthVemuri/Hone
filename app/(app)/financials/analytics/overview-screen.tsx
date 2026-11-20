@@ -21,14 +21,16 @@ import {
   TABS_NOT_AVAILABLE_NOTE,
   UNATTRIBUTED_LABEL,
   UNFINISHED_CHARTS_UNAVAILABLE,
+  BEYOND_USUAL_FILTER_NOTE,
   beyondUsualNote,
   noNextBookingNote,
 } from "@/lib/business-analytics/copy";
 import { FIGURE_UNAVAILABLE_COPY, type Figure } from "@/lib/business-analytics/figure";
 import { MONEY_BASIS_NOTE, type Change } from "@/lib/business-analytics/money-metrics";
-import type { OverviewView } from "@/lib/business-analytics/overview-model";
+import type { CollectedDifference, OverviewView } from "@/lib/business-analytics/overview-model";
 import { overviewQuery, type OverviewParams } from "@/lib/business-analytics/overview-params";
 import { PERIOD_KINDS } from "@/lib/business-analytics/period";
+import { DEFAULT_BEYOND_USUAL_FACTOR } from "@/lib/business-analytics/visit-metrics";
 import type { Fact } from "@/lib/dashboard/owner-capacity-model";
 
 import { Donut, HBars, LineChart } from "./charts";
@@ -71,6 +73,8 @@ function bucketLabel(key: string): string {
   if (!(mi >= 0 && mi < 12)) return key;
   return d ? `${Number(d)} ${MONTHS[mi]}` : `${MONTHS[mi]} ${y}`;
 }
+/** "day"/"days" or "month"/"months" for the series' own unit. */
+const unitWord = (unit: "day" | "month", n: number): string => (unit === "day" ? (n === 1 ? "day" : "days") : n === 1 ? "month" : "months");
 function asOfText(local: string): string {
   const [y, m, d] = local.split("-");
   const mi = Number(m) - 1;
@@ -190,10 +194,9 @@ function ChangeLine({ change, cmp }: { change: Change; cmp: string }) {
   return <p className="text-sm text-fg-muted">{changeText(change, cmp)}</p>;
 }
 
-/** Words for a difference in collected: "$248 more collected", "$40 less collected" or "No change in collected". */
-function differenceText(now: number, before: number, fmt: (c: number) => string): string {
-  const d = now - before;
-  return d === 0 ? "No change in collected" : `${fmt(Math.abs(d))} ${d > 0 ? "more" : "less"} collected`;
+/** Words for the model's difference: "$248 more collected", "$40 less collected" or "No change in collected". The screen only formats; the subtraction is the model's. */
+function differenceText(d: CollectedDifference, fmt: (c: number) => string): string {
+  return d.direction === "same" ? "No change in collected" : `${fmt(d.cents)} ${d.direction} collected`;
 }
 
 export function OverviewScreen({ view, params, notices, practitionerOptions, format, print = false }: OverviewScreenProps) {
@@ -260,7 +263,7 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
             <div><dt className="font-medium">Not added together</dt><dd className="text-fg-muted">{NEVER_SUMMED_NOTE}</dd></div>
             <div><dt className="font-medium">First-time</dt><dd className="text-fg-muted">{FIRST_TIME_NOTE}</dd></div>
             <div><dt className="font-medium">Visit interval</dt><dd className="text-fg-muted">{INTERVAL_NOTE}</dd></div>
-            <div><dt className="font-medium">Beyond their usual visit interval</dt><dd className="text-fg-muted">{beyondUsualNote(1.5)}</dd></div>
+            <div><dt className="font-medium">Beyond their usual visit interval</dt><dd className="text-fg-muted">{beyondUsualNote(DEFAULT_BEYOND_USUAL_FACTOR)} {BEYOND_USUAL_FILTER_NOTE}</dd></div>
             <div><dt className="font-medium">Who sees this page</dt><dd className="text-fg-muted">{ANALYTICS_ACCESS_NOTE}</dd></div>
           </dl>
         </details>
@@ -333,9 +336,9 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
                 />
                 {view.previousSeries.available ? (
                   <p className="text-xs text-fg-muted">
-                    Each point on the dashed line is the same day number of {cmp}.
-                    {prevCount !== null && curCount !== null && prevCount < curCount ? ` That period has ${prevCount} ${prevCount === 1 ? "day" : "days"}, so its line ends sooner.` : ""}
-                    {prevCount !== null && curCount !== null && prevCount > curCount ? ` That period has ${prevCount} ${prevCount === 1 ? "day" : "days"}; only the first ${curCount} are drawn.` : ""}
+                    {`Each point on the dashed line is the same ${s.unit === "day" ? "day" : "month"} number of ${cmp}.`}
+                    {prevCount !== null && curCount !== null && prevCount < curCount ? ` That period has ${prevCount} ${unitWord(s.unit, prevCount)}, so its line ends sooner.` : ""}
+                    {prevCount !== null && curCount !== null && prevCount > curCount ? ` That period has ${prevCount} ${unitWord(s.unit, prevCount)}; only the first ${curCount} are drawn.` : ""}
                   </p>
                 ) : (
                   <p className="text-xs text-fg-muted" role="status">{FIGURE_UNAVAILABLE_COPY[(view.previousSeries as { reason: keyof typeof FIGURE_UNAVAILABLE_COPY }).reason]} The previous period is not drawn.</p>
@@ -383,11 +386,11 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <Card id="ov-month-collected" title="Collections compared" figure={view.collected}>
             {(c) =>
-              c.previousCents === null ? (
+              c.difference === null ? (
                 <p className="text-sm text-fg">The comparison is not available.</p>
               ) : (
                 <>
-                  <p className="text-xl font-semibold text-fg">{differenceText(c.headlineCents, c.previousCents, format)}</p>
+                  <p className="text-xl font-semibold text-fg">{differenceText(c.difference, format)}</p>
                   <p className="text-sm text-fg-muted">{view.currentLabel} against {cmp}. {changeText(c.change, cmp)}</p>
                 </>
               )
@@ -434,7 +437,7 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
           <Card id="ov-nonext" title="Clients without a next booking" figure={view.noNextBooking} note={noNextBookingNote()}>
             {(n) => <p className={BIG}>{n.count}</p>}
           </Card>
-          <Card id="ov-beyond" title="Beyond their usual visit interval" figure={view.beyondUsual} note={beyondUsualNote(1.5)}>
+          <Card id="ov-beyond" title="Beyond their usual visit interval" figure={view.beyondUsual} note={<>{beyondUsualNote(DEFAULT_BEYOND_USUAL_FACTOR)}{view.filterKind !== "all" ? ` ${BEYOND_USUAL_FILTER_NOTE}` : ""}</>}>
             {(b) => (
               <>
                 <p className={BIG}>{b.count}</p>

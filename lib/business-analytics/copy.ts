@@ -65,5 +65,6 @@ export const ANALYTICS_TABS = ["Overview", "Clients", "Capacity", "Treatments", 
 export const TABS_NOT_AVAILABLE_NOTE = "Clients, Capacity, Treatments and Team are not available yet.";
 /** Charts with unfinished sections come from clinical records, which need their own permissions design before this page can count them. */
 export const UNFINISHED_CHARTS_UNAVAILABLE = "Not available yet. This comes from clinical records, which need their own permissions design before Analytics can show it.";
-export const BEYOND_USUAL_FACTOR_SHOWN = 1.5;
 export const NOT_ENOUGH_HISTORY_NOTE = (n: number): string => `${n} ${n === 1 ? "client has" : "clients have"} fewer than two visit dates and ${n === 1 ? "is" : "are"} not judged.`;
+/** Said under a team-member filter: the population is every client that team member has ever seen, not only those seen in the period. */
+export const BEYOND_USUAL_FILTER_NOTE = "With a team-member filter, this counts every client that team member has ever seen, not only those seen in this period. Each client's gap still uses all of their visits.";

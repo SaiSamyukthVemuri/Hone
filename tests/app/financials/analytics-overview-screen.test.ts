@@ -6,6 +6,7 @@ vi.mock("server-only", () => ({}));
 
 import { OverviewScreen } from "@/app/(app)/financials/analytics/overview-screen";
 import { FIGURE_UNAVAILABLE_COPY, type ReadFailure } from "@/lib/business-analytics/figure";
+import { DEFAULT_BEYOND_USUAL_FACTOR } from "@/lib/business-analytics/visit-metrics";
 import { buildOverview, type OverviewInput, type OverviewView } from "@/lib/business-analytics/overview-model";
 import type { OverviewParams } from "@/lib/business-analytics/overview-params";
 import { resolvePeriod } from "@/lib/business-analytics/period";
@@ -334,5 +335,49 @@ describe("the layout correction (A4)", () => {
   it("an average-paid change appears only when the average is known", () => {
     const view = { ...healthy(), averagePaid: { available: true, value: { averageCents: { known: false, reason: "No completed visit." }, excludedUnknownVisits: 0 } } } as unknown as OverviewView;
     expect(text(card(render(view), "ov-avgpaid") ?? "")).not.toMatch(/compared with/);
+  });
+});
+
+describe("review round on A4 (V1 to V5, Codex P2s, population note)", () => {
+  const text = (h: string) => h.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/\s+/g, " ");
+  const oneDay = (): OverviewView => {
+    const view = healthy();
+    const series = { available: true, value: { unit: "day", points: [{ key: "2026-11-01", collectedCents: 9000, completedVisits: 1 }] } };
+    return { ...view, series, previousSeries: series } as unknown as OverviewView;
+  };
+  it("Codex P2: a one-point series draws a visible marker (a circle), and its row is still in the data table", () => {
+    const c = card(render(oneDay()), "ov-series") ?? "";
+    expect((c.match(/<circle[^>]*data-isolated="current"/g) ?? []).length).toBe(1);
+    expect((c.match(/<circle[^>]*data-isolated="previous"/g) ?? []).length).toBe(1);
+    expect((c.match(/<tr class="border-b border-line\/60"/g) ?? []).length).toBe(1);
+    expect(c).toContain("$90.00");
+  });
+  it("a multi-point series has no isolated marker, because its stroke is visible", () => {
+    expect(card(render(healthy()), "ov-series") ?? "").not.toContain("data-isolated");
+  });
+  it("V1: the screen says the difference from the model's direction, and says nothing when the model has none", () => {
+    const v = healthy();
+    const c = (d: unknown) => text(card(render({ ...v, collected: { available: true, value: { ...(v.collected as { value: object }).value, difference: d } } } as unknown as OverviewView), "ov-month-collected") ?? "");
+    expect(c({ direction: "more", cents: 24800 })).toContain("$248.00 more collected");
+    expect(c({ direction: "less", cents: 4000 })).toContain("$40.00 less collected");
+    expect(c({ direction: "same", cents: 0 })).toContain("No change in collected");
+    expect(c(null)).toContain("The comparison is not available.");
+  });
+  it("V5: a month-unit series speaks of months, not days", () => {
+    const view = healthy();
+    const months = (n: number) => ({ available: true, value: { unit: "month", points: Array.from({ length: n }, (_, i) => ({ key: `2026-0${i + 1}`, collectedCents: 100, completedVisits: 1 })) } });
+    const c = text(card(render({ ...view, series: months(3), previousSeries: months(2) } as unknown as OverviewView), "ov-series") ?? "");
+    expect(c).toContain("same month number");
+    expect(c).toContain("That period has 2 months, so its line ends sooner.");
+    expect(c).not.toMatch(/same day number|That period has \d+ days/);
+  });
+  it("population note: under a team-member filter the beyond-usual card says it counts every client that team member has ever seen", () => {
+    const view = healthy();
+    expect(text(card(render({ ...view, filterKind: "one" } as OverviewView), "ov-beyond") ?? "")).toContain("every client that team member has ever seen, not only those seen in this period");
+    expect(text(card(render(view), "ov-beyond") ?? "")).not.toContain("ever seen");
+    expect(text(render(view))).toContain("every client that team member has ever seen"); // the definitions always say it
+  });
+  it("V5: the factor on the page is the one the model uses", () => {
+    expect(text(card(render(healthy()), "ov-beyond") ?? "")).toContain(`than ${DEFAULT_BEYOND_USUAL_FACTOR} times`);
   });
 });

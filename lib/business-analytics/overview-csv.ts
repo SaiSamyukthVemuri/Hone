@@ -1,10 +1,11 @@
 import { csvCell } from "@/lib/csv";
 import { CSV_BOM, decimalAmount } from "@/lib/finance/statement-csv";
 
-import { ANALYTICS_ACCESS_NOTE, COLLECTED_LABEL, NOT_ENOUGH_HISTORY_NOTE, beyondUsualNote, EVIDENCE_LABELS, EVIDENCE_NOT_READABLE_NOTE, FIRST_TIME_NOTE, INTERVAL_NOTE, MISSING_PRICE_EVIDENCE_LABEL, NEVER_SUMMED_NOTE, SERVICE_VALUE_LABEL, noNextBookingNote } from "./copy";
+import { ANALYTICS_ACCESS_NOTE, COLLECTED_LABEL, BEYOND_USUAL_FILTER_NOTE, NOT_ENOUGH_HISTORY_NOTE, beyondUsualNote, EVIDENCE_LABELS, EVIDENCE_NOT_READABLE_NOTE, FIRST_TIME_NOTE, INTERVAL_NOTE, MISSING_PRICE_EVIDENCE_LABEL, NEVER_SUMMED_NOTE, SERVICE_VALUE_LABEL, noNextBookingNote } from "./copy";
 import { unavailableText, type Figure } from "./figure";
 import { MONEY_BASIS_NOTE, type Change } from "./money-metrics";
 import type { OverviewView } from "./overview-model";
+import { DEFAULT_BEYOND_USUAL_FACTOR } from "./visit-metrics";
 
 // ===========================================================================
 // The Overview as a spreadsheet file. PURE: no I/O, no clock, no request.
@@ -147,7 +148,7 @@ export function overviewCsv(view: OverviewView, opts: { preparedOn: string }): s
     add("Clients", "Average days between visits", i.pooledAverageDays.known ? String(Math.round(i.pooledAverageDays.value)) : `Not available: ${i.pooledAverageDays.reason}`, `${i.clientsWithInterval} clients with two or more visits; ${i.clientsWithoutInterval} left out. ${INTERVAL_NOTE}`),
   );
   fig("Clients", "Beyond their usual visit interval", view.beyondUsual, (b) =>
-    add("Clients", "Beyond their usual visit interval", String(b.count), `${beyondUsualNote(1.5)}${b.notEnoughHistory > 0 ? ` ${NOT_ENOUGH_HISTORY_NOTE(b.notEnoughHistory)}` : ""}`),
+    add("Clients", "Beyond their usual visit interval", String(b.count), `${beyondUsualNote(DEFAULT_BEYOND_USUAL_FACTOR)}${view.filterKind !== "all" ? ` ${BEYOND_USUAL_FILTER_NOTE}` : ""}${b.notEnoughHistory > 0 ? ` ${NOT_ENOUGH_HISTORY_NOTE(b.notEnoughHistory)}` : ""}`),
   );
   fig("Clients", "Clients with no next booking", view.noNextBooking, (n) => add("Clients", "Clients with no next booking", String(n.count), noNextBookingNote()));
 

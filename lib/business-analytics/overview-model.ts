@@ -24,7 +24,7 @@ import {
   type PaidVisit,
   type SeriesPoint,
 } from "./money-metrics";
-import { bucketsOf, statementsClaim, type PeriodWindow, type ResolvedPeriod, type StatementsClaim, type BucketUnit } from "./period";
+import { bucketUnit, bucketsOf, statementsClaim, type PeriodWindow, type ResolvedPeriod, type StatementsClaim, type BucketUnit } from "./period";
 import { reconcileWithStatement } from "./reconcile";
 import { serviceValueToCollected, type CompletedVisitMoney, type ReconciliationLine } from "./reconciliation-line";
 import { PRICE_EVIDENCE_CLASSES, resolveVisits, serviceValue, type PriceCandidate, type PriceEvidenceClass } from "./service-value";
@@ -63,6 +63,14 @@ export type WindowData = { appointments: readonly AssembleAppointment[]; money: 
 
 /** Completed-or-not appointments read for the history figures. Per-client data stays inside this module; only counts leave it. */
 export type HistoryData = { appointments: readonly AssembleAppointment[] };
+/** Collected now against the comparison period, computed here so the screen subtracts nothing: more, less or the same, and by how many cents (never negative). Null when the comparison could not be read. */
+export type CollectedDifference = { direction: "more" | "less" | "same"; cents: number };
+export function collectedDifference(nowCents: number, previousCents: number | null): CollectedDifference | null {
+  if (previousCents === null) return null;
+  const d = nowCents - previousCents;
+  return { direction: d > 0 ? "more" : d < 0 ? "less" : "same", cents: Math.abs(d) };
+}
+
 export type FollowThroughData = { past: readonly AssembleAppointment[]; future: readonly AssembleAppointment[] };
 
 export type PractitionerInfo = { id: string; displayName: string | null; active: boolean };
@@ -119,7 +127,7 @@ export type OverviewView = {
   filterKind: PractitionerFilter["kind"];
   currency: string | null;
   /** `previousCents` is the comparison period's collected (null when it could not be read), so the difference can be stated in words. */
-  collected: Figure<{ headlineCents: number; split: CollectedSplit; caveats: CollectedCaveats; change: Change; previousCents: number | null }>;
+  collected: Figure<{ headlineCents: number; split: CollectedSplit; caveats: CollectedCaveats; change: Change; previousCents: number | null; difference: CollectedDifference | null }>;
   completedVisits: Figure<{ count: number; change: Change }>;
   activeClients: Figure<{ count: number; withoutClient: number; change: Change }>;
   visitsPerClient: Figure<Fact<number>>;
@@ -142,7 +150,7 @@ export type OverviewView = {
   /**
    * A count only, as of now: clients with at least two completed visit dates, no confirmed booking still to come with anyone, whose days since their last
    * completed visit exceed 1.5 times their OWN average gap (the client's whole history, any practitioner). A team-member filter narrows who is counted (the
-   * clients that team member saw), not the history or the future-booking test. Clients with fewer than two visit dates are counted apart, never flagged.
+   * clients that team member has EVER seen, not only those seen in the period, and never the history or the future-booking test. Clients with fewer than two visit dates are counted apart, never flagged.
    */
   beyondUsual: Figure<{ count: number; notEnoughHistory: number }>;
 };
@@ -197,7 +205,7 @@ function visitFrequency(mine: readonly VisitFact[], w: PeriodWindow): VisitFrequ
   return { one: counts.filter((n) => n === 1).length, two: counts.filter((n) => n === 2).length, threePlus: counts.filter((n) => n >= 3).length };
 }
 
-function computeWindow(data: WindowData, w: PeriodWindow, o: Pick<OverviewInput, "timezone" | "currency" | "nowIso" | "filter" | "practitioners" | "classesRead">): Window {
+function computeWindow(data: WindowData, w: PeriodWindow, o: Pick<OverviewInput, "timezone" | "currency" | "nowIso" | "filter" | "practitioners" | "classesRead"> & { unit: BucketUnit }): Window {
   const facts: VisitFact[] = data.appointments.map((a) => ({
     appointmentId: a.id,
     clientId: a.clientId,
@@ -262,8 +270,8 @@ function computeWindow(data: WindowData, w: PeriodWindow, o: Pick<OverviewInput,
     return { appointmentId: v.appointmentId, state: d.state, paidCents: d.paidCents };
   });
   const localDateByAppointment = new Map(facts.filter((x) => ids.has(x.appointmentId)).map((x) => [x.appointmentId, x.localDate]));
-  const series = collectionsSeries({ window: w, buckets: bucketsOf(w).buckets, statement: f.statement, localDateByAppointment, classes });
-  const unit = bucketsOf(w).unit;
+  const series = collectionsSeries({ window: w, unit: o.unit, buckets: bucketsOf(w, o.unit).buckets, statement: f.statement, localDateByAppointment, classes });
+  const unit = o.unit;
 
   // A kind of evidence that was not read contributes NOTHING, anywhere: its candidates are dropped before any price is resolved, so the subtotals, the
   // with-evidence totals and the line to collected money all agree with the "not available" shown for it.
@@ -353,7 +361,7 @@ function historyFigures(input: OverviewInput, currentData: WindowData): Pick<Ove
 const numberOf = <T,>(f: Figure<T>, pick: (v: T) => number): number | null => (f.available ? pick(f.value) : null);
 
 export function buildOverview(input: OverviewInput): OverviewView {
-  const common = { timezone: input.timezone, currency: input.currency, nowIso: input.nowIso, filter: input.filter, practitioners: input.practitioners, classesRead: input.classesRead };
+  const common = { timezone: input.timezone, currency: input.currency, nowIso: input.nowIso, filter: input.filter, practitioners: input.practitioners, classesRead: input.classesRead, unit: bucketUnit(input.period.current) };
   const cur = input.current.ok ? computeWindow(input.current.value, input.period.current, common) : null;
   const prev = input.comparison.ok ? computeWindow(input.comparison.value, input.period.comparison, common) : null;
   const fail = (read: FigureRead<WindowData>): ReadFailure => (read.ok ? "read_failed" : read.reason);
@@ -386,7 +394,7 @@ export function buildOverview(input: OverviewInput): OverviewView {
     : cur.activeClients;
   view.visitsPerClient = cur.visitsPerClient;
   view.collected = cur.collected.available
-    ? { available: true, value: { ...cur.collected.value, change: changeOf(cur.collected.value.headlineCents, prev ? numberOf(prev.collected, (v) => v.headlineCents) : null, cmp), previousCents: prev ? numberOf(prev.collected, (v) => v.headlineCents) : null } }
+    ? { available: true, value: { ...cur.collected.value, change: changeOf(cur.collected.value.headlineCents, prev ? numberOf(prev.collected, (v) => v.headlineCents) : null, cmp), previousCents: prev ? numberOf(prev.collected, (v) => v.headlineCents) : null, difference: collectedDifference(cur.collected.value.headlineCents, prev ? numberOf(prev.collected, (v) => v.headlineCents) : null) } }
     : cur.collected;
   view.averagePaid = cur.averagePaid;
   const avg = (w: Window | null): number | null => (w && w.averagePaid.available && w.averagePaid.value.averageCents.known ? w.averagePaid.value.averageCents.value : null);

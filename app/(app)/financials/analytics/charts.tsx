@@ -1,4 +1,4 @@
-import { lineLayout, linePathD, niceAxis, segmentShares, truncateLabel } from "@/lib/business-analytics/chart-geometry";
+import { isolatedPoints, lineLayout, linePathD, niceAxis, segmentShares, truncateLabel } from "@/lib/business-analytics/chart-geometry";
 
 // ===========================================================================
 // Server-rendered SVG and CSS charts, each with the SAME numbers as text. No script, no chart library, nothing client-side.
@@ -93,6 +93,9 @@ export function LineChart({
           })}
           {previous ? <path d={linePathD(prev)} fill="none" stroke={INK_SOFT} strokeWidth={2} strokeDasharray="5 3" strokeLinejoin="round" strokeLinecap="round" /> : null}
           <path d={linePathD(cur)} fill="none" stroke={INK} strokeWidth={2.5} strokeLinejoin="round" strokeLinecap="round" />
+          {/* A point with no neighbour has no segment to draw, so it gets a marker (the numbers stay in the table). */}
+          {previous ? isolatedPoints(prev).map((p, i) => <circle key={`pp${i}`} data-isolated="previous" cx={p.x} cy={p.y} r={3.5} fill={INK_SOFT} />) : null}
+          {isolatedPoints(cur).map((p, i) => <circle key={`cp${i}`} data-isolated="current" cx={p.x} cy={p.y} r={3.5} fill={INK} />)}
           {points.map((p, i) =>
             i % every === 0 || i === slots - 1 ? (
               <text key={p.key} x={slots === 1 ? plotW / 2 : (i * plotW) / (slots - 1)} y={plotH + 18} textAnchor={slots === 1 ? "middle" : i === 0 ? "start" : i === slots - 1 ? "end" : "middle"} fontSize={11} fill={AXIS_TEXT}>
