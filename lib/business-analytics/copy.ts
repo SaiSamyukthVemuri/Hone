@@ -45,3 +45,12 @@ export const EVIDENCE_LABELS = {
   online_booking: "Price shown at online booking",
 } as const;
 export const MISSING_PRICE_EVIDENCE_LABEL = "Completed visits with no price evidence";
+
+// ---------------------------------------------------------------------------
+// Labels the Overview needs that are about people and unread sources. None of them is a name or an id.
+// ---------------------------------------------------------------------------
+export const UNATTRIBUTED_LABEL = "Unattributed";
+export const FORMER_TEAM_MEMBER_LABEL = "Former team member";
+export const UNNAMED_TEAM_MEMBER_LABEL = "Team member";
+/** Said where a kind of price evidence could not be read. It is NOT a zero and NOT "no visit had this". */
+export const EVIDENCE_NOT_READABLE_NOTE = "This kind of price evidence cannot be read yet, so it is not counted here. That is not a zero, and it does not mean no visit has it.";
