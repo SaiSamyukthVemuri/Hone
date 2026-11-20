@@ -24,6 +24,7 @@ import {
   type PaidVisit,
   type SeriesPoint,
 } from "./money-metrics";
+import { rankNamedClients, type ClientFigure, type NameLookup, type NamedClients } from "./named-clients";
 import { bucketUnit, bucketsOf, statementsClaim, type PeriodWindow, type ResolvedPeriod, type StatementsClaim, type BucketUnit } from "./period";
 import { reconcileWithStatement } from "./reconcile";
 import { serviceValueToCollected, type CompletedVisitMoney, type ReconciliationLine } from "./reconciliation-line";
@@ -91,6 +92,8 @@ export type OverviewInput = {
   followThrough: FigureRead<FollowThroughData>;
   /** The kinds of price evidence the loader could actually read. A kind not listed is "not available", never a zero. */
   classesRead: readonly PriceEvidenceClass[];
+  /** Display names for the clients seen in the period, read by the server for exactly the ids `candidateClientIds` returned. Absent or failed: the named lists say so and nothing else changes. */
+  names?: NameLookup;
 };
 
 export type ClassView = { read: true; visits: number; cents: number } | { read: false };
@@ -147,6 +150,8 @@ export type OverviewView = {
   interval: Figure<StudioInterval>;
   /** A count only, as of now. The clients themselves are listed on the Clients tab, never here. */
   noNextBooking: Figure<{ count: number }>;
+  /** The named lists (top spenders, most visits, most frequent returns) and the highest spend. Display names and figures only: no client id, no link. Never in the spreadsheet or the printed page. */
+  namedClients: Figure<NamedClients>;
   /**
    * A count only, as of now: clients with at least two completed visit dates, no confirmed booking still to come with anyone, whose days since their last
    * completed visit exceed 1.5 times their OWN average gap (the client's whole history, any practitioner). A team-member filter narrows who is counted (the
@@ -166,6 +171,8 @@ type Window = {
   byPractitioner: Figure<ByPractitionerRow[]>;
   serviceValue: Figure<ServiceValueView>;
   reconciliation: Figure<ReconciliationLine>;
+  /** Money kept per client (by client id) on the completed visits of THIS window; server-side only, never copied into the view. Null per client when no visit's payment is known. */
+  clientPaid?: Map<string, number | null>;
 };
 
 const unavailable = (reason: ReadFailure): { available: false; reason: ReadFailure } => ({ available: false, reason });
@@ -269,6 +276,15 @@ function computeWindow(data: WindowData, w: PeriodWindow, o: Pick<OverviewInput,
     const d = classifyVisit(v);
     return { appointmentId: v.appointmentId, state: d.state, paidCents: d.paidCents };
   });
+  const clientOf = new Map(facts.map((x) => [x.appointmentId, x.clientId] as const));
+  const clientPaid = new Map<string, number | null>();
+  for (const p of paid) {
+    const c = clientOf.get(p.appointmentId);
+    if (c === null || c === undefined) continue;
+    if (p.state === "unknown") {
+      if (!clientPaid.has(c)) clientPaid.set(c, null); // a payment not yet known adds nothing and is never counted as 0
+    } else clientPaid.set(c, (clientPaid.get(c) ?? 0) + p.paidCents);
+  }
   const localDateByAppointment = new Map(facts.filter((x) => ids.has(x.appointmentId)).map((x) => [x.appointmentId, x.localDate]));
   const series = collectionsSeries({ window: w, unit: o.unit, buckets: bucketsOf(w, o.unit).buckets, statement: f.statement, localDateByAppointment, classes });
   const unit = o.unit;
@@ -305,6 +321,7 @@ function computeWindow(data: WindowData, w: PeriodWindow, o: Pick<OverviewInput,
   return {
     ...base,
     collected: { available: true, value: { headlineCents: headlineCollected(split.split), split: split.split, caveats: collectedCaveats(f.statement) } },
+    clientPaid,
     averagePaid: { available: true, value: averagePaidPerVisit(paid) },
     series: series.ok ? { available: true, value: { unit, points: series.points } } : unavailable("not_reconciled"),
     byPractitioner,
@@ -358,6 +375,34 @@ function historyFigures(input: OverviewInput, currentData: WindowData): Pick<Ove
   return { returning, interval, noNextBooking: next, beyondUsual: beyond };
 }
 
+/** The clients the named lists could show: those with a completed visit in the period (team-member filter applied). The server reads display names for exactly these, and for no one else. */
+export function candidateClientIds(input: OverviewInput): string[] {
+  if (!input.current.ok) return [];
+  return activeClientIds(visitsOf(factsOf(input.current.value.appointments, input.timezone), input.filter), input.period.current);
+}
+
+function namedClientsFigure(input: OverviewInput, cur: Window): Figure<NamedClients> {
+  if (!input.current.ok) return unavailable(input.current.reason);
+  const w = input.period.current;
+  const tz = input.timezone;
+  const currentFacts = factsOf(input.current.value.appointments, tz);
+  const perClient = new Map<string, number>();
+  for (const v of visitsInWindow(visitsOf(currentFacts, input.filter), w)) if (v.clientId !== null) perClient.set(v.clientId, (perClient.get(v.clientId) ?? 0) + 1);
+
+  // The average gap is the same one the "average gap between visits" card uses: the client's completed visit dates up to the period's last day.
+  const gaps = new Map<string, number | null>();
+  let historyFailure: ReadFailure | null = null;
+  if (input.history.ok) {
+    const all = [...factsOf(input.history.value.appointments, tz), ...currentFacts];
+    const histories = clientHistories(visitsOf(all, input.filter).filter((v) => v.clientId !== null && perClient.has(v.clientId)), w.lastLocal);
+    for (const [id, h] of histories) gaps.set(id, h.averageGapDays.known ? h.averageGapDays.value : null);
+  } else historyFailure = input.history.reason;
+
+  const moneyFailure: ReadFailure | null = cur.clientPaid ? null : cur.collected.available ? "read_failed" : cur.collected.reason;
+  const figures: ClientFigure[] = [...perClient].map(([clientId, periodVisits]) => ({ clientId, periodVisits, periodPaidCents: cur.clientPaid?.get(clientId) ?? null, averageGapDays: gaps.get(clientId) ?? null }));
+  return rankNamedClients({ figures, seen: perClient.size, lookup: input.names ?? { ok: false }, moneyFailure, historyFailure });
+}
+
 const numberOf = <T,>(f: Figure<T>, pick: (v: T) => number): number | null => (f.available ? pick(f.value) : null);
 
 export function buildOverview(input: OverviewInput): OverviewView {
@@ -382,7 +427,7 @@ export function buildOverview(input: OverviewInput): OverviewView {
     currency: input.currency,
     collected: curFail, completedVisits: curFail, activeClients: curFail, visitsPerClient: curFail, averagePaid: curFail, averagePaidChange: { kind: "unavailable" },
     series: curFail, previousSeries: curFail, visitFrequency: curFail, byPractitioner: curFail, serviceValue: curFail, reconciliation: curFail,
-    returning: curFail, interval: curFail, noNextBooking: curFail, beyondUsual: curFail,
+    returning: curFail, interval: curFail, noNextBooking: curFail, beyondUsual: curFail, namedClients: curFail,
   };
   if (!cur) return view;
   const cmp = prev !== null;
@@ -406,5 +451,6 @@ export function buildOverview(input: OverviewInput): OverviewView {
   view.serviceValue = cur.serviceValue;
   view.reconciliation = cur.reconciliation;
   if (input.current.ok) Object.assign(view, historyFigures(input, input.current.value));
+  view.namedClients = namedClientsFigure(input, cur);
   return view;
 }

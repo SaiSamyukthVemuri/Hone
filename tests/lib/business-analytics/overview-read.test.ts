@@ -79,6 +79,50 @@ describe("the Overview read: whole or nothing, studio-scoped, never writing", ()
       for (const e of eqs) expect(e.args[1]).toBe(studio.id);
     }
   });
+  it("reads display names for the clients seen in the period only, archived excluded in the query, and shows them", async () => {
+    const res = healthy();
+    res.clients = ok([{ id: "c1", name: "Rowan Client" }]);
+    const { client, calls } = recording(res);
+    const r = await load("owner", client);
+    const nameCalls = calls.filter((c) => c.table === "clients");
+    expect(nameCalls.find((c) => c.method === "select")?.args).toEqual(["preferred_name, id, name"]);
+    expect(nameCalls.find((c) => c.method === "is")?.args).toEqual(["archived_at", null]);
+    expect(nameCalls.find((c) => c.method === "in")?.args).toEqual(["id", ["c1"]]);
+    expect(r).toMatchObject({ access: "granted", ok: true });
+    const view = (r as { view: { namedClients: { available: boolean; value?: { mostVisits: Array<{ name: string }> } } } }).view;
+    expect(view.namedClients.value?.mostVisits.map((x) => x.name)).toEqual(["Rowan Client"]);
+  });
+  it("never reads client names when asked not to (the printed page and the spreadsheet), and still returns the view", async () => {
+    const res = healthy();
+    res.clients = ok([{ id: "c1", name: "Rowan Client" }]);
+    const { client, calls } = recording(res);
+    const { loadOverview } = await import("@/lib/business-analytics/server/overview-read");
+    const r = await loadOverview({ role: "owner" }, studio, "cad", {}, { strict: true, names: false }, NOW, client);
+    expect(r).toMatchObject({ access: "granted", ok: true });
+    expect(calls.filter((c) => c.table === "clients")).toEqual([]);
+  });
+  it("under a team-member filter, names are asked for only the clients that team member saw in the period", async () => {
+    const res = healthy();
+    res.practitioners = ok([{ id: "pr-1", display_name: "Ada Example", active: true }, { id: "pr-2", display_name: "Bo Example", active: true }]);
+    res.appointments = ok([
+      { id: "a1", client_id: "c1", starts_at: "2026-11-03T15:00:00+00:00", status: "completed", practitioner_id: "pr-1", service_id: null, duration_minutes: 30 },
+      { id: "a2", client_id: "c2", starts_at: "2026-11-04T15:00:00+00:00", status: "completed", practitioner_id: "pr-2", service_id: null, duration_minutes: 30 },
+      { id: "a3", client_id: "c3", starts_at: "2026-11-05T15:00:00+00:00", status: "cancelled", practitioner_id: "pr-1", service_id: null, duration_minutes: 30 },
+    ]);
+    res.clients = ok([{ id: "c1", name: "One" }]);
+    const { client, calls } = recording(res);
+    await load("owner", client, { practitioner: "pr-1" });
+    expect(calls.filter((c) => c.table === "clients" && c.method === "in").map((c) => c.args[1])).toEqual([["c1"]]);
+  });
+  it("a failed name read makes only the named lists unavailable", async () => {
+    const res = healthy();
+    res.clients = { data: null, error: { message: "boom" } };
+    const r = await load("owner", recording(res).client);
+    expect(r).toMatchObject({ access: "granted", ok: true });
+    const view = (r as { view: { namedClients: unknown; completedVisits: { available: boolean } } }).view;
+    expect(view.namedClients).toEqual({ available: false, reason: "read_failed" });
+    expect(view.completedVisits.available).toBe(true);
+  });
   it("a failed practitioner read fails the whole page, as labels must not be guessed", async () => {
     const res = healthy();
     res.practitioners = { data: null, error: { message: "boom" } };
