@@ -245,3 +245,26 @@ describe("at the appointments row cap nothing partial is ever listed", () => {
     expect(src).toMatch(/appts\.length >= APPT_CAP\) return \{ access: "granted", ok: false, reason: "too_many_appointments" \}/);
   });
 });
+
+describe("the empty-money sentence never contradicts a table of no-payment rows", () => {
+  const emptyMoney = async (noPayment: ReturnType<typeof noPay>[]) => {
+    const { StatementView } = await import("@/app/(app)/financials/statement/statement-view");
+    const statement = buildStatement({ studioCurrency: "cad", appointments: [], cardRows: [], settlementRows: [], legacyFeeRows: [] });
+    const visitInfo: Record<string, { clientName: string; clientId: string | null; serviceName: string | null; minutes: number | null }> = {};
+    for (const n of noPayment) visitInfo[n.appointmentId] = { clientName: `Client ${n.appointmentId}`, clientId: null, serviceName: null, minutes: null };
+    return renderToStaticMarkup(createElement(StatementView as never, { view: { access: "granted", ok: true, month: "2026-11", label: "November 2026", timezone: "America/Toronto", startLocal: "2026-11-01", endLocalExclusive: "2026-12-01", statement, visitInfo, practitionerNames: {}, settlementQuotes: {}, noPaymentVisits: noPayment }, currency: "cad", format: (c: number) => formatStatementMoney(c, "cad"), maxMonth: "2026-11" }));
+  };
+  it("with no-payment rows the sentence says no visit has recorded money AND that completed visits without a payment are listed below, above a table that has them", async () => {
+    const out = await emptyMoney([noPay("np1", 4)]);
+    expect(out).toContain("No visit this month has recorded money. Completed visits without a payment are listed below.");
+    expect(out).not.toContain("No visit has recorded money this month.");
+    expect(out.indexOf("are listed below")).toBeLessThan(out.indexOf("Client np1"));
+    expect(out).toContain("No payment recorded");
+  });
+  it("with no no-payment rows the original sentence is unchanged and no table renders", async () => {
+    const out = await emptyMoney([]);
+    expect(out).toContain("No visit has recorded money this month.");
+    expect(out).not.toContain("listed below");
+    expect(out).not.toMatch(/Client np|No payment recorded/);
+  });
+});

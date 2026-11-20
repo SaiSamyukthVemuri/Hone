@@ -288,7 +288,11 @@ export function StatementView({
           <h2 id="stmt-visits" className="text-[21px] font-semibold tracking-[-0.65px] text-fg">Visits</h2>
           <p className="text-sm text-[#5d685f]">{view.label} · Latest first</p>
         </div>
-        {statement.visits.length === 0 ? <p className="text-sm text-fg">No visit has recorded money this month.</p> : null}
+        {statement.visits.length === 0 ? (
+          <p className="text-sm text-fg">
+            {view.noPaymentVisits.length > 0 ? "No visit this month has recorded money. Completed visits without a payment are listed below." : "No visit has recorded money this month."}
+          </p>
+        ) : null}
         {rows.length > 0 ? (
           <div className="overflow-hidden rounded-xl border border-[#dbe0d8] bg-white">
             <div className={cx(LINE_GRID, "bg-[#f1f3ef] !text-xs font-semibold text-[#637067]")} aria-hidden="true">
