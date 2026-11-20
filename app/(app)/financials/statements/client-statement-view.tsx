@@ -30,7 +30,7 @@ import {
 } from "@/lib/finance/statement-screen";
 
 import { COLLECTED_KINDS } from "@/lib/finance/statement";
-import { methodBreakdown, SHORT_METHOD_LABEL, visitCollectedCents } from "@/lib/finance/statement-methods";
+import { documentVisitTone, methodBreakdown, SHORT_METHOD_LABEL, visitCollectedCents } from "@/lib/finance/statement-methods";
 import { formatClock12h, splitCurrency } from "@/lib/finance/statement-money";
 import { latestFirst } from "@/lib/finance/statement-paging";
 
@@ -38,7 +38,7 @@ import type { ReactNode } from "react";
 
 import { ClientFinder } from "./client-finder";
 import type { ClientsViewProps } from "./clients-view";
-import { MonthControls, SEGMENT_GROUP, SUMMARY_TONE, segmentClass } from "./statements-chrome";
+import { MonthControls, PILL_TONE, SEGMENT_GROUP, SUMMARY_TONE, segmentClass } from "./statements-chrome";
 
 export type ClientStatementViewProps = {
   document: StatementDocument;
@@ -61,7 +61,7 @@ export type ClientStatementViewProps = {
 const TAG = "inline-block rounded-[20px] px-[9px] py-0.5 text-xs max-[540px]:px-[5px] max-[540px]:text-[11px]";
 // date | visit | payment | collected | toggle: the Studio tab's row shape, narrower because the client is already known.
 const LINE_GRID = "grid grid-cols-[58px_minmax(0,1fr)_minmax(0,92px)_60px_24px] items-center gap-1.5 px-2 py-3 text-xs min-[781px]:grid-cols-[110px_minmax(145px,1.4fr)_minmax(140px,1.1fr)_105px_26px] min-[781px]:gap-3 min-[781px]:px-[18px] min-[781px]:py-[14px] min-[781px]:text-sm";
-const PRIMARY = cx("inline-flex items-center rounded-lg border border-[#1f3d2e] bg-[#1f3d2e] px-3 text-sm font-medium text-white hover:bg-[#2a5240]", CONTROL_MIN_TOUCH, FOCUS_RING);
+const PRIMARY = cx("inline-flex items-center rounded-lg border border-accent bg-accent px-3 text-sm font-medium text-on-accent hover:border-accent-hover hover:bg-accent-hover", CONTROL_MIN_TOUCH, FOCUS_RING);
 const ACTION = cx("inline-flex items-center rounded-lg border border-line-strong bg-surface px-3 text-sm font-medium text-fg hover:bg-surface-sunken", CONTROL_MIN_TOUCH, FOCUS_RING);
 
 /** "Nov 19" within one month; "Nov 19, 2026" across the full history (the year is needed there). */
@@ -76,29 +76,29 @@ function VisitRow({ v, view, format }: { v: DocumentVisit; view: ClientView; for
   const collected = visitCollectedCents(v.lines);
   const methods = v.lines.filter((l) => COLLECTED_KINDS.includes(l.kind) && l.cents !== null);
   return (
-    <details className="group border-t border-[#e6e8e3] first:border-t-0">
+    <details className="group border-t border-line first:border-t-0">
       <summary className={cx(LINE_GRID, "cursor-pointer list-none [&::-webkit-details-marker]:hidden", FOCUS_RING)}>
         <span>
           <time dateTime={v.localDate}>{dateText(v.localDate, view)}</time>
-          <span className="block text-xs text-[#637067]">{formatClock12h(v.localTime)}</span>
+          <span className="block text-xs text-fg-muted">{formatClock12h(v.localTime)}</span>
         </span>
         <span className="text-fg">
           {v.serviceName ?? "Service not recorded"}
-          {v.serviceName && v.scheduledMinutes ? <small className="ml-1 text-xs text-[#5d685f]">· {v.scheduledMinutes} min</small> : null}
+          {v.serviceName && v.scheduledMinutes ? <small className="ml-1 text-xs text-fg-muted">· {v.scheduledMinutes} min</small> : null}
         </span>
         <span>
-          <span className={cx(TAG, v.state === "paid" ? "bg-[#eaf2e9] text-[#31573d]" : "bg-[#f3eee4] text-[#675534]")}>{VISIT_STATE_LABEL[v.state]}</span>
-          {methods.map((l, i) => <span key={i} className="block text-xs text-[#5d685f]">{(SHORT_METHOD_LABEL as Record<string, string | undefined>)[l.kind] ?? l.kind}</span>)}
+          <span className={cx(TAG, PILL_TONE[documentVisitTone(v.state)])}>{VISIT_STATE_LABEL[v.state]}</span>
+          {methods.map((l, i) => <span key={i} className="block text-xs text-fg-muted">{(SHORT_METHOD_LABEL as Record<string, string | undefined>)[l.kind] ?? l.kind}</span>)}
         </span>
         <span className="text-right font-medium tabular-nums text-fg max-[780px]:text-[13px]">
           {collected === null ? <><span aria-hidden="true">—</span><span className="sr-only">No amount</span></> : splitCurrency(format(collected)).amount}
         </span>
-        <span aria-hidden="true" className="inline-flex size-[26px] items-center justify-center rounded-lg border border-[#d6dbd3] bg-white text-fg group-open:bg-[#edf1eb]">
+        <span aria-hidden="true" className="inline-flex size-[26px] items-center justify-center rounded-lg border border-line-strong bg-white text-fg group-open:bg-surface-sunken">
           <span className="group-open:hidden">+</span>
           <span className="hidden group-open:inline">−</span>
         </span>
       </summary>
-      <dl className="space-y-1 border-t border-[#e6e8e3] bg-[#f8faf6] px-[22px] py-3 text-sm text-fg">
+      <dl className="space-y-1 border-t border-line bg-surface-sunken px-[22px] py-3 text-sm text-fg">
         <div className="flex gap-2"><dt className="w-24 shrink-0 text-fg-muted">Duration</dt><dd>{v.scheduledMinutes ? `${v.scheduledMinutes} min` : "Duration not recorded"}</dd></div>
         <div className="flex gap-2"><dt className="w-24 shrink-0 text-fg-muted">Practitioner</dt><dd>{v.practitionerName ?? "Practitioner not recorded"}</dd></div>
         <div className="flex gap-2"><dt className="w-24 shrink-0 text-fg-muted">Fee</dt><dd>{visitFeeWithBasis(v, format)}</dd></div>
@@ -128,7 +128,7 @@ export function ClientStatementView({ document: doc, month, monthLabel, maxMonth
   return (
     <div className="space-y-6">
       <header className="space-y-4">
-        <p className="text-sm text-[#5d685f]">Business &nbsp;/&nbsp; Statements</p>
+        <p className="text-sm text-fg-muted">Business &nbsp;/&nbsp; Statements</p>
         <div className="flex flex-wrap items-end justify-between gap-3">
           <h1 className="text-[clamp(32px,4vw,46px)] font-bold leading-[1.07] tracking-[-2px] text-fg">Client statement</h1>
           {view === "month" ? <MonthControls base={`/financials/statements/${encodeURIComponent(clientId)}`} month={month} maxMonth={maxMonth} /> : null}
@@ -162,20 +162,20 @@ export function ClientStatementView({ document: doc, month, monthLabel, maxMonth
         <h2 id="cs-summary" className="sr-only">Summary</h2>
         <div>
           <p className="font-semibold text-fg">{clientName}</p>
-          <p className="text-[#5d685f]">{scope} · Total paid</p>
+          <p className="text-fg-muted">{scope} · Total paid</p>
           {/* The figure is shown large for scanning; the verified sentence below carries the same number and is what a screen reader reads. */}
           <p aria-hidden="true" className="mt-1 text-[clamp(34px,5vw,54px)] font-semibold leading-[1.15] tracking-[-2.8px] tabular-nums text-fg max-[540px]:text-[38px]">
             {total.amount}
-            {total.unit ? <small className="ml-2 text-base font-normal tracking-normal text-[#5d685f]">{total.unit}</small> : null}
+            {total.unit ? <small className="ml-2 text-base font-normal tracking-normal text-fg-muted">{total.unit}</small> : null}
           </p>
           <p className="sr-only">{paidSummaryLine(doc, format)}</p>
-          <p className="text-sm text-[#5d685f]">{visitCountPhrase(doc.totals.visitCount)}{studioName ? ` · ${studioName}` : ""}</p>
+          <p className="text-sm text-fg-muted">{visitCountPhrase(doc.totals.visitCount)}{studioName ? ` · ${studioName}` : ""}</p>
         </div>
         {methods ? (
-          <div className="border-[#c5d2c3] sm:border-l sm:pl-[30px] max-[540px]:border-t max-[540px]:pt-3">
+          <div className="border-line sm:border-l sm:pl-[30px] max-[540px]:border-t max-[540px]:pt-3">
             <h3 className="text-base font-semibold text-fg">Collected by method</h3>
-            <div className="my-3 flex h-[7px] overflow-hidden rounded-lg bg-[#d5dfd2]" aria-hidden="true">
-              {methods.map((m, i) => <span key={m.kind} className="h-full bg-[#3f6b52]" style={{ width: `${(m.cents / doc.totals.paidCents) * 100}%`, opacity: 1 - i * 0.22 }} />)}
+            <div className="my-3 flex h-[7px] overflow-hidden rounded-lg bg-line" aria-hidden="true">
+              {methods.map((m, i) => <span key={m.kind} className="h-full bg-fg" style={{ width: `${(m.cents / doc.totals.paidCents) * 100}%`, opacity: 1 - i * 0.22 }} />)}
             </div>
             <ul className="space-y-1 text-fg">
               {methods.map((m) => (
@@ -200,7 +200,7 @@ export function ClientStatementView({ document: doc, month, monthLabel, maxMonth
         </div>
       ) : null}
 
-      <details className="rounded-xl border border-[#dbe0d8] bg-white px-[22px] py-4 max-[540px]:px-3">
+      <details className="rounded-xl border border-line bg-white px-[22px] py-4 max-[540px]:px-3">
         <summary className={cx("cursor-pointer font-semibold text-fg", FOCUS_RING)}>Full payment breakdown</summary>
         <div className="mt-4 space-y-3 text-sm text-fg">
           {methods ? (
@@ -217,7 +217,7 @@ export function ClientStatementView({ document: doc, month, monthLabel, maxMonth
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h2 id="cs-visits" className="text-[21px] font-semibold tracking-[-0.65px] text-fg">Client visits</h2>
-            <p className="text-sm text-[#5d685f]">{scope} · Latest first</p>
+            <p className="text-sm text-fg-muted">{scope} · Latest first</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {/* Plain links: the CSV is a file download, the print page is a printable view. Neither writes, charges or messages anyone. */}
@@ -227,8 +227,8 @@ export function ClientStatementView({ document: doc, month, monthLabel, maxMonth
         </div>
         {doc.visits.length === 0 ? <p className="text-sm text-fg">No visits in this period.</p> : null}
         {doc.visits.length > 0 ? (
-          <div className="overflow-hidden rounded-xl border border-[#dbe0d8] bg-white">
-            <div className={cx(LINE_GRID, "bg-[#f1f3ef] !text-xs font-semibold text-[#637067]")} aria-hidden="true">
+          <div className="overflow-hidden rounded-xl border border-line bg-white">
+            <div className={cx(LINE_GRID, "bg-surface-sunken !text-xs font-semibold text-fg-muted")} aria-hidden="true">
               <span>Date</span><span>Visit</span><span>Payment</span><span className="text-right">Collected</span><span />
             </div>
             {visits.map((v) => <VisitRow key={v.appointmentId} v={v} view={view} format={format} />)}

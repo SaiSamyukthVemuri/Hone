@@ -57,30 +57,38 @@ export function visitCollectedCents(lines: readonly { kind: StatementKind; cents
 //   * a still-owing note beside money: "Payment recorded", the note shown beside the method.
 //   * a recorded $0 collection: "No charge" when the price is $0, otherwise "Payment not confirmed" (nothing was collected against a price).
 //   * no money collected: the adjustment or note, in the breakdown's own words.
-// "paid" is the positive tone; the others are neutral.
-export type VisitStatus = { label: string; tone: "paid" | "neutral"; reason?: string };
+// The pill's tone says whether the state is SETTLED, NEEDS ATTENTION or merely INFORMATIVE; colour is never the only carrier (the label is always shown):
+//   success = "Paid";  warning = "Payment not confirmed", "Unresolved", "Marked still owing";  neutral = everything else ("Payment recorded", "Refunded in
+//   full", "Waived", "No charge", and the listed "No payment recorded").
+export type PillTone = "success" | "warning" | "neutral";
+export type VisitStatus = { label: string; tone: PillTone; reason?: string };
 const PART_SETTLED = "Part settled; the rest is not confirmed";
 export function studioVisitStatus(lines: readonly { kind: StatementKind; cents: number | null }[], quoteCents: number | null = null): VisitStatus {
   const kinds = new Set(lines.map((l) => l.kind));
   // ANY unresolved money line wins over everything else: money that may or may not have moved means the visit cannot be called Paid, Refunded or
   // anything settled. The existing words, and the existing reason for a payment or refund that is unresolved.
-  if (kinds.has("unresolved")) return { label: "Unresolved", tone: "neutral", reason: UNKNOWN_REASON_COPY.payment_unresolved };
+  if (kinds.has("unresolved")) return { label: "Unresolved", tone: "warning", reason: UNKNOWN_REASON_COPY.payment_unresolved };
   const collected = visitCollectedCents(lines);
   if (collected !== null) {
     const waived = lines.reduce((n, l) => (l.kind === "waived" && l.cents !== null ? n + l.cents : n), 0);
     const cardSessions = lines.filter((l) => l.kind === "collected_card_session" && l.cents !== null);
     const others = lines.filter((l) => COLLECTED.includes(l.kind) && l.kind !== "collected_card_session" && l.cents !== null);
     const price = quoteCents !== null ? quoteCents : cardSessions.length === 1 && others.length === 0 ? (cardSessions[0].cents as number) : null;
-    if (collected === 0 && waived === 0) return price === 0 ? { label: "No charge", tone: "neutral" } : { label: "Payment not confirmed", tone: "neutral" };
-    if (kinds.has("still_owes_note")) return { label: "Payment recorded", tone: "paid" };
-    if (price === null) return { label: "Payment recorded", tone: "paid" };
-    if (collected + waived < price) return { label: "Payment not confirmed", tone: "neutral", reason: PART_SETTLED };
-    return { label: "Paid", tone: "paid" };
+    if (collected === 0 && waived === 0) return price === 0 ? { label: "No charge", tone: "neutral" } : { label: "Payment not confirmed", tone: "warning" };
+    if (kinds.has("still_owes_note")) return { label: "Payment recorded", tone: "neutral" };
+    if (price === null) return { label: "Payment recorded", tone: "neutral" };
+    if (collected + waived < price) return { label: "Payment not confirmed", tone: "warning", reason: PART_SETTLED };
+    return { label: "Paid", tone: "success" };
   }
   if (kinds.has("refunded_card_session") || kinds.has("refunded_card_fee")) return { label: "Refunded in full", tone: "neutral" };
   if (kinds.has("waived")) return { label: "Waived", tone: "neutral" };
-  if (kinds.has("still_owes_note")) return { label: "Marked still owing", tone: "neutral" };
-  return { label: "Unresolved", tone: "neutral" };
+  if (kinds.has("still_owes_note")) return { label: "Marked still owing", tone: "warning" };
+  return { label: "Unresolved", tone: "warning" };
+}
+
+/** The pill tone of a client statement's visit state: "Paid" is success; "Payment not confirmed" and "Not paid" (a recorded still-owing visit) need attention; adjusted and no-charge are informative. PURE. */
+export function documentVisitTone(state: "paid" | "unknown" | "confirmed_unpaid" | "adjusted" | "no_charge"): PillTone {
+  return state === "paid" ? "success" : state === "unknown" || state === "confirmed_unpaid" ? "warning" : "neutral";
 }
 
 /** The short method words the Studio card and rows use ("Card", "E-transfer"); the full verified basis wording stays in the breakdown. */
