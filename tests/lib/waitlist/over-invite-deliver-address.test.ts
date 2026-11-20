@@ -28,7 +28,7 @@ vi.mock("@/lib/waitlist/invite-to-book-adapter", () => ({
 
 const { deliverIssued } = await import("@/lib/waitlist/over-invite-deliver");
 
-const issued = (deliveryEmail: string | null) => ({ invitationId: "inv", rawToken: "tok", issuedAt: "2026-01-01T00:00:00Z", expiresAt: "2026-01-02T00:00:00Z", deliveryEmail, deliveryName: null });
+const issued = (deliveryEmail: string | null) => ({ invitationId: "inv", rawToken: "tok", issuedAt: new Date("2026-01-01T00:00:00Z"), expiresAt: new Date("2026-01-02T00:00:00Z"), deliveryEmail, deliveryName: null });
 const reader = (answer: { data: unknown; error: unknown }) => {
   const q: Record<string, unknown> = {};
   for (const k of ["select", "eq"]) q[k] = () => q;
