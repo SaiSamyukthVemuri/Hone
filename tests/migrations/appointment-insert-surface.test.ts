@@ -157,6 +157,65 @@ describe("drops", () => {
   });
 });
 
+describe("a drop names a SIGNATURE: a different one drops nothing", () => {
+  const ins = fn("f", "insert into public.appointments (id) values (1);", "p uuid");
+  it("a drop of another signature with the same arity keeps the function and is reported, never deleted", () => {
+    const c = run(ins, "drop function if exists public.f(text);");
+    expect(direct(c)).toEqual(["f/1"]);
+    expect(c.ambiguousDrops).toHaveLength(1);
+    expect(unknownInserters(c)).not.toEqual([]);
+  });
+  it("a drop of the SAME types deletes it, with or without argument names", () => {
+    for (const drop of ["drop function public.f(uuid);", "drop function public.f(p uuid);", "drop function public.f(other_name uuid);"]) expect(direct(run(ins, drop)), drop).toEqual([]);
+  });
+  it("a drop of a signature with a different arity matches nothing and is not an unknown", () => {
+    const c = run(ins, "drop function public.f(uuid, text);");
+    expect(direct(c)).toEqual(["f/1"]);
+    expect(c.ambiguousDrops).toEqual([]);
+  });
+  it("alias spellings in the drop still match (timestamp with time zone vs timestamptz)", () => {
+    const f = fn("f", "insert into public.appointments (id) values (1);", "p_at timestamptz, p_n int");
+    expect(direct(run(f, "drop function public.f(timestamp with time zone, integer);"))).toEqual([]);
+  });
+  it("of two same-arity overloads, a drop picks the one whose types match", () => {
+    const a = fn("f", "insert into public.appointments (id) values (1);", "p uuid");
+    const b = fn("f", "perform 1;", "p text");
+    const c = run(a, b, "drop function public.f(text);");
+    expect(direct(c)).toEqual(["f/1"]);
+    expect(c.ambiguousDrops).toEqual([]);
+  });
+});
+
+describe("a SQL-standard begin atomic body is kept whole", () => {
+  const atomic = (body: string, name = "f") => `create or replace function public.${name}(p uuid) returns void language sql begin atomic ${body} end;`;
+  it("an insert AFTER an inner semicolon is seen", () => {
+    expect(direct(run(atomic("select 1; insert into public.appointments (id) values (1);")))).toEqual(["f/1"]);
+  });
+  it("a case ... end inside the body does not close it early", () => {
+    expect(direct(run(atomic("select case when p is null then 1 else 2 end; insert into public.appointments (id) values (1);")))).toEqual(["f/1"]);
+  });
+  it("the words begin atomic or end inside a string or comment do not count", () => {
+    expect(direct(run(atomic("select 'end; begin atomic'; /* end; */ insert into public.appointments (id) values (1);")))).toEqual(["f/1"]);
+  });
+  it("the statement after it is a separate statement", () => {
+    const c = run(atomic("select 1;") + "\n" + fn("g", "insert into public.appointments (id) values (1);"));
+    expect(direct(c)).toEqual(["g/1"]);
+    expect(unknownInserters(c)).toEqual([]);
+  });
+  it("a body that never closes cannot be bracketed: it is unreadable, so unknown", () => {
+    const c = run("create function public.f(p uuid) returns void language sql begin atomic select 1; insert into public.appointments (id) values (1);");
+    expect(unknownInserters(c)).not.toEqual([]);
+  });
+});
+
+describe("the exact quoted call Codex raised", () => {
+  it('PERFORM public."create_appointment_core"(...) reaches the insert', () => {
+    const core = fn("create_appointment_core", "insert into public.appointments (id) values (1);");
+    const caller = fn("wrapper", 'perform public."create_appointment_core"(p, p, p);');
+    expect(appointmentCreationSurface(run(core, caller))).toEqual({ direct: ["create_appointment_core/1"], viaCalls: ["wrapper/1"] });
+  });
+});
+
 describe("FAIL CLOSED: what the scanner cannot read is an unknown inserter, never absent", () => {
   it("a create function with no readable body", () => {
     const c = run("create function public.f(p uuid) returns void language plpgsql;");

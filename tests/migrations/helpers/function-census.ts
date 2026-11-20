@@ -153,7 +153,7 @@ export function scan(sql: string): Scan {
         continue;
       }
     }
-    if (c === ";") {
+    if (c === ";" && !openAtomicBody(cur)) {
       statements.push(cur);
       cur = "";
       i++;
@@ -163,7 +163,29 @@ export function scan(sql: string): Scan {
     i++;
   }
   if (cur.trim() !== "") statements.push(cur);
+  // A `begin atomic` body that never closed cannot be bracketed: the last statement is unreadable.
+  if (openAtomicBody(cur)) unterminated = true;
   return { statements, unterminated };
+}
+
+/** The text with every quoted region (strings, identifiers, dollar bodies) blanked, so keyword counts see only code. */
+function blankQuoted(sql: string): string {
+  return sql
+    .replace(/\$([A-Za-z_]\w*)?\$[\s\S]*?\$\1?\$/g, " ")
+    .replace(/'(?:[^']|'')*'/g, " ")
+    .replace(/"(?:[^"]|"")*"/g, " ");
+}
+
+/**
+ * True while `cur` holds a SQL-standard `begin atomic ... end` function body that has not closed. Such a body contains `;` of its own, so the splitter
+ * must not cut at them. It is closed when the `end` words balance the `case` words plus the one `begin atomic`, and the text so far ends with `end`.
+ */
+function openAtomicBody(cur: string): boolean {
+  const code = blankQuoted(cur);
+  if (!/\bbegin\s+atomic\b/i.test(code)) return false;
+  const ends = (code.match(/\bend\b/gi) ?? []).length;
+  const cases = (code.match(/\bcase\b/gi) ?? []).length;
+  return !(ends >= cases + 1 && /\bend\s*$/i.test(code.trimEnd()));
 }
 
 /** Comments removed, everything else (strings, nested dollar bodies) kept. */
@@ -303,6 +325,19 @@ function parseCreate(stmt: string, file: string): { def?: FunctionDef; bad?: Unp
 
 const keyOf = (d: { schema: string; name: string; args: string }) => `${d.schema}.${d.name}(${d.args})`;
 
+const argType = (a: string) => a.trim();
+/** Do a definition's normalised arguments and a drop's normalised arguments name the same types, position by position (names optional on either side)? */
+function sameTypes(defArgs: string, dropArgs: string[]): boolean {
+  const d = splitTop(defArgs).map(argType);
+  if (d.length !== dropArgs.length) return false;
+  return d.every((x, i) => {
+    const y = dropArgs[i];
+    // Equal, or one side carries an argument name the other lacks, or both carry (different) names over the same type.
+    const bare = (t: string) => (t.includes(" ") ? t.slice(t.indexOf(" ") + 1) : t);
+    return x === y || x.endsWith(" " + y) || y.endsWith(" " + x) || (x.includes(" ") && y.includes(" ") && bare(x) === bare(y));
+  });
+}
+
 /** `drop function [if exists] a(args), b(args) [cascade|restrict]` */
 function applyDrop(stmt: string, file: string, functions: Map<string, FunctionDef>, ambiguous: Census["ambiguousDrops"]): boolean {
   const m = /^\s*drop\s+function\s+(?:if\s+exists\s+)?([\s\S]*)$/i.exec(stmt);
@@ -324,12 +359,13 @@ function applyDrop(stmt: string, file: string, functions: Map<string, FunctionDe
     }
     let target: FunctionDef | undefined;
     if (argList) {
-      const exact = candidates.find((f) => f.args === argList!.join(", "));
-      if (exact) target = exact;
-      else {
-        const sameArity = candidates.filter((f) => f.arity === argList!.length);
-        if (sameArity.length === 1) target = sameArity[0];
-      }
+      // PostgreSQL drops the overload whose argument TYPES match; a drop that names a different signature drops nothing. A drop may or may not carry
+      // argument names, so each position matches when the whole normalised argument, or its trailing type, is equal. Never fall back to "the only one with
+      // this arity": that deletes a function PostgreSQL would keep. When nothing matches but a same-arity definition exists, the census cannot tell
+      // whether it is a different signature or a spelling it does not know, so it keeps every candidate and reports the drop.
+      const matches = candidates.filter((f) => f.arity === argList!.length && sameTypes(f.args, argList!));
+      if (matches.length === 1) target = matches[0];
+      else if (matches.length === 0 && !candidates.some((f) => f.arity === argList!.length)) continue; // no such overload: nothing to drop
     } else if (candidates.length === 1) {
       target = candidates[0];
     }
