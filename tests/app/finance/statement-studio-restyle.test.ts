@@ -243,4 +243,9 @@ describe("latest first is deterministic", () => {
     expect(order(rows)).toEqual(["c", "a", "b", "y", "z"]);
     expect(order([...rows].reverse())).toEqual(order(rows));
   });
+  it("a parseable start time ALWAYS precedes an unparseable one, even where id order would put the unparseable one first", () => {
+    const pair = [{ appointmentId: "a", startsAt: "not a time" }, { appointmentId: "b", startsAt: "2026-11-02T15:00:00Z" }];
+    expect([...pair].sort(latestFirst).map((x) => x.appointmentId)).toEqual(["b", "a"]);
+    expect([...pair].reverse().sort(latestFirst).map((x) => x.appointmentId)).toEqual(["b", "a"]);
+  });
 });
