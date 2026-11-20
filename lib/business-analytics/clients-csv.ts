@@ -4,6 +4,7 @@ import { CSV_BOM, decimalAmount } from "@/lib/finance/statement-csv";
 import { ANALYTICS_ACCESS_NOTE } from "./copy";
 import { unavailableText } from "./figure";
 import { MONEY_BASIS_NOTE } from "./money-metrics";
+import { FILTER_TEXT } from "./overview-csv";
 import type { OverviewView } from "./overview-model";
 
 // ===========================================================================
@@ -29,6 +30,7 @@ export function clientsCsv(view: OverviewView, opts: { preparedOn: string }): st
   rows.push(["Period", view.currentLabel]);
   rows.push(["Prepared on", opts.preparedOn]);
   rows.push(["Currency", cur || "Not set"]);
+  rows.push(["Team members", FILTER_TEXT[view.filterKind]]); // the kind only, never a name or an id, so a filtered total never reads as the whole studio
   rows.push(["Basis", MONEY_BASIS_NOTE]);
   rows.push(["Who sees this", ANALYTICS_ACCESS_NOTE]);
   rows.push(["Contents", "Counts and totals only. No client is named in this file."]);

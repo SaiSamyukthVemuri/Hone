@@ -281,3 +281,48 @@ describe("the Clients tab: a client whose every payment is unconfirmed has no li
     expect(text(render(view()))).toContain("Visits awaiting payment confirmation add nothing, and a client with none confirmed shows as not available.");
   });
 });
+
+describe("the Clients spreadsheet: exact rows with nonzero values", () => {
+  const extra = [...appointments, appt("done-unrecorded2", "completed", "2026-11-09T15:00:00Z", "pr-1", "client-unrecorded")];
+  const nonzero = () => {
+    const v = view({}, { current: { ok: true, value: { appointments: extra, money: { ok: true, value: money as never } } }, followThrough: { ok: true, value: { past: extra, future: [] } }, names: lookup({ "client-done-quoted": "Quinn Quoted", "client-unrecorded": "Una Unrecorded" }) });
+    return { ...v, clientsReconciliation: reconcileClientsMoney({ clientsPaidCents: 21_500, noClientPaidCents: 4_000, completedVisitsCents: 26_734 }) } as OverviewView;
+  };
+  const lines = (csv: string) => csv.split("\n").map((l) => l.replace(/^﻿/, ""));
+  const row = (csv: string, prefix: string) => lines(csv).find((l) => l.startsWith(prefix));
+  it("writes every count and total with its own value, so none can be dropped or zeroed", () => {
+    const csv = clientsCsv(nonzero(), { preparedOn: "2026-11-30" });
+    expect(row(csv, "Clients,Clients seen in this period,")).toBe("Clients,Clients seen in this period,4,,");
+    expect(row(csv, "Clients,Clients that can be listed,")).toMatch(/^Clients,Clients that can be listed,2,,/);
+    expect(row(csv, "Clients,Seen clients not listed,")).toMatch(/^Clients,Seen clients not listed,2,,/);
+    expect(row(csv, "Clients,All clients,")).toBe("Clients,All clients,2,,");
+    expect(row(csv, "Clients,No next booking,")).toMatch(/^Clients,No next booking,2,,/);
+    expect(row(csv, "Clients,Seen clients with no confirmed payment,")).toMatch(/^Clients,Seen clients with no confirmed payment,1,,/);
+    expect(row(csv, "Paid in period,Paid in period across every client seen,")).toBe("Paid in period,Paid in period across every client seen,215.00,CAD,");
+    expect(row(csv, "Paid in period,Money on completed visits with no client recorded,")).toBe("Paid in period,Money on completed visits with no client recorded,40.00,CAD,");
+    expect(row(csv, "Paid in period,Collected on completed visits (Overview),")).toBe("Paid in period,Collected on completed visits (Overview),267.34,CAD,");
+    expect(row(csv, "Paid in period,Difference,")).toBe("Paid in period,Difference,12.34,CAD,");
+  });
+  it("a chip count that could not be read is written as Not available, never 0", () => {
+    const v = view({}, { followThrough: { ok: false, reason: "read_failed" } });
+    const csv = clientsCsv(v, { preparedOn: "2026-11-30" });
+    expect(row(csv, "Clients,No next booking,")).toMatch(/^Clients,No next booking,Not available,,/);
+    expect(row(csv, "Clients,Beyond their usual visit interval,")).toBe("Clients,Beyond their usual visit interval,Not available,,");
+    expect(csv).not.toMatch(/No next booking,0,/);
+  });
+  it("a table that failed is said in the file, not left out silently", () => {
+    const v = buildOverview(input({ names: { ok: false }, clients: { sort: "spend", chip: "all", page: 1, lifetimeHistory: lifetime() } }));
+    const csv = clientsCsv(v, { preparedOn: "2026-11-30" });
+    expect(row(csv, "Clients,Client table,")).toContain(FIGURE_UNAVAILABLE_COPY.read_failed);
+    expect(csv).not.toContain("Clients that can be listed");
+  });
+  it("says whether the totals are filtered, by kind only, never by name or id", () => {
+    const whole = clientsCsv(view(), { preparedOn: "2026-11-30" });
+    expect(row(whole, "Team members,")).toBe("Team members,All team members");
+    const one = clientsCsv(view({}, { filter: { kind: "one", practitionerId: "pr-1" } }), { preparedOn: "2026-11-30" });
+    expect(row(one, "Team members,")).toBe("Team members,One team member (filtered)");
+    expect(one).not.toMatch(/Ada|pr-1/);
+    const none = clientsCsv(view({}, { filter: { kind: "unattributed" } }), { preparedOn: "2026-11-30" });
+    expect(row(none, "Team members,")).toBe("Team members,Bookings with no team member (filtered)");
+  });
+});

@@ -105,6 +105,35 @@ describe("the Clients CSV route", () => {
   });
 });
 
+describe("the Clients CSV route: refusals are 403, failures are 503", () => {
+  it("a signed-out or inactive caller is 403, and a failed identity read is 503, not a refusal", async () => {
+    const { IdentityRefusalError } = await import("@/lib/supabase/identity-refusal");
+    state.throwOnWho = new (IdentityRefusalError as unknown as new (m: string) => Error)("refused");
+    expect((await get()).status).toBe(403);
+    state.throwOnWho = { digest: "NEXT_REDIRECT;replace;/login;307;" };
+    expect((await get()).status).toBe(403);
+    state.throwOnWho = new Error("database down");
+    const res = await get();
+    expect(res.status).toBe(503);
+    expect(res.headers.get("Cache-Control")).toBe("no-store, private");
+    expect(state.loads).toEqual([]);
+  });
+  it("a loader that refuses access is a 403 with no body of data, never a 200 or a 503", async () => {
+    state.result = { access: "refused" };
+    const res = await get();
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "forbidden" });
+  });
+  it("a bad value from the loader is 400, any other failed read is 503", async () => {
+    state.result = { access: "granted", ok: false, reason: "bad_request", notices: [] };
+    expect((await get()).status).toBe(400);
+    for (const reason of ["read_failed", "too_many_appointments", "period_invalid"]) {
+      state.result = { access: "granted", ok: false, reason, notices: [] };
+      expect((await get()).status, reason).toBe(503);
+    }
+  });
+});
+
 describe("the Clients page", () => {
   const page = async (qs: Record<string, string | string[]> = {}) => {
     const mod = await import("@/app/(app)/financials/analytics/clients/page");
