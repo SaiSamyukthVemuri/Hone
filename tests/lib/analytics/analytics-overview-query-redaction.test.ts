@@ -80,6 +80,13 @@ describe("Sentry", () => {
   it("free text (the message and the exception value) keeps no member id and no date; the parameter names may remain (pinned, not hidden)", () => {
     for (const u of URLS) {
       const out = scrubErrorEvent(error({ message: `failed at ${u}`, exception: { values: [{ type: "Error", value: `bad request ${u}` }] } }));
+      // Asserted on the scrubbed TEXT itself, field by field, so a later scrubber change that stops redacting the id or a date goes red here,
+      // whatever shape the rest of the string takes.
+      const texts = [out.message, out.exception?.values?.[0]?.value];
+      for (const text of texts) {
+        expect(typeof text, "the free text is still there").toBe("string");
+        for (const secret of [MEMBER, MEMBER.toUpperCase(), "2026-01-05", "2026-02-17"]) expect(text as string, `${secret} in "${text}"`).not.toContain(secret);
+      }
       expectNoValues(out, `free text for ${u}`);
       expect(JSON.stringify(out)).toContain("practitioner=[id]"); // the id is replaced, the name of the parameter is not a secret
     }
