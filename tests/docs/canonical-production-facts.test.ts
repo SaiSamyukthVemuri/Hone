@@ -4616,7 +4616,8 @@ describe("pending-release receipt controls (HON-18 39ad5aaf)", () => {
     const up = u.land(81, { "tests/ci/b.test.ts": "t\n", [file(81)]: receipt(81, false) }, { at: 1_900_000_000 + 71 * 3600 });
     const fresh = await coveredSince(u.g, ur, up, []);
     expect(coveredLag(u.g, (fresh as { covered: string[] }).covered, up)).toEqual({ ok: true });
-  });
+  // Three fixture repositories and eleven merges of real git: 2.4 s alone, and it hit the 5 s default under full-suite load.
+  }, 20_000);
 
   it("N8. moving app/x.ts INTO docs/production/pending-releases/ is neither record-only nor covered", async () => {
     const r = receiptRepo();
