@@ -5,6 +5,7 @@ vi.mock("server-only", () => ({}));
 import { FIGURE_UNAVAILABLE_COPY, unavailableText, type ReadFailure } from "@/lib/business-analytics/figure";
 import { overviewCsv, overviewCsvFileName } from "@/lib/business-analytics/overview-csv";
 import { buildOverview, type OverviewInput, type OverviewView } from "@/lib/business-analytics/overview-model";
+import { DEFAULT_BEYOND_USUAL_FACTOR } from "@/lib/business-analytics/visit-metrics";
 import { resolvePeriod } from "@/lib/business-analytics/period";
 import { CSV_BOM } from "@/lib/finance/statement-csv";
 
@@ -84,7 +85,7 @@ describe("the Overview CSV", () => {
 });
 
 describe("every unavailable figure is a row that says why, never an empty cell or a zero", () => {
-  const KEYS = ["collected", "series", "byPractitioner", "serviceValue", "reconciliation", "completedVisits", "activeClients", "visitsPerClient", "averagePaid", "returning", "interval", "noNextBooking"] as const;
+  const KEYS = ["collected", "series", "byPractitioner", "serviceValue", "reconciliation", "completedVisits", "activeClients", "visitsPerClient", "averagePaid", "returning", "interval", "noNextBooking", "previousSeries", "visitFrequency", "beyondUsual"] as const;
   const REASONS: ReadFailure[] = ["too_many_appointments", "read_failed", "currency_unknown", "not_reconciled", "no_evidence_read"];
   for (const key of KEYS) {
     for (const reason of REASONS) {
@@ -176,5 +177,54 @@ describe("an unknown is written as its unavailable text, never 0, 0.00 or 0% (X2
     const line = rowOf(text, "Service value,Price shown at online booking");
     expect(line).toContain("Not available");
     expect(line).not.toMatch(/0\.00/);
+  });
+});
+
+describe("the figures the layout draws are in the file too", () => {
+  const text = csv(healthy());
+  it("how often clients visit sums to the clients seen, and beyond-usual is a count with its rule and no client", () => {
+    const rows = text.split("\n");
+    const n = (label: string) => Number((rows.find((l) => l.startsWith(`Visits,${label},`)) ?? "").split(",")[2]);
+    const seen = Number((rows.find((l) => l.startsWith("Visits,Clients seen,")) ?? "").split(",")[2]);
+    expect(n("Clients with 1 visit") + n("Clients with 2 visits") + n("Clients with 3 or more visits")).toBe(seen);
+    expect(rows.find((l) => l.startsWith("Clients,Beyond their usual visit interval,"))).toMatch(/^Clients,Beyond their usual visit interval,\d+,,.*1\.5 times/);
+    expect(text).not.toMatch(/client-[a-z]/);
+  });
+  it("the comparison period's series is written, by date and never as a name, when it could be read; otherwise one row says why", () => {
+    expect(text).toContain('Comparison by date,"Collected and completed visits by date, comparison period",');
+    const readable = csv(buildOverview(input({ comparison: { ok: true, value: { appointments: [appt("p1", "completed", "2026-10-05T15:00:00Z", "pr-1")], money: { ok: true, value: { cardRows: [], settlementRows: [], legacyFeeRows: [] } as never } } } })));
+    expect(readable).toMatch(/Comparison by date,2026-10-05 collected,0\.00,/);
+    expect(readable).toMatch(/Comparison by date,2026-10-05 completed visits,1,/);
+  });
+});
+
+describe("the beyond-usual CSV row", () => {
+  it("is a count row with the factor from the one constant, the notes, and the filter scope when filtered", () => {
+    const all = csv(healthy()).split("\n").find((l) => l.startsWith("Clients,Beyond their usual visit interval,")) ?? "";
+    expect(all).toMatch(/^Clients,Beyond their usual visit interval,\d+,,/);
+    expect(all).toContain(`than ${DEFAULT_BEYOND_USUAL_FACTOR} times`);
+    expect(all).not.toContain("ever seen");
+    const one = csv(buildOverview(input({ filter: { kind: "one", practitionerId: "pr-1" } }))).split("\n").find((l) => l.startsWith("Clients,Beyond their usual visit interval,")) ?? "";
+    expect(one).toContain("ever seen, not only those seen in this period");
+  });
+  it("amounts keep their exact cents as plain decimals, and the beyond-usual count is not mixed up with the clients not judged", () => {
+    const v = healthy();
+    const c = (v.collected as { value: { split: Record<string, number> } }).value;
+    const view = {
+      ...v,
+      collected: { available: true, value: { ...(v.collected as { value: object }).value, headlineCents: 146170, split: { ...c.split, completedVisitsCents: 146165, feesCents: 5, totalCents: 146170 } } },
+      beyondUsual: { available: true, value: { count: 3, notEnoughHistory: 2 } },
+    } as unknown as OverviewView;
+    const rows = csv(view).split("\n");
+    expect(rows.find((l) => l.startsWith("Collected,Collected (by visit date),"))).toMatch(/^Collected,Collected \(by visit date\),1461\.70,CAD,/);
+    expect(rows.find((l) => l.startsWith("Collected,On completed visits,"))).toMatch(/^Collected,On completed visits,1461\.65,CAD/);
+    expect(rows.find((l) => l.includes("booking fees\""))).toMatch(/,0\.05,CAD/);
+    const beyond = rows.find((l) => l.startsWith("Clients,Beyond their usual visit interval,")) ?? "";
+    expect(beyond.split(",")[2]).toBe("3");
+    expect(beyond).toContain("2 clients have fewer than two visit dates");
+    expect(beyond).not.toContain("3 clients have fewer");
+  });
+  it("the collected row's change and the comparison series do not use a leading sign", () => {
+    for (const line of csv(healthy()).split("\n").slice(1)) for (const cellText of line.split(",")) expect(cellText).not.toMatch(/^[+@=]/);
   });
 });

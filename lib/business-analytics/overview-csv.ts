@@ -1,10 +1,11 @@
 import { csvCell } from "@/lib/csv";
 import { CSV_BOM, decimalAmount } from "@/lib/finance/statement-csv";
 
-import { ANALYTICS_ACCESS_NOTE, COLLECTED_LABEL, EVIDENCE_LABELS, EVIDENCE_NOT_READABLE_NOTE, FIRST_TIME_NOTE, INTERVAL_NOTE, MISSING_PRICE_EVIDENCE_LABEL, NEVER_SUMMED_NOTE, SERVICE_VALUE_LABEL, noNextBookingNote } from "./copy";
+import { ANALYTICS_ACCESS_NOTE, COLLECTED_LABEL, BEYOND_USUAL_FILTER_NOTE, NOT_ENOUGH_HISTORY_NOTE, beyondUsualNote, EVIDENCE_LABELS, EVIDENCE_NOT_READABLE_NOTE, FIRST_TIME_NOTE, INTERVAL_NOTE, MISSING_PRICE_EVIDENCE_LABEL, NEVER_SUMMED_NOTE, SERVICE_VALUE_LABEL, noNextBookingNote } from "./copy";
 import { unavailableText, type Figure } from "./figure";
 import { MONEY_BASIS_NOTE, type Change } from "./money-metrics";
 import type { OverviewView } from "./overview-model";
+import { DEFAULT_BEYOND_USUAL_FACTOR } from "./visit-metrics";
 
 // ===========================================================================
 // The Overview as a spreadsheet file. PURE: no I/O, no clock, no request.
@@ -92,6 +93,13 @@ export function overviewCsv(view: OverviewView, opts: { preparedOn: string }): s
     }
   });
 
+  fig("Comparison by date", "Collected and completed visits by date, comparison period", view.previousSeries, (s) => {
+    for (const p of s.points) {
+      add("Comparison by date", `${p.key} collected`, money(p.collectedCents), s.unit === "day" ? "day" : "month", cur);
+      add("Comparison by date", `${p.key} completed visits`, String(p.completedVisits), s.unit === "day" ? "day" : "month");
+    }
+  });
+
   fig("Visits", "Completed visits", view.completedVisits, (v) => add("Visits", "Completed visits", String(v.count), changeText(v.change, view.comparisonLabel)));
   fig("Visits", "Clients seen", view.activeClients, (v) =>
     add("Visits", "Clients seen", String(v.count), `${changeText(v.change, view.comparisonLabel)}${v.withoutClient > 0 ? ` ${v.withoutClient} visits have no client recorded and are not counted.` : ""}`),
@@ -99,9 +107,15 @@ export function overviewCsv(view: OverviewView, opts: { preparedOn: string }): s
   fig("Visits", "Visits per client seen", view.visitsPerClient, (v) => (v.known ? add("Visits", "Visits per client seen", v.value.toFixed(1)) : add("Visits", "Visits per client seen", `Not available: ${v.reason}`)));
   fig("Visits", "Average paid per visit", view.averagePaid, (a) =>
     a.averageCents.known
-      ? add("Visits", "Average paid per visit", money(a.averageCents.value), `${a.excludedUnknownVisits} visits awaiting payment confirmation are left out.`, cur)
+      ? add("Visits", "Average paid per visit", money(a.averageCents.value), `${changeText(view.averagePaidChange, view.comparisonLabel)}. ${a.excludedUnknownVisits} visits awaiting payment confirmation are left out.`, cur)
       : add("Visits", "Average paid per visit", `Not available: ${a.averageCents.reason}`, `${a.excludedUnknownVisits} visits awaiting payment confirmation are left out.`),
   );
+
+  fig("Visits", "How often clients visit", view.visitFrequency, (f) => {
+    add("Visits", "Clients with 1 visit", String(f.one), "Completed visits per active client in this period.");
+    add("Visits", "Clients with 2 visits", String(f.two), "Completed visits per active client in this period.");
+    add("Visits", "Clients with 3 or more visits", String(f.threePlus), "Completed visits per active client in this period.");
+  });
 
   fig(WHOLE_STUDIO, "Collected by team member (whole studio, not filtered)", view.byPractitioner, (list) => {
     for (const r of list) add(WHOLE_STUDIO, r.label, money(r.collectedCents), "", cur);
@@ -132,6 +146,9 @@ export function overviewCsv(view: OverviewView, opts: { preparedOn: string }): s
   );
   fig("Clients", "Average days between visits", view.interval, (i) =>
     add("Clients", "Average days between visits", i.pooledAverageDays.known ? String(Math.round(i.pooledAverageDays.value)) : `Not available: ${i.pooledAverageDays.reason}`, `${i.clientsWithInterval} clients with two or more visits; ${i.clientsWithoutInterval} left out. ${INTERVAL_NOTE}`),
+  );
+  fig("Clients", "Beyond their usual visit interval", view.beyondUsual, (b) =>
+    add("Clients", "Beyond their usual visit interval", String(b.count), `${beyondUsualNote(DEFAULT_BEYOND_USUAL_FACTOR)}${view.filterKind !== "all" ? ` ${BEYOND_USUAL_FILTER_NOTE}` : ""}${b.notEnoughHistory > 0 ? ` ${NOT_ENOUGH_HISTORY_NOTE(b.notEnoughHistory)}` : ""}`),
   );
   fig("Clients", "Clients with no next booking", view.noNextBooking, (n) => add("Clients", "Clients with no next booking", String(n.count), noNextBookingNote()));
 
