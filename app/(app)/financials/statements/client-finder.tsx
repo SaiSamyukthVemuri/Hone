@@ -62,8 +62,8 @@ export function ClientFinder({ month, monthLabel, clients, monthVisits, lastVisi
 
   const expanded = state.open && outcome.state !== "prompt";
   return (
-    <div className="relative max-w-md">
-      <label htmlFor={`${listId}-input`} className="block text-sm font-medium text-fg">
+    <div className="relative">
+      <label htmlFor={`${listId}-input`} className="sr-only">
         Find a client
       </label>
       <input
@@ -80,13 +80,13 @@ export function ClientFinder({ month, monthLabel, clients, monthVisits, lastVisi
         value={state.query}
         onChange={(e) => setState(onFinderInput(e.target.value))}
         onKeyDown={onKeyDown}
-        className={cx("mt-1 w-full rounded border border-line bg-surface px-3 py-2 text-sm text-fg", CONTROL_MIN_TOUCH, FOCUS_RING)}
+        className={cx("w-full rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm text-fg placeholder:text-fg-muted", CONTROL_MIN_TOUCH, FOCUS_RING)}
       />
       <p className="sr-only" role="status" aria-live="polite">
         {outcome.state === "results" ? `${options.length} ${options.length === 1 ? "client" : "clients"} found` : outcome.state === "none" ? FINDER_NO_MATCH : ""}
       </p>
       {expanded ? (
-        <div id={listId} className="absolute z-10 mt-1 w-full rounded-lg border border-line bg-surface shadow-sm">
+        <div id={listId} className="absolute z-10 mt-1 w-full rounded-xl border border-line-strong bg-surface p-1 shadow-lg">
           {outcome.state === "none" ? (
             <div className="space-y-1 p-3 text-sm text-fg">
               <p>{FINDER_NO_MATCH}</p>
@@ -118,7 +118,7 @@ export function ClientFinder({ month, monthLabel, clients, monthVisits, lastVisi
           {outcome.state === "results" && outcome.truncated ? <p className="border-t border-line p-2 text-xs text-fg-muted">Showing the first matches. Type more of the name to narrow the list.</p> : null}
         </div>
       ) : (
-        <p className="mt-1 text-xs text-fg-muted">{FINDER_PROMPT}</p>
+        <p className="sr-only">{FINDER_PROMPT}</p>
       )}
     </div>
   );
