@@ -50,8 +50,8 @@ const build = (over: { extraCard?: StatementCardRow[]; settlements?: { appointme
 };
 async function renderWith(statement: ReturnType<typeof buildStatement>, page = 1, over: Record<string, unknown> = {}) {
   const { StatementView } = await import("@/app/(app)/financials/statement/statement-view");
-  const visitInfo: Record<string, { clientName: string; serviceName: string | null }> = {};
-  for (const v of statement.visits) visitInfo[v.appointmentId] = { clientName: `Client ${v.appointmentId}`, serviceName: "Service" };
+  const visitInfo: Record<string, { clientName: string; clientId: string | null; serviceName: string | null; minutes: number | null }> = {};
+  for (const v of statement.visits) visitInfo[v.appointmentId] = { clientName: `Client ${v.appointmentId}`, clientId: `c-${v.appointmentId}`, serviceName: "Service", minutes: 60 };
   return renderToStaticMarkup(
     createElement(StatementView as never, {
       view: { access: "granted", ok: true, month: "2026-11", label: "November 2026", timezone: "America/Toronto", startLocal: "2026-11-01", endLocalExclusive: "2026-12-01", statement, visitInfo, practitionerNames: { "pract-one": "Pat Synthetic" }, settlementQuotes: {} },
@@ -144,8 +144,15 @@ describe("the method bar appears only when the segments reconcile to the collect
     const m = bucketMethodBreakdown(st.all)!;
     expect(m.reduce((n, x) => n + x.cents, 0)).toBe(st.all.collectedCents);
     const out = await renderWith(st);
-    expect(out).toMatch(/Card \(Hone-verified\): session payments<\/span><span[^>]*>\$1,000\.00 CAD/);
-    expect(out).toMatch(/Cash \(recorded by the owner\)<\/span><span[^>]*>\$250\.00 CAD/);
+    // the card shows the short method words, the amounts without a currency suffix (CAD appears once, beside the total), the bar above the list
+    const card = out.slice(out.indexOf('aria-label="Summary"'), out.indexOf("</section>", out.indexOf('aria-label="Summary"')));
+    expect(card).toMatch(/<span>Card<\/span><span[^>]*>\$1,000\.00<\/span>/);
+    expect(card).toMatch(/<span>Cash<\/span><span[^>]*>\$250\.00<\/span>/);
+    expect(card.indexOf("h-[7px]")).toBeLessThan(card.indexOf("<span>Card</span>"));
+    expect(card.match(/CAD/g)?.length).toBe(1);
+    // the full verified wording stays in the breakdown
+    expect(out).toContain("Card (Hone-verified): session payments");
+    expect(out).toContain("Cash (recorded by the owner)");
   });
   it("a fully refunded charge is not collected money: it is not in the bar, the list or the total", async () => {
     const st = build({ onlyIds: ["a1"], extraCard: [row({ appointmentId: "a1", amountCents: 70000, cumulativeFullRefundVerified: true, refundStatus: "succeeded", providerRefundStatus: "succeeded", stripeRefundId: "re_x" })] });
@@ -184,8 +191,12 @@ describe("what a visit row says", () => {
     expect(out).toContain('dateTime="2026-11-02"');
     expect(out).toContain(">Nov 2<");
     expect(out).toContain("Client a2");
-    expect(out).toMatch(/>Paid<\/span><span[^>]*>Card \(Hone-verified\): session payments</);
-    expect(out).toMatch(/text-right[^"]*"[^>]*>\$1,000\.00 CAD</);
+    expect(out).toMatch(/>Paid<\/span><span[^>]*>Card</);
+    expect(out).toMatch(/text-right[^"]*"[^>]*>\$1,000\.00</);
+    const visits = out.slice(out.indexOf('aria-labelledby="stmt-visits"'));
+    expect(visits.slice(0, visits.indexOf("</summary>"))).not.toContain("CAD"); // CAD once, in the card; not on the row (the breakdown keeps full amounts)
+    expect(out).toMatch(/>10:00 AM</); // 12-hour time, as the reference draws it (15:00Z is 10:00 in Toronto)
+    expect(out).toMatch(/<a [^>]*href="\/financials\/statements\/c-a2\?month=2026-11[^"]*"[^>]*>Client a2<\/a>/); // the client links to their own statement for the month
     expect(out).toContain("Insurer details");
     expect(out.match(/<details/g)?.length).toBe(2); // the full breakdown + the one visit
   });
@@ -226,7 +237,7 @@ describe("a part-payment with a still-owing note does not read as Paid, and the 
     expect(out).toMatch(/>Payment recorded<\/span>/);
     expect(out).not.toMatch(/>Paid<\/span>/);
     expect(out).toMatch(/Marked still owing \(a note, not an amount\)<\/span>/);
-    expect(out).toMatch(/Card \(Hone-verified\): session payments<\/span>/);
+    expect(out).toMatch(/>Card<\/span>/);
   });
 });
 

@@ -79,3 +79,12 @@ export function studioVisitStatus(lines: readonly { kind: StatementKind; cents: 
   if (kinds.has("still_owes_note")) return { label: "Marked still owing", tone: "neutral" };
   return { label: "Unresolved", tone: "neutral" };
 }
+
+/** The short method words the Studio card and rows use ("Card", "E-transfer"); the full verified basis wording stays in the breakdown. */
+export const SHORT_METHOD_LABEL: Partial<Record<StatementKind, string>> = {
+  collected_card_session: "Card",
+  collected_card_fee: "Card fees",
+  collected_cash: "Cash",
+  collected_e_transfer: "E-transfer",
+  collected_other_external: "Other",
+};

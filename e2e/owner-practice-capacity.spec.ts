@@ -890,7 +890,7 @@ test("an owner starts on the dashboard, opens Business, then Statements, and cho
   // This seeded studio has NO payment jurisdiction yet, so the owner reaches the page's own honest "currency not set" state: no
   // heading, no month picker, no figure. The owner check is the one the page always had; nothing is loosened here.
   await expect(page.getByText("This studio's payment currency is not set, so money cannot be totalled. Nothing is shown.")).toBeVisible();
-  await expect(page.getByRole("heading", { name: /^Money statement:/ })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Monthly statements" })).toHaveCount(0);
   // The menu reads as the current section on the statement page in either state.
   await expect(nav.getByRole("button", { name: "Business", exact: true })).toHaveAttribute("aria-current", "page");
 
@@ -903,7 +903,7 @@ test("an owner starts on the dashboard, opens Business, then Statements, and cho
   );
   try {
     await page.goto("/financials/statement");
-    await expect(page.getByRole("heading", { name: /^Money statement:/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Monthly statements" })).toBeVisible();
     // The item inside the open menu is the current one.
     await nav.getByRole("button", { name: "Business", exact: true }).click();
     await expect(nav.getByRole("link", { name: "Statements", exact: true })).toHaveAttribute("aria-current", "page");
@@ -915,7 +915,8 @@ test("an owner starts on the dashboard, opens Business, then Statements, and cho
     await picker.getByLabel("Month").fill("2026-01");
     await picker.getByRole("button", { name: "Show month" }).click();
     await page.waitForURL("**/financials/statement?month=2026-01");
-    await expect(page.getByRole("heading", { name: /^Money statement: January 2026/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Monthly statements" })).toBeVisible();
+    await expect(page.getByText("January 2026 · Total collected")).toBeVisible();
     await expect(picker.getByLabel("Month")).toHaveValue("2026-01");
   } finally {
     await sql(`delete from public.studio_payment_jurisdictions where studio_id = $1 and verification_reference = 'e2e business menu statement'`, [seed.studioId]);
@@ -955,7 +956,7 @@ test("a practitioner typing the statement URL is refused, with no money shown", 
   // The direct URL is refused.
   await page.goto("/financials/statement");
   await expect(page.getByText("Only the studio owner can see the money statement.")).toBeVisible();
-  await expect(page.getByRole("heading", { name: /^Money statement:/ })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Monthly statements" })).toHaveCount(0);
 });
 
 test("a practitioner gets no Business entry on the desktop nav, and the route still refuses them", async ({

@@ -54,7 +54,7 @@ async function render(opts: { names?: Record<string, string>; startsAt?: string;
         startLocal: "2026-11-01",
         endLocalExclusive: "2026-12-01",
         statement,
-        visitInfo: { a1: { clientName: "Synthetic Client", serviceName: "Service" }, a2: { clientName: "Other Client", serviceName: null } },
+        visitInfo: { a1: { clientName: "Synthetic Client", clientId: "client-1", serviceName: "Service", minutes: 60 }, a2: { clientName: "Other Client", clientId: null, serviceName: null, minutes: null } },
         practitionerNames: opts.names ?? { "pract-one": "Pat Synthetic", "pract-two": "Robin Example" },
         settlementQuotes: {},
       },

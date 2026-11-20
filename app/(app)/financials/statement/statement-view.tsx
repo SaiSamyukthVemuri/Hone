@@ -5,7 +5,7 @@ import { CONTROL_MIN_TOUCH, FOCUS_RING, cx } from "@/components/ui/control-base"
 
 import { MonthControls, SUMMARY_TONE } from "../statements/statements-chrome";
 
-import { formatLocalDateLabel, localDateString, localTimeString } from "@/lib/booking/tz";
+import { formatLocalDateLabel, localDateString, localTimeString12h } from "@/lib/booking/tz";
 
 import { SectionLabel } from "@/components/ui/section-label";
 import { INSURER_FIELD_GAPS } from "@/lib/clinical-records/insurer-field-gaps";
@@ -32,7 +32,8 @@ import {
   STATEMENT_WRITE_OFFS_NOTE,
   unreadableFormsLine,
 } from "@/lib/finance/statement-copy";
-import { bucketMethodBreakdown, studioVisitStatus, visitCollectedCents } from "@/lib/finance/statement-methods";
+import { bucketMethodBreakdown, SHORT_METHOD_LABEL, studioVisitStatus, visitCollectedCents } from "@/lib/finance/statement-methods";
+import { clientStatementHref } from "@/lib/finance/statement-screen";
 import { latestFirst, slicePage } from "@/lib/finance/statement-paging";
 import type { StatementView as View } from "@/lib/finance/statement-read";
 import type { YearMonth } from "@/lib/finance/statement-period";
@@ -108,12 +109,12 @@ function SummaryCard({ bucket, visitCount, monthLabel, studioName, format }: { b
         <h2 className="text-base font-semibold text-fg">Collected by method</h2>
         {methods ? (
           <>
-            <ul className="mt-2 space-y-1 text-fg">
-              {methods.map((m) => <li key={m.kind} className="flex justify-between gap-3"><span>{m.label}</span><span className="tabular-nums">{format(m.cents)}</span></li>)}
-            </ul>
             <div className="my-3 flex h-[7px] overflow-hidden rounded-lg bg-[#d5dfd2]" aria-hidden="true">
               {methods.map((m, i) => <span key={m.kind} className="h-full bg-[#3f6b52]" style={{ width: `${(m.cents / bucket.collectedCents) * 100}%`, opacity: 1 - i * 0.22 }} />)}
             </div>
+            <ul className="space-y-1 text-fg">
+              {methods.map((m) => <li key={m.kind} className="flex justify-between gap-3"><span>{SHORT_METHOD_LABEL[m.kind] ?? m.label}</span><span className="tabular-nums">{splitCurrency(format(m.cents)).amount}</span></li>)}
+            </ul>
           </>
         ) : bucket.collectedCents === 0 ? (
           <p className="mt-2 text-sm text-[#5d685f]">No recorded money for visits this month.</p>
@@ -142,25 +143,32 @@ function VisitRow({ v, view, format }: { v: VisitT; view: OkView; format: (c: nu
   const ymd = localDateString(when, view.timezone);
   const status = studioVisitStatus(v.lines, view.settlementQuotes[v.appointmentId] ?? null);
   const collected = visitCollectedCents(v.lines);
-  const methods = v.lines.filter((l) => (COLLECTED_KINDS.includes(l.kind) && l.cents !== null) || l.kind === "still_owes_note" || l.kind === "waived");
+  // The short method words under the pill ("Card", "E-transfer"). A still-owing note or a waiver is kept in its full words BESIDE money (the pill alone
+  // would not say it); with no money the pill already says it, so it is not repeated.
+  const methods = v.lines.filter((l) => (COLLECTED_KINDS.includes(l.kind) && l.cents !== null) || (collected !== null && (l.kind === "still_owes_note" || l.kind === "waived")));
+  const serviceText = info?.serviceName ? `${info.serviceName}${info.minutes ? ` · ${info.minutes} min` : ""}` : "";
   return (
     <details className="group border-t border-[#e6e8e3] first:border-t-0">
       <summary className={cx(LINE_GRID, "cursor-pointer list-none [&::-webkit-details-marker]:hidden", FOCUS_RING)}>
         <span>
           <time dateTime={ymd}>{shortDate(ymd)}</time>
-          <span className="block text-xs text-[#637067]">{localTimeString(when, view.timezone)}</span>
+          <span className="block text-xs text-[#637067]">{localTimeString12h(when, view.timezone)}</span>
         </span>
         <span>
-          <span className="text-fg">{info?.clientName}</span>
-          {info?.serviceName ? <span className="block text-xs text-[#5d685f] min-[781px]:hidden">{info.serviceName}</span> : null}
+          {info?.clientId ? (
+            <Link href={clientStatementHref(info.clientId, view.month as YearMonth, "month")} className="text-[#31573d] underline underline-offset-2">{info.clientName}</Link>
+          ) : (
+            <span className="text-fg">{info?.clientName}</span>
+          )}
+          {info?.serviceName ? <span className="block text-xs text-[#5d685f] min-[781px]:hidden">{serviceText}</span> : null}
         </span>
-        <span className="hidden text-fg min-[781px]:block">{info?.serviceName ?? ""}</span>
+        <span className="hidden text-fg min-[781px]:block">{info?.serviceName ?? ""}{info?.serviceName && info.minutes ? <small className="ml-1 text-xs text-[#5d685f]">· {info.minutes} min</small> : null}</span>
         <span>
           <span className={cx(TAG, status.tone === "paid" ? "bg-[#eaf2e9] text-[#31573d]" : "bg-[#f3eee4] text-[#675534]")}>{status.label}</span>
           {status.reason ? <span className="block text-xs text-[#5d685f]">{status.reason}</span> : null}
-          {methods.map((l, i) => <span key={i} className="block text-xs text-[#5d685f]">{STATEMENT_METHOD_LABELS[l.kind]}</span>)}
+          {methods.map((l, i) => <span key={i} className="block text-xs text-[#5d685f]">{SHORT_METHOD_LABEL[l.kind] ?? STATEMENT_METHOD_LABELS[l.kind]}</span>)}
         </span>
-        <span className="text-right font-medium tabular-nums text-fg max-[780px]:text-[13px]">{collected === null ? STATEMENT_NO_TOTAL : format(collected)}</span>
+        <span className="text-right font-medium tabular-nums text-fg max-[780px]:text-[13px]">{collected === null ? <><span aria-hidden="true">—</span><span className="sr-only">{STATEMENT_NO_TOTAL}</span></> : splitCurrency(format(collected)).amount}</span>
         <span aria-hidden="true" className="inline-flex size-[26px] items-center justify-center rounded-lg border border-[#d6dbd3] bg-white text-fg group-open:bg-[#edf1eb]">
           <span className="group-open:hidden">+</span>
           <span className="hidden group-open:inline">−</span>
@@ -230,16 +238,13 @@ export function StatementView({
   return (
     <div className="space-y-6">
       <header className="space-y-3">
+        <p className="text-sm text-[#5d685f]">Business &nbsp;/&nbsp; Statements</p>
         <div className="flex flex-wrap items-end justify-between gap-3">
-          <h1 className="text-[clamp(32px,4vw,46px)] font-bold leading-[1.07] tracking-[-2px] text-fg">Money statement: {view.label}</h1>
+          <h1 className="text-[clamp(32px,4vw,46px)] font-bold leading-[1.07] tracking-[-2px] text-fg">Monthly statements</h1>
           <MonthControls base="/financials/statement" month={view.month as YearMonth} maxMonth={(maxMonth ?? "9999-12") as YearMonth} />
         </div>
         {tabs}
-        <p className="text-sm text-fg-muted">
-          Visits that started {view.startLocal} to the end of the month, in the studio&apos;s timezone ({view.timezone}). Currency: {currency?.toUpperCase()}.
-        </p>
         {notice ? <p className="text-sm text-fg" role="status">{notice}</p> : null}
-        <p className="text-sm text-fg">{STATEMENT_FRAMING}</p>
       </header>
 
       <SummaryCard bucket={statement.all} visitCount={statement.visits.length} monthLabel={view.label} studioName={studioName} format={format} />
@@ -292,6 +297,10 @@ export function StatementView({
       </section>
 
       <footer className="space-y-2 text-sm text-fg-muted">
+        <p>
+          Visits that started {view.startLocal} to the end of the month, in the studio&apos;s timezone ({view.timezone}). Currency: {currency?.toUpperCase()}.
+        </p>
+        <p>{STATEMENT_FRAMING}</p>
         <p>
           Reconciliation: {r.rowsClassified} money {r.rowsClassified === 1 ? "row" : "rows"} placed, each in exactly one line above
           {r.rowsWithoutAppointment > 0 ? `, ${r.rowsWithoutAppointment} not matched to a visit shown as Unattributed` : ""}.

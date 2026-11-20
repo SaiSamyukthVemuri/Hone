@@ -31,6 +31,7 @@ vi.mock("next/link", () => ({
   useLinkStatus: () => ({ pending: false }),
 }));
 import { studioVisitStatus } from "@/lib/finance/statement-methods";
+import { STATEMENT_FRAMING } from "@/lib/finance/statement-copy";
 import { formatStatementMoney } from "@/lib/finance/statement-money";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -160,5 +161,84 @@ describe("the loader carries the settled quote, and only a clean one", () => {
     const withQ = await run([row("a1", 10000)]);
     const without = await run([row("a1", null)]);
     expect(withQ.statement).toEqual(without.statement);
+  });
+});
+
+// Fidelity pass against the approved reference (heading, explanatory text placement, service, links, dash). Synthetic records only.
+const withInfo = { visitInfo: { v1: { clientName: "Client v1", clientId: "client-1", serviceName: "Service", minutes: 30 } } };
+
+describe("heading and the explanatory text", () => {
+  it("a breadcrumb and the title 'Monthly statements'; the month lives in the picker and the card, not the title", async () => {
+    const out = await renderFix({ view: withInfo });
+    expect(out).toMatch(/Business\s*\/\s*Statements/);
+    expect(out).toMatch(/<h1[^>]*>Monthly statements<\/h1>/);
+    expect(out).not.toContain("Money statement:");
+    expect(out).toContain("November 2026 · Total collected");
+  });
+  it("the period/timezone line and the framing sentence are KEPT, below the table as a footnote, not above the card", async () => {
+    const out = await renderFix({ view: withInfo });
+    const period = "in the studio&#x27;s timezone (America/Toronto)";
+    expect(out).toContain(period);
+    expect(out).toContain(STATEMENT_FRAMING);
+    const visitsAt = out.indexOf('aria-labelledby="stmt-visits"');
+    expect(out.indexOf(period)).toBeGreaterThan(visitsAt);
+    expect(out.indexOf(STATEMENT_FRAMING)).toBeGreaterThan(visitsAt);
+  });
+});
+
+describe("the visit row", () => {
+  it("shows the service with its minutes, and the client as a link to their statement for the month", async () => {
+    const out = await renderFix({ view: withInfo, settle: [{ appointmentId: "v1", method: "paid_cash", amountCents: 5000, currency: "cad" }] });
+    expect(out).toMatch(/>Service<small[^>]*>· 30 min</);
+    expect(out).toMatch(/<a [^>]*href="\/financials\/statements\/client-1\?month=2026-11[^"]*"[^>]*>Client v1<\/a>/);
+    expect(out).not.toMatch(/Invoice/);
+  });
+  it("a client with no id is plain text, not a link; no minutes means no '· min' text", async () => {
+    const out = await renderFix({ view: { visitInfo: { v1: { clientName: "Client v1", clientId: null, serviceName: "Service", minutes: null } } }, settle: [{ appointmentId: "v1", method: "paid_cash", amountCents: 5000, currency: "cad" }] });
+    expect(out).not.toMatch(/<a [^>]*>Client v1<\/a>/);
+    expect(out).not.toContain(" min<");
+  });
+  it("a still-owing visit shows an em dash (read aloud as 'no amount') in the Collected column, never visible 'no amount' text", async () => {
+    const out = await renderFix({ view: withInfo, settle: [{ appointmentId: "v1", method: "still_owes", amountCents: 0, currency: "cad" }] });
+    expect(out).toMatch(/<span aria-hidden="true">—<\/span><span class="sr-only">no amount<\/span>/);
+    const table = out.slice(out.indexOf('aria-labelledby="stmt-visits"'));
+    expect(table.slice(0, table.indexOf("</summary>")).match(/no amount/g)?.length).toBe(1); // the one copy is the sr-only text asserted above
+  });
+  it("no row carries 'Marked still owing (a note, not an amount)' under a pill that already says it", async () => {
+    const out = await renderFix({ view: withInfo, settle: [{ appointmentId: "v1", method: "still_owes", amountCents: 0, currency: "cad" }] });
+    const visits = out.slice(out.indexOf('aria-labelledby="stmt-visits"'), out.indexOf("</summary>", out.indexOf('aria-labelledby="stmt-visits"')));
+    expect(visits).not.toContain("a note, not an amount");
+  });
+});
+
+describe("visitMinutes and the loader", () => {
+  it("whole minutes between start and end; absent when missing, unreadable, or not after the start", async () => {
+    const { visitMinutes } = await import("@/lib/finance/statement-read");
+    expect(visitMinutes("2026-11-03T15:00:00Z", "2026-11-03T15:30:00Z")).toBe(30);
+    expect(visitMinutes("2026-11-03T15:00:00Z", "2026-11-03T16:30:00Z")).toBe(90);
+    expect(visitMinutes("2026-11-03T15:00:00Z", null)).toBeNull();
+    expect(visitMinutes("2026-11-03T15:00:00Z", "nonsense")).toBeNull();
+    expect(visitMinutes("2026-11-03T15:00:00Z", "2026-11-03T15:00:00Z")).toBeNull();
+    expect(visitMinutes("2026-11-03T15:00:00Z", "2026-11-03T14:00:00Z")).toBeNull();
+  });
+  it("visitInfo carries the client id and minutes from the SAME appointments read; it changes no figure", async () => {
+    const { loadStatementView } = await import("@/lib/finance/statement-read");
+    const calls: string[] = [];
+    const client = {
+      from: (table: string) => {
+        const results: Record<string, { data: unknown[]; error: null }> = {
+          appointments: { data: [{ id: "a1", starts_at: "2026-11-03T15:00:00Z", ends_at: "2026-11-03T16:00:00Z", client_id: "cl-1", practitioner_id: "p1", service_id: null, clients: { name: "Synthetic", preferred_name: null } }], error: null },
+          sessions: { data: [], error: null }, payment_charge_attempts: { data: [], error: null }, appointment_settlements: { data: [], error: null }, manual_fee_charge_attempts: { data: [], error: null }, services: { data: [], error: null }, practitioners: { data: [], error: null },
+        };
+        const chain: unknown = new Proxy(() => undefined, { get: (_x, prop) => (prop === "then" ? (res: (v: unknown) => void) => res(results[table]) : (...a: unknown[]) => { if (prop === "select" && table === "appointments") calls.push(String(a[0])); return chain; }) });
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+    const v = await loadStatementView({ role: "owner" }, { id: "s1", timezone: "America/Toronto" }, "2026-11", "cad", client);
+    if (v.access !== "granted" || !v.ok) throw new Error("expected a granted view");
+    expect(v.visitInfo.a1).toMatchObject({ clientId: "cl-1", minutes: 60, clientName: "Synthetic" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain("ends_at");
+    expect(calls[0]).toContain("client_id");
   });
 });

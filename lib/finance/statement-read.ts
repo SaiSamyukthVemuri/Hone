@@ -48,7 +48,7 @@ export type StatementView =
       startLocal: string;
       endLocalExclusive: string;
       statement: Statement;
-      visitInfo: Record<string, { clientName: string; serviceName: string | null }>;
+      visitInfo: Record<string, { clientName: string; clientId: string | null; serviceName: string | null; minutes: number | null }>;
       /** Practitioner id -> display name, for the owner. A name that could not be read is simply absent (the page then says so); it never changes a figure. */
       practitionerNames: Record<string, string>;
       /**
@@ -59,9 +59,19 @@ export type StatementView =
       settlementQuotes: Record<string, number>;
     };
 
+/** Whole minutes between a visit's start and end, or null when either is missing, unreadable, or the end is not after the start. */
+export function visitMinutes(startsAt: string, endsAt: string | null): number | null {
+  if (!endsAt) return null;
+  const ms = Date.parse(endsAt) - Date.parse(startsAt);
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  return Math.round(ms / 60000);
+}
+
 type ApptRow = {
   id: string;
   starts_at: string;
+  ends_at: string | null;
+  client_id: string | null;
   practitioner_id: string | null;
   service_id: string | null;
   clients: { name: string | null; preferred_name: string | null } | { name: string | null; preferred_name: string | null }[] | null;
@@ -87,7 +97,7 @@ export async function loadStatementView(
 
   const { data: apptData, error: apptError } = await supabase
     .from("appointments")
-    .select("id, starts_at, practitioner_id, service_id, clients(name, preferred_name)")
+    .select("id, starts_at, ends_at, client_id, practitioner_id, service_id, clients(name, preferred_name)")
     .eq("studio_id", studio.id)
     .gte("starts_at", startUtc)
     .lt("starts_at", endUtc)
@@ -200,12 +210,15 @@ export async function loadStatementView(
   const practitionerNames: Record<string, string> = {};
   if (prac.ok) for (const r of prac.rows) if (r.display_name && r.display_name.trim()) practitionerNames[r.id] = r.display_name.trim();
 
-  const visitInfo: Record<string, { clientName: string; serviceName: string | null }> = {};
+  const visitInfo: Record<string, { clientName: string; clientId: string | null; serviceName: string | null; minutes: number | null }> = {};
   for (const a of appts) {
     const c = Array.isArray(a.clients) ? a.clients[0] : a.clients;
     visitInfo[a.id] = {
       clientName: c ? clientDisplayName({ name: c.name ?? "", preferred_name: c.preferred_name }) : "Client",
+      clientId: a.client_id,
       serviceName: a.service_id ? svcName.get(a.service_id) ?? null : null,
+      // The booked length, from the appointment's own start and end; absent (never zero) when either is missing or the end is not after the start.
+      minutes: visitMinutes(a.starts_at, a.ends_at),
     };
   }
 
