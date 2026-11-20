@@ -83,23 +83,26 @@ describe("the payment-method breakdown adds no rule: it regroups the lines and m
 });
 
 describe("the client statement, restyled", () => {
-  it("shows a prominent total, the VERIFIED sentence unchanged, the visit count and how it was paid", () => {
+  it("shows a prominent total, the VERIFIED sentence unchanged, the visit count and the method list", () => {
     const out = html(docFor([visit(), split]));
     expect(out).toMatch(/aria-hidden="true"[^>]*>\$120\.00<\/p>/);
     expect(out).toMatch(/\$120\.00 paid<\/p>/);
     expect(out).toMatch(/2 visits/);
-    expect(out).toMatch(/How it was paid/);
+    expect(out).toMatch(/Collected by method/);
     // short method words in the card (the amounts carry no currency suffix; CAD is shown once beside the total); the unchanged basis wording is methodBreakdown's own label
     expect(out).toMatch(/<span>Card<\/span><span[^>]*>\$100\.00<\/span>/);
     expect(out).toMatch(/<span>E-transfer<\/span><span[^>]*>\$20\.00<\/span>/);
   });
   it("omits the breakdown entirely when no method can be shown, and never invents a balance", () => {
     const out = html(docFor([visit({ lines: [] })]));
-    expect(out).not.toMatch(/How it was paid/);
+    expect(out).not.toMatch(/Collected by method/);
     expect(out).toMatch(/Balance due is not shown yet/);
     expect(out).not.toMatch(/Balance due \$/);
+    // the balance sentence lives in the Full payment breakdown (kept, not dropped)
+    const breakdown = out.slice(out.indexOf("Full payment breakdown"), out.indexOf('aria-labelledby="cs-visits"'));
+    expect(breakdown).toMatch(/Balance due is not shown yet/);
   });
-  it("each visit carries a readable status badge whose words are the unchanged state labels, and a Details disclosure with the rest", () => {
+  it("each visit carries a readable status badge whose words are the unchanged state labels, and an expander with the rest", () => {
     const unpaid = visit({ appointmentId: "a2", localDate: "2026-11-19", lines: [] });
     const out = html(docFor([visit(), unpaid]));
     expect(out).toContain(VISIT_STATE_LABEL.paid);
@@ -108,19 +111,14 @@ describe("the client statement, restyled", () => {
     expect(out).toMatch(/Duration/);
     expect(out).toMatch(/Practitioner One/);
     expect(out).toMatch(/No payment recorded/);
-    expect(out).toMatch(/normal-case[^"]*"[^>]*>Paid</);
-    // the shared pill sets small capitals; the override must be !important or the browser still shows "PAID" (found in the browser run, not by markup alone)
-    expect(out).toMatch(/!normal-case !tracking-normal !text-xs/);
+    expect(out).toMatch(/rounded-\[20px\][^"]*bg-\[#eaf2e9\][^"]*">Paid</); // paid is drawn green, in the Studio tab's pill shape
   });
-  it("the wide table and the stacked phone list EACH carry the badge, the unchanged label and the details (neither is a copy of the other's text)", () => {
+  it("ONE responsive row set serves the wide and the phone layout: the pill, the unchanged label and the expander are each present exactly once per visit", () => {
     const out = html(docFor([visit()]));
-    const table = out.slice(out.indexOf("<table"), out.indexOf("</table>"));
-    const list = out.slice(out.indexOf("</table>"));
-    for (const part of [table, list]) {
-      expect(part).toMatch(/normal-case[^"]*"[^>]*>Paid</);
-      expect(part).toMatch(/<details/);
-      expect(part).toMatch(/Practitioner One/);
-    }
+    expect(out).not.toContain("<table");
+    expect(out.match(/>Paid<\/span>/g)?.length).toBe(1);
+    expect(out.match(/<details class="group/g)?.length).toBe(1);
+    expect(out).toMatch(/Practitioner One/);
   });
   it("the summary cards of the Studio tab and the client statement share ONE sage tone, the approved reference's", () => {
     const out = html(docFor([visit()]));
@@ -133,15 +131,16 @@ describe("the client statement, restyled", () => {
     for (const f of ["client-statement-view.tsx", "../statement/statement-view.tsx"]) expect(read("app/(app)/financials/statements/" + f), f).toMatch(/SUMMARY_TONE/);
     expect(read("app/(app)/financials/statements/clients-view.tsx")).not.toMatch(/SUMMARY_TONE/);
   });
-  it("fees are right-aligned numbers in a bordered table with one header row plus one row per visit", () => {
+  it("the collected amounts are right-aligned numbers in the Studio tab's bordered grid: one head row plus one expandable row per visit", () => {
     const out = html(docFor([visit(), visit({ appointmentId: "a2", localDate: "2026-11-04" })]));
-    expect(out.match(/<tr /g)?.length).toBe(3);
-    expect(out).toMatch(/text-right[^"]*tabular-nums[^"]*"[^>]*>\$60\.00</);
-    expect(out).toMatch(/rounded-xl border border-line/);
+    expect(out.match(/<details class="group/g)?.length).toBe(2);
+    expect(out.match(/<span class="text-right font-medium tabular-nums[^"]*">\$60\.00<\/span>/g)?.length).toBe(2);
+    expect(out).toMatch(/<span class="text-right">Collected<\/span>/);
+    expect(out).toMatch(/rounded-xl border border-\[#dbe0d8\]/);
   });
   it("the month and full-history controls keep their links and aria-current", () => {
     const out = html(docFor([visit()]));
-    expect(out).toMatch(/aria-current="page"[^>]*>[^]{0,240}?November 2026</);
+    expect(out).toMatch(/aria-current="page"[^>]*>[^]{0,240}?One month</);
     expect(out).toContain('href="/financials/statements/c1?month=2026-11&amp;view=history"');
     const tabs = renderToStaticMarkup(createElement(StatementsTabs, { active: "clients", month: "2026-11" }));
     expect(tabs).toMatch(/aria-current="page"[^>]*>[^]{0,240}?Clients</);

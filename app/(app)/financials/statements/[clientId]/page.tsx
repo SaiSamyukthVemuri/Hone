@@ -60,6 +60,7 @@ export default async function ClientStatementPage({
       format={(c) => formatStatementMoney(c, currency)}
       tabs={<StatementsTabs active="clients" month={month} />}
       finder={finder}
+      studioName={studio.name}
     />
   );
 }

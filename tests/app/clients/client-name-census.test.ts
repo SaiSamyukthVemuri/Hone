@@ -42,7 +42,6 @@ const BASELINE: ReadonlyArray<readonly [string, number, Status]> = [
   ["app/(app)/calendar/postcare-auto-send.ts", 1, "unrendered"],
   ["app/(app)/clients/[id]/clinical-notes/print/page.tsx", 1, "gap"],
   ["app/(app)/clients/[id]/sessions/[sessionId]/page.tsx", 1, "fine"],
-  ["app/(app)/financials/statements/client-statement-view.tsx", 1, "fine"],
   ["app/(app)/financials/statements/statement-print-view.tsx", 2, "fine"],
   ["app/(app)/global-search-actions.ts", 3, "helper"],
   ["app/api/cron/appointment-reminders/route.ts", 2, "fine"],
@@ -77,7 +76,6 @@ const UNRENDERED_EVIDENCE: Record<string, string> = {
 const FINE_REASON: Record<string, string> = {
   "app/(app)/financials/statements/statement-print-view.tsx": "renders document.client.name, which the statement document model has already resolved to the display name; the view reads no stored name field itself. The page title is the fixed words \"Client statement\", so the name now appears only through that one resolved value",
   "lib/finance/statement-csv.ts": "writes document.client.name (the model's resolved display name) into the header block only; the file reads no stored name field itself",
-  "app/(app)/financials/statements/client-statement-view.tsx": "renders document.client.name, which the statement document model has already resolved to the display name (the preferred name when set); the view reads no stored name field itself",
   "app/api/cron/appointment-reminders/route.ts": "the treatment-time line now names the client through the shared loader (communication name); the two stored-name reads left are the loader's fallback argument and a template parameter the client reminder does not render",
   "lib/email/send-appointment.ts": "the client-facing sites (the treatment-time line, the trusted-render path) take the loader's communication name and fall back to the stored name; the stored-name reads left are those fallbacks. The practitioner and cancellation emails it sends take the same loader's name (pinned by their rendered output in tests/lib/email/client-email-names.test.ts)",
   "app/(app)/clients/[id]/sessions/[sessionId]/page.tsx": "the one remaining read feeds the postcare PREVIEW, which is pinned to the stored name so it matches the send; the page's screen wording uses clientDisplayName",
