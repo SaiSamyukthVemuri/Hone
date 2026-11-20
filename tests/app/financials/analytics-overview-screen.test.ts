@@ -165,6 +165,22 @@ describe("what the page may and may not carry", () => {
   });
 });
 
+describe("downloads and print", () => {
+  it("the screen links to the CSV and the print page with the same choices", () => {
+    const html = render(healthy());
+    expect(html).toContain('href="/financials/analytics/export.csv?period=custom&amp;from=2026-11-01&amp;to=2026-11-30"');
+    expect(html).toContain('href="/financials/analytics/print?period=custom&amp;from=2026-11-01&amp;to=2026-11-30"');
+  });
+  it("the printable form drops the controls, the toggle and the download links, and keeps every card", () => {
+    const html = render(healthy(), { print: true });
+    expect(html).not.toContain("<form");
+    expect(html).not.toContain("export.csv");
+    expect(html).toContain("data-print-footer");
+    const ids = [...html.matchAll(/data-figure="([^"]+)"/g)].map((m) => m[1]).sort();
+    expect(ids).toEqual(Object.values(CARD_OF).sort());
+  });
+});
+
 describe("the interval card under a team-member filter", () => {
   // Ada's earlier visits were with pr-1; in November she is seen by pr-2 only.
   const earlier = [appt("e1", "completed", "2026-10-10T15:00:00Z", "pr-1", "client-ada"), appt("e2", "completed", "2026-10-20T15:00:00Z", "pr-1", "client-ada")];

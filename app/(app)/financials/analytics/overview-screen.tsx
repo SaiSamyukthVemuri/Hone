@@ -29,6 +29,8 @@ export type OverviewScreenProps = {
   notices: readonly string[];
   practitionerOptions: ReadonlyArray<{ id: string; label: string }>;
   format: (cents: number) => string;
+  /** The printable form: no controls or toggles, definitions open, the owner-only note as a footer. The figures are the same cards. */
+  print?: boolean;
 };
 
 function changeText(c: Change, comparisonLabel: string): string {
@@ -126,7 +128,7 @@ export function OverviewInvalidPeriod({ params, notices, practitionerOptions }: 
   );
 }
 
-export function OverviewScreen({ view, params, notices, practitionerOptions, format }: OverviewScreenProps) {
+export function OverviewScreen({ view, params, notices, practitionerOptions, format, print = false }: OverviewScreenProps) {
   const cmp = view.comparisonLabel;
   const claim =
     view.statementsClaim.kind === "one_whole_month"
@@ -144,13 +146,21 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
         : (practitionerOptions.find((o) => o.id === (params.practitioner as { practitionerId: string }).practitionerId)?.label ?? FORMER_TEAM_MEMBER_LABEL);
   return (
     <div className="space-y-8">
-      <header className="space-y-4">
+      <header className="space-y-4" data-statement-header={print ? "" : undefined}>
         <div className="space-y-1">
           <h1 className="text-3xl font-semibold tracking-tight text-fg">Analytics</h1>
           <p className="text-sm text-fg-muted">{view.currentLabel}, compared with {cmp}.</p>
           <p className="text-sm font-medium text-fg" data-showing="">Showing: {showing}</p>
         </div>
-        <Controls params={params} options={practitionerOptions} />
+        {print ? null : (
+          <>
+            <Controls params={params} options={practitionerOptions} />
+            <p className="flex flex-wrap gap-4 text-sm">
+              <a href={`${OVERVIEW_PATH}/export.csv${overviewQuery(params)}`} className={cx("underline", FOCUS_RING)}>Download as a spreadsheet (CSV)</a>
+              <a href={`${OVERVIEW_PATH}/print${overviewQuery(params)}`} className={cx("underline", FOCUS_RING)}>Print this page</a>
+            </p>
+          </>
+        )}
         {notices.length > 0 || view.notes.length > 0 ? (
           <ul className="space-y-1 text-sm text-fg" role="status">
             {[...notices, ...view.notes].map((n) => (
@@ -185,10 +195,12 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
           )}
         </Card>
 
-        <div className="flex flex-wrap items-center gap-2 text-sm" role="group" aria-label="Chart shows">
-          <a href={`${OVERVIEW_PATH}${overviewQuery(params, { series: "money" })}`} aria-current={chartIsMoney ? "true" : undefined} className={cx("rounded-lg px-3", CONTROL_MIN_TOUCH, "inline-flex items-center", FOCUS_RING, chartIsMoney ? "bg-white font-semibold shadow-[0_1px_4px_#0002]" : "text-fg-muted")}>Collected</a>
-          <a href={`${OVERVIEW_PATH}${overviewQuery(params, { series: "visits" })}`} aria-current={!chartIsMoney ? "true" : undefined} className={cx("rounded-lg px-3", CONTROL_MIN_TOUCH, "inline-flex items-center", FOCUS_RING, !chartIsMoney ? "bg-white font-semibold shadow-[0_1px_4px_#0002]" : "text-fg-muted")}>Completed visits</a>
-        </div>
+        {print ? null : (
+          <div className="flex flex-wrap items-center gap-2 text-sm" role="group" aria-label="Chart shows">
+            <a href={`${OVERVIEW_PATH}${overviewQuery(params, { series: "money" })}`} aria-current={chartIsMoney ? "true" : undefined} className={cx("rounded-lg px-3", CONTROL_MIN_TOUCH, "inline-flex items-center", FOCUS_RING, chartIsMoney ? "bg-white font-semibold shadow-[0_1px_4px_#0002]" : "text-fg-muted")}>Collected</a>
+            <a href={`${OVERVIEW_PATH}${overviewQuery(params, { series: "visits" })}`} aria-current={!chartIsMoney ? "true" : undefined} className={cx("rounded-lg px-3", CONTROL_MIN_TOUCH, "inline-flex items-center", FOCUS_RING, !chartIsMoney ? "bg-white font-semibold shadow-[0_1px_4px_#0002]" : "text-fg-muted")}>Completed visits</a>
+          </div>
+        )}
         <Card id="ov-series" title={chartIsMoney ? "Collected by visit date" : "Completed visits by date"} figure={view.series}>
           {(s) => (
             <BarChart
@@ -331,7 +343,7 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
       </section>
 
       <section aria-labelledby="ov-defs" className="space-y-2">
-        <details className="rounded-lg border border-line bg-surface p-4">
+        <details open={print} className="rounded-lg border border-line bg-surface p-4">
           <summary id="ov-defs" className={cx("cursor-pointer text-sm font-medium text-fg", FOCUS_RING)}>What the numbers mean</summary>
           <dl className="mt-3 space-y-3 text-sm text-fg">
             <div><dt className="font-medium">{COLLECTED_LABEL}</dt><dd className="text-fg-muted">{COLLECTED_DEFINITION}</dd></div>
@@ -343,6 +355,7 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
           </dl>
         </details>
       </section>
+      {print ? <p data-print-footer="" className="border-t border-line pt-3 text-xs text-fg-muted">{ANALYTICS_ACCESS_NOTE}</p> : null}
     </div>
   );
 }

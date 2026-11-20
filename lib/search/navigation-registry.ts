@@ -932,6 +932,10 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
     reason: "Owner-only, no navigation link until the layout is accepted and the redaction tests land; it is registered with the navigation change that adds the menu entry.",
   },
   {
+    route: "/financials/analytics/print",
+    reason: "The printable form of the owner-only Analytics screen; reached only from that screen's Print link, never searched.",
+  },
+  {
     route: "/financials/statements",
     reason: "The Clients statements screens are new and are not yet reachable from the menu or Global Search; the search entry ships with the menu entry in the navigation change, so a destination is never searchable before it is linkable.",
   },
