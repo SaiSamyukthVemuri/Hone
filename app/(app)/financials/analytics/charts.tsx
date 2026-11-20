@@ -97,7 +97,8 @@ export function LineChart({
           {previous ? isolatedPoints(prev).map((p, i) => <circle key={`pp${i}`} data-isolated="previous" cx={p.x} cy={p.y} r={3.5} fill={INK_SOFT} />) : null}
           {isolatedPoints(cur).map((p, i) => <circle key={`cp${i}`} data-isolated="current" cx={p.x} cy={p.y} r={3.5} fill={INK} />)}
           {points.map((p, i) =>
-            i % every === 0 || i === slots - 1 ? (
+            // The last label is always drawn, but not when the one before it would sit on top of it (a label is about every `every` slots apart).
+            (i % every === 0 && (i === slots - 1 || slots - 1 - i >= Math.ceil(every / 2) + 1 || every === 1)) || i === slots - 1 ? (
               <text key={p.key} x={slots === 1 ? plotW / 2 : (i * plotW) / (slots - 1)} y={plotH + 18} textAnchor={slots === 1 ? "middle" : i === 0 ? "start" : i === slots - 1 ? "end" : "middle"} fontSize={11} fill={AXIS_TEXT}>
                 {truncateLabel(p.label, maxLabelChars)}
               </text>
@@ -119,7 +120,7 @@ export function LineChart({
           <tbody>
             {points.map((p, i) => (
               <tr key={p.key} className="border-b border-line/60">
-                <th scope="row" className="py-1 pr-3 font-normal text-fg">{p.label}</th>
+                <th scope="row" className="whitespace-nowrap py-1 pr-3 font-normal text-fg">{p.label}</th>
                 <td className="py-1 pr-3 text-right tabular-nums text-fg">{formatValue(p.value)}</td>
                 {previous ? (
                   <td className="py-1 text-right tabular-nums text-fg">

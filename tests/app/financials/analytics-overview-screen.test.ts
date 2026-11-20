@@ -381,3 +381,17 @@ describe("review round on A4 (V1 to V5, Codex P2s, population note)", () => {
     expect(text(card(render(healthy()), "ov-beyond") ?? "")).toContain(`than ${DEFAULT_BEYOND_USUAL_FACTOR} times`);
   });
 });
+
+describe("visual pass fixes on A4", () => {
+  it("the period line is said once, not again in the notes", () => {
+    const html = render(healthy());
+    const line = `${healthy().currentLabel} compared with ${healthy().comparisonLabel}.`;
+    expect(html.split(line.replace(/&/g, "&amp;")).length - 1).toBe(1 + 0);
+  });
+  it("the last axis label is not drawn on top of the one before it", () => {
+    const labels = (html: string) => [...(card(html, "ov-series") ?? "").matchAll(/<text[^>]*text-anchor="(?:start|middle|end)"[^>]*font-size="11"[^>]*>([^<]*)<\/text>/g)].map((m) => m[1]).filter((t) => /\d+ [A-Z][a-z]{2}/.test(t));
+    const l = labels(render(healthy()));
+    expect(l.at(-1)).toBe("30 Nov");
+    expect(l.at(-2)).not.toBe("28 Nov"); // the label before the last is far enough from it
+  });
+});

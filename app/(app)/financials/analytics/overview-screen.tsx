@@ -215,6 +215,9 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
       : params.practitioner.kind === "unattributed"
         ? UNATTRIBUTED_LABEL
         : (practitionerOptions.find((o) => o.id === (params.practitioner as { practitionerId: string }).practitionerId)?.label ?? FORMER_TEAM_MEMBER_LABEL);
+  // The period line is already said once above; the model's own copy of it is not repeated.
+  const periodLine = `${view.currentLabel} compared with ${cmp}.`;
+  const pageNotes = view.notes.filter((n) => n !== periodLine);
   const prevCount = view.previousSeries.available ? view.previousSeries.value.points.length : null;
   const curCount = view.series.available ? view.series.value.points.length : null;
   const toggle = (series: "money" | "visits", label: string) => (
@@ -245,12 +248,12 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
           </div>
         )}
         <div className="space-y-1">
-          <p className="text-sm text-fg-muted">{view.currentLabel} compared with {cmp}.</p>
+          <p className="text-sm text-fg-muted">{periodLine}</p>
           <p className="text-sm font-medium text-fg" data-showing="">Showing: {showing}</p>
         </div>
-        {notices.length > 0 || view.notes.length > 0 ? (
+        {notices.length > 0 || pageNotes.length > 0 ? (
           <ul className="space-y-1 text-sm text-fg" role="status">
-            {[...notices, ...view.notes].map((n) => (
+            {[...notices, ...pageNotes].map((n) => (
               <li key={n}>{n}</li>
             ))}
           </ul>
