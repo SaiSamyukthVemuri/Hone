@@ -65,3 +65,27 @@ describe("dates that were not accepted keep the controls, so the range can be co
     expect(html).not.toMatch(/data-figure=/); // no figure is drawn without a period
   });
 });
+
+describe("the corrected-dates form echoes only a plain date (Privacy C1)", () => {
+  const render = async (from: string, to: string) => {
+    calls.result = {
+      access: "granted", ok: false, reason: "period_invalid", notices: ["The dates were not accepted (range reversed)."],
+      params: { periodKind: "custom", from, to, compare: "last_year", practitioner: { kind: "all" }, series: "money" },
+      practitionerOptions: [],
+    };
+    return renderToStaticMarkup((await AnalyticsOverviewPage({ searchParams: Promise.resolve({}) })) as never);
+  };
+  it("a real date is kept", async () => {
+    const html = await render("2026-12-01", "2026-11-01");
+    expect(html).toContain('value="2026-12-01"');
+    expect(html).toContain('value="2026-11-01"');
+  });
+  it("junk, a long string and a non-date leave the field empty, and none of the text reaches the page", async () => {
+    for (const bad of ["<script>alert(1)</script>", "x".repeat(5000), "not-a-date", "2026-1-1", "2026-12-01T00:00", " 2026-12-01", "2026-12-01\n"]) {
+      const html = await render(bad, bad);
+      expect(html, bad.slice(0, 20)).not.toContain(bad.trim().slice(0, 12) === "" ? "\u0000" : bad.trim().slice(0, 12));
+      expect(html.length, "no unbounded echo").toBeLessThan(60_000);
+      expect(html).toMatch(/name="from"[^>]*value=""|value=""[^>]*name="from"|name="from"(?![^>]*value=)/);
+    }
+  });
+});
