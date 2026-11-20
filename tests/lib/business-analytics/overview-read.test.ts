@@ -254,6 +254,34 @@ describe("the filter's list of team members", () => {
   });
 });
 
+describe("a selected team member who is no longer active (U2)", () => {
+  const roster = () => {
+    const res = healthy();
+    res.practitioners = ok([
+      { id: "pr-a", display_name: "Amy", active: true },
+      { id: "pr-x", display_name: "Gone Person", active: false },
+    ]);
+    return res;
+  };
+  it("is listed as a Former team member, never by name, so the form cannot say Everyone while the data is filtered", async () => {
+    const r = await load("owner", recording(roster()).client, { practitioner: "pr-x" });
+    if (!(r.access === "granted" && r.ok)) throw new Error("expected a view");
+    expect(r.params.practitioner).toEqual({ kind: "one", practitionerId: "pr-x" });
+    expect(r.practitionerOptions).toEqual([
+      { id: "pr-a", label: "Amy" },
+      { id: "pr-x", label: "Former team member" },
+    ]);
+    expect(JSON.stringify(r.practitionerOptions)).not.toContain("Gone");
+  });
+  it("the default view and an active selection add nothing", async () => {
+    for (const raw of [{}, { practitioner: "pr-a" }] as Array<Record<string, string>>) {
+      const r = await load("owner", recording(roster()).client, raw);
+      if (!(r.access === "granted" && r.ok)) throw new Error("expected a view");
+      expect(r.practitionerOptions).toEqual([{ id: "pr-a", label: "Amy" }]);
+    }
+  });
+});
+
 describe("the Overview read: parameters", () => {
   it("a page with a bad value shows the default with a notice; a strict route is refused, with no data query", async () => {
     const page = await load("owner", recording(healthy()).client, { period: "week" });

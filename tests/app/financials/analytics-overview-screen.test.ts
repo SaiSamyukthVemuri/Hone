@@ -191,3 +191,66 @@ describe("the chart's left margin follows its longest axis label", () => {
     expect(tickMargin([])).toBe(64);
   });
 });
+
+
+describe("the filter in force is always stated (U1)", () => {
+  const showing = (html: string) => (html.match(/data-showing="">([^<]*)</)?.[1] ?? "").replace(/&#x27;/g, "'");
+  const withFilter = (practitioner: OverviewParams["practitioner"]) => render(healthy(), { params: { ...params, practitioner } });
+  it("says Everyone, the member's name, Former team member for one not in the list, or Unattributed", () => {
+    expect(showing(withFilter({ kind: "all" }))).toBe("Showing: Everyone");
+    expect(showing(withFilter({ kind: "one", practitionerId: "pr-1" }))).toBe("Showing: Ada Example");
+    expect(showing(withFilter({ kind: "one", practitionerId: "pr-2" }))).toBe("Showing: Former team member");
+    expect(showing(withFilter({ kind: "unattributed" }))).toBe("Showing: Unattributed");
+  });
+  it("the by-team-member card says it stays whole-studio under a filter", () => {
+    const html = withFilter({ kind: "one", practitionerId: "pr-1" });
+    expect(card(html, "ov-bypractitioner") ?? "").toContain("always shows the whole studio, whatever team member is chosen above");
+  });
+});
+
+describe("an unknown figure is never drawn as a zero (U3)", () => {
+  const unknownReturning = { available: true, value: { activeClients: 0, returning: 0, firstTime: 0, returningPercent: { known: false, reason: "No client had a completed visit in this period." } } } as unknown as OverviewView["returning"];
+  const text = (html: string, id: string) => (card(html, id) ?? "").replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/\s+/g, " ");
+  it("an unknown returning percent shows its reason, not 0%", () => {
+    const t = text(render({ ...healthy(), returning: unknownReturning }), "ov-returning");
+    expect(t).toContain("No client had a completed visit in this period.");
+    expect(t).not.toMatch(/\b0\s*%/);
+  });
+  it("an unknown visits-per-client or average-paid fact shows its reason, not 0.0 or $0.00", () => {
+    const vpc = { available: true, value: { known: false, reason: "No client was seen." } } as unknown as OverviewView["visitsPerClient"];
+    const avg = { available: true, value: { averageCents: { known: false, reason: "No visit has a known payment." }, excludedUnknownVisits: 0 } } as unknown as OverviewView["averagePaid"];
+    const html = render({ ...healthy(), visitsPerClient: vpc, averagePaid: avg });
+    expect(text(html, "ov-vpc")).toContain("No client was seen.");
+    expect(text(html, "ov-vpc")).not.toMatch(/0\.0/);
+    expect(text(html, "ov-avgpaid")).toContain("No visit has a known payment.");
+    expect(text(html, "ov-avgpaid")).not.toContain("$0.00");
+  });
+  it("an unavailable comparison says so, not +0.0%", () => {
+    const base = healthy();
+    const collected = base.collected.available ? { ...base.collected, value: { ...base.collected.value, change: { kind: "unavailable" } } } : base.collected;
+    const visits = base.completedVisits.available ? { ...base.completedVisits, value: { ...base.completedVisits.value, change: { kind: "unavailable" } } } : base.completedVisits;
+    const html = render({ ...base, collected, completedVisits: visits } as OverviewView);
+    expect(text(html, "ov-collected-total")).toContain("The comparison is not available.");
+    expect(text(html, "ov-visits")).toContain("The comparison is not available.");
+    expect(html).not.toMatch(/[+−]0\.0%/);
+  });
+});
+
+describe("the collected card states its basis (U4)", () => {
+  it("carries the money basis note, so the figure is never shown without how it is counted", async () => {
+    const { MONEY_BASIS_NOTE } = await import("@/lib/business-analytics/money-metrics");
+    expect((card(render(healthy()), "ov-collected-total") ?? "").replace(/&#x27;/g, "'")).toContain(MONEY_BASIS_NOTE);
+  });
+});
+
+
+describe("a period with no visits at all draws no false zero (U3, through the real model)", () => {
+  it("returning, visits per client, average paid and the comparisons say why instead of 0", () => {
+    const empty = { cardRows: [], settlementRows: [], legacyFeeRows: [] };
+    const view = buildOverview(input({ current: { ok: true, value: { appointments: [], money: { ok: true, value: empty as never } } }, history: { ok: true, value: { appointments: [] } } }));
+    const t = (id: string) => (card(render(view), id) ?? "").replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/\s+/g, " ");
+    expect(t("ov-returning")).not.toMatch(/\b0\s*%/);
+    expect(t("ov-vpc")).not.toMatch(/\b0\.0\b/);
+    expect(t("ov-avgpaid")).not.toContain("$0.00");
+  });
+});

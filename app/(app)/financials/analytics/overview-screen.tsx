@@ -6,6 +6,7 @@ import { FIGURE_UNAVAILABLE_COPY, type Figure } from "@/lib/business-analytics/f
 import { MONEY_BASIS_NOTE, type Change } from "@/lib/business-analytics/money-metrics";
 import type { OverviewView } from "@/lib/business-analytics/overview-model";
 import { overviewQuery, type OverviewParams } from "@/lib/business-analytics/overview-params";
+import { FORMER_TEAM_MEMBER_LABEL, UNATTRIBUTED_LABEL } from "@/lib/business-analytics/copy";
 import { PERIOD_KINDS } from "@/lib/business-analytics/period";
 import type { Fact } from "@/lib/dashboard/owner-capacity-model";
 
@@ -15,8 +16,9 @@ import { BarChart } from "./charts";
 // The Overview screen. PRESENTATION ONLY: it renders the one OverviewView it is given and computes nothing about money or people.
 // ===========================================================================
 // Every figure goes through <Card>: an unavailable figure shows its fixed reason sentence in the same place, never a blank card, a 0 or a dropped
-// section. The view holds aggregates only, so nothing here can show a client, an appointment or a practitioner id. The only id on the page is the
-// practitioner filter's own option value in the form (owner-only page); no chart, table or link text carries one.
+// section. The view holds aggregates only, so nothing here can show a client or an appointment id, and no text names a practitioner id. A SELECTED
+// team member's id sits in the filter form's option value AND in the screen's own link hrefs (the chart toggle here; Download, Print and Back on
+// the other pages): owner-only, the same URL as the request. It must stay OUT of print, CSV and any chart, table or link text.
 
 export const OVERVIEW_PATH = "/financials/analytics";
 const PERIOD_LABELS: Record<string, string> = { month_to_date: "Month to date", previous_month: "Previous month", year_to_date: "Year to date", custom: "Custom range" };
@@ -111,12 +113,20 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
         ? "These are whole calendar months. Each month's collected total can be compared with that month on Statements."
         : "This period is not whole months, so it is not compared with a Statements page. It follows the same rules applied to the same dates.";
   const chartIsMoney = params.series === "money";
+  // The filter in force, in words, so the data is never filtered without saying so. An id not in the list is a former team member.
+  const showing =
+    params.practitioner.kind === "all"
+      ? "Everyone"
+      : params.practitioner.kind === "unattributed"
+        ? UNATTRIBUTED_LABEL
+        : (practitionerOptions.find((o) => o.id === (params.practitioner as { practitionerId: string }).practitionerId)?.label ?? FORMER_TEAM_MEMBER_LABEL);
   return (
     <div className="space-y-8">
       <header className="space-y-4">
         <div className="space-y-1">
           <h1 className="text-3xl font-semibold tracking-tight text-fg">Analytics</h1>
           <p className="text-sm text-fg-muted">{view.currentLabel}, compared with {cmp}.</p>
+          <p className="text-sm font-medium text-fg" data-showing="">Showing: {showing}</p>
         </div>
         <Controls params={params} options={practitionerOptions} />
         {notices.length > 0 || view.notes.length > 0 ? (
@@ -209,7 +219,7 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
 
       <section aria-labelledby="ov-team" className="space-y-3">
         <h2 id="ov-team" className="text-xl font-semibold tracking-tight text-fg">Collections by team member</h2>
-        <Card id="ov-bypractitioner" title="Collected by team member (whole studio)" figure={view.byPractitioner}>
+        <Card id="ov-bypractitioner" title="Collected by team member (whole studio)" figure={view.byPractitioner} note="This card always shows the whole studio, whatever team member is chosen above.">
           {(rows) => (
             <BarChart
               idPrefix="ov-team-chart"
