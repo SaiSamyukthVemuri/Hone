@@ -40,7 +40,7 @@ export default async function AnalyticsOverviewPrintPage({ searchParams }: { sea
         <PrintButton />
         <a href={`${OVERVIEW_PATH}${overviewQuery(read.params)}`} className="text-sm underline">Back to Analytics</a>
       </div>
-      <OverviewScreen view={read.view} params={read.params} notices={[]} practitionerOptions={[]} format={(c) => formatMoney(c, currency)} print />
+      <OverviewScreen view={read.view} params={read.params} notices={[]} practitionerOptions={read.practitionerOptions} format={(c) => formatMoney(c, currency)} print />
     </div>
   );
 }

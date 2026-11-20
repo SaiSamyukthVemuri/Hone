@@ -23,6 +23,9 @@ import type { OverviewView } from "./overview-model";
 const PLAIN_NUMBER = /^-?\d+(\.\d{2})?$/;
 const cell = (v: string): string => (PLAIN_NUMBER.test(v) ? v : csvCell(v));
 
+/** The by-team-member rows are the whole studio whatever team member is chosen, so the section says so, as the screen does. */
+const WHOLE_STUDIO = "Whole studio (not filtered)";
+
 export const OVERVIEW_CSV_COLUMNS = ["section", "figure", "value", "currency", "note"] as const;
 
 type Row = readonly string[];
@@ -100,8 +103,8 @@ export function overviewCsv(view: OverviewView, opts: { preparedOn: string }): s
       : add("Visits", "Average paid per visit", `Not available: ${a.averageCents.reason}`, `${a.excludedUnknownVisits} visits awaiting payment confirmation are left out.`),
   );
 
-  fig("By team member", "Collected by team member", view.byPractitioner, (list) => {
-    for (const r of list) add("By team member", r.label, money(r.collectedCents), "", cur);
+  fig(WHOLE_STUDIO, "Collected by team member (whole studio, not filtered)", view.byPractitioner, (list) => {
+    for (const r of list) add(WHOLE_STUDIO, r.label, money(r.collectedCents), "", cur);
   });
 
   fig("Service value", SERVICE_VALUE_LABEL, view.serviceValue, (sv) => {

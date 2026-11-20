@@ -106,6 +106,24 @@ function Controls({ params, options }: { params: OverviewParams; options: Overvi
   );
 }
 
+/** The dates were not accepted: the header and controls stay (with what was submitted, parsed to safe values) so the owner can correct the range, and the reason sits beside them. */
+export function OverviewInvalidPeriod({ params, notices, practitionerOptions }: { params: OverviewParams; notices: readonly string[]; practitionerOptions: OverviewScreenProps["practitionerOptions"] }) {
+  return (
+    <div className="space-y-8">
+      <header className="space-y-4">
+        <h1 className="text-3xl font-semibold tracking-tight text-fg">Analytics</h1>
+        <Controls params={params} options={practitionerOptions} />
+        <ul className="space-y-1 text-sm text-fg" role="alert">
+          {notices.map((n) => (
+            <li key={n}>{n}</li>
+          ))}
+        </ul>
+        <p className="text-xs text-fg-muted">{ANALYTICS_ACCESS_NOTE}</p>
+      </header>
+    </div>
+  );
+}
+
 export function OverviewScreen({ view, params, notices, practitionerOptions, format, print = false }: OverviewScreenProps) {
   const cmp = view.comparisonLabel;
   const claim =
