@@ -361,6 +361,20 @@ describe("replace, the studio lock and what a claimed item authorises", () => {
     expect(new Set(got.map((r: any) => r.studio_id)).size).toBe(2);
     for (const sid of [f.studioId, g.studioId]) expect(got.filter((r: any) => r.studio_id === sid)).toHaveLength(2);
   });
+  it("a DECLINED, unexpired invitation no longer excludes its person from a new batch; a failed item with no invitation holds nothing", async () => {
+    const f = await seed("dc"); const [a, b2] = await entries(f, 2);
+    await liveInvite(f, a); await liveInvite(f, b2);
+    await q(`update public.new_client_waitlist_invitations set declined_at = now() where entry_id=$1`, [a]);
+    await q(`update public.new_client_waitlist_entries set status = 'waiting' where id=$1`, [a]).catch(() => undefined);
+    const live = (await q(`select count(*)::int n from public.new_client_waitlist_invitations where studio_id=$1 and redeemed_at is null and expired_at is null and released_at is null and declined_at is null and expires_at > now()`, [f.studioId]))[0].n;
+    expect((await create(f, [a], { fit: 0, shown: live }))[0].result, "declined: re-inviteable").toBe("created");
+    expect((await create(f, [b2], { fit: 0, shown: live }))[0].result, "live: still blocked").toBe("entry_in_other_batch");
+    const [e3] = await entries(f, 1);
+    await q(`insert into public.waitlist_invitation_batches (studio_id, batch_key, confirmed_by_practitioner_id, confirmed_by_user_id, quantity, extra_requested, fit_shown, live_shown, service_id, start_date, end_date, ttl_hours) values ($1,$2,$3,$4,1,0,0,0,$5,$6,$7,72)`, [f.studioId, randomUUID(), f.practitionerId, f.userId, f.serviceId, day(1), day(30)]);
+    const bid = (await q(`select id from public.waitlist_invitation_batches where studio_id=$1 order by confirmed_at desc limit 1`, [f.studioId]))[0].id;
+    await q(`insert into public.waitlist_invitation_batch_items (batch_id, studio_id, entry_id, state) values ($1,$2,$3,'failed')`, [bid, f.studioId, e3]);
+    expect((await create(f, [e3], { fit: 0, shown: live }))[0].result, "a null-invitation failed item holds nothing").toBe("created");
+  });
   it("a LATE settle for the old invitation after a replace changes nothing: the replacement is never marked sent by the old delivery", async () => {
     const f = await seed("ls"); const [e1] = await entries(f, 1); const c = await liveInvite(f, e1);
     const inv = async () => (await q(`select invitation_id from public.waitlist_invitation_batch_items where id=$1`, [c.item_id]))[0].invitation_id as string;

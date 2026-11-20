@@ -478,10 +478,12 @@ begin
   -- invited again. An item whose invitation is still live keeps blocking.
   update public.waitlist_invitation_batch_items i
      set state = 'skipped', reason_class = 'invitation_ended', settled_at = pg_catalog.clock_timestamp()
-    from public.new_client_waitlist_invitations inv
    where i.entry_id = any (p_entry_ids) and i.studio_id = p_studio_id and i.state in ('issued','unknown','failed')
-     and inv.id = i.invitation_id and inv.redeemed_at is null
-     and (inv.released_at is not null or inv.expired_at is not null or inv.expires_at <= pg_catalog.clock_timestamp());
+     and (i.invitation_id is null   -- a failed item with no invitation (the table allows it; no command makes one) holds nothing
+          or exists (select 1 from public.new_client_waitlist_invitations inv
+                      where inv.id = i.invitation_id and inv.redeemed_at is null
+                        and (inv.released_at is not null or inv.declined_at is not null or inv.expired_at is not null
+                             or inv.expires_at <= pg_catalog.clock_timestamp())));
   if exists (select 1 from public.waitlist_invitation_batch_items i
               where i.entry_id = any (p_entry_ids) and i.state in ('pending','claimed','issued','unknown','failed')) then
     return query select 'entry_in_other_batch'::text, null::uuid, null::integer, null::integer, null::integer; return;
@@ -531,7 +533,7 @@ begin
                         and (bi.state in ('pending','claimed')
                              or (bi.state in ('issued','unknown','failed')
                                  and exists (select 1 from public.new_client_waitlist_invitations inv where inv.id = bi.invitation_id
-                                              and inv.redeemed_at is null and inv.released_at is null and inv.expired_at is null
+                                              and inv.redeemed_at is null and inv.released_at is null and inv.declined_at is null and inv.expired_at is null
                                               and inv.expires_at > pg_catalog.clock_timestamp())))));
 end;
 $$;
