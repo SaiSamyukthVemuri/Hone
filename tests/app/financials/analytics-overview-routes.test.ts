@@ -85,7 +85,7 @@ describe("the Overview CSV route", () => {
   });
   it("asks the loader in STRICT mode and passes repeated keys through, so a repeated value is a bad request", async () => {
     await get("?period=previous_month&period=year_to_date");
-    expect(state.loads[0].opts).toEqual({ strict: true });
+    expect(state.loads[0].opts).toEqual({ strict: true, names: false }); // neither the spreadsheet nor the printed page reads client names
     expect(state.loads[0].raw).toEqual({ period: ["previous_month", "year_to_date"] });
   });
   it("a bad value is 400 and a failed read is 503, both uncached and never a partial file", async () => {
@@ -126,7 +126,7 @@ describe("the Overview print page", () => {
   });
   it("is read in strict mode: a printed page says what it was asked for", async () => {
     await page();
-    expect(state.loads[0].opts).toEqual({ strict: true });
+    expect(state.loads[0].opts).toEqual({ strict: true, names: false }); // neither the spreadsheet nor the printed page reads client names
     state.result = { access: "granted", ok: false, reason: "bad_request", notices: [] };
     const { tree } = await page();
     expect(JSON.stringify(tree)).toContain("nothing is printed");

@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
     raw[key] = all.length === 1 ? all[0] : all;
   }
   const now = new Date();
-  const read = await loadOverview(practitioner, studio, currency, raw, { strict: true }, now);
+  const read = await loadOverview(practitioner, studio, currency, raw, { strict: true, names: false }, now); // the spreadsheet carries no names, so it never reads them
   if (read.access !== "granted") return refuse(403, "forbidden");
   if (!read.ok) return read.reason === "bad_request" ? refuse(400, "bad_request") : refuse(503, "unavailable");
 

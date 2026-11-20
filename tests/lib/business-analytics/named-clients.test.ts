@@ -122,7 +122,7 @@ describe("who is listed, and the cap", () => {
 });
 
 // A recording stand-in for the query builder: every call is kept so the filters can be pinned.
-function fakeSupabase(rowsFor: (ids: string[]) => Array<{ id: string; name: string | null }>, fail = false) {
+function fakeSupabase(rowsFor: (ids: string[], select: string) => Array<{ id: string; name: string | null; preferred_name?: string | null }>, fail = false, missingPreferred = false) {
   const calls: Array<{ table: string; select: string; eq: Array<[string, unknown]>; is: Array<[string, unknown]>; inIds: string[] }> = [];
   const client = {
     from(table: string) {
@@ -132,7 +132,8 @@ function fakeSupabase(rowsFor: (ids: string[]) => Array<{ id: string; name: stri
         select(s: string) { call.select = s; return q; },
         eq(c: string, v: unknown) { call.eq.push([c, v]); return q; },
         is(c: string, v: unknown) { call.is.push([c, v]); return q; },
-        in(_c: string, ids: string[]) { call.inIds = ids; return Promise.resolve(fail ? { data: null, error: { message: "x" } } : { data: rowsFor(ids), error: null }); },
+        in(_c: string, ids: string[]) { call.inIds = ids; if (missingPreferred && call.select.includes("preferred_name")) return Promise.resolve({ data: null, error: { code: "42703", message: 'column clients.preferred_name does not exist' } });
+          return Promise.resolve(fail ? { data: null, error: { message: "x" } } : { data: rowsFor(ids, call.select), error: null }); },
       };
       return q;
     },
@@ -146,7 +147,7 @@ describe("the names-only read", () => {
     const r = await readClientNames(f.client, "studio-1", ["a", "b", "a"]);
     expect(f.calls).toHaveLength(1);
     expect(f.calls[0].table).toBe("clients");
-    expect(f.calls[0].select).toBe("id, name");
+    expect(f.calls[0].select).toBe("preferred_name, id, name");
     expect(f.calls[0].eq).toEqual([["studio_id", "studio-1"]]);
     expect(f.calls[0].is).toEqual([["archived_at", null]]);
     expect(f.calls[0].inIds).toEqual(["a", "b"]);
@@ -172,5 +173,36 @@ describe("the names-only read", () => {
     const f = fakeSupabase(() => [{ id: "a", name: null }]);
     const r = await readClientNames(f.client, "studio-1", ["a"]);
     expect(r.ok && r.names.size).toBe(0);
+  });
+});
+
+describe("the name shown is the app's display name, never the legal name", () => {
+  it("a client with a preferred name shows it, and the stored name is not shown", async () => {
+    const f = fakeSupabase(() => [{ id: "a", name: "Legal Lastname", preferred_name: "Sam" }]);
+    const r = await readClientNames(f.client, "studio-1", ["a"]);
+    expect(r.ok && r.names.get("a")).toBe("Sam");
+  });
+  it("a client without one shows the stored name; a whitespace preferred name does not hide it", async () => {
+    const f = fakeSupabase(() => [{ id: "a", name: "Stored Name", preferred_name: null }, { id: "b", name: "Other Stored", preferred_name: "  " }]);
+    const r = await readClientNames(f.client, "studio-1", ["a", "b"]);
+    expect(r.ok && [r.names.get("a"), r.names.get("b")]).toEqual(["Stored Name", "Other Stored"]);
+  });
+  it("a database without the preferred-name column is read again without it and shows the stored name", async () => {
+    const f = fakeSupabase((_ids, select) => (select.includes("preferred_name") ? [] : [{ id: "a", name: "Stored Name" }]), false, true);
+    const r = await readClientNames(f.client, "studio-1", ["a"]);
+    expect(f.calls.map((c) => c.select)).toEqual(["preferred_name, id, name", "id, name"]);
+    expect(f.calls[1].is).toEqual([["archived_at", null]]); // the fallback keeps every filter
+    expect(f.calls[1].eq).toEqual([["studio_id", "studio-1"]]);
+    expect(r.ok && r.names.get("a")).toBe("Stored Name");
+  });
+  it("the blank rule applies to the resulting name: preferred and stored both blank is not listed", async () => {
+    const f = fakeSupabase(() => [{ id: "a", name: " ", preferred_name: "" }]);
+    const r = await readClientNames(f.client, "studio-1", ["a"]);
+    expect(r.ok && r.names.size).toBe(0);
+  });
+  it("a different failure on the first attempt is not retried and is a failed lookup", async () => {
+    const f = fakeSupabase(() => [], true);
+    expect(await readClientNames(f.client, "studio-1", ["a"])).toEqual({ ok: false });
+    expect(f.calls).toHaveLength(1);
   });
 });

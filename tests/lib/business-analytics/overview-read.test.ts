@@ -85,12 +85,21 @@ describe("the Overview read: whole or nothing, studio-scoped, never writing", ()
     const { client, calls } = recording(res);
     const r = await load("owner", client);
     const nameCalls = calls.filter((c) => c.table === "clients");
-    expect(nameCalls.find((c) => c.method === "select")?.args).toEqual(["id, name"]);
+    expect(nameCalls.find((c) => c.method === "select")?.args).toEqual(["preferred_name, id, name"]);
     expect(nameCalls.find((c) => c.method === "is")?.args).toEqual(["archived_at", null]);
     expect(nameCalls.find((c) => c.method === "in")?.args).toEqual(["id", ["c1"]]);
     expect(r).toMatchObject({ access: "granted", ok: true });
     const view = (r as { view: { namedClients: { available: boolean; value?: { mostVisits: Array<{ name: string }> } } } }).view;
     expect(view.namedClients.value?.mostVisits.map((x) => x.name)).toEqual(["Ada Client"]);
+  });
+  it("never reads client names when asked not to (the printed page and the spreadsheet), and still returns the view", async () => {
+    const res = healthy();
+    res.clients = ok([{ id: "c1", name: "Ada Client" }]);
+    const { client, calls } = recording(res);
+    const { loadOverview } = await import("@/lib/business-analytics/server/overview-read");
+    const r = await loadOverview({ role: "owner" }, studio, "cad", {}, { strict: true, names: false }, NOW, client);
+    expect(r).toMatchObject({ access: "granted", ok: true });
+    expect(calls.filter((c) => c.table === "clients")).toEqual([]);
   });
   it("a failed name read makes only the named lists unavailable", async () => {
     const res = healthy();

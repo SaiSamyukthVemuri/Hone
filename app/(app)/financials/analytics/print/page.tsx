@@ -25,7 +25,7 @@ export default async function AnalyticsOverviewPrintPage({ searchParams }: { sea
   const currency: PaymentCurrency | null = jurisdiction.ok ? jurisdiction.jurisdiction.currency : null;
 
   // A printed page must say exactly what it was asked for, so a bad value is refused here, not replaced by the default.
-  const read = await loadOverview(practitioner, studio, currency, await searchParams, { strict: true }, new Date());
+  const read = await loadOverview(practitioner, studio, currency, await searchParams, { strict: true, names: false }, new Date());
   if (read.access !== "granted") return null; // unreachable: the role was checked above, and the loader checks it again
   if (!read.ok) {
     return (
