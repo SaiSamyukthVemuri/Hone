@@ -9,7 +9,7 @@ vi.mock("@/lib/rollouts/charting-rollout", async (orig) => {
   const real = await orig<typeof import("@/lib/rollouts/charting-rollout")>();
   return { ...real, readChartingRollout: async () => { ROLLOUT.reads += 1; return ROLLOUT.value; } };
 });
-const { guardXcellRollout, createReceiptLookup, XCELL_ROLLOUT_OFF_MESSAGE } = await import("@/lib/machines/xcell-rollout-guard");
+const { guardXcellRollout, createReceiptLookup, submissionReceiptLookup, XCELL_ROLLOUT_OFF_MESSAGE } = await import("@/lib/machines/xcell-rollout-guard");
 
 type Row = Record<string, unknown>;
 const TABLES: Record<string, Row[]> = {};
@@ -77,6 +77,24 @@ describe("a receipt decides BEFORE the rollout is read", () => {
     ROLLOUT.reads = 0;
     expect(await guardXcellRollout(fakeDb(), { ...where, receipt: async () => "unknown" })).toMatchObject({ ok: false, error: XCELL_RECEIPT_UNKNOWN_MESSAGE, reason: "receipt" });
     expect(ROLLOUT.reads).toBe(0);
+  });
+});
+
+describe("submissionReceiptLookup maps the existing lookup, and a failure is never none", () => {
+  const UNKNOWN = "We could not check whether an earlier attempt saved. Reload the chart to check it.";
+  it("true is found, false is none, null is unknown, and a THROWING lookup is unknown", async () => {
+    expect(await submissionReceiptLookup(async () => true)()).toBe("found");
+    expect(await submissionReceiptLookup(async () => false)()).toBe("none");
+    expect(await submissionReceiptLookup(async () => null)()).toBe("unknown");
+    expect(await submissionReceiptLookup(async () => { throw new Error("boom"); })()).toBe("unknown");
+  });
+  it("a throwing lookup is refused as unresolved by the guard, with NO rollout read, for either rollout value", async () => {
+    for (const v of ["off", "on"] as const) {
+      ROLLOUT.value = v; ROLLOUT.reads = 0;
+      const out = await guardXcellRollout(fakeDb(), { ...where, receipt: submissionReceiptLookup(async () => { throw new Error("boom"); }) });
+      expect(out, v).toMatchObject({ ok: false, error: UNKNOWN, reason: "receipt" });
+      expect(ROLLOUT.reads, v).toBe(0);
+    }
   });
 });
 
