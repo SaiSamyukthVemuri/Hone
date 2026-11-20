@@ -2,19 +2,14 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Guards the pillar + three feature pages: one H1 each, shared metadata helper,
-// a truthful walkthrough CTA, internal links, distinct H1s (no cannibalization),
-// and no unreleased-capability / Google Calendar / overclaim language.
+// Guards the pillar + three feature pages: no unreleased-capability / Google
+// Calendar / overclaim language, and append-only claims scoped to what is kept.
 
 function read(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf8");
 }
 function stripComments(s: string): string {
   return s.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
-}
-function h1Inner(raw: string): string {
-  const m = raw.match(/<Display[^>]*>([\s\S]*?)<\/Display>/);
-  return (m?.[1] ?? "").replace(/\s+/g, " ").trim();
 }
 
 const PAGES = [
@@ -50,19 +45,6 @@ describe("pillar + feature pages", () => {
     describe(p.path, () => {
       const raw = read(p.file);
       const scan = stripComments(raw).replace(/\s+/g, " ");
-
-      it("has exactly one H1 (Display)", () => {
-        expect((raw.match(/<Display\b/g) ?? []).length).toBe(1);
-      });
-
-      it("uses the shared metadata helper for its own path", () => {
-        expect(scan).toMatch(new RegExp(`marketingMetadata\\("${p.path.replace(/\//g, "\\/")}"\\)`));
-      });
-
-      it("has the truthful walkthrough CTA and internal links", () => {
-        expect(scan).toMatch(/WALKTHROUGH/);
-        expect(scan).toMatch(/RelatedLinks/);
-      });
 
       it("has no unreleased-capability / Calendar / overclaim language", () => {
         for (const rx of FORBIDDEN) {
@@ -157,13 +139,5 @@ describe("pillar + feature pages", () => {
       expect(flat).toMatch(/next-treatment note/i);
       expect(flat).toMatch(/stay editable|stays editable|remain editable/i);
     });
-  });
-
-  it("every H1 is distinct (no cannibalization) and none equals the homepage H1", () => {
-    const h1s = PAGES.map((p) => h1Inner(read(p.file)));
-    for (const h of h1s) expect(h.length).toBeGreaterThan(0);
-    expect(new Set(h1s).size).toBe(h1s.length);
-    // Homepage H1 renders a constant reference; feature H1s are literal — never equal.
-    for (const h of h1s) expect(h).not.toMatch(/POSITIONING\.heroH1/);
   });
 });

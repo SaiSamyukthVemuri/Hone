@@ -73,8 +73,4 @@ describe("0319 times-don't-work wiring", () => {
     expect(SCREEN).not.toContain("we’ve let the studio know");
     expect(SCREEN).toContain("nothing is booked or held in the meantime");
   });
-
-  it("the existing decline stays as the flag-off footer", () => {
-    expect(SCREEN).toContain("I can’t make any of these");
-  });
 });

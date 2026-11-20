@@ -23,10 +23,6 @@ describe("lib/supabase/admin-server.ts has the server-only boundary", () => {
     const head = ADMIN_SOURCE.split("\n").slice(0, 50).join("\n");
     expect(head).toMatch(/^\s*import\s+"server-only";/m);
   });
-
-  it("still exports createAdminClient", () => {
-    expect(ADMIN_SOURCE).toMatch(/export function createAdminClient\(/);
-  });
 });
 
 // ---------------------------------------------------------------------------

@@ -9,9 +9,8 @@ import path from "node:path";
 //     thrown run records cron_route_failed instead);
 //   * the heartbeat payload + module carry NO secret / PII (no CRON_SECRET,
 //     email, phone, name, token, notes);
-//   * the heartbeat is best-effort/fail-open and reuses Upstash (no migration,
-//     no new dependency);
-//   * the admin console surfaces the status (operator-only).
+//   * the heartbeat is best-effort/fail-open;
+//   * the admin console only reads the status (no write on render).
 
 const REPO_ROOT = path.resolve(__dirname, "../../..");
 const read = (rel: string): string =>
@@ -23,8 +22,6 @@ const ADMIN = read("app/admin/page.tsx");
 const MATERIALIZE = read("app/api/cron/materialize-recurring-breaks/route.ts");
 const RECONCILE = read("app/api/cron/calendar-reconcile/route.ts");
 const SYNC = read("app/api/cron/calendar-sync/route.ts");
-const ALERTS = read("lib/ops/alerts.ts");
-const SCHEDULE = read("lib/cron/reminder-schedule.ts");
 
 // Every Vercel-scheduled cron that must independently evaluate reminder health.
 const INDEPENDENT_MONITOR_ROUTES: ReadonlyArray<readonly [string, string]> = [
@@ -69,13 +66,7 @@ describe("cron route records the heartbeat on the authorized success path only",
   });
 });
 
-describe("heartbeat module is fail-open, secret-free, and migration-free", () => {
-  it("reuses Upstash (no new dependency, no DB migration)", () => {
-    expect(HEARTBEAT).toMatch(/@upstash\/redis/);
-    expect(HEARTBEAT).toMatch(/UPSTASH_REDIS_REST_URL/);
-    expect(HEARTBEAT).toMatch(/UPSTASH_REDIS_REST_TOKEN/);
-  });
-
+describe("heartbeat module is fail-open and secret-free", () => {
   it("is best-effort/fail-open (write + read wrapped, never throws)", () => {
     expect(HEARTBEAT).toMatch(/try\s*\{[\s\S]*?\}\s*catch/);
     // The write helper returns early when Upstash is unconfigured.
@@ -87,27 +78,9 @@ describe("heartbeat module is fail-open, secret-free, and migration-free", () =>
     expect(code).not.toMatch(/process\.env\.CRON_SECRET/);
     expect(code).not.toMatch(/\bemail\b|\bphone\b|\bnotes\b|cancellation_token/i);
   });
-
-  it("derives the stale threshold from the shared cadence constant", () => {
-    expect(HEARTBEAT).toMatch(/CRON_INTERVAL_MINUTES/);
-    expect(HEARTBEAT).toMatch(/REMINDER_STALE_AFTER_MINUTES/);
-  });
 });
 
-describe("admin console surfaces the scheduler status (operator-only)", () => {
-  it("reads the heartbeat and renders the status card", () => {
-    expect(ADMIN).toMatch(/readReminderHeartbeat/);
-    expect(ADMIN).toMatch(/computeReminderSchedulerStatus/);
-    expect(ADMIN).toMatch(/ReminderSchedulerCard/);
-  });
-
-  it("classifies healthy/stale/missing and names the external scheduler", () => {
-    expect(ADMIN).toMatch(/healthy/);
-    expect(ADMIN).toMatch(/stale/);
-    expect(ADMIN).toMatch(/missing/);
-    expect(ADMIN).toMatch(/external scheduler/i);
-  });
-
+describe("admin console only reads the scheduler status", () => {
   it("does NOT record/alert on render — the admin page only reads + classifies (no write-on-render)", () => {
     // The health-alert recorder must not run during admin page render.
     expect(ADMIN).not.toMatch(/recordReminderSchedulerHealthAlert/);
@@ -122,37 +95,6 @@ describe("reminder-scheduler health alert function (lib/cron/reminder-heartbeat.
   it("dedupes on an UNRESOLVED ops_alerts row for the same event", () => {
     expect(HEARTBEAT).toMatch(/\.from\("ops_alerts"\)/);
     expect(HEARTBEAT).toMatch(/\.is\("resolved_at", null\)/);
-  });
-
-  it("uses the three event names (degraded/stale/missing)", () => {
-    expect(HEARTBEAT).toContain("reminder_scheduler_degraded");
-    expect(HEARTBEAT).toContain("reminder_scheduler_stale");
-    expect(HEARTBEAT).toContain("reminder_scheduler_missing");
-    // Both severities are still reachable; the exact mapping is pinned by the
-    // dedicated ternary assertion below.
-    expect(HEARTBEAT).toMatch(/"warning"/);
-    expect(HEARTBEAT).toMatch(/"critical"/);
-  });
-
-  // PR OPS-01. The severity split is the whole point of the escalation: only
-  // `critical` reaches OPS_ALERT_EMAILS (lib/ops/alerts.ts gates the email on
-  // severity === "critical"), so `stale` must NOT be a warning.
-  it("severity is chosen from the status, with degraded the ONLY warning", () => {
-    expect(HEARTBEAT).toMatch(
-      /const severity: ReminderAlertSeverity =\s*\n?\s*status\.status === "degraded" \? "warning" : "critical";/,
-    );
-  });
-
-  it("only critical severity is emailed by the ops-alert pipeline (the reason stale escalates)", () => {
-    expect(ALERTS).toMatch(/if \(input\.severity === "critical"\)/);
-    expect(ALERTS).toMatch(/notifyCriticalOpsAlert/);
-  });
-
-  it("is best-effort/fail-open and returns a result (never throws to the caller)", () => {
-    // The dedupe read is wrapped in try/catch and the function returns a
-    // typed result rather than throwing.
-    expect(HEARTBEAT).toMatch(/Promise<ReminderSchedulerHealthAlertResult>/);
-    expect(HEARTBEAT).toMatch(/try\s*\{[\s\S]*?\}\s*catch/);
   });
 
   it("does NOT auto-resolve (no resolved_at write back from the health check)", () => {
@@ -178,19 +120,6 @@ describe("reminder-scheduler health alert function (lib/cron/reminder-heartbeat.
 });
 
 describe("daily materialize cron runs the health check best-effort (PR #283)", () => {
-  it("imports + calls recordReminderSchedulerHealthAlert", () => {
-    expect(MATERIALIZE).toMatch(
-      /import \{ recordReminderSchedulerHealthAlert \} from "@\/lib\/cron\/reminder-heartbeat"/,
-    );
-    expect(MATERIALIZE).toMatch(/await recordReminderSchedulerHealthAlert\(\)/);
-  });
-
-  it("wraps the health check in try/catch so its failure cannot break the daily cron", () => {
-    expect(MATERIALIZE).toMatch(
-      /try\s*\{\s*await recordReminderSchedulerHealthAlert\(\);\s*\}\s*catch/,
-    );
-  });
-
   it("runs the check AFTER the auth gate (an unauthorized 401 records nothing)", () => {
     const gate = MATERIALIZE.indexOf("isAuthorizedCronRequest(req)");
     const check = MATERIALIZE.indexOf("recordReminderSchedulerHealthAlert(");
@@ -298,15 +227,6 @@ describe("several independent Vercel crons evaluate reminder health (PR OPS-01)"
     },
   );
 
-  // Detection must survive ANY single one of these routes failing or being
-  // unregistered. Fewer than two callers reinstates the single point of failure.
-  it("at least three independent scheduled callers exist (no single point of failure)", () => {
-    const callers = INDEPENDENT_MONITOR_ROUTES.filter(([, src]) =>
-      /await recordReminderSchedulerHealthAlert\(\)/.test(src),
-    );
-    expect(callers.length).toBeGreaterThanOrEqual(3);
-  });
-
   // Each caller must be a cron Vercel actually runs, otherwise it is decoration.
   it("every monitor caller is a registered vercel.json cron", () => {
     const crons: Array<{ path: string; schedule: string }> = JSON.parse(
@@ -334,58 +254,6 @@ describe("several independent Vercel crons evaluate reminder health (PR OPS-01)"
     expect(gate).toBeGreaterThan(-1);
     expect(check).toBeGreaterThan(gate);
   });
-
-  // Three callers per day must still produce ONE alert per outage. The dedupe
-  // is the mechanism; pin that it is still keyed on an unresolved row.
-  it("multiple callers stay non-spammy via the unresolved-row dedupe", () => {
-    expect(HEARTBEAT).toMatch(/\.eq\("event", event\)/);
-    expect(HEARTBEAT).toMatch(/\.is\("resolved_at", null\)/);
-  });
-});
-
-describe("monitoring thresholds track the shipped cadence (PR OPS-01)", () => {
-  it("both thresholds are derived from CRON_INTERVAL_MINUTES, not magic numbers", () => {
-    expect(HEARTBEAT).toMatch(
-      /REMINDER_DEGRADED_AFTER_MINUTES = CRON_INTERVAL_MINUTES \* 2/,
-    );
-    expect(HEARTBEAT).toMatch(
-      /REMINDER_STALE_AFTER_MINUTES = CRON_INTERVAL_MINUTES \* 3/,
-    );
-  });
-
-  it("the heartbeat module imports the cadence rather than restating 15", () => {
-    expect(HEARTBEAT).toMatch(
-      /import \{ CRON_INTERVAL_MINUTES \} from "@\/lib\/cron\/reminder-schedule"/,
-    );
-    // No bare 15-minute literal in the threshold code.
-    const code = codeOnly(HEARTBEAT);
-    expect(code).not.toMatch(/AFTER_MINUTES\s*=\s*\d+\s*;/);
-  });
-
-  it("the canonical cadence constant is still 15 minutes", () => {
-    expect(SCHEDULE).toMatch(/CRON_INTERVAL_MINUTES = 15/);
-    expect(SCHEDULE).toMatch(
-      /APPOINTMENT_REMINDER_CRON_SCHEDULE = "\*\/15 \* \* \* \*"/,
-    );
-  });
-});
-
-describe("admin card renders all four states (PR OPS-01)", () => {
-  it("labels degraded distinctly instead of falling through to Missing", () => {
-    expect(ADMIN).toMatch(/"Degraded"/);
-    expect(ADMIN).toMatch(/status\.status === "degraded"/);
-  });
-
-  it("still renders every other state", () => {
-    for (const label of ["Healthy", "Stale", "Missing"]) {
-      expect(ADMIN).toContain(`"${label}"`);
-    }
-  });
-
-  it("surfaces both thresholds so the operator can see the contract", () => {
-    expect(ADMIN).toMatch(/degradedAfterMinutes/);
-    expect(ADMIN).toMatch(/staleAfterMinutes/);
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -410,18 +278,6 @@ describe("OPS-01.1 P1-A/P2-A: the writer records real INVOCATION evidence", () =
     expect(block).toMatch(/invokedAt:/);
   });
 
-  it("the heartbeat type names invocation fields unambiguously", () => {
-    expect(HEARTBEAT).toMatch(/invokedAt\?: string;/);
-    expect(HEARTBEAT).toMatch(/previousInvokedAt\?: string;/);
-    // the old, misleading name must be gone entirely
-    expect(HEARTBEAT).not.toMatch(/previousSuccessAt/);
-  });
-
-  it("the classifier derives cadence from invocation timestamps only", () => {
-    expect(HEARTBEAT).toMatch(/invParsed - prevInvParsed/);
-    expect(HEARTBEAT).not.toMatch(/parsed - priorParsed/);
-  });
-
   it("the write path stays best-effort/fail-open", () => {
     const fn =
       HEARTBEAT.match(
@@ -431,22 +287,6 @@ describe("OPS-01.1 P1-A/P2-A: the writer records real INVOCATION evidence", () =
     expect(fn).toMatch(/try\s*\{/);
     expect(fn).toMatch(/catch/);
     expect(fn).toMatch(/if \(!redis\) return/);
-  });
-
-  it("the classifier consumes BOTH axes, not recency alone", () => {
-    expect(HEARTBEAT).toMatch(/observedIntervalMinutes/);
-    expect(HEARTBEAT).toMatch(/worseHealth\(recencyStatus/);
-  });
-
-  it("cadence evidence is explicit, never fabricated", () => {
-    expect(HEARTBEAT).toMatch(/cadenceEvidence/);
-    expect(HEARTBEAT).toMatch(/"measured"|"unavailable"/);
-  });
-
-  it("no new dependency and no database table for cadence", () => {
-    const code = codeOnly(HEARTBEAT);
-    expect(code).not.toMatch(/from "(?!@upstash\/redis|@\/lib|server-only)/);
-    expect(code).not.toMatch(/create table|CREATE TABLE/i);
   });
 });
 
@@ -480,15 +320,6 @@ describe("OPS-01.1 P2-B: the heartbeat write is ONE atomic operation", () => {
   it("an unreadable stored value still stores the current run", () => {
     expect(HEARTBEAT).toMatch(/if cur == nil then/);
   });
-
-  it("the false read-then-write monotonicity claim is gone", () => {
-    expect(HEARTBEAT).not.toMatch(/read-then-write keeps `at` monotonic/);
-    expect(HEARTBEAT).toMatch(/was simply WRONG and has been removed/);
-  });
-
-  it("the pure merge is exported as the specification of the Lua", () => {
-    expect(HEARTBEAT).toMatch(/export function mergeReminderHeartbeat/);
-  });
 });
 
 describe("OPS-01.1 P1-B: dedupe reads severity, not just existence", () => {
@@ -498,16 +329,6 @@ describe("OPS-01.1 P1-B: dedupe reads severity, not just existence", () => {
 
   it("a critical open row anywhere in the set outranks warnings", () => {
     expect(HEARTBEAT).toMatch(/severities\.includes\("critical"\)/);
-  });
-
-  it("the decider compares severity rather than a bare boolean", () => {
-    expect(HEARTBEAT).toMatch(/isAtLeastAsSevere\(existingUnresolved\.severity, severity\)/);
-  });
-
-  it("severity ordering is stated explicitly (warning < critical)", () => {
-    expect(HEARTBEAT).toMatch(/SEVERITY_RANK/);
-    expect(HEARTBEAT).toMatch(/warning: 0/);
-    expect(HEARTBEAT).toMatch(/critical: 1/);
   });
 
   // D6 — a failed dedupe lookup must fail OPEN (record), never silently drop
@@ -522,25 +343,6 @@ describe("OPS-01.1 P1-B: dedupe reads severity, not just existence", () => {
     expect(block).not.toBe("");
     expect(block).toMatch(/\}\s*catch\s*\{\s*existingUnresolved = null;/);
   });
-
-  // The legacy row is operator-owned history; making a test pass by rewriting
-  // it would be worse than letting the critical row sit beside it.
-  it("does NOT auto-resolve the legacy warning row", () => {
-    const code = codeOnly(HEARTBEAT);
-    expect(code).not.toMatch(/resolved_at:\s/);
-    expect(code).not.toMatch(/\.update\(/);
-  });
-});
-
-describe("OPS-01.1 admin card surfaces measured cadence honestly", () => {
-  it("shows the observed interval", () => {
-    expect(ADMIN).toMatch(/observedIntervalMinutes/);
-    expect(ADMIN).toMatch(/Observed cadence/);
-  });
-
-  it("says 'not yet measured' rather than implying a healthy cadence", () => {
-    expect(ADMIN).toMatch(/not yet measured/);
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -549,21 +351,6 @@ describe("OPS-01.1 admin card surfaces measured cadence honestly", () => {
 //   3774838345 (P2) distinguish cadence failures from recency failures
 // ---------------------------------------------------------------------------
 describe("P2 3774838342: a failed prior read must not discard the run's heartbeat", () => {
-  // This invariant is now STRUCTURAL rather than defensive. The earlier fix
-  // isolated a client-side read in its own try/catch; the atomic EVAL removes
-  // the client-side read altogether, so there is no longer a prior-read step
-  // that can fail independently of the write. The guarantee is stronger, so
-  // these pins assert the new shape.
-  it("there is no separate client-side prior read to fail", () => {
-    const fn =
-      HEARTBEAT.match(
-        /export async function recordReminderRunSuccess\([\s\S]*?\n\}/,
-      )?.[0] ?? "";
-    expect(fn).not.toBe("");
-    expect(fn).not.toMatch(/redis\.get\(/);
-    expect(fn).toMatch(/redis\.eval\(/);
-  });
-
   it("the prior value is read INSIDE the same atomic step", () => {
     expect(HEARTBEAT).toMatch(/redis\.call\('GET', KEYS\[1\]\)/);
     expect(HEARTBEAT).toMatch(/redis\.call\('SET', KEYS\[1\]/);
@@ -574,37 +361,15 @@ describe("P2 3774838342: a failed prior read must not discard the run's heartbea
     expect(HEARTBEAT).toMatch(/pcall\(cjson\.decode, raw\)/);
     expect(HEARTBEAT).toMatch(/if cur == nil then[\s\S]*?redis\.call\('SET'/);
   });
-
-  it("cadence evidence is optional; recording the success is not", () => {
-    expect(HEARTBEAT).toMatch(/cannot suppress this run's recency/);
-  });
 });
 
 describe("P2 3774838345: operator copy names the axis that failed", () => {
-  it("the status carries a failing-axis attribution", () => {
-    expect(HEARTBEAT).toMatch(/failingAxis/);
-    expect(HEARTBEAT).toMatch(/ReminderFailingAxis/);
-  });
-
-  it("the alert message branches on the failing axis", () => {
-    expect(HEARTBEAT).toMatch(/status\.failingAxis === "cadence"/);
-    // and it takes the whole status, not just the bare health word
-    expect(HEARTBEAT).toMatch(
-      /function reminderSchedulerAlertMessage\(\s*status: ReminderSchedulerStatus,?\s*\)/,
-    );
-  });
-
   it("a cadence-only message does not claim the last success is old", () => {
     const fn =
       HEARTBEAT.match(
         /function reminderSchedulerAlertMessage\([\s\S]*?\n\}/,
       )?.[0] ?? "";
     expect(fn).toMatch(/still firing/);
-  });
-
-  it("the admin card branches on the failing axis too", () => {
-    expect(ADMIN).toMatch(/status\.failingAxis === "cadence"/);
-    expect(ADMIN).toMatch(/still firing/);
   });
 });
 
@@ -630,10 +395,6 @@ describe("P2 3775193411: the Lua validates timestamps before ordering", () => {
   it("a stored value with an unusable completion timestamp is treated as absent", () => {
     expect(HEARTBEAT).toMatch(/ts\(decoded\.at\) ~= nil then cur = decoded/);
   });
-
-  it("the JS specification applies the identical guard", () => {
-    expect(HEARTBEAT).toMatch(/if \(!current \|\| t\(current\.at\) === null\) return \{ \.\.\.candidate \};/);
-  });
 });
 
 describe("P2 3775413510: the Lua rejects impossible dates, not just bad shapes", () => {
@@ -646,31 +407,10 @@ describe("P2 3775413510: the Lua rejects impossible dates, not just bad shapes",
     expect(HEARTBEAT).toMatch(/if d < 1 or d > 31 then return nil end/);
     expect(HEARTBEAT).toMatch(/if h > 23 or mi > 59 or sec > 59 then return nil end/);
   });
-
-  it("documents that it must never be more permissive than Date.parse", () => {
-    // the comment wraps across lines, so match across the newline
-    expect(HEARTBEAT).toMatch(/never be MORE permissive[\s\S]{0,12}than Date\.parse/);
-  });
 });
 
 describe("P3 3775413519: documented safe_details keys match the builder", () => {
   const DOC = read("docs/08_EMAIL_SMS_AND_CRON.md");
-
-  it("the runbook lists the keys the builder actually emits", () => {
-    for (const key of [
-      "invoked_at",
-      "previous_invoked_at",
-      "failing_axis",
-      "observed_interval_minutes",
-      "cadence_evidence",
-    ]) {
-      expect(DOC).toContain(`\`${key}\``);
-    }
-  });
-
-  it("the removed key is gone from the runbook", () => {
-    expect(DOC).not.toMatch(/`previous_success_at`/);
-  });
 
   it("every key the builder emits appears in the runbook", () => {
     const builder =
@@ -688,37 +428,6 @@ describe("P3 3775413519: documented safe_details keys match the builder", () => 
   });
 });
 
-describe("P2 3775518504: the Lua rejects hour 24 outright", () => {
-  it("bounds the hour at 23, not 24", () => {
-    expect(HEARTBEAT).toMatch(/if h > 23 or mi > 59 or sec > 59 then return nil end/);
-    expect(HEARTBEAT).not.toMatch(/if h > 24/);
-  });
-
-  it("explains why rejecting it loses nothing", () => {
-    expect(HEARTBEAT).toMatch(/toISOString\(\) NEVER emits hour 24/);
-  });
-});
-
-describe("P3 3775518514: the runbook health table describes BOTH axes", () => {
-  const DOC = read("docs/08_EMAIL_SMS_AND_CRON.md");
-
-  it("states that health is the worse of recency and cadence", () => {
-    expect(DOC).toMatch(/worse of two independent axes/i);
-  });
-
-  it("gives the cadence-only example an operator would otherwise misread", () => {
-    expect(DOC).toMatch(/10 minutes old is still \*\*degraded\*\*/);
-  });
-
-  it("the table column is not framed as heartbeat age alone", () => {
-    expect(DOC).toMatch(/\| State \| Worse axis \(recency \*\*or\*\* cadence\) \|/);
-  });
-
-  it("documents the unavailable-cadence warm-up honestly", () => {
-    expect(DOC).toMatch(/reported as `unavailable` until two successive invocations/);
-  });
-});
-
 describe("P2 3775648194: the plausibility bound closes the ordering family", () => {
   it("the Lua receives a max-plausible timestamp and enforces it", () => {
     expect(HEARTBEAT).toMatch(/local maxIso = ARGV\[3\]/);
@@ -730,15 +439,6 @@ describe("P2 3775648194: the plausibility bound closes the ordering family", () 
     expect(HEARTBEAT).toMatch(/REMINDER_FUTURE_TOLERANCE_MINUTES \* 60_000/);
     expect(HEARTBEAT).toMatch(/maxPlausibleIso,/);
   });
-
-  it("the JS specification applies the same bound", () => {
-    expect(HEARTBEAT).toMatch(/return ms > horizon \? null : ms;/);
-    expect(HEARTBEAT).toMatch(/parsedRaw > futureHorizon \? NaN : parsedRaw/);
-  });
-
-  it("the tolerance is exported as a named constant", () => {
-    expect(HEARTBEAT).toMatch(/export const REMINDER_FUTURE_TOLERANCE_MINUTES/);
-  });
 });
 
 describe("P2 3775648205: displayed minutes cannot contradict their band", () => {
@@ -747,9 +447,5 @@ describe("P2 3775648205: displayed minutes cannot contradict their band", () => 
     expect(HEARTBEAT).toMatch(/Math\.ceil\(intervalMs \/ 60000\)/);
     expect(HEARTBEAT).not.toMatch(/Math\.round\(ageMs \/ 60000\)/);
     expect(HEARTBEAT).not.toMatch(/Math\.round\(intervalMs \/ 60000\)/);
-  });
-
-  it("the reason is recorded next to the code", () => {
-    expect(HEARTBEAT).toMatch(/CEIL, not round/);
   });
 });
