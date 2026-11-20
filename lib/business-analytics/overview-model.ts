@@ -1,0 +1,274 @@
+import { localDateString } from "@/lib/booking/tz";
+import { type Fact } from "@/lib/dashboard/owner-capacity-model";
+import { COLLECTED_KINDS } from "@/lib/finance/statement";
+import { classifyVisit } from "@/lib/finance/statement-document";
+import { assembleClientInputs, type AssembleAppointment, type AssembleResult } from "@/lib/finance/statement-document-assemble";
+import type { MoneyRows } from "@/lib/finance/statement-money-read";
+
+import { FORMER_TEAM_MEMBER_LABEL, UNATTRIBUTED_LABEL, UNNAMED_TEAM_MEMBER_LABEL } from "./copy";
+import type { Figure, FigureRead, ReadFailure } from "./figure";
+import {
+  averagePaidPerVisit,
+  classifyMoney,
+  collectedCaveats,
+  collectedForFilter,
+  collectionsSeries,
+  headlineCollected,
+  percentChange,
+  practitionerBucketsReconcile,
+  splitCollected,
+  type AveragePaid,
+  type Change,
+  type CollectedCaveats,
+  type CollectedSplit,
+  type PaidVisit,
+  type SeriesPoint,
+} from "./money-metrics";
+import { bucketsOf, statementsClaim, type PeriodWindow, type ResolvedPeriod, type StatementsClaim, type BucketUnit } from "./period";
+import { reconcileWithStatement } from "./reconcile";
+import { serviceValueToCollected, type CompletedVisitMoney, type ReconciliationLine } from "./reconciliation-line";
+import { PRICE_EVIDENCE_CLASSES, resolveVisits, serviceValue, type PriceCandidate, type PriceEvidenceClass } from "./service-value";
+import { activeClientIds, completedVisitCount, matchesPractitioner, visitsOf, visitsPerActiveClient, visitsWithoutClient, type PractitionerFilter, type VisitFact } from "./visit-metrics";
+
+// ===========================================================================
+// Business → Analytics: THE OVERVIEW VIEW MODEL. PURE: it is given rows already read; it reads nothing.
+// ===========================================================================
+//
+// One value drives the screen, the CSV and the print, so they cannot disagree. The VIEW holds AGGREGATES ONLY: no appointment id, no client id, no
+// practitioner id and no per-visit price ever leaves this function (the browser is sent exactly this object). Per-visit data lives only inside
+// `computeWindow` and is dropped on return.
+//
+// Each figure is its own `Figure<T>`: a value, or a reason. A read that failed makes only the figures that needed it unavailable. All money shares
+// one reconciliation proof: if the Statements identity does not hold for the window, NO money figure is shown for it.
+
+export type WindowData = { appointments: readonly AssembleAppointment[]; money: MoneyRows };
+
+export type PractitionerInfo = { id: string; displayName: string | null; active: boolean };
+
+export type OverviewInput = {
+  timezone: string;
+  /** Null when the studio's payment currency is not set: every money figure says so, the others still show. */
+  currency: string | null;
+  nowIso: string;
+  period: ResolvedPeriod;
+  filter: PractitionerFilter;
+  current: FigureRead<WindowData>;
+  comparison: FigureRead<WindowData>;
+  practitioners: readonly PractitionerInfo[];
+  /** The kinds of price evidence the loader could actually read. A kind not listed is "not available", never a zero. */
+  classesRead: readonly PriceEvidenceClass[];
+};
+
+export type ClassView = { read: true; visits: number; cents: number } | { read: false };
+export type ServiceValueView = {
+  classes: Record<PriceEvidenceClass, ClassView>;
+  /** Over the kinds that were READ only. */
+  withEvidenceVisits: number;
+  withEvidenceCents: number;
+  /** Completed visits with no price evidence among the sources read. Always shown beside the figure. */
+  missingVisits: number;
+  ambiguousVisits: number;
+  completedVisits: number;
+  unreadClasses: PriceEvidenceClass[];
+};
+
+export type ByPractitionerRow = { key: string; label: string; collectedCents: number };
+
+export type OverviewView = {
+  currentLabel: string;
+  comparisonLabel: string;
+  notes: string[];
+  partial: boolean;
+  clamped: boolean;
+  statementsClaim: StatementsClaim;
+  /** The filter's KIND only: never the practitioner's id. */
+  filterKind: PractitionerFilter["kind"];
+  currency: string | null;
+  collected: Figure<{ headlineCents: number; split: CollectedSplit; caveats: CollectedCaveats; change: Change }>;
+  completedVisits: Figure<{ count: number; change: Change }>;
+  activeClients: Figure<{ count: number; withoutClient: number; change: Change }>;
+  visitsPerClient: Figure<Fact<number>>;
+  averagePaid: Figure<AveragePaid>;
+  series: Figure<{ unit: BucketUnit; points: SeriesPoint[] }>;
+  byPractitioner: Figure<ByPractitionerRow[]>;
+  serviceValue: Figure<ServiceValueView>;
+  reconciliation: Figure<ReconciliationLine>;
+};
+
+type Window = {
+  completedVisits: Figure<number>;
+  activeClients: Figure<{ count: number; withoutClient: number }>;
+  visitsPerClient: Figure<Fact<number>>;
+  collected: Figure<{ headlineCents: number; split: CollectedSplit; caveats: CollectedCaveats }>;
+  averagePaid: Figure<AveragePaid>;
+  series: Figure<{ unit: BucketUnit; points: SeriesPoint[] }>;
+  byPractitioner: Figure<ByPractitionerRow[]>;
+  serviceValue: Figure<ServiceValueView>;
+  reconciliation: Figure<ReconciliationLine>;
+};
+
+const unavailable = (reason: ReadFailure): { available: false; reason: ReadFailure } => ({ available: false, reason });
+const collectedLines = (lines: ReadonlyArray<{ kind: string; cents: number | null }>) => lines.filter((l) => (COLLECTED_KINDS as readonly string[]).includes(l.kind) && typeof l.cents === "number");
+
+function assemble(args: { appointments: readonly AssembleAppointment[]; money: MoneyRows; currency: string; timezone: string; nowIso: string }): AssembleResult {
+  return assembleClientInputs({
+    studioCurrency: args.currency,
+    timezone: args.timezone,
+    nowIso: args.nowIso,
+    appointments: args.appointments,
+    cardRows: args.money.cardRows,
+    settlementRows: args.money.settlementRows,
+    legacyFeeRows: args.money.legacyFeeRows,
+    serviceNames: new Map(),
+    practitionerNames: new Map(),
+  });
+}
+
+function practitionerLabel(id: string | null, byId: ReadonlyMap<string, PractitionerInfo>): string {
+  if (id === null) return UNATTRIBUTED_LABEL;
+  const p = byId.get(id);
+  if (!p || !p.active) return FORMER_TEAM_MEMBER_LABEL; // a deactivated or removed practitioner is never named
+  return p.displayName && p.displayName.trim() ? p.displayName.trim() : UNNAMED_TEAM_MEMBER_LABEL;
+}
+
+function computeWindow(data: WindowData, w: PeriodWindow, o: Pick<OverviewInput, "timezone" | "currency" | "nowIso" | "filter" | "practitioners" | "classesRead">): Window {
+  const facts: VisitFact[] = data.appointments.map((a) => ({
+    appointmentId: a.id,
+    clientId: a.clientId,
+    localDate: localDateString(new Date(a.startsAt), o.timezone),
+    practitionerId: a.practitionerId,
+    status: a.status,
+  }));
+  const mine = visitsOf(facts, o.filter);
+  const completed = completedVisitCount(mine, w);
+  const clients = activeClientIds(mine, w).length;
+  const base = {
+    completedVisits: { available: true, value: completed } as Figure<number>,
+    activeClients: { available: true, value: { count: clients, withoutClient: visitsWithoutClient(mine, w) } } as Figure<{ count: number; withoutClient: number }>,
+    visitsPerClient: { available: true, value: visitsPerActiveClient(mine, w) } as Figure<Fact<number>>,
+  };
+  const money = (reason: ReadFailure) => ({
+    collected: unavailable(reason), averagePaid: unavailable(reason), series: unavailable(reason),
+    byPractitioner: unavailable(reason), serviceValue: unavailable(reason), reconciliation: unavailable(reason),
+  });
+  if (o.currency === null) return { ...base, ...money("currency_unknown") };
+
+  const all = assemble({ appointments: data.appointments, money: data.money, currency: o.currency, timezone: o.timezone, nowIso: o.nowIso });
+  const subset = o.filter.kind === "all" ? data.appointments : data.appointments.filter((a) => matchesPractitioner(a, o.filter));
+  const ids = new Set(subset.map((a) => a.id));
+  const moneyF: MoneyRows = o.filter.kind === "all" ? data.money : {
+    cardRows: data.money.cardRows.filter((r) => r.appointmentId !== null && ids.has(r.appointmentId)),
+    settlementRows: data.money.settlementRows.filter((r) => ids.has(r.appointmentId)),
+    legacyFeeRows: data.money.legacyFeeRows.filter((r) => ids.has(r.appointmentId)),
+  };
+  const f = o.filter.kind === "all" ? all : assemble({ appointments: subset, money: moneyF, currency: o.currency, timezone: o.timezone, nowIso: o.nowIso });
+
+  // ---- by practitioner (always the whole studio's statement), labelled and keyed by an opaque index
+  const byId = new Map(o.practitioners.map((p) => [p.id, p]));
+  const bucketsOk = practitionerBucketsReconcile(all.statement);
+  const byPractitioner: Figure<ByPractitionerRow[]> = bucketsOk
+    ? { available: true, value: all.statement.byPractitioner.map((b, i) => ({ key: `p${i}`, label: practitionerLabel(b.practitionerId, byId), collectedCents: b.bucket.collectedCents })) }
+    : unavailable("not_reconciled");
+
+  // ---- the split and the one reconciliation proof
+  const classes = classifyMoney(f);
+  const split = splitCollected(f, classes);
+  if (!split.ok) return { ...base, ...money("not_reconciled"), byPractitioner };
+  const clientsSpend = f.visits.filter((v) => v.eligibility !== "not_completed").reduce((n, v) => n + collectedLines(v.lines).reduce((m, l) => m + (l.cents as number), 0), 0)
+    + f.feeItems.reduce((n, it) => n + collectedLines(it.lines).reduce((m, l) => m + (l.cents as number), 0), 0);
+  const proof = reconcileWithStatement({
+    statement: f.statement,
+    overviewCollectedCents: headlineCollected(split.split, "all_money"),
+    split: split.split,
+    clientsSpendCents: clientsSpend,
+    offDocumentCollectedCents: f.offDocumentCollectedCents,
+  });
+  const filterAgrees = o.filter.kind === "all" || (bucketsOk && collectedForFilter(all.statement, o.filter) === f.statement.all.collectedCents);
+  if (!proof.reconciled || !filterAgrees) return { ...base, ...money("not_reconciled"), byPractitioner: bucketsOk ? byPractitioner : unavailable("not_reconciled") };
+
+  // ---- per completed visit, inside this function only
+  const treatment = f.visits.filter((v) => v.eligibility === undefined || v.eligibility === "treatment");
+  const paid: PaidVisit[] = treatment.map((v) => {
+    const d = classifyVisit(v);
+    return { appointmentId: v.appointmentId, state: d.state, paidCents: d.paidCents };
+  });
+  const localDateByAppointment = new Map(facts.filter((x) => ids.has(x.appointmentId)).map((x) => [x.appointmentId, x.localDate]));
+  const series = collectionsSeries({ window: w, buckets: bucketsOf(w).buckets, statement: f.statement, localDateByAppointment, classes });
+  const unit = bucketsOf(w).unit;
+
+  const pv = treatment.map((v) => ({
+    appointmentId: v.appointmentId,
+    candidates: v.feeCandidates.filter((c) => c.source === "settlement_quote").map((c): PriceCandidate => ({ evidence: "recorded_at_visit", cents: c.cents })),
+  }));
+  const sv = serviceValue(pv);
+  const resolved = resolveVisits(pv);
+  const unread = PRICE_EVIDENCE_CLASSES.filter((c) => !o.classesRead.includes(c));
+  const classView = Object.fromEntries(PRICE_EVIDENCE_CLASSES.map((c) => [c, o.classesRead.includes(c) ? { read: true, visits: sv.subtotals[c].visits, cents: sv.subtotals[c].cents } : { read: false }])) as Record<PriceEvidenceClass, ClassView>;
+  const serviceValueView: ServiceValueView = {
+    classes: classView,
+    withEvidenceVisits: sv.withEvidenceVisits,
+    withEvidenceCents: sv.withEvidenceCents,
+    missingVisits: sv.missingVisits,
+    ambiguousVisits: sv.missingByReason.ambiguous,
+    completedVisits: sv.completedVisits,
+    unreadClasses: unread,
+  };
+  const money7: CompletedVisitMoney[] = treatment.map((v) => {
+    const r = resolved.get(v.appointmentId);
+    const lines = collectedLines(v.lines);
+    return { appointmentId: v.appointmentId, priceCents: r && r.state === "evidence" ? r.cents : null, collectedCents: lines.reduce((n, l) => n + (l.cents as number), 0), collectedRows: lines.length };
+  });
+  const line = serviceValueToCollected(money7, split.split);
+
+  return {
+    ...base,
+    collected: { available: true, value: { headlineCents: headlineCollected(split.split), split: split.split, caveats: collectedCaveats(f.statement) } },
+    averagePaid: { available: true, value: averagePaidPerVisit(paid) },
+    series: series.ok ? { available: true, value: { unit, points: series.points } } : unavailable("not_reconciled"),
+    byPractitioner,
+    serviceValue: { available: true, value: serviceValueView },
+    reconciliation: line.ok ? { available: true, value: line.line } : unavailable("not_reconciled"),
+  };
+}
+
+const numberOf = <T,>(f: Figure<T>, pick: (v: T) => number): number | null => (f.available ? pick(f.value) : null);
+
+export function buildOverview(input: OverviewInput): OverviewView {
+  const common = { timezone: input.timezone, currency: input.currency, nowIso: input.nowIso, filter: input.filter, practitioners: input.practitioners, classesRead: input.classesRead };
+  const cur = input.current.ok ? computeWindow(input.current.value, input.period.current, common) : null;
+  const prev = input.comparison.ok ? computeWindow(input.comparison.value, input.period.comparison, common) : null;
+  const fail = (read: FigureRead<WindowData>): ReadFailure => (read.ok ? "read_failed" : read.reason);
+  const curFail = unavailable(fail(input.current));
+  const changeOf = (now: number | null, before: number | null, comparisonRead: boolean): Change => (comparisonRead ? percentChange(now, before) : { kind: "unavailable" });
+
+  const view: OverviewView = {
+    currentLabel: input.period.currentLabel,
+    comparisonLabel: input.period.comparisonLabel,
+    notes: input.period.notes,
+    partial: input.period.partial,
+    clamped: input.period.clamped,
+    statementsClaim: statementsClaim(input.period.current),
+    filterKind: input.filter.kind,
+    currency: input.currency,
+    collected: curFail, completedVisits: curFail, activeClients: curFail, visitsPerClient: curFail, averagePaid: curFail,
+    series: curFail, byPractitioner: curFail, serviceValue: curFail, reconciliation: curFail,
+  };
+  if (!cur) return view;
+  const cmp = prev !== null;
+  view.completedVisits = cur.completedVisits.available
+    ? { available: true, value: { count: cur.completedVisits.value, change: changeOf(cur.completedVisits.value, prev ? numberOf(prev.completedVisits, (v) => v) : null, cmp) } }
+    : cur.completedVisits;
+  view.activeClients = cur.activeClients.available
+    ? { available: true, value: { ...cur.activeClients.value, change: changeOf(cur.activeClients.value.count, prev ? numberOf(prev.activeClients, (v) => v.count) : null, cmp) } }
+    : cur.activeClients;
+  view.visitsPerClient = cur.visitsPerClient;
+  view.collected = cur.collected.available
+    ? { available: true, value: { ...cur.collected.value, change: changeOf(cur.collected.value.headlineCents, prev ? numberOf(prev.collected, (v) => v.headlineCents) : null, cmp) } }
+    : cur.collected;
+  view.averagePaid = cur.averagePaid;
+  view.series = cur.series;
+  view.byPractitioner = cur.byPractitioner;
+  view.serviceValue = cur.serviceValue;
+  view.reconciliation = cur.reconciliation;
+  return view;
+}

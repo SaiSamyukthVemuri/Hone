@@ -41,7 +41,17 @@ describe("fixed copy that must stay true", () => {
   });
 });
 
-const MODULES = ["chart-geometry.ts", "copy.ts", "figure.ts", "money-metrics.ts", "period.ts", "reconcile.ts", "reconciliation-line.ts", "service-value.ts", "visit-metrics.ts"];
+const MODULES = ["chart-geometry.ts", "copy.ts", "figure.ts", "money-metrics.ts", "overview-model.ts", "overview-params.ts", "period.ts", "reconcile.ts", "reconciliation-line.ts", "service-value.ts", "visit-metrics.ts"];
+
+describe("the analytics server folder is the only place that reads", () => {
+  it("holds the one loader, which is owner-gated first and never writes or uses a service role", () => {
+    const dir = path.resolve(__dirname, "../../../lib/business-analytics/server");
+    expect(readdirSync(dir).sort()).toEqual(["overview-read.ts"]);
+    const code = readFileSync(path.join(dir, "overview-read.ts"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    expect(code).toMatch(/if \(practitioner\.role !== "owner"\) return \{ access: "refused" \};\n  const supabase/);
+    expect(code).not.toMatch(/service_role|createServiceClient|admin|\.(insert|update|upsert|delete|rpc)\(|appointment_payments|price_cents/);
+  });
+});
 
 describe("the analytics modules stay pure (no I/O, no routes, no UI, no studio ids)", () => {
   const dir = path.resolve(__dirname, "../../../lib/business-analytics");
