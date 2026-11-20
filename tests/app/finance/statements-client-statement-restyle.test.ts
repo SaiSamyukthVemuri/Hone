@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -102,5 +103,25 @@ describe("the print page and the CSV keep the document's own order and 24-hour t
     const out = renderToStaticMarkup(createElement(StatementPrintView as never, { document: doc, offDocumentWithMoney: 0, backHref: "/x", format: fmt }));
     const times = [...out.matchAll(/Nov(?:ember)? (\d+), 2026, (\d{2}:\d{2})</g)].map((m) => `${m[1]} ${m[2]}`);
     expect(times).toEqual(doc.visits.map((v) => `${Number(v.localDate.slice(8))} ${v.localTime}`));
+  });
+});
+
+describe("the display order is a COPY, and the page loads the finder only after the owner gate", () => {
+  it("rendering leaves the document's own visits array in its original order and identity", () => {
+    const doc = three();
+    const before = doc.visits.map((v) => v.appointmentId);
+    const ref = doc.visits;
+    html(doc);
+    expect(doc.visits).toBe(ref);
+    expect(doc.visits.map((v) => v.appointmentId)).toEqual(before);
+    expect(before).not.toEqual([...before].reverse()); // the order is a real one, so an in-place sort would be noticed
+  });
+  it("the client statement page loads the finder after its owner gate, like the Studio page", () => {
+    const src = readFileSync("app/(app)/financials/statements/[clientId]/page.tsx", "utf8").replace(/\/\/.*$/gm, "");
+    const gate = src.indexOf('practitioner.role !== "owner"');
+    const call = src.indexOf("await loadFinderState(");
+    expect(gate).toBeGreaterThan(-1);
+    expect(call).toBeGreaterThan(gate);
+    expect(src.indexOf("await loadOwnerClientStatement(")).toBeGreaterThan(gate);
   });
 });
