@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 276,
-    "last": "0357_cancellation_fee_tiers.sql",
-    "sha256": "2fd806fcd667daf0644fbe27a47b0c2fc26409995c881621572eedc55743a126"
+    "count": 277,
+    "last": "0363_waitlist_batch_and_replace.sql",
+    "sha256": "70af55930f1d21ef0b6c6a33240a69fb176e1b5c83ecdf3b728177ac002f1403"
   },
   "public": {
     "tables": [
@@ -137,6 +137,8 @@
       "waitlist_decline_owner_emails",
       "waitlist_erase_records",
       "waitlist_followups",
+      "waitlist_invitation_batch_items",
+      "waitlist_invitation_batches",
       "waitlist_invitation_bookings",
       "waitlist_invitation_followups",
       "waitlist_retention_runs",
@@ -224,6 +226,7 @@
       "claim_stripe_account_country_alert",
       "claim_stripe_event",
       "claim_studio_sms_provisioning",
+      "claim_waitlist_batch_items",
       "claim_waitlist_invitation_sms",
       "claim_waitlist_join_ack_sms",
       "claim_welcome_email_attempt",
@@ -272,6 +275,7 @@
       "create_recurring_break_rule_and_materialize",
       "create_session_block_with_areas",
       "create_treatment_image_metadata",
+      "create_waitlist_invitation_batch",
       "create_waitlist_public_appointment",
       "current_privacy_version",
       "current_terms_version",
@@ -409,6 +413,7 @@
       "practitioner_cancel_appointment",
       "practitioner_capacity_retirement_blockers",
       "practitioners_receptionist_membership_guard",
+      "preview_waitlist_over_invite",
       "process_email_provider_event",
       "public_booking_local_to_utc",
       "public_booking_practitioner_options",
@@ -498,6 +503,7 @@
       "reorder_studio_service",
       "repair_bump_appointment_sync_version",
       "repair_enqueue_orphan_link_delete",
+      "replace_waitlist_invitation",
       "report_delivery_concern",
       "request_waitlist_withdrawal",
       "requeue_new_client_waitlist_entry",
@@ -559,6 +565,7 @@
       "settle_platform_lead_alert",
       "settle_postcare_send",
       "settle_sms_message",
+      "settle_waitlist_batch_item",
       "setup_capture_history_for_block",
       "setup_readings_for_block",
       "show_studio_service",
