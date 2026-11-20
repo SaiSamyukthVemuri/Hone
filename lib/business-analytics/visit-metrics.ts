@@ -192,7 +192,7 @@ export const DEFAULT_NO_NEXT_BOOKING_LOOKBACK_MONTHS = 12;
 /** "Beyond usual" means longer since the last visit than this multiple of the client's own average gap (the reference's rule). */
 export const DEFAULT_BEYOND_USUAL_FACTOR = 1.5;
 
-function monthsBefore(d: LocalDate, months: number): LocalDate {
+export function monthsBefore(d: LocalDate, months: number): LocalDate {
   const y = Number(d.slice(0, 4));
   const m = Number(d.slice(5, 7));
   const day = Number(d.slice(8, 10));

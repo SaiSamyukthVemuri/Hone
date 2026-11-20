@@ -2,16 +2,17 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { localDateString } from "@/lib/booking/tz";
+import { localDateString, utcInstantFromLocal } from "@/lib/booking/tz";
 import { readAppointmentsKeyset, readMoneyForAppointments } from "@/lib/finance/statement-money-read";
 import { createClient } from "@/lib/supabase/server";
 import type { Studio } from "@/lib/types/database";
 
 import type { FigureRead } from "../figure";
-import { buildOverview, type OverviewView, type PractitionerInfo, type WindowData } from "../overview-model";
+import { buildOverview, type FollowThroughData, type HistoryData, type OverviewView, type PractitionerInfo, type WindowData } from "../overview-model";
 import { parseOverviewParams, type OverviewParams, type RawParams } from "../overview-params";
 import { resolvePeriod, windowInstants, type PeriodWindow, type ResolvedPeriod } from "../period";
 import type { PriceEvidenceClass } from "../service-value";
+import { DEFAULT_NO_NEXT_BOOKING_LOOKBACK_MONTHS, monthsBefore } from "../visit-metrics";
 
 // ===========================================================================
 // Business → Analytics: THE OVERVIEW'S READS. READ-ONLY, owner-only, fail-closed.
@@ -41,6 +42,28 @@ async function readWindow(supabase: SupabaseClient, studioId: string, timezone: 
       money: money.ok ? { ok: true, value: { cardRows: money.cardRows, settlementRows: money.settlementRows, legacyFeeRows: money.legacyFeeRows } } : { ok: false, reason: "read_failed" },
     },
   };
+}
+
+const readFailure = (reason: "read_failed" | "too_many_appointments"): { ok: false; reason: "read_failed" | "too_many_appointments" } => ({ ok: false, reason });
+
+/** Every appointment BEFORE the window began, any status. Over the 10,000 cap it says so; it never truncates. */
+async function readHistory(supabase: SupabaseClient, studioId: string, timezone: string, w: PeriodWindow): Promise<FigureRead<HistoryData>> {
+  const { startUtc } = windowInstants(w, timezone);
+  const r = await readAppointmentsKeyset(supabase, studioId, { endUtc: startUtc });
+  return r.ok ? { ok: true, value: { appointments: r.rows } } : readFailure(r.reason);
+}
+
+/** The look-back up to now, and everything from now on, for "no next booking". As of now, so independent of the period chosen. */
+async function readFollowThrough(supabase: SupabaseClient, studioId: string, timezone: string, now: Date): Promise<FigureRead<FollowThroughData>> {
+  const lookbackStartLocal = monthsBefore(localDateString(now, timezone), DEFAULT_NO_NEXT_BOOKING_LOOKBACK_MONTHS);
+  const lookbackStartUtc = utcInstantFromLocal(lookbackStartLocal, "00:00", timezone).toISOString();
+  const [lookback, future] = await Promise.all([
+    readAppointmentsKeyset(supabase, studioId, { startUtc: lookbackStartUtc, endUtc: now.toISOString() }),
+    readAppointmentsKeyset(supabase, studioId, { startUtc: now.toISOString() }),
+  ]);
+  if (!lookback.ok) return readFailure(lookback.reason);
+  if (!future.ok) return readFailure(future.reason);
+  return { ok: true, value: { lookback: lookback.rows, future: future.rows, lookbackMonths: DEFAULT_NO_NEXT_BOOKING_LOOKBACK_MONTHS } };
 }
 
 export async function loadOverview(
@@ -77,6 +100,8 @@ export async function loadOverview(
 
   const current = await readWindow(supabase, studio.id, studio.timezone, period.current);
   const comparison = await readWindow(supabase, studio.id, studio.timezone, period.comparison);
+  const history = await readHistory(supabase, studio.id, studio.timezone, period.current);
+  const followThrough = await readFollowThrough(supabase, studio.id, studio.timezone, now);
   const view = buildOverview({
     timezone: studio.timezone,
     currency: studioCurrency,
@@ -85,6 +110,8 @@ export async function loadOverview(
     filter: parsed.params.practitioner,
     current,
     comparison,
+    history,
+    followThrough,
     practitioners: people.rows,
     classesRead: CLASSES_READ,
   });

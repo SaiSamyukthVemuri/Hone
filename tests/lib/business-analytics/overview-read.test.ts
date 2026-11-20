@@ -168,6 +168,38 @@ describe("the practitioner list is bounded and never truncated", () => {
   });
 });
 
+describe("the history reads", () => {
+  const appts = (calls: Call[]) => calls.filter((c) => c.table === "appointments");
+  it("reads everything before the window began, the look-back to now, and everything from now on, each studio-scoped", async () => {
+    const { client, calls } = recording(healthy());
+    await load("owner", client, { period: "previous_month" });
+    const filters = appts(calls).filter((c) => ["gte", "lt"].includes(c.method)).map((c) => `${c.method}:${String(c.args[1])}`);
+    // current + comparison windows (gte+lt each), history (lt only), look-back (gte+lt), future (gte only)
+    expect(filters.filter((f) => f.startsWith("lt:")).length).toBe(4);
+    expect(filters.filter((f) => f.startsWith("gte:")).length).toBe(4);
+    for (const c of appts(calls).filter((x) => x.method === "eq" && x.args[0] === "studio_id")) expect(c.args[1]).toBe(studio.id);
+  });
+  it("history over the appointment cap says so for returning and interval only", async () => {
+    const res = healthy();
+    // every appointments read returns a full page forever, so each keyset read hits MAX_PAGES: too_many_appointments
+    const page = Array.from({ length: 500 }, (_, i) => ({ id: `x${i}`, client_id: "c1", starts_at: `2026-11-03T15:00:${String(i % 60).padStart(2, "0")}+00:00`, status: "completed", practitioner_id: null, service_id: null, duration_minutes: 30 }));
+    res.appointments = ok(page);
+    const r = await load("owner", recording(res).client);
+    if (!(r.access === "granted" && r.ok)) throw new Error("expected a view");
+    expect(r.view.returning).toEqual({ available: false, reason: "too_many_appointments" });
+    expect(r.view.interval).toEqual({ available: false, reason: "too_many_appointments" });
+    expect(r.view.noNextBooking).toEqual({ available: false, reason: "too_many_appointments" });
+  });
+  it("a failed history read leaves the period's own figures alone", async () => {
+    const queues = healthy();
+    queues.appointments = [ok([]), ok([]), { data: null, error: { message: "boom" } }];
+    const r = await load("owner", recording(queues).client);
+    if (!(r.access === "granted" && r.ok)) throw new Error("expected a view");
+    expect(r.view.returning).toEqual({ available: false, reason: "read_failed" });
+    expect(r.view.completedVisits.available).toBe(true);
+  });
+});
+
 describe("the Overview read: parameters", () => {
   it("a page with a bad value shows the default with a notice; a strict route is refused, with no data query", async () => {
     const page = await load("owner", recording(healthy()).client, { period: "week" });
