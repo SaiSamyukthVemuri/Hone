@@ -199,6 +199,15 @@ describe("the collections-and-visits series", () => {
     if (!r.ok) throw new Error(r.reason);
     expect(r.points.reduce((n, p) => n + p.collectedCents, 0)).toBe(10000);
   });
+  it("a payment on an appointment that was not supplied makes the series unavailable, never a short chart", () => {
+    const orphan = assemble({ cardRows: [...cardRows, card("not-supplied", 4000)] });
+    expect(orphan.statement.all.collectedCents).toBe(25500); // the statement counts it
+    const r = collectionsSeries({ window: period.current, buckets, statement: orphan.statement, localDateByAppointment: dates, classes: classifyMoney(orphan) });
+    expect(r).toEqual({ ok: false, reason: "series_differs_from_collected" });
+    // the completed-visits-only scope never includes that money, so it is not refused
+    const only = collectionsSeries({ window: period.current, buckets, statement: orphan.statement, localDateByAppointment: dates, classes: classifyMoney(orphan), scope: "completed_visits_only" });
+    expect(only.ok).toBe(true);
+  });
   it("money outside the window is refused, not dropped", () => {
     const narrow = resolvePeriod({ kind: "custom", today: "2026-11-30", from: "2026-11-01", to: "2026-11-19" });
     if (!narrow.ok) throw new Error(narrow.error);

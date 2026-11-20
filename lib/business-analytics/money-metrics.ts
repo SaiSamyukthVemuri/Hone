@@ -195,6 +195,8 @@ export type SeriesPoint = { key: string; collectedCents: number; completedVisits
  * One point per bucket of the window: money by VISIT date (the date of the appointment each statement line sits on) and completed visits.
  * Every bucket is present, zero where nothing happened, because a day with no visits really had none; the table repeats these numbers.
  */
+export type SeriesFailure = "line_outside_window" | "unreadable_amount" | "unclassified_appointment" | "series_differs_from_collected";
+
 export function collectionsSeries(args: {
   window: PeriodWindow;
   buckets: ReadonlyArray<{ key: string }>;
@@ -202,7 +204,7 @@ export function collectionsSeries(args: {
   localDateByAppointment: ReadonlyMap<string, LocalDate>;
   classes: MoneyClassMap;
   scope?: CollectedScope;
-}): { ok: true; points: SeriesPoint[] } | { ok: false; reason: "line_outside_window" | "unreadable_amount" | "unclassified_appointment" } {
+}): { ok: true; points: SeriesPoint[] } | { ok: false; reason: SeriesFailure } {
   const scope = args.scope ?? DEFAULT_COLLECTED_SCOPE;
   const byKey = new Map<string, SeriesPoint>(args.buckets.map((b) => [b.key, { key: b.key, collectedCents: 0, completedVisits: 0 }]));
   for (const [id, date] of args.localDateByAppointment) {
@@ -223,7 +225,13 @@ export function collectionsSeries(args: {
       byKey.get(key)!.collectedCents += line.cents;
     }
   }
-  return { ok: true, points: args.buckets.map((b) => byKey.get(b.key)!) };
+  const points = args.buckets.map((b) => byKey.get(b.key)!);
+  // Money on a payment row whose appointment is not among the supplied appointments is in the statement's collected total but on no point.
+  // For the all-money scope the points must add up to that total, or the chart would be silently short: refuse instead.
+  if (scope === "all_money" && points.reduce((n, p) => n + p.collectedCents, 0) !== args.statement.all.collectedCents) {
+    return { ok: false, reason: "series_differs_from_collected" };
+  }
+  return { ok: true, points };
 }
 
 // ---------------------------------------------------------------------------
