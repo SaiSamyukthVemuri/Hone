@@ -333,3 +333,61 @@ describe("history figures", () => {
     for (const f of [v.returning, v.interval, v.noNextBooking]) expect(f).toEqual({ available: false, reason: "read_failed" });
   });
 });
+
+describe("the figures the layout correction draws (A4)", () => {
+  it("the comparison period's collected is carried so the difference can be said in words, and is null when the comparison could not be read", () => {
+    expect(must(buildOverview(input()).collected).previousCents).toBe(12000);
+    const noComparison = buildOverview(input({ comparison: { ok: false, reason: "read_failed" } }));
+    expect(must(noComparison.collected).previousCents).toBeNull();
+    expect(must(noComparison.collected).change).toEqual({ kind: "unavailable" });
+  });
+  it("the previous period's series is the comparison window's own points, one per day; unreadable comparison is unavailable with its reason, never an empty line", () => {
+    const v = buildOverview(input());
+    const prev = must(v.previousSeries);
+    expect(prev.unit).toBe("day");
+    expect(prev.points).toHaveLength(30);
+    expect(prev.points.reduce((n, p) => n + p.collectedCents, 0)).toBe(12000);
+    const failed = buildOverview(input({ comparison: { ok: false, reason: "read_failed" } }));
+    expect(failed.previousSeries).toEqual({ available: false, reason: "read_failed" });
+  });
+  it("average paid has a change only when both averages are known; otherwise it is unavailable, never 0%", () => {
+    const v = buildOverview(input());
+    const cur = must(v.averagePaid).averageCents;
+    expect(cur.known).toBe(true);
+    expect(v.averagePaidChange.kind).toBe("percent");
+    expect(buildOverview(input({ comparison: { ok: false, reason: "read_failed" } })).averagePaidChange).toEqual({ kind: "unavailable" });
+    const noPaidBefore = buildOverview(input({ comparison: window({ appointments: priorAppointments, money: { cardRows: [], settlementRows: [], legacyFeeRows: [] } }) }));
+    expect(noPaidBefore.averagePaidChange.kind).not.toBe("percent");
+  });
+  it("visit frequency buckets the active clients into 1, 2 and 3+ visits, and the buckets add up to the active clients", () => {
+    const rows: AssembleAppointment[] = [
+      appt("a1", "completed", "2026-11-02T15:00:00Z", "pr-1", "client-a"),
+      appt("a2", "completed", "2026-11-09T15:00:00Z", "pr-1", "client-a"),
+      appt("b1", "completed", "2026-11-03T15:00:00Z", "pr-1", "client-b"),
+      appt("b2", "completed", "2026-11-10T15:00:00Z", "pr-1", "client-b"),
+      appt("b3", "completed", "2026-11-17T15:00:00Z", "pr-1", "client-b"),
+      appt("b4", "completed", "2026-11-24T15:00:00Z", "pr-1", "client-b"),
+      appt("c1", "completed", "2026-11-04T15:00:00Z", "pr-1", "client-c"),
+      appt("d1", "cancelled", "2026-11-05T15:00:00Z", "pr-1", "client-d"),
+    ];
+    const v = buildOverview(input({ current: window({ appointments: rows, money: { cardRows: [], settlementRows: [], legacyFeeRows: [] } }) }));
+    const f = must(v.visitFrequency);
+    expect(f).toEqual({ one: 1, two: 1, threePlus: 1 });
+    expect(f.one + f.two + f.threePlus).toBe(must(v.activeClients).count);
+  });
+  it("visit frequency follows the team-member filter, and its buckets still add up", () => {
+    const rows: AssembleAppointment[] = [
+      appt("a1", "completed", "2026-11-02T15:00:00Z", "pr-1", "client-a"),
+      appt("a2", "completed", "2026-11-09T15:00:00Z", "pr-2", "client-a"),
+      appt("c1", "completed", "2026-11-04T15:00:00Z", "pr-2", "client-c"),
+    ];
+    const v = buildOverview(input({ filter: { kind: "one", practitionerId: "pr-1" }, current: window({ appointments: rows, money: { cardRows: [], settlementRows: [], legacyFeeRows: [] } }) }));
+    const f = must(v.visitFrequency);
+    expect(f).toEqual({ one: 1, two: 0, threePlus: 0 });
+    expect(f.one + f.two + f.threePlus).toBe(must(v.activeClients).count);
+  });
+  it("a failed current read makes the new figures unavailable too, with the same reason", () => {
+    const v = buildOverview(input({ current: { ok: false, reason: "read_failed" } }));
+    for (const f of [v.previousSeries, v.visitFrequency]) expect(f).toEqual({ available: false, reason: "read_failed" });
+  });
+});

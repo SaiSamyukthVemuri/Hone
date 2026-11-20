@@ -36,6 +36,7 @@ import {
   noNextBooking,
   splitReturning,
   studioInterval,
+  visitsInWindow,
   visitsOf,
   visitsPerActiveClient,
   visitsWithoutClient,
@@ -98,6 +99,9 @@ export type ServiceValueView = {
 
 export type ByPractitionerRow = { key: string; label: string; collectedCents: number };
 
+/** Active clients by how many completed visits they had in the period. The three always add up to the active clients. */
+export type VisitFrequency = { one: number; two: number; threePlus: number };
+
 export type OverviewView = {
   currentLabel: string;
   comparisonLabel: string;
@@ -110,12 +114,18 @@ export type OverviewView = {
   /** The filter's KIND only: never the practitioner's id. */
   filterKind: PractitionerFilter["kind"];
   currency: string | null;
-  collected: Figure<{ headlineCents: number; split: CollectedSplit; caveats: CollectedCaveats; change: Change }>;
+  /** `previousCents` is the comparison period's collected (null when it could not be read), so the difference can be stated in words. */
+  collected: Figure<{ headlineCents: number; split: CollectedSplit; caveats: CollectedCaveats; change: Change; previousCents: number | null }>;
   completedVisits: Figure<{ count: number; change: Change }>;
   activeClients: Figure<{ count: number; withoutClient: number; change: Change }>;
   visitsPerClient: Figure<Fact<number>>;
   averagePaid: Figure<AveragePaid>;
+  /** Unavailable when either average is unknown or the comparison could not be read; never a percentage against a missing figure. */
+  averagePaidChange: Change;
   series: Figure<{ unit: BucketUnit; points: SeriesPoint[] }>;
+  /** The comparison period's series, drawn beside the current one. Aligned by position (day 1 with day 1); a period with fewer days simply ends sooner, its missing days are absent, never 0. */
+  previousSeries: Figure<{ unit: BucketUnit; points: SeriesPoint[] }>;
+  visitFrequency: Figure<VisitFrequency>;
   byPractitioner: Figure<ByPractitionerRow[]>;
   serviceValue: Figure<ServiceValueView>;
   reconciliation: Figure<ReconciliationLine>;
@@ -131,6 +141,7 @@ type Window = {
   completedVisits: Figure<number>;
   activeClients: Figure<{ count: number; withoutClient: number }>;
   visitsPerClient: Figure<Fact<number>>;
+  visitFrequency: Figure<VisitFrequency>;
   collected: Figure<{ headlineCents: number; split: CollectedSplit; caveats: CollectedCaveats }>;
   averagePaid: Figure<AveragePaid>;
   series: Figure<{ unit: BucketUnit; points: SeriesPoint[] }>;
@@ -169,6 +180,13 @@ function practitionerLabel(id: string | null, byId: ReadonlyMap<string, Practiti
   return p.displayName && p.displayName.trim() ? p.displayName.trim() : UNNAMED_TEAM_MEMBER_LABEL;
 }
 
+function visitFrequency(mine: readonly VisitFact[], w: PeriodWindow): VisitFrequency {
+  const perClient = new Map<string, number>();
+  for (const v of visitsInWindow(mine, w)) if (v.clientId !== null) perClient.set(v.clientId, (perClient.get(v.clientId) ?? 0) + 1);
+  const counts = [...perClient.values()];
+  return { one: counts.filter((n) => n === 1).length, two: counts.filter((n) => n === 2).length, threePlus: counts.filter((n) => n >= 3).length };
+}
+
 function computeWindow(data: WindowData, w: PeriodWindow, o: Pick<OverviewInput, "timezone" | "currency" | "nowIso" | "filter" | "practitioners" | "classesRead">): Window {
   const facts: VisitFact[] = data.appointments.map((a) => ({
     appointmentId: a.id,
@@ -184,6 +202,7 @@ function computeWindow(data: WindowData, w: PeriodWindow, o: Pick<OverviewInput,
     completedVisits: { available: true, value: completed } as Figure<number>,
     activeClients: { available: true, value: { count: clients, withoutClient: visitsWithoutClient(mine, w) } } as Figure<{ count: number; withoutClient: number }>,
     visitsPerClient: { available: true, value: visitsPerActiveClient(mine, w) } as Figure<Fact<number>>,
+    visitFrequency: { available: true, value: visitFrequency(mine, w) } as Figure<VisitFrequency>,
   };
   const money = (reason: ReadFailure) => ({
     collected: unavailable(reason), averagePaid: unavailable(reason), series: unavailable(reason),
@@ -335,8 +354,8 @@ export function buildOverview(input: OverviewInput): OverviewView {
     statementsClaim: statementsClaim(input.period.current),
     filterKind: input.filter.kind,
     currency: input.currency,
-    collected: curFail, completedVisits: curFail, activeClients: curFail, visitsPerClient: curFail, averagePaid: curFail,
-    series: curFail, byPractitioner: curFail, serviceValue: curFail, reconciliation: curFail,
+    collected: curFail, completedVisits: curFail, activeClients: curFail, visitsPerClient: curFail, averagePaid: curFail, averagePaidChange: { kind: "unavailable" },
+    series: curFail, previousSeries: curFail, visitFrequency: curFail, byPractitioner: curFail, serviceValue: curFail, reconciliation: curFail,
     returning: curFail, interval: curFail, noNextBooking: curFail,
   };
   if (!cur) return view;
@@ -349,10 +368,14 @@ export function buildOverview(input: OverviewInput): OverviewView {
     : cur.activeClients;
   view.visitsPerClient = cur.visitsPerClient;
   view.collected = cur.collected.available
-    ? { available: true, value: { ...cur.collected.value, change: changeOf(cur.collected.value.headlineCents, prev ? numberOf(prev.collected, (v) => v.headlineCents) : null, cmp) } }
+    ? { available: true, value: { ...cur.collected.value, change: changeOf(cur.collected.value.headlineCents, prev ? numberOf(prev.collected, (v) => v.headlineCents) : null, cmp), previousCents: prev ? numberOf(prev.collected, (v) => v.headlineCents) : null } }
     : cur.collected;
   view.averagePaid = cur.averagePaid;
+  const avg = (w: Window | null): number | null => (w && w.averagePaid.available && w.averagePaid.value.averageCents.known ? w.averagePaid.value.averageCents.value : null);
+  view.averagePaidChange = changeOf(avg(cur), avg(prev), cmp);
   view.series = cur.series;
+  view.previousSeries = prev ? prev.series : unavailable(fail(input.comparison));
+  view.visitFrequency = cur.visitFrequency;
   view.byPractitioner = cur.byPractitioner;
   view.serviceValue = cur.serviceValue;
   view.reconciliation = cur.reconciliation;
