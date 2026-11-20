@@ -131,6 +131,13 @@ describe("the Overview print page", () => {
     const { tree } = await page();
     expect(JSON.stringify(tree)).toContain("nothing is printed");
   });
+  it("the printed page says which team member it shows, by name, even though the controls are gone (Codex)", async () => {
+    const { tree } = await page();
+    const html = renderToStaticMarkup(tree as never).replace(/&#x27;/g, "'");
+    expect(html).toContain("Showing: Ada Example");
+    expect(html).not.toContain("Former team member");
+    expect(html).toMatch(/<header[^>]*data-statement-header/); // the header that carries the line is the one print keeps
+  });
   it("the title is fixed text and the page carries no controls, no id and the owner-only footer", async () => {
     const { mod, tree } = await page();
     expect((mod.metadata as { title: string }).title).toBe("Analytics (print)");

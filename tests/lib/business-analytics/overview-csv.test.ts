@@ -103,6 +103,15 @@ describe("every unavailable figure is a row that says why, never an empty cell o
   });
 });
 
+describe("a filtered export labels the whole-studio rows as such (Codex)", () => {
+  it("the by-team-member rows are the section 'Whole studio (not filtered)' beside the 'One team member (filtered)' header", () => {
+    const filtered = csv(buildOverview(input({ filter: { kind: "one", practitionerId: "pr-1" } })));
+    expect(filtered).toContain("One team member (filtered)");
+    expect(filtered).toMatch(/\nWhole studio \(not filtered\),/);
+    expect(filtered).not.toMatch(/\nBy team member,/);
+  });
+});
+
 describe("signs, numbers and the formula guard (X1)", () => {
   const view = healthy();
   const withBelow = (cents: number): OverviewView => {
