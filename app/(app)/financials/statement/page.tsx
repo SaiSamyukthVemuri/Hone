@@ -1,6 +1,8 @@
-import { formatMoney, type PaymentCurrency } from "@/lib/billing/payment-jurisdiction";
+import { type PaymentCurrency } from "@/lib/billing/payment-jurisdiction";
 import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
 import { localDateString } from "@/lib/booking/tz";
+import { formatStatementMoney } from "@/lib/finance/statement-money";
+import { parsePageParam } from "@/lib/finance/statement-paging";
 import { loadStatementView } from "@/lib/finance/statement-read";
 import { resolveStatementMonth, yearMonthOf } from "@/lib/finance/statement-period";
 import { STATEMENT_MONTH_NOTICE } from "@/lib/finance/statement-copy";
@@ -22,7 +24,7 @@ export const dynamic = "force-dynamic";
 
 export const metadata = { title: "Money statement" };
 
-export default async function StatementPage({ searchParams }: { searchParams: Promise<{ month?: string | string[] }> }) {
+export default async function StatementPage({ searchParams }: { searchParams: Promise<{ month?: string | string[]; page?: string | string[] }> }) {
   const { practitioner, studio } = await requirePractitionerWithStudio();
   if (practitioner.role !== "owner") {
     return (
@@ -42,10 +44,19 @@ export default async function StatementPage({ searchParams }: { searchParams: Pr
   const currency: PaymentCurrency | null = jurisdiction.ok ? jurisdiction.jurisdiction.currency : null;
 
   const view = await loadStatementView(practitioner, studio, month, currency);
+  // Wide screens get the reference's content width: a contained breakout of the Statements content only (the app shell and its navigation are unchanged).
   return (
-    <div className="space-y-6">
-      <StatementsTabs active="studio" month={month} />
-      <StatementView view={view} currency={currency} format={(c) => formatMoney(c, currency)} maxMonth={current} notice={notice} />
+    <div className="min-[1140px]:-mx-[45px]">
+      <StatementView
+        view={view}
+        currency={currency}
+        format={(c) => formatStatementMoney(c, currency)}
+        maxMonth={current}
+        notice={notice}
+        page={parsePageParam(sp.page)}
+        tabs={<StatementsTabs active="studio" month={month} />}
+        studioName={studio.name}
+      />
     </div>
   );
 }

@@ -121,10 +121,10 @@ describe("the client statement, restyled", () => {
       expect(part).toMatch(/Practitioner One/);
     }
   });
-  it("the summary card, the Clients totals line and the Studio collected total share ONE muted-sage tone (not the full success surface)", () => {
+  it("the summary card, the Clients totals line and the Studio collected total share ONE sage tone, the approved reference's", () => {
     const out = html(docFor([visit()]));
-    // oklab, not oklch: the neutral has an explicit hue of 0, so an oklch mix drags the green toward orange (a peach card, seen in the browser, not in markup)
-    expect(out).toMatch(/bg-\[color-mix\(in_oklab,var\(--color-success-surface\)_35%,var\(--color-line\)\)\]/);
+    // the reference stylesheet's own values: #eaf0e7 on a #d1ddce edge
+    expect(out).toMatch(/border-\[#d1ddce\][^"]*bg-\[#eaf0e7\]/);
     for (const f of ["client-statement-view.tsx", "clients-view.tsx", "../statement/statement-view.tsx"]) {
       expect(read("app/(app)/financials/statements/" + f), f).not.toMatch(/bg-success-surface\/\d+/);
       expect(read("app/(app)/financials/statements/" + f), f).toMatch(/SUMMARY_TONE/);

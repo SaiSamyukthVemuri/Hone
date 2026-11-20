@@ -1,4 +1,5 @@
 import { PendingLink } from "@/components/pending-link";
+import { MonthPickerInput } from "./month-picker-input";
 import { CONTROL_MIN_TOUCH, FOCUS_RING, cx } from "@/components/ui/control-base";
 import { shiftYearMonth, STATEMENT_MIN_MONTH, type YearMonth } from "@/lib/finance/statement-period";
 import { STATEMENT_TABS, tabHref, type StatementsTab } from "@/lib/finance/statement-screen";
@@ -7,11 +8,11 @@ import { STATEMENT_TABS, tabHref, type StatementsTab } from "@/lib/finance/state
 
 // One segmented control for the screens' tabs and period switches (Studio | Clients, Month | Full history). Presentation only: the links, labels and
 // aria-current are unchanged.
-// The summary tone: a muted sage (the success tint mixed into the line grey, so it reads greyish sage), not the full success surface, so a card reads restrained.
-export const SUMMARY_TONE = "border border-line bg-[color-mix(in_oklab,var(--color-success-surface)_35%,var(--color-line))]";
-export const SEGMENT_GROUP = "inline-flex gap-0.5 rounded-lg border border-line bg-surface-sunken p-0.5";
+// The summary tone: the approved reference's sage (#eaf0e7 on a #d1ddce edge), taken from its stylesheet.
+export const SUMMARY_TONE = "border border-[#d1ddce] bg-[#eaf0e7]";
+export const SEGMENT_GROUP = "inline-flex gap-0.5 rounded-[9px] bg-[#e9ece7] p-[3px]";
 export const segmentClass = (active: boolean) =>
-  cx("inline-flex items-center rounded-md px-3 text-sm", CONTROL_MIN_TOUCH, FOCUS_RING, active ? "bg-surface font-medium text-fg shadow-sm" : "text-fg-muted hover:text-fg");
+  cx("inline-flex items-center rounded-lg px-3 text-sm", CONTROL_MIN_TOUCH, FOCUS_RING, active ? "bg-white font-semibold text-fg shadow-[0_1px_4px_#0002]" : "text-fg hover:bg-white/60");
 
 export function StatementsTabs({ active, month }: { active: StatementsTab; month: YearMonth }) {
   return (
@@ -25,31 +26,36 @@ export function StatementsTabs({ active, month }: { active: StatementsTab; month
   );
 }
 
-const MONTH_STEP = cx("inline-flex items-center rounded-lg border border-line-strong bg-surface px-3 text-sm text-fg hover:bg-surface-sunken", CONTROL_MIN_TOUCH, FOCUS_RING);
+// The month controls as the reference draws them: a bordered arrow, the month picker, a bordered arrow. The links, labels and bounds are unchanged (the
+// arrows keep their words for screen readers); at a bound the arrow is not rendered, as before.
+const ARROW = cx("inline-flex w-9 items-center justify-center rounded-lg border border-[#d6dbd3] bg-white text-fg hover:bg-[#edf1eb]", CONTROL_MIN_TOUCH, FOCUS_RING);
+const PICKER = cx("w-[185px] max-w-full rounded-lg border border-[#d6dbd3] bg-white px-2 text-fg", CONTROL_MIN_TOUCH, FOCUS_RING);
 
-/** Previous / next month links and a month picker, all pointing at `base` (the page's own path, with any fixed query already in `extra`). */
+/** Previous / next month arrows and a month picker, all pointing at `base` (the page's own path, with any fixed query already in `extra`). */
 export function MonthControls({ base, month, maxMonth, extra = "" }: { base: string; month: YearMonth; maxMonth: YearMonth; extra?: string }) {
   const prev = shiftYearMonth(month, -1);
   const next = shiftYearMonth(month, 1);
   const href = (m: YearMonth) => `${base}?month=${m}${extra}`;
   return (
-    <div className="flex flex-wrap items-center gap-2 text-sm">
+    <div className="flex items-center gap-1 text-sm">
       {prev >= STATEMENT_MIN_MONTH ? (
-        <PendingLink href={href(prev)} className={MONTH_STEP}>
-          <span aria-hidden="true">‹&nbsp;</span>Previous month
+        <PendingLink href={href(prev)} className={ARROW}>
+          <span aria-hidden="true">‹</span>
+          <span className="sr-only">Previous month</span>
         </PendingLink>
       ) : null}
-      <form method="get" action={base} className="flex items-center gap-2" aria-label="Choose a month">
+      <form method="get" action={base} className="flex items-center gap-1" aria-label="Choose a month">
         {extra ? <input type="hidden" name="view" value="month" /> : null}
         <label className="text-fg">
           <span className="sr-only">Month</span>
-          <input type="month" name="month" defaultValue={month} min={STATEMENT_MIN_MONTH} max={maxMonth} className={cx("rounded-lg border border-line-strong bg-surface px-2 text-fg", CONTROL_MIN_TOUCH, FOCUS_RING)} />
+          <MonthPickerInput defaultValue={month} min={STATEMENT_MIN_MONTH} max={maxMonth} className={PICKER} />
         </label>
-        <button type="submit" className={MONTH_STEP}>Show month</button>
+        <button type="submit" className="sr-only focus:not-sr-only focus:rounded-lg focus:border focus:border-[#d6dbd3] focus:bg-white focus:px-3 focus:py-2">Show month</button>
       </form>
       {next <= maxMonth ? (
-        <PendingLink href={href(next)} className={MONTH_STEP}>
-          Next month<span aria-hidden="true">&nbsp;›</span>
+        <PendingLink href={href(next)} className={ARROW}>
+          <span aria-hidden="true">›</span>
+          <span className="sr-only">Next month</span>
         </PendingLink>
       ) : null}
     </div>
