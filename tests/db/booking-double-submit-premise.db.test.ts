@@ -12,8 +12,9 @@ import { dropSynthStudio, seedSynthStudioB, type SynthStudio } from "./helpers/s
 // what the public booking command does TODAY when the same booking is submitted twice at once (two browser tabs, a double click, a retry after a lost
 // answer). It does not test the key (it does not exist yet); it records the behaviour the key has to improve.
 //
-// WHAT THE COMMAND DOES (read from the latest definitions, proved below): every booking command takes the studio-wide capacity advisory lock first, so
-// two submits to one studio SERIALISE; they never race to the insert. The second therefore sees the first's committed appointment and is judged against
+// WHAT THE COMMAND DOES (read from the latest definitions, MEASURED below): the public command first locks the studio's own row (`select ... for update`)
+// and then takes the studio capacity advisory lock, so two submits to one studio SERIALISE; they never race to the insert. Measured on a fresh stack: the
+// second submit is seen waiting with wait_event_type Lock / wait_event transactionid (that row lock), until the first commits. The second therefore sees the first's committed appointment and is judged against
 // it. Three things can then happen, and each is a test:
 //   1. studio with capacity OFF (studio-wide exclusion): the second submit is REFUSED as unavailable. It is not replayed (the client who lost the answer
 //      is told the slot is gone) and it is not duplicated.
@@ -41,15 +42,15 @@ async function conn(): Promise<Client> {
   return c;
 }
 
-/** Poll pg_stat_activity until `pid` is waiting on a lock (the studio capacity advisory lock). */
-async function waitUntilBlocked(pid: number, timeoutMs = 8000): Promise<boolean> {
+/** Poll pg_stat_activity until `pid` is waiting on a lock; returns what it waits on (the evidence), or null if it never waits. */
+async function waitUntilBlocked(pid: number, timeoutMs = 8000): Promise<{ type: string; event: string } | null> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const r = await adminQuery(`select wait_event_type from pg_stat_activity where pid = $1`, [pid]);
-    if (r.rows[0]?.wait_event_type === "Lock") return true;
+    const r = await adminQuery(`select wait_event_type, wait_event from pg_stat_activity where pid = $1`, [pid]);
+    if (r.rows[0]?.wait_event_type === "Lock") return { type: r.rows[0].wait_event_type, event: r.rows[0].wait_event };
     await new Promise((res) => setTimeout(res, 100));
   }
-  return false;
+  return null;
 }
 
 type Result = { result: string; appointment_id: string | null };
@@ -59,7 +60,7 @@ const submit = (c: Client, start: string, practitionerId: string | null) =>
   c.query<Result>(`select * from public.create_public_appointment_v2($1,$2,$3,$4::timestamptz,$5,null,null,$6)`, [B.studioId, B.clientId, serviceId, start, hash64(), practitionerId]);
 
 /** Submit the SAME booking twice at once: A holds the command's locks in an open transaction, B starts and must WAIT, then A commits and B runs. */
-async function doubleSubmit(start: string, practitionerId: string | null): Promise<{ a: Result; b: Result; bWaited: boolean }> {
+async function doubleSubmit(start: string, practitionerId: string | null): Promise<{ a: Result; b: Result; bWaited: { type: string; event: string } | null }> {
   const A = await conn();
   const Bc = await conn();
   try {
@@ -110,9 +111,9 @@ describe("capacity OFF: a double submit is serialised, then the second is refuse
   it("the second submit WAITS on the studio lock, then is refused; exactly one appointment exists", async () => {
     const start = startsAt(5, 10);
     const { a, b, bWaited } = await doubleSubmit(start, null);
-    expect(bWaited, "the second submit must wait on the first's studio lock: they serialise, they do not race").toBe(true);
+    expect(bWaited, "the second submit must wait on the first: they serialise, they do not race").toEqual({ type: "Lock", event: "transactionid" });
     expect(a.result).toBe("created");
-    expect(b.result).not.toBe("created");
+    expect(b.result).toBe("time_unavailable"); // the refusal code observed on the stack
     expect(b.appointment_id, "a refusal carries no appointment: nothing is replayed").toBeNull();
     expect(await confirmedAt(start)).toHaveLength(1);
   }, 40_000);
@@ -123,9 +124,11 @@ describe("capacity ON, a practitioner named: the per-practitioner exclusion refu
     await enableCapacity();
     const start = startsAt(5, 11);
     const named = B.practitioners[1].practitionerId;
-    const { a, b } = await doubleSubmit(start, named);
+    const { a, b, bWaited } = await doubleSubmit(start, named);
+    expect(bWaited).toEqual({ type: "Lock", event: "transactionid" });
     expect(a.result).toBe("created");
-    expect(b.result).not.toBe("created");
+    expect(b.result).toBe("time_unavailable");
+    expect(b.appointment_id).toBeNull();
     const rows = await confirmedAt(start);
     expect(rows).toHaveLength(1);
     expect(rows[0].practitioner_id).toBe(named);
@@ -137,7 +140,7 @@ describe("capacity ON, no practitioner named: the second submit is assigned to A
     await enableCapacity();
     const start = startsAt(5, 12);
     const { a, b, bWaited } = await doubleSubmit(start, null);
-    expect(bWaited).toBe(true);
+    expect(bWaited).toEqual({ type: "Lock", event: "transactionid" });
     expect(a.result).toBe("created");
     // THE PREMISE: the second is NOT refused; it lands on another free practitioner.
     expect(b.result).toBe("created");
