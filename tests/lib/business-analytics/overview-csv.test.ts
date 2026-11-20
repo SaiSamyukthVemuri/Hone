@@ -58,7 +58,7 @@ describe("the Overview CSV", () => {
   });
   it("writes money as decimals with a currency column", () => {
     expect(text).toMatch(/Collected \(by visit date\),265\.00,CAD,/);
-    expect(text).toMatch(/= Collected,265\.00,CAD,/);
+    expect(text).toMatch(/Equals: collected,265\.00,CAD,/);
   });
   it("a team member's name that starts like a formula is neutralised, and a former member is not named", () => {
     expect(text).toContain("'=HYPERLINK(1)");
@@ -100,5 +100,72 @@ describe("every unavailable figure is a row that says why, never an empty cell o
   }
   it("the sentence is the screen's sentence", () => {
     expect(unavailableText("no_evidence_read")).toContain(FIGURE_UNAVAILABLE_COPY.no_evidence_read);
+  });
+});
+
+describe("signs, numbers and the formula guard (X1)", () => {
+  const view = healthy();
+  const withBelow = (cents: number): OverviewView => {
+    if (!view.reconciliation.available) throw new Error("fixture");
+    return { ...view, reconciliation: { available: true, value: { ...view.reconciliation.value, collectedBelowPriceCents: cents } } };
+  };
+  it("a negative amount is a real number, never text with a quote in front", () => {
+    const text = csv(withBelow(-500));
+    expect(text).toMatch(/Subtract: collected below the price[^\n]*,-5\.00,CAD,/);
+    expect(text).not.toContain("'-5.00");
+    expect(text).not.toMatch(/'-?\d/);
+  });
+  it("no label or note starts with a sign, so none is turned into text", () => {
+    const plain = buildOverview(input({ practitioners: [{ id: "pr-1", displayName: "Ada Example", active: true }, { id: "pr-2", displayName: "Grace Example", active: false }] }));
+    const text = csv(plain);
+    for (const line of text.split("\n").slice(1)) expect(line, line).not.toMatch(/(^|,)'[-+=@]/);
+    for (const label of ["Add: collected above the price", "Subtract: collected below the price", "Add: collected on visits with no price evidence", "Add: fees", "Add: payments on past bookings never completed", "Add: money on other bookings", "Equals: collected"]) expect(text, label).toContain(label);
+  });
+  it("a change is written in words, up or down", () => {
+    const base = healthy();
+    const col = base.collected;
+    if (!col.available) throw new Error("fixture");
+    const text = (percent: number) => csv({ ...base, collected: { available: true, value: { ...col.value, change: { kind: "percent", percent } } } });
+    expect(text(12.5)).toContain("Up 12.5% compared with");
+    expect(text(-12.5)).toContain("Down 12.5% compared with");
+    expect(text(0)).toContain("No change compared with");
+    expect(text(-12.5)).not.toMatch(/'-/);
+  });
+  it("the guard stays for everything that is not a plain number: a name or a note that looks like a formula is still neutralised", () => {
+    for (const name of ["-2+3", "+1", "=1+1", "@SUM(A1)", "-5.5", "- 5"]) {
+      const v = buildOverview(input({ practitioners: [{ id: "pr-1", displayName: name, active: true }, { id: "pr-2", displayName: "Grace Example", active: false }] }));
+      const text = csv(v);
+      expect(text, name).toContain(`'${name}`);
+      expect(text, name).not.toMatch(new RegExp(`(^|,|\\n)${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(,|\\n)`));
+    }
+  });
+});
+
+describe("an unknown is written as its unavailable text, never 0, 0.00 or 0% (X2)", () => {
+  const base = healthy();
+  const rowOf = (text: string, figure: string) => text.split("\n").find((l) => l.startsWith(figure)) ?? "";
+  it("visits per client, average paid, returning percent and interval", () => {
+    const view: OverviewView = {
+      ...base,
+      visitsPerClient: { available: true, value: { known: false, reason: "No client was seen." } } as never,
+      averagePaid: { available: true, value: { averageCents: { known: false, reason: "No visit has a known payment." }, excludedUnknownVisits: 0 } } as never,
+      returning: { available: true, value: { activeClients: 0, returning: 0, firstTime: 0, returningPercent: { known: false, reason: "No client had a completed visit in this period." } } } as never,
+      interval: { available: true, value: { pooledAverageDays: { known: false, reason: "No client has two visit dates yet." }, clientsWithInterval: 0, clientsWithoutInterval: 0 } } as never,
+    };
+    const text = csv(view);
+    expect(rowOf(text, "Visits,Visits per client seen,")).toContain("Not available: No client was seen.");
+    expect(rowOf(text, "Visits,Average paid per visit,")).toContain("Not available: No visit has a known payment.");
+    expect(rowOf(text, "Clients,Returning clients,")).toContain("Not available: No client had a completed visit in this period.");
+    expect(rowOf(text, "Clients,Average days between visits,")).toContain("Not available: No client has two visit dates yet.");
+    expect(rowOf(text, "Visits,Visits per client seen,")).not.toMatch(/,(0|0\.0)(,|$)/);
+    expect(rowOf(text, "Visits,Average paid per visit,")).not.toMatch(/,0\.00,/);
+    expect(rowOf(text, "Clients,Returning clients,")).not.toMatch(/,0%,/);
+    expect(rowOf(text, "Clients,Average days between visits,")).not.toMatch(/,0,/);
+  });
+  it("an unread price class is Not available with its note, never 0.00", () => {
+    const text = csv(base);
+    const line = rowOf(text, "Service value,Price shown at online booking");
+    expect(line).toContain("Not available");
+    expect(line).not.toMatch(/0\.00/);
   });
 });

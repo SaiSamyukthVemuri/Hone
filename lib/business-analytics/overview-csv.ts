@@ -19,6 +19,10 @@ import type { OverviewView } from "./overview-model";
 // MONEY. Decimal amounts ("60.00") with a separate currency column; written as text so the places survive. SAFETY: every cell goes through csvCell
 // (a text cell beginning with = + - @ TAB or CR is neutralised; RFC 4180 quoting), and a UTF-8 byte order mark leads the file.
 
+/** A plain number (a decimal amount or a count, possibly negative) is a real number in the spreadsheet, not text. Nothing else is exempt from the formula guard. */
+const PLAIN_NUMBER = /^-?\d+(\.\d{2})?$/;
+const cell = (v: string): string => (PLAIN_NUMBER.test(v) ? v : csvCell(v));
+
 export const OVERVIEW_CSV_COLUMNS = ["section", "figure", "value", "currency", "note"] as const;
 
 type Row = readonly string[];
@@ -34,8 +38,12 @@ const FILTER_TEXT: Record<OverviewView["filterKind"], string> = {
   unattributed: "Bookings with no team member (filtered)",
 };
 
+/** In words, never a leading sign: a note that began with + or - would be neutralised as a formula and written as text. */
 function changeText(c: Change, comparisonLabel: string): string {
-  if (c.kind === "percent") return `${c.percent >= 0 ? "+" : "-"}${Math.abs(c.percent).toFixed(1)}% compared with ${comparisonLabel}`;
+  if (c.kind === "percent") {
+    const p = Math.abs(c.percent).toFixed(1);
+    return c.percent === 0 || p === "0.0" ? `No change compared with ${comparisonLabel}` : `${c.percent > 0 ? "Up" : "Down"} ${p}% compared with ${comparisonLabel}`;
+  }
   if (c.kind === "none_recorded") return `Nothing was recorded in ${comparisonLabel}, so there is no percentage to show.`;
   return "The comparison is not available.";
 }
@@ -107,13 +115,13 @@ export function overviewCsv(view: OverviewView, opts: { preparedOn: string }): s
   });
   fig("Service value", "From service value to collected", view.reconciliation, (l) => {
     add("Service value to collected", "Completed service value", money(l.serviceValueCents), "", cur);
-    add("Service value to collected", "+ Collected above the price", money(l.collectedAbovePriceCents), "", cur);
-    add("Service value to collected", "- Collected below the price (unpaid, part paid, adjusted or waived)", money(l.collectedBelowPriceCents), "", cur);
-    add("Service value to collected", "+ Collected on visits with no price evidence", money(l.collectedOnNoEvidenceCents), "", cur);
-    add("Service value to collected", "+ Fees", money(l.feesCents), "", cur);
-    add("Service value to collected", "+ Payments on past bookings never completed", money(l.uncompletedPaymentsCents), "", cur);
-    add("Service value to collected", "+ Money on other bookings", money(l.otherBookingsCents), "", cur);
-    add("Service value to collected", "= Collected", money(l.collectedCents), "", cur);
+    add("Service value to collected", "Add: collected above the price", money(l.collectedAbovePriceCents), "", cur);
+    add("Service value to collected", "Subtract: collected below the price (unpaid, part paid, adjusted or waived)", money(l.collectedBelowPriceCents), "", cur);
+    add("Service value to collected", "Add: collected on visits with no price evidence", money(l.collectedOnNoEvidenceCents), "", cur);
+    add("Service value to collected", "Add: fees", money(l.feesCents), "", cur);
+    add("Service value to collected", "Add: payments on past bookings never completed", money(l.uncompletedPaymentsCents), "", cur);
+    add("Service value to collected", "Add: money on other bookings", money(l.otherBookingsCents), "", cur);
+    add("Service value to collected", "Equals: collected", money(l.collectedCents), "", cur);
   });
 
   fig("Clients", "Returning and first-time clients", view.returning, (r) =>
@@ -124,5 +132,5 @@ export function overviewCsv(view: OverviewView, opts: { preparedOn: string }): s
   );
   fig("Clients", "Clients with no next booking", view.noNextBooking, (n) => add("Clients", "Clients with no next booking", String(n.count), noNextBookingNote()));
 
-  return `${CSV_BOM}${rows.map((r) => r.map(csvCell).join(",")).join("\n")}\n`;
+  return `${CSV_BOM}${rows.map((r) => r.map(cell).join(",")).join("\n")}\n`;
 }
