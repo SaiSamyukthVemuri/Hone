@@ -5,7 +5,6 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { formatExact } from "@/lib/business-analytics/money-format";
 import { buildOverview, type OverviewInput, type OverviewView } from "@/lib/business-analytics/overview-model";
 import type { OverviewParams } from "@/lib/business-analytics/overview-params";
 import { resolvePeriod } from "@/lib/business-analytics/period";
@@ -214,5 +213,19 @@ describe("the Clients tab: nothing personal leaves it", () => {
     expect(csv).toContain("Clients seen in this period,3");
     expect(csv).toContain("No client is named in this file.");
     expect(csv).toContain("Paid in period across every client seen,305.00".replace("305.00", "215.00") + ",cad".toUpperCase().replace(",CAD", ",CAD"));
+  });
+});
+
+describe("the Clients tab: money on a visit with no client recorded", () => {
+  it("is shown on its own line, is not in any client's figure, and the difference stays zero", () => {
+    const extra = [...appointments, appt("done-noclient", "completed", "2026-11-10T15:00:00Z", "pr-1", null as never)];
+    const withMoney = { ...money, settlementRows: [...money.settlementRows, { appointmentId: "done-noclient", method: "paid_cash", amountCents: 4000, currency: "cad", quotedAmountCents: 4000 }] };
+    const v = view({}, { current: { ok: true, value: { appointments: extra, money: { ok: true, value: withMoney as never } } }, followThrough: { ok: true, value: { past: extra, future: [] } } });
+    const r = v.clientsReconciliation;
+    expect(r && r.available && r.value.noClientPaidCents).toBe(4000);
+    expect(r && r.available && r.value.clientsPaidCents).toBe(9000 + 9500 + 3000);
+    expect(r && r.available && r.value.differenceCents).toBe(0);
+    expect(table(v)?.seen).toBe(3); // the no-client visit is not a client seen
+    expect(text(render(v))).toContain("Money on completed visits with no client recorded $40.00");
   });
 });
