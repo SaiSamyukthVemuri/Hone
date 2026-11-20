@@ -32,7 +32,7 @@ if (!p.ok) throw new Error(p.error);
 const run = (filter: { kind: "all" } | { kind: "one"; practitionerId: string }) =>
   buildOverview({
     timezone: "America/Toronto", currency: "cad", nowIso: "2026-11-30T20:00:00Z", period: p.period, filter,
-    current: { ok: true, value: { appointments: appts, money: { ok: true, value: money } } }, comparison: { ok: false, reason: "read_failed" }, history: { ok: true, value: { appointments: [] } }, followThrough: { ok: true, value: { lookback: [], future: [] } },
+    current: { ok: true, value: { appointments: appts, money: { ok: true, value: money } } }, comparison: { ok: false, reason: "read_failed" }, history: { ok: true, value: { appointments: [] } }, followThrough: { ok: true, value: { past: [], future: [] } },
     practitioners: [{ id: "pr-1", displayName: "Ada Example", active: true }, { id: "pr-2", displayName: "Grace Example", active: true }], classesRead: ["recorded_at_visit"],
   });
 const MONEY_KEYS = ["collected", "averagePaid", "series", "serviceValue", "reconciliation"] as const;

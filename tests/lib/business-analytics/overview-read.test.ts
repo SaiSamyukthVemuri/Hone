@@ -170,13 +170,13 @@ describe("the practitioner list is bounded and never truncated", () => {
 
 describe("the history reads", () => {
   const appts = (calls: Call[]) => calls.filter((c) => c.table === "appointments");
-  it("reads everything before the window began, the look-back to now, and everything from now on, each studio-scoped", async () => {
+  it("reads everything before the window began, everything up to now, and everything from now on, each studio-scoped", async () => {
     const { client, calls } = recording(healthy());
     await load("owner", client, { period: "previous_month" });
     const filters = appts(calls).filter((c) => ["gte", "lt"].includes(c.method)).map((c) => `${c.method}:${String(c.args[1])}`);
-    // current + comparison windows (gte+lt each), history (lt only), look-back (gte+lt), future (gte only)
+    // current + comparison windows (gte+lt each), history (lt only), past (lt only), future (gte only)
     expect(filters.filter((f) => f.startsWith("lt:")).length).toBe(4);
-    expect(filters.filter((f) => f.startsWith("gte:")).length).toBe(4);
+    expect(filters.filter((f) => f.startsWith("gte:")).length).toBe(3);
     for (const c of appts(calls).filter((x) => x.method === "eq" && x.args[0] === "studio_id")) expect(c.args[1]).toBe(studio.id);
   });
   it("history over the appointment cap says so for returning and interval only", async () => {
@@ -190,9 +190,9 @@ describe("the history reads", () => {
     expect(r.view.interval).toEqual({ available: false, reason: "too_many_appointments" });
     expect(r.view.noNextBooking).toEqual({ available: false, reason: "too_many_appointments" });
   });
-  it("a look-back read that succeeds but a future read that fails: no next booking says why, and nothing is thrown", async () => {
+  it("a past read that succeeds but a future read that fails: no next booking says why, and nothing is thrown", async () => {
     const q = healthy();
-    // reads in order: current window, comparison, history, look-back, future
+    // reads in order: current window, comparison, history, past, future
     q.appointments = [ok([]), ok([]), ok([]), ok([]), { data: null, error: { message: "boom" } }];
     const r = await load("owner", recording(q).client);
     if (!(r.access === "granted" && r.ok)) throw new Error("expected a view");

@@ -47,7 +47,7 @@ const window = (over: { appointments?: AssembleAppointment[]; money?: typeof mon
 const input = (over: Partial<OverviewInput> = {}): OverviewInput => ({
   timezone: "America/Toronto", currency: "cad", nowIso: NOW, period, filter: { kind: "all" },
   current: window(), comparison: window({ appointments: priorAppointments, money: priorMoney }),
-  history: { ok: true, value: { appointments: [] } }, followThrough: { ok: true, value: { lookback: [], future: [] } },
+  history: { ok: true, value: { appointments: [] } }, followThrough: { ok: true, value: { past: [], future: [] } },
   practitioners, classesRead: ["recorded_at_visit"], ...over,
 });
 const must = <T,>(f: { available: true; value: T } | { available: false; reason: string }): T => {
@@ -255,6 +255,16 @@ describe("history figures", () => {
     expect(r.activeClients).toBe(0);
     expect(r.returningPercent.known).toBe(false);
   });
+  it("visit interval is pooled over EVERY client with history to the period's end, not only those seen in it (the reference's rule)", () => {
+    // fay was not seen in November: 1 Jun and 1 Jul → one gap of 30 days. She still counts, and so does the filter's team member's absence from it.
+    const extra = [...prior, hist("e1", "fay", "2026-06-01T15:00:00Z", "completed", "pr-1"), hist("e2", "fay", "2026-07-01T15:00:00Z", "completed", "pr-1")];
+    const all = must(buildOverview(base({ history: { ok: true, value: { appointments: extra } } })).interval);
+    expect(all.pooledAverageDays).toEqual({ known: true, value: (30 + 26 + 36 + 30) / 4 });
+    expect(all).toMatchObject({ clientsWithInterval: 3 });
+    // the practitioner filter decides who is SEEN; it does not narrow whose history is pooled
+    const filtered = must(buildOverview(base({ filter: { kind: "one", practitionerId: "pr-2" }, history: { ok: true, value: { appointments: extra } } })).interval);
+    expect(filtered.pooledAverageDays).toEqual({ known: true, value: (30 + 26 + 36 + 30) / 4 });
+  });
   it("visit interval is pooled over the clients seen in the period, through the period's last day only", () => {
     // ada: 10 Sep, 10 Oct, 5 Nov → gaps 30, 26. bea: 1 Oct, 6 Nov → gap 36. cy: one visit, no interval.
     const i = must(buildOverview(base()).interval);
@@ -275,27 +285,28 @@ describe("history figures", () => {
 
   const NOW_MS = Date.parse(NOW);
   const future = (id: string, clientId: string, status = "confirmed", dayOffset = 3) => hist(id, clientId, new Date(NOW_MS + dayOffset * 86_400_000).toISOString(), status);
-  const follow = (lookback: AssembleAppointment[], fut: AssembleAppointment[], months?: number) => ({ ok: true as const, value: { lookback, future: fut, lookbackMonths: months } });
+  const follow = (past: AssembleAppointment[], fut: AssembleAppointment[]) => ({ ok: true as const, value: { past, future: fut } });
   const seenRecently = [hist("l1", "ada", "2026-11-20T15:00:00Z"), hist("l2", "bea", "2026-08-01T15:00:00Z", "completed", "pr-2"), hist("l3", "cy", "2025-01-01T15:00:00Z")];
-  it("no next booking: seen in the look-back, nothing still to come with anyone; a count only", () => {
+  it("no next booking: any client with a completed visit, nothing still to come with anyone; a count only, however long ago they were seen", () => {
     const v = buildOverview(base({ followThrough: follow(seenRecently, [future("f1", "ada")]) }));
-    expect(must(v.noNextBooking)).toEqual({ count: 1, lookbackMonths: 12 }); // bea: cy is outside the look-back, ada has a booking
+    expect(must(v.noNextBooking)).toEqual({ count: 2 }); // bea and cy (seen in 2025: no look-back), ada has a booking
     expect(JSON.stringify(v.noNextBooking)).not.toMatch(/ada|bea|cy/);
   });
   it("only a confirmed booking still to come counts: a cancelled or past one does not", () => {
-    expect(must(buildOverview(base({ followThrough: follow(seenRecently, [future("f1", "ada", "cancelled"), future("f2", "bea", "confirmed", -1)]) })).noNextBooking).count).toBe(2);
+    expect(must(buildOverview(base({ followThrough: follow(seenRecently, [future("f1", "ada", "cancelled"), future("f2", "bea", "confirmed", -1)]) })).noNextBooking).count).toBe(3);
   });
   it("completed, no-show and cancelled rows dated in the future are not bookings: only a confirmed one counts", () => {
     const wrong = ["completed", "no_show", "cancelled", "pending"].map((st, i) => future(`g${i}`, "ada", st));
-    expect(must(buildOverview(base({ followThrough: follow(seenRecently, wrong) })).noNextBooking).count).toBe(2); // ada and bea are still without one (cy is outside the look-back)
-    expect(must(buildOverview(base({ followThrough: follow(seenRecently, [...wrong, future("g9", "ada", "confirmed")]) })).noNextBooking).count).toBe(1);
+    expect(must(buildOverview(base({ followThrough: follow(seenRecently, wrong) })).noNextBooking).count).toBe(3); // ada, bea and cy are all still without one
+    expect(must(buildOverview(base({ followThrough: follow(seenRecently, [...wrong, future("g9", "ada", "confirmed")]) })).noNextBooking).count).toBe(2);
   });
   it("the practitioner filter narrows who was seen, never the future-booking test", () => {
     const v = buildOverview(base({ filter: { kind: "one", practitionerId: "pr-2" }, followThrough: follow(seenRecently, [future("f1", "bea", "confirmed")].map((a) => ({ ...a, practitionerId: "pr-1" }))) }));
     expect(must(v.noNextBooking).count).toBe(0); // bea was seen by pr-2 and has a booking with pr-1: still booked
   });
-  it("the look-back follows the parameter", () => {
-    expect(must(buildOverview(base({ followThrough: follow(seenRecently, [], 24) })).noNextBooking)).toEqual({ count: 3, lookbackMonths: 24 });
+  it("a client last seen years ago is counted: there is no look-back (the reference's scope), and a cancelled-only client is not a client with a visit", () => {
+    const old = [hist("o1", "dee", "2019-03-01T15:00:00Z"), hist("o2", "eli", "2026-10-01T15:00:00Z", "cancelled")];
+    expect(must(buildOverview(base({ followThrough: follow(old, []) })).noNextBooking)).toEqual({ count: 1 });
   });
   it("a follow-through read that failed makes only that figure unavailable", () => {
     const v = buildOverview(base({ followThrough: { ok: false, reason: "too_many_appointments" } }));

@@ -32,7 +32,6 @@ import {
   activeClientIds,
   clientHistories,
   completedVisitCount,
-  DEFAULT_NO_NEXT_BOOKING_LOOKBACK_MONTHS,
   matchesPractitioner,
   noNextBooking,
   splitReturning,
@@ -62,7 +61,7 @@ export type WindowData = { appointments: readonly AssembleAppointment[]; money: 
 
 /** Completed-or-not appointments read for the history figures. Per-client data stays inside this module; only counts leave it. */
 export type HistoryData = { appointments: readonly AssembleAppointment[] };
-export type FollowThroughData = { lookback: readonly AssembleAppointment[]; future: readonly AssembleAppointment[]; lookbackMonths?: number };
+export type FollowThroughData = { past: readonly AssembleAppointment[]; future: readonly AssembleAppointment[] };
 
 export type PractitionerInfo = { id: string; displayName: string | null; active: boolean };
 
@@ -120,10 +119,10 @@ export type OverviewView = {
   reconciliation: Figure<ReconciliationLine>;
   /** Of the clients seen in the period, how many had a completed visit before it. First-time means first visit recorded in Hone. */
   returning: Figure<ReturningSplit>;
-  /** Average days between a seen client's completed visits, pooled over the clients seen in the period. */
+  /** Average days between a client's completed visits, pooled over every client with a completed visit up to the period's last day (the reference's rule). */
   interval: Figure<StudioInterval>;
   /** A count only, as of now. The clients themselves are listed on the Clients tab, never here. */
-  noNextBooking: Figure<{ count: number; lookbackMonths: number }>;
+  noNextBooking: Figure<{ count: number }>;
 };
 
 type Window = {
@@ -296,17 +295,16 @@ function historyFigures(input: OverviewInput, currentData: WindowData): Pick<Ove
     const completedAll = visitsOf(all); // whole history, every practitioner
     const seen = new Set(activeClientIds(visitsOf(all, input.filter), w));
     returning = { available: true, value: splitReturning([...completedAll.filter((v) => v.clientId !== null && seen.has(v.clientId))], w) };
-    const histories = clientHistories(completedAll.filter((v) => v.clientId !== null && seen.has(v.clientId)), w.lastLocal);
+    const histories = clientHistories(completedAll.filter((v) => v.clientId !== null), w.lastLocal); // every client with history, not only those seen
     interval = { available: true, value: studioInterval(histories) };
   }
 
-  let next: Figure<{ count: number; lookbackMonths: number }> = failedFollow ?? unavailable("read_failed");
+  let next: Figure<{ count: number }> = failedFollow ?? unavailable("read_failed");
   if (input.followThrough.ok) {
-    const months = input.followThrough.value.lookbackMonths ?? DEFAULT_NO_NEXT_BOOKING_LOOKBACK_MONTHS;
-    const seenFacts = visitsOf(factsOf(input.followThrough.value.lookback, tz), input.filter);
+    const seenFacts = visitsOf(factsOf(input.followThrough.value.past, tz), input.filter);
     const nowMs = new Date(input.nowIso).getTime();
     const future = new Set(input.followThrough.value.future.filter((a) => a.status === "confirmed" && new Date(a.startsAt).getTime() > nowMs).map((a) => a.clientId));
-    next = { available: true, value: { count: noNextBooking({ visits: seenFacts, clientsWithFutureBooking: future, todayLocal, lookbackMonths: months }).length, lookbackMonths: months } };
+    next = { available: true, value: { count: noNextBooking({ visits: seenFacts, clientsWithFutureBooking: future, todayLocal }).length } };
   }
   return { returning, interval, noNextBooking: next };
 }

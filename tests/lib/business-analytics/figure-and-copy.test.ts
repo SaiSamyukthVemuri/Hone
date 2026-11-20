@@ -36,6 +36,7 @@ describe("fixed copy that must stay true", () => {
   it("labels say what the data cannot", () => {
     expect(FIRST_TIME_NOTE).toContain("first visit recorded in Hone");
     expect(noNextBookingNote(12)).toContain("last 12 months");
+    expect(noNextBookingNote()).not.toMatch(/last \d+ month/); // no look-back in use, none named
     expect(beyondUsualNote(1.5)).toContain("1.5 times");
     expect(TREATMENT_CONTEXT_NOTE).toContain("how many treatments were recorded and the date of the latest");
   });

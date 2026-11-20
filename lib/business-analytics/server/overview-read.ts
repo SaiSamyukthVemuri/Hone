@@ -12,7 +12,6 @@ import { buildOverview, type FollowThroughData, type HistoryData, type OverviewV
 import { parseOverviewParams, type OverviewParams, type RawParams } from "../overview-params";
 import { resolvePeriod, windowInstants, type PeriodWindow, type ResolvedPeriod } from "../period";
 import type { PriceEvidenceClass } from "../service-value";
-import { DEFAULT_NO_NEXT_BOOKING_LOOKBACK_MONTHS, monthsBefore } from "../visit-metrics";
 
 // ===========================================================================
 // Business → Analytics: THE OVERVIEW'S READS. READ-ONLY, owner-only, fail-closed.
@@ -53,17 +52,15 @@ async function readHistory(supabase: SupabaseClient, studioId: string, timezone:
   return r.ok ? { ok: true, value: { appointments: r.rows } } : readFailure(r.reason);
 }
 
-/** The look-back up to now, and everything from now on, for "no next booking". As of now, so independent of the period chosen. */
-async function readFollowThrough(supabase: SupabaseClient, studioId: string, timezone: string, now: Date): Promise<FigureRead<FollowThroughData>> {
-  const lookbackStartLocal = monthsBefore(localDateString(now, timezone), DEFAULT_NO_NEXT_BOOKING_LOOKBACK_MONTHS);
-  const lookbackStartUtc = utcInstantFromLocal(lookbackStartLocal, "00:00", timezone).toISOString();
-  const [lookback, future] = await Promise.all([
-    readAppointmentsKeyset(supabase, studioId, { startUtc: lookbackStartUtc, endUtc: now.toISOString() }),
+/** Everything up to now (any status; every client with a completed visit counts) and everything from now on, for "no next booking". As of now, so independent of the period chosen. */
+async function readFollowThrough(supabase: SupabaseClient, studioId: string, now: Date): Promise<FigureRead<FollowThroughData>> {
+  const [past, future] = await Promise.all([
+    readAppointmentsKeyset(supabase, studioId, { endUtc: now.toISOString() }),
     readAppointmentsKeyset(supabase, studioId, { startUtc: now.toISOString() }),
   ]);
-  if (!lookback.ok) return readFailure(lookback.reason);
+  if (!past.ok) return readFailure(past.reason);
   if (!future.ok) return readFailure(future.reason);
-  return { ok: true, value: { lookback: lookback.rows, future: future.rows, lookbackMonths: DEFAULT_NO_NEXT_BOOKING_LOOKBACK_MONTHS } };
+  return { ok: true, value: { past: past.rows, future: future.rows } };
 }
 
 export async function loadOverview(
@@ -101,7 +98,7 @@ export async function loadOverview(
   const current = await readWindow(supabase, studio.id, studio.timezone, period.current);
   const comparison = await readWindow(supabase, studio.id, studio.timezone, period.comparison);
   const history = await readHistory(supabase, studio.id, studio.timezone, period.current);
-  const followThrough = await readFollowThrough(supabase, studio.id, studio.timezone, now);
+  const followThrough = await readFollowThrough(supabase, studio.id, now);
   const view = buildOverview({
     timezone: studio.timezone,
     currency: studioCurrency,

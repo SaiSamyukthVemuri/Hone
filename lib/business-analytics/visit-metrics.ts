@@ -187,8 +187,6 @@ export function studioInterval(histories: ReadonlyMap<string, ClientHistory>): S
 // Follow-through: no next booking, beyond usual interval
 // ---------------------------------------------------------------------------
 
-/** Months looked back for "no next booking". A product choice, so a parameter, never a constant buried in a loop. */
-export const DEFAULT_NO_NEXT_BOOKING_LOOKBACK_MONTHS = 12;
 /** "Beyond usual" means longer since the last visit than this multiple of the client's own average gap (the reference's rule). */
 export const DEFAULT_BEYOND_USUAL_FACTOR = 1.5;
 
@@ -204,18 +202,19 @@ export function monthsBefore(d: LocalDate, months: number): LocalDate {
 }
 
 /**
- * Clients seen in the look-back who have no future booking. "Future booking" is supplied by the caller as the set of client ids that have an
+ * Clients with a completed visit (in the look-back, when one is given) who have no future booking. "Future booking" is supplied by the caller as the set of client ids that have an
  * appointment still `confirmed` after now; this function never reads one. Point in time: it is "as of today", not a period figure.
  */
 export function noNextBooking(args: {
   visits: readonly VisitFact[];
   clientsWithFutureBooking: ReadonlySet<string>;
   todayLocal: LocalDate;
+  /** Omitted: every completed visit up to today counts (the reference's scope). A number limits it to the last N months. */
   lookbackMonths?: number;
 }): string[] {
-  const from = monthsBefore(args.todayLocal, args.lookbackMonths ?? DEFAULT_NO_NEXT_BOOKING_LOOKBACK_MONTHS);
+  const from = args.lookbackMonths === undefined ? null : monthsBefore(args.todayLocal, args.lookbackMonths);
   const seen = new Set<string>();
-  for (const v of args.visits) if (v.clientId !== null && v.localDate >= from && v.localDate <= args.todayLocal) seen.add(v.clientId);
+  for (const v of args.visits) if (v.clientId !== null && (from === null || v.localDate >= from) && v.localDate <= args.todayLocal) seen.add(v.clientId);
   return [...seen].filter((id) => !args.clientsWithFutureBooking.has(id)).sort();
 }
 
