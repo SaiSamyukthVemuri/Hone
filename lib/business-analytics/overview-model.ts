@@ -30,6 +30,7 @@ import { serviceValueToCollected, type CompletedVisitMoney, type ReconciliationL
 import { PRICE_EVIDENCE_CLASSES, resolveVisits, serviceValue, type PriceCandidate, type PriceEvidenceClass } from "./service-value";
 import {
   activeClientIds,
+  beyondUsualInterval,
   clientHistories,
   completedVisitCount,
   matchesPractitioner,
@@ -135,6 +136,12 @@ export type OverviewView = {
   interval: Figure<StudioInterval>;
   /** A count only, as of now. The clients themselves are listed on the Clients tab, never here. */
   noNextBooking: Figure<{ count: number }>;
+  /**
+   * A count only, as of now: clients with at least two completed visit dates, no confirmed booking still to come with anyone, whose days since their last
+   * completed visit exceed 1.5 times their OWN average gap (the client's whole history, any practitioner). A team-member filter narrows who is counted (the
+   * clients that team member saw), not the history or the future-booking test. Clients with fewer than two visit dates are counted apart, never flagged.
+   */
+  beyondUsual: Figure<{ count: number; notEnoughHistory: number }>;
 };
 
 type Window = {
@@ -302,7 +309,7 @@ const factsOf = (rows: readonly AssembleAppointment[], timezone: string): VisitF
  * Returning, interval and no-next-booking. The practitioner filter decides who counts as SEEN; it never narrows the history (a client is returning if
  * ANY practitioner saw them before) and never narrows the future-booking test (a booking with anyone counts), as the note on the screen says.
  */
-function historyFigures(input: OverviewInput, currentData: WindowData): Pick<OverviewView, "returning" | "interval" | "noNextBooking"> {
+function historyFigures(input: OverviewInput, currentData: WindowData): Pick<OverviewView, "returning" | "interval" | "noNextBooking" | "beyondUsual"> {
   const w = input.period.current;
   const tz = input.timezone;
   const todayLocal = localDateString(new Date(input.nowIso), tz);
@@ -325,13 +332,19 @@ function historyFigures(input: OverviewInput, currentData: WindowData): Pick<Ove
   }
 
   let next: Figure<{ count: number }> = failedFollow ?? unavailable("read_failed");
+  let beyond: Figure<{ count: number; notEnoughHistory: number }> = failedFollow ?? unavailable("read_failed");
   if (input.followThrough.ok) {
     const seenFacts = visitsOf(factsOf(input.followThrough.value.past, tz), input.filter);
     const nowMs = new Date(input.nowIso).getTime();
     const future = new Set(input.followThrough.value.future.filter((a) => a.status === "confirmed" && new Date(a.startsAt).getTime() > nowMs).map((a) => a.clientId));
     next = { available: true, value: { count: noNextBooking({ visits: seenFacts, clientsWithFutureBooking: future, todayLocal }).length } };
+    const everyone = visitsOf(factsOf(input.followThrough.value.past, tz));
+    const counted = new Set(seenFacts.flatMap((v) => (v.clientId === null ? [] : [v.clientId])));
+    const histories = clientHistories(everyone.filter((v) => v.clientId !== null && counted.has(v.clientId)), todayLocal);
+    const b = beyondUsualInterval({ histories, clientsWithFutureBooking: future, todayLocal });
+    beyond = { available: true, value: { count: b.clientIds.length, notEnoughHistory: b.notEnoughHistory.length } };
   }
-  return { returning, interval, noNextBooking: next };
+  return { returning, interval, noNextBooking: next, beyondUsual: beyond };
 }
 
 const numberOf = <T,>(f: Figure<T>, pick: (v: T) => number): number | null => (f.available ? pick(f.value) : null);
@@ -356,7 +369,7 @@ export function buildOverview(input: OverviewInput): OverviewView {
     currency: input.currency,
     collected: curFail, completedVisits: curFail, activeClients: curFail, visitsPerClient: curFail, averagePaid: curFail, averagePaidChange: { kind: "unavailable" },
     series: curFail, previousSeries: curFail, visitFrequency: curFail, byPractitioner: curFail, serviceValue: curFail, reconciliation: curFail,
-    returning: curFail, interval: curFail, noNextBooking: curFail,
+    returning: curFail, interval: curFail, noNextBooking: curFail, beyondUsual: curFail,
   };
   if (!cur) return view;
   const cmp = prev !== null;

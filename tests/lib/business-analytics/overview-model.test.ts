@@ -391,3 +391,37 @@ describe("the figures the layout correction draws (A4)", () => {
     for (const f of [v.previousSeries, v.visitFrequency]) expect(f).toEqual({ available: false, reason: "read_failed" });
   });
 });
+
+describe("beyond their usual visit interval (A4)", () => {
+  const past: AssembleAppointment[] = [
+    appt("x1", "completed", "2026-08-01T15:00:00Z", "pr-1", "client-x"), appt("x2", "completed", "2026-08-11T15:00:00Z", "pr-1", "client-x"), // gap 10, last 111 days ago: beyond
+    appt("y1", "completed", "2026-10-01T15:00:00Z", "pr-1", "client-y"), appt("y2", "completed", "2026-10-31T15:00:00Z", "pr-1", "client-y"), // gap 30, last 30 days ago: within 45
+    appt("z1", "completed", "2026-06-01T15:00:00Z", "pr-1", "client-z"), appt("z2", "completed", "2026-06-11T15:00:00Z", "pr-1", "client-z"), // beyond, but has a booking to come
+    appt("w1", "completed", "2026-05-01T15:00:00Z", "pr-1", "client-w"), // one visit date: not enough history
+    appt("q1", "completed", "2026-03-01T15:00:00Z", "pr-2", "client-q"), appt("q2", "completed", "2026-03-11T15:00:00Z", "pr-2", "client-q"), // beyond, seen by pr-2 only
+    appt("c1", "cancelled", "2026-02-01T15:00:00Z", "pr-1", "client-c"), appt("c2", "cancelled", "2026-02-11T15:00:00Z", "pr-1", "client-c"), // never completed: not counted
+  ];
+  const future: AssembleAppointment[] = [appt("fz", "confirmed", "2026-12-15T15:00:00Z", "pr-2", "client-z"), appt("fp", "pending", "2026-12-16T15:00:00Z", "pr-1", "client-x")];
+  const ft = (o: Partial<OverviewInput> = {}) => buildOverview(input({ followThrough: { ok: true, value: { past, future } }, ...o }));
+  it("counts the clients past 1.5 times their own average gap, with no confirmed booking to come; a one-visit client is counted apart, never flagged", () => {
+    expect(must(ft().beyondUsual)).toEqual({ count: 2, notEnoughHistory: 1 }); // x and q beyond; w short; y within; z has a booking; c never completed
+  });
+  it("a pending booking does not count as a booking to come; a confirmed one with ANY practitioner does", () => {
+    const v = ft({ followThrough: { ok: true, value: { past, future: [appt("fz", "confirmed", "2026-12-15T15:00:00Z", "pr-2", "client-z"), appt("fx", "confirmed", "2026-12-16T15:00:00Z", "pr-2", "client-x")] } } });
+    expect(must(v.beyondUsual).count).toBe(1); // x now has a confirmed booking with pr-2; only q is beyond
+  });
+  it("the team-member filter narrows who is counted (the clients that member saw), not the history or the future test", () => {
+    expect(must(ft({ filter: { kind: "one", practitionerId: "pr-1" } }).beyondUsual)).toEqual({ count: 1, notEnoughHistory: 1 });
+    expect(must(ft({ filter: { kind: "one", practitionerId: "pr-2" } }).beyondUsual)).toEqual({ count: 1, notEnoughHistory: 0 });
+  });
+  it("the boundary is strict: exactly 1.5 times the average gap is not beyond, one day more is", () => {
+    const run = (last: string, first: string) => must(ft({ followThrough: { ok: true, value: { past: [appt("e1", "completed", `${first}T15:00:00Z`, "pr-1", "client-e"), appt("e2", "completed", `${last}T15:00:00Z`, "pr-1", "client-e")], future: [] } } }).beyondUsual).count;
+    expect(run("2026-11-15", "2026-11-05")).toBe(0); // gap 10, last visit 15 days before 30 Nov: exactly 1.5 x
+    expect(run("2026-11-14", "2026-11-04")).toBe(1); // gap 10, last visit 16 days before
+  });
+  it("when the follow-through read failed the figure is unavailable with its reason, never 0", () => {
+    const v = buildOverview(input({ followThrough: { ok: false, reason: "read_failed" } }));
+    expect(v.beyondUsual).toEqual({ available: false, reason: "read_failed" });
+    expect(must(buildOverview(input({ followThrough: { ok: true, value: { past: [], future: [] } } })).beyondUsual)).toEqual({ count: 0, notEnoughHistory: 0 });
+  });
+});
