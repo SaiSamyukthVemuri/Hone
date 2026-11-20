@@ -1,4 +1,4 @@
-import type { StatementDocument } from "@/lib/finance/statement-document";
+import { UNKNOWN_REASON_COPY, type StatementDocument } from "@/lib/finance/statement-document";
 import type { StatementBucket, StatementKind } from "@/lib/finance/statement";
 import { STATEMENT_METHOD_LABELS } from "@/lib/finance/statement-copy";
 
@@ -62,6 +62,9 @@ export type VisitStatus = { label: string; tone: "paid" | "neutral"; reason?: st
 const PART_SETTLED = "Part settled; the rest is not confirmed";
 export function studioVisitStatus(lines: readonly { kind: StatementKind; cents: number | null }[], quoteCents: number | null = null): VisitStatus {
   const kinds = new Set(lines.map((l) => l.kind));
+  // ANY unresolved money line wins over everything else: money that may or may not have moved means the visit cannot be called Paid, Refunded or
+  // anything settled. The existing words, and the existing reason for a payment or refund that is unresolved.
+  if (kinds.has("unresolved")) return { label: "Unresolved", tone: "neutral", reason: UNKNOWN_REASON_COPY.payment_unresolved };
   const collected = visitCollectedCents(lines);
   if (collected !== null) {
     const waived = lines.reduce((n, l) => (l.kind === "waived" && l.cents !== null ? n + l.cents : n), 0);
