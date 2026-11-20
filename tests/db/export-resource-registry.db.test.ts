@@ -917,7 +917,9 @@ describe("what is excluded, and on what grounds", () => {
       // DELIVERY-VISIBILITY-01). 6 -> 7 derived: delivery_incidents (0215),
       // derived from the two ledgers.
       // 7 -> 8 platform: waitlist_retention_runs (0326, HON-7), the cleanup job's run log: counts and times, no studio column.
-      platform: 8,
+      // 8 -> 11 platform: permission_catalog, permission_key_release and permission_narrowings (0287, HON-44), the platform-wide
+      // permission reference and release state: no studio column, so none of it is a studio's own record.
+      platform: 11,
       // 7 -> 8 derived: dashboard_attention_events (0298, HELD), an owner's own dismiss/restore tidy-up of the Dashboard Needs
       // attention list. View state, not studio content; every reminder it hides is recomputed from records that ARE exported.
       // 8 -> 10 derived: waitlist_followups and waitlist_decline_owner_emails (0325, HON-7), the owner's follow-up queue and its
