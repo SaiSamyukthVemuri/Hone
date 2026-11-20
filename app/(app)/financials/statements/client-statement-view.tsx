@@ -24,7 +24,9 @@ import {
   scopeHeading,
   statementExportHref,
   statementPrintHref,
+  visitFeeBasis,
   visitFeeText,
+  visitFeeWithBasis,
   type ClientView,
 } from "@/lib/finance/statement-screen";
 
@@ -160,7 +162,7 @@ export function ClientStatementView({ document: doc, month, monthLabel, maxMonth
                     <th scope="col" className="px-4 py-2.5">Date and time</th>
                     <th scope="col" className="px-3 py-2.5">Service</th>
                     <th scope="col" className="px-3 py-2.5">Payment status</th>
-                    <th scope="col" className="px-3 py-2.5 text-right">Fee</th>
+                    <th scope="col" className="px-3 py-2.5 text-right">Amount</th>
                     <th scope="col" className="px-4 py-2.5">Details</th>
                   </tr>
                 </thead>
@@ -170,7 +172,7 @@ export function ClientStatementView({ document: doc, month, monthLabel, maxMonth
                       <td className="whitespace-nowrap px-4 py-3 text-fg">{`${formatLocalDate(v.localDate)}, ${v.localTime}`}</td>
                       <td className="px-3 py-3 text-fg">{v.serviceName ?? "Service not recorded"}</td>
                       <td className="px-3 py-3"><StatusPill tone={STATE_TONE[v.state]} className={PILL}>{VISIT_STATE_LABEL[v.state]}</StatusPill></td>
-                      <td className="whitespace-nowrap px-3 py-3 text-right font-medium tabular-nums text-fg">{visitFeeText(v, format)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right font-medium tabular-nums text-fg">{visitFeeText(v, format)}{visitFeeBasis(v) ? <div className="text-xs font-normal text-fg-muted">{visitFeeBasis(v)}</div> : null}</td>
                       <td className="px-4 py-1"><VisitDetails v={v} format={format} /></td>
                     </tr>
                   ))}
@@ -182,7 +184,7 @@ export function ClientStatementView({ document: doc, month, monthLabel, maxMonth
                 <li key={v.appointmentId} className="space-y-1 px-3 py-3 text-sm text-fg">
                   <div className="flex items-start justify-between gap-3">
                     <span>{`${formatLocalDate(v.localDate)}, ${v.localTime}`}</span>
-                    <span className="font-medium tabular-nums">{visitFeeText(v, format)}</span>
+                    <span className="font-medium tabular-nums">{visitFeeWithBasis(v, format)}</span>
                   </div>
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-fg-muted">{v.serviceName ?? "Service not recorded"}</span>
@@ -202,7 +204,7 @@ export function ClientStatementView({ document: doc, month, monthLabel, maxMonth
           <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface text-sm text-fg">
             {doc.feeItems.map((f) => (
               <li key={f.appointmentId} className="px-4 py-3">
-                {formatLocalDate(f.localDate)} · {FEE_REASON_COPY[f.reason]} · {visitFeeText(f, format)} · {FEE_ITEM_STATE_LABEL[f.state]}
+                {formatLocalDate(f.localDate)} · {FEE_REASON_COPY[f.reason]} · {visitFeeWithBasis(f, format)} · {FEE_ITEM_STATE_LABEL[f.state]}
                 {moneyLineTexts(f, format).length > 0 ? ` · ${moneyLineTexts(f, format).join(" · ")}` : ""}
               </li>
             ))}

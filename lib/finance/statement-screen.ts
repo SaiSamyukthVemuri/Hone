@@ -1,4 +1,4 @@
-import { formatLocalDate, type BalanceDue, type DocumentVisit, type FeeItem, type StatementDocument, type VisitState } from "@/lib/finance/statement-document";
+import { feeBasisLabel, formatLocalDate, type BalanceDue, type DocumentVisit, type FeeItem, type StatementDocument, type VisitState } from "@/lib/finance/statement-document";
 import { clientDisplayName } from "@/lib/clients/identity";
 import { foldForSearch } from "@/lib/clients/name-search";
 import { AMOUNT_KINDS } from "@/lib/finance/statement";
@@ -94,6 +94,17 @@ export const VISIT_STATE_LABEL: Record<VisitState, string> = {
 
 export function visitFeeText(v: DocumentVisit | FeeItem, fmt: (cents: number) => string): string {
   return v.fee.state === "recorded" ? fmt(v.fee.cents) : "Fee not recorded";
+}
+
+/** What the amount IS: "Agreed fee" (backed by price evidence) or "Charged" (taken from a payment); null when no amount is recorded. */
+export function visitFeeBasis(v: DocumentVisit | FeeItem): string | null {
+  return feeBasisLabel(v.fee);
+}
+
+/** The amount and what it is, as one line of text: "$120.00 · Agreed fee", "$25.00 · Charged", or "Fee not recorded". */
+export function visitFeeWithBasis(v: DocumentVisit | FeeItem, fmt: (cents: number) => string): string {
+  const basis = feeBasisLabel(v.fee);
+  return basis ? `${visitFeeText(v, fmt)} · ${basis}` : visitFeeText(v, fmt);
 }
 
 /** One visit's payment lines, kept together: "Card · $60.00". A row that carries no amount says so rather than showing a number. */

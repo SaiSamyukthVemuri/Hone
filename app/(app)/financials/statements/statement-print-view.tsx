@@ -10,7 +10,7 @@ import {
 } from "@/lib/finance/statement-document";
 import { offDocumentMoneyNotice } from "@/lib/finance/statement-directory";
 import { STATEMENT_NOT_AN_INVOICE, scopeLabel } from "@/lib/finance/statement-csv";
-import { FEE_ITEM_STATE_LABEL, VISIT_STATE_LABEL, balanceText, moneyLineTexts, visitFeeText } from "@/lib/finance/statement-screen";
+import { FEE_ITEM_STATE_LABEL, VISIT_STATE_LABEL, balanceText, moneyLineTexts, visitFeeWithBasis } from "@/lib/finance/statement-screen";
 
 import { PrintButton } from "./print-button";
 
@@ -37,7 +37,7 @@ function visitRow(v: DocumentVisit, format: (c: number) => string) {
     v.practitionerName ?? "Practitioner not recorded",
     VISIT_STATE_LABEL[v.state],
     lines.length === 0 ? "No payment recorded" : lines.join(" · "),
-    visitFeeText(v, format),
+    visitFeeWithBasis(v, format),
   ];
 }
 
@@ -77,7 +77,7 @@ export function StatementPrintView({ document: doc, offDocumentWithMoney, backHr
           <table className="w-full text-sm">
             <caption className="sr-only">Visits for {doc.client.name}</caption>
             <thead>
-              <tr className="text-left text-fg-muted">{["Date and time", "Service", "Duration", "Practitioner", "Payment status", "Payment", "Fee"].map((h) => <th key={h} scope="col" className="py-1 pr-3 font-normal">{h}</th>)}</tr>
+              <tr className="text-left text-fg-muted">{["Date and time", "Service", "Duration", "Practitioner", "Payment status", "Payment", "Amount"].map((h) => <th key={h} scope="col" className="py-1 pr-3 font-normal">{h}</th>)}</tr>
             </thead>
             <tbody>
               {doc.visits.map((v) => (
@@ -96,7 +96,7 @@ export function StatementPrintView({ document: doc, offDocumentWithMoney, backHr
           <ul className="space-y-1 text-sm">
             {doc.feeItems.map((f) => (
               <li key={f.appointmentId}>
-                {formatLocalDate(f.localDate)} · {FEE_REASON_COPY[f.reason]} · {visitFeeText(f, format)} · {FEE_ITEM_STATE_LABEL[f.state]}
+                {formatLocalDate(f.localDate)} · {FEE_REASON_COPY[f.reason]} · {visitFeeWithBasis(f, format)} · {FEE_ITEM_STATE_LABEL[f.state]}
                 {moneyLineTexts(f, format).length > 0 ? ` · ${moneyLineTexts(f, format).join(" · ")}` : ""}
               </li>
             ))}

@@ -46,7 +46,7 @@ export default async function StatementPage({ searchParams }: { searchParams: Pr
   const view = await loadStatementView(practitioner, studio, month, currency);
   // Wide screens get the reference's content width: a contained breakout of the Statements content only (the app shell and its navigation are unchanged).
   return (
-    <div className="min-[1140px]:-mx-[45px]">
+    <div className="bg-[#fafbf9] min-[1140px]:-mx-[45px]">
       <StatementView
         view={view}
         currency={currency}

@@ -315,10 +315,26 @@ describe("a client's statement", () => {
     const unpaid = visit({ appointmentId: "a2", localDate: "2026-11-19", feeCandidates: [{ source: "settlement_quote", cents: 6000 }], lines: [] });
     const out = html(createElement(ClientStatementView, stmtProps(docFor([visit(), unpaid]))));
     expect(out).toMatch(/\$60\.00 paid · 1 visit awaiting payment confirmation/);
-    expect(out).toMatch(/Nov 19, 2026 · \$60\.00 fee · No payment recorded/);
+    expect(out).toMatch(/Nov 19, 2026 · \$60\.00 agreed fee · No payment recorded/);
     expect(out).toMatch(/Balance due is not shown yet/);
     expect(out).toMatch(/waived, or noted as still owed/);
     expect(out).not.toMatch(/Balance due \$/);
+  });
+  it("names what each amount IS: 'Agreed fee' only with price evidence, 'Charged' for a payment-derived amount; the column is 'Amount'", () => {
+    const card = visit({ appointmentId: "a2", localDate: "2026-11-04", feeCandidates: [{ source: "card_attempt" as const, cents: 7000 }] });
+    const out = html(createElement(ClientStatementView, stmtProps(docFor([visit(), card]))));
+    expect(out).toMatch(/\$60\.00 · Agreed fee/); // the phone list line
+    expect(out).toMatch(/\$70\.00 · Charged/);
+    expect(out).toMatch(/>\$70\.00<div[^>]*>Charged<\/div>/); // the table cell
+    expect(out).toMatch(/>\$60\.00<div[^>]*>Agreed fee<\/div>/);
+    expect(out).toMatch(/>Amount<\/th>/);
+    expect(out).not.toMatch(/>Fee<\/th>/);
+    expect(out).not.toMatch(/\$70\.00[^<]{0,12}Agreed fee/);
+  });
+  it("a cancellation or no-show fee line says what its amount is too", () => {
+    const noShow = { appointmentId: "f1", clientId: "c-ada-1", localDate: "2026-11-05", startsAt: "2026-11-05T15:00:00Z", reason: "no_show_fee", feeCandidates: [{ source: "card_attempt", cents: 2500 }], lines: [{ kind: "collected_card_fee", cents: 2500, source: "card" }] };
+    const out = html(createElement(ClientStatementView, stmtProps(docFor([visit()], { kind: "month", month: "2026-11" }, { feeItems: [noShow] }))));
+    expect(out).toMatch(/\$25\.00 · Charged/);
   });
   it("shows a visit with no fee record as 'Fee not recorded', never a number", () => {
     const out = html(createElement(ClientStatementView, stmtProps(docFor([visit({ feeCandidates: [], lines: [] })]))));

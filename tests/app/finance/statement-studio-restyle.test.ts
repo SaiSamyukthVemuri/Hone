@@ -225,7 +225,7 @@ describe("the chrome", () => {
   });
   it("the contained width breakout is on the page wrapper only and only from 1140px, so a phone has no sideways scroll from it", () => {
     const src = readFileSync("app/(app)/financials/statement/page.tsx", "utf8");
-    expect(src).toMatch(/className="min-\[1140px\]:-mx-\[45px\]"/);
+    expect(src).toMatch(/className="bg-\[#fafbf9\] min-\[1140px\]:-mx-\[45px\]"/);
     expect(src).not.toMatch(/(^|[\s"])-mx-\[45px\]/m);
   });
 });

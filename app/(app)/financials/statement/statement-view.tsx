@@ -148,7 +148,8 @@ function VisitRow({ v, view, format }: { v: Row; view: OkView; format: (c: numbe
   // The short method words under the pill ("Card", "E-transfer"). A still-owing note or a waiver is kept in its full words BESIDE money (the pill alone
   // would not say it); with no money the pill already says it, so it is not repeated.
   const methods = v.lines.filter((l) => (COLLECTED_KINDS.includes(l.kind) && l.cents !== null) || (collected !== null && (l.kind === "still_owes_note" || l.kind === "waived")));
-  const serviceText = info?.serviceName ? `${info.serviceName}${info.minutes ? ` · ${info.minutes} min` : ""}` : "";
+  // Under the client on a phone the reference shows only the length ("60 min"); the service name is the fallback when no length is known.
+  const serviceText = info?.minutes ? `${info.minutes} min` : info?.serviceName ?? "";
   return (
     <details className="group border-t border-[#e6e8e3] first:border-t-0">
       <summary className={cx(LINE_GRID, "cursor-pointer list-none [&::-webkit-details-marker]:hidden", FOCUS_RING)}>
@@ -162,7 +163,7 @@ function VisitRow({ v, view, format }: { v: Row; view: OkView; format: (c: numbe
           ) : (
             <span className="text-fg">{info?.clientName}</span>
           )}
-          {info?.serviceName ? <span className="block text-xs text-[#5d685f] min-[781px]:hidden">{serviceText}</span> : null}
+          {serviceText ? <span className="block text-xs text-[#5d685f] min-[781px]:hidden">{serviceText}</span> : null}
         </span>
         <span className="hidden text-fg min-[781px]:block">{info?.serviceName ?? ""}{info?.serviceName && info.minutes ? <small className="ml-1 text-xs text-[#5d685f]">· {info.minutes} min</small> : null}</span>
         <span>
