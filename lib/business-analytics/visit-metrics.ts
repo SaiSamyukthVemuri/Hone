@@ -75,11 +75,11 @@ export function visitsWithoutClient(visits: readonly VisitFact[], w: Pick<Period
   return visitsInWindow(visits, w).filter((v) => v.clientId === null).length;
 }
 
-/** Completed visits per active client in the window. Not available when nobody was seen. */
+/** Completed visits that have a client, per active client, in the window (numerator and denominator are the same visits). Not available when nobody was seen. */
 export function visitsPerActiveClient(visits: readonly VisitFact[], w: Pick<PeriodWindow, "startLocal" | "endLocalExclusive">): Fact<number> {
   const clients = activeClientIds(visits, w).length;
   if (clients === 0) return unknown("No client had a completed visit in this period.");
-  return known(visitsInWindow(visits, w).length / clients);
+  return known(visitsInWindow(visits, w).filter((v) => v.clientId !== null).length / clients);
 }
 
 // ---------------------------------------------------------------------------

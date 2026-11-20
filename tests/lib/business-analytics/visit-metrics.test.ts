@@ -61,6 +61,9 @@ describe("active clients, with a no-client fail-safe", () => {
     expect(completedVisitCount(facts, W)).toBe(4);
     expect(visitsWithoutClient(facts, W)).toBe(1);
   });
+  it("one client visit plus one no-client visit is 1 per client: the no-client visit is not in the numerator", () => {
+    expect(visitsPerActiveClient([v("c1", "2026-11-02"), v(null, "2026-11-03")], W)).toEqual({ known: true, value: 1 });
+  });
   it("visits per active client is a number, or not available when nobody was seen (never 0 or NaN)", () => {
     expect(visitsPerActiveClient([v("c1", "2026-11-02"), v("c1", "2026-11-03"), v("c2", "2026-11-04")], W)).toEqual({ known: true, value: 1.5 });
     const none = visitsPerActiveClient([], W);
