@@ -39,8 +39,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // (the sage summary card, the method bar, the breakdown behind a disclosure, the paged latest-first visit table) and that none of it can disagree with the
 // totals. Synthetic records only.
 
-// Codex review on the Studio restyle: (1) the Studio and Clients tabs must survive a failed Studio read; (2) a row is not "Paid" when what was collected is
-// below the price the visit was settled against, or when nothing was collected. Synthetic records only.
+// The tabs stay visible when the Studio read fails, and a row is not "Paid" when what was collected is below the price the visit was settled against, or
+// when nothing was collected. Synthetic records only.
 const cash = (cents: number) => ({ kind: "collected_cash" as const, cents });
 const card = (cents: number) => ({ kind: "collected_card_session" as const, cents });
 
@@ -148,13 +148,13 @@ describe("the loader carries the settled quote, and only a clean one", () => {
   const run = async (settle: unknown[]) => {
     const { loadStatementView } = await import("@/lib/finance/statement-read");
     const a = (id: string) => ({ id, status: "completed", starts_at: "2026-11-03T15:00:00Z", practitioner_id: "p1", service_id: null, clients: null });
-    const v = await loadStatementView({ role: "owner" }, { id: "s1", timezone: "America/Toronto" }, "2026-11", "cad", recording({ appointments: okr([a("a1"), a("a2"), a("a3"), a("a4")]), sessions: okr([]), payment_charge_attempts: okr([]), appointment_settlements: okr(settle), manual_fee_charge_attempts: okr([]), services: okr([]), practitioners: okr([]) }));
+    const v = await loadStatementView({ role: "owner" }, { id: "s1", timezone: "America/Toronto" }, "2026-11", "cad", recording({ appointments: okr([a("a1"), a("a2"), a("a3"), a("a4"), a("a5")]), sessions: okr([]), payment_charge_attempts: okr([]), appointment_settlements: okr(settle), manual_fee_charge_attempts: okr([]), services: okr([]), practitioners: okr([]) }));
     if (v.access !== "granted" || !v.ok) throw new Error("expected a granted view");
     return v;
   };
   const row = (id: string, quote: unknown) => ({ appointment_id: id, method: "paid_cash", amount_cents: 5000, currency: "cad", quoted_amount_cents: quote });
   it("keeps a valid quote (including a recorded $0), drops a missing, negative or fractional one, and drops a visit whose live quotes disagree", async () => {
-    const v = await run([row("a1", 10000), row("a2", 0), row("a3", null), row("a4", -5), row("a1", 10000), row("a2", 500), row("a2", 600)]);
+    const v = await run([row("a1", 10000), row("a2", 0), row("a3", null), row("a4", -5), row("a5", 1.5), row("a1", 10000), row("a2", 500), row("a2", 600)]);
     expect(v.settlementQuotes).toEqual({ a1: 10000 });
   });
   it("it changes no total: the statement is identical with and without quotes on the settlements", async () => {
@@ -240,5 +240,23 @@ describe("visitMinutes and the loader", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]).toContain("ends_at");
     expect(calls[0]).toContain("client_id");
+  });
+});
+
+describe("small fidelity items", () => {
+  it("at the latest month the next arrow is drawn DISABLED: not a link, hidden from assistive technology; earlier months still link to it", async () => {
+    const out = await renderFix({ view: withInfo });
+    expect(out).toMatch(/<span aria-hidden="true" class="[^"]*opacity-35[^"]*">›<\/span>/);
+    expect(out).not.toContain("Next month");
+  });
+  it("under the client on a phone the row shows just the length ('30 min'), falling back to the service name when no length is known", async () => {
+    const phone = (out: string) => [...out.matchAll(/<span class="block text-xs text-\[#5d685f\] min-\[781px\]:hidden">([^<]*)<\/span>/g)].map((m) => m[1]);
+    const settle = [{ appointmentId: "v1", method: "paid_cash", amountCents: 5000, currency: "cad" }];
+    expect(phone(await renderFix({ view: withInfo, settle }))).toEqual(["30 min"]);
+    expect(phone(await renderFix({ view: { visitInfo: { v1: { clientName: "Client v1", clientId: null, serviceName: "Service", minutes: null } } }, settle }))).toEqual(["Service"]);
+  });
+  it("the Statements page tints its own content area #fafbf9 and leaves the shell alone (source guard)", () => {
+    const src = readFileSync("app/(app)/financials/statement/page.tsx", "utf8");
+    expect(src).toMatch(/className="bg-\[#fafbf9\] min-\[1140px\]:-mx-\[45px\]"/);
   });
 });

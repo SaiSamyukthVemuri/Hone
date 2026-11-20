@@ -57,7 +57,10 @@ export function MonthControls({ base, month, maxMonth, extra = "" }: { base: str
           <span aria-hidden="true">›</span>
           <span className="sr-only">Next month</span>
         </PendingLink>
-      ) : null}
+      ) : (
+        // At the latest month the arrow is drawn disabled, as the reference does: not a link, not focusable, and silent to screen readers.
+        <span aria-hidden="true" className={cx("inline-flex w-9 items-center justify-center rounded-lg border border-[#d6dbd3] bg-white text-fg opacity-35", CONTROL_MIN_TOUCH)}>›</span>
+      )}
     </div>
   );
 }
