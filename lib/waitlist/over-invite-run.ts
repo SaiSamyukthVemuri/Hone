@@ -1,7 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { admitBatchItem, claimItems, replaceInvitation, settleItem } from "@/lib/waitlist/over-invite-port";
-import { deliverIssued, mayStillSend } from "@/lib/waitlist/over-invite-deliver";
+import { deliverIssued } from "@/lib/waitlist/over-invite-deliver";
 import type { Reader } from "@/lib/waitlist/over-invite-shown";
 import { RETRY_CLICK_MAX } from "@/lib/waitlist/over-invite-progress";
 import type { ClaimMode } from "@/lib/waitlist/over-invite-port";
@@ -40,7 +40,9 @@ export function liveWorkerDeps(sleep: (ms: number) => Promise<void> = sleepFor):
     // An email that takes longer than the per-item budget is reported UNKNOWN (it may still arrive), never retried automatically, and keeps the whole round inside
     // the lease: lease > chunk x (spacing + ITEM_BUDGET_MS), pinned by a test.
     deliver: (issued, entryId, item) => withItemBudget(deliverIssued(item.studioId, issued, entryId)),
-    mayStillSend: (item) => mayStillSend(item.studioId, item.entryId),
+    // The admit command re-validates the entry atomically (waiting, follow-up, round, batch state) and returns the address it validated, so there is no
+    // separate read of the entry here: service_role has no table privilege on the waitlist entries, and a read could only fail or race the command.
+    mayStillSend: async () => "sendable",
     sleep,
   };
 }
@@ -107,7 +109,7 @@ export async function retryByKind(
         return ok ? { state: row.state, invitationId: typeof row.invitation_id === "string" ? row.invitation_id : null } : null;
       },
       replace: (entryId, expectedInvitationId) => replaceInvitation(db, { studioId, actorUserId, entryId, expectedInvitationId }),
-      deliver: (issued, entryId) => withItemBudget(deliverIssued(studioId, issued, entryId)),
+      deliver: (issued, entryId) => withItemBudget(deliverIssued(studioId, issued, entryId, reader)),
       settle: (target, outcome, reason, expected, invitationId) => settleItem(db, target, outcome, reason, expected ?? null, invitationId ?? null),
       sleep: sleepFor,
     },

@@ -75,11 +75,17 @@ test.describe("invite beyond the estimate", () => {
     const refused = await page.request.get("/api/cron/waitlist-invitation-batches", { headers: { Authorization: "Bearer not-the-secret" } });
     expect(refused.status()).toBe(401);
     expect((await sql<{ n: number }>(`select count(*)::int n from public.waitlist_invitation_batch_items where studio_id=$1 and state in ('pending','claimed')`, [seed.studioId]))[0]!.n).toBe(waiting[0]!.n);
-    const ran = await page.request.get("/api/cron/waitlist-invitation-batches", { headers: { Authorization: `Bearer ${CRON_SECRET}` }, timeout: 90_000 });
-    expect(ran.status()).toBe(200);
-    const summary = await ran.json();
-    expect(summary.ok).toBe(true);
-    expect(JSON.stringify(summary)).not.toMatch(/@|harness\.local/); // counts only: no name, address or id
+    // The scheduler calls it every minute; each call has a time budget, so a held send or two can leave something for the next call. Call it until this
+    // studio has nothing waiting (at most four calls), exactly as the scheduler would.
+    const waitingNow = async () => (await sql<{ n: number }>(`select count(*)::int n from public.waitlist_invitation_batch_items where studio_id=$1 and state in ('pending','claimed')`, [seed.studioId]))[0]!.n;
+    for (let call = 0; call < 4 && (await waitingNow()) > 0; call++) {
+      const ran = await page.request.get("/api/cron/waitlist-invitation-batches", { headers: { Authorization: `Bearer ${CRON_SECRET}` }, timeout: 90_000 });
+      expect(ran.status()).toBe(200);
+      const summary = await ran.json();
+      expect(summary.ok).toBe(true);
+      expect(JSON.stringify(summary)).not.toMatch(/@|harness\.local/); // counts only: no name, address or id
+    }
+    expect(await waitingNow()).toBe(0);
 
     // 5. Progress shows every chosen client sent.
     await page.goto("/settings/waitlist/over-invite");
