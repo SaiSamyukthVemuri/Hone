@@ -200,6 +200,14 @@ describe("a SQL-standard begin atomic body is kept whole", () => {
   it("an end inside a string does not balance a real case (only code words count)", () => {
     expect(direct(run(atomic("select case when p is null then 'end' end; insert into public.appointments (id) values (1);")))).toEqual(["f/1"]);
   });
+  it("an end word that is not the last word of the text so far does not close the body (the count alone is not enough)", () => {
+    expect(direct(run(atomic("select t.end from t; insert into public.appointments (id) values (1);")))).toEqual(["f/1"]);
+  });
+  it("end and case words inside a dollar-quoted body, or one nested in another, are not code", () => {
+    expect(direct(run(atomic("select case when p is null then $q$ end $q$ end; insert into public.appointments (id) values (1);")))).toEqual(["f/1"]);
+    expect(direct(run(atomic("select $a$ case $b$ end $b$ end $a$ end2; select case when p is null then 1 end; insert into public.appointments (id) values (1);")))).toEqual(["f/1"]);
+    expect(direct(run(atomic("select 'case' , $z$ case case $z$ , 'end'; select case when p is null then 1 end; insert into public.appointments (id) values (1);")))).toEqual(["f/1"]);
+  });
   it("the statement after it is a separate statement", () => {
     const c = run(atomic("select 1;") + "\n" + fn("g", "insert into public.appointments (id) values (1);"));
     expect(direct(c)).toEqual(["g/1"]);
