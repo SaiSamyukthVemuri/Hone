@@ -93,6 +93,10 @@ describe("Find a client on the Studio tab", () => {
     expect(src.indexOf('practitioner.role !== "owner"')).toBeLessThan(src.indexOf("await loadFinderState("));
     expect(src).toContain("finder={finder}");
   });
+  it("the Studio view tells the finder it has no month counts, so a result states none (source guard)", () => {
+    const src = readFileSync("app/(app)/financials/statement/statement-view.tsx", "utf8");
+    expect(src).toMatch(/<ClientFinder[^>]*monthVisits=\{null\}[^>]*showMonthCount=\{false\}/);
+  });
 });
 
 describe("each client row has a real document action", () => {
