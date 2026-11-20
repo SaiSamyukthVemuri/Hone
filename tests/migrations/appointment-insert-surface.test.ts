@@ -197,6 +197,9 @@ describe("a SQL-standard begin atomic body is kept whole", () => {
   it("the words begin atomic or end inside a string or comment do not count", () => {
     expect(direct(run(atomic("select 'end; begin atomic'; /* end; */ insert into public.appointments (id) values (1);")))).toEqual(["f/1"]);
   });
+  it("an end inside a string does not balance a real case (only code words count)", () => {
+    expect(direct(run(atomic("select case when p is null then 'end' end; insert into public.appointments (id) values (1);")))).toEqual(["f/1"]);
+  });
   it("the statement after it is a separate statement", () => {
     const c = run(atomic("select 1;") + "\n" + fn("g", "insert into public.appointments (id) values (1);"));
     expect(direct(c)).toEqual(["g/1"]);
