@@ -101,7 +101,7 @@ describe("create: confirmation, idempotency, material change, isolation", () => 
     for (const who of [rUser, prac.userId]) {
       expect((await create(f, [e], { user: who }))[0].result, "create").toBe("not_owner");
       expect((await q(`select * from public.preview_waitlist_over_invite($1,$2,$3,$4,$5,null)`, [f.studioId, who, [e], day(1), day(30)]))[0].result, "preview").toBe("not_owner");
-      expect((await q(`select * from public.replace_waitlist_invitation($1,$2,$3)`, [f.studioId, who, e]))[0].result, "replace").toBe("not_owner");
+      expect((await q(`select * from public.replace_waitlist_invitation($1,$2,$3,(select i.id from public.new_client_waitlist_invitations i where i.entry_id=$3 order by i.issued_at desc limit 1))`, [f.studioId, who, e]))[0].result, "replace").toBe("not_owner");
       const admit = await q(`select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,null,72,null,$7)`, [f.studioId, who, e, f.serviceId, day(1), day(30), c.item_id]);
       expect(admit[0].result, "admit").not.toBe("admitted");
     }
@@ -190,7 +190,7 @@ describe("replace", () => {
     await create(f, [e], { fit: 0, shown: 0 }); const c = (await claim())[0]; const a = await admitItem(f, c.item_id, e);
     const before = (await q(`select joined_at from public.new_client_waitlist_entries where id=$1`, [e]))[0].joined_at;
     const live = () => q(`select public.count_waitlist_competing_invitations_internal($1,$2,$3,null) n`, [f.studioId, day(1), day(30)]).catch(() => [{ n: null }]);
-    const r = await q(`select * from public.replace_waitlist_invitation($1,$2,$3)`, [f.studioId, f.userId, e]);
+    const r = await q(`select * from public.replace_waitlist_invitation($1,$2,$3,(select i.id from public.new_client_waitlist_invitations i where i.entry_id=$3 order by i.issued_at desc limit 1))`, [f.studioId, f.userId, e]);
     expect(r[0].result).toBe("replaced"); expect(r[0].raw_token).toBeTruthy(); expect(r[0].invitation_id).not.toBe(a[0].invitation_id);
     expect((await q(`select released_at from public.new_client_waitlist_invitations where id=$1`, [a[0].invitation_id]))[0].released_at).toBeTruthy();
     expect((await q(`select status, joined_at from public.new_client_waitlist_entries where id=$1`, [e]))[0]).toMatchObject({ status: "invited" });
@@ -200,13 +200,13 @@ describe("replace", () => {
   });
   it("refuses: not owner, no live invitation, a redeemed invitation; and a failed refusal leaves the entry exactly as it was", async () => {
     const f = await seed("rf"); const [e, e2] = await entries(f, 2); const m = await seedMember(f.studio, "practitioner");
-    expect((await q(`select * from public.replace_waitlist_invitation($1,$2,$3)`, [f.studioId, f.userId, e]))[0].result).toBe("no_live_invitation");
+    expect((await q(`select * from public.replace_waitlist_invitation($1,$2,$3,(select i.id from public.new_client_waitlist_invitations i where i.entry_id=$3 order by i.issued_at desc limit 1))`, [f.studioId, f.userId, e]))[0].result).toBe("no_live_invitation");
     await create(f, [e], { fit: 0, shown: 0 }); const c = (await claim())[0]; await admitItem(f, c.item_id, e);
-    expect((await q(`select * from public.replace_waitlist_invitation($1,$2,$3)`, [f.studioId, m.userId, e]))[0].result).toBe("not_owner");
+    expect((await q(`select * from public.replace_waitlist_invitation($1,$2,$3,(select i.id from public.new_client_waitlist_invitations i where i.entry_id=$3 order by i.issued_at desc limit 1))`, [f.studioId, m.userId, e]))[0].result).toBe("not_owner");
     await q(`alter table public.new_client_waitlist_invitations disable trigger new_client_waitlist_invitations_append_only`);
     await q(`update public.new_client_waitlist_invitations set redeemed_at = now() where entry_id=$1`, [e]);
     await q(`alter table public.new_client_waitlist_invitations enable trigger new_client_waitlist_invitations_append_only`);
-    expect((await q(`select * from public.replace_waitlist_invitation($1,$2,$3)`, [f.studioId, f.userId, e]))[0].result).toBe("invitation_redeemed");
+    expect((await q(`select * from public.replace_waitlist_invitation($1,$2,$3,(select i.id from public.new_client_waitlist_invitations i where i.entry_id=$3 order by i.issued_at desc limit 1))`, [f.studioId, f.userId, e]))[0].result).toBe("invitation_redeemed");
     expect((await q(`select status from public.new_client_waitlist_entries where id=$1`, [e]))[0].status).toBe("invited");
     void e2;
   });
@@ -217,7 +217,7 @@ describe("replace, the studio lock and what a claimed item authorises", () => {
     await create(f, [e], { fit: 0, shown: (await q(`select count(*)::int n from public.new_client_waitlist_invitations where studio_id=$1 and redeemed_at is null and expired_at is null and released_at is null`, [f.studioId]))[0].n });
     const c = (await claim()).find((r: any) => r.entry_id === e)!; await admitItem(f, c.item_id, e); return c;
   }
-  const replace = (f: F, e: string) => q(`select * from public.replace_waitlist_invitation($1,$2,$3)`, [f.studioId, f.userId, e]).then((r) => r[0]);
+  const replace = (f: F, e: string) => q(`select * from public.replace_waitlist_invitation($1,$2,$3,(select i.id from public.new_client_waitlist_invitations i where i.entry_id=$3 order by i.issued_at desc limit 1))`, [f.studioId, f.userId, e]).then((r) => r[0]);
   it("simultaneous replaces in one studio never deadlock (repeated), and a replace racing an admit serialises", async () => {
     for (let k = 0; k < 5; k++) {
       const f = await seed(`f1${k}`); const ids = await entries(f, 4);
@@ -317,6 +317,27 @@ describe("replace, the studio lock and what a claimed item authorises", () => {
       expect(rows.every((x: any) => x.state === "unknown")).toBe(true);
     }
   });
+  it("two concurrent replaces of the same item: exactly one applies, the other answers state_changed and changes nothing", async () => {
+    for (let k = 0; k < 4; k++) {
+      const f = await seed(`rr${k}`); const [e1] = await entries(f, 1); await liveInvite(f, e1);
+      const seen = (await q(`select id from public.new_client_waitlist_invitations where entry_id=$1 order by issued_at desc limit 1`, [e1]))[0].id;
+      const call = () => q(`select * from public.replace_waitlist_invitation($1,$2,$3,$4)`, [f.studioId, f.userId, e1, seen]).then((r) => r[0].result);
+      const r = await Promise.all([call(), call()]);
+      expect([...r].sort(), `run ${k}`).toEqual(["replaced", "state_changed"]);
+      expect((await q(`select count(*)::int n from public.new_client_waitlist_invitations where entry_id=$1`, [e1]))[0].n, "only ONE new invitation").toBe(2);
+    }
+    const f = await seed("rn"); const [e2] = await entries(f, 1); await liveInvite(f, e2);
+    expect((await q(`select * from public.replace_waitlist_invitation($1,$2,$3,null)`, [f.studioId, f.userId, e2]))[0].result, "null expected never matches").toBe("state_changed");
+  });
+  it("settle with an expected state applies only if the item is still in it; two concurrent settles: one settled, one state_changed", async () => {
+    const f = await seed("se"); const [e1] = await entries(f, 1);
+    await create(f, [e1], { fit: 0, shown: 0 }); const [c1] = await claim(); await admitItem(f, c1.item_id, e1);
+    const st = (o: string, r: string | null, exp: string | null) => q(`select public.settle_waitlist_batch_item($1,$2,$3,$4,$5,$6) r`, [c1.item_id, f.studioId, e1, o, r, exp]).then((x) => x[0].r);
+    expect(await st("failed", "provider_error", "claimed"), "stale expectation").toBe("state_changed");
+    expect((await q(`select state from public.waitlist_invitation_batch_items where id=$1`, [c1.item_id]))[0].state).toBe("issued");
+    const r = await Promise.all([st("failed", "provider_error", "issued"), st("failed", "provider_error", "issued")]);
+    expect([...r].sort()).toEqual(["settled", "state_changed"]);
+  });
   it("stop: owner-only, moves PENDING items to skipped, never touches claimed or issued, idempotent", async () => {
     const f = await seed("cn"); const g = await seed("co"); const [e1, e2, e3] = await entries(f, 3);
     const b = await create(f, [e1, e2, e3], { fit: 0, shown: 0 }); const batch = b[0].batch_id;
@@ -369,7 +390,7 @@ describe("replace, the studio lock and what a claimed item authorises", () => {
 
 describe("grants, rollback shape, one admit overload", () => {
   it("every new function is service_role only; the tables allow owner SELECT only; exactly one admit overload exists", async () => {
-    for (const fn of ["create_waitlist_invitation_batch(uuid,uuid,uuid,uuid[],uuid,date,date,smallint[],integer,integer,integer,boolean)", "preview_waitlist_over_invite(uuid,uuid,uuid[],date,date,smallint[])", "claim_waitlist_batch_items(integer,integer,integer)", "settle_waitlist_batch_item(uuid,uuid,uuid,text,text)", "replace_waitlist_invitation(uuid,uuid,uuid)"]) {
+    for (const fn of ["create_waitlist_invitation_batch(uuid,uuid,uuid,uuid[],uuid,date,date,smallint[],integer,integer,integer,boolean)", "preview_waitlist_over_invite(uuid,uuid,uuid[],date,date,smallint[])", "claim_waitlist_batch_items(integer,integer,integer)", "settle_waitlist_batch_item(uuid,uuid,uuid,text,text,text)", "replace_waitlist_invitation(uuid,uuid,uuid,uuid)"]) {
       const r = await q(`select has_function_privilege('anon','public.${fn}','execute') a, has_function_privilege('authenticated','public.${fn}','execute') u, has_function_privilege('service_role','public.${fn}','execute') s`);
       expect(r[0]).toEqual({ a: false, u: false, s: true });
     }

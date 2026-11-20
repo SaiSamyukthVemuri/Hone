@@ -576,8 +576,8 @@ $$;
 -- claimed or sent again automatically, it still blocks the entry from another batch, and only the owner's separate retry (replace) or a later
 -- confirmation (sent / failed) moves it on. Outcomes: sent (from issued | failed | unknown), failed (same, with a reason class), unknown (from
 -- issued, with a reason class), skipped (from claimed, with a reason class).
--- Results: settled | already_sent | not_found | invalid_state | invalid_input.
-create or replace function public.settle_waitlist_batch_item(p_item_id uuid, p_studio_id uuid, p_entry_id uuid, p_outcome text, p_reason_class text)
+-- Results: settled | already_sent | not_found | invalid_state | invalid_input | state_changed.
+create or replace function public.settle_waitlist_batch_item(p_item_id uuid, p_studio_id uuid, p_entry_id uuid, p_outcome text, p_reason_class text, p_expected_state text default null)
 returns text language plpgsql volatile security definer set search_path = pg_catalog, pg_temp
 as $$
 declare v_state text;
@@ -592,6 +592,9 @@ begin
   select i.state into v_state from public.waitlist_invitation_batch_items i
    where i.id = p_item_id and i.studio_id = p_studio_id and i.entry_id = p_entry_id for update;
   if v_state is null then return 'not_found'; end if;
+  -- COMPARE-AND-SWAP (optional): when the caller names the state it saw, the settle applies only if the item is still in it; otherwise nothing
+  -- changes and the answer is 'state_changed'. Checked before the terminal-state answers, so a stale caller is told the state moved.
+  if p_expected_state is not null and v_state <> p_expected_state then return 'state_changed'; end if;
   if v_state = 'sent' then return 'already_sent'; end if;
   if p_outcome = 'sent' and v_state in ('issued','failed','unknown') then
     update public.waitlist_invitation_batch_items set state = 'sent', reason_class = null, settled_at = pg_catalog.clock_timestamp() where id = p_item_id;
@@ -610,8 +613,8 @@ $$;
 
 -- replace: atomic release + requeue + claim + issue for an entry holding a LIVE invitation (the retry path for a failed delivery). The live
 -- count is unchanged and no capacity check runs. The entry keeps joined_at (so its queue priority). Refused when the person already used the
--- invitation. Results: replaced | not_owner | not_found | no_live_invitation | invitation_redeemed | invalid_service | pending_owner_review | refused:<code from a closed set> | refused:other. Raw token returned once.
-create or replace function public.replace_waitlist_invitation(p_studio_id uuid, p_actor_user_id uuid, p_entry_id uuid)
+-- invitation. Results: replaced | not_owner | not_found | no_live_invitation | invitation_redeemed | invalid_service | pending_owner_review | state_changed | refused:<code from a closed set> | refused:other. Raw token returned once.
+create or replace function public.replace_waitlist_invitation(p_studio_id uuid, p_actor_user_id uuid, p_entry_id uuid, p_expected_invitation_id uuid)
 returns table (result text, invitation_id uuid, raw_token text, issued_at timestamptz, expires_at timestamptz)
 language plpgsql volatile security definer set search_path = pg_catalog, pg_temp
 as $$
@@ -632,6 +635,11 @@ begin
    where i.entry_id = p_entry_id and i.studio_id = p_studio_id order by i.issued_at desc limit 1;
   if v_status <> 'invited' or v_old.id is null then
     return query select 'no_live_invitation'::text, null::uuid, null::text, null::timestamptz, null::timestamptz; return; end if;
+  -- COMPARE-AND-SWAP: the replace applies only to the invitation the caller SAW. Two instances that both re-checked and both call replace cannot
+  -- both succeed: the first replaces (a new invitation becomes the latest), the second finds a different latest invitation and changes nothing.
+  -- A null expected id never matches a live invitation.
+  if v_old.id is distinct from p_expected_invitation_id then
+    return query select 'state_changed'::text, null::uuid, null::text, null::timestamptz, null::timestamptz; return; end if;
   if v_old.redeemed_at is not null then
     return query select 'invitation_redeemed'::text, null::uuid, null::text, null::timestamptz, null::timestamptz; return; end if;
   -- THE SAME GUARDS ADMIT APPLIES, re-checked now: the service must still be bookable by a new client, and an entry with an OPEN
@@ -723,19 +731,19 @@ revoke all privileges on function public.preview_waitlist_over_invite(uuid, uuid
 grant execute on function public.preview_waitlist_over_invite(uuid, uuid, uuid[], date, date, smallint[]) to service_role;
 revoke all privileges on function public.claim_waitlist_batch_items(integer, integer, integer) from public, anon, authenticated, service_role;
 grant execute on function public.claim_waitlist_batch_items(integer, integer, integer) to service_role;
-revoke all privileges on function public.settle_waitlist_batch_item(uuid, uuid, uuid, text, text) from public, anon, authenticated, service_role;
-grant execute on function public.settle_waitlist_batch_item(uuid, uuid, uuid, text, text) to service_role;
+revoke all privileges on function public.settle_waitlist_batch_item(uuid, uuid, uuid, text, text, text) from public, anon, authenticated, service_role;
+grant execute on function public.settle_waitlist_batch_item(uuid, uuid, uuid, text, text, text) to service_role;
 revoke all privileges on function public.stop_waitlist_batch(uuid, uuid, uuid, integer) from public, anon, authenticated, service_role;
 grant execute on function public.stop_waitlist_batch(uuid, uuid, uuid, integer) to service_role;
-revoke all privileges on function public.replace_waitlist_invitation(uuid, uuid, uuid) from public, anon, authenticated, service_role;
-grant execute on function public.replace_waitlist_invitation(uuid, uuid, uuid) to service_role;
+revoke all privileges on function public.replace_waitlist_invitation(uuid, uuid, uuid, uuid) from public, anon, authenticated, service_role;
+grant execute on function public.replace_waitlist_invitation(uuid, uuid, uuid, uuid) to service_role;
 revoke all privileges on function public.admit_new_client_waitlist_entry(uuid, uuid, uuid, uuid, date, date, smallint[], integer, integer, uuid) from public, anon, authenticated, service_role;
 grant execute on function public.admit_new_client_waitlist_entry(uuid, uuid, uuid, uuid, date, date, smallint[], integer, integer, uuid) to service_role;
 
 do $$
 declare v_fn regprocedure; v_role text;
 begin
-  foreach v_fn in array array['public.stop_waitlist_batch(uuid, uuid, uuid, integer)'::regprocedure,'public.create_waitlist_invitation_batch(uuid, uuid, uuid, uuid[], uuid, date, date, smallint[], integer, integer, integer, boolean)'::regprocedure,'public.preview_waitlist_over_invite(uuid, uuid, uuid[], date, date, smallint[])'::regprocedure,'public.claim_waitlist_batch_items(integer, integer, integer)'::regprocedure,'public.settle_waitlist_batch_item(uuid, uuid, uuid, text, text)'::regprocedure,'public.replace_waitlist_invitation(uuid, uuid, uuid)'::regprocedure,'public.admit_new_client_waitlist_entry(uuid, uuid, uuid, uuid, date, date, smallint[], integer, integer, uuid)'::regprocedure] loop
+  foreach v_fn in array array['public.stop_waitlist_batch(uuid, uuid, uuid, integer)'::regprocedure,'public.create_waitlist_invitation_batch(uuid, uuid, uuid, uuid[], uuid, date, date, smallint[], integer, integer, integer, boolean)'::regprocedure,'public.preview_waitlist_over_invite(uuid, uuid, uuid[], date, date, smallint[])'::regprocedure,'public.claim_waitlist_batch_items(integer, integer, integer)'::regprocedure,'public.settle_waitlist_batch_item(uuid, uuid, uuid, text, text, text)'::regprocedure,'public.replace_waitlist_invitation(uuid, uuid, uuid, uuid)'::regprocedure,'public.admit_new_client_waitlist_entry(uuid, uuid, uuid, uuid, date, date, smallint[], integer, integer, uuid)'::regprocedure] loop
     foreach v_role in array array['anon','authenticated'] loop
       if pg_catalog.has_function_privilege(v_role, v_fn, 'EXECUTE') then raise exception '0363: % must not execute %', v_role, v_fn; end if;
     end loop;
