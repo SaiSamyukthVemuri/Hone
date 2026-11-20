@@ -32,7 +32,7 @@ import {
   STATEMENT_WRITE_OFFS_NOTE,
   unreadableFormsLine,
 } from "@/lib/finance/statement-copy";
-import { bucketMethodBreakdown, SHORT_METHOD_LABEL, studioVisitStatus, visitCollectedCents } from "@/lib/finance/statement-methods";
+import { bucketMethodBreakdown, SHORT_METHOD_LABEL, studioVisitStatus, visitCollectedCents, type VisitStatus } from "@/lib/finance/statement-methods";
 import { clientStatementHref } from "@/lib/finance/statement-screen";
 import { latestFirst, slicePage } from "@/lib/finance/statement-paging";
 import type { StatementView as View } from "@/lib/finance/statement-read";
@@ -143,7 +143,7 @@ function VisitRow({ v, view, format }: { v: Row; view: OkView; format: (c: numbe
   const info = view.visitInfo[v.appointmentId];
   const when = new Date(v.startsAt);
   const ymd = localDateString(when, view.timezone);
-  const status = v.noPayment ? ({ label: "No payment recorded", tone: "neutral" } as const) : studioVisitStatus(v.lines, view.settlementQuotes[v.appointmentId] ?? null);
+  const status: VisitStatus = v.noPayment ? { label: "No payment recorded", tone: "neutral" } : studioVisitStatus(v.lines, view.settlementQuotes[v.appointmentId] ?? null);
   const collected = v.noPayment ? null : visitCollectedCents(v.lines);
   // The short method words under the pill ("Card", "E-transfer"). A still-owing note or a waiver is kept in its full words BESIDE money (the pill alone
   // would not say it); with no money the pill already says it, so it is not repeated.
