@@ -403,7 +403,7 @@ export function appointmentInserters(c: Census): string[] {
 /** A call to `callee`, bare, schema-qualified or quoted (`core(`, `public.core(`, `public."core"(`, `"core"(`); a longer name that merely contains it is not a call. */
 export function callsFunction(body: string, callee: string): boolean {
   const esc = callee.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(String.raw`(?<![A-Za-z0-9_$])"?${esc}"?\s*\(`, "i").test(body);
+  return new RegExp(String.raw`(?<![A-Za-z0-9_$])${esc}"?\s*\(`, "i").test(body);
 }
 
 /**
