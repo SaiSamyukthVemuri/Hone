@@ -4,7 +4,7 @@ import { loadOverview } from "@/lib/business-analytics/server/overview-read";
 import { STATEMENTS_OWNER_ONLY } from "@/lib/finance/statement-screen";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 
-import { OverviewScreen } from "./overview-screen";
+import { OverviewInvalidPeriod, OverviewScreen } from "./overview-screen";
 
 // ===========================================================================
 // Business → Analytics → Overview. Owner-only, READ-ONLY: no write, no Stripe, no mail, no service-role client, no migration.
@@ -26,11 +26,12 @@ export default async function AnalyticsOverviewPage({ searchParams }: { searchPa
 
   const read = await loadOverview(practitioner, studio, currency, await searchParams, { strict: false }, new Date());
   if (read.access !== "granted") return null; // unreachable: the role was checked above, and the loader checks it again
+  if (!read.ok && read.reason === "period_invalid") return <OverviewInvalidPeriod params={read.params} notices={read.notices} practitionerOptions={read.practitionerOptions} />;
   if (!read.ok) {
     return (
       <section className="space-y-2 rounded-lg border border-line bg-surface p-6 text-sm text-fg" role="alert">
         <h1 className="text-2xl font-semibold tracking-tight">Analytics</h1>
-        <p>{read.reason === "period_invalid" ? read.notices.join(" ") : "Analytics could not be read right now. Nothing is shown rather than a partial figure. Try again in a moment."}</p>
+        <p>Analytics could not be read right now. Nothing is shown rather than a partial figure. Try again in a moment.</p>
       </section>
     );
   }

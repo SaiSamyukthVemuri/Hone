@@ -282,6 +282,24 @@ describe("a selected team member who is no longer active (U2)", () => {
   });
 });
 
+describe("dates that cannot be used still return the controls' values (page mode)", () => {
+  it("a reversed range, a future range and one over 366 days are period_invalid with the submitted dates and the team list; strict is bad_request", async () => {
+    for (const raw of [
+      { period: "custom", from: "2026-11-20", to: "2026-11-01" },
+      { period: "custom", from: "2027-01-01", to: "2027-01-31" },
+      { period: "custom", from: "2025-01-01", to: "2026-11-01" },
+    ] as Array<Record<string, string>>) {
+      const r = await load("owner", recording(healthy()).client, raw);
+      expect(r, JSON.stringify(raw)).toMatchObject({ access: "granted", ok: false, reason: "period_invalid" });
+      if (!(r.access === "granted" && !r.ok && r.reason === "period_invalid")) throw new Error("expected period_invalid");
+      expect(r.params).toMatchObject({ periodKind: "custom", from: raw.from, to: raw.to });
+      expect(r.practitionerOptions).toEqual([{ id: "pr-1", label: "Ada Example" }]);
+      expect(r.notices.join(" ")).toContain("The dates were not accepted");
+      expect(await load("owner", recording(healthy()).client, raw, true)).toMatchObject({ ok: false, reason: "bad_request" });
+    }
+  });
+});
+
 describe("the Overview read: parameters", () => {
   it("a page with a bad value shows the default with a notice; a strict route is refused, with no data query", async () => {
     const page = await load("owner", recording(healthy()).client, { period: "week" });

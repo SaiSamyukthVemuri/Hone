@@ -26,7 +26,9 @@ export const CLASSES_READ: readonly PriceEvidenceClass[] = ["recorded_at_visit"]
 
 export type OverviewRead =
   | { access: "refused" }
-  | { access: "granted"; ok: false; reason: "bad_request" | "read_failed" | "period_invalid"; notices: string[] }
+  | { access: "granted"; ok: false; reason: "bad_request" | "read_failed"; notices: string[] }
+  // The dates were not accepted: the controls are still drawn with what was submitted (parsed to safe values), so the owner can correct the range.
+  | { access: "granted"; ok: false; reason: "period_invalid"; notices: string[]; params: OverviewParams; practitionerOptions: PractitionerOption[] }
   | { access: "granted"; ok: true; view: OverviewView; params: OverviewParams; notices: string[]; practitionerOptions: PractitionerOption[] };
 
 /** What the filter control lists: the current team, by display name. Needed by the filter's own form only; never put in a chart, table or export. */
@@ -67,6 +69,21 @@ async function readFollowThrough(supabase: SupabaseClient, studioId: string, now
   return { ok: true, value: { past: past.rows, future: future.rows } };
 }
 
+/**
+ * The filter's list: the active team by display name, sorted. A SELECTED team member who is no longer active still has visits to show; the form lists
+ * active members only, so without this the browser would show "Everyone" while the data is filtered. List the selected one as a former team member,
+ * never by name.
+ */
+function optionsFor(rows: ReadonlyArray<{ id: string; displayName: string | null; active: boolean }>, params: OverviewParams): PractitionerOption[] {
+  const options = rows
+    .filter((p) => p.active)
+    .map((p) => ({ id: p.id, label: p.displayName && p.displayName.trim() ? p.displayName.trim() : UNNAMED_TEAM_MEMBER_LABEL }))
+    .sort((a, b) => a.label.localeCompare(b.label) || a.id.localeCompare(b.id));
+  const chosen = params.practitioner.kind === "one" ? params.practitioner.practitionerId : null;
+  if (chosen !== null && !options.some((o) => o.id === chosen)) options.push({ id: chosen, label: FORMER_TEAM_MEMBER_LABEL });
+  return options;
+}
+
 export async function loadOverview(
   practitioner: { readonly role: string },
   studio: Pick<Studio, "id" | "timezone">,
@@ -95,7 +112,7 @@ export async function loadOverview(
   });
   if (!resolved.ok) {
     if (opts.strict) return { access: "granted", ok: false, reason: "bad_request", notices: [] };
-    return { access: "granted", ok: false, reason: "period_invalid", notices: [...parsed.notices, `The dates were not accepted (${resolved.error.replace(/_/g, " ")}).`] };
+    return { access: "granted", ok: false, reason: "period_invalid", notices: [...parsed.notices, `The dates were not accepted (${resolved.error.replace(/_/g, " ")}).`], params: parsed.params, practitionerOptions: optionsFor(people.rows, parsed.params) };
   }
   const period: ResolvedPeriod = resolved.period;
 
@@ -116,14 +133,7 @@ export async function loadOverview(
     practitioners: people.rows,
     classesRead: CLASSES_READ,
   });
-  const practitionerOptions = people.rows
-    .filter((p) => p.active)
-    .map((p) => ({ id: p.id, label: p.displayName && p.displayName.trim() ? p.displayName.trim() : UNNAMED_TEAM_MEMBER_LABEL }))
-    .sort((a, b) => a.label.localeCompare(b.label) || a.id.localeCompare(b.id));
-  // A SELECTED team member who is no longer active still has visits to show. The form lists active members only, so without this the browser would
-  // show "Everyone" while the data is filtered: list the selected one, as a former team member, never by name.
-  const chosen = parsed.params.practitioner.kind === "one" ? parsed.params.practitioner.practitionerId : null;
-  if (chosen !== null && !practitionerOptions.some((o) => o.id === chosen)) practitionerOptions.push({ id: chosen, label: FORMER_TEAM_MEMBER_LABEL });
+  const practitionerOptions = optionsFor(people.rows, parsed.params);
   return { access: "granted", ok: true, view, params: parsed.params, notices: parsed.notices, practitionerOptions };
 }
 

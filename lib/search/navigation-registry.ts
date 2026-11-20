@@ -928,6 +928,10 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
   reason: string;
 }> = [
   {
+    route: "/financials/analytics",
+    reason: "Owner-only, no navigation link until the layout is accepted and the redaction tests land; it is registered with the navigation change that adds the menu entry.",
+  },
+  {
     route: "/financials/statements",
     reason: "The Clients statements screens are new and are not yet reachable from the menu or Global Search; the search entry ships with the menu entry in the navigation change, so a destination is never searchable before it is linkable.",
   },
