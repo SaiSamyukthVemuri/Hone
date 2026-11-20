@@ -32,7 +32,7 @@ import {
   STATEMENT_WRITE_OFFS_NOTE,
   unreadableFormsLine,
 } from "@/lib/finance/statement-copy";
-import { bucketMethodBreakdown, SHORT_METHOD_LABEL, studioVisitStatus, visitCollectedCents } from "@/lib/finance/statement-methods";
+import { bucketMethodBreakdown, SHORT_METHOD_LABEL, studioVisitStatus, visitCollectedCents, type VisitStatus } from "@/lib/finance/statement-methods";
 import { clientStatementHref } from "@/lib/finance/statement-screen";
 import { latestFirst, slicePage } from "@/lib/finance/statement-paging";
 import type { StatementView as View } from "@/lib/finance/statement-read";
@@ -136,13 +136,15 @@ function shortDate(ymd: string): string {
 
 type OkView = Extract<View, { ok: true }>;
 type VisitT = OkView["statement"]["visits"][number];
+// A row of the visit table: a visit with recorded money, or a COMPLETED visit with no payment recorded (no lines, no amount; in no total).
+type Row = VisitT & { noPayment: boolean };
 
-function VisitRow({ v, view, format }: { v: VisitT; view: OkView; format: (c: number) => string }) {
+function VisitRow({ v, view, format }: { v: Row; view: OkView; format: (c: number) => string }) {
   const info = view.visitInfo[v.appointmentId];
   const when = new Date(v.startsAt);
   const ymd = localDateString(when, view.timezone);
-  const status = studioVisitStatus(v.lines, view.settlementQuotes[v.appointmentId] ?? null);
-  const collected = visitCollectedCents(v.lines);
+  const status: VisitStatus = v.noPayment ? { label: "No payment recorded", tone: "neutral" } : studioVisitStatus(v.lines, view.settlementQuotes[v.appointmentId] ?? null);
+  const collected = v.noPayment ? null : visitCollectedCents(v.lines);
   // The short method words under the pill ("Card", "E-transfer"). A still-owing note or a waiver is kept in its full words BESIDE money (the pill alone
   // would not say it); with no money the pill already says it, so it is not repeated.
   const methods = v.lines.filter((l) => (COLLECTED_KINDS.includes(l.kind) && l.cents !== null) || (collected !== null && (l.kind === "still_owes_note" || l.kind === "waived")));
@@ -176,6 +178,7 @@ function VisitRow({ v, view, format }: { v: VisitT; view: OkView; format: (c: nu
         </span>
       </summary>
       <div className="border-t border-[#e6e8e3] bg-[#f8faf6] px-[22px] py-3 text-sm text-fg">
+        {v.noPayment ? <p>No payment recorded for this visit.</p> : null}
         <ul className="space-y-1">
           {v.lines.map((l, i) => (
             <li key={i}>{STATEMENT_METHOD_LABELS[l.kind]}: {AMOUNT_KINDS.includes(l.kind) && l.cents !== null ? format(l.cents) : STATEMENT_NO_TOTAL}</li>
@@ -233,7 +236,13 @@ export function StatementView({
   const r = statement.reconciliation;
   // Latest first, as the reference draws it. The ORDER only decides which visits fall on which page: the totals, the counts and every figure above are
   // computed from the whole list and cannot depend on it or on the page being viewed.
-  const ordered = [...statement.visits].sort(latestFirst);
+  // Completed visits with no payment recorded join the table as rows with no amount. They are a LISTING only: the summary, the breakdown and every count of
+  // money above are computed from statement.visits and statement.all, which never include them.
+  const rows: Row[] = [
+    ...statement.visits.map((v) => ({ ...v, noPayment: false })),
+    ...view.noPaymentVisits.map((n) => ({ appointmentId: n.appointmentId, startsAt: n.startsAt, practitionerId: n.practitionerId, lines: [], noPayment: true })),
+  ];
+  const ordered = rows.sort(latestFirst);
   const pg = slicePage(ordered, page);
   const pageHref = (n: number) => `/financials/statement?month=${view.month}${n > 1 ? `&page=${n}` : ""}`;
   return (
@@ -279,8 +288,12 @@ export function StatementView({
           <h2 id="stmt-visits" className="text-[21px] font-semibold tracking-[-0.65px] text-fg">Visits</h2>
           <p className="text-sm text-[#5d685f]">{view.label} · Latest first</p>
         </div>
-        {statement.visits.length === 0 ? <p className="text-sm text-fg">No visit has recorded money this month.</p> : null}
-        {statement.visits.length > 0 ? (
+        {statement.visits.length === 0 ? (
+          <p className="text-sm text-fg">
+            {view.noPaymentVisits.length > 0 ? "No visit this month has recorded money. Completed visits without a payment are listed below." : "No visit has recorded money this month."}
+          </p>
+        ) : null}
+        {rows.length > 0 ? (
           <div className="overflow-hidden rounded-xl border border-[#dbe0d8] bg-white">
             <div className={cx(LINE_GRID, "bg-[#f1f3ef] !text-xs font-semibold text-[#637067]")} aria-hidden="true">
               <span>Date</span><span>Client</span><span className="hidden min-[781px]:block">Service</span><span>Payment</span><span className="text-right">Collected</span><span />
@@ -288,6 +301,7 @@ export function StatementView({
             {pg.items.map((v) => <VisitRow key={v.appointmentId} v={v} view={view} format={format} />)}
           </div>
         ) : null}
+        {view.noPaymentVisits.length > 0 ? <p className="mt-3 text-sm text-[#5d685f]">Completed visits with no payment recorded are listed without an amount. They are not in any total above.</p> : null}
         {pg.pages > 1 || pg.total > pg.items.length ? (
           <nav aria-label="Visit pages" className="mt-3 flex items-center justify-end gap-2.5">
             <span className="text-sm text-[#5d685f]">{pg.from}–{pg.to} of {pg.total}</span>

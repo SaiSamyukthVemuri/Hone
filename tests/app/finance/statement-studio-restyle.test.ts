@@ -54,7 +54,7 @@ async function renderWith(statement: ReturnType<typeof buildStatement>, page = 1
   for (const v of statement.visits) visitInfo[v.appointmentId] = { clientName: `Client ${v.appointmentId}`, clientId: `c-${v.appointmentId}`, serviceName: "Service", minutes: 60 };
   return renderToStaticMarkup(
     createElement(StatementView as never, {
-      view: { access: "granted", ok: true, month: "2026-11", label: "November 2026", timezone: "America/Toronto", startLocal: "2026-11-01", endLocalExclusive: "2026-12-01", statement, visitInfo, practitionerNames: { "pract-one": "Pat Synthetic" }, settlementQuotes: {} },
+      view: { access: "granted", ok: true, month: "2026-11", label: "November 2026", timezone: "America/Toronto", startLocal: "2026-11-01", endLocalExclusive: "2026-12-01", statement, visitInfo, practitionerNames: { "pract-one": "Pat Synthetic" }, settlementQuotes: {}, noPaymentVisits: [] },
       currency: "cad",
       format: (c: number) => formatStatementMoney(c, "cad"),
       maxMonth: "2026-11",
