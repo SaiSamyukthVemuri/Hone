@@ -88,4 +88,3 @@ describe("the worker is driven ONLY by the owner's own action (no cron, job or p
     expect(read("app/(app)/settings/waitlist/over-invite/page.tsx")).not.toMatch(/sendOverInviteAction\(|continueOverInviteAction\(|runBatchChunk/);
   });
 });
-});
