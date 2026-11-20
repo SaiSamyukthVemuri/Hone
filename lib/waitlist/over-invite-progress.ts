@@ -22,6 +22,8 @@ export type BatchProgress = {
   skipped: number;
   /** Not sent because the owner stopped the rest. */
   stopped: number;
+  /** The invitation was released or expired before it was sent. */
+  ended: number;
   /** Anything else that failed. */
   otherFailed: number;
 };
@@ -30,7 +32,7 @@ export type BatchProgress = {
 export const SENDING_WINDOW_MS = 120_000;
 
 export function tallyItems(rows: readonly ItemRow[], now: number = Date.now()): BatchProgress {
-  const t: BatchProgress = { sent: 0, waiting: 0, sending: 0, unknown: 0, unknownRetryable: 0, refused: 0, skipped: 0, stopped: 0, otherFailed: 0 };
+  const t: BatchProgress = { sent: 0, waiting: 0, sending: 0, unknown: 0, unknownRetryable: 0, refused: 0, skipped: 0, stopped: 0, ended: 0, otherFailed: 0 };
   for (const r of rows) {
     if (r.state === "sent") t.sent += 1;
     else if (r.state === "pending" || r.state === "claimed") t.waiting += 1;
@@ -44,6 +46,7 @@ export function tallyItems(rows: readonly ItemRow[], now: number = Date.now()): 
     }
     else if (r.state === "skipped") {
       if (r.reason_class === "owner_stopped") t.stopped += 1;
+      else if (r.reason_class === "invitation_ended") t.ended += 1;
       else t.skipped += 1;
     }
     else if (r.state === "failed") {

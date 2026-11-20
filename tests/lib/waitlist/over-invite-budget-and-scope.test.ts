@@ -193,7 +193,7 @@ describe("retry re-checks each item and never double sends", () => {
       { kind: "unknown", stillRetryable: async () => ({ state: "failed", invitationId: "inv-1" }), replace: async () => ({ ok: true, result: "invitation_redeemed" }), deliver: async () => "accepted", settle: async (_t, o, why) => (settled.push(`${o}:${why}`), { ok: true, result: "settled" }), sleep: async () => {} },
       [{ entryId: "e", itemId: "i", studioId: "s" }],
     );
-    expect(settled).toEqual(["failed:retry_started", "failed:delivery_unknown"]);
+    expect(settled).toEqual(["failed:retry_started", "failed:retry_not_possible"]); // a permanent refusal is not offered again
   });
 });
 
@@ -438,5 +438,108 @@ describe("the confirm path can never fall back to the unscoped claim", () => {
     await runRounds({ budgetMs: 20_000, scope: { studioId: "s", batchId: "B", actorUserId: "U" }, deps: b.deps, now: () => 0 });
     expect(a.seen[0]).toBeNull();
     expect(b.seen[0]).toEqual({ batchId: "B", actorUserId: "U" });
+  });
+});
+
+describe("permanent replace refusals do not block the retryable items behind them", () => {
+  const issued = { invitationId: "inv-2", rawToken: "t", issuedAt: new Date(), expiresAt: new Date(), deliveryEmail: null, deliveryName: null };
+  it("7 targets, the first 5 permanently unreplaceable: the first click retires them, the next click reaches the retryable ones", async () => {
+    const items = new Map<string, { state: string; reason: string | null }>();
+    for (let n = 0; n < 7; n++) items.set(`i${n}`, { state: "failed", reason: "delivery_refused" });
+    const permanent = new Set(["i0", "i1", "i2", "i3", "i4"]);
+    const sent: string[] = [];
+    const deps = {
+      kind: "refused" as const,
+      stillRetryable: async ({ itemId }: { itemId: string }) => (items.get(itemId)!.reason === "delivery_refused" ? { state: "failed", invitationId: "inv-1" } : null),
+      replace: async (entryId: string) => (permanent.has(entryId) ? { ok: true as const, result: "invitation_redeemed" } : { ok: true as const, result: "replaced" as const, issued }),
+      deliver: async () => "accepted" as const,
+      settle: async (t: { itemId: string }, o: string, why: string | null) => {
+        items.set(t.itemId, { state: o, reason: why });
+        if (o === "sent") sent.push(t.itemId);
+        return { ok: true as const, result: "settled" };
+      },
+      sleep: async () => {},
+    };
+    // The selection the page makes: refused items in stable order, capped at one click.
+    const pick = () => [...items].filter(([, v]) => v.state === "failed" && v.reason === "delivery_refused").map(([id]) => ({ entryId: id, itemId: id, studioId: "s" })).slice(0, RETRY_CLICK_MAX);
+    await retryDeliveries(deps, pick());
+    expect(sent).toEqual([]);
+    expect([...items].filter(([, v]) => v.reason === "retry_not_possible")).toHaveLength(5);
+    await retryDeliveries(deps, pick());
+    expect(sent).toEqual(["i5", "i6"]);
+  });
+  it("a transient failure (command unreachable) is restored as retryable, not retired", async () => {
+    const settled: string[] = [];
+    await retryDeliveries(
+      { kind: "refused", stillRetryable: async () => ({ state: "failed", invitationId: "x" }), replace: async () => ({ ok: false, code: "unavailable" as never }), deliver: async () => "accepted", settle: async (_t, o, why) => (settled.push(`${o}:${why}`), { ok: true, result: "settled" }), sleep: async () => {} },
+      [{ entryId: "e", itemId: "i-t", studioId: "s" }],
+    );
+    expect(settled).toEqual(["failed:retry_started", "failed:delivery_refused"]);
+  });
+});
+
+describe("every settle names the exact invitation id it concerns", () => {
+  const mkIssued = (id: string) => ({ invitationId: id, rawToken: "t", issuedAt: new Date(), expiresAt: new Date(), deliveryEmail: null, deliveryName: null });
+  const item = { itemId: "it", batchId: "b", studioId: "s", entryId: "e", actorUserId: "a", serviceId: "v", startDate: "d", endDate: "d", allowedWeekdays: null, ttlHours: 1 };
+  async function worker(opts: { admit: unknown; delivery?: "accepted" | "refused" | "unknown"; settleResult?: string }) {
+    const { runBatchChunk } = await import("@/lib/waitlist/over-invite-worker");
+    const calls: string[] = [];
+    const r = await runBatchChunk({
+      claim: async () => ({ ok: true, items: [item] }),
+      admit: async () => opts.admit as never,
+      settle: async (_t, o, why, st, inv) => (calls.push(`${o}:${why}:${st ?? null}:${inv ?? null}`), { ok: true, result: opts.settleResult ?? "settled" }),
+      deliver: async () => opts.delivery ?? "accepted",
+      mayStillSend: async () => true,
+      sleep: async () => {},
+    });
+    return { calls, r };
+  }
+  it("worker sent / refused / unknown settles pass the id admit returned", async () => {
+    const admit = { ok: true, result: "admitted", issued: mkIssued("INV-A") };
+    expect((await worker({ admit })).calls).toEqual(["sent:null:null:INV-A"]);
+    expect((await worker({ admit, delivery: "refused" })).calls).toEqual(["failed:delivery_refused:null:INV-A"]);
+    expect((await worker({ admit, delivery: "unknown" })).calls).toEqual(["unknown:delivery_unknown:null:INV-A"]);
+  });
+  it("worker skipped settle (no invitation was issued) passes null", async () => {
+    expect((await worker({ admit: { ok: true, result: "no_capacity" } })).calls).toEqual(["skipped:no_capacity:null:null"]);
+  });
+  it("worker: state_changed is skipped, never sent and never an error", async () => {
+    const { r } = await worker({ admit: { ok: true, result: "admitted", issued: mkIssued("INV-A") }, settleResult: "state_changed" });
+    expect(r.ok && r.outcomes[0]).toMatchObject({ status: "skipped", reason: "state_changed" });
+  });
+  it("retry: the mark and the restores pass the CURRENT id; the settles after replace pass the NEW id", async () => {
+    const run = async (replace: unknown, delivery: "accepted" | "refused" | "unknown") => {
+      const calls: string[] = [];
+      await retryDeliveries(
+        {
+          kind: "refused",
+          stillRetryable: async () => ({ state: "failed", invitationId: "OLD" }),
+          replace: async () => replace as never,
+          deliver: async () => delivery,
+          settle: async (_t, o, why, st, inv) => (calls.push(`${o}:${why}:${st}:${inv}`), { ok: true, result: "settled" }),
+          sleep: async () => {},
+        },
+        [{ entryId: "e", itemId: "i-" + Math.random(), studioId: "s" }],
+      );
+      return calls;
+    };
+    const replaced = { ok: true, result: "replaced", issued: mkIssued("NEW") };
+    expect(await run(replaced, "accepted")).toEqual(["failed:retry_started:failed:OLD", "sent:null:failed:NEW"]);
+    expect(await run(replaced, "refused")).toEqual(["failed:retry_started:failed:OLD", "failed:delivery_refused:failed:NEW"]);
+    expect(await run(replaced, "unknown")).toEqual(["failed:retry_started:failed:OLD", "failed:delivery_unknown:failed:NEW"]);
+    expect(await run({ ok: true, result: "invitation_redeemed" }, "accepted")).toEqual(["failed:retry_started:failed:OLD", "failed:retry_not_possible:failed:OLD"]);
+    expect(await run({ ok: false, code: "unavailable" }, "accepted")).toEqual(["failed:retry_started:failed:OLD", "failed:delivery_refused:failed:OLD"]);
+  });
+  it("port sends p_expected_invitation_id on settle", async () => {
+    const { settleItem } = await import("@/lib/waitlist/over-invite-port");
+    const calls: Record<string, unknown>[] = [];
+    const db = { rpc: async (_f: string, a: Record<string, unknown>) => (calls.push(a), { data: "settled", error: null }) };
+    await settleItem(db as never, { itemId: "i", studioId: "s", entryId: "e" }, "sent", null, null, "INV");
+    expect(calls[0]).toMatchObject({ p_expected_invitation_id: "INV" });
+  });
+  it("progress counts an ended invitation separately from not sent", async () => {
+    const t = tallyItems([{ state: "skipped", reason_class: "invitation_ended" }, { state: "skipped", reason_class: "no_capacity" }]);
+    expect(t.ended).toBe(1);
+    expect(t.skipped).toBe(1);
   });
 });

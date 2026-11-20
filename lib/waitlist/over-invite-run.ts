@@ -32,7 +32,7 @@ export function liveWorkerDeps(sleep: (ms: number) => Promise<void> = sleepFor):
   return {
     claim: (limits, scope) => claimItems(db, { ...limits, batchId: scope?.batchId ?? null, actorUserId: scope?.actorUserId ?? null }),
     admit: (item) => admitBatchItem(db, item, null),
-    settle: (target, outcome, reason) => settleItem(db, target, outcome, reason),
+    settle: (target, outcome, reason, expected, invitationId) => settleItem(db, target, outcome, reason, expected ?? null, invitationId ?? null),
     // An email that takes longer than the per-item budget is reported UNKNOWN (it may still arrive), never retried automatically, and keeps the whole round inside
     // the lease: lease > chunk x (spacing + ITEM_BUDGET_MS), pinned by a test.
     deliver: (issued, entryId, item) => withItemBudget(deliverIssued(item.studioId, issued, entryId)),
@@ -108,7 +108,7 @@ export async function retryByKind(
       },
       replace: (entryId, expectedInvitationId) => replaceInvitation(db, { studioId, actorUserId, entryId, expectedInvitationId }),
       deliver: (issued, entryId) => withItemBudget(deliverIssued(studioId, issued, entryId)),
-      settle: (target, outcome, reason, expected) => settleItem(db, target, outcome, reason, expected ?? null),
+      settle: (target, outcome, reason, expected, invitationId) => settleItem(db, target, outcome, reason, expected ?? null, invitationId ?? null),
       sleep: sleepFor,
     },
     targets.slice(0, RETRY_CLICK_MAX).map((t) => ({ ...t, studioId })),

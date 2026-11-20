@@ -22,7 +22,7 @@ export type RetryDeps = {
   stillRetryable: (target: { itemId: string }) => Promise<{ state: string; invitationId: string | null } | null>;
   replace: (entryId: string, expectedInvitationId: string | null) => Promise<ReplaceOutcome>;
   deliver: (issued: IssuedInvitation, entryId: string) => Promise<DeliveryState>;
-  settle: (target: SettleTarget, outcome: "sent" | "failed", reasonClass: string | null, expectedState?: string) => Promise<SettleOutcome>;
+  settle: (target: SettleTarget, outcome: "sent" | "failed", reasonClass: string | null, expectedState?: string, expectedInvitationId?: string | null) => Promise<SettleOutcome>;
   sleep: (ms: number) => Promise<void>;
 };
 
@@ -67,7 +67,7 @@ async function retryOne(deps: RetryDeps, target: SettleTarget, entryId: string):
   if (!seen) return skipped("no_longer_retryable");
   // The mark names the state just seen: if another instance moved the item on, the database answers state_changed and writes nothing, so exactly
   // one caller wins the item.
-  const marked = await deps.settle(target, "failed", "retry_started", seen.state);
+  const marked = await deps.settle(target, "failed", "retry_started", seen.state, seen.invitationId);
   if (!marked.ok || marked.result !== "settled") return skipped("no_longer_retryable");
 
   let rep: ReplaceOutcome;
@@ -80,9 +80,16 @@ async function retryOne(deps: RetryDeps, target: SettleTarget, entryId: string):
   if (!rep.ok || rep.result !== "replaced" || !("issued" in rep)) {
     // Another instance replaced this invitation first: it owns the item now, so leave it exactly as it is.
     if (rep.ok && rep.result === "state_changed") return skipped("no_longer_retryable");
-    // Nothing new was issued: put the item back as it was (only if it is still the state this attempt set), so it can be offered again.
-    await deps.settle(target, "failed", ORIGINAL_REASON[deps.kind], "failed");
-    return skipped(rep.ok ? reasonFor(rep.result.replace(/:.*/, "")) : "replace_unavailable");
+    if (!rep.ok) {
+      // A TRANSIENT failure (the command could not be reached or answered badly): nothing was issued, so put the item back as it was (only if it is
+      // still the state this attempt set) and it can be offered again.
+      await deps.settle(target, "failed", ORIGINAL_REASON[deps.kind], "failed", seen.invitationId);
+      return skipped("replace_unavailable");
+    }
+    // A PERMANENT refusal (already redeemed, no live invitation, not found, ...): retrying can never succeed. Record it under a fixed reason that no
+    // retry selects, so a later click moves on to the items that CAN be retried instead of re-picking this one forever.
+    await deps.settle(target, "failed", "retry_not_possible", "failed", seen.invitationId);
+    return skipped(reasonFor(rep.result.replace(/:.*/, "")));
   }
   let state: DeliveryState;
   try {
@@ -91,12 +98,12 @@ async function retryOne(deps: RetryDeps, target: SettleTarget, entryId: string):
     state = "unknown"; // a thrown delivery is UNKNOWN, never refused
   }
   if (state === "accepted") {
-    const s = await deps.settle(target, "sent", null, "failed");
+    const s = await deps.settle(target, "sent", null, "failed", rep.issued.invitationId);
     return s.ok ? { entryId, status: "sent" } : { entryId, status: "failed", reason: "settle_failed" };
   }
   // A new invitation is out, so the item records how THIS attempt ended: refused stays retryable, anything else is recorded unknown and is only ever
   // offered through the unknown-retry action. (The database allows `unknown` only from issued, so it is `failed` with that reason.)
   const reason = state === "refused" ? "delivery_refused" : "delivery_unknown";
-  const s = await deps.settle(target, "failed", reason, "failed");
+  const s = await deps.settle(target, "failed", reason, "failed", rep.issued.invitationId);
   return { entryId, status: "failed", reason: s.ok ? reason : "settle_failed" };
 }

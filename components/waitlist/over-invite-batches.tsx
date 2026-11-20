@@ -57,7 +57,7 @@ export function OverInviteBatches({
             <br />
             <span>
               {b.progress.sent} sent · {b.progress.waiting} waiting to send · {b.progress.sending} sending now · {b.progress.refused} refused by the email provider · {b.progress.unknown} outcome unknown ·{" "}
-              {b.progress.skipped} not sent · {b.progress.stopped} stopped{b.progress.otherFailed > 0 ? ` · ${b.progress.otherFailed} failed (can't be retried here)` : ""}
+              {b.progress.skipped} not sent · {b.progress.stopped} stopped{b.progress.ended > 0 ? ` · ${b.progress.ended} Invitation ended` : ""}{b.progress.otherFailed > 0 ? ` · ${b.progress.otherFailed} failed (can't be retried here)` : ""}
             </span>
             {b.progress.waiting > 0 ? (
               <form action={stopFormAction as unknown as (formData: FormData) => void} className="mt-1">
@@ -95,6 +95,9 @@ export function OverInviteBatches({
           Some invitations failed in a way that can&apos;t be retried from here, and we can&apos;t tell whether the person got the email. To invite them again,
           contact them directly.
         </p>
+      ) : null}
+      {batches.some((b) => b.progress.ended > 0) ? (
+        <p>An invitation that ended before it was sent may still have reached the person. If you need to be sure, contact them directly.</p>
       ) : null}
       {unknownNote ? <p role="status">{unknownNote}</p> : null}
       {stopNote ? <p role="status">{stopNote}</p> : null}

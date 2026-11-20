@@ -83,7 +83,7 @@ function deps(deliver: (entryId: string) => DeliveryState, log: string[] = []): 
   return {
     claim: (l) => claimItems(db, l),
     admit: (item) => admitBatchItem(db, item, null),
-    settle: (t, o, r) => settleItem(db, t, o, r),
+    settle: (t, o, r, expected, invitationId) => settleItem(db, t, o, r, expected ?? null, invitationId ?? null),
     deliver: async (_i, entryId) => (log.push(entryId), deliver(entryId)),
     mayStillSend: async () => true,
     sleep: async () => {},
@@ -156,7 +156,7 @@ describe("over-invite worker against the real batch commands", () => {
         },
         replace: (entryId, expectedInvitationId) => replaceInvitation(db, { studioId: f.studioId, actorUserId: f.userId, entryId, expectedInvitationId }),
         deliver: async () => "accepted",
-        settle: (t, o, r, expected) => settleItem(db, t, o, r, expected ?? null),
+        settle: (t, o, r, expected, invitationId) => settleItem(db, t, o, r, expected ?? null, invitationId ?? null),
         sleep: async () => {},
       },
       [{ entryId: refused!.entryId, itemId: refused!.itemId, studioId: f.studioId }],
@@ -176,6 +176,52 @@ describe("over-invite worker against the real batch commands", () => {
     const r = await batch(a, foreign, { fit: 0 });
     expect(r.ok && r.result).not.toBe("created");
     expect(await q(`select count(*)::int c from public.waitlist_invitation_batch_items where studio_id=$1`, [a.studioId])).toEqual([{ c: 0 }]);
+  });
+
+  it("a scoped confirm-time claim leases only its own batch for its owner; a foreign item stays claimable by an unscoped, cron-style call", async () => {
+    const a = await seed("n1a");
+    const b = await seed("n1b"); // both seeded BEFORE either batch exists: seeding clears the queue
+    const mine = await batch(a, await entries(a, 3), { fit: 0 });
+    const theirs = await batch(b, await entries(b, 3), { fit: 0 });
+    const aBatch = (mine as { batchId: string }).batchId;
+    const bBatch = (theirs as { batchId: string }).batchId;
+    // A non-owner (the other studio's owner) naming A's batch gets nothing, and an unknown batch gets nothing.
+    const notOwner = await claimItems(db, { ...{ perStudio: 5, total: 5, leaseSeconds: 120 }, batchId: aBatch, actorUserId: b.userId });
+    expect(notOwner.ok && notOwner.items).toEqual([]);
+    const unknown = await claimItems(db, { perStudio: 5, total: 5, leaseSeconds: 120, batchId: "00000000-0000-4000-8000-0000000000ff", actorUserId: a.userId });
+    expect(unknown.ok && unknown.items).toEqual([]);
+    // The owner's scoped claim returns only A's own batch, and leaves B's items untouched (never leased).
+    const scoped = await claimItems(db, { perStudio: 5, total: 5, leaseSeconds: 120, batchId: aBatch, actorUserId: a.userId });
+    expect(scoped.ok && scoped.items.length).toBe(3);
+    expect(scoped.ok && scoped.items.every((i) => i.batchId === aBatch && i.studioId === a.studioId)).toBe(true);
+    expect(await q(`select state, count(*)::int c from public.waitlist_invitation_batch_items where batch_id=$1 group by 1`, [bBatch])).toEqual([{ state: "pending", c: 3 }]);
+    // An unscoped, cron-style claim still reaches the foreign batch.
+    const cron = await claimItems(db, { perStudio: 5, total: 5, leaseSeconds: 120 });
+    expect(cron.ok && cron.items.map((i) => i.batchId)).toEqual([bBatch, bBatch, bBatch]);
+  });
+
+  it("a late 'sent' for the OLD invitation after a replace is refused (state_changed) and the replacement stays issued; the NEW id settles", async () => {
+    const f = await seed("g3");
+    const ids = await entries(f, 1);
+    await batch(f, ids, { fit: 0 });
+    const claimed = await claimItems(db, { perStudio: 5, total: 5, leaseSeconds: 120, batchId: (await q(`select batch_id from public.waitlist_invitation_batch_items where entry_id=$1`, [ids[0]]))[0].batch_id, actorUserId: f.userId });
+    expect(claimed.ok && claimed.items.length).toBe(1);
+    const item = (claimed as { items: Parameters<typeof admitBatchItem>[1][] }).items[0];
+    const admitted = await admitBatchItem(db, item, null);
+    expect(admitted.ok && admitted.result).toBe("admitted");
+    const oldId = (admitted as { issued: { invitationId: string } }).issued.invitationId;
+    const target = { itemId: item.itemId, studioId: item.studioId, entryId: item.entryId };
+    // The owner (or a retry) replaces the invitation while the first delivery's answer is still in flight.
+    const rep = await replaceInvitation(db, { studioId: f.studioId, actorUserId: f.userId, entryId: item.entryId, expectedInvitationId: oldId });
+    expect(rep.ok && rep.result).toBe("replaced");
+    const newId = (rep as { issued: { invitationId: string } }).issued.invitationId;
+    expect(newId).not.toBe(oldId);
+    // The late answer for the OLD invitation changes nothing.
+    expect(await settleItem(db, target, "sent", null, null, oldId)).toEqual({ ok: true, result: "state_changed" });
+    expect(await q(`select state from public.waitlist_invitation_batch_items where id=$1`, [item.itemId])).toEqual([{ state: "issued" }]);
+    // A settle that names no invitation can not be confused with the new one either; the NEW id settles.
+    expect(await settleItem(db, target, "sent", null, null, newId)).toEqual({ ok: true, result: "settled" });
+    expect(await q(`select state from public.waitlist_invitation_batch_items where id=$1`, [item.itemId])).toEqual([{ state: "sent" }]);
   });
 
   it("settle refuses an item named with another studio's id or another entry's id: not_found, and nothing changes", async () => {

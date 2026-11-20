@@ -269,7 +269,7 @@ const REASON = /^[a-z_]{1,40}$/;
 export type SettleTarget = { itemId: string; studioId: string; entryId: string };
 
 /** The item must belong to BOTH the studio and the entry named: a mismatch answers not_found and changes nothing. Pass them from the claimed row. */
-export async function settleItem(db: Rpc, target: SettleTarget, outcome: "sent" | "failed" | "unknown" | "skipped", reasonClass: string | null, expectedState: string | null = null): Promise<SettleOutcome> {
+export async function settleItem(db: Rpc, target: SettleTarget, outcome: "sent" | "failed" | "unknown" | "skipped", reasonClass: string | null, expectedState: string | null = null, expectedInvitationId: string | null = null): Promise<SettleOutcome> {
   if (expectedState !== null && !REASON.test(expectedState)) return { ok: false, code: "bad_shape" };
   if (outcome !== "sent" && (reasonClass === null || !REASON.test(reasonClass))) return { ok: false, code: "bad_shape" };
   const { data, error } = await db.rpc("settle_waitlist_batch_item", {
@@ -279,6 +279,9 @@ export async function settleItem(db: Rpc, target: SettleTarget, outcome: "sent" 
     p_outcome: outcome,
     p_reason_class: reasonClass,
     p_expected_state: expectedState,
+    // The invitation this caller delivered (from admit or replace): the settle applies only if it is still the item's current one, so a late answer
+    // for a replaced invitation can never mark the replacement sent. Null on the skipped path (no invitation was issued).
+    p_expected_invitation_id: expectedInvitationId,
   });
   if (error) return failure(error);
   const result = str(data);
