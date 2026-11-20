@@ -196,9 +196,9 @@ describe("FAIL CLOSED: what the scanner cannot read is an unknown inserter, neve
       expect(c.unmodelled.length, sql).toBeGreaterThan(0);
       expect(unknownInserters(c), sql).not.toEqual([]);
     }
-    expect(run(proc).unmodelled[0].reason).toMatch(/procedure/);
-    expect(run(rule).unmodelled[0].reason).toMatch(/rule/);
-    expect(run(agg).unmodelled[0].reason).toMatch(/aggregate/);
+    expect(run(proc).unmodelled[0].reason).toMatch(/create procedure is not modelled/);
+    expect(run(rule).unmodelled[0].reason).toMatch(/create rule is not modelled/);
+    expect(run(agg).unmodelled[0].reason).toMatch(/create aggregate is not modelled/);
   });
   it("one created inside a string (a DO block or an execute) is unknown too", () => {
     for (const kind of ["procedure public.p() language sql as $x$ select 1 $x$", "rule r as on insert to public.appointments do instead nothing", "aggregate public.a(int) (sfunc = int4pl, stype = int)"]) {
