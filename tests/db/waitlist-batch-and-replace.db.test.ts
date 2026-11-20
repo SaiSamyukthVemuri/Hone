@@ -375,6 +375,29 @@ describe("replace, the studio lock and what a claimed item authorises", () => {
     await q(`insert into public.waitlist_invitation_batch_items (batch_id, studio_id, entry_id, state) values ($1,$2,$3,'failed')`, [bid, f.studioId, e3]);
     expect((await create(f, [e3], { fit: 0, shown: live }))[0].result, "a null-invitation failed item holds nothing").toBe("created");
   });
+  it("preview counts an entry whose invitation was DECLINED (back to waiting, invitation unexpired) as admissible, and one with a LIVE invitation as not", async () => {
+    const f = await seed("pv"); const [a, b2] = await entries(f, 2);
+    await liveInvite(f, b2);
+    await create(f, [a], { fit: 0, shown: 1 }); const c = (await claim()).find((r: any) => r.entry_id === a)!;
+    const adm = await admitItem(f, c.item_id, a); expect(adm[0].result).toBe("admitted");
+    const proof = await q(`select * from public.begin_waitlist_invitation_proof($1,20)`, [adm[0].raw_token]);
+    const cap = await q(`select * from public.complete_waitlist_invitation_proof($1,$2)`, [adm[0].raw_token, proof[0].raw_challenge]);
+    const d = await q(`select result from public.decline_new_client_waitlist_invitation($1,$2)`, [adm[0].raw_token, cap[0].raw_capability]);
+    expect(d[0].result).toBe("declined");
+    // The decline opens an owner follow-up, which holds the person until handled; handle it so only the invitation state decides.
+    await q(`update public.waitlist_followups set status = 'handled', closed_at = now() where entry_id=$1 and status = 'open'`, [a]);
+    expect((await q(`select public.requeue_new_client_waitlist_entry($1,$2,$3) r`, [f.studioId, a, f.userId]))[0].r).toBe("requeued");
+    const inv = (await q(`select declined_at, released_at, expired_at, expires_at > now() as unexpired from public.new_client_waitlist_invitations where entry_id=$1 order by issued_at desc limit 1`, [a]))[0];
+    expect(inv.declined_at).not.toBeNull(); expect(inv.released_at, "declined only, not released").toBeNull(); expect(inv.expired_at).toBeNull(); expect(inv.unexpired).toBe(true);
+    const p = (await q(`select * from public.preview_waitlist_over_invite($1,$2,$3,$4,$5,null)`, [f.studioId, f.userId, [a, b2], day(1), day(30)]))[0];
+    expect(p.selected).toBe(2); expect(p.admissible, "declined admissible, live not").toBe(1);
+  });
+  it("stop takes the studio lock before it changes any item (source order pin)", async () => {
+    const src = (await q(`select prosrc from pg_proc where proname='stop_waitlist_batch'`))[0].prosrc as string;
+    const lock = src.indexOf("from public.studios"); const upd = src.indexOf("update public.waitlist_invitation_batch_items");
+    expect(lock).toBeGreaterThan(-1); expect(src.slice(lock, lock + 80)).toContain("for no key update");
+    expect(lock).toBeLessThan(upd);
+  });
   it("a LATE settle for the old invitation after a replace changes nothing: the replacement is never marked sent by the old delivery", async () => {
     const f = await seed("ls"); const [e1] = await entries(f, 1); const c = await liveInvite(f, e1);
     const inv = async () => (await q(`select invitation_id from public.waitlist_invitation_batch_items where id=$1`, [c.item_id]))[0].invitation_id as string;
