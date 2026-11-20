@@ -302,7 +302,7 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
         <Card id="ov-avgpaid" title="Average paid per visit" figure={view.averagePaid}>
           {(a) => (
             <>
-              <p className={a.averageCents.known ? BIG : "text-sm text-fg"}>{factText(a.averageCents, formatWhole)}</p>
+              <p className={a.averageCents.known ? BIG : "text-sm text-fg"}>{factText(a.averageCents, format)}</p>
               {a.averageCents.known ? <ChangeLine change={view.averagePaidChange} cmp={cmp} /> : null}
               {a.excludedUnknownVisits > 0 ? <p className="text-xs text-fg-muted">{plural(a.excludedUnknownVisits, "visit", "visits")} awaiting payment confirmation {a.excludedUnknownVisits === 1 ? "is" : "are"} left out of this average.</p> : null}
             </>

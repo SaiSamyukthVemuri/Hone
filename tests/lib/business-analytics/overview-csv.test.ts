@@ -207,6 +207,23 @@ describe("the beyond-usual CSV row", () => {
     const one = csv(buildOverview(input({ filter: { kind: "one", practitionerId: "pr-1" } }))).split("\n").find((l) => l.startsWith("Clients,Beyond their usual visit interval,")) ?? "";
     expect(one).toContain("ever seen, not only those seen in this period");
   });
+  it("amounts keep their exact cents as plain decimals, and the beyond-usual count is not mixed up with the clients not judged", () => {
+    const v = healthy();
+    const c = (v.collected as { value: { split: Record<string, number> } }).value;
+    const view = {
+      ...v,
+      collected: { available: true, value: { ...(v.collected as { value: object }).value, headlineCents: 146170, split: { ...c.split, completedVisitsCents: 146165, feesCents: 5, totalCents: 146170 } } },
+      beyondUsual: { available: true, value: { count: 3, notEnoughHistory: 2 } },
+    } as unknown as OverviewView;
+    const rows = csv(view).split("\n");
+    expect(rows.find((l) => l.startsWith("Collected,Collected (by visit date),"))).toMatch(/^Collected,Collected \(by visit date\),1461\.70,CAD,/);
+    expect(rows.find((l) => l.startsWith("Collected,On completed visits,"))).toMatch(/^Collected,On completed visits,1461\.65,CAD/);
+    expect(rows.find((l) => l.includes("booking fees\""))).toMatch(/,0\.05,CAD/);
+    const beyond = rows.find((l) => l.startsWith("Clients,Beyond their usual visit interval,")) ?? "";
+    expect(beyond.split(",")[2]).toBe("3");
+    expect(beyond).toContain("2 clients have fewer than two visit dates");
+    expect(beyond).not.toContain("3 clients have fewer");
+  });
   it("the collected row's change and the comparison series do not use a leading sign", () => {
     for (const line of csv(healthy()).split("\n").slice(1)) for (const cellText of line.split(",")) expect(cellText).not.toMatch(/^[+@=]/);
   });

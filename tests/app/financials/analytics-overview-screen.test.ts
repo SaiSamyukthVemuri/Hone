@@ -6,6 +6,7 @@ vi.mock("server-only", () => ({}));
 
 import { OverviewScreen } from "@/app/(app)/financials/analytics/overview-screen";
 import { FIGURE_UNAVAILABLE_COPY, type ReadFailure } from "@/lib/business-analytics/figure";
+import { formatExact } from "@/lib/business-analytics/money-format";
 import { DEFAULT_BEYOND_USUAL_FACTOR } from "@/lib/business-analytics/visit-metrics";
 import { buildOverview, type OverviewInput, type OverviewView } from "@/lib/business-analytics/overview-model";
 import type { OverviewParams } from "@/lib/business-analytics/overview-params";
@@ -439,6 +440,27 @@ describe("compact controls, whole-dollar headline figures and the area under the
     const odd = { ...view, collected: { available: true, value: { ...(view.collected as { value: object }).value, headlineCents: 26549 } } } as unknown as OverviewView;
     expect(text(card(render(odd), "ov-collected-total") ?? "")).toMatch(/\$265 CAD/);
     expect((odd.collected as { value: { headlineCents: number } }).value.headlineCents).toBe(26549);
+  });
+  it("the reconciliation's total and the average paid keep exact cents, while the other headline cards are whole dollars", () => {
+    const v = healthy();
+    const exact = (view: OverviewView) => render(view, { format: formatExact });
+    const line = { serviceValueCents: 146165, collectedAbovePriceCents: 0, collectedBelowPriceCents: 0, collectedOnNoEvidenceCents: 0, feesCents: 5, uncompletedPaymentsCents: 0, otherBookingsCents: 0, collectedCents: 146170 };
+    const view = {
+      ...v,
+      reconciliation: { available: true, value: line },
+      averagePaid: { available: true, value: { averageCents: { known: true, value: 8742 }, excludedUnknownVisits: 0 } },
+      collected: { available: true, value: { ...(v.collected as { value: object }).value, headlineCents: 146170 } },
+    } as unknown as OverviewView;
+    const html = exact(view);
+    expect(text(card(html, "ov-line") ?? "")).toMatch(/= Collected \$1,461\.70/);
+    expect(text(card(html, "ov-avgpaid") ?? "")).toContain("$87.42");
+    expect(text(card(html, "ov-collected-total") ?? "")).toMatch(/\$1,462 CAD/);
+  });
+  it("the beyond-usual count is shown apart from the clients not judged", () => {
+    const view = { ...healthy(), beyondUsual: { available: true, value: { count: 3, notEnoughHistory: 2 } } } as unknown as OverviewView;
+    const c = text(card(render(view), "ov-beyond") ?? "");
+    expect(c).toMatch(/^\s*Beyond their usual visit interval 3 /);
+    expect(c).toContain("2 clients have fewer than two visit dates");
   });
   it("the current line has a faint neutral area under it", () => {
     const c = card(render(healthy()), "ov-series") ?? "";
