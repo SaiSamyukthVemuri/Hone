@@ -334,7 +334,7 @@ describe("history figures", () => {
   });
 });
 
-describe("the figures the layout correction draws (A4)", () => {
+describe("the figures the layout draws", () => {
   it("the comparison period's collected is carried so the difference can be said in words, and is null when the comparison could not be read", () => {
     expect(must(buildOverview(input()).collected).previousCents).toBe(12000);
     const noComparison = buildOverview(input({ comparison: { ok: false, reason: "read_failed" } }));
@@ -392,7 +392,7 @@ describe("the figures the layout correction draws (A4)", () => {
   });
 });
 
-describe("beyond their usual visit interval (A4)", () => {
+describe("beyond their usual visit interval", () => {
   const past: AssembleAppointment[] = [
     appt("x1", "completed", "2026-08-01T15:00:00Z", "pr-1", "client-x"), appt("x2", "completed", "2026-08-11T15:00:00Z", "pr-1", "client-x"), // gap 10, last 111 days ago: beyond
     appt("y1", "completed", "2026-10-01T15:00:00Z", "pr-1", "client-y"), appt("y2", "completed", "2026-10-31T15:00:00Z", "pr-1", "client-y"), // gap 30, last 30 days ago: within 45
@@ -427,9 +427,9 @@ describe("beyond their usual visit interval (A4)", () => {
   });
 });
 
-describe("review round on A4 (insurance V1 to V5, Codex P2s)", () => {
+describe("the collected difference, visit frequency buckets and one bucket unit for both series", () => {
   const empty = { cardRows: [], settlementRows: [], legacyFeeRows: [] };
-  it("V1/V2: the model says which way collected moved and by how much, so the screen subtracts nothing", () => {
+  it("the model says which way collected moved and by how much, so the screen subtracts nothing", () => {
     // now = 265.00 (the fixture); the comparison collected is set by the prior money
     const up = must(buildOverview(input()).collected); // previous 120.00
     expect(up.difference).toEqual({ direction: "more", cents: up.headlineCents - 12000 });
@@ -440,7 +440,7 @@ describe("review round on A4 (insurance V1 to V5, Codex P2s)", () => {
     expect(same.difference).toEqual({ direction: "same", cents: 0 });
     expect(must(buildOverview(input({ comparison: { ok: false, reason: "read_failed" } })).collected).difference).toBeNull();
   });
-  it("V3: three-visit and four-visit clients land in the 3+ bucket, and the buckets add up to the active clients", () => {
+  it("three-visit and four-visit clients land in the 3+ bucket, and the buckets add up to the active clients", () => {
     const rows: AssembleAppointment[] = [];
     for (const [c, n] of [["c1", 1], ["c2", 2], ["c3", 3], ["c4", 4]] as const) for (let i = 0; i < n; i++) rows.push(appt(`${c}-${i}`, "completed", `2026-11-0${i + 2}T15:00:00Z`, "pr-1", `client-${c}`));
     const v = buildOverview(input({ current: window({ appointments: rows, money: empty }) }));
@@ -448,7 +448,7 @@ describe("review round on A4 (insurance V1 to V5, Codex P2s)", () => {
     expect(f).toEqual({ one: 1, two: 1, threePlus: 2 });
     expect(f.one + f.two + f.threePlus).toBe(must(v.activeClients).count);
   });
-  it("Codex P2: both series use the CURRENT period's unit, so a 63-day year to date and its 62-day comparison are both monthly", () => {
+  it("both series use the CURRENT period's unit, so a 63-day year to date and its 62-day comparison are both monthly", () => {
     const r = resolvePeriod({ kind: "year_to_date", today: "2028-03-03" });
     if (!r.ok) throw new Error(r.error);
     expect(r.period.current.days).toBe(63);
@@ -461,7 +461,7 @@ describe("review round on A4 (insurance V1 to V5, Codex P2s)", () => {
     expect(prev.points.map((p) => p.key)).toEqual(["2027-01", "2027-02", "2027-03"]);
     expect(cur.points.map((p) => p.key)).toEqual(["2028-01", "2028-02", "2028-03"]);
   });
-  it("Codex P2, the other way: a short current period keeps daily buckets for a longer comparison", () => {
+  it("a short current period keeps daily buckets for a longer comparison", () => {
     const r = resolvePeriod({ kind: "custom", today: "2028-03-03", from: "2028-03-01", to: "2028-03-03" });
     if (!r.ok) throw new Error(r.error);
     const v = buildOverview(input({ period: r.period, nowIso: "2028-03-03T18:00:00Z", current: window({ appointments: [], money: empty }), comparison: window({ appointments: [], money: empty }) }));

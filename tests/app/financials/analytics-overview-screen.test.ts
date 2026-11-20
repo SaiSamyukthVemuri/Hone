@@ -288,7 +288,7 @@ describe("a period with no visits at all draws no false zero (U3, through the re
   });
 });
 
-describe("the layout correction (A4)", () => {
+describe("the Overview layout", () => {
   const html = render(healthy());
   const text = (h: string) => h.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/\s+/g, " ");
   it("has the new title, the Overview tab as current, and the other four as disabled text: no link, no route", () => {
@@ -343,14 +343,14 @@ describe("the layout correction (A4)", () => {
   });
 });
 
-describe("review round on A4 (V1 to V5, Codex P2s, population note)", () => {
+describe("chart markers, the money difference, month wording and the beyond-usual scope note", () => {
   const text = (h: string) => h.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/\s+/g, " ");
   const oneDay = (): OverviewView => {
     const view = healthy();
     const series = { available: true, value: { unit: "day", points: [{ key: "2026-11-01", collectedCents: 9000, completedVisits: 1 }] } };
     return { ...view, series, previousSeries: series } as unknown as OverviewView;
   };
-  it("Codex P2: a one-point series draws a visible marker (a circle), and its row is still in the data table", () => {
+  it("a one-point series draws a visible marker (a circle), and its row is still in the data table", () => {
     const c = card(render(oneDay()), "ov-series") ?? "";
     expect((c.match(/<circle[^>]*data-isolated="current"/g) ?? []).length).toBe(1);
     expect((c.match(/<circle[^>]*data-isolated="previous"/g) ?? []).length).toBe(1);
@@ -360,7 +360,7 @@ describe("review round on A4 (V1 to V5, Codex P2s, population note)", () => {
   it("a multi-point series has no isolated marker, because its stroke is visible", () => {
     expect(card(render(healthy()), "ov-series") ?? "").not.toContain("data-isolated");
   });
-  it("V1: the screen says the difference from the model's direction, and says nothing when the model has none", () => {
+  it("the screen says the difference from the model's direction, and says nothing when the model has none", () => {
     const v = healthy();
     const c = (d: unknown) => text(card(render({ ...v, collected: { available: true, value: { ...(v.collected as { value: object }).value, difference: d } } } as unknown as OverviewView), "ov-month-collected") ?? "");
     expect(c({ direction: "more", cents: 24800 })).toContain("$248.00 more collected");
@@ -368,7 +368,7 @@ describe("review round on A4 (V1 to V5, Codex P2s, population note)", () => {
     expect(c({ direction: "same", cents: 0 })).toContain("No change in collected");
     expect(c(null)).toContain("The comparison is not available.");
   });
-  it("V5: a month-unit series speaks of months, not days", () => {
+  it("a month-unit series speaks of months, not days", () => {
     const view = healthy();
     const months = (n: number) => ({ available: true, value: { unit: "month", points: Array.from({ length: n }, (_, i) => ({ key: `2026-0${i + 1}`, collectedCents: 100, completedVisits: 1 })) } });
     const c = text(card(render({ ...view, series: months(3), previousSeries: months(2) } as unknown as OverviewView), "ov-series") ?? "");
@@ -382,12 +382,12 @@ describe("review round on A4 (V1 to V5, Codex P2s, population note)", () => {
     expect(text(card(render(view), "ov-beyond") ?? "")).not.toContain("ever seen");
     expect(text(render(view))).toContain("every client that team member has ever seen"); // the definitions always say it
   });
-  it("V5: the factor on the page is the one the model uses", () => {
+  it("the factor on the page is the one the model uses", () => {
     expect(text(card(render(healthy()), "ov-beyond") ?? "")).toContain(`than ${DEFAULT_BEYOND_USUAL_FACTOR} times`);
   });
 });
 
-describe("visual pass fixes on A4", () => {
+describe("period line, axis labels and chart-data row labels", () => {
   it("the period line is said once, not again in the notes", () => {
     const html = render(healthy());
     const line = `${healthy().currentLabel} compared with ${healthy().comparisonLabel}.`;
@@ -401,9 +401,9 @@ describe("visual pass fixes on A4", () => {
   });
 });
 
-describe("the four visual gaps (A4)", () => {
+describe("compact controls, whole-dollar headline figures and the area under the line", () => {
   const text = (h: string) => h.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/\s+/g, " ");
-  it("(7) compact controls: a period list, a practitioner list and a Show button, with the dates and the comparison in a group a custom period reveals", () => {
+  it("compact controls: a period list, a practitioner list and a Show button, with the dates and the comparison in a group a custom period reveals", () => {
     const form = render(healthy()).match(/<form[^>]*aria-label="Period and team member"[\s\S]*?<\/form>/)?.[0] ?? "";
     expect(form).toMatch(/<select[^>]*name="period"/);
     expect(form).toMatch(/<select[^>]*name="practitioner"/);
@@ -416,19 +416,19 @@ describe("the four visual gaps (A4)", () => {
     expect(form).toContain("All practitioners");
     for (const k of ["month_to_date", "previous_month", "year_to_date", "custom"]) expect(form).toContain(`value="${k}"`);
   });
-  it("(7) the form submits exactly the names the strict parser reads, by GET to the same path", () => {
+  it("the form submits exactly the names the strict parser reads, by GET to the same path", () => {
     const form = render(healthy(), { practitionerOptions: [{ id: "pr-1", label: "Ada Example" }] }).match(/<form[\s\S]*?<\/form>/)?.[0] ?? "";
     expect([...form.matchAll(/name="([a-z]+)"/g)].map((m) => m[1]).sort()).toEqual(["compare", "from", "period", "practitioner", "to"]);
     expect(form).toContain('action="/financials/analytics"');
     expect(form).toContain('method="get"');
   });
-  it("(9) headline cards show whole dollars with one currency word; exact cents stay in the split and the chart data", () => {
+  it("headline cards show whole dollars with one currency word; exact cents stay in the split and the chart data", () => {
     const html = render(healthy());
     expect(text(card(html, "ov-collected-total") ?? "")).toMatch(/\$265 CAD/);
     expect(card(html, "ov-split") ?? "").toContain("$265.00");
     expect(card(html, "ov-series") ?? "").toContain("$90.00");
   });
-  it("(9) rounding is display only: the model's exact cents are unchanged, the split still adds up to them, and the card is within 50 cents", () => {
+  it("rounding is display only: the model's exact cents are unchanged, the split still adds up to them, and the card is within 50 cents", () => {
     const view = healthy();
     const c = (view.collected as { value: { headlineCents: number; split: { totalCents: number } } }).value;
     expect(c.headlineCents).toBe(26500);
@@ -440,7 +440,7 @@ describe("the four visual gaps (A4)", () => {
     expect(text(card(render(odd), "ov-collected-total") ?? "")).toMatch(/\$265 CAD/);
     expect((odd.collected as { value: { headlineCents: number } }).value.headlineCents).toBe(26549);
   });
-  it("(10) the current line has a faint neutral area under it", () => {
+  it("the current line has a faint neutral area under it", () => {
     const c = card(render(healthy()), "ov-series") ?? "";
     expect((c.match(/data-area="current"/g) ?? []).length).toBe(1);
     expect(c).toMatch(/data-area="current"[^>]*fill-opacity="0\.06"/);

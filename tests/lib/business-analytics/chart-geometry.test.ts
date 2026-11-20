@@ -92,7 +92,7 @@ describe("line layout", () => {
   });
 });
 
-describe("line layout: slots and isolated points (A4 review)", () => {
+describe("line layout: slots and isolated points ", () => {
   const axis = niceAxis(100, 4);
   it("values beyond the slots are not drawn: only the first `slots` values are laid out", () => {
     const pts = lineLayout([10, 20, 30, 40, 50], axis, 3, 300, 100);
@@ -108,7 +108,7 @@ describe("line layout: slots and isolated points (A4 review)", () => {
   });
 });
 
-describe("area under the line (A4 visual pass)", () => {
+describe("area under the line ", () => {
   const axis = niceAxis(100, 4);
   it("closes to the baseline under an unbroken run", () => {
     const d = areaPathD(lineLayout([10, 20, 30], axis, 3, 200, 100), 100);

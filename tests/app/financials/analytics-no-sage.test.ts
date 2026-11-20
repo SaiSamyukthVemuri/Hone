@@ -31,7 +31,7 @@ describe("Analytics carries no sage or green", () => {
       expect(src).not.toMatch(/\bsage\b|\b(?:bg|text|border|fill|stroke|ring|from|to|via)-(?:green|emerald|lime|teal|sage)-\d/i);
     });
   }
-  it("the detector flags the sage hexes Team found and passes the neutral ones", () => {
+  it("the detector flags the sage hexes and passes the neutral ones", () => {
     for (const bad of ["#d6dbd3", "#5a6358", "#6f8a64", "#edf1eb"]) expect(greenish(bad), bad).toBe(true);
     for (const ok of ["#1f2328", "#e3e5e8", "#5f6368", "#9aa0a6", "#fff", "#000"]) expect(greenish(ok), ok).toBe(false);
   });

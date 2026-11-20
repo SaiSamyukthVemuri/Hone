@@ -180,7 +180,7 @@ describe("an unknown is written as its unavailable text, never 0, 0.00 or 0% (X2
   });
 });
 
-describe("the figures the layout correction draws are in the file too (A4)", () => {
+describe("the figures the layout draws are in the file too", () => {
   const text = csv(healthy());
   it("how often clients visit sums to the clients seen, and beyond-usual is a count with its rule and no client", () => {
     const rows = text.split("\n");
@@ -198,7 +198,7 @@ describe("the figures the layout correction draws are in the file too (A4)", () 
   });
 });
 
-describe("the beyond-usual CSV row (A4 review)", () => {
+describe("the beyond-usual CSV row", () => {
   it("is a count row with the factor from the one constant, the notes, and the filter scope when filtered", () => {
     const all = csv(healthy()).split("\n").find((l) => l.startsWith("Clients,Beyond their usual visit interval,")) ?? "";
     expect(all).toMatch(/^Clients,Beyond their usual visit interval,\d+,,/);

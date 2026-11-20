@@ -6,7 +6,9 @@
 //   formatWhole: whole dollars, "$1,462", for the four headline cards only. This is DISPLAY ONLY: nothing is computed from a rounded value, and the exact
 //   figure is on the same page in the reconciliation and the chart data. Half a dollar rounds away from zero.
 
-const group = (digits: string): string => digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+// The "$" sign assumes a dollar currency (CAD and USD, the two a studio can be set to today). A studio in a currency that is not written with "$" needs its own
+// symbol here before it is offered; until then the currency word on the page and in the CSV is what says which currency the figures are in.
+const group =(digits: string): string => digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 
 export function formatExact(cents: number): string {
   const abs = Math.abs(cents);
