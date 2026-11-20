@@ -245,8 +245,8 @@ export function bucketUnit(w: Pick<PeriodWindow, "days">): BucketUnit {
 }
 
 /** Buckets covering the window exactly, in order, with no gap and no overlap. A month bucket is clipped to the window at either end. */
-export function bucketsOf(w: PeriodWindow): { unit: BucketUnit; buckets: Bucket[] } {
-  const unit = bucketUnit(w);
+export function bucketsOf(w: PeriodWindow, forcedUnit?: BucketUnit): { unit: BucketUnit; buckets: Bucket[] } {
+  const unit = forcedUnit ?? bucketUnit(w);
   const out: Bucket[] = [];
   if (unit === "day") {
     for (let d = w.startLocal; d < w.endLocalExclusive; d = addDays(d, 1)) out.push({ key: d, startLocal: d, endLocalExclusive: addDays(d, 1) });
@@ -265,9 +265,9 @@ export function bucketsOf(w: PeriodWindow): { unit: BucketUnit; buckets: Bucket[
 }
 
 /** Which bucket a local date falls in, or null when it is outside the window. */
-export function bucketKeyFor(d: LocalDate, w: PeriodWindow): string | null {
+export function bucketKeyFor(d: LocalDate, w: PeriodWindow, forcedUnit?: BucketUnit): string | null {
   if (d < w.startLocal || d >= w.endLocalExclusive) return null;
-  return bucketUnit(w) === "day" ? d : d.slice(0, 7);
+  return (forcedUnit ?? bucketUnit(w)) === "day" ? d : d.slice(0, 7);
 }
 
 /** True when `d` is inside the window. */

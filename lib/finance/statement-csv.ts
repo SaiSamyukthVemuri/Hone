@@ -1,5 +1,5 @@
 import { csvCell } from "@/lib/csv";
-import { CSV_COLUMNS, FEE_NOT_RECORDED_COPY, FEE_REASON_COPY, NOT_COMPLETED_COPY, UNKNOWN_REASON_COPY, toCsvRows, type StatementDocument } from "@/lib/finance/statement-document";
+import { CSV_COLUMNS, FEE_NOT_RECORDED_COPY, feeBasisLabel, FEE_REASON_COPY, NOT_COMPLETED_COPY, UNKNOWN_REASON_COPY, toCsvRows, type StatementDocument } from "@/lib/finance/statement-document";
 import { monthRange } from "@/lib/finance/statement-period";
 import { offDocumentMoneyNotice } from "@/lib/finance/statement-directory";
 import { FEE_ITEM_STATE_LABEL, VISIT_STATE_LABEL, balanceText } from "@/lib/finance/statement-screen";
@@ -103,13 +103,13 @@ export function statementCsvLines(doc: StatementDocument, offDocumentWithMoney =
       const v = doc.visits[r];
       cells[col("row_type")] = "Visit";
       cells[col("state")] = VISIT_STATE_LABEL[v.state];
-      cells[col("fee_state")] = v.fee.state === "recorded" ? "Fee recorded" : FEE_NOT_RECORDED_COPY;
+      cells[col("fee_state")] = feeBasisLabel(v.fee) ?? FEE_NOT_RECORDED_COPY;
       cells[col("reasons")] = v.reasons.map((x) => UNKNOWN_REASON_COPY[x]).join("; ");
     } else if (r < nVisits + nItems) {
       const f = doc.feeItems[r - nVisits];
       cells[col("row_type")] = FEE_REASON_COPY[f.reason];
       cells[col("state")] = FEE_ITEM_STATE_LABEL[f.state];
-      cells[col("fee_state")] = f.fee.state === "recorded" ? "Fee recorded" : FEE_NOT_RECORDED_COPY;
+      cells[col("fee_state")] = feeBasisLabel(f.fee) ?? FEE_NOT_RECORDED_COPY;
     } else {
       cells[col("row_type")] = NOT_COMPLETED_COPY;
       cells[col("state")] = NOT_COMPLETED_COPY;
