@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import { adminQuery, closePool, seedStudio } from "./helpers/harness";
-import { admitBatchItem, claimItems, createBatch, previewSelection, replaceInvitation, settleItem } from "@/lib/waitlist/over-invite-port";
+import { admitBatchItem, claimItems, createBatch, previewSelection, replaceInvitation, settleItem, stopBatch } from "@/lib/waitlist/over-invite-port";
 import { runBatchChunk, type DeliveryState, type WorkerDeps } from "@/lib/waitlist/over-invite-worker";
 import { retryRefusedDeliveries } from "@/lib/waitlist/over-invite-retry";
 
@@ -192,6 +192,34 @@ describe("over-invite worker against the real batch commands", () => {
     // The item's own studio and entry settle it.
     expect(await settleItem(db, a, "skipped", "test_reason")).toEqual({ ok: true, result: "settled" });
     expect(await stateOf(a.itemId)).toBe("skipped");
+  });
+
+  it("stop moves the pending items to skipped owner_stopped, nothing more is sent, and a second stop has nothing to stop", async () => {
+    const f = await seed("s");
+    const ids = await entries(f, 12);
+    const b = await batch(f, ids, { fit: 0 });
+    expect(b.ok && b.result).toBe("created");
+    const batchId = (b as { batchId: string }).batchId;
+    const first = await stopBatch(db, { studioId: f.studioId, actorUserId: f.userId, batchId, leaseSeconds: 120 });
+    expect(first).toEqual({ ok: true, result: "stopped", cancelled: 12 });
+    expect(await drain(deps(() => "accepted"))).toHaveLength(0);
+    const states = await q(`select state, reason_class, count(*)::int c from public.waitlist_invitation_batch_items where batch_id=$1 group by 1,2`, [batchId]);
+    expect(states).toEqual([{ state: "skipped", reason_class: "owner_stopped", c: 12 }]);
+    expect(await stopBatch(db, { studioId: f.studioId, actorUserId: f.userId, batchId, leaseSeconds: 120 })).toMatchObject({ ok: true, result: "nothing_pending" });
+  });
+
+  it("an unknown delivery settles to the unknown state; claim never returns it and nothing retries it", async () => {
+    const f = await seed("u");
+    const ids = await entries(f, 3);
+    const b = await batch(f, ids, { fit: 0 });
+    const batchId = (b as { batchId: string }).batchId;
+    const log: string[] = [];
+    await drain(deps((e) => (e === ids[0] ? "unknown" : "accepted"), log));
+    const unk = await q(`select entry_id, state, reason_class from public.waitlist_invitation_batch_items where batch_id=$1 and state='unknown'`, [batchId]);
+    expect(unk).toEqual([{ entry_id: ids[0], state: "unknown", reason_class: "delivery_unknown" }]);
+    const again = await drain(deps(() => "accepted", log));
+    expect(again).toHaveLength(0);
+    expect(log.filter((e) => e === ids[0])).toHaveLength(1);
   });
 
   it("preview counts what can be invited, and an entry with no live invitation cannot be replaced", async () => {
