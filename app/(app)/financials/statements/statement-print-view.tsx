@@ -10,6 +10,11 @@ import {
 } from "@/lib/finance/statement-document";
 import { offDocumentMoneyNotice } from "@/lib/finance/statement-directory";
 import { STATEMENT_NOT_AN_INVOICE, scopeLabel } from "@/lib/finance/statement-csv";
+import { COLLECTED_KINDS, AMOUNT_KINDS } from "@/lib/finance/statement";
+import { STATEMENT_METHOD_LABELS, STATEMENT_NO_TOTAL } from "@/lib/finance/statement-copy";
+import { SHORT_METHOD_LABEL, visitCollectedCents } from "@/lib/finance/statement-methods";
+import { formatClock12h, splitCurrency } from "@/lib/finance/statement-money";
+import { latestFirst } from "@/lib/finance/statement-paging";
 import { FEE_ITEM_STATE_LABEL, VISIT_STATE_LABEL, balanceText, moneyLineTexts, visitFeeWithBasis } from "@/lib/finance/statement-screen";
 
 import { PrintButton } from "./print-button";
@@ -26,26 +31,47 @@ export const PRINT_CSS = `
   a { color: inherit; text-decoration: none; }
 }`;
 
-export type StatementPrintViewProps = { document: StatementDocument; offDocumentWithMoney: number; backHref: string; format: (cents: number) => string };
+export type StatementPrintViewProps = {
+  document: StatementDocument;
+  offDocumentWithMoney: number;
+  backHref: string;
+  format: (cents: number) => string;
+  /** The studio's IANA timezone ("America/Toronto"); the paper says "Toronto time". Absent: the line leaves it out. */
+  timezone?: string | null;
+  /** The studio's payment currency ("cad"); the paper says "CAD" once in its header. Absent: the line leaves it out. */
+  currency?: string | null;
+  /** The month's label ("November 2026"), for the scope line of a one-month statement. Absent: the document's own scope label is used. */
+  monthLabel?: string | null;
+};
 
-function visitRow(v: DocumentVisit, format: (c: number) => string) {
-  const lines = moneyLineTexts(v, format);
-  return [
-    `${formatLocalDate(v.localDate)}, ${v.localTime}`,
-    v.serviceName ?? "Service not recorded",
-    v.scheduledMinutes ? `${v.scheduledMinutes} min` : "Duration not recorded",
-    v.practitionerName ?? "Practitioner not recorded",
-    VISIT_STATE_LABEL[v.state],
-    lines.length === 0 ? "No payment recorded" : lines.join(" · "),
-    visitFeeWithBasis(v, format),
-  ];
+/** The paper's payment lines for one visit: "Card · Collected · $120.00" for collected money; every other line (a refund, a waiver, a still-owing note, an unresolved or unreadable one) keeps its full verified wording. */
+function paymentLines(v: DocumentVisit, format: (c: number) => string): string[] {
+  const out: string[] = [];
+  for (const l of v.lines) {
+    if (l.kind === "excluded") continue;
+    const amount = AMOUNT_KINDS.includes(l.kind) && l.cents !== null ? splitCurrency(format(l.cents)).amount : null;
+    if (COLLECTED_KINDS.includes(l.kind) && amount !== null) out.push(`${(SHORT_METHOD_LABEL as Record<string, string | undefined>)[l.kind] ?? STATEMENT_METHOD_LABELS[l.kind]} · Collected · ${amount}`);
+    else out.push(`${STATEMENT_METHOD_LABELS[l.kind]}: ${amount ?? STATEMENT_NO_TOTAL}`);
+  }
+  return out;
 }
 
-export function StatementPrintView({ document: doc, offDocumentWithMoney, backHref, format }: StatementPrintViewProps) {
+function cityTime(tz: string | null | undefined): string | null {
+  if (!tz) return null;
+  const city = tz.split("/").pop()?.replace(/_/g, " ");
+  return city ? `${city} time` : null;
+}
+
+export function StatementPrintView({ document: doc, offDocumentWithMoney, backHref, format, timezone, currency, monthLabel }: StatementPrintViewProps) {
   const balance = balanceText(doc.balanceDue, format);
   const off = offDocumentMoneyNotice(offDocumentWithMoney);
   const byId = new Map(doc.visits.map((v) => [v.appointmentId, v]));
   const awaiting = doc.awaiting.map((a) => byId.get(a.appointmentId)).filter((v): v is DocumentVisit => v !== undefined);
+  // Latest first, as the approved paper. A DISPLAY order only: the document and the CSV keep their own order.
+  const visits = [...doc.visits].sort(latestFirst);
+  const meta = [`${doc.totals.visitCount} ${doc.totals.visitCount === 1 ? "visit" : "visits"}`, cityTime(timezone), currency ? currency.toUpperCase() : null].filter(Boolean).join(" · ");
+  const scope = monthLabel && doc.scope.kind === "month" ? monthLabel : scopeLabel(doc.scope);
+  const totalPaid = splitCurrency(format(doc.totals.paidCents)).amount;
 
   return (
     <div className="space-y-5 text-fg">
@@ -56,13 +82,17 @@ export function StatementPrintView({ document: doc, offDocumentWithMoney, backHr
       </div>
       <header data-statement-header className="space-y-1 border-b border-line pb-3">
         <p className="text-sm font-semibold uppercase tracking-wide">{STATEMENT_NOT_AN_INVOICE}</p>
-        <h1 className="text-2xl font-semibold">{doc.client.name}</h1>
+        <h1 className="text-2xl font-semibold">Client statement</h1>
+        <h2 className="text-lg font-medium">{doc.client.name}</h2>
+        <p className="text-sm">{scope}</p>
+        <p className="text-sm text-fg-muted">{meta}</p>
         <p className="text-sm">{doc.attribution}</p>
-        <p className="text-sm text-fg-muted">{scopeLabel(doc.scope)} · Prepared {formatLocalDate(doc.preparedOn)}</p>
+        <p className="text-sm text-fg-muted">Prepared {formatLocalDate(doc.preparedOn)}</p>
       </header>
 
       <section aria-label="Summary" className="space-y-2">
-        <p className="text-xl font-medium">{paidSummaryLine(doc, format)}</p>
+        <p className="text-xl font-semibold">Total paid {totalPaid}</p>
+        <p className="text-sm">{paidSummaryLine(doc, format)}</p>
         <p className="text-sm">{balance.text}{balance.hint ? ` ${balance.hint}` : ""}</p>
         {awaiting.length > 0 ? <ul className="space-y-1 text-sm">{awaiting.map((v) => <li key={v.appointmentId}>{awaitingVisitLine(v, format)}</li>)}</ul> : null}
         <p className="text-xs text-fg-muted">{TOTAL_PAID_DEFINITION}</p>
@@ -77,14 +107,32 @@ export function StatementPrintView({ document: doc, offDocumentWithMoney, backHr
           <table className="w-full text-sm">
             <caption className="sr-only">Visits for {doc.client.name}</caption>
             <thead>
-              <tr className="text-left text-fg-muted">{["Date and time", "Service", "Duration", "Practitioner", "Payment status", "Payment", "Amount"].map((h) => <th key={h} scope="col" className="py-1 pr-3 font-normal">{h}</th>)}</tr>
+              <tr className="text-left font-semibold">
+                <th scope="col" className="py-1 pr-3">Date &amp; time</th>
+                <th scope="col" className="py-1 pr-3">Visit</th>
+                <th scope="col" className="py-1 pr-3">Payment details</th>
+                <th scope="col" className="py-1 text-right">Paid</th>
+              </tr>
             </thead>
             <tbody>
-              {doc.visits.map((v) => (
-                <tr key={v.appointmentId} className="border-t border-line align-top">
-                  {visitRow(v, format).map((c, i) => <td key={i} className="py-1 pr-3">{c}</td>)}
-                </tr>
-              ))}
+              {visits.map((v) => {
+                const collected = visitCollectedCents(v.lines);
+                const lines = paymentLines(v, format);
+                return (
+                  <tr key={v.appointmentId} className="border-t border-line align-top">
+                    <td className="py-1 pr-3"><span className="block">{formatLocalDate(v.localDate)}</span><span className="block text-fg-muted">{formatClock12h(v.localTime)}</span></td>
+                    <td className="py-1 pr-3">
+                      <span className="block">{v.serviceName ?? "Service not recorded"}{v.serviceName && v.scheduledMinutes ? ` · ${v.scheduledMinutes} min` : ""}</span>
+                      <span className="block text-fg-muted">{v.practitionerName ?? "Practitioner not recorded"}</span>
+                    </td>
+                    <td className="py-1 pr-3">
+                      {v.state !== "paid" ? <span className="block font-medium">{VISIT_STATE_LABEL[v.state]}</span> : null}
+                      {lines.length === 0 ? <span className="block">No payment recorded</span> : lines.map((t, i) => <span key={i} className="block">{t}</span>)}
+                    </td>
+                    <td className="py-1 text-right tabular-nums">{collected === null ? "—" : splitCurrency(format(collected)).amount}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}

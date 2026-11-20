@@ -167,11 +167,13 @@ describe("a visit row's expander keeps the fee, its basis, and every detail", ()
 });
 
 describe("the print page and the CSV keep the document's own order and 24-hour times", () => {
-  it("the print page lists visits in the document order with the stored time, unchanged", () => {
+  it("DELIBERATE CHANGE: the print page now lists visits LATEST FIRST with 12-hour times (it was oldest first, 24-hour); the document's own order is untouched", () => {
     const doc = three();
+    const before = doc.visits.map((v) => v.appointmentId);
     const out = renderToStaticMarkup(createElement(StatementPrintView as never, { document: doc, offDocumentWithMoney: 0, backHref: "/x", format: fmt }));
-    const times = [...out.matchAll(/Nov(?:ember)? (\d+), 2026, (\d{2}:\d{2})</g)].map((m) => `${m[1]} ${m[2]}`);
-    expect(times).toEqual(doc.visits.map((v) => `${Number(v.localDate.slice(8))} ${v.localTime}`));
+    const rows = [...out.matchAll(/<td class="py-1 pr-3"><span class="block">Nov (\d+), 2026<\/span><span class="block text-fg-muted">(\d+:\d{2} [AP]M)<\/span>/g)].map((m) => `${m[1]} ${m[2]}`);
+    expect(rows).toEqual(["17 11:00 AM", "10 1:30 PM", "3 9:00 AM"]);
+    expect(doc.visits.map((v) => v.appointmentId)).toEqual(before);
   });
 });
 
@@ -192,5 +194,59 @@ describe("the display order is a COPY, and the page loads the finder only after 
     expect(gate).toBeGreaterThan(-1);
     expect(call).toBeGreaterThan(gate);
     expect(src.indexOf("await loadOwnerClientStatement(")).toBeGreaterThan(gate);
+  });
+});
+
+describe("the print paper follows the approved hierarchy and keeps what must stay", () => {
+  const paper = (d = three(), over = {}) => renderToStaticMarkup(createElement(StatementPrintView as never, { document: d, offDocumentWithMoney: 0, backHref: "/x", format: fmt, timezone: "America/Toronto", currency: "cad", monthLabel: "November 2026", ...over }));
+  it("title 'Client statement', then the client, the month, 'N visits · Toronto time · CAD', and 'Total paid $X' with the currency only in the header line", () => {
+    const out = paper();
+    expect(out).toMatch(/<h1[^>]*>Client statement<\/h1><h2[^>]*>Ada Lovelace<\/h2><p[^>]*>November 2026<\/p><p[^>]*>3 visits · Toronto time · CAD<\/p>/);
+    expect(out).toMatch(/Total paid \$180\.00</);
+    const table = out.slice(out.indexOf("<table"), out.indexOf("</table>"));
+    expect(table).not.toContain("CAD");
+  });
+  it("KEEPS the 'Statement — not an invoice' line, the prepared-by line and the prepared date, inside the statement's own header", () => {
+    const out = paper();
+    expect(out).toMatch(/<header data-statement-header[^>]*>[\s\S]*Statement — not an invoice[\s\S]*Ada Lovelace[\s\S]*Prepared by Hone for Studio One[\s\S]*Prepared Nov 19, 2026[\s\S]*<\/header>/);
+  });
+  it("four columns: Date & time (two lines), Visit (service · minutes, then the practitioner), Payment details, Paid", () => {
+    const out = paper();
+    const heads = [...out.matchAll(/<th scope="col"[^>]*>([^<]*)<\/th>/g)].map((m) => m[1]);
+    expect(heads).toEqual(["Date &amp; time", "Visit", "Payment details", "Paid"]);
+    expect(out).toContain("Service A · 60 min");
+    expect(out).toContain("Practitioner One");
+    expect(out).toMatch(/Card · Collected · \$60\.00/);
+    expect(out).toMatch(/E-transfer · Collected · \$60\.00/);
+  });
+  it("a visit with no payment says so, a dash is its Paid cell, and its status word is kept; a still-owing note keeps its full wording", () => {
+    const d = docFor([visit("a1", "2026-11-03", "09:00", { lines: [] }), visit("a2", "2026-11-04", "09:00", { lines: [{ kind: "still_owes_note", cents: null, source: "settlement" }] })]);
+    const out = paper(d);
+    expect(out).toContain("No payment recorded");
+    expect(out).toContain("Marked still owing (a note, not an amount)");
+    expect(out).toMatch(/<td class="py-1 text-right tabular-nums">—<\/td>/);
+    expect(out).toMatch(/Not paid|Payment not confirmed/);
+  });
+  it("keeps the verified paid sentence, the balance rule and the awaiting line, so no status is lost from the paper", () => {
+    const d = docFor([visit("a1", "2026-11-03", "09:00"), visit("a2", "2026-11-19", "09:00", { lines: [] })]);
+    const out = paper(d);
+    expect(out).toMatch(/\$60\.00 CAD paid · 1 visit awaiting payment confirmation|\$60\.00 paid · 1 visit awaiting payment confirmation/);
+    expect(out).toMatch(/Balance due is not shown yet/);
+    expect(out).not.toMatch(/Balance due \$/);
+    expect(out).toMatch(/Nov 19, 2026 · \$60\.00( CAD)? agreed fee · No payment recorded/);
+  });
+  it("without a timezone or currency the header line states only what it knows (never a guessed zone)", () => {
+    const out = paper(three(), { timezone: null, currency: null });
+    expect(out).toMatch(/<p[^>]*>3 visits<\/p>/);
+    expect(out).not.toMatch(/time ·|· CAD/);
+  });
+  it("the print page route hands the paper the studio timezone and currency (source guard)", () => {
+    const src = readFileSync("app/(app)/financials/statements/[clientId]/print/page.tsx", "utf8");
+    expect(src).toContain("timezone={studio.timezone}");
+    expect(src).toContain("currency={result.currency}");
+  });
+  it("the CSV is untouched: its route and builder are not part of this change (source guard on the fixed header and the document order)", () => {
+    const csv = readFileSync("lib/finance/statement-csv.ts", "utf8");
+    expect(csv).not.toMatch(/latestFirst|formatClock12h/);
   });
 });
