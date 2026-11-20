@@ -524,27 +524,38 @@ $$;
 
 -- claim: service-only worker queue. Per-studio fairness: studios are visited oldest-waiting first, at most p_per_studio items each, at most
 -- p_total overall, `for update skip locked`. A claimed item whose admit never ran (no invitation) is reclaimed after p_lease_seconds.
-create or replace function public.claim_waitlist_batch_items(p_per_studio integer, p_total integer, p_lease_seconds integer)
+create or replace function public.claim_waitlist_batch_items(p_per_studio integer, p_total integer, p_lease_seconds integer, p_batch_id uuid default null, p_actor_user_id uuid default null)
 returns table (item_id uuid, batch_id uuid, studio_id uuid, entry_id uuid, actor_user_id uuid, service_id uuid,
                start_date date, end_date date, allowed_weekdays smallint[], ttl_hours integer)
 language plpgsql volatile security definer set search_path = pg_catalog, pg_temp
 as $$
-declare v_studio uuid; v_left integer; v_take integer; v_rec record;
+declare v_studio uuid; v_left integer; v_take integer; v_rec record; v_batch_studio uuid; v_code text;
 begin
   if p_per_studio is null or p_per_studio < 1 or p_total is null or p_total < 1 or p_lease_seconds is null or p_lease_seconds < 5 then return; end if;
+  -- SCOPED CLAIM (the owner's own first rounds): with a batch id, ONLY that batch's items are claimed, and only for an owner of the batch's studio
+  -- (the actor is resolved through the batch's own studio, never taken from the caller). Nothing of another studio or batch is claimed or leased.
+  -- Without a batch id this is the cron's round-robin over every studio.
+  if p_batch_id is not null then
+    if p_actor_user_id is null then return; end if;
+    select b.studio_id into v_batch_studio from public.waitlist_invitation_batches b where b.id = p_batch_id;
+    if v_batch_studio is null then return; end if;
+    select r.code into v_code from public.new_client_waitlist_resolve_owner(v_batch_studio, p_actor_user_id) r;
+    if v_code is distinct from 'ok' then return; end if;
+  end if;
   -- AN ISSUED ITEM NOBODY SETTLED within the lease (the worker died between the issue and the delivery answer) becomes UNKNOWN, never claimable:
   -- whether the message left is not known, so it is not sent again by itself.
   -- The rows are picked in id order with FOR UPDATE SKIP LOCKED first, so two overlapping claim calls never wait on each other's rows (no 40P01).
   update public.waitlist_invitation_batch_items u set state = 'unknown', reason_class = 'delivery_unconfirmed', settled_at = pg_catalog.clock_timestamp()
    where u.id in (select x.id from public.waitlist_invitation_batch_items x
-                   where x.state = 'issued' and x.issued_at < pg_catalog.clock_timestamp() - make_interval(secs => p_lease_seconds)
+                   where x.state = 'issued' and (p_batch_id is null or x.batch_id = p_batch_id) and x.issued_at < pg_catalog.clock_timestamp() - make_interval(secs => p_lease_seconds)
                    order by x.id for update skip locked);
   v_left := p_total;
   for v_studio in
     select x.studio_id from (
       select i.studio_id, min(b.confirmed_at) as oldest
         from public.waitlist_invitation_batch_items i join public.waitlist_invitation_batches b on b.id = i.batch_id
-       where i.state = 'pending' or (i.state = 'claimed' and i.invitation_id is null and i.claimed_at < pg_catalog.clock_timestamp() - make_interval(secs => p_lease_seconds))
+       where (i.state = 'pending' or (i.state = 'claimed' and i.invitation_id is null and i.claimed_at < pg_catalog.clock_timestamp() - make_interval(secs => p_lease_seconds)))
+         and (p_batch_id is null or i.batch_id = p_batch_id)
        group by i.studio_id) x order by x.oldest, x.studio_id
   loop
     exit when v_left <= 0;
@@ -552,7 +563,7 @@ begin
     for v_rec in
       with picked as (
         select i.id from public.waitlist_invitation_batch_items i join public.waitlist_invitation_batches b on b.id = i.batch_id
-         where i.studio_id = v_studio
+         where i.studio_id = v_studio and (p_batch_id is null or i.batch_id = p_batch_id)
            and (i.state = 'pending' or (i.state = 'claimed' and i.invitation_id is null and i.claimed_at < pg_catalog.clock_timestamp() - make_interval(secs => p_lease_seconds)))
          order by b.confirmed_at, i.id limit v_take for update of i skip locked),
       upd as (
@@ -729,8 +740,8 @@ revoke all privileges on function public.create_waitlist_invitation_batch(uuid, 
 grant execute on function public.create_waitlist_invitation_batch(uuid, uuid, uuid, uuid[], uuid, date, date, smallint[], integer, integer, integer, boolean) to service_role;
 revoke all privileges on function public.preview_waitlist_over_invite(uuid, uuid, uuid[], date, date, smallint[]) from public, anon, authenticated, service_role;
 grant execute on function public.preview_waitlist_over_invite(uuid, uuid, uuid[], date, date, smallint[]) to service_role;
-revoke all privileges on function public.claim_waitlist_batch_items(integer, integer, integer) from public, anon, authenticated, service_role;
-grant execute on function public.claim_waitlist_batch_items(integer, integer, integer) to service_role;
+revoke all privileges on function public.claim_waitlist_batch_items(integer, integer, integer, uuid, uuid) from public, anon, authenticated, service_role;
+grant execute on function public.claim_waitlist_batch_items(integer, integer, integer, uuid, uuid) to service_role;
 revoke all privileges on function public.settle_waitlist_batch_item(uuid, uuid, uuid, text, text, text) from public, anon, authenticated, service_role;
 grant execute on function public.settle_waitlist_batch_item(uuid, uuid, uuid, text, text, text) to service_role;
 revoke all privileges on function public.stop_waitlist_batch(uuid, uuid, uuid, integer) from public, anon, authenticated, service_role;
@@ -743,7 +754,7 @@ grant execute on function public.admit_new_client_waitlist_entry(uuid, uuid, uui
 do $$
 declare v_fn regprocedure; v_role text;
 begin
-  foreach v_fn in array array['public.stop_waitlist_batch(uuid, uuid, uuid, integer)'::regprocedure,'public.create_waitlist_invitation_batch(uuid, uuid, uuid, uuid[], uuid, date, date, smallint[], integer, integer, integer, boolean)'::regprocedure,'public.preview_waitlist_over_invite(uuid, uuid, uuid[], date, date, smallint[])'::regprocedure,'public.claim_waitlist_batch_items(integer, integer, integer)'::regprocedure,'public.settle_waitlist_batch_item(uuid, uuid, uuid, text, text, text)'::regprocedure,'public.replace_waitlist_invitation(uuid, uuid, uuid, uuid)'::regprocedure,'public.admit_new_client_waitlist_entry(uuid, uuid, uuid, uuid, date, date, smallint[], integer, integer, uuid)'::regprocedure] loop
+  foreach v_fn in array array['public.stop_waitlist_batch(uuid, uuid, uuid, integer)'::regprocedure,'public.create_waitlist_invitation_batch(uuid, uuid, uuid, uuid[], uuid, date, date, smallint[], integer, integer, integer, boolean)'::regprocedure,'public.preview_waitlist_over_invite(uuid, uuid, uuid[], date, date, smallint[])'::regprocedure,'public.claim_waitlist_batch_items(integer, integer, integer, uuid, uuid)'::regprocedure,'public.settle_waitlist_batch_item(uuid, uuid, uuid, text, text, text)'::regprocedure,'public.replace_waitlist_invitation(uuid, uuid, uuid, uuid)'::regprocedure,'public.admit_new_client_waitlist_entry(uuid, uuid, uuid, uuid, date, date, smallint[], integer, integer, uuid)'::regprocedure] loop
     foreach v_role in array array['anon','authenticated'] loop
       if pg_catalog.has_function_privilege(v_role, v_fn, 'EXECUTE') then raise exception '0363: % must not execute %', v_role, v_fn; end if;
     end loop;

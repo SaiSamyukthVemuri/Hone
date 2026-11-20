@@ -338,6 +338,29 @@ describe("replace, the studio lock and what a claimed item authorises", () => {
     const r = await Promise.all([st("failed", "provider_error", "issued"), st("failed", "provider_error", "issued")]);
     expect([...r].sort()).toEqual(["settled", "state_changed"]);
   });
+  it("a SCOPED claim takes only its own batch for its own owner and never claims or leases a foreign item; a null claim stays fair across studios", async () => {
+    const f = await seed("sc1"); const g = await seed("sc2");
+    const fe = await entries(f, 3); const ge = await entries(g, 3);
+    const fb = await create(f, fe, { fit: 0, shown: 0 }); const gb = await create(g, ge, { fit: 0, shown: 0 });
+    const scoped = (batch: string, user: string | null, per = 100) => q(`select * from public.claim_waitlist_batch_items($1,1000,600,$2,$3)`, [per, batch, user]);
+    expect(await scoped(fb[0].batch_id, g.userId), "another studio's owner").toHaveLength(0);
+    expect(await scoped(fb[0].batch_id, null), "no actor").toHaveLength(0);
+    expect(await scoped(randomUUID(), f.userId), "unknown batch").toHaveLength(0);
+    const mine = await scoped(fb[0].batch_id, f.userId);
+    expect(mine).toHaveLength(3); expect(mine.every((r: any) => r.studio_id === f.studioId && r.batch_id === fb[0].batch_id)).toBe(true);
+    const foreign = await items(gb[0].batch_id);
+    expect(foreign.every((r: any) => r.state === "pending" && r.claimed_at === null), "the other studio's items were not touched").toBe(true);
+    const rest = await claim(1, 1000);
+    expect(rest).toHaveLength(1); expect(rest[0].studio_id).toBe(g.studioId);
+  });
+  it("a null claim stays round-robin: each studio is served up to p_per_studio before any gets more", async () => {
+    const f = await seed("rr1"); const g = await seed("rr2");
+    await create(f, await entries(f, 4), { fit: 0, shown: 0 }); await create(g, await entries(g, 4), { fit: 0, shown: 0 });
+    const got = await claim(2, 4);
+    expect(got).toHaveLength(4);
+    expect(new Set(got.map((r: any) => r.studio_id)).size).toBe(2);
+    for (const sid of [f.studioId, g.studioId]) expect(got.filter((r: any) => r.studio_id === sid)).toHaveLength(2);
+  });
   it("stop: owner-only, moves PENDING items to skipped, never touches claimed or issued, idempotent", async () => {
     const f = await seed("cn"); const g = await seed("co"); const [e1, e2, e3] = await entries(f, 3);
     const b = await create(f, [e1, e2, e3], { fit: 0, shown: 0 }); const batch = b[0].batch_id;
@@ -390,7 +413,7 @@ describe("replace, the studio lock and what a claimed item authorises", () => {
 
 describe("grants, rollback shape, one admit overload", () => {
   it("every new function is service_role only; the tables allow owner SELECT only; exactly one admit overload exists", async () => {
-    for (const fn of ["create_waitlist_invitation_batch(uuid,uuid,uuid,uuid[],uuid,date,date,smallint[],integer,integer,integer,boolean)", "preview_waitlist_over_invite(uuid,uuid,uuid[],date,date,smallint[])", "claim_waitlist_batch_items(integer,integer,integer)", "settle_waitlist_batch_item(uuid,uuid,uuid,text,text,text)", "replace_waitlist_invitation(uuid,uuid,uuid,uuid)"]) {
+    for (const fn of ["create_waitlist_invitation_batch(uuid,uuid,uuid,uuid[],uuid,date,date,smallint[],integer,integer,integer,boolean)", "preview_waitlist_over_invite(uuid,uuid,uuid[],date,date,smallint[])", "claim_waitlist_batch_items(integer,integer,integer,uuid,uuid)", "settle_waitlist_batch_item(uuid,uuid,uuid,text,text,text)", "replace_waitlist_invitation(uuid,uuid,uuid,uuid)"]) {
       const r = await q(`select has_function_privilege('anon','public.${fn}','execute') a, has_function_privilege('authenticated','public.${fn}','execute') u, has_function_privilege('service_role','public.${fn}','execute') s`);
       expect(r[0]).toEqual({ a: false, u: false, s: true });
     }
