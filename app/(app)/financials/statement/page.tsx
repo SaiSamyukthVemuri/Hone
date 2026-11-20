@@ -8,6 +8,7 @@ import { resolveStatementMonth, yearMonthOf } from "@/lib/finance/statement-peri
 import { STATEMENT_MONTH_NOTICE } from "@/lib/finance/statement-copy";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 
+import { loadFinderState } from "../statements/finder-data";
 import { StatementsTabs } from "../statements/statements-chrome";
 import { StatementView } from "./statement-view";
 
@@ -44,6 +45,8 @@ export default async function StatementPage({ searchParams }: { searchParams: Pr
   const currency: PaymentCurrency | null = jurisdiction.ok ? jurisdiction.jurisdiction.currency : null;
 
   const view = await loadStatementView(practitioner, studio, month, currency);
+  // "Find a client" beside the tabs, as on the Clients tab. Read only AFTER the owner gate above; the month is the one in view.
+  const finder = await loadFinderState(practitioner, studio);
   // Wide screens get the reference's content width: a contained breakout of the Statements content only (the app shell and its navigation are unchanged).
   return (
     <div className="bg-[#fafbf9] min-[1140px]:-mx-[45px]">
@@ -56,6 +59,7 @@ export default async function StatementPage({ searchParams }: { searchParams: Pr
         page={parsePageParam(sp.page)}
         tabs={<StatementsTabs active="studio" month={month} />}
         studioName={studio.name}
+        finder={finder}
       />
     </div>
   );

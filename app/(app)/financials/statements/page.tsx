@@ -1,14 +1,15 @@
-import { formatMoney, type PaymentCurrency } from "@/lib/billing/payment-jurisdiction";
+import { type PaymentCurrency } from "@/lib/billing/payment-jurisdiction";
+import { formatStatementMoney } from "@/lib/finance/statement-money";
 import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
 import { localDateString } from "@/lib/booking/tz";
-import { clientDisplayName } from "@/lib/clients/identity";
-import { FINDER_CLIENT_CAP, STATEMENTS_OWNER_ONLY, parseClientsParams, sameNameClientIds } from "@/lib/finance/statement-screen";
-import { loadFinderClients, loadLastVisitDates, loadStatementDirectory, LAST_VISIT_MAX_CLIENTS } from "@/lib/finance/statement-directory-read";
+import { STATEMENTS_OWNER_ONLY, parseClientsParams } from "@/lib/finance/statement-screen";
+import { loadStatementDirectory } from "@/lib/finance/statement-directory-read";
 import { monthRange, yearMonthOf } from "@/lib/finance/statement-period";
 import { STATEMENT_MONTH_NOTICE } from "@/lib/finance/statement-copy";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 
 import { ClientsView, type ClientsViewProps } from "./clients-view";
+import { loadFinderState } from "./finder-data";
 
 // ===========================================================================
 // The Clients tab of Statements: every client with a visit in the month, and Find a client. Owner-only, READ-ONLY.
@@ -36,21 +37,10 @@ export default async function StatementsClientsPage({ searchParams }: { searchPa
   const directory: ClientsViewProps["directory"] =
     read.access === "granted" && read.ok ? { ok: true, value: read.directory } : { ok: false, reason: read.access === "granted" && !read.ok ? read.reason : "read_failed" };
 
-  const found = await loadFinderClients(practitioner, studio);
-  let finder: ClientsViewProps["finder"] = { state: "unavailable" };
-  if (found.access === "granted" && found.ok) {
-    if (found.clients.length > FINDER_CLIENT_CAP) finder = { state: "too_many" };
-    else {
-      const sameName = sameNameClientIds(found.clients);
-      // Two clients with one name are told apart by their last visit date; beyond the bound, or on any failure, the screen says only "same name".
-      const last = sameName.length <= LAST_VISIT_MAX_CLIENTS ? await loadLastVisitDates(practitioner, studio, sameName) : null;
-      // Only an id, the shown name and the archived flag are handed to the browser (built here, AFTER the owner gate above).
-      const options = found.clients.map((c) => ({ id: c.id, displayName: clientDisplayName({ name: c.name, preferred_name: c.preferredName }), archived: c.archived }));
-      finder = { state: "ok", clients: options, lastVisits: last && last.access === "granted" && last.ok ? last.lastVisit : null };
-    }
-  }
+  const finder = await loadFinderState(practitioner, studio);
 
   return (
+    <div className="bg-[#fafbf9] min-[1140px]:-mx-[45px]">
     <ClientsView
       month={month}
       monthLabel={monthRange(month).label}
@@ -58,9 +48,10 @@ export default async function StatementsClientsPage({ searchParams }: { searchPa
       timezone={studio.timezone}
       notice={fellBack ? STATEMENT_MONTH_NOTICE : null}
       page={page}
-      format={(c) => formatMoney(c, currency)}
+      format={(c) => formatStatementMoney(c, currency)}
       directory={directory}
       finder={finder}
     />
+    </div>
   );
 }

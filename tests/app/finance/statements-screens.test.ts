@@ -171,8 +171,8 @@ describe("Find a client (mounted)", () => {
       expect(x).toMatch(/Same name as another client/);
       expect(x).not.toMatch(/Last visit/);
     }
-    // and the page itself withholds the lookup above the cap
-    expect(read("app/(app)/financials/statements/page.tsx")).toMatch(/sameName\.length <= LAST_VISIT_MAX_CLIENTS \? await loadLastVisitDates\([^)]*\) : null/);
+    // and the shared finder loader (used by both tabs) withholds the lookup above the cap
+    expect(read("app/(app)/financials/statements/finder-data.ts")).toMatch(/sameName\.length <= LAST_VISIT_MAX_CLIENTS \? await loadLastVisitDates\([^)]*\) : null/);
   });
   it("does not search email or phone: only the shown name is matched", () => {
     const el = mountFinder();
@@ -372,14 +372,19 @@ describe("what reaches the browser, and where a last visit date may go", () => {
     const src = read("app/(app)/financials/statements/client-finder.tsx");
     const type = src.match(/export type FinderOption = \{([^}]*)\}/)?.[1] ?? "";
     expect(type.split(";").map((f) => f.trim().split(":")[0]).filter(Boolean)).toEqual(["id", "displayName", "archived"]);
-    // and what the page hands it is built from exactly those three, after the owner gate
-    const page = strip(read("app/(app)/financials/statements/page.tsx"));
-    const gate = page.indexOf('practitioner.role !== "owner"');
-    const build = page.indexOf("const options = found.clients.map");
-    expect(gate).toBeGreaterThan(-1);
-    expect(build).toBeGreaterThan(gate);
-    expect(page.slice(build, build + 260)).toMatch(/\{ id: c\.id, displayName: clientDisplayName\([^)]*\), archived: c\.archived \}/);
-    expect(page).not.toMatch(/clients: found\.clients/);
+    // what the shared loader hands it is built from exactly those three, and BOTH tabs' pages call it only after the owner gate
+    const loader = strip(read("app/(app)/financials/statements/finder-data.ts"));
+    const build = loader.indexOf("const options = found.clients.map");
+    expect(build).toBeGreaterThan(-1);
+    expect(loader.slice(build, build + 260)).toMatch(/\{ id: c\.id, displayName: clientDisplayName\([^)]*\), archived: c\.archived \}/);
+    expect(loader).not.toMatch(/clients: found\.clients/);
+    for (const f of ["app/(app)/financials/statements/page.tsx", "app/(app)/financials/statement/page.tsx"]) {
+      const page = strip(read(f));
+      const gate = page.indexOf('practitioner.role !== "owner"');
+      const call = page.indexOf("await loadFinderState(");
+      expect(gate, f).toBeGreaterThan(-1);
+      expect(call, f).toBeGreaterThan(gate);
+    }
   });
   it("a client's stored or legal name, preferred name and contact details never reach the browser through the finder", () => {
     const html = (() => {

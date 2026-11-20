@@ -34,9 +34,14 @@ import {
 } from "@/lib/finance/statement-copy";
 import { bucketMethodBreakdown, SHORT_METHOD_LABEL, studioVisitStatus, visitCollectedCents, type VisitStatus } from "@/lib/finance/statement-methods";
 import { clientStatementHref } from "@/lib/finance/statement-screen";
+import { splitCurrency } from "@/lib/finance/statement-money";
 import { latestFirst, slicePage } from "@/lib/finance/statement-paging";
 import type { StatementView as View } from "@/lib/finance/statement-read";
 import type { YearMonth } from "@/lib/finance/statement-period";
+import { FINDER_TOO_MANY, STATEMENT_READ_UNAVAILABLE } from "@/lib/finance/statement-screen";
+
+import { ClientFinder } from "../statements/client-finder";
+import type { ClientsViewProps } from "../statements/clients-view";
 
 const UNAVAILABLE: Record<string, string> = {
   read_failed: "The statement could not be read, so nothing is shown. No figure is guessed. Try again.",
@@ -86,10 +91,6 @@ function Section({ bucket, format }: { bucket: StatementBucket; format: (c: numb
 // ---- The summary card: the studio's collected total at display size and how it was paid. ---------------------------------------------------------
 // The figures are the bucket's own. The proportional bar and the method list appear ONLY when the non-zero methods add up to the collected total to the
 // cent (bucketMethodBreakdown); with nothing collected, or segments that cannot be explained, the card says so in words and draws no bar.
-function splitCurrency(text: string): { amount: string; unit: string | null } {
-  const m = /^(.*\d) ([A-Z]{3})$/.exec(text);
-  return m ? { amount: m[1], unit: m[2] } : { amount: text, unit: null };
-}
 
 function SummaryCard({ bucket, visitCount, monthLabel, studioName, format }: { bucket: StatementBucket; visitCount: number; monthLabel: string; studioName?: string | null; format: (c: number) => string }) {
   const methods = bucketMethodBreakdown(bucket);
@@ -210,6 +211,7 @@ export function StatementView({
   page = 1,
   tabs,
   studioName,
+  finder,
 }: {
   view: View;
   currency: string | null;
@@ -219,6 +221,8 @@ export function StatementView({
   page?: number;
   tabs?: ReactNode;
   studioName?: string | null;
+  /** The data behind "Find a client"; absent (undefined) draws no box. */
+  finder?: ClientsViewProps["finder"];
 }) {
   if (view.access === "refused") {
     return <section className="rounded-lg border border-line bg-surface-sunken p-6 text-sm text-fg">Only the studio owner can see the money statement.</section>;
@@ -253,7 +257,19 @@ export function StatementView({
           <h1 className="text-[clamp(32px,4vw,46px)] font-bold leading-[1.07] tracking-[-2px] text-fg">Monthly statements</h1>
           <MonthControls base="/financials/statement" month={view.month as YearMonth} maxMonth={(maxMonth ?? "9999-12") as YearMonth} />
         </div>
-        {tabs}
+        <div className="flex flex-wrap items-start gap-3">
+          {tabs}
+          {finder ? (
+            <section aria-labelledby="stmt-find" className="min-w-0 flex-1 basis-60 md:max-w-sm">
+              <h2 id="stmt-find" className="sr-only">Find a client</h2>
+              {finder.state === "ok" ? (
+                <ClientFinder month={view.month as YearMonth} monthLabel={view.label} clients={finder.clients} monthVisits={null} showMonthCount={false} lastVisits={finder.lastVisits} />
+              ) : (
+                <p className="text-sm text-fg">{finder.state === "too_many" ? FINDER_TOO_MANY : STATEMENT_READ_UNAVAILABLE.read_failed}</p>
+              )}
+            </section>
+          ) : null}
+        </div>
         {notice ? <p className="text-sm text-fg" role="status">{notice}</p> : null}
       </header>
 

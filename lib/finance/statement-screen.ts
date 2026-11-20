@@ -71,8 +71,10 @@ export function lastVisitDetail(lastVisitLocalDate: string | null | undefined): 
  * name with another result it then adds what tells them apart: the last visit date, or, when the last-visit lookup was not made or the client has
  * never had a visit, the plain "Same name as another client" (never a second "No visits" after "No visits in <month>").
  */
-export function finderOptionLine(args: { monthLabel: string; monthVisitCount: number | null; sameNameAsAnother: boolean; lastVisit: string | null | undefined; lastVisitsLoaded: boolean }): string {
-  const { monthLabel, monthVisitCount, sameNameAsAnother, lastVisit, lastVisitsLoaded } = args;
+export function finderOptionLine(args: { monthLabel: string; monthVisitCount: number | null; sameNameAsAnother: boolean; lastVisit: string | null | undefined; lastVisitsLoaded: boolean; showMonthCount?: boolean }): string {
+  const { monthLabel, monthVisitCount, sameNameAsAnother, lastVisit, lastVisitsLoaded, showMonthCount = true } = args;
+  // A screen that does not load the month's counts (the Studio tab) leaves the count out entirely: no "unavailable", which would read as an error, and never a zero.
+  if (!showMonthCount) return sameNameAsAnother ? (lastVisitsLoaded && lastVisit ? lastVisitDetail(lastVisit) : "Same name as another client") : "";
   const month =
     monthVisitCount === null
       ? `Visit count for ${monthLabel} unavailable`
