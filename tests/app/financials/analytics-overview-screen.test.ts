@@ -561,6 +561,13 @@ describe("the named client lists on the page", () => {
     const csv = overviewCsv(named(NAMES), { preparedOn: "2026-11-30" });
     for (const n of Object.values(NAMES)) expect(csv).not.toContain(n);
   });
+  it("under a team-member filter the candidates are only the clients that team member was seen by in the period", async () => {
+    const { candidateClientIds } = await import("@/lib/business-analytics/overview-model");
+    const one = candidateClientIds(input({ filter: { kind: "one", practitionerId: "pr-1" } })).sort();
+    expect(one).toEqual(["client-done-over", "client-done-quoted"]); // client-done-noprice was seen by pr-2
+    expect(candidateClientIds(input({ filter: { kind: "one", practitionerId: "pr-2" } }))).toEqual(["client-done-noprice"]);
+    expect(candidateClientIds(input({ filter: { kind: "unattributed" } }))).toEqual([]);
+  });
   it("candidateClientIds is the clients with a completed visit in the period, and only them", async () => {
     const { candidateClientIds } = await import("@/lib/business-analytics/overview-model");
     expect(candidateClientIds(input()).sort()).toEqual(["client-done-noprice", "client-done-over", "client-done-quoted"]);

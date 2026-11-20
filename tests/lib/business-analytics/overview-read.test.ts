@@ -101,6 +101,19 @@ describe("the Overview read: whole or nothing, studio-scoped, never writing", ()
     expect(r).toMatchObject({ access: "granted", ok: true });
     expect(calls.filter((c) => c.table === "clients")).toEqual([]);
   });
+  it("under a team-member filter, names are asked for only the clients that team member saw in the period", async () => {
+    const res = healthy();
+    res.practitioners = ok([{ id: "pr-1", display_name: "Ada Example", active: true }, { id: "pr-2", display_name: "Bo Example", active: true }]);
+    res.appointments = ok([
+      { id: "a1", client_id: "c1", starts_at: "2026-11-03T15:00:00+00:00", status: "completed", practitioner_id: "pr-1", service_id: null, duration_minutes: 30 },
+      { id: "a2", client_id: "c2", starts_at: "2026-11-04T15:00:00+00:00", status: "completed", practitioner_id: "pr-2", service_id: null, duration_minutes: 30 },
+      { id: "a3", client_id: "c3", starts_at: "2026-11-05T15:00:00+00:00", status: "cancelled", practitioner_id: "pr-1", service_id: null, duration_minutes: 30 },
+    ]);
+    res.clients = ok([{ id: "c1", name: "One" }]);
+    const { client, calls } = recording(res);
+    await load("owner", client, { practitioner: "pr-1" });
+    expect(calls.filter((c) => c.table === "clients" && c.method === "in").map((c) => c.args[1])).toEqual([["c1"]]);
+  });
   it("a failed name read makes only the named lists unavailable", async () => {
     const res = healthy();
     res.clients = { data: null, error: { message: "boom" } };

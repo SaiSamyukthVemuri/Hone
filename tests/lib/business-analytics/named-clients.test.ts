@@ -5,6 +5,7 @@ vi.mock("server-only", () => ({}));
 import { NAMED_LIST_SIZE, rankNamedClients, usableName, type ClientFigure, type NameLookup, type NamedClients } from "@/lib/business-analytics/named-clients";
 import { NAME_CHUNK, readClientNames } from "@/lib/business-analytics/server/client-names-read";
 import { namedClientsCap } from "@/lib/business-analytics/copy";
+import { compareClients, type ClientRow, type RankBy } from "@/lib/business-analytics/visit-metrics";
 
 const fig = (id: string, visits: number, paid: number | null, gap: number | null): ClientFigure => ({ clientId: id, periodVisits: visits, periodPaidCents: paid, averageGapDays: gap });
 const lookup = (ids: readonly string[], nameOf: (id: string) => string = (id) => `Name ${id}`): NameLookup => ({ ok: true, names: new Map(ids.map((id) => [id, nameOf(id)])) });
@@ -56,6 +57,10 @@ describe("most visits and most frequent returns", () => {
     const v = rank([fig("a", 1, 1, 30), fig("b", 1, 1, 7), fig("c", 1, 1, null), fig("d", 1, 1, 14)]);
     expect(names(returns(v))).toEqual(["Name b", "Name d", "Name a"]);
     expect(v.fewerThanTwoDates).toBe(1);
+  });
+  it("an equal gap is broken by more visits in the period, then by name", () => {
+    const v = rank([fig("a", 1, 1, 10), fig("b", 3, 1, 10), fig("c", 3, 1, 10)], { lookup: lookup(["a", "b", "c"], (id) => ({ a: "Aaa", b: "Zed", c: "Bob" })[id] as string) });
+    expect(names(returns(v))).toEqual(["Bob", "Zed", "Aaa"]); // 3 visits before 1; then Bob before Zed
   });
   it("a client with a short gap but no visit in this period is in none of the lists", () => {
     const v = rank([fig("a", 0, 100, 3), fig("b", 1, 100, 20)]);
@@ -205,4 +210,16 @@ describe("the name shown is the app's display name, never the legal name", () =>
     expect(await readClientNames(f.client, "studio-1", ["a"])).toEqual({ ok: false });
     expect(f.calls).toHaveLength(1);
   });
+});
+
+describe("the last tiebreak is the client id, so the order never depends on the order the rows arrive in", () => {
+  const row = (clientId: string): ClientRow => ({ clientId, name: "Same Name", periodVisits: 2, periodPaidCents: 500, lifetimePaidCents: 500, averageGapDays: 9, lastVisitDate: "2026-11-01" });
+  for (const by of ["spend", "visits", "interval", "lifetime", "last_visit", "name"] as RankBy[]) {
+    it(`${by}: two clients equal in name and every figure sort by id in either input order`, () => {
+      const forward = [row("id-1"), row("id-2")].sort(compareClients(by)).map((r) => r.clientId);
+      const backward = [row("id-2"), row("id-1")].sort(compareClients(by)).map((r) => r.clientId);
+      expect(forward).toEqual(["id-1", "id-2"]);
+      expect(backward).toEqual(["id-1", "id-2"]);
+    });
+  }
 });
