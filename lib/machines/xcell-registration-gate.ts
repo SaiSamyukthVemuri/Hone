@@ -1,12 +1,14 @@
-import { CHARTING_VIEW_STUDIOS_ENV, chartingViewToggleVisible, parseChartingViewGate } from "@/lib/charting/view-preference";
+import { chartingRolloutFor, readChartingRollout, type RolloutRead } from "@/lib/rollouts/charting-rollout";
 
 /**
- * WHO MAY SEE OR REGISTER "Dectro xCell" (Sam's rollout decision). Only studios on the charting new-view allowlist
- * (HONE_CHARTING_NEW_VIEW_STUDIO_IDS) are offered the model in Settings > Machines, and the registration action refuses every other
- * studio, so a forged form cannot get around the listing. It reuses the SAME parser and visibility rule as the charting toggle
- * (unset = nobody, "all" = every studio, otherwise a list of studio ids); there is no second parser. This is a rollout gate on a
- * DISPLAY/offer decision, not an authorization decision: the owner check stays in the database command.
+ * Whether this studio may be OFFERED the xCell and may register it. It is the platform rollout (set in the admin control; nothing here reads an
+ * environment variable). The studio comes from the authenticated scope, never from a posted value. An error is "not offered" for display.
  */
-export function xcellRegistrationAllowed(studioId: string | null | undefined, rawGate: string | undefined | null = process.env[CHARTING_VIEW_STUDIOS_ENV]): boolean {
-  return chartingViewToggleVisible(parseChartingViewGate(rawGate), studioId);
+export async function xcellRegistrationAllowed(studioId: string | null | undefined): Promise<boolean> {
+  return chartingRolloutFor(studioId);
+}
+
+/** The registration ACTION needs to tell "off" from "could not check" so it can refuse with a retryable message. */
+export async function xcellRegistrationState(studioId: string | null | undefined): Promise<RolloutRead> {
+  return readChartingRollout(studioId);
 }

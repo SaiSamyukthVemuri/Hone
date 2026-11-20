@@ -1100,6 +1100,18 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "A single global row holding the calendar worker kill-switch. No studio_id, no studio meaning.",
   },
+  platform_rollouts: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "Hone operator rollout switch (one row per platform feature: off, pilot or all). Hone's own release configuration; it holds no studio data.",
+  },
+  platform_rollout_studios: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "Hone operator pilot list (which studios a platform feature is piloted for). Hone's own release configuration, keyed by studio id only; it holds no studio-authored content.",
+  },
   admin_action_events: {
     kind: "excluded",
     category: "platform",

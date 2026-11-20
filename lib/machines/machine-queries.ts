@@ -718,7 +718,7 @@ export async function setupSubmissionExists(
     .select("id, session_blocks!inner(session_id)")
     .eq("session_block_id", blockId)
     .eq("session_blocks.session_id", sessionId)
-    .eq("idempotency_key", idempotencyKey.trim())
+    .eq("idempotency_key", idempotencyKey)
     .limit(1);
   if (error || !Array.isArray(data)) return null;
   return data.length > 0;

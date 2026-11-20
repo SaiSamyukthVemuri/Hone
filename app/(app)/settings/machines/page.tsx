@@ -39,7 +39,7 @@ export default async function MachineSettingsPage() {
   const models = registrableProfiles(
     listableProfiles(active, (p) => published.get(`${p.profileId}@${p.version}`) ?? null),
     listed.ok ? listed.value : [],
-    xcellRegistrationAllowed(studio.id),
+    await xcellRegistrationAllowed(studio.id),
   ).map((p) => ({
     profileId: p.profileId,
     label: machineModelLabel(p),

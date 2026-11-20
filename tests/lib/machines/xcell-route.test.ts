@@ -77,7 +77,7 @@ describe("one xCell, one name", () => {
     const page = readFileSync("app/(app)/settings/machines/page.tsx", "utf8");
     expect(page).toMatch(/registrableProfiles\(\s*listableProfiles\(/);
     expect(page).toMatch(/listed\.ok \? listed\.value : \[\]/);
-    expect(page).toContain("xcellRegistrationAllowed(studio.id)");
+    expect(page).toContain("await xcellRegistrationAllowed(studio.id)");
   });
   it("no user-facing file composes a model name by hand any more", async () => {
     const { readFileSync } = await import("node:fs");
