@@ -84,7 +84,7 @@ describe("the Overview CSV", () => {
 });
 
 describe("every unavailable figure is a row that says why, never an empty cell or a zero", () => {
-  const KEYS = ["collected", "series", "byPractitioner", "serviceValue", "reconciliation", "completedVisits", "activeClients", "visitsPerClient", "averagePaid", "returning", "interval", "noNextBooking"] as const;
+  const KEYS = ["collected", "series", "byPractitioner", "serviceValue", "reconciliation", "completedVisits", "activeClients", "visitsPerClient", "averagePaid", "returning", "interval", "noNextBooking", "previousSeries", "visitFrequency", "beyondUsual"] as const;
   const REASONS: ReadFailure[] = ["too_many_appointments", "read_failed", "currency_unknown", "not_reconciled", "no_evidence_read"];
   for (const key of KEYS) {
     for (const reason of REASONS) {
@@ -176,5 +176,23 @@ describe("an unknown is written as its unavailable text, never 0, 0.00 or 0% (X2
     const line = rowOf(text, "Service value,Price shown at online booking");
     expect(line).toContain("Not available");
     expect(line).not.toMatch(/0\.00/);
+  });
+});
+
+describe("the figures the layout correction draws are in the file too (A4)", () => {
+  const text = csv(healthy());
+  it("how often clients visit sums to the clients seen, and beyond-usual is a count with its rule and no client", () => {
+    const rows = text.split("\n");
+    const n = (label: string) => Number((rows.find((l) => l.startsWith(`Visits,${label},`)) ?? "").split(",")[2]);
+    const seen = Number((rows.find((l) => l.startsWith("Visits,Clients seen,")) ?? "").split(",")[2]);
+    expect(n("Clients with 1 visit") + n("Clients with 2 visits") + n("Clients with 3 or more visits")).toBe(seen);
+    expect(rows.find((l) => l.startsWith("Clients,Beyond their usual visit interval,"))).toMatch(/^Clients,Beyond their usual visit interval,\d+,,.*1\.5 times/);
+    expect(text).not.toMatch(/client-[a-z]/);
+  });
+  it("the comparison period's series is written, by date and never as a name, when it could be read; otherwise one row says why", () => {
+    expect(text).toContain('Comparison by date,"Collected and completed visits by date, comparison period",');
+    const readable = csv(buildOverview(input({ comparison: { ok: true, value: { appointments: [appt("p1", "completed", "2026-10-05T15:00:00Z", "pr-1")], money: { ok: true, value: { cardRows: [], settlementRows: [], legacyFeeRows: [] } as never } } } })));
+    expect(readable).toMatch(/Comparison by date,2026-10-05 collected,0\.00,/);
+    expect(readable).toMatch(/Comparison by date,2026-10-05 completed visits,1,/);
   });
 });
