@@ -66,7 +66,7 @@ describe("dates that were not accepted keep the controls, so the range can be co
   });
 });
 
-describe("the corrected-dates form echoes only a plain date (Privacy C1)", () => {
+describe("the corrected-dates form echoes only a plain date", () => {
   const render = async (from: string, to: string) => {
     calls.result = {
       access: "granted", ok: false, reason: "period_invalid", notices: ["The dates were not accepted (range reversed)."],
