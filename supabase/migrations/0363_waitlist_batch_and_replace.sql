@@ -473,6 +473,15 @@ begin
   if (select count(*) from public.new_client_waitlist_entries e where e.studio_id = p_studio_id and e.id = any (p_entry_ids)) <> v_n then
     return query select 'invalid_entries'::text, null::uuid, null::integer, null::integer, null::integer; return;
   end if;
+  -- THE EXCLUSION ENDS WITH THE INVITATION. An issued, unknown or failed item whose invitation has since been released or has expired (the owner released
+  -- or requeued the person, or time ran out) no longer holds the entry: it is moved to a terminal state here, under the studio lock, so the person can be
+  -- invited again. An item whose invitation is still live keeps blocking.
+  update public.waitlist_invitation_batch_items i
+     set state = 'skipped', reason_class = 'invitation_ended', settled_at = pg_catalog.clock_timestamp()
+    from public.new_client_waitlist_invitations inv
+   where i.entry_id = any (p_entry_ids) and i.studio_id = p_studio_id and i.state in ('issued','unknown','failed')
+     and inv.id = i.invitation_id and inv.redeemed_at is null
+     and (inv.released_at is not null or inv.expired_at is not null or inv.expires_at <= pg_catalog.clock_timestamp());
   if exists (select 1 from public.waitlist_invitation_batch_items i
               where i.entry_id = any (p_entry_ids) and i.state in ('pending','claimed','issued','unknown','failed')) then
     return query select 'entry_in_other_batch'::text, null::uuid, null::integer, null::integer, null::integer; return;
@@ -518,7 +527,12 @@ begin
     (select count(*)::integer from public.new_client_waitlist_entries e
       where e.studio_id = p_studio_id and e.id = any (coalesce(p_entry_ids, '{}')) and e.status = 'waiting'
         and not exists (select 1 from public.waitlist_followups f where f.entry_id = e.id and f.status = 'open')
-        and not exists (select 1 from public.waitlist_invitation_batch_items bi where bi.entry_id = e.id and bi.state in ('pending','claimed','issued','unknown','failed')));
+        and not exists (select 1 from public.waitlist_invitation_batch_items bi where bi.entry_id = e.id
+                        and (bi.state in ('pending','claimed')
+                             or (bi.state in ('issued','unknown','failed')
+                                 and exists (select 1 from public.new_client_waitlist_invitations inv where inv.id = bi.invitation_id
+                                              and inv.redeemed_at is null and inv.released_at is null and inv.expired_at is null
+                                              and inv.expires_at > pg_catalog.clock_timestamp())))));
 end;
 $$;
 
@@ -587,11 +601,11 @@ $$;
 -- claimed or sent again automatically, it still blocks the entry from another batch, and only the owner's separate retry (replace) or a later
 -- confirmation (sent / failed) moves it on. Outcomes: sent (from issued | failed | unknown), failed (same, with a reason class), unknown (from
 -- issued, with a reason class), skipped (from claimed, with a reason class).
--- Results: settled | already_sent | not_found | invalid_state | invalid_input | state_changed.
-create or replace function public.settle_waitlist_batch_item(p_item_id uuid, p_studio_id uuid, p_entry_id uuid, p_outcome text, p_reason_class text, p_expected_state text default null)
+-- Results: settled | already_sent | not_found | invalid_state | invalid_input | state_changed (the item moved on, or the answer is for an earlier invitation).
+create or replace function public.settle_waitlist_batch_item(p_item_id uuid, p_studio_id uuid, p_entry_id uuid, p_outcome text, p_reason_class text, p_expected_state text default null, p_expected_invitation_id uuid default null)
 returns text language plpgsql volatile security definer set search_path = pg_catalog, pg_temp
 as $$
-declare v_state text;
+declare v_state text; v_inv uuid;
 begin
   -- THE ITEM MUST BELONG TO THE STUDIO AND THE ENTRY THE CALLER NAMES. The caller is the service worker, which holds the claimed row's studio and
   -- entry; a forged or stale item id therefore cannot settle another studio's item or another entry's. A mismatch is indistinguishable from a
@@ -600,9 +614,13 @@ begin
   -- would otherwise reach the table's check constraint, whose error echoes the value into the error and any log.
   if p_item_id is null or p_studio_id is null or p_entry_id is null or p_outcome not in ('sent','failed','skipped','unknown')
      or (p_reason_class is not null and p_reason_class !~ '^[a-z_]{1,40}$') then return 'invalid_input'; end if;
-  select i.state into v_state from public.waitlist_invitation_batch_items i
+  select i.state, i.invitation_id into v_state, v_inv from public.waitlist_invitation_batch_items i
    where i.id = p_item_id and i.studio_id = p_studio_id and i.entry_id = p_entry_id for update;
   if v_state is null then return 'not_found'; end if;
+  -- THE SETTLEMENT IS BOUND TO THE DELIVERY ATTEMPT: it applies only to the invitation the caller delivered. After a replace the item points at the
+  -- NEW invitation, so a delayed answer for the OLD one (a late success, say) changes nothing and can never mark the replacement sent. An item that has
+  -- no invitation yet (claimed) is matched by a null.
+  if v_inv is distinct from p_expected_invitation_id then return 'state_changed'; end if;
   -- COMPARE-AND-SWAP (optional): when the caller names the state it saw, the settle applies only if the item is still in it; otherwise nothing
   -- changes and the answer is 'state_changed'. Checked before the terminal-state answers, so a stale caller is told the state moved.
   if p_expected_state is not null and v_state <> p_expected_state then return 'state_changed'; end if;
@@ -742,8 +760,8 @@ revoke all privileges on function public.preview_waitlist_over_invite(uuid, uuid
 grant execute on function public.preview_waitlist_over_invite(uuid, uuid, uuid[], date, date, smallint[]) to service_role;
 revoke all privileges on function public.claim_waitlist_batch_items(integer, integer, integer, uuid, uuid) from public, anon, authenticated, service_role;
 grant execute on function public.claim_waitlist_batch_items(integer, integer, integer, uuid, uuid) to service_role;
-revoke all privileges on function public.settle_waitlist_batch_item(uuid, uuid, uuid, text, text, text) from public, anon, authenticated, service_role;
-grant execute on function public.settle_waitlist_batch_item(uuid, uuid, uuid, text, text, text) to service_role;
+revoke all privileges on function public.settle_waitlist_batch_item(uuid, uuid, uuid, text, text, text, uuid) from public, anon, authenticated, service_role;
+grant execute on function public.settle_waitlist_batch_item(uuid, uuid, uuid, text, text, text, uuid) to service_role;
 revoke all privileges on function public.stop_waitlist_batch(uuid, uuid, uuid, integer) from public, anon, authenticated, service_role;
 grant execute on function public.stop_waitlist_batch(uuid, uuid, uuid, integer) to service_role;
 revoke all privileges on function public.replace_waitlist_invitation(uuid, uuid, uuid, uuid) from public, anon, authenticated, service_role;
@@ -754,7 +772,7 @@ grant execute on function public.admit_new_client_waitlist_entry(uuid, uuid, uui
 do $$
 declare v_fn regprocedure; v_role text;
 begin
-  foreach v_fn in array array['public.stop_waitlist_batch(uuid, uuid, uuid, integer)'::regprocedure,'public.create_waitlist_invitation_batch(uuid, uuid, uuid, uuid[], uuid, date, date, smallint[], integer, integer, integer, boolean)'::regprocedure,'public.preview_waitlist_over_invite(uuid, uuid, uuid[], date, date, smallint[])'::regprocedure,'public.claim_waitlist_batch_items(integer, integer, integer, uuid, uuid)'::regprocedure,'public.settle_waitlist_batch_item(uuid, uuid, uuid, text, text, text)'::regprocedure,'public.replace_waitlist_invitation(uuid, uuid, uuid, uuid)'::regprocedure,'public.admit_new_client_waitlist_entry(uuid, uuid, uuid, uuid, date, date, smallint[], integer, integer, uuid)'::regprocedure] loop
+  foreach v_fn in array array['public.stop_waitlist_batch(uuid, uuid, uuid, integer)'::regprocedure,'public.create_waitlist_invitation_batch(uuid, uuid, uuid, uuid[], uuid, date, date, smallint[], integer, integer, integer, boolean)'::regprocedure,'public.preview_waitlist_over_invite(uuid, uuid, uuid[], date, date, smallint[])'::regprocedure,'public.claim_waitlist_batch_items(integer, integer, integer, uuid, uuid)'::regprocedure,'public.settle_waitlist_batch_item(uuid, uuid, uuid, text, text, text, uuid)'::regprocedure,'public.replace_waitlist_invitation(uuid, uuid, uuid, uuid)'::regprocedure,'public.admit_new_client_waitlist_entry(uuid, uuid, uuid, uuid, date, date, smallint[], integer, integer, uuid)'::regprocedure] loop
     foreach v_role in array array['anon','authenticated'] loop
       if pg_catalog.has_function_privilege(v_role, v_fn, 'EXECUTE') then raise exception '0363: % must not execute %', v_role, v_fn; end if;
     end loop;

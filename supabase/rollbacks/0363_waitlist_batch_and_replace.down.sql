@@ -8,7 +8,7 @@ end $$;
 drop function if exists public.create_waitlist_invitation_batch(uuid, uuid, uuid, uuid[], uuid, date, date, smallint[], integer, integer, integer, boolean);
 drop function if exists public.preview_waitlist_over_invite(uuid, uuid, uuid[], date, date, smallint[]);
 drop function if exists public.claim_waitlist_batch_items(integer, integer, integer, uuid, uuid);
-drop function if exists public.settle_waitlist_batch_item(uuid, uuid, uuid, text, text, text);
+drop function if exists public.settle_waitlist_batch_item(uuid, uuid, uuid, text, text, text, uuid);
 drop function if exists public.replace_waitlist_invitation(uuid, uuid, uuid, uuid);
 drop function if exists public.stop_waitlist_batch(uuid, uuid, uuid, integer);
 drop function if exists public.admit_new_client_waitlist_entry(uuid, uuid, uuid, uuid, date, date, smallint[], integer, integer, uuid);
