@@ -61,6 +61,10 @@ function Card<T>({ id, title, figure, children, note }: { id: string; title: str
 const BIG = "text-2xl font-semibold tabular-nums tracking-tight text-fg";
 const INPUT = cx("rounded-lg border border-[#d6dbd3] bg-white px-2 text-fg", CONTROL_MIN_TOUCH, FOCUS_RING);
 
+/** A submitted date is put back in the form only when it is a plain YYYY-MM-DD; anything else (junk, a long string, a non-date) leaves the field empty rather than echoing the query. */
+const PLAIN_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const shownDate = (v: string | undefined): string => (v !== undefined && PLAIN_DATE.test(v) ? v : "");
+
 function Controls({ params, options }: { params: OverviewParams; options: OverviewScreenProps["practitionerOptions"] }) {
   const selected = params.practitioner.kind === "one" ? params.practitioner.practitionerId : params.practitioner.kind === "unattributed" ? "unattributed" : "all";
   return (
@@ -75,11 +79,11 @@ function Controls({ params, options }: { params: OverviewParams; options: Overvi
       </label>
       <label className="flex flex-col gap-1 text-sm text-fg-muted">
         From (custom)
-        <input type="date" name="from" defaultValue={params.from ?? ""} className={INPUT} />
+        <input type="date" name="from" defaultValue={shownDate(params.from)} className={INPUT} />
       </label>
       <label className="flex flex-col gap-1 text-sm text-fg-muted">
         To (custom)
-        <input type="date" name="to" defaultValue={params.to ?? ""} className={INPUT} />
+        <input type="date" name="to" defaultValue={shownDate(params.to)} className={INPUT} />
       </label>
       <label className="flex flex-col gap-1 text-sm text-fg-muted">
         Compare with (custom)
