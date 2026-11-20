@@ -10,6 +10,7 @@ drop function if exists public.preview_waitlist_over_invite(uuid, uuid, uuid[], 
 drop function if exists public.claim_waitlist_batch_items(integer, integer, integer);
 drop function if exists public.settle_waitlist_batch_item(uuid, uuid, uuid, text, text);
 drop function if exists public.replace_waitlist_invitation(uuid, uuid, uuid);
+drop function if exists public.stop_waitlist_batch(uuid, uuid, uuid, integer);
 drop function if exists public.admit_new_client_waitlist_entry(uuid, uuid, uuid, uuid, date, date, smallint[], integer, integer, uuid);
 
 drop table if exists public.waitlist_invitation_batch_items;

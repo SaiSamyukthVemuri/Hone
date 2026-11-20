@@ -685,6 +685,34 @@ begin
 end;
 $$;
 
+-- stop: the OWNER's stop control for a running batch. Moves the batch's PENDING items, and its lease-expired CLAIMED items that have no invitation
+-- (a worker that died before admit), to skipped (reason owner_stopped). It never touches an issued, unknown, failed or sent item or a claim still
+-- inside its lease, so work in flight finishes and nothing delivered is undone. Idempotent: a second call
+-- stops nothing and says so. A race with a claim is decided by the item's row lock: the item is either already claimed (not stopped) or
+-- stopped before it can be claimed, never both.
+-- Results: stopped | nothing_pending | not_owner | not_found | invalid_input. The count is how many items this call stopped.
+create or replace function public.stop_waitlist_batch(p_studio_id uuid, p_actor_user_id uuid, p_batch_id uuid, p_lease_seconds integer)
+returns table (result text, cancelled integer)
+language plpgsql volatile security definer set search_path = pg_catalog, pg_temp
+as $$
+declare v_code text; v_n integer;
+begin
+  if p_studio_id is null or p_actor_user_id is null or p_batch_id is null or p_lease_seconds is null or p_lease_seconds < 5 then return query select 'invalid_input'::text, 0; return; end if;
+  select r.code into v_code from public.new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id) r;
+  if v_code <> 'ok' then return query select 'not_owner'::text, 0; return; end if;
+  perform 1 from public.studios s where s.id = p_studio_id for no key update;
+  if not exists (select 1 from public.waitlist_invitation_batches b where b.id = p_batch_id and b.studio_id = p_studio_id) then
+    return query select 'not_found'::text, 0; return; end if;
+  update public.waitlist_invitation_batch_items i
+     set state = 'skipped', reason_class = 'owner_stopped', settled_at = pg_catalog.clock_timestamp()
+   where i.batch_id = p_batch_id and i.studio_id = p_studio_id
+     and (i.state = 'pending'
+          or (i.state = 'claimed' and i.invitation_id is null and i.claimed_at < pg_catalog.clock_timestamp() - make_interval(secs => p_lease_seconds)));
+  get diagnostics v_n = row_count;
+  return query select (case when v_n > 0 then 'stopped' else 'nothing_pending' end)::text, v_n;
+end;
+$$;
+
 -- Grants BY NAME for every default grantee, service_role only.
 revoke all privileges on function public.create_waitlist_invitation_batch(uuid, uuid, uuid, uuid[], uuid, date, date, smallint[], integer, integer, integer, boolean) from public, anon, authenticated, service_role;
 grant execute on function public.create_waitlist_invitation_batch(uuid, uuid, uuid, uuid[], uuid, date, date, smallint[], integer, integer, integer, boolean) to service_role;
@@ -694,6 +722,8 @@ revoke all privileges on function public.claim_waitlist_batch_items(integer, int
 grant execute on function public.claim_waitlist_batch_items(integer, integer, integer) to service_role;
 revoke all privileges on function public.settle_waitlist_batch_item(uuid, uuid, uuid, text, text) from public, anon, authenticated, service_role;
 grant execute on function public.settle_waitlist_batch_item(uuid, uuid, uuid, text, text) to service_role;
+revoke all privileges on function public.stop_waitlist_batch(uuid, uuid, uuid, integer) from public, anon, authenticated, service_role;
+grant execute on function public.stop_waitlist_batch(uuid, uuid, uuid, integer) to service_role;
 revoke all privileges on function public.replace_waitlist_invitation(uuid, uuid, uuid) from public, anon, authenticated, service_role;
 grant execute on function public.replace_waitlist_invitation(uuid, uuid, uuid) to service_role;
 revoke all privileges on function public.admit_new_client_waitlist_entry(uuid, uuid, uuid, uuid, date, date, smallint[], integer, integer, uuid) from public, anon, authenticated, service_role;
@@ -702,7 +732,7 @@ grant execute on function public.admit_new_client_waitlist_entry(uuid, uuid, uui
 do $$
 declare v_fn regprocedure; v_role text;
 begin
-  foreach v_fn in array array['public.create_waitlist_invitation_batch(uuid, uuid, uuid, uuid[], uuid, date, date, smallint[], integer, integer, integer, boolean)'::regprocedure,'public.preview_waitlist_over_invite(uuid, uuid, uuid[], date, date, smallint[])'::regprocedure,'public.claim_waitlist_batch_items(integer, integer, integer)'::regprocedure,'public.settle_waitlist_batch_item(uuid, uuid, uuid, text, text)'::regprocedure,'public.replace_waitlist_invitation(uuid, uuid, uuid)'::regprocedure,'public.admit_new_client_waitlist_entry(uuid, uuid, uuid, uuid, date, date, smallint[], integer, integer, uuid)'::regprocedure] loop
+  foreach v_fn in array array['public.stop_waitlist_batch(uuid, uuid, uuid, integer)'::regprocedure,'public.create_waitlist_invitation_batch(uuid, uuid, uuid, uuid[], uuid, date, date, smallint[], integer, integer, integer, boolean)'::regprocedure,'public.preview_waitlist_over_invite(uuid, uuid, uuid[], date, date, smallint[])'::regprocedure,'public.claim_waitlist_batch_items(integer, integer, integer)'::regprocedure,'public.settle_waitlist_batch_item(uuid, uuid, uuid, text, text)'::regprocedure,'public.replace_waitlist_invitation(uuid, uuid, uuid)'::regprocedure,'public.admit_new_client_waitlist_entry(uuid, uuid, uuid, uuid, date, date, smallint[], integer, integer, uuid)'::regprocedure] loop
     foreach v_role in array array['anon','authenticated'] loop
       if pg_catalog.has_function_privilege(v_role, v_fn, 'EXECUTE') then raise exception '0363: % must not execute %', v_role, v_fn; end if;
     end loop;

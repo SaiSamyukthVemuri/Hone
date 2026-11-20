@@ -280,10 +280,12 @@ describe("replace, the studio lock and what a claimed item authorises", () => {
     expect((await mk([1, 2], 72))[0].result, "different weekdays").toBe("key_reused");
     expect((await mk(null, 48))[0].result, "different ttl").toBe("key_reused");
   });
-  it("the two batch tables carry no token, address, phone or name column", async () => {
-    const cols = await q(`select column_name from information_schema.columns where table_schema='public' and table_name in ('waitlist_invitation_batches','waitlist_invitation_batch_items')`);
-    expect(cols.length).toBeGreaterThan(10);
-    for (const c of cols) expect(c.column_name, c.column_name).not.toMatch(/token|e_?mail|phone|mobile|name|address|contact|sms/i);
+  it("the two batch tables carry EXACTLY the reviewed columns (an allowlist: any new column, such as a recipient, fails here until it is reviewed)", async () => {
+    const cols = async (t: string) => (await q(`select column_name from information_schema.columns where table_schema='public' and table_name=$1 order by column_name`, [t])).map((c: any) => c.column_name);
+    expect(await cols("waitlist_invitation_batches")).toEqual(
+      ["allowed_weekdays","batch_key","confirmed_at","confirmed_by_practitioner_id","confirmed_by_user_id","end_date","extra_requested","fit_shown","id","live_shown","quantity","service_id","start_date","studio_id","ttl_hours"]);
+    expect(await cols("waitlist_invitation_batch_items")).toEqual(
+      ["attempts","batch_id","claimed_at","entry_id","id","invitation_id","issued_at","reason_class","settled_at","state","studio_id"]);
   });
   it("UNKNOWN is distinct from failed: issued -> unknown needs a reason, is never claimed again, blocks a new batch for the entry, and only a later sent or failed moves it on", async () => {
     const f = await seed("uk"); const [e1] = await entries(f, 1);
@@ -302,6 +304,40 @@ describe("replace, the studio lock and what a claimed item authorises", () => {
     await q(`update public.waitlist_invitation_batch_items set issued_at = now() - interval '1 hour' where id=$1`, [c1.item_id]);
     expect(await claim(100, 1000, 60)).toHaveLength(0);
     expect((await q(`select state, reason_class from public.waitlist_invitation_batch_items where id=$1`, [c1.item_id]))[0]).toMatchObject({ state: "unknown", reason_class: "delivery_unconfirmed" });
+  });
+  it("stop: owner-only, moves PENDING items to skipped, never touches claimed or issued, idempotent", async () => {
+    const f = await seed("cn"); const g = await seed("co"); const [e1, e2, e3] = await entries(f, 3);
+    const b = await create(f, [e1, e2, e3], { fit: 0, shown: 0 }); const batch = b[0].batch_id;
+    const [c1] = await claim(1, 1); await admitItem(f, c1.item_id, c1.entry_id);
+    const cancel = (studio: string, user: string, id: string) => q(`select * from public.stop_waitlist_batch($1,$2,$3,600)`, [studio, user, id]).then((r) => r[0]);
+    expect((await cancel(g.studioId, g.userId, batch)).result, "another studio's owner").toBe("not_found");
+    expect((await cancel(f.studioId, randomUUID(), batch)).result, "not an owner").toBe("not_owner");
+    expect(await cancel(f.studioId, f.userId, batch)).toMatchObject({ result: "stopped", cancelled: 2 });
+    const st = await q(`select state, reason_class from public.waitlist_invitation_batch_items where batch_id=$1 order by state`, [batch]);
+    expect(st.filter((r: any) => r.state === "skipped")).toHaveLength(2);
+    expect(st.every((r: any) => r.state !== "skipped" || r.reason_class === "owner_stopped")).toBe(true);
+    expect(st.find((r: any) => r.state === "issued"), "the issued item is untouched").toBeTruthy();
+    expect(await cancel(f.studioId, f.userId, batch)).toMatchObject({ result: "nothing_pending", cancelled: 0 });
+    expect(await claim()).toHaveLength(0);
+  });
+  it("stop also stops a lease-expired claim that has no invitation, but not one still inside its lease", async () => {
+    const f = await seed("sl"); const [e1, e2] = await entries(f, 2);
+    const b = await create(f, [e1, e2], { fit: 0, shown: 0 }); const cs = await claim();
+    await q(`update public.waitlist_invitation_batch_items set claimed_at = now() - interval '1 hour' where id=$1`, [cs[0].item_id]);
+    const r = (await q(`select * from public.stop_waitlist_batch($1,$2,$3,600)`, [f.studioId, f.userId, b[0].batch_id]))[0];
+    expect(r).toMatchObject({ result: "stopped", cancelled: 1 });
+    const st = Object.fromEntries((await items(b[0].batch_id)).map((x: any) => [x.id, x.state]));
+    expect(st[cs[0].item_id]).toBe("skipped"); expect(st[cs[1].item_id]).toBe("claimed");
+  });
+  it("stop racing a claim: every item is either claimed or cancelled, never both, never lost", async () => {
+    for (let k = 0; k < 5; k++) {
+      const f = await seed(`cr${k}`); const ids = await entries(f, 6);
+      const b = await create(f, ids, { fit: 0, shown: 0 });
+      const [claimed, cancelled] = await Promise.all([claim(100, 1000), q(`select * from public.stop_waitlist_batch($1,$2,$3,600)`, [f.studioId, f.userId, b[0].batch_id])]);
+      const rows = await items(b[0].batch_id);
+      const nClaimed = rows.filter((r: any) => r.state === "claimed").length, nSkipped = rows.filter((r: any) => r.state === "skipped").length;
+      expect(nClaimed + nSkipped).toBe(6); expect(claimed.length).toBe(nClaimed); expect(cancelled[0].cancelled).toBe(nSkipped);
+    }
   });
   it("a claimed item authorises only what the batch stored: another service, window, weekdays or TTL is batch_item_invalid and the item stays claimed", async () => {
     const f = await seed("f3"); const other = await q(`insert into public.services (studio_id,name,default_duration_minutes,active,modality) values ($1,'Other',30,true,'consultation') returning id`, [f.studioId]);

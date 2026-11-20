@@ -3,7 +3,7 @@
   "migrations": {
     "count": 277,
     "last": "0363_waitlist_batch_and_replace.sql",
-    "sha256": "20e3a0aee97a8f32eea06ce18e5e4046330c38acfe0f4a655efa22d5f11f862d"
+    "sha256": "25e1c1dbec785b48cce7321852b6636a74e3a6fb019171903535b132b8dcc0de"
   },
   "public": {
     "tables": [
@@ -579,6 +579,7 @@
       "soft_delete_session_area",
       "soft_delete_session_block",
       "start_session",
+      "stop_waitlist_batch",
       "stripe_account_provisioning_payment_country",
       "studio_account_acceptable_for_jurisdiction",
       "studio_capacity_enabled",
