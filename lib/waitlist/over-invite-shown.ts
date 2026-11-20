@@ -6,7 +6,23 @@ import type { ItemRow } from "./over-invite-progress";
 export const BATCHES_SHOWN = 10;
 const READ_PAGE = 1000;
 
-type Reader = { from: (table: string) => any };
+// The owner-session reads these helpers make: a minimal structural shape of the query builder (so no `any`), satisfied by the app's server client
+// through `asReader`. Each helper only chains the filters shown here.
+type Row = Record<string, unknown>;
+type Result = PromiseLike<{ data: Row[] | null; error: unknown }>;
+type One = PromiseLike<{ data: Row | null; error: unknown }>;
+export type Query = Result & {
+  select: (columns: string) => Query;
+  eq: (column: string, value: unknown) => Query;
+  in: (column: string, values: readonly unknown[]) => Query;
+  order: (column: string, options?: { ascending: boolean }) => Query;
+  limit: (count: number) => Query;
+  range: (from: number, to: number) => Query;
+  maybeSingle: () => One;
+};
+export type Reader = { from: (table: string) => Query };
+/** The one place the app's server client is narrowed to the shape above. */
+export const asReader = (client: unknown): Reader => client as Reader;
 
 export type ShownBatch = { id: string; confirmed_at: string; quantity: number; fit_shown: number; live_shown: number };
 

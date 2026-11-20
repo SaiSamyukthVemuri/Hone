@@ -9,7 +9,7 @@ import { computeConsultationFit } from "@/lib/waitlist/send-time-fit";
 import { newBatchKey } from "@/lib/waitlist/over-invite-selection";
 import { previewSelection } from "@/lib/waitlist/over-invite-port";
 import { tallyItems } from "@/lib/waitlist/over-invite-progress";
-import { loadBatchItems, loadShownBatches } from "@/lib/waitlist/over-invite-shown";
+import { asReader, loadBatchItems, loadShownBatches } from "@/lib/waitlist/over-invite-shown";
 import type { Candidate } from "@/lib/waitlist/recipient-chooser";
 import { retryFailedDeliveriesAction, retryUnknownDeliveriesAction, sendOverInviteAction, stopBatchAction } from "./actions";
 
@@ -44,7 +44,7 @@ async function waitingNames(studioId: string): Promise<Candidate[] | null> {
 
 /** This studio's most recent confirmed batches and where each stands. The retry acts on exactly these (see over-invite-shown.ts). */
 async function batchViews(studioId: string): Promise<BatchView[]> {
-  const supabase = await createClient();
+  const supabase = asReader(await createClient());
   const batches = await loadShownBatches(supabase, studioId);
   if (!batches) return [];
   const views: BatchView[] = [];

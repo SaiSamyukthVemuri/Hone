@@ -106,7 +106,9 @@ async function runOne(deps: WorkerDeps, item: ClaimedItem): Promise<ItemOutcome>
     // Unknown whether the command ran. The item stays claimed and is reclaimed after its lease; never settled blind.
     return { ...base, status: "failed", reason: "settle_failed" };
   }
-  if (!admit.ok) return skip("admit_unavailable");
+  // A command that could not be reached or answered badly is TRANSIENT, exactly like a thrown error: nothing is known to have happened, so the item
+  // stays claimed and is reclaimed after its lease. Only a definitive refusal from the command settles the item skipped.
+  if (!admit.ok) return { ...base, status: "failed", reason: "settle_failed" };
   if (admit.result !== "admitted" || !("issued" in admit)) return skip(reasonFor(admit.result));
 
   let state: DeliveryState;

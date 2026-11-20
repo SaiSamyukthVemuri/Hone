@@ -12,7 +12,7 @@ import { createBatch, previewSelection, stopBatch } from "@/lib/waitlist/over-in
 import { retryByKind, runRounds } from "@/lib/waitlist/over-invite-run";
 import { DEFAULT_LIMITS } from "@/lib/waitlist/over-invite-worker";
 import { createClient } from "@/lib/supabase/server";
-import { loadRefusedTargets, loadUnknownTargets } from "@/lib/waitlist/over-invite-shown";
+import { asReader, loadRefusedTargets, loadUnknownTargets } from "@/lib/waitlist/over-invite-shown";
 import { RETRY_CLICK_MAX } from "@/lib/waitlist/over-invite-progress";
 import { OVER_INVITE_NOTICES as N, type OverInviteResult } from "@/lib/waitlist/over-invite-result";
 
@@ -181,7 +181,7 @@ async function retryAction(kind: "refused" | "unknown", formData: FormData): Pro
     if (formData.get(kind === "refused" ? "confirmRetry" : "confirmRetryUnknown") !== "on") return { state: "notice", notice: kind === "refused" ? N.needRetryConfirm : N.needUnknownConfirm };
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
     if (practitioner.role !== "owner" || !practitioner.user_id) return { state: "notice", notice: N.ownerOnly };
-    const supabase = await createClient();
+    const supabase = asReader(await createClient());
     const targets = kind === "refused" ? await loadRefusedTargets(supabase, studio.id) : await loadUnknownTargets(supabase, studio.id);
     if (targets === null) return { state: "notice", notice: N.unavailable };
     if (targets.length === 0) return { state: "notice", notice: kind === "refused" ? N.nothingToRetry : N.nothingUnknownToRetry };

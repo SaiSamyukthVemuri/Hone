@@ -43,6 +43,21 @@ describe("over-invite worker", () => {
     expect(calls).toEqual(["settle:i1:skipped:no_capacity"]);
     expect(r.ok && r.outcomes[0]).toMatchObject({ status: "skipped", reason: "no_capacity" });
   });
+  it("a transient admit failure (unavailable, not applied, bad shape) leaves the item claimed and settles nothing, like a thrown error", async () => {
+    for (const code of ["unavailable", "not_applied", "bad_shape"] as const) {
+      const { d, calls } = deps({ admit: async () => ({ ok: false, code }) });
+      const r = await runBatchChunk(d, undefined, BG);
+      expect(calls).toEqual([]);
+      expect(r.ok && r.outcomes[0].status).toBe("failed");
+    }
+  });
+  it("only a definitive refusal from the command settles the item skipped", async () => {
+    for (const result of ["no_capacity", "invalid_service", "pending_owner_review", "refused"]) {
+      const { d, calls } = deps({ admit: async () => ({ ok: true, result }) });
+      await runBatchChunk(d, undefined, BG);
+      expect(calls).toEqual([`settle:i1:skipped:${result}`]);
+    }
+  });
   it("a command that cannot be reached leaves the item claimed (no blind settle)", async () => {
     const { d, calls } = deps({ admit: async () => { throw new Error("x"); } });
     const r = await runBatchChunk(d, undefined, BG);

@@ -2,6 +2,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { admitBatchItem, claimItems, replaceInvitation, settleItem } from "@/lib/waitlist/over-invite-port";
 import { deliverIssued, mayStillSend } from "@/lib/waitlist/over-invite-deliver";
+import type { Reader } from "@/lib/waitlist/over-invite-shown";
 import { RETRY_CLICK_MAX } from "@/lib/waitlist/over-invite-progress";
 import type { ClaimMode } from "@/lib/waitlist/over-invite-port";
 import { DEFAULT_LIMITS, ITEM_BUDGET_MS, SPACING_MS, runBatchChunk, type DeliveryState, type ItemOutcome, type WorkerDeps } from "@/lib/waitlist/over-invite-worker";
@@ -87,7 +88,7 @@ export async function retryByKind(
   studioId: string,
   actorUserId: string,
   targets: readonly { entryId: string; itemId: string }[],
-  reader: { from: (table: string) => any },
+  reader: Reader,
 ): Promise<RetryOutcome[]> {
   const db = createAdminClient();
   return retryDeliveries(

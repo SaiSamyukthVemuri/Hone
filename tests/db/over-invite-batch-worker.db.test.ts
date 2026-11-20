@@ -170,11 +170,46 @@ describe("over-invite worker against the real batch commands", () => {
       [{ entryId: refused!.entryId, itemId: refused!.itemId, studioId: f.studioId }],
     );
     expect(retried[0].status).toBe("sent");
+    // The retry's final settle is RECORDED by the real command (not answered state_changed): the item is sent, under the new invitation.
+    expect(await q(`select state, reason_class from public.waitlist_invitation_batch_items where id=$1`, [refused!.itemId])).toEqual([{ state: "sent", reason_class: null }]);
     const live = await q(
       `select count(*)::int c from public.new_client_waitlist_invitations where studio_id=$1 and released_at is null and redeemed_at is null`,
       [f.studioId],
     );
     expect(live[0].c).toBe(3);
+  });
+
+  it("every retry outcome is recorded by the real commands: sent, refused again and unknown again, from both retry kinds", async () => {
+    const f = await seed("rr");
+    const ids = await entries(f, 4);
+    await batch(f, ids, { fit: 0 });
+    // ids[0], ids[1] end refused; ids[2], ids[3] end unknown.
+    const out = await drain(deps((e) => (e === ids[0] || e === ids[1] ? "refused" : "unknown")));
+    const item = (entryId: string) => out.find((o) => o.entryId === entryId)!.itemId;
+    const retry = (kind: "refused" | "unknown", entryId: string, deliver: DeliveryState) =>
+      retryDeliveries(
+        {
+          kind,
+          stillRetryable: async ({ itemId }) => {
+            const [row] = await q(`select state, invitation_id from public.waitlist_invitation_batch_items where id=$1`, [itemId]);
+            return { state: row.state, invitationId: row.invitation_id };
+          },
+          replace: (e, expected) => replaceInvitation(db, { studioId: f.studioId, actorUserId: f.userId, entryId: e, expectedInvitationId: expected }),
+          deliver: async () => deliver,
+          settle: (t, o, r, expected, inv) => settleItem(db, t, o, r, expected ?? null, inv ?? null),
+          sleep: async () => {},
+        },
+        [{ entryId, itemId: item(entryId), studioId: f.studioId }],
+      );
+    const state = async (entryId: string) => (await q(`select state, reason_class from public.waitlist_invitation_batch_items where id=$1`, [item(entryId)]))[0];
+    expect((await retry("refused", ids[0], "accepted"))[0].status).toBe("sent");
+    expect(await state(ids[0])).toEqual({ state: "sent", reason_class: null });
+    expect((await retry("refused", ids[1], "refused"))[0]).toMatchObject({ status: "failed", reason: "delivery_refused" });
+    expect(await state(ids[1])).toEqual({ state: "failed", reason_class: "delivery_refused" });
+    expect((await retry("unknown", ids[2], "accepted"))[0].status).toBe("sent");
+    expect(await state(ids[2])).toEqual({ state: "sent", reason_class: null });
+    expect((await retry("unknown", ids[3], "unknown"))[0]).toMatchObject({ status: "failed", reason: "delivery_unknown" });
+    expect(await state(ids[3])).toEqual({ state: "failed", reason_class: "delivery_unknown" });
   });
 
   it("a studio's owner cannot batch another studio's entries (isolation)", async () => {
