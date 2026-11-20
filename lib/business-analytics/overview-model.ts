@@ -101,6 +101,8 @@ export type ByPractitionerRow = { key: string; label: string; collectedCents: nu
 export type OverviewView = {
   currentLabel: string;
   comparisonLabel: string;
+  /** The current period's first and last local dates: used for a file name, never a person. */
+  currentRange: { startLocal: string; lastLocal: string };
   notes: string[];
   partial: boolean;
   clamped: boolean;
@@ -326,6 +328,7 @@ export function buildOverview(input: OverviewInput): OverviewView {
   const view: OverviewView = {
     currentLabel: input.period.currentLabel,
     comparisonLabel: input.period.comparisonLabel,
+    currentRange: { startLocal: input.period.current.startLocal, lastLocal: input.period.current.lastLocal },
     notes: input.period.notes,
     partial: input.period.partial,
     clamped: input.period.clamped,
