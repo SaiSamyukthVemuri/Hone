@@ -7,6 +7,8 @@ import { RETRY_CLICK_MAX } from "@/lib/waitlist/over-invite-progress";
 import type { ClaimMode } from "@/lib/waitlist/over-invite-port";
 import { DEFAULT_LIMITS, ITEM_BUDGET_MS, SPACING_MS, runBatchChunk, type DeliveryState, type ItemOutcome, type WorkerDeps } from "@/lib/waitlist/over-invite-worker";
 import { retryDeliveries, type RetryKind, type RetryOutcome } from "@/lib/waitlist/over-invite-retry";
+/** The background route's round budget. Lives here, not in the route file: a Next route may export only its handlers and config fields. */
+export const OVER_INVITE_CRON_BUDGET_MS = 40_000;
 
 // The ONLY two places that drive the over-invite worker: the confirm action's first round and the cron route. Both call `runRounds`. Pacing is
 // this module's constant (SPACING_MS in the worker), not an environment read.

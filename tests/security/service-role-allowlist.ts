@@ -49,7 +49,7 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     path: "lib/waitlist/over-invite-deliver.ts",
     purpose: "Delivery of one invitation email for a claimed batch item: re-read of the entry's stored address and status, the studio's sender details, and the observed-delivery record.",
     why: "Internal server-only helper used by the worker and the owner's retry after the claim or replace has authorised the item. Every read is scoped by the studio id the item itself names (and the entry id), the address is read server-side and never taken from a form or a request, and nothing here returns an address, a name or a token to a caller. It sends only the existing invitation email, with no SMS path.",
-    scopeGuard: 'studio_id", studioId',
+    scopeGuard: '.eq("studio_id", studioId)',
   },
   {
     path: "lib/waitlist/over-invite-run.ts",
