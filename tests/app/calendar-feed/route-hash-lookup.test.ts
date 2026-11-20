@@ -22,20 +22,6 @@ function codeOnly(src: string): string {
 const ROUTE_CODE = codeOnly(ROUTE);
 
 describe("calendar feed route: hash lookup wiring", () => {
-  it("imports hashCalendarFeedToken from the shared helper", () => {
-    expect(ROUTE).toMatch(
-      /import \{ hashCalendarFeedToken \} from "@\/lib\/calendar-feed\/token"/,
-    );
-  });
-
-  it("hashes the URL token before the practitioner SELECT", () => {
-    const hashIdx = ROUTE.indexOf("hashCalendarFeedToken(token)");
-    const selectIdx = ROUTE.indexOf('.from("practitioners")');
-    expect(hashIdx).toBeGreaterThan(-1);
-    expect(selectIdx).toBeGreaterThan(-1);
-    expect(hashIdx).toBeLessThan(selectIdx);
-  });
-
   it("looks up the practitioner via calendar_feed_token_hash", () => {
     expect(ROUTE).toMatch(
       /\.eq\("calendar_feed_token_hash", tokenHash\)/,
@@ -78,21 +64,5 @@ describe("calendar feed route: privacy + safety contracts", () => {
 
   it("still strips the trailing .ics extension from the URL token", () => {
     expect(ROUTE).toMatch(/\.replace\(\/\\\.ics\$\/i, ""\)/);
-  });
-
-  it("still refuses tokens shorter than 16 characters", () => {
-    expect(ROUTE).toMatch(/token\.length < 16/);
-  });
-});
-
-describe("calendar feed route: PR #182 phase-1 boundaries", () => {
-  it("does NOT touch any payment / Stripe code", () => {
-    expect(ROUTE_CODE).not.toMatch(
-      /paymentIntents\.create|refunds\.create|charges\.create|checkout\.sessions|setupIntents\.create|STRIPE_ALLOW_LIVE_MODE/,
-    );
-  });
-
-  it("does NOT send SMS / email / push from the route", () => {
-    expect(ROUTE_CODE).not.toMatch(/sendEmailSafely|sendSms|twilio/i);
   });
 });

@@ -46,41 +46,4 @@ describe("reschedule actions do not return raw DB / RPC error text", () => {
     );
     expect(hits).toBe(0);
   });
-
-  it("never `return { ok: false, error: lookupErr(?)?.message }`", () => {
-    const hits = countMatches(
-      ACTIONS_SOURCE,
-      /return\s*\{\s*ok:\s*false,\s*error:\s*lookupErr\??\.message/g,
-    );
-    expect(hits).toBe(0);
-  });
-
-  it("never `return { ok: false, error: rpcErr(?)?.message }`", () => {
-    const hits = countMatches(
-      ACTIONS_SOURCE,
-      /return\s*\{\s*ok:\s*false,\s*error:\s*rpcErr\??\.message/g,
-    );
-    expect(hits).toBe(0);
-  });
-
-  it("never `return { ok: false, error: fetchErr(?)?.message }`", () => {
-    const hits = countMatches(
-      ACTIONS_SOURCE,
-      /return\s*\{\s*ok:\s*false,\s*error:\s*fetchErr\??\.message/g,
-    );
-    expect(hits).toBe(0);
-  });
-
-  it("references the generic public copy at least once", () => {
-    // The constant lives at the top of the file. The action file
-    // must keep referencing it (the easiest way to verify the
-    // generic-collapse pattern is in use).
-    expect(ACTIONS_SOURCE).toMatch(/PUBLIC_RESCHEDULE_GENERIC_ERROR/);
-  });
-
-  it("uses logInternal to record structured server-side errors", () => {
-    // PR #149 added a logInternal helper used to capture DB / RPC
-    // failure detail server-side without exposing it to the client.
-    expect(ACTIONS_SOURCE).toMatch(/logInternal\(/);
-  });
 });

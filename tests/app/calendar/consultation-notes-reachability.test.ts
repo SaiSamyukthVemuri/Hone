@@ -5,11 +5,11 @@ import path from "node:path";
 // Consultation + skin/hair notes must be REACHABLE from the appointment.
 //
 // Both note kinds already existed and already worked; Chloe could not find
-// them. So these tests pin the reachability contract itself — the CTA, its
-// destination, the modality scoping, and the fact that nothing here became a
-// second writer. The rendered journey is proved in the browser
-// (e2e/clinical-notes.spec.ts); this file pins the wiring that browser test
-// depends on, and the invariants a browser test cannot see.
+// them. The rendered journey (card mounted, CTA, destination, modality scoping,
+// Chart session beside it) is proved in the browser
+// (e2e/clinical-notes.spec.ts); this file pins only the branches that journey
+// does not visit and the invariants a browser test cannot see, including that
+// nothing here became a second writer.
 
 const REPO = path.resolve(__dirname, "../../..");
 const read = (p: string) => readFileSync(path.join(REPO, p), "utf8");
@@ -19,54 +19,7 @@ const APPT = read("app/(app)/calendar/[id]/page.tsx");
 const TABS = read("lib/clients/profile-tabs.ts");
 const TAB_MODEL = read("components/profile-tab.ts");
 
-describe("G1 — the appointment reaches the notes", () => {
-  it("the card is mounted on the appointment page", () => {
-    expect(APPT).toMatch(/import \{ ConsultationNotesCard \}/);
-    expect(APPT).toMatch(/<ConsultationNotesCard/);
-  });
-
-  it("the CTA deep-links to the EXISTING consultation tab, not a new route", () => {
-    expect(CARD).toMatch(
-      /href = `\/clients\/\$\{clientId\}\?tab=treatment`/,
-    );
-    // No invented route, and no note-composer of its own.
-    expect(CARD).not.toMatch(/\/consultation\/new|\/notes\/new/);
-  });
-
-  // SOURCE-STRUCTURE test, not a rendering test. The earlier name claimed the
-  // CTA "is scoped to consultation modality", which a regex cannot establish —
-  // and the old proximity pattern (/isConsultation[\s\S]{0,120}Record .../)
-  // would still have matched if the ternary were INVERTED, i.e. the exact
-  // regression it named. It now pins the TRUE branch of each ternary, so an
-  // inversion fails here. Runtime scoping is proved in the browser:
-  // e2e/clinical-notes.spec.ts asserts the record CTA on a consultation
-  // appointment.
-  it("source: the record CTA is the TRUE branch of the isConsultation ternary", () => {
-    // testid ternary: true -> record, false -> view.
-    expect(CARD).toMatch(
-      /isConsultation\s*\?\s*"appointment-record-consultation-notes"\s*:\s*"appointment-view-consultation-notes"/,
-    );
-    // label ternary: true -> "Record consultation notes".
-    expect(CARD).toMatch(/isConsultation\s*\?\s*\n?\s*"Record consultation notes"/);
-    // And the page derives that flag from the SERVICE modality it already has.
-    expect(APPT).toMatch(
-      /isConsultation=\{data\.service\?\.modality === "consultation"\}/,
-    );
-  });
-
-  // SOURCE-ORDER test. That ChartSessionCard actually RENDERS beside the notes
-  // card on a real consultation appointment is proved in the browser
-  // (e2e/clinical-notes.spec.ts asserts the "+ Chart session" link and its
-  // appointment-scoped href). This only pins that the notes card was ADDED
-  // after it in the tree rather than replacing it.
-  it("source: the notes card is added after ChartSessionCard, not in place of it", () => {
-    expect(APPT).toMatch(/<ChartSessionCard/);
-    const chartAt = APPT.indexOf("<ChartSessionCard");
-    const notesAt = APPT.indexOf("<ConsultationNotesCard");
-    expect(chartAt).toBeGreaterThan(-1);
-    expect(notesAt).toBeGreaterThan(chartAt);
-  });
-
+describe("G1 — the card renders nothing when it has nothing to offer", () => {
   it("source: a client-less card early-returns null rather than build a link", () => {
     expect(CARD).toMatch(/if \(!clientId\) return null;/);
   });
@@ -77,20 +30,7 @@ describe("G1 — the appointment reaches the notes", () => {
   });
 });
 
-describe("G2 — pre-visit note context reuses the existing authority", () => {
-  it("reads through the EXISTING summary helper, adding no new query shape", () => {
-    expect(APPT).toMatch(
-      /import \{ getClinicalNotesSummary \} from "@\/lib\/clinical-notes\/queries"/,
-    );
-  });
-
-  it("source: each kind's block is guarded by its own presence check", () => {
-    expect(CARD).toMatch(/\{consultation && \(/);
-    expect(CARD).toMatch(/\{skinHair && \(/);
-    expect(CARD).toMatch(/Consultation note/);
-    expect(CARD).toMatch(/Skin\/hair analysis/);
-  });
-
+describe("G2 — pre-visit note context", () => {
   // That the CURRENT (non-superseded) entry is what actually appears is proved
   // against real records in e2e/clinical-notes.spec.ts, which writes a note,
   // revises it, and asserts the appointment card shows the revision and NOT

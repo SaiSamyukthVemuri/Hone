@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // PR B Part 4 — the internal booking action routes through the canonical
-// command and never self-assigns or leaks raw DB text.
+// command. Actor/target forwarding is proved behaviourally in
+// booking-post-commit-safety.test.ts, which also holds the raw-error tripwire.
 
 const ACTIONS = readFileSync(
   join(process.cwd(), "app/(app)/calendar/actions.ts"),
@@ -19,13 +20,6 @@ describe("bookAppointmentForClientAction — canonical command wiring", () => {
     expect(ACTIONS).not.toMatch(/p_duration_minutes:/);
     expect(ACTIONS).toMatch(/p_duration_override_minutes: durationOverride/);
     expect(ACTIONS).toMatch(/p_allow_outside_availability: allowOutsideAvailability/);
-  });
-
-  it("passes an explicit actor + target practitioner (no silent self-assign in the insert)", () => {
-    expect(ACTIONS).toMatch(/p_actor_practitioner_id: practitioner\.id/);
-    expect(ACTIONS).toMatch(/p_target_practitioner_id: targetPractitionerId/);
-    // The old direct insert that hard-coded practitioner_id is gone.
-    expect(ACTIONS).not.toMatch(/\.from\("appointments"\)\s*\.insert\(/);
   });
 
   it("resolves the target only for an owner (either capacity mode); everyone else books for self", () => {

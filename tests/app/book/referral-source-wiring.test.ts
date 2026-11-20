@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// PR #163. Source-grep tests that pin the wiring of the new
-// referral_source field across every surface it touches: the
-// migration, the Appointment TS type, the public booking form, the
-// public booking action, the practitioner notification email, the
-// appointment detail page. A future refactor that drops one of the
+// PR #163. Source-grep tests that pin the wiring of the
+// referral_source field across the surfaces no behavioural test
+// drives: the public booking form, the public booking action, the
+// practitioner notification email, the appointment detail page, and
+// its absence from client-facing surfaces. A refactor that drops one of the
 // surfaces would either silently leak the field out of the practitioner
 // view (no more attribution) or silently drop the value at insert (no
 // more capture). Both are caught here.
@@ -107,12 +107,6 @@ describe("public booking form renders the 'How did you hear about us?' question"
 describe("public booking action validates + persists referral_source", () => {
   const ACTIONS = read("app/book/[slug]/actions.ts");
 
-  it("imports parseReferralSource + referralSourceLabel from the shared helper", () => {
-    expect(ACTIONS).toMatch(
-      /import \{\s*parseReferralSource,\s*referralSourceLabel,\s*\} from "@\/lib\/booking\/referral-source"/,
-    );
-  });
-
   it("calls parseReferralSource on the form value and catches the throw", () => {
     expect(ACTIONS).toMatch(/parseReferralSource\(formData\.get\("referral_source"\)\)/);
     // Surrounded by try/catch so a tampered value surfaces the
@@ -137,12 +131,6 @@ describe("public booking action validates + persists referral_source", () => {
 
 describe("practitioner notification email renders How they heard about us when set", () => {
   const TEMPLATE = read("lib/email/templates/appointment.ts");
-
-  it("NotifyPractitioner type carries referralSourceLabel: string | null", () => {
-    const block =
-      TEMPLATE.match(/type NotifyPractitioner = \{[\s\S]*?\};/)?.[0] ?? "";
-    expect(block).toMatch(/referralSourceLabel:\s*string\s*\|\s*null/);
-  });
 
   it("html body renders the row only when referralSourceLabel is truthy", () => {
     expect(TEMPLATE).toMatch(
@@ -170,26 +158,12 @@ describe("practitioner notification helper threads the new field", () => {
   });
 });
 
-describe("practitioner-side booking action passes null (it never asked)", () => {
-  const CALENDAR_ACTIONS = read("app/(app)/calendar/actions.ts");
-
-  it("calendar bookAppointmentForClientAction sends referralSourceLabel: null", () => {
-    expect(CALENDAR_ACTIONS).toMatch(/referralSourceLabel:\s*null/);
-  });
-});
-
 // ---------------------------------------------------------------------------
 // Calendar appointment detail page renders the row when set, omits when null.
 // ---------------------------------------------------------------------------
 
 describe("calendar appointment detail surfaces the practitioner-only row", () => {
   const PAGE = read("app/(app)/calendar/[id]/page.tsx");
-
-  it("imports referralSourceLabel from the shared helper", () => {
-    expect(PAGE).toMatch(
-      /import \{ referralSourceLabel \} from "@\/lib\/booking\/referral-source"/,
-    );
-  });
 
   it("renders a section gated on data.referral_source truthy", () => {
     expect(PAGE).toMatch(
