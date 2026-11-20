@@ -67,3 +67,25 @@ describe("the page never says or enforces a cap of 25 (Sam's quantity rule)", ()
     expect(actions).not.toMatch(/entryIds\.slice\(|\.slice\(0, *25\)/);
   });
 });
+
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+describe("the worker is driven ONLY by the owner's own action (no cron, job or page load)", () => {
+  it("claim and the chunk runner are referenced only by the port, the worker and the owner's two actions", () => {
+    const hits = execFileSync("grep", ["-rlE", "claimItems|claim_waitlist_batch_items|runBatchChunk", "app", "lib", "components", "scripts", "middleware.ts"], { encoding: "utf8" })
+      .split("\n").filter(Boolean).sort();
+    expect(hits).toEqual([
+      "app/(app)/settings/waitlist/over-invite/actions.ts",
+      "lib/waitlist/over-invite-port.ts",
+      "lib/waitlist/over-invite-worker.ts",
+    ]);
+  });
+  it("no route handler, cron or script reaches the over-invite actions or the worker", () => {
+    const r = spawnSync("grep", ["-rlE", "over-invite", "app/api", "scripts", "lib/cron"], { encoding: "utf8" });
+    expect((r.stdout ?? "").split("\n").filter(Boolean)).toEqual([]);
+    const vercel = existsSync("vercel.json") ? read("vercel.json") : "";
+    expect(vercel).not.toMatch(/over-invite|waitlist-batch/);
+    expect(read("app/(app)/settings/waitlist/over-invite/page.tsx")).not.toMatch(/sendOverInviteAction\(|continueOverInviteAction\(|runBatchChunk/);
+  });
+});
+});

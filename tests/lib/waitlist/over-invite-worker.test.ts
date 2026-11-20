@@ -109,3 +109,33 @@ describe("retry through replace", () => {
     expect(r[0]).toMatchObject({ status: "skipped", reason: "invitation_redeemed" });
   });
 });
+
+import { replaceInvitation, admitBatchItem, type ClaimedItem as CI } from "@/lib/waitlist/over-invite-port";
+
+describe("closed result sets (free text never flows onward)", () => {
+  const rpcWith = (row: Record<string, unknown>) => ({ rpc: async () => ({ data: [row], error: null }) }) as never;
+  it("replace answering 'refused:' plus text maps to the closed value 'refused', text dropped", async () => {
+    const r = await replaceInvitation(rpcWith({ result: "refused:person@example.test is blocked" }), { studioId: "s", actorUserId: "a", entryId: "e" });
+    expect(r).toEqual({ ok: true, result: "refused" });
+  });
+  it("an unknown admit code maps to 'refused'", async () => {
+    const item = { itemId: "i", studioId: "s", entryId: "e", actorUserId: "a", serviceId: "v", startDate: "d", endDate: "d", allowedWeekdays: null, ttlHours: 1 } as CI;
+    expect(await admitBatchItem(rpcWith({ result: "some_new_free_text" }), item, null)).toEqual({ ok: true, result: "refused" });
+    expect(await admitBatchItem(rpcWith({ result: "no_capacity" }), item, null)).toEqual({ ok: true, result: "no_capacity" });
+  });
+});
+
+describe("an owner's click never sends another studio's batch", () => {
+  it("items of another studio are neither admitted nor settled, and do not keep the loop alive", async () => {
+    const foreign = { ...item(9), studioId: "other" };
+    let admitted: string[] = [];
+    const { d, calls } = deps({ items: [foreign, item(1)], admit: async (it) => (admitted.push(it.entryId), { ok: true, result: "admitted", issued }) });
+    const r = await runBatchChunk(d, undefined, "s");
+    expect(admitted).toEqual(["e1"]);
+    expect(calls.filter((c) => c.includes("i9"))).toEqual([]);
+    expect(r.ok && r.claimed).toBe(1);
+    const only = deps({ items: [foreign] });
+    const r2 = await runBatchChunk(only.d, undefined, "s");
+    expect(r2.ok && r2.claimed).toBe(0);
+  });
+});

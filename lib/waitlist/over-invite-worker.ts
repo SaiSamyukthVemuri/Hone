@@ -41,17 +41,27 @@ function reasonFor(result: string): string {
   return /^[a-z_]{1,40}$/.test(result) ? result : "refused";
 }
 
-export async function runBatchChunk(deps: WorkerDeps, limits: { perStudio: number; total: number; leaseSeconds: number } = DEFAULT_LIMITS): Promise<ChunkResult> {
+/**
+ * `ownStudioId`: the claim queue is GLOBAL across studios, so a claim can return another studio's confirmed items. An owner's click must never send
+ * another owner's batch: items of any other studio are left exactly as claimed (not admitted, not settled), and the database returns them to the
+ * queue when their lease runs out. They are not counted in `claimed`, so the loop is not kept alive by them.
+ */
+export async function runBatchChunk(
+  deps: WorkerDeps,
+  limits: { perStudio: number; total: number; leaseSeconds: number } = DEFAULT_LIMITS,
+  ownStudioId?: string,
+): Promise<ChunkResult> {
   const claimed = await deps.claim(limits);
   if (!claimed.ok) return { ok: false, code: "claim_failed" };
   const outcomes: ItemOutcome[] = [];
   let first = true;
-  for (const item of claimed.items) {
+  const mine = ownStudioId === undefined ? claimed.items : claimed.items.filter((i) => i.studioId === ownStudioId);
+  for (const item of mine) {
     if (!first) await deps.sleep(SPACING_MS);
     first = false;
     outcomes.push(await runOne(deps, item));
   }
-  return { ok: true, outcomes, claimed: claimed.items.length };
+  return { ok: true, outcomes, claimed: mine.length };
 }
 
 async function runOne(deps: WorkerDeps, item: ClaimedItem): Promise<ItemOutcome> {

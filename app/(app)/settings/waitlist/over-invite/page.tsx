@@ -1,5 +1,6 @@
 import { OwnerOnlyNotice } from "@/components/settings/view-heading";
 import { OverInviteForm } from "@/components/waitlist/over-invite-form";
+import { OverInviteBatches, type OpenBatch } from "@/components/waitlist/over-invite-batches";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { createClient } from "@/lib/supabase/server";
@@ -37,6 +38,34 @@ async function waitingNames(studioId: string): Promise<Candidate[] | null> {
   }
 }
 
+/** This studio's confirmed batches that still have people to send, read through the owner's own session (owner-only select policy). */
+async function openBatches(studioId: string): Promise<OpenBatch[]> {
+  const supabase = await createClient();
+  const { data: items, error } = await supabase
+    .from("waitlist_invitation_batch_items")
+    .select("batch_id,state")
+    .eq("studio_id", studioId)
+    .in("state", ["pending", "claimed"]);
+  if (error || !items || items.length === 0) return [];
+  const remaining = new Map<string, number>();
+  for (const i of items) remaining.set(String(i.batch_id), (remaining.get(String(i.batch_id)) ?? 0) + 1);
+  const { data: batches, error: bErr } = await supabase
+    .from("waitlist_invitation_batches")
+    .select("id,confirmed_at,quantity,fit_shown,live_shown")
+    .eq("studio_id", studioId)
+    .in("id", [...remaining.keys()])
+    .order("confirmed_at", { ascending: true });
+  if (bErr || !batches) return [];
+  return batches.map((b) => ({
+    id: String(b.id),
+    confirmedAt: String(b.confirmed_at),
+    quantity: Number(b.quantity),
+    fitShown: Number(b.fit_shown),
+    liveShown: Number(b.live_shown),
+    remaining: remaining.get(String(b.id)) ?? 0,
+  }));
+}
+
 export default async function OverInvitePage({
   searchParams,
 }: {
@@ -47,6 +76,8 @@ export default async function OverInvitePage({
     return <OwnerOnlyNotice>Only studio owners can invite beyond the estimate.</OwnerOnlyNotice>;
   }
   const params = (await searchParams) ?? {};
+  const open = await openBatches(studio.id);
+  const batchesPanel = <OverInviteBatches batches={open} continueAction={continueOverInviteAction} renderedAt={Date.now()} />;
   const supabase = await createClient();
   const { data: services } = await supabase.from("services").select("id,name,active").eq("studio_id", studio.id).order("name");
   const list = (services ?? []).filter((s) => s.active !== false);
@@ -86,6 +117,7 @@ export default async function OverInvitePage({
     return (
       <main className="flex flex-col gap-4 p-4">
         <h1 className="text-xl font-semibold">Invite beyond the estimate</h1>
+        {batchesPanel}
         {chooser}
       </main>
     );
@@ -111,6 +143,7 @@ export default async function OverInvitePage({
   return (
     <main className="flex flex-col gap-4 p-4">
       <h1 className="text-xl font-semibold">Invite beyond the estimate</h1>
+      {batchesPanel}
       {chooser}
       <OverInviteForm
         action={sendOverInviteAction}

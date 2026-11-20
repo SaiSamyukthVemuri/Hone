@@ -155,7 +155,7 @@ export async function sendOverInviteAction(_prev: OverInviteResult, formData: Fo
     const t0 = Date.now();
     let claimedAny = true;
     while (claimedAny && Date.now() - t0 < CHUNK_BUDGET_MS) {
-      const r = await runBatchChunk(workerDeps(sleepFor));
+      const r = await runBatchChunk(workerDeps(sleepFor), undefined, studio.id);
       if (!r.ok) break;
       outcomes.push(...r.outcomes);
       claimedAny = r.claimed > 0;
@@ -181,13 +181,13 @@ export async function sendOverInviteAction(_prev: OverInviteResult, formData: Fo
 /** Finish a confirmed batch: runs more chunks of the SAME queue. It confirms nothing new and adds no recipient. */
 export async function continueOverInviteAction(prev: OverInviteResult): Promise<OverInviteResult> {
   try {
-    const { practitioner } = await getCurrentPractitionerWithStudio();
+    const { practitioner, studio } = await getCurrentPractitionerWithStudio();
     if (practitioner.role !== "owner" || !practitioner.user_id) return { state: "notice", notice: N.ownerOnly };
     const outcomes: ItemOutcome[] = [];
     const t0 = Date.now();
     let claimedAny = true;
     while (claimedAny && Date.now() - t0 < CHUNK_BUDGET_MS) {
-      const r = await runBatchChunk(workerDeps(sleepFor));
+      const r = await runBatchChunk(workerDeps(sleepFor), undefined, studio.id);
       if (!r.ok) break;
       outcomes.push(...r.outcomes);
       claimedAny = r.claimed > 0;

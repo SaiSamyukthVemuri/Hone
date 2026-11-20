@@ -190,6 +190,17 @@ export type AdmitOutcome =
   | { ok: true; result: string }
   | PortFailure;
 
+// CLOSED SETS. A command's result is mapped into one of these or into "refused": free text from the database (replace used to answer "refused:" plus
+// text) is never returned, shown or logged, and a code this app does not know cannot widen what flows onward.
+export const ADMIT_REFUSAL_CODES = [
+  "no_capacity", "invalid_fit", "invalid_service", "not_found", "not_admissible", "pending_owner_review", "unknown_studio", "batch_item_invalid",
+  "already_invited", "already_declined_offer", "invalid_ttl", "invalid_scope_dates", "no_round_open", "round_full", "not_owner", "invalid_input",
+] as const;
+export const REPLACE_REFUSAL_CODES = [
+  "not_owner", "not_found", "no_live_invitation", "invitation_redeemed", "invalid_service", "pending_owner_review",
+] as const;
+const closed = (result: string, set: readonly string[]): string => (set.includes(result) ? result : "refused");
+
 function issued(r: Record<string, unknown>): IssuedInvitation | null {
   const invitationId = str(r.invitation_id);
   const rawToken = str(r.raw_token);
@@ -219,7 +230,7 @@ export async function admitBatchItem(db: Rpc, item: ClaimedItem, fit: number | n
   const row = rows(data)?.[0];
   const result = str(row?.result);
   if (!row || !result) return { ok: false, code: "bad_shape" };
-  if (result !== "admitted") return { ok: true, result };
+  if (result !== "admitted") return { ok: true, result: closed(result, ADMIT_REFUSAL_CODES) };
   const got = issued(row);
   return got ? { ok: true, result: "admitted", issued: got } : { ok: false, code: "bad_shape" };
 }
@@ -239,7 +250,7 @@ export async function replaceInvitation(db: Rpc, input: { studioId: string; acto
   const row = rows(data)?.[0];
   const result = str(row?.result);
   if (!row || !result) return { ok: false, code: "bad_shape" };
-  if (result !== "replaced") return { ok: true, result };
+  if (result !== "replaced") return { ok: true, result: closed(result, REPLACE_REFUSAL_CODES) };
   const got = issued({ ...row, delivery_email: null, delivery_name: null });
   return got ? { ok: true, result: "replaced", issued: got } : { ok: false, code: "bad_shape" };
 }
