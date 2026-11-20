@@ -3,7 +3,7 @@
   "migrations": {
     "count": 277,
     "last": "0363_waitlist_batch_and_replace.sql",
-    "sha256": "70af55930f1d21ef0b6c6a33240a69fb176e1b5c83ecdf3b728177ac002f1403"
+    "sha256": "20e3a0aee97a8f32eea06ce18e5e4046330c38acfe0f4a655efa22d5f11f862d"
   },
   "public": {
     "tables": [

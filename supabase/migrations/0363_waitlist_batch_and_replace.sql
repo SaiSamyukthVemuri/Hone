@@ -36,7 +36,7 @@ create table if not exists public.waitlist_invitation_batch_items (
   batch_id uuid not null,
   studio_id uuid not null,
   entry_id uuid not null,
-  state text not null default 'pending' check (state in ('pending','claimed','issued','sent','failed','skipped')),
+  state text not null default 'pending' check (state in ('pending','claimed','issued','sent','unknown','failed','skipped')),
   reason_class text check (reason_class is null or reason_class ~ '^[a-z_]{1,40}$'),
   attempts integer not null default 0 check (attempts >= 0),
   invitation_id uuid,
@@ -48,13 +48,13 @@ create table if not exists public.waitlist_invitation_batch_items (
     references public.new_client_waitlist_entries (id, studio_id) on delete cascade,
   constraint waitlist_invitation_batch_items_shape check (
     (state in ('pending','claimed') and invitation_id is null)
-    or (state in ('issued','sent') and invitation_id is not null)
+    or (state in ('issued','sent','unknown') and invitation_id is not null)
     or state in ('failed','skipped')),
   constraint waitlist_invitation_batch_items_skip_reason check (state <> 'skipped' or reason_class is not null)
 );
 -- One entry in at most one ACTIVE batch: two simultaneous owner actions cannot both queue the same person.
 create unique index if not exists waitlist_invitation_batch_items_active_entry
-  on public.waitlist_invitation_batch_items (entry_id) where state in ('pending','claimed','issued','failed');
+  on public.waitlist_invitation_batch_items (entry_id) where state in ('pending','claimed','issued','unknown','failed');
 create index if not exists waitlist_invitation_batch_items_claimable
   on public.waitlist_invitation_batch_items (studio_id, state) where state in ('pending','claimed');
 
@@ -474,7 +474,7 @@ begin
     return query select 'invalid_entries'::text, null::uuid, null::integer, null::integer, null::integer; return;
   end if;
   if exists (select 1 from public.waitlist_invitation_batch_items i
-              where i.entry_id = any (p_entry_ids) and i.state in ('pending','claimed','issued','failed')) then
+              where i.entry_id = any (p_entry_ids) and i.state in ('pending','claimed','issued','unknown','failed')) then
     return query select 'entry_in_other_batch'::text, null::uuid, null::integer, null::integer, null::integer; return;
   end if;
 
@@ -518,7 +518,7 @@ begin
     (select count(*)::integer from public.new_client_waitlist_entries e
       where e.studio_id = p_studio_id and e.id = any (coalesce(p_entry_ids, '{}')) and e.status = 'waiting'
         and not exists (select 1 from public.waitlist_followups f where f.entry_id = e.id and f.status = 'open')
-        and not exists (select 1 from public.waitlist_invitation_batch_items bi where bi.entry_id = e.id and bi.state in ('pending','claimed','issued','failed')));
+        and not exists (select 1 from public.waitlist_invitation_batch_items bi where bi.entry_id = e.id and bi.state in ('pending','claimed','issued','unknown','failed')));
 end;
 $$;
 
@@ -532,6 +532,10 @@ as $$
 declare v_studio uuid; v_left integer; v_take integer; v_rec record;
 begin
   if p_per_studio is null or p_per_studio < 1 or p_total is null or p_total < 1 or p_lease_seconds is null or p_lease_seconds < 5 then return; end if;
+  -- AN ISSUED ITEM NOBODY SETTLED within the lease (the worker died between the issue and the delivery answer) becomes UNKNOWN, never claimable:
+  -- whether the message left is not known, so it is not sent again by itself.
+  update public.waitlist_invitation_batch_items u set state = 'unknown', reason_class = 'delivery_unconfirmed', settled_at = pg_catalog.clock_timestamp()
+   where u.state = 'issued' and u.issued_at < pg_catalog.clock_timestamp() - make_interval(secs => p_lease_seconds);
   v_left := p_total;
   for v_studio in
     select x.studio_id from (
@@ -565,6 +569,10 @@ end;
 $$;
 
 -- settle: records one item's outcome. A SENT item is terminal: settling it again changes nothing (a retry never resends a success).
+-- UNKNOWN is distinct from failed: the invitation was issued but whether it was DELIVERED is not known (a timeout, a lost answer). It is never
+-- claimed or sent again automatically, it still blocks the entry from another batch, and only the owner's separate retry (replace) or a later
+-- confirmation (sent / failed) moves it on. Outcomes: sent (from issued | failed | unknown), failed (same, with a reason class), unknown (from
+-- issued, with a reason class), skipped (from claimed, with a reason class).
 -- Results: settled | already_sent | not_found | invalid_state | invalid_input.
 create or replace function public.settle_waitlist_batch_item(p_item_id uuid, p_studio_id uuid, p_entry_id uuid, p_outcome text, p_reason_class text)
 returns text language plpgsql volatile security definer set search_path = pg_catalog, pg_temp
@@ -576,15 +584,17 @@ begin
   -- missing item ('not_found'), and a null studio or entry is refused rather than treated as "any", so omitting them cannot bypass the check.
   -- THE REASON CLASS IS A CLOSED SHAPE, checked here before anything is written: a free-text value (for example provider text carrying an address)
   -- would otherwise reach the table's check constraint, whose error echoes the value into the error and any log.
-  if p_item_id is null or p_studio_id is null or p_entry_id is null or p_outcome not in ('sent','failed','skipped')
+  if p_item_id is null or p_studio_id is null or p_entry_id is null or p_outcome not in ('sent','failed','skipped','unknown')
      or (p_reason_class is not null and p_reason_class !~ '^[a-z_]{1,40}$') then return 'invalid_input'; end if;
   select i.state into v_state from public.waitlist_invitation_batch_items i
    where i.id = p_item_id and i.studio_id = p_studio_id and i.entry_id = p_entry_id for update;
   if v_state is null then return 'not_found'; end if;
   if v_state = 'sent' then return 'already_sent'; end if;
-  if p_outcome = 'sent' and v_state in ('issued','failed') then
+  if p_outcome = 'sent' and v_state in ('issued','failed','unknown') then
     update public.waitlist_invitation_batch_items set state = 'sent', reason_class = null, settled_at = pg_catalog.clock_timestamp() where id = p_item_id;
-  elsif p_outcome = 'failed' and v_state in ('issued','failed') and p_reason_class is not null then
+  elsif p_outcome = 'unknown' and v_state = 'issued' and p_reason_class is not null then
+    update public.waitlist_invitation_batch_items set state = 'unknown', reason_class = p_reason_class, settled_at = pg_catalog.clock_timestamp() where id = p_item_id;
+  elsif p_outcome = 'failed' and v_state in ('issued','failed','unknown') and p_reason_class is not null then
     update public.waitlist_invitation_batch_items set state = 'failed', reason_class = p_reason_class, settled_at = pg_catalog.clock_timestamp() where id = p_item_id;
   elsif p_outcome = 'skipped' and v_state = 'claimed' and p_reason_class is not null then
     update public.waitlist_invitation_batch_items set state = 'skipped', reason_class = p_reason_class, settled_at = pg_catalog.clock_timestamp() where id = p_item_id;
@@ -659,7 +669,7 @@ begin
     select i.issued_at, i.expires_at into v_issued, v_expires from public.new_client_waitlist_invitations i where i.id = v_issue.invitation_id;
     -- A batch item that pointed at the old invitation follows the new one.
     update public.waitlist_invitation_batch_items bi set invitation_id = v_issue.invitation_id
-     where bi.entry_id = p_entry_id and bi.invitation_id = v_old.id and bi.state in ('issued','failed');
+     where bi.entry_id = p_entry_id and bi.invitation_id = v_old.id and bi.state in ('issued','unknown','failed');
     return query select 'replaced'::text, v_issue.invitation_id, v_issue.raw_token, v_issued, v_expires;
     return;
   exception when sqlstate 'WA001' then

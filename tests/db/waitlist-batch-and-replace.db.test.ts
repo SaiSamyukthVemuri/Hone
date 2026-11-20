@@ -285,6 +285,24 @@ describe("replace, the studio lock and what a claimed item authorises", () => {
     expect(cols.length).toBeGreaterThan(10);
     for (const c of cols) expect(c.column_name, c.column_name).not.toMatch(/token|e_?mail|phone|mobile|name|address|contact|sms/i);
   });
+  it("UNKNOWN is distinct from failed: issued -> unknown needs a reason, is never claimed again, blocks a new batch for the entry, and only a later sent or failed moves it on", async () => {
+    const f = await seed("uk"); const [e1] = await entries(f, 1);
+    await create(f, [e1], { fit: 0, shown: 0 }); const [c1] = await claim(); await admitItem(f, c1.item_id, e1);
+    const st = (o: string, r: string | null) => q(`select public.settle_waitlist_batch_item($1,$2,$3,$4,$5) r`, [c1.item_id, f.studioId, e1, o, r]).then((x) => x[0].r);
+    const state = async () => (await q(`select state from public.waitlist_invitation_batch_items where id=$1`, [c1.item_id]))[0].state;
+    expect(await st("unknown", null)).toBe("invalid_state");
+    expect(await st("unknown", "timeout")).toBe("settled"); expect(await state()).toBe("unknown");
+    expect(await claim(100, 1000, 5)).toHaveLength(0);
+    const again = await create(f, [e1], { fit: 0, shown: 0 }); expect(again[0].result).toBe("entry_in_other_batch");
+    expect(await st("sent", null)).toBe("settled"); expect(await state()).toBe("sent");
+  });
+  it("an issued item nobody settled within the lease becomes unknown on the next claim, and is not handed out", async () => {
+    const f = await seed("us"); const [e1] = await entries(f, 1);
+    await create(f, [e1], { fit: 0, shown: 0 }); const [c1] = await claim(); await admitItem(f, c1.item_id, e1);
+    await q(`update public.waitlist_invitation_batch_items set issued_at = now() - interval '1 hour' where id=$1`, [c1.item_id]);
+    expect(await claim(100, 1000, 60)).toHaveLength(0);
+    expect((await q(`select state, reason_class from public.waitlist_invitation_batch_items where id=$1`, [c1.item_id]))[0]).toMatchObject({ state: "unknown", reason_class: "delivery_unconfirmed" });
+  });
   it("a claimed item authorises only what the batch stored: another service, window, weekdays or TTL is batch_item_invalid and the item stays claimed", async () => {
     const f = await seed("f3"); const other = await q(`insert into public.services (studio_id,name,default_duration_minutes,active,modality) values ($1,'Other',30,true,'consultation') returning id`, [f.studioId]);
     const ids = await entries(f, 5); await create(f, ids, { fit: 0, shown: 0 });
