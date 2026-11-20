@@ -1,5 +1,9 @@
 import Link from "next/link";
 
+import { CONTROL_MIN_TOUCH, FOCUS_RING, cx } from "@/components/ui/control-base";
+
+import { SUMMARY_TONE } from "../statements/statements-chrome";
+
 import { localDateString } from "@/lib/booking/tz";
 
 import { SectionLabel } from "@/components/ui/section-label";
@@ -37,17 +41,19 @@ const UNAVAILABLE: Record<string, string> = {
   month_out_of_range: "That month is outside the range this statement covers (January 2000 to the current month). Nothing is shown.",
 };
 
+const MONTH_STEP = cx("inline-flex items-center rounded-lg border border-line-strong bg-surface px-3 text-sm text-fg hover:bg-surface-sunken", CONTROL_MIN_TOUCH, FOCUS_RING);
+
 function Rows({ bucket, kinds, format }: { bucket: StatementBucket; kinds: readonly StatementKind[]; format: (c: number) => string }) {
   return (
-    <table className="w-full text-sm">
+    <table className="w-full overflow-hidden rounded-xl border border-line bg-surface text-sm">
       <tbody>
         {kinds.map((k) => (
-          <tr key={k} className="border-t border-line">
-            <th scope="row" className="py-2 pr-3 text-left font-normal text-fg">
+          <tr key={k} className="border-t border-line first:border-t-0">
+            <th scope="row" className="px-4 py-2.5 text-left font-normal text-fg">
               {STATEMENT_METHOD_LABELS[k]}
             </th>
-            <td className="py-2 pr-3 text-right text-fg-muted">{bucket.kinds[k].count} {bucket.kinds[k].count === 1 ? "row" : "rows"}</td>
-            <td className="py-2 text-right tabular-nums text-fg">{AMOUNT_KINDS.includes(k) ? format(bucket.kinds[k].cents) : STATEMENT_NO_TOTAL}</td>
+            <td className="px-3 py-2.5 text-right text-fg-muted">{bucket.kinds[k].count} {bucket.kinds[k].count === 1 ? "row" : "rows"}</td>
+            <td className="px-4 py-2.5 text-right tabular-nums text-fg">{AMOUNT_KINDS.includes(k) ? format(bucket.kinds[k].cents) : STATEMENT_NO_TOTAL}</td>
           </tr>
         ))}
       </tbody>
@@ -61,7 +67,7 @@ function Section({ bucket, format }: { bucket: StatementBucket; format: (c: numb
       <div>
         <SectionLabel>Collected</SectionLabel>
         <Rows bucket={bucket} kinds={COLLECTED_KINDS} format={format} />
-        <p className="mt-2 text-sm font-medium text-fg">Collected in total: {format(bucket.collectedCents)}</p>
+        <p className={cx("mt-2 rounded-xl px-4 py-3 text-base font-semibold tabular-nums text-fg", SUMMARY_TONE)}>Collected in total: {format(bucket.collectedCents)}</p>
       </div>
       <div>
         <SectionLabel>Adjustments</SectionLabel>
@@ -89,39 +95,43 @@ export function StatementView({ view, currency, format, maxMonth, notice }: { vi
   const r = statement.reconciliation;
   return (
     <div className="space-y-8">
-      <header className="space-y-2">
-        <h1 className="text-xl font-semibold text-fg">Money statement: {view.label}</h1>
+      <header className="space-y-3">
+        <h1 className="text-3xl font-semibold tracking-tight text-fg">Money statement: {view.label}</h1>
         <p className="text-sm text-fg-muted">
           Visits that started {view.startLocal} to the end of the month, in the studio&apos;s timezone ({view.timezone}). Currency: {currency?.toUpperCase()}.
         </p>
         {notice ? <p className="text-sm text-fg" role="status">{notice}</p> : null}
         <p className="text-sm text-fg">{STATEMENT_FRAMING}</p>
-        <form method="get" action="/financials/statement" className="flex items-end gap-2 text-sm" aria-label="Choose a month">
-          <label className="flex flex-col gap-1 text-fg">
-            Month
-            <input type="month" name="month" defaultValue={view.month} min={STATEMENT_MIN_MONTH} max={maxMonth} className="rounded border border-line px-2 py-1" />
-          </label>
-          <button type="submit" className="rounded border border-line px-3 py-1">Show month</button>
-        </form>
-        <nav className="flex gap-4 text-sm" aria-label="Month">
-          {prev >= STATEMENT_MIN_MONTH ? <Link href={`/financials/statement?month=${prev}`} className="underline">Previous month</Link> : null}
-          {maxMonth === undefined || next <= maxMonth ? <Link href={`/financials/statement?month=${next}`} className="underline">Next month</Link> : null}
-        </nav>
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <nav className="contents" aria-label="Month">
+            {prev >= STATEMENT_MIN_MONTH ? <Link href={`/financials/statement?month=${prev}`} className={MONTH_STEP}><span aria-hidden="true">‹&nbsp;</span>Previous month</Link> : null}
+          </nav>
+          <form method="get" action="/financials/statement" className="flex items-center gap-2" aria-label="Choose a month">
+            <label className="text-fg">
+              <span className="sr-only">Month</span>
+              <input type="month" name="month" defaultValue={view.month} min={STATEMENT_MIN_MONTH} max={maxMonth} className={cx("rounded-lg border border-line-strong bg-surface px-2 text-fg", CONTROL_MIN_TOUCH, FOCUS_RING)} />
+            </label>
+            <button type="submit" className={MONTH_STEP}>Show month</button>
+          </form>
+          <nav className="contents" aria-label="Month">
+            {maxMonth === undefined || next <= maxMonth ? <Link href={`/financials/statement?month=${next}`} className={MONTH_STEP}>Next month<span aria-hidden="true">&nbsp;›</span></Link> : null}
+          </nav>
+        </div>
       </header>
 
       <section className="space-y-3" aria-labelledby="stmt-all">
-        <h2 id="stmt-all" className="text-lg font-medium text-fg">All practitioners</h2>
+        <h2 id="stmt-all" className="text-xl font-semibold tracking-tight text-fg">All practitioners</h2>
         <Section bucket={statement.all} format={format} />
         <p className="text-sm text-fg-muted">{STATEMENT_ADJUSTMENTS_NOTE} {STATEMENT_WRITE_OFFS_NOTE}</p>
         <p className="text-sm text-fg-muted">{STATEMENT_UNRESOLVED_NOTE} {STATEMENT_PARTIAL_REFUND_NOTE}</p>
       </section>
 
       <section className="space-y-3" aria-labelledby="stmt-prac">
-        <h2 id="stmt-prac" className="text-lg font-medium text-fg">By practitioner</h2>
+        <h2 id="stmt-prac" className="text-xl font-semibold tracking-tight text-fg">By practitioner</h2>
         <p className="text-sm text-fg-muted">{STATEMENT_PRACTITIONER_RULE}</p>
         {statement.byPractitioner.length === 0 ? <p className="text-sm text-fg">No recorded money for visits this month.</p> : null}
         {statement.byPractitioner.map((p) => (
-          <div key={p.practitionerId ?? "none"} className="rounded-lg border border-line p-4">
+          <div key={p.practitionerId ?? "none"} className="rounded-xl border border-line bg-surface p-4">
             <h3 className="text-base font-medium text-fg">{p.practitionerId === null ? "Unattributed" : view.practitionerNames[p.practitionerId] ?? STATEMENT_UNNAMED_PRACTITIONER}</h3>
             <Section bucket={p.bucket} format={format} />
           </div>
@@ -129,10 +139,10 @@ export function StatementView({ view, currency, format, maxMonth, notice }: { vi
       </section>
 
       <section className="space-y-3" aria-labelledby="stmt-visits">
-        <h2 id="stmt-visits" className="text-lg font-medium text-fg">Visits</h2>
+        <h2 id="stmt-visits" className="text-xl font-semibold tracking-tight text-fg">Visits</h2>
         {statement.visits.length === 0 ? <p className="text-sm text-fg">No visit has recorded money this month.</p> : null}
         {statement.visits.map((v) => (
-          <details key={v.appointmentId} className="rounded-lg border border-line p-3">
+          <details key={v.appointmentId} className="rounded-xl border border-line bg-surface p-3">
             <summary className="cursor-pointer text-sm text-fg">
               {localDateString(new Date(v.startsAt), view.timezone)}: {nameOf(v.appointmentId)?.clientName}
               {nameOf(v.appointmentId)?.serviceName ? `, ${nameOf(v.appointmentId)?.serviceName}` : ""}
