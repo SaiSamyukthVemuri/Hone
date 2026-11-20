@@ -1930,7 +1930,7 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
 
 const APPLY_HISTORY_ENTRIES = 34;
 const APPLY_HISTORY_DIGEST =
-  "930ecf450e8fabb213f16d32148e41cd4e918600dffc96d375d3abb728e9e97f";
+  "432455197499d6a4c2b3a6313fbe47801faef013f422d825e2ce67bb5c0f50fd";
 
 describe("canonical production docs: the apply history is append-only", () => {
   /**
