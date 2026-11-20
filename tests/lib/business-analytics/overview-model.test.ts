@@ -129,7 +129,7 @@ describe("the practitioner filter", () => {
   });
 });
 
-describe("people labels (Privacy): display name only, opaque keys, former team member", () => {
+describe("people labels: former, unnamed and unattributed", () => {
   const rows = must(buildOverview(input()).byPractitioner);
   it("keys are opaque indexes, never an id or a name", () => {
     expect(rows.map((r) => r.key)).toEqual(["p0", "p1", "p2"]);
