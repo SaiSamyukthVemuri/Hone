@@ -254,7 +254,7 @@ export function StatementView({
             <section aria-labelledby="stmt-find" className="min-w-0 flex-1 basis-60 md:max-w-sm">
               <h2 id="stmt-find" className="sr-only">Find a client</h2>
               {finder.state === "ok" ? (
-                <ClientFinder month={view.month as YearMonth} monthLabel={view.label} clients={finder.clients} monthVisits={null} lastVisits={finder.lastVisits} />
+                <ClientFinder month={view.month as YearMonth} monthLabel={view.label} clients={finder.clients} monthVisits={null} showMonthCount={false} lastVisits={finder.lastVisits} />
               ) : (
                 <p className="text-sm text-fg">{finder.state === "too_many" ? FINDER_TOO_MANY : STATEMENT_READ_UNAVAILABLE.read_failed}</p>
               )}

@@ -40,7 +40,7 @@ export default async function StatementsClientsPage({ searchParams }: { searchPa
   const finder = await loadFinderState(practitioner, studio);
 
   return (
-    <div className="bg-[#fafbf9]">
+    <div className="bg-[#fafbf9] min-[1140px]:-mx-[45px]">
     <ClientsView
       month={month}
       monthLabel={monthRange(month).label}

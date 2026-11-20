@@ -122,14 +122,16 @@ describe("the client statement, restyled", () => {
       expect(part).toMatch(/Practitioner One/);
     }
   });
-  it("the summary card, the Clients totals line and the Studio collected total share ONE sage tone, the approved reference's", () => {
+  it("the summary cards of the Studio tab and the client statement share ONE sage tone, the approved reference's", () => {
     const out = html(docFor([visit()]));
     // the reference stylesheet's own values: #eaf0e7 on a #d1ddce edge
     expect(out).toMatch(/border-\[#d1ddce\][^"]*bg-\[#eaf0e7\]/);
+    // the Clients tab no longer has a tinted summary strip (the reference's header is plain), so only the two card screens use the tone
     for (const f of ["client-statement-view.tsx", "clients-view.tsx", "../statement/statement-view.tsx"]) {
       expect(read("app/(app)/financials/statements/" + f), f).not.toMatch(/bg-success-surface\/\d+/);
-      expect(read("app/(app)/financials/statements/" + f), f).toMatch(/SUMMARY_TONE/);
     }
+    for (const f of ["client-statement-view.tsx", "../statement/statement-view.tsx"]) expect(read("app/(app)/financials/statements/" + f), f).toMatch(/SUMMARY_TONE/);
+    expect(read("app/(app)/financials/statements/clients-view.tsx")).not.toMatch(/SUMMARY_TONE/);
   });
   it("fees are right-aligned numbers in a bordered table with one header row plus one row per visit", () => {
     const out = html(docFor([visit(), visit({ appointmentId: "a2", localDate: "2026-11-04" })]));
