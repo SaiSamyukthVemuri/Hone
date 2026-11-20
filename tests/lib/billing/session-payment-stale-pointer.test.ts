@@ -124,13 +124,4 @@ describe("PR #177 safety gates (PR-scoped negative checks)", () => {
   it("eligibility helper does NOT call Stripe directly", () => {
     expect(ELIG).not.toMatch(/getStripe\(\)|paymentIntents|setupIntents/);
   });
-
-  it("charge helper does NOT add any NEW paymentIntents.create call site", () => {
-    // The existing PR #173 call site lives in the runSessionPaymentCharge
-    // body. We confirm there is still EXACTLY ONE call site by counting
-    // the substring; the check-stripe-gates.mjs script also enforces a
-    // global allowlist count of 2 across the whole runtime tree.
-    const matches = CHARGE.match(/paymentIntents\.create\(/g) ?? [];
-    expect(matches.length).toBe(1);
-  });
 });

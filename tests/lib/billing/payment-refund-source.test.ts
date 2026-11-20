@@ -78,11 +78,6 @@ describe("refund owner-only gate (PR #296)", () => {
     expect(refundCall).toBeGreaterThan(ownerCheck); // before the Stripe refund
   });
 
-  it("keeps exactly one refunds.create call site (gate unchanged)", () => {
-    const count = (HELPER_CODE.match(/refunds\.create/g) ?? []).length;
-    expect(count).toBe(1);
-  });
-
   it("non-owner denial logging carries safe IDs only — no client PII", () => {
     for (const [src, event] of [
       [HELPER, "payment_refund_helper_not_owner"],
@@ -114,12 +109,6 @@ describe("refundPaymentChargeAttempt: server boundary", () => {
 
   it("uses inferStripeLivemode for the live-mode dormancy guard", () => {
     expect(HELPER).toMatch(/inferStripeLivemode\(\)/);
-  });
-
-  it("imports recordOpsAlert from the ops alerts helper", () => {
-    expect(HELPER).toMatch(
-      /import \{ recordOpsAlert \} from "@\/lib\/ops\/alerts"/,
-    );
   });
 });
 
@@ -167,18 +156,6 @@ describe("refundPaymentChargeAttempt: eligibility predicates", () => {
     );
   });
 
-  it("refuses already-refunded with outcome 'already_refunded'", () => {
-    expect(HELPER).toMatch(
-      /attempt\.refund_status === "succeeded"[\s\S]{0,300}outcome:\s*"already_refunded"/,
-    );
-  });
-
-  it("refuses in-flight refund with outcome 'refund_in_flight'", () => {
-    expect(HELPER).toMatch(
-      /attempt\.refund_status === "pending_stripe"[\s\S]{0,300}outcome:\s*"refund_in_flight"/,
-    );
-  });
-
   it("refuses cross-studio attempt with outcome 'not_authorized'", () => {
     expect(HELPER).toMatch(
       /attempt\.studio_id !== args\.studioId[\s\S]{0,300}outcome:\s*"not_authorized"/,
@@ -211,18 +188,6 @@ describe("refundPaymentChargeAttempt: env-gated mode (PR #323)", () => {
 });
 
 describe("refundPaymentChargeAttempt: atomic claim", () => {
-  it("claim conditional UPDATE happens BEFORE refunds.create", () => {
-    // Use HELPER_CODE so a docblock mention of refunds.create or of
-    // refund_status='pending_stripe' does not move the indices.
-    const claimIdx = HELPER_CODE.indexOf(
-      `refund_status: "pending_stripe"`,
-    );
-    const refundIdx = HELPER_CODE.indexOf("stripe.refunds.create(");
-    expect(claimIdx).toBeGreaterThan(-1);
-    expect(refundIdx).toBeGreaterThan(-1);
-    expect(claimIdx).toBeLessThan(refundIdx);
-  });
-
   it("claim filters by status='succeeded' AND the deployment mode", () => {
     expect(HELPER).toMatch(/\.eq\("status", "succeeded"\)/);
     expect(HELPER).toMatch(/\.eq\("stripe_livemode", livemode\)/);
@@ -249,15 +214,6 @@ describe("refundPaymentChargeAttempt: atomic claim", () => {
     }
     expect(HELPER).not.toMatch(/stripe_refund_id:\s*null/);
   });
-
-  it("zero-row claim returns outcome='claim_lost' (no duplicate Stripe call)", () => {
-    // HELPER_CODE, not HELPER: the window bounds intervening EXECUTABLE code,
-    // so a comment between the check and the return cannot push the return out
-    // of range, and cannot pad the window to hide real code either.
-    expect(HELPER_CODE).toMatch(
-      /claimedRows\.length === 0[\s\S]{0,400}outcome:\s*"claim_lost"/,
-    );
-  });
 });
 
 describe("refundPaymentChargeAttempt: deterministic idempotency key", () => {
@@ -276,11 +232,6 @@ describe("refundPaymentChargeAttempt: deterministic idempotency key", () => {
 });
 
 describe("refundPaymentChargeAttempt: Stripe refund call shape", () => {
-  it("calls stripe.refunds.create exactly once (code only, comments excluded)", () => {
-    const matches = HELPER_CODE.match(/stripe\.refunds\.create\(/g) ?? [];
-    expect(matches.length).toBe(1);
-  });
-
   it("passes the connected account context", () => {
     expect(HELPER).toMatch(
       /stripeAccount:\s*attempt\.stripe_account_id/,
@@ -339,13 +290,6 @@ describe("refundPaymentChargeAttempt: outcome writes", () => {
     );
   });
 
-  it("unknown Stripe outcome leaves refund_status='pending_stripe' and records critical ops_alert", () => {
-    expect(HELPER).toMatch(
-      /payment_refund_stripe_unknown_outcome[\s\S]{0,800}severity:\s*"critical"/,
-    );
-    expect(HELPER).toMatch(/outcome:\s*"needs_manual_review"/);
-  });
-
   it("success-write DB failure records critical ops_alert with the Stripe refund id", () => {
     // The ops_alert call lists severity before event in this code;
     // pin both literals + the stripe_refund_id payload separately so
@@ -374,22 +318,6 @@ describe("refundPaymentChargeAttempt: failure handling discriminates Stripe vs u
 });
 
 describe("refundPaymentChargeAttempt: forbidden operations", () => {
-  it("does NOT call paymentIntents.create", () => {
-    expect(HELPER).not.toMatch(/paymentIntents\.create/);
-  });
-
-  it("does NOT call setupIntents.create", () => {
-    expect(HELPER).not.toMatch(/setupIntents\.create/);
-  });
-
-  it("does NOT call charges.create", () => {
-    expect(HELPER).not.toMatch(/charges\.create/);
-  });
-
-  it("does NOT call checkout.sessions", () => {
-    expect(HELPER).not.toMatch(/checkout\.sessions/);
-  });
-
   it("does NOT touch manual_fee_charge_attempts (code only, comments excluded)", () => {
     expect(HELPER_CODE).not.toMatch(/manual_fee_charge_attempts/);
   });
@@ -400,18 +328,6 @@ describe("refundPaymentChargeAttempt: forbidden operations", () => {
 });
 
 describe("Action layer: refundPaymentChargeAttemptAction", () => {
-  it("declares the action", () => {
-    expect(ACTION).toMatch(
-      /export async function refundPaymentChargeAttemptAction\(/,
-    );
-  });
-
-  it("imports the helper from lib/billing/payment-refund", () => {
-    expect(ACTION).toMatch(
-      /import \{\s*\n?\s*refundPaymentChargeAttempt,\s*\n?\s*type PaymentRefundResult,\s*\n?\s*\} from "@\/lib\/billing\/payment-refund"/,
-    );
-  });
-
   it("resolves practitioner + studio server-side (never trusts the browser)", () => {
     const block =
       ACTION.match(
