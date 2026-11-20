@@ -197,7 +197,7 @@ export const ADMIT_REFUSAL_CODES = [
   "already_invited", "already_declined_offer", "invalid_ttl", "invalid_scope_dates", "no_round_open", "round_full", "not_owner", "invalid_input",
 ] as const;
 export const REPLACE_REFUSAL_CODES = [
-  "not_owner", "not_found", "no_live_invitation", "invitation_redeemed", "invalid_service", "pending_owner_review",
+  "not_owner", "not_found", "no_live_invitation", "invitation_redeemed", "invalid_service", "pending_owner_review", "state_changed",
 ] as const;
 const closed = (result: string, set: readonly string[]): string => (set.includes(result) ? result : "refused");
 
@@ -240,11 +240,13 @@ export type ReplaceOutcome =
   | { ok: true; result: string }
   | PortFailure;
 
-export async function replaceInvitation(db: Rpc, input: { studioId: string; actorUserId: string; entryId: string }): Promise<ReplaceOutcome> {
+/** `expectedInvitationId` is the latest invitation the caller re-checked. If another instance already replaced it the command answers `state_changed` and changes nothing. */
+export async function replaceInvitation(db: Rpc, input: { studioId: string; actorUserId: string; entryId: string; expectedInvitationId: string | null }): Promise<ReplaceOutcome> {
   const { data, error } = await db.rpc("replace_waitlist_invitation", {
     p_studio_id: input.studioId,
     p_actor_user_id: input.actorUserId,
     p_entry_id: input.entryId,
+    p_expected_invitation_id: input.expectedInvitationId,
   });
   if (error) return failure(error);
   const row = rows(data)?.[0];
@@ -264,7 +266,8 @@ const REASON = /^[a-z_]{1,40}$/;
 export type SettleTarget = { itemId: string; studioId: string; entryId: string };
 
 /** The item must belong to BOTH the studio and the entry named: a mismatch answers not_found and changes nothing. Pass them from the claimed row. */
-export async function settleItem(db: Rpc, target: SettleTarget, outcome: "sent" | "failed" | "unknown" | "skipped", reasonClass: string | null): Promise<SettleOutcome> {
+export async function settleItem(db: Rpc, target: SettleTarget, outcome: "sent" | "failed" | "unknown" | "skipped", reasonClass: string | null, expectedState: string | null = null): Promise<SettleOutcome> {
+  if (expectedState !== null && !REASON.test(expectedState)) return { ok: false, code: "bad_shape" };
   if (outcome !== "sent" && (reasonClass === null || !REASON.test(reasonClass))) return { ok: false, code: "bad_shape" };
   const { data, error } = await db.rpc("settle_waitlist_batch_item", {
     p_item_id: target.itemId,
@@ -272,6 +275,7 @@ export async function settleItem(db: Rpc, target: SettleTarget, outcome: "sent" 
     p_entry_id: target.entryId,
     p_outcome: outcome,
     p_reason_class: reasonClass,
+    p_expected_state: expectedState,
   });
   if (error) return failure(error);
   const result = str(data);

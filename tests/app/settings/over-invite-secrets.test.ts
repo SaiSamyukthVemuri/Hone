@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   mode: "success" as string,
+  unknownRun: false,
+  replaces: 0,
   spied: [] as string[],
   SECRET: { token: "RAWTOKEN-s3cr3t-xyz", email: "private.person@example.test", name: "Privatename Surname" },
 }));
@@ -15,7 +17,18 @@ vi.mock("next/navigation", () => ({ redirect: (u: string) => { h.spied.push(`red
 vi.mock("@sentry/nextjs", () => ({ captureException: (...a: unknown[]) => h.spied.push(`sentry:${JSON.stringify(a)}`), captureMessage: (...a: unknown[]) => h.spied.push(`sentry:${JSON.stringify(a)}`) }));
 vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: async (...a: unknown[]) => { h.spied.push(`alert:${JSON.stringify(a)}`); } }));
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ from: () => { const c: any = { select: () => c, eq: () => c, then: (r: (v: unknown) => void) => r({ data: [{ id: "00000000-0000-4000-8000-000000000050", entry_id: "00000000-0000-4000-8000-000000000001" }], error: null }) }; return c; } }) }));
+vi.mock("@/lib/supabase/server", () => ({
+  createClient: async () => ({
+    from: (name: string) => {
+      const c: any = {
+        select: () => c, eq: () => c, in: () => c, order: () => c, limit: () => c, range: () => c,
+        maybeSingle: async () => ({ data: { state: h.unknownRun ? "unknown" : "failed", reason_class: "delivery_refused" }, error: null }),
+        then: (r: (v: unknown) => void) => r({ data: name === "waitlist_invitation_batches" ? [{ id: "b", confirmed_at: "2026-11-20", quantity: 1, fit_shown: 0, live_shown: 0 }] : [{ id: "00000000-0000-4000-8000-000000000050", entry_id: "00000000-0000-4000-8000-000000000001" }], error: null }),
+      };
+      return c;
+    },
+  }),
+}));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({}) }));
 vi.mock("@/lib/supabase/queries", () => ({
   getCurrentPractitionerWithStudio: async () => ({
@@ -54,12 +67,12 @@ vi.mock("@/lib/waitlist/over-invite-port", async () => {
       return { ok: true, result: "admitted", issued };
     },
     settleItem: async () => (h.mode === "settle_fails" ? { ok: false, code: "unavailable" } : { ok: true, result: "settled" }),
-    replaceInvitation: async () => (h.mode === "replace_refused" ? { ok: true, result: "refused" } : { ok: true, result: "replaced", issued }),
+    replaceInvitation: async () => (h.replaces++, h.mode === "replace_refused" ? { ok: true, result: "refused" } : { ok: true, result: "replaced", issued }),
   };
 });
 vi.spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void) => { fn(); return 0; }) as never);
 
-import { retryFailedDeliveriesAction as retryOverInviteDeliveriesAction, sendOverInviteAction } from "@/app/(app)/settings/waitlist/over-invite/actions";
+import { retryFailedDeliveriesAction as retryOverInviteDeliveriesAction, retryUnknownDeliveriesAction, sendOverInviteAction } from "@/app/(app)/settings/waitlist/over-invite/actions";
 
 const U = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 function sendForm() {
@@ -77,6 +90,8 @@ const MODES = ["success", "admit_refused", "admit_throws", "deliver_throws", "de
 
 beforeEach(() => {
   h.spied = [];
+  h.replaces = 0;
+  h.unknownRun = false;
   for (const m of ["log", "error", "warn", "info", "debug"] as const) vi.spyOn(console, m).mockImplementation((...a) => { h.spied.push(`console.${m}:${a.map((x) => (x instanceof Error ? `${x.message}${x.stack}` : String(typeof x === "object" ? JSON.stringify(x) : x))).join(" ")}`); });
 });
 const leaked = (text: string) => Object.values(SECRET).filter((s) => text.includes(s));
@@ -108,6 +123,22 @@ describe("no secret reaches a logger, reporter, redirect or result", () => {
       }
       expect(leaked(out)).toEqual([]);
       expect(leaked(h.spied.join("\n"))).toEqual([]);
+      if (mode !== "settle_fails") expect(h.replaces, "the retry really ran (not vacuous)").toBeGreaterThanOrEqual(1);
+    });
+    it(`retry unknown: ${mode}`, async () => {
+      h.mode = mode;
+      h.unknownRun = true;
+      const f = new FormData();
+      f.append("confirmRetryUnknown", "on");
+      let out = "";
+      try {
+        out = JSON.stringify(await retryUnknownDeliveriesAction({ state: "idle" }, f));
+      } catch (e) {
+        out = `THROWN:${(e as Error).message}`;
+      }
+      expect(leaked(out)).toEqual([]);
+      expect(leaked(h.spied.join("\n"))).toEqual([]);
+      if (mode !== "settle_fails") expect(h.replaces, "the unknown retry really ran (not vacuous)").toBeGreaterThanOrEqual(1);
     });
   }
   it("the spies are live: a deliberate console.error is captured (non-vacuity)", () => {

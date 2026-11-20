@@ -8,9 +8,9 @@ import type { ClaimedItem, ClaimOutcome, AdmitOutcome, IssuedInvitation, SettleO
 //  - A REFUSED admit leaves the item CLAIMED, so the worker MUST settle it `skipped` with a reason class, or the lease expires and the item is
 //    claimed and retried forever. Every non-admitted result below settles.
 //  - `no_capacity` on a batch item settles as skipped (the entry stays waiting). A confirmed batch is governed by its own confirmation, not the fit.
-//  - The worker NEVER re-admits and NEVER retries. A refused delivery settles `failed` and an unknown one settles `unknown`; both stay as they are until
-//    the OWNER separately confirms a retry of the refused ones (over-invite-retry.ts, the only module that uses replace). An UNKNOWN delivery is never
-//    retried by anything, because it may have reached the provider and a second send is a duplicate.
+//  - The worker NEVER re-admits and NEVER retries. A refused delivery settles `failed` and an unknown one settles `unknown`; both stay as they are.
+//    An unknown outcome is never retried AUTOMATICALLY: it may have reached the provider, so a second send could be a duplicate. Only the owner's
+//    separately confirmed action may retry it (over-invite-retry.ts, the only module that uses replace), behind a warning that a second email may go out.
 //  - One item in flight, spaced by the caller's sleep; chunk bounded by the claim's `total`. The database enforces none of those.
 //  - Nothing here logs. The admit/replace results carry an email, a name and a raw token: they are passed to `deliver` and dropped.
 
@@ -111,7 +111,7 @@ async function runOne(deps: WorkerDeps, item: ClaimedItem): Promise<ItemOutcome>
     return s.ok ? { ...base, status: "sent" } : { ...base, status: "failed", reason: "settle_failed" };
   }
   // REFUSED is a known failure (only the owner's separately confirmed retry may touch it). UNKNOWN is its own state in the database: the delivery may
-  // have reached the provider, so it is never retried by anything automatic and never by the retry action either.
+  // have reached the provider, so it is never retried automatically; only the owner's separately confirmed action may retry it.
   const reason = state === "refused" ? "delivery_refused" : "delivery_unknown";
   const s = await deps.settle(target, state === "refused" ? "failed" : "unknown", reason);
   return s.ok ? { ...base, status: "failed", reason } : { ...base, status: "failed", reason: "settle_failed" };

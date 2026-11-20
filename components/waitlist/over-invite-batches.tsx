@@ -57,7 +57,7 @@ export function OverInviteBatches({
             <br />
             <span>
               {b.progress.sent} sent · {b.progress.waiting} waiting to send · {b.progress.sending} sending now · {b.progress.refused} refused by the email provider · {b.progress.unknown} outcome unknown ·{" "}
-              {b.progress.skipped} not sent · {b.progress.stopped} stopped{b.progress.otherFailed > 0 ? ` · ${b.progress.otherFailed} failed` : ""}
+              {b.progress.skipped} not sent · {b.progress.stopped} stopped{b.progress.otherFailed > 0 ? ` · ${b.progress.otherFailed} failed (can't be retried here)` : ""}
             </span>
             {b.progress.waiting > 0 ? (
               <form action={stopFormAction as unknown as (formData: FormData) => void} className="mt-1">
@@ -73,7 +73,7 @@ export function OverInviteBatches({
         <form action={formAction as unknown as (formData: FormData) => void} className="flex flex-col gap-2">
           <label className="flex min-h-11 items-start gap-2">
             <input type="checkbox" name="confirmRetry" className="mt-1" />
-            <span>Retry {thisClick} of the {refused} refused deliveries now{refused > thisClick ? ` (each click retries up to ${RETRY_CLICK_MAX}; click again for the rest)` : ""}. Each gets a fresh invitation link and a new email. If an email was in fact delivered without being confirmed, the person receives a second email and the first link stops working.</span>
+            <span>Retry {thisClick} of the {refused} refused deliveries now{refused > thisClick ? ` (each click retries up to ${RETRY_CLICK_MAX}; click again for the rest)` : ""}. Each gets a fresh invitation link and a new email.</span>
           </label>
           <SubmitOnce>Retry refused deliveries</SubmitOnce>
         </form>
@@ -89,6 +89,12 @@ export function OverInviteBatches({
           </label>
           <SubmitOnce>Retry unknown-outcome deliveries</SubmitOnce>
         </form>
+      ) : null}
+      {batches.some((b) => b.progress.otherFailed > 0) ? (
+        <p>
+          Some invitations failed in a way that can&apos;t be retried from here, and we can&apos;t tell whether the person got the email. To invite them again,
+          contact them directly, or remove and re-add them to the waitlist.
+        </p>
       ) : null}
       {unknownNote ? <p role="status">{unknownNote}</p> : null}
       {stopNote ? <p role="status">{stopNote}</p> : null}

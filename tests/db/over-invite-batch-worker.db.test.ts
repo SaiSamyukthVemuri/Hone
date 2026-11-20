@@ -150,10 +150,13 @@ describe("over-invite worker against the real batch commands", () => {
     const retried = await retryDeliveries(
       {
         kind: "refused",
-        stillRetryable: async () => true,
-        replace: (entryId) => replaceInvitation(db, { studioId: f.studioId, actorUserId: f.userId, entryId }),
+        stillRetryable: async ({ itemId }) => {
+          const [row] = await q(`select state, invitation_id from public.waitlist_invitation_batch_items where id=$1`, [itemId]);
+          return { state: row.state, invitationId: row.invitation_id };
+        },
+        replace: (entryId, expectedInvitationId) => replaceInvitation(db, { studioId: f.studioId, actorUserId: f.userId, entryId, expectedInvitationId }),
         deliver: async () => "accepted",
-        settle: (t, o, r) => settleItem(db, t, o, r),
+        settle: (t, o, r, expected) => settleItem(db, t, o, r, expected ?? null),
         sleep: async () => {},
       },
       [{ entryId: refused!.entryId, itemId: refused!.itemId, studioId: f.studioId }],
@@ -238,7 +241,7 @@ describe("over-invite worker against the real batch commands", () => {
     // An invitation's window is immutable in the database, so expiry cannot be forced here; the app-side expiry refusal is covered by the delivery
     // unit tests. What the database must still refuse: replacing an invitation for an entry that has none.
     const fresh = (await entries(f, 1))[0];
-    const r = await replaceInvitation(db, { studioId: f.studioId, actorUserId: f.userId, entryId: fresh });
+    const r = await replaceInvitation(db, { studioId: f.studioId, actorUserId: f.userId, entryId: fresh, expectedInvitationId: null });
     expect(r.ok && r.result).toBe("no_live_invitation");
   });
 });

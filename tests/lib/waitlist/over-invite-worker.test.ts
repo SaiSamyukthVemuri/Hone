@@ -91,7 +91,7 @@ describe("retry through replace", () => {
     const calls: string[] = [];
     const r = await retryDeliveries({
       kind: "refused",
-      stillRetryable: async () => true,
+      stillRetryable: async () => ({ state: "failed", invitationId: "inv-1" }),
       replace: async () => (calls.push("replace"), { ok: true, result: "replaced", issued }),
       deliver: async () => "accepted",
       settle: async (t, o) => (calls.push(`settle:${t.itemId}:${o}`), { ok: true, result: "settled" }),
@@ -104,7 +104,7 @@ describe("retry through replace", () => {
     let delivered = false;
     const r = await retryDeliveries({
       kind: "refused",
-      stillRetryable: async () => true,
+      stillRetryable: async () => ({ state: "failed", invitationId: "inv-1" }),
       replace: async () => ({ ok: true, result: "invitation_redeemed" }),
       deliver: async () => { delivered = true; return "accepted"; },
       settle: async () => ({ ok: true, result: "settled" }),
@@ -120,7 +120,7 @@ import { replaceInvitation, admitBatchItem, type ClaimedItem as CI } from "@/lib
 describe("closed result sets (free text never flows onward)", () => {
   const rpcWith = (row: Record<string, unknown>) => ({ rpc: async () => ({ data: [row], error: null }) }) as never;
   it("replace answering 'refused:' plus text maps to the closed value 'refused', text dropped", async () => {
-    const r = await replaceInvitation(rpcWith({ result: "refused:person@example.test is blocked" }), { studioId: "s", actorUserId: "a", entryId: "e" });
+    const r = await replaceInvitation(rpcWith({ result: "refused:person@example.test is blocked" }), { studioId: "s", actorUserId: "a", entryId: "e", expectedInvitationId: null });
     expect(r).toEqual({ ok: true, result: "refused" });
   });
   it("an unknown admit code maps to 'refused'", async () => {

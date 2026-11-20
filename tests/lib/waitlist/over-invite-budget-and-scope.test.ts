@@ -61,7 +61,7 @@ describe("retry: one click, bounded, and a hang can never lead to a second email
     const run = (state: "refused" | "unknown") =>
       retryDeliveries({
         kind: "refused",
-        stillRetryable: async () => true,
+        stillRetryable: async () => ({ state: "failed", invitationId: "inv-1" }),
         replace: async () => ({ ok: true, result: "replaced", issued }),
         deliver: async () => state,
         settle: async (t, o, r) => (settled.push(`${t.itemId}:${o}:${r}`), { ok: true, result: "settled" }),
@@ -129,7 +129,7 @@ describe("a thrown delivery is UNKNOWN, never refused (worker and retry)", () =>
     const r = await retryDeliveries(
       {
         kind: "refused",
-        stillRetryable: async () => true,
+        stillRetryable: async () => ({ state: "failed", invitationId: "inv-1" }),
         replace: async () => ({ ok: true, result: "replaced", issued }),
         deliver: async () => { throw new Error("boom"); },
         settle: async (t, o, why) => (settled.push(`${o}:${why}`), { ok: true, result: "settled" }),
@@ -162,7 +162,7 @@ describe("retry re-checks each item and never double sends", () => {
     let sends = 0;
     const mk = () => ({
       kind: "refused" as const,
-      stillRetryable: async ({ itemId }: { itemId: string }) => state.get(itemId) === "failed:delivery_refused",
+      stillRetryable: async ({ itemId }: { itemId: string }) => (state.get(itemId) === "failed:delivery_refused" ? { state: "failed", invitationId: "inv-1" } : null),
       replace: async () => ({ ok: true as const, result: "replaced" as const, issued }),
       deliver: async () => { sends += 1; return "accepted" as const; },
       settle: async (t: { itemId: string }, o: string, why: string | null) => {
@@ -180,7 +180,7 @@ describe("retry re-checks each item and never double sends", () => {
   it("an item no longer in the retryable state is skipped, nothing replaced", async () => {
     let replaced = false;
     const r = await retryDeliveries(
-      { kind: "refused", stillRetryable: async () => false, replace: async () => ((replaced = true), { ok: true, result: "replaced", issued }), deliver: async () => "accepted", settle: async () => ({ ok: true, result: "settled" }), sleep: async () => {} },
+      { kind: "refused", stillRetryable: async () => null, replace: async () => ((replaced = true), { ok: true, result: "replaced", issued }), deliver: async () => "accepted", settle: async () => ({ ok: true, result: "settled" }), sleep: async () => {} },
       [{ entryId: "e", itemId: "i", studioId: "s" }],
     );
     expect(replaced).toBe(false);
@@ -189,7 +189,7 @@ describe("retry re-checks each item and never double sends", () => {
   it("a replace that issues nothing puts the item back as it was", async () => {
     const settled: string[] = [];
     await retryDeliveries(
-      { kind: "unknown", stillRetryable: async () => true, replace: async () => ({ ok: true, result: "invitation_redeemed" }), deliver: async () => "accepted", settle: async (_t, o, why) => (settled.push(`${o}:${why}`), { ok: true, result: "settled" }), sleep: async () => {} },
+      { kind: "unknown", stillRetryable: async () => ({ state: "failed", invitationId: "inv-1" }), replace: async () => ({ ok: true, result: "invitation_redeemed" }), deliver: async () => "accepted", settle: async (_t, o, why) => (settled.push(`${o}:${why}`), { ok: true, result: "settled" }), sleep: async () => {} },
       [{ entryId: "e", itemId: "i", studioId: "s" }],
     );
     expect(settled).toEqual(["failed:retry_started", "failed:delivery_unknown"]);
@@ -246,5 +246,95 @@ describe("budget edge: an item that would not fit is never started", () => {
   it("the cron budget plus its margin stays inside the platform cap, and so does confirm's", async () => {
     const cron = await import("@/app/api/cron/waitlist-invitation-batches/route");
     expect(cron.maxDuration).toBeGreaterThanOrEqual(60);
+  });
+});
+
+describe("two server instances racing on one item: exactly one email", () => {
+  it("the second instance's replace answers state_changed (the invitation is no longer the latest), so it sends nothing", async () => {
+    let latest = "inv-1";
+    let sends = 0;
+    const row = { state: "failed", reason: "delivery_refused" as string | null };
+    const issued = { invitationId: "inv-2", rawToken: "t", issuedAt: new Date(), expiresAt: new Date(), deliveryEmail: null, deliveryName: null };
+    const deps = (retryDeliveriesFn: typeof retryDeliveries) => ({
+      kind: "refused" as const,
+      // Both instances read the item BEFORE either replaces.
+      stillRetryable: async () => ({ state: row.state, invitationId: latest }),
+      replace: async (_e: string, expected: string | null) => {
+        if (expected !== latest) return { ok: true as const, result: "state_changed" };
+        latest = "inv-2";
+        return { ok: true as const, result: "replaced" as const, issued };
+      },
+      deliver: async () => { sends += 1; return "accepted" as const; },
+      settle: async (_t: unknown, o: string, why: string | null, expected?: string) => {
+        if (expected !== undefined && expected !== row.state) return { ok: true as const, result: "state_changed" };
+        row.state = o === "sent" ? "sent" : "failed";
+        row.reason = why;
+        return { ok: true as const, result: "settled" };
+      },
+      sleep: async () => {},
+      _fn: retryDeliveriesFn,
+    });
+    const vi_ = await import("vitest");
+    vi_.vi.resetModules();
+    const a = (await import("@/lib/waitlist/over-invite-retry")).retryDeliveries;
+    vi_.vi.resetModules();
+    const b = (await import("@/lib/waitlist/over-invite-retry")).retryDeliveries; // a separate module instance: its in-process guard is separate
+    const target = [{ entryId: "e1", itemId: "i1", studioId: "s" }];
+    const [ra, rb] = await Promise.all([a(deps(a), target), b(deps(b), target)]);
+    expect(sends).toBe(1);
+    expect([ra[0].status, rb[0].status].sort()).toEqual(["sent", "skipped"]);
+  });
+});
+
+describe("nothing is delivered unless replace answered replaced", () => {
+  for (const result of ["state_changed", "refused", "no_live_invitation", "invitation_redeemed", "not_found"]) {
+    it(`replace answers ${result}: no delivery, no sent mark`, async () => {
+      let delivered = 0;
+      const settled: string[] = [];
+      const r = await retryDeliveries(
+        {
+          kind: "unknown",
+          stillRetryable: async () => ({ state: "unknown", invitationId: "inv-1" }),
+          replace: async () => ({ ok: true, result }),
+          deliver: async () => (delivered++, "accepted"),
+          settle: async (_t, o, why, exp) => (settled.push(`${o}:${why}:${exp}`), { ok: true, result: "settled" }),
+          sleep: async () => {},
+        },
+        [{ entryId: "e", itemId: "i-" + result, studioId: "s" }],
+      );
+      expect(delivered).toBe(0);
+      expect(settled.some((x) => x.startsWith("sent"))).toBe(false);
+      expect(r[0].status).toBe("skipped");
+      if (result === "state_changed") expect(settled).toEqual(["failed:retry_started:unknown"]); // left as the other caller has it
+    });
+  }
+  it("the mark and the invitation check receive the values just read", async () => {
+    const seen: string[] = [];
+    await retryDeliveries(
+      {
+        kind: "refused",
+        stillRetryable: async () => ({ state: "failed", invitationId: "INV-X" }),
+        replace: async (_e, expected) => (seen.push(`replace:${expected}`), { ok: true, result: "state_changed" }),
+        deliver: async () => "accepted",
+        settle: async (_t, _o, _w, exp) => (seen.push(`settle:${exp}`), { ok: true, result: "settled" }),
+        sleep: async () => {},
+      },
+      [{ entryId: "e", itemId: "i-pass", studioId: "s" }],
+    );
+    expect(seen).toEqual(["settle:failed", "replace:INV-X"]);
+  });
+});
+
+describe("port passes the expected values and keeps state_changed as a closed code", () => {
+  it("replace sends p_expected_invitation_id; settle sends p_expected_state; state_changed survives the closed set", async () => {
+    const { replaceInvitation, settleItem } = await import("@/lib/waitlist/over-invite-port");
+    const calls: [string, Record<string, unknown>][] = [];
+    const db = { rpc: async (fn: string, args: Record<string, unknown>) => (calls.push([fn, args]), { data: fn.startsWith("replace") ? [{ result: "state_changed" }] : "state_changed", error: null }) };
+    const r = await replaceInvitation(db as never, { studioId: "s", actorUserId: "a", entryId: "e", expectedInvitationId: "INV" });
+    const s = await settleItem(db as never, { itemId: "i", studioId: "s", entryId: "e" }, "failed", "retry_started", "unknown");
+    expect(calls[0][1]).toMatchObject({ p_expected_invitation_id: "INV" });
+    expect(calls[1][1]).toMatchObject({ p_expected_state: "unknown" });
+    expect(r).toEqual({ ok: true, result: "state_changed" });
+    expect(s).toEqual({ ok: true, result: "state_changed" });
   });
 });

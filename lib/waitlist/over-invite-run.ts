@@ -13,7 +13,7 @@ import { retryDeliveries, type RetryKind, type RetryOutcome } from "@/lib/waitli
 const realSetTimeout = globalThis.setTimeout;
 const sleepFor = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-/** Resolves with the delivery state, or "unknown" if the provider takes longer than the per-item budget (it may still arrive; never retried). */
+/** Resolves with the delivery state, or "unknown" if the provider takes longer than the per-item budget (it may still arrive; never retried automatically). */
 function withItemBudget(p: Promise<DeliveryState>): Promise<DeliveryState> {
   return new Promise((resolve) => {
     const timer = realSetTimeout(() => resolve("unknown"), ITEM_BUDGET_MS);
@@ -33,7 +33,7 @@ export function liveWorkerDeps(sleep: (ms: number) => Promise<void> = sleepFor):
     claim: (limits) => claimItems(db, limits),
     admit: (item) => admitBatchItem(db, item, null),
     settle: (target, outcome, reason) => settleItem(db, target, outcome, reason),
-    // An email that takes longer than the per-item budget is reported UNKNOWN (it may still arrive), never retried, and keeps the whole round inside
+    // An email that takes longer than the per-item budget is reported UNKNOWN (it may still arrive), never retried automatically, and keeps the whole round inside
     // the lease: lease > chunk x (spacing + ITEM_BUDGET_MS), pinned by a test.
     deliver: (issued, entryId, item) => withItemBudget(deliverIssued(item.studioId, issued, entryId)),
     mayStillSend: (item) => mayStillSend(item.studioId, item.entryId),
@@ -94,16 +94,18 @@ export async function retryByKind(
     {
       kind,
       stillRetryable: async ({ itemId }) => {
-        const { data } = await reader.from("waitlist_invitation_batch_items").select("state,reason_class").eq("studio_id", studioId).eq("id", itemId).maybeSingle();
-        const row = data as { state?: string; reason_class?: string | null } | null;
-        if (!row) return false;
-        return kind === "refused"
-          ? row.state === "failed" && row.reason_class === "delivery_refused"
-          : row.state === "unknown" || (row.state === "failed" && row.reason_class === "delivery_unknown");
+        const { data } = await reader.from("waitlist_invitation_batch_items").select("state,reason_class,invitation_id").eq("studio_id", studioId).eq("id", itemId).maybeSingle();
+        const row = data as { state?: string; reason_class?: string | null; invitation_id?: string | null } | null;
+        if (!row || typeof row.state !== "string") return null;
+        const ok =
+          kind === "refused"
+            ? row.state === "failed" && row.reason_class === "delivery_refused"
+            : row.state === "unknown" || (row.state === "failed" && row.reason_class === "delivery_unknown");
+        return ok ? { state: row.state, invitationId: typeof row.invitation_id === "string" ? row.invitation_id : null } : null;
       },
-      replace: (entryId) => replaceInvitation(db, { studioId, actorUserId, entryId }),
+      replace: (entryId, expectedInvitationId) => replaceInvitation(db, { studioId, actorUserId, entryId, expectedInvitationId }),
       deliver: (issued, entryId) => withItemBudget(deliverIssued(studioId, issued, entryId)),
-      settle: (target, outcome, reason) => settleItem(db, target, outcome, reason),
+      settle: (target, outcome, reason, expected) => settleItem(db, target, outcome, reason, expected ?? null),
       sleep: sleepFor,
     },
     targets.slice(0, RETRY_CLICK_MAX).map((t) => ({ ...t, studioId })),
