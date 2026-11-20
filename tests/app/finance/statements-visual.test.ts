@@ -108,6 +108,8 @@ describe("the client statement, restyled", () => {
     expect(out).toMatch(/Practitioner One/);
     expect(out).toMatch(/No payment recorded/);
     expect(out).toMatch(/normal-case[^"]*"[^>]*>Paid</);
+    // the shared pill sets small capitals; the override must be !important or the browser still shows "PAID" (found in the browser run, not by markup alone)
+    expect(out).toMatch(/!normal-case !tracking-normal !text-xs/);
   });
   it("the wide table and the stacked phone list EACH carry the badge, the unchanged label and the details (neither is a copy of the other's text)", () => {
     const out = html(docFor([visit()]));

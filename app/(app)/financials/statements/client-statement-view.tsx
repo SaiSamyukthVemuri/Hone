@@ -45,7 +45,7 @@ export type ClientStatementViewProps = {
 
 // The tone is presentation only; the WORDS come from VISIT_STATE_LABEL, unchanged.
 const STATE_TONE: Record<DocumentVisit["state"], StatusTone> = { paid: "success", unknown: "warning", confirmed_unpaid: "warning", adjusted: "neutral", no_charge: "neutral" };
-const PILL = "normal-case tracking-normal text-xs px-2.5 py-1";
+const PILL = "!normal-case !tracking-normal !text-xs px-2.5 py-1"; // the shared pill is small capitals; the statement wants readable sentence case
 const ACTION = cx("inline-flex items-center rounded-lg border border-line-strong bg-surface px-3 text-sm font-medium text-fg hover:bg-surface-sunken", CONTROL_MIN_TOUCH, FOCUS_RING);
 
 /** The expandable part of a visit: everything the row does not show, exactly as before. */
