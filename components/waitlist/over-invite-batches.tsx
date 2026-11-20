@@ -93,7 +93,7 @@ export function OverInviteBatches({
       {batches.some((b) => b.progress.otherFailed > 0) ? (
         <p>
           Some invitations failed in a way that can&apos;t be retried from here, and we can&apos;t tell whether the person got the email. To invite them again,
-          contact them directly, or remove and re-add them to the waitlist.
+          contact them directly.
         </p>
       ) : null}
       {unknownNote ? <p role="status">{unknownNote}</p> : null}
