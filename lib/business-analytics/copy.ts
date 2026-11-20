@@ -55,3 +55,15 @@ export const FORMER_TEAM_MEMBER_LABEL = "Former team member";
 export const UNNAMED_TEAM_MEMBER_LABEL = "Team member";
 /** Said where a kind of price evidence could not be read. It is NOT a zero and NOT "no visit had this". */
 export const EVIDENCE_NOT_READABLE_NOTE = "This kind of price evidence cannot be read yet, so it is not counted here. That is not a zero, and it does not mean no visit has it.";
+
+// ---------------------------------------------------------------------------
+// The page's own words (the header, the tabs and the follow-through cards).
+// ---------------------------------------------------------------------------
+export const ANALYTICS_TITLE = "Your practice, in perspective.";
+export const ANALYTICS_SUBTITLE = "Clients, capacity, treatments and the health of your practice.";
+export const ANALYTICS_TABS = ["Overview", "Clients", "Capacity", "Treatments", "Team"] as const;
+export const TABS_NOT_AVAILABLE_NOTE = "Clients, Capacity, Treatments and Team are not available yet.";
+/** Charts with unfinished sections come from clinical records, which need their own permissions design before this page can count them. */
+export const UNFINISHED_CHARTS_UNAVAILABLE = "Not available yet. This comes from clinical records, which need their own permissions design before Analytics can show it.";
+export const BEYOND_USUAL_FACTOR_SHOWN = 1.5;
+export const NOT_ENOUGH_HISTORY_NOTE = (n: number): string => `${n} ${n === 1 ? "client has" : "clients have"} fewer than two visit dates and ${n === 1 ? "is" : "are"} not judged.`;

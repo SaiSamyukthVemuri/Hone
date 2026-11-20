@@ -55,20 +55,27 @@ const render = (view: OverviewView, over: Partial<Parameters<typeof OverviewScre
   renderToStaticMarkup(createElement(OverviewScreen, { view, params, notices: [], practitionerOptions: [{ id: "pr-1", label: "Ada Example" }], format: fmt, ...over }));
 const healthy = () => buildOverview(input());
 
-const CARD_OF = {
-  collected: "ov-collected-total",
-  series: "ov-series",
-  byPractitioner: "ov-bypractitioner",
-  serviceValue: "ov-servicevalue",
-  reconciliation: "ov-line",
-  completedVisits: "ov-visits",
-  activeClients: "ov-clients",
-  visitsPerClient: "ov-vpc",
-  averagePaid: "ov-avgpaid",
-  returning: "ov-returning",
-  interval: "ov-interval",
-  noNextBooking: "ov-nonext",
-} as const;
+/** Every card on the page, with the view key that feeds it. A key may feed more than one card. */
+const CARDS: ReadonlyArray<readonly [string, string]> = [
+  ["collected", "ov-collected-total"],
+  ["completedVisits", "ov-visits"],
+  ["averagePaid", "ov-avgpaid"],
+  ["activeClients", "ov-clients"],
+  ["series", "ov-series"],
+  ["returning", "ov-returning"],
+  ["interval", "ov-interval"],
+  ["collected", "ov-month-collected"],
+  ["returning", "ov-month-new"],
+  ["visitsPerClient", "ov-vpc"],
+  ["visitFrequency", "ov-frequency"],
+  ["byPractitioner", "ov-bypractitioner"],
+  ["noNextBooking", "ov-nonext"],
+  ["beyondUsual", "ov-beyond"],
+  ["collected", "ov-split"],
+  ["serviceValue", "ov-servicevalue"],
+  ["reconciliation", "ov-line"],
+];
+const CARD_IDS = CARDS.map(([, id]) => id).sort();
 const card = (html: string, id: string) => html.match(new RegExp(`<section[^>]*data-figure="${id}"[^>]*>([\\s\\S]*?)</section>`))?.[1] ?? null;
 /** React writes an apostrophe as an entity, so the expected sentence is escaped the same way. */
 const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/'/g, "&#x27;").replace(/"/g, "&quot;");
@@ -77,10 +84,10 @@ const REASONS: ReadFailure[] = ["too_many_appointments", "read_failed", "currenc
 describe("the Overview screen renders the view it is given", () => {
   const html = render(healthy());
   it("shows the collected total with its lines, and the line from service value to collected", () => {
-    const c = card(html, "ov-collected-total") ?? "";
-    expect(c).toContain("$265.00"); // 9000 + 9500 + 3000 + 5000
-    expect(c).toContain("$215.00"); // on completed visits
-    expect(c).toContain("$50.00"); // fees
+    expect(card(html, "ov-collected-total") ?? "").toContain("$265.00"); // 9000 + 9500 + 3000 + 5000
+    const split = card(html, "ov-split") ?? "";
+    expect(split).toContain("$215.00"); // on completed visits
+    expect(split).toContain("$50.00"); // fees
     const line = card(html, "ov-line") ?? "";
     expect(line).toContain("= Collected");
     expect(line).toContain("$180.00"); // completed service value: 9000 + 9000
@@ -96,16 +103,16 @@ describe("the Overview screen renders the view it is given", () => {
     expect(sv).toMatch(/Price shown at online booking:<\/span> Not available\./);
   });
   it("the owner-only note is on the page and in the definitions", () => {
-    expect(html.match(/Only the studio owner is shown this page/g)?.length).toBe(2);
+    expect(html.match(/Only the studio owner is shown this page/g)?.length).toBe(2); // the definitions and the footer
   });
 });
 
 describe("every unavailable figure renders its reason sentence, never a blank, a zero or a dropped card", () => {
   it("every card on the page has a case here, so a new card without a test fails first", () => {
     const ids = [...render(healthy()).matchAll(/data-figure="([^"]+)"/g)].map((m) => m[1]).sort();
-    expect(ids).toEqual(Object.values(CARD_OF).sort());
+    expect(ids).toEqual(CARD_IDS);
   });
-  for (const [key, id] of Object.entries(CARD_OF)) {
+  for (const [key, id] of CARDS) {
     for (const reason of REASONS) {
       it(`${key} unavailable (${reason}) shows "${FIGURE_UNAVAILABLE_COPY[reason].slice(0, 28)}…"`, () => {
         const view = { ...healthy(), [key]: { available: false, reason } } as OverviewView;
@@ -118,9 +125,9 @@ describe("every unavailable figure renders its reason sentence, never a blank, a
     }
   }
   it("the whole view unavailable still shows every card, each with its sentence", () => {
-    const gone = Object.fromEntries(Object.keys(CARD_OF).map((k) => [k, { available: false, reason: "read_failed" }]));
+    const gone = Object.fromEntries([...new Set(CARDS.map(([k]) => k))].map((k) => [k, { available: false, reason: "read_failed" }]));
     const html = render({ ...healthy(), ...gone } as OverviewView);
-    for (const id of Object.values(CARD_OF)) expect(card(html, id) ?? "", id).toContain(esc(FIGURE_UNAVAILABLE_COPY.read_failed));
+    for (const id of CARD_IDS) expect(card(html, id) ?? "", id).toContain(esc(FIGURE_UNAVAILABLE_COPY.read_failed));
   });
 });
 
@@ -131,7 +138,8 @@ describe("charts are server-rendered with their data in a table", () => {
     expect(html).not.toContain("<script");
     const series = card(html, "ov-series") ?? "";
     expect(series).toMatch(/<title id="ov-series-chart-title">Collected by visit date<\/title>/);
-    expect((series.match(/<rect /g) ?? []).length).toBe(30);
+    expect((series.match(/<path /g) ?? []).length).toBe(1); // the previous period could not be read: one line, not an empty second one
+    expect(series).not.toContain("<rect ");
     expect((series.match(/<tr class="border-b border-line\/60"/g) ?? []).length).toBe(30);
   });
   it("team chart keys are opaque, labels are display names, a former member is not named", () => {
@@ -140,6 +148,7 @@ describe("charts are server-rendered with their data in a table", () => {
     expect(team).toContain("Former team member");
     expect(team).not.toContain("Grace");
     expect(team).not.toMatch(/data-key|pr-1|pr-2/);
+    expect(team).toContain("$"); // each row carries its amount as text, not only as a bar
   });
   it("the chart toggle keeps the other choices", () => {
     expect(html).toContain('href="/financials/analytics?period=custom&amp;from=2026-11-01&amp;to=2026-11-30&amp;series=visits"');
@@ -177,7 +186,9 @@ describe("downloads and print", () => {
     expect(html).not.toContain("export.csv");
     expect(html).toContain("data-print-footer");
     const ids = [...html.matchAll(/data-figure="([^"]+)"/g)].map((m) => m[1]).sort();
-    expect(ids).toEqual(Object.values(CARD_OF).sort());
+    expect(ids).toEqual(CARD_IDS);
+    expect(html).not.toContain("aria-label=\"Analytics sections\"");
+    expect(html).not.toContain("Export data");
   });
 });
 
@@ -194,7 +205,7 @@ describe("the interval card under a team-member filter", () => {
     const one = render(view({ kind: "one", practitionerId: "pr-2" }));
     expect(text(one, "ov-interval")).toMatch(/0 clients have two or more visits; 1 has fewer and is left out/);
     expect(text(one, "ov-interval")).toContain("With a team-member filter, only that team member's visits are used.");
-    expect(text(one, "ov-returning")).toMatch(/1 returning, 0 first-time/);
+    expect(text(one, "ov-returning")).toMatch(/1 returning\s+0 first-time/);
   });
 });
 
@@ -268,5 +279,60 @@ describe("a period with no visits at all draws no false zero (U3, through the re
     expect(t("ov-returning")).not.toMatch(/\b0\s*%/);
     expect(t("ov-vpc")).not.toMatch(/\b0\.0\b/);
     expect(t("ov-avgpaid")).not.toContain("$0.00");
+  });
+});
+
+describe("the layout correction (A4)", () => {
+  const html = render(healthy());
+  const text = (h: string) => h.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/\s+/g, " ");
+  it("has the new title, the Overview tab as current, and the other four as disabled text: no link, no route", () => {
+    expect(html).toContain("<h1");
+    expect(text(html)).toContain("Your practice, in perspective.");
+    const tabs = html.match(/<ul[^>]*aria-label="Analytics sections"[^>]*>([\s\S]*?)<\/ul>/)?.[1] ?? "";
+    expect(tabs).toContain('aria-current="page"');
+    expect((tabs.match(/aria-disabled="true"/g) ?? []).length).toBe(4);
+    expect(tabs).not.toMatch(/<a |href=/);
+    expect(text(tabs)).toMatch(/Clients.*not available yet.*Capacity.*not available yet.*Treatments.*not available yet.*Team.*not available yet/);
+  });
+  it("Export data and Print / Save PDF are the existing routes; no explore links to unbuilt pages", () => {
+    expect(html).toMatch(/<a href="\/financials\/analytics\/export\.csv[^"]*"[^>]*>Export data<\/a>/);
+    expect(html).toMatch(/<a href="\/financials\/analytics\/print[^"]*"[^>]*>Print \/ Save PDF<\/a>/);
+    expect(html).not.toMatch(/Explore client history|View all clients|Explore completed visits/);
+  });
+  it("the line chart draws two lines (current solid, previous dashed) when the previous period is readable, with the chart data closed on screen and open in print", () => {
+    const withPrev = buildOverview(input({ comparison: { ok: true, value: { appointments: [appt("p1", "completed", "2026-10-05T15:00:00Z", "pr-1", "client-x")], money: { ok: true, value: { cardRows: [], settlementRows: [], legacyFeeRows: [] } as never } } } }));
+    const screen = card(render(withPrev), "ov-series") ?? "";
+    expect((screen.match(/<path /g) ?? []).length).toBe(2);
+    expect(screen).toContain('stroke-dasharray="5 3"');
+    expect(screen).toMatch(/<details class="text-sm" data-chart-data="">/);
+    expect(card(render(withPrev, { print: true }), "ov-series") ?? "").toMatch(/<details open="" class="text-sm" data-chart-data="">/);
+    expect(screen).toContain("View chart data");
+  });
+  it("a previous period that could not be read is said, not drawn as a flat or zero line", () => {
+    const series = card(html, "ov-series") ?? "";
+    expect(series).toContain("The previous period is not drawn.");
+    expect(series).not.toContain('stroke-dasharray="5 3"><');
+  });
+  it("is neutral: no sage or other decorative green in the page's markup", () => {
+    expect(html).not.toMatch(/#6f8a64|#d6dbd3|#edf1eb|sage/i);
+  });
+  it("follow-through shows the beyond-usual count and says Charts with unfinished sections is not available yet, never a number", () => {
+    const f = text(html);
+    expect(card(html, "ov-beyond")).not.toBeNull();
+    expect(f).toContain("Charts with unfinished sections");
+    expect(f).toContain("permissions design");
+    expect(html).toMatch(/data-unavailable-section="ov-unfinished"/);
+  });
+  it("the reconciliation sits in a closed disclosure on screen and an open one in print", () => {
+    expect(html).toMatch(/<details class="[^"]*" data-reconciliation="">/);
+    expect(render(healthy(), { print: true })).toMatch(/<details open="" class="[^"]*" data-reconciliation="">/);
+  });
+  it("the footer carries the currency and the studio's time zone", () => {
+    expect(text(html)).toContain("CAD");
+    expect(text(html)).toContain("America/Toronto");
+  });
+  it("an average-paid change appears only when the average is known", () => {
+    const view = { ...healthy(), averagePaid: { available: true, value: { averageCents: { known: false, reason: "No completed visit." }, excludedUnknownVisits: 0 } } } as unknown as OverviewView;
+    expect(text(card(render(view), "ov-avgpaid") ?? "")).not.toMatch(/compared with/);
   });
 });

@@ -50,3 +50,34 @@ export function segmentShares(parts: ReadonlyArray<{ key: string; value: number 
   if (total === 0) return [];
   return clean.map((p) => ({ ...p, fraction: p.value / total }));
 }
+
+export type LinePoint = { x: number; y: number };
+
+/**
+ * Positions for a line over `slots` evenly spaced places (index 0 at the left edge, the last slot at the right edge; one slot sits in the middle). A value
+ * for slot i is drawn at slot i, so two series of different lengths line up by position and the shorter one simply ends sooner. A missing, negative or
+ * non-finite value is `null`: the line breaks there and nothing is drawn, never a 0.
+ */
+export function lineLayout(values: ReadonlyArray<number | null>, axis: AxisScale, slots: number, width: number, height: number): Array<LinePoint | null> {
+  if (!(width > 0) || !(height > 0) || !(slots > 0)) return [];
+  return values.slice(0, slots).map((v, i) => {
+    if (v === null || !Number.isFinite(v) || v < 0) return null;
+    const x = slots === 1 ? width / 2 : (i * width) / (slots - 1);
+    return { x, y: height - (Math.min(v, axis.max) / axis.max) * height };
+  });
+}
+
+/** An SVG path for a line that breaks at every null. Coordinates are rounded to two places so the markup is stable. */
+export function linePathD(points: ReadonlyArray<LinePoint | null>): string {
+  let d = "";
+  let pen = false;
+  for (const p of points) {
+    if (p === null) {
+      pen = false;
+      continue;
+    }
+    d += `${pen ? "L" : "M"}${Math.round(p.x * 100) / 100} ${Math.round(p.y * 100) / 100}`;
+    pen = true;
+  }
+  return d;
+}

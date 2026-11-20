@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { barLayout, niceAxis, segmentShares, truncateLabel } from "@/lib/business-analytics/chart-geometry";
+import { barLayout, lineLayout, linePathD, niceAxis, segmentShares, truncateLabel } from "@/lib/business-analytics/chart-geometry";
 
 describe("axis", () => {
   it("is zero-based and covers the data in at most the requested steps", () => {
@@ -58,5 +58,36 @@ describe("labels and shares", () => {
     expect(s.map((x) => x.fraction)).toEqual([0.75, 0.25]);
     expect(segmentShares([{ key: "a", value: 0 }, { key: "b", value: 0 }])).toEqual([]);
     expect(segmentShares([{ key: "a", value: -2 }, { key: "b", value: 2 }]).map((x) => x.fraction)).toEqual([0, 1]);
+  });
+});
+
+describe("line layout", () => {
+  const axis = niceAxis(100, 4);
+  it("spreads the slots edge to edge, with value 0 on the baseline and the axis maximum at the top", () => {
+    const pts = lineLayout([0, 50, axis.max], axis, 3, 300, 100);
+    expect(pts.map((p) => p && p.x)).toEqual([0, 150, 300]);
+    expect(pts[0]?.y).toBe(100);
+    expect(pts[2]?.y).toBe(0);
+  });
+  it("a series shorter than the slots ends sooner: the missing places are absent, never drawn at 0", () => {
+    const pts = lineLayout([10, 20], axis, 5, 400, 100);
+    expect(pts).toHaveLength(2);
+    expect(pts[1]?.x).toBe(100);
+  });
+  it("a null, negative or non-finite value breaks the line and is not drawn", () => {
+    const pts = lineLayout([10, null, -5, Number.NaN, 20], axis, 5, 400, 100);
+    expect(pts.map((p) => p === null)).toEqual([false, true, true, true, false]);
+    const d = linePathD(pts);
+    expect(d.match(/M/g)).toHaveLength(2); // two separate strokes, no line across the gap
+    expect(d).not.toContain("L");
+  });
+  it("one slot sits in the middle; no slots or a zero size draws nothing", () => {
+    expect(lineLayout([5], axis, 1, 200, 100)[0]?.x).toBe(100);
+    expect(lineLayout([5], axis, 0, 200, 100)).toEqual([]);
+    expect(lineLayout([5], axis, 1, 0, 100)).toEqual([]);
+  });
+  it("consecutive values join with a line", () => {
+    expect(linePathD(lineLayout([10, 20, 30], axis, 3, 200, 100))).toMatch(/^M[\d. ]+L[\d. ]+L[\d. ]+$/);
+    expect(linePathD([])).toBe("");
   });
 });

@@ -106,6 +106,9 @@ export type VisitFrequency = { one: number; two: number; threePlus: number };
 export type OverviewView = {
   currentLabel: string;
   comparisonLabel: string;
+  /** The studio-local date "now" falls on, and the studio's time zone: said in the footer and the follow-through heading, never a person. */
+  asOfLocal: string;
+  timezone: string;
   /** The current period's first and last local dates: used for a file name, never a person. */
   currentRange: { startLocal: string; lastLocal: string };
   notes: string[];
@@ -358,6 +361,8 @@ export function buildOverview(input: OverviewInput): OverviewView {
   const changeOf = (now: number | null, before: number | null, comparisonRead: boolean): Change => (comparisonRead ? percentChange(now, before) : { kind: "unavailable" });
 
   const view: OverviewView = {
+    asOfLocal: localDateString(new Date(input.nowIso), input.timezone),
+    timezone: input.timezone,
     currentLabel: input.period.currentLabel,
     comparisonLabel: input.period.comparisonLabel,
     currentRange: { startLocal: input.period.current.startLocal, lastLocal: input.period.current.lastLocal },
