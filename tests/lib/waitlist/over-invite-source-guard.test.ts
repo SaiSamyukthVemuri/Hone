@@ -125,4 +125,8 @@ describe("the worker is driven ONLY by the confirm action's first round and the 
     expect(route).toMatch(/isAuthorizedCronRequest\(req\)/);
     expect(route).not.toMatch(/process\.env|searchParams|new URL/);
   });
+  it("the confirm action's rounds always name the batch AND the owner; only the cron route calls runRounds unscoped", () => {
+    expect(code("app/(app)/settings/waitlist/over-invite/actions.ts")).toMatch(/scope:\s*\{[^}]*batchId:[^}]*actorUserId:/);
+    expect(code("app/api/cron/waitlist-invitation-batches/route.ts")).not.toMatch(/scope/);
+  });
 });

@@ -30,7 +30,7 @@ export { RETRY_CLICK_MAX };
 export function liveWorkerDeps(sleep: (ms: number) => Promise<void> = sleepFor): WorkerDeps {
   const db = createAdminClient();
   return {
-    claim: (limits) => claimItems(db, limits),
+    claim: (limits, scope) => claimItems(db, { ...limits, batchId: scope?.batchId ?? null, actorUserId: scope?.actorUserId ?? null }),
     admit: (item) => admitBatchItem(db, item, null),
     settle: (target, outcome, reason) => settleItem(db, target, outcome, reason),
     // An email that takes longer than the per-item budget is reported UNKNOWN (it may still arrive), never retried automatically, and keeps the whole round inside
@@ -49,7 +49,10 @@ export type RoundsSummary = { rounds: number; claimed: number; sent: number; ski
  * serves every studio and batch in turn.
  * An unspent budget with nothing claimed means the queue is empty. Returns counts only.
  */
-export async function runRounds(opts: { budgetMs: number; scope?: { studioId?: string; batchId?: string }; deps?: WorkerDeps; now?: () => number }): Promise<RoundsSummary> {
+export async function runRounds(opts: { budgetMs: number; scope?: { studioId?: string; batchId?: string; actorUserId?: string }; deps?: WorkerDeps; now?: () => number }): Promise<RoundsSummary> {
+  // FAIL CLOSED: a scoped call (the owner's confirm) must name BOTH its batch and its owner. A scope missing either would fall back to the unscoped
+  // claim (every studio's items), which is only for the cron route, so it claims nothing at all.
+  if (opts.scope && (!opts.scope.batchId || !opts.scope.actorUserId)) return { rounds: 0, claimed: 0, sent: 0, skipped: 0, failed: 0, budgetSpent: false };
   const deps = opts.deps ?? liveWorkerDeps();
   const now = opts.now ?? Date.now;
   const t0 = now();

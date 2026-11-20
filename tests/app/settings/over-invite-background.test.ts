@@ -14,6 +14,7 @@ const h = vi.hoisted(() => ({
   batchSeq: 0,
   failedRows: [] as { id: string; entry_id: string }[],
   claimThrows: false,
+  claimCalls: [] as { batchId: string | null; actorUserId: string | null }[],
 }));
 
 vi.mock("server-only", () => ({}));
@@ -55,9 +56,12 @@ vi.mock("@/lib/waitlist/over-invite-port", async () => {
       i.entryIds.forEach((entryId, n) => h.items.push({ itemId: `${batchId}-i${n}`, entryId, batchId, studioId: i.studioId, state: "pending", reason: null, sentCount: 0 }));
       return { ok: true, result: "created", batchId, quantity: i.entryIds.length, extraRequested: i.entryIds.length, liveCount: 0 };
     },
-    claimItems: async (_d: unknown, l: { total: number }) => {
+    claimItems: async (_d: unknown, l: { total: number; batchId?: string | null; actorUserId?: string | null }) => {
       if (h.claimThrows) throw new Error("claim down");
-      const take = h.items.filter((x) => x.state === "pending").slice(0, l.total);
+      h.claimCalls.push({ batchId: l.batchId ?? null, actorUserId: l.actorUserId ?? null });
+      // The database scopes a named batch to its owner: a batch id without an actor (or an unknown batch) returns nothing.
+      if ((l.batchId && !l.actorUserId) || (!l.batchId && l.actorUserId)) return { ok: true, items: [] };
+      const take = h.items.filter((x) => x.state === "pending" && (!l.batchId || x.batchId === l.batchId)).slice(0, l.total);
       take.forEach((x) => (x.state = "claimed"));
       return { ok: true, items: take.map((t) => ({ itemId: t.itemId, entryId: t.entryId, batchId: t.batchId, studioId: t.studioId, actorUserId: "a", serviceId: "s", startDate: "2026-12-01", endDate: "2026-12-07", allowedWeekdays: null, ttlHours: 48 })) };
     },
@@ -97,7 +101,7 @@ const cron = (auth?: string) => GET(new Request("http://x/api/cron/waitlist-invi
 const count = (state: string, reason?: string) => h.items.filter((x) => x.state === state && (reason === undefined || x.reason === reason)).length;
 
 beforeEach(() => {
-  h.items = []; h.replaced = []; h.admitted = []; h.batchSeq = 0; h.failedRows = [];
+  h.claimCalls = []; h.items = []; h.replaced = []; h.admitted = []; h.batchSeq = 0; h.failedRows = [];
   h.delivery = () => "accepted";
   process.env.CRON_SECRET = "test-secret-value";
 });
@@ -149,13 +153,16 @@ describe("confirm once, the background route finishes", () => {
     const r = await sendOverInviteAction({ state: "idle" }, sendForm(4, 100));
     expect(r).toMatchObject({ state: "progress", quantity: 4, sent: 4 });
     expect(h.admitted.some((e) => e.startsWith("o"))).toBe(false);
-    // The other batch's items were leased by the shared claim and are left for the background route; none was sent or settled.
-    expect(h.items.filter((x) => x.batchId === "other-batch").every((x) => x.sentCount === 0)).toBe(true);
+    // The claim itself is scoped to this batch and this owner, so the other batch's items were never even leased: still pending.
+    expect(h.items.filter((x) => x.batchId === "other-batch").every((x) => x.state === "pending" && x.sentCount === 0)).toBe(true);
+    expect(h.claimCalls.length).toBeGreaterThan(0);
+    expect(h.claimCalls.every((c) => c.batchId !== null && c.actorUserId !== null)).toBe(true);
   });
   it("another studio's items are never processed by an owner's confirm", async () => {
     h.items.push({ itemId: "f0", entryId: "f0", batchId: "fb", studioId: OTHER, state: "pending", reason: null, sentCount: 0 });
     await sendOverInviteAction({ state: "idle" }, sendForm(2));
     expect(h.admitted).not.toContain("f0");
+    expect(h.items.find((x) => x.itemId === "f0")!.state).toBe("pending"); // never leased
   });
 });
 
@@ -209,5 +216,14 @@ describe("failures are explicit and never silently retried", () => {
     const f = new FormData(); f.append("confirmRetry", "on");
     await retryFailedDeliveriesAction({ state: "idle" }, f);
     expect(h.replaced).toHaveLength(5);
+  });
+
+  it("the background route claims with neither a batch nor an actor (round-robin across studios)", async () => {
+    await sendOverInviteAction({ state: "idle" }, sendForm(2));
+    h.claimCalls = [];
+    h.items.push({ itemId: "z0", entryId: "z0", batchId: "zb", studioId: STUDIO, state: "pending", reason: null, sentCount: 0 });
+    await cron("Bearer test-secret-value");
+    expect(h.claimCalls.length).toBeGreaterThan(0);
+    expect(h.claimCalls.every((c) => c.batchId === null && c.actorUserId === null)).toBe(true);
   });
 });

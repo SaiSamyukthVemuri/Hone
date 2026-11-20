@@ -140,11 +140,14 @@ export type ClaimedItem = {
 export type ClaimOutcome = { ok: true; items: ClaimedItem[] } | PortFailure;
 
 /** Claim runs per studio round-robin with a lease. The caller passes sane limits; the database returns NOTHING for a limit below its floor. */
-export async function claimItems(db: Rpc, input: { perStudio: number; total: number; leaseSeconds: number }): Promise<ClaimOutcome> {
+export async function claimItems(db: Rpc, input: { perStudio: number; total: number; leaseSeconds: number; batchId?: string | null; actorUserId?: string | null }): Promise<ClaimOutcome> {
   const { data, error } = await db.rpc("claim_waitlist_batch_items", {
     p_per_studio: input.perStudio,
     p_total: input.total,
     p_lease_seconds: input.leaseSeconds,
+    // Both or neither: the owner's own first rounds name their batch AND themselves, so nothing of another studio is leased; the cron passes neither.
+    p_batch_id: input.batchId ?? null,
+    p_actor_user_id: input.actorUserId ?? null,
     // NEVER a time argument: the claim's clock is the database's.
   });
   if (error) return failure(error);

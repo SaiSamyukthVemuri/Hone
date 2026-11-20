@@ -17,7 +17,7 @@ import type { ClaimedItem, ClaimOutcome, AdmitOutcome, IssuedInvitation, SettleO
 export type DeliveryState = "accepted" | "refused" | "unknown";
 
 export type WorkerDeps = {
-  claim: (limits: { perStudio: number; total: number; leaseSeconds: number }) => Promise<ClaimOutcome>;
+  claim: (limits: { perStudio: number; total: number; leaseSeconds: number }, scope?: { batchId?: string; actorUserId?: string }) => Promise<ClaimOutcome>;
   admit: (item: ClaimedItem) => Promise<AdmitOutcome>;
   settle: (target: SettleTarget, outcome: "sent" | "failed" | "unknown" | "skipped", reasonClass: string | null) => Promise<SettleOutcome>;
   /** Sends the one invitation email. `entryId` lets the deliverer re-read the stored address when the command did not return one. */
@@ -58,9 +58,10 @@ export function reasonFor(result: string): string {
 export async function runBatchChunk(
   deps: WorkerDeps,
   limits: { perStudio: number; total: number; leaseSeconds: number } = DEFAULT_LIMITS,
-  scope: { studioId?: string; batchId?: string } = {},
+  scope: { studioId?: string; batchId?: string; actorUserId?: string } = {},
 ): Promise<ChunkResult> {
-  const claimed = await deps.claim(limits);
+  // A scoped claim is made IN THE DATABASE (only this batch, only for this owner); the filter below is a second line of defence, not the first.
+  const claimed = await deps.claim(limits, scope.batchId && scope.actorUserId ? { batchId: scope.batchId, actorUserId: scope.actorUserId } : undefined);
   if (!claimed.ok) return { ok: false, code: "claim_failed" };
   const outcomes: ItemOutcome[] = [];
   let first = true;

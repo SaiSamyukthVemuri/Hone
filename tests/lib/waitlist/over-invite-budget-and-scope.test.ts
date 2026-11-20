@@ -384,3 +384,59 @@ describe("the retry mark gates everything after it", () => {
     expect(calls).toEqual(["failed:retry_started:unknown", "sent:null:failed"]);
   });
 });
+
+describe("the claim command receives the batch and the owner", () => {
+  it("scoped: p_batch_id and p_actor_user_id are sent; unscoped: both null", async () => {
+    const { claimItems } = await import("@/lib/waitlist/over-invite-port");
+    const calls: Record<string, unknown>[] = [];
+    const db = { rpc: async (_f: string, a: Record<string, unknown>) => (calls.push(a), { data: [], error: null }) };
+    await claimItems(db as never, { perStudio: 5, total: 5, leaseSeconds: 120, batchId: "B", actorUserId: "U" });
+    await claimItems(db as never, { perStudio: 5, total: 5, leaseSeconds: 120 });
+    expect(calls[0]).toMatchObject({ p_batch_id: "B", p_actor_user_id: "U" });
+    expect(calls[1]).toMatchObject({ p_batch_id: null, p_actor_user_id: null });
+  });
+  it("runBatchChunk hands the scope to the claim only when it names both a batch and an owner", async () => {
+    const { runBatchChunk } = await import("@/lib/waitlist/over-invite-worker");
+    const seen: unknown[] = [];
+    const base = { admit: async () => ({ ok: false as const, code: "x" as never }), settle: async () => ({ ok: true as const, result: "settled" }), deliver: async () => "accepted" as const, mayStillSend: async () => true, sleep: async () => {} };
+    const claim = async (_l: unknown, s?: unknown) => (seen.push(s ?? null), { ok: true as const, items: [] });
+    await runBatchChunk({ ...base, claim }, undefined, { studioId: "s", batchId: "B", actorUserId: "U" });
+    await runBatchChunk({ ...base, claim }, undefined, {});
+    expect(seen).toEqual([{ batchId: "B", actorUserId: "U" }, null]);
+  });
+});
+
+describe("the confirm path can never fall back to the unscoped claim", () => {
+  const mk = () => {
+    const seen: unknown[] = [];
+    const deps: WorkerDeps = {
+      claim: async (_l, sc) => (seen.push(sc ?? null), { ok: true, items: [] }),
+      admit: async () => ({ ok: false, code: "x" as never }),
+      settle: async () => ({ ok: true, result: "settled" }),
+      deliver: async () => "accepted",
+      mayStillSend: async () => true,
+      sleep: async () => {},
+    };
+    return { deps, seen };
+  };
+  for (const [name, scope] of [
+    ["no batch", { studioId: "s", actorUserId: "u" }],
+    ["no owner", { studioId: "s", batchId: "b" }],
+    ["studio only", { studioId: "s" }],
+    ["empty scope", {}],
+  ] as const) {
+    it(`a scope with ${name} claims nothing at all`, async () => {
+      const { deps, seen } = mk();
+      await runRounds({ budgetMs: 20_000, scope, deps, now: () => 0 });
+      expect(seen).toEqual([]);
+    });
+  }
+  it("only the cron's NO scope claims unscoped; a full scope claims scoped", async () => {
+    const a = mk();
+    await runRounds({ budgetMs: 20_000, deps: a.deps, now: () => 0 });
+    const b = mk();
+    await runRounds({ budgetMs: 20_000, scope: { studioId: "s", batchId: "B", actorUserId: "U" }, deps: b.deps, now: () => 0 });
+    expect(a.seen[0]).toBeNull();
+    expect(b.seen[0]).toEqual({ batchId: "B", actorUserId: "U" });
+  });
+});
