@@ -4,7 +4,7 @@ vi.mock("server-only", () => ({}));
 
 import type { AssembleAppointment } from "@/lib/finance/statement-document-assemble";
 import type { StatementCardRow } from "@/lib/finance/statement";
-import { buildOverview, type OverviewInput, type WindowData } from "@/lib/business-analytics/overview-model";
+import { buildOverview, SUPPLIED_EVIDENCE_CLASSES, type OverviewInput, type WindowData } from "@/lib/business-analytics/overview-model";
 import { resolvePeriod } from "@/lib/business-analytics/period";
 import { FORMER_TEAM_MEMBER_LABEL, UNATTRIBUTED_LABEL } from "@/lib/business-analytics/copy";
 
@@ -42,7 +42,8 @@ const practitioners = [
   { id: "pr-1", displayName: "Ada Example", active: true },
   { id: "pr-2", displayName: "Grace Example", active: false },
 ];
-const window = (over: Partial<WindowData> = {}) => ({ ok: true as const, value: { appointments, money, ...over } });
+const okMoney = (m: typeof money) => ({ ok: true as const, value: m });
+const window = (over: { appointments?: AssembleAppointment[]; money?: typeof money } = {}) => ({ ok: true as const, value: { appointments: over.appointments ?? appointments, money: okMoney(over.money ?? money) } as WindowData });
 const input = (over: Partial<OverviewInput> = {}): OverviewInput => ({
   timezone: "America/Toronto", currency: "cad", nowIso: NOW, period, filter: { kind: "all" },
   current: window(), comparison: window({ appointments: priorAppointments, money: priorMoney }),
@@ -98,18 +99,38 @@ describe("a price class that could not be read is never a zero and never 'none'"
     expect(JSON.stringify(sv.classes.online_booking)).not.toMatch(/visits|cents|0/);
   });
   it("only a class that WAS read may show a zero: read with no rows is a known zero, unread is not", () => {
-    const none = { ...window().value, money: { cardRows: [], settlementRows: [], legacyFeeRows: [] } };
-    const both = must(buildOverview(input({ current: { ok: true, value: none }, classesRead: ["recorded_at_visit", "online_booking"] })).serviceValue);
-    expect(both.classes.online_booking).toEqual({ read: true, visits: 0, cents: 0 });
-    const onlyOne = must(buildOverview(input({ current: { ok: true, value: none }, classesRead: ["recorded_at_visit"] })).serviceValue);
-    expect(onlyOne.classes.online_booking).toEqual({ read: false });
-    expect(onlyOne.classes.recorded_at_visit).toEqual({ read: true, visits: 0, cents: 0 });
+    const none = window({ money: { cardRows: [], settlementRows: [], legacyFeeRows: [] } }).value;
+    const read = must(buildOverview(input({ current: { ok: true, value: none }, classesRead: ["recorded_at_visit"] })).serviceValue);
+    expect(read.classes.recorded_at_visit).toEqual({ read: true, visits: 0, cents: 0 });
+    const unread = must(buildOverview(input({ current: { ok: true, value: none }, classesRead: [] })).serviceValue);
+    expect(unread.classes.recorded_at_visit).toEqual({ read: false });
+  });
+  it("a caller that lists a class the model cannot build candidates for still gets 'not available', never a false zero", () => {
+    const sv = must(buildOverview(input({ classesRead: ["recorded_at_visit", "online_booking"] })).serviceValue);
+    expect(sv.classes.online_booking).toEqual({ read: false });
+    expect(sv.unreadClasses).toEqual(["online_booking"]);
+  });
+  it("the model's supplied classes are exactly the ones it has candidate code for", () => {
+    expect([...SUPPLIED_EVIDENCE_CLASSES]).toEqual(["recorded_at_visit"]);
   });
   it("whatever rows another class has, an unread class is not filled in from them", () => {
     const sv = must(buildOverview(input({ classesRead: [] })).serviceValue);
     expect(sv.classes).toEqual({ recorded_at_visit: { read: false }, online_booking: { read: false } });
     expect(sv.unreadClasses).toHaveLength(2);
   });
+});
+
+describe("a money read that fails or hits its cap hides only the money figures", () => {
+  const MONEY = ["collected", "averagePaid", "series", "byPractitioner", "serviceValue", "reconciliation"] as const;
+  for (const [what, reason] of [["fails", "read_failed"], ["hits its row cap", "read_failed"]] as const) {
+    it(`appointments read, money ${what}: visit figures show, every money figure says why`, () => {
+      const v = buildOverview(input({ current: { ok: true, value: { appointments, money: { ok: false, reason } } } }));
+      for (const k of MONEY) expect(v[k], k).toEqual({ available: false, reason });
+      expect(must(v.completedVisits).count).toBe(3);
+      expect(must(v.activeClients).count).toBe(3);
+      expect(v.visitsPerClient.available).toBe(true);
+    });
+  }
 });
 
 describe("the practitioner filter", () => {

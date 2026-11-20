@@ -88,12 +88,69 @@ describe("the Overview read: whole or nothing, studio-scoped, never writing", ()
       expect(r.view.completedVisits).toEqual({ available: false, reason: "read_failed" });
     }
   });
+  it("appointments read but a money query fails: the visit figures stay and every money figure says why", async () => {
+    const res = healthy();
+    res.appointment_settlements = { data: null, error: { message: "boom" } };
+    const r = await load("owner", recording(res).client);
+    if (!(r.access === "granted" && r.ok)) throw new Error("expected a view");
+    expect(r.view.completedVisits).toMatchObject({ available: true, value: { count: 1 } });
+    expect(r.view.activeClients.available).toBe(true);
+    for (const k of ["collected", "averagePaid", "series", "byPractitioner", "serviceValue", "reconciliation"] as const) expect(r.view[k], k).toEqual({ available: false, reason: "read_failed" });
+  });
+  it("appointments read but a money query returns a full page (the row cap): the same, never a partial total", async () => {
+    const { ROW_CAP } = await import("@/lib/dashboard/in-chunks");
+    const res = healthy();
+    res.appointment_settlements = ok(Array.from({ length: ROW_CAP }, (_, i) => ({ appointment_id: `a${i}`, method: "paid_cash", amount_cents: 100, currency: "cad", quoted_amount_cents: 100 })));
+    const r = await load("owner", recording(res).client);
+    if (!(r.access === "granted" && r.ok)) throw new Error("expected a view");
+    expect(r.view.completedVisits.available).toBe(true);
+    expect(r.view.collected).toEqual({ available: false, reason: "read_failed" });
+  });
   it("no payment currency: no money, visits still shown", async () => {
     const r = await load("owner", recording(healthy()).client, {}, false, null);
     if (r.access === "granted" && r.ok) {
       expect(r.view.collected).toEqual({ available: false, reason: "currency_unknown" });
       expect(r.view.completedVisits.available).toBe(true);
     } else throw new Error("expected a view");
+  });
+});
+
+describe("price evidence: what the loader says it read equals what it queried", () => {
+  // Each kind of price evidence and the table its candidates come from. A new class has no entry here until someone adds one, and the exhaustive check fails first.
+  const SOURCE_TABLE: Record<string, string> = { recorded_at_visit: "appointment_settlements", online_booking: "appointment_payments" };
+  it("every class has a declared source, so a new class cannot be added silently", async () => {
+    const { PRICE_EVIDENCE_CLASSES } = await import("@/lib/business-analytics/service-value");
+    expect(Object.keys(SOURCE_TABLE).sort()).toEqual([...PRICE_EVIDENCE_CLASSES].sort());
+  });
+  it("a class is listed as read exactly when its source table is queried, and the view shows the rest as not available", async () => {
+    const { CLASSES_READ } = await import("@/lib/business-analytics/server/overview-read");
+    const { PRICE_EVIDENCE_CLASSES } = await import("@/lib/business-analytics/service-value");
+    const { client, calls } = recording(healthy());
+    const r = await load("owner", client);
+    const queried = new Set(calls.map((c) => c.table));
+    for (const c of PRICE_EVIDENCE_CLASSES) expect(CLASSES_READ.includes(c), c).toBe(queried.has(SOURCE_TABLE[c]));
+    expect([...CLASSES_READ]).toEqual(["recorded_at_visit"]);
+    if (!(r.access === "granted" && r.ok) || !r.view.serviceValue.available) throw new Error("expected a view");
+    expect(r.view.serviceValue.value.classes.online_booking).toEqual({ read: false });
+    expect(r.view.serviceValue.value.classes.recorded_at_visit.read).toBe(true);
+  });
+});
+
+describe("the practitioner list is bounded and never truncated", () => {
+  const people = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `pr-${i}`, display_name: `P ${i}`, active: true }));
+  it("asks for one more than the cap, so an over-cap list is seen", async () => {
+    const { client, calls } = recording(healthy());
+    await load("owner", client);
+    const lim = calls.find((c) => c.table === "practitioners" && c.method === "limit");
+    expect(lim?.args[0]).toBe(1001);
+  });
+  it("exactly 1000 practitioners is read; 1001 fails the whole page rather than showing a partial list", async () => {
+    const at = healthy();
+    at.practitioners = ok(people(1000));
+    expect(await load("owner", recording(at).client)).toMatchObject({ access: "granted", ok: true });
+    const over = healthy();
+    over.practitioners = ok(people(1001));
+    expect(await load("owner", recording(over).client)).toEqual({ access: "granted", ok: false, reason: "read_failed", notices: [] });
   });
 });
 

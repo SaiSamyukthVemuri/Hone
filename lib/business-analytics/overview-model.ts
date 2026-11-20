@@ -41,7 +41,8 @@ import { activeClientIds, completedVisitCount, matchesPractitioner, visitsOf, vi
 // Each figure is its own `Figure<T>`: a value, or a reason. A read that failed makes only the figures that needed it unavailable. All money shares
 // one reconciliation proof: if the Statements identity does not hold for the window, NO money figure is shown for it.
 
-export type WindowData = { appointments: readonly AssembleAppointment[]; money: MoneyRows };
+/** The appointments and, separately, their money: a money read that failed must not hide the visit figures, which do not need it. */
+export type WindowData = { appointments: readonly AssembleAppointment[]; money: FigureRead<MoneyRows> };
 
 export type PractitionerInfo = { id: string; displayName: string | null; active: boolean };
 
@@ -124,6 +125,12 @@ function assemble(args: { appointments: readonly AssembleAppointment[]; money: M
   });
 }
 
+/**
+ * The kinds of price evidence THIS MODEL can turn into candidates from the rows it is given. A class listed as read by a caller but not supplied here
+ * is still "not available": claiming it was read would show a false zero. Adding a class means adding its candidates below AND listing it here.
+ */
+export const SUPPLIED_EVIDENCE_CLASSES: readonly PriceEvidenceClass[] = ["recorded_at_visit"];
+
 function practitionerLabel(id: string | null, byId: ReadonlyMap<string, PractitionerInfo>): string {
   if (id === null) return UNATTRIBUTED_LABEL;
   const p = byId.get(id);
@@ -152,14 +159,16 @@ function computeWindow(data: WindowData, w: PeriodWindow, o: Pick<OverviewInput,
     byPractitioner: unavailable(reason), serviceValue: unavailable(reason), reconciliation: unavailable(reason),
   });
   if (o.currency === null) return { ...base, ...money("currency_unknown") };
+  if (!data.money.ok) return { ...base, ...money(data.money.reason) };
+  const moneyRows = data.money.value;
 
-  const all = assemble({ appointments: data.appointments, money: data.money, currency: o.currency, timezone: o.timezone, nowIso: o.nowIso });
+  const all = assemble({ appointments: data.appointments, money: moneyRows, currency: o.currency, timezone: o.timezone, nowIso: o.nowIso });
   const subset = o.filter.kind === "all" ? data.appointments : data.appointments.filter((a) => matchesPractitioner(a, o.filter));
   const ids = new Set(subset.map((a) => a.id));
-  const moneyF: MoneyRows = o.filter.kind === "all" ? data.money : {
-    cardRows: data.money.cardRows.filter((r) => r.appointmentId !== null && ids.has(r.appointmentId)),
-    settlementRows: data.money.settlementRows.filter((r) => ids.has(r.appointmentId)),
-    legacyFeeRows: data.money.legacyFeeRows.filter((r) => ids.has(r.appointmentId)),
+  const moneyF: MoneyRows = o.filter.kind === "all" ? moneyRows : {
+    cardRows: moneyRows.cardRows.filter((r) => r.appointmentId !== null && ids.has(r.appointmentId)),
+    settlementRows: moneyRows.settlementRows.filter((r) => ids.has(r.appointmentId)),
+    legacyFeeRows: moneyRows.legacyFeeRows.filter((r) => ids.has(r.appointmentId)),
   };
   const f = o.filter.kind === "all" ? all : assemble({ appointments: subset, money: moneyF, currency: o.currency, timezone: o.timezone, nowIso: o.nowIso });
 
@@ -202,8 +211,9 @@ function computeWindow(data: WindowData, w: PeriodWindow, o: Pick<OverviewInput,
   }));
   const sv = serviceValue(pv);
   const resolved = resolveVisits(pv);
-  const unread = PRICE_EVIDENCE_CLASSES.filter((c) => !o.classesRead.includes(c));
-  const classView = Object.fromEntries(PRICE_EVIDENCE_CLASSES.map((c) => [c, o.classesRead.includes(c) ? { read: true, visits: sv.subtotals[c].visits, cents: sv.subtotals[c].cents } : { read: false }])) as Record<PriceEvidenceClass, ClassView>;
+  const readClasses = o.classesRead.filter((c) => SUPPLIED_EVIDENCE_CLASSES.includes(c));
+  const unread = PRICE_EVIDENCE_CLASSES.filter((c) => !readClasses.includes(c));
+  const classView = Object.fromEntries(PRICE_EVIDENCE_CLASSES.map((c) => [c, readClasses.includes(c) ? { read: true, visits: sv.subtotals[c].visits, cents: sv.subtotals[c].cents } : { read: false }])) as Record<PriceEvidenceClass, ClassView>;
   const serviceValueView: ServiceValueView = {
     classes: classView,
     withEvidenceVisits: sv.withEvidenceVisits,

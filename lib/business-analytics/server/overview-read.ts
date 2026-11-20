@@ -33,8 +33,14 @@ async function readWindow(supabase: SupabaseClient, studioId: string, timezone: 
   const appts = await readAppointmentsKeyset(supabase, studioId, { startUtc, endUtc });
   if (!appts.ok) return { ok: false, reason: appts.reason === "too_many_appointments" ? "too_many_appointments" : "read_failed" };
   const money = await readMoneyForAppointments(supabase, studioId, appts.rows.map((a) => a.id));
-  if (!money.ok) return { ok: false, reason: "read_failed" };
-  return { ok: true, value: { appointments: appts.rows, money: { cardRows: money.cardRows, settlementRows: money.settlementRows, legacyFeeRows: money.legacyFeeRows } } };
+  // A money read that failed or hit its row cap makes only the MONEY figures unavailable: the visit figures need none of it.
+  return {
+    ok: true,
+    value: {
+      appointments: appts.rows,
+      money: money.ok ? { ok: true, value: { cardRows: money.cardRows, settlementRows: money.settlementRows, legacyFeeRows: money.legacyFeeRows } } : { ok: false, reason: "read_failed" },
+    },
+  };
 }
 
 export async function loadOverview(
