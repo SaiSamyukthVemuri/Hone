@@ -338,3 +338,48 @@ describe("port passes the expected values and keeps state_changed as a closed co
     expect(s).toEqual({ ok: true, result: "state_changed" });
   });
 });
+
+describe("the retry mark gates everything after it", () => {
+  const issued = { invitationId: "inv-2", rawToken: "t", issuedAt: new Date(), expiresAt: new Date(), deliveryEmail: null, deliveryName: null };
+  const marks: [string, { ok: true; result: string } | { ok: false; code: string }][] = [
+    ["state_changed", { ok: true, result: "state_changed" }],
+    ["not_found", { ok: true, result: "not_found" }],
+    ["invalid_state", { ok: true, result: "invalid_state" }],
+    ["a failed call", { ok: false, code: "unavailable" }],
+  ];
+  for (const [name, answer] of marks) {
+    it(`a mark answering ${name} stops the retry BEFORE replace; nothing is replaced or delivered`, async () => {
+      let replaced = 0, delivered = 0;
+      const r = await retryDeliveries(
+        {
+          kind: "refused",
+          stillRetryable: async () => ({ state: "failed", invitationId: "inv-1" }),
+          replace: async () => (replaced++, { ok: true, result: "replaced", issued }),
+          deliver: async () => (delivered++, "accepted"),
+          settle: async () => answer,
+          sleep: async () => {},
+        },
+        [{ entryId: "e", itemId: "i-" + name, studioId: "s" }],
+      );
+      expect(replaced).toBe(0);
+      expect(delivered).toBe(0);
+      expect(r[0]).toMatchObject({ status: "skipped", reason: "no_longer_retryable" });
+    });
+  }
+  it("the sent settle names the expected state: the retry mark leaves the item in failed", async () => {
+    const calls: string[] = [];
+    await retryDeliveries(
+      {
+        kind: "unknown",
+        stillRetryable: async () => ({ state: "unknown", invitationId: "inv-1" }),
+        replace: async () => ({ ok: true, result: "replaced", issued }),
+        deliver: async () => "accepted",
+        settle: async (_t, o, why, exp) => (calls.push(`${o}:${why}:${exp}`), { ok: true, result: "settled" }),
+        sleep: async () => {},
+      },
+      [{ entryId: "e", itemId: "i-sent", studioId: "s" }],
+    );
+    // The mark names the state seen (unknown); every later settle names `failed`, the state the mark left behind.
+    expect(calls).toEqual(["failed:retry_started:unknown", "sent:null:failed"]);
+  });
+});
