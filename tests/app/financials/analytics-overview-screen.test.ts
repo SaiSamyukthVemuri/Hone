@@ -85,7 +85,8 @@ const REASONS: ReadFailure[] = ["too_many_appointments", "read_failed", "currenc
 describe("the Overview screen renders the view it is given", () => {
   const html = render(healthy());
   it("shows the collected total with its lines, and the line from service value to collected", () => {
-    expect(card(html, "ov-collected-total") ?? "").toContain("$265.00"); // 9000 + 9500 + 3000 + 5000
+    expect(card(html, "ov-collected-total") ?? "").toContain("$265"); // 9000 + 9500 + 3000 + 5000, whole dollars on the card
+    expect(card(html, "ov-collected-total") ?? "").not.toContain("$265.00"); // the exact cents are in the split, not on the card
     const split = card(html, "ov-split") ?? "";
     expect(split).toContain("$215.00"); // on completed visits
     expect(split).toContain("$50.00"); // fees
@@ -139,7 +140,7 @@ describe("charts are server-rendered with their data in a table", () => {
     expect(html).not.toContain("<script");
     const series = card(html, "ov-series") ?? "";
     expect(series).toMatch(/<title id="ov-series-chart-title">Collected by visit date<\/title>/);
-    expect((series.match(/<path /g) ?? []).length).toBe(1); // the previous period could not be read: one line, not an empty second one
+    expect((series.match(/<path (?![^>]*data-area)/g) ?? []).length).toBe(1); // the previous period could not be read: one line, not an empty second one
     expect(series).not.toContain("<rect ");
     expect((series.match(/<tr class="border-b border-line\/60"/g) ?? []).length).toBe(30);
   });
@@ -264,10 +265,14 @@ describe("an unknown figure is never drawn as a zero (U3)", () => {
   });
 });
 
-describe("the collected card states its basis (U4)", () => {
-  it("carries the money basis note, so the figure is never shown without how it is counted", async () => {
+describe("the collected figure states its basis (U4), beside the cards", () => {
+  it("carries the money basis note and the Statements sentence on the page, outside the cards so the four stay level", async () => {
     const { MONEY_BASIS_NOTE } = await import("@/lib/business-analytics/money-metrics");
-    expect((card(render(healthy()), "ov-collected-total") ?? "").replace(/&#x27;/g, "'")).toContain(MONEY_BASIS_NOTE);
+    const html = render(healthy()).replace(/&#x27;/g, "'");
+    const note = html.match(/<p[^>]*data-collected-basis=""[^>]*>([\s\S]*?)<\/p>/)?.[1] ?? "";
+    expect(note).toContain(MONEY_BASIS_NOTE);
+    expect(note).toMatch(/Statements/);
+    expect(card(html, "ov-collected-total") ?? "").not.toContain(MONEY_BASIS_NOTE);
   });
 });
 
@@ -303,7 +308,7 @@ describe("the layout correction (A4)", () => {
   it("the line chart draws two lines (current solid, previous dashed) when the previous period is readable, with the chart data closed on screen and open in print", () => {
     const withPrev = buildOverview(input({ comparison: { ok: true, value: { appointments: [appt("p1", "completed", "2026-10-05T15:00:00Z", "pr-1", "client-x")], money: { ok: true, value: { cardRows: [], settlementRows: [], legacyFeeRows: [] } as never } } } }));
     const screen = card(render(withPrev), "ov-series") ?? "";
-    expect((screen.match(/<path /g) ?? []).length).toBe(2);
+    expect((screen.match(/<path (?![^>]*data-area)/g) ?? []).length).toBe(2);
     expect(screen).toContain('stroke-dasharray="5 3"');
     expect(screen).toMatch(/<details class="text-sm" data-chart-data="">/);
     expect(card(render(withPrev, { print: true }), "ov-series") ?? "").toMatch(/<details open="" class="text-sm" data-chart-data="">/);
@@ -393,5 +398,51 @@ describe("visual pass fixes on A4", () => {
     const l = labels(render(healthy()));
     expect(l.at(-1)).toBe("30 Nov");
     expect(l.at(-2)).not.toBe("29 Nov"); // the label before the last is far enough from it
+  });
+});
+
+describe("the four visual gaps (A4)", () => {
+  const text = (h: string) => h.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/\s+/g, " ");
+  it("(7) compact controls: a period list, a practitioner list and a Show button, with the dates and the comparison in a group a custom period reveals", () => {
+    const form = render(healthy()).match(/<form[^>]*aria-label="Period and team member"[\s\S]*?<\/form>/)?.[0] ?? "";
+    expect(form).toMatch(/<select[^>]*name="period"/);
+    expect(form).toMatch(/<select[^>]*name="practitioner"/);
+    expect(form).toMatch(/<button type="submit"[^>]*>Show<\/button>/);
+    const custom = form.match(/<div[^>]*data-custom-range=""[\s\S]*?<\/div>/)?.[0] ?? "";
+    expect(custom).toMatch(/name="from"/);
+    expect(custom).toMatch(/name="to"/);
+    expect(custom).toMatch(/name="compare"/);
+    expect(form).toContain("group-has-[option[value=custom]:checked]:flex"); // hidden until Custom is chosen, with no script
+    expect(form).toContain("All practitioners");
+    for (const k of ["month_to_date", "previous_month", "year_to_date", "custom"]) expect(form).toContain(`value="${k}"`);
+  });
+  it("(7) the form submits exactly the names the strict parser reads, by GET to the same path", () => {
+    const form = render(healthy(), { practitionerOptions: [{ id: "pr-1", label: "Ada Example" }] }).match(/<form[\s\S]*?<\/form>/)?.[0] ?? "";
+    expect([...form.matchAll(/name="([a-z]+)"/g)].map((m) => m[1]).sort()).toEqual(["compare", "from", "period", "practitioner", "to"]);
+    expect(form).toContain('action="/financials/analytics"');
+    expect(form).toContain('method="get"');
+  });
+  it("(9) headline cards show whole dollars with one currency word; exact cents stay in the split and the chart data", () => {
+    const html = render(healthy());
+    expect(text(card(html, "ov-collected-total") ?? "")).toMatch(/\$265 CAD/);
+    expect(card(html, "ov-split") ?? "").toContain("$265.00");
+    expect(card(html, "ov-series") ?? "").toContain("$90.00");
+  });
+  it("(9) rounding is display only: the model's exact cents are unchanged, the split still adds up to them, and the card is within 50 cents", () => {
+    const view = healthy();
+    const c = (view.collected as { value: { headlineCents: number; split: { totalCents: number } } }).value;
+    expect(c.headlineCents).toBe(26500);
+    expect(c.split.totalCents).toBe(c.headlineCents);
+    const shown = Number((text(card(render(view), "ov-collected-total") ?? "").match(/\$([\d,]+)/) ?? [])[1].split(",").join(""));
+    expect(Math.abs(shown * 100 - c.headlineCents)).toBeLessThanOrEqual(50);
+    // a figure that is not a whole dollar rounds on the card but is unchanged in the view
+    const odd = { ...view, collected: { available: true, value: { ...(view.collected as { value: object }).value, headlineCents: 26549 } } } as unknown as OverviewView;
+    expect(text(card(render(odd), "ov-collected-total") ?? "")).toMatch(/\$265 CAD/);
+    expect((odd.collected as { value: { headlineCents: number } }).value.headlineCents).toBe(26549);
+  });
+  it("(10) the current line has a faint neutral area under it", () => {
+    const c = card(render(healthy()), "ov-series") ?? "";
+    expect((c.match(/data-area="current"/g) ?? []).length).toBe(1);
+    expect(c).toMatch(/data-area="current"[^>]*fill-opacity="0\.06"/);
   });
 });

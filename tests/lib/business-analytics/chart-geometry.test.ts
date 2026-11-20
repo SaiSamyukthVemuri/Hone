@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { barLayout, isolatedPoints, lineLayout, linePathD, niceAxis, segmentShares, truncateLabel } from "@/lib/business-analytics/chart-geometry";
+import { areaPathD, barLayout, isolatedPoints, lineLayout, linePathD, niceAxis, segmentShares, truncateLabel } from "@/lib/business-analytics/chart-geometry";
 
 describe("axis", () => {
   it("is zero-based and covers the data in at most the requested steps", () => {
@@ -105,5 +105,19 @@ describe("line layout: slots and isolated points (A4 review)", () => {
     expect(isolatedPoints(layout).map((p) => p.x)).toEqual([0, 200]); // the 10 and the 20; 30 and 40 are joined
     expect(isolatedPoints([])).toEqual([]);
     expect(isolatedPoints([null, null])).toEqual([]);
+  });
+});
+
+describe("area under the line (A4 visual pass)", () => {
+  const axis = niceAxis(100, 4);
+  it("closes to the baseline under an unbroken run", () => {
+    const d = areaPathD(lineLayout([10, 20, 30], axis, 3, 200, 100), 100);
+    expect(d).toMatch(/^M0 100L0 [\d.]+L100 [\d.]+L200 [\d.]+L200 100Z$/);
+  });
+  it("stops at a break: two runs make two shapes, and a lone point makes none", () => {
+    const d = areaPathD(lineLayout([10, 20, null, 30, 40, null, 50], axis, 7, 600, 100), 100);
+    expect((d.match(/Z/g) ?? []).length).toBe(2);
+    expect(areaPathD(lineLayout([10], axis, 1, 100, 100), 100)).toBe("");
+    expect(areaPathD([], 100)).toBe("");
   });
 });

@@ -26,6 +26,7 @@ import {
   noNextBookingNote,
 } from "@/lib/business-analytics/copy";
 import { FIGURE_UNAVAILABLE_COPY, type Figure } from "@/lib/business-analytics/figure";
+import { formatWhole } from "@/lib/business-analytics/money-format";
 import { MONEY_BASIS_NOTE, type Change } from "@/lib/business-analytics/money-metrics";
 import type { CollectedDifference, OverviewView } from "@/lib/business-analytics/overview-model";
 import { overviewQuery, type OverviewParams } from "@/lib/business-analytics/overview-params";
@@ -102,35 +103,23 @@ const shownDate = (v: string | undefined): string => (v !== undefined && PLAIN_D
 
 function Controls({ params, options }: { params: OverviewParams; options: OverviewScreenProps["practitionerOptions"] }) {
   const selected = params.practitioner.kind === "one" ? params.practitioner.practitionerId : params.practitioner.kind === "unattributed" ? "unattributed" : "all";
+  // Compact controls: a period list and a team-member list. Choosing "Custom range" reveals the dates and the comparison, with no script: the form's own
+  // :has() rule shows that group while the Custom option is selected. The submit button is always there, so every choice works without script, and the
+  // submitted names and values are exactly the ones the loader's strict parser reads.
   return (
-    <form method="get" action={OVERVIEW_PATH} className="flex flex-wrap items-end gap-3" aria-label="Period and team member">
+    <form method="get" action={OVERVIEW_PATH} className="group flex flex-wrap items-end justify-end gap-2" aria-label="Period and team member">
       <label className="flex flex-col gap-1 text-xs text-fg-muted">
-        Period
-        <select name="period" defaultValue={params.periodKind} className={INPUT}>
+        <span className="sr-only">Period</span>
+        <select name="period" defaultValue={params.periodKind} aria-label="Period" className={INPUT}>
           {PERIOD_KINDS.map((k) => (
             <option key={k} value={k}>{PERIOD_LABELS[k]}</option>
           ))}
         </select>
       </label>
       <label className="flex flex-col gap-1 text-xs text-fg-muted">
-        From (custom)
-        <input type="date" name="from" defaultValue={shownDate(params.from)} className={INPUT} />
-      </label>
-      <label className="flex flex-col gap-1 text-xs text-fg-muted">
-        To (custom)
-        <input type="date" name="to" defaultValue={shownDate(params.to)} className={INPUT} />
-      </label>
-      <label className="flex flex-col gap-1 text-xs text-fg-muted">
-        Compare with (custom)
-        <select name="compare" defaultValue={params.compare} className={INPUT}>
-          <option value="preceding">The period just before</option>
-          <option value="last_year">The same dates last year</option>
-        </select>
-      </label>
-      <label className="flex flex-col gap-1 text-xs text-fg-muted">
-        Team member
-        <select name="practitioner" defaultValue={selected} className={INPUT}>
-          <option value="all">Everyone</option>
+        <span className="sr-only">Team member</span>
+        <select name="practitioner" defaultValue={selected} aria-label="Team member" className={INPUT}>
+          <option value="all">All practitioners</option>
           {options.map((o) => (
             <option key={o.id} value={o.id}>{o.label}</option>
           ))}
@@ -139,6 +128,23 @@ function Controls({ params, options }: { params: OverviewParams; options: Overvi
       </label>
       {params.series !== "money" ? <input type="hidden" name="series" value={params.series} /> : null}
       <button type="submit" className={BUTTON}>Show</button>
+      <div className="hidden basis-full flex-wrap items-end justify-end gap-2 group-has-[option[value=custom]:checked]:flex" data-custom-range="">
+        <label className="flex flex-col gap-1 text-xs text-fg-muted">
+          From
+          <input type="date" name="from" defaultValue={shownDate(params.from)} className={INPUT} />
+        </label>
+        <label className="flex flex-col gap-1 text-xs text-fg-muted">
+          To
+          <input type="date" name="to" defaultValue={shownDate(params.to)} className={INPUT} />
+        </label>
+        <label className="flex flex-col gap-1 text-xs text-fg-muted">
+          Compare with
+          <select name="compare" defaultValue={params.compare} className={INPUT}>
+            <option value="preceding">The period just before</option>
+            <option value="last_year">The same dates last year</option>
+          </select>
+        </label>
+      </div>
     </form>
   );
 }
@@ -218,6 +224,7 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
   // The period line is already said once above; the model's own copy of it is not repeated.
   const periodLine = `${view.currentLabel} compared with ${cmp}.`;
   const pageNotes = view.notes.filter((n) => n !== periodLine);
+  const currencyWord = view.currency ? view.currency.toUpperCase() : null;
   const prevCount = view.previousSeries.available ? view.previousSeries.value.points.length : null;
   const curCount = view.series.available ? view.series.value.points.length : null;
   const toggle = (series: "money" | "visits", label: string) => (
@@ -273,10 +280,13 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
       </header>
 
       <section aria-label="Headline figures" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Card id="ov-collected-total" title={COLLECTED_LABEL} figure={view.collected} tone="soft" note={`${MONEY_BASIS_NOTE} ${claim}`}>
+        <Card id="ov-collected-total" title={COLLECTED_LABEL} figure={view.collected} tone="soft">
           {(c) => (
             <>
-              <p className={BIG}>{format(c.headlineCents)}</p>
+              <p className={BIG}>
+                {formatWhole(c.headlineCents)}
+                {currencyWord ? <span className="ml-1.5 text-sm font-medium tracking-normal text-fg-muted">{currencyWord}</span> : null}
+              </p>
               <ChangeLine change={c.change} cmp={cmp} />
             </>
           )}
@@ -292,7 +302,7 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
         <Card id="ov-avgpaid" title="Average paid per visit" figure={view.averagePaid}>
           {(a) => (
             <>
-              <p className={a.averageCents.known ? BIG : "text-sm text-fg"}>{factText(a.averageCents, format)}</p>
+              <p className={a.averageCents.known ? BIG : "text-sm text-fg"}>{factText(a.averageCents, formatWhole)}</p>
               {a.averageCents.known ? <ChangeLine change={view.averagePaidChange} cmp={cmp} /> : null}
               {a.excludedUnknownVisits > 0 ? <p className="text-xs text-fg-muted">{plural(a.excludedUnknownVisits, "visit", "visits")} awaiting payment confirmation {a.excludedUnknownVisits === 1 ? "is" : "are"} left out of this average.</p> : null}
             </>
@@ -308,6 +318,8 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
           )}
         </Card>
       </section>
+      {/* The basis of the Collected figure, in full, beside the cards it belongs to (not inside one card, so the four cards stay level). */}
+      <p className="-mt-4 text-xs text-fg-muted" data-collected-basis="">{COLLECTED_LABEL}: {MONEY_BASIS_NOTE} {claim}</p>
 
       <section aria-label="Over time and returning clients" className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <div className="space-y-3">
@@ -327,14 +339,14 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
                 <LineChart
                   idPrefix="ov-series-chart"
                   title={chartIsMoney ? "Collected by visit date" : "Completed visits by date"}
-                  caption={`${chartIsMoney ? "Collected" : "Completed visits"} for each ${s.unit === "day" ? "day" : "month"} of ${view.currentLabel}${view.previousSeries.available ? `, with the same for ${cmp}` : ""}.`}
+                  caption={`${chartIsMoney ? `Collected${currencyWord ? ` (amounts in ${currencyWord})` : ""}` : "Completed visits"} for each ${s.unit === "day" ? "day" : "month"} of ${view.currentLabel}${view.previousSeries.available ? `, with the same for ${cmp}` : ""}.`}
                   valueHeading={chartIsMoney ? "Collected" : "Completed visits"}
                   currentName={view.currentLabel}
                   previousName={cmp}
                   points={s.points.map((p) => ({ key: p.key, label: bucketLabel(p.key), value: chartIsMoney ? p.collectedCents : p.completedVisits }))}
                   previous={view.previousSeries.available ? view.previousSeries.value.points.map((p) => (chartIsMoney ? p.collectedCents : p.completedVisits)) : null}
                   formatValue={(v) => (chartIsMoney ? format(v) : String(v))}
-                  formatTick={(v) => (chartIsMoney ? format(v) : String(v))}
+                  formatTick={(v) => (chartIsMoney ? formatWhole(v) : String(v))}
                   openData={print}
                 />
                 {view.previousSeries.available ? (

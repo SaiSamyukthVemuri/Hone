@@ -1,4 +1,5 @@
-import { formatMoney, type PaymentCurrency } from "@/lib/billing/payment-jurisdiction";
+import { type PaymentCurrency } from "@/lib/billing/payment-jurisdiction";
+import { formatExact } from "@/lib/business-analytics/money-format";
 import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
 import { loadOverview } from "@/lib/business-analytics/server/overview-read";
 import { STATEMENTS_OWNER_ONLY } from "@/lib/finance/statement-screen";
@@ -35,5 +36,5 @@ export default async function AnalyticsOverviewPage({ searchParams }: { searchPa
       </section>
     );
   }
-  return <OverviewScreen view={read.view} params={read.params} notices={read.notices} practitionerOptions={read.practitionerOptions} format={(c) => formatMoney(c, currency)} />;
+  return <OverviewScreen view={read.view} params={read.params} notices={read.notices} practitionerOptions={read.practitionerOptions} format={formatExact} />;
 }

@@ -90,3 +90,20 @@ export function linePathD(points: ReadonlyArray<LinePoint | null>): string {
   }
   return d;
 }
+
+/** A closed shape under each unbroken run of the line down to the baseline (`baseY`), so the area stops where the line breaks and never spans a gap. */
+export function areaPathD(points: ReadonlyArray<LinePoint | null>, baseY: number): string {
+  const r = (n: number) => Math.round(n * 100) / 100;
+  let d = "";
+  let run: LinePoint[] = [];
+  const close = () => {
+    if (run.length >= 2) d += `M${r(run[0].x)} ${r(baseY)}${run.map((p) => `L${r(p.x)} ${r(p.y)}`).join("")}L${r(run[run.length - 1].x)} ${r(baseY)}Z`;
+    run = [];
+  };
+  for (const p of points) {
+    if (p === null) close();
+    else run.push(p);
+  }
+  close();
+  return d;
+}

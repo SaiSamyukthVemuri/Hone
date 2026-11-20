@@ -1,4 +1,4 @@
-import { isolatedPoints, lineLayout, linePathD, niceAxis, segmentShares, truncateLabel } from "@/lib/business-analytics/chart-geometry";
+import { areaPathD, isolatedPoints, lineLayout, linePathD, niceAxis, segmentShares, truncateLabel } from "@/lib/business-analytics/chart-geometry";
 
 // ===========================================================================
 // Server-rendered SVG and CSS charts, each with the SAME numbers as text. No script, no chart library, nothing client-side.
@@ -91,6 +91,8 @@ export function LineChart({
               </g>
             );
           })}
+          {/* A faint neutral fill under the current line only; the line and the table carry the numbers. */}
+          <path d={areaPathD(cur, plotH)} data-area="current" fill={INK} fillOpacity={0.06} stroke="none" />
           {previous ? <path d={linePathD(prev)} fill="none" stroke={INK_SOFT} strokeWidth={2} strokeDasharray="5 3" strokeLinejoin="round" strokeLinecap="round" /> : null}
           <path d={linePathD(cur)} fill="none" stroke={INK} strokeWidth={2.5} strokeLinejoin="round" strokeLinecap="round" />
           {/* A point with no neighbour has no segment to draw, so it gets a marker (the numbers stay in the table). */}
