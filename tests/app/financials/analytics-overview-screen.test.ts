@@ -462,6 +462,18 @@ describe("compact controls, whole-dollar headline figures and the area under the
     expect(c).toMatch(/^\s*Beyond their usual visit interval 3 /);
     expect(c).toContain("2 clients have fewer than two visit dates");
   });
+  it("a comparison period's extra days, which nothing draws, do not stretch the axis", () => {
+    const view = healthy();
+    const day = (n: number, cents: number) => ({ key: `2026-02-${String(n).padStart(2, "0")}`, collectedCents: cents, completedVisits: 1 });
+    const current = { available: true, value: { unit: "day", points: Array.from({ length: 28 }, (_, i) => day(i + 1, 10000)) } };
+    // January has 31 days: the last three carry a huge amount that the 28-day chart never shows.
+    const previous = { available: true, value: { unit: "day", points: Array.from({ length: 31 }, (_, i) => ({ key: `2026-01-${String(i + 1).padStart(2, "0")}`, collectedCents: i >= 28 ? 5_000_000 : 10000, completedVisits: 1 })) } };
+    const c = card(render({ ...view, series: current, previousSeries: previous } as unknown as OverviewView), "ov-series") ?? "";
+    const ticks = [...c.matchAll(/<text[^>]*text-anchor="end"[^>]*font-size="11"[^>]*>(\$[\d,.]+)<\/text>/g)].map((m) => m[1]);
+    expect(ticks.length).toBeGreaterThan(1);
+    expect(ticks.at(0)).not.toMatch(/\$[1-9]\d{3},|\$\d{5,}/); // the top tick is not near $50,000
+    expect(c).not.toContain("$50,000"); // the hidden amounts are also not in the table
+  });
   it("the current line has a faint neutral area under it", () => {
     const c = card(render(healthy()), "ov-series") ?? "";
     expect((c.match(/data-area="current"/g) ?? []).length).toBe(1);

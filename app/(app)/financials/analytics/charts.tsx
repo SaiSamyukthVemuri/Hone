@@ -1,4 +1,4 @@
-import { areaPathD, isolatedPoints, lineLayout, linePathD, niceAxis, segmentShares, truncateLabel } from "@/lib/business-analytics/chart-geometry";
+import { areaPathD, drawnValues, isolatedPoints, lineLayout, linePathD, niceAxis, segmentShares, truncateLabel } from "@/lib/business-analytics/chart-geometry";
 
 // ===========================================================================
 // Server-rendered SVG and CSS charts, each with the SAME numbers as text. No script, no chart library, nothing client-side.
@@ -54,7 +54,9 @@ export function LineChart({
   openData?: boolean;
 }) {
   const plotH = H - PAD.top - PAD.bottom;
-  const max = Math.max(0, ...points.map((p) => p.value), ...(previous ?? []));
+  // The axis is scaled from the values the two lines actually draw: the comparison period is cut to this period's length, so a larger comparison period's
+  // extra days (which the lines and the table never show) cannot flatten what is shown.
+  const max = Math.max(0, ...drawnValues(points.map((p) => p.value), points.length).map((v) => v ?? 0), ...drawnValues(previous ?? [], points.length).map((v) => v ?? 0));
   const axis = niceAxis(max, 4);
   const left = tickMargin(axis.ticks.map((t) => formatTick(t)));
   const plotW = W - left - PAD.right;

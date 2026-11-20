@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { areaPathD, barLayout, isolatedPoints, lineLayout, linePathD, niceAxis, segmentShares, truncateLabel } from "@/lib/business-analytics/chart-geometry";
+import { areaPathD, barLayout, drawnValues, isolatedPoints, lineLayout, linePathD, niceAxis, segmentShares, truncateLabel } from "@/lib/business-analytics/chart-geometry";
 
 describe("axis", () => {
   it("is zero-based and covers the data in at most the requested steps", () => {
@@ -119,5 +119,17 @@ describe("area under the line ", () => {
     expect((d.match(/Z/g) ?? []).length).toBe(2);
     expect(areaPathD(lineLayout([10], axis, 1, 100, 100), 100)).toBe("");
     expect(areaPathD([], 100)).toBe("");
+  });
+});
+
+describe("the axis is scaled from what is drawn", () => {
+  it("drawnValues is exactly the slice lineLayout draws", () => {
+    const values = [1, 2, 3, 4, 5];
+    expect(drawnValues(values, 3)).toEqual([1, 2, 3]);
+    expect(drawnValues(values, 9)).toEqual(values);
+    expect(drawnValues(values, 0)).toEqual([]);
+    expect(drawnValues(values, -2)).toEqual([]);
+    const axis = niceAxis(5, 4);
+    expect(lineLayout(values, axis, 3, 300, 100).length).toBe(drawnValues(values, 3).length);
   });
 });

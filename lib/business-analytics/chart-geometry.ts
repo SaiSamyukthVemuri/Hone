@@ -58,9 +58,14 @@ export type LinePoint = { x: number; y: number };
  * for slot i is drawn at slot i, so two series of different lengths line up by position and the shorter one simply ends sooner. A missing, negative or
  * non-finite value is `null`: the line breaks there and nothing is drawn, never a 0.
  */
+/** The values a line over `slots` places actually draws: the first `slots` of them. The axis is scaled from exactly these, so a value the line never draws cannot stretch it. */
+export function drawnValues(values: ReadonlyArray<number | null>, slots: number): Array<number | null> {
+  return values.slice(0, Math.max(0, slots));
+}
+
 export function lineLayout(values: ReadonlyArray<number | null>, axis: AxisScale, slots: number, width: number, height: number): Array<LinePoint | null> {
   if (!(width > 0) || !(height > 0) || !(slots > 0)) return [];
-  return values.slice(0, slots).map((v, i) => {
+  return drawnValues(values, slots).map((v, i) => {
     if (v === null || !Number.isFinite(v) || v < 0) return null;
     const x = slots === 1 ? width / 2 : (i * width) / (slots - 1);
     return { x, y: height - (Math.min(v, axis.max) / axis.max) * height };
