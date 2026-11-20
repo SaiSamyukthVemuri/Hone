@@ -52,6 +52,7 @@ const params: OverviewParams = { periodKind: "custom", from: "2026-11-01", to: "
 const fmt = (c: number) => `$${(c / 100).toFixed(2)}`;
 import { ClientsScreen } from "@/app/(app)/financials/analytics/clients-screen";
 import { FIGURE_UNAVAILABLE_COPY } from "@/lib/business-analytics/figure";
+import { reconcileClientsMoney } from "@/lib/business-analytics/clients-table";
 import { clientsCsv } from "@/lib/business-analytics/clients-csv";
 import type { ClientChip, ClientSort } from "@/lib/business-analytics/clients-table";
 
@@ -237,5 +238,46 @@ describe("the Clients tab: the first-visit column", () => {
     expect(heads).toContain("First visit");
     expect(heads.join("|")).not.toMatch(/Client since/);
     expect(text(html)).not.toMatch(/Client since/);
+  });
+});
+
+describe("the Clients tab: a nonzero reconciliation difference is computed and shown", () => {
+  it("completed-visit money above the clients' money plus the no-client money gives a positive difference", () => {
+    const r = reconcileClientsMoney({ clientsPaidCents: 21_500, noClientPaidCents: 4_000, completedVisitsCents: 26_734 });
+    expect(r.value.differenceCents).toBe(1_234);
+    const below = reconcileClientsMoney({ clientsPaidCents: 21_500, noClientPaidCents: 4_000, completedVisitsCents: 25_000 });
+    expect(below.value.differenceCents).toBe(-500);
+  });
+  it("the page shows that number on the Difference line, never a hidden zero", () => {
+    const v = { ...view(), clientsReconciliation: reconcileClientsMoney({ clientsPaidCents: 21_500, noClientPaidCents: 4_000, completedVisitsCents: 26_734 }) };
+    const recon = text(render(v as OverviewView));
+    expect(recon).toContain("Paid in period across every client seen $215.00");
+    expect(recon).toContain("Money on completed visits with no client recorded $40.00");
+    expect(recon).toContain("Collected on completed visits (Overview) $267.34");
+    expect(recon).toContain("Difference $12.34");
+    expect(recon).not.toContain("Difference $0.00");
+  });
+});
+
+describe("the Clients tab: a client whose every payment is unconfirmed has no lifetime figure, not $0", () => {
+  it("the earlier and the current visit both have no payment on record: lifetime is null and the page says Not available", () => {
+    const earlier = appt("earlier-unrecorded", "completed", "2026-10-02T15:00:00Z", "pr-1", "client-unconfirmed");
+    const now = appt("now-unrecorded", "completed", "2026-11-12T15:00:00Z", "pr-1", "client-unconfirmed");
+    const cur = [...appointments, now];
+    const v = view(
+      { lifetimeHistory: { ok: true, value: { appointments: [earlier], money: { ok: true, value: { cardRows: [], settlementRows: [], legacyFeeRows: [] } as never } } } },
+      { current: { ok: true, value: { appointments: cur, money: { ok: true, value: money as never } } }, followThrough: { ok: true, value: { past: cur, future: [] } }, names: lookup({ ...NAMES, "client-unconfirmed": "Uma Unconfirmed" }) },
+    );
+    const row = table(v)?.rows.find((r) => r.name === "Uma Unconfirmed");
+    expect(row?.periodPaidCents).toBeNull();
+    expect(row?.lifetimePaidCents).toBeNull();
+    const tr = render(v).match(/<tr[^>]*>(?:(?!<\/tr>)[\s\S])*Uma Unconfirmed[\s\S]*?<\/tr>/)?.[0] ?? "";
+    const cells = [...tr.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((m) => text(m[1]).trim());
+    expect(cells[2]).toBe("Not available"); // paid in period
+    expect(cells[3]).toBe("Not available"); // lifetime paid, never $0.00
+    expect(tr).not.toContain("$0.00");
+  });
+  it("the Lifetime note says unconfirmed visits add nothing", () => {
+    expect(text(render(view()))).toContain("Visits awaiting payment confirmation add nothing, and a client with none confirmed shows as not available.");
   });
 });

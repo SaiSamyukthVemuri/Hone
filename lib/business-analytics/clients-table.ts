@@ -155,3 +155,8 @@ export function rankClientsTable(args: {
     },
   };
 }
+
+/** The Clients tab's money against the Overview's "collected on completed visits". The difference is shown, never hidden: positive when completed-visit money is more than the clients' money plus the money on visits with no client. */
+export function reconcileClientsMoney(a: { clientsPaidCents: number; noClientPaidCents: number; completedVisitsCents: number }): { available: true; value: { clientsPaidCents: number; noClientPaidCents: number; completedVisitsCents: number; differenceCents: number } } {
+  return { available: true, value: { ...a, differenceCents: a.completedVisitsCents - a.clientsPaidCents - a.noClientPaidCents } };
+}

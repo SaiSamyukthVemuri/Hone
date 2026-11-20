@@ -89,7 +89,7 @@ export const fewerThanTwoDatesNote = (n: number): string => `${n} ${n === 1 ? "c
 // ---------------------------------------------------------------------------
 export const CLIENTS_POPULATION_NOTE = "This table lists the clients seen in this period (a completed visit in it), not every client on record.";
 export const CLIENTS_PRINT_NOTE = "The client table is left off the printed page.";
-export const LIFETIME_NOTE = "Lifetime paid is money kept on a client's completed visits at the studio, with every team member, through the last day of this period.";
+export const LIFETIME_NOTE = "Lifetime paid is money kept on a client's completed visits at the studio, with every team member, through the last day of this period. Visits awaiting payment confirmation add nothing, and a client with none confirmed shows as not available.";
 export const clientsRowsLine = (from: number, to: number, shown: number, seen: number): string =>
   shown === 0
     ? "No clients to show."

@@ -24,7 +24,7 @@ import {
   type PaidVisit,
   type SeriesPoint,
 } from "./money-metrics";
-import { rankClientsTable, type ClientChip, type ClientSort, type ClientTableFigure, type ClientsTable } from "./clients-table";
+import { rankClientsTable, reconcileClientsMoney, type ClientChip, type ClientSort, type ClientTableFigure, type ClientsTable } from "./clients-table";
 import { rankNamedClients, type ClientFigure, type NameLookup, type NamedClients } from "./named-clients";
 import { bucketUnit, bucketsOf, statementsClaim, type PeriodWindow, type ResolvedPeriod, type StatementsClaim, type BucketUnit } from "./period";
 import { reconcileWithStatement } from "./reconcile";
@@ -495,12 +495,7 @@ function clientsTableFigure(input: OverviewInput, cur: Window): { table: Figure<
   const moneyOk = cur.clientPaid !== undefined && cur.collected.available;
   const reconciliation: NonNullable<OverviewView["clientsReconciliation"]> =
     table.available && moneyOk && cur.collected.available
-      ? (() => {
-          const clientsPaidCents = table.value.paidAcrossSeenCents;
-          const noClientPaidCents = cur.noClientPaidCents ?? 0;
-          const completedVisitsCents = cur.collected.value.split.completedVisitsCents;
-          return { available: true as const, value: { clientsPaidCents, noClientPaidCents, completedVisitsCents, differenceCents: completedVisitsCents - clientsPaidCents - noClientPaidCents } };
-        })()
+      ? reconcileClientsMoney({ clientsPaidCents: table.value.paidAcrossSeenCents, noClientPaidCents: cur.noClientPaidCents ?? 0, completedVisitsCents: cur.collected.value.split.completedVisitsCents })
       : unavailable(cur.collected.available ? "read_failed" : cur.collected.reason);
   return { table, reconciliation };
 }
