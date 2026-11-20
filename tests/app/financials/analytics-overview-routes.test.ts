@@ -131,12 +131,22 @@ describe("the Overview print page", () => {
     const { tree } = await page();
     expect(JSON.stringify(tree)).toContain("nothing is printed");
   });
-  it("the printed page says which team member it shows, by name, even though the controls are gone (Codex)", async () => {
+  it("the printed page says which team member it shows, by name, even though the controls are gone", async () => {
     const { tree } = await page();
     const html = renderToStaticMarkup(tree as never).replace(/&#x27;/g, "'");
     expect(html).toContain("Showing: Ada Example");
     expect(html).not.toContain("Former team member");
     expect(html).toMatch(/<header[^>]*data-statement-header/); // the header that carries the line is the one print keeps
+  });
+  it("the print DOM carries one link, Back to Analytics: no chart-toggle link is rendered, only hidden", async () => {
+    const { tree } = await page();
+    const html = renderToStaticMarkup(tree as never);
+    const hrefs = [...html.matchAll(/href="([^"]*)"/g)].map((m) => m[1].replace(/&amp;/g, "&"));
+    expect(hrefs.filter((h) => h.startsWith("/financials/analytics"))).toHaveLength(1);
+    expect(hrefs.filter((h) => /series=/.test(h))).toEqual([]);
+    expect(html).not.toContain("Chart shows");
+    // the chosen member's id is in the one Back link and nowhere else in the markup
+    expect(html.split("pr-1").length - 1).toBe(1);
   });
   it("the title is fixed text and the page carries no controls, no id and the owner-only footer", async () => {
     const { mod, tree } = await page();

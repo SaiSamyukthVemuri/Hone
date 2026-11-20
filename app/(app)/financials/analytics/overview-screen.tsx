@@ -195,10 +195,12 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
           )}
         </Card>
 
-        <div className={cx("flex flex-wrap items-center gap-2 text-sm", print ? "hidden" : "")} role="group" aria-label="Chart shows">
-          <a href={`${OVERVIEW_PATH}${overviewQuery(params, { series: "money" })}`} aria-current={chartIsMoney ? "true" : undefined} className={cx("rounded-lg px-3", CONTROL_MIN_TOUCH, "inline-flex items-center", FOCUS_RING, chartIsMoney ? "bg-white font-semibold shadow-[0_1px_4px_#0002]" : "text-fg-muted")}>Collected</a>
-          <a href={`${OVERVIEW_PATH}${overviewQuery(params, { series: "visits" })}`} aria-current={!chartIsMoney ? "true" : undefined} className={cx("rounded-lg px-3", CONTROL_MIN_TOUCH, "inline-flex items-center", FOCUS_RING, !chartIsMoney ? "bg-white font-semibold shadow-[0_1px_4px_#0002]" : "text-fg-muted")}>Completed visits</a>
-        </div>
+        {print ? null : (
+          <div className="flex flex-wrap items-center gap-2 text-sm" role="group" aria-label="Chart shows">
+            <a href={`${OVERVIEW_PATH}${overviewQuery(params, { series: "money" })}`} aria-current={chartIsMoney ? "true" : undefined} className={cx("rounded-lg px-3", CONTROL_MIN_TOUCH, "inline-flex items-center", FOCUS_RING, chartIsMoney ? "bg-white font-semibold shadow-[0_1px_4px_#0002]" : "text-fg-muted")}>Collected</a>
+            <a href={`${OVERVIEW_PATH}${overviewQuery(params, { series: "visits" })}`} aria-current={!chartIsMoney ? "true" : undefined} className={cx("rounded-lg px-3", CONTROL_MIN_TOUCH, "inline-flex items-center", FOCUS_RING, !chartIsMoney ? "bg-white font-semibold shadow-[0_1px_4px_#0002]" : "text-fg-muted")}>Completed visits</a>
+          </div>
+        )}
         <Card id="ov-series" title={chartIsMoney ? "Collected by visit date" : "Completed visits by date"} figure={view.series}>
           {(s) => (
             <BarChart

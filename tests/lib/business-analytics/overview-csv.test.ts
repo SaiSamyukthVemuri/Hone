@@ -103,7 +103,7 @@ describe("every unavailable figure is a row that says why, never an empty cell o
   });
 });
 
-describe("a filtered export labels the whole-studio rows as such (Codex)", () => {
+describe("a filtered export labels the whole-studio rows as such", () => {
   it("the by-team-member rows are the section 'Whole studio (not filtered)' beside the 'One team member (filtered)' header", () => {
     const filtered = csv(buildOverview(input({ filter: { kind: "one", practitionerId: "pr-1" } })));
     expect(filtered).toContain("One team member (filtered)");
