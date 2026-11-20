@@ -92,7 +92,7 @@ function log(fields: Record<string, unknown>): void {
 
 export async function sendWaitlistInvitationSms(args: {
   admin: SupabaseClient;
-  studio: { id: string; name?: string | null };
+  studio: { id: string; name?: string | null; timezone?: string | null };
   invitationId: string;
   /** The invitation's /invitation/<token> URL. Held in memory, never logged. */
   invitationUrl: string;
@@ -147,7 +147,7 @@ export async function sendWaitlistInvitationSms(args: {
     invitationUrl: args.invitationUrl,
     // The DATABASE's deadline, as the claim returned it, rendered exactly as
     // the invitation email renders it.
-    expiresAtLabel: invitationExpiryLabel(new Date(claim.target.expiresAt)),
+    expiresAtLabel: invitationExpiryLabel(new Date(claim.target.expiresAt), args.studio.timezone),
   });
   const statusCallbackUrl = smsStatusCallbackUrl(claim.messageId);
 

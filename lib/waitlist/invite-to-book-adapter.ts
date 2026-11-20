@@ -131,6 +131,7 @@ async function resolveSession(): Promise<
         studio: {
           id: studio.id,
           name: studio.name ?? null,
+          timezone: studio.timezone ?? null,
           // COMMS-01A: a client-facing send speaks as the studio and offers a
           // reply path. These ride along from a row already fetched.
           postcare_contact_email:
