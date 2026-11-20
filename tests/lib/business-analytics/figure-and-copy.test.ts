@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { ANALYTICS_ACCESS_NOTE, BEYOND_USUAL_NOTE, FIRST_TIME_NOTE, NO_NEXT_BOOKING_NOTE, TREATMENT_CONTEXT_NOTE } from "@/lib/business-analytics/copy";
+import { ANALYTICS_ACCESS_NOTE, FIRST_TIME_NOTE, TREATMENT_CONTEXT_NOTE, beyondUsualNote, noNextBookingNote } from "@/lib/business-analytics/copy";
 import { FIGURE_UNAVAILABLE_COPY, figureFrom, unavailableText, type FigureRead } from "@/lib/business-analytics/figure";
 
 describe("a window over the cap makes only that figure unavailable", () => {
@@ -35,23 +35,27 @@ describe("fixed copy that must stay true", () => {
   });
   it("labels say what the data cannot", () => {
     expect(FIRST_TIME_NOTE).toContain("first visit recorded in Hone");
-    expect(NO_NEXT_BOOKING_NOTE).toContain("last 12 months");
-    expect(BEYOND_USUAL_NOTE).toContain("1.5 times");
+    expect(noNextBookingNote(12)).toContain("last 12 months");
+    expect(beyondUsualNote(1.5)).toContain("1.5 times");
     expect(TREATMENT_CONTEXT_NOTE).toContain("how many treatments were recorded and the date of the latest");
   });
 });
+
+const MODULES = ["chart-geometry.ts", "copy.ts", "figure.ts", "money-metrics.ts", "period.ts", "reconcile.ts", "reconciliation-line.ts", "service-value.ts", "visit-metrics.ts"];
 
 describe("the analytics modules stay pure (no I/O, no routes, no UI, no studio ids)", () => {
   const dir = path.resolve(__dirname, "../../../lib/business-analytics");
   const files = readdirSync(dir).filter((f) => f.endsWith(".ts"));
   it("has the modules and nothing else", () => {
-    expect(files.sort()).toEqual(["copy.ts", "figure.ts", "money-metrics.ts", "period.ts", "reconcile.ts", "visit-metrics.ts"]);
+    expect(files.sort()).toEqual(MODULES);
   });
-  for (const f of ["copy.ts", "figure.ts", "money-metrics.ts", "period.ts", "reconcile.ts", "visit-metrics.ts"]) {
+  for (const f of MODULES) {
     it(`${f} imports no server code, database client, framework or clock`, () => {
       const src = readFileSync(path.join(dir, f), "utf8");
       const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
       expect(code).not.toMatch(/server-only|@\/lib\/supabase|from "next|from "react|createClient|\.from\(|fetch\(|process\.env|Date\.now|new Date\(\)/);
+      expect(code).not.toMatch(/services\.price_cents|price_cents/); // a past visit is never priced from today's list
+      expect(src).not.toMatch(/revenue|by payment date/i); // neither money figure is ever called revenue or "by payment date"
       expect(code).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i); // no id literal
     });
   }
