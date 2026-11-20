@@ -47,7 +47,7 @@ function workerDeps(sleep: (ms: number) => Promise<void>): WorkerDeps {
   return {
     claim: (limits) => claimItems(db, limits),
     admit: (item) => admitBatchItem(db, item, null),
-    settle: (id, outcome, reason) => settleItem(db, id, outcome, reason),
+    settle: (target, outcome, reason) => settleItem(db, target, outcome, reason),
     deliver: (issued, entryId, item) => deliverIssued(item.studioId, issued, entryId),
     mayStillSend: (item) => mayStillSend(item.studioId, item.entryId),
     sleep,
@@ -236,10 +236,10 @@ export async function retryOverInviteDeliveriesAction(_prev: OverInviteResult, f
       {
         replace: (entryId) => replaceInvitation(db, { studioId: studio.id, actorUserId, entryId }),
         deliver: (issued, entryId) => deliverIssued(studio.id, issued, entryId),
-        settle: (id, outcome, reason) => settleItem(db, id, outcome, reason),
+        settle: (target, outcome, reason) => settleItem(db, target, outcome, reason),
         sleep: sleepFor,
       },
-      targets,
+      targets.map((t) => ({ ...t, studioId: studio.id })),
     );
     revalidatePath("/settings/waitlist");
     return {

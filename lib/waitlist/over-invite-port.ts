@@ -250,10 +250,15 @@ export type SettleOutcome = { ok: true; result: string } | PortFailure;
 const REASON = /^[a-z_]{1,40}$/;
 
 /** `failed` and `skipped` REQUIRE a reason class; it is a fixed code, never free text and never a name. */
-export async function settleItem(db: Rpc, itemId: string, outcome: "sent" | "failed" | "skipped", reasonClass: string | null): Promise<SettleOutcome> {
+export type SettleTarget = { itemId: string; studioId: string; entryId: string };
+
+/** The item must belong to BOTH the studio and the entry named (0363): a mismatch answers not_found and changes nothing. Pass them from the claimed row. */
+export async function settleItem(db: Rpc, target: SettleTarget, outcome: "sent" | "failed" | "skipped", reasonClass: string | null): Promise<SettleOutcome> {
   if (outcome !== "sent" && (reasonClass === null || !REASON.test(reasonClass))) return { ok: false, code: "bad_shape" };
   const { data, error } = await db.rpc("settle_waitlist_batch_item", {
-    p_item_id: itemId,
+    p_item_id: target.itemId,
+    p_studio_id: target.studioId,
+    p_entry_id: target.entryId,
     p_outcome: outcome,
     p_reason_class: reasonClass,
   });

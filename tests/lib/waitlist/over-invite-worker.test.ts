@@ -10,16 +10,17 @@ const issued: IssuedInvitation = { invitationId: "inv", rawToken: "TOKEN", issue
 
 function deps(over: Partial<WorkerDeps> & { items?: ClaimedItem[] } = {}) {
   const calls: string[] = [];
+  const seen: { itemId: string; studioId: string; entryId: string }[] = [];
   const d: WorkerDeps = {
     claim: async () => ({ ok: true, items: over.items ?? [item(1)] }),
     admit: async () => ({ ok: true, result: "admitted", issued }),
-    settle: async (id, o, r) => (calls.push(`settle:${id}:${o}:${r}`), { ok: true, result: "settled" }),
+    settle: async (t, o, r) => (calls.push(`settle:${t.itemId}:${o}:${r}`), seen.push(t), { ok: true, result: "settled" }),
     deliver: async () => (calls.push("deliver"), "accepted"),
     mayStillSend: async () => true,
     sleep: async () => {},
     ...over,
   };
-  return { d, calls };
+  return { d, calls, seen };
 }
 
 describe("over-invite worker", () => {
@@ -28,6 +29,11 @@ describe("over-invite worker", () => {
     const r = await runBatchChunk(d);
     expect(r.ok && r.outcomes[0].status).toBe("sent");
     expect(calls).toEqual(["deliver", "settle:i1:sent:null"]);
+  });
+  it("settle names the item's own studio and entry from the claimed row (0363 ownership check)", async () => {
+    const { d, seen } = deps();
+    await runBatchChunk(d);
+    expect(seen).toEqual([{ itemId: "i1", studioId: "s", entryId: "e1" }]);
   });
   it("a refused admit (no_capacity) settles skipped so the lease cannot loop", async () => {
     const { d, calls } = deps({ admit: async () => ({ ok: true, result: "no_capacity" }) });
@@ -79,13 +85,13 @@ describe("over-invite worker", () => {
 });
 
 describe("retry through replace", () => {
-  const t = [{ entryId: "e1", itemId: "i1" }];
+  const t = [{ entryId: "e1", itemId: "i1", studioId: "s" }];
   it("replaces (never admits) and settles sent", async () => {
     const calls: string[] = [];
     const r = await retryRefusedDeliveries({
       replace: async () => (calls.push("replace"), { ok: true, result: "replaced", issued }),
       deliver: async () => "accepted",
-      settle: async (i, o) => (calls.push(`settle:${i}:${o}`), { ok: true, result: "settled" }),
+      settle: async (t, o) => (calls.push(`settle:${t.itemId}:${o}`), { ok: true, result: "settled" }),
       sleep: async () => {},
     }, t);
     expect(calls).toEqual(["replace", "settle:i1:sent"]);

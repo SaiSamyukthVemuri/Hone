@@ -75,7 +75,7 @@ function deps(deliver: (entryId: string) => DeliveryState, log: string[] = []): 
   return {
     claim: (l) => claimItems(db, l),
     admit: (item) => admitBatchItem(db, item, null),
-    settle: (id, o, r) => settleItem(db, id, o, r),
+    settle: (t, o, r) => settleItem(db, t, o, r),
     deliver: async (_i, entryId) => (log.push(entryId), deliver(entryId)),
     mayStillSend: async () => true,
     sleep: async () => {},
@@ -142,10 +142,10 @@ describe("over-invite worker against the real batch commands", () => {
       {
         replace: (entryId) => replaceInvitation(db, { studioId: f.studioId, actorUserId: f.userId, entryId }),
         deliver: async () => "accepted",
-        settle: (id, o, r) => settleItem(db, id, o, r),
+        settle: (t, o, r) => settleItem(db, t, o, r),
         sleep: async () => {},
       },
-      [{ entryId: refused!.entryId, itemId: refused!.itemId }],
+      [{ entryId: refused!.entryId, itemId: refused!.itemId, studioId: f.studioId }],
     );
     expect(retried[0].status).toBe("sent");
     const live = await q(

@@ -42,7 +42,7 @@ vi.mock("@/lib/waitlist/over-invite-port", () => ({
     h.admitted.push(item.entryId),
     { ok: true, result: "admitted", issued: { invitationId: "i", rawToken: "t", issuedAt: new Date(), expiresAt: new Date(), deliveryEmail: null, deliveryName: null } }
   ),
-  settleItem: async (_d: unknown, id: string, o: string) => (h.settled.push(`${id}:${o}`), { ok: true, result: "settled" }),
+  settleItem: async (_d: unknown, t: { itemId: string }, o: string) => (h.settled.push(`${t.itemId}:${o}`), { ok: true, result: "settled" }),
   replaceInvitation: async () => ({ ok: true, result: "no_live_invitation" }),
 }));
 // Spacing is the caller's, and is skipped here so 60 items do not take 30 s.

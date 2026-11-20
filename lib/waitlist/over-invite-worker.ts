@@ -1,4 +1,4 @@
-import type { ClaimedItem, ClaimOutcome, AdmitOutcome, IssuedInvitation, ReplaceOutcome, SettleOutcome } from "./over-invite-port";
+import type { ClaimedItem, ClaimOutcome, AdmitOutcome, IssuedInvitation, ReplaceOutcome, SettleOutcome, SettleTarget } from "./over-invite-port";
 
 // The over-invite batch WORKER, as logic over injected ports (no database, no mail provider, no SMS: this module has no SMS dependency at all, so
 // no waitlist text can be sent from here). It implements Machines' worker contract for one claimed chunk:
@@ -18,7 +18,7 @@ export type DeliveryState = "accepted" | "refused" | "unknown";
 export type WorkerDeps = {
   claim: (limits: { perStudio: number; total: number; leaseSeconds: number }) => Promise<ClaimOutcome>;
   admit: (item: ClaimedItem) => Promise<AdmitOutcome>;
-  settle: (itemId: string, outcome: "sent" | "failed" | "skipped", reasonClass: string | null) => Promise<SettleOutcome>;
+  settle: (target: SettleTarget, outcome: "sent" | "failed" | "skipped", reasonClass: string | null) => Promise<SettleOutcome>;
   /** Sends the one invitation email. `entryId` lets the deliverer re-read the stored address when the command did not return one. */
   deliver: (issued: IssuedInvitation, entryId: string, item: ClaimedItem) => Promise<DeliveryState>;
   /** Re-reads, immediately before the send, that the entry may still be mailed (waiting/invited, not removed, has an address). */
@@ -56,8 +56,9 @@ export async function runBatchChunk(deps: WorkerDeps, limits: { perStudio: numbe
 
 async function runOne(deps: WorkerDeps, item: ClaimedItem): Promise<ItemOutcome> {
   const base = { entryId: item.entryId, itemId: item.itemId };
+  const target = { itemId: item.itemId, studioId: item.studioId, entryId: item.entryId };
   const skip = async (reason: string): Promise<ItemOutcome> => {
-    const s = await deps.settle(item.itemId, "skipped", reason);
+    const s = await deps.settle(target, "skipped", reason);
     return s.ok ? { ...base, status: "skipped", reason } : { ...base, status: "failed", reason: "settle_failed" };
   };
 
@@ -87,11 +88,11 @@ async function runOne(deps: WorkerDeps, item: ClaimedItem): Promise<ItemOutcome>
     state = "unknown";
   }
   if (state === "accepted") {
-    const s = await deps.settle(item.itemId, "sent", null);
+    const s = await deps.settle(target, "sent", null);
     return s.ok ? { ...base, status: "sent" } : { ...base, status: "failed", reason: "settle_failed" };
   }
   const reason = state === "refused" ? "delivery_refused" : "delivery_unknown";
-  const s = await deps.settle(item.itemId, "failed", reason);
+  const s = await deps.settle(target, "failed", reason);
   return s.ok ? { ...base, status: "failed", reason } : { ...base, status: "failed", reason: "settle_failed" };
 }
 
@@ -113,7 +114,7 @@ export type RetryOutcome =
  * Retry ONLY entries whose delivery was REFUSED, through replace (never admit again). An UNKNOWN-delivery item is not accepted here: it may have
  * reached the provider, and the owner must decide. The caller passes the item ids so a retry that succeeds can settle the item `sent`.
  */
-export async function retryRefusedDeliveries(deps: RetryDeps, targets: readonly { entryId: string; itemId: string }[]): Promise<RetryOutcome[]> {
+export async function retryRefusedDeliveries(deps: RetryDeps, targets: readonly { entryId: string; itemId: string; studioId: string }[]): Promise<RetryOutcome[]> {
   const out: RetryOutcome[] = [];
   let first = true;
   for (const t of targets) {
@@ -141,7 +142,7 @@ export async function retryRefusedDeliveries(deps: RetryDeps, targets: readonly 
       state = "unknown";
     }
     if (state === "accepted") {
-      const s = await deps.settle(t.itemId, "sent", null);
+      const s = await deps.settle({ itemId: t.itemId, studioId: t.studioId, entryId: t.entryId }, "sent", null);
       out.push(s.ok ? { entryId: t.entryId, status: "sent" } : { entryId: t.entryId, status: "failed", reason: "settle_failed" });
     } else {
       out.push({ entryId: t.entryId, status: "failed", reason: state === "refused" ? "delivery_refused" : "delivery_unknown" });
