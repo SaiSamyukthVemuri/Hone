@@ -17,7 +17,7 @@ function deps(over: Partial<WorkerDeps> & { items?: ClaimedItem[] } = {}) {
     admit: async () => ({ ok: true, result: "admitted", issued }),
     settle: async (t, o, r) => (calls.push(`settle:${t.itemId}:${o}:${r}`), seen.push(t), { ok: true, result: "settled" }),
     deliver: async () => (calls.push("deliver"), "accepted"),
-    mayStillSend: async () => true,
+    mayStillSend: async () => "sendable" as const,
     sleep: async () => {},
     ...over,
   };
@@ -43,6 +43,19 @@ describe("over-invite worker", () => {
     expect(calls).toEqual(["settle:i1:skipped:no_capacity"]);
     expect(r.ok && r.outcomes[0]).toMatchObject({ status: "skipped", reason: "no_capacity" });
   });
+  it("a failed or thrown sendability read leaves the item claimed and settles nothing; only a definitive 'not sendable' settles skipped", async () => {
+    for (const read of [async () => "read_failed" as const, async () => { throw new Error("db down"); }]) {
+      let admitted = false;
+      const { d, calls } = deps({ mayStillSend: read, admit: async () => { admitted = true; return { ok: false, code: "unavailable" }; } });
+      const r = await runBatchChunk(d, undefined, BG);
+      expect(calls).toEqual([]);
+      expect(admitted).toBe(false);
+      expect(r.ok && r.outcomes[0].status).toBe("failed");
+    }
+    const { d, calls } = deps({ mayStillSend: async () => "not_sendable" as const });
+    await runBatchChunk(d, undefined, BG);
+    expect(calls).toEqual(["settle:i1:skipped:entry_not_sendable"]);
+  });
   it("a transient admit failure (unavailable, not applied, bad shape) leaves the item claimed and settles nothing, like a thrown error", async () => {
     for (const code of ["unavailable", "not_applied", "bad_shape"] as const) {
       const { d, calls } = deps({ admit: async () => ({ ok: false, code }) });
@@ -66,7 +79,7 @@ describe("over-invite worker", () => {
   });
   it("an entry no longer sendable is skipped and never admitted", async () => {
     let admitted = false;
-    const { d, calls } = deps({ mayStillSend: async () => false, admit: async () => { admitted = true; return { ok: true, result: "admitted", issued }; } });
+    const { d, calls } = deps({ mayStillSend: async () => "not_sendable" as const, admit: async () => { admitted = true; return { ok: true, result: "admitted", issued }; } });
     await runBatchChunk(d, undefined, BG);
     expect(admitted).toBe(false);
     expect(calls).toEqual(["settle:i1:skipped:entry_not_sendable"]);

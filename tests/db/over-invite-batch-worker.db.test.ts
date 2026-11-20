@@ -93,7 +93,7 @@ function deps(deliver: (entryId: string) => DeliveryState, log: string[] = []): 
     admit: (item) => admitBatchItem(db, item, null),
     settle: (t, o, r, expected, invitationId) => settleItem(db, t, o, r, expected ?? null, invitationId ?? null),
     deliver: async (_i, entryId) => (log.push(entryId), deliver(entryId)),
-    mayStillSend: async () => true,
+    mayStillSend: async () => "sendable" as const,
     sleep: async () => {},
   };
 }

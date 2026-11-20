@@ -26,16 +26,20 @@ async function storedAddress(studioId: string, entryId: string): Promise<string 
   return typeof row.email === "string" && row.email.length > 0 ? row.email : null;
 }
 
-export async function mayStillSend(studioId: string, entryId: string): Promise<boolean> {
+/** `sendable`; `not_sendable` is a DEFINITIVE answer (entry gone, no address, or no longer waiting/invited); `read_failed` means the read itself failed, which says nothing about the entry. */
+export type Sendability = "sendable" | "not_sendable" | "read_failed";
+
+export async function mayStillSend(studioId: string, entryId: string): Promise<Sendability> {
   const { data, error } = await createAdminClient()
     .from("new_client_waitlist_entries")
     .select("email,status")
     .eq("id", entryId)
     .eq("studio_id", studioId)
     .maybeSingle();
-  if (error || !data) return false;
+  if (error) return "read_failed";
+  if (!data) return "not_sendable"; // no such entry in this studio: a definitive answer
   const row = data as { email?: unknown; status?: unknown };
-  return typeof row.email === "string" && row.email.length > 0 && typeof row.status === "string" && ELIGIBLE_ENTRY_STATUSES.includes(row.status);
+  return typeof row.email === "string" && row.email.length > 0 && typeof row.status === "string" && ELIGIBLE_ENTRY_STATUSES.includes(row.status) ? "sendable" : "not_sendable";
 }
 
 export async function deliverIssued(studioId: string, issued: IssuedInvitation, entryId: string): Promise<DeliveryState> {

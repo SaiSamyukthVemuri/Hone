@@ -23,7 +23,7 @@ export type WorkerDeps = {
   /** Sends the one invitation email. `entryId` lets the deliverer re-read the stored address when the command did not return one. */
   deliver: (issued: IssuedInvitation, entryId: string, item: ClaimedItem) => Promise<DeliveryState>;
   /** Re-reads, immediately before the send, that the entry may still be mailed (waiting/invited, not removed, has an address). */
-  mayStillSend: (item: ClaimedItem) => Promise<boolean>;
+  mayStillSend: (item: ClaimedItem) => Promise<"sendable" | "not_sendable" | "read_failed">;
   sleep: (ms: number) => Promise<void>;
 };
 
@@ -91,13 +91,16 @@ async function runOne(deps: WorkerDeps, item: ClaimedItem): Promise<ItemOutcome>
   };
 
   // Re-read just before the send: an entry removed or changed since the batch was confirmed is skipped, never mailed.
-  let may = false;
+  // Only a DEFINITIVE "not sendable" settles the item skipped. A failed (or thrown) read says nothing about the entry: the item stays claimed,
+  // nothing is settled, and it is reclaimed after its lease, exactly like a transient admit failure.
+  let may: "sendable" | "not_sendable" | "read_failed";
   try {
     may = await deps.mayStillSend(item);
   } catch {
-    may = false;
+    may = "read_failed";
   }
-  if (!may) return skip("entry_not_sendable");
+  if (may === "read_failed") return { ...base, status: "failed", reason: "settle_failed" };
+  if (may !== "sendable") return skip("entry_not_sendable");
 
   let admit: AdmitOutcome;
   try {

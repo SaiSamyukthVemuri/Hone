@@ -19,7 +19,7 @@ vi.mock("@/lib/supabase/queries", () => ({
   }),
 }));
 vi.mock("@/lib/waitlist/send-time-fit", () => ({ computeConsultationFit: async () => h.fit }));
-vi.mock("@/lib/waitlist/over-invite-deliver", () => ({ deliverIssued: async () => "accepted", mayStillSend: async () => true }));
+vi.mock("@/lib/waitlist/over-invite-deliver", () => ({ deliverIssued: async () => "accepted", mayStillSend: async () => "sendable" as const }));
 vi.mock("@/lib/waitlist/over-invite-port", () => ({
   previewSelection: async () => (h.calls.push("preview"), h.preview),
   createBatch: async (_db: unknown, input: Record<string, unknown>) => (h.calls.push("create"), (h.createArgs = input), h.create),

@@ -25,7 +25,7 @@ describe("a call never overruns its budget (checked before every item's worth of
       admit: async () => ({ ok: true, result: "admitted", issued: { invitationId: "i", rawToken: "t", issuedAt: new Date(), expiresAt: new Date(), deliveryEmail: null, deliveryName: null } }),
       settle: async () => ({ ok: true, result: "settled" }),
       deliver: async () => { clock += perItemMs; return "accepted"; },
-      mayStillSend: async () => true,
+      mayStillSend: async () => "sendable" as const,
       sleep: async (ms) => { clock += ms; },
     };
     return { deps, now: () => clock, claimed, left: () => left };
@@ -149,7 +149,7 @@ describe("a thrown delivery is UNKNOWN, never refused (worker and retry)", () =>
       admit: async () => ({ ok: true, result: "admitted", issued }),
       settle: async (_t, o, why) => (settled.push(`${o}:${why}`), { ok: true, result: "settled" }),
       deliver: async () => { throw new Error("boom"); },
-      mayStillSend: async () => true,
+      mayStillSend: async () => "sendable" as const,
       sleep: async () => {},
     }, undefined, { mode: "background" });
     expect(settled).toEqual(["unknown:delivery_unknown"]);
@@ -237,7 +237,7 @@ describe("budget edge: an item that would not fit is never started", () => {
       admit: async () => ({ ok: true, result: "admitted", issued: { invitationId: "i", rawToken: "t", issuedAt: new Date(), expiresAt: new Date(), deliveryEmail: null, deliveryName: null } }),
       settle: async () => ({ ok: true, result: "settled" }),
       deliver: async () => { clock += ITEM_BUDGET_MS; return "accepted"; },
-      mayStillSend: async () => true,
+      mayStillSend: async () => "sendable" as const,
       sleep: async (ms) => { clock += ms; },
     };
     await runRounds({ budgetMs: SPACING_MS + ITEM_BUDGET_MS + 100, mode: { mode: "background" }, deps, now: () => clock });
@@ -428,7 +428,7 @@ describe("the claim modes: exactly two shapes claim anything", () => {
       expect(called).toBe(0);
     });
   }
-  const baseDeps = { admit: async () => ({ ok: false as const, code: "unavailable" as const }), settle: async () => ({ ok: true as const, result: "settled" }), deliver: async () => "accepted" as const, mayStillSend: async () => true, sleep: async () => {} };
+  const baseDeps = { admit: async () => ({ ok: false as const, code: "unavailable" as const }), settle: async () => ({ ok: true as const, result: "settled" }), deliver: async () => "accepted" as const, mayStillSend: async () => "sendable" as const, sleep: async () => {} };
   it("only the background route claims unscoped; a full scoped mode claims scoped and background claims background", async () => {
     const seen: unknown[] = [];
     const claim = async (_l: unknown, m: unknown) => (seen.push(m), { ok: true as const, items: [] });

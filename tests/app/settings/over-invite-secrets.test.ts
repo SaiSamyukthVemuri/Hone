@@ -38,7 +38,7 @@ vi.mock("@/lib/supabase/queries", () => ({
 }));
 vi.mock("@/lib/waitlist/send-time-fit", () => ({ computeConsultationFit: async () => ({ ok: true, fit: 0 }) }));
 vi.mock("@/lib/waitlist/over-invite-deliver", () => ({
-  mayStillSend: async () => true,
+  mayStillSend: async () => "sendable" as const,
   deliverIssued: async (_s: string, issued: { rawToken: string; deliveryEmail: string | null; deliveryName: string | null }) => {
     // The deliverer holds the secrets; a failing mode throws an error that CARRIES them, as a careless provider error might.
     if (h.mode === "deliver_throws") throw new Error(`provider failed for ${issued.deliveryEmail} ${issued.rawToken} ${issued.deliveryName}`);
