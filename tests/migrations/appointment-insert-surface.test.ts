@@ -211,7 +211,7 @@ describe("a SQL-standard begin atomic body is kept whole", () => {
   });
 });
 
-describe("the exact quoted call Codex raised", () => {
+describe("a quoted, schema-qualified PERFORM reaches the insert", () => {
   it('PERFORM public."create_appointment_core"(...) reaches the insert', () => {
     const core = fn("create_appointment_core", "insert into public.appointments (id) values (1);");
     const caller = fn("wrapper", 'perform public."create_appointment_core"(p, p, p);');
