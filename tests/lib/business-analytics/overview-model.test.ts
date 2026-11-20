@@ -47,6 +47,7 @@ const window = (over: { appointments?: AssembleAppointment[]; money?: typeof mon
 const input = (over: Partial<OverviewInput> = {}): OverviewInput => ({
   timezone: "America/Toronto", currency: "cad", nowIso: NOW, period, filter: { kind: "all" },
   current: window(), comparison: window({ appointments: priorAppointments, money: priorMoney }),
+  history: { ok: true, value: { appointments: [] } }, followThrough: { ok: true, value: { past: [], future: [] } },
   practitioners, classesRead: ["recorded_at_visit"], ...over,
 });
 const must = <T,>(f: { available: true; value: T } | { available: false; reason: string }): T => {
@@ -218,5 +219,117 @@ describe("what may be claimed about Statements", () => {
     const mtd = resolvePeriod({ kind: "month_to_date", today: "2026-11-19" });
     if (!mtd.ok) throw new Error(mtd.error);
     expect(buildOverview(input({ period: mtd.period })).statementsClaim.kind).toBe("same_rules_same_dates");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// History figures: returning versus first-time, visit interval, and no next booking
+// ---------------------------------------------------------------------------
+describe("history figures", () => {
+  // The period is November 2026. Before it: ada saw us on 10 Sep and 10 Oct; bea once, on 1 Oct. In it: ada, bea and cy (new) are seen.
+  const hist = (id: string, clientId: string, startsAt: string, status = "completed", practitionerId: string | null = "pr-1"): AssembleAppointment => ({ id, clientId, startsAt, status, practitionerId, serviceId: null, durationMinutes: 60 });
+  const prior = [hist("h1", "ada", "2026-09-10T15:00:00Z"), hist("h2", "ada", "2026-10-10T15:00:00Z"), hist("h3", "bea", "2026-10-01T15:00:00Z", "completed", "pr-2"), hist("h4", "dan", "2026-10-02T15:00:00Z", "cancelled")];
+  const inWindow = [hist("w1", "ada", "2026-11-05T15:00:00Z"), hist("w2", "bea", "2026-11-06T15:00:00Z", "completed", "pr-2"), hist("w3", "cy", "2026-11-07T15:00:00Z")];
+  const base = (over: Partial<OverviewInput> = {}) => input({
+    current: window({ appointments: inWindow, money: { cardRows: [], settlementRows: [], legacyFeeRows: [] } }),
+    history: { ok: true, value: { appointments: prior } },
+    ...over,
+  });
+
+  it("returning versus first-time: had a completed visit before the period began; a cancelled one does not count", () => {
+    const r = must(buildOverview(base()).returning);
+    expect(r).toMatchObject({ activeClients: 3, returning: 2, firstTime: 1 });
+    expect(r.returningPercent).toEqual({ known: true, value: (100 * 2) / 3 });
+  });
+  it("the practitioner filter decides who counts as seen; history is the whole studio's", () => {
+    // pr-2 saw only bea in November; bea had a visit before (with pr-2). ada's earlier visits with pr-1 do not matter here.
+    const r = must(buildOverview(base({ filter: { kind: "one", practitionerId: "pr-2" } })).returning);
+    expect(r).toMatchObject({ activeClients: 1, returning: 1, firstTime: 0 });
+    // a client first seen by pr-2 who was previously seen only by pr-1 is RETURNING to the studio
+    const moved = [hist("m1", "ada", "2026-10-10T15:00:00Z", "completed", "pr-1")];
+    const r2 = must(buildOverview(base({ filter: { kind: "one", practitionerId: "pr-2" }, history: { ok: true, value: { appointments: moved } }, current: window({ appointments: [hist("m2", "ada", "2026-11-05T15:00:00Z", "completed", "pr-2")], money: { cardRows: [], settlementRows: [], legacyFeeRows: [] } }) })).returning);
+    expect(r2).toMatchObject({ activeClients: 1, returning: 1 });
+  });
+  it("nobody seen: the percentage is not available, not 0", () => {
+    const r = must(buildOverview(base({ current: window({ appointments: [], money: { cardRows: [], settlementRows: [], legacyFeeRows: [] } }) })).returning);
+    expect(r.activeClients).toBe(0);
+    expect(r.returningPercent.known).toBe(false);
+  });
+  it("visit interval pools RETURNING clients only: a client not seen in the period, or first seen in it, is not in the pool", () => {
+    // fay (1 Jun, 1 Jul) was not seen in November; cy is new in November. Neither is returning, so neither shapes the interval.
+    const extra = [...prior, hist("e1", "fay", "2026-06-01T15:00:00Z"), hist("e2", "fay", "2026-07-01T15:00:00Z")];
+    const i = must(buildOverview(base({ history: { ok: true, value: { appointments: extra } } })).interval);
+    expect(i.pooledAverageDays).toEqual({ known: true, value: (30 + 26 + 36) / 3 }); // ada 30, 26; bea 36
+    expect(i).toMatchObject({ clientsWithInterval: 2, clientsWithoutInterval: 0 });
+  });
+  it("with a team-member filter, both who is seen AND the visits used for the gaps are that team member's", () => {
+    // pr-2 saw only bea in November. bea's visits: 1 Oct (pr-2), 6 Nov (pr-2): one gap of 36. ada's visits with pr-1 are neither seen nor used.
+    const f = must(buildOverview(base({ filter: { kind: "one", practitionerId: "pr-2" } })).interval);
+    expect(f.pooledAverageDays).toEqual({ known: true, value: 36 });
+    // a returning client seen by pr-2 whose EARLIER visit was with pr-1: that visit is not pr-2's, so there is no gap to pool (counted as without, never 0)
+    const moved = [hist("m1", "ada", "2026-10-10T15:00:00Z", "completed", "pr-1")];
+    const g = must(buildOverview(base({ filter: { kind: "one", practitionerId: "pr-2" }, history: { ok: true, value: { appointments: moved } }, current: window({ appointments: [hist("m2", "ada", "2026-11-05T15:00:00Z", "completed", "pr-2")], money: { cardRows: [], settlementRows: [], legacyFeeRows: [] } }) })).interval);
+    expect(g.pooledAverageDays.known).toBe(false);
+    expect(g).toMatchObject({ clientsWithInterval: 0, clientsWithoutInterval: 1 });
+  });
+  it("a client with one visit date is left out and counted, never averaged in as a zero gap", () => {
+    const one = must(buildOverview(base({ history: { ok: true, value: { appointments: [hist("s1", "ada", "2026-10-10T15:00:00Z"), hist("s2", "bea", "2026-10-01T15:00:00Z", "completed", "pr-2")] } } })).interval);
+    expect(one).toMatchObject({ clientsWithInterval: 2, clientsWithoutInterval: 0 }); // ada 10 Oct to 5 Nov = 26, bea 1 Oct to 6 Nov = 36
+    expect(one.pooledAverageDays).toEqual({ known: true, value: 31 });
+    const solo = must(buildOverview(base({ current: window({ appointments: [hist("t1", "ada", "2026-11-05T15:00:00Z")], money: { cardRows: [], settlementRows: [], legacyFeeRows: [] } }), history: { ok: true, value: { appointments: [] } } })).interval);
+    expect(solo.pooledAverageDays.known).toBe(false); // ada has one visit and is first-time: no gap, not 0
+    expect(solo.clientsWithoutInterval + solo.clientsWithInterval).toBe(0);
+  });
+  it("visit interval is pooled over the returning clients, through the period's last day only", () => {
+    // ada: 10 Sep, 10 Oct, 5 Nov → gaps 30, 26. bea: 1 Oct, 6 Nov → gap 36. cy is first-time: not in the pool.
+    const i = must(buildOverview(base()).interval);
+    expect(i.pooledAverageDays).toEqual({ known: true, value: (30 + 26 + 36) / 3 });
+    expect(i).toMatchObject({ clientsWithInterval: 2, clientsWithoutInterval: 0 });
+  });
+  it("a visit after the period never shapes its interval", () => {
+    const later = [...prior, hist("z", "ada", "2026-12-20T15:00:00Z")];
+    expect(must(buildOverview(base({ history: { ok: true, value: { appointments: later } } })).interval).pooledAverageDays).toEqual({ known: true, value: (30 + 26 + 36) / 3 });
+  });
+  it("history that could not be read makes only returning and interval unavailable", () => {
+    const v = buildOverview(base({ history: { ok: false, reason: "too_many_appointments" } }));
+    expect(v.returning).toEqual({ available: false, reason: "too_many_appointments" });
+    expect(v.interval).toEqual({ available: false, reason: "too_many_appointments" });
+    expect(must(v.completedVisits).count).toBe(3);
+    expect(v.collected.available).toBe(true);
+  });
+
+  const NOW_MS = Date.parse(NOW);
+  const future = (id: string, clientId: string, status = "confirmed", dayOffset = 3) => hist(id, clientId, new Date(NOW_MS + dayOffset * 86_400_000).toISOString(), status);
+  const follow = (past: AssembleAppointment[], fut: AssembleAppointment[]) => ({ ok: true as const, value: { past, future: fut } });
+  const seenRecently = [hist("l1", "ada", "2026-11-20T15:00:00Z"), hist("l2", "bea", "2026-08-01T15:00:00Z", "completed", "pr-2"), hist("l3", "cy", "2025-01-01T15:00:00Z")];
+  it("no next booking: any client with a completed visit, nothing still to come with anyone; a count only, however long ago they were seen", () => {
+    const v = buildOverview(base({ followThrough: follow(seenRecently, [future("f1", "ada")]) }));
+    expect(must(v.noNextBooking)).toEqual({ count: 2 }); // bea and cy (seen in 2025: no look-back), ada has a booking
+    expect(JSON.stringify(v.noNextBooking)).not.toMatch(/ada|bea|cy/);
+  });
+  it("only a confirmed booking still to come counts: a cancelled or past one does not", () => {
+    expect(must(buildOverview(base({ followThrough: follow(seenRecently, [future("f1", "ada", "cancelled"), future("f2", "bea", "confirmed", -1)]) })).noNextBooking).count).toBe(3);
+  });
+  it("completed, no-show and cancelled rows dated in the future are not bookings: only a confirmed one counts", () => {
+    const wrong = ["completed", "no_show", "cancelled", "pending"].map((st, i) => future(`g${i}`, "ada", st));
+    expect(must(buildOverview(base({ followThrough: follow(seenRecently, wrong) })).noNextBooking).count).toBe(3); // ada, bea and cy are all still without one
+    expect(must(buildOverview(base({ followThrough: follow(seenRecently, [...wrong, future("g9", "ada", "confirmed")]) })).noNextBooking).count).toBe(2);
+  });
+  it("the practitioner filter narrows who was seen, never the future-booking test", () => {
+    const v = buildOverview(base({ filter: { kind: "one", practitionerId: "pr-2" }, followThrough: follow(seenRecently, [future("f1", "bea", "confirmed")].map((a) => ({ ...a, practitionerId: "pr-1" }))) }));
+    expect(must(v.noNextBooking).count).toBe(0); // bea was seen by pr-2 and has a booking with pr-1: still booked
+  });
+  it("a client last seen years ago is counted: there is no look-back (the reference's scope), and a cancelled-only client is not a client with a visit", () => {
+    const old = [hist("o1", "dee", "2019-03-01T15:00:00Z"), hist("o2", "eli", "2026-10-01T15:00:00Z", "cancelled")];
+    expect(must(buildOverview(base({ followThrough: follow(old, []) })).noNextBooking)).toEqual({ count: 1 });
+  });
+  it("a follow-through read that failed makes only that figure unavailable", () => {
+    const v = buildOverview(base({ followThrough: { ok: false, reason: "too_many_appointments" } }));
+    expect(v.noNextBooking).toEqual({ available: false, reason: "too_many_appointments" });
+    expect(v.returning.available).toBe(true);
+  });
+  it("the current window failing makes the history figures unavailable with its reason", () => {
+    const v = buildOverview(base({ current: { ok: false, reason: "read_failed" } }));
+    for (const f of [v.returning, v.interval, v.noNextBooking]) expect(f).toEqual({ available: false, reason: "read_failed" });
   });
 });

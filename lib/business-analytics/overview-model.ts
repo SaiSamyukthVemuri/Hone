@@ -28,7 +28,22 @@ import { bucketsOf, statementsClaim, type PeriodWindow, type ResolvedPeriod, typ
 import { reconcileWithStatement } from "./reconcile";
 import { serviceValueToCollected, type CompletedVisitMoney, type ReconciliationLine } from "./reconciliation-line";
 import { PRICE_EVIDENCE_CLASSES, resolveVisits, serviceValue, type PriceCandidate, type PriceEvidenceClass } from "./service-value";
-import { activeClientIds, completedVisitCount, matchesPractitioner, visitsOf, visitsPerActiveClient, visitsWithoutClient, type PractitionerFilter, type VisitFact } from "./visit-metrics";
+import {
+  activeClientIds,
+  clientHistories,
+  completedVisitCount,
+  matchesPractitioner,
+  noNextBooking,
+  splitReturning,
+  studioInterval,
+  visitsOf,
+  visitsPerActiveClient,
+  visitsWithoutClient,
+  type PractitionerFilter,
+  type ReturningSplit,
+  type StudioInterval,
+  type VisitFact,
+} from "./visit-metrics";
 
 // ===========================================================================
 // Business → Analytics: THE OVERVIEW VIEW MODEL. PURE: it is given rows already read; it reads nothing.
@@ -44,6 +59,10 @@ import { activeClientIds, completedVisitCount, matchesPractitioner, visitsOf, vi
 /** The appointments and, separately, their money: a money read that failed must not hide the visit figures, which do not need it. */
 export type WindowData = { appointments: readonly AssembleAppointment[]; money: FigureRead<MoneyRows> };
 
+/** Completed-or-not appointments read for the history figures. Per-client data stays inside this module; only counts leave it. */
+export type HistoryData = { appointments: readonly AssembleAppointment[] };
+export type FollowThroughData = { past: readonly AssembleAppointment[]; future: readonly AssembleAppointment[] };
+
 export type PractitionerInfo = { id: string; displayName: string | null; active: boolean };
 
 export type OverviewInput = {
@@ -56,6 +75,10 @@ export type OverviewInput = {
   current: FigureRead<WindowData>;
   comparison: FigureRead<WindowData>;
   practitioners: readonly PractitionerInfo[];
+  /** Every appointment BEFORE the current window began (any status; completed ones are used). Its failure makes only returning and interval unavailable. */
+  history: FigureRead<HistoryData>;
+  /** Appointments in the look-back up to now, and those still to come. Its failure makes only "no next booking" unavailable. */
+  followThrough: FigureRead<FollowThroughData>;
   /** The kinds of price evidence the loader could actually read. A kind not listed is "not available", never a zero. */
   classesRead: readonly PriceEvidenceClass[];
 };
@@ -94,6 +117,12 @@ export type OverviewView = {
   byPractitioner: Figure<ByPractitionerRow[]>;
   serviceValue: Figure<ServiceValueView>;
   reconciliation: Figure<ReconciliationLine>;
+  /** Of the clients seen in the period, how many had a completed visit before it. First-time means first visit recorded in Hone. */
+  returning: Figure<ReturningSplit>;
+  /** Average days between a client's completed visits, pooled over the RETURNING clients (seen in the period, with a completed visit before it), through the period's last day; a team-member filter applies to the visits used. */
+  interval: Figure<StudioInterval>;
+  /** A count only, as of now. The clients themselves are listed on the Clients tab, never here. */
+  noNextBooking: Figure<{ count: number }>;
 };
 
 type Window = {
@@ -245,6 +274,45 @@ function computeWindow(data: WindowData, w: PeriodWindow, o: Pick<OverviewInput,
   };
 }
 
+const factsOf = (rows: readonly AssembleAppointment[], timezone: string): VisitFact[] =>
+  rows.map((a) => ({ appointmentId: a.id, clientId: a.clientId, localDate: localDateString(new Date(a.startsAt), timezone), practitionerId: a.practitionerId, status: a.status }));
+
+/**
+ * Returning, interval and no-next-booking. The practitioner filter decides who counts as SEEN; it never narrows the history (a client is returning if
+ * ANY practitioner saw them before) and never narrows the future-booking test (a booking with anyone counts), as the note on the screen says.
+ */
+function historyFigures(input: OverviewInput, currentData: WindowData): Pick<OverviewView, "returning" | "interval" | "noNextBooking"> {
+  const w = input.period.current;
+  const tz = input.timezone;
+  const todayLocal = localDateString(new Date(input.nowIso), tz);
+  const failedHistory = input.history.ok ? null : unavailable(input.history.reason);
+  const failedFollow = input.followThrough.ok ? null : unavailable(input.followThrough.reason);
+
+  let returning: Figure<ReturningSplit> = failedHistory ?? unavailable("read_failed");
+  let interval: Figure<StudioInterval> = failedHistory ?? unavailable("read_failed");
+  if (input.history.ok) {
+    const all = [...factsOf(input.history.value.appointments, tz), ...factsOf(currentData.appointments, tz)];
+    const completedAll = visitsOf(all); // whole history, every practitioner
+    const seen = new Set(activeClientIds(visitsOf(all, input.filter), w));
+    returning = { available: true, value: splitReturning([...completedAll.filter((v) => v.clientId !== null && seen.has(v.clientId))], w) };
+    // RETURNING clients only: seen in the period AND with a completed visit before it (any practitioner, as the returning card says). Their gaps are
+    // between THEIR completed visits up to the period's last day; with a team-member filter those visits are that team member's.
+    const before = new Set(completedAll.filter((v) => v.clientId !== null && v.localDate < w.startLocal).map((v) => v.clientId as string));
+    const returningIds = new Set([...seen].filter((id) => before.has(id)));
+    const histories = clientHistories(visitsOf(all, input.filter).filter((v) => v.clientId !== null && returningIds.has(v.clientId)), w.lastLocal);
+    interval = { available: true, value: studioInterval(histories) };
+  }
+
+  let next: Figure<{ count: number }> = failedFollow ?? unavailable("read_failed");
+  if (input.followThrough.ok) {
+    const seenFacts = visitsOf(factsOf(input.followThrough.value.past, tz), input.filter);
+    const nowMs = new Date(input.nowIso).getTime();
+    const future = new Set(input.followThrough.value.future.filter((a) => a.status === "confirmed" && new Date(a.startsAt).getTime() > nowMs).map((a) => a.clientId));
+    next = { available: true, value: { count: noNextBooking({ visits: seenFacts, clientsWithFutureBooking: future, todayLocal }).length } };
+  }
+  return { returning, interval, noNextBooking: next };
+}
+
 const numberOf = <T,>(f: Figure<T>, pick: (v: T) => number): number | null => (f.available ? pick(f.value) : null);
 
 export function buildOverview(input: OverviewInput): OverviewView {
@@ -266,6 +334,7 @@ export function buildOverview(input: OverviewInput): OverviewView {
     currency: input.currency,
     collected: curFail, completedVisits: curFail, activeClients: curFail, visitsPerClient: curFail, averagePaid: curFail,
     series: curFail, byPractitioner: curFail, serviceValue: curFail, reconciliation: curFail,
+    returning: curFail, interval: curFail, noNextBooking: curFail,
   };
   if (!cur) return view;
   const cmp = prev !== null;
@@ -284,5 +353,6 @@ export function buildOverview(input: OverviewInput): OverviewView {
   view.byPractitioner = cur.byPractitioner;
   view.serviceValue = cur.serviceValue;
   view.reconciliation = cur.reconciliation;
+  if (input.current.ok) Object.assign(view, historyFigures(input, input.current.value));
   return view;
 }

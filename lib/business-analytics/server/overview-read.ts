@@ -2,13 +2,13 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { localDateString } from "@/lib/booking/tz";
+import { localDateString, utcInstantFromLocal } from "@/lib/booking/tz";
 import { readAppointmentsKeyset, readMoneyForAppointments } from "@/lib/finance/statement-money-read";
 import { createClient } from "@/lib/supabase/server";
 import type { Studio } from "@/lib/types/database";
 
 import type { FigureRead } from "../figure";
-import { buildOverview, type OverviewView, type PractitionerInfo, type WindowData } from "../overview-model";
+import { buildOverview, type FollowThroughData, type HistoryData, type OverviewView, type PractitionerInfo, type WindowData } from "../overview-model";
 import { parseOverviewParams, type OverviewParams, type RawParams } from "../overview-params";
 import { resolvePeriod, windowInstants, type PeriodWindow, type ResolvedPeriod } from "../period";
 import type { PriceEvidenceClass } from "../service-value";
@@ -41,6 +41,26 @@ async function readWindow(supabase: SupabaseClient, studioId: string, timezone: 
       money: money.ok ? { ok: true, value: { cardRows: money.cardRows, settlementRows: money.settlementRows, legacyFeeRows: money.legacyFeeRows } } : { ok: false, reason: "read_failed" },
     },
   };
+}
+
+const readFailure = (reason: "read_failed" | "too_many_appointments"): { ok: false; reason: "read_failed" | "too_many_appointments" } => ({ ok: false, reason });
+
+/** Every appointment BEFORE the window began, any status. Over the 10,000 cap it says so; it never truncates. */
+async function readHistory(supabase: SupabaseClient, studioId: string, timezone: string, w: PeriodWindow): Promise<FigureRead<HistoryData>> {
+  const { startUtc } = windowInstants(w, timezone);
+  const r = await readAppointmentsKeyset(supabase, studioId, { endUtc: startUtc });
+  return r.ok ? { ok: true, value: { appointments: r.rows } } : readFailure(r.reason);
+}
+
+/** Everything up to now (any status; every client with a completed visit counts) and everything from now on, for "no next booking". As of now, so independent of the period chosen. */
+async function readFollowThrough(supabase: SupabaseClient, studioId: string, now: Date): Promise<FigureRead<FollowThroughData>> {
+  const [past, future] = await Promise.all([
+    readAppointmentsKeyset(supabase, studioId, { endUtc: now.toISOString() }),
+    readAppointmentsKeyset(supabase, studioId, { startUtc: now.toISOString() }),
+  ]);
+  if (!past.ok) return readFailure(past.reason);
+  if (!future.ok) return readFailure(future.reason);
+  return { ok: true, value: { past: past.rows, future: future.rows } };
 }
 
 export async function loadOverview(
@@ -77,6 +97,8 @@ export async function loadOverview(
 
   const current = await readWindow(supabase, studio.id, studio.timezone, period.current);
   const comparison = await readWindow(supabase, studio.id, studio.timezone, period.comparison);
+  const history = await readHistory(supabase, studio.id, studio.timezone, period.current);
+  const followThrough = await readFollowThrough(supabase, studio.id, now);
   const view = buildOverview({
     timezone: studio.timezone,
     currency: studioCurrency,
@@ -85,6 +107,8 @@ export async function loadOverview(
     filter: parsed.params.practitioner,
     current,
     comparison,
+    history,
+    followThrough,
     practitioners: people.rows,
     classesRead: CLASSES_READ,
   });

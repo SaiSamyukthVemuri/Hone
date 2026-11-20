@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { ANALYTICS_ACCESS_NOTE, FIRST_TIME_NOTE, TREATMENT_CONTEXT_NOTE, beyondUsualNote, noNextBookingNote } from "@/lib/business-analytics/copy";
+import { ANALYTICS_ACCESS_NOTE, FIRST_TIME_NOTE, INTERVAL_NOTE, TREATMENT_CONTEXT_NOTE, beyondUsualNote, noNextBookingNote } from "@/lib/business-analytics/copy";
 import { FIGURE_UNAVAILABLE_COPY, figureFrom, unavailableText, type FigureRead } from "@/lib/business-analytics/figure";
 
 describe("a window over the cap makes only that figure unavailable", () => {
@@ -34,8 +34,10 @@ describe("fixed copy that must stay true", () => {
     expect(ANALYTICS_ACCESS_NOTE).toContain("Only payment records are restricted to the owner in the database");
   });
   it("labels say what the data cannot", () => {
+    expect(INTERVAL_NOTE).toContain("With a team-member filter, only that team member's visits are used.");
     expect(FIRST_TIME_NOTE).toContain("first visit recorded in Hone");
     expect(noNextBookingNote(12)).toContain("last 12 months");
+    expect(noNextBookingNote()).not.toMatch(/last \d+ month/); // no look-back in use, none named
     expect(beyondUsualNote(1.5)).toContain("1.5 times");
     expect(TREATMENT_CONTEXT_NOTE).toContain("how many treatments were recorded and the date of the latest");
   });

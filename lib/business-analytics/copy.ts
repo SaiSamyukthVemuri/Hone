@@ -14,9 +14,10 @@ export const ANALYTICS_ACCESS_NOTE =
 export const NOT_ENOUGH_HISTORY = "Not enough history yet";
 export const NO_INTERVAL_REASON = "Needs at least two visit dates.";
 export const FIRST_TIME_NOTE = "First-time means the first visit recorded in Hone. Visits from before a client was entered in Hone are not known.";
-export const INTERVAL_NOTE = "Average visit interval is the average number of days between a client's completed visits. It is a historical pattern, not a forecast.";
-/** The look-back in the sentence is the look-back in use: it follows the parameter, never a fixed number. */
-export function noNextBookingNote(lookbackMonths: number): string {
+export const INTERVAL_NOTE = "Average visit interval is the average number of days between a client's completed visits. It is a historical pattern, not a forecast. With a team-member filter, only that team member's visits are used.";
+/** The scope in the sentence is the scope in use: with no look-back it says so, and a look-back is named only when one is given. */
+export function noNextBookingNote(lookbackMonths?: number): string {
+  if (lookbackMonths === undefined) return "As of now: clients with a completed visit and no confirmed booking still to come with any practitioner.";
   const months = lookbackMonths === 1 ? "month" : "months";
   return `As of now: clients with a completed visit in the last ${lookbackMonths} ${months} and no booking still to come with any practitioner.`;
 }
