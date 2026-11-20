@@ -1,7 +1,7 @@
 import { addDays, utcInstantFromLocal } from "@/lib/booking/tz";
 
 // ===========================================================================
-// Business → Analytics, slice A1: PERIODS. PURE. No I/O, no clock, no timezone lookup.
+// Business → Analytics: PERIODS. PURE. No I/O, no clock, no timezone lookup.
 // ===========================================================================
 //
 // The caller supplies today's STUDIO-LOCAL date (`todayInTz(studio.timezone)`). Every window is a half-open range of studio-local dates,
@@ -17,7 +17,7 @@ export type LocalDate = string; // "YYYY-MM-DD", a real calendar date
 export type PeriodKind = "month_to_date" | "previous_month" | "year_to_date" | "custom";
 export const PERIOD_KINDS: readonly PeriodKind[] = ["month_to_date", "previous_month", "year_to_date", "custom"];
 
-/** How a CUSTOM period is compared. The two options are a product decision (note Q11); both are offered, the default is the preceding period. */
+/** How a CUSTOM period is compared. Both options are offered; the default is the preceding period. */
 export type CustomComparison = "preceding" | "last_year";
 export const CUSTOM_COMPARISONS: readonly CustomComparison[] = ["preceding", "last_year"];
 
@@ -291,7 +291,7 @@ export function monthsCovered(w: PeriodWindow): Array<{ month: string; startLoca
 }
 
 /**
- * What may be CLAIMED about Statements for a window (note M2). A Statements page is one WHOLE calendar month, so only a window that is exactly one
+ * What may be CLAIMED about Statements for a window. A Statements page is one WHOLE calendar month, so only a window that is exactly one
  * whole month may say "matches Statements for <month>". A window of several whole months may say "the sum of these Statements months". Month to date,
  * year to date and any other window may NOT claim to match a Statements page: they are checked against the Statements rules applied independently
  * to the same dates, and the screen says that instead.

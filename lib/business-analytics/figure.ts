@@ -1,10 +1,9 @@
 // ===========================================================================
-// Business → Analytics, slice A1: PER-FIGURE AVAILABILITY. PURE.
+// Business → Analytics: PER-FIGURE AVAILABILITY. PURE.
 // ===========================================================================
 //
 // Each figure on the Overview comes from its own read. When one read cannot be completed (a window over the reader's cap, a failed query, a currency not
-// set) THAT figure is "unavailable" with a reason, and every other figure still shows. It is never blank and never zero (note M5, brief: "never treat
-// unknown values as zero"). The readers that feed this are fail-closed: a partial answer is never returned as a whole one.
+// set) THAT figure is "unavailable" with a reason, and every other figure still shows. It is never blank and never zero: an unknown value is never treated as zero. The readers that feed this are fail-closed: a partial answer is never returned as a whole one.
 
 export type ReadFailure = "too_many_appointments" | "read_failed" | "currency_unknown" | "not_reconciled";
 

@@ -19,7 +19,7 @@ import {
 import { reconcileMonthSum, reconcileWithStatement, figureIfReconciled } from "@/lib/business-analytics/reconcile";
 import { bucketsOf, resolvePeriod } from "@/lib/business-analytics/period";
 
-// Business → Analytics A1. Synthetic appointments and money only. The money is classified by the REAL lib/finance code; this file pins how the
+// Business → Analytics. Synthetic appointments and money only. The money is classified by the REAL lib/finance code; this file pins how the
 // Overview splits and reconciles it.
 
 const NOW = "2026-11-19T15:00:00Z";
@@ -32,7 +32,7 @@ const card = (appointmentId: string, amountCents: number, over: Partial<Statemen
 });
 const cash = (appointmentId: string, amountCents: number, method = "paid_cash") => ({ appointmentId, method, amountCents, currency: "cad", quotedAmountCents: null });
 
-// One booking of EACH class (Insurance S1), plus refund, in-flight and other-currency money that must never be summed.
+// One booking of EACH class, plus refund, in-flight and other-currency money that must never be summed.
 const appointments: AssembleAppointment[] = [
   appt("done", "completed", "2026-11-05T15:00:00Z", "p1"), //        completed visit: card 10000
   appt("noshow", "no_show", "2026-11-06T15:00:00Z", "p1"), //        fee item no_show_fee: card 5000

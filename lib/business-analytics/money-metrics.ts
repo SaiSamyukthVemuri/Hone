@@ -7,7 +7,7 @@ import { bucketKeyFor, type LocalDate, type PeriodWindow } from "./period";
 import { matchesPractitioner, type PractitionerFilter } from "./visit-metrics";
 
 // ===========================================================================
-// Business → Analytics, slice A1: MONEY. PURE. It writes NO money rule.
+// Business → Analytics: MONEY. PURE. It writes NO money rule.
 // ===========================================================================
 //
 // Every cent here was classified ONCE, by lib/finance/statement.ts `buildStatement` (one kind per row, adjustments never netted into a collected
@@ -17,9 +17,9 @@ import { matchesPractitioner, type PractitionerFilter } from "./visit-metrics";
 //
 // The statement document's per-client total ("paidCents") already INCLUDES completed visits, fee items and payments on past bookings never
 // marked complete. Only money on bookings the document leaves off (a booking still to come, a cancelled or no-show booking with no fee record,
-// an unknown status) is outside it. A booking later today is one of those: its money is in Collected, on the "other bookings" line (note M3).
+// an unknown status) is outside it. A booking later today is one of those: its money is in Collected, on the "other bookings" line.
 //
-// The basis is VISIT DATE (note Q2): money is grouped by the date of the appointment it belongs to, not the day it was paid. A payment-date
+// The basis is VISIT DATE: money is grouped by the date of the appointment it belongs to, not the day it was paid. A payment-date
 // basis is deliberately not offered; `MoneyBasis` has one member so a second one is a visible, reviewed addition.
 
 export type MoneyBasis = "visit_date";
@@ -102,7 +102,7 @@ export function splitCollected(assembled: AssembledForSplit, classes: MoneyClass
 }
 
 /**
- * Which money the headline "Collected" shows. `all_money` is the Statements studio total (it reconciles without explanation, note Q4);
+ * Which money the headline "Collected" shows. `all_money` is the Statements studio total (it reconciles without explanation);
  * `completed_visits_only` is the reference's wording. The split is always shown beside it.
  */
 export type CollectedScope = "all_money" | "completed_visits_only";
@@ -145,7 +145,7 @@ export type PaidVisit = { appointmentId: string; state: VisitState; paidCents: n
 export type AveragePaid = {
   /** Whole cents, rounded half up; not available when there is nothing to divide by. */
   averageCents: Fact<number>;
-  /** Money kept on the visits that are IN the average. The same set as `denominatorVisits` (note M4). */
+  /** Money kept on the visits that are IN the average. The same set as `denominatorVisits`. */
   numeratorCents: number;
   denominatorVisits: number;
   /** Completed visits left out of BOTH sides because their payment is unknown. Always reported, so the figure is never silent about them. */
@@ -156,8 +156,8 @@ export type AveragePaid = {
 /**
  * Money kept on completed visits ÷ completed visits whose payment can be established (paid, confirmed unpaid, adjusted, no charge). The two sides are
  * the SAME visit set: a visit in state `unknown` adds nothing to the numerator and is not counted in the denominator, and it is reported. A repeated
- * appointment id counts once. This is the only policy; the reference's "all completed visits" would treat an unknown payment as zero, which the
- * brief forbids, so it is not offered as an option.
+ * appointment id counts once. This is the only policy; the reference's "all completed visits" would treat an unknown payment as zero, which is
+ * never acceptable, so it is not offered as an option.
  */
 export function averagePaidPerVisit(visits: readonly PaidVisit[]): AveragePaid {
   const seen = new Set<string>();

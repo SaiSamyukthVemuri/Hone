@@ -3,7 +3,7 @@
 // ===========================================================================
 
 /**
- * What the owner-only gate IS (Privacy A1). It controls who is SHOWN the page. It is not a protection on the data: row-level security on
+ * What the owner-only gate IS. It controls who is SHOWN the page. It is not a protection on the data: row-level security on
  * clients, appointments and session_blocks is studio-wide, so any practitioner of the studio can read those rows directly. Only the payment
  * tables are owner-only at the database. This sentence must stay true, and must appear on the page and in every pull request about it.
  */

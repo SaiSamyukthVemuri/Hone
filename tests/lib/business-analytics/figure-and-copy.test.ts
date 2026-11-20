@@ -26,7 +26,7 @@ describe("a window over the cap makes only that figure unavailable", () => {
   });
 });
 
-describe("fixed copy that must stay true (Privacy A1, A6)", () => {
+describe("fixed copy that must stay true", () => {
   it("the access note says the gate controls who is SHOWN the page and is not a protection on the records", () => {
     expect(ANALYTICS_ACCESS_NOTE).toContain("who is shown");
     expect(ANALYTICS_ACCESS_NOTE).toContain("not a protection on the records");
@@ -41,7 +41,7 @@ describe("fixed copy that must stay true (Privacy A1, A6)", () => {
   });
 });
 
-describe("the A1 modules stay pure (no I/O, no routes, no UI, no studio ids)", () => {
+describe("the analytics modules stay pure (no I/O, no routes, no UI, no studio ids)", () => {
   const dir = path.resolve(__dirname, "../../../lib/business-analytics");
   const files = readdirSync(dir).filter((f) => f.endsWith(".ts"));
   it("has the modules and nothing else", () => {

@@ -20,7 +20,7 @@ import {
   type VisitFact,
 } from "@/lib/business-analytics/visit-metrics";
 
-// Business → Analytics A1. Synthetic clients only. Pure.
+// Business → Analytics. Synthetic clients only. Pure.
 let n = 0;
 const v = (clientId: string | null, localDate: string, over: Partial<VisitFact> = {}): VisitFact => ({
   appointmentId: `a${++n}`,

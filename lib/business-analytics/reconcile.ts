@@ -4,7 +4,7 @@ import type { Statement } from "@/lib/finance/statement";
 import type { CollectedSplit } from "./money-metrics";
 
 // ===========================================================================
-// Business → Analytics, slice A1: RECONCILIATION WITH STATEMENTS. PURE.
+// Business → Analytics: RECONCILIATION WITH STATEMENTS. PURE.
 // ===========================================================================
 //
 // The Overview's money may only be shown when it equals what Statements says for the same appointments. The pattern is the Statements
@@ -20,7 +20,7 @@ export type Reconciliation =
 const isCents = (n: unknown): n is number => typeof n === "number" && Number.isSafeInteger(n);
 
 /**
- * Check one window's Overview figures against the Statements studio statement over the SAME appointments (note M1, M2).
+ * Check one window's Overview figures against the Statements studio statement over the SAME appointments.
  * Statements' own identity: Σ per-client document money + the document's off-document money (+ any money on an appointment with no client)
  * = the studio total, computed independently of the per-client documents.
  *  - `overviewCollectedCents`: the headline the Overview would show, for scope `all_money`.

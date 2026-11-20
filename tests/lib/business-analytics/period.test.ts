@@ -14,7 +14,7 @@ import {
   windowInstants,
 } from "@/lib/business-analytics/period";
 
-// Business → Analytics A1. Synthetic dates only. Pure: no clock, no database.
+// Business → Analytics. Synthetic dates only. Pure: no clock, no database.
 const ok = (r: ReturnType<typeof resolvePeriod>) => {
   if (!r.ok) throw new Error(`expected ok, got ${r.error}`);
   return r.period;

@@ -3,7 +3,7 @@ import { known, unknown, type Fact } from "@/lib/dashboard/owner-capacity-model"
 import { daysBetween, inWindow, isRealLocalDate, type LocalDate, type PeriodWindow } from "./period";
 
 // ===========================================================================
-// Business → Analytics, slice A1: VISIT AND CLIENT METRICS. PURE. No I/O, no clock.
+// Business → Analytics: VISIT AND CLIENT METRICS. PURE. No I/O, no clock.
 // ===========================================================================
 //
 // Nothing here knows about money. These are counts and dates over appointments the caller already read, each already placed on its
@@ -17,7 +17,7 @@ import { daysBetween, inWindow, isRealLocalDate, type LocalDate, type PeriodWind
 /**
  * One appointment, already placed on the studio-local date it starts on. `status` is the appointment's own status, unchanged.
  * `clientId` is null for an appointment that has no client: it is still a VISIT (and its money is kept), but it is never an ACTIVE CLIENT
- * and appears in no per-client figure. The schema says `client_id NOT NULL`, so this path is a FAIL-SAFE ONLY with no UI of its own (Insurance final1224): it exists so a corrupt read can neither crash a figure nor be counted as a client.
+ * and appears in no per-client figure. The schema says `client_id NOT NULL`, so this path is a FAIL-SAFE ONLY with no UI of its own: it exists so a corrupt read can neither crash a figure nor be counted as a client.
  */
 export type VisitFact = {
   appointmentId: string;
@@ -187,7 +187,7 @@ export function studioInterval(histories: ReadonlyMap<string, ClientHistory>): S
 // Follow-through: no next booking, beyond usual interval
 // ---------------------------------------------------------------------------
 
-/** Months looked back for "no next booking". A product choice (note Q10); a parameter, never a constant buried in a loop. */
+/** Months looked back for "no next booking". A product choice, so a parameter, never a constant buried in a loop. */
 export const DEFAULT_NO_NEXT_BOOKING_LOOKBACK_MONTHS = 12;
 /** "Beyond usual" means longer since the last visit than this multiple of the client's own average gap (the reference's rule). */
 export const DEFAULT_BEYOND_USUAL_FACTOR = 1.5;
