@@ -54,7 +54,7 @@ async function renderWith(statement: ReturnType<typeof buildStatement>, page = 1
   for (const v of statement.visits) visitInfo[v.appointmentId] = { clientName: `Client ${v.appointmentId}`, serviceName: "Service" };
   return renderToStaticMarkup(
     createElement(StatementView as never, {
-      view: { access: "granted", ok: true, month: "2026-11", label: "November 2026", timezone: "America/Toronto", startLocal: "2026-11-01", endLocalExclusive: "2026-12-01", statement, visitInfo, practitionerNames: { "pract-one": "Pat Synthetic" } },
+      view: { access: "granted", ok: true, month: "2026-11", label: "November 2026", timezone: "America/Toronto", startLocal: "2026-11-01", endLocalExclusive: "2026-12-01", statement, visitInfo, practitionerNames: { "pract-one": "Pat Synthetic" }, settlementQuotes: {} },
       currency: "cad",
       format: (c: number) => formatStatementMoney(c, "cad"),
       maxMonth: "2026-11",
@@ -164,8 +164,8 @@ describe("the method bar appears only when the segments reconcile to the collect
 });
 
 describe("what a visit row says", () => {
-  it("studioVisitStatus: Paid when money was collected; otherwise the adjustment or note in the screen's own words", () => {
-    expect(studioVisitStatus([{ kind: "collected_cash", cents: 100 }])).toEqual({ label: "Paid", tone: "paid" });
+  it("studioVisitStatus: Payment recorded when money was collected with no price known; otherwise the adjustment or note in the screen's own words", () => {
+    expect(studioVisitStatus([{ kind: "collected_cash", cents: 100 }])).toEqual({ label: "Payment recorded", tone: "paid" }); // no price known: never claimed as paid in full
     expect(studioVisitStatus([{ kind: "refunded_card_session", cents: 100 }]).label).toBe("Refunded in full");
     expect(studioVisitStatus([{ kind: "waived", cents: 100 }]).label).toBe("Waived");
     expect(studioVisitStatus([{ kind: "still_owes_note", cents: null }]).label).toBe("Marked still owing");

@@ -56,6 +56,7 @@ async function render(opts: { names?: Record<string, string>; startsAt?: string;
         statement,
         visitInfo: { a1: { clientName: "Synthetic Client", serviceName: "Service" }, a2: { clientName: "Other Client", serviceName: null } },
         practitionerNames: opts.names ?? { "pract-one": "Pat Synthetic", "pract-two": "Robin Example" },
+        settlementQuotes: {},
       },
       currency: "cad",
       format: fmt,
@@ -181,7 +182,7 @@ describe("month bounds: Previous is hidden at the first month, and the fallback 
     const empty = buildStatement({ studioCurrency: "cad", appointments: [], cardRows: [], settlementRows: [], legacyFeeRows: [] });
     const html = renderToStaticMarkup(
       StatementView({
-        view: { access: "granted", ok: true, month: "2000-01", label: "January 2000", timezone: "America/Toronto", startLocal: "2000-01-01", endLocalExclusive: "2000-02-01", statement: empty, visitInfo: {}, practitionerNames: {} },
+        view: { access: "granted", ok: true, month: "2000-01", label: "January 2000", timezone: "America/Toronto", startLocal: "2000-01-01", endLocalExclusive: "2000-02-01", statement: empty, visitInfo: {}, practitionerNames: {}, settlementQuotes: {} },
         currency: "cad", format: fmt, maxMonth: "2026-11", notice: null,
       }),
     );

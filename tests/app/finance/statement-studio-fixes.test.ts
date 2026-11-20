@@ -1,0 +1,164 @@
+import { describe, expect, it, vi } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync } from "node:fs";
+import { buildStatement, type StatementCardRow } from "@/lib/finance/statement";
+import { STATEMENT_MONTH_NOTICE, STATEMENT_NO_TOTAL, STATEMENT_UNNAMED_PRACTITIONER } from "@/lib/finance/statement-copy";
+
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({}) }));
+
+// HON-64 Slice A review findings, pinned by rendering the real view with synthetic data.
+const row = (over: Partial<StatementCardRow>): StatementCardRow => ({
+  appointmentId: "a1",
+  chargeReason: "session_payment",
+  status: "succeeded",
+  amountCents: 12345,
+  currency: "cad",
+  refundStatus: null,
+  refundAmountCents: null,
+  providerRefundStatus: null,
+  stripeRefundId: null,
+  cumulativeFullRefundVerified: false,
+  stripeLivemode: true,
+  ...over,
+});
+const fmt = (c: number) => `$${Math.trunc(c / 100)}.${String(c % 100).padStart(2, "0")} CAD`;
+
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+vi.mock("next/link", () => ({
+  default: ({ href, children, ...rest }: Record<string, unknown>) => createElement("a", { href: String(href), ...rest }, children as never),
+  useLinkStatus: () => ({ pending: false }),
+}));
+import { studioVisitStatus } from "@/lib/finance/statement-methods";
+import { formatStatementMoney } from "@/lib/finance/statement-money";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+// The Studio tab, restyled to the approved reference. PRESENTATION ONLY: every figure, sentence and rule is unchanged; these pin what the new layout adds
+// (the sage summary card, the method bar, the breakdown behind a disclosure, the paged latest-first visit table) and that none of it can disagree with the
+// totals. Synthetic records only.
+
+// Codex review on the Studio restyle: (1) the Studio and Clients tabs must survive a failed Studio read; (2) a row is not "Paid" when what was collected is
+// below the price the visit was settled against, or when nothing was collected. Synthetic records only.
+const cash = (cents: number) => ({ kind: "collected_cash" as const, cents });
+const card = (cents: number) => ({ kind: "collected_card_session" as const, cents });
+
+describe("studioVisitStatus: derived from the money lines and the price the visit was settled against", () => {
+  it("$50 cash against a $100 quote is NOT Paid: it says Payment not confirmed, with the existing reason, and no amount owed", () => {
+    expect(studioVisitStatus([cash(5000)], 10000)).toEqual({ label: "Payment not confirmed", tone: "neutral", reason: "Part settled; the rest is not confirmed" });
+  });
+  it("an exact match and an overpayment are Paid", () => {
+    expect(studioVisitStatus([cash(10000)], 10000)).toEqual({ label: "Paid", tone: "paid" });
+    expect(studioVisitStatus([cash(15000)], 10000).label).toBe("Paid");
+  });
+  it("a recorded $0 collection: No charge when the price is $0; otherwise Payment not confirmed. Never Paid", () => {
+    expect(studioVisitStatus([cash(0)], 0)).toEqual({ label: "No charge", tone: "neutral" });
+    expect(studioVisitStatus([cash(0)], 10000).label).toBe("Payment not confirmed");
+    expect(studioVisitStatus([cash(0)], null).label).toBe("Payment not confirmed");
+  });
+  it("no quote: Payment recorded (it cannot be said to be paid in full), except one card charge, which is what was charged and covers itself", () => {
+    expect(studioVisitStatus([cash(5000)], null)).toEqual({ label: "Payment recorded", tone: "paid" });
+    expect(studioVisitStatus([card(10000)], null).label).toBe("Paid");
+    expect(studioVisitStatus([card(10000), cash(2000)], null).label).toBe("Payment recorded");
+    expect(studioVisitStatus([card(10000), card(2000)], null).label).toBe("Payment recorded");
+  });
+  it("money plus a waived amount that covers the quote is Paid; one that does not is Payment not confirmed; a still-owing note beside money is Payment recorded", () => {
+    expect(studioVisitStatus([cash(5000), { kind: "waived", cents: 5000 }], 10000).label).toBe("Paid");
+    expect(studioVisitStatus([cash(5000), { kind: "waived", cents: 1000 }], 10000).label).toBe("Payment not confirmed");
+    expect(studioVisitStatus([cash(5000), { kind: "still_owes_note", cents: null }], 10000).label).toBe("Payment recorded");
+  });
+  it("a quote of one visit never changes a visit with no money: the adjustment words are unchanged", () => {
+    expect(studioVisitStatus([{ kind: "waived", cents: 100 }], 10000).label).toBe("Waived");
+    expect(studioVisitStatus([{ kind: "unresolved", cents: null }], 10000).label).toBe("Unresolved");
+  });
+});
+
+async function renderFix(over: { settlementQuotes?: Record<string, number>; settle?: { appointmentId: string; method: string; amountCents: number; currency: string }[]; card?: StatementCardRow[]; view?: Record<string, unknown>; tabs?: unknown }) {
+  const { StatementView } = await import("@/app/(app)/financials/statement/statement-view");
+  const statement = buildStatement({
+    studioCurrency: "cad",
+    appointments: [{ id: "v1", practitionerId: "pract-one", startsAt: "2026-11-03T15:00:00Z" }],
+    cardRows: over.card ?? [],
+    settlementRows: over.settle ?? [],
+    legacyFeeRows: [],
+  });
+  return renderToStaticMarkup(
+    createElement(StatementView as never, {
+      view: { access: "granted", ok: true, month: "2026-11", label: "November 2026", timezone: "America/Toronto", startLocal: "2026-11-01", endLocalExclusive: "2026-12-01", statement, visitInfo: { v1: { clientName: "Client v1", serviceName: "Service" } }, practitionerNames: { "pract-one": "Pat Synthetic" }, noPaymentVisits: [], settlementQuotes: over.settlementQuotes ?? {}, ...over.view },
+      currency: "cad",
+      format: (c: number) => formatStatementMoney(c, "cad"),
+      maxMonth: "2026-11",
+      tabs: over.tabs,
+    }),
+  );
+}
+
+describe("the row pill in the rendered table", () => {
+  it("$50 cash against a $100 settled quote reads Payment not confirmed with the part-settled reason, never Paid", async () => {
+    const out = await renderFix({ settle: [{ appointmentId: "v1", method: "paid_cash", amountCents: 5000, currency: "cad" }], settlementQuotes: { v1: 10000 } });
+    expect(out).toMatch(/>Payment not confirmed<\/span><span[^>]*>Part settled; the rest is not confirmed<\/span>/);
+    expect(out).not.toMatch(/>Paid<\/span>/);
+    expect(out).toMatch(/text-right[^"]*"[^>]*>\$50\.00 CAD</); // the amount shown is still what was collected, not a balance
+    expect(out).not.toMatch(/\bowed?\b|\bdue\b/i);
+  });
+  it("the same $50 with no quote reads Payment recorded; an exact $100 of $100 reads Paid; a $0 cash settlement is never Paid", async () => {
+    const s = (n: number) => [{ appointmentId: "v1", method: "paid_cash", amountCents: n, currency: "cad" }];
+    expect(await renderFix({ settle: s(5000) })).toMatch(/>Payment recorded<\/span>/);
+    expect(await renderFix({ settle: s(10000), settlementQuotes: { v1: 10000 } })).toMatch(/>Paid<\/span>/);
+    const zero = await renderFix({ settle: s(0), settlementQuotes: { v1: 10000 } });
+    expect(zero).not.toMatch(/>Paid<\/span>/);
+    expect(zero).toMatch(/>Payment not confirmed<\/span>/);
+  });
+  it("the totals and the method bar are identical whatever the quote says (the quote words a pill and feeds no figure)", async () => {
+    const s = [{ appointmentId: "v1", method: "paid_cash", amountCents: 5000, currency: "cad" }];
+    const summary = (h: string) => h.slice(h.indexOf('aria-label="Summary"'), h.indexOf("</section>", h.indexOf('aria-label="Summary"')));
+    expect(summary(await renderFix({ settle: s, settlementQuotes: { v1: 10000 } }))).toBe(summary(await renderFix({ settle: s })));
+  });
+});
+
+describe("a failed Studio read keeps the tabs", () => {
+  const tabs = createElement("nav", { "aria-label": "Statements" }, "TABS-STUB");
+  it.each(["read_failed", "too_many_appointments", "currency_unknown", "month_out_of_range"])("%s: the error message AND the tabs are rendered", async (reason) => {
+    const out = await renderFix({ view: { ok: false, reason }, tabs });
+    expect(out).toContain("TABS-STUB");
+    expect(out).toMatch(/The statement could not be read|more appointments than|payment currency is not set|outside the range/);
+  });
+  it("a non-owner gets the refusal and NO tabs (nothing to navigate to)", async () => {
+    const out = await renderFix({ view: { access: "refused" }, tabs });
+    expect(out).toContain("Only the studio owner can see the money statement.");
+    expect(out).not.toContain("TABS-STUB");
+  });
+  it("the page passes the tabs into the view for every state (source guard)", () => {
+    const src = readFileSync("app/(app)/financials/statement/page.tsx", "utf8");
+    expect(src).toMatch(/tabs=\{<StatementsTabs active="studio" month=\{month\} \/>\}/);
+  });
+});
+
+describe("the loader carries the settled quote, and only a clean one", () => {
+  type Result = { data: unknown[] | null; error: unknown };
+  const okr = (data: unknown[]): Result => ({ data, error: null });
+  const recording = (results: Record<string, Result>) =>
+    ({
+      from: (table: string) => {
+        const chain: unknown = new Proxy(() => undefined, { get: (_x, prop) => (prop === "then" ? (res: (v: unknown) => void) => res(results[table]) : () => chain) });
+        return chain;
+      },
+    }) as unknown as SupabaseClient;
+  const run = async (settle: unknown[]) => {
+    const { loadStatementView } = await import("@/lib/finance/statement-read");
+    const a = (id: string) => ({ id, status: "completed", starts_at: "2026-11-03T15:00:00Z", practitioner_id: "p1", service_id: null, clients: null });
+    const v = await loadStatementView({ role: "owner" }, { id: "s1", timezone: "America/Toronto" }, "2026-11", "cad", recording({ appointments: okr([a("a1"), a("a2"), a("a3"), a("a4")]), sessions: okr([]), payment_charge_attempts: okr([]), appointment_settlements: okr(settle), manual_fee_charge_attempts: okr([]), services: okr([]), practitioners: okr([]) }));
+    if (v.access !== "granted" || !v.ok) throw new Error("expected a granted view");
+    return v;
+  };
+  const row = (id: string, quote: unknown) => ({ appointment_id: id, method: "paid_cash", amount_cents: 5000, currency: "cad", quoted_amount_cents: quote });
+  it("keeps a valid quote (including a recorded $0), drops a missing, negative or fractional one, and drops a visit whose live quotes disagree", async () => {
+    const v = await run([row("a1", 10000), row("a2", 0), row("a3", null), row("a4", -5), row("a1", 10000), row("a2", 500), row("a2", 600)]);
+    expect(v.settlementQuotes).toEqual({ a1: 10000 });
+  });
+  it("it changes no total: the statement is identical with and without quotes on the settlements", async () => {
+    const withQ = await run([row("a1", 10000)]);
+    const without = await run([row("a1", null)]);
+    expect(withQ.statement).toEqual(without.statement);
+  });
+});

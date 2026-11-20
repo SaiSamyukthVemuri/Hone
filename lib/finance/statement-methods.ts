@@ -47,14 +47,33 @@ export function visitCollectedCents(lines: readonly { kind: StatementKind; cents
   return any ? sum : null;
 }
 
-// The status pill on a Studio visit row, derived ONLY from that visit's own money lines and the screen's existing wording; nothing is invented. Money
-// collected wins; but with no price or balance known "Paid" cannot mean paid in full, so when a still-owing or waived note sits beside the money the pill
-// says only "Payment recorded" and the row shows the note beside the method, in the breakdown's own wording. Otherwise the visit's lines are all adjustments
-// or not-totalled notes and the pill says which. "paid" is the positive tone; the others are neutral.
-export type VisitStatus = { label: string; tone: "paid" | "neutral" };
-export function studioVisitStatus(lines: readonly { kind: StatementKind; cents: number | null }[]): VisitStatus {
+// The status pill on a Studio visit row, derived ONLY from that visit's own money lines, the price it was settled against, and the screen's existing wording;
+// nothing is invented. The rule mirrors the client statement's own visit states:
+//   * money collected AND a known price: "Paid" only when what was collected (plus anything waived) covers it; below it the pill is "Payment not confirmed"
+//     with the existing reason "Part settled; the rest is not confirmed". No amount owed is computed or shown.
+//   * money collected, no price known: "Payment recorded" (it cannot be said to be paid in full). The price is the settlement's recorded quote, else the
+//     amount of a SOLE card session charge (the same priority the client statement's recorded fee uses); card amounts are what was charged, so a visit
+//     paid by one card charge is covered by definition.
+//   * a still-owing note beside money: "Payment recorded", the note shown beside the method.
+//   * a recorded $0 collection: "No charge" when the price is $0, otherwise "Payment not confirmed" (nothing was collected against a price).
+//   * no money collected: the adjustment or note, in the breakdown's own words.
+// "paid" is the positive tone; the others are neutral.
+export type VisitStatus = { label: string; tone: "paid" | "neutral"; reason?: string };
+const PART_SETTLED = "Part settled; the rest is not confirmed";
+export function studioVisitStatus(lines: readonly { kind: StatementKind; cents: number | null }[], quoteCents: number | null = null): VisitStatus {
   const kinds = new Set(lines.map((l) => l.kind));
-  if (visitCollectedCents(lines) !== null) return kinds.has("still_owes_note") || kinds.has("waived") ? { label: "Payment recorded", tone: "paid" } : { label: "Paid", tone: "paid" };
+  const collected = visitCollectedCents(lines);
+  if (collected !== null) {
+    const waived = lines.reduce((n, l) => (l.kind === "waived" && l.cents !== null ? n + l.cents : n), 0);
+    const cardSessions = lines.filter((l) => l.kind === "collected_card_session" && l.cents !== null);
+    const others = lines.filter((l) => COLLECTED.includes(l.kind) && l.kind !== "collected_card_session" && l.cents !== null);
+    const price = quoteCents !== null ? quoteCents : cardSessions.length === 1 && others.length === 0 ? (cardSessions[0].cents as number) : null;
+    if (collected === 0 && waived === 0) return price === 0 ? { label: "No charge", tone: "neutral" } : { label: "Payment not confirmed", tone: "neutral" };
+    if (kinds.has("still_owes_note")) return { label: "Payment recorded", tone: "paid" };
+    if (price === null) return { label: "Payment recorded", tone: "paid" };
+    if (collected + waived < price) return { label: "Payment not confirmed", tone: "neutral", reason: PART_SETTLED };
+    return { label: "Paid", tone: "paid" };
+  }
   if (kinds.has("refunded_card_session") || kinds.has("refunded_card_fee")) return { label: "Refunded in full", tone: "neutral" };
   if (kinds.has("waived")) return { label: "Waived", tone: "neutral" };
   if (kinds.has("still_owes_note")) return { label: "Marked still owing", tone: "neutral" };

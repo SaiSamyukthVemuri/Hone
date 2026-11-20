@@ -140,7 +140,7 @@ function VisitRow({ v, view, format }: { v: VisitT; view: OkView; format: (c: nu
   const info = view.visitInfo[v.appointmentId];
   const when = new Date(v.startsAt);
   const ymd = localDateString(when, view.timezone);
-  const status = studioVisitStatus(v.lines);
+  const status = studioVisitStatus(v.lines, view.settlementQuotes[v.appointmentId] ?? null);
   const collected = visitCollectedCents(v.lines);
   const methods = v.lines.filter((l) => (COLLECTED_KINDS.includes(l.kind) && l.cents !== null) || l.kind === "still_owes_note" || l.kind === "waived");
   return (
@@ -157,6 +157,7 @@ function VisitRow({ v, view, format }: { v: VisitT; view: OkView; format: (c: nu
         <span className="hidden text-fg min-[781px]:block">{info?.serviceName ?? ""}</span>
         <span>
           <span className={cx(TAG, status.tone === "paid" ? "bg-[#eaf2e9] text-[#31573d]" : "bg-[#f3eee4] text-[#675534]")}>{status.label}</span>
+          {status.reason ? <span className="block text-xs text-[#5d685f]">{status.reason}</span> : null}
           {methods.map((l, i) => <span key={i} className="block text-xs text-[#5d685f]">{STATEMENT_METHOD_LABELS[l.kind]}</span>)}
         </span>
         <span className="text-right font-medium tabular-nums text-fg max-[780px]:text-[13px]">{collected === null ? STATEMENT_NO_TOTAL : format(collected)}</span>
@@ -211,7 +212,13 @@ export function StatementView({
     return <section className="rounded-lg border border-line bg-surface-sunken p-6 text-sm text-fg">Only the studio owner can see the money statement.</section>;
   }
   if (!view.ok) {
-    return <section className="rounded-lg border border-line bg-surface-sunken p-6 text-sm text-fg">{UNAVAILABLE[view.reason]}</section>;
+    // The Studio and Clients tabs stay on the error screen, so an owner whose Studio read failed can still reach Clients.
+    return (
+      <div className="space-y-6">
+        {tabs}
+        <section className="rounded-lg border border-line bg-surface-sunken p-6 text-sm text-fg">{UNAVAILABLE[view.reason]}</section>
+      </div>
+    );
   }
   const { statement } = view;
   const r = statement.reconciliation;

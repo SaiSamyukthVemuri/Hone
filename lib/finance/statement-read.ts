@@ -51,6 +51,12 @@ export type StatementView =
       visitInfo: Record<string, { clientName: string; serviceName: string | null }>;
       /** Practitioner id -> display name, for the owner. A name that could not be read is simply absent (the page then says so); it never changes a figure. */
       practitionerNames: Record<string, string>;
+      /**
+       * Appointment id -> the price the visit was SETTLED against (the settlement's own recorded quote), for the visits that have exactly one live
+       * settlement carrying one. Used ONLY to word a row's status pill honestly (money collected below the quote is not "Paid"); it feeds no total.
+       * A visit with no settlement, no quote, or two disagreeing live quotes is simply absent.
+       */
+      settlementQuotes: Record<string, number>;
     };
 
 type ApptRow = {
@@ -94,7 +100,7 @@ export async function loadStatementView(
   const ids = appts.map((a) => a.id);
   const empty = buildStatement({ studioCurrency, appointments: [], cardRows: [], settlementRows: [], legacyFeeRows: [] });
   if (ids.length === 0) {
-    return { access: "granted", ok: true, month, label: range.label, timezone: studio.timezone, startLocal: range.startLocal, endLocalExclusive: range.endLocalExclusive, statement: empty, visitInfo: {}, practitionerNames: {} };
+    return { access: "granted", ok: true, month, label: range.label, timezone: studio.timezone, startLocal: range.startLocal, endLocalExclusive: range.endLocalExclusive, statement: empty, visitInfo: {}, practitionerNames: {}, settlementQuotes: {} };
   }
 
   // Sessions of those appointments (deleted ones included: money on them is still money, attributed by appointment).
@@ -131,8 +137,8 @@ export async function loadStatementView(
       : readInChunks<CardDb>([...sessionToAppt.keys()], (chunk) =>
           supabase.from("payment_charge_attempts").select(CARD_COLS).eq("studio_id", studio.id).eq("charge_reason", "session_payment").in("session_id", chunk),
         ),
-    readInChunks<{ appointment_id: string; method: string; amount_cents: number | null; currency: string | null }>(ids, (chunk) =>
-      supabase.from("appointment_settlements").select("appointment_id, method, amount_cents, currency").eq("studio_id", studio.id).is("superseded_at", null).in("appointment_id", chunk),
+    readInChunks<{ appointment_id: string; method: string; amount_cents: number | null; currency: string | null; quoted_amount_cents: number | null }>(ids, (chunk) =>
+      supabase.from("appointment_settlements").select("appointment_id, method, amount_cents, currency, quoted_amount_cents").eq("studio_id", studio.id).is("superseded_at", null).in("appointment_id", chunk),
     ),
     readInChunks<{ appointment_id: string; status: string | null; amount_cents: number | null; currency: string | null; stripe_livemode: boolean | null }>(ids, (chunk) =>
       supabase.from("manual_fee_charge_attempts").select("appointment_id, status, amount_cents, currency, stripe_livemode").eq("studio_id", studio.id).in("appointment_id", chunk),
@@ -203,6 +209,16 @@ export async function loadStatementView(
     };
   }
 
+  const settlementQuotes: Record<string, number> = {};
+  const disagreeing = new Set<string>();
+  for (const r of settlements.rows) {
+    if (typeof r.quoted_amount_cents !== "number" || !Number.isInteger(r.quoted_amount_cents) || r.quoted_amount_cents < 0) continue;
+    const prior = settlementQuotes[r.appointment_id];
+    if (prior !== undefined && prior !== r.quoted_amount_cents) disagreeing.add(r.appointment_id);
+    settlementQuotes[r.appointment_id] = r.quoted_amount_cents;
+  }
+  for (const id of disagreeing) delete settlementQuotes[id];
+
   return {
     access: "granted",
     ok: true,
@@ -214,5 +230,6 @@ export async function loadStatementView(
     statement,
     visitInfo,
     practitionerNames,
+    settlementQuotes,
   };
 }
