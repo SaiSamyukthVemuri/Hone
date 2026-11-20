@@ -98,9 +98,9 @@ describe("who is listed, and the cap", () => {
   });
   it("a client with no row read, a blank name, or whitespace only is not listed and never shown as Unknown, but is still counted as seen", () => {
     const f = [fig("a", 1, 100, null), fig("gone", 1, 900, null), fig("blank", 1, 800, null), fig("space", 1, 700, null)];
-    const lk = lookup(["a", "blank", "space"], (id) => (id === "a" ? "Ada" : id === "blank" ? "" : " \t "));
+    const lk = lookup(["a", "blank", "space"], (id) => (id === "a" ? "Rowan" : id === "blank" ? "" : " \t "));
     const v = rank(f, { lookup: lk });
-    expect(names(spenders(v))).toEqual(["Ada"]);
+    expect(names(spenders(v))).toEqual(["Rowan"]);
     expect(v.seen).toBe(4);
     expect(v.notListed).toBe(3);
     expect(JSON.stringify(v)).not.toMatch(/unknown/i);
@@ -115,12 +115,12 @@ describe("who is listed, and the cap", () => {
     expect(rankNamedClients({ figures: [fig("a", 1, 1, null)], seen: 1, lookup: { ok: false }, moneyFailure: null, historyFailure: null })).toEqual({ available: false, reason: "read_failed" });
   });
   it("a name is trimmed and its inner whitespace collapsed", () => {
-    expect(usableName("  Ada   Lovelace ")).toBe("Ada Lovelace");
+    expect(usableName("  Rowan   Example ")).toBe("Rowan Example");
     expect(usableName("")).toBeNull();
     expect(usableName(null)).toBeNull();
   });
   it("no client id leaves the module: rows carry a rank key, a name and figures only", () => {
-    const v = rank([fig("secret-client-id-1", 2, 100, 9)], { lookup: lookup(["secret-client-id-1"], () => "Ada") });
+    const v = rank([fig("secret-client-id-1", 2, 100, 9)], { lookup: lookup(["secret-client-id-1"], () => "Rowan") });
     expect(JSON.stringify(v)).not.toContain("secret-client-id");
     expect(Object.keys(spenders(v)[0]).sort()).toEqual(["averageGapDays", "name", "periodPaidCents", "periodVisits", "rowKey"]);
   });
@@ -183,9 +183,9 @@ describe("the names-only read", () => {
 
 describe("the name shown is the app's display name, never the legal name", () => {
   it("a client with a preferred name shows it, and the stored name is not shown", async () => {
-    const f = fakeSupabase(() => [{ id: "a", name: "Legal Lastname", preferred_name: "Sam" }]);
+    const f = fakeSupabase(() => [{ id: "a", name: "Legal Lastname", preferred_name: "Rowan Example" }]);
     const r = await readClientNames(f.client, "studio-1", ["a"]);
-    expect(r.ok && r.names.get("a")).toBe("Sam");
+    expect(r.ok && r.names.get("a")).toBe("Rowan Example");
   });
   it("a client without one shows the stored name; a whitespace preferred name does not hide it", async () => {
     const f = fakeSupabase(() => [{ id: "a", name: "Stored Name", preferred_name: null }, { id: "b", name: "Other Stored", preferred_name: "  " }]);

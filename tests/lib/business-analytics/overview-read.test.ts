@@ -81,7 +81,7 @@ describe("the Overview read: whole or nothing, studio-scoped, never writing", ()
   });
   it("reads display names for the clients seen in the period only, archived excluded in the query, and shows them", async () => {
     const res = healthy();
-    res.clients = ok([{ id: "c1", name: "Ada Client" }]);
+    res.clients = ok([{ id: "c1", name: "Rowan Client" }]);
     const { client, calls } = recording(res);
     const r = await load("owner", client);
     const nameCalls = calls.filter((c) => c.table === "clients");
@@ -90,11 +90,11 @@ describe("the Overview read: whole or nothing, studio-scoped, never writing", ()
     expect(nameCalls.find((c) => c.method === "in")?.args).toEqual(["id", ["c1"]]);
     expect(r).toMatchObject({ access: "granted", ok: true });
     const view = (r as { view: { namedClients: { available: boolean; value?: { mostVisits: Array<{ name: string }> } } } }).view;
-    expect(view.namedClients.value?.mostVisits.map((x) => x.name)).toEqual(["Ada Client"]);
+    expect(view.namedClients.value?.mostVisits.map((x) => x.name)).toEqual(["Rowan Client"]);
   });
   it("never reads client names when asked not to (the printed page and the spreadsheet), and still returns the view", async () => {
     const res = healthy();
-    res.clients = ok([{ id: "c1", name: "Ada Client" }]);
+    res.clients = ok([{ id: "c1", name: "Rowan Client" }]);
     const { client, calls } = recording(res);
     const { loadOverview } = await import("@/lib/business-analytics/server/overview-read");
     const r = await loadOverview({ role: "owner" }, studio, "cad", {}, { strict: true, names: false }, NOW, client);
