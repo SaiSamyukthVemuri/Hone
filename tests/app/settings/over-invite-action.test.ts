@@ -54,7 +54,7 @@ beforeEach(() => {
 });
 
 describe("over-invite action", () => {
-  it("refuses when not confirmed, and says so (item 19); nothing is created", async () => {
+  it("refuses when not confirmed, and says so nothing is created", async () => {
     const r = await run(form({ confirmed: "" }));
     expect(r).toMatchObject({ state: "notice" });
     expect(h.calls).not.toContain("create");
@@ -75,12 +75,12 @@ describe("over-invite action", () => {
     expect(await run(form({ serviceId: "x" }))).toMatchObject({ state: "notice" });
     expect(h.calls).toEqual([]);
   });
-  it("forged shown numbers never change what is created; the server's own are used (item 1)", async () => {
+  it("forged shown numbers never change what is created; the server's own are used", async () => {
     await run(form({ shownFit: "5", shownActive: "8", shownExtra: "3" }));
     expect(h.createArgs).toMatchObject({ fit: 5, shownLiveCount: 8, confirmed: true });
     expect(h.createArgs?.entryIds).toEqual([U(1), U(2), U(3)]);
   });
-  it("shown numbers that differ from the server's re-ask and create nothing (item 13)", async () => {
+  it("shown numbers that differ from the server's re-ask and create nothing", async () => {
     const r = await run(form({ shownActive: "2" }));
     expect(r).toMatchObject({ state: "reconfirm", active: 8, extra: 3, fit: 5 });
     expect(h.calls).not.toContain("create");
@@ -90,11 +90,11 @@ describe("over-invite action", () => {
     const r = await run(form());
     expect(r).toMatchObject({ state: "reconfirm", extra: 2 });
   });
-  it("duplicate posted ids reach the command once each (item 20)", async () => {
+  it("duplicate posted ids reach the command once each", async () => {
     await run(form({ entryId: [U(1), U(1), U(2), U(3)] }));
     expect(h.createArgs?.entryIds).toEqual([U(1), U(2), U(3)]);
   });
-  it("a zero or exhausted capacity still sends a confirmed batch (item 12)", async () => {
+  it("a zero or exhausted capacity still sends a confirmed batch", async () => {
     h.fit = { ok: true, fit: 0 };
     const r = await run(form({ shownFit: "0" }));
     expect(h.calls).toContain("create");
@@ -118,7 +118,7 @@ describe("over-invite action", () => {
     expect(await run(form())).toMatchObject({ state: "notice" });
     expect(h.calls).toEqual([]);
   });
-  it("a thrown command yields a fixed sentence and logs nothing (item 22)", async () => {
+  it("a thrown command yields a fixed sentence and logs nothing", async () => {
     h.create = null as never;
     const r = await run(form());
     expect(r).toMatchObject({ state: "notice" });

@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-// The over-invite batch's database port: typed wrappers over the 0363 commands (create, preview, claim, admit with a batch item, settle, replace).
+// The over-invite batch's database port: typed wrappers over the batch commands (create, preview, claim, admit with a batch item, settle, replace).
 // Every command is service_role-only, so the caller passes the SERVICE client; the actor id is the confirming owner's AUTH user id, resolved from
 // the session by the caller, never read from a request.
 //
@@ -263,7 +263,7 @@ const REASON = /^[a-z_]{1,40}$/;
 /** `failed` and `skipped` REQUIRE a reason class; it is a fixed code, never free text and never a name. */
 export type SettleTarget = { itemId: string; studioId: string; entryId: string };
 
-/** The item must belong to BOTH the studio and the entry named (0363): a mismatch answers not_found and changes nothing. Pass them from the claimed row. */
+/** The item must belong to BOTH the studio and the entry named: a mismatch answers not_found and changes nothing. Pass them from the claimed row. */
 export async function settleItem(db: Rpc, target: SettleTarget, outcome: "sent" | "failed" | "unknown" | "skipped", reasonClass: string | null): Promise<SettleOutcome> {
   if (outcome !== "sent" && (reasonClass === null || !REASON.test(reasonClass))) return { ok: false, code: "bad_shape" };
   const { data, error } = await db.rpc("settle_waitlist_batch_item", {

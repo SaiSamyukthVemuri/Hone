@@ -8,14 +8,17 @@ import { addDays, localDateString } from "@/lib/booking/tz";
 import { computeConsultationFit } from "@/lib/waitlist/send-time-fit";
 import { newBatchKey } from "@/lib/waitlist/over-invite-selection";
 import { previewSelection } from "@/lib/waitlist/over-invite-port";
-import { tallyItems, type ItemRow } from "@/lib/waitlist/over-invite-progress";
+import { tallyItems } from "@/lib/waitlist/over-invite-progress";
+import { loadBatchItems, loadShownBatches } from "@/lib/waitlist/over-invite-shown";
 import type { Candidate } from "@/lib/waitlist/recipient-chooser";
-import { retryFailedDeliveriesAction, sendOverInviteAction, stopBatchAction } from "./actions";
+import { retryFailedDeliveriesAction, retryUnknownDeliveriesAction, sendOverInviteAction, stopBatchAction } from "./actions";
 
 // Owner-only. NAMES ONLY go to the browser (no email, phone or token), and nothing on this page logs a name. The numbers are the server's: the fit
 // from the slot engine and the live count from the same database function the batch command re-checks under its lock.
 
 export const dynamic = "force-dynamic";
+// The retry action runs from this page; one click is bounded to one round (5 items x the per-item budget), well inside the platform cap.
+export const maxDuration = 60;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const READ_PAGE = 1000;
@@ -39,31 +42,15 @@ async function waitingNames(studioId: string): Promise<Candidate[] | null> {
   }
 }
 
-/** This studio's confirmed batches and where each stands, read through the owner's own session (owner-only select policy). */
+/** This studio's most recent confirmed batches and where each stands. The retry acts on exactly these (see over-invite-shown.ts). */
 async function batchViews(studioId: string): Promise<BatchView[]> {
   const supabase = await createClient();
-  const { data: batches, error } = await supabase
-    .from("waitlist_invitation_batches")
-    .select("id,confirmed_at,quantity,fit_shown,live_shown")
-    .eq("studio_id", studioId)
-    .order("confirmed_at", { ascending: false })
-    .limit(10);
-  if (error || !batches) return [];
+  const batches = await loadShownBatches(supabase, studioId);
+  if (!batches) return [];
   const views: BatchView[] = [];
   for (const b of batches) {
-    const rows: ItemRow[] = [];
-    for (let from = 0; ; from += READ_PAGE) {
-      const { data, error: iErr } = await supabase
-        .from("waitlist_invitation_batch_items")
-        .select("state,reason_class")
-        .eq("studio_id", studioId)
-        .eq("batch_id", b.id)
-        .order("id", { ascending: true })
-        .range(from, from + READ_PAGE - 1);
-      if (iErr) return [];
-      rows.push(...((data ?? []) as ItemRow[]));
-      if (!data || data.length < READ_PAGE) break;
-    }
+    const rows = await loadBatchItems(supabase, studioId, b.id);
+    if (rows === null) return [];
     views.push({
       id: String(b.id),
       confirmedAt: String(b.confirmed_at),
@@ -87,7 +74,7 @@ export default async function OverInvitePage({
   }
   const params = (await searchParams) ?? {};
   const open = await batchViews(studio.id);
-  const batchesPanel = <OverInviteBatches batches={open} retryAction={retryFailedDeliveriesAction} stopAction={stopBatchAction} renderedAt={Date.now()} />;
+  const batchesPanel = <OverInviteBatches batches={open} retryAction={retryFailedDeliveriesAction} stopAction={stopBatchAction} unknownRetryAction={retryUnknownDeliveriesAction} renderedAt={Date.now()} />;
   const supabase = await createClient();
   const { data: services } = await supabase.from("services").select("id,name,active").eq("studio_id", studio.id).order("name");
   const list = (services ?? []).filter((s) => s.active !== false);

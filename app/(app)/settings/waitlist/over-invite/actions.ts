@@ -9,9 +9,11 @@ import { WAIT_INVITATION_TTL_HOURS } from "@/lib/waitlist/invitation-window";
 import { recheckBeforeSend } from "@/lib/waitlist/over-invite-batch";
 import { parseOverInviteForm } from "@/lib/waitlist/over-invite-selection";
 import { createBatch, previewSelection, stopBatch } from "@/lib/waitlist/over-invite-port";
-import { retryRefused, runRounds } from "@/lib/waitlist/over-invite-run";
+import { retryByKind, runRounds } from "@/lib/waitlist/over-invite-run";
 import { DEFAULT_LIMITS } from "@/lib/waitlist/over-invite-worker";
 import { createClient } from "@/lib/supabase/server";
+import { loadRefusedTargets, loadUnknownTargets } from "@/lib/waitlist/over-invite-shown";
+import { RETRY_CLICK_MAX } from "@/lib/waitlist/over-invite-progress";
 import { OVER_INVITE_NOTICES as N, type OverInviteResult } from "@/lib/waitlist/over-invite-result";
 
 // The owner's "invite beyond estimated capacity" action. The SERVER is the authority; the form is untrusted:
@@ -45,6 +47,8 @@ function readScope(formData: FormData): Scope | null {
 }
 
 export async function sendOverInviteAction(_prev: OverInviteResult, formData: FormData): Promise<OverInviteResult> {
+  // Once the batch is created it is SAVED whatever happens next, so a later failure must never say "Nothing was sent".
+  let batchSaved = false;
   try {
     const parsed = parseOverInviteForm(formData);
     if (!parsed.ok) return { state: "notice", notice: N.malformed };
@@ -108,6 +112,7 @@ export async function sendOverInviteAction(_prev: OverInviteResult, formData: Fo
     switch (created.result) {
       case "created":
       case "exists":
+        batchSaved = true;
         break;
       case "material_change":
         return {
@@ -133,7 +138,7 @@ export async function sendOverInviteAction(_prev: OverInviteResult, formData: Fo
     }
 
     // Without the batch id the inline round could not be scoped to THIS batch, so it does not run at all (the background route still sends the batch).
-    if (!created.batchId) return { state: "notice", notice: N.unavailable };
+    if (!created.batchId) return { state: "notice", notice: N.batchSaved };
     // The batch is persisted. Run the first round(s) now; whatever is left is finished by the background route with no page open and no click.
     const first = await runRounds({ budgetMs: FIRST_ROUNDS_BUDGET_MS, scope: { studioId: studio.id, batchId: created.batchId ?? undefined } });
     revalidatePath("/settings/waitlist/over-invite");
@@ -149,7 +154,7 @@ export async function sendOverInviteAction(_prev: OverInviteResult, formData: Fo
     };
   } catch {
     // A fixed sentence: no name, id, token or provider text.
-    return { state: "notice", notice: N.unavailable };
+    return { state: "notice", notice: batchSaved ? N.batchSaved : N.unavailable };
   }
 }
 
@@ -171,31 +176,21 @@ export async function stopBatchAction(_prev: OverInviteResult, formData: FormDat
   }
 }
 
-/**
- * The owner's SEPARATE, explicitly confirmed retry of failed recipients. Nothing is posted but the confirmation: the targets are read here from the
- * batch tables (this studio's items that failed with a REFUSED delivery), so a forged id cannot name anyone. An UNKNOWN outcome is never in this
- * set, a sent item never is, and each retry goes through replace (never admit again).
- */
-export async function retryFailedDeliveriesAction(_prev: OverInviteResult, formData: FormData): Promise<OverInviteResult> {
+async function retryAction(kind: "refused" | "unknown", formData: FormData): Promise<OverInviteResult> {
   try {
-    if (formData.get("confirmRetry") !== "on") return { state: "notice", notice: N.needRetryConfirm };
+    if (formData.get(kind === "refused" ? "confirmRetry" : "confirmRetryUnknown") !== "on") return { state: "notice", notice: kind === "refused" ? N.needRetryConfirm : N.needUnknownConfirm };
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
     if (practitioner.role !== "owner" || !practitioner.user_id) return { state: "notice", notice: N.ownerOnly };
     const supabase = await createClient();
-    const { data, error } = await supabase
-      .from("waitlist_invitation_batch_items")
-      .select("id,entry_id")
-      .eq("studio_id", studio.id)
-      .eq("state", "failed")
-      .eq("reason_class", "delivery_refused");
-    if (error) return { state: "notice", notice: N.unavailable };
-    const targets = (data ?? []).map((r) => ({ entryId: String(r.entry_id), itemId: String(r.id) }));
-    if (targets.length === 0) return { state: "notice", notice: N.nothingToRetry };
-    const out = await retryRefused(studio.id, practitioner.user_id, targets);
+    const targets = kind === "refused" ? await loadRefusedTargets(supabase, studio.id) : await loadUnknownTargets(supabase, studio.id);
+    if (targets === null) return { state: "notice", notice: N.unavailable };
+    if (targets.length === 0) return { state: "notice", notice: kind === "refused" ? N.nothingToRetry : N.nothingUnknownToRetry };
+    const chosen = targets.slice(0, RETRY_CLICK_MAX);
+    const out = await retryByKind(kind, studio.id, practitioner.user_id, chosen, supabase);
     revalidatePath("/settings/waitlist/over-invite");
     return {
       state: "progress",
-      quantity: targets.length,
+      quantity: chosen.length,
       extraRequested: 0,
       pending: 0,
       sent: out.filter((o) => o.status === "sent").length,
@@ -205,4 +200,18 @@ export async function retryFailedDeliveriesAction(_prev: OverInviteResult, formD
   } catch {
     return { state: "notice", notice: N.unavailable };
   }
+}
+
+/**
+ * The owner's SEPARATE, explicitly confirmed retry of deliveries the provider REFUSED. Nothing is posted but the confirmation: the targets are read
+ * here from the batches shown on the page (the same query that produces the number on the confirm box), so a forged id cannot name anyone. A sent
+ * item is never in this set, and an unknown outcome is not either (it has its own action below). Each retry goes through replace, never admit.
+ */
+export async function retryFailedDeliveriesAction(_prev: OverInviteResult, formData: FormData): Promise<OverInviteResult> {
+  return retryAction("refused", formData);
+}
+
+/** The owner's separate, more strongly confirmed retry of deliveries whose outcome is UNKNOWN (we cannot tell whether the email arrived). */
+export async function retryUnknownDeliveriesAction(_prev: OverInviteResult, formData: FormData): Promise<OverInviteResult> {
+  return retryAction("unknown", formData);
 }

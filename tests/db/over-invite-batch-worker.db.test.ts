@@ -3,10 +3,10 @@ import { afterAll, describe, expect, it } from "vitest";
 import { adminQuery, closePool, seedStudio } from "./helpers/harness";
 import { admitBatchItem, claimItems, createBatch, previewSelection, replaceInvitation, settleItem, stopBatch } from "@/lib/waitlist/over-invite-port";
 import { runBatchChunk, type DeliveryState, type WorkerDeps } from "@/lib/waitlist/over-invite-worker";
-import { retryRefusedDeliveries } from "@/lib/waitlist/over-invite-retry";
+import { retryDeliveries } from "@/lib/waitlist/over-invite-retry";
 
-// The over-invite port and worker against a REAL database with 0363 applied (owned local stack, synthetic data only). The mail provider is a fake;
-// the commands are the real ones. Requires 0363: with it absent every test fails loudly rather than skipping.
+// The over-invite port and worker against a REAL database with the batch migration applied (owned local stack, synthetic data only). The mail provider is a fake;
+// the commands are the real ones. Requires the batch migration: with it absent every test fails loudly rather than skipping.
 
 const q = async <T = any>(text: string, params: unknown[] = []): Promise<T[]> => (await adminQuery(text, params)).rows as T[];
 afterAll(async () => {
@@ -94,7 +94,7 @@ async function drain(d: WorkerDeps) {
   for (let i = 0; i < 60; i++) {
     const r = await runBatchChunk(d, { perStudio: 5, total: 5, leaseSeconds: 120 });
     if (process.env.OV_DEBUG) console.log("CHUNK", JSON.stringify(r));
-    if (!r.ok || r.claimed === 0) break;
+    if (!r.ok || r.claimedAll === 0) break;
     out.push(...r.outcomes);
   }
   return out;
@@ -147,8 +147,10 @@ describe("over-invite worker against the real batch commands", () => {
     const out = await drain(deps((e) => (e === ids[0] ? "refused" : e === ids[1] ? "unknown" : "accepted")));
     const refused = out.find((o) => o.status === "failed" && o.reason === "delivery_refused");
     expect(refused).toBeDefined();
-    const retried = await retryRefusedDeliveries(
+    const retried = await retryDeliveries(
       {
+        kind: "refused",
+        stillRetryable: async () => true,
         replace: (entryId) => replaceInvitation(db, { studioId: f.studioId, actorUserId: f.userId, entryId }),
         deliver: async () => "accepted",
         settle: (t, o, r) => settleItem(db, t, o, r),

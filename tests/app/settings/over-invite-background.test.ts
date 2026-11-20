@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Sam's flow: the owner confirms ONE batch; the background route finishes it with no page open and no click. A stateful in-memory model of the
+// The owner confirms ONE batch; the background route finishes it with no page open and no click. A stateful in-memory model of the
 // batch queue stands in for the database (claim returns only pending items; admit/settle move an item along; nothing is ever re-sent).
 
 type Item = { itemId: string; entryId: string; batchId: string; studioId: string; state: string; reason: string | null; sentCount: number };
@@ -20,8 +20,14 @@ vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({}) }));
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
-    from: () => {
-      const chain: any = { select: () => chain, eq: () => chain, then: (res: (v: unknown) => void) => res({ data: h.failedRows, error: null }) };
+    from: (name: string) => {
+      let table = "";
+      const chain: any = {
+        maybeSingle: async () => ({ data: h.failedRows.length ? { state: "failed", reason_class: "delivery_refused" } : null, error: null }),
+        select: () => chain, eq: () => chain, in: () => chain, order: () => chain, limit: () => chain, range: () => chain,
+        then: (res: (v: unknown) => void) => res({ data: table === "batches" ? [{ id: "B1", confirmed_at: "2026-11-20", quantity: 1, fit_shown: 0, live_shown: 0 }] : h.failedRows, error: null }),
+      };
+      table = name === "waitlist_invitation_batches" ? "batches" : "items";
       return chain;
     },
   }),
@@ -136,7 +142,7 @@ describe("confirm once, the background route finishes", () => {
     expect(h.admitted).toHaveLength(5);
     expect(h.items.every((x) => x.sentCount === 1)).toBe(true);
   });
-  it("the confirm action's inline round serves ITS batch only; another queued batch is untouched (Codex P1)", async () => {
+  it("the confirm action's inline round serves ITS batch only; another queued batch is untouched", async () => {
     h.items.push(...Array.from({ length: 3 }, (_, n) => ({ itemId: `o${n}`, entryId: `o${n}`, batchId: "other-batch", studioId: STUDIO, state: "pending", reason: null, sentCount: 0 })));
     const r = await sendOverInviteAction({ state: "idle" }, sendForm(4, 100));
     expect(r).toMatchObject({ state: "progress", quantity: 4, sent: 4 });

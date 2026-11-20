@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { runBatchChunk, type WorkerDeps } from "@/lib/waitlist/over-invite-worker";
-import { retryRefusedDeliveries } from "@/lib/waitlist/over-invite-retry";
+import { retryDeliveries } from "@/lib/waitlist/over-invite-retry";
 import type { ClaimedItem, IssuedInvitation } from "@/lib/waitlist/over-invite-port";
 
 const item = (n: number): ClaimedItem => ({
@@ -31,7 +31,7 @@ describe("over-invite worker", () => {
     expect(r.ok && r.outcomes[0].status).toBe("sent");
     expect(calls).toEqual(["deliver", "settle:i1:sent:null"]);
   });
-  it("settle names the item's own studio and entry from the claimed row (0363 ownership check)", async () => {
+  it("settle names the item's own studio and entry from the claimed row (ownership check)", async () => {
     const { d, seen } = deps();
     await runBatchChunk(d);
     expect(seen).toEqual([{ itemId: "i1", studioId: "s", entryId: "e1" }]);
@@ -89,18 +89,22 @@ describe("retry through replace", () => {
   const t = [{ entryId: "e1", itemId: "i1", studioId: "s" }];
   it("replaces (never admits) and settles sent", async () => {
     const calls: string[] = [];
-    const r = await retryRefusedDeliveries({
+    const r = await retryDeliveries({
+      kind: "refused",
+      stillRetryable: async () => true,
       replace: async () => (calls.push("replace"), { ok: true, result: "replaced", issued }),
       deliver: async () => "accepted",
       settle: async (t, o) => (calls.push(`settle:${t.itemId}:${o}`), { ok: true, result: "settled" }),
       sleep: async () => {},
     }, t);
-    expect(calls).toEqual(["replace", "settle:i1:sent"]);
+    expect(calls).toEqual(["settle:i1:failed", "replace", "settle:i1:sent"]);
     expect(r[0].status).toBe("sent");
   });
   it("an invitation already redeemed is skipped, not sent again", async () => {
     let delivered = false;
-    const r = await retryRefusedDeliveries({
+    const r = await retryDeliveries({
+      kind: "refused",
+      stillRetryable: async () => true,
       replace: async () => ({ ok: true, result: "invitation_redeemed" }),
       deliver: async () => { delivered = true; return "accepted"; },
       settle: async () => ({ ok: true, result: "settled" }),
@@ -142,7 +146,7 @@ describe("an owner's click never sends another studio's batch", () => {
 });
 
 import { DEFAULT_LIMITS, ITEM_BUDGET_MS, SPACING_MS } from "@/lib/waitlist/over-invite-worker";
-describe("lease covers a whole round (Insurance W1)", () => {
+describe("lease covers a whole round", () => {
   it("lease > chunk x (spacing + slowest admit+send) with at least 25% margin", () => {
     const worstRoundMs = DEFAULT_LIMITS.total * (SPACING_MS + ITEM_BUDGET_MS);
     expect(DEFAULT_LIMITS.leaseSeconds * 1000).toBeGreaterThan(worstRoundMs * 1.25);

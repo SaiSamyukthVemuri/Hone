@@ -1,7 +1,7 @@
 import type { ClaimedItem, ClaimOutcome, AdmitOutcome, IssuedInvitation, SettleOutcome, SettleTarget } from "./over-invite-port";
 
 // The over-invite batch WORKER, as logic over injected ports (no database, no mail provider, no SMS: this module has no SMS dependency at all, so
-// no waitlist text can be sent from here). It implements Machines' worker contract for one claimed chunk:
+// no waitlist text can be sent from here). It follows the batch queue's worker contract for one claimed chunk:
 //
 //   claim -> per item: admit (batch-aware) -> deliver the email -> settle
 //
@@ -32,7 +32,7 @@ export type ItemOutcome =
   | { entryId: string; itemId: string; status: "skipped"; reason: string }
   | { entryId: string; itemId: string; status: "failed"; reason: "delivery_refused" | "delivery_unknown" | "settle_failed" };
 
-export type ChunkResult = { ok: true; outcomes: ItemOutcome[]; claimed: number } | { ok: false; code: "claim_failed" };
+export type ChunkResult = { ok: true; outcomes: ItemOutcome[]; claimed: number; /** Everything the claim returned, including items outside the scope (left for the lease to return). */ claimedAll: number } | { ok: false; code: "claim_failed" };
 
 /**
  * LEASE > the time a whole claimed round can take. Items of a round wait their turn one at a time, so the last one is claimed for the sum of every
@@ -70,7 +70,7 @@ export async function runBatchChunk(
     first = false;
     outcomes.push(await runOne(deps, item));
   }
-  return { ok: true, outcomes, claimed: mine.length };
+  return { ok: true, outcomes, claimed: mine.length, claimedAll: claimed.items.length };
 }
 
 async function runOne(deps: WorkerDeps, item: ClaimedItem): Promise<ItemOutcome> {
