@@ -62,3 +62,32 @@ describe("the Clients tab matches the Studio tab's chrome and the approved grid"
     expect(src).toContain("formatStatementMoney(c, currency)");
   });
 });
+
+describe("Find a client on the Studio tab", () => {
+  const studioView = async (finder: unknown) => {
+    const { StatementView } = await import("@/app/(app)/financials/statement/statement-view");
+    const { buildStatement } = await import("@/lib/finance/statement");
+    const statement = buildStatement({ studioCurrency: "cad", appointments: [], cardRows: [], settlementRows: [], legacyFeeRows: [] });
+    return renderToStaticMarkup(createElement(StatementView as never, {
+      view: { access: "granted", ok: true, month: "2026-11", label: "November 2026", timezone: "America/Toronto", startLocal: "2026-11-01", endLocalExclusive: "2026-12-01", statement, visitInfo: {}, practitionerNames: {}, settlementQuotes: {}, noPaymentVisits: [] },
+      currency: "cad", format: (c: number) => formatStatementMoney(c, "cad"), maxMonth: "2026-11", tabs: createElement("nav", null, "TABS-STUB"), finder,
+    }));
+  };
+  it("with finder data the box sits beside the tabs under the same 'Find a client' heading as on the Clients tab", async () => {
+    const out = await studioView({ state: "ok", clients: [{ id: "c1", displayName: "Ada Lovelace", archived: false }], lastVisits: null });
+    expect(out).toContain("TABS-STUB");
+    expect(out).toMatch(/<h2 id="stmt-find" class="sr-only">Find a client<\/h2>/);
+    expect(out).toMatch(/<input[^>]*role="combobox"|placeholder="Find a client/);
+    expect(out.indexOf("TABS-STUB")).toBeLessThan(out.indexOf("stmt-find"));
+  });
+  it("too many clients, or an unavailable list, say so in the existing words instead of a box; no finder prop draws nothing", async () => {
+    expect(await studioView({ state: "too_many" })).toContain("more clients than Find a client can search");
+    expect(await studioView({ state: "unavailable" })).toMatch(/could not be read/);
+    expect(await studioView(undefined)).not.toContain("stmt-find");
+  });
+  it("the Studio page loads the finder only after the owner gate (source guard)", () => {
+    const src = readFileSync("app/(app)/financials/statement/page.tsx", "utf8");
+    expect(src.indexOf('practitioner.role !== "owner"')).toBeLessThan(src.indexOf("await loadFinderState("));
+    expect(src).toContain("finder={finder}");
+  });
+});
