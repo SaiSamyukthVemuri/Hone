@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { adminQuery, closePool, seedMember, seedStudio } from "./helpers/harness";
+import pg from "pg";
+import { adminQuery, closePool, resolveLocalDbUrl, seedMember, seedStudio } from "./helpers/harness";
 
 const q = async <T = any>(text: string, params: unknown[] = []): Promise<T[]> => (await adminQuery(text, params)).rows as T[];
 afterAll(async () => { await closePool(); });
@@ -391,6 +392,44 @@ describe("replace, the studio lock and what a claimed item authorises", () => {
     expect(inv.declined_at).not.toBeNull(); expect(inv.released_at, "declined only, not released").toBeNull(); expect(inv.expired_at).toBeNull(); expect(inv.unexpired).toBe(true);
     const p = (await q(`select * from public.preview_waitlist_over_invite($1,$2,$3,$4,$5,null)`, [f.studioId, f.userId, [a, b2], day(1), day(30)]))[0];
     expect(p.selected).toBe(2); expect(p.admissible, "declined admissible, live not").toBe(1);
+  });
+  it("TWO SESSIONS: a stop that holds the studio lock inside an open transaction and a claim from another session: the claim leases nothing of the stopped batch once stop commits, no deadlock", async () => {
+    const f = await seed("tw"); const ids = await entries(f, 6);
+    const b = await create(f, ids, { fit: 0, shown: 0 }); const batch = b[0].batch_id;
+    const s1 = new pg.Client({ connectionString: resolveLocalDbUrl() }); const s2 = new pg.Client({ connectionString: resolveLocalDbUrl() });
+    await s1.connect(); await s2.connect();
+    try {
+      await s1.query("begin");
+      const stopped = (await s1.query(`select * from public.stop_waitlist_batch($1,$2,$3,600)`, [f.studioId, f.userId, batch])).rows[0];
+      expect(stopped).toMatchObject({ result: "stopped", cancelled: 6 });
+      // Session 2 asks for the SAME batch while session 1's stop is uncommitted: the claim must not see (or lease) the items, and it must not fail.
+      let claimDone = false;
+      const claimP = s2.query(`select * from public.claim_waitlist_batch_items(100,1000,600,$1,$2)`, [batch, f.userId]).then((r) => { claimDone = true; return r.rows; });
+      await new Promise((r) => setTimeout(r, 400));
+      await s1.query("commit");
+      const got = await claimP;
+      expect(got, "nothing of the stopped batch is leased").toHaveLength(0);
+      expect(claimDone).toBe(true);
+      const rows = await items(batch);
+      expect(rows.every((r: any) => r.state === "skipped" && r.reason_class === "owner_stopped" && r.claimed_at === null)).toBe(true);
+    } finally { await s1.query("rollback").catch(() => undefined); await s1.end(); await s2.end(); }
+  });
+  it("TWO SESSIONS: stop WAITS for the studio lock another owner action holds, and proceeds once it is released (no deadlock)", async () => {
+    const f = await seed("tl"); const ids = await entries(f, 3);
+    const b = await create(f, ids, { fit: 0, shown: 0 }); const batch = b[0].batch_id;
+    const s1 = new pg.Client({ connectionString: resolveLocalDbUrl() }); const s2 = new pg.Client({ connectionString: resolveLocalDbUrl() });
+    await s1.connect(); await s2.connect();
+    try {
+      await s1.query("begin");
+      await s1.query(`select 1 from public.studios s where s.id = $1 for no key update`, [f.studioId]); // the same outer mutex admit, create and replace take
+      let done = false;
+      const stopP = s2.query(`select * from public.stop_waitlist_batch($1,$2,$3,600)`, [f.studioId, f.userId, batch]).then((r) => { done = true; return r.rows[0]; });
+      await new Promise((r) => setTimeout(r, 600));
+      expect(done, "stop must still be waiting for the studio lock").toBe(false);
+      expect((await items(batch)).every((r: any) => r.state === "pending"), "nothing changed while it waited").toBe(true);
+      await s1.query("commit");
+      expect(await stopP).toMatchObject({ result: "stopped", cancelled: 3 });
+    } finally { await s1.query("rollback").catch(() => undefined); await s1.end(); await s2.end(); }
   });
   it("stop takes the studio lock before it changes any item (source order pin)", async () => {
     const src = (await q(`select prosrc from pg_proc where proname='stop_waitlist_batch'`))[0].prosrc as string;
