@@ -364,6 +364,32 @@ export async function POST(req: Request): Promise<Response> {
     }
   }
 
+  // -------------------------------------------------------------------------
+  // THE NUMBER ITSELF, REMEMBERED (the SMS number-evidence migration)
+  // -------------------------------------------------------------------------
+  //
+  // A STOP is a statement about a NUMBER. The client and prospect passes above stamp the rows that hold the number today;
+  // this records the number in the phone-wide suppression list whether or not any row holds it, so a number that no row
+  // carries yet (or that a later edit, import or erasure removes from every row) is still suppressed when it appears.
+  // The command is idempotent (a repeat is a no-op) and normalizes the number the same way every send gate does. It runs
+  // for every valid STOP, not only the unmatched ones: the list is the one place the answer lives, so it never depends on
+  // which rows happened to match. Failing to write it is as unprotected as failing to stamp a row, so it earns the same
+  // retry.
+  let numberOptOutFailed = false;
+  {
+    const { error: numberErr } = await admin.rpc("record_sms_number_opt_out", {
+      p_phone: from,
+      p_source: "twilio_stop",
+    });
+    if (numberErr) {
+      numberOptOutFailed = true;
+      logError("twilio_inbound_number_optout_failed", {
+        code: dbErrorCode(numberErr),
+        messageSid,
+      });
+    }
+  }
+
   // If ANY matched-client update failed, return 500 so Twilio retries.
   // The successful subset is already persisted and will not be retried
   // (the scan above skips already-opted-out rows). The next attempt
@@ -450,7 +476,8 @@ export async function POST(req: Request): Promise<Response> {
     clientScanFailed ||
     optOutErrors > 0 ||
     prospectOptOutErrors > 0 ||
-    prospectScanFailed
+    prospectScanFailed ||
+    numberOptOutFailed
   ) {
     logError("twilio_inbound_stop_partial_optout_failed", {
       matchedCount: matchedClients.length,
@@ -461,6 +488,7 @@ export async function POST(req: Request): Promise<Response> {
       prospectSuccessfulCount: successfullyOptedOutProspects.length,
       prospectOptOutErrors,
       prospectScanFailed,
+      numberOptOutFailed,
       messageSid,
     });
     return NextResponse.json({ ok: false }, { status: 500 });

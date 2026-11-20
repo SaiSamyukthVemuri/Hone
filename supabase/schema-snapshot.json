@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 276,
-    "last": "0357_cancellation_fee_tiers.sql",
-    "sha256": "2fd806fcd667daf0644fbe27a47b0c2fc26409995c881621572eedc55743a126"
+    "count": 277,
+    "last": "0362_sms_number_consent_evidence.sql",
+    "sha256": "7be99f10009c7ac9ddd08b09b41088c675e5c9dc80bbf5e361a99ea6b71741bd"
   },
   "public": {
     "tables": [
@@ -89,6 +89,8 @@
       "session_blocks",
       "session_copy_operations",
       "sessions",
+      "sms_number_consents",
+      "sms_number_opt_outs",
       "sms_outbound_messages",
       "stripe_account_provisioning_attempts",
       "stripe_charge_attempts",
@@ -464,6 +466,7 @@
       "record_setup_group_in_scope",
       "record_setup_submission_with_identity",
       "record_sms_delivery_status",
+      "record_sms_number_opt_out",
       "record_sms_result",
       "record_stripe_account_jurisdiction",
       "record_studio_export_audit_governed",
@@ -563,6 +566,9 @@
       "setup_readings_for_block",
       "show_studio_service",
       "sms_normalized_phone",
+      "sms_number_evidence_append_only",
+      "sms_number_record_client_events",
+      "sms_number_record_entry_events",
       "sms_outbound_messages_identity_guard",
       "sms_outbound_messages_open_incident",
       "sms_outbound_messages_server_timestamps",
@@ -624,6 +630,7 @@
       "waitlist_invitation_booking_state",
       "waitlist_prospect_suppression_candidates",
       "waitlist_retention_health",
+      "waitlist_sms_number_consented",
       "waive_appointment_fee",
       "whole_session_copy_source_descriptor",
       "write_appointment_audit",
