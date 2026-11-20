@@ -31,7 +31,7 @@ vi.mock("next/link", () => ({
 }));
 import { bucketMethodBreakdown, studioVisitStatus, visitCollectedCents } from "@/lib/finance/statement-methods";
 import { formatStatementMoney } from "@/lib/finance/statement-money";
-import { parsePageParam, slicePage, STUDIO_VISITS_PAGE_SIZE } from "@/lib/finance/statement-paging";
+import { latestFirst, parsePageParam, slicePage, STUDIO_VISITS_PAGE_SIZE } from "@/lib/finance/statement-paging";
 
 // The Studio tab, restyled to the approved reference. PRESENTATION ONLY: every figure, sentence and rule is unchanged; these pin what the new layout adds
 // (the sage summary card, the method bar, the breakdown behind a disclosure, the paged latest-first visit table) and that none of it can disagree with the
@@ -171,6 +171,9 @@ describe("what a visit row says", () => {
     expect(studioVisitStatus([{ kind: "still_owes_note", cents: null }]).label).toBe("Marked still owing");
     expect(studioVisitStatus([{ kind: "unresolved", cents: null }])).toEqual({ label: "Unresolved", tone: "neutral" });
     expect(studioVisitStatus([{ kind: "collected_card_session", cents: 100 }, { kind: "refunded_card_fee", cents: 50 }]).label).toBe("Paid");
+    // with no price or balance known, money recorded beside a still-owing or waived note is NOT "Paid" (it cannot mean paid in full)
+    expect(studioVisitStatus([{ kind: "collected_cash", cents: 5000 }, { kind: "still_owes_note", cents: null }])).toEqual({ label: "Payment recorded", tone: "paid" });
+    expect(studioVisitStatus([{ kind: "collected_cash", cents: 5000 }, { kind: "waived", cents: 1000 }]).label).toBe("Payment recorded");
   });
   it("visitCollectedCents sums collected-method lines only and is null with none", () => {
     expect(visitCollectedCents([{ kind: "collected_card_session", cents: 12345 }, { kind: "collected_cash", cents: 5000 }, { kind: "unresolved", cents: null }])).toBe(17345);
@@ -213,5 +216,31 @@ describe("the chrome", () => {
     const src = readFileSync("app/(app)/financials/statement/page.tsx", "utf8");
     expect(src).toMatch(/className="min-\[1140px\]:-mx-\[45px\]"/);
     expect(src).not.toMatch(/(^|[\s"])-mx-\[45px\]/m);
+  });
+});
+
+describe("a part-payment with a still-owing note does not read as Paid, and the note shows beside the method", () => {
+  it("renders 'Payment recorded' with the money AND the still-owing wording in the row", async () => {
+    const st = build({ onlyIds: ["a1"], settlements: [{ appointmentId: "a1", method: "still_owes", amountCents: 0, currency: "cad" }] });
+    const out = await renderWith(st);
+    expect(out).toMatch(/>Payment recorded<\/span>/);
+    expect(out).not.toMatch(/>Paid<\/span>/);
+    expect(out).toMatch(/Marked still owing \(a note, not an amount\)<\/span>/);
+    expect(out).toMatch(/Card \(Hone-verified\): session payments<\/span>/);
+  });
+});
+
+describe("latest first is deterministic", () => {
+  it("equal times break on the id; a start time that does not parse sorts last, never NaN into the order", () => {
+    const rows = [
+      { appointmentId: "b", startsAt: "2026-11-02T15:00:00Z" },
+      { appointmentId: "a", startsAt: "2026-11-02T15:00:00Z" },
+      { appointmentId: "z", startsAt: "not a time" },
+      { appointmentId: "c", startsAt: "2026-11-09T15:00:00Z" },
+      { appointmentId: "y", startsAt: "" },
+    ];
+    const order = (r: typeof rows) => [...r].sort(latestFirst).map((x) => x.appointmentId);
+    expect(order(rows)).toEqual(["c", "a", "b", "y", "z"]);
+    expect(order([...rows].reverse())).toEqual(order(rows));
   });
 });

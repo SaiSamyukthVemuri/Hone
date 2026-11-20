@@ -48,12 +48,13 @@ export function visitCollectedCents(lines: readonly { kind: StatementKind; cents
 }
 
 // The status pill on a Studio visit row, derived ONLY from that visit's own money lines and the screen's existing wording; nothing is invented. Money
-// collected wins ("Paid"); otherwise the visit's lines are all adjustments or not-totalled notes and the pill says which, in the same words the
-// breakdown uses. "paid" is the positive tone; the others are neutral.
+// collected wins; but with no price or balance known "Paid" cannot mean paid in full, so when a still-owing or waived note sits beside the money the pill
+// says only "Payment recorded" and the row shows the note beside the method, in the breakdown's own wording. Otherwise the visit's lines are all adjustments
+// or not-totalled notes and the pill says which. "paid" is the positive tone; the others are neutral.
 export type VisitStatus = { label: string; tone: "paid" | "neutral" };
 export function studioVisitStatus(lines: readonly { kind: StatementKind; cents: number | null }[]): VisitStatus {
-  if (visitCollectedCents(lines) !== null) return { label: "Paid", tone: "paid" };
   const kinds = new Set(lines.map((l) => l.kind));
+  if (visitCollectedCents(lines) !== null) return kinds.has("still_owes_note") || kinds.has("waived") ? { label: "Payment recorded", tone: "paid" } : { label: "Paid", tone: "paid" };
   if (kinds.has("refunded_card_session") || kinds.has("refunded_card_fee")) return { label: "Refunded in full", tone: "neutral" };
   if (kinds.has("waived")) return { label: "Waived", tone: "neutral" };
   if (kinds.has("still_owes_note")) return { label: "Marked still owing", tone: "neutral" };

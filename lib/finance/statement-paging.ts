@@ -8,6 +8,17 @@ export function parsePageParam(raw: string | string[] | undefined): number {
   return typeof v === "string" && /^[1-9]\d{0,5}$/.test(v) ? Number(v) : 1;
 }
 
+/** Latest first, DETERMINISTIC: a start time that does not parse sorts last (never NaN into the comparison), and equal times break on the id. */
+export function latestFirst(a: { startsAt: string; appointmentId: string }, b: { startsAt: string; appointmentId: string }): number {
+  const ta = Date.parse(a.startsAt);
+  const tb = Date.parse(b.startsAt);
+  const fa = Number.isFinite(ta);
+  const fb = Number.isFinite(tb);
+  if (fa && fb && ta !== tb) return tb - ta;
+  if (fa !== fb) return fa ? -1 : 1;
+  return a.appointmentId < b.appointmentId ? -1 : a.appointmentId > b.appointmentId ? 1 : 0;
+}
+
 export type PageSlice<T> = { items: T[]; page: number; pages: number; from: number; to: number; total: number };
 
 /** The requested page, clamped into range (a page past the end shows the last page; an empty list is one empty page). */

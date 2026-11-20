@@ -33,7 +33,7 @@ import {
   unreadableFormsLine,
 } from "@/lib/finance/statement-copy";
 import { bucketMethodBreakdown, studioVisitStatus, visitCollectedCents } from "@/lib/finance/statement-methods";
-import { slicePage } from "@/lib/finance/statement-paging";
+import { latestFirst, slicePage } from "@/lib/finance/statement-paging";
 import type { StatementView as View } from "@/lib/finance/statement-read";
 import type { YearMonth } from "@/lib/finance/statement-period";
 
@@ -142,7 +142,7 @@ function VisitRow({ v, view, format }: { v: VisitT; view: OkView; format: (c: nu
   const ymd = localDateString(when, view.timezone);
   const status = studioVisitStatus(v.lines);
   const collected = visitCollectedCents(v.lines);
-  const methods = v.lines.filter((l) => COLLECTED_KINDS.includes(l.kind) && l.cents !== null);
+  const methods = v.lines.filter((l) => (COLLECTED_KINDS.includes(l.kind) && l.cents !== null) || l.kind === "still_owes_note" || l.kind === "waived");
   return (
     <details className="group border-t border-[#e6e8e3] first:border-t-0">
       <summary className={cx(LINE_GRID, "cursor-pointer list-none [&::-webkit-details-marker]:hidden", FOCUS_RING)}>
@@ -217,7 +217,7 @@ export function StatementView({
   const r = statement.reconciliation;
   // Latest first, as the reference draws it. The ORDER only decides which visits fall on which page: the totals, the counts and every figure above are
   // computed from the whole list and cannot depend on it or on the page being viewed.
-  const ordered = [...statement.visits].sort((a, b) => Date.parse(b.startsAt) - Date.parse(a.startsAt) || (a.appointmentId < b.appointmentId ? -1 : 1));
+  const ordered = [...statement.visits].sort(latestFirst);
   const pg = slicePage(ordered, page);
   const pageHref = (n: number) => `/financials/statement?month=${view.month}${n > 1 ? `&page=${n}` : ""}`;
   return (
