@@ -110,6 +110,17 @@ describe("a price class that could not be read is never a zero and never 'none'"
     expect(sv.classes.online_booking).toEqual({ read: false });
     expect(sv.unreadClasses).toEqual(["online_booking"]);
   });
+  it("an unread class contributes nothing anywhere, even when its rows are present", () => {
+    // The settlement quotes are in the rows (two visits, 18,000 in all) but the class was not read.
+    const v = buildOverview(input({ classesRead: [] }));
+    const sv = must(v.serviceValue);
+    expect(sv).toMatchObject({ withEvidenceVisits: 0, withEvidenceCents: 0, missingVisits: 3, completedVisits: 3 });
+    expect(sv.classes.recorded_at_visit).toEqual({ read: false });
+    const l = must(v.reconciliation);
+    expect(l.serviceValueCents).toBe(0);
+    expect(l).toMatchObject({ collectedAbovePriceCents: 0, collectedBelowPriceCents: 0 });
+    expect(l.collectedCents).toBe(30000);
+  });
   it("the model's supplied classes are exactly the ones it has candidate code for", () => {
     expect([...SUPPLIED_EVIDENCE_CLASSES]).toEqual(["recorded_at_visit"]);
   });

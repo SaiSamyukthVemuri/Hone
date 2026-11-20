@@ -91,8 +91,11 @@ export async function loadOverview(
   return { access: "granted", ok: true, view, params: parsed.params, notices: parsed.notices };
 }
 
+/** The API returns at most 1000 rows whatever limit is asked for, so truncation can only be seen as a FULL page: a page of exactly the cap may be cut off, and a roster that may be incomplete would mislabel people. It fails the page closed. */
+export const PRACTITIONER_PAGE_CAP = 1000;
+
 async function readStudioPractitioners(supabase: SupabaseClient, studioId: string): Promise<{ ok: true; rows: PractitionerInfo[] } | { ok: false }> {
-  const { data, error } = await supabase.from("practitioners").select("id, display_name, active").eq("studio_id", studioId).limit(1001);
-  if (error || !data || data.length > 1000) return { ok: false };
+  const { data, error } = await supabase.from("practitioners").select("id, display_name, active").eq("studio_id", studioId).limit(PRACTITIONER_PAGE_CAP);
+  if (error || !data || data.length >= PRACTITIONER_PAGE_CAP) return { ok: false };
   return { ok: true, rows: (data as { id: string; display_name: string | null; active: boolean }[]).map((r) => ({ id: r.id, displayName: r.display_name, active: r.active === true })) };
 }

@@ -205,13 +205,15 @@ function computeWindow(data: WindowData, w: PeriodWindow, o: Pick<OverviewInput,
   const series = collectionsSeries({ window: w, buckets: bucketsOf(w).buckets, statement: f.statement, localDateByAppointment, classes });
   const unit = bucketsOf(w).unit;
 
+  // A kind of evidence that was not read contributes NOTHING, anywhere: its candidates are dropped before any price is resolved, so the subtotals, the
+  // with-evidence totals and the line to collected money all agree with the "not available" shown for it.
+  const readClasses = o.classesRead.filter((c) => SUPPLIED_EVIDENCE_CLASSES.includes(c));
   const pv = treatment.map((v) => ({
     appointmentId: v.appointmentId,
-    candidates: v.feeCandidates.filter((c) => c.source === "settlement_quote").map((c): PriceCandidate => ({ evidence: "recorded_at_visit", cents: c.cents })),
+    candidates: readClasses.includes("recorded_at_visit") ? v.feeCandidates.filter((c) => c.source === "settlement_quote").map((c): PriceCandidate => ({ evidence: "recorded_at_visit", cents: c.cents })) : [],
   }));
   const sv = serviceValue(pv);
   const resolved = resolveVisits(pv);
-  const readClasses = o.classesRead.filter((c) => SUPPLIED_EVIDENCE_CLASSES.includes(c));
   const unread = PRICE_EVIDENCE_CLASSES.filter((c) => !readClasses.includes(c));
   const classView = Object.fromEntries(PRICE_EVIDENCE_CLASSES.map((c) => [c, readClasses.includes(c) ? { read: true, visits: sv.subtotals[c].visits, cents: sv.subtotals[c].cents } : { read: false }])) as Record<PriceEvidenceClass, ClassView>;
   const serviceValueView: ServiceValueView = {

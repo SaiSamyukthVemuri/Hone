@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({}) }));
 
+const SERVER_MAX_ROWS = 1000;
 type Result = { data: unknown; error: unknown };
 type Call = { table: string; method: string; args: unknown[] };
 
@@ -13,14 +14,19 @@ function recording(results: Record<string, Result | Result[]>) {
   for (const [t, r] of Object.entries(results)) queues.set(t, Array.isArray(r) ? [...r] : [r]);
   const client = {
     from: (table: string) => {
+      let asked: number | null = null;
       const chain: unknown = new Proxy(() => undefined, {
         get: (_x, prop) => {
           if (prop === "then")
             return (res: (v: unknown) => void) => {
               const q = queues.get(table) ?? [{ data: [], error: null }];
-              res(q.length > 1 ? q.shift() : q[0]);
+              const r = q.length > 1 ? q.shift() : q[0];
+              // The API's max_rows (1000) truncates silently whatever limit was asked for.
+              const cap = Math.min(asked ?? SERVER_MAX_ROWS, SERVER_MAX_ROWS);
+              res(r && Array.isArray(r.data) && r.data.length > cap ? { ...r, data: r.data.slice(0, cap) } : r);
             };
           return (...args: unknown[]) => {
+            if (prop === "limit" && typeof args[0] === "number") asked = args[0];
             calls.push({ table, method: String(prop), args });
             return chain;
           };
@@ -138,19 +144,27 @@ describe("price evidence: what the loader says it read equals what it queried", 
 
 describe("the practitioner list is bounded and never truncated", () => {
   const people = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `pr-${i}`, display_name: `P ${i}`, active: true }));
-  it("asks for one more than the cap, so an over-cap list is seen", async () => {
+  const failed = { access: "granted", ok: false, reason: "read_failed", notices: [] };
+  it("asks for no more than the server will return", async () => {
     const { client, calls } = recording(healthy());
     await load("owner", client);
     const lim = calls.find((c) => c.table === "practitioners" && c.method === "limit");
-    expect(lim?.args[0]).toBe(1001);
+    expect(lim?.args[0]).toBe(1000);
   });
-  it("exactly 1000 practitioners is read; 1001 fails the whole page rather than showing a partial list", async () => {
-    const at = healthy();
-    at.practitioners = ok(people(1000));
-    expect(await load("owner", recording(at).client)).toMatchObject({ access: "granted", ok: true });
-    const over = healthy();
-    over.practitioners = ok(people(1001));
-    expect(await load("owner", recording(over).client)).toEqual({ access: "granted", ok: false, reason: "read_failed", notices: [] });
+  it("999 practitioners is a whole roster", async () => {
+    const r = healthy();
+    r.practitioners = ok(people(999));
+    expect(await load("owner", recording(r).client)).toMatchObject({ access: "granted", ok: true });
+  });
+  it("a full page of 1000 may have been cut off by the server, so the page fails closed", async () => {
+    const r = healthy();
+    r.practitioners = ok(people(1000));
+    expect(await load("owner", recording(r).client)).toEqual(failed);
+  });
+  it("a studio with more than 1000 practitioners is cut to 1000 by the server and still fails closed", async () => {
+    const r = healthy();
+    r.practitioners = ok(people(1500));
+    expect(await load("owner", recording(r).client)).toEqual(failed);
   });
 });
 
