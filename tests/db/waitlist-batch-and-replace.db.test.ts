@@ -91,7 +91,7 @@ describe("create: confirmation, idempotency, material change, isolation", () => 
     expect((await create(f, ids, { user: m.userId }))[0].result).toBe("not_owner");
     expect((await q(`select count(*)::int n from public.waitlist_invitation_batches where studio_id=$1`, [f.studioId]))[0].n).toBe(0);
   });
-  it("a RECEPTIONIST and a PRACTITIONER get nothing: create, preview, replace and a batch-item admit are all refused, and nothing is written (Sam: over-invite is owner-only)", async () => {
+  it("a RECEPTIONIST and a PRACTITIONER get nothing: create, preview, replace and a batch-item admit are all refused, and nothing is written (over-invite is owner-only)", async () => {
     const f = await seed("rc"); const [e] = await entries(f, 1); const prac = await seedMember(f.studio, "practitioner");
     const rUser = randomUUID();
     await q(`insert into auth.users (id, email, email_confirmed_at) values ($1,$2,now())`, [rUser, `bt-recept-${rUser.slice(0, 8)}@example.com`]);
