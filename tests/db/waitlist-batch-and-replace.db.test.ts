@@ -305,6 +305,18 @@ describe("replace, the studio lock and what a claimed item authorises", () => {
     expect(await claim(100, 1000, 60)).toHaveLength(0);
     expect((await q(`select state, reason_class from public.waitlist_invitation_batch_items where id=$1`, [c1.item_id]))[0]).toMatchObject({ state: "unknown", reason_class: "delivery_unconfirmed" });
   });
+  it("two overlapping claims with many expired issued items never deadlock, and every item becomes unknown exactly once", async () => {
+    for (let k = 0; k < 3; k++) {
+      const f = await seed(`dl${k}`); const ids = await entries(f, 12);
+      const b = await create(f, ids, { fit: 0, shown: 0 });
+      for (const c of await claim(100, 1000)) await admitItem(f, c.item_id, c.entry_id);
+      await q(`update public.waitlist_invitation_batch_items set issued_at = now() - interval '1 hour' where batch_id=$1`, [b[0].batch_id]);
+      const r = await Promise.all([claim(100, 1000, 60), claim(100, 1000, 60), claim(100, 1000, 60)]);
+      expect(r.every((x: any) => x.length === 0)).toBe(true);
+      const rows = await items(b[0].batch_id);
+      expect(rows.every((x: any) => x.state === "unknown")).toBe(true);
+    }
+  });
   it("stop: owner-only, moves PENDING items to skipped, never touches claimed or issued, idempotent", async () => {
     const f = await seed("cn"); const g = await seed("co"); const [e1, e2, e3] = await entries(f, 3);
     const b = await create(f, [e1, e2, e3], { fit: 0, shown: 0 }); const batch = b[0].batch_id;

@@ -534,8 +534,11 @@ begin
   if p_per_studio is null or p_per_studio < 1 or p_total is null or p_total < 1 or p_lease_seconds is null or p_lease_seconds < 5 then return; end if;
   -- AN ISSUED ITEM NOBODY SETTLED within the lease (the worker died between the issue and the delivery answer) becomes UNKNOWN, never claimable:
   -- whether the message left is not known, so it is not sent again by itself.
+  -- The rows are picked in id order with FOR UPDATE SKIP LOCKED first, so two overlapping claim calls never wait on each other's rows (no 40P01).
   update public.waitlist_invitation_batch_items u set state = 'unknown', reason_class = 'delivery_unconfirmed', settled_at = pg_catalog.clock_timestamp()
-   where u.state = 'issued' and u.issued_at < pg_catalog.clock_timestamp() - make_interval(secs => p_lease_seconds);
+   where u.id in (select x.id from public.waitlist_invitation_batch_items x
+                   where x.state = 'issued' and x.issued_at < pg_catalog.clock_timestamp() - make_interval(secs => p_lease_seconds)
+                   order by x.id for update skip locked);
   v_left := p_total;
   for v_studio in
     select x.studio_id from (
