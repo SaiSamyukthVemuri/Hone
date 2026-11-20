@@ -934,7 +934,7 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
   {
     route: "/settings/waitlist/over-invite",
     reason:
-      "Owner-only invite-beyond-the-estimate page. Nothing links to it yet (it is reached by its own address), and it sends nothing until its background route is scheduled and its database commands are applied, so it is not advertised in search; the search entry ships with the link from the waitlist screen.",
+      "Owner-only invite-beyond-the-estimate page, reached from a link on the waitlist page. It follows its parent: the waitlist Settings tab appears only for a studio whose durable waitlist is switched on, so listing this page in Global Search would offer a page its studio cannot otherwise reach. Search does not advertise it separately.",
   },
   {
     route: "/calendar/check-practitioner",
