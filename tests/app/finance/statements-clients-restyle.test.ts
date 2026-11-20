@@ -91,3 +91,16 @@ describe("Find a client on the Studio tab", () => {
     expect(src).toContain("finder={finder}");
   });
 });
+
+describe("each client row has a real document action", () => {
+  it("'Statement' opens that client's statement for the month (where Print and Export already work), styled as the reference's row button; there is no Invoice wording", () => {
+    const out = render([row(), row({ clientId: "c2", name: "Grace Hopper" })]);
+    for (const [id, name] of [["c1", "Ada Lovelace"], ["c2", "Grace Hopper"]]) {
+      const tag = out.match(new RegExp(`<a [^>]*aria-label="Statement for ${name}"[^>]*>`))?.[0] ?? "";
+      expect(tag, name).toContain(`href="/financials/statements/${id}?month=2026-11"`);
+      expect(tag).toContain("border-[#d6dbd3]");
+    }
+    expect(out.match(/>Statement<\/span>/g)?.length).toBe(2);
+    expect(out).not.toMatch(/Invoice/);
+  });
+});

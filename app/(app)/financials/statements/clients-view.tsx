@@ -81,6 +81,7 @@ export function ClientsView({ month, monthLabel, maxMonth, timezone, notice, pag
                     <th scope="col" className="px-[18px] py-3">Client</th>
                     <th scope="col" className="px-3 py-3">Visits</th>
                     <th scope="col" className="px-[18px] py-3 text-right">Total paid</th>
+                    <th scope="col" className="px-[18px] py-3 text-right"><span className="sr-only">Document</span></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -93,6 +94,10 @@ export function ClientsView({ month, monthLabel, maxMonth, timezone, notice, pag
                       <td className="px-[18px] py-3 text-right tabular-nums">
                         <span className="block font-medium text-fg">{format(r.paidCents)}</span>
                         <span className="block text-xs text-[#5d685f]">{rowStatusText(r)}</span>
+                      </td>
+                      <td className="px-[18px] py-3 text-right">
+                        {/* The row's document action: opens that client's statement for the month, where Print / Save as PDF and Export CSV already work. */}
+                        <PendingLink href={clientStatementHref(r.clientId, month)} aria-label={`Statement for ${r.name}`} className={cx("inline-flex items-center rounded-lg border border-[#d6dbd3] bg-white px-3 text-sm text-fg hover:bg-[#edf1eb]", CONTROL_MIN_TOUCH, FOCUS_RING)}>Statement</PendingLink>
                       </td>
                     </tr>
                   ))}
