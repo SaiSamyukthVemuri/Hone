@@ -49,7 +49,6 @@ export type StatementView =
       endLocalExclusive: string;
       statement: Statement;
       visitInfo: Record<string, { clientName: string; clientId: string | null; serviceName: string | null; minutes: number | null }>;
-<<<<<<< HEAD
       /**
        * COMPLETED visits in the period with NO money line of any kind, listed so the Studio table can say "No payment recorded". It is a LISTING only: these
        * visits carry no amount, are not in `statement` (so in no total, method figure or count of money), and nothing about them implies an amount owed.
@@ -57,8 +56,6 @@ export type StatementView =
        * bookings are not), the same period window and the same owner gate as the rest of this read.
        */
       noPaymentVisits: { appointmentId: string; startsAt: string; practitionerId: string | null }[];
-=======
->>>>>>> origin/claude/build-hone-saas-hOex7
       /** Practitioner id -> display name, for the owner. A name that could not be read is simply absent (the page then says so); it never changes a figure. */
       practitionerNames: Record<string, string>;
       /**
@@ -108,11 +105,7 @@ export async function loadStatementView(
 
   const { data: apptData, error: apptError } = await supabase
     .from("appointments")
-<<<<<<< HEAD
     .select("id, status, starts_at, ends_at, client_id, practitioner_id, service_id, clients(name, preferred_name)")
-=======
-    .select("id, starts_at, ends_at, client_id, practitioner_id, service_id, clients(name, preferred_name)")
->>>>>>> origin/claude/build-hone-saas-hOex7
     .eq("studio_id", studio.id)
     .gte("starts_at", startUtc)
     .lt("starts_at", endUtc)
@@ -125,11 +118,7 @@ export async function loadStatementView(
   const ids = appts.map((a) => a.id);
   const empty = buildStatement({ studioCurrency, appointments: [], cardRows: [], settlementRows: [], legacyFeeRows: [] });
   if (ids.length === 0) {
-<<<<<<< HEAD
     return { access: "granted", ok: true, month, label: range.label, timezone: studio.timezone, startLocal: range.startLocal, endLocalExclusive: range.endLocalExclusive, statement: empty, visitInfo: {}, practitionerNames: {}, settlementQuotes: {}, noPaymentVisits: [] };
-=======
-    return { access: "granted", ok: true, month, label: range.label, timezone: studio.timezone, startLocal: range.startLocal, endLocalExclusive: range.endLocalExclusive, statement: empty, visitInfo: {}, practitionerNames: {}, settlementQuotes: {} };
->>>>>>> origin/claude/build-hone-saas-hOex7
   }
 
   // Sessions of those appointments (deleted ones included: money on them is still money, attributed by appointment).
@@ -251,7 +240,6 @@ export async function loadStatementView(
   }
   for (const id of disagreeing) delete settlementQuotes[id];
 
-<<<<<<< HEAD
   // Completed visits with no money line at all. The ONE visit rule is "a completed treatment is a visit" (statement-document's eligibility): a cancelled,
   // no-show or not-yet-completed booking is not promoted to a visit here either. A visit that has ANY money line (even one counted in no total) is already in
   // statement.visits and is not repeated.
@@ -260,8 +248,6 @@ export async function loadStatementView(
     .filter((a) => a.status === "completed" && !withMoney.has(a.id))
     .map((a) => ({ appointmentId: a.id, startsAt: a.starts_at, practitionerId: a.practitioner_id }));
 
-=======
->>>>>>> origin/claude/build-hone-saas-hOex7
   return {
     access: "granted",
     ok: true,
@@ -274,9 +260,6 @@ export async function loadStatementView(
     visitInfo,
     practitionerNames,
     settlementQuotes,
-<<<<<<< HEAD
     noPaymentVisits,
-=======
->>>>>>> origin/claude/build-hone-saas-hOex7
   };
 }
