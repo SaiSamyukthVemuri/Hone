@@ -42,7 +42,7 @@ const BASELINE: ReadonlyArray<readonly [string, number, Status]> = [
   ["app/(app)/calendar/postcare-auto-send.ts", 1, "unrendered"],
   ["app/(app)/clients/[id]/clinical-notes/print/page.tsx", 1, "gap"],
   ["app/(app)/clients/[id]/sessions/[sessionId]/page.tsx", 1, "fine"],
-  ["app/(app)/financials/statements/client-statement-view.tsx", 2, "fine"],
+  ["app/(app)/financials/statements/client-statement-view.tsx", 1, "fine"],
   ["app/(app)/financials/statements/statement-print-view.tsx", 2, "fine"],
   ["app/(app)/global-search-actions.ts", 3, "helper"],
   ["app/api/cron/appointment-reminders/route.ts", 2, "fine"],
@@ -75,7 +75,7 @@ const UNRENDERED_EVIDENCE: Record<string, string> = {
   "app/(app)/calendar/postcare-auto-send.ts": "tests/app/calendar/calendar-communication-preview-name.test.ts (the postcare email renders no client name; the send is pinned to the stored name so preview and send agree)",
 };
 const FINE_REASON: Record<string, string> = {
-  "app/(app)/financials/statements/statement-print-view.tsx": "renders document.client.name, which the statement document model has already resolved to the display name; the view reads no stored name field itself",
+  "app/(app)/financials/statements/statement-print-view.tsx": "renders document.client.name, which the statement document model has already resolved to the display name; the view reads no stored name field itself. The page title is the fixed words \"Client statement\", so the name now appears only through that one resolved value",
   "lib/finance/statement-csv.ts": "writes document.client.name (the model's resolved display name) into the header block only; the file reads no stored name field itself",
   "app/(app)/financials/statements/client-statement-view.tsx": "renders document.client.name, which the statement document model has already resolved to the display name (the preferred name when set); the view reads no stored name field itself",
   "app/api/cron/appointment-reminders/route.ts": "the treatment-time line now names the client through the shared loader (communication name); the two stored-name reads left are the loader's fallback argument and a template parameter the client reminder does not render",
