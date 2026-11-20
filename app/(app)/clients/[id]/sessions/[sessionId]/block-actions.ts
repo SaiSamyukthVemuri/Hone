@@ -20,6 +20,7 @@ import {
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import { checkIdentityChoice } from "@/lib/machines/identity-choice";
+import { isCanonicalRetryKey, NON_CANONICAL_KEY_MESSAGE } from "@/lib/machines/retry-key";
 import { createReceiptLookup, guardXcellRollout } from "@/lib/machines/xcell-rollout-guard";
 import { currentProfile } from "@/lib/machines/profile-contract";
 import { resolveWritingIdentity } from "@/lib/supabase/writing-identity";
@@ -1451,11 +1452,19 @@ export async function createTreatmentAreaWithEntryAction(
   // and nothing reaches here without settings.
   const withSetup =
     input.initialSetup != null && input.initialSetup.groups.length > 0;
+  // A RETRY KEY THAT IS NOT ALREADY CANONICAL IS REFUSED BEFORE ANYTHING IS READ OR SENT (lib/machines/retry-key.ts): the receipt lookup and the
+  // command must see the very same string. A bare-create key shorter than 8 characters has always meant "no key", and still does.
+  if (
+    (withSetup && !isCanonicalRetryKey(input.initialSetup!.idempotencyKey)) ||
+    (!withSetup && typeof input.createKey === "string" && input.createKey.length >= 8 && !isCanonicalRetryKey(input.createKey))
+  ) {
+    return { ok: false, error: NON_CANONICAL_KEY_MESSAGE };
+  }
   // A SETTINGS-FREE CREATE CARRIES A KEY TOO. 0223's command takes a key with no groups (its settings half is nullable
   // and it still writes the claim), so a retry of a bare save whose answer was lost is answered with the original area.
   const bareKey =
-    !withSetup && typeof input.createKey === "string" && input.createKey.trim().length >= 8
-      ? input.createKey.trim()
+    !withSetup && typeof input.createKey === "string" && input.createKey.length >= 8
+      ? input.createKey
       : null;
 
   // EVERY READING IS VALIDATED BEFORE ANY OF IT IS SENT, through the SAME

@@ -18,6 +18,7 @@ import {
   type MachineProfile,
 } from "@/lib/machines/profile-contract";
 import { blockUsesXcellPur, checkIdentityChoice, storedIdentityMatches } from "@/lib/machines/identity-choice";
+import { isCanonicalRetryKey, NON_CANONICAL_KEY_MESSAGE } from "@/lib/machines/retry-key";
 import { guardXcellRollout, submissionReceiptLookup } from "@/lib/machines/xcell-rollout-guard";
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
@@ -685,6 +686,11 @@ export async function recordBlockMachineIdentityAction(input: {
   if (!scope) {
     return { ok: false, code: "unauthenticated", error: "Sign in to choose a machine." };
   }
+  // A KEY THAT IS NOT ALREADY CANONICAL IS REFUSED BEFORE ANYTHING IS READ OR SENT (see lib/machines/retry-key.ts): the receipt lookup and the write
+  // must see the very same string.
+  if (!isCanonicalRetryKey(input.idempotencyKey)) {
+    return { ok: false, code: "rejected", error: NON_CANONICAL_KEY_MESSAGE };
+  }
   const db = await machineDb();
   // BEFORE ANYTHING IS WRITTEN: the same contract `rememberMachineSelectionAction` enforces.
   const choice = { deviceId: input.deviceId, modeKey: input.modeKey, profileId: input.profileId };
@@ -1124,6 +1130,11 @@ export async function recordSetupSubmissionAction(input: {
   //
   // THE SAME HELPER AS THE INITIAL WRITE, so the two cannot drift apart the
   // way the previous pair of pre-write-refusal fixes did.
+  // A KEY THAT IS NOT ALREADY CANONICAL IS REFUSED FIRST, before any read or write (lib/machines/retry-key.ts): the receipt lookup and the command
+  // must see the very same string, and nothing is trimmed or rewritten.
+  if (!isCanonicalRetryKey(input.idempotencyKey)) {
+    return { ok: false, code: "rejected", error: NON_CANONICAL_KEY_MESSAGE };
+  }
   const who = await resolveWritingIdentity();
   if (!who.ok) {
     // THE HELPER'S OWN CODE, so `unauthenticated` still reaches the caller as

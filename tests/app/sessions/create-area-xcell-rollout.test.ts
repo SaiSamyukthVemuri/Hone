@@ -58,6 +58,10 @@ vi.mock("@/lib/rollouts/charting-rollout", async (orig) => {
 
 const { createTreatmentAreaWithEntryAction } = await import("@/app/(app)/clients/[id]/sessions/[sessionId]/block-actions");
 const { XCELL_ROLLOUT_OFF_MESSAGE, ROLLOUT_UNAVAILABLE_MESSAGE_SAVE, XCELL_RECEIPT_UNKNOWN_MESSAGE } = await import("@/lib/machines/xcell-rollout-guard");
+const { NON_CANONICAL_KEY_MESSAGE } = await import("@/lib/machines/retry-key");
+const WHITESPACE = ["\t", "\n", "\r", "\u00a0", "\u2003", "\u3000", "\u200b", " "];
+const variantsOf = (k: string) => WHITESPACE.flatMap((w) => [w + k, k + w]);
+
 
 const BASE = { clientId: "c1", sessionId: "s1", mode: "thermo", createKey: "create-key-0001" };
 const IDENTITY_ONLY = { ...BASE, machineIdentity: { machineId: "unit-1", modeKey: "multiplex", profileId: null } };
@@ -193,6 +197,42 @@ describe("a NEW area with the xCell unit re-reads the rollout before anything is
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.error).toBe(XCELL_ROLLOUT_OFF_MESSAGE);
     expect(CLAIM.reads).toBe(0);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+});
+
+// A KEY THAT IS NOT ALREADY CANONICAL (a tab, newline or Unicode space, leading or trailing) applied to an EXISTING key must never reach the lookup or the command:
+// JavaScript trim() and SQL btrim() disagree about whitespace, so a normalised key used to find no receipt, skip the rollout gate and create a fresh submission.
+describe("a non-canonical retry key is refused before any lookup, rollout read or command, whatever the rollout says", () => {
+  for (const v of ["off", "on"] as const) {
+    it(`identity-only save, createKey (${v}): every whitespace variant of an EXISTING key is refused, nothing sent`, async () => {
+      for (const key of variantsOf("create-key-0001")) {
+        rpc.mockClear(); ROLLOUT.value = v; ROLLOUT.reads = 0; CLAIM.reads = 0; CLAIM.rows = RECEIPTS("s1");
+        const out = await createTreatmentAreaWithEntryAction({ ...IDENTITY_ONLY, createKey: key } as never);
+        expect(out, JSON.stringify(key)).toMatchObject({ ok: false, error: NON_CANONICAL_KEY_MESSAGE });
+        expect(rpc, JSON.stringify(key)).not.toHaveBeenCalled();
+        expect(ROLLOUT.reads, JSON.stringify(key)).toBe(0);
+        expect(CLAIM.reads, JSON.stringify(key)).toBe(0);
+      }
+    });
+    it(`save with settings, setup key (${v}): every whitespace variant of an EXISTING key is refused, nothing sent`, async () => {
+      for (const key of variantsOf("setup-key-0001")) {
+        rpc.mockClear(); ROLLOUT.value = v; ROLLOUT.reads = 0; CLAIM.reads = 0; CLAIM.rows = RECEIPTS("s1");
+        const out = await createTreatmentAreaWithEntryAction({ ...WITH_SETUP, initialSetup: { ...WITH_SETUP.initialSetup, idempotencyKey: key } } as never);
+        expect(out, JSON.stringify(key)).toMatchObject({ ok: false, error: NON_CANONICAL_KEY_MESSAGE });
+        expect(rpc, JSON.stringify(key)).not.toHaveBeenCalled();
+        expect(ROLLOUT.reads, JSON.stringify(key)).toBe(0);
+        expect(CLAIM.reads, JSON.stringify(key)).toBe(0);
+      }
+    });
+  }
+  it("the genuine canonical retry still works while the rollout is Off (replayed from its receipt); a fresh key is still blocked", async () => {
+    ROLLOUT.value = "off"; CLAIM.rows = RECEIPTS("s1"); rpc.mockClear();
+    await createTreatmentAreaWithEntryAction(IDENTITY_ONLY as never);
+    expect(rpc).toHaveBeenCalledTimes(1);
+    rpc.mockClear(); CLAIM.rows = [];
+    const out = await createTreatmentAreaWithEntryAction({ ...IDENTITY_ONLY, createKey: "create-key-FRESH1" } as never);
+    expect(out).toMatchObject({ ok: false, error: XCELL_ROLLOUT_OFF_MESSAGE });
     expect(rpc).not.toHaveBeenCalled();
   });
 });

@@ -3076,6 +3076,42 @@ describe("the rollout is re-read at write time by every path that assigns an xCe
     expect(DB.calls.filter((c) => c.fn === "record_block_machine_identity")).toHaveLength(1);
   });
 
+  describe("a non-canonical retry key (tab, newline, Unicode space; leading or trailing) is refused up front", () => {
+    const WHITESPACE = ["\t", "\n", "\r", "\u00a0", "\u2003", "\u3000", "\u200b", " "];
+    const variantsOf = (key: string) => WHITESPACE.flatMap((w) => [w + key, key + w]);
+    const { NON_CANONICAL_KEY_MESSAGE } = { NON_CANONICAL_KEY_MESSAGE: "This save could not be sent safely. Reload the chart and try again. Nothing was saved." };
+    for (const v of ["off", "on"] as const) {
+      it(`whole-setup submission (${v}): every variant of an EXISTING key, with its receipt present, sends nothing and reads no rollout`, async () => {
+        for (const key of variantsOf("save-key-0001")) {
+          arrange(PUR); ROLLOUT.value = v; ROLLOUT.reads = 0; DB.calls = [];
+          DB.rowsFor.treatment_setup_submissions = [{ id: "sub-1" }];
+          const out = await actions.recordSetupSubmissionAction({ ...ROUTE_ARGS, machineId: UNIT_ID, modeKey: "multiplex", idempotencyKey: key, groups: [GROUP] }) as { ok: boolean; error?: string };
+          expect(out, JSON.stringify(key)).toMatchObject({ ok: false, error: NON_CANONICAL_KEY_MESSAGE });
+          expect(DB.calls, JSON.stringify(key)).toHaveLength(0);
+          expect(ROLLOUT.reads, JSON.stringify(key)).toBe(0);
+        }
+      });
+      it(`identity command (${v}): every variant of an EXISTING key sends nothing and reads no rollout`, async () => {
+        for (const key of variantsOf("pick-key-0001")) {
+          arrange(PUR); ROLLOUT.value = v; ROLLOUT.reads = 0; DB.calls = [];
+          const out = await actions.recordBlockMachineIdentityAction({ ...ROUTE_ARGS, deviceId: UNIT_ID, modeKey: "multiplex", profileId: null, idempotencyKey: key }) as { ok: boolean; error?: string };
+          expect(out, JSON.stringify(key)).toMatchObject({ ok: false, error: NON_CANONICAL_KEY_MESSAGE });
+          expect(DB.calls.filter((c) => c.fn === "record_block_machine_identity"), JSON.stringify(key)).toHaveLength(0);
+          expect(ROLLOUT.reads, JSON.stringify(key)).toBe(0);
+        }
+      });
+    }
+    it("a genuine canonical same-key retry still replays while the rollout is Off, and a fresh key stays blocked", async () => {
+      arrange(PUR); DB.rowsFor.session_blocks = [{ studio_machine_id: "22222222-2222-4222-8222-222222222222" }]; ROLLOUT.value = "off"; ROLLOUT.reads = 0;
+      DB.rowsFor.treatment_setup_submissions = [{ id: "sub-1" }];
+      const retry = await PATHS[2]!.run(UNIT_ID, "multiplex");
+      expect(retry.error).not.toBe(XCELL_ROLLOUT_OFF_MESSAGE);
+      expect(ROLLOUT.reads).toBe(0);
+      DB.rowsFor.treatment_setup_submissions = [];
+      const fresh = await PATHS[2]!.run(UNIT_ID, "multiplex");
+      expect(fresh.error).toBe(XCELL_ROLLOUT_OFF_MESSAGE);
+    });
+  });
   // A LOST-ANSWER RETRY on an EXISTING block whose unit was changed by someone else since: the block no longer stores this unit, so the
   // existing-block exemption cannot recognise it.
   describe("a retry whose block now stores ANOTHER unit", () => {
