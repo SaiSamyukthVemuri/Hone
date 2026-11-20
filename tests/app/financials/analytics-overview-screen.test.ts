@@ -527,6 +527,16 @@ describe("the named client lists on the page", () => {
     expect(text(section(html))).toContain("2 clients seen in this period are not listed because they are archived or have no name on record.");
     expect(html).not.toMatch(/Unknown/);
   });
+  it("a client whose only visit has no payment on record shows as not available and ranks last, never as $0", () => {
+    const extra = [...appointments, appt("done-unrecorded", "completed", "2026-11-09T15:00:00Z", "pr-1", "client-unrecorded")];
+    const view = buildOverview(input({ current: { ok: true, value: { appointments: extra, money: { ok: true, value: money as never } } }, followThrough: { ok: true, value: { past: extra, future: [] } }, names: { ok: true, names: new Map([...Object.entries(NAMES), ["client-unrecorded", "Una Unrecorded"]]) } }));
+    const rows = view.namedClients.available && view.namedClients.value.spenders.available ? view.namedClients.value.spenders.value : [];
+    const una = rows.find((r) => r.name === "Una Unrecorded");
+    expect(una).toBeDefined();
+    expect(una?.periodPaidCents).toBeNull();
+    expect(rows.at(-1)?.name).toBe("Una Unrecorded");
+    expect(text(card(render(view), "ov-top-spenders") ?? "")).toMatch(/Una Unrecorded\s+Not available/);
+  });
   it("when the names cannot be read, each list says so and the rest of the page is unchanged", () => {
     const view = buildOverview(input({ names: { ok: false } }));
     const html = render(view);
