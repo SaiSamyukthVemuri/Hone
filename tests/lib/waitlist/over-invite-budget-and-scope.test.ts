@@ -1,3 +1,4 @@
+import type { SettleOutcome } from "@/lib/waitlist/over-invite-port";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
@@ -341,11 +342,11 @@ describe("port passes the expected values and keeps state_changed as a closed co
 
 describe("the retry mark gates everything after it", () => {
   const issued = { invitationId: "inv-2", rawToken: "t", issuedAt: new Date(), expiresAt: new Date(), deliveryEmail: null, deliveryName: null };
-  const marks: [string, { ok: true; result: string } | { ok: false; code: string }][] = [
+  const marks: [string, SettleOutcome][] = [
     ["state_changed", { ok: true, result: "state_changed" }],
     ["not_found", { ok: true, result: "not_found" }],
     ["invalid_state", { ok: true, result: "invalid_state" }],
-    ["a failed call", { ok: false, code: "unavailable" }],
+    ["a failed call", { ok: false, code: "unavailable" as never }],
   ];
   for (const [name, answer] of marks) {
     it(`a mark answering ${name} stops the retry BEFORE replace; nothing is replaced or delivered`, async () => {
