@@ -181,7 +181,7 @@ describe("the print view", () => {
     const out = html(printDoc([visit(), unpaid]), 2);
     expect(out).toMatch(/\$60\.00 paid · 1 visit awaiting payment confirmation/);
     expect(out).toMatch(/Balance due is not shown yet/);
-    expect(out).toMatch(/Nov 7, 2026 · \$60\.00 fee · No payment recorded/);
+    expect(out).toMatch(/Nov 7, 2026 · \$60\.00 agreed fee · No payment recorded/);
     expect(out).toMatch(/2 upcoming bookings have payments recorded/);
     expect(out).not.toMatch(/Balance due \$/);
   });
@@ -232,5 +232,24 @@ describe("links and the client profile", () => {
     const print = src("app/(app)/financials/statements/[clientId]/print/page.tsx");
     expect(print).toMatch(/export const dynamic = "force-dynamic"/);
     expect(print.indexOf('practitioner.role !== "owner"')).toBeLessThan(print.indexOf("loadOwnerClientStatement("));
+  });
+});
+
+describe("print: what a visit's amount is called leaves the app too", () => {
+  const card = visit({ appointmentId: "a2", localDate: "2026-11-04", feeCandidates: [{ source: "card_attempt", cents: 7000 }] });
+  it("an amount backed by a price record reads 'Agreed fee'; an amount taken from a card charge reads 'Charged' and is never 'Agreed fee'; the column is 'Amount', not 'Fee'", () => {
+    const out = html(printDoc([visit(), card]));
+    expect(out).toContain("$60.00 · Agreed fee");
+    expect(out).toContain("$70.00 · Charged");
+    expect(out.match(/Agreed fee/g)?.length).toBe(1);
+    expect(out).toMatch(/>Amount<\/th>/);
+    expect(out).not.toMatch(/>Fee<\/th>/);
+  });
+  it("the CSV an owner downloads says the same, row by row", async () => {
+    h.read.mockResolvedValue(granted({ visits: [visit(), card] }));
+    const text = await (await call()).text();
+    expect(text).toMatch(/Agreed fee,60\.00/);
+    expect(text).toMatch(/Charged,70\.00/);
+    expect(text).not.toMatch(/Fee recorded/);
   });
 });

@@ -67,6 +67,11 @@ export const UNKNOWN_REASON_COPY: Record<UnknownReason, string> = {
 };
 
 export const FEE_NOT_RECORDED_COPY = "Fee not recorded";
+
+// WHAT A VISIT'S AMOUNT IS. "Agreed fee" is shown ONLY when a record that states the price of the visit backs it (today: the settlement quote, the price
+// the owner recorded at that moment). An amount taken from a PAYMENT (a card charge or fee, a manual fee charge) proves money was charged, not what was
+// agreed, so it is labelled "Charged". A card charge or fee is never promoted to a price.
+export const FEE_BASIS_LABEL = { settlement_quote: "Agreed fee", card_attempt: "Charged", legacy_fee: "Charged" } as const;
 export const NOT_COMPLETED_COPY = "Not completed";
 export const FEE_REASON_COPY: Record<FeeReason, string> = {
   late_cancellation_fee: "Late cancellation fee",
@@ -588,9 +593,14 @@ export function paidSummaryLine(doc: StatementDocument, fmt: (cents: number) => 
   return parts.join(" · ");
 }
 
-/** "Nov 19, 2026 · $60 fee · No payment recorded", or "... · Fee not recorded · ..." when no stored record carries the fee. */
+/** The label for a recorded amount: "Agreed fee" only when price evidence backs it, otherwise "Charged"; null when no amount is recorded. */
+export function feeBasisLabel(fee: RecordedFee): string | null {
+  return fee.state === "recorded" ? FEE_BASIS_LABEL[fee.source] : null;
+}
+
+/** "Nov 19, 2026 · $60 agreed fee · No payment recorded", or "... · Fee not recorded · ..." when no stored record carries the fee. */
 export function awaitingVisitLine(visit: DocumentVisit, fmt: (cents: number) => string): string {
-  const fee = visit.fee.state === "recorded" ? `${fmt(visit.fee.cents)} fee` : FEE_NOT_RECORDED_COPY;
+  const fee = visit.fee.state === "recorded" ? `${fmt(visit.fee.cents)} ${FEE_BASIS_LABEL[visit.fee.source].toLowerCase()}` : FEE_NOT_RECORDED_COPY;
   const why = visit.reasons.map((r) => UNKNOWN_REASON_COPY[r]).join("; ");
   return `${formatLocalDate(visit.localDate)} · ${fee} · ${why}`;
 }

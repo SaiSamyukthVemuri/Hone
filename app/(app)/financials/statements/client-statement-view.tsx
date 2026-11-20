@@ -21,7 +21,9 @@ import {
   moneyLineTexts,
   statementExportHref,
   statementPrintHref,
+  visitFeeBasis,
   visitFeeText,
+  visitFeeWithBasis,
   type ClientView,
 } from "@/lib/finance/statement-screen";
 
@@ -48,7 +50,7 @@ function VisitCells({ v, format }: { v: DocumentVisit; format: (c: number) => st
       <span>{v.practitionerName ?? "Practitioner not recorded"}</span>
       <span>{VISIT_STATE_LABEL[v.state]}</span>
       <span>{lines.length === 0 ? "No payment recorded" : lines.join(" · ")}</span>
-      <span>{visitFeeText(v, format)}</span>
+      <span>{visitFeeWithBasis(v, format)}</span>
     </>
   );
 }
@@ -118,7 +120,7 @@ export function ClientStatementView({ document: doc, month, monthLabel, maxMonth
                 <caption className="sr-only">Visits for {doc.client.name}</caption>
                 <thead>
                   <tr className="text-left text-fg-muted">
-                    {["Date and time", "Service", "Duration", "Practitioner", "Payment status", "Payment", "Fee"].map((h) => <th key={h} scope="col" className="py-2 pr-3 font-normal">{h}</th>)}
+                    {["Date and time", "Service", "Duration", "Practitioner", "Payment status", "Payment", "Amount"].map((h) => <th key={h} scope="col" className="py-2 pr-3 font-normal">{h}</th>)}
                   </tr>
                 </thead>
                 <tbody>
@@ -132,7 +134,7 @@ export function ClientStatementView({ document: doc, month, monthLabel, maxMonth
                         VISIT_STATE_LABEL[v.state],
                       ].map((c, i) => <td key={i} className="py-2 pr-3 text-fg">{c}</td>)}
                       <td className="py-2 pr-3 text-fg">{moneyLineTexts(v, format).length === 0 ? "No payment recorded" : moneyLineTexts(v, format).map((t, i) => <div key={i}>{t}</div>)}</td>
-                      <td className="py-2 text-fg">{visitFeeText(v, format)}</td>
+                      <td className="py-2 text-fg">{visitFeeText(v, format)}{visitFeeBasis(v) ? <div className="text-xs text-fg-muted">{visitFeeBasis(v)}</div> : null}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -155,7 +157,7 @@ export function ClientStatementView({ document: doc, month, monthLabel, maxMonth
           <ul className="space-y-2 text-sm text-fg">
             {doc.feeItems.map((f) => (
               <li key={f.appointmentId} className="rounded-lg border border-line p-3">
-                {formatLocalDate(f.localDate)} · {FEE_REASON_COPY[f.reason]} · {visitFeeText(f, format)} · {FEE_ITEM_STATE_LABEL[f.state]}
+                {formatLocalDate(f.localDate)} · {FEE_REASON_COPY[f.reason]} · {visitFeeWithBasis(f, format)} · {FEE_ITEM_STATE_LABEL[f.state]}
                 {moneyLineTexts(f, format).length > 0 ? ` · ${moneyLineTexts(f, format).join(" · ")}` : ""}
               </li>
             ))}
