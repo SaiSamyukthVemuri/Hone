@@ -912,8 +912,8 @@ test("an owner starts on the dashboard, opens Business, then Statements, and cho
 
     // Choose a month with the picker; the page answers for exactly that month.
     const picker = page.getByRole("form", { name: "Choose a month" });
+    // The picker submits itself when a month is chosen; the "Show month" button stays for keyboard and no-script use (visible on focus).
     await picker.getByLabel("Month").fill("2026-01");
-    await picker.getByRole("button", { name: "Show month" }).click();
     await page.waitForURL("**/financials/statement?month=2026-01");
     await expect(page.getByRole("heading", { name: "Monthly statements" })).toBeVisible();
     await expect(page.getByText("January 2026 · Total collected")).toBeVisible();
