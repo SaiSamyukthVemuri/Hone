@@ -187,6 +187,10 @@ describe("the display order is a COPY, and the page loads the finder only after 
     expect(doc.visits.map((v) => v.appointmentId)).toEqual(before);
     expect(before).not.toEqual([...before].reverse()); // the order is a real one, so an in-place sort would be noticed
   });
+  it("the client statement page hands the view the studio's name (source guard)", () => {
+    const src = readFileSync("app/(app)/financials/statements/[clientId]/page.tsx", "utf8");
+    expect(src).toContain("studioName={studio.name}");
+  });
   it("the client statement page loads the finder after its owner gate, like the Studio page", () => {
     const src = readFileSync("app/(app)/financials/statements/[clientId]/page.tsx", "utf8").replace(/\/\/.*$/gm, "");
     const gate = src.indexOf('practitioner.role !== "owner"');
