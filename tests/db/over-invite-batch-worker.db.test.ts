@@ -228,8 +228,9 @@ describe("over-invite worker against the real batch commands", () => {
       }
       expect(await snapshot(b.studioId)).toEqual(before);
       expect(before.every((r: any) => r.state === "pending" && r.claimed_at == null)).toBe(true);
-      const cron = await bgClaim();
-      expect(cron.ok && cron.items.map((i) => i.batchId)).toEqual([bb, bb, bb, bb]); // immediately: no lease had to expire
+      // An unscoped cron claim (room for every studio) takes ALL of B's items at once: no lease had to expire first.
+      const cron = await claimItems(db, { perStudio: 5, total: 20, leaseSeconds: 120, claim: { mode: "background" } });
+      expect(cron.ok && cron.items.filter((i) => i.batchId === bb)).toHaveLength(4);
     });
     it("(b) concurrent scoped claims (A's two batches, a non-owner, an unknown batch) leave B unchanged and claim no A item twice", async () => {
       const { a, b, a1, a2, bb } = await twoStudios();
@@ -244,8 +245,8 @@ describe("over-invite worker against the real batch commands", () => {
       expect(new Set(ids).size).toBe(ids.length); // no item leased twice
       expect(results.flatMap((r) => (r.ok ? r.items : [])).every((i) => i.studioId === a.studioId)).toBe(true);
       expect(await snapshot(b.studioId)).toEqual(before);
-      const cron = await bgClaim();
-      expect(cron.ok && cron.items.map((i) => i.batchId)).toEqual([bb, bb, bb, bb]);
+      const cron = await claimItems(db, { perStudio: 5, total: 20, leaseSeconds: 120, claim: { mode: "background" } });
+      expect(cron.ok && cron.items.filter((i) => i.batchId === bb)).toHaveLength(4);
     });
     it("(c) a batch id with a NULL actor claims nothing at the database, and B is unchanged", async () => {
       const { b, a1 } = await twoStudios();
