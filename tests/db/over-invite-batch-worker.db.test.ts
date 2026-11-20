@@ -164,6 +164,27 @@ describe("over-invite worker against the real batch commands", () => {
     expect(await q(`select count(*)::int c from public.waitlist_invitation_batch_items where studio_id=$1`, [a.studioId])).toEqual([{ c: 0 }]);
   });
 
+  it("settle refuses an item named with another studio's id or another entry's id: not_found, and nothing changes", async () => {
+    const f = await seed("h1");
+    const other = await seed("h2");
+    const ids = await entries(f, 2);
+    await batch(f, ids, { fit: 0 });
+    const claimed = await claimItems(db, { perStudio: 25, total: 25, leaseSeconds: 600 });
+    expect(claimed.ok).toBe(true);
+    const mine = (claimed as { items: { itemId: string; studioId: string; entryId: string }[] }).items.filter((i) => i.studioId === f.studioId);
+    expect(mine).toHaveLength(2);
+    const [a, b] = mine;
+    const stateOf = async (id: string) => (await q(`select state from public.waitlist_invitation_batch_items where id=$1`, [id]))[0].state;
+    const before = await stateOf(a.itemId);
+    // Another studio's id, then another entry's id (the same studio's other recipient).
+    expect(await settleItem(db, { itemId: a.itemId, studioId: other.studioId, entryId: a.entryId }, "skipped", "test_reason")).toEqual({ ok: true, result: "not_found" });
+    expect(await settleItem(db, { itemId: a.itemId, studioId: a.studioId, entryId: b.entryId }, "skipped", "test_reason")).toEqual({ ok: true, result: "not_found" });
+    expect(await stateOf(a.itemId)).toBe(before);
+    // The item's own studio and entry settle it.
+    expect(await settleItem(db, a, "skipped", "test_reason")).toEqual({ ok: true, result: "settled" });
+    expect(await stateOf(a.itemId)).toBe("skipped");
+  });
+
   it("preview counts what can be invited, and an expired invitation cannot be replaced", async () => {
     const f = await seed("g");
     const ids = await entries(f, 2);
