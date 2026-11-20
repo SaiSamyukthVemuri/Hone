@@ -237,13 +237,12 @@ describe("links and the client profile", () => {
 
 describe("print: what a visit's amount is called leaves the app too", () => {
   const card = visit({ appointmentId: "a2", localDate: "2026-11-04", feeCandidates: [{ source: "card_attempt", cents: 7000 }] });
-  it("an amount backed by a price record reads 'Agreed fee'; an amount taken from a card charge reads 'Charged' and is never 'Agreed fee'; the column is 'Amount', not 'Fee'", () => {
+  it("DELIBERATE CHANGE (the paper now follows the approved layout): the print table's last column is 'Paid', the money COLLECTED, so a fee's basis is no longer printed per visit; no amount is ever called 'Agreed fee' unless the awaiting line says so, and a card amount is never 'Agreed fee'", () => {
     const out = html(printDoc([visit(), card]));
-    expect(out).toContain("$60.00 · Agreed fee");
-    expect(out).toContain("$70.00 · Charged");
-    expect(out.match(/Agreed fee/g)?.length).toBe(1);
-    expect(out).toMatch(/>Amount<\/th>/);
-    expect(out).not.toMatch(/>Fee<\/th>/);
+    expect(out).toMatch(/>Paid<\/th>/);
+    expect(out).not.toMatch(/>Amount<\/th>|>Fee<\/th>/);
+    expect(out).not.toMatch(/\$70\.00[^<]{0,12}Agreed fee/);
+    expect(out).not.toContain("· Charged"); // the basis wording stays on the screen's expander and in the CSV below
   });
   it("the CSV an owner downloads says the same, row by row", async () => {
     h.read.mockResolvedValue(granted({ visits: [visit(), card] }));

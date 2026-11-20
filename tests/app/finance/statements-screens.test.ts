@@ -301,13 +301,13 @@ const stmtProps = (document: ReturnType<typeof docFor>, over = {}) => ({ documen
 describe("a client's statement", () => {
   it("shows date, local time, service, duration, practitioner, payment status, methods and amounts for each visit", () => {
     const out = html(createElement(ClientStatementView, stmtProps(docFor([visit()]))));
-    for (const t of ["Nov 3, 2026, 10:00", "Service A", "60 min", "Practitioner One", "Paid", "$60.00"]) expect(out).toContain(t);
+    for (const t of ["Nov 3", "10:00 AM", "Service A", "60 min", "Practitioner One", "Paid", "$60.00"]) expect(out).toContain(t);
     expect(out).toMatch(/\$60\.00 paid/);
   });
   it("keeps a visit's split payments together in one row", () => {
     const split = visit({ lines: [{ kind: "collected_card_session", cents: 4000 }, { kind: "collected_cash", cents: 2000 }] });
     const out = html(createElement(ClientStatementView, stmtProps(docFor([split]))));
-    expect(out.match(/<tr /g)?.length).toBe(2); // header + ONE visit row
+    expect(out.match(/<details class="group/g)?.length).toBe(1); // ONE visit row
     expect(out).toMatch(/\$40\.00/);
     expect(out).toMatch(/\$20\.00/);
   });
@@ -320,15 +320,12 @@ describe("a client's statement", () => {
     expect(out).toMatch(/waived, or noted as still owed/);
     expect(out).not.toMatch(/Balance due \$/);
   });
-  it("names what each amount IS: 'Agreed fee' only with price evidence, 'Charged' for a payment-derived amount; the column is 'Amount'", () => {
+  it("names what each amount IS: 'Agreed fee' only with price evidence, 'Charged' for a payment-derived amount; the basis wording sits in the row's expander", () => {
     const card = visit({ appointmentId: "a2", localDate: "2026-11-04", feeCandidates: [{ source: "card_attempt" as const, cents: 7000 }] });
     const out = html(createElement(ClientStatementView, stmtProps(docFor([visit(), card]))));
-    expect(out).toMatch(/\$60\.00 · Agreed fee/); // the phone list line
-    expect(out).toMatch(/\$70\.00 · Charged/);
-    expect(out).toMatch(/>\$70\.00<div[^>]*>Charged<\/div>/); // the table cell
-    expect(out).toMatch(/>\$60\.00<div[^>]*>Agreed fee<\/div>/);
-    expect(out).toMatch(/>Amount<\/th>/);
-    expect(out).not.toMatch(/>Fee<\/th>/);
+    expect(out).toMatch(/<dt[^>]*>Fee<\/dt><dd>\$60\.00 · Agreed fee<\/dd>/);
+    expect(out).toMatch(/<dt[^>]*>Fee<\/dt><dd>\$70\.00 · Charged<\/dd>/);
+    expect(out).toMatch(/<span class="text-right">Collected<\/span>/); // the column shows what was collected; the fee and its basis are inside the expander
     expect(out).not.toMatch(/\$70\.00[^<]{0,12}Agreed fee/);
   });
   it("a cancellation or no-show fee line says what its amount is too", () => {

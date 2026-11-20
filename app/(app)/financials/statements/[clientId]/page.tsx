@@ -1,4 +1,4 @@
-import { formatMoney } from "@/lib/billing/payment-jurisdiction";
+import { formatStatementMoney } from "@/lib/finance/statement-money";
 import { localDateString } from "@/lib/booking/tz";
 import { loadOwnerClientStatement } from "@/lib/finance/owner-client-statement";
 import { STATEMENT_MONTH_NOTICE } from "@/lib/finance/statement-copy";
@@ -7,6 +7,8 @@ import { STATEMENTS_OWNER_ONLY, STATEMENT_READ_UNAVAILABLE, clientsListHref } fr
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 
 import { ClientStatementView } from "../client-statement-view";
+import { loadFinderState } from "../finder-data";
+import { StatementsTabs } from "../statements-chrome";
 
 // ===========================================================================
 // One client's statement: a month or the full history. Owner-only, READ-ONLY; viewing never charges and never messages anyone.
@@ -43,6 +45,8 @@ export default async function ClientStatementPage({
     );
   }
   const { month, view, currency } = result;
+  // The tabs and "Find a client", as on the other statements screens. The finder is read only AFTER the owner gate above.
+  const finder = await loadFinderState(practitioner, studio);
 
   return (
     <ClientStatementView
@@ -53,7 +57,10 @@ export default async function ClientStatementPage({
       view={view}
       notice={result.fellBack ? STATEMENT_MONTH_NOTICE : null}
       offDocumentWithMoney={result.offDocumentWithMoney}
-      format={(c) => formatMoney(c, currency)}
+      format={(c) => formatStatementMoney(c, currency)}
+      tabs={<StatementsTabs active="clients" month={month} />}
+      finder={finder}
+      studioName={studio.name}
     />
   );
 }
