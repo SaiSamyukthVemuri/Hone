@@ -41,8 +41,8 @@ export type NamedClients = {
   mostVisits: NamedRow[];
   /** Shortest average gap between visits; unavailable when history could not be read. */
   frequentReturns: Figure<NamedRow[]>;
-  /** Listable clients with fewer than two visit dates, who have no average gap and so are not eligible for "most frequent returns". */
-  fewerThanTwoDates: number;
+  /** Listable clients with fewer than two visit dates, who have no average gap and so are not eligible for "most frequent returns". Null when history could not be read. */
+  fewerThanTwoDates: number | null;
   /** The first row of the spenders list, shown again in "Period in review"; null when there is no spend to name. */
   highestSpend: NamedRow | null;
 };
@@ -92,7 +92,8 @@ export function rankNamedClients(args: {
       spenders,
       mostVisits,
       frequentReturns,
-      fewerThanTwoDates: listable.length - withGap.length,
+      // Only when history was read: with no history every client has no gap, and "fewer than two visit dates" would falsely count everyone.
+      fewerThanTwoDates: args.historyFailure === null ? listable.length - withGap.length : null,
       // Only a client with money kept on their visits is "the highest spend": a list led by an unknown amount names no one.
       highestSpend: top && top.periodPaidCents !== null ? top : null,
     },

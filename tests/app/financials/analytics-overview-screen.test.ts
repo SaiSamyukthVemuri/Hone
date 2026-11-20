@@ -550,6 +550,25 @@ describe("the named client lists on the page", () => {
     expect(card(html, "ov-most-visits") ?? "").toContain("Quinn Quoted");
     expect(html).not.toContain('data-figure="ov-highest-spend"');
   });
+  it("the browser's own Print on this page hides the lists, the footnotes and the highest-spend card, and says so in print only", () => {
+    const html = render(named(NAMES));
+    const lists = html.match(/<div[^>]*data-print-hidden=""[^>]*>\s*<section[^>]*data-figure="ov-top-spenders"/)?.[0] ?? "";
+    expect(lists).toContain("print:hidden");
+    for (const id of NAMED_IDS) expect(card(html, id)).not.toBeNull();
+    expect(html).toMatch(/<div[^>]*class="[^"]*print:hidden[^"]*"[^>]*data-named-footnotes=""/);
+    expect(html).toMatch(/<section[^>]*class="[^"]*print:hidden[^"]*"[^>]*data-figure="ov-highest-spend"/);
+    const note = html.match(/<p[^>]*data-print-only-note=""[^>]*>([^<]*)<\/p>/);
+    expect(note?.[1]).toBe("Client names are left off the printed page.");
+    expect(html).toMatch(/<p[^>]*class="[^"]*\bhidden\b[^"]*print:block[^"]*"[^>]*data-print-only-note=""/); // invisible on screen, shown in print
+  });
+  it("without history the returns card is unavailable and no fewer-than-two-visit-dates count is shown", () => {
+    const view = buildOverview(input({ history: { ok: false, reason: "too_many_appointments" }, names: { ok: true, names: new Map(Object.entries(NAMES)) } }));
+    const html = render(view);
+    expect(card(html, "ov-frequent-returns") ?? "").toContain(esc(FIGURE_UNAVAILABLE_COPY.too_many_appointments));
+    const foot = html.match(/<div[^>]*data-named-footnotes=""[^>]*>[\s\S]*?<\/div>/)?.[0] ?? "";
+    expect(foot).toContain("clients seen in this period"); // the footnotes are there
+    expect(foot).not.toMatch(/fewer than two visit dates/);
+  });
   it("the printed page leaves the names off and says so", () => {
     const html = render(named(NAMES), { print: true });
     for (const n of Object.values(NAMES)) expect(html).not.toContain(n);

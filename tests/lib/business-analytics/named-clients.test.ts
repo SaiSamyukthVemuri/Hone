@@ -62,6 +62,11 @@ describe("most visits and most frequent returns", () => {
     const v = rank([fig("a", 1, 1, 10), fig("b", 3, 1, 10), fig("c", 3, 1, 10)], { lookup: lookup(["a", "b", "c"], (id) => ({ a: "Aaa", b: "Zed", c: "Bob" })[id] as string) });
     expect(names(returns(v))).toEqual(["Bob", "Zed", "Aaa"]); // 3 visits before 1; then Bob before Zed
   });
+  it("the fewer-than-two-visit-dates count is a number only when history was read", () => {
+    const f = [fig("a", 1, 1, null), fig("b", 1, 1, 5)];
+    expect(rank(f).fewerThanTwoDates).toBe(1);
+    expect(rank(f, { historyFailure: "too_many_appointments" }).fewerThanTwoDates).toBeNull();
+  });
   it("a client with a short gap but no visit in this period is in none of the lists", () => {
     const v = rank([fig("a", 0, 100, 3), fig("b", 1, 100, 20)]);
     expect(names(returns(v))).toEqual(["Name b"]);
@@ -71,6 +76,7 @@ describe("most visits and most frequent returns", () => {
   it("an unreadable history makes only the returns list unavailable", () => {
     const v = rank([fig("a", 1, 100, null)], { historyFailure: "read_failed" });
     expect(v.frequentReturns).toEqual({ available: false, reason: "read_failed" });
+    expect(v.fewerThanTwoDates).toBeNull(); // no history means no gaps for anyone: counting "fewer than two visit dates" would count everyone
     expect(spenders(v)).toHaveLength(1);
   });
 });

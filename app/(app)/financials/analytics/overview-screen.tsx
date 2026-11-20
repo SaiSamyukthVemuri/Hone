@@ -92,9 +92,9 @@ function asOfText(local: string): string {
 }
 
 /** One figure's card. `figure` unavailable renders the reason sentence; there is no other path to a blank card. */
-function Card<T>({ id, title, figure, children, note, tone = "plain" }: { id: string; title: string; figure: Figure<T>; children: (v: T) => ReactNode; note?: ReactNode; tone?: "plain" | "soft" }) {
+function Card<T>({ id, title, figure, children, note, tone = "plain", className }: { id: string; title: string; figure: Figure<T>; children: (v: T) => ReactNode; note?: ReactNode; tone?: "plain" | "soft"; className?: string }) {
   return (
-    <section aria-labelledby={id} className={cx("space-y-2 rounded-xl border border-line p-4", tone === "soft" ? "bg-surface-sunken" : "bg-surface")} data-figure={id}>
+    <section aria-labelledby={id} className={cx("space-y-2 rounded-xl border border-line p-4", tone === "soft" ? "bg-surface-sunken" : "bg-surface", className)} data-figure={id} data-print-hidden={className?.includes("print:hidden") ? "" : undefined}>
       <h3 id={id} className="text-sm font-medium text-fg-muted">{title}</h3>
       {figure.available ? children(figure.value) : <p className="text-sm text-fg" role="status">{FIGURE_UNAVAILABLE_COPY[figure.reason]}</p>}
       {note ? <p className="text-xs text-fg-muted">{note}</p> : null}
@@ -433,7 +433,9 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
           <p className="text-sm text-fg-muted" data-named-omitted="">{NAMED_CLIENTS_PRINT_NOTE}</p>
         ) : (
           <>
-            <div className="grid gap-3 lg:grid-cols-3">
+            {/* The browser's own Print on this page must not print names or spending either: the lists are hidden in print media and a print-only line says so. */}
+            <p className="hidden text-sm text-fg-muted print:block" data-print-only-note="">{NAMED_CLIENTS_PRINT_NOTE}</p>
+            <div className="grid gap-3 lg:grid-cols-3 print:hidden" data-print-hidden="">
               <Card id="ov-top-spenders" title="Top spenders" figure={flatten(view.namedClients, (n) => n.spenders)} note={TOP_SPENDERS_NOTE}>
                 {(rows) => <NamedList rows={rows} show="spend" format={format} />}
               </Card>
@@ -445,10 +447,10 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
               </Card>
             </div>
             {view.namedClients.available ? (
-              <div className="space-y-1 text-xs text-fg-muted" data-named-footnotes="">
+              <div className="space-y-1 text-xs text-fg-muted print:hidden" data-named-footnotes="" data-print-hidden="">
                 <p>{namedClientsCap(view.namedClients.value.seen, NAMED_LIST_SIZE)}</p>
                 {view.namedClients.value.notListed > 0 ? <p>{namedClientsNotListed(view.namedClients.value.notListed)}</p> : null}
-                {view.namedClients.value.fewerThanTwoDates > 0 ? <p>{fewerThanTwoDatesNote(view.namedClients.value.fewerThanTwoDates)}</p> : null}
+                {view.namedClients.value.fewerThanTwoDates !== null && view.namedClients.value.fewerThanTwoDates > 0 ? <p>{fewerThanTwoDatesNote(view.namedClients.value.fewerThanTwoDates)}</p> : null}
               </div>
             ) : null}
           </>
@@ -482,7 +484,7 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
             {(v) => <p className={v.known ? BIG : "text-sm text-fg"}>{factText(v, (n) => n.toFixed(1))}</p>}
           </Card>
           {!print && view.namedClients.available && view.namedClients.value.highestSpend && view.namedClients.value.highestSpend.periodPaidCents !== null ? (
-            <Card id="ov-highest-spend" title="Highest spend this period" figure={{ available: true, value: view.namedClients.value.highestSpend }}>
+            <Card id="ov-highest-spend" className="print:hidden" title="Highest spend this period" figure={{ available: true, value: view.namedClients.value.highestSpend }}>
               {(r) => (
                 <>
                   <p className="text-xl font-semibold text-fg">{r.name}</p>
