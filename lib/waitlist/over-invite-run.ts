@@ -62,7 +62,7 @@ export async function runRounds(opts: { budgetMs: number; scope?: { studioId?: s
     // finish even if each takes its full item budget, so the call can never overrun its budget (and so never the platform's function cap).
     const room = Math.floor((opts.budgetMs - (now() - t0)) / (SPACING_MS + ITEM_BUDGET_MS));
     const take = Math.min(DEFAULT_LIMITS.total, room);
-    if (take < 1) {
+    if (take < 1 || now() - t0 >= opts.budgetMs) {
       budgetSpent = true;
       break;
     }

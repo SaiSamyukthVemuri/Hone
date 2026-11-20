@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
   admitted: [] as string[],
   batchSeq: 0,
   failedRows: [] as { id: string; entry_id: string }[],
+  claimThrows: false,
 }));
 
 vi.mock("server-only", () => ({}));
@@ -55,6 +56,7 @@ vi.mock("@/lib/waitlist/over-invite-port", async () => {
       return { ok: true, result: "created", batchId, quantity: i.entryIds.length, extraRequested: i.entryIds.length, liveCount: 0 };
     },
     claimItems: async (_d: unknown, l: { total: number }) => {
+      if (h.claimThrows) throw new Error("claim down");
       const take = h.items.filter((x) => x.state === "pending").slice(0, l.total);
       take.forEach((x) => (x.state = "claimed"));
       return { ok: true, items: take.map((t) => ({ itemId: t.itemId, entryId: t.entryId, batchId: t.batchId, studioId: t.studioId, actorUserId: "a", serviceId: "s", startDate: "2026-12-01", endDate: "2026-12-07", allowedWeekdays: null, ttlHours: 48 })) };
@@ -191,5 +193,21 @@ describe("failures are explicit and never silently retried", () => {
     const done = await retryFailedDeliveriesAction({ state: "idle" }, f);
     expect(done).toMatchObject({ state: "progress", sent: 1 });
     expect(h.replaced).toEqual([failed.entryId]);
+  });
+
+  it("a failure after the batch was created says it was saved, never that nothing was sent", async () => {
+    h.claimThrows = true;
+    const r = await sendOverInviteAction({ state: "idle" }, sendForm(3));
+    expect(h.items).toHaveLength(3);
+    expect(r).toMatchObject({ state: "notice", notice: expect.stringContaining("saved") });
+    expect(JSON.stringify(r)).not.toMatch(/nothing was sent/i);
+    h.claimThrows = false;
+  });
+  it("one retry click handles at most 5 refused deliveries, however many are waiting", async () => {
+    await sendOverInviteAction({ state: "idle" }, sendForm(8));
+    h.failedRows = Array.from({ length: 8 }, (_, n) => ({ id: h.items[n].itemId, entry_id: h.items[n].entryId }));
+    const f = new FormData(); f.append("confirmRetry", "on");
+    await retryFailedDeliveriesAction({ state: "idle" }, f);
+    expect(h.replaced).toHaveLength(5);
   });
 });
