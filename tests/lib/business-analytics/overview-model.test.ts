@@ -357,7 +357,7 @@ describe("the figures the layout correction draws (A4)", () => {
     expect(v.averagePaidChange.kind).toBe("percent");
     expect(buildOverview(input({ comparison: { ok: false, reason: "read_failed" } })).averagePaidChange).toEqual({ kind: "unavailable" });
     const noPaidBefore = buildOverview(input({ comparison: window({ appointments: priorAppointments, money: { cardRows: [], settlementRows: [], legacyFeeRows: [] } }) }));
-    expect(noPaidBefore.averagePaidChange.kind).not.toBe("percent");
+    expect(noPaidBefore.averagePaidChange).toEqual({ kind: "unavailable" });
   });
   it("visit frequency buckets the active clients into 1, 2 and 3+ visits, and the buckets add up to the active clients", () => {
     const rows: AssembleAppointment[] = [
