@@ -218,3 +218,30 @@ describe("the summary, the method bar and the breakdown are identical with and w
     expect([...p2.matchAll(/Client ((?:np|m)\d)/g)].map((m) => m[1])).toEqual(["m2", "m1"]);
   });
 });
+
+// Q: what happens when the appointments read reaches its row cap. The statement FAILS CLOSED at the cap (no list at all, the existing "too many
+// appointments" message), so a partial list of visits with no payment can never render, and never silently short.
+describe("at the appointments row cap nothing partial is ever listed", () => {
+  const many = (n: number) => Array.from({ length: n }, (_, i) => appt(`a${i}`, "completed", 3));
+  it("999 appointments are read in full (listed); 1000 or more return the 'too many appointments' error with NO visits and NO no-payment list", async () => {
+    const ok = await load(tables(many(999)));
+    if (ok.view.access !== "granted" || !ok.view.ok) throw new Error("expected a granted view");
+    expect(ok.view.noPaymentVisits).toHaveLength(999);
+    for (const n of [1000, 1001]) {
+      const { view } = await load(tables(many(n)));
+      expect(view).toEqual({ access: "granted", ok: false, reason: "too_many_appointments" });
+      expect("noPaymentVisits" in view).toBe(false);
+    }
+  });
+  it("the error screen renders the existing message and no 'No payment recorded' row, no table, no count", async () => {
+    const { StatementView } = await import("@/app/(app)/financials/statement/statement-view");
+    const out = renderToStaticMarkup(createElement(StatementView as never, { view: { access: "granted", ok: false, reason: "too_many_appointments" }, currency: "cad", format: (c: number) => formatStatementMoney(c, "cad") }));
+    expect(out).toContain("more appointments than this statement can read exactly");
+    expect(out).not.toMatch(/No payment recorded|<table|stmt-visits|visits with recorded money/);
+  });
+  it("the read asks for a bounded number of rows (the cap) so the fail-closed check is reachable (source guard)", () => {
+    const src = readFileSync("lib/finance/statement-read.ts", "utf8");
+    expect(src).toMatch(/\.limit\(APPT_CAP\)/);
+    expect(src).toMatch(/appts\.length >= APPT_CAP\) return \{ access: "granted", ok: false, reason: "too_many_appointments" \}/);
+  });
+});
