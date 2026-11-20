@@ -124,4 +124,39 @@ describe("over-invite action", () => {
     expect(r).toMatchObject({ state: "notice" });
     expect(h.logs.join("\n")).not.toMatch(/@|token|TOKEN/);
   });
+
+  // A key is canonical or it is refused BEFORE any lookup or command: no trimming, no Unicode whitespace, so the app and the database can never
+  // disagree about whether two spellings are the same key.
+  const PADS = ["\t", "\n", "\r", "\u00a0", "\u2003", "\u200b", " "];
+  for (const pad of PADS) {
+    const name = JSON.stringify(pad);
+    it(`a batch key padded with ${name} is refused and nothing is created`, async () => {
+      for (const key of [pad + KEY, KEY + pad]) {
+        h.calls = [];
+        const r = await run(form({ batchKey: key }));
+        expect(r).toMatchObject({ state: "notice" });
+        expect(h.calls).toEqual([]);
+      }
+    });
+    it(`a service id padded with ${name} is refused and nothing is created`, async () => {
+      for (const v of [pad + U(900), U(900) + pad]) {
+        h.calls = [];
+        const r = await run(form({ serviceId: v }));
+        expect(r).toMatchObject({ state: "notice" });
+        expect(h.calls).toEqual([]);
+      }
+    });
+    it(`a window or weekday value padded with ${name} is refused and nothing is created`, async () => {
+      for (const o of [{ windowDays: "7" + pad }, { windowDays: pad + "7" }, { allowedWeekdays: "1,2" + pad }, { allowedWeekdays: pad + "1" }]) {
+        h.calls = [];
+        const r = await run(form(o));
+        expect(r).toMatchObject({ state: "notice" });
+        expect(h.calls).toEqual([]);
+      }
+    });
+    it(`an entry id padded with ${name} is dropped, never sent to the command`, async () => {
+      await run(form({ entryId: [U(1), U(2) + pad, pad + U(3)] }));
+      expect(h.createArgs?.entryIds).toEqual([U(1)]);
+    });
+  }
 });
