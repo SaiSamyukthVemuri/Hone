@@ -255,21 +255,36 @@ describe("history figures", () => {
     expect(r.activeClients).toBe(0);
     expect(r.returningPercent.known).toBe(false);
   });
-  it("visit interval is pooled over EVERY client with history to the period's end, not only those seen in it (the reference's rule)", () => {
-    // fay was not seen in November: 1 Jun and 1 Jul → one gap of 30 days. She still counts, and so does the filter's team member's absence from it.
-    const extra = [...prior, hist("e1", "fay", "2026-06-01T15:00:00Z", "completed", "pr-1"), hist("e2", "fay", "2026-07-01T15:00:00Z", "completed", "pr-1")];
-    const all = must(buildOverview(base({ history: { ok: true, value: { appointments: extra } } })).interval);
-    expect(all.pooledAverageDays).toEqual({ known: true, value: (30 + 26 + 36 + 30) / 4 });
-    expect(all).toMatchObject({ clientsWithInterval: 3 });
-    // the practitioner filter decides who is SEEN; it does not narrow whose history is pooled
-    const filtered = must(buildOverview(base({ filter: { kind: "one", practitionerId: "pr-2" }, history: { ok: true, value: { appointments: extra } } })).interval);
-    expect(filtered.pooledAverageDays).toEqual({ known: true, value: (30 + 26 + 36 + 30) / 4 });
+  it("visit interval pools RETURNING clients only: a client not seen in the period, or first seen in it, is not in the pool", () => {
+    // fay (1 Jun, 1 Jul) was not seen in November; cy is new in November. Neither is returning, so neither shapes the interval.
+    const extra = [...prior, hist("e1", "fay", "2026-06-01T15:00:00Z"), hist("e2", "fay", "2026-07-01T15:00:00Z")];
+    const i = must(buildOverview(base({ history: { ok: true, value: { appointments: extra } } })).interval);
+    expect(i.pooledAverageDays).toEqual({ known: true, value: (30 + 26 + 36) / 3 }); // ada 30, 26; bea 36
+    expect(i).toMatchObject({ clientsWithInterval: 2, clientsWithoutInterval: 0 });
   });
-  it("visit interval is pooled over the clients seen in the period, through the period's last day only", () => {
-    // ada: 10 Sep, 10 Oct, 5 Nov → gaps 30, 26. bea: 1 Oct, 6 Nov → gap 36. cy: one visit, no interval.
+  it("with a team-member filter, both who is seen AND the visits used for the gaps are that team member's", () => {
+    // pr-2 saw only bea in November. bea's visits: 1 Oct (pr-2), 6 Nov (pr-2): one gap of 36. ada's visits with pr-1 are neither seen nor used.
+    const f = must(buildOverview(base({ filter: { kind: "one", practitionerId: "pr-2" } })).interval);
+    expect(f.pooledAverageDays).toEqual({ known: true, value: 36 });
+    // a returning client seen by pr-2 whose EARLIER visit was with pr-1: that visit is not pr-2's, so there is no gap to pool (counted as without, never 0)
+    const moved = [hist("m1", "ada", "2026-10-10T15:00:00Z", "completed", "pr-1")];
+    const g = must(buildOverview(base({ filter: { kind: "one", practitionerId: "pr-2" }, history: { ok: true, value: { appointments: moved } }, current: window({ appointments: [hist("m2", "ada", "2026-11-05T15:00:00Z", "completed", "pr-2")], money: { cardRows: [], settlementRows: [], legacyFeeRows: [] } }) })).interval);
+    expect(g.pooledAverageDays.known).toBe(false);
+    expect(g).toMatchObject({ clientsWithInterval: 0, clientsWithoutInterval: 1 });
+  });
+  it("a client with one visit date is left out and counted, never averaged in as a zero gap", () => {
+    const one = must(buildOverview(base({ history: { ok: true, value: { appointments: [hist("s1", "ada", "2026-10-10T15:00:00Z"), hist("s2", "bea", "2026-10-01T15:00:00Z", "completed", "pr-2")] } } })).interval);
+    expect(one).toMatchObject({ clientsWithInterval: 2, clientsWithoutInterval: 0 }); // ada 10 Oct to 5 Nov = 26, bea 1 Oct to 6 Nov = 36
+    expect(one.pooledAverageDays).toEqual({ known: true, value: 31 });
+    const solo = must(buildOverview(base({ current: window({ appointments: [hist("t1", "ada", "2026-11-05T15:00:00Z")], money: { cardRows: [], settlementRows: [], legacyFeeRows: [] } }), history: { ok: true, value: { appointments: [] } } })).interval);
+    expect(solo.pooledAverageDays.known).toBe(false); // ada has one visit and is first-time: no gap, not 0
+    expect(solo.clientsWithoutInterval + solo.clientsWithInterval).toBe(0);
+  });
+  it("visit interval is pooled over the returning clients, through the period's last day only", () => {
+    // ada: 10 Sep, 10 Oct, 5 Nov → gaps 30, 26. bea: 1 Oct, 6 Nov → gap 36. cy is first-time: not in the pool.
     const i = must(buildOverview(base()).interval);
     expect(i.pooledAverageDays).toEqual({ known: true, value: (30 + 26 + 36) / 3 });
-    expect(i).toMatchObject({ clientsWithInterval: 2, clientsWithoutInterval: 1 });
+    expect(i).toMatchObject({ clientsWithInterval: 2, clientsWithoutInterval: 0 });
   });
   it("a visit after the period never shapes its interval", () => {
     const later = [...prior, hist("z", "ada", "2026-12-20T15:00:00Z")];

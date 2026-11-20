@@ -119,7 +119,7 @@ export type OverviewView = {
   reconciliation: Figure<ReconciliationLine>;
   /** Of the clients seen in the period, how many had a completed visit before it. First-time means first visit recorded in Hone. */
   returning: Figure<ReturningSplit>;
-  /** Average days between a client's completed visits, pooled over every client with a completed visit up to the period's last day (the reference's rule). */
+  /** Average days between a client's completed visits, pooled over the RETURNING clients (seen in the period, with a completed visit before it), through the period's last day; a team-member filter applies to the visits used. */
   interval: Figure<StudioInterval>;
   /** A count only, as of now. The clients themselves are listed on the Clients tab, never here. */
   noNextBooking: Figure<{ count: number }>;
@@ -295,7 +295,11 @@ function historyFigures(input: OverviewInput, currentData: WindowData): Pick<Ove
     const completedAll = visitsOf(all); // whole history, every practitioner
     const seen = new Set(activeClientIds(visitsOf(all, input.filter), w));
     returning = { available: true, value: splitReturning([...completedAll.filter((v) => v.clientId !== null && seen.has(v.clientId))], w) };
-    const histories = clientHistories(completedAll.filter((v) => v.clientId !== null), w.lastLocal); // every client with history, not only those seen
+    // RETURNING clients only: seen in the period AND with a completed visit before it (any practitioner, as the returning card says). Their gaps are
+    // between THEIR completed visits up to the period's last day; with a team-member filter those visits are that team member's.
+    const before = new Set(completedAll.filter((v) => v.clientId !== null && v.localDate < w.startLocal).map((v) => v.clientId as string));
+    const returningIds = new Set([...seen].filter((id) => before.has(id)));
+    const histories = clientHistories(visitsOf(all, input.filter).filter((v) => v.clientId !== null && returningIds.has(v.clientId)), w.lastLocal);
     interval = { available: true, value: studioInterval(histories) };
   }
 
