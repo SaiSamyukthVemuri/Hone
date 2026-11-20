@@ -147,7 +147,7 @@ describe("over-invite action", () => {
       }
     });
     it(`a window or weekday value padded with ${name} is refused and nothing is created`, async () => {
-      for (const o of [{ windowDays: "7" + pad }, { windowDays: pad + "7" }, { allowedWeekdays: "1,2" + pad }, { allowedWeekdays: pad + "1" }]) {
+      for (const o of [{ windowDays: "7" + pad }, { windowDays: pad + "7" }, { allowedWeekdays: "1,2" + pad }, { allowedWeekdays: pad + "1" }] as Record<string, string>[]) {
         h.calls = [];
         const r = await run(form(o));
         expect(r).toMatchObject({ state: "notice" });
