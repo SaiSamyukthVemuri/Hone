@@ -54,8 +54,9 @@ async function render(opts: { names?: Record<string, string>; startsAt?: string;
         startLocal: "2026-11-01",
         endLocalExclusive: "2026-12-01",
         statement,
-        visitInfo: { a1: { clientName: "Synthetic Client", serviceName: "Service" }, a2: { clientName: "Other Client", serviceName: null } },
+        visitInfo: { a1: { clientName: "Synthetic Client", clientId: "client-1", serviceName: "Service", minutes: 60 }, a2: { clientName: "Other Client", clientId: null, serviceName: null, minutes: null } },
         practitionerNames: opts.names ?? { "pract-one": "Pat Synthetic", "pract-two": "Robin Example" },
+        settlementQuotes: {},
       },
       currency: "cad",
       format: fmt,
@@ -119,8 +120,9 @@ describe("review findings: counted-but-not-totalled lines never print an amount 
 describe("review finding: visit dates are in the studio's timezone", () => {
   it("23:30 Toronto on 30 Nov (03:30 UTC on 1 Dec) is shown as 2026-11-30, not the UTC date", async () => {
     const html = await render({ startsAt: "2026-12-01T03:30:00Z" });
-    expect(html).toContain("2026-11-30:");
-    expect(html).not.toContain("2026-12-01:");
+    expect(html).toContain('dateTime="2026-11-30"');
+    expect(html).toContain(">Nov 30<");
+    expect(html).not.toContain("2026-12-01");
   });
   it("the view never slices an ISO string for a date", () => {
     const src = readFileSync("app/(app)/financials/statement/statement-view.tsx", "utf8");
@@ -180,7 +182,7 @@ describe("month bounds: Previous is hidden at the first month, and the fallback 
     const empty = buildStatement({ studioCurrency: "cad", appointments: [], cardRows: [], settlementRows: [], legacyFeeRows: [] });
     const html = renderToStaticMarkup(
       StatementView({
-        view: { access: "granted", ok: true, month: "2000-01", label: "January 2000", timezone: "America/Toronto", startLocal: "2000-01-01", endLocalExclusive: "2000-02-01", statement: empty, visitInfo: {}, practitionerNames: {} },
+        view: { access: "granted", ok: true, month: "2000-01", label: "January 2000", timezone: "America/Toronto", startLocal: "2000-01-01", endLocalExclusive: "2000-02-01", statement: empty, visitInfo: {}, practitionerNames: {}, settlementQuotes: {} },
         currency: "cad", format: fmt, maxMonth: "2026-11", notice: null,
       }),
     );
