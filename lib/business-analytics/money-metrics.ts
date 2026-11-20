@@ -3,7 +3,7 @@ import { COLLECTED_KINDS, type Statement, type StatementKind } from "@/lib/finan
 import type { AssembleResult } from "@/lib/finance/statement-document-assemble";
 import type { VisitState } from "@/lib/finance/statement-document";
 
-import { bucketKeyFor, type LocalDate, type PeriodWindow } from "./period";
+import { bucketKeyFor, type BucketUnit, type LocalDate, type PeriodWindow } from "./period";
 import { matchesPractitioner, type PractitionerFilter } from "./visit-metrics";
 
 // ===========================================================================
@@ -199,6 +199,8 @@ export type SeriesFailure = "line_outside_window" | "unreadable_amount" | "uncla
 
 export function collectionsSeries(args: {
   window: PeriodWindow;
+  /** The bucket unit, when it is not the window's own (the comparison period uses the CURRENT period's unit so the two series overlay). */
+  unit?: BucketUnit;
   buckets: ReadonlyArray<{ key: string }>;
   statement: Statement;
   localDateByAppointment: ReadonlyMap<string, LocalDate>;
@@ -209,7 +211,7 @@ export function collectionsSeries(args: {
   const byKey = new Map<string, SeriesPoint>(args.buckets.map((b) => [b.key, { key: b.key, collectedCents: 0, completedVisits: 0 }]));
   for (const [id, date] of args.localDateByAppointment) {
     if (args.classes.get(id) !== "completed_visit") continue;
-    const key = bucketKeyFor(date, args.window);
+    const key = bucketKeyFor(date, args.window, args.unit);
     if (key !== null) byKey.get(key)!.completedVisits++;
   }
   for (const v of args.statement.visits) {
@@ -220,7 +222,7 @@ export function collectionsSeries(args: {
       if (cls === undefined) return { ok: false, reason: "unclassified_appointment" };
       if (scope === "completed_visits_only" && cls !== "completed_visit") continue;
       const date = args.localDateByAppointment.get(v.appointmentId);
-      const key = date === undefined ? null : bucketKeyFor(date, args.window);
+      const key = date === undefined ? null : bucketKeyFor(date, args.window, args.unit);
       if (key === null) return { ok: false, reason: "line_outside_window" };
       byKey.get(key)!.collectedCents += line.cents;
     }
