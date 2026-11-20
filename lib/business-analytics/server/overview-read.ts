@@ -7,6 +7,7 @@ import { readAppointmentsKeyset, readMoneyForAppointments } from "@/lib/finance/
 import { createClient } from "@/lib/supabase/server";
 import type { Studio } from "@/lib/types/database";
 
+import { UNNAMED_TEAM_MEMBER_LABEL } from "../copy";
 import type { FigureRead } from "../figure";
 import { buildOverview, type FollowThroughData, type HistoryData, type OverviewView, type PractitionerInfo, type WindowData } from "../overview-model";
 import { parseOverviewParams, type OverviewParams, type RawParams } from "../overview-params";
@@ -26,7 +27,10 @@ export const CLASSES_READ: readonly PriceEvidenceClass[] = ["recorded_at_visit"]
 export type OverviewRead =
   | { access: "refused" }
   | { access: "granted"; ok: false; reason: "bad_request" | "read_failed" | "period_invalid"; notices: string[] }
-  | { access: "granted"; ok: true; view: OverviewView; params: OverviewParams; notices: string[] };
+  | { access: "granted"; ok: true; view: OverviewView; params: OverviewParams; notices: string[]; practitionerOptions: PractitionerOption[] };
+
+/** What the filter control lists: the current team, by display name. Needed by the filter's own form only; never put in a chart, table or export. */
+export type PractitionerOption = { id: string; label: string };
 
 async function readWindow(supabase: SupabaseClient, studioId: string, timezone: string, w: PeriodWindow): Promise<FigureRead<WindowData>> {
   const { startUtc, endUtc } = windowInstants(w, timezone);
@@ -112,7 +116,11 @@ export async function loadOverview(
     practitioners: people.rows,
     classesRead: CLASSES_READ,
   });
-  return { access: "granted", ok: true, view, params: parsed.params, notices: parsed.notices };
+  const practitionerOptions = people.rows
+    .filter((p) => p.active)
+    .map((p) => ({ id: p.id, label: p.displayName && p.displayName.trim() ? p.displayName.trim() : UNNAMED_TEAM_MEMBER_LABEL }))
+    .sort((a, b) => a.label.localeCompare(b.label) || a.id.localeCompare(b.id));
+  return { access: "granted", ok: true, view, params: parsed.params, notices: parsed.notices, practitionerOptions };
 }
 
 /** The API returns at most 1000 rows whatever limit is asked for, so truncation can only be seen as a FULL page: a page of exactly the cap may be cut off, and a roster that may be incomplete would mislabel people. It fails the page closed. */

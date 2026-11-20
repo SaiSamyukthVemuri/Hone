@@ -235,6 +235,25 @@ describe("the history reads", () => {
   });
 });
 
+describe("the filter's list of team members", () => {
+  it("lists the current team by display name, never a former member, sorted, with no other field", async () => {
+    const res = healthy();
+    res.practitioners = ok([
+      { id: "pr-b", display_name: "Zed", active: true },
+      { id: "pr-a", display_name: " Amy ", active: true },
+      { id: "pr-x", display_name: "Gone", active: false },
+      { id: "pr-n", display_name: null, active: true },
+    ]);
+    const r = await load("owner", recording(res).client);
+    if (!(r.access === "granted" && r.ok)) throw new Error("expected a view");
+    expect(r.practitionerOptions).toEqual([
+      { id: "pr-a", label: "Amy" },
+      { id: "pr-n", label: "Team member" },
+      { id: "pr-b", label: "Zed" },
+    ]);
+  });
+});
+
 describe("the Overview read: parameters", () => {
   it("a page with a bad value shows the default with a notice; a strict route is refused, with no data query", async () => {
     const page = await load("owner", recording(healthy()).client, { period: "week" });

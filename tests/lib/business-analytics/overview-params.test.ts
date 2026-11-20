@@ -40,3 +40,26 @@ describe("overview query parameters", () => {
     expect(page({ period: "custom", from: "2026-02-30", to: "x" })).toMatchObject({ params: { from: "2026-02-30", to: "x" } });
   });
 });
+
+describe("links back to the Overview", () => {
+  const base = { periodKind: "month_to_date", compare: "preceding", practitioner: { kind: "all" }, series: "money" } as const;
+  it("defaults are left out, so a plain link is empty", async () => {
+    const { overviewQuery } = await import("@/lib/business-analytics/overview-params");
+    expect(overviewQuery(base)).toBe("");
+  });
+  it("carries every non-default choice and takes a change", async () => {
+    const { overviewQuery } = await import("@/lib/business-analytics/overview-params");
+    const q = overviewQuery({ ...base, periodKind: "custom", from: "2026-11-01", to: "2026-11-10", compare: "last_year", practitioner: { kind: "one", practitionerId: "pr-1" } }, { series: "visits" });
+    expect(new URLSearchParams(q).get("period")).toBe("custom");
+    expect(new URLSearchParams(q).get("compare")).toBe("last_year");
+    expect(new URLSearchParams(q).get("practitioner")).toBe("pr-1");
+    expect(new URLSearchParams(q).get("series")).toBe("visits");
+  });
+  it("custom dates are dropped when the period is not custom, and a link round-trips through the parser", async () => {
+    const { overviewQuery, parseOverviewParams } = await import("@/lib/business-analytics/overview-params");
+    expect(overviewQuery({ ...base, from: "2026-11-01", to: "2026-11-10" })).toBe("");
+    const params = { ...base, periodKind: "previous_month", practitioner: { kind: "unattributed" }, series: "visits" } as const;
+    const back = parseOverviewParams(Object.fromEntries(new URLSearchParams(overviewQuery(params))), { strict: true, practitionerIds: new Set() });
+    expect(back).toMatchObject({ ok: true, params: { periodKind: "previous_month", practitioner: { kind: "unattributed" }, series: "visits" } });
+  });
+});

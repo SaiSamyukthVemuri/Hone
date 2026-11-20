@@ -74,3 +74,23 @@ export function parseOverviewParams(raw: RawParams, opts: { strict: boolean; pra
   if (bad && opts.strict) return { ok: false, error: "bad_request" };
   return { ok: true, params: { periodKind, from, to, compare, practitioner, series }, notices };
 }
+
+/**
+ * The query string for a link to the Overview, from parsed parameters with optional changes. Defaults are left out so a link stays short. Values are
+ * encoded; the practitioner value is passed on exactly as the request had it, to the owner-only page only.
+ */
+export function overviewQuery(params: OverviewParams, patch: Partial<OverviewParams> = {}): string {
+  const p = { ...params, ...patch };
+  const q = new URLSearchParams();
+  if (p.periodKind !== DEFAULT_PERIOD_KIND) q.set("period", p.periodKind);
+  if (p.periodKind === "custom") {
+    if (p.from) q.set("from", p.from);
+    if (p.to) q.set("to", p.to);
+    if (p.compare !== "preceding") q.set("compare", p.compare);
+  }
+  if (p.practitioner.kind === "one") q.set("practitioner", p.practitioner.practitionerId);
+  else if (p.practitioner.kind === "unattributed") q.set("practitioner", "unattributed");
+  if (p.series !== "money") q.set("series", p.series);
+  const s = q.toString();
+  return s ? `?${s}` : "";
+}
