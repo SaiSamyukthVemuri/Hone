@@ -14,6 +14,8 @@ vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("next/navigation", () => ({ redirect: (u: string) => { h.spied.push(`redirect:${u}`); throw new Error("NEXT_REDIRECT"); } }));
 vi.mock("@sentry/nextjs", () => ({ captureException: (...a: unknown[]) => h.spied.push(`sentry:${JSON.stringify(a)}`), captureMessage: (...a: unknown[]) => h.spied.push(`sentry:${JSON.stringify(a)}`) }));
 vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: async (...a: unknown[]) => { h.spied.push(`alert:${JSON.stringify(a)}`); } }));
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ from: () => { const c: any = { select: () => c, eq: () => c, then: (r: (v: unknown) => void) => r({ data: [{ id: "00000000-0000-4000-8000-000000000050", entry_id: "00000000-0000-4000-8000-000000000001" }], error: null }) }; return c; } }) }));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({}) }));
 vi.mock("@/lib/supabase/queries", () => ({
   getCurrentPractitionerWithStudio: async () => ({
@@ -57,7 +59,7 @@ vi.mock("@/lib/waitlist/over-invite-port", async () => {
 });
 vi.spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void) => { fn(); return 0; }) as never);
 
-import { retryOverInviteDeliveriesAction, sendOverInviteAction } from "@/app/(app)/settings/waitlist/over-invite/actions";
+import { retryFailedDeliveriesAction as retryOverInviteDeliveriesAction, sendOverInviteAction } from "@/app/(app)/settings/waitlist/over-invite/actions";
 
 const U = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 function sendForm() {
@@ -97,7 +99,7 @@ describe("no secret reaches a logger, reporter, redirect or result", () => {
     it(`retry: ${mode}`, async () => {
       h.mode = mode;
       const f = new FormData();
-      f.append("retry", `${U(1)}:${U(50)}`);
+      f.append("confirmRetry", "on");
       let out = "";
       try {
         out = JSON.stringify(await retryOverInviteDeliveriesAction({ state: "idle" }, f));

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { runBatchChunk, retryRefusedDeliveries, type WorkerDeps } from "@/lib/waitlist/over-invite-worker";
+import { runBatchChunk, type WorkerDeps } from "@/lib/waitlist/over-invite-worker";
+import { retryRefusedDeliveries } from "@/lib/waitlist/over-invite-retry";
 import type { ClaimedItem, IssuedInvitation } from "@/lib/waitlist/over-invite-port";
 
 const item = (n: number): ClaimedItem => ({
@@ -58,7 +59,7 @@ describe("over-invite worker", () => {
     for (const state of ["refused", "unknown"] as const) {
       const { d, calls } = deps({ deliver: async () => state });
       const r = await runBatchChunk(d);
-      expect(calls).toEqual([`settle:i1:failed:delivery_${state}`]);
+      expect(calls).toEqual([`settle:i1:${state === "refused" ? "failed" : "unknown"}:delivery_${state}`]);
       expect(r.ok && r.outcomes[0].status).toBe("failed");
     }
   });
@@ -130,12 +131,23 @@ describe("an owner's click never sends another studio's batch", () => {
     const foreign = { ...item(9), studioId: "other" };
     let admitted: string[] = [];
     const { d, calls } = deps({ items: [foreign, item(1)], admit: async (it) => (admitted.push(it.entryId), { ok: true, result: "admitted", issued }) });
-    const r = await runBatchChunk(d, undefined, "s");
+    const r = await runBatchChunk(d, undefined, { studioId: "s" });
     expect(admitted).toEqual(["e1"]);
     expect(calls.filter((c) => c.includes("i9"))).toEqual([]);
     expect(r.ok && r.claimed).toBe(1);
     const only = deps({ items: [foreign] });
-    const r2 = await runBatchChunk(only.d, undefined, "s");
+    const r2 = await runBatchChunk(only.d, undefined, { studioId: "s" });
     expect(r2.ok && r2.claimed).toBe(0);
+  });
+});
+
+import { DEFAULT_LIMITS, ITEM_BUDGET_MS, SPACING_MS } from "@/lib/waitlist/over-invite-worker";
+describe("lease covers a whole round (Insurance W1)", () => {
+  it("lease > chunk x (spacing + slowest admit+send) with at least 25% margin", () => {
+    const worstRoundMs = DEFAULT_LIMITS.total * (SPACING_MS + ITEM_BUDGET_MS);
+    expect(DEFAULT_LIMITS.leaseSeconds * 1000).toBeGreaterThan(worstRoundMs * 1.25);
+  });
+  it("a worst-case round fits inside the cron route's 60 s function cap, so a round is never cut off mid-way", () => {
+    expect(DEFAULT_LIMITS.total * (SPACING_MS + ITEM_BUDGET_MS)).toBeLessThan(60_000);
   });
 });

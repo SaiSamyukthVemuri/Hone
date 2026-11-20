@@ -61,30 +61,45 @@ describe("the page never says or enforces a cap of 25 (Sam's quantity rule)", ()
       expect(code(f), f).not.toMatch(/up to 25|first 25|only 25|max(imum)?(?: of)? 25|25 (at a time|per (send|batch))/i);
     }
   });
-  it("the chunk is only ever the claim's page size, and the action loops until the queue is empty", () => {
-    const actions = read("app/(app)/settings/waitlist/over-invite/actions.ts");
-    expect(actions).toMatch(/while \(claimedAny/);
-    expect(actions).not.toMatch(/entryIds\.slice\(|\.slice\(0, *25\)/);
+  it("the chunk is only ever the claim's page size: rounds repeat until nothing is claimable, and the action never slices the selection", () => {
+    const run = read("lib/waitlist/over-invite-run.ts");
+    expect(run).toMatch(/for \(;;\)/);
+    expect(run).toMatch(/r\.claimed === 0\) break/);
+    expect(read("app/(app)/settings/waitlist/over-invite/actions.ts")).not.toMatch(/entryIds\.slice\(|\.slice\(0, *\d+\)/);
   });
 });
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-describe("the worker is driven ONLY by the owner's own action (no cron, job or page load)", () => {
-  it("claim and the chunk runner are referenced only by the port, the worker and the owner's two actions", () => {
-    const hits = execFileSync("grep", ["-rlE", "claimItems|claim_waitlist_batch_items|runBatchChunk", "app", "lib", "components", "scripts", "middleware.ts"], { encoding: "utf8" })
-      .split("\n").filter(Boolean).sort();
-    expect(hits).toEqual([
-      "app/(app)/settings/waitlist/over-invite/actions.ts",
+describe("the worker is driven ONLY by the confirm action's first round and the cron route", () => {
+  const hits = (re: string, dirs: string[]) =>
+    (spawnSync("grep", ["-rlE", re, ...dirs], { encoding: "utf8" }).stdout ?? "").split("\n").filter(Boolean).sort();
+  it("claim and the chunk runner are referenced only by the port, the worker and the run module", () => {
+    expect(hits("claimItems|claim_waitlist_batch_items|runBatchChunk", ["app", "lib", "components", "scripts", "middleware.ts"])).toEqual([
       "lib/waitlist/over-invite-port.ts",
+      "lib/waitlist/over-invite-run.ts",
       "lib/waitlist/over-invite-worker.ts",
     ]);
   });
-  it("no route handler, cron or script reaches the over-invite actions or the worker", () => {
-    const r = spawnSync("grep", ["-rlE", "over-invite", "app/api", "scripts", "lib/cron"], { encoding: "utf8" });
-    expect((r.stdout ?? "").split("\n").filter(Boolean)).toEqual([]);
-    const vercel = existsSync("vercel.json") ? read("vercel.json") : "";
-    expect(vercel).not.toMatch(/over-invite|waitlist-batch/);
-    expect(read("app/(app)/settings/waitlist/over-invite/page.tsx")).not.toMatch(/sendOverInviteAction\(|continueOverInviteAction\(|runBatchChunk/);
+  it("runRounds is called only by the owner's confirm action and the cron route", () => {
+    expect(hits("runRounds\\(", ["app", "lib", "components", "scripts"])).toEqual([
+      "app/(app)/settings/waitlist/over-invite/actions.ts",
+      "app/api/cron/waitlist-invitation-batches/route.ts",
+      "lib/waitlist/over-invite-run.ts",
+    ]);
+    expect(code("app/(app)/settings/waitlist/over-invite/page.tsx")).not.toMatch(/runRounds|runBatchChunk|sendOverInviteAction\(/);
+  });
+  it("the WORKER and the cron route never call replace; only the owner's confirmed retry does (Insurance F2, Privacy 3)", () => {
+    expect(code("lib/waitlist/over-invite-worker.ts")).not.toMatch(/replace/i);
+    expect(code("app/api/cron/waitlist-invitation-batches/route.ts")).not.toMatch(/replace|retry/i);
+    // replaceInvitation has exactly two code references: its definition and the run module's owner-retry wrapper.
+    expect(hits("replaceInvitation", ["app", "lib", "components", "scripts"])).toEqual(["lib/waitlist/over-invite-port.ts", "lib/waitlist/over-invite-run.ts"]);
+    // And the retry action refuses without its own confirmation box.
+    expect(read("app/(app)/settings/waitlist/over-invite/actions.ts")).toMatch(/formData\.get\("confirmRetry"\) !== "on"/);
+  });
+  it("the cron route authorises with the shared bearer check and reads no secret itself (Privacy 1)", () => {
+    const route = code("app/api/cron/waitlist-invitation-batches/route.ts");
+    expect(route).toMatch(/isAuthorizedCronRequest\(req\)/);
+    expect(route).not.toMatch(/process\.env|searchParams|new URL/);
   });
 });

@@ -8,9 +8,10 @@ import { computeConsultationFit } from "@/lib/waitlist/send-time-fit";
 import { WAIT_INVITATION_TTL_HOURS } from "@/lib/waitlist/invitation-window";
 import { recheckBeforeSend } from "@/lib/waitlist/over-invite-batch";
 import { parseOverInviteForm } from "@/lib/waitlist/over-invite-selection";
-import { admitBatchItem, claimItems, createBatch, previewSelection, replaceInvitation, settleItem } from "@/lib/waitlist/over-invite-port";
-import { deliverIssued, mayStillSend } from "@/lib/waitlist/over-invite-deliver";
-import { retryRefusedDeliveries, runBatchChunk, type ItemOutcome, type WorkerDeps } from "@/lib/waitlist/over-invite-worker";
+import { createBatch, previewSelection, stopBatch } from "@/lib/waitlist/over-invite-port";
+import { retryRefused, runRounds } from "@/lib/waitlist/over-invite-run";
+import { DEFAULT_LIMITS } from "@/lib/waitlist/over-invite-worker";
+import { createClient } from "@/lib/supabase/server";
 import { OVER_INVITE_NOTICES as N, type OverInviteResult } from "@/lib/waitlist/over-invite-result";
 
 // The owner's "invite beyond estimated capacity" action. The SERVER is the authority; the form is untrusted:
@@ -21,7 +22,8 @@ import { OVER_INVITE_NOTICES as N, type OverInviteResult } from "@/lib/waitlist/
 //  - nothing here logs a name, an email, a token or an id, and no SMS path is imported anywhere on this route.
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const CHUNK_BUDGET_MS = 40_000;
+// The confirm action runs only the FIRST round(s) inline; the cron route finishes the rest with no page open and no click.
+const FIRST_ROUNDS_BUDGET_MS = 20_000;
 
 type Scope = { serviceId: string; windowDays: number; allowedWeekdays: number[] | null };
 
@@ -40,26 +42,6 @@ function readScope(formData: FormData): Scope | null {
     allowedWeekdays = [...new Set(parts.map(Number))].sort();
   }
   return { serviceId, windowDays, allowedWeekdays };
-}
-
-function workerDeps(sleep: (ms: number) => Promise<void>): WorkerDeps {
-  const db = createAdminClient();
-  return {
-    claim: (limits) => claimItems(db, limits),
-    admit: (item) => admitBatchItem(db, item, null),
-    settle: (target, outcome, reason) => settleItem(db, target, outcome, reason),
-    deliver: (issued, entryId, item) => deliverIssued(item.studioId, issued, entryId),
-    mayStillSend: (item) => mayStillSend(item.studioId, item.entryId),
-    sleep,
-  };
-}
-
-const sleepFor = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-
-function tally(outcomes: readonly ItemOutcome[]) {
-  const t = { sent: 0, skipped: 0, failed: 0 };
-  for (const o of outcomes) t[o.status] += 1;
-  return t;
 }
 
 export async function sendOverInviteAction(_prev: OverInviteResult, formData: FormData): Promise<OverInviteResult> {
@@ -150,27 +132,20 @@ export async function sendOverInviteAction(_prev: OverInviteResult, formData: Fo
         return { state: "notice", notice: N.malformed };
     }
 
-    // Send until the budget is spent. Anything left stays queued and is finished by the continue action; nothing is dropped.
-    const outcomes: ItemOutcome[] = [];
-    const t0 = Date.now();
-    let claimedAny = true;
-    while (claimedAny && Date.now() - t0 < CHUNK_BUDGET_MS) {
-      const r = await runBatchChunk(workerDeps(sleepFor), undefined, studio.id);
-      if (!r.ok) break;
-      outcomes.push(...r.outcomes);
-      claimedAny = r.claimed > 0;
-    }
-    revalidatePath("/settings/waitlist");
-    const t = tally(outcomes);
+    // Without the batch id the inline round could not be scoped to THIS batch, so it does not run at all (the background route still sends the batch).
+    if (!created.batchId) return { state: "notice", notice: N.unavailable };
+    // The batch is persisted. Run the first round(s) now; whatever is left is finished by the background route with no page open and no click.
+    const first = await runRounds({ budgetMs: FIRST_ROUNDS_BUDGET_MS, scope: { studioId: studio.id, batchId: created.batchId ?? undefined } });
+    revalidatePath("/settings/waitlist/over-invite");
     const quantity = created.quantity ?? sub.entryIds.length;
     return {
       state: "progress",
       quantity,
-      // Whatever the chunks did not reach is still queued in the batch, and says so: nothing is dropped and nothing is capped.
-      pending: Math.max(0, quantity - outcomes.length),
       extraRequested: created.extraRequested ?? 0,
-      ...t,
-      refusedDeliveries: outcomes.flatMap((o) => (o.status === "failed" && o.reason === "delivery_refused" ? [{ entryId: o.entryId, itemId: o.itemId }] : [])),
+      sent: first.sent,
+      skipped: first.skipped,
+      failed: first.failed,
+      pending: Math.max(0, quantity - first.sent - first.skipped - first.failed),
     };
   } catch {
     // A fixed sentence: no name, id, token or provider text.
@@ -178,70 +153,46 @@ export async function sendOverInviteAction(_prev: OverInviteResult, formData: Fo
   }
 }
 
-/** Finish a confirmed batch: runs more chunks of the SAME queue. It confirms nothing new and adds no recipient. */
-export async function continueOverInviteAction(prev: OverInviteResult): Promise<OverInviteResult> {
+/** "Stop sending the rest": moves this batch's PENDING items (and lease-expired claimed ones with no invitation) to skipped; in-flight items finish. */
+export async function stopBatchAction(_prev: OverInviteResult, formData: FormData): Promise<OverInviteResult> {
   try {
+    const batchId = formData.get("batchId");
+    if (typeof batchId !== "string" || !UUID.test(batchId)) return { state: "notice", notice: N.malformed };
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
     if (practitioner.role !== "owner" || !practitioner.user_id) return { state: "notice", notice: N.ownerOnly };
-    const outcomes: ItemOutcome[] = [];
-    const t0 = Date.now();
-    let claimedAny = true;
-    while (claimedAny && Date.now() - t0 < CHUNK_BUDGET_MS) {
-      const r = await runBatchChunk(workerDeps(sleepFor), undefined, studio.id);
-      if (!r.ok) break;
-      outcomes.push(...r.outcomes);
-      claimedAny = r.claimed > 0;
-    }
-    revalidatePath("/settings/waitlist");
-    const t = tally(outcomes);
-    const base = prev.state === "progress" ? prev : null;
-    const settled = outcomes.length;
-    return {
-      state: "progress",
-      quantity: base?.quantity ?? settled,
-      extraRequested: base?.extraRequested ?? 0,
-      pending: Math.max(0, (base?.pending ?? 0) - settled),
-      sent: (base?.sent ?? 0) + t.sent,
-      skipped: (base?.skipped ?? 0) + t.skipped,
-      failed: (base?.failed ?? 0) + t.failed,
-      refusedDeliveries: [
-        ...(base?.refusedDeliveries ?? []),
-        ...outcomes.flatMap((o) => (o.status === "failed" && o.reason === "delivery_refused" ? [{ entryId: o.entryId, itemId: o.itemId }] : [])),
-      ],
-    };
+    const r = await stopBatch(createAdminClient(), { studioId: studio.id, actorUserId: practitioner.user_id, batchId, leaseSeconds: DEFAULT_LIMITS.leaseSeconds });
+    revalidatePath("/settings/waitlist/over-invite");
+    if (!r.ok) return { state: "notice", notice: N.unavailable };
+    if (r.result === "stopped") return { state: "notice", notice: N.stopped(r.cancelled) };
+    if (r.result === "nothing_pending") return { state: "notice", notice: N.nothingToStop };
+    return { state: "notice", notice: N.unavailable };
   } catch {
     return { state: "notice", notice: N.unavailable };
   }
 }
 
-/** Retry only entries whose delivery was REFUSED, through replace. Owner-only; the ids are requests and `replace` re-validates each. */
-export async function retryOverInviteDeliveriesAction(_prev: OverInviteResult, formData: FormData): Promise<OverInviteResult> {
+/**
+ * The owner's SEPARATE, explicitly confirmed retry of failed recipients. Nothing is posted but the confirmation: the targets are read here from the
+ * batch tables (this studio's items that failed with a REFUSED delivery), so a forged id cannot name anyone. An UNKNOWN outcome is never in this
+ * set, a sent item never is, and each retry goes through replace (never admit again).
+ */
+export async function retryFailedDeliveriesAction(_prev: OverInviteResult, formData: FormData): Promise<OverInviteResult> {
   try {
+    if (formData.get("confirmRetry") !== "on") return { state: "notice", notice: N.needRetryConfirm };
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
     if (practitioner.role !== "owner" || !practitioner.user_id) return { state: "notice", notice: N.ownerOnly };
-    // Each retry target posts as "entryId:itemId". Both must be well-formed ids; `replace` re-validates the entry in this studio.
-    const seen = new Set<string>();
-    const targets: { entryId: string; itemId: string }[] = [];
-    for (const v of formData.getAll("retry")) {
-      if (typeof v !== "string") continue;
-      const [entryId, itemId, extra] = v.split(":");
-      if (extra !== undefined || !entryId || !itemId || !UUID.test(entryId) || !UUID.test(itemId) || seen.has(entryId)) continue;
-      seen.add(entryId);
-      targets.push({ entryId, itemId });
-    }
-    if (targets.length === 0) return { state: "notice", notice: N.nobody };
-    const db = createAdminClient();
-    const actorUserId = practitioner.user_id;
-    const out = await retryRefusedDeliveries(
-      {
-        replace: (entryId) => replaceInvitation(db, { studioId: studio.id, actorUserId, entryId }),
-        deliver: (issued, entryId) => deliverIssued(studio.id, issued, entryId),
-        settle: (target, outcome, reason) => settleItem(db, target, outcome, reason),
-        sleep: sleepFor,
-      },
-      targets.map((t) => ({ ...t, studioId: studio.id })),
-    );
-    revalidatePath("/settings/waitlist");
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("waitlist_invitation_batch_items")
+      .select("id,entry_id")
+      .eq("studio_id", studio.id)
+      .eq("state", "failed")
+      .eq("reason_class", "delivery_refused");
+    if (error) return { state: "notice", notice: N.unavailable };
+    const targets = (data ?? []).map((r) => ({ entryId: String(r.entry_id), itemId: String(r.id) }));
+    if (targets.length === 0) return { state: "notice", notice: N.nothingToRetry };
+    const out = await retryRefused(studio.id, practitioner.user_id, targets);
+    revalidatePath("/settings/waitlist/over-invite");
     return {
       state: "progress",
       quantity: targets.length,
@@ -250,9 +201,6 @@ export async function retryOverInviteDeliveriesAction(_prev: OverInviteResult, f
       sent: out.filter((o) => o.status === "sent").length,
       skipped: out.filter((o) => o.status === "skipped").length,
       failed: out.filter((o) => o.status === "failed").length,
-      refusedDeliveries: out.flatMap((o) =>
-        o.status === "failed" && o.reason === "delivery_refused" ? [{ entryId: o.entryId, itemId: targets.find((t) => t.entryId === o.entryId)?.itemId ?? "" }] : [],
-      ),
     };
   } catch {
     return { state: "notice", notice: N.unavailable };

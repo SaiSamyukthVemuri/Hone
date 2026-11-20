@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import { adminQuery, closePool, seedStudio } from "./helpers/harness";
 import { admitBatchItem, claimItems, createBatch, previewSelection, replaceInvitation, settleItem } from "@/lib/waitlist/over-invite-port";
-import { retryRefusedDeliveries, runBatchChunk, type DeliveryState, type WorkerDeps } from "@/lib/waitlist/over-invite-worker";
+import { runBatchChunk, type DeliveryState, type WorkerDeps } from "@/lib/waitlist/over-invite-worker";
+import { retryRefusedDeliveries } from "@/lib/waitlist/over-invite-retry";
 
 // The over-invite port and worker against a REAL database with 0363 applied (owned local stack, synthetic data only). The mail provider is a fake;
 // the commands are the real ones. Requires 0363: with it absent every test fails loudly rather than skipping.
@@ -18,7 +19,14 @@ const db = {
     const vals = Object.values(args);
     try {
       const r = await adminQuery(`select * from public.${name}(${vals.map((_, i) => `$${i + 1}`).join(",")})`, vals as unknown[]);
-      return { data: r.rows, error: null };
+      // PostgREST returns a scalar function's value bare, not as a one-column row.
+      const first = r.rows[0] as Record<string, unknown> | undefined;
+      const scalar = r.rows.length === 1 && first && Object.keys(first).length === 1 && Object.keys(first)[0] === name;
+      // pg returns a `date` as a Date at UTC midnight; PostgREST returns it as 'YYYY-MM-DD'.
+      const rows = r.rows.map((row: Record<string, unknown>) =>
+        Object.fromEntries(Object.entries(row).map(([k, v]) => [k, v instanceof Date ? ((k === "start_date" || k === "end_date") ? v.toISOString().slice(0, 10) : v.toISOString()) : v])),
+      );
+      return { data: scalar ? first[name] : rows, error: null };
     } catch (e) {
       return { data: null, error: { code: String((e as { code?: string }).code ?? "unknown") } };
     }
@@ -83,8 +91,9 @@ function deps(deliver: (entryId: string) => DeliveryState, log: string[] = []): 
 }
 async function drain(d: WorkerDeps) {
   const out = [];
-  for (let i = 0; i < 20; i++) {
-    const r = await runBatchChunk(d, { perStudio: 25, total: 25, leaseSeconds: 600 });
+  for (let i = 0; i < 60; i++) {
+    const r = await runBatchChunk(d, { perStudio: 5, total: 5, leaseSeconds: 120 });
+    if (process.env.OV_DEBUG) console.log("CHUNK", JSON.stringify(r));
     if (!r.ok || r.claimed === 0) break;
     out.push(...r.outcomes);
   }
@@ -100,7 +109,7 @@ describe("over-invite worker against the real batch commands", () => {
     expect(out.filter((o) => o.status === "sent")).toHaveLength(10);
   });
 
-  it("60 confirmed are processed in full across chunks of 25, each exactly once", async () => {
+  it("60 confirmed are processed in full across rounds, each exactly once", async () => {
     const f = await seed("b");
     const ids = await entries(f, 60);
     await batch(f, ids, { fit: 0 });
@@ -169,7 +178,7 @@ describe("over-invite worker against the real batch commands", () => {
     const other = await seed("h2");
     const ids = await entries(f, 2);
     await batch(f, ids, { fit: 0 });
-    const claimed = await claimItems(db, { perStudio: 25, total: 25, leaseSeconds: 600 });
+    const claimed = await claimItems(db, { perStudio: 5, total: 5, leaseSeconds: 120 });
     expect(claimed.ok).toBe(true);
     const mine = (claimed as { items: { itemId: string; studioId: string; entryId: string }[] }).items.filter((i) => i.studioId === f.studioId);
     expect(mine).toHaveLength(2);
@@ -185,7 +194,7 @@ describe("over-invite worker against the real batch commands", () => {
     expect(await stateOf(a.itemId)).toBe("skipped");
   });
 
-  it("preview counts what can be invited, and an expired invitation cannot be replaced", async () => {
+  it("preview counts what can be invited, and an entry with no live invitation cannot be replaced", async () => {
     const f = await seed("g");
     const ids = await entries(f, 2);
     expect(await previewSelection(db, { studioId: f.studioId, actorUserId: f.userId, entryIds: ids, startDate: day(1), endDate: day(30), allowedWeekdays: null })).toMatchObject({
@@ -196,8 +205,10 @@ describe("over-invite worker against the real batch commands", () => {
     });
     await batch(f, ids, { fit: 0 });
     await drain(deps(() => "accepted"));
-    await q(`update public.new_client_waitlist_invitations set expires_at = now() - interval '1 minute' where studio_id=$1 and entry_id=$2`, [f.studioId, ids[0]]);
-    const r = await replaceInvitation(db, { studioId: f.studioId, actorUserId: f.userId, entryId: ids[0] });
-    expect(r.ok && r.result).not.toBe("replaced");
+    // An invitation's window is immutable in the database, so expiry cannot be forced here; the app-side expiry refusal is covered by the delivery
+    // unit tests. What the database must still refuse: replacing an invitation for an entry that has none.
+    const fresh = (await entries(f, 1))[0];
+    const r = await replaceInvitation(db, { studioId: f.studioId, actorUserId: f.userId, entryId: fresh });
+    expect(r.ok && r.result).toBe("no_live_invitation");
   });
 });

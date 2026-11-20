@@ -1,60 +1,70 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useActionState } from "react";
+import { ageLabel, type BatchProgress } from "@/lib/waitlist/over-invite-progress";
 import type { OverInviteResult } from "@/lib/waitlist/over-invite-result";
 
-// Confirmed batches that still have people to send. Shown from the DATABASE on every page load, so a batch left unfinished stays visible with its
-// age and the estimate the owner saw when confirming. NOTHING sends unless the owner presses the button: no page load, timer or background job runs
-// the worker. Pressing it continues this studio's queue only.
+// Confirmed batches and where each one is, read from the database on every load. Sending continues in the background with no page open and no
+// click; this panel only REPORTS. The one control is a separate, explicitly confirmed retry of deliveries the provider refused. An outcome we do
+// not know is never retried.
 
-export type OpenBatch = { id: string; confirmedAt: string; quantity: number; fitShown: number; liveShown: number; remaining: number };
-
-function age(iso: string, now: number): string {
-  const mins = Math.max(0, Math.floor((now - new Date(iso).getTime()) / 60_000));
-  if (mins < 60) return `${mins} minute${mins === 1 ? "" : "s"} ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 48) return `${hrs} hour${hrs === 1 ? "" : "s"} ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days} days ago`;
-}
+export type BatchView = { id: string; confirmedAt: string; quantity: number; fitShown: number; liveShown: number; progress: BatchProgress };
 
 export function OverInviteBatches({
   batches,
-  continueAction,
+  retryAction,
+  stopAction,
   renderedAt,
 }: {
-  batches: readonly OpenBatch[];
-  continueAction: (prev: OverInviteResult) => Promise<OverInviteResult>;
+  batches: readonly BatchView[];
+  retryAction: (prev: OverInviteResult, formData: FormData) => Promise<OverInviteResult>;
+  stopAction: (prev: OverInviteResult, formData: FormData) => Promise<OverInviteResult>;
   renderedAt: number;
 }) {
-  const [pending, start] = useTransition();
-  const [note, setNote] = useState<string | null>(null);
+  const [result, formAction] = useActionState(retryAction, { state: "idle" } as OverInviteResult);
+  const [stopResult, stopFormAction] = useActionState(stopAction, { state: "idle" } as OverInviteResult);
   if (batches.length === 0) return null;
-  const total = batches.reduce((n, b) => n + b.remaining, 0);
+  const refused = batches.reduce((n, b) => n + b.progress.refused, 0);
+  const stopNote = stopResult.state === "notice" ? stopResult.notice : null;
+  const note = result.state === "notice" ? result.notice : result.state === "progress" ? `${result.sent} resent, ${result.failed} still not delivered.` : null;
   return (
-    <section data-testid="over-invite-open-batches" className="flex flex-col gap-2 text-sm" aria-label="Batches still sending">
-      <h2 className="font-medium">Confirmed, still to send</h2>
-      <ul className="flex flex-col gap-1">
+    <section data-testid="over-invite-progress" className="flex flex-col gap-2 text-sm" aria-label="Invitation batches">
+      <h2 className="font-medium">Your confirmed batches</h2>
+      <ul className="flex flex-col gap-2">
         {batches.map((b) => (
-          <li key={b.id} data-testid="open-batch">
-            Confirmed {age(b.confirmedAt, renderedAt)} · {b.remaining} of {b.quantity} still to send · estimate then: {b.fitShown} available, {b.liveShown} active
+          <li key={b.id} data-testid="batch-progress">
+            <span>
+              Confirmed {ageLabel(b.confirmedAt, renderedAt)} · {b.quantity} chosen · estimate then: {b.fitShown} available, {b.liveShown} active
+            </span>
+            <br />
+            <span>
+              {b.progress.sent} sent · {b.progress.waiting} waiting to send · {b.progress.refused} refused by the email provider · {b.progress.unknown} outcome unknown ·{" "}
+              {b.progress.skipped} not sent · {b.progress.stopped} stopped{b.progress.otherFailed > 0 ? ` · ${b.progress.otherFailed} failed` : ""}
+            </span>
+            {b.progress.waiting > 0 ? (
+              <form action={stopFormAction as unknown as (formData: FormData) => void} className="mt-1">
+                <input type="hidden" name="batchId" value={b.id} />
+                <button type="submit" className="min-h-11 rounded-md border px-3">
+                  Stop sending the rest
+                </button>
+              </form>
+            ) : null}
           </li>
         ))}
       </ul>
-      <p>These were confirmed earlier. Availability may have changed since. They send only when you press the button.</p>
-      <button
-        type="button"
-        disabled={pending}
-        className="min-h-11 self-start rounded-md border px-3"
-        onClick={() =>
-          start(async () => {
-            const r = await continueAction({ state: "idle" });
-            setNote(r.state === "progress" ? `${r.sent} sent, ${r.skipped} not sent, ${r.failed} could not be delivered.` : r.state === "notice" ? r.notice : null);
-          })
-        }
-      >
-        Keep sending the remaining {total}
-      </button>
+      <p>Waiting invitations are sent in the background; you do not need to keep this page open. An outcome we do not know is never resent automatically.</p>
+      {refused > 0 ? (
+        <form action={formAction as unknown as (formData: FormData) => void} className="flex flex-col gap-2">
+          <label className="flex min-h-11 items-start gap-2">
+            <input type="checkbox" name="confirmRetry" className="mt-1" />
+            <span>Retry the {refused} refused deliveries now. Each gets a fresh invitation link and a new email. If an email was in fact delivered without being confirmed, the person receives a second email and the first link stops working.</span>
+          </label>
+          <button type="submit" className="min-h-11 self-start rounded-md border px-3">
+            Retry refused deliveries
+          </button>
+        </form>
+      ) : null}
+      {stopNote ? <p role="status">{stopNote}</p> : null}
       {note ? <p role="status">{note}</p> : null}
     </section>
   );

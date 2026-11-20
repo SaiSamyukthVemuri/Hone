@@ -264,7 +264,7 @@ const REASON = /^[a-z_]{1,40}$/;
 export type SettleTarget = { itemId: string; studioId: string; entryId: string };
 
 /** The item must belong to BOTH the studio and the entry named (0363): a mismatch answers not_found and changes nothing. Pass them from the claimed row. */
-export async function settleItem(db: Rpc, target: SettleTarget, outcome: "sent" | "failed" | "skipped", reasonClass: string | null): Promise<SettleOutcome> {
+export async function settleItem(db: Rpc, target: SettleTarget, outcome: "sent" | "failed" | "unknown" | "skipped", reasonClass: string | null): Promise<SettleOutcome> {
   if (outcome !== "sent" && (reasonClass === null || !REASON.test(reasonClass))) return { ok: false, code: "bad_shape" };
   const { data, error } = await db.rpc("settle_waitlist_batch_item", {
     p_item_id: target.itemId,
@@ -276,4 +276,24 @@ export async function settleItem(db: Rpc, target: SettleTarget, outcome: "sent" 
   if (error) return failure(error);
   const result = str(data);
   return result ? { ok: true, result } : { ok: false, code: "bad_shape" };
+}
+
+// ---- stop -----------------------------------------------------------------------------------------------------------------------------------
+
+export type StopOutcome = { ok: true; result: "stopped" | "nothing_pending" | "not_owner" | "not_found" | "invalid_input"; cancelled: number } | PortFailure;
+
+/** Owner-only. Moves the batch's pending (and lease-expired claimed, never-issued) items to skipped 'owner_stopped'; in-flight items finish. */
+export async function stopBatch(db: Rpc, input: { studioId: string; actorUserId: string; batchId: string; leaseSeconds: number }): Promise<StopOutcome> {
+  const { data, error } = await db.rpc("stop_waitlist_batch", {
+    p_studio_id: input.studioId,
+    p_actor_user_id: input.actorUserId,
+    p_batch_id: input.batchId,
+    p_lease_seconds: input.leaseSeconds,
+  });
+  if (error) return failure(error);
+  const row = rows(data)?.[0];
+  const result = str(row?.result);
+  const known = ["stopped", "nothing_pending", "not_owner", "not_found", "invalid_input"] as const;
+  if (!row || !result || !(known as readonly string[]).includes(result)) return { ok: false, code: "bad_shape" };
+  return { ok: true, result: result as (typeof known)[number], cancelled: int(row.cancelled) ?? 0 };
 }

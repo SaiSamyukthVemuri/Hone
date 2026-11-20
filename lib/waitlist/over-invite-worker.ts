@@ -1,4 +1,4 @@
-import type { ClaimedItem, ClaimOutcome, AdmitOutcome, IssuedInvitation, ReplaceOutcome, SettleOutcome, SettleTarget } from "./over-invite-port";
+import type { ClaimedItem, ClaimOutcome, AdmitOutcome, IssuedInvitation, SettleOutcome, SettleTarget } from "./over-invite-port";
 
 // The over-invite batch WORKER, as logic over injected ports (no database, no mail provider, no SMS: this module has no SMS dependency at all, so
 // no waitlist text can be sent from here). It implements Machines' worker contract for one claimed chunk:
@@ -8,8 +8,9 @@ import type { ClaimedItem, ClaimOutcome, AdmitOutcome, IssuedInvitation, Replace
 //  - A REFUSED admit leaves the item CLAIMED, so the worker MUST settle it `skipped` with a reason class, or the lease expires and the item is
 //    claimed and retried forever. Every non-admitted result below settles.
 //  - `no_capacity` on a batch item settles as skipped (the entry stays waiting). A confirmed batch is governed by its own confirmation, not the fit.
-//  - The worker NEVER re-admits. A failed DELIVERY after a successful admit is retried through `replace` (same entry), which re-issues in one step;
-//    an item whose delivery outcome is UNKNOWN is never auto-retried, because it may have reached the provider and a second send is a duplicate.
+//  - The worker NEVER re-admits and NEVER retries. A refused delivery settles `failed` and an unknown one settles `unknown`; both stay as they are until
+//    the OWNER separately confirms a retry of the refused ones (over-invite-retry.ts, the only module that uses replace). An UNKNOWN delivery is never
+//    retried by anything, because it may have reached the provider and a second send is a duplicate.
 //  - One item in flight, spaced by the caller's sleep; chunk bounded by the claim's `total`. The database enforces none of those.
 //  - Nothing here logs. The admit/replace results carry an email, a name and a raw token: they are passed to `deliver` and dropped.
 
@@ -18,7 +19,7 @@ export type DeliveryState = "accepted" | "refused" | "unknown";
 export type WorkerDeps = {
   claim: (limits: { perStudio: number; total: number; leaseSeconds: number }) => Promise<ClaimOutcome>;
   admit: (item: ClaimedItem) => Promise<AdmitOutcome>;
-  settle: (target: SettleTarget, outcome: "sent" | "failed" | "skipped", reasonClass: string | null) => Promise<SettleOutcome>;
+  settle: (target: SettleTarget, outcome: "sent" | "failed" | "unknown" | "skipped", reasonClass: string | null) => Promise<SettleOutcome>;
   /** Sends the one invitation email. `entryId` lets the deliverer re-read the stored address when the command did not return one. */
   deliver: (issued: IssuedInvitation, entryId: string, item: ClaimedItem) => Promise<DeliveryState>;
   /** Re-reads, immediately before the send, that the entry may still be mailed (waiting/invited, not removed, has an address). */
@@ -33,29 +34,37 @@ export type ItemOutcome =
 
 export type ChunkResult = { ok: true; outcomes: ItemOutcome[]; claimed: number } | { ok: false; code: "claim_failed" };
 
-export const DEFAULT_LIMITS = { perStudio: 25, total: 25, leaseSeconds: 120 } as const;
+/**
+ * LEASE > the time a whole claimed round can take. Items of a round wait their turn one at a time, so the last one is claimed for the sum of every
+ * earlier item: chunk x (spacing + the slowest admit + send we allow). An item whose lease runs out before its turn would be reclaimed and could be
+ * admitted twice by a second worker, so the arithmetic is pinned by a test.
+ */
 export const SPACING_MS = 500;
+export const ITEM_BUDGET_MS = 8_000;
+// A round is small ON PURPOSE: its worst case (total x (spacing + item budget) = 42.5 s) must fit inside the cron route's 60 s function cap, so a
+// round is never cut off mid-way. A batch of any size is simply more rounds; the chunk is pagination, never a cap.
+export const DEFAULT_LIMITS = { perStudio: 5, total: 5, leaseSeconds: 120 } as const;
 
 /** Reason classes are fixed codes ([a-z_]{1,40}); the command's own result code is used as-is when it fits, never free text. */
-function reasonFor(result: string): string {
+export function reasonFor(result: string): string {
   return /^[a-z_]{1,40}$/.test(result) ? result : "refused";
 }
 
 /**
- * `ownStudioId`: the claim queue is GLOBAL across studios, so a claim can return another studio's confirmed items. An owner's click must never send
- * another owner's batch: items of any other studio are left exactly as claimed (not admitted, not settled), and the database returns them to the
+ * `scope`: the claim queue is GLOBAL across studios and batches, so a claim can return items the caller was not asked to serve. The owner's confirm
+ * action serves ITS OWN batch only; the background route passes no scope and serves everything. Items outside the scope are left exactly as claimed (not admitted, not settled), and the database returns them to the
  * queue when their lease runs out. They are not counted in `claimed`, so the loop is not kept alive by them.
  */
 export async function runBatchChunk(
   deps: WorkerDeps,
   limits: { perStudio: number; total: number; leaseSeconds: number } = DEFAULT_LIMITS,
-  ownStudioId?: string,
+  scope: { studioId?: string; batchId?: string } = {},
 ): Promise<ChunkResult> {
   const claimed = await deps.claim(limits);
   if (!claimed.ok) return { ok: false, code: "claim_failed" };
   const outcomes: ItemOutcome[] = [];
   let first = true;
-  const mine = ownStudioId === undefined ? claimed.items : claimed.items.filter((i) => i.studioId === ownStudioId);
+  const mine = claimed.items.filter((i) => (scope.studioId === undefined || i.studioId === scope.studioId) && (scope.batchId === undefined || i.batchId === scope.batchId));
   for (const item of mine) {
     if (!first) await deps.sleep(SPACING_MS);
     first = false;
@@ -101,62 +110,9 @@ async function runOne(deps: WorkerDeps, item: ClaimedItem): Promise<ItemOutcome>
     const s = await deps.settle(target, "sent", null);
     return s.ok ? { ...base, status: "sent" } : { ...base, status: "failed", reason: "settle_failed" };
   }
+  // REFUSED is a known failure (only the owner's separately confirmed retry may touch it). UNKNOWN is its own state in the database: the delivery may
+  // have reached the provider, so it is never retried by anything automatic and never by the retry action either.
   const reason = state === "refused" ? "delivery_refused" : "delivery_unknown";
-  const s = await deps.settle(target, "failed", reason);
+  const s = await deps.settle(target, state === "refused" ? "failed" : "unknown", reason);
   return s.ok ? { ...base, status: "failed", reason } : { ...base, status: "failed", reason: "settle_failed" };
-}
-
-// ---- retry ----------------------------------------------------------------------------------------------------------------------------------
-
-export type RetryDeps = {
-  replace: (entryId: string) => Promise<ReplaceOutcome>;
-  deliver: (issued: IssuedInvitation, entryId: string) => Promise<DeliveryState>;
-  settle: WorkerDeps["settle"];
-  sleep: (ms: number) => Promise<void>;
-};
-
-export type RetryOutcome =
-  | { entryId: string; status: "sent" }
-  | { entryId: string; status: "failed"; reason: "delivery_refused" | "delivery_unknown" | "settle_failed" }
-  | { entryId: string; status: "skipped"; reason: string };
-
-/**
- * Retry ONLY entries whose delivery was REFUSED, through replace (never admit again). An UNKNOWN-delivery item is not accepted here: it may have
- * reached the provider, and the owner must decide. The caller passes the item ids so a retry that succeeds can settle the item `sent`.
- */
-export async function retryRefusedDeliveries(deps: RetryDeps, targets: readonly { entryId: string; itemId: string; studioId: string }[]): Promise<RetryOutcome[]> {
-  const out: RetryOutcome[] = [];
-  let first = true;
-  for (const t of targets) {
-    if (!first) await deps.sleep(SPACING_MS);
-    first = false;
-    let rep: ReplaceOutcome;
-    try {
-      rep = await deps.replace(t.entryId);
-    } catch {
-      out.push({ entryId: t.entryId, status: "failed", reason: "delivery_unknown" });
-      continue;
-    }
-    if (!rep.ok) {
-      out.push({ entryId: t.entryId, status: "skipped", reason: "replace_unavailable" });
-      continue;
-    }
-    if (rep.result !== "replaced" || !("issued" in rep)) {
-      out.push({ entryId: t.entryId, status: "skipped", reason: reasonFor(rep.result.replace(/:.*/, "")) });
-      continue;
-    }
-    let state: DeliveryState;
-    try {
-      state = await deps.deliver(rep.issued, t.entryId);
-    } catch {
-      state = "unknown";
-    }
-    if (state === "accepted") {
-      const s = await deps.settle({ itemId: t.itemId, studioId: t.studioId, entryId: t.entryId }, "sent", null);
-      out.push(s.ok ? { entryId: t.entryId, status: "sent" } : { entryId: t.entryId, status: "failed", reason: "settle_failed" });
-    } else {
-      out.push({ entryId: t.entryId, status: "failed", reason: state === "refused" ? "delivery_refused" : "delivery_unknown" });
-    }
-  }
-  return out;
 }
