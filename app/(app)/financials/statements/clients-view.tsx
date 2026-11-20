@@ -42,7 +42,7 @@ export function ClientsView({ month, monthLabel, maxMonth, timezone, notice, pag
   return (
     <div className="space-y-6">
       <header className="space-y-4">
-        <p className="text-sm text-[#5d685f]">Business &nbsp;/&nbsp; Statements</p>
+        <p className="text-sm text-fg-muted">Business &nbsp;/&nbsp; Statements</p>
         <div className="flex flex-wrap items-end justify-between gap-3">
           <h1 className="text-[clamp(32px,4vw,46px)] font-bold leading-[1.07] tracking-[-2px] text-fg">Clients this month</h1>
           <MonthControls base="/financials/statements" month={month} maxMonth={maxMonth} />
@@ -72,7 +72,7 @@ export function ClientsView({ month, monthLabel, maxMonth, timezone, notice, pag
           <EmptyState title={`No client visits in ${monthLabel}.`} description="A client appears here once they have a completed visit, a fee or a payment recorded in the month. Use Find a client to open anyone's full history." />
         ) : paged ? (
           <>
-            <div className="overflow-x-auto rounded-xl border border-[#dbe0d8] bg-white">
+            <div className="overflow-x-auto rounded-xl border border-line bg-white">
               <table className="w-full text-sm">
                 <caption className="sr-only">Clients with visits in {monthLabel}</caption>
                 {/* The reference draws no column heads; they stay for screen readers. */}
@@ -86,18 +86,18 @@ export function ClientsView({ month, monthLabel, maxMonth, timezone, notice, pag
                 </thead>
                 <tbody>
                   {paged.rows.map((r) => (
-                    <tr key={r.clientId} className="border-t border-[#e6e8e3] hover:bg-[#f8faf6]">
+                    <tr key={r.clientId} className="border-t border-line hover:bg-surface-sunken">
                       <th scope="row" className="px-[18px] py-3 text-left font-normal">
-                        <PendingLink href={clientStatementHref(r.clientId, month)} className={cx("inline-flex items-center font-semibold text-[#244e38] underline underline-offset-[3px]", CONTROL_MIN_TOUCH, FOCUS_RING)}>{r.name}</PendingLink>
+                        <PendingLink href={clientStatementHref(r.clientId, month)} className={cx("inline-flex items-center font-semibold text-fg underline underline-offset-[3px]", CONTROL_MIN_TOUCH, FOCUS_RING)}>{r.name}</PendingLink>
                       </th>
                       <td className="px-3 py-3 tabular-nums text-fg">{r.visitCount} {r.visitCount === 1 ? "visit" : "visits"}</td>
                       <td className="px-[18px] py-3 text-right tabular-nums">
                         <span className="block font-medium text-fg">{splitCurrency(format(r.paidCents)).amount}</span>
-                        <span className="block text-xs text-[#5d685f]">{rowStatusText(r)}</span>
+                        <span className="block text-xs text-fg-muted">{rowStatusText(r)}</span>
                       </td>
                       <td className="px-[18px] py-3 text-right">
                         {/* The row's document action: opens that client's statement for the month, where Print / Save as PDF and Export CSV already work. */}
-                        <PendingLink href={clientStatementHref(r.clientId, month)} aria-label={`Statement for ${r.name}`} className={cx("inline-flex items-center rounded-lg border border-[#d6dbd3] bg-white px-3 text-sm text-fg hover:bg-[#edf1eb]", CONTROL_MIN_TOUCH, FOCUS_RING)}>Statement</PendingLink>
+                        <PendingLink href={clientStatementHref(r.clientId, month)} aria-label={`Statement for ${r.name}`} className={cx("inline-flex items-center rounded-lg border border-line-strong bg-white px-3 text-sm text-fg hover:bg-surface-sunken", CONTROL_MIN_TOUCH, FOCUS_RING)}>Statement</PendingLink>
                       </td>
                     </tr>
                   ))}

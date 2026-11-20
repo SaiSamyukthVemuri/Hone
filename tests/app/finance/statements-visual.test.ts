@@ -111,7 +111,8 @@ describe("the client statement, restyled", () => {
     expect(out).toMatch(/Duration/);
     expect(out).toMatch(/Practitioner One/);
     expect(out).toMatch(/No payment recorded/);
-    expect(out).toMatch(/rounded-\[20px\][^"]*bg-\[#eaf2e9\][^"]*">Paid</); // paid is drawn green, in the Studio tab's pill shape
+    expect(out).toMatch(/rounded-\[20px\][^"]*bg-success-surface text-success-fg[^"]*">Paid</); // Paid keeps the success green, in the Studio tab's pill shape
+    expect(out).toMatch(/rounded-\[20px\][^"]*bg-warning-surface text-warning-fg[^"]*">Payment not confirmed</); // a visit that needs attention is amber
   });
   it("ONE responsive row set serves the wide and the phone layout: the pill, the unchanged label and the expander are each present exactly once per visit", () => {
     const out = html(docFor([visit()]));
@@ -120,10 +121,9 @@ describe("the client statement, restyled", () => {
     expect(out.match(/<details class="group/g)?.length).toBe(1);
     expect(out).toMatch(/Practitioner One/);
   });
-  it("the summary cards of the Studio tab and the client statement share ONE sage tone, the approved reference's", () => {
+  it("the summary cards of the Studio tab and the client statement share ONE neutral tone: white with the static edge, no tint", () => {
     const out = html(docFor([visit()]));
-    // the reference stylesheet's own values: #eaf0e7 on a #d1ddce edge
-    expect(out).toMatch(/border-\[#d1ddce\][^"]*bg-\[#eaf0e7\]/);
+    expect(out).toMatch(/border border-line bg-surface/);
     // the Clients tab no longer has a tinted summary strip (the reference's header is plain), so only the two card screens use the tone
     for (const f of ["client-statement-view.tsx", "clients-view.tsx", "../statement/statement-view.tsx"]) {
       expect(read("app/(app)/financials/statements/" + f), f).not.toMatch(/bg-success-surface\/\d+/);
@@ -136,7 +136,7 @@ describe("the client statement, restyled", () => {
     expect(out.match(/<details class="group/g)?.length).toBe(2);
     expect(out.match(/<span class="text-right font-medium tabular-nums[^"]*">\$60\.00<\/span>/g)?.length).toBe(2);
     expect(out).toMatch(/<span class="text-right">Collected<\/span>/);
-    expect(out).toMatch(/rounded-xl border border-\[#dbe0d8\]/);
+    expect(out).toMatch(/rounded-xl border border-line/);
   });
   it("the month and full-history controls keep their links and aria-current", () => {
     const out = html(docFor([visit()]));

@@ -60,9 +60,9 @@ describe("chrome and actions", () => {
     expect(out).toMatch(/<h2 id="stmt-find" class="sr-only">Find a client<\/h2>/);
     expect(out).toContain('aria-current="page"');
     const print = out.match(/<a [^>]*><span[^>]*>Print \/ Save as PDF<\/span>/)?.[0] ?? "";
-    expect(print).toContain("bg-[#1f3d2e]");
+    expect(print).toContain("bg-accent"); // the app's solid action
     const csv = out.match(/<a [^>]*>Export CSV<\/a>/)?.[0] ?? "";
-    expect(csv).not.toContain("bg-[#1f3d2e]");
+    expect(csv).not.toContain("bg-accent");
     expect(csv).toContain("href=");
   });
   it("without tabs or a finder the old Back to Clients link stays", () => {
@@ -129,7 +129,7 @@ describe("the toolbar and the visits header", () => {
     const header = section.slice(0, section.indexOf("<div class=\"overflow-hidden"));
     expect(header).toMatch(/>Client visits<\/h2><p[^>]*>November 2026 · Latest first<\/p>/);
     expect(header).toContain("Export CSV");
-    expect(header).toMatch(/bg-\[#1f3d2e\][^>]*><span[^>]*>Print \/ Save as PDF</);
+    expect(header).toMatch(/bg-accent[^>]*><span[^>]*>Print \/ Save as PDF</);
     expect(out.slice(0, out.indexOf('aria-labelledby="cs-visits"'))).not.toContain("Export CSV");
     expect(out).not.toMatch(/Create invoice|Invoice/);
   });

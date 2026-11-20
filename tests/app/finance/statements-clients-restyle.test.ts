@@ -35,19 +35,19 @@ describe("the Clients tab matches the Studio tab's chrome and the approved grid"
     expect(out).toMatch(/<h1[^>]*>Clients this month<\/h1>/);
     expect(out).not.toMatch(/<h1[^>]*>Monthly statements<\/h1>/);
   });
-  it("the client is a green underlined link to their statement for the month; the visit count reads '2 visits' (singular for one)", () => {
+  it("the client is an underlined charcoal link to their statement for the month; the visit count reads '2 visits' (singular for one)", () => {
     const out = render([row(), row({ clientId: "c2", name: "Grace Hopper", visitCount: 1 })]);
     const tag = out.match(/<a [^>]*><span[^>]*>Ada Lovelace<\/span>/)?.[0] ?? "";
     expect(tag).toContain('href="/financials/statements/c1?month=2026-11"');
-    expect(tag).toContain("text-[#244e38]");
+    expect(tag).toContain("text-fg");
     expect(tag).toContain("underline");
     expect(out).toContain(">2 visits<");
     expect(out).toContain(">1 visit<");
   });
   it("the amount is grouped by thousands and carries its status BENEATH it in the same cell, in the directory's own words", () => {
     const out = render([row({ paidCents: 123456 }), row({ clientId: "c2", name: "Grace Hopper", paidCents: 5000, awaitingCount: 1 })]);
-    expect(out).toMatch(/<span class="block font-medium text-fg">\$1,234\.56<\/span><span class="block text-xs text-\[#5d685f\]">All confirmed<\/span>/);
-    expect(out).toMatch(/\$50\.00<\/span><span class="block text-xs text-\[#5d685f\]">1 visit awaiting payment confirmation<\/span>/);
+    expect(out).toMatch(/<span class="block font-medium text-fg">\$1,234\.56<\/span><span class="block text-xs text-fg-muted">All confirmed<\/span>/);
+    expect(out).toMatch(/\$50\.00<\/span><span class="block text-xs text-fg-muted">1 visit awaiting payment confirmation<\/span>/);
     expect(out).not.toContain("Payment status"); // the column is gone; the words moved under the amount
     const list = out.slice(out.indexOf("<tbody"), out.indexOf("</table>"));
     expect(list).not.toContain("CAD"); // no currency suffix on a row, as on the Studio tab (CAD stays in the footnote totals line)
@@ -59,9 +59,9 @@ describe("the Clients tab matches the Studio tab's chrome and the approved grid"
     expect(out).toMatch(/<th scope="col"[^>]*>Client<\/th>/);
     expect(out).toMatch(/<th scope="row"/);
   });
-  it("the page tints its content area #fafbf9 (source guard) and formats money with thousands separators", () => {
+  it("the page keeps its content area on the white ground, no tint (source guard) and formats money with thousands separators", () => {
     const src = readFileSync("app/(app)/financials/statements/page.tsx", "utf8");
-    expect(src).toContain('<div className="bg-[#fafbf9] min-[1140px]:-mx-[45px]">'); // the same breakout width as the Studio tab
+    expect(src).toContain('<div className="bg-surface min-[1140px]:-mx-[45px]">'); // the same breakout width as the Studio tab
     expect(src).toContain("formatStatementMoney(c, currency)");
   });
 });
@@ -105,7 +105,7 @@ describe("each client row has a real document action", () => {
     for (const [id, name] of [["c1", "Ada Lovelace"], ["c2", "Grace Hopper"]]) {
       const tag = out.match(new RegExp(`<a [^>]*aria-label="Statement for ${name}"[^>]*>`))?.[0] ?? "";
       expect(tag, name).toContain(`href="/financials/statements/${id}?month=2026-11"`);
-      expect(tag).toContain("border-[#d6dbd3]");
+      expect(tag).toContain("border-line-strong");
     }
     expect(out.match(/>Statement<\/span>/g)?.length).toBe(2);
     expect(out).not.toMatch(/Invoice/);

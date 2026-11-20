@@ -172,14 +172,14 @@ describe("the method bar appears only when the segments reconcile to the collect
 
 describe("what a visit row says", () => {
   it("studioVisitStatus: Payment recorded when money was collected with no price known; otherwise the adjustment or note in the screen's own words", () => {
-    expect(studioVisitStatus([{ kind: "collected_cash", cents: 100 }])).toEqual({ label: "Payment recorded", tone: "paid" }); // no price known: never claimed as paid in full
+    expect(studioVisitStatus([{ kind: "collected_cash", cents: 100 }])).toEqual({ label: "Payment recorded", tone: "neutral" }); // no price known: never claimed as paid in full
     expect(studioVisitStatus([{ kind: "refunded_card_session", cents: 100 }]).label).toBe("Refunded in full");
     expect(studioVisitStatus([{ kind: "waived", cents: 100 }]).label).toBe("Waived");
     expect(studioVisitStatus([{ kind: "still_owes_note", cents: null }]).label).toBe("Marked still owing");
-    expect(studioVisitStatus([{ kind: "unresolved", cents: null }])).toEqual({ label: "Unresolved", tone: "neutral", reason: "A payment or refund is unresolved" });
+    expect(studioVisitStatus([{ kind: "unresolved", cents: null }])).toEqual({ label: "Unresolved", tone: "warning", reason: "A payment or refund is unresolved" });
     expect(studioVisitStatus([{ kind: "collected_card_session", cents: 100 }, { kind: "refunded_card_fee", cents: 50 }]).label).toBe("Paid");
     // with no price or balance known, money recorded beside a still-owing or waived note is NOT "Paid" (it cannot mean paid in full)
-    expect(studioVisitStatus([{ kind: "collected_cash", cents: 5000 }, { kind: "still_owes_note", cents: null }])).toEqual({ label: "Payment recorded", tone: "paid" });
+    expect(studioVisitStatus([{ kind: "collected_cash", cents: 5000 }, { kind: "still_owes_note", cents: null }])).toEqual({ label: "Payment recorded", tone: "neutral" });
     expect(studioVisitStatus([{ kind: "collected_cash", cents: 5000 }, { kind: "waived", cents: 1000 }]).label).toBe("Payment recorded");
   });
   it("visitCollectedCents sums collected-method lines only and is null with none", () => {
@@ -225,7 +225,7 @@ describe("the chrome", () => {
   });
   it("the contained width breakout is on the page wrapper only and only from 1140px, so a phone has no sideways scroll from it", () => {
     const src = readFileSync("app/(app)/financials/statement/page.tsx", "utf8");
-    expect(src).toMatch(/className="bg-\[#fafbf9\] min-\[1140px\]:-mx-\[45px\]"/);
+    expect(src).toMatch(/className="bg-surface min-\[1140px\]:-mx-\[45px\]"/);
     expect(src).not.toMatch(/(^|[\s"])-mx-\[45px\]/m);
   });
 });
