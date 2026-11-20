@@ -7,7 +7,7 @@ import { readAppointmentsKeyset, readMoneyForAppointments } from "@/lib/finance/
 import { createClient } from "@/lib/supabase/server";
 import type { Studio } from "@/lib/types/database";
 
-import { UNNAMED_TEAM_MEMBER_LABEL } from "../copy";
+import { FORMER_TEAM_MEMBER_LABEL, UNNAMED_TEAM_MEMBER_LABEL } from "../copy";
 import type { FigureRead } from "../figure";
 import { buildOverview, type FollowThroughData, type HistoryData, type OverviewView, type PractitionerInfo, type WindowData } from "../overview-model";
 import { parseOverviewParams, type OverviewParams, type RawParams } from "../overview-params";
@@ -120,6 +120,10 @@ export async function loadOverview(
     .filter((p) => p.active)
     .map((p) => ({ id: p.id, label: p.displayName && p.displayName.trim() ? p.displayName.trim() : UNNAMED_TEAM_MEMBER_LABEL }))
     .sort((a, b) => a.label.localeCompare(b.label) || a.id.localeCompare(b.id));
+  // A SELECTED team member who is no longer active still has visits to show. The form lists active members only, so without this the browser would
+  // show "Everyone" while the data is filtered: list the selected one, as a former team member, never by name.
+  const chosen = parsed.params.practitioner.kind === "one" ? parsed.params.practitioner.practitionerId : null;
+  if (chosen !== null && !practitionerOptions.some((o) => o.id === chosen)) practitionerOptions.push({ id: chosen, label: FORMER_TEAM_MEMBER_LABEL });
   return { access: "granted", ok: true, view, params: parsed.params, notices: parsed.notices, practitionerOptions };
 }
 
