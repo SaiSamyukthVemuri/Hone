@@ -11,6 +11,8 @@
  *     inserter, never as absent;
  *   - a file that ends inside a quote or a comment marks its last statement unparseable;
  *   - a `drop function` that cannot be matched to exactly one definition keeps every candidate and is reported as an AMBIGUOUS DROP;
+ *   - `create procedure`, `create rule` and `create aggregate` are not modelled at all, so each is reported (a rule can rewrite an insert; a procedure can
+ *     contain one), and so is any `insert into appointments` that is NOT inside a tracked function (a DO block, a top-level statement, a trigger body);
  *   - `alter function ... rename` or `... set schema` is reported (a renamed function would otherwise vanish from its old name), and so is a function
  *     created dynamically inside a string (a `create function` that is not itself a top-level statement).
  * The consumer treats every one of those lists as "must be empty or explicitly listed", so a new shape that the scanner cannot read fails a test
@@ -41,6 +43,8 @@ export type Census = {
   ambiguousDrops: { file: string; statement: string }[];
   renames: { file: string; statement: string }[];
   dynamicDefinitions: { file: string; excerpt: string }[];
+  /** Objects this census does not model (a procedure, a rule, an aggregate) and an appointment insert that is not inside a tracked function (a DO block, a top-level statement). */
+  unmodelled: { file: string; reason: string; excerpt: string }[];
 };
 
 // ---- the scanner -------------------------------------------------------------------------------------------------------------------------------------
@@ -220,7 +224,7 @@ function splitTop(list: string): string[] {
 
 /**
  * PostgreSQL spells one type several ways and treats them as ONE function: `timestamptz` and `timestamp with time zone`, `int` and `integer`. A census
- * that keyed on the spelling would keep a replaced definition beside its replacement (0152 and 0220 did exactly that for one command), so the aliases
+ * that keyed on the spelling would keep a replaced definition beside its replacement (two definitions of one booking command in the chain differ exactly that way), so the aliases
  * are folded to one name before the overload identity is built.
  */
 const TYPE_ALIASES: [RegExp, string][] = [
@@ -263,6 +267,7 @@ function parseName(a: string, b: string | undefined): { schema: string; name: st
 
 const CREATE_HEAD = new RegExp(String.raw`^\s*create\s+(?:or\s+replace\s+)?function\s+${QNAME}\s*\(`, "i");
 const LOOKS_LIKE_CREATE = /\bcreate\s+(?:or\s+replace\s+)?function\b/i;
+const LOOKS_LIKE_OTHER_OBJECT = /\bcreate\s+(?:or\s+replace\s+)?(?:procedure|rule|aggregate)\b/i;
 
 function parseCreate(stmt: string, file: string): { def?: FunctionDef; bad?: Unparseable } {
   const head = CREATE_HEAD.exec(stmt);
@@ -337,13 +342,18 @@ function applyDrop(stmt: string, file: string, functions: Map<string, FunctionDe
 /** Build the census from the files, which must be given in migration order. */
 export function buildCensus(files: readonly MigrationFile[]): Census {
   const functions = new Map<string, FunctionDef>();
-  const census: Census = { functions, unparseable: [], ambiguousDrops: [], renames: [], dynamicDefinitions: [] };
+  const census: Census = { functions, unparseable: [], ambiguousDrops: [], renames: [], dynamicDefinitions: [], unmodelled: [] };
   for (const f of files) {
     const { statements, unterminated } = scan(f.sql);
     statements.forEach((stmt, idx) => {
       const last = idx === statements.length - 1;
       if (unterminated && last) {
         census.unparseable.push({ file: f.name, reason: "the file ends inside a quote or a comment", excerpt: stmt.replace(/\s+/g, " ").trim().slice(0, 140) });
+        return;
+      }
+      const objectKind = /^\s*create\s+(?:or\s+replace\s+)?(procedure|rule|aggregate)\b/i.exec(stmt);
+      if (objectKind) {
+        census.unmodelled.push({ file: f.name, reason: `create ${objectKind[1].toLowerCase()} is not modelled`, excerpt: stmt.replace(/\s+/g, " ").trim().slice(0, 140) });
         return;
       }
       if (/^\s*create\s+(?:or\s+replace\s+)?function\b/i.test(stmt)) {
@@ -362,6 +372,9 @@ export function buildCensus(files: readonly MigrationFile[]): Census {
       }
       // A function created inside a string (a DO block, an execute): it is not a top-level statement, so the census cannot track it.
       if (LOOKS_LIKE_CREATE.test(stmt)) census.dynamicDefinitions.push({ file: f.name, excerpt: stmt.replace(/\s+/g, " ").trim().slice(0, 140) });
+      else if (LOOKS_LIKE_OTHER_OBJECT.test(stmt)) census.unmodelled.push({ file: f.name, reason: "a procedure, rule or aggregate created inside a string", excerpt: stmt.replace(/\s+/g, " ").trim().slice(0, 140) });
+      // An appointment insert outside any function this census tracks (a DO block, a top-level statement, a trigger body): the surface cannot see it.
+      if (APPOINTMENT_INSERT.test(stmt)) census.unmodelled.push({ file: f.name, reason: "an appointment insert outside a tracked function", excerpt: stmt.replace(/\s+/g, " ").trim().slice(0, 140) });
     });
     if (unterminated && statements.length === 0) census.unparseable.push({ file: f.name, reason: "the file ends inside a quote or a comment", excerpt: "" });
   }
@@ -387,6 +400,12 @@ export function appointmentInserters(c: Census): string[] {
   return [...c.functions.values()].filter(insertsAppointment).map(labelOf).sort();
 }
 
+/** A call to `callee`, bare, schema-qualified or quoted (`core(`, `public.core(`, `public."core"(`, `"core"(`); a longer name that merely contains it is not a call. */
+export function callsFunction(body: string, callee: string): boolean {
+  const esc = callee.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(String.raw`(?<![A-Za-z0-9_$])"?${esc}"?\s*\(`, "i").test(body);
+}
+
 /**
  * Every function that reaches an appointment insert: the direct inserters plus, transitively, any function whose body calls one of them by name. Name
  * matching is by identifier (not a substring of a longer name) and is deliberately generous: an extra caller is a line in a pinned list a reviewer reads,
@@ -402,7 +421,7 @@ export function appointmentCreationSurface(c: Census): { direct: string[]; viaCa
     for (const d of defs) {
       if (reach.has(d.name)) continue;
       for (const callee of reach) {
-        if (new RegExp(String.raw`(?<![A-Za-z0-9_$])${callee}\s*\(`, "i").test(d.body)) {
+        if (callsFunction(d.body, callee)) {
           reach.add(d.name);
           grew = true;
           break;
@@ -432,5 +451,6 @@ export function unknownInserters(c: Census): string[] {
     ...c.ambiguousDrops.map((d) => `ambiguous drop: ${d.file}: ${d.statement}`),
     ...c.renames.map((r) => `rename: ${r.file}: ${r.statement}`),
     ...c.dynamicDefinitions.map((d) => `dynamic definition: ${d.file}: ${d.excerpt}`),
+    ...c.unmodelled.map((u) => `unmodelled: ${u.file}: ${u.reason}: ${u.excerpt}`),
   ];
 }
