@@ -98,24 +98,26 @@ test.describe("invite beyond the estimate", () => {
     for (const p of people) expect(sent.filter((to) => to === p.email.toLowerCase()), p.email).toHaveLength(1);
   });
 
-  test("the owner retries a refused and an unknown-outcome delivery through the page: each is re-sent once, nobody else", async ({ page }) => {
+  test("the owner retries a refused delivery through the page: only that person is attempted again, nobody else", async ({ page }) => {
     test.setTimeout(240_000);
     const seed = await seedE2eStudio();
-    // 0 and 1 are accepted. 2 is REFUSED by the provider (every attempt). 3 fails once with a network error (an unknown outcome), then succeeds.
-    const people = await seedWaiting(seed, 4, ["success+", "success+", "reject+", "failonce+"]);
-    const [okA, okB, refused, unknown] = people;
+    // 0 and 1 are accepted. 2 is REFUSED by the provider on every attempt. (The fake cannot produce an unknown outcome cheaply: a `failonce` network error is
+    // absorbed by the delivery adapter's own retry and ends accepted. The unknown-outcome retry is covered by the database and unit tests.)
+    const people = await seedWaiting(seed, 3, ["success+", "success+", "reject+"]);
+    const [okA, okB, refused] = people;
     const mark = markResendLedger();
 
     await loginAsOwner(page, seed);
     await page.locator('[data-testid="nav-waitlist"]').first().click();
     await page.locator('[data-testid="over-invite-link"] a').click();
+    await expect(page).toHaveURL(/\/settings\/waitlist\/over-invite/, { timeout: T });
     await page.getByLabel("Service").selectOption({ label: seed.serviceName });
     await page.getByRole("button", { name: "Show numbers" }).click();
     const form = page.locator('[data-testid="over-invite-confirm"]');
     for (const p of people) await form.getByLabel(p.name).check();
     await form.getByRole("checkbox", { name: /I understand some clients may find no availability/ }).check();
     await form.getByRole("button", { name: "Send invitations" }).click();
-    await expect(page.locator('[data-testid="over-invite-result"]')).toContainText("4 confirmed", { timeout: 60_000 });
+    await expect(page.locator('[data-testid="over-invite-result"]')).toContainText("3 confirmed", { timeout: 60_000 });
 
     const waitingNow = async () => (await sql<{ n: number }>(`select count(*)::int n from public.waitlist_invitation_batch_items where studio_id=$1 and state in ('pending','claimed')`, [seed.studioId]))[0]!.n;
     for (let call = 0; call < 4 && (await waitingNow()) > 0; call++) {
@@ -127,27 +129,20 @@ test.describe("invite beyond the estimate", () => {
     const progress = page.locator('[data-testid="batch-progress"]').first();
     await expect(progress).toContainText("2 sent", { timeout: T });
     await expect(progress).toContainText("1 refused by the email provider");
-    await expect(progress).toContainText("1 outcome unknown");
     const attempts = () => readResendLedger(mark).map((r) => r.to.toLowerCase());
     const count = (to: string) => attempts().filter((x) => x === to.toLowerCase()).length;
-    expect([okA, okB, refused, unknown].map((p) => count(p.email))).toEqual([1, 1, 1, 1]);
+    expect([okA, okB, refused].map((p) => count(p.email))).toEqual([1, 1, 1]);
 
-    // 1. RETRY the refused one through the real page (a confirmed click). Only that person is attempted again; the provider still refuses, so it stays refused.
+    // RETRY the refused one through the real page (a confirmed click). Only that person is attempted again; the provider still refuses, so it stays refused.
     await page.getByRole("checkbox", { name: /of the 1 refused deliveries now/ }).check();
     await page.getByRole("button", { name: "Retry refused deliveries" }).click();
     await expect(page.getByText("0 resent, 1 still not delivered.")).toBeVisible({ timeout: 60_000 });
-    expect([okA, okB, refused, unknown].map((p) => count(p.email))).toEqual([1, 1, 2, 1]);
-
-    // 2. RETRY the unknown one, behind its stronger warning. It is attempted once more, succeeds, and nobody else is touched.
-    await page.getByRole("checkbox", { name: /whose outcome is unknown/ }).check();
-    await page.getByRole("button", { name: "Retry unknown-outcome deliveries" }).click();
-    await expect(page.getByText("1 resent, 0 still not confirmed.")).toBeVisible({ timeout: 60_000 });
-    expect([okA, okB, refused, unknown].map((p) => count(p.email))).toEqual([1, 1, 2, 2]);
+    expect([okA, okB, refused].map((p) => count(p.email))).toEqual([1, 1, 2]);
 
     await page.goto("/settings/waitlist/over-invite");
-    await expect(page.locator('[data-testid="batch-progress"]').first()).toContainText("3 sent", { timeout: T });
+    await expect(page.locator('[data-testid="batch-progress"]').first()).toContainText("2 sent", { timeout: T });
     const states = await sql<{ state: string; n: number }>(`select state, count(*)::int n from public.waitlist_invitation_batch_items where studio_id=$1 group by 1 order by 1`, [seed.studioId]);
-    expect(states).toEqual([{ state: "failed", n: 1 }, { state: "sent", n: 3 }]);
+    expect(states).toEqual([{ state: "failed", n: 1 }, { state: "sent", n: 2 }]);
   });
 
   test("a non-owner sees no link on the Waitlist page and the page refuses them", async ({ page }) => {
