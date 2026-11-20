@@ -239,6 +239,23 @@ describe("the print paper follows the approved hierarchy and keeps what must sta
     expect(out).not.toMatch(/Balance due \$/);
     expect(out).toMatch(/Nov 19, 2026 · \$60\.00( CAD)? agreed fee · No payment recorded/);
   });
+  it("G1: the paper's Paid cell is EXACTLY the money collected on that visit: one line, split lines summed, and refunded, waived, still-owing and unresolved lines never added", () => {
+    const d = docFor([
+      visit("a1", "2026-11-03", "09:00", { lines: [{ kind: "collected_card_session", cents: 6000, source: "card" }] }),
+      visit("a2", "2026-11-04", "09:00", { lines: [{ kind: "collected_card_session", cents: 4000, source: "card" }, { kind: "collected_cash", cents: 2500, source: "settlement" }, { kind: "refunded_card_session", cents: 1000, source: "card" }, { kind: "waived", cents: 700, source: "settlement" }] }),
+    ]);
+    const out = paper(d);
+    const cells = [...out.matchAll(/<td class="py-1 text-right tabular-nums">([^<]*)<\/td>/g)].map((m) => m[1]);
+    // latest first: the split visit (4000 + 2500 = 6500) then the single one (6000)
+    expect(cells).toEqual(["$65.00", "$60.00"]);
+  });
+  it("G2: a line that is not collected money (pending, failed or test mode) is never printed on the paper, in its words or its amount", () => {
+    const d = docFor([visit("a1", "2026-11-03", "09:00", { lines: [{ kind: "collected_card_session", cents: 6000, source: "card" }, { kind: "excluded", cents: 9900, source: "card" }] })]);
+    const out = paper(d);
+    expect(out).not.toContain("Not collected money");
+    expect(out).not.toContain("$99.00");
+    expect(out).toMatch(/Card · Collected · \$60\.00/);
+  });
   it("without a timezone or currency the header line states only what it knows (never a guessed zone)", () => {
     const out = paper(three(), { timezone: null, currency: null });
     expect(out).toMatch(/<p[^>]*>3 visits<\/p>/);
