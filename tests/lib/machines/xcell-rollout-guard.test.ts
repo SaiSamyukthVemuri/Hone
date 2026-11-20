@@ -63,6 +63,23 @@ describe("the existing-block exemption filters by block AND session AND unit", (
   });
 });
 
+describe("a receipt decides BEFORE the rollout is read", () => {
+  const { XCELL_RECEIPT_UNKNOWN_MESSAGE } = { XCELL_RECEIPT_UNKNOWN_MESSAGE: "We could not check whether an earlier attempt saved. Reload the chart to check it." };
+  it("found passes whatever the rollout says, and reads no rollout", async () => {
+    for (const v of ["off", "error"] as const) {
+      ROLLOUT.value = v; ROLLOUT.reads = 0;
+      expect(await guardXcellRollout(fakeDb(), { ...where, receipt: async () => "found" }), v).toEqual({ ok: true });
+      expect(ROLLOUT.reads, v).toBe(0);
+    }
+  });
+  it("none meets the rollout; unknown is refused as unresolved without a rollout read", async () => {
+    expect(await guardXcellRollout(fakeDb(), { ...where, receipt: async () => "none" })).toMatchObject({ ok: false, error: XCELL_ROLLOUT_OFF_MESSAGE });
+    ROLLOUT.reads = 0;
+    expect(await guardXcellRollout(fakeDb(), { ...where, receipt: async () => "unknown" })).toMatchObject({ ok: false, error: XCELL_RECEIPT_UNKNOWN_MESSAGE, reason: "receipt" });
+    expect(ROLLOUT.reads).toBe(0);
+  });
+});
+
 describe("the create receipt lookup filters by session AND key", () => {
   const TABLE = "treatment_area_create_claims";
   it("finds a receipt for this session and key, and asks with exactly those two filters", async () => {
