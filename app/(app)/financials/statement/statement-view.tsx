@@ -34,6 +34,7 @@ import {
 } from "@/lib/finance/statement-copy";
 import { bucketMethodBreakdown, SHORT_METHOD_LABEL, studioVisitStatus, visitCollectedCents } from "@/lib/finance/statement-methods";
 import { clientStatementHref } from "@/lib/finance/statement-screen";
+import { splitCurrency } from "@/lib/finance/statement-money";
 import { latestFirst, slicePage } from "@/lib/finance/statement-paging";
 import type { StatementView as View } from "@/lib/finance/statement-read";
 import type { YearMonth } from "@/lib/finance/statement-period";
@@ -90,10 +91,6 @@ function Section({ bucket, format }: { bucket: StatementBucket; format: (c: numb
 // ---- The summary card: the studio's collected total at display size and how it was paid. ---------------------------------------------------------
 // The figures are the bucket's own. The proportional bar and the method list appear ONLY when the non-zero methods add up to the collected total to the
 // cent (bucketMethodBreakdown); with nothing collected, or segments that cannot be explained, the card says so in words and draws no bar.
-function splitCurrency(text: string): { amount: string; unit: string | null } {
-  const m = /^(.*\d) ([A-Z]{3})$/.exec(text);
-  return m ? { amount: m[1], unit: m[2] } : { amount: text, unit: null };
-}
 
 function SummaryCard({ bucket, visitCount, monthLabel, studioName, format }: { bucket: StatementBucket; visitCount: number; monthLabel: string; studioName?: string | null; format: (c: number) => string }) {
   const methods = bucketMethodBreakdown(bucket);

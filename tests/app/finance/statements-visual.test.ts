@@ -89,8 +89,9 @@ describe("the client statement, restyled", () => {
     expect(out).toMatch(/\$120\.00 paid<\/p>/);
     expect(out).toMatch(/2 visits/);
     expect(out).toMatch(/How it was paid/);
-    expect(out).toMatch(/Card \(Hone-verified\): session payments<\/span><span[^>]*>\$100\.00/);
-    expect(out).toMatch(/E-transfer \(recorded by the owner\)<\/span><span[^>]*>\$20\.00/);
+    // short method words in the card (the amounts carry no currency suffix; CAD is shown once beside the total); the unchanged basis wording is methodBreakdown's own label
+    expect(out).toMatch(/<span>Card<\/span><span[^>]*>\$100\.00<\/span>/);
+    expect(out).toMatch(/<span>E-transfer<\/span><span[^>]*>\$20\.00<\/span>/);
   });
   it("omits the breakdown entirely when no method can be shown, and never invents a balance", () => {
     const out = html(docFor([visit({ lines: [] })]));
