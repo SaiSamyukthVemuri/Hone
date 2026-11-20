@@ -190,6 +190,41 @@ describe("the history reads", () => {
     expect(r.view.interval).toEqual({ available: false, reason: "too_many_appointments" });
     expect(r.view.noNextBooking).toEqual({ available: false, reason: "too_many_appointments" });
   });
+  it("a look-back read that succeeds but a future read that fails: no next booking says why, and nothing is thrown", async () => {
+    const q = healthy();
+    // reads in order: current window, comparison, history, look-back, future
+    q.appointments = [ok([]), ok([]), ok([]), ok([]), { data: null, error: { message: "boom" } }];
+    const r = await load("owner", recording(q).client);
+    if (!(r.access === "granted" && r.ok)) throw new Error("expected a view");
+    expect(r.view.noNextBooking).toEqual({ available: false, reason: "read_failed" });
+    expect(r.view.returning.available).toBe(true);
+    expect(r.view.completedVisits.available).toBe(true);
+  });
+  it("the future read at its appointment cap: no next booking says too many appointments, and nothing is thrown", async () => {
+    const page = Array.from({ length: 500 }, (_, i) => ({ id: `f${i}`, client_id: "c1", starts_at: `2026-12-03T15:00:${String(i % 60).padStart(2, "0")}+00:00`, status: "confirmed", practitioner_id: null, service_id: null, duration_minutes: 30 }));
+    const q = healthy();
+    q.appointments = [ok([]), ok([]), ok([]), ok([]), ok(page)]; // the last entry repeats: every further page is full
+    const r = await load("owner", recording(q).client);
+    if (!(r.access === "granted" && r.ok)) throw new Error("expected a view");
+    expect(r.view.noNextBooking).toEqual({ available: false, reason: "too_many_appointments" });
+    expect(r.view.completedVisits.available).toBe(true);
+  });
+  it("the history read stops at the period's start: it never reads the period's own rows toward the cap", async () => {
+    const { utcInstantFromLocal } = await import("@/lib/booking/tz");
+    const { client, calls } = recording(healthy());
+    await load("owner", client, { period: "custom", from: "2026-11-01", to: "2026-11-10" });
+    const startUtc = utcInstantFromLocal("2026-11-01", "00:00", studio.timezone).toISOString();
+    // each appointments query is one contiguous run of calls beginning at its select
+    const runs: Call[][] = [];
+    for (const c of calls.filter((x) => x.table === "appointments")) {
+      if (c.method === "select") runs.push([]);
+      runs[runs.length - 1].push(c);
+    }
+    // the comparison read also ends where the period starts, but it has a lower bound; the history read is the one with none
+    const ending = runs.filter((r) => r.some((c) => c.method === "lt" && c.args[1] === startUtc));
+    const history = ending.filter((r) => !r.some((c) => c.method === "gte"));
+    expect(history.length, "exactly one unbounded-below read, and it ends at the period start").toBe(1);
+  });
   it("a failed history read leaves the period's own figures alone", async () => {
     const queues = healthy();
     queues.appointments = [ok([]), ok([]), { data: null, error: { message: "boom" } }];

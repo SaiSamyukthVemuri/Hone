@@ -285,6 +285,11 @@ describe("history figures", () => {
   it("only a confirmed booking still to come counts: a cancelled or past one does not", () => {
     expect(must(buildOverview(base({ followThrough: follow(seenRecently, [future("f1", "ada", "cancelled"), future("f2", "bea", "confirmed", -1)]) })).noNextBooking).count).toBe(2);
   });
+  it("completed, no-show and cancelled rows dated in the future are not bookings: only a confirmed one counts", () => {
+    const wrong = ["completed", "no_show", "cancelled", "pending"].map((st, i) => future(`g${i}`, "ada", st));
+    expect(must(buildOverview(base({ followThrough: follow(seenRecently, wrong) })).noNextBooking).count).toBe(2); // ada and bea are still without one (cy is outside the look-back)
+    expect(must(buildOverview(base({ followThrough: follow(seenRecently, [...wrong, future("g9", "ada", "confirmed")]) })).noNextBooking).count).toBe(1);
+  });
   it("the practitioner filter narrows who was seen, never the future-booking test", () => {
     const v = buildOverview(base({ filter: { kind: "one", practitionerId: "pr-2" }, followThrough: follow(seenRecently, [future("f1", "bea", "confirmed")].map((a) => ({ ...a, practitionerId: "pr-1" }))) }));
     expect(must(v.noNextBooking).count).toBe(0); // bea was seen by pr-2 and has a booking with pr-1: still booked
