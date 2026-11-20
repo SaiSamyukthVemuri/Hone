@@ -55,6 +55,25 @@ describe("no decorative sage in the Statements screens", () => {
   });
 });
 
+describe("the method bar is charcoal on a neutral track in both card screens (share of money is not a status, so no status colour)", () => {
+  for (const f of ["statement/statement-view.tsx", "statements/client-statement-view.tsx"]) {
+    it(f, () => {
+      const src = readFileSync(`app/(app)/financials/${f}`, "utf8");
+      const bar = src.slice(src.indexOf('className="my-3 flex h-[7px]'), src.indexOf("methods.map(", src.indexOf('className="my-3 flex h-[7px]')) + 400);
+      expect(bar).toContain("overflow-hidden rounded-lg bg-line");
+      expect(bar).toContain('className="h-full bg-fg"');
+      expect(bar).not.toMatch(/success|warning|danger|info|emerald|green/);
+    });
+  }
+});
+
+describe("both screens draw a pill from the status's own tone, never a fixed class", () => {
+  it("the Studio tab uses PILL_TONE[status.tone]; the client statement uses PILL_TONE[documentVisitTone(state)]", () => {
+    expect(readFileSync("app/(app)/financials/statement/statement-view.tsx", "utf8")).toContain("cx(TAG, PILL_TONE[status.tone])");
+    expect(readFileSync("app/(app)/financials/statements/client-statement-view.tsx", "utf8")).toContain("cx(TAG, PILL_TONE[documentVisitTone(v.state)])");
+  });
+});
+
 describe("the status pill keeps its meaning in colour, and the words stay", () => {
   const cash = (cents: number) => ({ kind: "collected_cash" as const, cents });
   it("Paid is the success green; it is the ONLY state drawn that way", () => {
