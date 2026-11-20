@@ -34,6 +34,7 @@ import {
 } from "@/lib/finance/statement-copy";
 import { bucketMethodBreakdown, SHORT_METHOD_LABEL, studioVisitStatus, visitCollectedCents } from "@/lib/finance/statement-methods";
 import { clientStatementHref } from "@/lib/finance/statement-screen";
+import { splitCurrency } from "@/lib/finance/statement-money";
 import { latestFirst, slicePage } from "@/lib/finance/statement-paging";
 import type { StatementView as View } from "@/lib/finance/statement-read";
 import type { YearMonth } from "@/lib/finance/statement-period";
@@ -90,10 +91,6 @@ function Section({ bucket, format }: { bucket: StatementBucket; format: (c: numb
 // ---- The summary card: the studio's collected total at display size and how it was paid. ---------------------------------------------------------
 // The figures are the bucket's own. The proportional bar and the method list appear ONLY when the non-zero methods add up to the collected total to the
 // cent (bucketMethodBreakdown); with nothing collected, or segments that cannot be explained, the card says so in words and draws no bar.
-function splitCurrency(text: string): { amount: string; unit: string | null } {
-  const m = /^(.*\d) ([A-Z]{3})$/.exec(text);
-  return m ? { amount: m[1], unit: m[2] } : { amount: text, unit: null };
-}
 
 function SummaryCard({ bucket, visitCount, monthLabel, studioName, format }: { bucket: StatementBucket; visitCount: number; monthLabel: string; studioName?: string | null; format: (c: number) => string }) {
   const methods = bucketMethodBreakdown(bucket);
@@ -257,7 +254,7 @@ export function StatementView({
             <section aria-labelledby="stmt-find" className="min-w-0 flex-1 basis-60 md:max-w-sm">
               <h2 id="stmt-find" className="sr-only">Find a client</h2>
               {finder.state === "ok" ? (
-                <ClientFinder month={view.month as YearMonth} monthLabel={view.label} clients={finder.clients} monthVisits={null} lastVisits={finder.lastVisits} />
+                <ClientFinder month={view.month as YearMonth} monthLabel={view.label} clients={finder.clients} monthVisits={null} showMonthCount={false} lastVisits={finder.lastVisits} />
               ) : (
                 <p className="text-sm text-fg">{finder.state === "too_many" ? FINDER_TOO_MANY : STATEMENT_READ_UNAVAILABLE.read_failed}</p>
               )}

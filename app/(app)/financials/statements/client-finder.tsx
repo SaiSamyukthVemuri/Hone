@@ -24,11 +24,13 @@ export type FinderProps = {
   /** Eligible visits in the selected month, by client id; absent means none. */
   /** NULL when the month's counts could not be read: the finder then states no count at all (never a zero). */
   monthVisits: Readonly<Record<string, number>> | null;
+  /** False on the Studio tab, which does not load per-client month counts: the result line then states no count at all. Default true. */
+  showMonthCount?: boolean;
   /** Last visit dates (studio-local), only for clients that share a name; absent means the detail could not be read. */
   lastVisits: Readonly<Record<string, string | null>> | null;
 };
 
-export function ClientFinder({ month, monthLabel, clients, monthVisits, lastVisits }: FinderProps) {
+export function ClientFinder({ month, monthLabel, clients, monthVisits, lastVisits, showMonthCount = true }: FinderProps) {
   const router = useRouter();
   const listId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -108,9 +110,10 @@ export function ClientFinder({ month, monthLabel, clients, monthVisits, lastVisi
                   className={cx("cursor-pointer px-3 py-2 text-sm text-fg", CONTROL_MIN_TOUCH, "flex-col items-start justify-center", state.active === i && "bg-surface-sunken")}
                 >
                   <span className="font-medium">{o.displayName}{o.archived ? " (archived)" : ""}</span>
-                  <span className="text-xs text-fg-muted">
-                    {finderOptionLine({ monthLabel, monthVisitCount: o.monthVisitCount, sameNameAsAnother: o.sameNameAsAnother, lastVisit: lastVisits?.[o.clientId], lastVisitsLoaded: lastVisits !== null })}
-                  </span>
+                  {(() => {
+                    const line = finderOptionLine({ monthLabel, monthVisitCount: o.monthVisitCount, sameNameAsAnother: o.sameNameAsAnother, lastVisit: lastVisits?.[o.clientId], lastVisitsLoaded: lastVisits !== null, showMonthCount });
+                    return line ? <span className="text-xs text-fg-muted">{line}</span> : null;
+                  })()}
                 </li>
               ))}
             </ul>
