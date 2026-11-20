@@ -187,6 +187,9 @@ describe("callers: reaching an insert by calling a command counts", () => {
   it("a direct caller and a caller of that caller are both on the surface", () => {
     const c = run(core, fn("mid", "perform core(p);"), fn("top", "perform public.mid(p);"));
     expect(appointmentCreationSurface(c)).toEqual({ direct: ["core/1"], viaCalls: ["mid/1", "top/1"] });
+    // the OUTER caller defined first, a chain three deep: only a closure that repeats until nothing new is found reaches the top
+    const deep = run(fn("top", "perform public.mid(p);"), fn("mid", "perform low(p);"), fn("low", "perform core(p);"), core);
+    expect(appointmentCreationSurface(deep).viaCalls).toEqual(["low/1", "mid/1", "top/1"]);
   });
   it("a longer name that merely contains the command's name is not a caller", () => {
     const c = run(core, fn("other", "perform xcore(p); perform core_two(p); perform recore(p);"));
