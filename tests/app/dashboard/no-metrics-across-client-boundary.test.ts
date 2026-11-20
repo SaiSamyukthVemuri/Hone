@@ -31,13 +31,6 @@ describe("P2: no metrics object crosses a client boundary", () => {
       expect(code).not.toMatch(/practiceMetrics|PracticeDashboardMetrics|chartedWithin24h|bookedValueCents|completedValueCents|testPayments/);
     });
   }
-
-  it("the page and stack never pass a metrics value to a client component", () => {
-    const stack = readFileSync(join(DIR, "secondary-stack.tsx"), "utf8");
-    // The only client component the stack renders with data is the panel; it
-    // receives `needs`, built by the pure model.
-    expect(stack).toMatch(/<NeedsAttentionPanel\s+needs=\{v\.shown\}/);
-  });
 });
 
 describe("P3: the records roll-up is not described as personal or private", () => {

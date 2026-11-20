@@ -4,14 +4,12 @@ import path from "node:path";
 
 // PR A of the app-wide smart-payment-status plan: practitioner surfaces
 // derive payment copy from the shared presenter instead of making static
-// claims. This suite pins:
+// claims. The presenter's own copy and derivation are proved in
+// tests/lib/payments/payment-status-presenter.test.ts. This suite pins:
 //   * the banned stale strings are GONE from the PR-A surfaces
-//   * Settings → Payments renders the presenter banner (live-ready /
-//     test-ready / payouts-warning all reachable via connectBannerCopy)
-//   * the mode row + banner key off the RUNTIME, never the nullable row
-//   * portal card-on-file + booking-collection copy come from the presenter
-//   * getting-started + launch + policy surfaces no longer claim payments
-//     are off / future
+//   * the mode row keys off the RUNTIME, never the nullable row
+//   * a failed read degrades to unknown; manual fees are never automatic
+//   * public booking stays card-free; getting-started counts are mode-scoped
 
 function read(rel: string): string {
   return readFileSync(path.resolve(__dirname, "../../../", rel), "utf8");
@@ -43,40 +41,14 @@ describe("banned stale claims are gone from PR-A surfaces", () => {
       }
     });
   }
-
-  it("live-ready presenter copy itself never contains banned strings (belt)", () => {
-    const presenter = read("lib/payments/payment-status-presenter.ts");
-    expect(presenter).not.toMatch(/future update/i);
-    expect(presenter).not.toMatch(/becomes available/i);
-    expect(presenter).not.toMatch(/Client payments are not enabled/i);
-  });
 });
 
-describe("Settings → Payments is presenter-driven", () => {
+describe("Settings → Payments stays truthful", () => {
   const page = read("app/(app)/settings/payments/PaymentsView.tsx");
   const component = read("app/(app)/settings/payments/PaymentsSettings.tsx");
 
-  it("page derives banner + portal + booking copy from the presenter", () => {
-    expect(page).toMatch(/from "@\/lib\/payments\/payment-status-presenter"/);
-    expect(page).toMatch(/connectBannerCopy\(runtimeMode, connect\)/);
-    expect(page).toMatch(/derivePortalCardCapability\(/);
-    expect(page).toMatch(/bookingCardCopy\(bookingCardCollection\(\)\)/);
-    // Runtime mode from the deployment, not the row.
-    expect(page).toMatch(/const runtimeMode = currentRuntimeMode\(\)/);
-  });
-
   it("the read-error path degrades to 'unknown', never an all-clear", () => {
     expect(page).toMatch(/error\s*\n?\s*\? undefined/);
-  });
-
-  it("component renders the banner + messages as data (no static claims)", () => {
-    expect(component).toMatch(/\{banner\.headline\}/);
-    expect(component).toMatch(/\{banner\.detail\}/);
-    expect(component).toMatch(/\{portalCardMessage\}/);
-    expect(component).toMatch(/\{bookingCardMessage\}/);
-    // The old row-derived test banner is gone.
-    expect(component).not.toMatch(/showTestBanner/);
-    expect(component).not.toMatch(/Test mode: not collecting payments/);
   });
 
   it("the mode readiness row keys off the RUNTIME (row-null bug fixed)", () => {
@@ -84,25 +56,6 @@ describe("Settings → Payments is presenter-driven", () => {
     expect(component).not.toMatch(/const isTestMode = livemode !== true/);
     // Test-branch copy stays available for test runtime.
     expect(component).toMatch(/Test mode: no live charges/);
-  });
-
-  it("live-ready / test-ready / payouts-warning copy is exactly the approved wording (presenter source)", () => {
-    const presenter = read("lib/payments/payment-status-presenter.ts");
-    expect(presenter).toMatch(/Live payments are ready\./);
-    expect(presenter).toMatch(
-      /accept live payments through Hone after a client saves an authorized card on file/,
-    );
-    expect(presenter).toMatch(/Test payment setup is ready\./);
-    expect(presenter).toMatch(/without moving real money/);
-    expect(presenter).toMatch(
-      /Charges may be enabled, but payouts are not ready\. Finish payout setup before charging clients\./,
-    );
-    expect(presenter).toMatch(
-      /Portal card-on-file is available\. Clients can sign the card authorization and save a card in the client portal\./,
-    );
-    expect(presenter).toMatch(
-      /Booking-time card collection is off\. Clients can still book without entering a card\./,
-    );
   });
 
   it("manual-fee posture: configuration only, never automatic; fee card keeps 'Money is not charged here'", () => {

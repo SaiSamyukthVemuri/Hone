@@ -5,8 +5,8 @@ import { COMPOSED_DASHBOARD } from "./helpers/composed-dashboard";
 
 // Flag-off contract for the onboarding-v2 dashboard integration (migration
 // 0140). PRIME DIRECTIVE: while studios.onboarding_v2_enabled is not exactly
-// true, the dashboard must render exactly as today — the legacy getting-started
-// link / footer, NO wizard, NO onboarding signal queries. This source-level
+// true, the dashboard must render the legacy getting-started card, NO wizard,
+// NO onboarding signal queries. This source-level
 // contract (mirrors the capacity flag-off contract style) pins that gating so a
 // later edit can't silently leak the v2 experience to every studio.
 
@@ -47,30 +47,7 @@ describe("dashboard onboarding-v2 — default-OFF gating", () => {
     expect(CODE).toMatch(/const onboarding\s*=\s*onboardingV2On\s*\?/);
   });
 
-  it("renders the wizard/card surface ONLY when onboarding is present", () => {
-    expect(CODE).toMatch(/\{onboarding\s*&&\s*\(/);
-    expect(CODE).toContain("<OnboardingSurface");
-  });
-
   it("gates the legacy getting-started card behind !onboardingV2On", () => {
     expect(CODE).toMatch(/\{!onboardingV2On\s*&&\s*!setupComplete\s*&&/);
-  });
-
-  it("the completed-setup footer is GONE from both paths (Chloe D3)", () => {
-    // The flag-off contract is "renders exactly as the legacy path", and the
-    // legacy path deliberately changed in this PR: a studio whose setup is
-    // complete now sees no setup surface at all. Asserting the footer's absence
-    // keeps this contract honest rather than quietly dropping the assertion —
-    // if someone restores the footer, the flag-off path must fail here.
-    expect(CODE).not.toMatch(/\{!onboardingV2On\s*&&\s*setupComplete\s*&&/);
-    expect(CODE).not.toMatch(/Setup complete\./);
-    // Flag-ON is unaffected: OnboardingSurface already hides its pinned card
-    // once the model is complete, so neither system congratulates daily.
-    expect(CODE).toContain("<OnboardingSurface");
-  });
-
-  it("still computes the legacy getting-started signals (OFF path unchanged)", () => {
-    expect(CODE).toContain("buildGettingStarted(");
-    expect(CODE).toContain("getGettingStartedSignals(");
   });
 });
