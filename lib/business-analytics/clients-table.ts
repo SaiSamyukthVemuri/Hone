@@ -36,7 +36,7 @@ export type ClientTableFigure = {
   averageGapDays: number | null;
   lastVisitDate: string | null;
   /** The date of the earliest completed visit recorded in Hone. */
-  clientSince: string | null;
+  firstVisitDate: string | null;
   /** A confirmed booking still to come with anyone; null when the future bookings could not be read. */
   hasNextBooking: boolean | null;
   /** Past their usual visit interval (the Overview's rule); null when it could not be worked out. */
@@ -46,7 +46,7 @@ export type ClientTableFigure = {
 export type ClientsTableRow = {
   rowKey: string;
   name: string;
-  clientSince: string | null;
+  firstVisitDate: string | null;
   periodVisits: number;
   periodPaidCents: number | null;
   lifetimePaidCents: number | null;
@@ -123,7 +123,7 @@ export function rankClientsTable(args: {
     return {
       rowKey: `row-${(paged.page - 1) * paged.pageSize + i + 1}`,
       name: r.name,
-      clientSince: f.clientSince,
+      firstVisitDate: f.firstVisitDate,
       periodVisits: f.periodVisits,
       periodPaidCents: f.periodPaidCents,
       lifetimePaidCents: r.lifetimePaidCents,

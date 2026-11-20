@@ -373,7 +373,7 @@ describe("the Clients tab read", () => {
     const r = await loadOverview({ role }, studio, "cad", {}, { strict: false, clients }, NOW, client);
     return { r, calls };
   };
-  const view = (r: unknown) => (r as { view: { clientsTable?: { available: boolean; value?: { rows: Array<{ name: string; lifetimePaidCents: number | null; clientSince: string | null }>; lifetime: { available: boolean } } }; clientsReconciliation?: { available: boolean } } }).view;
+  const view = (r: unknown) => (r as { view: { clientsTable?: { available: boolean; value?: { rows: Array<{ name: string; lifetimePaidCents: number | null; firstVisitDate: string | null }>; lifetime: { available: boolean } } }; clientsReconciliation?: { available: boolean } } }).view;
   const withHistory = (): Record<string, Result | Result[]> => {
     const res = healthy();
     res.clients = ok([{ id: "c1", name: "Rowan Client" }]);

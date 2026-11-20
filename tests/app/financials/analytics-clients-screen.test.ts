@@ -72,11 +72,11 @@ describe("the Clients tab: the table", () => {
     const names = [...html.matchAll(/<th scope="row"[^>]*>([^<]+)<\/th>/g)].map((m) => m[1]);
     expect(names).toEqual(["Olive Over", "Quinn Quoted", "Nia Noprice"]); // $95, $90, $30; Nora had no completed visit
   });
-  it("shows client since, last visit and the lifetime figure through the period's last day", () => {
+  it("shows first visit, last visit and the lifetime figure through the period's last day", () => {
     const v = view();
     const rows = table(v)?.rows ?? [];
     const quinn = rows.find((r) => r.name === "Quinn Quoted");
-    expect(quinn?.clientSince).toBe("2026-10-01"); // the earlier visit
+    expect(quinn?.firstVisitDate).toBe("2026-10-01"); // the earlier visit
     expect(quinn?.lastVisitDate).toBe("2026-11-05");
     expect(quinn?.lifetimePaidCents).toBe(7000 + 9000);
     expect(rows.find((r) => r.name === "Olive Over")?.lifetimePaidCents).toBe(9500);
@@ -227,5 +227,15 @@ describe("the Clients tab: money on a visit with no client recorded", () => {
     expect(r && r.available && r.value.differenceCents).toBe(0);
     expect(table(v)?.seen).toBe(3); // the no-client visit is not a client seen
     expect(text(render(v))).toContain("Money on completed visits with no client recorded $40.00");
+  });
+});
+
+describe("the Clients tab: the first-visit column", () => {
+  it("is headed First visit, because it is the first completed visit recorded in Hone, not when the client record was made", () => {
+    const html = render(view());
+    const heads = [...html.matchAll(/<th scope="col"[^>]*>([\s\S]*?)<\/th>/g)].map((m) => text(m[1]).trim());
+    expect(heads).toContain("First visit");
+    expect(heads.join("|")).not.toMatch(/Client since/);
+    expect(text(html)).not.toMatch(/Client since/);
   });
 });

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { rankClientsTable, type ClientTableFigure } from "@/lib/business-analytics/clients-table";
 
-const fig = (id: string, over: Partial<ClientTableFigure> = {}): ClientTableFigure => ({ clientId: id, periodVisits: 1, periodPaidCents: 1000, lifetimePaidCents: 5000, averageGapDays: null, lastVisitDate: "2026-11-01", clientSince: "2026-01-01", hasNextBooking: false, beyondUsual: false, ...over });
+const fig = (id: string, over: Partial<ClientTableFigure> = {}): ClientTableFigure => ({ clientId: id, periodVisits: 1, periodPaidCents: 1000, lifetimePaidCents: 5000, averageGapDays: null, lastVisitDate: "2026-11-01", firstVisitDate: "2026-01-01", hasNextBooking: false, beyondUsual: false, ...over });
 const names = (o: Record<string, string>) => ({ ok: true as const, names: new Map(Object.entries(o)) });
 const run = (figures: ClientTableFigure[], over: Partial<Parameters<typeof rankClientsTable>[0]> = {}) =>
   rankClientsTable({ figures, lookup: names({ a: "Ana", b: "Ben", c: "Cy" }), sort: "spend", chip: "all", page: 1, lifetimeFailure: null, ...over });

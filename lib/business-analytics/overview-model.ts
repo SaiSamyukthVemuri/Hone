@@ -447,7 +447,7 @@ function clientsTableFigure(input: OverviewInput, cur: Window): { table: Figure<
 
   const historyFacts = input.history.ok ? factsOf(input.history.value.appointments, tz) : null;
   const allFacts = historyFacts ? [...historyFacts, ...currentFacts] : currentFacts;
-  // Gap and last visit follow the team-member filter (as on the Overview's gap card); "client since" is the studio's first completed visit, whoever it was with.
+  // Gap and last visit follow the team-member filter (as on the Overview's gap card); "first visit" is the studio's first completed visit, whoever it was with.
   const filtered = clientHistories(visitsOf(allFacts, input.filter).filter((v) => v.clientId !== null && perClient.has(v.clientId)), w.lastLocal);
   const everyone = clientHistories(visitsOf(allFacts).filter((v) => v.clientId !== null && perClient.has(v.clientId)), w.lastLocal);
 
@@ -487,7 +487,7 @@ function clientsTableFigure(input: OverviewInput, cur: Window): { table: Figure<
     lifetimePaidCents: lifetime?.get(clientId) ?? null,
     averageGapDays: (() => { const g = filtered.get(clientId)?.averageGapDays; return g && g.known ? g.value : null; })(),
     lastVisitDate: filtered.get(clientId)?.lastVisitDate ?? null,
-    clientSince: everyone.get(clientId)?.visitDates[0] ?? null,
+    firstVisitDate: everyone.get(clientId)?.visitDates[0] ?? null,
     hasNextBooking: future ? future.has(clientId) : null,
     beyondUsual: beyond ? beyond.has(clientId) : null,
   }));

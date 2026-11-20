@@ -66,7 +66,7 @@ const CHIPS: ReadonlyArray<{ chip: ClientChip; label: string }> = [
 
 const COLUMNS: ReadonlyArray<{ key: string; label: string; sort?: ClientSort; align?: "right" }> = [
   { key: "name", label: "Client", sort: "name" },
-  { key: "since", label: "Client since" },
+  { key: "since", label: "First visit" },
   { key: "visits", label: "Visits", sort: "visits", align: "right" },
   { key: "paid", label: "Paid in period", sort: "spend", align: "right" },
   { key: "lifetime", label: "Lifetime paid", sort: "lifetime", align: "right" },
@@ -187,7 +187,7 @@ export function ClientsScreen({ view, params, clients, notices, practitionerOpti
                       {table.value.rows.map((r) => (
                         <tr key={r.rowKey} className="border-b border-line last:border-0">
                           <th scope="row" className="px-3 py-2 text-left font-medium text-fg">{r.name}</th>
-                          <td className="px-3 py-2 text-fg-muted">{shownDate(r.clientSince)}</td>
+                          <td className="px-3 py-2 text-fg-muted">{shownDate(r.firstVisitDate)}</td>
                           <td className="px-3 py-2 text-right tabular-nums">{r.periodVisits}</td>
                           <td className="px-3 py-2 text-right tabular-nums">{r.periodPaidCents === null ? "Not available" : format(r.periodPaidCents)}</td>
                           <td className="px-3 py-2 text-right tabular-nums">{!table.value.lifetime.available || r.lifetimePaidCents === null ? "Not available" : format(r.lifetimePaidCents)}</td>
