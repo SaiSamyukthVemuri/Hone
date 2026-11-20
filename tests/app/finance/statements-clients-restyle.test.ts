@@ -159,7 +159,7 @@ describe("the Clients tab header and footnote follow the reference without dropp
     const foot = out.slice(out.indexOf("</table>"));
     expect(foot).toContain("1 client · 2 visits");
     expect(foot).toMatch(/awaiting payment confirmation/);
-    expect(foot).toContain("The counts and totals above cover every client in the month, not only this page.");
+    expect(foot).toContain("The counts and totals for the month cover every client, not only this page.");
     expect(foot).toContain("America/Toronto");
     expect(out.slice(0, out.indexOf("<table"))).not.toContain("America/Toronto");
   });

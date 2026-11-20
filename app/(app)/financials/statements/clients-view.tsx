@@ -117,7 +117,7 @@ export function ClientsView({ month, monthLabel, maxMonth, timezone, notice, pag
                 {paged.totals.clientCount} {paged.totals.clientCount === 1 ? "client" : "clients"} · {paged.totals.visitCount} {paged.totals.visitCount === 1 ? "visit" : "visits"} · {format(paged.totals.paidCents)} paid
                 {paged.totals.awaitingCount > 0 ? ` · ${paged.totals.awaitingCount} ${paged.totals.awaitingCount === 1 ? "visit" : "visits"} awaiting payment confirmation` : ""}
               </p>
-              <p>The counts and totals above cover every client in the month, not only this page.</p>
+              <p>The counts and totals for the month cover every client, not only this page.</p>
               <p>{DIRECTORY_MONTH_NOTE} Month and day boundaries use the studio&apos;s timezone ({timezone}).</p>
             </div>
           </>
