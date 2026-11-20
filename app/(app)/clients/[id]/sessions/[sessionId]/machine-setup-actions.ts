@@ -18,7 +18,7 @@ import {
   type MachineProfile,
 } from "@/lib/machines/profile-contract";
 import { blockUsesXcellPur, checkIdentityChoice, storedIdentityMatches } from "@/lib/machines/identity-choice";
-import { guardXcellRollout } from "@/lib/machines/xcell-rollout-guard";
+import { guardXcellRollout, submissionReceiptLookup } from "@/lib/machines/xcell-rollout-guard";
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import {
@@ -711,6 +711,9 @@ export async function recordBlockMachineIdentityAction(input: {
       deviceId: input.deviceId,
       blockId: input.blockId,
       sessionId: input.sessionId,
+      // The identity command's receipt is readable by no API role, so a retry of a save that committed (and was changed since) cannot be
+      // recognised here; the refusal says so instead of claiming nothing was ever saved.
+      receiptUnreadable: true,
     });
     if (!rolloutOk.ok) return { ok: false, code: "rejected", error: rolloutOk.error };
   }
@@ -1194,6 +1197,8 @@ export async function recordSetupSubmissionAction(input: {
     deviceId: input.machineId,
     blockId: input.blockId,
     sessionId: input.sessionId,
+    // A save carrying a key whose submission already committed is a lost-answer RETRY: the command replays it (or refuses a different payload).
+    receipt: submissionReceiptLookup(() => setupSubmissionExists(db, input.blockId, input.sessionId, input.idempotencyKey)),
   });
   if (!rolloutOk.ok) return { ok: false, code: "rejected", error: rolloutOk.error };
 

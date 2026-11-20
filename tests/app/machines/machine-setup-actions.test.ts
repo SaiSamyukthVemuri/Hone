@@ -2992,7 +2992,7 @@ describe("loadMachineSetupContext and the platform rollout", () => {
 // a unit that is not the xCell makes no rollout read at all.
 // ===========================================================================
 describe("the rollout is re-read at write time by every path that assigns an xCell identity", async () => {
-  const { XCELL_ROLLOUT_OFF_MESSAGE, ROLLOUT_UNAVAILABLE_MESSAGE_SAVE } = await import("@/lib/machines/xcell-rollout-guard");
+  const { XCELL_ROLLOUT_OFF_MESSAGE, ROLLOUT_UNAVAILABLE_MESSAGE_SAVE, XCELL_ROLLOUT_OFF_MESSAGE_UNCERTAIN, ROLLOUT_UNAVAILABLE_MESSAGE_UNCERTAIN, XCELL_RECEIPT_UNKNOWN_MESSAGE } = await import("@/lib/machines/xcell-rollout-guard");
   const PUR = { machine_profile_id: "dectro-apilus:xcell-pur", machine_profile_version: 1 };
   const ROUTE_ARGS = { clientId: "client-ana", sessionId: "session-1", blockId: "block-1" };
   const GROUP = { groupKey: null, newGroupRef: "n1", channels: [1], readings: [READING(1)] };
@@ -3027,15 +3027,20 @@ describe("the rollout is re-read at write time by every path that assigns an xCe
         arrange(PUR); ROLLOUT.value = "off";
         const out = await p.run(UNIT_ID, "multiplex");
         expect(out.ok).toBe(false);
-        expect(out.error).toBe(XCELL_ROLLOUT_OFF_MESSAGE);
+        expect(out.error).toBe(p.rpc === "record_block_machine_identity" ? XCELL_ROLLOUT_OFF_MESSAGE_UNCERTAIN : XCELL_ROLLOUT_OFF_MESSAGE);
         expect(DB.calls.filter((c) => c.fn === p.rpc)).toHaveLength(0);
       });
       it("a failed read: refused with the retryable message, and no command is sent", async () => {
         arrange(PUR); ROLLOUT.value = "error";
         const out = await p.run(UNIT_ID, "multiplex");
         expect(out.ok).toBe(false);
-        expect(out.error).toBe(ROLLOUT_UNAVAILABLE_MESSAGE_SAVE);
-        expect(out.error).toContain("Nothing was saved.");
+        if (p.rpc === "record_block_machine_identity") {
+          expect(out.error).toBe(ROLLOUT_UNAVAILABLE_MESSAGE_UNCERTAIN);
+          expect(out.error).toContain("reload the chart");
+        } else {
+          expect(out.error).toBe(ROLLOUT_UNAVAILABLE_MESSAGE_SAVE);
+          expect(out.error).toContain("Nothing was saved.");
+        }
         expect(DB.calls.filter((c) => c.fn === p.rpc)).toHaveLength(0);
       });
       it("On: reads the rollout once and is not refused by it", async () => {
@@ -3069,5 +3074,49 @@ describe("the rollout is re-read at write time by every path that assigns an xCe
     const out = await actions.recordBlockMachineIdentityAction({ ...ROUTE_ARGS, deviceId: UNIT_ID, modeKey: "multiplex", profileId: null, idempotencyKey: "pick-key-0001" });
     expect(out.ok, out.ok ? "" : out.error).toBe(true);
     expect(DB.calls.filter((c) => c.fn === "record_block_machine_identity")).toHaveLength(1);
+  });
+
+  // A LOST-ANSWER RETRY on an EXISTING block whose unit was changed by someone else since: the block no longer stores this unit, so the
+  // existing-block exemption cannot recognise it.
+  describe("a retry whose block now stores ANOTHER unit", () => {
+    const otherUnit = () => { DB.rowsFor.session_blocks = [{ studio_machine_id: "22222222-2222-4222-8222-222222222222" }]; };
+    it("whole-setup submission: a committed receipt for the key is REPLAYED, never refused, and the rollout is not read", async () => {
+      for (const v of ["off", "error"] as const) {
+        arrange(PUR); otherUnit(); ROLLOUT.value = v; ROLLOUT.reads = 0; DB.calls = [];
+        DB.rowsFor.treatment_setup_submissions = [{ id: "sub-1" }];
+        const out = await PATHS[2]!.run(UNIT_ID, "multiplex");
+        // The fixture's readings are not valid for this mode, so the save is rejected by validation AFTER the guard: what matters is that
+        // the guard let a receipted retry through (neither refusal message) without reading the rollout.
+        expect(out.error, v).not.toBe(XCELL_ROLLOUT_OFF_MESSAGE);
+        expect(out.error, v).not.toBe(ROLLOUT_UNAVAILABLE_MESSAGE_SAVE);
+        expect(out.error, v).not.toBe(XCELL_RECEIPT_UNKNOWN_MESSAGE);
+        expect(ROLLOUT.reads, v).toBe(0);
+      }
+    });
+    it("whole-setup submission: NO receipt for the key is refused as before; a failed receipt read is refused as unknown, sending nothing", async () => {
+      arrange(PUR); otherUnit(); ROLLOUT.value = "off";
+      DB.rowsFor.treatment_setup_submissions = [];
+      const none = await PATHS[2]!.run(UNIT_ID, "multiplex");
+      expect(none.error).toBe(XCELL_ROLLOUT_OFF_MESSAGE);
+      DB.calls = []; DB.errorFor.treatment_setup_submissions = { message: "boom" };
+      const unknown = await PATHS[2]!.run(UNIT_ID, "multiplex");
+      expect(unknown.error).toBe(XCELL_RECEIPT_UNKNOWN_MESSAGE);
+      expect(DB.calls.filter((c) => c.fn === "record_setup_submission_with_identity")).toHaveLength(0);
+    });
+    it("the identity command cannot read its receipt, so its refusals never claim an earlier attempt saved nothing", async () => {
+      arrange(PUR); otherUnit(); ROLLOUT.value = "off";
+      const off = await PATHS[0]!.run(UNIT_ID, "multiplex");
+      expect(off.error).toBe(XCELL_ROLLOUT_OFF_MESSAGE_UNCERTAIN);
+      ROLLOUT.value = "error";
+      const err = await PATHS[0]!.run(UNIT_ID, "multiplex");
+      expect(err.error).toBe(ROLLOUT_UNAVAILABLE_MESSAGE_UNCERTAIN);
+      for (const m of [off.error, err.error]) { expect(m).toContain("reload the chart"); expect(m).not.toContain("Nothing was saved"); }
+      expect(DB.calls.filter((c) => c.fn === "record_block_machine_identity")).toHaveLength(0);
+    });
+    it("the single group save has no retry key, so it keeps the definitive wording", async () => {
+      arrange(PUR); otherUnit(); ROLLOUT.value = "off";
+      const out = await PATHS[1]!.run(UNIT_ID, "multiplex");
+      expect(out.error).toBe(XCELL_ROLLOUT_OFF_MESSAGE);
+    });
   });
 });

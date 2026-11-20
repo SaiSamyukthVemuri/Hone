@@ -6,6 +6,12 @@ import type { MachineDb } from "@/lib/machines/machine-queries";
 export const XCELL_ROLLOUT_OFF_MESSAGE = "That machine is not available for new treatment setups right now. Choose another machine. Nothing was saved.";
 /** A failed rollout read: retryable, and nothing was sent. */
 export const ROLLOUT_UNAVAILABLE_MESSAGE_SAVE = `${ROLLOUT_UNAVAILABLE_MESSAGE} Nothing was saved.`;
+/**
+ * FOR A SAVE WHOSE RECEIPT CANNOT BE READ (the identity command's receipt is readable by no API role), so an earlier attempt that committed
+ * cannot be ruled out. These say what is true of THIS attempt and send the person to the chart, instead of claiming nothing was ever saved.
+ */
+export const XCELL_ROLLOUT_OFF_MESSAGE_UNCERTAIN = "That machine is not available for new treatment setups right now. Choose another machine. This attempt saved nothing. If you tried before, reload the chart to check it.";
+export const ROLLOUT_UNAVAILABLE_MESSAGE_UNCERTAIN = `${ROLLOUT_UNAVAILABLE_MESSAGE} This attempt saved nothing. If you tried before, reload the chart to check it.`;
 
 /** A refused create whose earlier attempt cannot be ruled out: it makes no claim about what was saved. */
 export const XCELL_RECEIPT_UNKNOWN_MESSAGE = "We could not check whether an earlier attempt saved. Reload the chart to check it.";
@@ -41,6 +47,8 @@ export async function guardXcellRollout(
      * switched Off in between. Looked up BEFORE the rollout is read; only a key with no receipt meets the rollout.
      */
     receipt?: ReceiptLookup;
+    /** The save is a retryable one whose receipt this code cannot read: refusals then use the wording that does not claim an earlier attempt saved nothing. */
+    receiptUnreadable?: boolean;
   },
 ): Promise<XcellRolloutGuard> {
   if (where.deviceId === null || where.unitProfileId !== XCELL_PUR_PROFILE_ID) return { ok: true };
@@ -53,8 +61,8 @@ export async function guardXcellRollout(
   const rollout = existing ? "on" : await readChartingRollout(where.studioId);
   const decision = xcellRouteDecision({ existingBlockUsesXcellPur: existing, rollout });
   if (decision === "offer") return { ok: true };
-  if (decision === "hide") return { ok: false, error: XCELL_ROLLOUT_OFF_MESSAGE, reason: "off" };
-  return { ok: false, error: ROLLOUT_UNAVAILABLE_MESSAGE_SAVE, reason: "unavailable" };
+  if (decision === "hide") return { ok: false, error: where.receiptUnreadable ? XCELL_ROLLOUT_OFF_MESSAGE_UNCERTAIN : XCELL_ROLLOUT_OFF_MESSAGE, reason: "off" };
+  return { ok: false, error: where.receiptUnreadable ? ROLLOUT_UNAVAILABLE_MESSAGE_UNCERTAIN : ROLLOUT_UNAVAILABLE_MESSAGE_SAVE, reason: "unavailable" };
 }
 
 /** Does this block already store exactly this unit? A failed or odd read is false: the rollout then decides, and an error refuses. */
@@ -67,6 +75,18 @@ async function blockStoresUnit(db: MachineDb, blockId: string, sessionId: string
   } catch {
     return false;
   }
+}
+
+/** A submission's receipt, from the existing (block, session, key) lookup: true is found, false is none, and a failed read is unknown, never none. */
+export function submissionReceiptLookup(exists: () => Promise<boolean | null>): ReceiptLookup {
+  return async () => {
+    try {
+      const r = await exists();
+      return r === null ? "unknown" : r ? "found" : "none";
+    } catch {
+      return "unknown";
+    }
+  };
 }
 
 /** The create receipt for this session and key (the claim row every create writes, readable by the studio's members). */
