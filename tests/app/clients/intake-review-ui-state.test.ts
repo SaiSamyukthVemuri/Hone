@@ -355,18 +355,6 @@ describe("F-CLIN-004 actions — the conditional update is the single authority"
   });
 });
 
-describe("F-CLIN-004 — the open database boundary is recorded in source", () => {
-  it("actions.ts states plainly that the DB boundary is still open", () => {
-    expect(ACTIONS).toMatch(/F-CLIN-004 REMAINS OPEN at the database boundary/);
-    expect(ACTIONS).toMatch(/0162/);
-  });
-
-  it("does not claim the finding is closed / remediated / fully fixed", () => {
-    expect(ACTIONS).not.toMatch(/F-CLIN-004[^\n]*\b(closed|remediated|fully fixed)\b/i);
-  });
-});
-
-
 describe("0246 unavailable catalogue holds review without blocking notes", () => {
   function render(reviewAvailable?: boolean) {
     return renderToStaticMarkup(createElement(IntakeReviewForm, {

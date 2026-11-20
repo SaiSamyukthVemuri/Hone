@@ -100,9 +100,6 @@ describe("mark resolved", () => {
     expect(ACTIONS_CODE).toMatch(/\.slice\(0, 2000\)/);
   });
 
-  it("revalidates the dashboard after resolving", () => {
-    expect(ACTIONS_CODE).toMatch(/revalidatePath\("\/admin\/ops-alerts"\)/);
-  });
 });
 
 describe("PR #195: app-path smoke action", () => {

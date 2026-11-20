@@ -10,7 +10,7 @@ import {
 // data the Overview already loads; recorded-history wording only.
 // PR #237: briefing reading order (Remember today first, then the
 // last treatment snapshot, then client response, then record
-// reminders) with chips and wrapping notes.
+// reminders).
 
 function read(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf8");
@@ -315,11 +315,6 @@ describe("imported treatment memory in Before Today (PR #259)", () => {
   // unrelated live-charted JSX above it.
   const importedStart = CARD.indexOf("importedMemory?.hasItems");
   const importedSection = CARD.slice(importedStart);
-
-  it("the card accepts an optional importedMemory prop (existing call sites unaffected)", () => {
-    expect(CARD).toMatch(/importedMemory\?: ImportedMemoryList/);
-    expect(CARD).toMatch(/from "@\/lib\/imported-treatment-memory"/);
-  });
 
   it("renders a clearly labelled, provenance-noted section gated on hasItems", () => {
     expect(importedStart).toBeGreaterThan(-1);

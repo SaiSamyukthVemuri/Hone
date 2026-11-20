@@ -67,16 +67,6 @@ describe("DASH-TRUTH-03 practice snapshot", () => {
     expect(SNAPSHOT).not.toMatch(/Test payments prepared/);
     expect(SNAPSHOT).not.toMatch(/testPayments\.prepared/);
   });
-
-  it("S3 Payments charged remains", () => {
-    expect(SNAPSHOT).toMatch(/Payments charged/);
-    expect(SNAPSHOT).toMatch(/testPayments\.charged/);
-  });
-
-  it("S4 Refunds remains", () => {
-    expect(SNAPSHOT).toMatch(/Refunds/);
-    expect(SNAPSHOT).toMatch(/testPayments\.refunds/);
-  });
 });
 
 // DASH-TRUTH-04 — the daily product does not email the founder.

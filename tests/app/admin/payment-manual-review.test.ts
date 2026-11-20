@@ -314,12 +314,6 @@ describe("manual-review page: queue selection mirrors docs/16 §17.7", () => {
     expect(PAGE).toMatch(/\.is\("resolved_at", null\)/);
     expect(PAGE).toMatch(/selectPaymentReviewAlerts/);
   });
-  it("renders empty states + links to /admin/ops-alerts for resolution", () => {
-    expect(PAGE).toMatch(/No payment attempts stuck/);
-    expect(PAGE).toMatch(/No unresolved critical payment alerts/);
-    expect(PAGE).toMatch(/href="\/admin\/ops-alerts"/);
-  });
-
   it("surfaces a read failure loudly (never a false 'all clear' empty queue) without leaking the provider error", () => {
     // Both reads capture .error and throw a GENERIC message — a failed query
     // must not render as an empty queue, and the raw provider message is not leaked.

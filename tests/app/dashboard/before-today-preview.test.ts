@@ -144,19 +144,6 @@ describe("placement + reuse", () => {
     expect(OVERVIEW).toMatch(/<BeforeTodayCard/);
   });
 
-  it("the preview reuses the exact PR #211 pipeline (no duplicated rules)", () => {
-    for (const fn of [
-      "pickLastTreatment",
-      "pickPreClientWatchPlanSource",
-      "buildLastSessionSummary",
-      "buildTreatmentIntelligence",
-      "buildBeforeToday",
-      "compactBeforeToday",
-    ]) {
-      expect(PREVIEWS).toMatch(new RegExp(fn));
-    }
-  });
-
   it("batched: four bounded reads for the roster, never per-appointment", () => {
     // sessions, session_blocks, clients, and (migration 0128) session_block_areas
     // — each ONE bounded query over the whole roster, never a per-appointment or

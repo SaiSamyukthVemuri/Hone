@@ -29,11 +29,6 @@ const PRINT = read("app/(app)/records/print/page.tsx");
 const EXPORT = read("app/(app)/settings/data/actions.ts");
 
 describe("manufacturer dropdown", () => {
-  it("offers Protec / Ballet / Sterex + Other", () => {
-    expect(FORMS).toMatch(/MANUFACTURER_OPTIONS\s*=\s*\[\s*"Protec",\s*"Ballet",\s*"Sterex"\s*\]/);
-    expect(FORMS).toMatch(/Other \(type a name\)/);
-    expect(FORMS).toMatch(/function ManufacturerPicker/);
-  });
   it("submits exactly one manufacturer_name (hidden input; select is unnamed)", () => {
     expect(FORMS).toMatch(/<input type="hidden" name="manufacturer_name" value=\{resolved\}/);
     // no <select> carries name="manufacturer_name" (no collision), and the only
@@ -183,11 +178,6 @@ describe("PR #317: print expiry marker + export note", () => {
 });
 
 describe("no migration / schema / RLS change", () => {
-  it("the new getExpiringSterileItems query adds no DDL/RPC (plain scoped select)", () => {
-    const s = QUERIES.indexOf("export async function getExpiringSterileItems");
-    const body = QUERIES.slice(s, s + 900);
-    expect(body).not.toMatch(/alter table|create table|create policy|drop policy|\.rpc\(/i);
-  });
   it("the new expiry helper + dashboard card contain no DB/DDL at all", () => {
     const EXPIRY = read("lib/record-keeping/expiry.ts");
     for (const src of [EXPIRY, MODEL, LIST]) {

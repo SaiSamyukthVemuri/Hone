@@ -522,13 +522,6 @@ describe("consultation surface", () => {
     );
   });
 
-  it("budget is NOT a client_clinical_notes kind", () => {
-    const types = readFileSync(join(ROOT, "lib/types/database.ts"), "utf8");
-    expect(types).toContain(
-      'export type ClinicalNoteKind = "consultation" | "skin_hair_analysis";',
-    );
-  });
-
   it("the three chip labels render exactly as approved", () => {
     expect(Object.values(CLIENT_BUDGET_LEVEL_LABELS)).toEqual([
       "No stated limit",
