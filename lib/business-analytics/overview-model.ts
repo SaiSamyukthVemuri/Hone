@@ -24,18 +24,20 @@ import {
   type PaidVisit,
   type SeriesPoint,
 } from "./money-metrics";
-import { bucketsOf, statementsClaim, type PeriodWindow, type ResolvedPeriod, type StatementsClaim, type BucketUnit } from "./period";
+import { bucketUnit, bucketsOf, statementsClaim, type PeriodWindow, type ResolvedPeriod, type StatementsClaim, type BucketUnit } from "./period";
 import { reconcileWithStatement } from "./reconcile";
 import { serviceValueToCollected, type CompletedVisitMoney, type ReconciliationLine } from "./reconciliation-line";
 import { PRICE_EVIDENCE_CLASSES, resolveVisits, serviceValue, type PriceCandidate, type PriceEvidenceClass } from "./service-value";
 import {
   activeClientIds,
+  beyondUsualInterval,
   clientHistories,
   completedVisitCount,
   matchesPractitioner,
   noNextBooking,
   splitReturning,
   studioInterval,
+  visitsInWindow,
   visitsOf,
   visitsPerActiveClient,
   visitsWithoutClient,
@@ -61,6 +63,14 @@ export type WindowData = { appointments: readonly AssembleAppointment[]; money: 
 
 /** Completed-or-not appointments read for the history figures. Per-client data stays inside this module; only counts leave it. */
 export type HistoryData = { appointments: readonly AssembleAppointment[] };
+/** Collected now against the comparison period, computed here so the screen subtracts nothing: more, less or the same, and by how many cents (never negative). Null when the comparison could not be read. */
+export type CollectedDifference = { direction: "more" | "less" | "same"; cents: number };
+export function collectedDifference(nowCents: number, previousCents: number | null): CollectedDifference | null {
+  if (previousCents === null) return null;
+  const d = nowCents - previousCents;
+  return { direction: d > 0 ? "more" : d < 0 ? "less" : "same", cents: Math.abs(d) };
+}
+
 export type FollowThroughData = { past: readonly AssembleAppointment[]; future: readonly AssembleAppointment[] };
 
 export type PractitionerInfo = { id: string; displayName: string | null; active: boolean };
@@ -98,9 +108,17 @@ export type ServiceValueView = {
 
 export type ByPractitionerRow = { key: string; label: string; collectedCents: number };
 
+/** Active clients by how many completed visits they had in the period. The three always add up to the active clients. */
+export type VisitFrequency = { one: number; two: number; threePlus: number };
+
 export type OverviewView = {
   currentLabel: string;
   comparisonLabel: string;
+  /** The studio-local date "now" falls on, and the studio's time zone: said in the footer and the follow-through heading, never a person. */
+  asOfLocal: string;
+  timezone: string;
+  /** The current period's first and last local dates: used for a file name, never a person. */
+  currentRange: { startLocal: string; lastLocal: string };
   notes: string[];
   partial: boolean;
   clamped: boolean;
@@ -108,12 +126,18 @@ export type OverviewView = {
   /** The filter's KIND only: never the practitioner's id. */
   filterKind: PractitionerFilter["kind"];
   currency: string | null;
-  collected: Figure<{ headlineCents: number; split: CollectedSplit; caveats: CollectedCaveats; change: Change }>;
+  /** `previousCents` is the comparison period's collected (null when it could not be read), so the difference can be stated in words. */
+  collected: Figure<{ headlineCents: number; split: CollectedSplit; caveats: CollectedCaveats; change: Change; previousCents: number | null; difference: CollectedDifference | null }>;
   completedVisits: Figure<{ count: number; change: Change }>;
   activeClients: Figure<{ count: number; withoutClient: number; change: Change }>;
   visitsPerClient: Figure<Fact<number>>;
   averagePaid: Figure<AveragePaid>;
+  /** Unavailable when either average is unknown or the comparison could not be read; never a percentage against a missing figure. */
+  averagePaidChange: Change;
   series: Figure<{ unit: BucketUnit; points: SeriesPoint[] }>;
+  /** The comparison period's series, drawn beside the current one. Aligned by position (day 1 with day 1); a period with fewer days simply ends sooner, its missing days are absent, never 0. */
+  previousSeries: Figure<{ unit: BucketUnit; points: SeriesPoint[] }>;
+  visitFrequency: Figure<VisitFrequency>;
   byPractitioner: Figure<ByPractitionerRow[]>;
   serviceValue: Figure<ServiceValueView>;
   reconciliation: Figure<ReconciliationLine>;
@@ -123,12 +147,19 @@ export type OverviewView = {
   interval: Figure<StudioInterval>;
   /** A count only, as of now. The clients themselves are listed on the Clients tab, never here. */
   noNextBooking: Figure<{ count: number }>;
+  /**
+   * A count only, as of now: clients with at least two completed visit dates, no confirmed booking still to come with anyone, whose days since their last
+   * completed visit exceed 1.5 times their OWN average gap (the client's whole history, any practitioner). A team-member filter narrows who is counted (the
+   * clients that team member has EVER seen, not only those seen in the period, and never the history or the future-booking test. Clients with fewer than two visit dates are counted apart, never flagged.
+   */
+  beyondUsual: Figure<{ count: number; notEnoughHistory: number }>;
 };
 
 type Window = {
   completedVisits: Figure<number>;
   activeClients: Figure<{ count: number; withoutClient: number }>;
   visitsPerClient: Figure<Fact<number>>;
+  visitFrequency: Figure<VisitFrequency>;
   collected: Figure<{ headlineCents: number; split: CollectedSplit; caveats: CollectedCaveats }>;
   averagePaid: Figure<AveragePaid>;
   series: Figure<{ unit: BucketUnit; points: SeriesPoint[] }>;
@@ -167,7 +198,14 @@ function practitionerLabel(id: string | null, byId: ReadonlyMap<string, Practiti
   return p.displayName && p.displayName.trim() ? p.displayName.trim() : UNNAMED_TEAM_MEMBER_LABEL;
 }
 
-function computeWindow(data: WindowData, w: PeriodWindow, o: Pick<OverviewInput, "timezone" | "currency" | "nowIso" | "filter" | "practitioners" | "classesRead">): Window {
+function visitFrequency(mine: readonly VisitFact[], w: PeriodWindow): VisitFrequency {
+  const perClient = new Map<string, number>();
+  for (const v of visitsInWindow(mine, w)) if (v.clientId !== null) perClient.set(v.clientId, (perClient.get(v.clientId) ?? 0) + 1);
+  const counts = [...perClient.values()];
+  return { one: counts.filter((n) => n === 1).length, two: counts.filter((n) => n === 2).length, threePlus: counts.filter((n) => n >= 3).length };
+}
+
+function computeWindow(data: WindowData, w: PeriodWindow, o: Pick<OverviewInput, "timezone" | "currency" | "nowIso" | "filter" | "practitioners" | "classesRead"> & { unit: BucketUnit }): Window {
   const facts: VisitFact[] = data.appointments.map((a) => ({
     appointmentId: a.id,
     clientId: a.clientId,
@@ -182,6 +220,7 @@ function computeWindow(data: WindowData, w: PeriodWindow, o: Pick<OverviewInput,
     completedVisits: { available: true, value: completed } as Figure<number>,
     activeClients: { available: true, value: { count: clients, withoutClient: visitsWithoutClient(mine, w) } } as Figure<{ count: number; withoutClient: number }>,
     visitsPerClient: { available: true, value: visitsPerActiveClient(mine, w) } as Figure<Fact<number>>,
+    visitFrequency: { available: true, value: visitFrequency(mine, w) } as Figure<VisitFrequency>,
   };
   const money = (reason: ReadFailure) => ({
     collected: unavailable(reason), averagePaid: unavailable(reason), series: unavailable(reason),
@@ -231,8 +270,8 @@ function computeWindow(data: WindowData, w: PeriodWindow, o: Pick<OverviewInput,
     return { appointmentId: v.appointmentId, state: d.state, paidCents: d.paidCents };
   });
   const localDateByAppointment = new Map(facts.filter((x) => ids.has(x.appointmentId)).map((x) => [x.appointmentId, x.localDate]));
-  const series = collectionsSeries({ window: w, buckets: bucketsOf(w).buckets, statement: f.statement, localDateByAppointment, classes });
-  const unit = bucketsOf(w).unit;
+  const series = collectionsSeries({ window: w, unit: o.unit, buckets: bucketsOf(w, o.unit).buckets, statement: f.statement, localDateByAppointment, classes });
+  const unit = o.unit;
 
   // A kind of evidence that was not read contributes NOTHING, anywhere: its candidates are dropped before any price is resolved, so the subtotals, the
   // with-evidence totals and the line to collected money all agree with the "not available" shown for it.
@@ -281,7 +320,7 @@ const factsOf = (rows: readonly AssembleAppointment[], timezone: string): VisitF
  * Returning, interval and no-next-booking. The practitioner filter decides who counts as SEEN; it never narrows the history (a client is returning if
  * ANY practitioner saw them before) and never narrows the future-booking test (a booking with anyone counts), as the note on the screen says.
  */
-function historyFigures(input: OverviewInput, currentData: WindowData): Pick<OverviewView, "returning" | "interval" | "noNextBooking"> {
+function historyFigures(input: OverviewInput, currentData: WindowData): Pick<OverviewView, "returning" | "interval" | "noNextBooking" | "beyondUsual"> {
   const w = input.period.current;
   const tz = input.timezone;
   const todayLocal = localDateString(new Date(input.nowIso), tz);
@@ -304,19 +343,25 @@ function historyFigures(input: OverviewInput, currentData: WindowData): Pick<Ove
   }
 
   let next: Figure<{ count: number }> = failedFollow ?? unavailable("read_failed");
+  let beyond: Figure<{ count: number; notEnoughHistory: number }> = failedFollow ?? unavailable("read_failed");
   if (input.followThrough.ok) {
     const seenFacts = visitsOf(factsOf(input.followThrough.value.past, tz), input.filter);
     const nowMs = new Date(input.nowIso).getTime();
     const future = new Set(input.followThrough.value.future.filter((a) => a.status === "confirmed" && new Date(a.startsAt).getTime() > nowMs).map((a) => a.clientId));
     next = { available: true, value: { count: noNextBooking({ visits: seenFacts, clientsWithFutureBooking: future, todayLocal }).length } };
+    const everyone = visitsOf(factsOf(input.followThrough.value.past, tz));
+    const counted = new Set(seenFacts.flatMap((v) => (v.clientId === null ? [] : [v.clientId])));
+    const histories = clientHistories(everyone.filter((v) => v.clientId !== null && counted.has(v.clientId)), todayLocal);
+    const b = beyondUsualInterval({ histories, clientsWithFutureBooking: future, todayLocal });
+    beyond = { available: true, value: { count: b.clientIds.length, notEnoughHistory: b.notEnoughHistory.length } };
   }
-  return { returning, interval, noNextBooking: next };
+  return { returning, interval, noNextBooking: next, beyondUsual: beyond };
 }
 
 const numberOf = <T,>(f: Figure<T>, pick: (v: T) => number): number | null => (f.available ? pick(f.value) : null);
 
 export function buildOverview(input: OverviewInput): OverviewView {
-  const common = { timezone: input.timezone, currency: input.currency, nowIso: input.nowIso, filter: input.filter, practitioners: input.practitioners, classesRead: input.classesRead };
+  const common = { timezone: input.timezone, currency: input.currency, nowIso: input.nowIso, filter: input.filter, practitioners: input.practitioners, classesRead: input.classesRead, unit: bucketUnit(input.period.current) };
   const cur = input.current.ok ? computeWindow(input.current.value, input.period.current, common) : null;
   const prev = input.comparison.ok ? computeWindow(input.comparison.value, input.period.comparison, common) : null;
   const fail = (read: FigureRead<WindowData>): ReadFailure => (read.ok ? "read_failed" : read.reason);
@@ -324,17 +369,20 @@ export function buildOverview(input: OverviewInput): OverviewView {
   const changeOf = (now: number | null, before: number | null, comparisonRead: boolean): Change => (comparisonRead ? percentChange(now, before) : { kind: "unavailable" });
 
   const view: OverviewView = {
+    asOfLocal: localDateString(new Date(input.nowIso), input.timezone),
+    timezone: input.timezone,
     currentLabel: input.period.currentLabel,
     comparisonLabel: input.period.comparisonLabel,
+    currentRange: { startLocal: input.period.current.startLocal, lastLocal: input.period.current.lastLocal },
     notes: input.period.notes,
     partial: input.period.partial,
     clamped: input.period.clamped,
     statementsClaim: statementsClaim(input.period.current),
     filterKind: input.filter.kind,
     currency: input.currency,
-    collected: curFail, completedVisits: curFail, activeClients: curFail, visitsPerClient: curFail, averagePaid: curFail,
-    series: curFail, byPractitioner: curFail, serviceValue: curFail, reconciliation: curFail,
-    returning: curFail, interval: curFail, noNextBooking: curFail,
+    collected: curFail, completedVisits: curFail, activeClients: curFail, visitsPerClient: curFail, averagePaid: curFail, averagePaidChange: { kind: "unavailable" },
+    series: curFail, previousSeries: curFail, visitFrequency: curFail, byPractitioner: curFail, serviceValue: curFail, reconciliation: curFail,
+    returning: curFail, interval: curFail, noNextBooking: curFail, beyondUsual: curFail,
   };
   if (!cur) return view;
   const cmp = prev !== null;
@@ -346,10 +394,14 @@ export function buildOverview(input: OverviewInput): OverviewView {
     : cur.activeClients;
   view.visitsPerClient = cur.visitsPerClient;
   view.collected = cur.collected.available
-    ? { available: true, value: { ...cur.collected.value, change: changeOf(cur.collected.value.headlineCents, prev ? numberOf(prev.collected, (v) => v.headlineCents) : null, cmp) } }
+    ? { available: true, value: { ...cur.collected.value, change: changeOf(cur.collected.value.headlineCents, prev ? numberOf(prev.collected, (v) => v.headlineCents) : null, cmp), previousCents: prev ? numberOf(prev.collected, (v) => v.headlineCents) : null, difference: collectedDifference(cur.collected.value.headlineCents, prev ? numberOf(prev.collected, (v) => v.headlineCents) : null) } }
     : cur.collected;
   view.averagePaid = cur.averagePaid;
+  const avg = (w: Window | null): number | null => (w && w.averagePaid.available && w.averagePaid.value.averageCents.known ? w.averagePaid.value.averageCents.value : null);
+  view.averagePaidChange = changeOf(avg(cur), avg(prev), cmp);
   view.series = cur.series;
+  view.previousSeries = prev ? prev.series : unavailable(fail(input.comparison));
+  view.visitFrequency = cur.visitFrequency;
   view.byPractitioner = cur.byPractitioner;
   view.serviceValue = cur.serviceValue;
   view.reconciliation = cur.reconciliation;

@@ -46,10 +46,10 @@ const card = (cents: number) => ({ kind: "collected_card_session" as const, cent
 
 describe("studioVisitStatus: derived from the money lines and the price the visit was settled against", () => {
   it("$50 cash against a $100 quote is NOT Paid: it says Payment not confirmed, with the existing reason, and no amount owed", () => {
-    expect(studioVisitStatus([cash(5000)], 10000)).toEqual({ label: "Payment not confirmed", tone: "neutral", reason: "Part settled; the rest is not confirmed" });
+    expect(studioVisitStatus([cash(5000)], 10000)).toEqual({ label: "Payment not confirmed", tone: "warning", reason: "Part settled; the rest is not confirmed" });
   });
   it("an exact match and an overpayment are Paid", () => {
-    expect(studioVisitStatus([cash(10000)], 10000)).toEqual({ label: "Paid", tone: "paid" });
+    expect(studioVisitStatus([cash(10000)], 10000)).toEqual({ label: "Paid", tone: "success" });
     expect(studioVisitStatus([cash(15000)], 10000).label).toBe("Paid");
   });
   it("a recorded $0 collection: No charge when the price is $0; otherwise Payment not confirmed. Never Paid", () => {
@@ -58,7 +58,7 @@ describe("studioVisitStatus: derived from the money lines and the price the visi
     expect(studioVisitStatus([cash(0)], null).label).toBe("Payment not confirmed");
   });
   it("no quote: Payment recorded (it cannot be said to be paid in full), except one card charge, which is what was charged and covers itself", () => {
-    expect(studioVisitStatus([cash(5000)], null)).toEqual({ label: "Payment recorded", tone: "paid" });
+    expect(studioVisitStatus([cash(5000)], null)).toEqual({ label: "Payment recorded", tone: "neutral" });
     expect(studioVisitStatus([card(10000)], null).label).toBe("Paid");
     expect(studioVisitStatus([card(10000), cash(2000)], null).label).toBe("Payment recorded");
     expect(studioVisitStatus([card(10000), card(2000)], null).label).toBe("Payment recorded");
@@ -250,20 +250,20 @@ describe("small fidelity items", () => {
     expect(out).not.toContain("Next month");
   });
   it("under the client on a phone the row shows just the length ('30 min'), falling back to the service name when no length is known", async () => {
-    const phone = (out: string) => [...out.matchAll(/<span class="block text-xs text-\[#5d685f\] min-\[781px\]:hidden">([^<]*)<\/span>/g)].map((m) => m[1]);
+    const phone = (out: string) => [...out.matchAll(/<span class="block text-xs text-fg-muted min-\[781px\]:hidden">([^<]*)<\/span>/g)].map((m) => m[1]);
     const settle = [{ appointmentId: "v1", method: "paid_cash", amountCents: 5000, currency: "cad" }];
     expect(phone(await renderFix({ view: withInfo, settle }))).toEqual(["30 min"]);
     expect(phone(await renderFix({ view: { visitInfo: { v1: { clientName: "Client v1", clientId: null, serviceName: "Service", minutes: null } } }, settle }))).toEqual(["Service"]);
   });
-  it("the Statements page tints its own content area #fafbf9 and leaves the shell alone (source guard)", () => {
+  it("the Statements page keeps its own content area on the white ground (no tint) and leaves the shell alone (source guard)", () => {
     const src = readFileSync("app/(app)/financials/statement/page.tsx", "utf8");
-    expect(src).toMatch(/className="bg-\[#fafbf9\] min-\[1140px\]:-mx-\[45px\]"/);
+    expect(src).toMatch(/className="bg-surface min-\[1140px\]:-mx-\[45px\]"/);
   });
 });
 
 describe("an unresolved money line wins over everything else in the pill", () => {
   const unresolved = { kind: "unresolved" as const, cents: null };
-  const UNRESOLVED = { label: "Unresolved", tone: "neutral", reason: "A payment or refund is unresolved" };
+  const UNRESOLVED = { label: "Unresolved", tone: "warning", reason: "A payment or refund is unresolved" };
   it("a collected card session beside an unresolved line is Unresolved, never Paid (with or without a quote)", () => {
     expect(studioVisitStatus([card(10000), unresolved])).toEqual(UNRESOLVED);
     expect(studioVisitStatus([card(10000), unresolved], 10000)).toEqual(UNRESOLVED);

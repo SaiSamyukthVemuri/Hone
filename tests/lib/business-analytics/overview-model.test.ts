@@ -333,3 +333,143 @@ describe("history figures", () => {
     for (const f of [v.returning, v.interval, v.noNextBooking]) expect(f).toEqual({ available: false, reason: "read_failed" });
   });
 });
+
+describe("the figures the layout draws", () => {
+  it("the comparison period's collected is carried so the difference can be said in words, and is null when the comparison could not be read", () => {
+    expect(must(buildOverview(input()).collected).previousCents).toBe(12000);
+    const noComparison = buildOverview(input({ comparison: { ok: false, reason: "read_failed" } }));
+    expect(must(noComparison.collected).previousCents).toBeNull();
+    expect(must(noComparison.collected).change).toEqual({ kind: "unavailable" });
+  });
+  it("the previous period's series is the comparison window's own points, one per day; unreadable comparison is unavailable with its reason, never an empty line", () => {
+    const v = buildOverview(input());
+    const prev = must(v.previousSeries);
+    expect(prev.unit).toBe("day");
+    expect(prev.points).toHaveLength(30);
+    expect(prev.points.reduce((n, p) => n + p.collectedCents, 0)).toBe(12000);
+    const failed = buildOverview(input({ comparison: { ok: false, reason: "read_failed" } }));
+    expect(failed.previousSeries).toEqual({ available: false, reason: "read_failed" });
+  });
+  it("average paid has a change only when both averages are known; otherwise it is unavailable, never 0%", () => {
+    const v = buildOverview(input());
+    const cur = must(v.averagePaid).averageCents;
+    expect(cur.known).toBe(true);
+    expect(v.averagePaidChange.kind).toBe("percent");
+    expect(buildOverview(input({ comparison: { ok: false, reason: "read_failed" } })).averagePaidChange).toEqual({ kind: "unavailable" });
+    const noPaidBefore = buildOverview(input({ comparison: window({ appointments: priorAppointments, money: { cardRows: [], settlementRows: [], legacyFeeRows: [] } }) }));
+    expect(noPaidBefore.averagePaidChange).toEqual({ kind: "unavailable" });
+  });
+  it("visit frequency buckets the active clients into 1, 2 and 3+ visits, and the buckets add up to the active clients", () => {
+    const rows: AssembleAppointment[] = [
+      appt("a1", "completed", "2026-11-02T15:00:00Z", "pr-1", "client-a"),
+      appt("a2", "completed", "2026-11-09T15:00:00Z", "pr-1", "client-a"),
+      appt("b1", "completed", "2026-11-03T15:00:00Z", "pr-1", "client-b"),
+      appt("b2", "completed", "2026-11-10T15:00:00Z", "pr-1", "client-b"),
+      appt("b3", "completed", "2026-11-17T15:00:00Z", "pr-1", "client-b"),
+      appt("b4", "completed", "2026-11-24T15:00:00Z", "pr-1", "client-b"),
+      appt("c1", "completed", "2026-11-04T15:00:00Z", "pr-1", "client-c"),
+      appt("d1", "cancelled", "2026-11-05T15:00:00Z", "pr-1", "client-d"),
+    ];
+    const v = buildOverview(input({ current: window({ appointments: rows, money: { cardRows: [], settlementRows: [], legacyFeeRows: [] } }) }));
+    const f = must(v.visitFrequency);
+    expect(f).toEqual({ one: 1, two: 1, threePlus: 1 });
+    expect(f.one + f.two + f.threePlus).toBe(must(v.activeClients).count);
+  });
+  it("visit frequency follows the team-member filter, and its buckets still add up", () => {
+    const rows: AssembleAppointment[] = [
+      appt("a1", "completed", "2026-11-02T15:00:00Z", "pr-1", "client-a"),
+      appt("a2", "completed", "2026-11-09T15:00:00Z", "pr-2", "client-a"),
+      appt("c1", "completed", "2026-11-04T15:00:00Z", "pr-2", "client-c"),
+    ];
+    const v = buildOverview(input({ filter: { kind: "one", practitionerId: "pr-1" }, current: window({ appointments: rows, money: { cardRows: [], settlementRows: [], legacyFeeRows: [] } }) }));
+    const f = must(v.visitFrequency);
+    expect(f).toEqual({ one: 1, two: 0, threePlus: 0 });
+    expect(f.one + f.two + f.threePlus).toBe(must(v.activeClients).count);
+  });
+  it("a failed current read makes the new figures unavailable too, with the same reason", () => {
+    const v = buildOverview(input({ current: { ok: false, reason: "read_failed" } }));
+    for (const f of [v.previousSeries, v.visitFrequency]) expect(f).toEqual({ available: false, reason: "read_failed" });
+  });
+});
+
+describe("beyond their usual visit interval", () => {
+  const past: AssembleAppointment[] = [
+    appt("x1", "completed", "2026-08-01T15:00:00Z", "pr-1", "client-x"), appt("x2", "completed", "2026-08-11T15:00:00Z", "pr-1", "client-x"), // gap 10, last 111 days ago: beyond
+    appt("y1", "completed", "2026-10-01T15:00:00Z", "pr-1", "client-y"), appt("y2", "completed", "2026-10-31T15:00:00Z", "pr-1", "client-y"), // gap 30, last 30 days ago: within 45
+    appt("z1", "completed", "2026-06-01T15:00:00Z", "pr-1", "client-z"), appt("z2", "completed", "2026-06-11T15:00:00Z", "pr-1", "client-z"), // beyond, but has a booking to come
+    appt("w1", "completed", "2026-05-01T15:00:00Z", "pr-1", "client-w"), // one visit date: not enough history
+    appt("q1", "completed", "2026-03-01T15:00:00Z", "pr-2", "client-q"), appt("q2", "completed", "2026-03-11T15:00:00Z", "pr-2", "client-q"), // beyond, seen by pr-2 only
+    appt("m1", "completed", "2026-01-01T15:00:00Z", "pr-2", "client-m"), appt("m2", "completed", "2026-01-11T15:00:00Z", "pr-2", "client-m"), appt("m3", "completed", "2026-02-01T15:00:00Z", "pr-1", "client-m"), // pr-2 saw them twice, pr-1 once: their gaps are across BOTH
+    appt("c1", "cancelled", "2026-02-01T15:00:00Z", "pr-1", "client-c"), appt("c2", "cancelled", "2026-02-11T15:00:00Z", "pr-1", "client-c"), // never completed: not counted
+  ];
+  const future: AssembleAppointment[] = [appt("fz", "confirmed", "2026-12-15T15:00:00Z", "pr-2", "client-z"), appt("fp", "pending", "2026-12-16T15:00:00Z", "pr-1", "client-x")];
+  const ft = (o: Partial<OverviewInput> = {}) => buildOverview(input({ followThrough: { ok: true, value: { past, future } }, ...o }));
+  it("counts the clients past 1.5 times their own average gap, with no confirmed booking to come; a one-visit client is counted apart, never flagged", () => {
+    expect(must(ft().beyondUsual)).toEqual({ count: 3, notEnoughHistory: 1 }); // x, q and m beyond; w short; y within; z has a booking; c never completed
+  });
+  it("a pending booking does not count as a booking to come; a confirmed one with ANY practitioner does", () => {
+    const v = ft({ followThrough: { ok: true, value: { past, future: [appt("fz", "confirmed", "2026-12-15T15:00:00Z", "pr-2", "client-z"), appt("fx", "confirmed", "2026-12-16T15:00:00Z", "pr-2", "client-x")] } } });
+    expect(must(v.beyondUsual).count).toBe(2); // x now has a confirmed booking with pr-2; q and m are beyond
+  });
+  it("the team-member filter narrows who is counted (the clients that member saw), not the history or the future test", () => {
+    expect(must(ft({ filter: { kind: "one", practitionerId: "pr-1" } }).beyondUsual)).toEqual({ count: 2, notEnoughHistory: 1 }); // x, and m: their gaps use pr-2's visits too, not only pr-1's single visit
+    expect(must(ft({ filter: { kind: "one", practitionerId: "pr-2" } }).beyondUsual)).toEqual({ count: 2, notEnoughHistory: 0 }); // q and m
+  });
+  it("the boundary is strict: exactly 1.5 times the average gap is not beyond, one day more is", () => {
+    const run = (last: string, first: string) => must(ft({ followThrough: { ok: true, value: { past: [appt("e1", "completed", `${first}T15:00:00Z`, "pr-1", "client-e"), appt("e2", "completed", `${last}T15:00:00Z`, "pr-1", "client-e")], future: [] } } }).beyondUsual).count;
+    expect(run("2026-11-15", "2026-11-05")).toBe(0); // gap 10, last visit 15 days before 30 Nov: exactly 1.5 x
+    expect(run("2026-11-14", "2026-11-04")).toBe(1); // gap 10, last visit 16 days before
+  });
+  it("when the follow-through read failed the figure is unavailable with its reason, never 0", () => {
+    const v = buildOverview(input({ followThrough: { ok: false, reason: "read_failed" } }));
+    expect(v.beyondUsual).toEqual({ available: false, reason: "read_failed" });
+    expect(must(buildOverview(input({ followThrough: { ok: true, value: { past: [], future: [] } } })).beyondUsual)).toEqual({ count: 0, notEnoughHistory: 0 });
+  });
+});
+
+describe("the collected difference, visit frequency buckets and one bucket unit for both series", () => {
+  const empty = { cardRows: [], settlementRows: [], legacyFeeRows: [] };
+  it("the model says which way collected moved and by how much, so the screen subtracts nothing", () => {
+    // now = 265.00 (the fixture); the comparison collected is set by the prior money
+    const up = must(buildOverview(input()).collected); // previous 120.00
+    expect(up.difference).toEqual({ direction: "more", cents: up.headlineCents - 12000 });
+    const down = must(buildOverview(input({ comparison: window({ appointments: priorAppointments, money: { cardRows: [], settlementRows: [cash("old-1", 40000, 40000)], legacyFeeRows: [] } }) })).collected);
+    expect(down.difference).toEqual({ direction: "less", cents: 40000 - down.headlineCents });
+    expect(down.difference!.cents).toBeGreaterThan(0); // the amount is never negative; the direction carries the sign
+    const same = must(buildOverview(input({ comparison: window({ appointments: priorAppointments, money: { cardRows: [], settlementRows: [cash("old-1", must(buildOverview(input()).collected).headlineCents, 1)], legacyFeeRows: [] } }) })).collected);
+    expect(same.difference).toEqual({ direction: "same", cents: 0 });
+    expect(must(buildOverview(input({ comparison: { ok: false, reason: "read_failed" } })).collected).difference).toBeNull();
+  });
+  it("three-visit and four-visit clients land in the 3+ bucket, and the buckets add up to the active clients", () => {
+    const rows: AssembleAppointment[] = [];
+    for (const [c, n] of [["c1", 1], ["c2", 2], ["c3", 3], ["c4", 4]] as const) for (let i = 0; i < n; i++) rows.push(appt(`${c}-${i}`, "completed", `2026-11-0${i + 2}T15:00:00Z`, "pr-1", `client-${c}`));
+    const v = buildOverview(input({ current: window({ appointments: rows, money: empty }) }));
+    const f = must(v.visitFrequency);
+    expect(f).toEqual({ one: 1, two: 1, threePlus: 2 });
+    expect(f.one + f.two + f.threePlus).toBe(must(v.activeClients).count);
+  });
+  it("both series use the CURRENT period's unit, so a 63-day year to date and its 62-day comparison are both monthly", () => {
+    const r = resolvePeriod({ kind: "year_to_date", today: "2028-03-03" });
+    if (!r.ok) throw new Error(r.error);
+    expect(r.period.current.days).toBe(63);
+    expect(r.period.comparison.days).toBe(62);
+    const v = buildOverview(input({ period: r.period, nowIso: "2028-03-03T18:00:00Z", current: window({ appointments: [], money: empty }), comparison: window({ appointments: [], money: empty }) }));
+    const cur = must(v.series);
+    const prev = must(v.previousSeries);
+    expect(cur.unit).toBe("month");
+    expect(prev.unit).toBe("month");
+    expect(prev.points.map((p) => p.key)).toEqual(["2027-01", "2027-02", "2027-03"]);
+    expect(cur.points.map((p) => p.key)).toEqual(["2028-01", "2028-02", "2028-03"]);
+  });
+  it("a short current period keeps daily buckets for a longer comparison", () => {
+    const r = resolvePeriod({ kind: "custom", today: "2028-03-03", from: "2028-03-01", to: "2028-03-03" });
+    if (!r.ok) throw new Error(r.error);
+    const v = buildOverview(input({ period: r.period, nowIso: "2028-03-03T18:00:00Z", current: window({ appointments: [], money: empty }), comparison: window({ appointments: [], money: empty }) }));
+    expect(must(v.series).unit).toBe("day");
+    expect(must(v.previousSeries).unit).toBe("day");
+  });
+  it("the scope of beyond-usual under a filter is documented on the type (every client that team member has ever seen)", async () => {
+    const { readFileSync } = await import("node:fs");
+    expect(readFileSync("lib/business-analytics/overview-model.ts", "utf8")).toContain("has EVER seen, not only those seen in the period");
+  });
+});

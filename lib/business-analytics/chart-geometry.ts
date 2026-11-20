@@ -50,3 +50,65 @@ export function segmentShares(parts: ReadonlyArray<{ key: string; value: number 
   if (total === 0) return [];
   return clean.map((p) => ({ ...p, fraction: p.value / total }));
 }
+
+export type LinePoint = { x: number; y: number };
+
+/**
+ * Positions for a line over `slots` evenly spaced places (index 0 at the left edge, the last slot at the right edge; one slot sits in the middle). A value
+ * for slot i is drawn at slot i, so two series of different lengths line up by position and the shorter one simply ends sooner. A missing, negative or
+ * non-finite value is `null`: the line breaks there and nothing is drawn, never a 0.
+ */
+/** The values a line over `slots` places actually draws: the first `slots` of them. The axis is scaled from exactly these, so a value the line never draws cannot stretch it. */
+export function drawnValues(values: ReadonlyArray<number | null>, slots: number): Array<number | null> {
+  return values.slice(0, Math.max(0, slots));
+}
+
+export function lineLayout(values: ReadonlyArray<number | null>, axis: AxisScale, slots: number, width: number, height: number): Array<LinePoint | null> {
+  if (!(width > 0) || !(height > 0) || !(slots > 0)) return [];
+  return drawnValues(values, slots).map((v, i) => {
+    if (v === null || !Number.isFinite(v) || v < 0) return null;
+    const x = slots === 1 ? width / 2 : (i * width) / (slots - 1);
+    return { x, y: height - (Math.min(v, axis.max) / axis.max) * height };
+  });
+}
+
+/** The points a stroke cannot show: a point with no drawn neighbour on either side (a single point, or one between breaks) has no segment, so it is marked on its own. */
+export function isolatedPoints(points: ReadonlyArray<LinePoint | null>): LinePoint[] {
+  const out: LinePoint[] = [];
+  points.forEach((p, i) => {
+    if (p !== null && (i === 0 || points[i - 1] === null) && (i === points.length - 1 || points[i + 1] === null)) out.push(p);
+  });
+  return out;
+}
+
+/** An SVG path for a line that breaks at every null. Coordinates are rounded to two places so the markup is stable. */
+export function linePathD(points: ReadonlyArray<LinePoint | null>): string {
+  let d = "";
+  let pen = false;
+  for (const p of points) {
+    if (p === null) {
+      pen = false;
+      continue;
+    }
+    d += `${pen ? "L" : "M"}${Math.round(p.x * 100) / 100} ${Math.round(p.y * 100) / 100}`;
+    pen = true;
+  }
+  return d;
+}
+
+/** A closed shape under each unbroken run of the line down to the baseline (`baseY`), so the area stops where the line breaks and never spans a gap. */
+export function areaPathD(points: ReadonlyArray<LinePoint | null>, baseY: number): string {
+  const r = (n: number) => Math.round(n * 100) / 100;
+  let d = "";
+  let run: LinePoint[] = [];
+  const close = () => {
+    if (run.length >= 2) d += `M${r(run[0].x)} ${r(baseY)}${run.map((p) => `L${r(p.x)} ${r(p.y)}`).join("")}L${r(run[run.length - 1].x)} ${r(baseY)}Z`;
+    run = [];
+  };
+  for (const p of points) {
+    if (p === null) close();
+    else run.push(p);
+  }
+  close();
+  return d;
+}

@@ -177,7 +177,7 @@ describe("the table row says only that no payment is recorded", () => {
     const out = await renderRows([noPay("np1", 4)]);
     const visits = region(out, 'aria-labelledby="stmt-visits"', "</section>");
     const row1 = region(visits, "Client np1", "</details>");
-    expect(row1).toMatch(/bg-\[#f3eee4\][^"]*"[^>]*>No payment recorded</);
+    expect(row1).toMatch(/bg-status-neutral-surface[^"]*"[^>]*>No payment recorded</);
     expect(row1).toMatch(/<span aria-hidden="true">—<\/span><span class="sr-only">no amount<\/span>/);
     expect(row1).not.toMatch(/\$\d/);
     expect(row1).toContain("No payment recorded for this visit.");
