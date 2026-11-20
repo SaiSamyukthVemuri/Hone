@@ -260,3 +260,26 @@ describe("small fidelity items", () => {
     expect(src).toMatch(/className="bg-\[#fafbf9\] min-\[1140px\]:-mx-\[45px\]"/);
   });
 });
+
+describe("an unresolved money line wins over everything else in the pill", () => {
+  const unresolved = { kind: "unresolved" as const, cents: null };
+  const UNRESOLVED = { label: "Unresolved", tone: "neutral", reason: "A payment or refund is unresolved" };
+  it("a collected card session beside an unresolved line is Unresolved, never Paid (with or without a quote)", () => {
+    expect(studioVisitStatus([card(10000), unresolved])).toEqual(UNRESOLVED);
+    expect(studioVisitStatus([card(10000), unresolved], 10000)).toEqual(UNRESOLVED);
+    expect(studioVisitStatus([cash(5000), unresolved], 5000)).toEqual(UNRESOLVED);
+  });
+  it("a refunded fee or session beside an unresolved line is Unresolved, never Refunded in full", () => {
+    expect(studioVisitStatus([{ kind: "refunded_card_fee", cents: 2500 }, unresolved])).toEqual(UNRESOLVED);
+    expect(studioVisitStatus([{ kind: "refunded_card_session", cents: 10000 }, unresolved])).toEqual(UNRESOLVED);
+  });
+  it("unresolved alone, and beside a waiver or a still-owing note, is Unresolved", () => {
+    expect(studioVisitStatus([unresolved])).toEqual(UNRESOLVED);
+    expect(studioVisitStatus([unresolved, { kind: "waived", cents: 100 }])).toEqual(UNRESOLVED);
+    expect(studioVisitStatus([unresolved, { kind: "still_owes_note", cents: null }])).toEqual(UNRESOLVED);
+  });
+  it("without an unresolved line nothing changes: collected stays Paid, a lone refund stays Refunded in full", () => {
+    expect(studioVisitStatus([card(10000)]).label).toBe("Paid");
+    expect(studioVisitStatus([{ kind: "refunded_card_fee", cents: 2500 }]).label).toBe("Refunded in full");
+  });
+});

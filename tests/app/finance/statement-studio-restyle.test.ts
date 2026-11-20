@@ -176,7 +176,7 @@ describe("what a visit row says", () => {
     expect(studioVisitStatus([{ kind: "refunded_card_session", cents: 100 }]).label).toBe("Refunded in full");
     expect(studioVisitStatus([{ kind: "waived", cents: 100 }]).label).toBe("Waived");
     expect(studioVisitStatus([{ kind: "still_owes_note", cents: null }]).label).toBe("Marked still owing");
-    expect(studioVisitStatus([{ kind: "unresolved", cents: null }])).toEqual({ label: "Unresolved", tone: "neutral" });
+    expect(studioVisitStatus([{ kind: "unresolved", cents: null }])).toEqual({ label: "Unresolved", tone: "neutral", reason: "A payment or refund is unresolved" });
     expect(studioVisitStatus([{ kind: "collected_card_session", cents: 100 }, { kind: "refunded_card_fee", cents: 50 }]).label).toBe("Paid");
     // with no price or balance known, money recorded beside a still-owing or waived note is NOT "Paid" (it cannot mean paid in full)
     expect(studioVisitStatus([{ kind: "collected_cash", cents: 5000 }, { kind: "still_owes_note", cents: null }])).toEqual({ label: "Payment recorded", tone: "paid" });
