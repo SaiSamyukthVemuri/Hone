@@ -56,12 +56,12 @@ vi.mock("@/lib/waitlist/over-invite-port", async () => {
       i.entryIds.forEach((entryId, n) => h.items.push({ itemId: `${batchId}-i${n}`, entryId, batchId, studioId: i.studioId, state: "pending", reason: null, sentCount: 0 }));
       return { ok: true, result: "created", batchId, quantity: i.entryIds.length, extraRequested: i.entryIds.length, liveCount: 0 };
     },
-    claimItems: async (_d: unknown, l: { total: number; batchId?: string | null; actorUserId?: string | null }) => {
+    claimItems: async (_d: unknown, l: { total: number; claim: { mode: string; batchId?: string; actorUserId?: string } }) => {
       if (h.claimThrows) throw new Error("claim down");
-      h.claimCalls.push({ batchId: l.batchId ?? null, actorUserId: l.actorUserId ?? null });
-      // The database scopes a named batch to its owner: a batch id without an actor (or an unknown batch) returns nothing.
-      if ((l.batchId && !l.actorUserId) || (!l.batchId && l.actorUserId)) return { ok: true, items: [] };
-      const take = h.items.filter((x) => x.state === "pending" && (!l.batchId || x.batchId === l.batchId)).slice(0, l.total);
+      const scoped = l.claim.mode === "scoped";
+      h.claimCalls.push({ batchId: scoped ? l.claim.batchId ?? null : null, actorUserId: scoped ? l.claim.actorUserId ?? null : null });
+      if (l.claim.mode !== "scoped" && l.claim.mode !== "background") return { ok: false, code: "bad_scope" };
+      const take = h.items.filter((x) => x.state === "pending" && (!scoped || x.batchId === l.claim.batchId)).slice(0, l.total);
       take.forEach((x) => (x.state = "claimed"));
       return { ok: true, items: take.map((t) => ({ itemId: t.itemId, entryId: t.entryId, batchId: t.batchId, studioId: t.studioId, actorUserId: "a", serviceId: "s", startDate: "2026-12-01", endDate: "2026-12-07", allowedWeekdays: null, ttlHours: 48 })) };
     },
@@ -114,6 +114,8 @@ describe("cron route", () => {
     expect(h.admitted).toEqual([]);
     process.env.CRON_SECRET = "";
     expect((await cron("Bearer ")).status).toBe(401);
+    expect(h.claimCalls).toEqual([]); // no claim of any kind was made, scoped or not
+    expect(h.items[0].state).toBe("pending");
   });
   it("answers with counts only", async () => {
     process.env.CRON_SECRET = "test-secret-value";
@@ -132,7 +134,7 @@ describe("confirm once, the background route finishes", () => {
   it("a budget that ends mid-queue leaves the rest pending, and the next route call sends them", async () => {
     h.items = Array.from({ length: 60 }, (_, n) => ({ itemId: `x${n}`, entryId: `e${n}`, batchId: "bx", studioId: STUDIO, state: "pending", reason: null, sentCount: 0 }));
     let t = 0;
-    const first = await runRounds({ budgetMs: 1, now: () => (t += 1), deps: undefined as never }).catch(() => null);
+    const first = await runRounds({ budgetMs: 1, mode: { mode: "background" }, now: () => (t += 1), deps: undefined as never }).catch(() => null);
     void first;
     // Run one bounded pass through the real route: it processes everything pending across rounds of 25.
     const res = await (await cron("Bearer test-secret-value")).json();

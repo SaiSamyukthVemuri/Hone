@@ -14,6 +14,6 @@ export async function GET(req: Request) {
   if (!isAuthorizedCronRequest(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
-  const summary = await runRounds({ budgetMs: OVER_INVITE_CRON_BUDGET_MS });
+  const summary = await runRounds({ budgetMs: OVER_INVITE_CRON_BUDGET_MS, mode: { mode: "background" } });
   return NextResponse.json({ ok: true, ...summary });
 }

@@ -1,4 +1,4 @@
-import type { ClaimedItem, ClaimOutcome, AdmitOutcome, IssuedInvitation, SettleOutcome, SettleTarget } from "./over-invite-port";
+import type { ClaimMode, ClaimedItem, ClaimOutcome, AdmitOutcome, IssuedInvitation, SettleOutcome, SettleTarget } from "./over-invite-port";
 
 // The over-invite batch WORKER, as logic over injected ports (no database, no mail provider, no SMS: this module has no SMS dependency at all, so
 // no waitlist text can be sent from here). It follows the batch queue's worker contract for one claimed chunk:
@@ -17,7 +17,7 @@ import type { ClaimedItem, ClaimOutcome, AdmitOutcome, IssuedInvitation, SettleO
 export type DeliveryState = "accepted" | "refused" | "unknown";
 
 export type WorkerDeps = {
-  claim: (limits: { perStudio: number; total: number; leaseSeconds: number }, scope?: { batchId?: string; actorUserId?: string }) => Promise<ClaimOutcome>;
+  claim: (limits: { perStudio: number; total: number; leaseSeconds: number }, mode: ClaimMode) => Promise<ClaimOutcome>;
   admit: (item: ClaimedItem) => Promise<AdmitOutcome>;
   settle: (target: SettleTarget, outcome: "sent" | "failed" | "unknown" | "skipped", reasonClass: string | null, expectedState?: string | null, expectedInvitationId?: string | null) => Promise<SettleOutcome>;
   /** Sends the one invitation email. `entryId` lets the deliverer re-read the stored address when the command did not return one. */
@@ -32,7 +32,7 @@ export type ItemOutcome =
   | { entryId: string; itemId: string; status: "skipped"; reason: string }
   | { entryId: string; itemId: string; status: "failed"; reason: "delivery_refused" | "delivery_unknown" | "settle_failed" };
 
-export type ChunkResult = { ok: true; outcomes: ItemOutcome[]; claimed: number; /** Everything the claim returned, including items outside the scope (left for the lease to return). */ claimedAll: number } | { ok: false; code: "claim_failed" };
+export type ChunkResult = { ok: true; outcomes: ItemOutcome[]; claimed: number } | { ok: false; code: "claim_failed" };
 
 /**
  * LEASE > the time a whole claimed round can take. Items of a round wait their turn one at a time, so the last one is claimed for the sum of every
@@ -51,27 +51,35 @@ export function reasonFor(result: string): string {
 }
 
 /**
- * `scope`: the claim queue is GLOBAL across studios and batches, so a claim can return items the caller was not asked to serve. The owner's confirm
- * action serves ITS OWN batch only; the background route passes no scope and serves everything. Items outside the scope are left exactly as claimed (not admitted, not settled), and the database returns them to the
- * queue when their lease runs out. They are not counted in `claimed`, so the loop is not kept alive by them.
+ * `mode` is one of exactly two shapes, and nothing else claims anything:
+ *  - `scoped`: a batch AND its owner (the owner's confirm action). The database authorizes the owner through the batch's own studio before it
+ *    leases anything, so only that batch is ever claimed.
+ *  - `background`: the unscoped round-robin, used only by the background route behind its secret.
+ * Any other shape returns nothing WITHOUT calling the claim. After a scoped claim every returned item is checked against the scope; if one is ever
+ * foreign it is NOT processed and the whole chunk reports `claim_failed`, so that can never pass as a normal round.
  */
 export async function runBatchChunk(
   deps: WorkerDeps,
   limits: { perStudio: number; total: number; leaseSeconds: number } = DEFAULT_LIMITS,
-  scope: { studioId?: string; batchId?: string; actorUserId?: string } = {},
+  mode?: ClaimMode,
 ): Promise<ChunkResult> {
-  // A scoped claim is made IN THE DATABASE (only this batch, only for this owner); the filter below is a second line of defence, not the first.
-  const claimed = await deps.claim(limits, scope.batchId && scope.actorUserId ? { batchId: scope.batchId, actorUserId: scope.actorUserId } : undefined);
+  const m = mode as { mode?: unknown; batchId?: unknown; actorUserId?: unknown } | undefined;
+  const validScoped = m?.mode === "scoped" && typeof m.batchId === "string" && m.batchId !== "" && typeof m.actorUserId === "string" && m.actorUserId !== "";
+  if (!validScoped && m?.mode !== "background") return { ok: true, outcomes: [], claimed: 0 };
+  const claimed = await deps.claim(limits, mode as ClaimMode);
   if (!claimed.ok) return { ok: false, code: "claim_failed" };
+  if (validScoped) {
+    const s = mode as Extract<ClaimMode, { mode: "scoped" }>;
+    if (claimed.items.some((i) => i.batchId !== s.batchId || (s.studioId !== undefined && i.studioId !== s.studioId))) return { ok: false, code: "claim_failed" };
+  }
   const outcomes: ItemOutcome[] = [];
   let first = true;
-  const mine = claimed.items.filter((i) => (scope.studioId === undefined || i.studioId === scope.studioId) && (scope.batchId === undefined || i.batchId === scope.batchId));
-  for (const item of mine) {
+  for (const item of claimed.items) {
     if (!first) await deps.sleep(SPACING_MS);
     first = false;
     outcomes.push(await runOne(deps, item));
   }
-  return { ok: true, outcomes, claimed: mine.length, claimedAll: claimed.items.length };
+  return { ok: true, outcomes, claimed: claimed.items.length };
 }
 
 async function runOne(deps: WorkerDeps, item: ClaimedItem): Promise<ItemOutcome> {

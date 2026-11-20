@@ -24,41 +24,42 @@ function deps(over: Partial<WorkerDeps> & { items?: ClaimedItem[] } = {}) {
   return { d, calls, seen };
 }
 
+const BG = { mode: "background" } as const;
 describe("over-invite worker", () => {
   it("admit -> deliver -> settle sent", async () => {
     const { d, calls } = deps();
-    const r = await runBatchChunk(d);
+    const r = await runBatchChunk(d, undefined, BG);
     expect(r.ok && r.outcomes[0].status).toBe("sent");
     expect(calls).toEqual(["deliver", "settle:i1:sent:null"]);
   });
   it("settle names the item's own studio and entry from the claimed row (ownership check)", async () => {
     const { d, seen } = deps();
-    await runBatchChunk(d);
+    await runBatchChunk(d, undefined, BG);
     expect(seen).toEqual([{ itemId: "i1", studioId: "s", entryId: "e1" }]);
   });
   it("a refused admit (no_capacity) settles skipped so the lease cannot loop", async () => {
     const { d, calls } = deps({ admit: async () => ({ ok: true, result: "no_capacity" }) });
-    const r = await runBatchChunk(d);
+    const r = await runBatchChunk(d, undefined, BG);
     expect(calls).toEqual(["settle:i1:skipped:no_capacity"]);
     expect(r.ok && r.outcomes[0]).toMatchObject({ status: "skipped", reason: "no_capacity" });
   });
   it("a command that cannot be reached leaves the item claimed (no blind settle)", async () => {
     const { d, calls } = deps({ admit: async () => { throw new Error("x"); } });
-    const r = await runBatchChunk(d);
+    const r = await runBatchChunk(d, undefined, BG);
     expect(calls).toEqual([]);
     expect(r.ok && r.outcomes[0].status).toBe("failed");
   });
   it("an entry no longer sendable is skipped and never admitted", async () => {
     let admitted = false;
     const { d, calls } = deps({ mayStillSend: async () => false, admit: async () => { admitted = true; return { ok: true, result: "admitted", issued }; } });
-    await runBatchChunk(d);
+    await runBatchChunk(d, undefined, BG);
     expect(admitted).toBe(false);
     expect(calls).toEqual(["settle:i1:skipped:entry_not_sendable"]);
   });
   it("refused delivery settles failed; unknown settles failed with its own reason; neither resends here", async () => {
     for (const state of ["refused", "unknown"] as const) {
       const { d, calls } = deps({ deliver: async () => state });
-      const r = await runBatchChunk(d);
+      const r = await runBatchChunk(d, undefined, BG);
       expect(calls).toEqual([`settle:i1:${state === "refused" ? "failed" : "unknown"}:delivery_${state}`]);
       expect(r.ok && r.outcomes[0].status).toBe("failed");
     }
@@ -70,17 +71,17 @@ describe("over-invite worker", () => {
       admit: async (it) => (it.entryId === "e2" ? { ok: true, result: "not_admissible" } : { ok: true, result: "admitted", issued }),
       sleep: async (ms) => { sleeps.push(ms); },
     });
-    const r = await runBatchChunk(d);
+    const r = await runBatchChunk(d, undefined, BG);
     expect(r.ok && r.outcomes.map((o) => o.status)).toEqual(["sent", "skipped", "sent"]);
     expect(sleeps).toEqual([500, 500]);
   });
   it("a claim failure is reported, nothing is attempted", async () => {
     const { d } = deps({ claim: async () => ({ ok: false, code: "unavailable" }) });
-    expect(await runBatchChunk(d)).toEqual({ ok: false, code: "claim_failed" });
+    expect(await runBatchChunk(d, undefined, BG)).toEqual({ ok: false, code: "claim_failed" });
   });
   it("no outcome carries the token, email or name", async () => {
     const { d } = deps();
-    const r = await runBatchChunk(d);
+    const r = await runBatchChunk(d, undefined, BG);
     expect(JSON.stringify(r)).not.toMatch(/TOKEN|example\.test|"N"/);
   });
 });
@@ -127,21 +128,6 @@ describe("closed result sets (free text never flows onward)", () => {
     const item = { itemId: "i", studioId: "s", entryId: "e", actorUserId: "a", serviceId: "v", startDate: "d", endDate: "d", allowedWeekdays: null, ttlHours: 1 } as CI;
     expect(await admitBatchItem(rpcWith({ result: "some_new_free_text" }), item, null)).toEqual({ ok: true, result: "refused" });
     expect(await admitBatchItem(rpcWith({ result: "no_capacity" }), item, null)).toEqual({ ok: true, result: "no_capacity" });
-  });
-});
-
-describe("an owner's click never sends another studio's batch", () => {
-  it("items of another studio are neither admitted nor settled, and do not keep the loop alive", async () => {
-    const foreign = { ...item(9), studioId: "other" };
-    let admitted: string[] = [];
-    const { d, calls } = deps({ items: [foreign, item(1)], admit: async (it) => (admitted.push(it.entryId), { ok: true, result: "admitted", issued }) });
-    const r = await runBatchChunk(d, undefined, { studioId: "s" });
-    expect(admitted).toEqual(["e1"]);
-    expect(calls.filter((c) => c.includes("i9"))).toEqual([]);
-    expect(r.ok && r.claimed).toBe(1);
-    const only = deps({ items: [foreign] });
-    const r2 = await runBatchChunk(only.d, undefined, { studioId: "s" });
-    expect(r2.ok && r2.claimed).toBe(0);
   });
 });
 

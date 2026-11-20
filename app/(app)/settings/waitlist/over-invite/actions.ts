@@ -140,7 +140,7 @@ export async function sendOverInviteAction(_prev: OverInviteResult, formData: Fo
     // Without the batch id the inline round could not be scoped to THIS batch, so it does not run at all (the background route still sends the batch).
     if (!created.batchId) return { state: "notice", notice: N.batchSaved };
     // The batch is persisted. Run the first round(s) now; whatever is left is finished by the background route with no page open and no click.
-    const first = await runRounds({ budgetMs: FIRST_ROUNDS_BUDGET_MS, scope: { studioId: studio.id, batchId: created.batchId ?? undefined, actorUserId: practitioner.user_id } });
+    const first = await runRounds({ budgetMs: FIRST_ROUNDS_BUDGET_MS, mode: { mode: "scoped", studioId: studio.id, batchId: created.batchId, actorUserId: practitioner.user_id } });
     revalidatePath("/settings/waitlist/over-invite");
     const quantity = created.quantity ?? sub.entryIds.length;
     return {

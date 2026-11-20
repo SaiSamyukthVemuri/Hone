@@ -79,7 +79,7 @@ describe("the page never says or enforces a cap of 25 ", () => {
   it("the chunk is only ever the claim's page size: rounds repeat until nothing is claimable, and the action never slices the selection", () => {
     const run = read("lib/waitlist/over-invite-run.ts");
     expect(run).toMatch(/for \(;;\)/);
-    expect(run).toMatch(/r\.claimedAll === 0\) break/);
+    expect(run).toMatch(/r\.claimed === 0\) break/);
     expect(read("app/(app)/settings/waitlist/over-invite/actions.ts")).not.toMatch(/entryIds\.slice\(|\.slice\(0, *\d+\)/);
   });
 });
@@ -125,8 +125,11 @@ describe("the worker is driven ONLY by the confirm action's first round and the 
     expect(route).toMatch(/isAuthorizedCronRequest\(req\)/);
     expect(route).not.toMatch(/process\.env|searchParams|new URL/);
   });
-  it("the confirm action's rounds always name the batch AND the owner; only the cron route calls runRounds unscoped", () => {
-    expect(code("app/(app)/settings/waitlist/over-invite/actions.ts")).toMatch(/scope:\s*\{[^}]*batchId:[^}]*actorUserId:/);
-    expect(code("app/api/cron/waitlist-invitation-batches/route.ts")).not.toMatch(/scope/);
+  it("only the background route may make an unscoped (background) claim; the confirm action always names its batch AND its owner", () => {
+    expect(code("app/(app)/settings/waitlist/over-invite/actions.ts")).toMatch(/mode:\s*\{\s*mode:\s*"scoped"[^}]*batchId:[^}]*actorUserId:/);
+    expect(code("app/(app)/settings/waitlist/over-invite/actions.ts")).not.toMatch(/mode:\s*"background"/);
+    expect(code("app/api/cron/waitlist-invitation-batches/route.ts")).toMatch(/mode:\s*\{\s*mode:\s*"background"\s*\}/);
+    // The call shape `mode: { mode: "background" }` appears nowhere in production code but the cron route.
+    expect(hits('mode: \\{ mode: "background" \\}', ["app", "lib", "components", "scripts", "middleware.ts"])).toEqual(["app/api/cron/waitlist-invitation-batches/route.ts"]);
   });
 });

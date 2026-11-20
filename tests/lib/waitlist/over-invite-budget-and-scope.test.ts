@@ -34,7 +34,7 @@ describe("a call never overruns its budget (checked before every item's worth of
     it(`worst-case items (full item budget each): elapsed stays within ${budget} ms and the rest stays queued`, async () => {
       const m = model(500, ITEM_BUDGET_MS);
       const t0 = m.now();
-      const r = await runRounds({ budgetMs: budget, deps: m.deps, now: m.now });
+      const r = await runRounds({ budgetMs: budget, mode: { mode: "background" }, deps: m.deps, now: m.now });
       expect(m.now() - t0).toBeLessThanOrEqual(budget);
       expect(r.budgetSpent).toBe(true);
       expect(m.left()).toBeGreaterThan(0); // nothing dropped: it is still queued for the next call
@@ -42,13 +42,13 @@ describe("a call never overruns its budget (checked before every item's worth of
   }
   it("fast items drain a large queue inside the budget, in rounds of at most 5", async () => {
     const m = model(60, 200);
-    const r = await runRounds({ budgetMs: 40_000, deps: m.deps, now: m.now });
+    const r = await runRounds({ budgetMs: 40_000, mode: { mode: "background" }, deps: m.deps, now: m.now });
     expect(r.sent).toBe(60);
     expect(Math.max(...m.claimed)).toBeLessThanOrEqual(5);
   });
   it("an exhausted budget claims nothing at all", async () => {
     const m = model(10, 100);
-    const r = await runRounds({ budgetMs: SPACING_MS + ITEM_BUDGET_MS - 1, deps: m.deps, now: m.now });
+    const r = await runRounds({ budgetMs: SPACING_MS + ITEM_BUDGET_MS - 1, mode: { mode: "background" }, deps: m.deps, now: m.now });
     expect(m.claimed).toEqual([]);
     expect(r.budgetSpent).toBe(true);
   });
@@ -151,7 +151,7 @@ describe("a thrown delivery is UNKNOWN, never refused (worker and retry)", () =>
       deliver: async () => { throw new Error("boom"); },
       mayStillSend: async () => true,
       sleep: async () => {},
-    });
+    }, undefined, { mode: "background" });
     expect(settled).toEqual(["unknown:delivery_unknown"]);
   });
 });
@@ -240,7 +240,7 @@ describe("budget edge: an item that would not fit is never started", () => {
       mayStillSend: async () => true,
       sleep: async (ms) => { clock += ms; },
     };
-    await runRounds({ budgetMs: SPACING_MS + ITEM_BUDGET_MS + 100, deps, now: () => clock });
+    await runRounds({ budgetMs: SPACING_MS + ITEM_BUDGET_MS + 100, mode: { mode: "background" }, deps, now: () => clock });
     expect(claimed).toEqual([1]);
     expect(clock).toBeLessThanOrEqual(SPACING_MS + ITEM_BUDGET_MS + 100);
   });
@@ -385,161 +385,69 @@ describe("the retry mark gates everything after it", () => {
   });
 });
 
-describe("the claim command receives the batch and the owner", () => {
-  it("scoped: p_batch_id and p_actor_user_id are sent; unscoped: both null", async () => {
+describe("the claim modes: exactly two shapes claim anything", () => {
+  const limits = { perStudio: 5, total: 5, leaseSeconds: 120 };
+  it("port: scoped sends the batch and the owner; background sends neither", async () => {
     const { claimItems } = await import("@/lib/waitlist/over-invite-port");
     const calls: Record<string, unknown>[] = [];
     const db = { rpc: async (_f: string, a: Record<string, unknown>) => (calls.push(a), { data: [], error: null }) };
-    await claimItems(db as never, { perStudio: 5, total: 5, leaseSeconds: 120, batchId: "B", actorUserId: "U" });
-    await claimItems(db as never, { perStudio: 5, total: 5, leaseSeconds: 120 });
+    await claimItems(db as never, { ...limits, claim: { mode: "scoped", batchId: "B", actorUserId: "U" } });
+    await claimItems(db as never, { ...limits, claim: { mode: "background" } });
     expect(calls[0]).toMatchObject({ p_batch_id: "B", p_actor_user_id: "U" });
     expect(calls[1]).toMatchObject({ p_batch_id: null, p_actor_user_id: null });
   });
-  it("runBatchChunk hands the scope to the claim only when it names both a batch and an owner", async () => {
-    const { runBatchChunk } = await import("@/lib/waitlist/over-invite-worker");
-    const seen: unknown[] = [];
-    const base = { admit: async () => ({ ok: false as const, code: "x" as never }), settle: async () => ({ ok: true as const, result: "settled" }), deliver: async () => "accepted" as const, mayStillSend: async () => true, sleep: async () => {} };
-    const claim = async (_l: unknown, s?: unknown) => (seen.push(s ?? null), { ok: true as const, items: [] });
-    await runBatchChunk({ ...base, claim }, undefined, { studioId: "s", batchId: "B", actorUserId: "U" });
-    await runBatchChunk({ ...base, claim }, undefined, {});
-    expect(seen).toEqual([{ batchId: "B", actorUserId: "U" }, null]);
-  });
-});
-
-describe("the confirm path can never fall back to the unscoped claim", () => {
-  const mk = () => {
-    const seen: unknown[] = [];
-    const deps: WorkerDeps = {
-      claim: async (_l, sc) => (seen.push(sc ?? null), { ok: true, items: [] }),
-      admit: async () => ({ ok: false, code: "x" as never }),
-      settle: async () => ({ ok: true, result: "settled" }),
-      deliver: async () => "accepted",
-      mayStillSend: async () => true,
-      sleep: async () => {},
-    };
-    return { deps, seen };
-  };
-  for (const [name, scope] of [
-    ["no batch", { studioId: "s", actorUserId: "u" }],
-    ["no owner", { studioId: "s", batchId: "b" }],
-    ["studio only", { studioId: "s" }],
-    ["empty scope", {}],
-  ] as const) {
-    it(`a scope with ${name} claims nothing at all`, async () => {
-      const { deps, seen } = mk();
-      await runRounds({ budgetMs: 20_000, scope, deps, now: () => 0 });
-      expect(seen).toEqual([]);
+  const BAD: [string, unknown][] = [
+    ["undefined", undefined],
+    ["empty object", {}],
+    ["scoped with no batch", { mode: "scoped", actorUserId: "U" }],
+    ["scoped with no owner", { mode: "scoped", batchId: "B" }],
+    ["scoped with an empty owner", { mode: "scoped", batchId: "B", actorUserId: "" }],
+    ["scoped with a studio only", { mode: "scoped", studioId: "s" }],
+    ["an unknown mode", { mode: "all" }],
+    ["background with extra ids", { mode: "scoped" }],
+  ];
+  for (const [name, claim] of BAD) {
+    it(`the port never calls the database for ${name}`, async () => {
+      const { claimItems } = await import("@/lib/waitlist/over-invite-port");
+      let called = 0;
+      const db = { rpc: async () => (called++, { data: [], error: null }) };
+      const r = await claimItems(db as never, { ...limits, claim: claim as never });
+      expect(called).toBe(0);
+      expect(r).toEqual({ ok: false, code: "bad_scope" });
+    });
+    it(`the worker never calls claim for ${name}`, async () => {
+      const { runBatchChunk } = await import("@/lib/waitlist/over-invite-worker");
+      let called = 0;
+      const r = await runBatchChunk({ ...baseDeps, claim: async () => (called++, { ok: true as const, items: [] }) }, undefined, claim as never);
+      expect(called).toBe(0);
+      expect(r).toEqual({ ok: true, outcomes: [], claimed: 0 });
+    });
+    it(`runRounds claims nothing for ${name}`, async () => {
+      let called = 0;
+      await runRounds({ budgetMs: 20_000, mode: claim as never, deps: { ...baseDeps, claim: async () => (called++, { ok: true as const, items: [] }) }, now: () => 0 });
+      expect(called).toBe(0);
     });
   }
-  it("only the cron's NO scope claims unscoped; a full scope claims scoped", async () => {
-    const a = mk();
-    await runRounds({ budgetMs: 20_000, deps: a.deps, now: () => 0 });
-    const b = mk();
-    await runRounds({ budgetMs: 20_000, scope: { studioId: "s", batchId: "B", actorUserId: "U" }, deps: b.deps, now: () => 0 });
-    expect(a.seen[0]).toBeNull();
-    expect(b.seen[0]).toEqual({ batchId: "B", actorUserId: "U" });
+  const baseDeps = { admit: async () => ({ ok: false as const, code: "unavailable" as const }), settle: async () => ({ ok: true as const, result: "settled" }), deliver: async () => "accepted" as const, mayStillSend: async () => true, sleep: async () => {} };
+  it("only the background route claims unscoped; a full scoped mode claims scoped and background claims background", async () => {
+    const seen: unknown[] = [];
+    const claim = async (_l: unknown, m: unknown) => (seen.push(m), { ok: true as const, items: [] });
+    await runRounds({ budgetMs: 20_000, mode: { mode: "background" }, deps: { ...baseDeps, claim }, now: () => 0 });
+    await runRounds({ budgetMs: 20_000, mode: { mode: "scoped", studioId: "s", batchId: "B", actorUserId: "U" }, deps: { ...baseDeps, claim }, now: () => 0 });
+    expect(seen).toEqual([{ mode: "background" }, { mode: "scoped", studioId: "s", batchId: "B", actorUserId: "U" }]);
   });
-});
-
-describe("permanent replace refusals do not block the retryable items behind them", () => {
-  const issued = { invitationId: "inv-2", rawToken: "t", issuedAt: new Date(), expiresAt: new Date(), deliveryEmail: null, deliveryName: null };
-  it("7 targets, the first 5 permanently unreplaceable: the first click retires them, the next click reaches the retryable ones", async () => {
-    const items = new Map<string, { state: string; reason: string | null }>();
-    for (let n = 0; n < 7; n++) items.set(`i${n}`, { state: "failed", reason: "delivery_refused" });
-    const permanent = new Set(["i0", "i1", "i2", "i3", "i4"]);
-    const sent: string[] = [];
-    const deps = {
-      kind: "refused" as const,
-      stillRetryable: async ({ itemId }: { itemId: string }) => (items.get(itemId)!.reason === "delivery_refused" ? { state: "failed", invitationId: "inv-1" } : null),
-      replace: async (entryId: string) => (permanent.has(entryId) ? { ok: true as const, result: "invitation_redeemed" } : { ok: true as const, result: "replaced" as const, issued }),
-      deliver: async () => "accepted" as const,
-      settle: async (t: { itemId: string }, o: string, why: string | null) => {
-        items.set(t.itemId, { state: o, reason: why });
-        if (o === "sent") sent.push(t.itemId);
-        return { ok: true as const, result: "settled" };
-      },
-      sleep: async () => {},
-    };
-    // The selection the page makes: refused items in stable order, capped at one click.
-    const pick = () => [...items].filter(([, v]) => v.state === "failed" && v.reason === "delivery_refused").map(([id]) => ({ entryId: id, itemId: id, studioId: "s" })).slice(0, RETRY_CLICK_MAX);
-    await retryDeliveries(deps, pick());
-    expect(sent).toEqual([]);
-    expect([...items].filter(([, v]) => v.reason === "retry_not_possible")).toHaveLength(5);
-    await retryDeliveries(deps, pick());
-    expect(sent).toEqual(["i5", "i6"]);
-  });
-  it("a transient failure (command unreachable) is restored as retryable, not retired", async () => {
-    const settled: string[] = [];
-    await retryDeliveries(
-      { kind: "refused", stillRetryable: async () => ({ state: "failed", invitationId: "x" }), replace: async () => ({ ok: false, code: "unavailable" as never }), deliver: async () => "accepted", settle: async (_t, o, why) => (settled.push(`${o}:${why}`), { ok: true, result: "settled" }), sleep: async () => {} },
-      [{ entryId: "e", itemId: "i-t", studioId: "s" }],
-    );
-    expect(settled).toEqual(["failed:retry_started", "failed:delivery_refused"]);
-  });
-});
-
-describe("every settle names the exact invitation id it concerns", () => {
-  const mkIssued = (id: string) => ({ invitationId: id, rawToken: "t", issuedAt: new Date(), expiresAt: new Date(), deliveryEmail: null, deliveryName: null });
-  const item = { itemId: "it", batchId: "b", studioId: "s", entryId: "e", actorUserId: "a", serviceId: "v", startDate: "d", endDate: "d", allowedWeekdays: null, ttlHours: 1 };
-  async function worker(opts: { admit: unknown; delivery?: "accepted" | "refused" | "unknown"; settleResult?: string }) {
+  const item = (batchId: string, studioId: string, n: number) => ({ itemId: `i${n}`, batchId, studioId, entryId: `e${n}`, actorUserId: "a", serviceId: "v", startDate: "d", endDate: "d", allowedWeekdays: null, ttlHours: 1 });
+  it("a scoped claim that ever returns a foreign item processes NOTHING and reports claim_failed", async () => {
     const { runBatchChunk } = await import("@/lib/waitlist/over-invite-worker");
-    const calls: string[] = [];
-    const r = await runBatchChunk({
-      claim: async () => ({ ok: true, items: [item] }),
-      admit: async () => opts.admit as never,
-      settle: async (_t, o, why, st, inv) => (calls.push(`${o}:${why}:${st ?? null}:${inv ?? null}`), { ok: true, result: opts.settleResult ?? "settled" }),
-      deliver: async () => opts.delivery ?? "accepted",
-      mayStillSend: async () => true,
-      sleep: async () => {},
-    });
-    return { calls, r };
-  }
-  it("worker sent / refused / unknown settles pass the id admit returned", async () => {
-    const admit = { ok: true, result: "admitted", issued: mkIssued("INV-A") };
-    expect((await worker({ admit })).calls).toEqual(["sent:null:null:INV-A"]);
-    expect((await worker({ admit, delivery: "refused" })).calls).toEqual(["failed:delivery_refused:null:INV-A"]);
-    expect((await worker({ admit, delivery: "unknown" })).calls).toEqual(["unknown:delivery_unknown:null:INV-A"]);
-  });
-  it("worker skipped settle (no invitation was issued) passes null", async () => {
-    expect((await worker({ admit: { ok: true, result: "no_capacity" } })).calls).toEqual(["skipped:no_capacity:null:null"]);
-  });
-  it("worker: state_changed is skipped, never sent and never an error", async () => {
-    const { r } = await worker({ admit: { ok: true, result: "admitted", issued: mkIssued("INV-A") }, settleResult: "state_changed" });
-    expect(r.ok && r.outcomes[0]).toMatchObject({ status: "skipped", reason: "state_changed" });
-  });
-  it("retry: the mark and the restores pass the CURRENT id; the settles after replace pass the NEW id", async () => {
-    const run = async (replace: unknown, delivery: "accepted" | "refused" | "unknown") => {
-      const calls: string[] = [];
-      await retryDeliveries(
-        {
-          kind: "refused",
-          stillRetryable: async () => ({ state: "failed", invitationId: "OLD" }),
-          replace: async () => replace as never,
-          deliver: async () => delivery,
-          settle: async (_t, o, why, st, inv) => (calls.push(`${o}:${why}:${st}:${inv}`), { ok: true, result: "settled" }),
-          sleep: async () => {},
-        },
-        [{ entryId: "e", itemId: "i-" + Math.random(), studioId: "s" }],
+    for (const foreign of [item("OTHER", "s", 2), item("B", "OTHER-STUDIO", 3)]) {
+      let admitted = 0;
+      const r = await runBatchChunk(
+        { ...baseDeps, claim: async () => ({ ok: true as const, items: [item("B", "s", 1), foreign] }), admit: async () => (admitted++, { ok: false as const, code: "unavailable" as const }) },
+        undefined,
+        { mode: "scoped", studioId: "s", batchId: "B", actorUserId: "U" },
       );
-      return calls;
-    };
-    const replaced = { ok: true, result: "replaced", issued: mkIssued("NEW") };
-    expect(await run(replaced, "accepted")).toEqual(["failed:retry_started:failed:OLD", "sent:null:failed:NEW"]);
-    expect(await run(replaced, "refused")).toEqual(["failed:retry_started:failed:OLD", "failed:delivery_refused:failed:NEW"]);
-    expect(await run(replaced, "unknown")).toEqual(["failed:retry_started:failed:OLD", "failed:delivery_unknown:failed:NEW"]);
-    expect(await run({ ok: true, result: "invitation_redeemed" }, "accepted")).toEqual(["failed:retry_started:failed:OLD", "failed:retry_not_possible:failed:OLD"]);
-    expect(await run({ ok: false, code: "unavailable" }, "accepted")).toEqual(["failed:retry_started:failed:OLD", "failed:delivery_refused:failed:OLD"]);
-  });
-  it("port sends p_expected_invitation_id on settle", async () => {
-    const { settleItem } = await import("@/lib/waitlist/over-invite-port");
-    const calls: Record<string, unknown>[] = [];
-    const db = { rpc: async (_f: string, a: Record<string, unknown>) => (calls.push(a), { data: "settled", error: null }) };
-    await settleItem(db as never, { itemId: "i", studioId: "s", entryId: "e" }, "sent", null, null, "INV");
-    expect(calls[0]).toMatchObject({ p_expected_invitation_id: "INV" });
-  });
-  it("progress counts an ended invitation separately from not sent", async () => {
-    const t = tallyItems([{ state: "skipped", reason_class: "invitation_ended" }, { state: "skipped", reason_class: "no_capacity" }]);
-    expect(t.ended).toBe(1);
-    expect(t.skipped).toBe(1);
+      expect(r).toEqual({ ok: false, code: "claim_failed" });
+      expect(admitted).toBe(0);
+    }
   });
 });

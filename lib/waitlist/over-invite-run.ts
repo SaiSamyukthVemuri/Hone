@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { admitBatchItem, claimItems, replaceInvitation, settleItem } from "@/lib/waitlist/over-invite-port";
 import { deliverIssued, mayStillSend } from "@/lib/waitlist/over-invite-deliver";
 import { RETRY_CLICK_MAX } from "@/lib/waitlist/over-invite-progress";
+import type { ClaimMode } from "@/lib/waitlist/over-invite-port";
 import { DEFAULT_LIMITS, ITEM_BUDGET_MS, SPACING_MS, runBatchChunk, type DeliveryState, type ItemOutcome, type WorkerDeps } from "@/lib/waitlist/over-invite-worker";
 import { retryDeliveries, type RetryKind, type RetryOutcome } from "@/lib/waitlist/over-invite-retry";
 
@@ -30,7 +31,7 @@ export { RETRY_CLICK_MAX };
 export function liveWorkerDeps(sleep: (ms: number) => Promise<void> = sleepFor): WorkerDeps {
   const db = createAdminClient();
   return {
-    claim: (limits, scope) => claimItems(db, { ...limits, batchId: scope?.batchId ?? null, actorUserId: scope?.actorUserId ?? null }),
+    claim: (limits, claim) => claimItems(db, { ...limits, claim }),
     admit: (item) => admitBatchItem(db, item, null),
     settle: (target, outcome, reason, expected, invitationId) => settleItem(db, target, outcome, reason, expected ?? null, invitationId ?? null),
     // An email that takes longer than the per-item budget is reported UNKNOWN (it may still arrive), never retried automatically, and keeps the whole round inside
@@ -45,14 +46,11 @@ export type RoundsSummary = { rounds: number; claimed: number; sent: number; ski
 
 /**
  * Process rounds until no item is claimable or the time budget is spent. Round-robin fairness across studios is the claim's (per-studio cap per
- * round). `scope` limits a call to one studio and batch (the owner's confirm action serves only the batch it just created); the cron passes none and
- * serves every studio and batch in turn.
+ * round). `mode` is required: `scoped` (the owner's confirm action serves only the batch it just created, for that owner) or `background` (the cron
+ * route only, every studio and batch in turn). Any other shape claims nothing.
  * An unspent budget with nothing claimed means the queue is empty. Returns counts only.
  */
-export async function runRounds(opts: { budgetMs: number; scope?: { studioId?: string; batchId?: string; actorUserId?: string }; deps?: WorkerDeps; now?: () => number }): Promise<RoundsSummary> {
-  // FAIL CLOSED: a scoped call (the owner's confirm) must name BOTH its batch and its owner. A scope missing either would fall back to the unscoped
-  // claim (every studio's items), which is only for the cron route, so it claims nothing at all.
-  if (opts.scope && (!opts.scope.batchId || !opts.scope.actorUserId)) return { rounds: 0, claimed: 0, sent: 0, skipped: 0, failed: 0, budgetSpent: false };
+export async function runRounds(opts: { budgetMs: number; mode: ClaimMode; deps?: WorkerDeps; now?: () => number }): Promise<RoundsSummary> {
   const deps = opts.deps ?? liveWorkerDeps();
   const now = opts.now ?? Date.now;
   const t0 = now();
@@ -69,11 +67,10 @@ export async function runRounds(opts: { budgetMs: number; scope?: { studioId?: s
       budgetSpent = true;
       break;
     }
-    const r = await runBatchChunk(deps, { ...DEFAULT_LIMITS, perStudio: take, total: take }, opts.scope);
+    const r = await runBatchChunk(deps, { ...DEFAULT_LIMITS, perStudio: take, total: take }, opts.mode);
     if (!r.ok) break;
     rounds += 1;
-    // Stop only when the queue is EMPTY. A round that claimed nothing in scope but did claim others' items has moved those out of the way, so go on.
-    if (r.claimedAll === 0) break;
+    if (r.claimed === 0) break;
     claimed += r.claimed;
     outcomes.push(...r.outcomes);
   }

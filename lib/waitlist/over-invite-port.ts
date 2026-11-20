@@ -11,7 +11,7 @@ type Rpc = Pick<SupabaseClient, "rpc">;
 
 const FN_ABSENT = new Set(["PGRST202", "42883"]);
 
-export type PortFailure = { ok: false; code: "unavailable" | "not_applied" | "bad_shape" };
+export type PortFailure = { ok: false; code: "unavailable" | "not_applied" | "bad_shape" | "bad_scope" };
 
 function failure(error: { code?: string } | null): PortFailure {
   return { ok: false, code: error && FN_ABSENT.has(String(error.code)) ? "not_applied" : "unavailable" };
@@ -139,15 +139,28 @@ export type ClaimedItem = {
 
 export type ClaimOutcome = { ok: true; items: ClaimedItem[] } | PortFailure;
 
+/**
+ * The ONLY two ways to claim. `scoped` names a batch AND its owner: the database authorizes the owner through the batch's own studio before it
+ * leases anything, and a batch id with no owner, an unknown batch or a non-owner returns nothing. `background` is the unscoped round-robin across
+ * studios, used ONLY by the background route. Any other shape never reaches the database.
+ */
+export type ClaimMode = { mode: "scoped"; batchId: string; actorUserId: string; studioId?: string } | { mode: "background" };
+
+const NONEMPTY = (v: unknown): v is string => typeof v === "string" && v.length > 0;
+
 /** Claim runs per studio round-robin with a lease. The caller passes sane limits; the database returns NOTHING for a limit below its floor. */
-export async function claimItems(db: Rpc, input: { perStudio: number; total: number; leaseSeconds: number; batchId?: string | null; actorUserId?: string | null }): Promise<ClaimOutcome> {
+export async function claimItems(db: Rpc, input: { perStudio: number; total: number; leaseSeconds: number; claim: ClaimMode }): Promise<ClaimOutcome> {
+  const m = input.claim as { mode?: unknown; batchId?: unknown; actorUserId?: unknown } | null | undefined;
+  const scoped = m?.mode === "scoped";
+  // Fail closed BEFORE any call: a scoped claim needs both ids, a background claim needs neither, and nothing else is a claim at all.
+  if (!(scoped ? NONEMPTY(m?.batchId) && NONEMPTY(m?.actorUserId) : m?.mode === "background")) return { ok: false, code: "bad_scope" };
   const { data, error } = await db.rpc("claim_waitlist_batch_items", {
     p_per_studio: input.perStudio,
     p_total: input.total,
     p_lease_seconds: input.leaseSeconds,
     // Both or neither: the owner's own first rounds name their batch AND themselves, so nothing of another studio is leased; the cron passes neither.
-    p_batch_id: input.batchId ?? null,
-    p_actor_user_id: input.actorUserId ?? null,
+    p_batch_id: scoped ? (m!.batchId as string) : null,
+    p_actor_user_id: scoped ? (m!.actorUserId as string) : null,
     // NEVER a time argument: the claim's clock is the database's.
   });
   if (error) return failure(error);

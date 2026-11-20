@@ -1,9 +1,17 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
+
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({}) }));
 import { adminQuery, closePool, seedStudio } from "./helpers/harness";
 import { admitBatchItem, claimItems, createBatch, previewSelection, replaceInvitation, settleItem, stopBatch } from "@/lib/waitlist/over-invite-port";
 import { runBatchChunk, type DeliveryState, type WorkerDeps } from "@/lib/waitlist/over-invite-worker";
 import { retryDeliveries } from "@/lib/waitlist/over-invite-retry";
+import { runRounds } from "@/lib/waitlist/over-invite-run";
+
+const LIM = { perStudio: 5, total: 5, leaseSeconds: 120 };
+const scopedClaim = (batchId: string, actorUserId: string) => claimItems(db, { ...LIM, claim: { mode: "scoped", batchId, actorUserId } });
+const bgClaim = () => claimItems(db, { ...LIM, claim: { mode: "background" } });
 
 // The over-invite port and worker against a REAL database with the batch migration applied (owned local stack, synthetic data only). The mail provider is a fake;
 // the commands are the real ones. Requires the batch migration: with it absent every test fails loudly rather than skipping.
@@ -81,7 +89,7 @@ const batch = (f: F, ids: string[], o: { key?: string; fit?: number; shown?: num
 
 function deps(deliver: (entryId: string) => DeliveryState, log: string[] = []): WorkerDeps {
   return {
-    claim: (l) => claimItems(db, l),
+    claim: (l, claim) => claimItems(db, { ...l, claim }),
     admit: (item) => admitBatchItem(db, item, null),
     settle: (t, o, r, expected, invitationId) => settleItem(db, t, o, r, expected ?? null, invitationId ?? null),
     deliver: async (_i, entryId) => (log.push(entryId), deliver(entryId)),
@@ -92,9 +100,9 @@ function deps(deliver: (entryId: string) => DeliveryState, log: string[] = []): 
 async function drain(d: WorkerDeps) {
   const out = [];
   for (let i = 0; i < 60; i++) {
-    const r = await runBatchChunk(d, { perStudio: 5, total: 5, leaseSeconds: 120 });
+    const r = await runBatchChunk(d, { perStudio: 5, total: 5, leaseSeconds: 120 }, { mode: "background" });
     if (process.env.OV_DEBUG) console.log("CHUNK", JSON.stringify(r));
-    if (!r.ok || r.claimedAll === 0) break;
+    if (!r.ok || r.claimed === 0) break;
     out.push(...r.outcomes);
   }
   return out;
@@ -186,25 +194,81 @@ describe("over-invite worker against the real batch commands", () => {
     const aBatch = (mine as { batchId: string }).batchId;
     const bBatch = (theirs as { batchId: string }).batchId;
     // A non-owner (the other studio's owner) naming A's batch gets nothing, and an unknown batch gets nothing.
-    const notOwner = await claimItems(db, { ...{ perStudio: 5, total: 5, leaseSeconds: 120 }, batchId: aBatch, actorUserId: b.userId });
+    const notOwner = await scopedClaim(aBatch, b.userId);
     expect(notOwner.ok && notOwner.items).toEqual([]);
-    const unknown = await claimItems(db, { perStudio: 5, total: 5, leaseSeconds: 120, batchId: "00000000-0000-4000-8000-0000000000ff", actorUserId: a.userId });
+    const unknown = await scopedClaim("00000000-0000-4000-8000-0000000000ff", a.userId);
     expect(unknown.ok && unknown.items).toEqual([]);
     // The owner's scoped claim returns only A's own batch, and leaves B's items untouched (never leased).
-    const scoped = await claimItems(db, { perStudio: 5, total: 5, leaseSeconds: 120, batchId: aBatch, actorUserId: a.userId });
+    const scoped = await scopedClaim(aBatch, a.userId);
     expect(scoped.ok && scoped.items.length).toBe(3);
     expect(scoped.ok && scoped.items.every((i) => i.batchId === aBatch && i.studioId === a.studioId)).toBe(true);
     expect(await q(`select state, count(*)::int c from public.waitlist_invitation_batch_items where batch_id=$1 group by 1`, [bBatch])).toEqual([{ state: "pending", c: 3 }]);
     // An unscoped, cron-style claim still reaches the foreign batch.
-    const cron = await claimItems(db, { perStudio: 5, total: 5, leaseSeconds: 120 });
+    const cron = await bgClaim();
     expect(cron.ok && cron.items.map((i) => i.batchId)).toEqual([bBatch, bBatch, bBatch]);
+  });
+
+  describe("a scoped (confirm-time) claim never leases anything of another studio", () => {
+    const snapshot = (studioId: string) => q(`select * from public.waitlist_invitation_batch_items where studio_id=$1 order by id`, [studioId]);
+    async function twoStudios() {
+      const a = await seed("lease-a");
+      const b = await seed("lease-b"); // both seeded BEFORE any batch exists: seeding clears the queue
+      const a1 = (await batch(a, await entries(a, 6), { fit: 0 })) as { batchId: string };
+      const a2 = (await batch(a, await entries(a, 6), { fit: 0 })) as { batchId: string };
+      const bb = (await batch(b, await entries(b, 4), { fit: 0 })) as { batchId: string };
+      return { a, b, a1: a1.batchId, a2: a2.batchId, bb: bb.batchId };
+    }
+    it("(a) three successive confirm rounds for A leave B's rows byte-equal, and an unscoped cron claim takes B immediately", async () => {
+      const { a, b, a1, bb } = await twoStudios();
+      const before = await snapshot(b.studioId);
+      expect(before).toHaveLength(4);
+      for (let n = 0; n < 3; n++) {
+        const r = await runBatchChunk(deps(() => "accepted"), LIM, { mode: "scoped", studioId: a.studioId, batchId: a1, actorUserId: a.userId });
+        expect(r.ok).toBe(true);
+      }
+      expect(await snapshot(b.studioId)).toEqual(before);
+      expect(before.every((r: any) => r.state === "pending" && r.claimed_at == null)).toBe(true);
+      const cron = await bgClaim();
+      expect(cron.ok && cron.items.map((i) => i.batchId)).toEqual([bb, bb, bb, bb]); // immediately: no lease had to expire
+    });
+    it("(b) concurrent scoped claims (A's two batches, a non-owner, an unknown batch) leave B unchanged and claim no A item twice", async () => {
+      const { a, b, a1, a2, bb } = await twoStudios();
+      const before = await snapshot(b.studioId);
+      const results = await Promise.all([
+        scopedClaim(a1, a.userId), scopedClaim(a1, a.userId), scopedClaim(a2, a.userId),
+        scopedClaim(a1, b.userId), scopedClaim("00000000-0000-4000-8000-0000000000ff", a.userId),
+      ]);
+      expect(results[3].ok && results[3].items).toEqual([]);
+      expect(results[4].ok && results[4].items).toEqual([]);
+      const ids = results.flatMap((r) => (r.ok ? r.items.map((i) => i.itemId) : []));
+      expect(new Set(ids).size).toBe(ids.length); // no item leased twice
+      expect(results.flatMap((r) => (r.ok ? r.items : [])).every((i) => i.studioId === a.studioId)).toBe(true);
+      expect(await snapshot(b.studioId)).toEqual(before);
+      const cron = await bgClaim();
+      expect(cron.ok && cron.items.map((i) => i.batchId)).toEqual([bb, bb, bb, bb]);
+    });
+    it("(c) a batch id with a NULL actor claims nothing at the database, and B is unchanged", async () => {
+      const { b, a1 } = await twoStudios();
+      const before = await snapshot(b.studioId);
+      const rows = await q(`select * from public.claim_waitlist_batch_items(5, 5, 120, $1::uuid, null::uuid)`, [a1]);
+      expect(rows).toEqual([]);
+      expect(await snapshot(b.studioId)).toEqual(before);
+    });
+    it("(d) a full confirm-path runRounds through the real port processes A's batch and leaves B unchanged", async () => {
+      const { a, b, a1 } = await twoStudios();
+      const before = await snapshot(b.studioId);
+      const r = await runRounds({ budgetMs: 40_000, mode: { mode: "scoped", studioId: a.studioId, batchId: a1, actorUserId: a.userId }, deps: deps(() => "accepted") });
+      expect(r.sent).toBe(6);
+      expect(await q(`select state, count(*)::int c from public.waitlist_invitation_batch_items where batch_id=$1 group by 1`, [a1])).toEqual([{ state: "sent", c: 6 }]);
+      expect(await snapshot(b.studioId)).toEqual(before);
+    });
   });
 
   it("a late 'sent' for the OLD invitation after a replace is refused (state_changed) and the replacement stays issued; the NEW id settles", async () => {
     const f = await seed("g3");
     const ids = await entries(f, 1);
     await batch(f, ids, { fit: 0 });
-    const claimed = await claimItems(db, { perStudio: 5, total: 5, leaseSeconds: 120, batchId: (await q(`select batch_id from public.waitlist_invitation_batch_items where entry_id=$1`, [ids[0]]))[0].batch_id, actorUserId: f.userId });
+    const claimed = await scopedClaim((await q(`select batch_id from public.waitlist_invitation_batch_items where entry_id=$1`, [ids[0]]))[0].batch_id, f.userId);
     expect(claimed.ok && claimed.items.length).toBe(1);
     const item = (claimed as { items: Parameters<typeof admitBatchItem>[1][] }).items[0];
     const admitted = await admitBatchItem(db, item, null);
@@ -229,7 +293,7 @@ describe("over-invite worker against the real batch commands", () => {
     const other = await seed("h2");
     const ids = await entries(f, 2);
     await batch(f, ids, { fit: 0 });
-    const claimed = await claimItems(db, { perStudio: 5, total: 5, leaseSeconds: 120 });
+    const claimed = await bgClaim();
     expect(claimed.ok).toBe(true);
     const mine = (claimed as { items: { itemId: string; studioId: string; entryId: string }[] }).items.filter((i) => i.studioId === f.studioId);
     expect(mine).toHaveLength(2);
