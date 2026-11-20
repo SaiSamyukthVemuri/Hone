@@ -471,8 +471,10 @@ describe("compact controls, whole-dollar headline figures and the area under the
     const c = card(render({ ...view, series: current, previousSeries: previous } as unknown as OverviewView), "ov-series") ?? "";
     const ticks = [...c.matchAll(/<text[^>]*text-anchor="end"[^>]*font-size="11"[^>]*>(\$[\d,.]+)<\/text>/g)].map((m) => m[1]);
     expect(ticks.length).toBeGreaterThan(1);
-    expect(ticks.at(0)).not.toMatch(/\$[1-9]\d{3},|\$\d{5,}/); // the top tick is not near $50,000
-    expect(c).not.toContain("$50,000"); // the hidden amounts are also not in the table
+    const top = Number((ticks.at(-1) ?? "").split("$").join("").split(",").join(""));
+    expect(top).toBeGreaterThanOrEqual(100); // every drawn day is $100
+    expect(top).toBeLessThanOrEqual(200); // and the axis stops near it, not near the $50,000 days that are cut off
+    expect(c).not.toContain("50,000"); // the cut-off amounts are not in the table either
   });
   it("the current line has a faint neutral area under it", () => {
     const c = card(render(healthy()), "ov-series") ?? "";
