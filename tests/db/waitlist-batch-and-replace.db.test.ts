@@ -5,8 +5,8 @@ import { adminQuery, closePool, seedMember, seedStudio } from "./helpers/harness
 const q = async <T = any>(text: string, params: unknown[] = []): Promise<T[]> => (await adminQuery(text, params)).rows as T[];
 afterAll(async () => { await closePool(); });
 
-// 0363 -- over-invite batches, batch-aware admit, atomic replace. Synthetic data, owned local stack. Rehearsed 20/20 alone (19 Nov 2026) and in
-// the stacked rehearsal; the first-run helper fixes are already in.
+// 0363 -- over-invite batches, batch-aware admit, atomic replace. Synthetic data, owned local stack. Rehearsed alone and stacked; the first-run helper
+// fixes are already in.
 // claim_waitlist_batch_items is GLOBAL across studios (it is the worker queue), so every test starts from an empty queue.
 async function drainQueue() {
   await q(`update public.waitlist_invitation_batch_items set state='skipped', reason_class='test_cleanup' where state in ('pending','claimed') and invitation_id is null`);
@@ -212,13 +212,13 @@ describe("replace", () => {
   });
 });
 
-describe("Insurance F1-F3", () => {
+describe("replace, the studio lock and what a claimed item authorises", () => {
   async function liveInvite(f: F, e: string) {
     await create(f, [e], { fit: 0, shown: (await q(`select count(*)::int n from public.new_client_waitlist_invitations where studio_id=$1 and redeemed_at is null and expired_at is null and released_at is null`, [f.studioId]))[0].n });
     const c = (await claim()).find((r: any) => r.entry_id === e)!; await admitItem(f, c.item_id, e); return c;
   }
   const replace = (f: F, e: string) => q(`select * from public.replace_waitlist_invitation($1,$2,$3)`, [f.studioId, f.userId, e]).then((r) => r[0]);
-  it("F1: simultaneous replaces in one studio never deadlock (repeated), and a replace racing an admit serialises", async () => {
+  it("simultaneous replaces in one studio never deadlock (repeated), and a replace racing an admit serialises", async () => {
     for (let k = 0; k < 5; k++) {
       const f = await seed(`f1${k}`); const ids = await entries(f, 4);
       for (const e of ids) await liveInvite(f, e);
@@ -230,12 +230,12 @@ describe("Insurance F1-F3", () => {
     const [rep, adm] = await Promise.all([replace(f, a), q(`select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,null,72,1000)`, [f.studioId, f.userId, c, f.serviceId, day(1), day(30)])]);
     expect(rep.result).toBe("replaced"); expect(adm[0].result).toBe("admitted");
   });
-  it("F1: the studio lock is taken first (source order pin: studio lock precedes the entry lock in replace)", async () => {
+  it("the studio lock is taken first (source order pin: studio lock precedes the entry lock in replace)", async () => {
     const src = (await q(`select prosrc from pg_proc where proname='replace_waitlist_invitation'`))[0].prosrc as string;
     expect(src.indexOf("from public.studios")).toBeGreaterThan(-1);
     expect(src.indexOf("from public.studios")).toBeLessThan(src.indexOf("from public.new_client_waitlist_entries"));
   });
-  it("F2: replace refuses an inactive service and an open owner-review hold, and changes nothing", async () => {
+  it("replace refuses an inactive service and an open owner-review hold, and changes nothing", async () => {
     const f = await seed("f2"); const [a, b2] = await entries(f, 2); await liveInvite(f, a); await liveInvite(f, b2);
     await q(`insert into public.waitlist_followups (studio_id, entry_id, kind, status, opened_at) values ($1,$2,'decline','open',now())`, [f.studioId, b2]);
     expect((await replace(f, b2)).result).toBe("pending_owner_review");
@@ -243,7 +243,49 @@ describe("Insurance F1-F3", () => {
     expect((await replace(f, a)).result).toBe("invalid_service");
     for (const e of [a, b2]) expect((await q(`select status from public.new_client_waitlist_entries where id=$1`, [e]))[0].status).toBe("invited");
   });
-  it("F3: a claimed item authorises only what the batch stored: another service, window, weekdays or TTL is batch_item_invalid and the item stays claimed", async () => {
+  it("a FULL admission round does not block a replace: it rotates as admit does, and the replace succeeds", async () => {
+    const f = await seed("rf"); const [a, b2] = await entries(f, 2);
+    await liveInvite(f, a); await liveInvite(f, b2);
+    await q(`update public.studio_waitlist_admission_rounds set allowance = 1 where studio_id = $1 and closed_at is null`, [f.studioId]);
+    const r = await replace(f, a);
+    expect(r.result).toBe("replaced");
+    const open = await q(`select count(*)::int n from public.studio_waitlist_admission_rounds where studio_id = $1 and closed_at is null`, [f.studioId]);
+    expect(open[0].n, "exactly one open round after the rotation").toBe(1);
+  });
+  it("a replace refusal carries only a code from the closed set (no open round: refused:no_round_open), and the mapping is a closed set in the source", async () => {
+    const f = await seed("rc"); const [a] = await entries(f, 1);
+    await liveInvite(f, a);
+    await q(`update public.studio_waitlist_admission_rounds set closed_at = clock_timestamp(), closed_by_practitioner_id = $2, updated_at = clock_timestamp() where studio_id = $1 and closed_at is null`, [f.studioId, f.practitionerId]);
+    const r = await replace(f, a);
+    expect(r.result).toBe("refused:no_round_open");
+    const src = (await q(`select prosrc from pg_proc where proname='replace_waitlist_invitation'`))[0].prosrc as string;
+    expect(src).toContain("'refused:other'");
+    expect(src).not.toMatch(/'refused:'\s*\|\|\s*SQLERRM\)::text/);
+    expect(src).toMatch(/SQLERRM = any \(array\[/);
+  });
+  it("settle refuses a reason class that is not a closed lowercase shape, as invalid_input, before anything is written", async () => {
+    const f = await seed("sr"); const [e1] = await entries(f, 1);
+    await create(f, [e1], { fit: 0, shown: 0 }); const [c1] = await claim();
+    await admitItem(f, c1.item_id, c1.entry_id);
+    const settle = (reason: string) => q(`select public.settle_waitlist_batch_item($1,$2,$3,'failed',$4) r`, [c1.item_id, f.studioId, c1.entry_id, reason]).then((r) => r[0].r);
+    for (const bad of ["Provider Error", "someone@example.com", "x".repeat(41), "has space", ""]) expect(await settle(bad), bad).toBe("invalid_input");
+    expect((await q(`select state, reason_class from public.waitlist_invitation_batch_items where id=$1`, [c1.item_id]))[0]).toMatchObject({ state: "issued", reason_class: null });
+    expect(await settle("provider_error")).toBe("settled");
+  });
+  it("a create replay with different weekdays or TTL is key_reused, not exists", async () => {
+    const f = await seed("cw"); const [e1] = await entries(f, 1); const key = randomUUID();
+    const mk = (wd: number[] | null, ttl: number) => q(`select * from public.create_waitlist_invitation_batch($1,$2,$3,$4,$5,$6,$7,$8,$9,0,0,true)`, [f.studioId, f.userId, key, [e1], f.serviceId, day(1), day(30), wd, ttl]);
+    expect((await mk(null, 72))[0].result).toBe("created");
+    expect((await mk(null, 72))[0].result).toBe("exists");
+    expect((await mk([1, 2], 72))[0].result, "different weekdays").toBe("key_reused");
+    expect((await mk(null, 48))[0].result, "different ttl").toBe("key_reused");
+  });
+  it("the two batch tables carry no token, address, phone or name column", async () => {
+    const cols = await q(`select column_name from information_schema.columns where table_schema='public' and table_name in ('waitlist_invitation_batches','waitlist_invitation_batch_items')`);
+    expect(cols.length).toBeGreaterThan(10);
+    for (const c of cols) expect(c.column_name, c.column_name).not.toMatch(/token|e_?mail|phone|mobile|name|address|contact|sms/i);
+  });
+  it("a claimed item authorises only what the batch stored: another service, window, weekdays or TTL is batch_item_invalid and the item stays claimed", async () => {
     const f = await seed("f3"); const other = await q(`insert into public.services (studio_id,name,default_duration_minutes,active,modality) values ($1,'Other',30,true,'consultation') returning id`, [f.studioId]);
     const ids = await entries(f, 5); await create(f, ids, { fit: 0, shown: 0 });
     const cs = await claim(); const by = (i: number) => cs.find((r: any) => r.entry_id === ids[i])!;
