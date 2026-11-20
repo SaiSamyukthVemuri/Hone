@@ -104,3 +104,38 @@ describe("each client row has a real document action", () => {
     expect(out).not.toMatch(/Invoice/);
   });
 });
+
+describe("the shared finder loader keeps its size cap and its states", () => {
+  const load = async (clients: { id: string; name: string; preferredName: string | null; archived: boolean }[], over: Record<string, unknown> = {}) => {
+    vi.resetModules();
+    const lastVisits = vi.fn(async () => ({ access: "granted", ok: true, lastVisit: {} }));
+    vi.doMock("@/lib/finance/statement-directory-read", () => ({
+      LAST_VISIT_MAX_CLIENTS: 40,
+      loadFinderClients: vi.fn(async () => ({ access: "granted", ok: true, clients })),
+      loadLastVisitDates: lastVisits,
+      ...over,
+    }));
+    const { loadFinderState } = await import("@/app/(app)/financials/statements/finder-data");
+    const { FINDER_CLIENT_CAP } = await import("@/lib/finance/statement-screen");
+    return { state: await loadFinderState({ role: "owner" } as never, { id: "s1", timezone: "America/Toronto" } as never), cap: FINDER_CLIENT_CAP, lastVisits };
+  };
+  const many = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `c${i}`, name: `Client ${i}`, preferredName: null, archived: false }));
+  it("exactly the cap is searchable; one more is 'too_many' and carries NO client", async () => {
+    const { cap } = await load([]);
+    const atCap = await load(many(cap));
+    expect(atCap.state.state).toBe("ok");
+    const over = await load(many(cap + 1));
+    expect(over.state).toEqual({ state: "too_many" });
+  });
+  it("a refused or failed client read is 'unavailable', never an empty finder", async () => {
+    const refused = await load([], { loadFinderClients: vi.fn(async () => ({ access: "refused" })) });
+    expect(refused.state).toEqual({ state: "unavailable" });
+    const failed = await load([], { loadFinderClients: vi.fn(async () => ({ access: "granted", ok: false, reason: "read_failed" })) });
+    expect(failed.state).toEqual({ state: "unavailable" });
+  });
+  it("above the cap no last-visit lookup is made at all", async () => {
+    const { cap } = await load([]);
+    const over = await load(many(cap + 1));
+    expect(over.lastVisits).not.toHaveBeenCalled();
+  });
+});
