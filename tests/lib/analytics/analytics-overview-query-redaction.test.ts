@@ -82,6 +82,7 @@ describe("Sentry", () => {
       const out = scrubErrorEvent(error({ message: `failed at ${u}`, exception: { values: [{ type: "Error", value: `bad request ${u}` }] } }));
       // Asserted on the scrubbed TEXT itself, field by field, so a later scrubber change that stops redacting the id or a date goes red here,
       // whatever shape the rest of the string takes.
+      // The dates in free text are covered by the phone-style digit-run rule, not by a rule that knows from and to.
       const texts = [out.message, out.exception?.values?.[0]?.value];
       for (const text of texts) {
         expect(typeof text, "the free text is still there").toBe("string");
