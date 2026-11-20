@@ -41,8 +41,9 @@ export function ClientsView({ month, monthLabel, maxMonth, timezone, notice, pag
   return (
     <div className="space-y-6">
       <header className="space-y-4">
+        <p className="text-sm text-[#5d685f]">Business &nbsp;/&nbsp; Statements</p>
         <div className="flex flex-wrap items-end justify-between gap-3">
-          <h1 className="text-3xl font-semibold tracking-tight text-fg">Statements</h1>
+          <h1 className="text-[clamp(32px,4vw,46px)] font-bold leading-[1.07] tracking-[-2px] text-fg">Monthly statements</h1>
           <MonthControls base="/financials/statements" month={month} maxMonth={maxMonth} />
         </div>
         <div className="flex flex-wrap items-start gap-3">
@@ -60,7 +61,7 @@ export function ClientsView({ month, monthLabel, maxMonth, timezone, notice, pag
       </header>
 
       <section aria-labelledby="stmt-clients" className="space-y-3">
-        <h2 id="stmt-clients" className="text-xl font-semibold tracking-tight text-fg">Clients with visits in {monthLabel}</h2>
+        <h2 id="stmt-clients" className="text-[21px] font-semibold tracking-[-0.65px] text-fg">Clients with visits in {monthLabel}</h2>
         <p className="text-sm text-fg-muted">{DIRECTORY_MONTH_NOTE} Month and day boundaries use the studio&apos;s timezone ({timezone}).</p>
         {!directory.ok ? (
           <p className="text-sm text-fg" role="alert">{STATEMENT_READ_UNAVAILABLE[directory.reason] ?? STATEMENT_READ_UNAVAILABLE.read_failed}</p>
@@ -72,26 +73,27 @@ export function ClientsView({ month, monthLabel, maxMonth, timezone, notice, pag
               {paged.totals.clientCount} {paged.totals.clientCount === 1 ? "client" : "clients"} · {paged.totals.visitCount} {paged.totals.visitCount === 1 ? "visit" : "visits"} · {format(paged.totals.paidCents)} paid
               {paged.totals.awaitingCount > 0 ? ` · ${paged.totals.awaitingCount} ${paged.totals.awaitingCount === 1 ? "visit" : "visits"} awaiting payment confirmation` : ""}
             </p>
-            <div className="overflow-x-auto rounded-xl border border-line bg-surface">
+            <div className="overflow-x-auto rounded-xl border border-[#dbe0d8] bg-white">
               <table className="w-full text-sm">
                 <caption className="sr-only">Clients with visits in {monthLabel}</caption>
                 <thead>
-                  <tr className="bg-surface-sunken text-left text-xs font-semibold text-fg-muted">
-                    <th scope="col" className="px-4 py-2.5">Client</th>
-                    <th scope="col" className="px-3 py-2.5 text-right">Visits</th>
-                    <th scope="col" className="px-3 py-2.5 text-right">Total paid</th>
-                    <th scope="col" className="px-4 py-2.5">Payment status</th>
+                  <tr className="bg-[#f1f3ef] text-left text-xs font-semibold text-[#637067]">
+                    <th scope="col" className="px-[18px] py-3">Client</th>
+                    <th scope="col" className="px-3 py-3">Visits</th>
+                    <th scope="col" className="px-[18px] py-3 text-right">Total paid</th>
                   </tr>
                 </thead>
                 <tbody>
                   {paged.rows.map((r) => (
-                    <tr key={r.clientId} className="border-t border-line hover:bg-surface-sunken">
-                      <th scope="row" className="px-4 py-1 text-left font-normal">
-                        <PendingLink href={clientStatementHref(r.clientId, month)} className={cx("inline-flex items-center font-medium text-fg underline decoration-line-strong underline-offset-4 hover:decoration-fg", CONTROL_MIN_TOUCH, FOCUS_RING)}>{r.name}</PendingLink>
+                    <tr key={r.clientId} className="border-t border-[#e6e8e3] hover:bg-[#f8faf6]">
+                      <th scope="row" className="px-[18px] py-3 text-left font-normal">
+                        <PendingLink href={clientStatementHref(r.clientId, month)} className={cx("inline-flex items-center font-semibold text-[#244e38] underline underline-offset-[3px]", CONTROL_MIN_TOUCH, FOCUS_RING)}>{r.name}</PendingLink>
                       </th>
-                      <td className="px-3 py-2 text-right tabular-nums">{r.visitCount}</td>
-                      <td className="px-3 py-2 text-right font-medium tabular-nums">{format(r.paidCents)}</td>
-                      <td className="px-4 py-2 text-fg-muted">{rowStatusText(r)}</td>
+                      <td className="px-3 py-3 tabular-nums text-fg">{r.visitCount} {r.visitCount === 1 ? "visit" : "visits"}</td>
+                      <td className="px-[18px] py-3 text-right tabular-nums">
+                        <span className="block font-medium text-fg">{format(r.paidCents)}</span>
+                        <span className="block text-xs text-[#5d685f]">{rowStatusText(r)}</span>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

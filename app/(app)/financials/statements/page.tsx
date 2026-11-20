@@ -1,4 +1,5 @@
-import { formatMoney, type PaymentCurrency } from "@/lib/billing/payment-jurisdiction";
+import { type PaymentCurrency } from "@/lib/billing/payment-jurisdiction";
+import { formatStatementMoney } from "@/lib/finance/statement-money";
 import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
 import { localDateString } from "@/lib/booking/tz";
 import { clientDisplayName } from "@/lib/clients/identity";
@@ -51,6 +52,7 @@ export default async function StatementsClientsPage({ searchParams }: { searchPa
   }
 
   return (
+    <div className="bg-[#fafbf9]">
     <ClientsView
       month={month}
       monthLabel={monthRange(month).label}
@@ -58,9 +60,10 @@ export default async function StatementsClientsPage({ searchParams }: { searchPa
       timezone={studio.timezone}
       notice={fellBack ? STATEMENT_MONTH_NOTICE : null}
       page={page}
-      format={(c) => formatMoney(c, currency)}
+      format={(c) => formatStatementMoney(c, currency)}
       directory={directory}
       finder={finder}
     />
+    </div>
   );
 }
