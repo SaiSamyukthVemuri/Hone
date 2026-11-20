@@ -854,7 +854,6 @@ export default async function SessionDetailPage({
       <SessionPhotos clientId={id} photos={sessionPhotos} />
 
       {/* New view only (nothing renders in Current view): step 4. The section below is the existing next-visit form, unchanged. */}
-      <NewViewOnlyStep n={4} title="Next visit" />
 
       {/* PR #190 (clinical memory): plan for the NEXT visit. Saved on
           sessions.next_session_note and shown as "From last visit"
@@ -898,7 +897,7 @@ export default async function SessionDetailPage({
           Everything above still saves as you go; nothing here is a new
           lifecycle system. */}
       {/* New view only: step 5. The finish checklist, postcare and payment below are the existing controls, unchanged and in their existing order. */}
-      <NewViewOnlyStep n={5} title="Review & finish" />
+      <NewViewOnlyStep n={4} title="Review & finish" />
       <section
         data-testid="finish-appointment"
         className="flex flex-col gap-4 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800"
@@ -1117,6 +1116,7 @@ export default async function SessionDetailPage({
           withdrawn for one. */}
       {isOwner && sessionPaymentEligibility && (
       <div id="session-payment">
+        <NewViewOnlyStep n={5} title="Session payment" />
         <SessionPaymentPrepareCard
           sessionId={session.id}
           clientId={id}
@@ -1181,6 +1181,7 @@ export default async function SessionDetailPage({
           areas={visit.areas}
           count={visit.count}
           nextVisitNoteRecorded={visit.nextVisitNoteRecorded}
+          paymentStep={Boolean(isOwner && sessionPaymentEligibility)}
         />
       }
     >

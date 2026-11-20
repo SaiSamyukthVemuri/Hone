@@ -6,6 +6,7 @@ import { resolveStatementMonth, yearMonthOf } from "@/lib/finance/statement-peri
 import { STATEMENT_MONTH_NOTICE } from "@/lib/finance/statement-copy";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 
+import { StatementsTabs } from "../statements/statements-chrome";
 import { StatementView } from "./statement-view";
 
 // ===========================================================================
@@ -41,5 +42,10 @@ export default async function StatementPage({ searchParams }: { searchParams: Pr
   const currency: PaymentCurrency | null = jurisdiction.ok ? jurisdiction.jurisdiction.currency : null;
 
   const view = await loadStatementView(practitioner, studio, month, currency);
-  return <StatementView view={view} currency={currency} format={(c) => formatMoney(c, currency)} maxMonth={current} notice={notice} />;
+  return (
+    <div className="space-y-6">
+      <StatementsTabs active="studio" month={month} />
+      <StatementView view={view} currency={currency} format={(c) => formatMoney(c, currency)} maxMonth={current} notice={notice} />
+    </div>
+  );
 }

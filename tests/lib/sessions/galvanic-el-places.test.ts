@@ -42,7 +42,7 @@ describe("reading order", () => {
 describe("the list of places is pinned (a new place cannot be added silently)", () => {
   const places: Array<[string, RegExp]> = [
     ["app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts", /keepGalvanicEnergy: redesignOn,/],
-    ["app/(app)/clients/[id]/sessions/[sessionId]/actions.ts", /redesignOn \? \(passGroups\.energy \? energyLevelRaw : null\)/],
+    ["app/(app)/clients/[id]/sessions/[sessionId]/actions.ts", /keepsEnergyLevel = redesignOn \? Boolean\(passGroups\.energy\) : mode !== "galv"/],
     ["lib/sessions/treatment-setup-snapshot.ts", /isGalv && !opts\.keepGalvanicEnergy/],
     ["lib/sessions/whole-session-copy-normalize.ts", /isGalv && !keepGalvanicEnergy/],
     ["app/(app)/clients/[id]/sessions/[sessionId]/whole-session-copy-actions.ts", /keepGalvanicEnergy: await chartingRolloutFor\(studio\.id\)/],

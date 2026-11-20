@@ -221,6 +221,18 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     visibility: "owner",
     priority: 95,
   },
+  {
+    id: "financials-statement",
+    title: "Statements",
+    category: "Navigation",
+    href: "/financials/statement",
+    description: "Visits and money for one month",
+    // Owner-only like Capacity, and advertised under Business. Presentation only: the page and its read refuse any role but owner
+    // before any query, and the money tables are owner-readable only (0254).
+    keywords: ["statements", "monthly statement", "statement", "money statement", "business", "income", "revenue", "payments this month", "month end"],
+    visibility: "owner",
+    priority: 94,
+  },
 
   // --- Record Keeping sections ------------------------------------------
   // Exposure Incidents is deliberately absent; see NON_SEARCHABLE_ROUTES.
@@ -916,6 +928,10 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
   reason: string;
 }> = [
   {
+    route: "/financials/statements",
+    reason: "The Clients statements screens are new and are not yet reachable from the menu or Global Search; the search entry ships with the menu entry in the navigation change, so a destination is never searchable before it is linkable.",
+  },
+  {
     route: "/calendar/check-practitioner",
     reason:
       "Owner-only review of open appointments whose recorded practitioner may be wrong (HON-44, before completion becomes assigned-only). Reached from the owner's Calendar toolbar and Team settings (Review practitioner assignments), not a destination to search for.",
@@ -1009,11 +1025,6 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
     route: "/financials",
     reason:
       "FIN-01A Slice 1 establishes the owner financial truth surface and deliberately answers no money question yet: the disposition chain and the two money bridges say, on screen, that they are not supported in this release. Advertising it would resolve to a destination that names four figures it cannot show. It gains a NAV_ENTRIES row in its own registration slice, once those land.",
-  },
-  {
-    route: "/financials/statement",
-    reason:
-      "HON-64 Slice A: the owner-only money statement by month. Deliberately unadvertised, like /financials: it carries no navigation entry and is not searchable until the owner-facing wording and access have had their review. Navigation hiding is not authority: the page and its read refuse any role but owner before any query, and the money tables are owner-readable only (0254).",
   },
   {
     route: "/admin",

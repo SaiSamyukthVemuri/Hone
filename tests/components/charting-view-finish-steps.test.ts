@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { ChartingViewContext, NewViewOnlyStep } from "@/components/charting-view-context";
 
 const render = (view: "current" | "new" | null) => {
-  const step = createElement(NewViewOnlyStep, { n: 5, title: "Review & finish" });
+  const step = createElement(NewViewOnlyStep, { n: 4, title: "Review & finish" });
   return renderToStaticMarkup(
     view === null ? step : createElement(ChartingViewContext.Provider, { value: { view, setView: () => undefined, notice: null } }, step),
   );
@@ -14,7 +14,7 @@ const render = (view: "current" | "new" | null) => {
 describe("NewViewOnlyStep", () => {
   it("renders the numbered step in New view", () => {
     const h = render("new");
-    expect(h).toContain('data-testid="new-view-step-5"');
+    expect(h).toContain('data-testid="new-view-step-4"');
     expect(h).toContain("Review &amp; finish");
   });
   it("renders NOTHING in Current view, and nothing outside any switch, so Current's markup is unchanged", () => {
@@ -31,16 +31,21 @@ const at = (needle: string) => {
   return i;
 };
 describe("the session page's New view steps 4 and 5", () => {
-  it("step 4 heads the next-visit section and step 5 heads the finish checklist, in page order", () => {
+  it("step 4 heads the finish checklist and step 5 heads the session payment card, in page order; the next-visit section stays unnumbered", () => {
     const photos = at("<SessionPhotos clientId");
-    const s4 = at('<NewViewOnlyStep n={4} title="Next visit" />');
     const next = at("<NextVisitNoteForm");
-    const s5 = at('<NewViewOnlyStep n={5} title="Review & finish" />');
+    const s4 = at('<NewViewOnlyStep n={4} title="Review & finish" />');
     const finish = at('data-testid="finish-appointment"');
     const complete = at("<MarkAppointmentCompleteControl");
     const postcare = at("<PostcareSection");
+    const s5 = at('<NewViewOnlyStep n={5} title="Session payment" />');
     const pay = at("<SessionPaymentPrepareCard");
-    expect([photos, s4, next, s5, finish, complete, postcare, pay]).toEqual([photos, s4, next, s5, finish, complete, postcare, pay].sort((a, b) => a - b));
+    expect([photos, next, s4, finish, complete, postcare, s5, pay]).toEqual([photos, next, s4, finish, complete, postcare, s5, pay].sort((a, b) => a - b));
+    expect(page).not.toContain('title="Next visit"');
+  });
+  it("the card lists step 5 under the same condition as the payment card itself", () => {
+    expect(page).toContain("paymentStep={Boolean(isOwner && sessionPaymentEligibility)}");
+    expect(page).toContain("{isOwner && sessionPaymentEligibility && (");
   });
   it("each step is used once, and nothing renders a step in Current view from the page itself", () => {
     expect((page.match(/<NewViewOnlyStep /g) ?? []).length).toBe(2);

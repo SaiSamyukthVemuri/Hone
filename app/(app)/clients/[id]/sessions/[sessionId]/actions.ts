@@ -49,6 +49,24 @@ function clampedPulseCount(value: FormDataEntryValue | null): number {
   return Math.min(PULSE_COUNT_MAX, Math.max(PULSE_COUNT_MIN, n));
 }
 
+// A pass is REFUSED, never quietly altered, when a reading it carries is outside what the form allows. The form's own min/max stop an honest
+// browser; a forged POST or a caller that skips them used to have the value dropped to null (or clamped) and the pass reported as saved, so a
+// reading the practitioner typed vanished with no word. Only the fields the mode owns are checked (the rest are ignored, as before).
+type BoundSpec = { field: string; label: string; min: number; max?: number; integer?: boolean };
+function outOfRangeReading(formData: FormData, specs: ReadonlyArray<BoundSpec>): string | null {
+  for (const { field, label, min, max, integer } of specs) {
+    const raw = formData.get(field);
+    if (typeof raw !== "string" || raw.trim() === "") continue;
+    const n = Number(raw);
+    const bad = !Number.isFinite(n) || n < min || (max !== undefined && n > max) || (integer === true && !Number.isInteger(n));
+    if (bad) {
+      const range = max !== undefined ? `between ${min} and ${max}` : `${min} or more`;
+      return `${label} must be ${range}${integer ? " (a whole number)" : ""}. Nothing was saved.`;
+    }
+  }
+  return null;
+}
+
 function nullableString(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
@@ -286,7 +304,10 @@ export async function addElectrolysisEntryAction(
   const energyLevelRaw = pickInteger(formData.get("energy_level"), {
     min: 0,
   });
-  const energyLevel = redesignOn ? (passGroups.energy ? energyLevelRaw : null) : mode === "galv" ? null : energyLevelRaw;
+  // The write and its range check use ONE rule, so they cannot drift: an energy level this mode will not store is not checked either. Behind the
+  // rollout the mode's own groups decide; otherwise Galvanic keeps none.
+  const keepsEnergyLevel = redesignOn ? Boolean(passGroups.energy) : mode !== "galv";
+  const energyLevel = keepsEnergyLevel ? energyLevelRaw : null;
   const minutesPerformed = pickInteger(formData.get("minutes_performed"), {
     min: 0,
   });
@@ -304,6 +325,26 @@ export async function addElectrolysisEntryAction(
   // numeric fields); the DB CHECK is the final guard.
   const wantGalv = mode === "galv" || mode === "blend";
   const wantThermo = mode === "thermo" || mode === "blend";
+  const rangeRefusal = outOfRangeReading(formData, [
+    ...(!keepsEnergyLevel ? [] : [{ field: "energy_level", label: "Energy level", min: 0, integer: true }]),
+    { field: "minutes_performed", label: "Minutes performed", min: 0, max: 1440, integer: true },
+    { field: "hairs_treated", label: "Hairs treated", min: 0, integer: true },
+    ...(wantGalv
+      ? [
+          { field: "galvanic_ma", label: "Galvanic mA", min: 0 },
+          { field: "galvanic_duration_seconds", label: "Galvanic duration", min: 0, integer: true },
+          { field: "units_of_lye", label: "Units of lye", min: 0 },
+        ]
+      : []),
+    ...(wantThermo
+      ? [
+          { field: "thermolysis_intensity_percent", label: "Thermolysis intensity", min: 0, max: 100, integer: true },
+          { field: "thermolysis_duration_seconds", label: "Thermolysis duration", min: 0 },
+          { field: "pulse_count", label: "Pulse count", min: PULSE_COUNT_MIN, max: PULSE_COUNT_MAX, integer: true },
+        ]
+      : []),
+  ]);
+  if (rangeRefusal) return { ok: false, code: "invalid_input", error: rangeRefusal };
   const galvanicMa = wantGalv ? nonNegNumber(formData.get("galvanic_ma")) : null;
   const galvanicDurationSeconds = wantGalv
     ? pickInteger(formData.get("galvanic_duration_seconds"), { min: 0 })

@@ -983,27 +983,31 @@ function normalizedChips(r: EntryReadingsInput): string[] {
 // Server-side range validation mirroring the DB CHECK (migration 0042) so
 // the practitioner gets a clean message instead of an opaque constraint
 // violation. Empty/null values are always allowed.
+// One wording for every range refusal: field name, then the range, then "Nothing was saved." The submitted value is never echoed.
+// The message is built here from constants only, so the checks return a finished refusal and the callers pass it on unchanged.
+const NOTHING_SAVED = "Nothing was saved.";
+function rangeText(label: string, min: number, max?: number, whole?: boolean): string {
+  const range = max !== undefined ? `between ${min} and ${max}` : `${min} or more`;
+  return `${label} must be ${range}${whole ? " (a whole number)" : ""}. ${NOTHING_SAVED}`;
+}
+function outside(v: number | null | undefined, min: number, max?: number, whole?: boolean): boolean {
+  if (v == null) return false;
+  return !Number.isFinite(v) || v < min || (max !== undefined && v > max) || (whole === true && !Number.isInteger(v));
+}
 function validateReadings(
   r: EntryReadingsInput,
 ): { ok: true } | { ok: false; error: string } {
-  const nonNeg: ReadonlyArray<[number | null | undefined, string]> = [
-    [r.galvanicMa, "Galvanic mA"],
-    [r.galvanicDurationSeconds, "Galvanic duration"],
-    [r.thermolysisDurationSeconds, "Thermolysis duration"],
-    [r.unitsOfLye, "Units of lye"],
+  // The column types: mA, thermolysis duration and units of lye
+  // are numeric (decimals are intended); galvanic duration and thermolysis intensity are integer, so a fraction is refused, not rounded.
+  const checks: ReadonlyArray<[number | null | undefined, string, number, number | undefined, boolean]> = [
+    [r.galvanicMa, "Galvanic mA", 0, undefined, false],
+    [r.galvanicDurationSeconds, "Galvanic duration", 0, undefined, true],
+    [r.thermolysisDurationSeconds, "Thermolysis duration", 0, undefined, false],
+    [r.unitsOfLye, "Units of lye", 0, undefined, false],
+    [r.thermolysisIntensityPercent, "Thermolysis intensity", 0, 100, true],
   ];
-  for (const [v, label] of nonNeg) {
-    if (v != null && (!Number.isFinite(v) || v < 0)) {
-      return { ok: false, error: `${label} must be a non-negative number.` };
-    }
-  }
-  const percent: ReadonlyArray<[number | null | undefined, string]> = [
-    [r.thermolysisIntensityPercent, "Thermolysis intensity"],
-  ];
-  for (const [v, label] of percent) {
-    if (v != null && (!Number.isFinite(v) || v < 0 || v > 100)) {
-      return { ok: false, error: `${label} must be between 0 and 100.` };
-    }
+  for (const [v, label, min, max, whole] of checks) {
+    if (outside(v, min, max, whole)) return { ok: false, error: rangeText(label, min, max, whole) };
   }
   // Pulse delay: validated only when multiple pulses were done (pulse_count >
   // 1). A single-pulse entry carries no delay, so a stale draft value is
@@ -1011,8 +1015,29 @@ function validateReadings(
   if (clampPulseCount(r.pulseCount) > 1 && r.pulseDelaySeconds != null) {
     const d = r.pulseDelaySeconds;
     if (!Number.isFinite(d) || d < PULSE_DELAY_MIN || d > PULSE_DELAY_MAX) {
-      return { ok: false, error: PULSE_DELAY_RANGE_ERROR };
+      return { ok: false, error: `${PULSE_DELAY_RANGE_ERROR} ${NOTHING_SAVED}` };
     }
+  }
+  return { ok: true };
+}
+
+const MINUTES_MAX_SERVER = 1440; // the form's own ceiling (a day)
+// energy_level, minutes_performed, hairs_treated and pulse_count are integer columns, so a fraction is refused rather than left for the database
+// to reject or round. Energy level is a whole number only where the ENTRY stores it (the same rule as entryMachineSnapshot: not for Galvanic);
+// the block column itself is numeric, so a Galvanic block carrying a stale hidden fraction still saves, as it always did (a negative is still refused).
+function validateSetupNumbers(
+  input: { mode?: string | null; energyLevel?: number | null; minutesPerformed?: number | null },
+  r: EntryReadingsInput,
+): { ok: true } | { ok: false; error: string } {
+  const keepsEnergyLevel = input.mode !== "galv";
+  const checks: ReadonlyArray<[number | null | undefined, string, number, number | undefined, boolean]> = [
+    [input.energyLevel, "Energy level", 0, undefined, keepsEnergyLevel],
+    [input.minutesPerformed, "Minutes", 0, MINUTES_MAX_SERVER, true],
+    [r.hairsTreated, "Hairs treated", 0, undefined, true],
+    [r.pulseCount, "Pulse count", PULSE_COUNT_MIN, PULSE_COUNT_MAX, true],
+  ];
+  for (const [v, label, min, max, whole] of checks) {
+    if (outside(v, min, max, whole)) return { ok: false, error: rangeText(label, min, max, whole) };
   }
   return { ok: true };
 }
@@ -1294,8 +1319,11 @@ export async function createTreatmentAreaWithEntryAction(
   const readings = input.readings ?? {};
   const area = blockPrimaryArea;
 
+  // Both checks run before anything is written (only reads precede them), so a refusal writes nothing, and says so.
   const readingsCheck = validateReadings(readings);
   if (!readingsCheck.ok) return readingsCheck;
+  const setupCheck = validateSetupNumbers(input, readings);
+  if (!setupCheck.ok) return setupCheck;
 
   // The first entry's area is the treatment area. An entry needs a (NOT
   // NULL) area, so readings can't be saved without one.
@@ -1853,8 +1881,11 @@ export async function updateTreatmentAreaWithEntryAction(
   const readings = input.readings ?? {};
   const area = blockPrimaryArea;
 
+  // Both checks run before anything is written (only reads precede them), so a refusal writes nothing, and says so.
   const readingsCheck = validateReadings(readings);
   if (!readingsCheck.ok) return readingsCheck;
+  const setupCheck = validateSetupNumbers(input, readings);
+  if (!setupCheck.ok) return setupCheck;
 
   // Creating a new first entry (block had none) needs an area, same NOT NULL
   // reason as create. Updating an existing entry keeps its current area when
