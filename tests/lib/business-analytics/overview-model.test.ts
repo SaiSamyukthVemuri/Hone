@@ -98,36 +98,39 @@ describe("a price class that could not be read is never a zero and never 'none'"
     expect(sv.unreadClasses).toEqual(["online_booking"]);
     expect(JSON.stringify(sv.classes.online_booking)).not.toMatch(/visits|cents|0/);
   });
-  it("only a class that WAS read may show a zero: read with no rows is a known zero, unread is not", () => {
+  it("only a class that WAS read may show a zero: read with no rows is a known zero", () => {
     const none = window({ money: { cardRows: [], settlementRows: [], legacyFeeRows: [] } }).value;
     const read = must(buildOverview(input({ current: { ok: true, value: none }, classesRead: ["recorded_at_visit"] })).serviceValue);
     expect(read.classes.recorded_at_visit).toEqual({ read: true, visits: 0, cents: 0 });
-    const unread = must(buildOverview(input({ current: { ok: true, value: none }, classesRead: [] })).serviceValue);
-    expect(unread.classes.recorded_at_visit).toEqual({ read: false });
   });
   it("a caller that lists a class the model cannot build candidates for still gets 'not available', never a false zero", () => {
     const sv = must(buildOverview(input({ classesRead: ["recorded_at_visit", "online_booking"] })).serviceValue);
     expect(sv.classes.online_booking).toEqual({ read: false });
     expect(sv.unreadClasses).toEqual(["online_booking"]);
   });
-  it("an unread class contributes nothing anywhere, even when its rows are present", () => {
+  it("no kind of price evidence read: no service value and no line to collected, and never a 0 for either", () => {
     // The settlement quotes are in the rows (two visits, 18,000 in all) but the class was not read.
     const v = buildOverview(input({ classesRead: [] }));
-    const sv = must(v.serviceValue);
-    expect(sv).toMatchObject({ withEvidenceVisits: 0, withEvidenceCents: 0, missingVisits: 3, completedVisits: 3 });
-    expect(sv.classes.recorded_at_visit).toEqual({ read: false });
-    const l = must(v.reconciliation);
-    expect(l.serviceValueCents).toBe(0);
-    expect(l).toMatchObject({ collectedAbovePriceCents: 0, collectedBelowPriceCents: 0 });
-    expect(l.collectedCents).toBe(30000);
+    expect(v.serviceValue).toEqual({ available: false, reason: "no_evidence_read" });
+    expect(v.reconciliation).toEqual({ available: false, reason: "no_evidence_read" });
+    expect(JSON.stringify([v.serviceValue, v.reconciliation])).not.toMatch(/Cents|"visits"|:0\b/);
+    // collected money and every other figure stay
+    expect(must(v.collected).headlineCents).toBe(30000);
+    for (const f of [v.averagePaid, v.series, v.byPractitioner]) expect(f.available).toBe(true);
+    expect(must(v.completedVisits).count).toBe(3);
+  });
+  it("a class listed as read that the model cannot supply is the same as none read", () => {
+    const v = buildOverview(input({ classesRead: ["online_booking"] }));
+    expect(v.serviceValue).toEqual({ available: false, reason: "no_evidence_read" });
+    expect(v.reconciliation).toEqual({ available: false, reason: "no_evidence_read" });
+  });
+  it("one class read beside an unread one: service value shows, with the unread class as not read", () => {
+    const v = buildOverview(input({ classesRead: ["recorded_at_visit", "online_booking"] }));
+    expect(must(v.serviceValue).classes.online_booking).toEqual({ read: false });
+    expect(must(v.reconciliation).serviceValueCents).toBe(18000);
   });
   it("the model's supplied classes are exactly the ones it has candidate code for", () => {
     expect([...SUPPLIED_EVIDENCE_CLASSES]).toEqual(["recorded_at_visit"]);
-  });
-  it("whatever rows another class has, an unread class is not filled in from them", () => {
-    const sv = must(buildOverview(input({ classesRead: [] })).serviceValue);
-    expect(sv.classes).toEqual({ recorded_at_visit: { read: false }, online_booking: { read: false } });
-    expect(sv.unreadClasses).toHaveLength(2);
   });
 });
 

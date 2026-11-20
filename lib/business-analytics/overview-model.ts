@@ -231,6 +231,8 @@ function computeWindow(data: WindowData, w: PeriodWindow, o: Pick<OverviewInput,
     return { appointmentId: v.appointmentId, priceCents: r && r.state === "evidence" ? r.cents : null, collectedCents: lines.reduce((n, l) => n + (l.cents as number), 0), collectedRows: lines.length };
   });
   const line = serviceValueToCollected(money7, split.split);
+  // With NO kind of price evidence read there is no service value to state: a 0 here would read as "the visits were worth nothing". Collected money is unaffected.
+  const noEvidence = readClasses.length === 0;
 
   return {
     ...base,
@@ -238,8 +240,8 @@ function computeWindow(data: WindowData, w: PeriodWindow, o: Pick<OverviewInput,
     averagePaid: { available: true, value: averagePaidPerVisit(paid) },
     series: series.ok ? { available: true, value: { unit, points: series.points } } : unavailable("not_reconciled"),
     byPractitioner,
-    serviceValue: { available: true, value: serviceValueView },
-    reconciliation: line.ok ? { available: true, value: line.line } : unavailable("not_reconciled"),
+    serviceValue: noEvidence ? unavailable("no_evidence_read") : { available: true, value: serviceValueView },
+    reconciliation: noEvidence ? unavailable("no_evidence_read") : line.ok ? { available: true, value: line.line } : unavailable("not_reconciled"),
   };
 }
 

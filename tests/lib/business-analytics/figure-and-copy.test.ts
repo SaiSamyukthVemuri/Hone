@@ -22,7 +22,7 @@ describe("a window over the cap makes only that figure unavailable", () => {
     expect(_typed).toBeNull();
   });
   it("every failure reason has words", () => {
-    for (const r of ["too_many_appointments", "read_failed", "currency_unknown", "not_reconciled"] as const) expect(FIGURE_UNAVAILABLE_COPY[r].length).toBeGreaterThan(10);
+    for (const r of ["too_many_appointments", "read_failed", "currency_unknown", "not_reconciled", "no_evidence_read"] as const) expect(FIGURE_UNAVAILABLE_COPY[r].length).toBeGreaterThan(10);
   });
 });
 
