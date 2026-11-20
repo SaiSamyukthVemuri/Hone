@@ -22,9 +22,18 @@ import {
   UNATTRIBUTED_LABEL,
   UNFINISHED_CHARTS_UNAVAILABLE,
   BEYOND_USUAL_FILTER_NOTE,
+  MOST_FREQUENT_RETURNS_NOTE,
+  NAMED_CLIENTS_PRINT_NOTE,
+  NAMED_CLIENTS_TITLE,
+  SPEND_NOT_AVAILABLE,
+  TOP_SPENDERS_NOTE,
   beyondUsualNote,
+  fewerThanTwoDatesNote,
+  namedClientsCap,
+  namedClientsNotListed,
   noNextBookingNote,
 } from "@/lib/business-analytics/copy";
+import { NAMED_LIST_SIZE, type NamedRow } from "@/lib/business-analytics/named-clients";
 import { FIGURE_UNAVAILABLE_COPY, type Figure } from "@/lib/business-analytics/figure";
 import { formatWhole } from "@/lib/business-analytics/money-format";
 import { MONEY_BASIS_NOTE, type Change } from "@/lib/business-analytics/money-metrics";
@@ -90,6 +99,28 @@ function Card<T>({ id, title, figure, children, note, tone = "plain" }: { id: st
       {figure.available ? children(figure.value) : <p className="text-sm text-fg" role="status">{FIGURE_UNAVAILABLE_COPY[figure.reason]}</p>}
       {note ? <p className="text-xs text-fg-muted">{note}</p> : null}
     </section>
+  );
+}
+
+/** A figure inside a figure: unavailable when the outer one is, else the picked inner one. */
+function flatten<T, U>(outer: Figure<T>, pick: (v: T) => Figure<U>): Figure<U> {
+  return outer.available ? pick(outer.value) : outer;
+}
+
+/** One ranked list: a display name and one figure per row, in the order given. No link, no id; the row key is the rank, never a client. */
+function NamedList({ rows, show, format }: { rows: readonly NamedRow[]; show: "spend" | "visits" | "gap"; format: (cents: number) => string }) {
+  if (rows.length === 0) return <p className="text-sm text-fg-muted">No clients to list.</p>;
+  const value = (r: NamedRow): string =>
+    show === "spend" ? (r.periodPaidCents === null ? SPEND_NOT_AVAILABLE : format(r.periodPaidCents)) : show === "visits" ? plural(r.periodVisits, "visit", "visits") : `every ${Math.round(r.averageGapDays ?? 0)} days`;
+  return (
+    <ol className="space-y-1.5">
+      {rows.map((r) => (
+        <li key={r.rowKey} className="flex items-baseline justify-between gap-3 text-sm">
+          <span className="min-w-0 truncate text-fg">{r.name}</span>
+          <span className="shrink-0 tabular-nums text-fg-muted">{value(r)}</span>
+        </li>
+      ))}
+    </ol>
   );
 }
 
@@ -396,9 +427,37 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
         </div>
       </section>
 
+      <section aria-labelledby="ov-named" className="space-y-3" data-named-clients="">
+        <h2 id="ov-named" className="text-xl font-semibold tracking-tight text-fg">{NAMED_CLIENTS_TITLE}</h2>
+        {print ? (
+          <p className="text-sm text-fg-muted" data-named-omitted="">{NAMED_CLIENTS_PRINT_NOTE}</p>
+        ) : (
+          <>
+            <div className="grid gap-3 lg:grid-cols-3">
+              <Card id="ov-top-spenders" title="Top spenders" figure={flatten(view.namedClients, (n) => n.spenders)} note={TOP_SPENDERS_NOTE}>
+                {(rows) => <NamedList rows={rows} show="spend" format={format} />}
+              </Card>
+              <Card id="ov-most-visits" title="Most visits" figure={flatten(view.namedClients, (n) => ({ available: true, value: n.mostVisits }))}>
+                {(rows) => <NamedList rows={rows} show="visits" format={format} />}
+              </Card>
+              <Card id="ov-frequent-returns" title="Most frequent returns" figure={flatten(view.namedClients, (n) => n.frequentReturns)} note={MOST_FREQUENT_RETURNS_NOTE}>
+                {(rows) => <NamedList rows={rows} show="gap" format={format} />}
+              </Card>
+            </div>
+            {view.namedClients.available ? (
+              <div className="space-y-1 text-xs text-fg-muted" data-named-footnotes="">
+                <p>{namedClientsCap(view.namedClients.value.seen, NAMED_LIST_SIZE)}</p>
+                {view.namedClients.value.notListed > 0 ? <p>{namedClientsNotListed(view.namedClients.value.notListed)}</p> : null}
+                {view.namedClients.value.fewerThanTwoDates > 0 ? <p>{fewerThanTwoDatesNote(view.namedClients.value.fewerThanTwoDates)}</p> : null}
+              </div>
+            ) : null}
+          </>
+        )}
+      </section>
+
       <section aria-labelledby="ov-review" className="space-y-3">
         <h2 id="ov-review" className="text-xl font-semibold tracking-tight text-fg">Period in review</h2>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className={cx("grid gap-3 sm:grid-cols-2", !print && view.namedClients.available && view.namedClients.value.highestSpend ? "lg:grid-cols-4" : "lg:grid-cols-3")}>
           <Card id="ov-month-collected" title="Collections compared" figure={view.collected}>
             {(c) =>
               c.difference === null ? (
@@ -422,6 +481,16 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
           <Card id="ov-vpc" title="Visits per client seen" figure={view.visitsPerClient}>
             {(v) => <p className={v.known ? BIG : "text-sm text-fg"}>{factText(v, (n) => n.toFixed(1))}</p>}
           </Card>
+          {!print && view.namedClients.available && view.namedClients.value.highestSpend && view.namedClients.value.highestSpend.periodPaidCents !== null ? (
+            <Card id="ov-highest-spend" title="Highest spend this period" figure={{ available: true, value: view.namedClients.value.highestSpend }}>
+              {(r) => (
+                <>
+                  <p className="text-xl font-semibold text-fg">{r.name}</p>
+                  <p className="text-sm text-fg-muted">{format(r.periodPaidCents as number)} kept on completed visits.</p>
+                </>
+              )}
+            </Card>
+          ) : null}
         </div>
       </section>
 

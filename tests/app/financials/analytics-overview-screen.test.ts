@@ -76,7 +76,11 @@ const CARDS: ReadonlyArray<readonly [string, string]> = [
   ["collected", "ov-split"],
   ["serviceValue", "ov-servicevalue"],
   ["reconciliation", "ov-line"],
+  ["namedClients", "ov-top-spenders"],
+  ["namedClients", "ov-most-visits"],
+  ["namedClients", "ov-frequent-returns"],
 ];
+const NAMED_IDS = ["ov-top-spenders", "ov-most-visits", "ov-frequent-returns"];
 const CARD_IDS = CARDS.map(([, id]) => id).sort();
 const card = (html: string, id: string) => html.match(new RegExp(`<section[^>]*data-figure="${id}"[^>]*>([\\s\\S]*?)</section>`))?.[1] ?? null;
 /** React writes an apostrophe as an entity, so the expected sentence is escaped the same way. */
@@ -189,7 +193,8 @@ describe("downloads and print", () => {
     expect(html).not.toContain("export.csv");
     expect(html).toContain("data-print-footer");
     const ids = [...html.matchAll(/data-figure="([^"]+)"/g)].map((m) => m[1]).sort();
-    expect(ids).toEqual(CARD_IDS);
+    expect(ids).toEqual(CARD_IDS.filter((id) => !NAMED_IDS.includes(id))); // the named lists are not printed
+    expect(html).toContain("Client names are left off the printed page.");
     expect(html).not.toContain("aria-label=\"Analytics sections\"");
     expect(html).not.toContain("Export data");
   });
@@ -480,5 +485,75 @@ describe("compact controls, whole-dollar headline figures and the area under the
     const c = card(render(healthy()), "ov-series") ?? "";
     expect((c.match(/data-area="current"/g) ?? []).length).toBe(1);
     expect(c).toMatch(/data-area="current"[^>]*fill-opacity="0\.06"/);
+  });
+});
+
+describe("the named client lists on the page", () => {
+  const text = (h: string) => h.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/\s+/g, " ");
+  const named = (names: Record<string, string>) => buildOverview(input({ names: { ok: true, names: new Map(Object.entries(names)) } }));
+  const NAMES = { "client-done-quoted": "Quinn Quoted", "client-done-over": "Olive Over", "client-done-noprice": "Nia Noprice", "client-noshow": "Nora Noshow" };
+  const section = (html: string) => html.match(/<section[^>]*data-named-clients=""[\s\S]*?<\/section>\s*<section aria-labelledby="ov-review"/)?.[0] ?? "";
+  it("shows the three lists with display names, in order, and the cap sentence", () => {
+    const html = render(named(NAMES));
+    const s = section(html);
+    expect(s).toContain("Your client relationships");
+    const spend = card(html, "ov-top-spenders") ?? "";
+    expect(spend.indexOf("Olive Over")).toBeGreaterThan(-1);
+    expect(spend.indexOf("Olive Over")).toBeLessThan(spend.indexOf("Quinn Quoted")); // $95.00 before $90.00
+    expect(spend.indexOf("Quinn Quoted")).toBeLessThan(spend.indexOf("Nia Noprice"));
+    expect(text(s)).toContain("All 3 clients seen in this period.");
+    expect(s).not.toContain("Nora Noshow"); // no completed visit
+  });
+  it("names the highest spend once, with exact cents, in the period review", () => {
+    const html = render(named(NAMES));
+    const c = text(card(html, "ov-highest-spend") ?? "");
+    expect(c).toContain("Olive Over");
+    expect(c).toContain("$95.00");
+  });
+  it("lists carry no link and no client id anywhere in the markup or the view", () => {
+    const view = named(NAMES);
+    const html = render(view);
+    const s = section(html) + (card(html, "ov-highest-spend") ?? "");
+    expect(s).not.toMatch(/<a |href=/);
+    expect(html).not.toMatch(/client-done|client-noshow|client-old/);
+    expect(JSON.stringify(view)).not.toMatch(/client-done|client-noshow|client-old/);
+  });
+  it("a client who cannot be named is counted in the totals and mentioned once, never listed or called Unknown", () => {
+    const withAll = named(NAMES);
+    const without = named({ "client-done-quoted": "Quinn Quoted" });
+    expect(without.activeClients).toEqual(withAll.activeClients);
+    expect(without.collected).toEqual(withAll.collected);
+    const html = render(without);
+    expect(text(section(html))).toContain("2 clients seen in this period are not listed because they are archived or have no name on record.");
+    expect(html).not.toMatch(/Unknown/);
+  });
+  it("when the names cannot be read, each list says so and the rest of the page is unchanged", () => {
+    const view = buildOverview(input({ names: { ok: false } }));
+    const html = render(view);
+    for (const id of NAMED_IDS) expect(card(html, id) ?? "").toContain(esc(FIGURE_UNAVAILABLE_COPY.read_failed));
+    expect(view.collected).toEqual(named(NAMES).collected);
+  });
+  it("when money is unavailable the spenders list says so and the visit lists still show", () => {
+    const view = buildOverview(input({ names: { ok: true, names: new Map(Object.entries(NAMES)) }, currency: null }));
+    const html = render(view);
+    expect(card(html, "ov-top-spenders") ?? "").toContain(esc(FIGURE_UNAVAILABLE_COPY.currency_unknown));
+    expect(card(html, "ov-most-visits") ?? "").toContain("Quinn Quoted");
+    expect(html).not.toContain('data-figure="ov-highest-spend"');
+  });
+  it("the printed page leaves the names off and says so", () => {
+    const html = render(named(NAMES), { print: true });
+    for (const n of Object.values(NAMES)) expect(html).not.toContain(n);
+    expect(html).toContain("Client names are left off the printed page.");
+    expect(html).not.toContain('data-figure="ov-highest-spend"');
+  });
+  it("the spreadsheet never carries a name", async () => {
+    const { overviewCsv } = await import("@/lib/business-analytics/overview-csv");
+    const csv = overviewCsv(named(NAMES), { preparedOn: "2026-11-30" });
+    for (const n of Object.values(NAMES)) expect(csv).not.toContain(n);
+  });
+  it("candidateClientIds is the clients with a completed visit in the period, and only them", async () => {
+    const { candidateClientIds } = await import("@/lib/business-analytics/overview-model");
+    expect(candidateClientIds(input()).sort()).toEqual(["client-done-noprice", "client-done-over", "client-done-quoted"]);
+    expect(candidateClientIds(input({ current: { ok: false, reason: "read_failed" } }))).toEqual([]);
   });
 });

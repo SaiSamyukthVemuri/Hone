@@ -68,3 +68,18 @@ export const UNFINISHED_CHARTS_UNAVAILABLE = "Not available yet. This comes from
 export const NOT_ENOUGH_HISTORY_NOTE = (n: number): string => `${n} ${n === 1 ? "client has" : "clients have"} fewer than two visit dates and ${n === 1 ? "is" : "are"} not judged.`;
 /** Said under a team-member filter: the population is every client that team member has ever seen, not only those seen in the period. */
 export const BEYOND_USUAL_FILTER_NOTE = "With a team-member filter, this counts every client that team member has ever seen, not only those seen in this period. Each client's gap still uses all of their visits.";
+
+// ---------------------------------------------------------------------------
+// Named clients (owner-only). Display names only; the lists are never in the spreadsheet and never on the printed page.
+// ---------------------------------------------------------------------------
+export const NAMED_CLIENTS_TITLE = "Your client relationships";
+export const NAMED_CLIENTS_PRINT_NOTE = "Client names are left off the printed page.";
+/** Said once under the lists, so a cut-off is never silent. `seen` is every client with a completed visit in the period. */
+export const namedClientsCap = (seen: number, size: number): string =>
+  seen === 0 ? "No clients were seen in this period." : seen <= size ? `${seen === 1 ? "The 1 client" : `All ${seen} clients`} seen in this period.` : `Top ${size} of ${seen} clients seen in this period.`;
+/** Clients seen in the period who cannot be named: archived, or with no usable name. They are in every total. */
+export const namedClientsNotListed = (n: number): string => `${n} ${n === 1 ? "client seen in this period is" : "clients seen in this period are"} not listed because they are archived or have no name on record. They are counted in every total.`;
+export const MOST_FREQUENT_RETURNS_NOTE = "A shorter average gap between completed visits means a client returns more often. It is a historical pattern, not a forecast.";
+export const TOP_SPENDERS_NOTE = "Money kept on completed visits in this period. Visits awaiting payment confirmation are not counted, and a client with none confirmed shows as not available.";
+export const SPEND_NOT_AVAILABLE = "Not available";
+export const fewerThanTwoDatesNote = (n: number): string => `${n} ${n === 1 ? "client has" : "clients have"} fewer than two visit dates and ${n === 1 ? "is" : "are"} not ranked here.`;

@@ -9,7 +9,8 @@ import type { Studio } from "@/lib/types/database";
 
 import { FORMER_TEAM_MEMBER_LABEL, UNNAMED_TEAM_MEMBER_LABEL } from "../copy";
 import type { FigureRead } from "../figure";
-import { buildOverview, type FollowThroughData, type HistoryData, type OverviewView, type PractitionerInfo, type WindowData } from "../overview-model";
+import { readClientNames } from "./client-names-read";
+import { buildOverview, candidateClientIds, type FollowThroughData, type HistoryData, type OverviewView, type PractitionerInfo, type WindowData } from "../overview-model";
 import { parseOverviewParams, type OverviewParams, type RawParams } from "../overview-params";
 import { resolvePeriod, windowInstants, type PeriodWindow, type ResolvedPeriod } from "../period";
 import type { PriceEvidenceClass } from "../service-value";
@@ -120,7 +121,7 @@ export async function loadOverview(
   const comparison = await readWindow(supabase, studio.id, studio.timezone, period.comparison);
   const history = await readHistory(supabase, studio.id, studio.timezone, period.current);
   const followThrough = await readFollowThrough(supabase, studio.id, now);
-  const view = buildOverview({
+  const input = {
     timezone: studio.timezone,
     currency: studioCurrency,
     nowIso: now.toISOString(),
@@ -132,7 +133,10 @@ export async function loadOverview(
     followThrough,
     practitioners: people.rows,
     classesRead: CLASSES_READ,
-  });
+  };
+  // Names for the clients this period's visits name, read after the owner check and for no one else.
+  const names = await readClientNames(supabase, studio.id, candidateClientIds(input));
+  const view = buildOverview({ ...input, names });
   const practitionerOptions = optionsFor(people.rows, parsed.params);
   return { access: "granted", ok: true, view, params: parsed.params, notices: parsed.notices, practitionerOptions };
 }
