@@ -65,6 +65,7 @@ const CLASSIFIED_NON_BEARER: ReadonlyArray<{ prefix: string; why: string }> = [
   { prefix: "/book", why: "public booking page keyed by the studio's PUBLIC slug — the slug is meant to be shared" },
   { prefix: "/calendar", why: "authenticated app route; the segment is an appointment row id" },
   { prefix: "/clients", why: "authenticated app route; the segment is a client row id" },
+  { prefix: "/financials/statements", why: "authenticated owner-only statements route; the segment is a client row id verified against the signed-in owner's studio, never a credential" },
   { prefix: "/api/clients", why: "authenticated photo re-mint route (FETT HON-43, Codex P1 4307807754); the segment is a client row id behind the session middleware (no exemption) and the handler's own practitioner check" },
   { prefix: "/api/clients/[clientId]/images", why: "same route, nested; the segment is a treatment-image row id, authorised by the shared signer against the session's studio AND the client above it, never a credential" },
   { prefix: "/clients/[id]/sessions", why: "authenticated app route nested under a client; the segment is a session row id and the client id above it is equally not a credential" },

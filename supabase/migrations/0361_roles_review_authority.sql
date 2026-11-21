@@ -13,6 +13,8 @@
 --       (4) a commit that carries a review hash refuses with review_changed if the recomputed hash differs;
 --       (5) the result gains `review`, `review_version`, `review_hash`; every existing result key keeps its name and type;
 --       (6) a reviewed commit records {version, hash} under `_review` inside the audit row's `after`; with no hash nothing is added.
+--       (7) a released row whose stored value is not in force because a direct prerequisite is below it gets the timing value capped_by_prerequisite (decided
+--           before perm_review_timing is asked), so a valid choice is saved and labelled instead of being refused as a race on every try.
 --   perm_run_changes(7 args)  unchanged head and ACL; it delegates with a null hash and strips the three new keys, so its callers (the old preview and
 --       save commands) see exactly what 0360 returned.
 --   preview_role_changes_at(uuid, jsonb, bigint)  the preview WITH the page's expected version (the version check runs when commit is false) and the table.
@@ -29,7 +31,7 @@
 --
 -- NOT CHANGED. perm_base_scope, perm_effective_scope and so effective access; reset, adopt and activation (they keep their own version and hash checks).
 -- Grants: every new function is revoked from public, anon, authenticated and service_role by name; only the two commands are granted, to authenticated.
--- Rollback: supabase/rollbacks/0361_*.down.sql restores the 0360 body (md5 e1f64999b3fda06d586261447acbaca0) and drops each new function by exact signature.
+-- Rollback: supabase/rollbacks/0361_*.down.sql restores the 0360 body (md5 6650cbbb16c82bdcffd4f50da443c6a5) and drops each new function by exact signature.
 
 begin;
 set local lock_timeout = '5s';
@@ -187,6 +189,10 @@ declare
   v_msg text;
   v_req text;
   v_cap text;
+  v_anc record;
+  v_anc_scope text;
+  v_anc_allowed text[];
+  c2 public.permission_catalog%rowtype;
   v_roles text[] := '{}';
   v_before_eff jsonb := '{}'::jsonb;
   v_after_eff jsonb := '{}'::jsonb;
@@ -291,14 +297,36 @@ begin
       on conflict (studio_id, role, key) do update set scope = excluded.scope, set_at = now();
     end loop;
 
-    -- Prerequisites must hold on the RESULTING set.
+    -- Prerequisites must hold on the RESULTING set, judged on the owner's INTENDED policy and not on release-dependent access (0360): a
+    -- prerequisite's intended value is its stored choice (this request's rows are already written above), else the studio's own basis default
+    -- (the new-studio default on a new_studio studio, the snapshot on an existing one), whether or not its key is released. Enforcement stays
+    -- release-gated in perm_effective_scope; this only decides whether the owner's choices are consistent with each other. Every ancestor in the
+    -- requires chain is checked, because the effective value of a prerequisite was itself capped by its own prerequisites.
     for v_item in select * from jsonb_array_elements(v_apply) loop
-      select * into c from public.permission_catalog where key = v_item ->> 'key';
-      foreach v_req in array c.requires loop
-        v_cap := public.perm_effective_scope(p_studio, v_item ->> 'role', v_req, array[v_item ->> 'key']);
-        if public.perm_rank(v_cap) < public.perm_rank(v_item ->> 'scope') then
+      for v_anc in
+        with recursive req_chain(k) as (
+          select unnest(c0.requires) from public.permission_catalog c0 where c0.key = v_item ->> 'key'
+          union
+          select unnest(c1.requires) from public.permission_catalog c1 join req_chain rc on c1.key = rc.k
+        )
+        select rc2.k from req_chain rc2 order by rc2.k
+      loop
+        select * into c2 from public.permission_catalog where key = v_anc.k;
+        if not found
+           or not (case v_item ->> 'role' when 'practitioner' then c2.offered_practitioner else c2.offered_receptionist end) then
+          v_anc_scope := 'off';
+        else
+          v_anc_scope := coalesce(
+            (select s.scope from public.studio_role_permissions s where s.studio_id = p_studio and s.role = v_item ->> 'role' and s.key = v_anc.k),
+            case when v_basis = 'new_studio'
+                 then case v_item ->> 'role' when 'practitioner' then c2.new_practitioner else c2.new_receptionist end
+                 else case v_item ->> 'role' when 'practitioner' then c2.snapshot_practitioner else c2.snapshot_receptionist end end);
+          v_anc_allowed := case when v_item ->> 'role' = 'receptionist' then array_remove(c2.scopes, 'own') else c2.scopes end;
+          if not (v_anc_scope = any (v_anc_allowed)) then v_anc_scope := 'off'; end if;
+        end if;
+        if public.perm_rank(v_anc_scope) < public.perm_rank(v_item ->> 'scope') then
           raise exception using errcode = 'PM001',
-            message = public.perm_fail('prerequisite_unmet', v_item ->> 'key', v_item ->> 'role', null, jsonb_build_object('blocked_by', v_req))::text;
+            message = public.perm_fail('prerequisite_unmet', v_item ->> 'key', v_item ->> 'role', null, jsonb_build_object('blocked_by', v_anc.k))::text;
         end if;
       end loop;
     end loop;
@@ -327,12 +355,24 @@ begin
              'written', (r.value ->> 'written')::boolean,
              'effective_before', v_before_eff -> (r.value ->> 'role') ->> (r.value ->> 'key'),
              'effective_after', v_after_eff -> (r.value ->> 'role') ->> (r.value ->> 'key'),
-             'timing', public.perm_review_timing(
+             -- capped_by_prerequisite: a released key whose stored value is NOT in force because a direct prerequisite's effective value is below it
+             -- (the prerequisite is unreleased or can never be released). The value is saved and labelled as stored; it is not a race, so perm_review_timing
+             -- (which still raises review_changed for a real race) is not asked. A narrow release's raise is labelled by perm_review_timing as before.
+             'timing', case
+                         when (r.value ->> 'written')::boolean and rel.released_at is not null
+                              and not (rel.release_kind = 'narrow' and public.perm_rank(r.value ->> 'requested') > public.perm_rank(r.value ->> 'snapshot'))
+                              and v_after_eff -> (r.value ->> 'role') ->> (r.value ->> 'key') <> r.value ->> 'requested'
+                              and exists (select 1 from public.permission_catalog pcc, unnest(pcc.requires) rq(k)
+                                           where pcc.key = r.value ->> 'key'
+                                             and public.perm_rank(v_after_eff -> (r.value ->> 'role') ->> rq.k) < public.perm_rank(r.value ->> 'requested'))
+                         then 'capped_by_prerequisite'
+                         else public.perm_review_timing(
                          rel.released_at is not null, rel.release_kind, r.value ->> 'snapshot', r.value ->> 'requested',
                          v_before_eff -> (r.value ->> 'role') ->> (r.value ->> 'key'),
                          v_after_eff -> (r.value ->> 'role') ->> (r.value ->> 'key'), (r.value ->> 'written')::boolean,
                          exists (select 1 from public.permission_key_activation k
                                   where k.studio_id = p_studio and k.key = r.value ->> 'key' and k.release_tag = rel.release_tag))
+                       end
            ) order by r.value ->> 'role', r.value ->> 'key'), '[]'::jsonb)
       into v_review
       from jsonb_array_elements(v_rows) r(value)

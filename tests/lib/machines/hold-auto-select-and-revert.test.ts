@@ -47,8 +47,9 @@ describe("auto-resolution is held while legacy values are entered", () => {
       [
         // automatic: gated by `hold`
         "clientLastMachine", "remembered", "rememberedUnavailable", "restoredSelection",
-        // button-only
-        "suggestedMachine",
+        // button-only: `multiplexRoute` carries a unit id, but it is only ever used when the practitioner picks MultiPlex under the xCell
+        // choice (an explicit chooseDevice); it never selects anything on its own, so it is not gated by `hold`.
+        "suggestedMachine", "multiplexRoute",
         // no unit choice
         "canManageMachines", "catalogue", "devices", "inventoryReason", "legacyMachine", "persistence", "priorSetup",
         "priorSetupUnavailable", "recordedSetup", "recordedSetupUnavailable", "scope", "unitNames",

@@ -213,3 +213,19 @@ describe("receptionists never reach this navigation, and the gate is false for t
     }
   });
 });
+
+describe("the gate runs WITH the shell's other reads, not ahead of them, and is measured", () => {
+  const layout = readFileSync("app/(app)/layout.tsx", "utf8");
+  it("it is inside the support-reads Promise.all, under its own span", () => {
+    expect(layout).toMatch(
+      /const \[unreadPersisted, overdueDisinfectantCount, showWaitlist\] = await timed\(\s*"shell\.support-reads",\s*\(\) =>\s*Promise\.all\(\[[\s\S]*?timed\("shell\.waitlist-nav", \(\) =>\s*showWaitlistInPrimaryNav\(/,
+    );
+  });
+  it("no serial `await showWaitlistInPrimaryNav` remains, and the rule input is unchanged", () => {
+    expect(layout).not.toMatch(/await showWaitlistInPrimaryNav/);
+    expect(layout).toContain('role: practitioner.role === "owner" ? "owner" : "practitioner"');
+  });
+  it("the span is declared in the closed list of telemetry names", () => {
+    expect(readFileSync("lib/observability/perf-timing.ts", "utf8")).toMatch(/"shell\.support-reads",\s*"shell\.waitlist-nav",/);
+  });
+});

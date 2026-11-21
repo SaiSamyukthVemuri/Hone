@@ -21,11 +21,11 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 
 | Field | Value |
 |---|---|
-| **Hosted (production) migration max** | **0357**, as declared in `docs/production/migration-state.json` on this tree. Advanced from `0300` by the record-only updates of 2026-11-14, 2026-11-15 and 2026-11-16, which declare the applies `0298`, `0301`-`0303`, `0287`, `0313`, `0323`-`0327`, `0338`, `0339`, `0340`, `0341`, `0350`, `0351`, `0352`, `0353`, `0354` and `0357` from their operator records; no apply is performed or re-verified by them. `0328` to `0337` are not hosted **by the row count** (the 0338, 0339, 0340, 0341, 0350, 0351, 0352, 0353, 0354 and 0357 read-backs were each one row above the read before them). `0355` and `0356` stay below the hosted maximum and unhosted: they are reserved for Roles. |
-| **Repo migration max** | **0361** (`0361_roles_review_authority.sql`), derived from the source files on this tree. <!-- ledger-derived --> |
+| **Hosted (production) migration max** | **0364**, as declared in `docs/production/migration-state.json` on this tree. Advanced from `0300` by the record-only updates of 2026-11-14, 2026-11-15 and 2026-11-16, which declare the applies `0298`, `0301`-`0303`, `0287`, `0313`, `0323`-`0327`, `0338`, `0339`, `0340`, `0341`, `0350`, `0351`, `0352`, `0353`, `0354`, `0357`, `0363` and `0364` from their operator records; no apply is performed or re-verified by them. `0328` to `0337` are not hosted **by the row count** (the 0338, 0339, 0340, 0341, 0350, 0351, 0352, 0353, 0354 and 0357 read-backs were each one row above the read before them). `0355` and `0356` (reserved for Roles) and `0358` to `0362` (reserved, no file) stay below the hosted maximum and unhosted. |
+| **Repo migration max** | **0364** (`0364_waitlist_replace_lock_order_and_live_only.sql`), derived from the source files on this tree. <!-- ledger-derived --> |
 | **Remote-only migrations** | Not restated on this tree; this tree's record of hosted lags the real hosted state. |
-| **Pending migrations** | **`0360`** (`0360_roles_save_inert_denial.sql`) and **`0361`** (`0361_roles_review_authority.sql`), authored on the Roles carriers and NOT applied; each is applied migration-first, in numeric order, under its own exact-package approval. **`0319`** (`0319_waitlist_times_unsuitable.sql`, sealed, NOT applied). `0298`, `0313`, `0323`, `0324`, `0325`, `0326`, `0310`, `0327`, `0338`, `0339`, `0340`, `0341`, `0350`, `0351`, `0352`, `0353`, `0354` and `0357` were applied to production (see the apply entries below and the `hosted_note` in `migration-state.json`), and are no longer pending. The files for `0351` to `0354` and for `0357` are all on this tree. |
-| **Next free number** | Next free number is **0362** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by reservation, not by this file. <!-- ledger-derived --> |
+| **Pending migrations** | **`0319`** (`0319_waitlist_times_unsuitable.sql`, sealed, NOT applied). `0298`, `0313`, `0323`, `0324`, `0325`, `0326`, `0310`, `0327`, `0338`, `0339`, `0340`, `0341`, `0350`, `0351`, `0352`, `0353`, `0354`, `0357`, `0363` and `0364` were applied to production (see the apply entries below and the `hosted_note` in `migration-state.json`), and are no longer pending. `0358` to `0362` are reserved numbers with no file in this tree. The files for `0351` to `0354`, `0357` and `0363` are all on this tree. |
+| **Next free number** | Next free number is **0365** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by reservation, not by this file. <!-- ledger-derived --> |
 | **Project ref** | Canonical Hone production project. |
 
 ### Cancellation fee tiers (0357, applied; the app code ships with #1526)
@@ -233,6 +233,35 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 - **Migration file header.** The header comment of the migration file is kept as sealed, because applied migrations are frozen.
 - **Not captured.** Any server-side apply instant; `hosted_applied_at` stays null. The declared project is not named in this record.
 - **Not done by this record.** #1526's application is not released and needs the owner's separate approval. A 24-hour read-only check is due no earlier than 2026-11-19T00:29Z.
+
+### The 0363 apply (facts as recorded by the operator, 2026-11-20; apply receipt `01-ops/RECEIPT-0363-APPLY-20261120.md`)
+
+- **What it is.** `0363_waitlist_batch_and_replace.sql`: the waitlist batch and replacement tables and their seven service-role functions. The file is on this tree (carried by #1657) with this record. The scheduler and the first real batch are **not** authorized by this record and stay off; the application release that reads these tables is **not** released.
+- **Approval.** The owner ran the apply in person, typing the confirmation twice, for this exact sealed package: apply 0363 only, a plain push, without `--include-all`.
+- **Package.** SEAL-SHA256SUMS `4d9cc1f4…`; sealed file sha256 `1489dbc8…` and rollback file sha256 `4ea38d21…` (the files on this tree have those hashes). The dry run listed exactly one migration, `0363`.
+- **Pre-apply reads (re-run inside the apply).** 278 history rows, max `0357`, `0363` absent; the sealed preflight passed; no open transaction older than 60 seconds on the three scanned tables; the three tables were small. No setting was written.
+- **Apply.** The push exited 0; the marker was written at 2026-11-20T23:21:54Z.
+- **Read-back (2026-11-20, 23:21:55Z to 23:21:58Z, client side).** **OVERALL PASS**: 279 history rows, max `0363`, `0363` present once; both new tables with row-level security on and the owner SELECT policy, columns, validated constraints and two partial indexes as sealed, no rows; `authenticated` has SELECT on the two tables only, `anon` and `service_role` nothing; the seven functions at one overload each, EXECUTE for `service_role` only, sealed bodies, SECURITY DEFINER, pinned search_path; the old 9-argument admit and 3-argument settle gone; the public catalog equal to the sealed post-0363 fingerprint (`ALL|4634|82a362c1…`). The reconcile is done.
+- **Scope on hosted.** New tables and functions only; both tables are empty and nothing has been sent.
+- **Hosted at that read-back:** 279 rows, max `0363`. By the row count (278 before, plus `0363` once, equals 279), `0355`, `0356` and `0358` to `0362` stay BELOW the hosted maximum and UNHOSTED; `0358` to `0362` have no file on this tree.
+- **Declared hosted maximum.** Advanced to `0363` in `migration-state.json` by this record, from the receipt only.
+- **Migration file header.** Kept as sealed, because applied migrations are frozen.
+- **Not captured.** Any server-side apply instant; `hosted_applied_at` stays null. The declared project is not named in this record.
+- **Not done by this record.** The scheduler and the first real batch need the owner's separate approvals. A 24-hour read-only check is due no earlier than 2026-11-21T23:22Z.
+
+### The 0364 apply (facts as recorded by the operator, 2026-11-21; apply receipt `01-ops/RECEIPT-0364-APPLY-20261121.md`)
+
+- **What it is.** `0364_waitlist_replace_lock_order_and_live_only.sql`: replaces one function, the invitation replace command. It takes its locks in the same order as the redeem path (so the two cannot deadlock), refuses an invitation that has ended or whose time has run out, and resets a replaced batch item to a new attempt. No table, column, index, permission or row is added. The file is on this tree (carried by #1681) with this record. The scheduler and the first real batch are **not** authorized by this record and stay off.
+- **Approval.** The owner ran the apply in person, under written authorization for this exact sealed package: apply 0364 only, a plain push, without `--include-all`.
+- **Package.** SEAL-SHA256SUMS `51abfb73…`; sealed file sha256 `ad7b5fde…` and rollback file sha256 `63b162e5…` (the files on this tree have those hashes). The dry run listed exactly one migration, `0364`.
+- **Pre-apply reads (re-run inside the apply).** 279 history rows, max `0363`, `0364` absent; the sealed preflight passed, including the replace function and the six others equal to the sealed previous bodies.
+- **Apply.** The push exited 0; the marker was written at 2026-11-21T12:52:29Z.
+- **Read-back (2026-11-21, 12:52:31Z to 12:52:33Z, client side).** **OVERALL PASS**: 280 history rows, max `0364`, `0364` present once; one overload of each of the seven functions, EXECUTE for `service_role` only; the replace function has the sealed new body (md5 `5888d9eb…`) and the other six are unchanged; SECURITY DEFINER, pinned search_path, owner postgres; the public catalog equals the sealed fingerprint `ALL|4634|0fdcee8b…`; the reconcile is done.
+- **Hosted at that read-back:** 280 rows, max `0364`. By the row count (279 before, plus `0364` once, equals 280), `0355`, `0356` and `0358` to `0362` stay BELOW the hosted maximum and UNHOSTED.
+- **Declared hosted maximum.** Advanced to `0364` in `migration-state.json` by this record, from the receipt only.
+- **Migration file header.** Kept as sealed, because applied migrations are frozen.
+- **Not captured.** Any server-side apply instant; `hosted_applied_at` stays null. The declared project is not named in this record.
+- **Not done by this record.** The scheduler and the first real batch need the owner's separate approvals. A 24-hour read-only check is due no earlier than 2026-11-22T12:53Z.
 
 ### HON-7 V1 activation (a configuration change, not a migration; recorded 2026-11-09 from `01-ops/ROLES-DECISIONS-LOG.md` and `01-ops/HON7-RETENTION-DEADLINE-TRACKER.md`)
 
