@@ -207,6 +207,9 @@ describe("what is retryable: only the right rows", () => {
     mixed("5", "issued", null),
     mixed("6", "sent", null),
     mixed("7", "skipped", "owner_stopped"),
+    // 0364: a retry that found the invitation over. A SAFE STOP: no retry kind may ever select these again.
+    mixed("8", "failed", "invitation_expired"),
+    mixed("9", "failed", "invitation_ended"),
   ];
   const db = () => fakeDb({ waitlist_invitation_batches: [{ id: "b1", studio_id: "s", confirmed_at: "2026-11-20", quantity: 7, fit_shown: 0, live_shown: 0 }], waitlist_invitation_batch_items: rows });
   it("refused retry targets are ONLY failed + delivery_refused", async () => {
@@ -217,6 +220,39 @@ describe("what is retryable: only the right rows", () => {
     const { loadUnknownTargets } = await import("@/lib/waitlist/over-invite-shown");
     expect((await loadUnknownTargets(db(), "s"))!.map((t) => t.itemId).sort()).toEqual(["2", "4"]);
   });
+});
+
+describe("an invitation found over is a SAFE STOP (0364): recorded once, counted ended, never retried or re-claimed", () => {
+  for (const code of ["invitation_expired", "invitation_ended"]) {
+    it(`${code}: one replace attempt, no delivery, and no later click selects the item again`, async () => {
+      const { loadRefusedTargets, loadUnknownTargets } = await import("@/lib/waitlist/over-invite-shown");
+      const item: Record<string, unknown> = { id: "1", entry_id: "e1", studio_id: "s", batch_id: "b1", state: "failed", reason_class: "delivery_refused", invitation_id: "inv-1" };
+      const db = () => fakeDb({ waitlist_invitation_batches: [{ id: "b1", studio_id: "s", confirmed_at: "2026-11-20", quantity: 1, fit_shown: 0, live_shown: 0 }], waitlist_invitation_batch_items: [{ ...item }] });
+      const [target] = (await loadRefusedTargets(db(), "s"))!;
+      let replaces = 0;
+      let delivered = 0;
+      const run = () =>
+        retryDeliveries(
+          {
+            kind: "refused",
+            stillRetryable: async () => ({ state: String(item.state), invitationId: "inv-1" }),
+            replace: async () => (replaces++, { ok: true, result: code }),
+            deliver: async () => (delivered++, "accepted"),
+            settle: async (_t, _o, why) => ((item.state = "failed"), (item.reason_class = why), { ok: true, result: "settled" }),
+            sleep: async () => {},
+          },
+          [{ ...target, studioId: "s" }],
+        );
+      expect((await run())[0]).toMatchObject({ status: "skipped", reason: code });
+      expect(item).toMatchObject({ state: "failed", reason_class: code });
+      // The item no longer appears for either retry kind, so a second click has nothing to replace.
+      expect(await loadRefusedTargets(db(), "s")).toEqual([]);
+      expect(await loadUnknownTargets(db(), "s")).toEqual([]);
+      expect(tallyItems([{ state: "failed", reason_class: code }]).ended).toBe(1);
+      expect(replaces).toBe(1);
+      expect(delivered).toBe(0);
+    });
+  }
 });
 
 describe("an issued item inside the lease shows as sending, not unknown", () => {
