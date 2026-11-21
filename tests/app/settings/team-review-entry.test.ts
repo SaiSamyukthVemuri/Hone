@@ -67,7 +67,7 @@ describe("behaviour of the real Team page, by role (queries mocked, page and com
     vi.doMock("@/lib/appointments/review-link", () => ({ shouldShowReviewLink }));
     vi.doMock("../../../app/(app)/settings/team/actions", () => ({ removePractitionerAction: vi.fn(), revokeInvitationAction: vi.fn() }));
     const { default: Page } = await import("../../../app/(app)/settings/team/page");
-    return { html: renderToStaticMarkup(await Page()), getPractitionersForStudio, shouldShowReviewLink };
+    return { html: renderToStaticMarkup(await Page({ searchParams: Promise.resolve({}) })), getPractitionersForStudio, shouldShowReviewLink };
   };
   const QUIET = 'data-testid="team-review-assignments-quiet"';
   const REMINDER = 'data-testid="team-review-assignments"';

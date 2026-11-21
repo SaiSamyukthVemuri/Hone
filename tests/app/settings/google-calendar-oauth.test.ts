@@ -29,10 +29,17 @@ vi.mock("@/lib/google-calendar/oauth", () => ({
   })),
   revokeToken: vi.fn(async () => ({ ok: true })),
 }));
+const STORE_ERR = vi.hoisted(() => ({
+  Class: class ConnectionStoreError extends Error {
+    step = "test_step";
+    code: string | null = "57014";
+  },
+}));
 vi.mock("@/lib/google-calendar/connection", () => ({
+  ConnectionStoreError: STORE_ERR.Class,
   getOwnConnectionMetadata: vi.fn(async () => null),
   getRefreshTokenCiphertext: vi.fn(async () => "v1:1:iv:tag:ct"),
-  disconnectConnection: vi.fn(async () => {}),
+  disconnectConnection: vi.fn(async () => true),
   markReconnectRequired: vi.fn(async () => {}),
   setWriteCalendar: vi.fn(async () => {}),
   designateStudioCalendarOwner: vi.fn(async () => true),
@@ -45,6 +52,8 @@ import { createOAuthState } from "@/lib/google-calendar/state";
 import { ConnectionWriteError } from "@/lib/google-calendar/store-write-error";
 import {
   getOwnConnectionMetadata,
+  getRefreshTokenCiphertext,
+  markReconnectRequired,
   disconnectConnection,
   setWriteCalendar,
   designateStudioCalendarOwner,
@@ -52,6 +61,7 @@ import {
 import {
   startGoogleCalendarConnectAction,
   disconnectGoogleCalendarAction,
+  listWritableCalendarsAction,
   selectWriteCalendarAction,
   designateSelfAsCalendarOwnerAction,
 } from "@/app/(app)/settings/profile/google-calendar-actions";
@@ -145,20 +155,59 @@ describe("startGoogleCalendarConnectAction — flag gate + state + nonce cookie"
   });
 });
 
-describe("disconnectGoogleCalendarAction — revoke then destroy", () => {
-  it("revokes at Google then clears local connection state", async () => {
+describe("disconnectGoogleCalendarAction — studio-local disconnection, never a revoke at Google", () => {
+  it("clears THIS studio's connection and never calls Google; ok WITH the notice that Google authorization may remain", async () => {
     const r = await disconnectGoogleCalendarAction();
     expect(r.ok).toBe(true);
-    expect(revokeToken).toHaveBeenCalledWith("refresh-token");
+    expect(revokeToken).not.toHaveBeenCalled();
+    expect(disconnectConnection).toHaveBeenCalledWith(STUDIO, PRAC);
+    const notice = (r as { notice?: string }).notice ?? "";
+    expect(notice).toMatch(/Google authorization may remain/);
+    expect(notice).toMatch(/Third-party apps and services/);
+    expect(notice).toContain("This studio's stored Google credentials were removed and its sync has stopped");
+    expect(notice).not.toMatch(/other studio|disconnected from Google/i); // names no other studio, and never "disconnected from Google"
+  });
+
+  it("a failed local clear is reported as a failure, never as a completed disconnect (exact log string)", async () => {
+    vi.mocked(disconnectConnection).mockRejectedValueOnce(new STORE_ERR.Class("calendar_connection_store_error:disconnect_delete_secret"));
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const r = await disconnectGoogleCalendarAction();
+    expect(r).toEqual({ ok: false, error: "Couldn't disconnect Google Calendar. Please try again." });
+    expect(log).toHaveBeenCalledWith("google_calendar_error:disconnect:test_step");
+  });
+
+  it("a connection row with NO stored secret still gets the notice (a grant may remain at Google)", async () => {
+    vi.mocked(getOwnConnectionMetadata).mockResolvedValueOnce(null as never);
+    const r = await disconnectGoogleCalendarAction();
+    expect((r as { notice?: string }).notice).toMatch(/Google authorization may remain/);
     expect(disconnectConnection).toHaveBeenCalledWith(STUDIO, PRAC);
   });
 
-  it("Q-1: a failed local disconnect write is reported as a failure, not 'disconnected'", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.mocked(disconnectConnection).mockRejectedValueOnce(new ConnectionWriteError("disconnect_delete_secret"));
+  it("no connection row at all: disconnected idempotently with plain ok and NO notice", async () => {
+    vi.mocked(getOwnConnectionMetadata).mockResolvedValueOnce(null as never);
+    vi.mocked(disconnectConnection).mockResolvedValueOnce(false as never);
     const r = await disconnectGoogleCalendarAction();
-    expect(r).toEqual({ ok: false, error: "Couldn't disconnect Google Calendar. Please try again." });
-    expect(console.error).toHaveBeenCalledWith("google_calendar_error:disconnect:disconnect_delete_secret");
+    expect(r).toEqual({ ok: true });
+    expect(disconnectConnection).toHaveBeenCalledWith(STUDIO, PRAC);
+    expect(revokeToken).not.toHaveBeenCalled();
+  });
+
+  it("source pin: the action neither decrypts nor revokes (the revoke call is gone, not merely unreached)", () => {
+    const src = readFileSync(join(__dirname, "../../../app/(app)/settings/profile/google-calendar-actions.ts"), "utf8");
+    const body = src.slice(src.indexOf("export async function disconnectGoogleCalendarAction"), src.indexOf("export async function listWritableCalendarsAction"));
+    expect(body).not.toMatch(/revokeToken|decryptGoogleSecret/);
+    expect(body).not.toContain("getRefreshTokenCiphertext"); // the Disconnect path reads connection metadata, not the encrypted token
+    expect(src).not.toMatch(/revokeToken/);
+  });
+
+  it("an unreadable connection store stops BEFORE anything is destroyed (the grant status is unknown)", async () => {
+    vi.mocked(getOwnConnectionMetadata).mockRejectedValueOnce(new STORE_ERR.Class("calendar_connection_store_error:read_metadata"));
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const r = await disconnectGoogleCalendarAction();
+    expect(r.ok).toBe(false);
+    expect(disconnectConnection).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith("google_calendar_error:disconnect:test_step");
   });
 
   it("is rejected when the flag is OFF", async () => {
@@ -166,6 +215,27 @@ describe("disconnectGoogleCalendarAction — revoke then destroy", () => {
     const r = await disconnectGoogleCalendarAction();
     expect(r.ok).toBe(false);
     expect(disconnectConnection).not.toHaveBeenCalled();
+  });
+});
+
+describe("store failures in the other actions (T-1): retry message, never a dead-grant flag", () => {
+  it("mintAccessToken: a store error asks to retry, does NOT set reconnectRequired and does NOT mark the connection (exact log string)", async () => {
+    vi.mocked(getRefreshTokenCiphertext).mockRejectedValueOnce(new STORE_ERR.Class("calendar_connection_store_error:read_connection"));
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const r = await listWritableCalendarsAction();
+    expect(r).toEqual({ ok: false, error: "Couldn't read the connection. Please try again." });
+    expect((r as { reconnectRequired?: boolean }).reconnectRequired).toBeUndefined();
+    expect(markReconnectRequired).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith("google_calendar_error:mint_read_connection:test_step");
+  });
+
+  it("a metadata read failure is reported as a retryable error, not as 'Connect your Google account first' (exact log string)", async () => {
+    vi.mocked(getOwnConnectionMetadata).mockRejectedValueOnce(new STORE_ERR.Class("calendar_connection_store_error:read_metadata"));
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const r = await designateSelfAsCalendarOwnerAction();
+    expect(r).toEqual({ ok: false, error: "Couldn't read the connection. Please try again." });
+    expect(designateStudioCalendarOwner).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith("google_calendar_error:load_metadata:test_step");
   });
 });
 

@@ -176,7 +176,7 @@ describe("persistConnectedFromCallback (P-1): no token returned", () => {
   it("Q-1: a failed secret delete throws disconnect_delete_secret and the connection row is NOT marked disconnected", async () => {
     h.script["calendar_connections.select"] = [{ data: { id: "c1" }, error: null }];
     h.script["calendar_connection_secrets.delete"] = [{ data: null, error: DB_ERR }];
-    await expect(disconnectConnection("s1", "p1")).rejects.toMatchObject({ name: "ConnectionWriteError", step: "disconnect_delete_secret" });
+    await expect(disconnectConnection("s1", "p1")).rejects.toMatchObject({ step: "disconnect_delete_secret" });
     expect(writes("calendar_connections")).toEqual([]);
   });
   it("Q-1: a failed mark-disconnected throws disconnect_mark_disconnected", async () => {
