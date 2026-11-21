@@ -58,6 +58,7 @@ export type FeeCardEligibility = {
   clientName: string | null;
   serviceName: string | null;
   startsAt: string | null;
+  timingClassification?: "practitioner_asserted" | "system_derived";
   card: { brand: string; last4: string } | null;
   cardAuthorizationSignedAt: string | null;
   policyAcknowledgedAt: string | null;
@@ -124,6 +125,7 @@ export function projectFeeEligibility(
     clientName: e.client?.name ?? null,
     serviceName: e.appointment?.service_name ?? null,
     startsAt: e.appointment?.starts_at ?? null,
+    timingClassification: e.timingClassification,
     card: e.card ? { brand: e.card.brand, last4: e.card.last4 } : null,
     cardAuthorizationSignedAt: e.cardAuthorization?.signed_at ?? null,
     policyAcknowledgedAt: e.policyAcknowledgement?.acknowledged_at ?? null,

@@ -303,6 +303,7 @@ describe("the window a recipient actually gets", () => {
     expect("expiresInHours" in submission).toBe(false);
     expect(Object.keys(submission).sort()).toEqual([
       "allowedWeekdays",
+      "beyondEstimate",
       "entryId",
       "serviceId",
       "windowDays",
@@ -478,6 +479,9 @@ describe("CENSUS — the database's own default can never decide the window", ()
         // signature rather than arguments.
         const before = MIGRATION_SQL.slice(Math.max(0, at - 60), at).toLowerCase();
         if (before.includes("function")) continue;
+        // A regprocedure LITERAL names a TYPE signature (0324's DO block pins the 9-argument admit it then installed); like a
+        // declaration, it carries types, not arguments, and a later widening must not turn it into a short call.
+        if (before.includes("regprocedure")) continue;
 
         const open = at + m[0].length - 1;
         let depth = 0;

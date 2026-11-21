@@ -141,7 +141,7 @@ export type ManualFeeEligibility =
       amountCents: number;
       feeBasis: ManualFeeBasis;
       currency: string;
-      timingClassification: "practitioner_asserted";
+      timingClassification: "practitioner_asserted" | "system_derived";
       appointment: EligibilityAppointmentSummary;
       client: EligibilityClientSummary;
       card: EligibilityCardSummary;
@@ -162,6 +162,6 @@ export type ManualFeeEligibility =
       /** True when percent mode calculated a fee of exactly $0.00 (zero price or rounds to zero): nothing is owed, no attempt. */
       noFeeOwed: boolean;
       currency: string | null;
-      timingClassification: "practitioner_asserted";
+      timingClassification: "practitioner_asserted" | "system_derived";
       existingAttempts: EligibilityExistingAttemptSummary[];
     };

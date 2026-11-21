@@ -20,7 +20,7 @@ import { readInChunks } from "./in-chunks";
 
 export type MoneyHandling = "counted" | "unavailable" | "quote" | "not_money" | "not_checked";
 
-export const MONEY_FORMS: ReadonlyArray<{ table: string; form: string; handling: MoneyHandling; note: string }> = [
+export const MONEY_FORMS: ReadonlyArray<{ table: string; form: string; handling: MoneyHandling; note: string; plain?: string }> = [
   { table: "payment_charge_attempts", form: "session card payment (succeeded)", handling: "counted", note: "amount minus a readable succeeded refund" },
   { table: "payment_charge_attempts", form: "card payment in flight (pending_stripe)", handling: "unavailable", note: "money may or may not have moved" },
   { table: "payment_charge_attempts", form: "refund succeeded, amount unreadable", handling: "unavailable", note: "AO1: not 'no refund'" },
@@ -36,12 +36,12 @@ export const MONEY_FORMS: ReadonlyArray<{ table: string; form: string; handling:
   { table: "sessions", form: "price_paid_cents recorded on the session", handling: "unavailable", note: "shown on the client page; a paid amount this balance does not subtract" },
   { table: "services", form: "price", handling: "quote", note: "via resolveAuthoritativeSessionPaymentAmount" },
   { table: "client_pricing", form: "custom price", handling: "quote", note: "via resolveAuthoritativeSessionPaymentAmount" },
-  { table: "appointment_payments", form: "booking-time charge, refund, dispute state", handling: "not_checked", note: "written by database functions; no app code reads it; RLS on, no policy" },
-  { table: "stripe_charge_attempts", form: "appointment-level charge", handling: "not_checked", note: "legacy Connect phase 1; RLS on, no policy" },
-  { table: "stripe_refund_attempts", form: "appointment-level refund attempt", handling: "not_checked", note: "RLS on, no policy" },
-  { table: "stripe_refunds", form: "appointment-level refund", handling: "not_checked", note: "RLS on, no policy" },
-  { table: "stripe_disputes", form: "dispute or chargeback", handling: "not_checked", note: "RLS on, no policy; the label does not claim a final balance" },
-  { table: "payment_charge_refunds", form: "per-refund history of a card charge (0358)", handling: "not_money", note: "a history read through the attempt's summary columns, not a separate money form: the balance never sums these rows, so a refund is never counted twice" },
+  { table: "appointment_payments", form: "booking-time charge, refund, dispute state", handling: "not_checked", note: "written by database functions; no app code reads it; RLS on, no policy", plain: "card charges taken when a booking was made, and their refunds" },
+  { table: "stripe_charge_attempts", form: "appointment-level charge", handling: "not_checked", note: "legacy Connect phase 1; RLS on, no policy", plain: "older card charges recorded against an appointment" },
+  { table: "stripe_refund_attempts", form: "appointment-level refund attempt", handling: "not_checked", note: "RLS on, no policy", plain: "card refunds that were attempted for an appointment" },
+  { table: "stripe_refunds", form: "appointment-level refund", handling: "not_checked", note: "RLS on, no policy", plain: "card refunds recorded against an appointment" },
+  { table: "stripe_disputes", form: "dispute or chargeback", handling: "not_checked", note: "RLS on, no policy; the label does not claim a final balance", plain: "card disputes and chargebacks" },
+  { table: "payment_charge_refunds", form: "per-refund history of a card charge (0358)", handling: "not_money", note: "a history read through the attempt's summary columns, not a separate money form: the balance never sums these rows, so a refund is never counted twice" , plain: "one row for each refund of a card charge" },
   { table: "stripe_payment_audit", form: "audit copy of the four above", handling: "not_money", note: "no independent amount" },
   { table: "pending_booking_payment_sessions", form: "quoted price snapshot, card setup", handling: "not_money", note: "a card on file and a quote; no charge" },
   { table: "studios", form: "late_cancel_fee_cents / no_show_fee_cents", handling: "not_money", note: "policy amounts, not payments" },

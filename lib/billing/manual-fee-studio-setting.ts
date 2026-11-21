@@ -1,23 +1,14 @@
 import "server-only";
+import { loadCancellationFeeRules } from "./cancellation-fee-rules-server";
+import { selectCancellationFeeTier } from "./cancellation-fee-rules";
 import { liveChargeReasonBlockMessage } from "@/lib/billing/live-charge-reason-allowlist";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadAppointmentSessionPrice } from "@/lib/billing/authoritative-appointment-price";
 import { manualFeeConfigIssue, type FeeConfigRow } from "@/lib/billing/manual-fee-percent";
 
-// The studio's OWN setting for each manual fee (migration 0351): studios.late_cancel_fee_enabled and
-// studios.no_show_fee_enabled, both NOT NULL DEFAULT false, changed only by the owner (Settings -> Payments).
-//
-// This is the studio-facing switch. It is separate from the temporary LIVE release list in
-// live-charge-reason-allowlist.ts, which Hone uses during rollout: in LIVE mode a fee needs BOTH. In TEST mode only this
-// setting applies.
-//
-// FAIL CLOSED. A missing row, a read error, a missing column (the migration is not applied) or any value that is not the
-// boolean `true` reads as OFF. A setting can only ever make a charge LESS likely.
-//
-// WHEN IT APPLIES. To NEW charges only: prepare (eligibility) and, at execute, an attempt that has not been sent yet
-// (status "ready"). An attempt already claimed or sent (pending_stripe, requires_action, succeeded, failed, and any refund
-// of one) is reconciled, refreshed and refunded exactly as before whatever this setting says, so turning a fee off never
-// strands money in flight.
+// No-show still uses the legacy studio switch and independent release gate.
+// Cancellation fees use the governed tier configuration (0357), not the legacy flat-rate switch.
+// Both paths refuse unreadable settings and recheck before a new charge; recovery/refunds remain available.
 
 export const LATE_CANCEL_FEE_DISABLED_MESSAGE =
   "Late cancellation fees are turned off for this studio. The owner can turn them on in Settings, Payments.";
@@ -43,35 +34,7 @@ export function manualFeeSettingBlockMessage(chargeReason: string, row: ManualFe
   return null;
 }
 
-// ---------------------------------------------------------------------------
-// What the owner SEES: the saved choice versus whether the fee is actually active.
-//
-// The Settings screen must never show a fee type as on while a gate still blocks it. So the screen does not decide
-// anything itself: it asks this function, which calls the SAME two gate functions prepare and execute call
-// (manualFeeSettingBlockMessage here, liveChargeReasonBlockMessage for the release list). If either of those changes,
-// the screen changes with it.
-//
-//   off                       the owner's saved choice is OFF
-//   active                    saved ON, payments ready, and (LIVE mode) the studio is on this type's release list
-//   not_active_config         saved ON but the saved amount (fixed) or percentage (percent) is missing or invalid
-//   not_active_payments       saved ON but payments are not ready (Stripe not connected or charges not enabled, or the
-//                             payment jurisdiction is not confirmed, or readiness could not be read)
-//   not_active_release        saved ON, payments ready, LIVE mode, and the studio is not yet on this type's release list
-//
-// TEMPORARY RELEASE CONTROL. The per-reason release lists (HONE_LATE_CANCEL_FEE_LIVE_STUDIO_IDS and
-// HONE_NO_SHOW_FEE_LIVE_STUDIO_IDS in live-charge-reason-allowlist.ts) are a rollout control, not the studio-facing
-// feature.
-// For EACH fee type separately, its list is removed only when ALL of these hold (set by the platform operator, 15 Nov 2026):
-//   (a) the settings migration (0351) is applied and read back;
-//   (b) the readiness of that type has been reviewed (payment-safety review, and a wording review);
-//   (c) its tests pass, including the test-mode smoke for that type;
-//   (d) monitoring is in place for stuck or unclear fee attempts;
-//   (e) the platform operator gives explicit rollout approval.
-// There is NO minimum number of days or of real charged fees: a real fee is never created to satisfy a testing count.
-// The removal is a PR that deletes that type's release check, after which the owner's setting plus payment readiness
-// alone govern. First responder for a stuck or unclear fee attempt is the on-call operator; Stripe investigation escalates to the platform operator.
-// ---------------------------------------------------------------------------
-
+// Legacy no-show presentation. Cancellation settings use cancellationFeeState instead.
 export type ManualFeeEffectiveState = "off" | "active" | "not_active_config" | "not_active_payments" | "not_active_release";
 
 export function manualFeeEffectiveState(args: {
@@ -125,7 +88,8 @@ export async function loadManualFeeExecuteHold(
 ): Promise<string | null> {
   const reasonKey = attempt.charge_reason;
   if (reasonKey !== "late_cancellation_fee" && reasonKey !== "no_show_fee") return null;
-  const late = reasonKey === "late_cancellation_fee";
+  if (reasonKey === "late_cancellation_fee") return loadCancellationExecuteHold(admin as SupabaseClient, attempt);
+  const late = false;
   try {
     const db = admin as {
       from: (t: string) => {
@@ -174,6 +138,36 @@ export async function loadManualFeeExecuteHold(
       return null;
     }
     return MANUAL_FEE_SETTINGS_CHANGED_MESSAGE;
+  } catch {
+    return MANUAL_FEE_SETTING_UNREADABLE_MESSAGE;
+  }
+}
+
+/** The new tier model is independent of legacy single-rate switches, which never enroll a studio. */
+async function loadCancellationExecuteHold(db: SupabaseClient, attempt: { id: string; studio_id: string; amount_cents: number }): Promise<string | null> {
+  try {
+    const config = await loadCancellationFeeRules(db, attempt.studio_id);
+    if (!config.ok) return config.error;
+    const { data: frozen, error } = await db.from("payment_charge_attempts")
+      .select("calc_mode, basis_cents, percent_bp, appointment_id, policy_snapshot_hash, cancellation_fee_snapshot")
+      .eq("id", attempt.id).eq("studio_id", attempt.studio_id).maybeSingle();
+    if (error || !frozen) return MANUAL_FEE_SETTING_UNREADABLE_MESSAGE;
+    const { data: appt, error: apptError } = await db.from("appointments").select("starts_at, cancelled_at, status")
+      .eq("id", frozen.appointment_id).eq("studio_id", attempt.studio_id).maybeSingle();
+    if (apptError || !appt) return MANUAL_FEE_SETTING_UNREADABLE_MESSAGE;
+    if (appt.status !== "cancelled") return MANUAL_FEE_SETTINGS_CHANGED_MESSAGE;
+    const choice = selectCancellationFeeTier({ rules: config.rules, startsAt: appt.starts_at, cancelledAt: appt.cancelled_at, timezone: config.timezone });
+    if (!choice.ok) return choice.error;
+    const snapshot = frozen.cancellation_fee_snapshot;
+    if (!snapshot || snapshot.revision !== config.rules.revision || snapshot.tier !== choice.tier ||
+      snapshot.timezone !== config.timezone || Date.parse(snapshot.startsAt) !== Date.parse(appt.starts_at) ||
+      Date.parse(snapshot.cancelledAt) !== Date.parse(appt.cancelled_at) || frozen.policy_snapshot_hash !== config.policyHash ||
+      frozen.calc_mode !== choice.rate.mode) return MANUAL_FEE_SETTINGS_CHANGED_MESSAGE;
+    if (choice.rate.mode === "fixed") return attempt.amount_cents === choice.rate.value ? null : MANUAL_FEE_SETTINGS_CHANGED_MESSAGE;
+    if (frozen.percent_bp !== choice.rate.value) return MANUAL_FEE_SETTINGS_CHANGED_MESSAGE;
+    const price = await loadAppointmentSessionPrice({ admin: db, studioId: attempt.studio_id, appointmentId: frozen.appointment_id, studioTimezone: config.timezone });
+    if (!price.ok) return MANUAL_FEE_SETTING_UNREADABLE_MESSAGE;
+    return price.result.kind === "resolved" ? null : MANUAL_FEE_PRICE_CHANGED_MESSAGE;
   } catch {
     return MANUAL_FEE_SETTING_UNREADABLE_MESSAGE;
   }

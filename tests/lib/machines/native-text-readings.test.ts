@@ -241,7 +241,7 @@ it("all six synthetic identities are absent when gate-closed or deployed, with r
     expect(catalogueForRuntime(env).some((p) => p.profileId.startsWith("synthetic:"))).toBe(false);
   }
   expect(MACHINE_CATALOGUE.filter((p) => p.availability === "active").map((p) => `${p.profileId}@${p.version}`).sort()).toEqual([
-    "dectro-apilus:junior-3g@3", "dectro-apilus:senior-3g@3",
+    "dectro-apilus:junior-3g@3", "dectro-apilus:senior-3g@3", "dectro-apilus:xcell-pur@1",
   ]);
 });
 

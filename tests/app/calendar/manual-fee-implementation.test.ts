@@ -195,7 +195,7 @@ describe("the fee receipt names the fee and the amount, never a session payment"
   });
 });
 
-describe("the percentage engine is bounded, and no new policy model", () => {
+describe("the percentage engine is bounded and cancellation rates come from the tier model", () => {
   // Decision trail: PR #145 shipped fixed amounts only and this guard said "no percentage engine". the platform operator later authorised a
   // percent-of-session-price mode (0351), so the guard is EXTENDED, not loosened: the arithmetic lives in ONE pure module, the
   // files below still compute nothing, and no form field ever carries a charge amount.
@@ -230,10 +230,10 @@ describe("the percentage engine is bounded, and no new policy model", () => {
     walk(path.join(root, "lib")); walk(path.join(root, "app"));
     expect(hits).toEqual(["lib/billing/manual-fee-percent.ts"]);
   });
-  it("the fixed amount in eligibility comes from exactly the two saved amount columns, and a percent amount only from the reviewed resolver", () => {
+  it("cancellation uses the selected governed tier, no-show uses its saved amount, and percentages use the reviewed resolver", () => {
     const code = codeOnly(read("lib/billing/manual-fee-eligibility.ts"));
     expect(code).toContain("late_cancel_fee_cents, no_show_fee_cents, late_cancel_fee_enabled, no_show_fee_enabled, late_cancel_fee_mode");
-    expect(code).toMatch(/studioRow\.late_cancel_fee_cents/);
+    expect(code).toMatch(/cancellationRate\?\.value/);
     expect(code).toMatch(/studioRow\.no_show_fee_cents/);
     expect(code).toMatch(/loadAppointmentSessionPrice\(/);
     expect(code).toMatch(/computePercentFee\(price\.result\.amountCents, bp\)/);

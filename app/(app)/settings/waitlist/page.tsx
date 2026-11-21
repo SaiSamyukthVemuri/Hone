@@ -22,6 +22,7 @@ import { declineOwnerEmailActivation } from "@/lib/waitlist/decline-owner-email-
 import { waitlistDeclineAnswersEnabled } from "@/lib/waitlist/decline-answers-gate";
 import { readFollowUps } from "@/lib/waitlist/followups-owner";
 import { loadLinkableAppointments } from "@/lib/waitlist/followup-linkable";
+import { loadReplyContacts } from "@/lib/waitlist/reply-contact";
 import { DeclineFollowUpSection } from "@/components/waitlist/decline-follow-up-section";
 import { DeclineEmailFailedNotice } from "@/components/waitlist/decline-email-failed-notice";
 import {
@@ -50,6 +51,7 @@ import {
   UNKNOWN_JOINED_AT_COPY,
 } from "@/lib/waitlist/entry-provenance";
 import { EntryAvailability } from "@/components/waitlist/entry-availability";
+import { OverInviteLink } from "@/components/waitlist/over-invite-link";
 import { WaitlistTextsSetting } from "@/components/waitlist/waitlist-texts-setting";
 import { EntrySmsConsent, type SmsConsentView } from "@/components/waitlist/entry-sms-consent";
 import { AddToWaitlistPanel } from "@/components/waitlist/add-to-waitlist-panel";
@@ -658,6 +660,9 @@ export default async function WaitlistSettingsPage({
   const declineAnswersOn = waitlistDeclineAnswersEnabled();
   const followUps = declineAnswersOn ? await readFollowUps(studio.id, practitioner.user_id) : null;
   const followUpOpenRows = followUps?.kind === "ok" ? followUps.rows : [];
+  // Contact for each response, by ENTRY ID within the studio (never by name), read through the owner's own session.
+  const followUpContacts =
+    followUps?.kind === "ok" ? await loadReplyContacts(studio.id, [...new Set(followUps.rows.map((r) => r.entryId))]) : null;
   const linkable = await loadLinkableAppointments(supabase, studio.id, followUpOpenRows, studio.timezone ?? "UTC");
   const outbox = await loadOutboxCounts(
     studio.id,
@@ -822,6 +827,8 @@ export default async function WaitlistSettingsPage({
       {/* Absent only on a row read before 0206; the column defaults FALSE, so
           absent displays as OFF. */}
       <WaitlistTextsSetting initial={studio.send_waitlist_invitation_sms === true} />
+      {/* Owner-only: the page above already refuses a non-owner, and the link states the check itself. */}
+      <OverInviteLink isOwner={practitioner.role === "owner"} />
       {/* THE ALLOWANCE, ABOVE THE WAITLIST. Nothing to type: it is read from availability. */}
       <section
         data-testid="invitation-allowance"
@@ -867,6 +874,17 @@ export default async function WaitlistSettingsPage({
 
       <p className="text-sm font-medium" aria-live="polite">
         Waitlist entries: <span className="tabular-nums">{active}</span>
+      </p>
+      <p className="flex flex-wrap gap-x-4 text-sm" data-testid="waitlist-tools-nav">
+        <Link href="/settings/waitlist/search" className="underline">
+          Search the waitlist by name
+        </Link>
+        <Link href="/settings/waitlist/released" className="underline">
+          Released and expired history
+        </Link>
+        <Link href="/settings/waitlist/archived" className="underline">
+          Archived entries
+        </Link>
       </p>
 
       {/* NO BULK CLAIM CONTROL. "Claim the next N" was removed with the rest of
@@ -963,6 +981,8 @@ export default async function WaitlistSettingsPage({
                 linkable={linkable}
                 notice={followUpNotice}
                 capped={followUps.capped === true}
+                contacts={followUpContacts?.kind === "ok" ? followUpContacts.byEntry : null}
+                renderedEntryIds={new Set(rows.map((r) => r.id))}
               />
             ) : (
               <p id="follow-up" className="scroll-mt-[calc(var(--settings-top,4.5rem)+4rem)] text-sm text-neutral-600 min-[700px]:scroll-mt-[calc(var(--settings-top,4.5rem)+1rem)] dark:text-neutral-400" role="status">
@@ -1165,6 +1185,7 @@ export default async function WaitlistSettingsPage({
                     return (
                       <li
                         key={row.id}
+                        id={`entry-${row.id}`}
                         // WHICH PERSON THIS ROW IS, on the row itself.
                         //
                         // A control is only reachable if it is reachable ON THE

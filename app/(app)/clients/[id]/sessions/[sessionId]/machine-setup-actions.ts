@@ -1,5 +1,6 @@
 "use server";
 
+import { machineModelLabel, XCELL_ONE_CHOICE_LABEL } from "@/lib/machines/display-name";
 import { revalidatePath } from "next/cache";
 import { readClientLastMachine } from "@/lib/sessions/client-last-machine";
 import { validateClientLastMachine } from "@/lib/machines/client-last-machine";
@@ -28,6 +29,8 @@ import {
   legacyMachineOffer,
   type LegacyMachineOffer,
 } from "@/lib/machines/legacy-machine";
+import { XCELL_PUR_PROFILE_ID } from "@/lib/machines/xcell-pur";
+import { xcellMultiplexRoute, type XcellMultiplexRoute } from "@/lib/machines/xcell-route";
 import {
   restoreSelectionFromRecordedSetup,
   type RestoredSelection,
@@ -72,7 +75,8 @@ import {
   inventoryUnavailable,
   listStudioDevices,
 } from "@/lib/machines/studio-devices";
-import { machinesByIds, recordBlockMachineIdentity } from "@/lib/machines/machine-queries";
+import { xcellRegistrationAllowed } from "@/lib/machines/xcell-registration-gate";
+import { listStudioMachines, machinesByIds, recordBlockMachineIdentity } from "@/lib/machines/machine-queries";
 import {
   assertSessionForClient,
   SessionLineageError,
@@ -229,6 +233,8 @@ export type MachineSetupContext = {
    * that has never charted that way; nothing tenant-specific lives in code.
    */
   legacyMachine: LegacyMachineOffer | null;
+  /** MultiPlex as a mode of the one xCell choice: the xCell Pur unit to route it through, or null (nothing changes). */
+  multiplexRoute: XcellMultiplexRoute | null;
 };
 
 const ANONYMOUS: MachineSetupContext = {
@@ -249,6 +255,7 @@ const ANONYMOUS: MachineSetupContext = {
   clientLastMachine: null,
   restoredSelection: null,
   legacyMachine: null,
+  multiplexRoute: null,
 };
 
 /** Everything the panel needs, derived entirely on the server. */
@@ -454,6 +461,24 @@ export async function loadMachineSetupContext(input: {
     legacyMachine = null;
   }
 
+  // MULTIPLEX AS A MODE OF THE ONE xCELL CHOICE (HON-71). A route only where the existing choice is offered, the contract row is
+  // PUBLISHED and the studio has a usable unit; a failed read means no route, and the studio's form is exactly what it was.
+  let multiplexRoute: XcellMultiplexRoute | null = null;
+  if (legacyMachine) {
+    try {
+      const purProfile = currentProfile(catalogue, XCELL_PUR_PROFILE_ID);
+      const published = purProfile ? await publishedModesFor(db, purProfile.profileId, purProfile.version) : null;
+      multiplexRoute = xcellMultiplexRoute({
+        legacyOffered: true,
+        catalogue,
+        devices: inventory.devices,
+        publishedModes: published && published.ok ? published.value : null,
+      });
+    } catch {
+      multiplexRoute = null;
+    }
+  }
+
   // THE CLIENT'S OWN LAST MACHINE, validated like any other choice.
   let clientLastMachine: MachineSetupContext["clientLastMachine"] = null;
   try {
@@ -513,6 +538,7 @@ export async function loadMachineSetupContext(input: {
     suggestedMachine,
     restoredSelection,
     legacyMachine,
+    multiplexRoute,
     clientLastMachine,
   };
 }
@@ -693,6 +719,8 @@ export async function recordBlockMachineIdentityAction(input: {
  * The profile must be one the server's own catalogue offers, so a client cannot
  * register a unit against an unverified or invented profile id.
  */
+const XCELL_ALREADY_REGISTERED = "This studio already has its xCell registered.";
+
 export async function registerMachineAction(input: {
   profileId: string;
   displayName: string;
@@ -723,6 +751,12 @@ export async function registerMachineAction(input: {
       error:
         "That machine model is not offered yet. A model becomes available only after its evidence review.",
     };
+  }
+
+  // ROLLOUT GATE (Sam): only allowlisted studios may register the xCell. The same answer as the listing, enforced here so a forged form
+  // cannot bypass it; the message does not reveal the rollout.
+  if (profile.profileId === XCELL_PUR_PROFILE_ID && !xcellRegistrationAllowed(scope.studioId)) {
+    return { ok: false, code: "rejected", error: "That machine model is not offered yet. A model becomes available only after its evidence review." };
   }
 
   const name = input.displayName.trim();
@@ -765,13 +799,27 @@ export async function registerMachineAction(input: {
       ok: false,
       code: "rejected",
       error:
-        `No published field contract covers ${profile.manufacturer} ${profile.model} ` +
+        `No published field contract covers ${machineModelLabel(profile)} ` +
         `version ${profile.version} (${missing.join(", ")}). A machine cannot be ` +
         `registered until its contract is published, because its settings could ` +
         `not then be recorded.`,
     };
   }
 
+  // ONE xCell (HON-71): a studio has one xCell Pur unit. A second registration is refused with a clear message, and a failed read refuses
+  // too (it cannot be shown that none exists). The owner check itself stays in the database command.
+  if (profile.profileId === XCELL_PUR_PROFILE_ID) {
+    const existing = await listStudioMachines(db, scope.studioId);
+    if (!existing.ok) return { ok: false, code: "rejected", error: existing.error };
+    if (existing.value.some((m) => m.profileId === XCELL_PUR_PROFILE_ID)) {
+      return { ok: false, code: "rejected", error: XCELL_ALREADY_REGISTERED };
+    }
+  }
+
+  // THE xCell'S NAME IS FIXED, so the database's unique name index (studio_machines_studio_display_name_uniq, 0223) is the atomic
+  // one-xCell-per-studio guarantee: two owner tabs that both pass the inventory read above cannot both insert it. (A retired unit keeps
+  // its name reserved, so retiring it is not an undo that frees the name.)
+  const isXcell = profile.profileId === XCELL_PUR_PROFILE_ID;
   const made = await registerStudioMachine(db, {
     studioId: scope.studioId,
     profileId: profile.profileId,
@@ -779,10 +827,14 @@ export async function registerMachineAction(input: {
     // a unit cannot be registered against a contract version that does not
     // exist.
     profileVersion: profile.version,
-    displayName: name,
+    displayName: isXcell ? XCELL_ONE_CHOICE_LABEL : name,
     installedOptions: input.installedOptions ?? [],
   });
-  if (!made.ok) return { ok: false, code: "rejected", error: made.error };
+  if (!made.ok) {
+    // The racing second insert: ONLY the unique name index's violation (SQLSTATE 23505 on that constraint) is the race; any other error passes through. Same message as the read-time refusal.
+    if (isXcell && made.dbCode === "23505" && made.error.includes("studio_machines_studio_display_name_uniq")) return { ok: false, code: "rejected", error: XCELL_ALREADY_REGISTERED };
+    return { ok: false, code: "rejected", error: made.error };
+  }
 
   return { ok: true, machineId: made.value };
 }
