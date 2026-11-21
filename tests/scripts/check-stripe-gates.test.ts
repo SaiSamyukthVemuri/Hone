@@ -111,7 +111,7 @@ describe("check-stripe-gates script (PR #154)", () => {
 // PR #309: complete Stripe-write inventory (non-money rules + catch-all)
 // --------------------------------------------------------------------
 
-describe("check-stripe-gates: money-movement gate stays 1/1/0/0 (PR #309)", () => {
+describe("check-stripe-gates: money-movement gate stays 1/1/0/0 (PR #309; checkout.sessions is the HON-70 billing adapter only)", () => {
   it("prints the exact money-movement PASS lines verify-production.mjs relies on", () => {
     const result = spawnSync("node", [SCRIPT_PATH], {
       cwd: REPO_ROOT,
@@ -127,7 +127,9 @@ describe("check-stripe-gates: money-movement gate stays 1/1/0/0 (PR #309)", () =
     expect(stdout).toMatch(
       /^PASS refunds\.create: 1 occurrence\(s\), all in allowlisted file\(s\): lib\/billing\/payment-refund\.ts:1$/m,
     );
-    expect(stdout).toMatch(/^PASS checkout\.sessions: zero runtime source occurrences$/m);
+    expect(stdout).toMatch(
+      /^PASS checkout\.sessions: 1 occurrence\(s\), all in allowlisted file\(s\): lib\/subscriptions\/billing-client\.ts:1$/m,
+    );
   });
 });
 
@@ -343,5 +345,115 @@ describe("check-stripe-gates: getStripe() binding convention (PR #321)", () => {
     });
     expect(r.stdout ?? "").toMatch(/^PASS no-unclassified-stripe-writes:/m);
     expect(r.stdout ?? "").toMatch(/^PASS getStripe-binding:/m);
+  });
+});
+
+// PROPOSED (HON-70, pending Sam's approval): the single Checkout Session site is
+// the Hone Care Inc subscription adapter, isolated from Connect/treatment money.
+describe("check-stripe-gates: Stripe client construction is pinned to two files (Insurance G-2)", () => {
+  const FILES = ["lib/stripe/server.ts", "lib/subscriptions/billing-client.ts"];
+  const NEW = "const c = new Stripe(secret, {});\n";
+  let dir: string | null = null;
+  function runAgainst(files: Record<string, string>) {
+    dir = mkdtempSync(path.join(tmpdir(), "stripe-ctor-"));
+    for (const [rel, contents] of Object.entries(files)) {
+      const abs = path.join(dir, rel);
+      mkdirSync(path.dirname(abs), { recursive: true });
+      writeFileSync(abs, contents, "utf8");
+    }
+    return spawnSync("node", [SCRIPT_PATH], { cwd: dir, encoding: "utf8" });
+  }
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    dir = null;
+  });
+
+  it("passes with exactly one constructor in each of the two files (anti-vacuity: the detector counts both)", () => {
+    const r = runAgainst({ [FILES[0]]: NEW, [FILES[1]]: NEW });
+    expect(r.stdout ?? "").toMatch(/^PASS new Stripe\(: 2 occurrence\(s\)/m);
+  });
+  it("HARD-FAILS a third constructor in any other file", () => {
+    const r = runAgainst({ [FILES[0]]: NEW, [FILES[1]]: NEW, "lib/other/billing2.ts": NEW });
+    expect(r.status).not.toBe(0);
+    expect(r.stdout ?? "").toMatch(/^FAIL new Stripe\(:/m);
+    expect(r.stdout ?? "").toContain("lib/other/billing2.ts");
+  });
+  it("HARD-FAILS a renamed second client inside the billing adapter", () => {
+    const r = runAgainst({ [FILES[0]]: NEW, [FILES[1]]: NEW + "const billing = new Stripe(k, {});\n" });
+    expect(r.stdout ?? "").toMatch(/^FAIL new Stripe\(:/m);
+  });
+  it("HARD-FAILS when a constructor disappears (the pin cannot silently shrink)", () => {
+    const r = runAgainst({ [FILES[0]]: NEW });
+    expect(r.stdout ?? "").toMatch(/^FAIL new Stripe\(:/m);
+  });
+  it("source shape: exactly 2, two allowlisted files", () => {
+    expect(SCRIPT_SOURCE).toMatch(/name: "new Stripe\(",[\s\S]*?allowlist: \["lib\/stripe\/server\.ts", "lib\/subscriptions\/billing-client\.ts"\],\s*exactly: 2,/);
+  });
+  it("the real repo has exactly those two constructors", () => {
+    const r = spawnSync("node", [SCRIPT_PATH], { cwd: REPO_ROOT, encoding: "utf8" });
+    expect(r.stdout ?? "").toMatch(/^PASS new Stripe\(: 2 occurrence\(s\)/m);
+  });
+});
+
+describe("check-stripe-gates: checkout.sessions is the HON-70 billing adapter only", () => {
+  const BILLING_CLIENT = "lib/subscriptions/billing-client.ts";
+  const CALL = "await stripe.checkout.sessions.create({});\n";
+  let dir: string | null = null;
+  function runAgainst(files: Record<string, string>) {
+    dir = mkdtempSync(path.join(tmpdir(), "stripe-checkout-"));
+    for (const [rel, contents] of Object.entries(files)) {
+      const abs = path.join(dir, rel);
+      mkdirSync(path.dirname(abs), { recursive: true });
+      writeFileSync(abs, contents, "utf8");
+    }
+    return spawnSync("node", [SCRIPT_PATH], { cwd: dir, encoding: "utf8" });
+  }
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    dir = null;
+  });
+
+  it("allowlists exactly one file with exactly one occurrence (source shape)", () => {
+    expect(SCRIPT_SOURCE).toMatch(
+      /name: "checkout\.sessions",[\s\S]*?allowlist: \[[\s\S]*?"lib\/subscriptions\/billing-client\.ts",\s*\],\s*exactly: 1,/,
+    );
+  });
+
+  it("passes with the one call in the billing adapter (anti-vacuity: the detector counts it)", () => {
+    const r = runAgainst({ [BILLING_CLIENT]: CALL });
+    expect(r.stdout ?? "").toMatch(
+      /^PASS checkout\.sessions: 1 occurrence\(s\), all in allowlisted file\(s\): lib\/subscriptions\/billing-client\.ts:1$/m,
+    );
+  });
+
+  it.each(["lib/billing/x.ts", "lib/stripe/x.ts", "lib/subscriptions/other.ts", "app/api/stripe/webhook/x.ts", "app/api/billing/webhook/x.ts"])(
+    "HARD-FAILS a Checkout Session created anywhere else (%s)",
+    (file) => {
+      const r = runAgainst({ [file]: CALL });
+      expect(r.status).not.toBe(0);
+      expect(r.stdout ?? "").toMatch(/^FAIL checkout\.sessions: found in /m);
+      expect(r.stdout ?? "").toContain(file);
+    },
+  );
+
+  it("HARD-FAILS a second call in the allowlisted file (exactly one)", () => {
+    const r = runAgainst({ [BILLING_CLIENT]: CALL + CALL });
+    expect(r.stdout ?? "").toMatch(/^FAIL checkout\.sessions:/m);
+  });
+
+  it("HARD-FAILS when the adapter is missing (the pin cannot silently go to zero)", () => {
+    const r = runAgainst({ "lib/x.ts": "export {};\n" });
+    expect(r.stdout ?? "").toMatch(/^FAIL checkout\.sessions:/m);
+  });
+
+  it("the billing client never uses getStripe() or the Connect key (separate account and client)", () => {
+    const src = readFileSync(path.resolve(REPO_ROOT, BILLING_CLIENT), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/(^|[^:])\/\/.*$/gm, "$1");
+    expect(src).toContain("stripe.checkout.sessions.create"); // detector reaches the real file
+    expect(src).not.toMatch(/\bgetStripe\b/);
+    expect(src).not.toMatch(/@\/lib\/stripe\//);
+    expect(src).not.toMatch(/(?<![A-Z0-9_])STRIPE_SECRET_KEY\b/);
+    expect(src).toContain("HONE_BILLING_STRIPE_SECRET_KEY");
   });
 });
