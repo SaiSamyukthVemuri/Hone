@@ -1,6 +1,7 @@
 import { currentProfile, type MachineProfile } from "./profile-contract";
 import { XCELL_PUR_PROFILE_ID } from "./xcell-pur";
 import type { StudioDevice } from "./selection";
+import type { XcellModelSwitch } from "./xcell-switch-seam";
 
 /**
  * ONE xCell CHOICE, TWO WAYS TO STORE IT (HON-71).
@@ -79,4 +80,45 @@ export function xcellMultiplexSwitchRoute(input: {
   }
   if (ofModel.length > 0) return { kind: "refused", reason: "retired" };
   return { kind: "create-at-first-save", modeKey: XCELL_MULTIPLEX_MODE_KEY };
+}
+
+export type XcellMultiplexOffer = {
+  /** The unit to route MultiPlex through, or null. */
+  route: XcellMultiplexRoute | null;
+  /** The switch is on and the studio has never had a unit: the database command will create it at the first successful MultiPlex save. App code creates nothing. */
+  createAtFirstSave: boolean;
+  /** Set when every unit is retired: shown to the practitioner. */
+  refusal: string | null;
+  /** The owner's switch, not old history, is what offers the xCell choice. */
+  legacyOfferedBySwitch: boolean;
+};
+
+/**
+ * THE PICKER'S ONE DECISION. While the owner's switch is unavailable the answer is exactly the old history route (no behaviour change). Once
+ * it is available the switch decides and old history is not read.
+ */
+export function resolveXcellMultiplexOffer(input: {
+  switchState: XcellModelSwitch;
+  legacyOffered: boolean;
+  catalogue: readonly MachineProfile[];
+  devices: readonly StudioDevice[];
+  publishedModes: readonly string[] | null;
+  clientLastUnitId: string | null;
+}): XcellMultiplexOffer {
+  if (!input.switchState.available) {
+    const route = xcellMultiplexRoute({ legacyOffered: input.legacyOffered, catalogue: input.catalogue, devices: input.devices, publishedModes: input.publishedModes });
+    return { route, createAtFirstSave: false, refusal: null, legacyOfferedBySwitch: false };
+  }
+  if (!input.switchState.enabled) return { route: null, createAtFirstSave: false, refusal: null, legacyOfferedBySwitch: false };
+  const r = xcellMultiplexSwitchRoute({
+    modelEnabled: true,
+    catalogue: input.catalogue,
+    devices: input.devices,
+    publishedModes: input.publishedModes,
+    clientLastUnitId: input.clientLastUnitId,
+  });
+  if (r === null) return { route: null, createAtFirstSave: false, refusal: null, legacyOfferedBySwitch: true };
+  if (r.kind === "use-unit") return { route: { deviceId: r.deviceId, modeKey: r.modeKey }, createAtFirstSave: false, refusal: null, legacyOfferedBySwitch: true };
+  if (r.kind === "refused") return { route: null, createAtFirstSave: false, refusal: XCELL_MULTIPLEX_RETIRED_MESSAGE, legacyOfferedBySwitch: true };
+  return { route: null, createAtFirstSave: true, refusal: null, legacyOfferedBySwitch: true };
 }

@@ -30,7 +30,8 @@ import {
   type LegacyMachineOffer,
 } from "@/lib/machines/legacy-machine";
 import { XCELL_PUR_PROFILE_ID } from "@/lib/machines/xcell-pur";
-import { xcellMultiplexRoute, type XcellMultiplexRoute } from "@/lib/machines/xcell-route";
+import { resolveXcellMultiplexOffer, type XcellMultiplexRoute } from "@/lib/machines/xcell-route";
+import { readXcellModelSwitch, type XcellModelSwitch } from "@/lib/machines/xcell-switch-seam";
 import {
   restoreSelectionFromRecordedSetup,
   type RestoredSelection,
@@ -236,6 +237,10 @@ export type MachineSetupContext = {
   legacyMachine: LegacyMachineOffer | null;
   /** MultiPlex as a mode of the one xCell choice: the xCell Pur unit to route it through, or null (nothing changes). */
   multiplexRoute: XcellMultiplexRoute | null;
+  /** Plain-words reason MultiPlex is refused (every xCell unit retired), or null. */
+  multiplexRefusal: string | null;
+  /** The owner's switch is on and the studio has no unit yet: the database command will create it at the first successful MultiPlex save. Carried only; app code creates nothing. */
+  multiplexCreateAtFirstSave: boolean;
 };
 
 const ANONYMOUS: MachineSetupContext = {
@@ -257,6 +262,8 @@ const ANONYMOUS: MachineSetupContext = {
   restoredSelection: null,
   legacyMachine: null,
   multiplexRoute: null,
+  multiplexRefusal: null,
+  multiplexCreateAtFirstSave: false,
 };
 
 /** Everything the panel needs, derived entirely on the server. */
@@ -465,6 +472,17 @@ export async function loadMachineSetupContext(input: {
   // MULTIPLEX AS A MODE OF THE ONE xCELL CHOICE (HON-71). A route only where the existing choice is offered, the contract row is
   // PUBLISHED and the studio has a usable unit; a failed read means no route, and the studio's form is exactly what it was.
   let multiplexRoute: XcellMultiplexRoute | null = null;
+  let multiplexRefusal: string | null = null;
+  let multiplexCreateAtFirstSave = false;
+  // THE OWNER'S SWITCH (answer A). Unavailable until its migration exists, and then nothing below changes. When it is available and on, the
+  // xCell choice is offered by the switch even for a studio with no xCell history.
+  let xcellSwitch: XcellModelSwitch = { available: false };
+  try {
+    xcellSwitch = await readXcellModelSwitch(scope.studioId);
+  } catch {
+    xcellSwitch = { available: false };
+  }
+  if (xcellSwitch.available && xcellSwitch.enabled && !legacyMachine) legacyMachine = legacyMachineOffer(catalogue);
   // PLATFORM ROLLOUT (Insurance E1/E2, R2). Only a studio that is OFFERED the legacy xCell choice has anything to gate, so the rollout and
   // the existing-block read happen ONLY then: a studio with no xCell history makes no rollout read and keeps its own reason, so a rollout
   // outage (or a deploy ahead of the migration) cannot degrade machine setup for every studio. An EXISTING MultiPlex block keeps its route
@@ -484,14 +502,29 @@ export async function loadMachineSetupContext(input: {
       try {
         const purProfile = currentProfile(catalogue, XCELL_PUR_PROFILE_ID);
         const published = purProfile ? await publishedModesFor(db, purProfile.profileId, purProfile.version) : null;
-        multiplexRoute = xcellMultiplexRoute({
+        let clientLastUnitId: string | null = null;
+        if (xcellSwitch.available) {
+          try {
+            clientLastUnitId = (await readClientLastMachine(input.clientId))?.deviceId ?? null;
+          } catch {
+            clientLastUnitId = null;
+          }
+        }
+        const offer = resolveXcellMultiplexOffer({
+          switchState: xcellSwitch,
           legacyOffered: true,
           catalogue,
           devices: inventory.devices,
           publishedModes: published && published.ok ? published.value : null,
+          clientLastUnitId,
         });
+        multiplexRoute = offer.route;
+        multiplexRefusal = offer.refusal;
+        multiplexCreateAtFirstSave = offer.createAtFirstSave;
       } catch {
         multiplexRoute = null;
+        multiplexRefusal = null;
+        multiplexCreateAtFirstSave = false;
       }
     }
   }
@@ -556,6 +589,8 @@ export async function loadMachineSetupContext(input: {
     restoredSelection,
     legacyMachine,
     multiplexRoute,
+    multiplexRefusal,
+    multiplexCreateAtFirstSave,
     clientLastMachine,
   };
 }
