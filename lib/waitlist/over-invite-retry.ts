@@ -86,6 +86,9 @@ async function retryOne(deps: RetryDeps, target: SettleTarget, entryId: string):
     if (!rep.ok) {
       // A TRANSIENT failure (the command could not be reached or answered badly): nothing was issued, so put the item back as it was (only if it is
       // still the state this attempt set) and it can be offered again.
+      // The put-back keeps the item's KIND: the reason is the original one (`delivery_refused` or `delivery_unknown`). The settle command cannot set the literal
+      // state `unknown` again (that is only reachable from `issued`), but an item that is `failed` with `delivery_unknown` is treated as unknown by both
+      // the unknown-kind retry selector and the progress count, so an unknown item stays unknown and a refused one stays refused.
       await deps.settle(target, "failed", ORIGINAL_REASON[deps.kind], "failed", seen.invitationId);
       return skipped("replace_unavailable");
     }
