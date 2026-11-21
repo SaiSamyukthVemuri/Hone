@@ -67,9 +67,12 @@ export function ClientAppointmentTimeline({
   clientId,
   rows: allRows,
   aftercareAvailable,
+  canChart = true,
 }: {
   clientId: string;
   rows: ReadonlyArray<ClientAppointmentTimelineRow>;
+  // false = the viewer lacks clin.edit_records: "Chart session" starts a chart, which is refused, so the link is not offered (read-only chart mode).
+  canChart?: boolean;
   // false = the viewer lacks clin.view_aftercare: the postcare detail was not loaded, and absence must not read as "nothing was sent".
   aftercareAvailable: boolean;
 }) {
@@ -134,6 +137,7 @@ export function ClientAppointmentTimeline({
             group={g}
             clientId={clientId}
             nowMs={nowMs}
+            canChart={canChart}
           />
         ))
       )}
@@ -150,10 +154,12 @@ function TimelineGroup({
   group,
   clientId,
   nowMs,
+  canChart,
 }: {
   group: Group;
   clientId: string;
   nowMs: number;
+  canChart: boolean;
 }) {
   // PR #194 (Chloe retest): only "Needs charting" stays expanded by
   // default; Upcoming, Charted, and Cancelled/no-shows collapse so a
@@ -180,6 +186,7 @@ function TimelineGroup({
             bucket={group.key}
             clientId={clientId}
             nowMs={nowMs}
+            canChart={canChart}
           />
         ))}
       </ul>
@@ -192,11 +199,13 @@ function TimelineRow({
   bucket,
   clientId,
   nowMs,
+  canChart,
 }: {
   row: ClientAppointmentTimelineRow;
   bucket: Bucket;
   clientId: string;
   nowMs: number;
+  canChart: boolean;
 }) {
   const serviceLabel = row.service_name ?? "Appointment";
   const modalitySuffix = row.service_modality ? ` · ${row.service_modality}` : "";
@@ -251,7 +260,7 @@ function TimelineRow({
           </p>
         )}
       </div>
-      <TimelineActions row={row} bucket={bucket} clientId={clientId} />
+      <TimelineActions row={row} bucket={bucket} clientId={clientId} canChart={canChart} />
     </li>
   );
 }
@@ -325,10 +334,12 @@ function TimelineActions({
   row,
   bucket,
   clientId,
+  canChart,
 }: {
   row: ClientAppointmentTimelineRow;
   bucket: Bucket;
   clientId: string;
+  canChart: boolean;
 }) {
   // Cancelled and no_show rows never expose "Chart session" because
   // there is no treatment to record. They DO expose "View session" if
@@ -380,12 +391,14 @@ function TimelineActions({
   if (bucket === "needsCharting") {
     return (
       <div className="flex flex-wrap gap-2">
-        <Link
-          href={`/clients/${clientId}/sessions/new?appointment_id=${encodeURIComponent(row.id)}`}
-          className={buttonClasses({ variant: "primary", size: "sm" })}
-        >
-          Chart session
-        </Link>
+        {canChart && (
+          <Link
+            href={`/clients/${clientId}/sessions/new?appointment_id=${encodeURIComponent(row.id)}`}
+            className={buttonClasses({ variant: "primary", size: "sm" })}
+          >
+            Chart session
+          </Link>
+        )}
         <Link
           href={`/calendar/${row.id}`}
           className={buttonClasses({ variant: "secondary", size: "sm" })}

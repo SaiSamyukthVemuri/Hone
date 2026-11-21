@@ -9,6 +9,7 @@ import { publishableKeyOk } from "@/lib/payments/payment-status-presenter";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requirePermission } from "@/lib/permissions/require-permission";
+import { EDIT_RECORDS_REFUSAL, PERMISSION_CHECK_FAILED, permissionCheckFailed } from "@/lib/permissions/refusal-copy";
 import { contained, gateClient, once } from "@/lib/permissions/ask-permission";
 import {
   buildLastSessionSummary,
@@ -300,6 +301,24 @@ export default async function ClientCheatSheetPage({
   );
   // The decision the sessions gate already gave inside getClientById (no second await).
   const canViewRecords = data.sessionsAllowed;
+  // Read-only chart mode: viewing the chart without editing it. Started here and awaited inside the profile's one parallel wave, so it adds no serial stage; contained, so a
+  // failing check reads as 'cannot edit' and never crashes the page. Editing needs viewing (NQ-10), so no edit check runs without it.
+  // Insurance I-5: a FAILED read (not a "no") is remembered so the page says "couldn't check", never the read-only sentence.
+  let editCheckFailed = false;
+  const canEditRecordsPromise = canViewRecords
+    ? contained("clin.edit_records", () =>
+        gateClient()
+          .then((db) => requirePermission(db, studio.id, "clin.edit_records", { client: id }))
+          .then((d) => {
+            if (permissionCheckFailed(d)) editCheckFailed = true;
+            return d.allowed;
+          })
+          .catch((e) => {
+            editCheckFailed = true;
+            throw e;
+          }),
+      )
+    : Promise.resolve(false);
 
   const { client, pricing, sessions, practitioners, attributionRoster } = data;
   // HON-58: ONE display identity for the whole profile (preferred name alone when set; else the stored name, labelled Name on file).
@@ -409,6 +428,7 @@ export default async function ClientCheatSheetPage({
     portalAccessEvents,
     overviewVisitAppointments,
     canViewAftercare,
+    canEditRecords,
   ] = await Promise.all([
     // PR #157: full appointment history joined to the linked session via the
     // PR #156 appointment_id FK. Rendered only by <ClientAppointmentTimeline>
@@ -500,6 +520,7 @@ export default async function ClientCheatSheetPage({
       ? getOverviewVisitAppointments(studio.id, client.id, new Date(visitNowMs).toISOString())
       : Promise.resolve([] as Awaited<ReturnType<typeof getOverviewVisitAppointments>>),
     canViewAftercarePromise,
+    canEditRecordsPromise,
   ]);
 
   // Pre-0246 SELECT * rows genuinely lack this field. Only that absent-field
@@ -1052,13 +1073,21 @@ export default async function ClientCheatSheetPage({
               is a TRUE depth-3 dependency chain (identity -> client -> last
               charted treatment), so no wave collapse is available there and
               acknowledgement is the only remedy the route admits. */}
-          <PendingLink
-            href={`/clients/${client.id}/sessions/new`}
-            pendingLabel="Opening new session…"
-            className="rounded-md bg-neutral-900 px-4 py-2.5 text-center text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
-          >
-            + Log session
-          </PendingLink>
+          {canEditRecords ? (
+            <PendingLink
+              href={`/clients/${client.id}/sessions/new`}
+              pendingLabel="Opening new session…"
+              className="rounded-md bg-neutral-900 px-4 py-2.5 text-center text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+            >
+              + Log session
+            </PendingLink>
+          ) : (
+            canViewRecords && (
+              <p data-testid="log-session-read-only" className="text-sm text-neutral-600 dark:text-neutral-400">
+                {editCheckFailed ? PERMISSION_CHECK_FAILED : EDIT_RECORDS_REFUSAL}
+              </p>
+            )
+          )}
           {/* Collapsed: a compact "+ Book appointment" button paired
               with Log session. Expanded: the booking card grows into
               the remaining row width (full-width on phones). */}
@@ -1718,6 +1747,7 @@ export default async function ClientCheatSheetPage({
             breakdown={treatmentByArea}
             goal={treatmentGoal}
             upsertGoalAction={upsertTreatmentGoalAction}
+            readOnly={!canEditRecords}
           />
 
           {/* 2. Last treatment; what the practitioner reaches for
@@ -1831,6 +1861,7 @@ export default async function ClientCheatSheetPage({
             clientId={client.id}
             rows={appointmentTimeline}
             aftercareAvailable={canViewAftercare}
+            canChart={canEditRecords}
           />
 
           {/* PR #197 (Chloe round 3): "Charted" and "Session history"
@@ -1874,6 +1905,15 @@ export default async function ClientCheatSheetPage({
         </p>
       )}
 
+      {(activeTab === "treatment" || activeTab === "sessions") && canViewRecords && !canEditRecords && (
+        <p
+          data-testid="chart-read-only-note"
+          className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-700 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300"
+        >
+          {editCheckFailed ? PERMISSION_CHECK_FAILED : `${EDIT_RECORDS_REFUSAL} Ask the studio owner if you need to make a change.`}
+        </p>
+      )}
+
       {activeTab === "treatment" && clinicalNoteSections && (
         <ClinicalNotesSection
           clientId={client.id}
@@ -1882,6 +1922,7 @@ export default async function ClientCheatSheetPage({
           addAction={addClinicalNoteAction}
           reviseAction={reviseClinicalNoteAction}
           printHref={`/clients/${client.id}/clinical-notes/print`}
+          readOnly={!canEditRecords}
         />
       )}
 
@@ -1936,6 +1977,7 @@ export default async function ClientCheatSheetPage({
           practitionerNames={practitionerNames}
           autoOpenCreate={autoOpenCreatePlan}
           returnTo={planReturnTo}
+          readOnly={!canEditRecords}
         />
       )}
         </div>

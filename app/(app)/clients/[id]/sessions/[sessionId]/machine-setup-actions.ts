@@ -62,6 +62,7 @@ import {
   assertSessionForClient,
   SessionLineageError,
 } from "@/lib/sessions/session-lineage";
+import { editRecordsRefusal } from "@/lib/permissions/refusal-copy";
 
 // MPX-03 — the machine workflow's server surface.
 //
@@ -690,6 +691,10 @@ export async function recordReadingsAction(input: {
   if (!(await requirePermission(await createClient(), scope.studioId, "clin.view_records", { client: input.clientId })).allowed) {
     return { ok: false, code: "rejected", error: "Not available to your role." };
   }
+  const editDecision = await requirePermission(await createClient(), scope.studioId, "clin.edit_records", { client: input.clientId });
+  if (!editDecision.allowed) {
+    return { ok: false, code: "rejected", error: editRecordsRefusal(editDecision) };
+  }
   if (input.readings.length === 0) {
     return { ok: false, code: "rejected", error: "Nothing to save." };
   }
@@ -910,6 +915,10 @@ export async function recordSetupSubmissionAction(input: {
   }
   if (!(await requirePermission(await createClient(), scope.studioId, "clin.view_records", { client: input.clientId })).allowed) {
     return { ok: false, code: "rejected", error: "Not available to your role." };
+  }
+  const editDecision = await requirePermission(await createClient(), scope.studioId, "clin.edit_records", { client: input.clientId });
+  if (!editDecision.allowed) {
+    return { ok: false, code: "rejected", error: editRecordsRefusal(editDecision) };
   }
 
   const db = await machineDb();

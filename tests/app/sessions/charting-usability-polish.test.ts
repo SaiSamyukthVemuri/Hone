@@ -25,7 +25,7 @@ describe("A. collapse the Add settings block by default (no auto-open, no writes
     // The compact CTA is the initial surface and has a stable testid.
     expect(VIEW).toMatch(/data-testid="add-settings-block-cta"/);
     // The full form renders ONLY when `adding` is true.
-    expect(VIEW).toMatch(/\{adding \? \(\s*\n?\s*<BlockSetupForm/);
+    expect(VIEW).toMatch(/\{readOnly \? null : adding \? \(\s*\n?\s*<BlockSetupForm/);
   });
 
   it("(#2/#3) opening and cancelling are pure state toggles — neither calls a server action", () => {
@@ -55,7 +55,7 @@ describe("A. collapse the Add settings block by default (no auto-open, no writes
     expect(VIEW).toMatch(/const \[editing, setEditing\] = useState\(autoEdit\)/);
     expect(VIEW).toMatch(/autoEdit = false,/);
     expect(VIEW).toMatch(/autoEditBlockId = null,/);
-    expect(VIEW).toMatch(/autoEdit=\{block\.id === autoEditBlockId\}/);
+    expect(VIEW).toMatch(/autoEdit=\{!readOnly && block\.id === autoEditBlockId\}/);
   });
 });
 

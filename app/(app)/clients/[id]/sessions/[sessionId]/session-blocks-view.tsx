@@ -109,6 +109,9 @@ type Props = {
   // the practitioner edits today's facts without closing a panel, scrolling
   // back down and reopening the area she just created.
   autoEditBlockId?: string | null;
+  // Read-only chart mode (clin.view_records without clin.edit_records): the chart is shown, no control that changes it is. The actions
+  // refuse independently; this only keeps the page from offering what would be refused.
+  readOnly?: boolean;
 };
 
 export function SessionBlocksView({
@@ -122,6 +125,7 @@ export function SessionBlocksView({
   probeLotSuggestions = { byKey: {}, byLabel: {} },
   probeLotInventory = [],
   autoEditBlockId = null,
+  readOnly = false,
 }: Props) {
   // Charting-usability polish (Chloe): the long settings form no longer
   // auto-renders. A session with zero saved blocks starts on a COMPACT "Add
@@ -159,7 +163,8 @@ export function SessionBlocksView({
           clientTagLabels={clientTagLabels}
           probeLotSuggestions={probeLotSuggestions}
           probeLotInventory={probeLotInventory}
-          autoEdit={block.id === autoEditBlockId}
+          autoEdit={!readOnly && block.id === autoEditBlockId}
+          readOnly={readOnly}
         />
       ))}
 
@@ -182,7 +187,7 @@ export function SessionBlocksView({
         </section>
       )}
 
-      {adding ? (
+      {readOnly ? null : adding ? (
         <BlockSetupForm
           sessionId={sessionId}
           clientId={clientId}
@@ -225,6 +230,7 @@ function BlockSection({
   probeLotSuggestions = { byKey: {}, byLabel: {} },
   probeLotInventory = [],
   autoEdit = false,
+  readOnly = false,
 }: {
   block: SessionBlockWithEntries;
   sessionId: string;
@@ -237,6 +243,7 @@ function BlockSection({
   // closed state exactly as before, so saving (which calls onCancel) closes it
   // and a later refresh cannot force it back open.
   autoEdit?: boolean;
+  readOnly?: boolean;
 }) {
   const [editing, setEditing] = useState(autoEdit);
   const sectionRef = useRef<HTMLElement | null>(null);
@@ -329,7 +336,7 @@ function BlockSection({
       data-editing={editing ? "true" : "false"}
       className="flex flex-col gap-4 rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950"
     >
-      {editing ? (
+      {editing && !readOnly ? (
         <BlockSetupForm
           sessionId={sessionId}
           clientId={clientId}
@@ -366,6 +373,7 @@ function BlockSection({
                 {title.text}
               </h3>
             </div>
+            {!readOnly && (
             <div className="flex flex-wrap items-start justify-end gap-3">
               <button
                 type="button"
@@ -384,6 +392,7 @@ function BlockSection({
                 passCount={block.electrolysis_entries.length}
               />
             </div>
+            )}
           </div>
 
           {paramsLine && (
@@ -506,6 +515,7 @@ function BlockSection({
                           : undefined
                       }
                       action={
+                        readOnly ? undefined : (
                         <RemovePassButton
                           action={deleteElectrolysisEntryAction}
                           entryId={e.id}
@@ -517,6 +527,7 @@ function BlockSection({
                               : "Remove pass"
                           }
                         />
+                        )
                       }
                     />
                   </li>
@@ -525,7 +536,7 @@ function BlockSection({
             </ul>
           )}
 
-          {addingPass ? (
+          {readOnly ? null : addingPass ? (
             <div className="flex flex-col gap-2">
               <SimplifiedEntryForm
                 block={block}

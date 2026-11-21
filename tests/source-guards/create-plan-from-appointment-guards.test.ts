@@ -34,14 +34,15 @@ describe("create-plan-from-appointment — profile page wiring", () => {
 describe("create-plan-from-appointment — card opens but never auto-creates", () => {
   const c = read(CARD);
   it("opens the EXISTING form on autoOpenCreate + focuses the first field + shows the Back link", () => {
-    expect(c).toMatch(/useState\(autoOpenCreate\)/);
+    // read-only chart mode (#1351): a deep link must not open the create form for someone who cannot edit records
+    expect(c).toMatch(/useState\(autoOpenCreate && !readOnly\)/);
     expect(c).toMatch(/autoFocus=\{autoOpenCreate\}/);
     expect(c).toMatch(/Back to appointment/);
   });
   it("reuses the existing createAction; creating happens ONLY on submit, never on open/mount", () => {
     expect(c).toMatch(/await createAction\(fd\)/); // the one existing create path
     // the open-state init line never calls createAction
-    const i = c.indexOf("useState(autoOpenCreate)");
+    const i = c.indexOf("useState(autoOpenCreate && !readOnly)");
     expect(c.slice(i, i + 60)).not.toMatch(/createAction/);
     expect((c.match(/createAction\(/g) ?? []).length).toBe(1); // no NEW create call added
   });

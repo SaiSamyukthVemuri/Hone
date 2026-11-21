@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { isValidProbeOptionKey } from "@/lib/probes";
+import { requirePermission } from "@/lib/permissions/require-permission";
+import { editRecordsRefusal } from "@/lib/permissions/refusal-copy";
 
 // PR #205 (migration 0085): record-keeping server actions. All
 // practitioner-authenticated; studio_id always resolved server-side
@@ -221,8 +223,9 @@ export async function markAftercareExplainedAction(
   // The stamping practitioner and the studio are now derived inside the command
   // from auth.uid(); this call remains as the AUTH GATE, so an unauthenticated
   // or non-member caller still gets the generic error here, exactly as before.
+  let studioId: string;
   try {
-    await getCurrentPractitionerWithStudio();
+    studioId = (await getCurrentPractitionerWithStudio()).studio.id;
   } catch {
     return { ok: false, error: GENERIC_ERROR };
   }
@@ -237,6 +240,11 @@ export async function markAftercareExplainedAction(
   const explained = explainedRaw === "true";
   if (!sessionId) return { ok: false, error: GENERIC_ERROR };
   const supabase = await createClient();
+  // The aftercare-explained stamp is chart content: the edit key too (asked ahead of enforcement, NQ-12; the 0289 guard is the database backstop).
+  const editDecision = await requirePermission(supabase, studioId, "clin.edit_records");
+  if (!editDecision.allowed) {
+    return { ok: false, error: editRecordsRefusal(editDecision) };
+  }
   // L18 Phase 3: both columns are set or cleared together inside
   // set_session_aftercare_explained (migration 0167), and the stamping
   // practitioner is derived from auth.uid() rather than sent by the caller.

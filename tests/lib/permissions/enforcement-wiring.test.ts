@@ -173,8 +173,16 @@ describe("enforcement wiring: the key is asked before any privileged effect", ()
     // availability actions pick one of three keys through assertAvailabilityKey
     for (const m of read("app/(app)/settings/availability/actions.ts").matchAll(/"(avail\.manage_[a-z_]+)"/g)) asked.add(m[1]!);
     const marked = new Set(CATALOG.filter((d) => (d as { enforcement?: string }).enforcement).map((d) => d.key));
-    expect([...asked].sort()).toEqual([...marked].sort());
-    for (const k of asked) expect(["enforced", "deny_only", "observe"]).toContain(enforcementOf(k));
+    // NQ-12 (Sam, 3 Nov): the app asks the edit key AHEAD of its enforcement flag, so a direct call and an open page cannot outrun the
+    // database protections (held 0289). The catalog stays `not_yet` until the DB proof passes and the reviews clear; the key resolves to
+    // today's snapshot while unreleased, so asking it changes nobody's access. An entry here must still be asked and must still be not_yet.
+    const ASKED_AHEAD: Record<string, string> = { "clin.edit_records": "NQ-12: asked before the 0289 proof; flag flips only after it passes" };
+    for (const [k, why] of Object.entries(ASKED_AHEAD)) {
+      expect(asked.has(k), `${k} (${why}) is no longer asked: remove it from ASKED_AHEAD`).toBe(true);
+      expect(enforcementOf(k), `${k} is marked; remove it from ASKED_AHEAD`).toBe("not_yet");
+    }
+    expect([...asked].filter((k) => !(k in ASKED_AHEAD)).sort()).toEqual([...marked].sort());
+    for (const k of asked) if (!(k in ASKED_AHEAD)) expect(["enforced", "deny_only", "observe"]).toContain(enforcementOf(k));
     expect(enforcementOf("appt.complete")).toBe("observe"); // asked, logged, never blocks
   });
 

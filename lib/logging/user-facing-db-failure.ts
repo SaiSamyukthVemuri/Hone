@@ -27,9 +27,19 @@ export function classifyDbFailure(code: string): DbFailureClass {
   return "generic";
 }
 
+// 0289 chart lineage guard: a stage written into a different studio than its plan is refused with 23514 and this fixed token (a closed marker the
+// migration raises, never data). It gets its own sentence, not the "check the values" one: nothing the person typed is wrong.
+export const LINEAGE_MARKER = "chart_lineage_mismatch";
+function isLineageRefusal(code: string, error: unknown): boolean {
+  if (code !== "23514" || typeof error !== "object" || error === null) return false;
+  const m = (error as { message?: unknown }).message;
+  return typeof m === "string" && m.includes(LINEAGE_MARKER);
+}
+
 export function userFacingDbFailure(what: string, error: unknown, event: string): string {
   const code = dbErrorCode(error);
   console.error(JSON.stringify({ event, code, timestamp: new Date().toISOString() }));
+  if (isLineageRefusal(code, error)) return `Could not ${what}. Nothing was saved, because the change would put the record in a different studio than the one it belongs to.`;
   switch (classifyDbFailure(code)) {
     case "permission":
       return `You do not have permission to ${what}.`;

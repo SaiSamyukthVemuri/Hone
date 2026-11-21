@@ -69,6 +69,8 @@ type Props = {
   autoOpenCreate?: boolean;
   // Validated internal "/calendar/<uuid>" back link, or null (nothing rendered).
   returnTo?: string | null;
+  // Read-only chart mode (clin.view_records without clin.edit_records): plans and stages are shown, none can be created, edited or closed.
+  readOnly?: boolean;
 };
 
 export function TreatmentPlansCard({
@@ -83,8 +85,9 @@ export function TreatmentPlansCard({
   practitionerNames,
   autoOpenCreate = false,
   returnTo = null,
+  readOnly = false,
 }: Props) {
-  const [adding, setAdding] = useState(autoOpenCreate);
+  const [adding, setAdding] = useState(autoOpenCreate && !readOnly);
   const router = useRouter();
   // Drop the deep-link params (create_plan/returnTo) once the form closes so a
   // refresh does not reopen it. Next replace (no new history entry), no scroll;
@@ -226,7 +229,8 @@ export function TreatmentPlansCard({
               clientId={clientId}
               practitionerNames={practitionerNames}
               pending={pending}
-              onClose={() => submitClose(p.id)}
+              onClose={readOnly ? null : () => submitClose(p.id)}
+              readOnly={readOnly}
               updateNotesAction={updateNotesAction}
               createStageAction={createStageAction}
               updateStageAction={updateStageAction}
@@ -250,6 +254,7 @@ export function TreatmentPlansCard({
                 practitionerNames={practitionerNames}
                 pending={pending}
                 onClose={null}
+                readOnly={readOnly}
                 updateNotesAction={updateNotesAction}
                 createStageAction={createStageAction}
                 updateStageAction={updateStageAction}
@@ -266,7 +271,7 @@ export function TreatmentPlansCard({
         </p>
       )}
 
-      {adding ? (
+      {readOnly ? null : adding ? (
         <div className="flex flex-col gap-3 rounded-md border border-neutral-200 bg-neutral-50 p-4 dark:border-neutral-700 dark:bg-neutral-900">
           <p className="text-sm font-medium">Create treatment plan</p>
 
@@ -411,7 +416,9 @@ function PlanCard({
   createStageAction,
   updateStageAction,
   deleteStageAction,
+  readOnly = false,
 }: {
+  readOnly?: boolean;
   plan: TreatmentPlanWithStages;
   clientId: string;
   practitionerNames: Record<string, string>;
@@ -423,6 +430,8 @@ function PlanCard({
   deleteStageAction: TreatmentScheduleAction;
 }) {
   const isClosed = plan.status === "closed";
+  // The editors below treat a frozen plan as read-only; a read-only chart freezes every plan without changing what its status badge says.
+  const frozen = isClosed || readOnly;
   const createdBy = plan.created_by_practitioner_id
     ? practitionerNames[plan.created_by_practitioner_id]
     : null;
@@ -479,7 +488,7 @@ function PlanCard({
               "Edit" link below stays as a redundant entry so existing
               muscle memory still works. Renders only for active plans
               because closed plans are read-only. */}
-          {!isClosed && !editing && (
+          {!frozen && !editing && (
             <button
               type="button"
               onClick={() => setEditing(true)}
@@ -544,7 +553,7 @@ function PlanCard({
       <TreatmentScheduleEditor
         planId={plan.id}
         clientId={clientId}
-        isClosed={isClosed}
+        isClosed={frozen}
         stages={plan.stages}
         createStageAction={createStageAction}
         updateStageAction={updateStageAction}
@@ -554,7 +563,7 @@ function PlanCard({
       <PlanNotesEditor
         plan={plan}
         clientId={clientId}
-        isClosed={isClosed}
+        isClosed={frozen}
         action={updateNotesAction}
         editing={editing}
         setEditing={setEditing}

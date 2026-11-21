@@ -16,6 +16,8 @@ type Props = {
   upsertGoalAction: (formData: FormData) => Promise<
     { ok: true } | { ok: false; error: string }
   >;
+  // Read-only chart mode: the goal's progress is shown, the Edit/Reassess control is not.
+  readOnly?: boolean;
 };
 
 const MAX_HOURS = 1000;
@@ -26,6 +28,7 @@ export function TreatmentTimeCard({
   breakdown,
   goal,
   upsertGoalAction,
+  readOnly = false,
 }: Props) {
   const lastSession = relativeLastSession(totals.lastSessionAt);
 
@@ -88,6 +91,7 @@ export function TreatmentTimeCard({
           totalMinutes={totals.totalMinutes}
           upsertGoalAction={upsertGoalAction}
           hasAny={hasAny}
+          readOnly={readOnly}
         />
       )}
     </section>
@@ -130,7 +134,9 @@ function GoalSection({
   totalMinutes,
   upsertGoalAction,
   hasAny,
+  readOnly = false,
 }: {
+  readOnly?: boolean;
   clientId: string;
   goal: TreatmentGoal | null;
   totalMinutes: number;
@@ -165,7 +171,8 @@ function GoalSection({
     });
   }
 
-  if (editing || (!goal && !hasAny)) {
+  if (readOnly && !goal) return null;
+  if (!readOnly && (editing || (!goal && !hasAny))) {
     if (!editing) {
       // Inline prompt when there's no goal yet and the client has no
       // sessions either: don't expand the form unless the practitioner
@@ -296,13 +303,15 @@ function GoalSection({
             </span>
           )}
         </p>
-        <button
-          type="button"
-          onClick={() => setEditing(true)}
-          className="text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
-        >
-          {isAtOrPast || isApproaching ? "Reassess goal" : "Edit goal"}
-        </button>
+        {!readOnly && (
+          <button
+            type="button"
+            onClick={() => setEditing(true)}
+            className="text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
+          >
+            {isAtOrPast || isApproaching ? "Reassess goal" : "Edit goal"}
+          </button>
+        )}
       </div>
       <div className="h-2 w-full overflow-hidden rounded-full bg-neutral-100 dark:bg-neutral-800">
         <div

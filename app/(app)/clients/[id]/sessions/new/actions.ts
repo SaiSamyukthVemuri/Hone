@@ -8,6 +8,7 @@ import {
 } from "@/lib/sessions/session-command-errors";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { requirePermission } from "@/lib/permissions/require-permission";
 import type { Modality } from "@/lib/types/database";
 import { captureServerEvent } from "@/lib/analytics/server";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
@@ -114,11 +115,23 @@ export async function startSessionAction(formData: FormData): Promise<void> {
   if (modality !== "electrolysis" && modality !== "laser") {
     throw new Error("Invalid modality.");
   }
+  // Privacy DW2: the refusal redirect below is built from this string, so check it is a UUID first (the lineage checks rely on the same shape).
+  if (!UUID_RE.test(clientId)) {
+    throw new Error("Missing client id.");
+  }
 
   const { practitioner, studio } = await timed("session-start.identity", () =>
     getCurrentPractitionerWithStudio(),
   );
   const supabase = await createClient();
+  // Starting a session creates a chart: editing records (NQ-11/12, asked ahead of enforcement; the database trigger is the backstop).
+  if (!(await requirePermission(supabase, studio.id, "clin.edit_records", { client: clientId })).allowed) {
+    // A handled refusal, not a throw: a throw lands on the error boundary. The new-session page answers a viewer without the edit key with the explanation.
+    // The appointment being charted is carried through (UUID-validated only; anything else is dropped, as the page does with a stale search param), so a
+    // retry after access returns or a transient permission-check failure cannot start a session that is no longer tied to that visit (Codex P2).
+    const refusedAppointment = typeof appointmentIdRaw === "string" && UUID_RE.test(appointmentIdRaw) ? appointmentIdRaw : null;
+    redirect(`/clients/${clientId}/sessions/new${refusedAppointment ? `?appointment_id=${refusedAppointment}` : ""}`);
+  }
 
   // PR #156. Validate the optional appointment lineage BEFORE touching
   // sessions. The lookup runs through the authenticated practitioner's
