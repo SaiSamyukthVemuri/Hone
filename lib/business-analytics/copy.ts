@@ -62,7 +62,7 @@ export const EVIDENCE_NOT_READABLE_NOTE = "This kind of price evidence cannot be
 export const ANALYTICS_TITLE = "Your practice, in perspective.";
 export const ANALYTICS_SUBTITLE = "Clients, capacity, treatments and the health of your practice.";
 export const ANALYTICS_TABS = ["Overview", "Clients", "Capacity", "Treatments", "Team"] as const;
-export const TABS_NOT_AVAILABLE_NOTE = "Clients, Capacity, Treatments and Team are not available yet.";
+export const TABS_NOT_AVAILABLE_NOTE = "Capacity, Treatments and Team are not available yet.";
 /** Charts with unfinished sections come from clinical records, which need their own permissions design before this page can count them. */
 export const UNFINISHED_CHARTS_UNAVAILABLE = "Not available yet. This comes from clinical records, which need their own permissions design before Analytics can show it.";
 export const NOT_ENOUGH_HISTORY_NOTE = (n: number): string => `${n} ${n === 1 ? "client has" : "clients have"} fewer than two visit dates and ${n === 1 ? "is" : "are"} not judged.`;
@@ -83,3 +83,19 @@ export const MOST_FREQUENT_RETURNS_NOTE = "A shorter average gap between complet
 export const TOP_SPENDERS_NOTE = "Money kept on completed visits in this period. Visits awaiting payment confirmation are not counted, and a client with none confirmed shows as not available.";
 export const SPEND_NOT_AVAILABLE = "Not available";
 export const fewerThanTwoDatesNote = (n: number): string => `${n} ${n === 1 ? "client has" : "clients have"} fewer than two visit dates and ${n === 1 ? "is" : "are"} not ranked here.`;
+
+// ---------------------------------------------------------------------------
+// The Clients tab (owner-only). Names are display names; nothing personal is ever in the address.
+// ---------------------------------------------------------------------------
+export const CLIENTS_POPULATION_NOTE = "This table lists the clients seen in this period (a completed visit in it), not every client on record.";
+export const CLIENTS_PRINT_NOTE = "The client table is left off the printed page.";
+export const LIFETIME_NOTE = "Lifetime paid is money kept on a client's completed visits at the studio, with every team member, through the last day of this period. Visits awaiting payment confirmation add nothing, and a client with none confirmed shows as not available.";
+export const clientsRowsLine = (from: number, to: number, shown: number, seen: number): string =>
+  shown === 0
+    ? "No clients to show."
+    : from === 0
+      ? `There are no clients on this page. ${shown} ${shown === 1 ? "client matches" : "clients match"}; go back to an earlier page.`
+      : `Showing ${from} to ${to} of ${shown} ${shown === 1 ? "client" : "clients"}${shown === seen ? "" : ` (${seen} seen in this period)`}.`;
+export const CLIENTS_NOT_LISTED = (n: number): string => `${n} ${n === 1 ? "client seen in this period is" : "clients seen in this period are"} not listed because they are archived or have no name on record. They are counted in every total.`;
+export const CLIENTS_SORT_NOTE = "Sort, filters and pages change only the order and which rows show. No figure above changes.";
+export const CLIENTS_RECON_INTRO = "How the clients' money adds up to the Overview's collected on completed visits. A difference is shown, never hidden.";

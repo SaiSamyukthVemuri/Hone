@@ -24,6 +24,7 @@ import {
   type PaidVisit,
   type SeriesPoint,
 } from "./money-metrics";
+import { rankClientsTable, reconcileClientsMoney, type ClientChip, type ClientSort, type ClientTableFigure, type ClientsTable } from "./clients-table";
 import { rankNamedClients, type ClientFigure, type NameLookup, type NamedClients } from "./named-clients";
 import { bucketUnit, bucketsOf, statementsClaim, type PeriodWindow, type ResolvedPeriod, type StatementsClaim, type BucketUnit } from "./period";
 import { reconcileWithStatement } from "./reconcile";
@@ -94,6 +95,8 @@ export type OverviewInput = {
   classesRead: readonly PriceEvidenceClass[];
   /** Display names for the clients seen in the period, read by the server for exactly the ids `candidateClientIds` returned. Absent or failed: the named lists say so and nothing else changes. */
   names?: NameLookup;
+  /** Set only by the Clients tab: the table's sort, chip and page, and the earlier visits with their money for the lifetime column. */
+  clients?: { sort: ClientSort; chip: ClientChip; page: number; lifetimeHistory: FigureRead<WindowData> };
 };
 
 export type ClassView = { read: true; visits: number; cents: number } | { read: false };
@@ -152,6 +155,10 @@ export type OverviewView = {
   noNextBooking: Figure<{ count: number }>;
   /** The named lists (top spenders, most visits, most frequent returns) and the highest spend. Display names and figures only: no client id, no link. Never in the spreadsheet or the printed page. */
   namedClients: Figure<NamedClients>;
+  /** The Clients tab's table; present only when the Clients tab asked for it. */
+  clientsTable?: Figure<ClientsTable>;
+  /** Paid in period across the clients seen, plus money on visits with no client, against the Overview's "on completed visits"; the difference is shown, never hidden. */
+  clientsReconciliation?: Figure<{ clientsPaidCents: number; noClientPaidCents: number; completedVisitsCents: number; differenceCents: number }>;
   /**
    * A count only, as of now: clients with at least two completed visit dates, no confirmed booking still to come with anyone, whose days since their last
    * completed visit exceed 1.5 times their OWN average gap (the client's whole history, any practitioner). A team-member filter narrows who is counted (the
@@ -173,6 +180,8 @@ type Window = {
   reconciliation: Figure<ReconciliationLine>;
   /** Money kept per client (by client id) on the completed visits of THIS window; server-side only, never copied into the view. Null per client when no visit's payment is known. */
   clientPaid?: Map<string, number | null>;
+  /** Money kept on this window's completed visits that have no client recorded. */
+  noClientPaidCents?: number;
 };
 
 const unavailable = (reason: ReadFailure): { available: false; reason: ReadFailure } => ({ available: false, reason });
@@ -210,6 +219,35 @@ function visitFrequency(mine: readonly VisitFact[], w: PeriodWindow): VisitFrequ
   for (const v of visitsInWindow(mine, w)) if (v.clientId !== null) perClient.set(v.clientId, (perClient.get(v.clientId) ?? 0) + 1);
   const counts = [...perClient.values()];
   return { one: counts.filter((n) => n === 1).length, two: counts.filter((n) => n === 2).length, threePlus: counts.filter((n) => n >= 3).length };
+}
+
+/** Money kept per client on completed visits (a payment not yet known adds nothing and is never counted as 0), and the money on visits with no client. */
+function paidByClient(paid: readonly PaidVisit[], clientOf: ReadonlyMap<string, string | null>): { byClient: Map<string, number | null>; noClientCents: number } {
+  const byClient = new Map<string, number | null>();
+  let noClientCents = 0;
+  for (const p of paid) {
+    const c = clientOf.get(p.appointmentId);
+    if (c === null || c === undefined) {
+      if (p.state !== "unknown") noClientCents += p.paidCents;
+      continue;
+    }
+    if (p.state === "unknown") {
+      if (!byClient.has(c)) byClient.set(c, null);
+    } else byClient.set(c, (byClient.get(c) ?? 0) + p.paidCents);
+  }
+  return { byClient, noClientCents };
+}
+
+/** Money kept per client over one set of appointments, every team member, with no reconciliation proof: used only for the lifetime column. Null when it cannot be worked out. */
+function lifetimePaid(data: WindowData, o: { timezone: string; currency: string; nowIso: string }): Map<string, number | null> | null {
+  if (!data.money.ok) return null;
+  const r = assemble({ appointments: data.appointments, money: data.money.value, currency: o.currency, timezone: o.timezone, nowIso: o.nowIso });
+  const treatment = r.visits.filter((v) => v.eligibility === undefined || v.eligibility === "treatment");
+  const paid: PaidVisit[] = treatment.map((v) => {
+    const d = classifyVisit(v);
+    return { appointmentId: v.appointmentId, state: d.state, paidCents: d.paidCents };
+  });
+  return paidByClient(paid, new Map(data.appointments.map((a) => [a.id, a.clientId] as const))).byClient;
 }
 
 function computeWindow(data: WindowData, w: PeriodWindow, o: Pick<OverviewInput, "timezone" | "currency" | "nowIso" | "filter" | "practitioners" | "classesRead"> & { unit: BucketUnit }): Window {
@@ -276,15 +314,7 @@ function computeWindow(data: WindowData, w: PeriodWindow, o: Pick<OverviewInput,
     const d = classifyVisit(v);
     return { appointmentId: v.appointmentId, state: d.state, paidCents: d.paidCents };
   });
-  const clientOf = new Map(facts.map((x) => [x.appointmentId, x.clientId] as const));
-  const clientPaid = new Map<string, number | null>();
-  for (const p of paid) {
-    const c = clientOf.get(p.appointmentId);
-    if (c === null || c === undefined) continue;
-    if (p.state === "unknown") {
-      if (!clientPaid.has(c)) clientPaid.set(c, null); // a payment not yet known adds nothing and is never counted as 0
-    } else clientPaid.set(c, (clientPaid.get(c) ?? 0) + p.paidCents);
-  }
+  const { byClient: clientPaid, noClientCents: noClientPaidCents } = paidByClient(paid, new Map(facts.map((x) => [x.appointmentId, x.clientId] as const)));
   const localDateByAppointment = new Map(facts.filter((x) => ids.has(x.appointmentId)).map((x) => [x.appointmentId, x.localDate]));
   const series = collectionsSeries({ window: w, unit: o.unit, buckets: bucketsOf(w, o.unit).buckets, statement: f.statement, localDateByAppointment, classes });
   const unit = o.unit;
@@ -322,6 +352,7 @@ function computeWindow(data: WindowData, w: PeriodWindow, o: Pick<OverviewInput,
     ...base,
     collected: { available: true, value: { headlineCents: headlineCollected(split.split), split: split.split, caveats: collectedCaveats(f.statement) } },
     clientPaid,
+    noClientPaidCents,
     averagePaid: { available: true, value: averagePaidPerVisit(paid) },
     series: series.ok ? { available: true, value: { unit, points: series.points } } : unavailable("not_reconciled"),
     byPractitioner,
@@ -403,6 +434,72 @@ function namedClientsFigure(input: OverviewInput, cur: Window): Figure<NamedClie
   return rankNamedClients({ figures, seen: perClient.size, lookup: input.names ?? { ok: false }, moneyFailure, historyFailure });
 }
 
+function clientsTableFigure(input: OverviewInput, cur: Window): { table: Figure<ClientsTable>; reconciliation: NonNullable<OverviewView["clientsReconciliation"]> } {
+  const opts = input.clients as NonNullable<OverviewInput["clients"]>;
+  const none = (reason: ReadFailure) => ({ table: unavailable(reason), reconciliation: unavailable(reason) });
+  if (!input.current.ok) return none(input.current.reason);
+  const w = input.period.current;
+  const tz = input.timezone;
+  const todayLocal = localDateString(new Date(input.nowIso), tz);
+  const currentFacts = factsOf(input.current.value.appointments, tz);
+  const perClient = new Map<string, number>();
+  for (const v of visitsInWindow(visitsOf(currentFacts, input.filter), w)) if (v.clientId !== null) perClient.set(v.clientId, (perClient.get(v.clientId) ?? 0) + 1);
+
+  const historyFacts = input.history.ok ? factsOf(input.history.value.appointments, tz) : null;
+  const allFacts = historyFacts ? [...historyFacts, ...currentFacts] : currentFacts;
+  // Gap and last visit follow the team-member filter (as on the Overview's gap card); "first visit" is the studio's first completed visit, whoever it was with.
+  const filtered = clientHistories(visitsOf(allFacts, input.filter).filter((v) => v.clientId !== null && perClient.has(v.clientId)), w.lastLocal);
+  const everyone = clientHistories(visitsOf(allFacts).filter((v) => v.clientId !== null && perClient.has(v.clientId)), w.lastLocal);
+
+  // Next booking and beyond-usual are the Overview's definitions, as of today, over every team member.
+  let future: Set<string> | null = null;
+  let beyond: Set<string> | null = null;
+  if (input.followThrough.ok) {
+    const nowMs = new Date(input.nowIso).getTime();
+    future = new Set(input.followThrough.value.future.filter((a) => a.status === "confirmed" && new Date(a.startsAt).getTime() > nowMs).map((a) => a.clientId));
+    const past = visitsOf(factsOf(input.followThrough.value.past, tz));
+    beyond = new Set(beyondUsualInterval({ histories: clientHistories(past.filter((v) => v.clientId !== null && perClient.has(v.clientId)), todayLocal), clientsWithFutureBooking: future, todayLocal }).clientIds);
+  }
+
+  // Lifetime paid: the earlier visits' money plus this period's, every team member, through the period's last day.
+  let lifetime: Map<string, number | null> | null = null;
+  let lifetimeFailure: ReadFailure | null = null;
+  if (input.currency === null) lifetimeFailure = "currency_unknown";
+  else if (!opts.lifetimeHistory.ok) lifetimeFailure = opts.lifetimeHistory.reason;
+  else {
+    const before = lifetimePaid(opts.lifetimeHistory.value, { timezone: tz, currency: input.currency, nowIso: input.nowIso });
+    const now = lifetimePaid(input.current.value, { timezone: tz, currency: input.currency, nowIso: input.nowIso });
+    if (!before || !now) lifetimeFailure = "read_failed";
+    else {
+      lifetime = new Map();
+      for (const id of perClient.keys()) {
+        const a = before.get(id);
+        const b = now.get(id);
+        lifetime.set(id, a === undefined && b === undefined ? null : (a ?? null) === null && (b ?? null) === null ? null : (a ?? 0) + (b ?? 0));
+      }
+    }
+  }
+
+  const figures: ClientTableFigure[] = [...perClient].map(([clientId, periodVisits]) => ({
+    clientId,
+    periodVisits,
+    periodPaidCents: cur.clientPaid?.get(clientId) ?? null,
+    lifetimePaidCents: lifetime?.get(clientId) ?? null,
+    averageGapDays: (() => { const g = filtered.get(clientId)?.averageGapDays; return g && g.known ? g.value : null; })(),
+    lastVisitDate: filtered.get(clientId)?.lastVisitDate ?? null,
+    firstVisitDate: everyone.get(clientId)?.visitDates[0] ?? null,
+    hasNextBooking: future ? future.has(clientId) : null,
+    beyondUsual: beyond ? beyond.has(clientId) : null,
+  }));
+  const table = rankClientsTable({ figures, lookup: input.names ?? { ok: false }, sort: opts.sort, chip: opts.chip, page: opts.page, lifetimeFailure, historyFailure: input.history.ok ? null : input.history.reason, periodMoneyFailure: cur.clientPaid ? null : cur.collected.available ? "read_failed" : cur.collected.reason });
+  const moneyOk = cur.clientPaid !== undefined && cur.collected.available;
+  const reconciliation: NonNullable<OverviewView["clientsReconciliation"]> =
+    table.available && moneyOk && cur.collected.available && table.value.paidAcrossSeenCents !== null
+      ? reconcileClientsMoney({ clientsPaidCents: table.value.paidAcrossSeenCents, noClientPaidCents: cur.noClientPaidCents ?? 0, completedVisitsCents: cur.collected.value.split.completedVisitsCents })
+      : unavailable(cur.collected.available ? "read_failed" : cur.collected.reason);
+  return { table, reconciliation };
+}
+
 const numberOf = <T,>(f: Figure<T>, pick: (v: T) => number): number | null => (f.available ? pick(f.value) : null);
 
 export function buildOverview(input: OverviewInput): OverviewView {
@@ -429,7 +526,13 @@ export function buildOverview(input: OverviewInput): OverviewView {
     series: curFail, previousSeries: curFail, visitFrequency: curFail, byPractitioner: curFail, serviceValue: curFail, reconciliation: curFail,
     returning: curFail, interval: curFail, noNextBooking: curFail, beyondUsual: curFail, namedClients: curFail,
   };
-  if (!cur) return view;
+  if (!cur) {
+    if (input.clients) {
+      view.clientsTable = curFail;
+      view.clientsReconciliation = curFail;
+    }
+    return view;
+  }
   const cmp = prev !== null;
   view.completedVisits = cur.completedVisits.available
     ? { available: true, value: { count: cur.completedVisits.value, change: changeOf(cur.completedVisits.value, prev ? numberOf(prev.completedVisits, (v) => v) : null, cmp) } }
@@ -452,5 +555,10 @@ export function buildOverview(input: OverviewInput): OverviewView {
   view.reconciliation = cur.reconciliation;
   if (input.current.ok) Object.assign(view, historyFigures(input, input.current.value));
   view.namedClients = namedClientsFigure(input, cur);
+  if (input.clients) {
+    const c = clientsTableFigure(input, cur);
+    view.clientsTable = c.table;
+    view.clientsReconciliation = c.reconciliation;
+  }
   return view;
 }
