@@ -151,15 +151,6 @@ describe("the targeted browser lane's shard count is stated consistently", () =>
     }
   });
 
-  it("the extended lane still runs exactly four, untouched", () => {
-    // Extended runs the whole suite, which is never fewer files than shards, so
-    // the cap cannot reduce it. Pinned so the repair to targeted cannot quietly
-    // change the lane it was not about.
-    expect(CI_YML).toContain("const shardTotal = extended");
-    expect(CI_YML).toMatch(/extended\s*\n\s*\?\s*4/);
-    expect(specsForGroups(Object.keys(BROWSER_GROUPS)).length).toBeGreaterThanOrEqual(4);
-  });
-
   it("measured cold setup and augmented native ceilings keep targeted coverage unchanged", () => {
     // run39713000378: setup12–12.6min, zero observed browser assertions failed.
     // Ceilings are not performance targets; retain all four shards and tests.

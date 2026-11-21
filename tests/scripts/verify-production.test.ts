@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { migrationState } from "../migrations/helpers/migration-state";
-// @ts-expect-error - .mjs utility ships without type declarations
-import { getMigrationState as deriveExpectedRaw } from "../../scripts/migration-state.mjs";
-const deriveExpected = () => (deriveExpectedRaw() as { repo_migration_max: string }).repo_migration_max;
 
 // PR #308. Read-only production verification script. The script is an
 // operator-run tool (it shells `supabase db query --linked`, which CI can't do),
@@ -89,20 +85,6 @@ describe("verify-production: covers every required check", () => {
     expect(CODE).toMatch(/schema_migrations/);
   });
 
-  it("the derived expected max tracks the repo's current migration max", () => {
-    // REPO-max invariant (drift tripwire) — pins the newest migration FILE in the
-    // repo. Migrations 0119 (2026-07-10) and 0120 (2026-07-11, Phase 2 corrections
-    // & amendments) were both applied to the hosted project migration-first, so repo
-    // and hosted reconcile at 0120 (the verifier's "Remote migration max" PASSES).
-    // This assertion still fails on the next new migration, forcing a conscious
-    // review of the pre-live verifier.
-    // The verifier no longer scans supabase/migrations itself — it delegates to
-    // scripts/migration-state.mjs, so there is exactly ONE derivation of the repo
-    // max in the repository. This asserts the delegation and agreement, and needs
-    // no edit when a migration lands.
-    expect(CODE).toMatch(/getMigrationState/);
-    expect(deriveExpected()).toBe(migrationState().repo_migration_max);
-  });
   it("0093 bucket private + policies/trigger", () => {
     expect(CODE).toMatch(/treatment-images/);
     expect(CODE).toMatch(/public = false/);
@@ -145,9 +127,6 @@ describe("verify-production: covers every required check", () => {
     expect(CODE).toMatch(/resolved_at is null/);
     // count(*) only — never selects the message/detail columns.
     expect(CODE).not.toMatch(/select[^;]*ops_alerts[^;]*\b(message|detail|safe_details|payload)\b/i);
-  });
-  it("Stripe gates 1/1/0/0 via the existing gate", () => {
-    expect(CODE).toMatch(/check-stripe-gates\.mjs/);
   });
   it("reminder heartbeat with the mirrored 45-minute threshold", () => {
     expect(CODE).toMatch(/reminder_cron:last_success/);

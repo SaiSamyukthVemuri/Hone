@@ -410,46 +410,12 @@ describe("the decision record", () => {
 });
 
 // ===========================================================================
-// 2. The enforcement the documents describe is really in the migration.
+// 2. The documents do not claim more than the migration did. (That the
+//    enforcement itself holds is proved against a real database by
+//    tests/db/clinical-finalization-retired.db.test.ts.)
 // ===========================================================================
 
-describe("migration 0159 backs the documented posture", () => {
-  it("pins both flags false, revokes the retired RPCs, and guards the lifecycle", () => {
-    expect(MIGRATION).toMatch(/check \(clinical_finalization_enabled = false\)/);
-    expect(MIGRATION).toMatch(/check \(clinical_corrections_enabled = false\)/);
-    for (const fn of [
-      "public.finalize_session",
-      "public.correct_finalized_session",
-      "public.amend_finalized_session",
-      "public.amend_finalized_session_with_image",
-      "public.build_session_snapshot",
-    ]) {
-      const re = new RegExp(
-        `revoke all on function ${fn.replace(/[.]/g, "\\.")}[\\s\\S]{0,160}?from public, anon, authenticated, service_role`,
-      );
-      expect(MIGRATION, `0159 must revoke EXECUTE on ${fn} from every runtime role`).toMatch(re);
-    }
-    expect(MIGRATION).toMatch(/create trigger sessions_guard_retired_finalization/);
-    expect(MIGRATION).toMatch(/clinical_record_snapshots_retired_no_insert/);
-    expect(MIGRATION).toMatch(/clinical_record_amendments_retired_no_insert/);
-    expect(MIGRATION).toMatch(/clinical_audit_events_retired_no_insert/);
-    expect(MIGRATION).toMatch(/grant select on table public\.session_block_areas to authenticated/);
-  });
-
-  it("drops nothing, exactly as every document claims", () => {
-    // `drop trigger/policy/constraint if exists` immediately followed by a CREATE is
-    // idempotent re-creation, not removal. A dropped TABLE, COLUMN or FUNCTION would
-    // destroy the legacy artifact or make 0119/0120 unreplayable.
-    for (const forbidden of [/drop\s+table/i, /drop\s+column/i, /drop\s+function/i, /truncate\s+table/i, /\bdelete\s+from\b/i]) {
-      expect(
-        MIGRATION,
-        `0159 must stay additive and non-destructive (${forbidden}). The one legacy finalized ` +
-          `artifact is retained audit history: deleting it destroys evidence, and rehashing it ` +
-          `fabricates evidence.`,
-      ).not.toMatch(forbidden);
-    }
-  });
-
+describe("no document overclaims what migration 0159 revoked", () => {
   it("does NOT claim the sessions/blocks/entries/images DML revocation (that is the follow-up PR)", () => {
     // PR B moves those callers onto narrow reviewed commands FIRST. Documenting the
     // revocation before it happens would be an overclaim, and doing it now would

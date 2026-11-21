@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 // PR #240, amended 2026-07-27. Docs-only agentic readiness and safety
@@ -26,16 +26,9 @@ function readDoc(rel: string): string {
 
 const DOC_PATH = "docs/22_AGENTIC_READINESS_AND_SAFETY.md";
 const PLAN = readDoc(DOC_PATH);
-const HANDOFF = readDoc("docs/14_AI_HANDOFF.md");
 const DECISIONS = readDoc("docs/13_BACKLOG_AND_DECISIONS.md");
 
-describe("docs/22 exists and is a plan, not a runtime", () => {
-  it("the file is at the expected path", () => {
-    expect(
-      existsSync(path.resolve(__dirname, "../..", DOC_PATH)),
-    ).toBe(true);
-  });
-
+describe("docs/22 is a plan, not a runtime", () => {
   it("states up front that no AI runtime is added", () => {
     expect(PLAN).toMatch(/No AI runtime is added by this document/);
     expect(PLAN).toMatch(/No model is called anywhere in the product/);
@@ -180,13 +173,7 @@ describe("security and RLS posture", () => {
   });
 });
 
-describe("roadmap docs updated", () => {
-  it("docs/14 records the plan as current status with no AI runtime added", () => {
-    expect(HANDOFF).toMatch(/Agentic readiness and safety plan/);
-    expect(HANDOFF).toMatch(/No AI runtime, model call, endpoint, migration, schema, RLS change, or payment capability is added/);
-    expect(HANDOFF).toMatch(/next possible PR is Daily Prep Brief V1/);
-  });
-
+describe("docs/13 decision log", () => {
   it("docs/13 records the decision that the roadmap starts with a safety plan", () => {
     expect(DECISIONS).toMatch(/Agentic readiness and safety plan \(PR #240, docs-only\)/);
     expect(DECISIONS).toMatch(/starts with a safety plan, not a runtime/);

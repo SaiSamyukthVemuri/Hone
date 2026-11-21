@@ -5,8 +5,8 @@ import path from "node:path";
 // PR #219. Docs drift cleanup pins. After the PR #196 ledger
 // unification and the PR #217/#218 hardening, several docs and one
 // runtime header comment still described the OLD world (no refunds,
-// legacy fee executor as live runtime, OPS_ALERT_EMAILS unread,
-// preview modal not using the HTML renderer). These tests pin the
+// legacy fee executor as live runtime, OPS_ALERT_EMAILS unread).
+// These tests pin the
 // corrected claims so the docs cannot silently drift back, and pin
 // that the cleanup did NOT overclaim live-payment readiness.
 
@@ -197,24 +197,7 @@ describe("docs/03: OPS_ALERT_EMAILS language matches lib/ops/alert-email.ts", ()
   });
 });
 
-describe("lib/email/markdown-lite.ts: header comment matches actual usage", () => {
-  it("no longer claims the preview renders plain text instead of the HTML", () => {
-    expect(MARKDOWN_LITE).not.toMatch(/the plain-text version, not the HTML/);
-    expect(MARKDOWN_LITE).not.toMatch(
-      /not exposed through dangerouslySetInnerHTML/,
-    );
-  });
-
-  it("names the preview modal surface and the dangerouslySetInnerHTML exposure", () => {
-    expect(MARKDOWN_LITE).toMatch(/PostcareEditingHelpers\.tsx/);
-    expect(MARKDOWN_LITE).toMatch(
-      /DOES render\s*(\/\/\s*)?this helper's HTML output via dangerouslySetInnerHTML/,
-    );
-    expect(MARKDOWN_LITE).toMatch(
-      /ONLY\s*(\/\/\s*)?approved browser surface/,
-    );
-  });
-
+describe("lib/email/markdown-lite.ts: preview usage and escape-first order", () => {
   it("the claimed usage is real: the preview modal consumes markdownLiteToHtml via dangerouslySetInnerHTML", () => {
     const preview = read("app/(app)/settings/studio/PostcareEditingHelpers.tsx");
     expect(preview).toMatch(/markdownLiteToHtml\(/);

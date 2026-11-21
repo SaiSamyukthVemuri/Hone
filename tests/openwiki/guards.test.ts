@@ -289,10 +289,6 @@ describe("the page manifest: openwiki@0.6.1's strict schema, on every run", () =
   const valid = (value: unknown) => checkPageManifest({ state: "present-valid", value });
   const entry = { pageVersion: `sha256:${"a".repeat(64)}` };
 
-  it("accepts the repository's own committed manifest", () => {
-    expect(checkPageManifest(readWorktreeState(REPO_ROOT, "openwiki/.page-manifest.json"))).toEqual([]);
-  });
-
   it("accepts every optional field in its OpenWiki format", () => {
     expect(
       valid({

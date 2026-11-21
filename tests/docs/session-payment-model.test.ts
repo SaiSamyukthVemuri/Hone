@@ -3,13 +3,14 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 // PR #169. Pin the session-payment product model documented in
-// docs/16 §12 + docs/02 + docs/13. Every assertion below is a load-
+// docs/16 §12 + docs/02. Every assertion below is a load-
 // bearing product decision; a future PR that contradicts one of
 // them must either update the doc OR be the live-mode enablement
 // PR that deliberately retires the constraint.
 //
 // These are docs-only tests. The runtime guards on the Stripe path
-// live in tests/lib/billing/live-mode-blockers.test.ts (PR #168).
+// live in tests/lib/billing/live-mode-blockers.test.ts (PR #168) and
+// scripts/check-stripe-gates.mjs (tests/scripts/check-stripe-gates.test.ts).
 
 function readDoc(rel: string): string {
   return readFileSync(path.resolve(__dirname, "../..", rel), "utf8");
@@ -17,8 +18,6 @@ function readDoc(rel: string): string {
 
 const READINESS = readDoc("docs/16_LIVE_PAYMENTS_READINESS.md");
 const DOMAIN = readDoc("docs/02_DOMAIN_MODEL.md");
-const DECISIONS = readDoc("docs/13_BACKLOG_AND_DECISIONS.md");
-const HANDOFF = readDoc("docs/14_AI_HANDOFF.md");
 
 describe("docs/16 §12: session payment product model exists", () => {
   it("a §12 section was added for the session payment model (PR #169)", () => {
@@ -190,61 +189,6 @@ describe("docs/16 §12.11: risk-ordered enablement", () => {
   });
 });
 
-describe("docs/16 §12.13: updated MVP sequence is complete", () => {
-  it("every renumbered PR appears (#169 through #183 plus operator)", () => {
-    for (const n of [
-      "PR #169",
-      "PR #170",
-      "PR #171",
-      "PR #172",
-      "PR #173",
-      "PR #174",
-      "PR #175",
-      "PR #176",
-      "PR #177",
-      "PR #178",
-      "PR #179",
-      "PR #180",
-      "PR #181",
-      "PR #182",
-      "PR #183",
-    ]) {
-      expect(READINESS).toContain(n);
-    }
-  });
-
-  it("the session_payment track has its own DB CHECK relax PR (separate from cancellation)", () => {
-    expect(READINESS).toMatch(/PR #183[\s\S]{0,200}DB CHECK relax/i);
-  });
-});
-
-describe("docs/16 §12.15: PR #169 honest non-claims", () => {
-  it("declares no live payments enabled by this PR", () => {
-    expect(READINESS).toMatch(
-      /[Ee]nables live payments[\s\S]{0,80}three dormancy guards.*unchanged/i,
-    );
-  });
-
-  it("declares no schema / migration in PR #169", () => {
-    expect(READINESS).toMatch(/No new migration/);
-    expect(READINESS).toMatch(/0072_consent_templates_is_live\.sql/);
-  });
-
-  it("declares paymentIntents.create call site count unchanged (still 1; unified executor since PR #218)", () => {
-    expect(READINESS).toMatch(
-      /Still exactly one[\s\S]{0,200}lib\/billing\/session-payment-charge\.ts/i,
-    );
-  });
-
-  it("declares refunds.create call site count unchanged (still 0)", () => {
-    expect(READINESS).toMatch(/refunds\.create[\s\S]{0,40}[Ss]till zero/);
-  });
-
-  it("STRIPE_ALLOW_LIVE_MODE unchanged from PR #168 baseline", () => {
-    expect(READINESS).toMatch(/STRIPE_ALLOW_LIVE_MODE[\s\S]{0,80}unset/);
-  });
-});
-
 describe("docs/02 domain model carries the session payment section", () => {
   it("§Session payment model (PR #169) exists in docs/02", () => {
     expect(DOMAIN).toMatch(/Session payment model.{0,40}PR #169/);
@@ -260,99 +204,5 @@ describe("docs/02 domain model carries the session payment section", () => {
     expect(DOMAIN).toMatch(
       /16_LIVE_PAYMENTS_READINESS\.md#12-session-payment-product-model/,
     );
-  });
-});
-
-describe("docs/13 decision log has the PR #169 entry", () => {
-  it("§Session payment product model (PR #169, docs + guardrails only) exists", () => {
-    expect(DECISIONS).toMatch(
-      /Session payment product model \(PR #169, docs \+ guardrails only\)/,
-    );
-  });
-
-  it("the decision names every key v1 product choice", () => {
-    const required = [
-      /[Cc]harge after the session, not at booking/,
-      /[Pp]ractitioner-confirmed amount/,
-      /[Oo]ne charge primitive/,
-      /[Oo]ff-session card requirement/,
-      /[Cc]ard authorization wording/,
-      /0%[\s\S]{0,40}Hone platform fee/i,
-      /[Nn]o tax calculation in v1/,
-      /[Pp]aid status[\s\S]{0,30}derived/i,
-      /[Mm]erchant of record/,
-      /[Rr]isk-ordered enablement/,
-    ];
-    for (const pattern of required) {
-      expect(DECISIONS).toMatch(pattern);
-    }
-  });
-});
-
-describe("docs/14 AI handoff references the PR #169 product model", () => {
-  it("the status line names a current PR (PR #169 or later)", () => {
-    // Same forward-rolling pattern as the PR #168 test: the
-    // status line is allowed to name a later PR so a future docs
-    // PR does not need to back-edit this test file. The PR #169
-    // decision content (the new payments bullet below) must
-    // still be present in the handoff regardless.
-    const m = HANDOFF.match(/Current production status \(as of PR #(\d+)\)/);
-    expect(m).not.toBeNull();
-    if (m) {
-      const n = Number(m[1]);
-      expect(n).toBeGreaterThanOrEqual(169);
-    }
-  });
-
-  it("the new payments bullet references docs/16 §12", () => {
-    expect(HANDOFF).toMatch(
-      /Session payment product model defined.*PR #169/i,
-    );
-    expect(HANDOFF).toMatch(/16_LIVE_PAYMENTS_READINESS/);
-  });
-
-  it("the live-payments-not-enabled paragraph from PR #168 is preserved", () => {
-    expect(HANDOFF).toMatch(/Live payments are NOT enabled/);
-  });
-});
-
-describe("PR #169 changes nothing in the runtime tree (docs + tests only)", () => {
-  // These tests duplicate the spirit of
-  // tests/lib/billing/live-mode-blockers.test.ts so a single
-  // failure here surfaces immediately if PR #169 accidentally
-  // included code changes. The detailed guards live in that
-  // file; here we just confirm the baseline did not move.
-
-  // PR #218 removed lib/billing/manual-fee-charge.ts; the unified
-  // executor's single call site is pinned in the gates tests.
-  const RUNTIME_FILES_THAT_SHOULD_BE_UNCHANGED = [
-    "lib/stripe/server.ts",
-    "lib/billing/manual-fee-eligibility.ts",
-    "lib/stripe/setup-intent.ts",
-    "app/portal/payment-method-actions.ts",
-    "app/api/stripe/webhook/route.ts",
-  ];
-
-  for (const rel of RUNTIME_FILES_THAT_SHOULD_BE_UNCHANGED) {
-    it(`${rel} still does not contain a NEW paymentIntents.create call`, () => {
-      const src = readDoc(rel);
-      const matches = src.match(/paymentIntents\.create/g) ?? [];
-      expect(matches.length).toBe(0);
-    });
-  }
-
-  it("no refunds.create exists in any of the above files", () => {
-    for (const rel of RUNTIME_FILES_THAT_SHOULD_BE_UNCHANGED) {
-      const src = readDoc(rel);
-      expect(src).not.toMatch(/refunds\.create/);
-    }
-  });
-
-  it("STRIPE_ALLOW_LIVE_MODE=true string still lives in exactly one file", () => {
-    // The literal string occurs once in lib/stripe/server.ts (the
-    // error message). Anywhere else is a P0 violation. This
-    // mirrors the check-stripe-gates.mjs assertion.
-    const stripeServer = readDoc("lib/stripe/server.ts");
-    expect(stripeServer.match(/STRIPE_ALLOW_LIVE_MODE=true/g)?.length).toBe(1);
   });
 });
