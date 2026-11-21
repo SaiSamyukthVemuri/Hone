@@ -303,6 +303,7 @@ describe("the window a recipient actually gets", () => {
     expect("expiresInHours" in submission).toBe(false);
     expect(Object.keys(submission).sort()).toEqual([
       "allowedWeekdays",
+      "beyondEstimate",
       "entryId",
       "serviceId",
       "windowDays",

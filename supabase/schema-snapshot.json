@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 277,
-    "last": "0363_waitlist_batch_and_replace.sql",
-    "sha256": "0e42e8e7ba87bb5bf155f1a982ded5c440cca685445cb64e864ae219e01f8bcf"
+    "count": 278,
+    "last": "0364_waitlist_replace_lock_order_and_live_only.sql",
+    "sha256": "f50af41463b89c161e5340051bfe0cb5fcef7986108241515ea33230741282ac"
   },
   "public": {
     "tables": [
