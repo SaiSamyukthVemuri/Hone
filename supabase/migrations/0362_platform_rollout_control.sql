@@ -5,7 +5,7 @@
 --
 -- Two tables and a set of service-role-only commands. The admin identity is app-level (ADMIN_EMAILS), so the DATABASE cannot verify the actor: the
 -- service-role-only grant is the boundary, exactly as for every existing admin write. The caller passes the actor's user id and email, taken from
--- the authenticated session after isAdmin (never from form input). Every change writes its audit row (admin_action_events, 0113) IN THE SAME
+-- the authenticated session after isAdmin (never from form input). Every change writes its audit row (admin_action_events) IN THE SAME
 -- TRANSACTION with constant action/target_type values and metadata built here (mode before/after, or the studio id) and nothing caller-supplied.
 -- ===========================================================================
 begin;

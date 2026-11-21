@@ -3,7 +3,7 @@
   "migrations": {
     "count": 279,
     "last": "0364_waitlist_replace_lock_order_and_live_only.sql",
-    "sha256": "0fac1ee9218f560ae12815c708112a6b7bc15a348664feb8301a7ace1c0af0b2"
+    "sha256": "55e1757bbb2c0c20d073ea3db1f464e79ccd680e8836a3f28c1245d431a039df"
   },
   "public": {
     "tables": [
