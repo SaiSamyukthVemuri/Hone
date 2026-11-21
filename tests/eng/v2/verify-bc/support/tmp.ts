@@ -1,7 +1,7 @@
 // Scratch directories for the verifier. One root per test process; heavy rows work inside a scope that is removed as
-// soon as they finish, so the final afterAll removes little. Removal is one native recursive force-remove per tree
-// (fs.rmSync never follows a symlink: it removes the link itself). Permissions are restored only for the entries a
-// row deliberately made unreadable (markRestrictive), never by walking the tree.
+// soon as they finish, so the final afterAll removes little. Removal is a native recursive force-remove per tree,
+// verified gone and retried (fs.rmSync never follows a symlink: it removes the link itself). Permissions are restored
+// only for the entries a row deliberately made unreadable (markRestrictive), never by walking the tree.
 
 import fs from "node:fs";
 import os from "node:os";
@@ -36,6 +36,9 @@ export function markRestrictive(p: string): void {
   restrictive.add(p);
 }
 
+/** Removal rounds before removeTree gives up and throws. */
+export const REMOVE_ATTEMPTS = 6;
+
 function removeTree(p: string): void {
   for (const r of [...restrictive]) {
     if (r !== p && !r.startsWith(p + path.sep)) continue;
@@ -47,7 +50,20 @@ function removeTree(p: string): void {
     }
     restrictive.delete(r);
   }
-  fs.rmSync(p, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  // A returned rmSync is not proof the tree is gone. Under a concurrent writer that recreates an entry mid-walk,
+  // Node 24.22.1 can return WITHOUT error and leave the tree behind (measured on this host: 3/130 trials; Node 20 and
+  // 22 throw ENOTEMPTY for the same race instead). So check, retry a bounded number of times, then throw rather
+  // than leak silently.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      fs.rmSync(p, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    } catch (e) {
+      if (attempt >= REMOVE_ATTEMPTS - 1) throw e;
+    }
+    if (!fs.existsSync(p)) return;
+    if (attempt >= REMOVE_ATTEMPTS - 1) throw new Error(`removeTree: ${p} survived ${attempt + 1} removals`);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+  }
 }
 
 /** Run fn with tmp() creating inside a fresh scope, and remove that scope as soon as fn settles. */
