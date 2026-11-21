@@ -1,16 +1,16 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
-import { adminQuery, adminTx, closePool, resolveLocalDbUrl, seedStudio } from "./helpers/harness";
+import { adminQuery, closePool, resolveLocalDbUrl, seedStudio } from "./helpers/harness";
 
 const q = async <T = any>(text: string, params: unknown[] = []): Promise<T[]> => (await adminQuery(text, params)).rows as T[];
 afterAll(async () => { await closePool(); });
 
 // replace_waitlist_invitation: the round is locked first (no deadlock with redemption), a replace is for a LIVE invitation only, and a replaced item starts a new attempt.
 // Synthetic data, owned local stack.
-// The invitation table's append-only guard refuses these fixture edits (the window and the round binding are immutable), even for the admin connection. A fixture edit runs in ONE
-// transaction with session_replication_role = replica, which is transaction-local: it reverts at commit or rollback, so nothing stays disabled for the next test.
-const fixup = (text: string, params: unknown[] = []) => adminTx(async (query) => { await query(`set local session_replication_role = replica`); return query(text, params); });
+// Fixture states are reached WITHOUT touching the append-only guard on the invitation table (nothing is disabled or bypassed): a row is INSERTed in the state under test (the guard
+// is an UPDATE guard), and the entry is moved to 'invited' the way the issue command moves it. The elapsed invitation is inserted with its window already in the past, the
+// stamped (ended) one with its stamp set at insert, and the legacy one without a round, so no column is ever changed after the fact.
 const day = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
 let n = 0;
 async function seedLive() {
@@ -29,13 +29,32 @@ async function seedLive() {
   return { studioId: s.studioId as string, userId: s.userId as string, entryId, invId: inv.id as string, roundId: inv.admission_round_id as string | null };
 }
 type L = Awaited<ReturnType<typeof seedLive>>;
+type Inserted = { issuedHoursAgo?: number; expiresInHours?: number; withRound?: boolean; stamp?: "expired_at" | "released_at" | "declined_at" };
+async function seedInserted(o: Inserted = {}): Promise<L> {
+  const s = await seedStudio(`rl-${n++}`);
+  const svc = await q<{ id: string }>(`insert into public.services (studio_id,name,default_duration_minutes,active,modality) values ($1,'Consultation',30,true,'consultation') returning id`, [s.studioId]);
+  await q(`update auth.users set email_confirmed_at = now() where id = $1`, [s.userId]);
+  await q(`select * from public.open_new_client_waitlist_admission_round($1,$2,200)`, [s.studioId, s.userId]);
+  const roundId = (await q<{ id: string }>(`select id from public.studio_waitlist_admission_rounds where studio_id = $1 and closed_at is null`, [s.studioId]))[0].id;
+  const e = await q(`select * from public.create_practitioner_waitlist_entry($1,$2,$3,$4,null,null)`, [s.studioId, s.userId, "Inserted One", `ri-${n}-${s.studioId.slice(0, 8)}@example.com`]);
+  const entryId = e[0].entry_id as string;
+  const claimed = await q(`select public.claim_new_client_waitlist_entry($1,$2,$3) as r`, [s.studioId, entryId, s.userId]);
+  expect(claimed[0].r).toBe("claimed");
+  const ago = o.issuedHoursAgo ?? 0; const inH = o.expiresInHours ?? 72;
+  const stampSql = o.stamp ? `, ${o.stamp}` : ""; const stampVal = o.stamp ? `, now()` : "";
+  const inv = await q<{ id: string }>(
+    `insert into public.new_client_waitlist_invitations (studio_id, entry_id, token_hash, issued_at, expires_at, issued_by_practitioner_id, scope_service_id, scope_start_date, scope_end_date, admission_round_id${stampSql})
+     values ($1,$2, encode(sha256(convert_to(gen_random_uuid()::text,'UTF8')),'hex'), now() - make_interval(hours => $3::int), now() + make_interval(hours => $4::int), $5, $6, $7, $8, $9${stampVal}) returning id`,
+    [s.studioId, entryId, ago, inH, s.practitionerId, svc[0].id, day(1), day(30), o.withRound === false ? null : roundId]);
+  await q(`update public.new_client_waitlist_entries set status = 'invited', invited_at = now() - make_interval(hours => $3::int) where id = $1 and studio_id = $2 and status = 'claimed'`, [entryId, s.studioId, ago]);
+  return { studioId: s.studioId as string, userId: s.userId as string, entryId, invId: inv[0].id, roundId: o.withRound === false ? null : roundId };
+}
 const replace = (l: L, expected: string = l.invId) =>
   q(`select * from public.replace_waitlist_invitation($1,$2,$3,$4)`, [l.studioId, l.userId, l.entryId, expected]);
 
 describe("a replace is for a LIVE invitation only", () => {
   it("an invitation whose time has run out (status still invited) is refused: invitation_expired, nothing written, no new invitation", async () => {
-    const l = await seedLive();
-    await fixup(`update public.new_client_waitlist_invitations set issued_at = now() - interval '3 days', expires_at = now() - interval '1 hour' where id = $1`, [l.invId]);
+    const l = await seedInserted({ issuedHoursAgo: 72, expiresInHours: -1 }); // issued three days ago, ran out an hour ago, never swept
     const before = await q(`select count(*)::int n from public.new_client_waitlist_invitations where entry_id = $1`, [l.entryId]);
     const r = await replace(l);
     expect(r[0].result).toBe("invitation_expired");
@@ -46,8 +65,7 @@ describe("a replace is for a LIVE invitation only", () => {
   });
   for (const col of ["expired_at", "released_at", "declined_at"] as const) {
     it(`an invitation stamped ${col} is refused: invitation_ended, nothing written`, async () => {
-      const l = await seedLive();
-      await fixup(`update public.new_client_waitlist_invitations set ${col} = now() where id = $1`, [l.invId]);
+      const l = await seedInserted({ stamp: col }); // an invitation carrying the stamp while its entry reads invited
       const r = await replace(l);
       expect(r[0].result).toBe("invitation_ended");
       expect((await q(`select count(*)::int n from public.new_client_waitlist_invitations where entry_id = $1`, [l.entryId]))[0].n).toBe(1);
@@ -96,8 +114,7 @@ describe("a replace and a redemption on one invitation never deadlock", () => {
 
 describe("lock order with the other takers", () => {
   it("a legacy invitation (no round) and a redemption-style invitation lock: no deadlock, the replace completes after the lock is released", async () => {
-    const l = await seedLive();
-    await fixup(`update public.new_client_waitlist_invitations set admission_round_id = null where id = $1`, [l.invId]); // a pre-0192 style invitation: redemption locks only the invitation
+    const l = await seedInserted({ withRound: false }); // a pre-0192 style invitation: redemption locks only the invitation
     const url = resolveLocalDbUrl();
     const D = new pg.Client({ connectionString: url }); const R = new pg.Client({ connectionString: url });
     await D.connect(); await R.connect();
