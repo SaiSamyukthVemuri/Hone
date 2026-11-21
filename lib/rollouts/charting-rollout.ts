@@ -2,7 +2,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 
-// The ONE server resolver for the platform rollout of xCell MultiPlex and New view (design: XCELL-ADMIN-ROLLOUT-DESIGN). The mode (off, pilot,
+// The ONE server resolver for the platform rollout of xCell MultiPlex and New view. The mode (off, pilot,
 // all) and the pilot list are set by an authorized Hone admin in /admin/rollouts; nothing here reads an environment variable.
 //
 // * READ PER REQUEST, NEVER CACHED: nothing is memoized across calls, and the read is an rpc (a POST), which a framework never caches.

@@ -2746,7 +2746,7 @@ describe("callers of the area identity write", () => {
 });
 
 
-// PLATFORM ROLLOUT at the context level (Insurance R1/R2): the loader is where a failed read must refuse, an existing block must keep its
+// PLATFORM ROLLOUT at the context level: the loader is where a failed read must refuse, an existing block must keep its
 // route, and a studio with no legacy history must make no rollout read at all.
 describe("loadMachineSetupContext and the platform rollout", () => {
   const NEW_SETUP = { clientId: "client-ana", sessionId: "session-1" };
@@ -2855,7 +2855,7 @@ describe("loadMachineSetupContext and the platform rollout", () => {
     expect((await actions.loadMachineSetupContext(NEW_SETUP)).remembered).toBeNull();
   });
 
-  // W1: EVERY selection is pinned at the LOADER level. They cannot all be non-null in one call (the prior-unit suggestion is offered only when
+  // EVERY selection is pinned at the LOADER level. They cannot all be non-null in one call (the prior-unit suggestion is offered only when
   // nothing is remembered; a restored selection needs an existing block that does not itself use the unit), so three calls each arrange the
   // selections that can coexist, and each asserts "returned with the rollout On, null with the read failed".
   describe("every selection pointing at the xCell unit is withheld at the loader when the rollout read fails", () => {

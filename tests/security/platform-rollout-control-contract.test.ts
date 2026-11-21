@@ -51,7 +51,7 @@ describe("the migration touches only the control and its audit", () => {
   });
 });
 
-describe("the audit rules inside the commands (Privacy 1 to 3, Insurance S2)", () => {
+describe("the audit rules inside the commands", () => {
   const writers = ["set_platform_rollout_mode", "add_platform_rollout_studio", "remove_platform_rollout_studio"];
   it("each writer validates the actor, writes its audit row in the same function, with CONSTANT action and target_type", () => {
     const expected: Record<string, string> = { set_platform_rollout_mode: "platform_rollout_mode_set", add_platform_rollout_studio: "platform_rollout_studio_added", remove_platform_rollout_studio: "platform_rollout_studio_removed" };
