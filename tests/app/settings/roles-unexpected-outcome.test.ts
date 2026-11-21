@@ -60,6 +60,22 @@ describe("rebaseDrafts: only this owner's own choices survive an uncertain save"
     const rebased = rebaseDrafts(P({ "k.one": "own" }), oldSaved, P({ "k.one": "off" }));
     expect(rebased.practitioner.values).toEqual({ "k.one": "own" });
   });
+  it("a reverted edit (explicit basis value where nothing was saved) is NOT carried over, so it cannot overwrite a concurrent change (Codex P2 4620000808)", () => {
+    // appt.cancel for a practitioner on the new-studio basis defaults to studio. The owner changed it to off and back: the draft holds an
+    // explicit studio, the saved policy holds nothing, and they are the same choice. Another owner set it to own meanwhile.
+    const basis = { basis: "new_studio" };
+    const oldSaved = { practitioner: { ...basis, values: {} }, receptionist: { ...basis, values: {} } } as unknown as Record<Role, StudioPolicy>;
+    const drafts = { practitioner: { ...basis, values: { "appt.cancel": "studio" } }, receptionist: { ...basis, values: {} } } as unknown as Record<Role, StudioPolicy>;
+    const fresh = { practitioner: { ...basis, values: { "appt.cancel": "own" } }, receptionist: { ...basis, values: {} } } as unknown as Record<Role, StudioPolicy>;
+    expect(rebaseDrafts(drafts, oldSaved, fresh).practitioner.values).toEqual({ "appt.cancel": "own" });
+  });
+  it("control: a real edit of that key (off, not the basis value) is still carried over", () => {
+    const basis = { basis: "new_studio" };
+    const oldSaved = { practitioner: { ...basis, values: {} }, receptionist: { ...basis, values: {} } } as unknown as Record<Role, StudioPolicy>;
+    const drafts = { practitioner: { ...basis, values: { "appt.cancel": "off" } }, receptionist: { ...basis, values: {} } } as unknown as Record<Role, StudioPolicy>;
+    const fresh = { practitioner: { ...basis, values: { "appt.cancel": "own" } }, receptionist: { ...basis, values: {} } } as unknown as Record<Role, StudioPolicy>;
+    expect(rebaseDrafts(drafts, oldSaved, fresh).practitioner.values).toEqual({ "appt.cancel": "off" });
+  });
   it("a choice that already equals the fresh value drops out as an edit", () => {
     const rebased = rebaseDrafts(P({ "k.one": "own" }), P({ "k.one": "studio" }), P({ "k.one": "own" }));
     expect(rebased.practitioner.values).toEqual({ "k.one": "own" });

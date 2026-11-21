@@ -8,7 +8,7 @@ import {
   type Scope,
   type StudioPolicy,
 } from "@/lib/permissions/catalog";
-import { groupLabel } from "./model";
+import { chosenScope, groupLabel } from "./model";
 
 // Before/after for Reset to defaults, the existing-studio review and Save. PURE. It compares EFFECTIVE scopes (what is in force),
 // so a dependent that follows its prerequisite down shows as a change too, and a newly enabled sensitive key is flagged.
@@ -90,3 +90,44 @@ export function diffPolicies(role: Role, before: StudioPolicy, after: StudioPoli
 
 /** The policy Reset to defaults and Adopt would set: the new-studio basis with no stored overrides. Gates stay as the operator set them. */
 export const defaultsPolicy = (current: StudioPolicy): StudioPolicy => ({ basis: "new_studio", values: {}, gates: current.gates });
+
+/**
+ * The policy each command actually leaves behind, for the saved-choice side of a preview (Codex P2 4623900551). They are NOT the same target:
+ * Reset deletes one role's stored overrides and KEEPS the studio's basis; Adopt moves the basis to new_studio and KEEPS every stored override
+ * (0287 perm_run_basis). A shared "new defaults with no overrides" target described neither.
+ */
+export const resetTarget = (current: StudioPolicy): StudioPolicy => ({ basis: current.basis, values: {}, gates: current.gates });
+export const adoptTarget = (current: StudioPolicy): StudioPolicy => ({ basis: "new_studio", values: { ...current.values }, gates: current.gates });
+
+export type ChoiceChange = { role: Role; key: string; label: string; from: Scope | null; to: Scope };
+
+/**
+ * The choices an owner HOLDS (what each role is set to, stored value else the studio's basis) that moving from one policy to another changes.
+ * This is the saved-choice side of a reset or adoption: while nothing is released, the effective-access diff is empty even when the
+ * fallback choices move, so the owner must be shown these separately (Codex P2 4584672884). PURE: both policies are passed in.
+ */
+export function chosenChanges(roles: readonly Role[], before: Record<Role, StudioPolicy>, after: Record<Role, StudioPolicy>): ChoiceChange[] {
+  const out: ChoiceChange[] = [];
+  for (const role of roles) {
+    for (const d of CATALOG as readonly PermissionDef[]) {
+      if (!d.offeredTo[role] || !d.ownerConfigurable) continue;
+      const from = chosenScope(role, before[role], d.key);
+      const to = chosenScope(role, after[role], d.key);
+      if (from === undefined || to === undefined || from === to) continue;
+      out.push({ role, key: d.key, label: d.label, from, to });
+    }
+  }
+  return out;
+}
+
+/** The stored choices a save would write, each beside the value held in the policy READ AT THE PREVIEWED VERSION (null: no stored value yet). */
+export function savedChoicesFor(saved: Record<Role, StudioPolicy>, edits: Partial<Record<Role, Record<string, Scope>>>): ChoiceChange[] {
+  const out: ChoiceChange[] = [];
+  for (const role of Object.keys(edits) as Role[]) {
+    for (const [key, to] of Object.entries(edits[role] ?? {})) {
+      const d = (CATALOG as readonly PermissionDef[]).find((c) => c.key === key);
+      out.push({ role, key, label: d?.label ?? key, from: saved[role]?.values[key] ?? null, to });
+    }
+  }
+  return out;
+}

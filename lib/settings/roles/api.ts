@@ -1,4 +1,4 @@
-import type { Role } from "@/lib/permissions/catalog";
+import type { Role, Scope } from "@/lib/permissions/catalog";
 import type { RoleDiff } from "./diff";
 
 // The contract between the Roles page and the permission core (R1), agreed with Team 3 Nov (general/ROLES-R1-INTERFACE-REPLY-20261103.md).
@@ -50,7 +50,10 @@ export type StoredRemoval = { key: string; label: string; stored: string; effect
 export type RolePreview = { role: Role; diff: RoleDiff; people: PersonRef[]; count: number; storedRemoved: StoredRemoval[] };
 
 /** What every preview returns: the diff per role AND the policy version it was computed against. A save binds to that version. */
-export type ServerPreview = { version: number; roles: RolePreview[] };
+// `choices` are the saved-choice changes the request would make, read by the server at the previewed version (the effective-access diff
+// is the core's; while nothing is released it can be empty even when choices move).
+export type PreviewChoice = { role: Role; key: string; label: string; from: Scope | null; to: Scope };
+export type ServerPreview = { version: number; roles: RolePreview[]; choices?: PreviewChoice[] };
 
 export type PreviewResult = { ok: true; preview: ServerPreview } | { ok: false; error: RoleError };
 export type CommandResult = { ok: true; newVersion: number } | { ok: false; error: RoleError };
