@@ -39,3 +39,44 @@ export function xcellMultiplexRoute(input: {
     .sort((a, b) => a.deviceId.localeCompare(b.deviceId))[0];
   return unit ? { deviceId: unit.deviceId, modeKey: XCELL_MULTIPLEX_MODE_KEY } : null;
 }
+
+/** Shown when every xCell unit the studio ever had is retired. A retired unit is never recreated by a save. */
+export const XCELL_MULTIPLEX_RETIRED_MESSAGE = "The studio's xCell has been retired, so MultiPlex cannot be used. Ask the studio owner to add the xCell again in Settings.";
+
+/**
+ * MULTIPLEX FOLLOWS THE OWNER'S SWITCH (Sam, 21 Nov 2026, answer A). The studio's old xCell history is not an input: the owner enabling the
+ * model is. This decides only what the picker and the save should do; the unit record itself is created by the database command, once, inside
+ * the first successful MultiPlex save.
+ *  - not enabled, or the layout is not published (or its read failed), or the profile or mode is not active: not offered (null);
+ *  - a live unit of this model and version exists: use it (the client's last-used live unit, else the lowest id);
+ *  - no unit was ever registered: offered, and the unit is created at the first save;
+ *  - units exist but every one is retired: refused. A retired unit is never silently recreated.
+ */
+export type XcellMultiplexSwitchRoute =
+  | { kind: "use-unit"; deviceId: string; modeKey: "multiplex" }
+  | { kind: "create-at-first-save"; modeKey: "multiplex" }
+  | { kind: "refused"; reason: "retired" };
+
+export function xcellMultiplexSwitchRoute(input: {
+  modelEnabled: boolean;
+  catalogue: readonly MachineProfile[];
+  devices: readonly StudioDevice[];
+  /** Mode keys published for the profile's CURRENT version, or null when the read failed (then nothing is offered). */
+  publishedModes: readonly string[] | null;
+  /** The client's last-used unit id, or null. Honoured only when it is a live unit of this model. */
+  clientLastUnitId: string | null;
+}): XcellMultiplexSwitchRoute | null {
+  if (!input.modelEnabled || input.publishedModes === null) return null;
+  const profile = currentProfile(input.catalogue, XCELL_PUR_PROFILE_ID);
+  if (!profile || profile.availability !== "active") return null;
+  if (!profile.modes.some((m) => m.key === XCELL_MULTIPLEX_MODE_KEY && m.availability === "active")) return null;
+  if (!input.publishedModes.includes(XCELL_MULTIPLEX_MODE_KEY)) return null;
+  const ofModel = input.devices.filter((d) => d.profileId === profile.profileId && d.profileVersion === profile.version);
+  const live = ofModel.filter((d) => d.retiredAt === null).sort((a, b) => a.deviceId.localeCompare(b.deviceId));
+  if (live.length > 0) {
+    const last = input.clientLastUnitId ? live.find((d) => d.deviceId === input.clientLastUnitId) : undefined;
+    return { kind: "use-unit", deviceId: (last ?? live[0]).deviceId, modeKey: XCELL_MULTIPLEX_MODE_KEY };
+  }
+  if (ofModel.length > 0) return { kind: "refused", reason: "retired" };
+  return { kind: "create-at-first-save", modeKey: XCELL_MULTIPLEX_MODE_KEY };
+}
