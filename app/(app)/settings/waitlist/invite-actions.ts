@@ -17,7 +17,7 @@ import {
   admissionCommandAdapter,
   validateInviteInput,
 } from "@/lib/waitlist/invite-to-book-adapter";
-import type { InvitationOutcome } from "@/lib/waitlist/invite-to-book-contract";
+import type { InvitationOutcome, InviteToBookInput } from "@/lib/waitlist/invite-to-book-contract";
 
 // ===========================================================================
 // WAIT INTEGRATION-01 — THE PRACTITIONER'S SUBMISSION BOUNDARY
@@ -165,7 +165,7 @@ export async function inviteToBookAction(formData: FormData): Promise<InviteActi
     return { outcome: null, reason: "malformed_submission" };
   }
 
-  const input = {
+  const input: InviteToBookInput = {
     entryId: s.entryId,
     scope: { serviceId, windowDays, allowedWeekdays: s.allowedWeekdays },
   };
@@ -180,8 +180,10 @@ export async function inviteToBookAction(formData: FormData): Promise<InviteActi
   // admission is closed (or unreadable), so an invitation created now could only fail at
   // Book. Refused BEFORE the command, so nothing is created or counted against capacity.
   // Fails closed: an unreadable studio or mode is a refusal, not a send.
+  let isOwner = false;
   try {
-    const { studio } = await getCurrentPractitionerWithStudio();
+    const { studio, practitioner } = await getCurrentPractitionerWithStudio();
+    isOwner = practitioner.role === "owner";
     const admission = await getNewClientAdmissionMode(studio);
     const refusal = await invitedBookingRefusalKind(admission);
     if (refusal) {
@@ -191,6 +193,10 @@ export async function inviteToBookAction(formData: FormData): Promise<InviteActi
     return { outcome: null, reason: "admission_unreadable" };
   }
 
+  // THE OVERRIDE IS THE OWNER'S, AND IT IS CHECKED HERE. Only an owner's explicit "Invite anyway" lifts the capacity estimate; for anyone else the flag is
+  // ignored and the invitation meets the same at-zero refusal as a plain one, with no confirmation offered. It lifts that one estimate and nothing else:
+  // the command re-derives the owner and still applies every other check.
+  if (s.beyondEstimate && isOwner) input.beyondEstimate = true;
   const outcome = await admissionCommandAdapter.inviteToBook(input);
 
   // The queue's rendered state changes on a commit — the entry moves to

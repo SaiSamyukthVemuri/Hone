@@ -143,6 +143,12 @@ export type InviteToBookInput = {
    *  a browser may name an entry, never a tenant, an actor or a role. */
   entryId: string;
   scope: BookingScope;
+  /**
+   * The owner's explicit "Invite anyway" after the estimate said no consultation availability remains. It overrides ONLY that estimate: the
+   * command still checks the owner, the studio, the entry's state, any open owner review, the service and scope, a live invitation already out and
+   * the admission round, exactly as for any other invitation. Absent or false means the estimate applies as always.
+   */
+  beyondEstimate?: boolean;
   // NO WINDOW. Level 3 is a FIXED 48-hour opportunity: the adapter supplies
   // `WAIT_INVITATION_TTL_HOURS` and no caller may name one. This field used to
   // be `expiresInHours: number` with a 1..168 bound, which is what let the

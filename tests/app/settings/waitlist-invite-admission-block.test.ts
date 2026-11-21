@@ -46,7 +46,7 @@ const form = () => {
 
 beforeEach(() => {
   for (const m of [getCurrentPractitionerWithStudio, getNewClientAdmissionMode, inviteToBook, readRule]) m.mockReset();
-  getCurrentPractitionerWithStudio.mockResolvedValue({ studio: { id: "s", slug: "studio-a" } });
+  getCurrentPractitionerWithStudio.mockResolvedValue({ studio: { id: "s", slug: "studio-a" }, practitioner: { role: "owner" } });
   inviteToBook.mockResolvedValue({ state: "refused" });
   readRule.mockResolvedValue("absent");
 });
