@@ -1,9 +1,10 @@
 "use client";
 
 import { machineModelLabel } from "@/lib/machines/display-name";
-import { XCELL_PUR_PROFILE_ID } from "@/lib/machines/xcell-pur";
 import { recordedSummary } from "@/lib/machines/recorded-count";
 import { useEffect, useRef, useState } from "react";
+import type { Preselect } from "@/lib/machines/preselect";
+import { pickerUnits } from "@/lib/machines/picker-entries";
 import { LEGACY_MACHINE_OPTION_VALUE } from "@/lib/machines/legacy-machine";
 
 import { unsupportedModes } from "@/lib/machines/unsupported-modes";
@@ -133,6 +134,10 @@ export type MachineFirstSetupPanelProps = {
    * empty studio and an unreadable inventory are different situations.
    */
   inventoryReason?: string | null;
+  /** Reports the display label of the unit's model now chosen (machineModelLabel), or null. DISPLAY ONLY: read by the New view's "This visit" card. */
+  onChosenModel?: (model: string | null) => void;
+  /** The ONE-CHOICE PRESELECT (New view): used only as the INITIAL state, and only when no restored, remembered or unavailable selection applies. */
+  onlyChoice?: Preselect;
   /** The treatment block being charted. Entry is impossible without it. */
   blockId?: string | null;
   /**
@@ -342,6 +347,8 @@ function MachineFirstSetupPanelImpl({
   catalogue = MACHINE_CATALOGUE,
   persistence = NO_PERSISTENCE,
   inventoryReason = null,
+  onChosenModel,
+  onlyChoice = null,
   blockId = null,
   canManageMachines = false,
   priorSetup = [],
@@ -424,7 +431,10 @@ function MachineFirstSetupPanelImpl({
     // keeps all three facts straight; see lib/machines/selection-state.
     unavailableSelection
       ? unusableSelection(unavailableSelection.deviceId, unavailableSelection.reason)
-      : initialSelection(initialDeviceId),
+      : initialDeviceId == null && onlyChoice?.kind === "native"
+        // A PRESELECT IS NOT A REMEMBERED CHOICE: it selects the only unit and claims nothing is stored.
+        ? restoredSelection(onlyChoice.deviceId, null)
+        : initialSelection(initialDeviceId),
   );
   const deviceId = selection.selected;
   const selectionNote = selection.note;
@@ -440,7 +450,7 @@ function MachineFirstSetupPanelImpl({
   const [savedAgainst, setSavedAgainst] = useState<{ list: typeof recordedSetup } | null>(null);
   const selectRef = useRef<HTMLSelectElement | null>(null);
   const [legacyChosen, setLegacyChosen] = useState(
-    initialLegacyChosen && legacyMachine !== null,
+    (initialLegacyChosen || (onlyChoice?.kind === "legacy" && !restored && !unavailableSelection && initialDeviceId == null)) && legacyMachine !== null,
   );
   // The route applies only beside the existing xCell choice (never a second xCell on its own).
   const xcellRouted = multiplexRoute !== null && legacyMachine !== null;
@@ -609,6 +619,19 @@ function MachineFirstSetupPanelImpl({
   // FROM THE PHYSICAL UNIT, not the model: a mode gated on an option this
   // device does not have is not a choice, and offering it only to have the
   // capture refused two layers down is worse than not offering it.
+  // The existing xCell choice (and a saved legacy block) has no unit, so it reports the picker's own label for it.
+  // A SAVED unit that is retired or unavailable is still this area's identity (the panel keeps it through savedUnavailable), so it is
+  // reported by the name the panel itself shows for it, not as no machine.
+  const chosenModel = legacyChosen
+    ? (legacyMachine?.label ?? null)
+    : chosen
+      ? machineModelLabel(chosen.profile)
+      : Boolean(blockId) && savedDeviceId !== null
+        ? `${unitNames[savedDeviceId] ?? "Saved machine"} (no longer available)`
+        : null;
+  useEffect(() => {
+    onChosenModel?.(chosenModel);
+  }, [onChosenModel, chosenModel]);
   const modes = chosen ? supportedModes(chosen.device, chosen.profile) : [];
   // A MODE KEY THIS UNIT DOES NOT OFFER IS NEVER SHOWN AS A DIFFERENT MODE (Vercel Security Review 01M6VEJJ83G4GZ10DFCKMJAEVP).
   // The old fallback (`?? modes[0]`) made a stored or remembered key that the unit does not offer appear as the unit's FIRST mode, so the
@@ -787,11 +810,10 @@ function MachineFirstSetupPanelImpl({
               so clearing remains reachable.
             */}
             <option value="">Choose machine…</option>
-            {selectable
+            {pickerUnits(selectable, { legacyOffered: legacyMachine !== null, xcellRouted, currentDeviceId: deviceId })
               // ONE xCell CHOICE: the MultiPlex unit is reached through the xCell entry's mode, never listed as a second xCell.
               // Hidden whenever the existing xCell is offered (even before a route exists), so there is never both; the exception keeps a unit that is
               // already this area's chosen identity visible when no route is active.
-              .filter(({ device }) => !(legacyMachine !== null && device.profileId === XCELL_PUR_PROFILE_ID && (xcellRouted || device.deviceId !== deviceId)))
               .map(({ device, profile }) => (
               <option key={device.deviceId} value={device.deviceId} disabled={nativeLocked}>
                 {device.displayName} — {machineModelLabel(profile)}

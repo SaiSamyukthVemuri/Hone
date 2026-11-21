@@ -17,7 +17,8 @@ import {
   admissionCommandAdapter,
   validateInviteInput,
 } from "@/lib/waitlist/invite-to-book-adapter";
-import type { InvitationOutcome } from "@/lib/waitlist/invite-to-book-contract";
+import { estimateWindowCapacityAction } from "./window-capacity-actions";
+import type { InvitationOutcome, InviteToBookInput } from "@/lib/waitlist/invite-to-book-contract";
 
 // ===========================================================================
 // WAIT INTEGRATION-01 — THE PRACTITIONER'S SUBMISSION BOUNDARY
@@ -165,7 +166,7 @@ export async function inviteToBookAction(formData: FormData): Promise<InviteActi
     return { outcome: null, reason: "malformed_submission" };
   }
 
-  const input = {
+  const input: InviteToBookInput = {
     entryId: s.entryId,
     scope: { serviceId, windowDays, allowedWeekdays: s.allowedWeekdays },
   };
@@ -180,8 +181,10 @@ export async function inviteToBookAction(formData: FormData): Promise<InviteActi
   // admission is closed (or unreadable), so an invitation created now could only fail at
   // Book. Refused BEFORE the command, so nothing is created or counted against capacity.
   // Fails closed: an unreadable studio or mode is a refusal, not a send.
+  let isOwner = false;
   try {
-    const { studio } = await getCurrentPractitionerWithStudio();
+    const { studio, practitioner } = await getCurrentPractitionerWithStudio();
+    isOwner = practitioner.role === "owner";
     const admission = await getNewClientAdmissionMode(studio);
     const refusal = await invitedBookingRefusalKind(admission);
     if (refusal) {
@@ -191,6 +194,29 @@ export async function inviteToBookAction(formData: FormData): Promise<InviteActi
     return { outcome: null, reason: "admission_unreadable" };
   }
 
+  // THE SERVER DECIDES WHETHER THE ESTIMATE IS ZERO, NOT THE PAGE.
+  //
+  // For an owner the server works out the allowance for this very scope (the consultations that fit, less the live invitations competing for the same
+  // dates) before anything is sent:
+  //  - it cannot be read: nothing is sent and the owner is told to try again. An unreadable estimate is never treated as zero and never honours the
+  //    override, even when the field is present;
+  //  - it is zero: an explicit "Invite anyway" from the owner sends, anything else sends nothing and answers "needs confirmation", so a page that
+  //    believed there was room is asked the same question and nothing goes out silently;
+  //  - there is room: the field is ignored completely and the invitation takes the normal path with the real estimate.
+  // Anyone who is not an owner never reaches the override: they take the normal path and meet the usual refusal at zero. The override lifts the
+  // availability estimate and nothing else; the command re-derives the owner and still applies every other check.
+  if (isOwner) {
+    const estimate = await estimateWindowCapacityAction({
+      serviceId,
+      windowDays,
+      allowedWeekdays: s.allowedWeekdays === null ? null : [...s.allowedWeekdays],
+    });
+    if (!estimate.ok) return { outcome: { state: "refused", code: "estimate_unreadable" } };
+    if (estimate.open <= 0) {
+      if (s.beyondEstimate !== true) return { outcome: { state: "refused", code: "needs_estimate_confirmation" } };
+      input.beyondEstimate = true;
+    }
+  }
   const outcome = await admissionCommandAdapter.inviteToBook(input);
 
   // The queue's rendered state changes on a commit — the entry moves to
