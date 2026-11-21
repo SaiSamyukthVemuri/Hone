@@ -359,7 +359,7 @@ do $$
 begin
   if (select md5(p.prosrc) from pg_proc p where p.oid = 'public.apply_block_machine_identity(uuid, uuid, text, uuid, text, timestamptz, text, text)'::regprocedure)
      <> '218c39a20344d2effd4d934f702b0338' then
-    raise exception 'apply_block_machine_identity is not the 0310 body this migration was written against; re-derive it' using errcode = 'check_violation';
+    raise exception 'apply_block_machine_identity is not the body this migration was written against; re-derive it' using errcode = 'check_violation';
   end if;
 end $$;
 
