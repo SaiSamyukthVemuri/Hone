@@ -11,7 +11,7 @@ afterAll(async () => { await closePool(); });
 // DEFENSIVE CASE: the three ended-stamp tests insert an invitation that carries a stamp while its entry reads 'invited'. The real release, decline and expire commands move the entry out of 'invited'
 // in the same transaction, so this state is unreachable through the application's own commands; the refusal is defence in depth and the tests prove it holds if the state ever arises.
 // Fixture states are reached WITHOUT touching the append-only guard on the invitation table (nothing is disabled or bypassed): a row is INSERTed in the state under test (the guard
-// is an UPDATE guard), and the entry is moved to 'invited' the way the issue command moves it. The elapsed invitation is inserted with its window already in the past, the
+// is an UPDATE guard), and the entry is moved to 'invited' the way the issue command moves it. The elapsed invitation is inserted with a two-second window that the real clock then runs out, the
 // stamped (ended) one with its stamp set at insert, and the legacy one without a round, so no column is ever changed after the fact.
 const day = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
 let n = 0;
@@ -31,7 +31,7 @@ async function seedLive() {
   return { studioId: s.studioId as string, userId: s.userId as string, entryId, invId: inv.id as string, roundId: inv.admission_round_id as string | null };
 }
 type L = Awaited<ReturnType<typeof seedLive>>;
-type Inserted = { issuedHoursAgo?: number; expiresInHours?: number; withRound?: boolean; stamp?: "expired_at" | "released_at" | "declined_at" };
+type Inserted = { expiresInSeconds?: number; withRound?: boolean; stamp?: "expired_at" | "released_at" | "declined_at" };
 async function seedInserted(o: Inserted = {}): Promise<L> {
   const s = await seedStudio(`rl-${n++}`);
   const svc = await q<{ id: string }>(`insert into public.services (studio_id,name,default_duration_minutes,active,modality) values ($1,'Consultation',30,true,'consultation') returning id`, [s.studioId]);
@@ -42,13 +42,13 @@ async function seedInserted(o: Inserted = {}): Promise<L> {
   const entryId = e[0].entry_id as string;
   const claimed = await q(`select public.claim_new_client_waitlist_entry($1,$2,$3) as r`, [s.studioId, entryId, s.userId]);
   expect(claimed[0].r).toBe("claimed");
-  const ago = o.issuedHoursAgo ?? 0; const inH = o.expiresInHours ?? 72;
+  const inSecs = o.expiresInSeconds ?? 72 * 3600; // an insert trigger stamps issued_at = now() whatever is passed, so a short window is waited out rather than back-dated
   const stampSql = o.stamp ? `, ${o.stamp}` : ""; const stampVal = o.stamp ? `, now()` : "";
   const inv = await q<{ id: string }>(
     `insert into public.new_client_waitlist_invitations (studio_id, entry_id, token_hash, issued_at, expires_at, issued_by_practitioner_id, scope_service_id, scope_start_date, scope_end_date, admission_round_id${stampSql})
-     values ($1,$2, encode(sha256(convert_to(gen_random_uuid()::text,'UTF8')),'hex'), now() - make_interval(hours => $3::int), now() + make_interval(hours => $4::int), $5, $6, $7, $8, $9${stampVal}) returning id`,
-    [s.studioId, entryId, ago, inH, s.practitionerId, svc[0].id, day(1), day(30), o.withRound === false ? null : roundId]);
-  await q(`update public.new_client_waitlist_entries set status = 'invited', invited_at = now() - make_interval(hours => $3::int) where id = $1 and studio_id = $2 and status = 'claimed'`, [entryId, s.studioId, ago]);
+     values ($1,$2, encode(sha256(convert_to(gen_random_uuid()::text,'UTF8')),'hex'), now(), now() + make_interval(secs => $3::int), $4, $5, $6, $7, $8${stampVal}) returning id`,
+    [s.studioId, entryId, inSecs, s.practitionerId, svc[0].id, day(1), day(30), o.withRound === false ? null : roundId]);
+  await q(`update public.new_client_waitlist_entries set status = 'invited', invited_at = now() where id = $1 and studio_id = $2 and status = 'claimed'`, [entryId, s.studioId]);
   return { studioId: s.studioId as string, userId: s.userId as string, entryId, invId: inv[0].id, roundId: o.withRound === false ? null : roundId };
 }
 const replace = (l: L, expected: string = l.invId) =>
@@ -56,7 +56,8 @@ const replace = (l: L, expected: string = l.invId) =>
 
 describe("a replace is for a LIVE invitation only", () => {
   it("an invitation whose time has run out (status still invited) is refused: invitation_expired, nothing written, no new invitation", async () => {
-    const l = await seedInserted({ issuedHoursAgo: 72, expiresInHours: -1 }); // issued three days ago, ran out an hour ago, never swept
+    const l = await seedInserted({ expiresInSeconds: 2 }); // a two-second window, then the real clock runs it out; the entry still reads invited (never swept)
+    await new Promise((r) => setTimeout(r, 3500));
     const before = await q(`select count(*)::int n from public.new_client_waitlist_invitations where entry_id = $1`, [l.entryId]);
     const r = await replace(l);
     expect(r[0].result).toBe("invitation_expired");
