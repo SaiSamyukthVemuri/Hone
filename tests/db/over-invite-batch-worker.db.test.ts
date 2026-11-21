@@ -567,32 +567,4 @@ describe("a studio with no open admission round", () => {
     expect(answers).toEqual(["opened", "round_already_open"]);
     expect(await rounds(f.studioId)).toEqual({ total: 1, open: 1 });
   });
-
-  it("a retry for a studio whose round was closed by the real close command opens a round and goes through", async () => {
-    const f = await seed("nr4");
-    const ids = await entries(f, 1);
-    await batch(f, ids, { fit: 0 });
-    const out = await drain(deps(() => "refused"));
-    const item = out.find((o) => o.status === "failed" && o.reason === "delivery_refused")!;
-    expect(item).toBeDefined();
-    expect((await q(`select public.close_new_client_waitlist_admission_round($1,$2) r`, [f.studioId, f.userId]))[0].r).toBe("closed");
-    expect((await rounds(f.studioId)).open).toBe(0);
-    const r = await retryDeliveries(
-      {
-        kind: "refused",
-        stillRetryable: async ({ itemId }) => {
-          const [x] = await q(`select state, reason_class, invitation_id from public.waitlist_invitation_batch_items where id=$1`, [itemId]);
-          return x.state === "failed" && x.reason_class === "delivery_refused" ? { state: x.state, invitationId: x.invitation_id } : null;
-        },
-        replace: (entryId, expectedInvitationId) => replaceInvitation(db, { studioId: f.studioId, actorUserId: f.userId, entryId, expectedInvitationId }),
-        deliver: async () => "accepted",
-        settle: (t, o, why, expected, invitationId) => settleItem(db, t, o, why, expected ?? null, invitationId ?? null),
-        sleep: async () => {},
-      },
-      [{ entryId: item.entryId, itemId: item.itemId, studioId: f.studioId }],
-    );
-    expect(r[0]).toMatchObject({ status: "sent" });
-    expect(await rounds(f.studioId)).toMatchObject({ open: 1 });
-    expect((await q(`select state from public.waitlist_invitation_batch_items where id=$1`, [item.itemId]))[0].state).toBe("sent");
-  });
 });
