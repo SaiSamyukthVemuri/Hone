@@ -44,7 +44,7 @@ const db = {
 async function drainQueue() {
   await q(`update public.waitlist_invitation_batch_items set state='skipped', reason_class='test_cleanup' where state in ('pending','claimed') and invitation_id is null`);
 }
-async function seed(label: string) {
+async function seed(label: string, o: { openRound?: boolean } = {}) {
   await drainQueue();
   const s = await seedStudio(`ov-${label}`);
   const svc = await q<{ id: string }>(
@@ -52,7 +52,7 @@ async function seed(label: string) {
     [s.studioId],
   );
   await q(`update auth.users set email_confirmed_at = now() where id = $1`, [s.userId]);
-  await q(`select * from public.open_new_client_waitlist_admission_round($1,$2,500)`, [s.studioId, s.userId]);
+  if (o.openRound !== false) await q(`select * from public.open_new_client_waitlist_admission_round($1,$2,500)`, [s.studioId, s.userId]);
   return { studioId: s.studioId, userId: s.userId, serviceId: svc[0].id, practitionerId: s.practitionerId };
 }
 type F = Awaited<ReturnType<typeof seed>>;
@@ -514,5 +514,85 @@ describe("replace refuses an ended invitation and starts a new attempt", () => {
     expect(delivered).toBe(0);
     expect((await bgClaim()).ok).toBe(true);
     expect(await row(item.itemId)).toMatchObject({ state: "failed", reason_class: "invitation_ended" });
+  });
+});
+
+// ---- a studio with NO open admission round -------------------------------------------------------------------------------------------------
+// Every other case seeds an open round, which hid this: a studio's FIRST batch has none. The round is plumbing the owner never chooses, so the batch
+// opens it through the same command the single invitation uses. Concurrency rests on the studio row lock taken by that command and on the partial
+// unique index allowing one open round per studio. No guard is bypassed anywhere here.
+describe("a studio with no open admission round", () => {
+  const rounds = async (studioId: string) =>
+    (await q(`select count(*)::int total, count(*) filter (where closed_at is null)::int open from public.studio_waitlist_admission_rounds where studio_id=$1`, [studioId]))[0] as { total: number; open: number };
+  const liveInvitations = async (entryId: string) => (await q(`select count(*)::int n from public.new_client_waitlist_invitations where entry_id=$1`, [entryId]))[0].n as number;
+
+  it("a first batch is processed in full: every recipient is admitted, issued and settled sent, none skipped, and exactly one round is opened", async () => {
+    const f = await seed("nr1", { openRound: false });
+    expect(await rounds(f.studioId)).toEqual({ total: 0, open: 0 });
+    const ids = await entries(f, 7);
+    expect(await batch(f, ids, { fit: 0 })).toMatchObject({ ok: true, result: "created", quantity: 7 });
+    const log: string[] = [];
+    const out = await drain(deps(() => "accepted", log));
+    expect(out.filter((o) => o.status === "sent")).toHaveLength(7);
+    expect(out.filter((o) => o.status === "skipped")).toHaveLength(0);
+    expect(new Set(log).size).toBe(7);
+    expect(log).toHaveLength(7);
+    expect(await rounds(f.studioId)).toEqual({ total: 1, open: 1 });
+    const items = await q(`select state, reason_class from public.waitlist_invitation_batch_items bi join public.waitlist_invitation_batches b on b.id = bi.batch_id where b.studio_id=$1`, [f.studioId]);
+    expect(items.every((i) => i.state === "sent")).toBe(true);
+    for (const id of ids) expect(await liveInvitations(id)).toBe(1);
+  });
+
+  it("two first batches processed at the same moment open exactly ONE round, both proceed, and nobody is invited or mailed twice", async () => {
+    const f = await seed("nr2", { openRound: false });
+    const idsA = await entries(f, 5);
+    const idsB = await entries(f, 5);
+    expect(await batch(f, idsA, { fit: 0 })).toMatchObject({ ok: true, result: "created" });
+    expect(await batch(f, idsB, { fit: 0 })).toMatchObject({ ok: true, result: "created" });
+    const log: string[] = [];
+    const [outA, outB] = await Promise.all([drain(deps(() => "accepted", log)), drain(deps(() => "accepted", log))]);
+    const all = [...outA, ...outB];
+    expect(all.filter((o) => o.status === "sent")).toHaveLength(10);
+    expect(all.filter((o) => o.status === "skipped")).toHaveLength(0);
+    expect(new Set(log).size).toBe(10);
+    expect(log).toHaveLength(10);
+    expect(await rounds(f.studioId)).toEqual({ total: 1, open: 1 });
+    for (const id of [...idsA, ...idsB]) expect(await liveInvitations(id)).toBe(1);
+  });
+
+  it("the open command itself, called twice at once for a studio with no round, answers opened once and round_already_open for the other", async () => {
+    const f = await seed("nr3", { openRound: false });
+    const open = async () => (await q(`select result from public.open_new_client_waitlist_admission_round($1,$2,100)`, [f.studioId, f.userId]))[0].result as string;
+    const answers = (await Promise.all([open(), open()])).sort();
+    expect(answers).toEqual(["opened", "round_already_open"]);
+    expect(await rounds(f.studioId)).toEqual({ total: 1, open: 1 });
+  });
+
+  it("a retry for a studio whose round was closed by the real close command opens a round and goes through", async () => {
+    const f = await seed("nr4");
+    const ids = await entries(f, 1);
+    await batch(f, ids, { fit: 0 });
+    const out = await drain(deps(() => "refused"));
+    const item = out.find((o) => o.status === "failed" && o.reason === "delivery_refused")!;
+    expect(item).toBeDefined();
+    expect((await q(`select public.close_new_client_waitlist_admission_round($1,$2) r`, [f.studioId, f.userId]))[0].r).toBe("closed");
+    expect((await rounds(f.studioId)).open).toBe(0);
+    const r = await retryDeliveries(
+      {
+        kind: "refused",
+        stillRetryable: async ({ itemId }) => {
+          const [x] = await q(`select state, reason_class, invitation_id from public.waitlist_invitation_batch_items where id=$1`, [itemId]);
+          return x.state === "failed" && x.reason_class === "delivery_refused" ? { state: x.state, invitationId: x.invitation_id } : null;
+        },
+        replace: (entryId, expectedInvitationId) => replaceInvitation(db, { studioId: f.studioId, actorUserId: f.userId, entryId, expectedInvitationId }),
+        deliver: async () => "accepted",
+        settle: (t, o, why, expected, invitationId) => settleItem(db, t, o, why, expected ?? null, invitationId ?? null),
+        sleep: async () => {},
+      },
+      [{ entryId: item.entryId, itemId: item.itemId, studioId: f.studioId }],
+    );
+    expect(r[0]).toMatchObject({ status: "sent" });
+    expect(await rounds(f.studioId)).toMatchObject({ open: 1 });
+    expect((await q(`select state from public.waitlist_invitation_batch_items where id=$1`, [item.itemId]))[0].state).toBe("sent");
   });
 });
