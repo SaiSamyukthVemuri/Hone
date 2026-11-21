@@ -792,6 +792,11 @@ describe("answer A: the owner's switch decides, old history is not needed, and t
     await adminQuery(`update public.session_blocks set deleted_at = now() where id = $1`, [sess.blockId]);
     expect((await failure(ensure(S.userId, sess.blockId, PUR)))?.message).toBe("Not available.");
     expect(await unitCount(S.studioId)).toBe(0);
+    // a live block inside a SOFT-DELETED session is not a save either
+    const sess2 = await seedSession(S);
+    await adminQuery(`update public.sessions set deleted_at = now() where id = $1`, [sess2.sessionId]);
+    expect((await failure(ensure(S.userId, sess2.blockId, PUR)))?.message).toBe("Not available.");
+    expect(await unitCount(S.studioId)).toBe(0);
   });
 
   it("another studio's owner cannot switch this studio's model on, and a receptionist (no practitioner row) cannot save into it", async () => {
