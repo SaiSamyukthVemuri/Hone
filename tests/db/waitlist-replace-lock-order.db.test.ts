@@ -1,13 +1,16 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
-import { adminQuery, closePool, resolveLocalDbUrl, seedStudio } from "./helpers/harness";
+import { adminQuery, adminTx, closePool, resolveLocalDbUrl, seedStudio } from "./helpers/harness";
 
 const q = async <T = any>(text: string, params: unknown[] = []): Promise<T[]> => (await adminQuery(text, params)).rows as T[];
 afterAll(async () => { await closePool(); });
 
 // replace_waitlist_invitation: the round is locked first (no deadlock with redemption), a replace is for a LIVE invitation only, and a replaced item starts a new attempt.
 // Synthetic data, owned local stack.
+// The invitation table's append-only guard refuses these fixture edits (the window and the round binding are immutable), even for the admin connection. A fixture edit runs in ONE
+// transaction with session_replication_role = replica, which is transaction-local: it reverts at commit or rollback, so nothing stays disabled for the next test.
+const fixup = (text: string, params: unknown[] = []) => adminTx(async (query) => { await query(`set local session_replication_role = replica`); return query(text, params); });
 const day = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
 let n = 0;
 async function seedLive() {
@@ -32,7 +35,7 @@ const replace = (l: L, expected: string = l.invId) =>
 describe("a replace is for a LIVE invitation only", () => {
   it("an invitation whose time has run out (status still invited) is refused: invitation_expired, nothing written, no new invitation", async () => {
     const l = await seedLive();
-    await q(`update public.new_client_waitlist_invitations set issued_at = now() - interval '3 days', expires_at = now() - interval '1 hour' where id = $1`, [l.invId]);
+    await fixup(`update public.new_client_waitlist_invitations set issued_at = now() - interval '3 days', expires_at = now() - interval '1 hour' where id = $1`, [l.invId]);
     const before = await q(`select count(*)::int n from public.new_client_waitlist_invitations where entry_id = $1`, [l.entryId]);
     const r = await replace(l);
     expect(r[0].result).toBe("invitation_expired");
@@ -44,7 +47,7 @@ describe("a replace is for a LIVE invitation only", () => {
   for (const col of ["expired_at", "released_at", "declined_at"] as const) {
     it(`an invitation stamped ${col} is refused: invitation_ended, nothing written`, async () => {
       const l = await seedLive();
-      await q(`update public.new_client_waitlist_invitations set ${col} = now() where id = $1`, [l.invId]);
+      await fixup(`update public.new_client_waitlist_invitations set ${col} = now() where id = $1`, [l.invId]);
       const r = await replace(l);
       expect(r[0].result).toBe("invitation_ended");
       expect((await q(`select count(*)::int n from public.new_client_waitlist_invitations where entry_id = $1`, [l.entryId]))[0].n).toBe(1);
@@ -94,7 +97,7 @@ describe("a replace and a redemption on one invitation never deadlock", () => {
 describe("lock order with the other takers", () => {
   it("a legacy invitation (no round) and a redemption-style invitation lock: no deadlock, the replace completes after the lock is released", async () => {
     const l = await seedLive();
-    await q(`update public.new_client_waitlist_invitations set admission_round_id = null where id = $1`, [l.invId]); // a pre-0192 style invitation: redemption locks only the invitation
+    await fixup(`update public.new_client_waitlist_invitations set admission_round_id = null where id = $1`, [l.invId]); // a pre-0192 style invitation: redemption locks only the invitation
     const url = resolveLocalDbUrl();
     const D = new pg.Client({ connectionString: url }); const R = new pg.Client({ connectionString: url });
     await D.connect(); await R.connect();
