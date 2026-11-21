@@ -110,12 +110,12 @@ describe("clients needing attention", () => {
 describe("missing-records assistant", () => {
   const NOW = "2026-10-24T12:00:00.000Z";
 
-  it("shows the preferred name on both of its client-joined reads", async () => {
+  it("shows the preferred name on all three of its client-joined reads (the third is the HON-45 unfinished-visit read)", async () => {
     const out = await getMissingRecordsAssistant("studio-1", NOW);
     expect(JSON.stringify(out)).toContain("Maggie");
     expect(JSON.stringify(out)).not.toContain("Margaret Nowak");
     const reads = clientReads();
-    expect(reads).toHaveLength(2);
+    expect(reads).toHaveLength(3);
     for (const r of reads) expect(r.columns).toContain("preferred_name");
   });
 
@@ -124,8 +124,8 @@ describe("missing-records assistant", () => {
     const out = await getMissingRecordsAssistant("studio-1", NOW);
     expect(JSON.stringify(out)).toContain("Margaret Nowak");
     const reads = clientReads();
-    expect(reads).toHaveLength(4);
-    expect(reads.filter((r) => r.columns.includes("preferred_name"))).toHaveLength(2);
+    expect(reads).toHaveLength(6);
+    expect(reads.filter((r) => r.columns.includes("preferred_name"))).toHaveLength(3);
   });
 
   it("a real failure still refuses with the fixed message and is not retried", async () => {

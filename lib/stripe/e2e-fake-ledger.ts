@@ -1,5 +1,5 @@
 import "server-only";
-import { existsSync, readFileSync, appendFileSync, writeFileSync, renameSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, appendFileSync, writeFileSync, renameSync, rmSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -38,6 +38,21 @@ function ledgerPath(runId: string): string {
 }
 function configPath(runId: string): string {
   return join(tmpdir(), `${PREFIX}${runId}.config.json`);
+}
+// One file PER intent: a write replaces only that intent's own file (atomic rename), so two writers can never lose each
+// other's update the way a shared read-modify-write map would. The id is reduced to [A-Za-z0-9_-] so no separator can
+// reach the path.
+function piStatePath(runId: string, id: string): string {
+  return join(tmpdir(), `${PREFIX}${runId}.pi.${id.replace(/[^A-Za-z0-9_-]/g, "_")}.json`);
+}
+function piStatePrefix(runId: string): string {
+  return `${PREFIX}${runId}.pi.`;
+}
+function removePiStateFiles(runId: string): void {
+  const prefix = piStatePrefix(runId);
+  for (const name of readdirSync(tmpdir())) {
+    if (name.startsWith(prefix) && name.endsWith(".json")) rmSync(join(tmpdir(), name), { force: true });
+  }
 }
 
 export type FakeOutcome = "success" | "decline" | "processing";
@@ -108,6 +123,64 @@ export function setFakeStripeBehavior(
   renameSync(tmp, p);
 }
 
+// When the fake sends the decline event: "after" (default) a moment after the charge call has returned, or
+// "before_return", sent and processed BEFORE the charge call returns, so the event reaches the application ahead of the
+// executor binding the intent to its attempt. Stripe does not promise an order; a lane can pin either.
+export type FakeWebhookTiming = "after" | "before_return";
+export function readFakeWebhookTiming(runId: string): FakeWebhookTiming {
+  try {
+    assertAllowed(runId);
+    const p = configPath(runId);
+    if (!existsSync(p)) return "after";
+    const cfg = JSON.parse(readFileSync(p, "utf8")) as { webhookTiming?: string };
+    return cfg.webhookTiming === "before_return" ? "before_return" : "after";
+  } catch {
+    return "after";
+  }
+}
+
+export function setFakeStripeWebhookTiming(runId: string, timing: FakeWebhookTiming): void {
+  assertAllowed(runId);
+  const p = configPath(runId);
+  let cfg: Record<string, unknown> = {};
+  if (existsSync(p)) {
+    try {
+      cfg = JSON.parse(readFileSync(p, "utf8"));
+    } catch {
+      cfg = {};
+    }
+  }
+  cfg.webhookTiming = timing;
+  const tmp = `${p}.${Math.abs(hashRun(runId))}.tmp`;
+  writeFileSync(tmp, JSON.stringify(cfg), { mode: 0o600 });
+  renameSync(tmp, p);
+}
+
+// PAYMENTINTENT STATE ACROSS ROUTE BUNDLES. Next compiles each route into its own bundle, so module-level state set while a
+// server action created an intent is invisible to the webhook route that later retrieves or cancels it: the retrieve then
+// states an intent the fake "never created" (no amount, no metadata) and the application correctly refuses it. The fake
+// therefore keeps each intent's state here as well, keyed by id, so every route sees the same object, as with Stripe.
+// Synthetic, test-safe fields only (id, status, amount, currency, metadata ids, customer id, charge id, synthetic error code).
+export function writeFakePiState(runId: string, pi: { id: string } & Record<string, unknown>): void {
+  assertAllowed(runId);
+  const p = piStatePath(runId, pi.id);
+  const tmp = `${p}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tmp, JSON.stringify(pi), { mode: 0o600 });
+  renameSync(tmp, p);
+}
+
+export function readFakePiState(runId: string, id: string): Record<string, unknown> | null {
+  assertAllowed(runId);
+  const p = piStatePath(runId, id);
+  if (!existsSync(p)) return null;
+  try {
+    const pi = JSON.parse(readFileSync(p, "utf8")) as unknown;
+    return pi && typeof pi === "object" ? (pi as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function clearFakeStripeBehavior(runId: string): void {
   assertAllowed(runId);
   const p = configPath(runId);
@@ -118,6 +191,7 @@ export function resetFakeStripeLedger(runId: string): void {
   assertAllowed(runId);
   const p = ledgerPath(runId);
   if (existsSync(p)) rmSync(p, { force: true });
+  removePiStateFiles(runId);
 }
 
 export function cleanupFakeStripeFiles(runId: string): void {
@@ -125,6 +199,7 @@ export function cleanupFakeStripeFiles(runId: string): void {
   for (const p of [ledgerPath(runId), configPath(runId)]) {
     if (existsSync(p)) rmSync(p, { force: true });
   }
+  removePiStateFiles(runId);
 }
 
 // Deterministic tmp-suffix seed from the (already validated) run id, no Math.random.
