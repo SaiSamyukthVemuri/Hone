@@ -11,7 +11,8 @@ import { SPACING_MS, reasonFor, type DeliveryState } from "./over-invite-worker"
 // Before each item is replaced it is RE-CHECKED (still failed-refused, or still unknown) and then MARKED `retry_started`, so a second click, a
 // second tab or a double submit finds it no longer retryable. The database closes the race: the mark names the state just seen (a mismatch answers
 // `state_changed`), and `replace` names the invitation just re-checked, so only ONE caller can replace it. The mark is state-only, so the real
-// guarantee is the rule below: NOTHING is delivered unless replace answered "replaced". An item left `retry_started` by a crash is never offered again.
+// guarantee is the rule below: NOTHING is delivered unless replace answered "replaced". If the replace ran, the current command
+// resets the item to `issued`, and it becomes retryable as unknown once the lease passes; if it did not run, the item stays marked and is not offered again.
 
 export type RetryKind = "refused" | "unknown";
 /** The replace refusals that mean the invitation is over. Recorded under their own reason class; the progress view reads them as "ended". */
@@ -76,7 +77,7 @@ async function retryOne(deps: RetryDeps, target: SettleTarget, entryId: string):
   try {
     rep = await deps.replace(entryId, seen.invitationId);
   } catch {
-    // Whether the command ran is unknown, so the item stays marked `retry_started` and is not offered again.
+    // Whether the command ran is unknown, so the item stays marked `retry_started`; if the replace did run, the item is `issued` and becomes retryable as unknown after the lease.
     return { entryId, status: "failed", reason: "delivery_unknown" };
   }
   if (!rep.ok || rep.result !== "replaced" || !("issued" in rep)) {

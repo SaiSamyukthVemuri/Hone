@@ -123,12 +123,13 @@ async function runOne(deps: WorkerDeps, item: ClaimedItem): Promise<ItemOutcome>
   if (state === "accepted") {
     const s = await deps.settle(target, "sent", null, null, admit.issued.invitationId);
     if (s.ok && s.result === "state_changed") return { ...base, status: "skipped", reason: "state_changed" }; // someone else already handled this item
-    return s.ok ? { ...base, status: "sent" } : { ...base, status: "failed", reason: "settle_failed" };
+    // Sent only when the database answered `settled`; any other answer is not a recorded send.
+    return s.ok && s.result === "settled" ? { ...base, status: "sent" } : { ...base, status: "failed", reason: "settle_failed" };
   }
   // REFUSED is a known failure (only the owner's separately confirmed retry may touch it). UNKNOWN is its own state in the database: the delivery may
   // have reached the provider, so it is never retried automatically; only the owner's separately confirmed action may retry it.
   const reason = state === "refused" ? "delivery_refused" : "delivery_unknown";
   const s = await deps.settle(target, state === "refused" ? "failed" : "unknown", reason, null, admit.issued.invitationId);
   if (s.ok && s.result === "state_changed") return { ...base, status: "skipped", reason: "state_changed" };
-  return s.ok ? { ...base, status: "failed", reason } : { ...base, status: "failed", reason: "settle_failed" };
+  return s.ok && s.result === "settled" ? { ...base, status: "failed", reason } : { ...base, status: "failed", reason: "settle_failed" };
 }

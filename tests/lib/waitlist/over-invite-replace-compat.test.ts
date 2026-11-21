@@ -117,6 +117,24 @@ describe("a retry settles the replacement whether the item is `failed` (older re
       expect(w.item.reason).toBe("delivery_unknown");
     });
   }
+  it("on the failed path too, a settle answered with anything but `settled` is reported as settle_failed, not under the delivery reason", async () => {
+    for (const kind of ["refused", "unknown"] as const) {
+      for (const answer of ["state_changed", "not_found", "invalid_state"]) {
+        const r = await retryDeliveries(
+          {
+            kind,
+            stillRetryable: async () => ({ state: kind === "refused" ? "failed" : "unknown", invitationId: "inv-1" }),
+            replace: async () => ({ ok: true, result: "replaced", issued }),
+            deliver: async () => (kind === "refused" ? "refused" : "unknown"),
+            settle: async (_t, _o, why) => (why === "retry_started" ? { ok: true, result: "settled" } : { ok: true, result: answer }),
+            sleep: async () => {},
+          },
+          target,
+        );
+        expect(r[0], `${kind}/${answer}`).toEqual({ entryId: "e", status: "failed", reason: "settle_failed" });
+      }
+    }
+  });
   it("a settle the database answers with anything but `settled` is reported as not recorded, never as sent", async () => {
     for (const answer of ["state_changed", "already_sent", "invalid_state"]) {
       const r = await retryDeliveries(

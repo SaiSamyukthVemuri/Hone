@@ -32,6 +32,18 @@ describe("over-invite worker", () => {
     expect(r.ok && r.outcomes[0].status).toBe("sent");
     expect(calls).toEqual(["deliver", "settle:i1:sent:null"]);
   });
+  it("a first send counts as sent only when the settle answers `settled`; any other answer is settle_failed, on every delivery outcome", async () => {
+    for (const delivery of ["accepted", "refused", "unknown"] as const) {
+      for (const answer of ["not_found", "invalid_state", "already_sent"]) {
+        const { d } = deps({ deliver: async () => delivery, settle: async () => ({ ok: true, result: answer }) });
+        const r = await runBatchChunk(d, undefined, BG);
+        expect(r.ok && r.outcomes[0], `${delivery}/${answer}`).toMatchObject({ status: "failed", reason: "settle_failed" });
+      }
+    }
+    const { d } = deps({ settle: async () => ({ ok: true, result: "state_changed" }) });
+    const r = await runBatchChunk(d, undefined, BG);
+    expect(r.ok && r.outcomes[0]).toMatchObject({ status: "skipped", reason: "state_changed" });
+  });
   it("settle names the item's own studio and entry from the claimed row (ownership check)", async () => {
     const { d, seen } = deps();
     await runBatchChunk(d, undefined, BG);
