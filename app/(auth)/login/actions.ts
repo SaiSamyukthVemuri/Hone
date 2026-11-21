@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+import { EMAIL_CANDIDATE_LIMIT, emailIlikePattern, singleExactEmailRow } from "@/lib/invitations/email-match";
 
 // PR #189 (pilot safety): Hone is invite-only during the pilot.
 //
@@ -42,17 +43,21 @@ export async function requestPractitionerMagicLinkAction(
 
   // Invite lookup runs through the admin client: the requester is
   // anonymous and pending_invitations is RLS-gated to studio members.
-  // ilike with no wildcards = case-insensitive equality, matching the
-  // lower(email) semantics of the handle_new_user() trigger. A lookup
+  // ilike on the ESCAPED address = case-insensitive equality, matching the
+  // lower(email) semantics of the claim RPCs. An unescaped _ or % is a wildcard
+  // and let one person's address pass the signup gate on another's invitation. A lookup
   // error fails CLOSED for signup (no user creation) while still
   // letting existing practitioners get their link.
   const admin = createAdminClient();
-  const { data: invite, error: inviteError } = await admin
+  const { data: candidates, error: inviteError } = await admin
     .from("pending_invitations")
-    .select("id")
-    .ilike("email", normalized)
+    .select("id, email")
+    .ilike("email", emailIlikePattern(normalized))
     .eq("status", "pending")
-    .maybeSingle();
+    .limit(EMAIL_CANDIDATE_LIMIT);
+  // The ilike only narrows candidates (PostgREST also treats * as a wildcard); signup is allowed only when EXACTLY ONE candidate's
+  // address equals the typed one. Several candidates, or none equal, fail closed.
+  const invite = singleExactEmailRow(candidates, normalized);
   const allowSignup = !inviteError && Boolean(invite);
 
   const supabase = await createClient();
