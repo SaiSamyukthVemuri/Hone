@@ -53,7 +53,7 @@ async function seed(label: string) {
   );
   await q(`update auth.users set email_confirmed_at = now() where id = $1`, [s.userId]);
   await q(`select * from public.open_new_client_waitlist_admission_round($1,$2,500)`, [s.studioId, s.userId]);
-  return { studioId: s.studioId, userId: s.userId, serviceId: svc[0].id };
+  return { studioId: s.studioId, userId: s.userId, serviceId: svc[0].id, practitionerId: s.practitionerId };
 }
 type F = Awaited<ReturnType<typeof seed>>;
 const day = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
@@ -393,14 +393,30 @@ describe("over-invite worker against the real batch commands", () => {
 });
 
 // ---- migration 0364: replace takes the round before the invitation, refuses an ended or elapsed invitation, and starts a NEW attempt ----------------------
-// Requires 0364 in the stack. Against 0363 alone the first and fourth tests fail by design (the item stays `failed`; an ended invitation is replaced).
-// NO FIXTURE HERE DISABLES OR BYPASSES THE APPEND-ONLY TRIGGER (0200; Sam's rule). What that means for what can be reached:
-//  - `invitation_expired` (the time ran out) is NOT reachable: the server-timestamp trigger sets issued_at = now() on insert, the ttl check needs
-//    expires_at > issued_at, the shortest ttl is 1 hour, and a bypass is the only way to move the window. It is pinned by the unit tests only.
-//  - an ended stamp (expired_at, released_at, declined_at) may be set once, from null, which the trigger permits, so a plain UPDATE is not a bypass.
-//    A REAL release or decline also returns the entry to `waiting`, so replace then answers no_live_invitation (the entry check comes first);
-//    `invitation_ended` itself is only reachable with the entry still `invited`, i.e. by stamping the invitation directly.
-const endInvitation = (id: string) => q(`update public.new_client_waitlist_invitations set expired_at = now() where id=$1`, [id]);
+// Requires 0364 in the stack. Against 0363 alone the first and the refusal tests fail by design (the item stays `failed`; an ended invitation is replaced).
+//
+// NO FIXTURE HERE DISABLES OR BYPASSES THE APPEND-ONLY TRIGGER (0200; Sam's rule). The guard is BEFORE UPDATE only, so each state is reached by INSERT:
+//  - an ELAPSED invitation: the insert trigger sets issued_at = now() whatever is supplied, and the ttl check needs expires_at > issued_at, so the window is
+//    inserted ALREADY SHORT (two seconds) and the test waits it out. The real clock elapses; nothing is moved.
+//  - an ENDED invitation with the person still `invited`: inserted carrying the stamp (expired_at / released_at / declined_at).
+// The invitation is swapped in with the real commands (release, requeue, claim) exactly as replace itself moves an entry, then the batch item is pointed at it
+// (the items table is not guarded).
+async function swapInInvitation(f: F, entryId: string, itemId: string, o: { expiresInSeconds?: number; stamp?: "expired_at" | "released_at" | "declined_at" } = {}): Promise<string> {
+  expect((await q(`select public.release_new_client_waitlist_entry($1,$2,$3) r`, [f.studioId, entryId, f.userId]))[0].r).toBe("released");
+  expect((await q(`select public.requeue_new_client_waitlist_entry($1,$2,$3) r`, [f.studioId, entryId, f.userId]))[0].r).toBe("requeued");
+  expect((await q(`select public.claim_new_client_waitlist_entry($1,$2,$3) r`, [f.studioId, entryId, f.userId]))[0].r).toBe("claimed");
+  const round = (await q(`select id from public.studio_waitlist_admission_rounds where studio_id=$1 and closed_at is null`, [f.studioId]))[0].id;
+  const stampCol = o.stamp ? `, ${o.stamp}` : "";
+  const stampVal = o.stamp ? ", now()" : "";
+  const inv = await q<{ id: string }>(
+    `insert into public.new_client_waitlist_invitations (studio_id, entry_id, token_hash, expires_at, issued_by_practitioner_id, scope_service_id, scope_start_date, scope_end_date, admission_round_id${stampCol})
+     values ($1,$2, encode(sha256(convert_to(gen_random_uuid()::text,'UTF8')),'hex'), now() + make_interval(secs => $3::int), $4, $5, $6, $7, $8${stampVal}) returning id`,
+    [f.studioId, entryId, o.expiresInSeconds ?? 72 * 3600, f.practitionerId, f.serviceId, day(1), day(30), round],
+  );
+  await q(`update public.new_client_waitlist_entries set status='invited', invited_at=now() where id=$1 and studio_id=$2 and status='claimed'`, [entryId, f.studioId]);
+  await q(`update public.waitlist_invitation_batch_items set invitation_id=$1 where id=$2`, [inv[0].id, itemId]);
+  return inv[0].id;
+}
 
 describe("replace after 0364", () => {
   async function refusedItem(label: string) {
@@ -414,6 +430,7 @@ describe("replace after 0364", () => {
   }
   const row = async (itemId: string) =>
     (await q(`select state, reason_class, invitation_id, attempts, settled_at, issued_at from public.waitlist_invitation_batch_items where id=$1`, [itemId]))[0];
+  const invitations = async (entryId: string) => (await q(`select count(*)::int n from public.new_client_waitlist_invitations where entry_id=$1`, [entryId]))[0].n as number;
 
   it("a replaced failed item starts a new attempt: issued, the old outcome cleared, attempts + 1, the new invitation", async () => {
     const { f, item } = await refusedItem("0364a");
@@ -431,8 +448,34 @@ describe("replace after 0364", () => {
     expect(await row(item.itemId)).toMatchObject({ state: "unknown", reason_class: "delivery_unknown" });
   });
 
+  it("an invitation whose time has run out is refused as invitation_expired: nothing is replaced and the item is untouched", async () => {
+    const { f, item } = await refusedItem("0364b");
+    const inv = await swapInInvitation(f, item.entryId, item.itemId, { expiresInSeconds: 2 });
+    const before = await row(item.itemId);
+    const count = await invitations(item.entryId);
+    await new Promise((r) => setTimeout(r, 3_000)); // the real clock runs the window out
+    const rep = await replaceInvitation(db, { studioId: f.studioId, actorUserId: f.userId, entryId: item.entryId, expectedInvitationId: inv });
+    expect(rep.ok && rep.result).toBe("invitation_expired");
+    expect(await row(item.itemId)).toMatchObject({ state: "failed", reason_class: "delivery_refused", invitation_id: inv, attempts: before.attempts });
+    expect(await invitations(item.entryId)).toBe(count);
+    expect((await q(`select status from public.new_client_waitlist_entries where id=$1`, [item.entryId]))[0].status).toBe("invited");
+  }, 30_000);
+
+  for (const stamp of ["expired_at", "released_at", "declined_at"] as const) {
+    it(`an invitation carrying ${stamp} while the person is still invited is refused as invitation_ended: nothing is replaced`, async () => {
+      const { f, item } = await refusedItem(`0364-${stamp.slice(0, 3)}`);
+      const inv = await swapInInvitation(f, item.entryId, item.itemId, { stamp });
+      const before = await row(item.itemId);
+      const count = await invitations(item.entryId);
+      const rep = await replaceInvitation(db, { studioId: f.studioId, actorUserId: f.userId, entryId: item.entryId, expectedInvitationId: inv });
+      expect(rep.ok && rep.result).toBe("invitation_ended");
+      expect(await row(item.itemId)).toMatchObject({ state: "failed", invitation_id: inv, attempts: before.attempts });
+      expect(await invitations(item.entryId)).toBe(count);
+    });
+  }
+
   it("a REAL release of the person ends the invitation through the command: replace then answers no_live_invitation and changes nothing", async () => {
-    const { f, item } = await refusedItem("0364c");
+    const { f, item } = await refusedItem("0364r");
     const before = await row(item.itemId);
     expect((await q(`select public.release_new_client_waitlist_entry($1,$2,$3) r`, [f.studioId, item.entryId, f.userId]))[0].r).toBe("released");
     const rep = await replaceInvitation(db, { studioId: f.studioId, actorUserId: f.userId, entryId: item.entryId, expectedInvitationId: before.invitation_id });
@@ -440,39 +483,36 @@ describe("replace after 0364", () => {
     expect(await row(item.itemId)).toMatchObject({ state: "failed", invitation_id: before.invitation_id, attempts: before.attempts });
   });
 
-  it("an invitation stamped ended while the person is still invited is refused as invitation_ended: nothing is replaced", async () => {
+  it("the owner's retry of an ended invitation delivers nothing, the item is recorded under invitation_ended, and no later retry selects it", async () => {
     const { f, item } = await refusedItem("0364d");
-    const before = await row(item.itemId);
-    await endInvitation(before.invitation_id);
-    const rep = await replaceInvitation(db, { studioId: f.studioId, actorUserId: f.userId, entryId: item.entryId, expectedInvitationId: before.invitation_id });
-    expect(rep.ok && rep.result).toBe("invitation_ended");
-    expect(await row(item.itemId)).toMatchObject({ state: "failed", reason_class: "delivery_refused", invitation_id: before.invitation_id, attempts: before.attempts });
-  });
-
-  it("the owner's retry of an ended invitation delivers nothing and the item is counted as ended by the progress view", async () => {
-    const { f, item } = await refusedItem("0364d");
-    const before = await row(item.itemId);
-    await endInvitation(before.invitation_id);
+    await swapInInvitation(f, item.entryId, item.itemId, { stamp: "expired_at" });
     let delivered = 0;
-    const r = await retryDeliveries(
-      {
-        kind: "refused",
-        stillRetryable: async ({ itemId }) => {
-          const [x] = await q(`select state, invitation_id from public.waitlist_invitation_batch_items where id=$1`, [itemId]);
-          return { state: x.state, invitationId: x.invitation_id };
+    let replaces = 0;
+    const retry = () =>
+      retryDeliveries(
+        {
+          kind: "refused",
+          stillRetryable: async ({ itemId }) => {
+            const [x] = await q(`select state, reason_class, invitation_id from public.waitlist_invitation_batch_items where id=$1`, [itemId]);
+            return x.state === "failed" && x.reason_class === "delivery_refused" ? { state: x.state, invitationId: x.invitation_id } : null;
+          },
+          replace: (entryId, expectedInvitationId) => (replaces++, replaceInvitation(db, { studioId: f.studioId, actorUserId: f.userId, entryId, expectedInvitationId })),
+          deliver: async () => (delivered++, "accepted"),
+          settle: (t, o, why, expected, invitationId) => settleItem(db, t, o, why, expected ?? null, invitationId ?? null),
+          sleep: async () => {},
         },
-        replace: (entryId, expectedInvitationId) => replaceInvitation(db, { studioId: f.studioId, actorUserId: f.userId, entryId, expectedInvitationId }),
-        deliver: async () => (delivered++, "accepted"),
-        settle: (t, o, why, expected, invitationId) => settleItem(db, t, o, why, expected ?? null, invitationId ?? null),
-        sleep: async () => {},
-      },
-      [{ entryId: item.entryId, itemId: item.itemId, studioId: f.studioId }],
-    );
-    expect(delivered).toBe(0);
-    expect(r[0]).toMatchObject({ status: "skipped", reason: "invitation_ended" });
+        [{ entryId: item.entryId, itemId: item.itemId, studioId: f.studioId }],
+      );
+    expect((await retry())[0]).toMatchObject({ status: "skipped", reason: "invitation_ended" });
     const after = await row(item.itemId);
     expect(after).toMatchObject({ state: "failed", reason_class: "invitation_ended" });
     const { tallyItems } = await import("@/lib/waitlist/over-invite-progress");
     expect(tallyItems([{ state: after.state, reason_class: after.reason_class, issued_at: null }]).ended).toBe(1);
+    // A second click finds the item no longer retryable: no second replace, nothing delivered, and the batch claim never takes a failed item.
+    expect((await retry())[0]).toMatchObject({ status: "skipped", reason: "no_longer_retryable" });
+    expect(replaces).toBe(1);
+    expect(delivered).toBe(0);
+    expect((await bgClaim()).ok).toBe(true);
+    expect(await row(item.itemId)).toMatchObject({ state: "failed", reason_class: "invitation_ended" });
   });
 });
