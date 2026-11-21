@@ -1693,6 +1693,20 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Private invitation history for the new-client waitlist, live since migration 0188. The lifecycle itself is studio-owned demand truth and belongs in the backlog alongside new_client_waitlist_entries, so this is PENDING rather than EXCLUDED. It is tier 2 and field-review-required because the row is not only that history: token_hash is security material and MUST NEVER be emitted, raw or otherwise, and the row also carries operational attribution and lifecycle stamps (issued_by_practitioner_id, redeemed_at, expired_at, released_at) whose export shape has not been reviewed. Excluding the whole resource on account of one column would hide legitimate studio-owned invitation history from the backlog; the field review decides the payload column by column, the way calendar_connections separates its non-secret half from secrets that stay permanently excluded.",
   },
+  waitlist_invitation_batches: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "Over-invite batches the owner confirms for the new-client waitlist: the batch key, the live-count snapshot and who confirmed. Studio-owned operational history; export shape not yet reviewed, so PENDING.",
+  },
+  waitlist_invitation_batch_items: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "One row per waitlist entry in an over-invite batch with its send state (pending, claimed, issued, sent, failed, skipped). Holds no token, address or phone number. Studio-owned operational history; PENDING.",
+  },
   studio_sms_senders: {
     kind: "pending",
     ticket: "TRUTH-01B",
@@ -1906,6 +1920,20 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 1,
     reason:
       "Introduced by migration 0223 (MPX-02, #829). The studio's own list of physical electrolysis machines: a display name, the catalogue profile and version it was registered against, the options physically fitted, and a retirement instant. It holds NO client or clinical data and no provider identifier. It is plainly studio-owned content and a studio export should probably carry it, but that is a product decision this lane was not asked to make, so nothing is claimed here. Whoever takes it should note that treatment_setup_readings references this table, so exporting the readings without the machines would leave an unresolvable identifier in the archive.",
+  },
+  studio_cancellation_fee_rule_changes: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "The studio's own record of changes to its cancellation fee tiers: the previous and new rule, who changed it and when. It holds no client data and no free text, only a staff user id. It is not in this export yet; whether it is included is decided together with the studio's other settings histories.",
+  },
+  studio_cancellation_fee_rules: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "The studio's current cancellation fee tiers: one row per studio holding the notice window in hours, a fixed or percentage rate for the notice window and for the same day, whether charging is switched on, the revision and a hash of the policy text the owner reviewed. It is studio payment configuration, not client data, and holds no free text. It is not in this export yet; it is decided together with the studio's other payment settings.",
   },
   payment_charge_refunds: {
     kind: "pending",

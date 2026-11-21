@@ -196,7 +196,7 @@ After PR #180 ships, the workflow Chloe could not finish becomes reachable. Run 
    where id = '<appointment_id>';
    ```
    Expected: `status='completed'`.
-7. (Optional, demonstrates auto-complete.) Skip step 5 and instead click "Chart session" from the appointment detail. After the session record is created, return to the calendar appointment detail. The appointment must now be `completed` (auto-marked by `maybeMarkAppointmentCompletedOnSessionStart`). SQL verify the same way.
+7. (Optional, demonstrates that charting does NOT complete.) Skip step 5 and instead click "Chart session" from the appointment detail. After the session record is created, return to the calendar appointment detail. The appointment must still be `confirmed`: starting a chart no longer completes it (HON-45 reversed the PR #180 auto-mark). Completion is the separate Finish appointment / Mark completed action, which sends no postcare (unless the studio opted into automatic postcare) and takes no payment. SQL verify the same way.
 
 Negative checks (each should leave the appointment status alone):
 - Future confirmed appointment: both buttons are visible but disabled. Hover title for the Mark completed button reads "Appointment can be marked completed after the appointment has ended."

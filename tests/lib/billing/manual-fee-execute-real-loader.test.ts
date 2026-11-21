@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { tierStudio, tierRules, tierFrozen, TIER_TIMING } from "./helpers/cancellation-tier-fixture";
 import { MANUAL_FEE_PRICE_CHANGED_MESSAGE, loadManualFeeExecuteHold } from "@/lib/billing/manual-fee-studio-setting";
 
 // Decision (platform operator, #1483). A percent fee was prepared at a POSITIVE price. The client's custom price then became
@@ -18,9 +19,10 @@ const pricing = (cents: number, from = "2020-01-01") => ({ service_name: "Servic
 
 function fake(customRows: unknown[], menuCents: number | null = 12000) {
   const tables: Record<string, unknown> = {
-    studios: PCT_STUDIO,
-    payment_charge_attempts: FROZEN,
-    appointments: { id: "appt-1", client_id: "c1", duration_minutes: 60, service: { name: "Service", price_cents: menuCents } },
+    studios: tierStudio(PCT_STUDIO),
+    studio_cancellation_fee_rules: tierRules(PCT_STUDIO),
+    payment_charge_attempts: tierFrozen(FROZEN),
+    appointments: { ...TIER_TIMING, id: "appt-1", client_id: "c1", duration_minutes: 60, service: { name: "Service", price_cents: menuCents } },
   };
   return {
     from: (t: string) => {

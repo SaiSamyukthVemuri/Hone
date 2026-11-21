@@ -6,9 +6,7 @@ import { adminQuery, adminTx, asRole, closePool, seedStudio } from "./helpers/ha
 // APPOINTMENT BOUNDARY B6 — migration 0175 behavioural proof, fresh chain.
 // ===========================================================================
 //
-// The static contract lives in
-// tests/migrations/0175-appointment-transition-integrity.test.ts. This suite
-// proves the things only a real migrated database can show:
+// This suite proves the things only a real migrated database can show:
 //
 //   * the completion boundary is starts_at, and INCLUSIVE;
 //   * completing early does not shrink the booking or release its capacity;

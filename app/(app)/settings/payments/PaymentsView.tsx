@@ -12,6 +12,9 @@ import {
   publishableKeyOk,
 } from "@/lib/payments/payment-status-presenter";
 import { PaymentsSettings, type StripeStatusView } from "./PaymentsSettings";
+import { CancellationFeeRulesCard } from "./CancellationFeeRulesCard";
+import { buildPolicySnapshot } from "@/lib/booking/policy-acknowledgement";
+import { cancellationFeeState, isCancellationFeeRules } from "@/lib/billing/cancellation-fee-rules";
 import { FeeAmountsCard } from "./FeeAmountsCard";
 import {
   OwnerOnlyNotice,
@@ -66,13 +69,10 @@ export async function PaymentsView({ view }: { view: PaymentsViewKind }) {
     );
     const paymentsReady = feeConnect === "ready" && feeJurisdictionOnly.ok;
     const feeLivemode = inferStripeLivemode();
-    const lateState = manualFeeEffectiveState({
-      chargeReason: "late_cancellation_fee",
-      settingRow: studio,
-      paymentsReady,
-      livemode: feeLivemode,
-      studioId: studio.id,
-    });
+    const { data: cancellationRules, error: cancellationRulesError } = await feeSupabase.from("studio_cancellation_fee_rules")
+      .select("revision, enabled, notice_hours, notice_mode, notice_value, same_day_mode, same_day_value, policy_snapshot_hash")
+      .eq("studio_id", studio.id).maybeSingle();
+    const cancellationPolicyHash = buildPolicySnapshot({ cancellationPolicyText: studio.cancellation_policy_text, noShowPolicyText: studio.no_show_policy_text }).policySnapshotHash;
     const noShowState = manualFeeEffectiveState({
       chargeReason: "no_show_fee",
       settingRow: studio,
@@ -89,15 +89,24 @@ export async function PaymentsView({ view }: { view: PaymentsViewKind }) {
           Choose a fixed amount or a percentage for each fee. Money is not
           charged here.
         </SettingsViewHeading>
-        {/* PR #145. Owner-only fee amount settings. */}
+        <CancellationFeeRulesCard
+          key={studio.id}
+          initial={isCancellationFeeRules(cancellationRules) ? cancellationRules : null}
+          policyText={studio.cancellation_policy_text ?? ""}
+          policyHash={cancellationPolicyHash}
+          currency={feeJurisdictionOnly.ok ? currencyLabel(feeJurisdictionOnly.jurisdiction.currency) : null}
+          status={cancellationRulesError ? "Cancellation fee settings could not be checked." : cancellationFeeState(cancellationRules, cancellationPolicyHash, paymentsReady)}
+          available={!cancellationRulesError}
+        />
         <FeeAmountsCard
+          hideLateCancel
           initialLateCancelCents={studio.late_cancel_fee_cents}
           initialNoShowCents={studio.no_show_fee_cents}
           lateCancel={{
             enabled: studio.late_cancel_fee_enabled === true,
             mode: studio.late_cancel_fee_mode === "percent" ? "percent" : "fixed",
             percentBp: studio.late_cancel_fee_percent_bp ?? null,
-            status: MANUAL_FEE_STATE_COPY[lateState],
+            status: { saved: "Saved as off", effective: "Configure cancellation rules above" },
           }}
           noShow={{
             enabled: studio.no_show_fee_enabled === true,

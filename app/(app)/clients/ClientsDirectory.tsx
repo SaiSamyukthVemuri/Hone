@@ -6,6 +6,7 @@ import { UnarchiveRowControl } from "./UnarchiveRowControl";
 import { OverviewFrame } from "./OverviewFrame";
 import { formatStudioDate, formatStudioDateTime } from "@/lib/clients/last-visit";
 import { NAME_ON_FILE_LABEL } from "@/lib/clients/directory-rules";
+import type { LastVisitFilter } from "@/lib/clients/last-visit-filter";
 import {
   directoryHref,
   overviewRowLinkId,
@@ -33,6 +34,8 @@ export type DirectoryState = {
   q: string;
   filters: DirectoryFilter[];
   sort: DirectorySort;
+  /** "Not seen in N months" / "No recorded visit"; "any" when none is applied. */
+  lastVisit: LastVisitFilter;
   /** The results page being shown, so a link that opens the overview keeps it (Codex P2 on 4a7e9e8f). */
   page: number;
 };
@@ -76,8 +79,15 @@ export function DirectoryResults({
   timeZone?: string;
 }) {
   const archived = state.view === "archived";
-  const filtered = state.q.length > 0 || state.filters.length > 0;
+  const filtered = state.q.length > 0 || state.filters.length > 0 || state.lastVisit !== "any";
 
+  if (data.lastVisitBlocked) {
+    return (
+      <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-5 py-8 text-center text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+        We couldn&apos;t check visit history just now, so that filter can&apos;t be applied. Remove the filter or try again.
+      </div>
+    );
+  }
   if (data.blockedFilters.length > 0) {
     return (
       <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-5 py-8 text-center text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
@@ -111,6 +121,11 @@ export function DirectoryResults({
       {(data.nextUnavailable || data.intakeUnavailable) && !archived && (
         <p role="status" className="text-xs text-amber-700 dark:text-amber-300">
           Some details couldn&apos;t be loaded and are marked Unavailable.
+        </p>
+      )}
+      {state.sort === "lastvisit" && data.lastVisitUnavailable && (
+        <p role="status" className="text-xs text-amber-700 dark:text-amber-300">
+          Visit history is unavailable, so the list is sorted by name.
         </p>
       )}
       {data.sortDegraded && (
@@ -156,8 +171,9 @@ export function LastVisitText({ cell }: { cell: LastVisitCell }) {
   if (cell.kind === "at") {
     return cell.label ? <time dateTime={cell.iso}>{cell.label}</time> : <FormattedDateTime iso={cell.iso} format="date" />;
   }
-  // "in Hone": imported treatment history feeds neither source, so this is not "never seen" (K6).
-  if (cell.kind === "none") return <span>No visit recorded in Hone</span>;
+  // Missing evidence is not absence: imported or uncharted history feeds neither source, so this says only that
+  // nothing is recorded here, never "never seen" and never "overdue" (K6).
+  if (cell.kind === "none") return <span>No recorded visit</span>;
   return <span className="text-neutral-500">Unavailable</span>;
 }
 

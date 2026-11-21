@@ -789,46 +789,11 @@ export function classifyDelivery(
 // INVITATION WINDOW
 // ---------------------------------------------------------------------------
 
-/**
- * The invitation's expiry as an ABSOLUTE moment, in a FIXED zone.
- *
- * V1 renders UTC, deliberately, and the reason is idempotency rather than
- * convenience. Three shapes were tried and only this one holds:
- *
- *   * REMAINING time drifted between retries, moved the payload, moved the
- *     payload-derived key, and let the provider send a second invitation.
- *   * The MINTED window was stable and then lied — "expires in 3 days" on a
- *     send made a day after issuance.
- *   * An absolute instant in the STUDIO's timezone was stable and truthful, and
- *     still wrong: `studios.timezone` is mutable operator state, so correcting
- *     it moved the bytes under a key that had not moved, which the provider
- *     answers with `invalid_idempotent_request` rather than a replay.
- *
- * A fixed zone removes the last mutable input. The payload becomes a pure
- * function of `expires_at` alone, which is exactly what the event-only key
- * requires. UTC is labelled explicitly in the output, so a reader is never left
- * guessing whose clock it is.
- *
- * THE COST, STATED. A prospect reads UTC rather than their studio's local time.
- * That is the launch-scope reduction this slice accepts: the secure invitation
- * page can show local time freely, because a page renders fresh on every visit
- * and has no idempotency key to contradict. Studio-local email copy needs a
- * delivery snapshot this lane deliberately does not build.
- */
-export const INVITATION_EXPIRY_TIMEZONE = "UTC";
-
-export function invitationExpiryLabel(expiresAt: Date): string {
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone: INVITATION_EXPIRY_TIMEZONE,
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    timeZoneName: "short",
-  }).format(expiresAt);
-}
+// Shared with the recipient page and SMS; retain this export for callers.
+export {
+  invitationExpiryLabel,
+  INVITATION_EXPIRY_TIMEZONE,
+} from "@/lib/waitlist/invitation-deadline";
 
 /**
  * Whether an invitation is still live at the authoritative current time.

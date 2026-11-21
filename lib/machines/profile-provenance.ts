@@ -1,3 +1,4 @@
+import { machineModelLabel } from "./display-name";
 import type { EvidenceRef, MachineProfile } from "./profile-contract";
 
 /**
@@ -59,7 +60,7 @@ export function profileProvenance(profile: MachineProfile): ProfileProvenance {
   const confirmed = profile.verification === "device-confirmed";
   const documented = profile.verification === "manufacturer-documented";
   return {
-    title: `${profile.manufacturer} ${profile.model}${profile.variant ? ` (${profile.variant})` : ""}`,
+    title: machineModelLabel(profile),
     versionLabel: `Profile version ${profile.version}`,
     sources,
     confirmation: confirmed ? "confirmed" : documented ? "pending" : "not-applicable",

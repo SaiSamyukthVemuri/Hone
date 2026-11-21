@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { nativeFieldGroups } from "@/lib/machines/charting";
 import { useReportDraft } from "./draft-registry";
+import { useReportVisitDraft } from "@/components/charting-visit-draft";
 import { RangeConfirmationList } from "./range-confirmation-list";
 import { SettingDraftFields } from "./setting-draft-fields";
 import {
@@ -154,6 +155,15 @@ function recordedKeysOf(
   recorded: readonly RecordedGroupIdentity[],
 ): string[] {
   return [...new Set(recorded.map((g) => g.groupKey))].sort();
+}
+
+/**
+ * "Needs attention" on the visit card for a readings save: not while a save is in flight, then when its outcome is unknown, or when it was
+ * refused and nothing is recorded. Pure so the truth table is pinned directly (the unresolved term is only reachable with `recorded` true, a
+ * revision, which this surface's mounted tests cannot drive).
+ */
+export function readingsSaveNeedsAttention(s: { pending: boolean; unresolved: boolean; recorded: boolean; message: string | null }): boolean {
+  return !s.pending && (s.unresolved || (!s.recorded && s.message !== null));
 }
 
 export function MachineReadingEntry({
@@ -349,6 +359,14 @@ export function MachineReadingEntry({
   // REPORTED AS LEVELS TO THE HOST'S REGISTRY (draft-registry.tsx): the current flags on every change of their value, removed on unmount only.
   // The controls that can destroy this save's retry key are outside this component, and they read the registry's derived view.
   useReportDraft({ draft: hasDraft, unresolved: transportHold });
+  // "This visit" (New view): a refused save, or one whose outcome is unknown, needs attention until it is settled. Display only: this reports
+  // and never reads it back. A request still in flight is not yet a failure.
+  useReportVisitDraft(`readings:${useId()}`, {
+    machine: null,
+    draftAreas: [],
+    unsaved: false,
+    attention: readingsSaveNeedsAttention({ pending, ...save }),
+  });
 
   // EVERY DRAFT CHANGE CLOSES THE OPEN SAVE, which is how the retry key keeps
   // meaning what it says: a changed draft is a DIFFERENT save and must mint a

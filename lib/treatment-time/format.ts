@@ -1,6 +1,14 @@
 // Pure helpers and types for the treatment-time system. Safe to import
 // from client components. Server-only queries live in queries.ts.
 
+import { clientCommunicationName, type ClientIdentityFields } from "@/lib/clients/identity";
+
+/** The first word of the communication name (preferred, else stored); the whole name when it has no space. */
+export function treatmentTimeFirstName(client: ClientIdentityFields): string {
+  const full = clientCommunicationName(client);
+  return full.split(/\s+/)[0] || full;
+}
+
 export type TotalTreatmentTime = {
   totalMinutes: number;
   sessionCount: number;
@@ -55,13 +63,16 @@ export function relativeLastSession(iso: string | null): string | null {
 // off. Possessive form reads naturally only with the given name.
 export function buildTreatmentTimeLine(opts: {
   enabled: boolean;
-  clientFirstName: string;
+  /** The client's identity fields, NOT a name string: the line names the client by the name they go by (preferred, else stored),
+   * so no caller can hand it the stored first word. Load them with loadTreatmentTimeNameFields. */
+  client: ClientIdentityFields;
   context: EmailTreatmentTimeContext;
 }): string | null {
   if (!opts.enabled) return null;
+  const clientFirstName = treatmentTimeFirstName(opts.client);
   const { sessionCount, totalMinutes } = opts.context;
   if (sessionCount === 0) {
-    return `This will be ${opts.clientFirstName}'s first electrolysis session.`;
+    return `This will be ${clientFirstName}'s first electrolysis session.`;
   }
   return `Treatment time so far: ${formatMinutes(totalMinutes)} · This will be session ${sessionCount + 1}.`;
 }
