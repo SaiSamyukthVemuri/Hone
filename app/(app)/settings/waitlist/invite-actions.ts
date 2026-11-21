@@ -17,6 +17,7 @@ import {
   admissionCommandAdapter,
   validateInviteInput,
 } from "@/lib/waitlist/invite-to-book-adapter";
+import { estimateWindowCapacityAction } from "./window-capacity-actions";
 import type { InvitationOutcome, InviteToBookInput } from "@/lib/waitlist/invite-to-book-contract";
 
 // ===========================================================================
@@ -193,10 +194,29 @@ export async function inviteToBookAction(formData: FormData): Promise<InviteActi
     return { outcome: null, reason: "admission_unreadable" };
   }
 
-  // THE OVERRIDE IS THE OWNER'S, AND IT IS CHECKED HERE. Only an owner's explicit "Invite anyway" lifts the capacity estimate; for anyone else the flag is
-  // ignored and the invitation meets the same at-zero refusal as a plain one, with no confirmation offered. It lifts that one estimate and nothing else:
-  // the command re-derives the owner and still applies every other check.
-  if (s.beyondEstimate && isOwner) input.beyondEstimate = true;
+  // THE SERVER DECIDES WHETHER THE ESTIMATE IS ZERO, NOT THE PAGE.
+  //
+  // For an owner the server works out the allowance for this very scope (the consultations that fit, less the live invitations competing for the same
+  // dates) before anything is sent:
+  //  - it cannot be read: nothing is sent and the owner is told to try again. An unreadable estimate is never treated as zero and never honours the
+  //    override, even when the field is present;
+  //  - it is zero: an explicit "Invite anyway" from the owner sends, anything else sends nothing and answers "needs confirmation", so a page that
+  //    believed there was room is asked the same question and nothing goes out silently;
+  //  - there is room: the field is ignored completely and the invitation takes the normal path with the real estimate.
+  // Anyone who is not an owner never reaches the override: they take the normal path and meet the usual refusal at zero. The override lifts the
+  // availability estimate and nothing else; the command re-derives the owner and still applies every other check.
+  if (isOwner) {
+    const estimate = await estimateWindowCapacityAction({
+      serviceId,
+      windowDays,
+      allowedWeekdays: s.allowedWeekdays === null ? null : [...s.allowedWeekdays],
+    });
+    if (!estimate.ok) return { outcome: { state: "refused", code: "estimate_unreadable" } };
+    if (estimate.open <= 0) {
+      if (s.beyondEstimate !== true) return { outcome: { state: "refused", code: "needs_estimate_confirmation" } };
+      input.beyondEstimate = true;
+    }
+  }
   const outcome = await admissionCommandAdapter.inviteToBook(input);
 
   // The queue's rendered state changes on a commit — the entry moves to

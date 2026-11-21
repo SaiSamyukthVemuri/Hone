@@ -3,7 +3,8 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { BEYOND_ESTIMATE_CONFIRM_TEXT, BeyondEstimateConfirm, beyondEstimateSubmitStep } from "@/components/waitlist/invite-composer";
+import { BEYOND_ESTIMATE_CONFIRM_TEXT, BeyondEstimateConfirm, beyondEstimateConfirmOpen, beyondEstimateSubmitStep } from "@/components/waitlist/invite-composer";
+import { ESTIMATE_UNREADABLE_COPY, invitationNoticeFor } from "@/lib/waitlist/invite-to-book-contract";
 import { COMPOSER_FIELD_NAMES, inviteSubmissionFromFormData } from "@/lib/waitlist/b4-invitation-draft";
 
 // "Invite anyway" when the estimate says no consultation availability remains. This repo has no jsdom, so a click cannot be dispatched here: the
@@ -84,5 +85,42 @@ describe("the override field", () => {
   });
   it("is false when the field is absent", () => {
     expect(read({})).toBe(false);
+  });
+});
+
+describe("when the server finds the estimate at zero and asks", () => {
+  const asks = { notice: { needsConfirmation: true } };
+  const none = { atZero: false, confirmFor: null, scope: "s", answer: null, dismissed: null };
+  it("the answer carries the same question and marks itself as needing confirmation", () => {
+    const n = invitationNoticeFor({ state: "refused", code: "needs_estimate_confirmation" });
+    expect(n.needsConfirmation).toBe(true);
+    expect(n.message).toBe(BEYOND_ESTIMATE_CONFIRM_TEXT);
+    expect(n.invitationExists).toBe(false);
+  });
+  it("an unreadable estimate is a retryable error in plain words, never a confirmation", () => {
+    const n = invitationNoticeFor({ state: "refused", code: "estimate_unreadable" });
+    expect(n.message).toBe("Couldn\u2019t check availability. Please try again.");
+    expect(n.message).toBe(ESTIMATE_UNREADABLE_COPY);
+    expect(n.needsConfirmation).toBeUndefined();
+    expect(n.tone).toBe("error");
+  });
+  it("no other refusal asks for confirmation", () => {
+    for (const code of ["no_capacity", "already_invited", "not_owner"] as const) expect(invitationNoticeFor({ state: "refused", code }).needsConfirmation).toBeUndefined();
+  });
+  it("the confirmation opens on the server's ask even though the page thought there was room", () => {
+    expect(beyondEstimateConfirmOpen({ ...none, answer: asks })).toBe(true);
+  });
+  it("Cancel dismisses that answer; a new answer asks again", () => {
+    expect(beyondEstimateConfirmOpen({ ...none, answer: asks, dismissed: asks })).toBe(false);
+    expect(beyondEstimateConfirmOpen({ ...none, answer: { notice: { needsConfirmation: true } }, dismissed: asks })).toBe(true);
+  });
+  it("the page's own zero opens it for the scope that was pressed, and only that one", () => {
+    expect(beyondEstimateConfirmOpen({ ...none, atZero: true, confirmFor: "s" })).toBe(true);
+    expect(beyondEstimateConfirmOpen({ ...none, atZero: true, confirmFor: "other" })).toBe(false);
+    expect(beyondEstimateConfirmOpen({ ...none, atZero: false, confirmFor: "s" })).toBe(false);
+  });
+  it("an ordinary answer or none does not open it", () => {
+    expect(beyondEstimateConfirmOpen({ ...none, answer: { notice: {} } })).toBe(false);
+    expect(beyondEstimateConfirmOpen(none)).toBe(false);
   });
 });

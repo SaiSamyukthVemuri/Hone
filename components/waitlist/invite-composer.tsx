@@ -36,6 +36,7 @@ import {
 } from "@/lib/waitlist/b4-invitation-draft";
 import {
   adapterMissingReason,
+  BEYOND_ESTIMATE_CONFIRM_TEXT,
   type AdapterCapabilities,
 } from "@/lib/waitlist/invite-to-book-contract";
 import {
@@ -349,6 +350,22 @@ export function beyondEstimateSubmitStep(input: { atZero: boolean; via: string |
 }
 
 /**
+ * Is the confirmation showing? Two things open it: the page's own estimate reads zero and the owner pressed Send for this scope, or the SERVER found
+ * the estimate at zero and answered "needs confirmation" to a press for this scope. Cancel dismisses that particular answer; a new press makes a new
+ * answer, so it asks again.
+ */
+export function beyondEstimateConfirmOpen(input: {
+  atZero: boolean;
+  confirmFor: string | null;
+  scope: string;
+  answer: { notice: { needsConfirmation?: boolean } } | null;
+  dismissed: object | null;
+}): boolean {
+  if (input.atZero && input.confirmFor === input.scope) return true;
+  return input.answer !== null && input.answer.notice.needsConfirmation === true && input.answer !== input.dismissed;
+}
+
+/**
  * The confirmation when the estimate is zero. "Invite anyway" submits this same form with the one explicit field the server reads; Cancel closes the
  * confirmation and sends nothing. The button is disabled while the send is in flight, so a double press cannot send twice.
  */
@@ -469,9 +486,7 @@ export type CapacityView =
   | { status: "ok"; lines: string[]; /** Invitations the estimate still allows for this scope. 0 means "Invite anyway" asks first. */ open?: number }
   | { status: "unavailable" };
 
-/** Said exactly once, so the words on screen and the words a test pins cannot drift. */
-export const BEYOND_ESTIMATE_CONFIRM_TEXT =
-  "No estimated consultation availability remains. Invite this person anyway? They may find no appointments available.";
+export { BEYOND_ESTIMATE_CONFIRM_TEXT };
 
 /**
  * The rendering half, PURE and exported so the whole surface can be proved
@@ -557,8 +572,13 @@ export function InviteComposerView({
   // confirmation belongs to the scope it was opened for: changing the service or the window closes it, so it can never confirm a scope nobody saw.
   const atZero = capacity.status === "ok" && capacity.open === 0;
   const [confirmFor, setConfirmFor] = useState<string | null>(null);
-  const confirming = atZero && confirmFor === scopeKey(draft);
-  const inlineAnswer = answered !== null && sentKey !== null && sentKey === scopeKey(draft) && !sending ? answered : null;
+  // THE SERVER MAY ASK TOO. If the page thought there was room but the server's own estimate is zero, it sends nothing and answers "needs
+  // confirmation"; the same confirmation then opens here (until the owner cancels it), so nothing is ever sent silently.
+  const [dismissed, setDismissed] = useState<object | null>(null);
+  const answerForScope = answered !== null && sentKey !== null && sentKey === scopeKey(draft) && !sending ? answered : null;
+  const confirming = beyondEstimateConfirmOpen({ atZero, confirmFor, scope: scopeKey(draft), answer: answerForScope, dismissed });
+  // The confirmation carries the question itself, so the bare answer is not shown beside it.
+  const inlineAnswer = answerForScope !== null && answerForScope.notice.needsConfirmation !== true ? answerForScope : null;
   // The answer is inserted ABOVE Send and pushes it down, so a press near the bottom of a phone screen left the answer (and Send) below the fold.
   // When an answer first appears, bring the pair into view with the least movement; focus stays where it was, and an unchanged answer re-rendering
   // does not scroll again (the effect follows the answer, not the render). Reduced motion gets an instant jump.
@@ -871,7 +891,13 @@ export function InviteComposerView({
             source order to get it visually left on a desktop would put it under
             the thumb on every phone. */}
         {confirming ? (
-          <BeyondEstimateConfirm disabled={sendDisabled} onCancel={() => setConfirmFor(null)} />
+          <BeyondEstimateConfirm
+            disabled={sendDisabled}
+            onCancel={() => {
+              setConfirmFor(null);
+              setDismissed(answerForScope);
+            }}
+          />
         ) : (
           <SendInvitationButton
             disabled={sendDisabled}

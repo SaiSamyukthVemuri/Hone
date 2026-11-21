@@ -131,5 +131,30 @@ for (const [label, viewport] of [
       expect(await liveInvitations(p.id)).toBe(1);
       expect(readResendLedger(mark).filter((r) => r.to.toLowerCase() === p.email.toLowerCase())).toHaveLength(1);
     });
+
+    test("the page saw room but the server finds none: Send asks, sends nothing, then Invite anyway sends one", async ({ page }) => {
+      test.setTimeout(120_000);
+      const seed = await seedE2eStudio();
+      const p = await seedWaiting(seed, `late-${label}`);
+      const mark = markResendLedger();
+      await loginAsOwner(page, seed);
+      await page.goto("/settings/waitlist?section=waiting");
+      const row = await openComposer(page, p.name);
+      await expect(row.locator('[data-testid="composer-capacity"]')).toContainText("You can invite", { timeout: T });
+      await expect(row.locator('[data-testid="composer-capacity"]')).not.toContainText("You can invite 0 more people");
+      // The room goes away after the page read it.
+      await makeEstimateZero(seed);
+
+      await row.locator('[data-testid="composer-send"]').click();
+      const confirm = row.locator('[data-testid="composer-beyond-confirm"]');
+      await expect(confirm).toContainText("No estimated consultation availability remains. Invite this person anyway? They may find no appointments available.", { timeout: 60_000 });
+      expect(await liveInvitations(p.id)).toBe(0);
+      expect(readResendLedger(mark).filter((r) => r.to.toLowerCase() === p.email.toLowerCase())).toHaveLength(0);
+
+      await confirm.locator('[data-testid="composer-invite-anyway"]').click();
+      await expect(page.locator('[data-testid="invite-outcome"]').first()).toBeVisible({ timeout: 60_000 });
+      expect(await liveInvitations(p.id)).toBe(1);
+      expect(readResendLedger(mark).filter((r) => r.to.toLowerCase() === p.email.toLowerCase())).toHaveLength(1);
+    });
   });
 }
