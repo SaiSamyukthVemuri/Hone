@@ -1,10 +1,10 @@
--- MACHINE SWITCHES. Forward migration. DRAFT FOR REVIEW: not sealed, not applied.
--- Depends on 0362 (platform_rollout_enabled_for).
+-- MACHINE SWITCHES. Forward migration.
+-- Depends on the platform rollout control (platform_rollout_enabled_for).
 --
 -- ONE SETTING PER STUDIO: which machine models are ON, and the default (a model or "Ask at each visit"). Turning a model on creates NO machine
 -- record; a unit is made lazily, inside a real block save, by ensure_studio_machine_for_save. Every studio is seeded ONCE (here for existing
 -- studios, by an AFTER INSERT trigger for new ones); nothing re-seeds, and nothing reads "absent row = enabled".
--- Also amends apply_block_machine_identity (0310, frozen) so the xCell Pur model can be recorded with a legacy-column mode.
+-- Also amends apply_block_machine_identity (frozen) so the xCell Pur model can be recorded with a legacy-column mode.
 
 begin;
 set local lock_timeout = '5s';
@@ -292,8 +292,8 @@ end $$;
 -- ---------------------------------------------------------------------------
 -- DB-LEVEL FREEZE (the application freeze in the charting actions is read-then-write and can race; this closes the race in the database).
 -- A block that already holds readings may not CHANGE its machine identity (model, unit or machine mode) once one is set. First assignment
--- (null to a value) stays allowed; 0310 already limits what may be assigned. Always on, not behind the rollout: no existing path changes an
--- identity under readings (0310 refuses it), so there is nothing for an Off state to preserve, and the protection is for existing records.
+-- (null to a value) stays allowed; the existing identity command already limits what may be assigned. Always on, not behind the rollout: no existing path changes an
+-- identity under readings (that command refuses it), so there is nothing for an Off state to preserve, and the protection is for existing records.
 -- RACE: the identity UPDATE holds the block row lock when this trigger runs; every reading write takes FOR SHARE on its block row first
 -- (the second trigger, SECURITY INVOKER so it locks only a block the caller may write), so a reading cannot commit between this check and the identity update, and the check then sees committed readings.
 -- ---------------------------------------------------------------------------
@@ -352,7 +352,7 @@ create trigger treatment_setup_readings_share_lock_block before insert or update
   for each row execute function public.reading_write_share_lock_block();
 
 -- ---------------------------------------------------------------------------
--- MIGRATION A: apply_block_machine_identity (0310, frozen) re-created from its CURRENT body, asserted by md5 below, with the xCell Pur
+-- MIGRATION A: apply_block_machine_identity (frozen) re-created from its CURRENT body, asserted by md5 below, with the xCell Pur
 -- model accepted for the three legacy-column modes. Everything else in the body is unchanged.
 -- ---------------------------------------------------------------------------
 do $$
@@ -406,13 +406,13 @@ begin
   -- own write produced and no separate read can race it.
   --
   -- THE SESSION MUST BE LIVE, AND IS LOCKED BEFORE THE BLOCK (Codex 4486745915).
-  -- assert_session_writable (0166, frozen) does not look at sessions.deleted_at, and
-  -- soft_delete_session (0167) stamps the session and leaves its blocks alone, so a direct
+  -- assert_session_writable (frozen) does not look at sessions.deleted_at, and
+  -- soft_delete_session stamps the session and leaves its blocks alone, so a direct
   -- call could change the machine identity of a block in a removed session. The session is
   -- read from the block (a plain read, no lock), then locked FOR SHARE with the liveness
   -- test in the same statement, then the block is locked FOR UPDATE and must still belong
-  -- to it. That is the documented order: SESSION, then BLOCK (0166 assert_block_in_session,
-  -- 0223 assert_setup_scope; copy_session_setup and correct_finalized_session hold the
+  -- to it. That is the documented order: SESSION, then BLOCK (assert_block_in_session,
+  -- assert_setup_scope; copy_session_setup and correct_finalized_session hold the
   -- session FOR UPDATE and then want its blocks). FOR SHARE is the same mode the
   -- record_setup_submission_with_identity wrapper already holds, so it is a no-op there.
   select b.session_id into v_session_id
@@ -459,7 +459,7 @@ begin
       coalesce(nullif(btrim(coalesce(p_profile_id, '')), ''), '') || '|' ||
       coalesce(p_studio_machine_id::text, '') || '|' ||
       coalesce(nullif(btrim(coalesce(p_mode_key, '')), ''), ''));
-    -- THE READINGS KIND NEVER REPLAYS FROM HERE (Privacy RV-1). A readings replay is decided by 0223's own submission claim
+    -- THE READINGS KIND NEVER REPLAYS FROM HERE (Privacy RV-1). A readings replay is decided by the submission command's own claim
     -- (record_treatment_setup_submission, in the wrapper): this function is reached only for a submission the wrapper judged NEW.
     -- If the claim were ever gone while this key's receipt remained, answering from the receipt would hand back a stale version for
     -- readings that were just written; a new submission instead writes a fresh receipt over the stale one (below).
@@ -513,7 +513,7 @@ begin
     -- THE MODE MUST BE ONE THIS UNIT'S PROFILE VERSION PUBLISHED, AND ITS OPTION MUST BE FITTED. Only modes the published contract lists
     -- for the unit's profile and version are accepted, and an option-gated mode only when the option is fitted. This sits AFTER the
     -- same-key receipt replay and the stale-version check above, so a committed attempt is still answered from its receipt and never
-    -- becomes an error, and the lock order is unchanged. It mirrors the 0223 submission command: the contract row must exist (fail
+    -- becomes an error, and the lock order is unchanged. It mirrors the submission command: the contract row must exist (fail
     -- closed), and the unit's own installed options decide an option-gated mode.
     if v_mode is not null and not v_pur_legacy then
       select c.requires_installed_option into v_requires
@@ -551,7 +551,7 @@ begin
   end if;
 
 
-  -- 0364: a NEW assignment of the Pur model with a legacy-column mode needs the studio's switch ON and the rollout ON, decided in the database.
+  -- A NEW assignment of the Pur model with a legacy-column mode needs the studio's switch ON and the rollout ON, decided in the database.
   -- An EXISTING block whose identity is unchanged (same model, unit and mode) is not a new assignment and still saves with either off.
   -- A failed rollout read raises, so this fails closed.
   v_new_identity := v_cur_profile is distinct from v_profile
