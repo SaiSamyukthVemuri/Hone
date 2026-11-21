@@ -626,3 +626,42 @@ describe("a studio with no open admission round", () => {
     expect(log).toHaveLength(3);
   }, 40_000);
 });
+
+// ---- fairness across studios in the BACKGROUND round -------------------------------------------------------------------------------------------
+// The claim command walks studios oldest batch first and does not rotate between calls, so a background round that asked for `total` from one studio
+// would give that studio every slot until its batch is done. A background round claims one item per studio per pass instead.
+describe("the background round shares its slots across studios", () => {
+  it("TWO studios pending: both get items in the FIRST background round, the older one first, and everything is later sent exactly once", async () => {
+    const a = await seed("fa", {});
+    const b = await seed("fb", {});
+    const idsA = await entries(a, 12);
+    const idsB = await entries(b, 12);
+    expect(await batch(a, idsA, { fit: 0 })).toMatchObject({ ok: true, result: "created" });
+    expect(await batch(b, idsB, { fit: 0 })).toMatchObject({ ok: true, result: "created" });
+    const log: string[] = [];
+    const d = deps(() => "accepted", log);
+    const first = await runBatchChunk(d, { perStudio: 5, total: 5, leaseSeconds: 120 }, { mode: "background" });
+    expect(first.ok && first.claimed).toBe(5);
+    const firstEntries = first.ok ? first.outcomes.map((o) => o.entryId) : [];
+    const fromA = firstEntries.filter((e) => idsA.includes(e)).length;
+    const fromB = firstEntries.filter((e) => idsB.includes(e)).length;
+    expect({ fromA, fromB }).toEqual({ fromA: 3, fromB: 2 });
+    expect(first.ok && first.outcomes.every((o) => o.status === "sent")).toBe(true);
+    const rest = await drain(d);
+    expect(rest.filter((o) => o.status === "sent")).toHaveLength(19);
+    expect(new Set(log).size).toBe(24);
+    expect(log).toHaveLength(24);
+  });
+
+  it("one studio alone still fills the whole round (5 items) and the whole batch is sent", async () => {
+    const a = await seed("fc", {});
+    const ids = await entries(a, 12);
+    await batch(a, ids, { fit: 0 });
+    const log: string[] = [];
+    const d = deps(() => "accepted", log);
+    const first = await runBatchChunk(d, { perStudio: 5, total: 5, leaseSeconds: 120 }, { mode: "background" });
+    expect(first.ok && first.claimed).toBe(5);
+    expect((await drain(d)).filter((o) => o.status === "sent")).toHaveLength(7);
+    expect(new Set(log).size).toBe(12);
+  });
+});

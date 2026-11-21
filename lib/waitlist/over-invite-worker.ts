@@ -66,7 +66,7 @@ export async function runBatchChunk(
   const m = mode as { mode?: unknown; batchId?: unknown; actorUserId?: unknown } | undefined;
   const validScoped = m?.mode === "scoped" && typeof m.batchId === "string" && m.batchId !== "" && typeof m.actorUserId === "string" && m.actorUserId !== "";
   if (!validScoped && m?.mode !== "background") return { ok: true, outcomes: [], claimed: 0 };
-  const claimed = await deps.claim(limits, mode as ClaimMode);
+  const claimed = await claimRound(deps, limits, mode as ClaimMode);
   if (!claimed.ok) return { ok: false, code: "claim_failed" };
   if (validScoped) {
     const s = mode as Extract<ClaimMode, { mode: "scoped" }>;
@@ -80,6 +80,30 @@ export async function runBatchChunk(
     outcomes.push(await runOne(deps, item));
   }
   return { ok: true, outcomes, claimed: claimed.items.length };
+}
+
+/**
+ * THE BACKGROUND ROUND IS FAIR ACROSS STUDIOS. The claim command walks studios oldest batch first and does not rotate between calls, so one claim of
+ * `total` slots with `perStudio = total` hands every slot to the oldest studio, round after round, until its whole batch is done: every other studio
+ * waits for it. So a background round claims ONE item per studio per pass (`perStudio` 1) and repeats the pass until the round's slots are full or a
+ * pass finds nothing. Every studio with pending items that the round has room for therefore progresses in every round, and a single studio on its own
+ * still fills the whole round (one item per pass, `total` passes) so its pace is unchanged. Only the BACKGROUND mode does this: the owner's own batch
+ * (scoped) is one studio's by construction and is claimed in one call as before.
+ * The command cannot reach beyond `total` studios in one round, because it has no rotation: more studios than slots still wait for an earlier
+ * studio's items to finish. That is bounded by the round size, not by a whole batch.
+ */
+async function claimRound(deps: WorkerDeps, limits: { perStudio: number; total: number; leaseSeconds: number }, mode: ClaimMode): Promise<ClaimOutcome> {
+  if (mode.mode !== "background") return deps.claim(limits, mode);
+  const items: ClaimedItem[] = [];
+  for (let pass = 0; pass < limits.total && items.length < limits.total; pass++) {
+    const left = limits.total - items.length;
+    const got = await deps.claim({ ...limits, perStudio: 1, total: left }, mode);
+    // A failed pass keeps what earlier passes already leased: those items are processed, never dropped. A failure on the FIRST pass is the whole answer.
+    if (!got.ok) return items.length > 0 ? { ok: true, items } : got;
+    if (got.items.length === 0) break;
+    items.push(...got.items);
+  }
+  return { ok: true, items };
 }
 
 async function runOne(deps: WorkerDeps, item: ClaimedItem): Promise<ItemOutcome> {

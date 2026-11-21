@@ -12,8 +12,14 @@ const issued: IssuedInvitation = { invitationId: "inv", rawToken: "TOKEN", issue
 function deps(over: Partial<WorkerDeps> & { items?: ClaimedItem[] } = {}) {
   const calls: string[] = [];
   const seen: { itemId: string; studioId: string; entryId: string }[] = [];
+  // Like the real claim, a leased item is not handed out again: the first call returns the items, later calls find nothing.
+  let served = false;
   const d: WorkerDeps = {
-    claim: async () => ({ ok: true, items: over.items ?? [item(1)] }),
+    claim: async () => {
+      const items = served ? [] : (over.items ?? [item(1)]);
+      served = true;
+      return { ok: true, items };
+    },
     admit: async () => ({ ok: true, result: "admitted", issued }),
     settle: async (t, o, r) => (calls.push(`settle:${t.itemId}:${o}:${r}`), seen.push(t), { ok: true, result: "settled" }),
     deliver: async () => (calls.push("deliver"), "accepted"),

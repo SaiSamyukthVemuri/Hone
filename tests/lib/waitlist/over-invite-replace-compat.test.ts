@@ -194,3 +194,37 @@ describe("the progress view of an item a replace has reset", () => {
     expect(t).toMatchObject({ ended: 2, otherFailed: 1, refused: 0 });
   });
 });
+
+describe("a transient replace failure puts the item back as the kind it was", () => {
+  const rows = (kind: "refused" | "unknown") => {
+    const calls: { outcome: string; reason: string | null; expected: string | null | undefined }[] = [];
+    return {
+      calls,
+      deps: {
+        kind,
+        stillRetryable: async () => ({ state: kind === "refused" ? "failed" : "unknown", invitationId: "inv-1" }),
+        replace: async () => ({ ok: false as const, code: "unavailable" as const }),
+        deliver: async () => { throw new Error("must not deliver"); },
+        settle: async (_t: unknown, outcome: string, reason: string | null, expected?: string | null) => (calls.push({ outcome, reason, expected }), { ok: true as const, result: "settled" }),
+        sleep: async () => {},
+      },
+    };
+  };
+  it("the mark is followed by a put-back under the ORIGINAL kind's reason, guarded by the state the mark set", async () => {
+    for (const [kind, reason] of [["refused", "delivery_refused"], ["unknown", "delivery_unknown"]] as const) {
+      const w = rows(kind);
+      const r = await retryDeliveries(w.deps as never, target);
+      expect(r[0], kind).toEqual({ entryId: "e", status: "skipped", reason: "replace_unavailable" });
+      expect(w.calls, kind).toEqual([
+        { outcome: "failed", reason: "retry_started", expected: kind === "refused" ? "failed" : "unknown" },
+        { outcome: "failed", reason, expected: "failed" },
+      ]);
+    }
+  });
+  it("what is put back is offered to the SAME retry kind again and counted as that kind, never as the other", () => {
+    const refused = { state: "failed", reason_class: "delivery_refused", issued_at: null };
+    const unknown = { state: "failed", reason_class: "delivery_unknown", issued_at: null };
+    expect(tallyItems([refused])).toMatchObject({ refused: 1, unknown: 0, unknownRetryable: 0 });
+    expect(tallyItems([unknown])).toMatchObject({ refused: 0, unknown: 1, unknownRetryable: 1 });
+  });
+});
