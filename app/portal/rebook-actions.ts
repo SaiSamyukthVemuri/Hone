@@ -2,6 +2,7 @@
 
 import { loadTreatmentTimeNameFields } from "@/lib/treatment-time/client-first-name";
 import { revalidatePath } from "next/cache";
+import { findLiveDuplicateAppointment, isLiveRepeatViolation } from "@/lib/booking/live-duplicate";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { requirePortalSessionForAction } from "@/lib/portal/session";
 import {
@@ -582,6 +583,19 @@ export async function bookAnotherAppointmentAction(
     return refuse("unavailable", PORTAL_REBOOK_GENERIC_REFUSAL);
   }
 
+  // A REPEAT OF A BOOKING THAT ALREADY EXISTS. The client is the signed-in one (`clientId` is the session's own). With no practitioner named the slot
+  // check above passes while another practitioner is free, so a repeat of the same rebook would be assigned to them and the client would hold two
+  // appointments at one time. If they already hold a live appointment for this service at this exact time, write nothing and answer as a taken slot
+  // (the first request's result is the one that carried the management link, which a repeat cannot mint). An unreadable lookup falls through to the
+  // normal write, as before. Narrows the race, does not close it: see lib/booking/live-duplicate.ts.
+  const repeat = await findLiveDuplicateAppointment(admin, {
+    studioId: studio.id,
+    clientId,
+    serviceId,
+    startsAtIso: start.toISOString(),
+  });
+  if (repeat.state === "found") return refuse("slot_taken", PORTAL_REBOOK_SLOT_TAKEN);
+
   const appointmentToken = generateAppointmentToken();
   const { data: rpcRows, error: rpcErr } = await admin.rpc(
     "create_public_appointment",
@@ -613,7 +627,7 @@ export async function bookAnotherAppointmentAction(
   if (rpcErr || !createdId) {
     // 23P01 = the actual-overlap GiST exclusion constraint. HB001 = migration
     // 0152's soft-buffer trigger. Both mean the same thing to a client.
-    const collided = rpcErr?.code === "23P01" || rpcErr?.code === "HB001";
+    const collided = rpcErr?.code === "23P01" || rpcErr?.code === "HB001" || isLiveRepeatViolation(rpcErr);
     // The command reports every collision — overlap, buffer, block, break — as
     // `time_unavailable`. `not_a_public_slot` belongs here too: it means the
     // instant stopped being an offered slot between the check above and the

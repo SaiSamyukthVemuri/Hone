@@ -276,6 +276,8 @@ export const BROWSER_GROUPS = {
       // #1424 own-calendar-first default, 1280/390 matrix (opt-in: self-skips unless CAL_OWN_FIRST_E2E=1, so a targeted lane lists it but runs nothing).
       "calendar-own-first.spec.ts",
       "calendar-day-layout.spec.ts",
+      // Five active practitioners on the Day and Week views (1280/390): attribution, no overlap, and per-practitioner availability.
+      "calendar-five-practitioners.spec.ts",
       "calendar-day-layout-single.spec.ts",
       // HON-48 team day view: five synthetic practitioners in one-column-per-
       // practitioner layout, Los Angeles date boundaries, same-practitioner

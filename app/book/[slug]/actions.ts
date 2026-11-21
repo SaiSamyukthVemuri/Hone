@@ -5,6 +5,7 @@ import { CLIENT_NAME_MAX, CLIENT_NAME_TOO_LONG } from "@/lib/clients/identity";
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { isLiveRepeatViolation } from "@/lib/booking/live-duplicate";
 import {
   limitPublicSlots,
   limitPublicBooking,
@@ -1605,7 +1606,9 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     // only fires on a rare race). Both map to the SAME safe copy, never the raw
     // DB message or SQLSTATE. A rejected booking must NOT trigger a confirmation
     // email, so we return before any send path.
-    if (rpcErr?.code === "23P01" || rpcErr?.code === "HB001") {
+    // A unique violation on the one-live-appointment rule is a repeat of a booking that already exists (a simultaneous second submit that was given another
+    // practitioner). It gets the SAME copy as a taken slot, so an unauthenticated visitor learns nothing about who holds an appointment.
+    if (rpcErr?.code === "23P01" || rpcErr?.code === "HB001" || isLiveRepeatViolation(rpcErr)) {
       console.error(
         JSON.stringify({
           event: "booking_slot_collision",

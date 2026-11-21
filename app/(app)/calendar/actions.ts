@@ -6,6 +6,7 @@ import { CLIENT_NAME_MAX, CLIENT_NAME_TOO_LONG } from "@/lib/clients/identity";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { findLiveDuplicateAppointment, isLiveRepeatViolation } from "@/lib/booking/live-duplicate";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { getAvailableSlots, INTERNAL_SLOT_PACKING } from "@/lib/booking/slots";
 import { captureServerEvent } from "@/lib/analytics/server";
@@ -244,6 +245,22 @@ export async function bookAppointmentForClientAction(
   if (start.getTime() <= Date.now()) {
     return { ok: false, error: "That time is in the past. Please choose a future time." };
   }
+  // A REPEAT OF A BOOKING THAT ALREADY EXISTS. Everything above (the practitioner's own authority, the service and client in this studio, a real future
+  // time) has been checked for THIS request. If this client already holds a live appointment for this service at this exact time with this
+  // practitioner, the request is a double click or a retry of a booking that was accepted: answer with it, write nothing, and do not run the slot check
+  // below, which would now find the slot taken by the very appointment being asked for and call a successful booking a failure. Narrows the race, does
+  // not close it: see lib/booking/live-duplicate.ts. An unreadable lookup falls through to the normal write, which is exactly the behaviour before.
+  const repeat = await findLiveDuplicateAppointment(createAdminClient(), {
+    studioId: studio.id,
+    clientId,
+    serviceId,
+    startsAtIso: start.toISOString(),
+    practitionerId: targetPractitionerId,
+  });
+  if (repeat.state === "found") {
+    revalidatePath("/calendar");
+    return { ok: true, appointmentId: repeat.appointmentId };
+  }
   // Effective duration: drag-derived override when present (only
   // possible on the override path, gated above), otherwise the
   // service default. Conflict + buffer + blockout enforcement still
@@ -343,6 +360,23 @@ export async function bookAppointmentForClientAction(
     },
   );
   if (rpcErr) {
+    // The database's one-live-appointment rule: a simultaneous repeat of this very booking lost the race to the first. It is not a failure to report; the
+    // booking exists. Answer with it, exactly as the earlier repeat check does. If it cannot be found (it was cancelled in the meantime), the time is not
+    // ours any more: the ordinary taken-slot answer.
+    if (isLiveRepeatViolation(rpcErr)) {
+      const existing = await findLiveDuplicateAppointment(admin, {
+        studioId: studio.id,
+        clientId,
+        serviceId,
+        startsAtIso: start.toISOString(),
+        practitionerId: targetPractitionerId,
+      });
+      if (existing.state === "found") {
+        revalidatePath("/calendar");
+        return { ok: true, appointmentId: existing.appointmentId };
+      }
+      return { ok: false, error: "That time is no longer available. Please choose another time.", code: "slot_taken" };
+    }
     // 23P01 = the per-resource exclusion: the slot was taken between the
     // advisory pre-check and the insert. Safe, structured; no raw DB text.
     if (rpcErr.code === "23P01") {

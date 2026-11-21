@@ -10,7 +10,7 @@ import { dropSynthStudio, seedSynthStudioB, type SynthStudio } from "./helpers/s
 //
 // A booking request key is meant to make a RETRY or a DOUBLE SUBMIT of one booking safe. Before it is designed around a failure mode, this file measures
 // what the public booking command does TODAY when the same booking is submitted twice at once (two browser tabs, a double click, a retry after a lost
-// answer). It does not test the key (it does not exist yet); it records the behaviour the key has to improve.
+// answer). The natural key (client, service, start) is that key, held by a unique rule in the database; cases 1 and 2 record the behaviour that was already right and case 3 the behaviour the rule changed.
 //
 // WHAT THE COMMAND DOES (read from the latest definitions, MEASURED below): the public command first locks the studio's own row (`select ... for update`)
 // and then takes the studio capacity advisory lock, so two submits to one studio SERIALISE; they never race to the insert. Measured on a fresh stack: the
@@ -19,8 +19,8 @@ import { dropSynthStudio, seedSynthStudioB, type SynthStudio } from "./helpers/s
 //   1. studio with capacity OFF (studio-wide exclusion): the second submit is REFUSED as unavailable. It is not replayed (the client who lost the answer
 //      is told the slot is gone) and it is not duplicated.
 //   2. capacity ON, a practitioner NAMED: the per-practitioner exclusion refuses the second submit, the same way.
-//   3. capacity ON, NO practitioner named ("any available"): the second submit is judged against the practitioners who are still free, so it can be
-//      ASSIGNED TO ANOTHER PRACTITIONER. That is a duplicate booking for one client at one time, and it is the defect a request key closes.
+//   3. capacity ON, NO practitioner named ("any available"): before the one-live-appointment rule the second submit was judged against the practitioners
+//      who were still free and ASSIGNED TO ANOTHER PRACTITIONER, a duplicate booking for one client at one time. The rule now refuses it (unique violation).
 // Each test names its outcome so a change in the command's behaviour (or a key that starts replaying) is a visible, deliberate edit here.
 
 let B: SynthStudio;
@@ -135,18 +135,32 @@ describe("capacity ON, a practitioner named: the per-practitioner exclusion refu
   }, 40_000);
 });
 
-describe("capacity ON, no practitioner named: the second submit is assigned to ANOTHER practitioner (the duplicate a key closes)", () => {
-  it("both submits are created, for two different practitioners, for the same client at the same start", async () => {
+describe("capacity ON, no practitioner named: the second submit is refused by the one-live-appointment rule (it used to land on another practitioner)", () => {
+  it("one appointment for the client at that start; the second raises the rule's unique violation", async () => {
     await enableCapacity();
     const start = startsAt(5, 12);
-    const { a, b, bWaited } = await doubleSubmit(start, null);
-    expect(bWaited).toEqual({ type: "Lock", event: "transactionid" });
-    expect(a.result).toBe("created");
-    // THE PREMISE: the second is NOT refused; it lands on another free practitioner.
-    expect(b.result).toBe("created");
+    const A = await conn();
+    const Bc = await conn();
+    try {
+      const bPid = (await Bc.query<{ pid: number }>(`select pg_backend_pid() as pid`)).rows[0].pid;
+      await A.query("begin");
+      const a = (await submit(A, start, null)).rows[0];
+      const bPromise = submit(Bc, start, null).then(() => null, (e: { code?: string; message?: string }) => e);
+      const bWaited = await waitUntilBlocked(bPid);
+      await A.query("commit");
+      const bError = await bPromise;
+      expect(bWaited).toEqual({ type: "Lock", event: "transactionid" });
+      expect(a.result).toBe("created");
+      // THE FIX: the second is NOT assigned to another free practitioner; the database refuses it.
+      expect(bError?.code).toBe("23505");
+      expect(bError?.message).toContain("appointments_one_live_per_client_service_start");
+    } finally {
+      await A.query("rollback").catch(() => undefined);
+      await A.end();
+      await Bc.end();
+    }
     const rows = await confirmedAt(start);
-    expect(rows).toHaveLength(2);
-    expect(new Set(rows.map((r) => r.practitioner_id)).size).toBe(2);
+    expect(rows).toHaveLength(1);
     expect(new Set(rows.map((r) => r.client_id)).size).toBe(1);
   }, 40_000);
 });
