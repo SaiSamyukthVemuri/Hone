@@ -51,6 +51,7 @@ import {
   UNKNOWN_JOINED_AT_COPY,
 } from "@/lib/waitlist/entry-provenance";
 import { EntryAvailability } from "@/components/waitlist/entry-availability";
+import { OverInviteLink } from "@/components/waitlist/over-invite-link";
 import { WaitlistTextsSetting } from "@/components/waitlist/waitlist-texts-setting";
 import { EntrySmsConsent, type SmsConsentView } from "@/components/waitlist/entry-sms-consent";
 import { AddToWaitlistPanel } from "@/components/waitlist/add-to-waitlist-panel";
@@ -826,6 +827,8 @@ export default async function WaitlistSettingsPage({
       {/* Absent only on a row read before 0206; the column defaults FALSE, so
           absent displays as OFF. */}
       <WaitlistTextsSetting initial={studio.send_waitlist_invitation_sms === true} />
+      {/* Owner-only: the page above already refuses a non-owner, and the link states the check itself. */}
+      <OverInviteLink isOwner={practitioner.role === "owner"} />
       {/* THE ALLOWANCE, ABOVE THE WAITLIST. Nothing to type: it is read from availability. */}
       <section
         data-testid="invitation-allowance"
@@ -878,6 +881,9 @@ export default async function WaitlistSettingsPage({
         </Link>
         <Link href="/settings/waitlist/released" className="underline">
           Released and expired history
+        </Link>
+        <Link href="/settings/waitlist/archived" className="underline">
+          Archived entries
         </Link>
       </p>
 

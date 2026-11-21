@@ -121,6 +121,10 @@ export function clientManageDisabledMessage(studioName?: string | null): string 
 export const PORTAL_OFF_STAFF_MESSAGE =
   "Client portal access is off for your studio. Clients cannot sign in, and no portal links are sent. Reminders and appointment emails are unaffected.";
 
+/** HON-47. Shown in place of the staff "New message" composer when client portal access is off. */
+export const PORTAL_MESSAGES_OFF_NOTE =
+  "Client portal is off for this studio, so new portal messages can't be sent. Earlier messages stay visible here.";
+
 export function clientPortalDisabledMessage(studioName?: string | null): string {
   return `Online client access isn't available for ${contact(studioName)}. Please contact the studio directly about your appointments, forms or care instructions.`;
 }

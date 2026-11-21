@@ -565,7 +565,7 @@ describe("0247 matching RPC caller and actual renderer (offline)", () => {
     const dto = reminder(withIntake); const s = await setup(dto, "reminder_24h", withIntake ? "reminder_with_intake" : "reminder_only");
     const { parseEmailOperationRender } = await import("@/lib/email/operation-state");
     const { buildAppointmentEmailOperationPayload } = await import("@/lib/email/send-appointment");
-    const closed = parseEmailOperationRender(dto)!; const payload = buildAppointmentEmailOperationPayload(closed, "reminder_24h", "appointment", "both")!;
+    const closed = parseEmailOperationRender(dto)!; const payload = buildAppointmentEmailOperationPayload(closed, "reminder_24h", "appointment", "both", undefined, true)!;
     expect(payload.text).toContain("10m"); expect(payload.text).toContain("session 2"); expect(payload.text).toContain("Synthetic address");
     expect(payload.replyTo).toBe("owner@harness.local"); expect(payload.attachments).toBeUndefined();
     expect(payload.text.includes("/intake/")).toBe(withIntake);
@@ -583,7 +583,7 @@ describe("0247 matching RPC caller and actual renderer (offline)", () => {
   it("standalone intake has no contact Reply-To, attachments, practitioner or clinical line", async () => {
     const s = await setup(intake()); const { parseEmailOperationRender } = await import("@/lib/email/operation-state");
     const { buildAppointmentEmailOperationPayload } = await import("@/lib/email/send-appointment");
-    const payload = buildAppointmentEmailOperationPayload(parseEmailOperationRender(intake())!, "reminder_24h", "appointment", "both")!;
+    const payload = buildAppointmentEmailOperationPayload(parseEmailOperationRender(intake())!, "reminder_24h", "appointment", "both", undefined, true)!;
     expect(payload.replyTo).toBeUndefined(); expect(payload.attachments).toBeUndefined(); expect(payload.text).not.toContain("Treatment time");
     expect(await s.run()).toMatchObject({ kind: "observed" }); expect(s.fetchGuard).not.toHaveBeenCalled();
   });

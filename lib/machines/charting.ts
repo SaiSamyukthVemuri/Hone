@@ -30,6 +30,7 @@
  * this slice.
  */
 
+import { machineModelLabel } from "./display-name";
 import {
   findMode,
   modeFields,
@@ -405,9 +406,7 @@ export function priorSetupView(
   }
 
   return {
-    machine: `${profile.manufacturer} ${profile.model}${
-      profile.variant ? ` (${profile.variant})` : ""
-    }`,
+    machine: machineModelLabel(profile),
     profileId: profile.profileId,
     profileVersion: setup.profileVersion,
     modeLabel: mode?.nativeLabel ?? setup.modeKey,

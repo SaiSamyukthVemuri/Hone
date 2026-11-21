@@ -17,6 +17,7 @@ import type {
 } from "@/lib/sessions/appointment-prep-memory";
 import type { BlockArea } from "@/lib/sessions/block-areas";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { mayBeTruncated } from "@/lib/supabase/row-cap";
 
 // THE loader behind every "last treatment" surface changed by this PR.
 //
@@ -247,6 +248,19 @@ async function selectFromCandidates<T extends SessionWithLoadedEntries>(
     return { status: "unavailable" };
   }
 
+  // Same fail-closed rule as the batched read: a result at the API row cap may have been cut.
+  if (mayBeTruncated((data ?? []).length)) {
+    console.error(
+      JSON.stringify({
+        event: "last_charted_treatment_blocks_row_cap_reached",
+        code: null,
+        studio_id: studioId,
+        candidate_count: candidates.length,
+        at: new Date().toISOString(),
+      }),
+    );
+    return { status: "unavailable" };
+  }
   const rows = (data ?? []) as unknown as RawBlock[];
   const bySession = groupBlocksBySession(rows);
   // THE selector, not a second copy of its rule. `candidates` is already the
@@ -405,6 +419,10 @@ export type AppointmentPrepLoad = {
     // The newest eligible row's legacy session_notes, matching what the
     // pre-Session-1D page rendered.
     legacySessionNotes: PrepNarrativeItem | null;
+    // The newest eligible (live, non-void, before the visit) session, charted or not: "the latest visit".
+    // Lets the dashboard say when the plan note is from an EARLIER visit than this one. Optional so a
+    // caller that builds a narrative by hand is unaffected.
+    latestVisit?: { id: string; at: string } | null;
   };
 };
 
@@ -490,6 +508,7 @@ export async function loadLastChartedTreatmentForClient(input: {
   const narrative = {
     plan: newestPlanOf(candidates),
     legacySessionNotes: newestLegacyNotesOf(candidates),
+    latestVisit: candidates[0] ? { id: candidates[0].id, at: candidates[0].started_at } : null,
   };
 
   const outcome = await selectFromCandidates(input.studioId, candidates);
@@ -689,6 +708,20 @@ export async function loadLastChartedTreatmentsForClients(input: {
         }),
       );
       blocksUnavailable = true;
+    } else if (mayBeTruncated((blockData ?? []).length)) {
+      // FAIL CLOSED. This read is ordered by sort_order, not recency, across every candidate session, so a
+      // result at the API row cap may have lost blocks of ANY session, the newest included. A cut read is not an
+      // answer: say "could not be loaded" rather than build a treatment from part of the blocks.
+      console.error(
+        JSON.stringify({
+          event: "appointment_prep_blocks_batch_row_cap_reached",
+          code: null,
+          studio_id: input.studioId,
+          candidate_count: allCandidateIds.length,
+          at: new Date().toISOString(),
+        }),
+      );
+      blocksUnavailable = true;
     } else {
       blocksBySession = groupBlocksBySession(
         (blockData ?? []) as unknown as RawBlock[],
@@ -703,6 +736,7 @@ export async function loadLastChartedTreatmentsForClients(input: {
     const narrative = {
       plan: newestPlanOf(candidates),
       legacySessionNotes: newestLegacyNotesOf(candidates),
+      latestVisit: candidates[0] ? { id: candidates[0].id, at: candidates[0].started_at } : null,
     };
 
     if (blocksUnavailable) {

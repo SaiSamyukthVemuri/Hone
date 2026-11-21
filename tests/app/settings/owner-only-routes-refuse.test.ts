@@ -59,7 +59,9 @@ const loaders: Record<string, () => Promise<PageModule>> = {
   "waitlist/page.tsx": () => import("@/app/(app)/settings/waitlist/page"),
   "waitlist/replies/page.tsx": () => import("@/app/(app)/settings/waitlist/replies/page"),
   "waitlist/search/page.tsx": () => import("@/app/(app)/settings/waitlist/search/page"),
+  "waitlist/over-invite/page.tsx": () => import("@/app/(app)/settings/waitlist/over-invite/page"),
   "waitlist/released/page.tsx": () => import("@/app/(app)/settings/waitlist/released/page"),
+  "waitlist/archived/page.tsx": () => import("@/app/(app)/settings/waitlist/archived/page"),
   "availability/page.tsx": () => import("@/app/(app)/settings/availability/page"),
   "services/page.tsx": () => import("@/app/(app)/settings/services/page"),
   "machines/page.tsx": () => import("@/app/(app)/settings/machines/page"),
@@ -102,7 +104,10 @@ const OWNER_ONLY_ROUTES: Record<string, string> = {
   "/settings/waitlist/replies": "waitlist/replies/page.tsx",
   // Owner-only, read-only name search and recorded invitation history over the owner's waitlist.
   "/settings/waitlist/search": "waitlist/search/page.tsx",
+  // Owner-only: invite beyond the estimated capacity, through the batch commands.
+  "/settings/waitlist/over-invite": "waitlist/over-invite/page.tsx",
   "/settings/waitlist/released": "waitlist/released/page.tsx",
+  "/settings/waitlist/archived": "waitlist/archived/page.tsx",
   "/settings/availability": "availability/page.tsx",
   "/settings/services": "services/page.tsx",
   "/settings/machines": "machines/page.tsx",
