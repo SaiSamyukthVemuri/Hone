@@ -144,8 +144,9 @@ describe("a thrown delivery is UNKNOWN, never refused (worker and retry)", () =>
   it("worker: deliver throws -> settle unknown/delivery_unknown", async () => {
     const { runBatchChunk } = await import("@/lib/waitlist/over-invite-worker");
     const settled: string[] = [];
+    let served = false; // a leased item is not handed out again
     await runBatchChunk({
-      claim: async () => ({ ok: true, items: [{ itemId: "i", batchId: "b", studioId: "s", entryId: "e", actorUserId: "a", serviceId: "v", startDate: "d", endDate: "d", allowedWeekdays: null, ttlHours: 1 }] }),
+      claim: async () => (served ? { ok: true, items: [] } : ((served = true), { ok: true, items: [{ itemId: "i", batchId: "b", studioId: "s", entryId: "e", actorUserId: "a", serviceId: "v", startDate: "d", endDate: "d", allowedWeekdays: null, ttlHours: 1 }] })),
       admit: async () => ({ ok: true, result: "admitted", issued }),
       settle: async (_t, o, why) => (settled.push(`${o}:${why}`), { ok: true, result: "settled" }),
       deliver: async () => { throw new Error("boom"); },

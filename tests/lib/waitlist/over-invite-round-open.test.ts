@@ -30,6 +30,15 @@ function studio(opts: { opens?: string; error?: boolean; afterOpen?: string } = 
   };
   return { db: { rpc } as never, calls, isOpen: () => open };
 }
+/** Like the real claim: a leased item is not handed out again, so the first call returns the items and later calls find nothing. */
+const serveOnce = (items: ClaimedItem[]): WorkerDeps["claim"] => {
+  let served = false;
+  return async () => {
+    const out = served ? [] : items;
+    served = true;
+    return { ok: true, items: out };
+  };
+};
 const count = (calls: string[], n: string) => calls.filter((c) => c === n).length;
 
 describe("admit for a studio with no open round", () => {
@@ -77,7 +86,7 @@ describe("admit for a studio with no open round", () => {
     const db = { rpc: async (n: string) => (n.startsWith("open_") ? { data: null, error: { code: "57014" } } : { data: [{ result: "no_round_open" }], error: null }) } as never;
     const settled: string[] = [];
     const d: WorkerDeps = {
-      claim: async () => ({ ok: true, items: [item] }),
+      claim: serveOnce([item]),
       admit: (it) => admitBatchItem(db, it, null),
       settle: async (t, o, r) => (settled.push(`${t.itemId}:${o}:${r}`), { ok: true, result: "settled" }),
       deliver: async () => { throw new Error("must not deliver"); },
@@ -104,9 +113,13 @@ describe("admit for a studio with no open round", () => {
         return { data: [open ? { result: "admitted", ...issuedRow } : { result: "no_round_open" }], error: null };
       },
     } as never;
-    const state = { settled: [] as string[], delivered: 0, claimable: true };
+    const state = { settled: [] as string[], delivered: 0, claimable: true, leased: false };
     const d: WorkerDeps = {
-      claim: async () => ({ ok: true, items: state.claimable ? [item] : [] }),
+      claim: async () => {
+        const out = state.claimable && !state.leased ? [item] : [];
+        if (out.length > 0) state.leased = true; // leased until its lease passes or it is settled
+        return { ok: true, items: out };
+      },
       admit: (it) => admitBatchItem(db, it, null),
       settle: async (t, o, r) => (state.settled.push(`${t.itemId}:${o}:${r}`), (state.claimable = false), { ok: true, result: "settled" }),
       deliver: async () => (state.delivered++, "accepted"),
@@ -118,7 +131,8 @@ describe("admit for a studio with no open round", () => {
     expect(state.settled).toEqual([]);
     expect(state.delivered).toBe(0);
     expect(state.claimable).toBe(true); // still claimed and eligible: nothing recorded it as over
-    faulty = false; // the lease has passed and the fault is gone
+    faulty = false; // the fault is gone
+    state.leased = false; // and the lease has passed
     const second = await runBatchChunk(d, undefined, { mode: "background" });
     expect(second.ok && second.outcomes[0]).toMatchObject({ status: "sent" });
     expect(state.delivered).toBe(1);
@@ -139,7 +153,7 @@ describe("admit for a studio with no open round", () => {
     const settled: string[] = [];
     const items = [1, 2, 3].map((n) => ({ ...item, itemId: `i${n}`, entryId: `e${n}` }));
     const d: WorkerDeps = {
-      claim: async () => ({ ok: true, items }),
+      claim: serveOnce(items),
       admit: (it) => admitBatchItem(s.db, it, null),
       settle: async (t, o, r) => (settled.push(`${t.itemId}:${o}:${r}`), { ok: true, result: "settled" }),
       deliver: async () => "accepted",
@@ -155,7 +169,7 @@ describe("admit for a studio with no open round", () => {
     const s = studio({ opens: "not_owner" });
     const settled: string[] = [];
     const d: WorkerDeps = {
-      claim: async () => ({ ok: true, items: [item] }),
+      claim: serveOnce([item]),
       admit: (it) => admitBatchItem(s.db, it, null),
       settle: async (t, o, r) => (settled.push(`${t.itemId}:${o}:${r}`), { ok: true, result: "settled" }),
       deliver: async () => { throw new Error("must not deliver"); },
