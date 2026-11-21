@@ -271,11 +271,11 @@ describe("the owner's Invite anyway: the largest accepted number lifts the estim
     expect(await liveCount(f.studioId)).toBe(1);
   });
 
-  it("a person who already has a live invitation is refused again, so one invitation exists", async () => {
+  it("a person who already has a live invitation is refused again (no longer admissible), so one invitation exists", async () => {
     const f = await fixture("dupe");
     const e = await entry(f, "dupe");
     expect((await admit(f, e, MAX_FIT)).result).toBe("admitted");
-    expect((await admit(f, e, MAX_FIT)).result).toBe("already_invited");
+    expect((await admit(f, e, MAX_FIT)).result).toBe("not_admissible");
     expect(await allInvitations(f.studioId)).toBe(1);
   });
 
@@ -283,7 +283,7 @@ describe("the owner's Invite anyway: the largest accepted number lifts the estim
     const f = await fixture("press");
     const e = await entry(f, "press");
     const [x, y] = await Promise.all([admit(f, e, MAX_FIT), admit(f, e, MAX_FIT)]);
-    expect([x.result, y.result].sort()).toEqual(["admitted", "already_invited"]);
+    expect([x.result, y.result].sort()).toEqual(["admitted", "not_admissible"]);
     expect(await allInvitations(f.studioId)).toBe(1);
   });
 
@@ -305,12 +305,13 @@ describe("the owner's Invite anyway: the largest accepted number lifts the estim
     expect(await allInvitations(f.studioId)).toBe(0);
   });
 
-  it("an entry that is not waiting is refused whatever number is given", async () => {
-    const f = await fixture("status");
-    const e = await entry(f, "status");
-    await q(`update public.new_client_waitlist_entries set status = 'removed' where id = $1`, [e]);
+  it("an entry that belongs to another studio is refused whatever number is given", async () => {
+    const f = await fixture("foreign");
+    const other = await fixture("foreign-other");
+    const e = await entry(other, "foreign");
     expect((await admit(f, e, MAX_FIT)).result).not.toBe("admitted");
     expect(await allInvitations(f.studioId)).toBe(0);
+    expect(await allInvitations(other.studioId)).toBe(0);
   });
 });
 

@@ -6,7 +6,7 @@ import { markResendLedger, readResendLedger } from "./helpers/resend-ledger";
 // ===========================================================================
 // INVITE ANYWAY WHEN THE ESTIMATE IS ZERO
 //
-// With no hours open the estimate for the chosen service is zero. Send then asks first: Cancel sends nothing, Invite anyway sends exactly one email
+// With a short day (two slots) and more live invitations out than slots, the estimate for the chosen service is zero. Send then asks first: Cancel sends nothing, Invite anyway sends exactly one email
 // through the same invitation flow. Above zero nothing changes. Every recipient is a synthetic harness address on the fake provider, so nothing leaves
 // the machine. Run on a desktop and a phone viewport.
 // ===========================================================================
@@ -20,7 +20,7 @@ async function ownerId(seed: E2eSeed) {
 }
 
 async function seedWaiting(seed: E2eSeed, label: string) {
-  await sql(`select * from public.open_new_client_waitlist_admission_round($1,$2,20)`, [seed.studioId, await ownerId(seed)]);
+  await sql(`select * from public.open_new_client_waitlist_admission_round($1,$2,100)`, [seed.studioId, await ownerId(seed)]);
   const name = `Anyway Person ${label} ${seed.runId.slice(0, 6)}`;
   const email = `success+anyway-${label}-${seed.runId}@harness.local`;
   const rows = await sql<{ id: string }>(
@@ -31,7 +31,21 @@ async function seedWaiting(seed: E2eSeed, label: string) {
   return { id: rows[0]!.id, name, email };
 }
 
-const noHours = (seed: E2eSeed) => sql(`update public.studio_availability_default set is_open = false where studio_id = $1`, [seed.studioId]);
+// The estimate reads zero when the live invitations out are at least the consultations that fit. The day is cut to two slots, so a fortnight holds at
+// most about thirty, and forty people are invited through the command with the largest capacity number (no email is sent by this seed).
+async function makeEstimateZero(seed: E2eSeed) {
+  await sql(`update public.studio_availability_default set open_time = '06:00', close_time = '07:00' where studio_id = $1`, [seed.studioId]);
+  const owner = await ownerId(seed);
+  const service = await sql<{ id: string }>(`select id from public.services where studio_id = $1 and active limit 1`, [seed.studioId]);
+  for (let i = 0; i < 40; i++) {
+    const e = await sql<{ entry_id: string }>(`select * from public.create_practitioner_waitlist_entry($1,$2,$3,$4,null,null)`, [seed.studioId, owner, `Filler ${i}`, `filler-${i}-${seed.runId}@harness.local`]);
+    const a = await sql<{ result: string }>(
+      `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,current_date,current_date + 13,null,72,2147483647)`,
+      [seed.studioId, owner, e[0]!.entry_id, service[0]!.id],
+    );
+    expect(a[0]!.result).toBe("admitted");
+  }
+}
 const liveInvitations = async (entryId: string) =>
   (await sql<{ n: number }>(`select count(*)::int n from public.new_client_waitlist_invitations where entry_id = $1 and redeemed_at is null and expired_at is null and released_at is null and declined_at is null`, [entryId]))[0]!.n;
 
@@ -54,8 +68,8 @@ for (const [label, viewport] of [
     test("Send asks first and Cancel sends nothing", async ({ page }) => {
       test.setTimeout(120_000);
       const seed = await seedE2eStudio();
-      await noHours(seed);
       const p = await seedWaiting(seed, `cancel-${label}`);
+      await makeEstimateZero(seed);
       const mark = markResendLedger();
       await loginAsOwner(page, seed);
       await page.goto("/settings/waitlist?section=waiting");
@@ -77,8 +91,8 @@ for (const [label, viewport] of [
     test("Invite anyway sends exactly one invitation and one email, and the page shows it", async ({ page }) => {
       test.setTimeout(120_000);
       const seed = await seedE2eStudio();
-      await noHours(seed);
       const p = await seedWaiting(seed, `anyway-${label}`);
+      await makeEstimateZero(seed);
       const mark = markResendLedger();
       await loginAsOwner(page, seed);
       await page.goto("/settings/waitlist?section=waiting");
