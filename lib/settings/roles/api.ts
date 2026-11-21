@@ -57,7 +57,12 @@ export type RolePreview = { role: Role; diff: RoleDiff; people: PersonRef[]; cou
 // is the core's; while nothing is released it can be empty even when choices move).
 export type PreviewChoice = { role: Role; key: string; label: string; from: Scope | null; to: Scope };
 // Save and Review use `review` (the database's table); Reset and Adopt previews use `choices` (read by the server). Each preview carries the one its command produces.
-export type ServerPreview = { version: number; roles: RolePreview[]; review?: ReviewTable | null; choices?: PreviewChoice[] };
+type PreviewBase = { version: number; roles: RolePreview[] };
+/** The Save preview: the database's review table. It cannot carry `choices` (the type refuses it), so the page can never draw two summaries for one Save. */
+export type SavePreview = PreviewBase & { review?: ReviewTable | null; choices?: never };
+/** The Reset and Adopt previews: the saved choices the server read at the previewed version. They never carry a review table. */
+export type ChoicePreview = PreviewBase & { choices?: PreviewChoice[]; review?: never };
+export type ServerPreview = SavePreview | ChoicePreview;
 
 
 /** When a saved choice takes effect, as the database states it (0361 perm_review_timing). The page chooses its words from this and from nothing else. */

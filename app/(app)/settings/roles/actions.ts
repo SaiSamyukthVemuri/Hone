@@ -95,7 +95,8 @@ async function withChoices(
   const state = await loadStudioPolicyState(studioId);
   if (!state.writable) return refuse({ code: "unavailable" });
   if (state.version !== result.preview.version) return refuse({ code: "stale_version" });
-  return { ok: true, preview: { ...result.preview, choices: choicesOf(state.policies) } };
+  // Rebuilt from the two shared fields, never spread: a Reset or Adopt preview carries `choices` and no review table (the type enforces it).
+  return { ok: true, preview: { version: result.preview.version, roles: result.preview.roles, choices: choicesOf(state.policies) } };
 }
 
 

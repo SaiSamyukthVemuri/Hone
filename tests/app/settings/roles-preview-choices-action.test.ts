@@ -17,6 +17,7 @@ vi.mock("@/lib/settings/roles/core", () => ({
 }));
 vi.mock("@/lib/settings/roles/policy-store", () => store);
 
+import type { ServerPreview } from "@/lib/settings/roles/api";
 import { previewAdoptAction, previewResetAction, previewRoleChangesAction } from "@/app/(app)/settings/roles/actions";
 
 const snapshot = (values: Record<string, string> = {}) => ({ basis: "existing_snapshot", values, gates: {} });
@@ -26,6 +27,18 @@ const state = (version: number, writable = true, values: Record<string, string> 
 const corePreview = (version: number) => ({ ok: true as const, preview: { version, roles: [] } });
 
 beforeEach(() => vi.clearAllMocks());
+
+describe("union: the preview type keeps the two summaries apart", () => {
+  it("a Save preview (review table) cannot carry choices, and a Reset/Adopt preview (choices) cannot carry a review table: the compiler refuses both", () => {
+    // @ts-expect-error a Save preview with choices
+    const saveWithChoices: ServerPreview = { version: 1, roles: [], review: null, choices: [] };
+    // @ts-expect-error a Reset/Adopt preview with a review table
+    const choicesWithReview: ServerPreview = { version: 1, roles: [], choices: [], review: { rows: [], hash: "", version: 1 } };
+    const okSave: ServerPreview = { version: 1, roles: [], review: null };
+    const okChoices: ServerPreview = { version: 1, roles: [], choices: [] };
+    expect([saveWithChoices, choicesWithReview, okSave, okChoices]).toHaveLength(4);
+  });
+});
 
 describe("previews carry server-read saved choices", () => {
   it("adopt: lists the choices adoption changes and describes the version that was previewed", async () => {
