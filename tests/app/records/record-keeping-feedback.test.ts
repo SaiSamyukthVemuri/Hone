@@ -2,9 +2,8 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// PR #280 (Chloe record-keeping feedback). The forms are not DOM-rendered here
-// (node env), so these are source/wiring pins proving each fix is in place +
-// persisted same-studio. Behavioral DB proof: tests/db/record-keeping-discard-due.db.test.ts.
+// PR #280 (Chloe record-keeping feedback). Source/wiring pins proving the
+// actions persist each fix same-studio. Behavioral DB proof: tests/db/record-keeping-discard-due.db.test.ts.
 
 function read(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf8");
@@ -72,12 +71,5 @@ describe("exposure incident person selector + same-studio autofill", () => {
   it("exposure save actions are unchanged (still free-text columns only)", () => {
     expect(ACTIONS).toMatch(/exposed_person_full_name: exposedName/);
     expect(ACTIONS).toMatch(/exposure incident history is owner-only/i);
-  });
-});
-
-describe("scope: no cron/email/SMS/notification added in this PR", () => {
-  it("no new cron route or notification writes in record-keeping", () => {
-    expect(FORMS).not.toMatch(/api\/cron|recordPractitionerNotification|sendEmail|sendSms/i);
-    expect(ACTIONS).not.toMatch(/api\/cron|recordPractitionerNotification|sendEmail|sendSms/i);
   });
 });

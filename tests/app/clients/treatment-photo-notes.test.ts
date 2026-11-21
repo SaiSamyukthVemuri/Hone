@@ -3,8 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 // PR #307. Per-photo practitioner note/caption. The action is RLS-scoped and
-// row-affected-checked exactly like the archive hardening; the UI shows the note
-// on the card + modal with Add/Edit inline editing. Source-grep (the images UI
+// row-affected-checked exactly like the archive hardening. Source-grep (the images UI
 // isn't DOM-rendered in the node env) + a scope guard that upload / sanitizer /
 // storage / signed-URL / archive / session-attach behavior is untouched.
 

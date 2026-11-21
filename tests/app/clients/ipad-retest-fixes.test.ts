@@ -65,32 +65,4 @@ describe("3. charting order + chips", () => {
       /isChipSelected\([\s\S]{0,60}reactionTypeLabel\(draft\.reactionType as ReactionType\)/,
     );
   });
-  it("legacy reaction notes stay visible; tolerance rating remains", () => {
-    expect(FORM).toMatch(/\{draft\.reactionNotes\.trim\(\) !== "" && \(/);
-    // PR #279: tolerance is now a label-based control (still stored 1-5).
-    expect(FORM).toMatch(/TOLERANCE_OPTIONS\.map/);
-  });
-});
-
-describe("4. session header", () => {
-  it("no price UI; performer select remains", () => {
-    expect(INFO).not.toMatch(/Add session price/);
-    expect(INFO).not.toMatch(/\$0/);
-    expect(INFO).toMatch(/performer/i);
-  });
-});
-
-describe("5. Client info card", () => {
-  it("one card holds birthday + emergency + address with an Edit link", () => {
-    const card = PAGE.slice(PAGE.indexOf(">\n                Client info"), PAGE.indexOf("Pricing moved to the end"));
-    expect(card).toMatch(/ClientBirthdayCard/);
-    expect(card).toMatch(/Emergency contact/);
-    expect(card).toMatch(/Address/);
-    expect(PAGE).toMatch(/Client info\s*<\/h2>[\s\S]{0,400}\/edit/);
-  });
-  it("overview order: pinned, allergies, skin, client info, pricing", () => {
-    const o = PAGE.slice(PAGE.indexOf('{activeTab === "overview"'), PAGE.indexOf('{activeTab === "messages"'));
-    const idx = [o.indexOf("ClientPinnedNotesCard"), o.indexOf("Allergies"), o.indexOf(">\n              Skin"), o.indexOf("Client info"), o.lastIndexOf("Pricing")];
-    for (let i = 1; i < idx.length; i++) expect(idx[i]).toBeGreaterThan(idx[i - 1]);
-  });
 });

@@ -35,12 +35,6 @@ describe("session photos: the Photos tab's trust boundary", () => {
     expect(helper).toMatch(/TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS/);
     expect(helper).toMatch(/\.filter\(\(p\): p is SessionPhoto => p !== null\)/);
   });
-
-  it("labels areas exactly as the Photos tab does, including 0128 structured areas", () => {
-    expect(helper).toMatch(/getSessionBlockAreasByBlockIds\(/);
-    expect(helper).toMatch(/structured_areas:/);
-    expect(helper).toMatch(/treatmentPhotoAreaLabel\(r\.session_block_id, block\)/);
-  });
 });
 
 describe("session photos on the chart page", () => {

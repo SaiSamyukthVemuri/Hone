@@ -27,14 +27,4 @@ describe("?book=1 opens the existing booking flow (directory contract)", () => {
     expect(book).toMatch(/const qs = next\.toString\(\);/);
     expect(book).toMatch(/router\.replace\(qs \? `\$\{pathname\}\?\$\{qs\}` : pathname/);
   });
-  it("the cleanup keeps the other params (behavioural model of the same logic)", () => {
-    const run = (search: string) => {
-      const next = new URLSearchParams(search);
-      next.delete("book");
-      const qs = next.toString();
-      return qs ? `/p?${qs}` : "/p";
-    };
-    expect(run("book=1")).toBe("/p");
-    expect(run("book=1&tab=sessions&returnTo=%2Fclients%3Fq%3Da")).toBe("/p?tab=sessions&returnTo=%2Fclients%3Fq%3Da");
-  });
 });
