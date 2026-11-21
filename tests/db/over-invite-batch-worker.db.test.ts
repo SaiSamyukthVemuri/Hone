@@ -3,7 +3,7 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({}) }));
-import { adminQuery, adminTx, closePool, seedStudio } from "./helpers/harness";
+import { adminQuery, closePool, seedStudio } from "./helpers/harness";
 import { admitBatchItem, claimItems, createBatch, previewSelection, replaceInvitation, settleItem, stopBatch } from "@/lib/waitlist/over-invite-port";
 import { runBatchChunk, type DeliveryState, type WorkerDeps } from "@/lib/waitlist/over-invite-worker";
 import { retryDeliveries } from "@/lib/waitlist/over-invite-retry";
@@ -393,21 +393,14 @@ describe("over-invite worker against the real batch commands", () => {
 });
 
 // ---- migration 0364: replace takes the round before the invitation, refuses an ended or elapsed invitation, and starts a NEW attempt ----------------------
-// Requires 0364 in the stack. Against 0363 alone the first two tests fail by design (the item stays `failed`; an elapsed invitation is replaced).
-// The invitations table's append-only trigger (0200) freezes issued_at/expires_at and the stamps, even for the table owner, so a test that needs an
-// elapsed or ended invitation must bypass it. The same helper General's #1681 test uses (and tests/db/waitlist-atomic-send-allowance.db.test.ts):
-// `set local session_replication_role = replica` inside ONE transaction. It is transaction-local, so it reverts at commit AND at rollback and nothing
-// can be left disabled for the next test (no ALTER TABLE, no lock, nothing to restore by hand).
-async function withInvitationTriggerOff(change: string, params: unknown[]): Promise<void> {
-  await adminTx(async (query) => {
-    await query(`set local session_replication_role = replica`);
-    await query(change, params);
-  });
-}
-// The ttl CHECK (expires_at > issued_at, within 7 days) means the two columns move together.
-const elapseInvitation = (id: string) =>
-  withInvitationTriggerOff(`update public.new_client_waitlist_invitations set issued_at = now() - interval '3 hours', expires_at = now() - interval '1 hour' where id=$1`, [id]);
-const endInvitation = (id: string) => withInvitationTriggerOff(`update public.new_client_waitlist_invitations set expired_at = now() where id=$1`, [id]);
+// Requires 0364 in the stack. Against 0363 alone the first and fourth tests fail by design (the item stays `failed`; an ended invitation is replaced).
+// NO FIXTURE HERE DISABLES OR BYPASSES THE APPEND-ONLY TRIGGER (0200; Sam's rule). What that means for what can be reached:
+//  - `invitation_expired` (the time ran out) is NOT reachable: the server-timestamp trigger sets issued_at = now() on insert, the ttl check needs
+//    expires_at > issued_at, the shortest ttl is 1 hour, and a bypass is the only way to move the window. It is pinned by the unit tests only.
+//  - an ended stamp (expired_at, released_at, declined_at) may be set once, from null, which the trigger permits, so a plain UPDATE is not a bypass.
+//    A REAL release or decline also returns the entry to `waiting`, so replace then answers no_live_invitation (the entry check comes first);
+//    `invitation_ended` itself is only reachable with the entry still `invited`, i.e. by stamping the invitation directly.
+const endInvitation = (id: string) => q(`update public.new_client_waitlist_invitations set expired_at = now() where id=$1`, [id]);
 
 describe("replace after 0364", () => {
   async function refusedItem(label: string) {
@@ -438,42 +431,28 @@ describe("replace after 0364", () => {
     expect(await row(item.itemId)).toMatchObject({ state: "unknown", reason_class: "delivery_unknown" });
   });
 
-  it("an invitation whose time has run out is refused as invitation_expired: nothing is replaced and the item is untouched", async () => {
-    const { f, item } = await refusedItem("0364b");
+  it("a REAL release of the person ends the invitation through the command: replace then answers no_live_invitation and changes nothing", async () => {
+    const { f, item } = await refusedItem("0364c");
     const before = await row(item.itemId);
-    await elapseInvitation(before.invitation_id);
+    expect((await q(`select public.release_new_client_waitlist_entry($1,$2,$3) r`, [f.studioId, item.entryId, f.userId]))[0].r).toBe("released");
     const rep = await replaceInvitation(db, { studioId: f.studioId, actorUserId: f.userId, entryId: item.entryId, expectedInvitationId: before.invitation_id });
-    expect(rep.ok && rep.result).toBe("invitation_expired");
-    expect(await row(item.itemId)).toMatchObject({ state: "failed", reason_class: "delivery_refused", invitation_id: before.invitation_id, attempts: before.attempts });
+    expect(rep.ok && rep.result).toBe("no_live_invitation");
+    expect(await row(item.itemId)).toMatchObject({ state: "failed", invitation_id: before.invitation_id, attempts: before.attempts });
   });
 
-  it("an invitation that has ended (expired stamp) is refused as invitation_ended", async () => {
-    const { f, item } = await refusedItem("0364c");
+  it("an invitation stamped ended while the person is still invited is refused as invitation_ended: nothing is replaced", async () => {
+    const { f, item } = await refusedItem("0364d");
     const before = await row(item.itemId);
     await endInvitation(before.invitation_id);
     const rep = await replaceInvitation(db, { studioId: f.studioId, actorUserId: f.userId, entryId: item.entryId, expectedInvitationId: before.invitation_id });
-    expect(rep.ok && ["invitation_ended", "no_live_invitation"].includes(rep.result)).toBe(true);
-    expect(await row(item.itemId)).toMatchObject({ state: "failed", invitation_id: before.invitation_id });
+    expect(rep.ok && rep.result).toBe("invitation_ended");
+    expect(await row(item.itemId)).toMatchObject({ state: "failed", reason_class: "delivery_refused", invitation_id: before.invitation_id, attempts: before.attempts });
   });
 
-  it("the trigger bypass restores itself: the guard still refuses a direct change afterwards, and after a failing change", async () => {
-    const mode = async () => (await q(`show session_replication_role`))[0].session_replication_role;
-    const guarded = async (id: string) => adminQuery(`update public.new_client_waitlist_invitations set expires_at = expires_at + interval '1 minute' where id=$1`, [id]);
-    const { f, item } = await refusedItem("0364e");
-    const inv = (await row(item.itemId)).invitation_id;
-    await elapseInvitation(inv);
-    expect(await mode()).toBe("origin");
-    await expect(guarded(inv)).rejects.toBeDefined(); // the append-only trigger is live again
-    await expect(withInvitationTriggerOff(`update public.new_client_waitlist_invitations set no_such_column = 1`, [])).rejects.toBeDefined();
-    expect(await mode()).toBe("origin");
-    await expect(guarded(inv)).rejects.toBeDefined();
-    void f;
-  });
-
-  it("the owner's retry of an elapsed invitation delivers nothing and the item is counted as ended by the progress view", async () => {
+  it("the owner's retry of an ended invitation delivers nothing and the item is counted as ended by the progress view", async () => {
     const { f, item } = await refusedItem("0364d");
     const before = await row(item.itemId);
-    await elapseInvitation(before.invitation_id);
+    await endInvitation(before.invitation_id);
     let delivered = 0;
     const r = await retryDeliveries(
       {
@@ -490,9 +469,9 @@ describe("replace after 0364", () => {
       [{ entryId: item.entryId, itemId: item.itemId, studioId: f.studioId }],
     );
     expect(delivered).toBe(0);
-    expect(r[0]).toMatchObject({ status: "skipped", reason: "invitation_expired" });
+    expect(r[0]).toMatchObject({ status: "skipped", reason: "invitation_ended" });
     const after = await row(item.itemId);
-    expect(after).toMatchObject({ state: "failed", reason_class: "invitation_expired" });
+    expect(after).toMatchObject({ state: "failed", reason_class: "invitation_ended" });
     const { tallyItems } = await import("@/lib/waitlist/over-invite-progress");
     expect(tallyItems([{ state: after.state, reason_class: after.reason_class, issued_at: null }]).ended).toBe(1);
   });
