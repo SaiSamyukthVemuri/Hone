@@ -491,10 +491,10 @@ function clientsTableFigure(input: OverviewInput, cur: Window): { table: Figure<
     hasNextBooking: future ? future.has(clientId) : null,
     beyondUsual: beyond ? beyond.has(clientId) : null,
   }));
-  const table = rankClientsTable({ figures, lookup: input.names ?? { ok: false }, sort: opts.sort, chip: opts.chip, page: opts.page, lifetimeFailure, historyFailure: input.history.ok ? null : input.history.reason });
+  const table = rankClientsTable({ figures, lookup: input.names ?? { ok: false }, sort: opts.sort, chip: opts.chip, page: opts.page, lifetimeFailure, historyFailure: input.history.ok ? null : input.history.reason, periodMoneyFailure: cur.clientPaid ? null : cur.collected.available ? "read_failed" : cur.collected.reason });
   const moneyOk = cur.clientPaid !== undefined && cur.collected.available;
   const reconciliation: NonNullable<OverviewView["clientsReconciliation"]> =
-    table.available && moneyOk && cur.collected.available
+    table.available && moneyOk && cur.collected.available && table.value.paidAcrossSeenCents !== null
       ? reconcileClientsMoney({ clientsPaidCents: table.value.paidAcrossSeenCents, noClientPaidCents: cur.noClientPaidCents ?? 0, completedVisitsCents: cur.collected.value.split.completedVisitsCents })
       : unavailable(cur.collected.available ? "read_failed" : cur.collected.reason);
   return { table, reconciliation };

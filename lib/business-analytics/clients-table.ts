@@ -79,8 +79,10 @@ export type ClientsTable = {
   /** Whether the visit-history columns (first visit, average gap, beyond usual) could be worked out, and if not, why. */
   history: { available: true } | { available: false; reason: ReadFailure };
   /** Money kept in the period across EVERY client seen (named or not), and how many of them have no confirmed payment. */
-  paidAcrossSeenCents: number;
-  seenWithoutConfirmedPayment: number;
+  paidAcrossSeenCents: number | null;
+  seenWithoutConfirmedPayment: number | null;
+  /** Whether the period money could be read at all, and if not, why. When it could not, every paid figure is unknown, which is NOT the same as no confirmed payment. */
+  periodMoney: { available: true } | { available: false; reason: ReadFailure };
 };
 
 export function rankClientsTable(args: {
@@ -93,6 +95,8 @@ export function rankClientsTable(args: {
   lifetimeFailure: ReadFailure | null;
   /** Set when the earlier-appointments read failed or hit its cap: first visit, average gap and beyond-usual are then unknown, and say so. */
   historyFailure?: ReadFailure | null;
+  /** Set when the period money (or its currency) could not be read: no paid figure is then known, and none is counted as unconfirmed. */
+  periodMoneyFailure?: ReadFailure | null;
 }): Figure<ClientsTable> {
   if (!args.lookup.ok) return { available: false, reason: "read_failed" };
   const pageSize = args.pageSize ?? CLIENTS_PAGE_SIZE;
@@ -104,7 +108,7 @@ export function rankClientsTable(args: {
     if (f.periodVisits < 1) continue;
     const name = usableName(names.get(f.clientId));
     if (name === null) continue;
-    listed.push({ clientId: f.clientId, name, periodVisits: f.periodVisits, periodPaidCents: f.periodPaidCents, lifetimePaidCents: args.lifetimeFailure === null ? f.lifetimePaidCents : null, averageGapDays: args.historyFailure ? null : f.averageGapDays, lastVisitDate: f.lastVisitDate, f });
+    listed.push({ clientId: f.clientId, name, periodVisits: f.periodVisits, periodPaidCents: args.periodMoneyFailure ? null : f.periodPaidCents, lifetimePaidCents: args.lifetimeFailure === null ? f.lifetimePaidCents : null, averageGapDays: args.historyFailure ? null : f.averageGapDays, lastVisitDate: f.lastVisitDate, f });
   }
   const counted = args.figures.filter((f) => f.periodVisits >= 1);
   const historyFailed = (args.historyFailure ?? null) !== null;
@@ -130,7 +134,7 @@ export function rankClientsTable(args: {
       name: r.name,
       firstVisitDate: historyFailed ? null : f.firstVisitDate,
       periodVisits: f.periodVisits,
-      periodPaidCents: f.periodPaidCents,
+      periodPaidCents: args.periodMoneyFailure ? null : f.periodPaidCents,
       lifetimePaidCents: r.lifetimePaidCents,
       averageGapDays: historyFailed ? null : f.averageGapDays,
       lastVisitDate: f.lastVisitDate,
@@ -156,8 +160,9 @@ export function rankClientsTable(args: {
       rows,
       lifetime: args.lifetimeFailure === null ? { available: true } : { available: false, reason: args.lifetimeFailure },
       history: args.historyFailure ? { available: false, reason: args.historyFailure } : { available: true },
-      paidAcrossSeenCents: counted.reduce((n, f) => n + (f.periodPaidCents ?? 0), 0),
-      seenWithoutConfirmedPayment: counted.filter((f) => f.periodPaidCents === null).length,
+      periodMoney: args.periodMoneyFailure ? { available: false, reason: args.periodMoneyFailure } : { available: true },
+      paidAcrossSeenCents: args.periodMoneyFailure ? null : counted.reduce((n, f) => n + (f.periodPaidCents ?? 0), 0),
+      seenWithoutConfirmedPayment: args.periodMoneyFailure ? null : counted.filter((f) => f.periodPaidCents === null).length,
     },
   };
 }

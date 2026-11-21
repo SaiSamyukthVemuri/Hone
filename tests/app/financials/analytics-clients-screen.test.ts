@@ -131,6 +131,32 @@ describe("the Clients tab: a failed or over-cap history read", () => {
   });
 });
 
+describe("the Clients tab: unreadable period money", () => {
+  const noMoney = () => view({}, { current: { ok: true, value: { appointments, money: { ok: false, reason: "read_failed" } } } as never });
+  it("says the paid figure is unavailable with the fixed sentence, never that every client has no confirmed payment", () => {
+    const v = noMoney();
+    const t = table(v);
+    expect(t?.periodMoney.available).toBe(false);
+    expect(t?.seenWithoutConfirmedPayment).toBeNull();
+    expect(t?.paidAcrossSeenCents).toBeNull();
+    const html = render(v);
+    expect(html).toContain("data-period-money-unavailable");
+    expect(text(html)).not.toContain("no confirmed payment this period");
+    expect(text(html)).toContain(FIGURE_UNAVAILABLE_COPY.read_failed);
+  });
+  it("the reconciliation and the lifetime column are unavailable together with it", () => {
+    const v = noMoney();
+    expect(v.clientsReconciliation?.available).toBe(false);
+    expect(table(v)?.lifetime.available).toBe(false);
+  });
+  it("the CSV writes Not available for the unconfirmed count and never a number", () => {
+    const csv = clientsCsv(noMoney(), { preparedOn: "2026-11-21" });
+    const line = csv.split("\n").find((l) => l.includes("Seen clients with no confirmed payment")) ?? "";
+    expect(line).toContain("Not available");
+    expect(line).not.toMatch(/,\d+,/);
+  });
+});
+
 describe("the Clients tab: sort, chip and page", () => {
   it("sorts by name, visits and last visit with the documented tiebreaks", () => {
     expect(table(view({ sort: "name" }))?.rows.map((r) => r.name)).toEqual(["Nia Noprice", "Olive Over", "Quinn Quoted"]);

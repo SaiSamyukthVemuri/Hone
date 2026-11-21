@@ -38,6 +38,28 @@ describe("rankClientsTable", () => {
     expect(t?.rows[0].averageGapDays).toBe(30);
     expect(t?.history).toEqual({ available: true });
   });
+  it("under a failed history read the average-gap sort ignores the raw gaps, so the order is not by a period-only figure", () => {
+    const figs = [fig("a", { averageGapDays: 50 }), fig("b", { averageGapDays: 10 }), fig("c", { averageGapDays: 30 })];
+    expect(val(run(figs, { sort: "interval", historyFailure: "read_failed" }))?.rows.map((r) => r.name)).toEqual(["Ben", "Ana", "Cy"].sort()); // all unknown, so visits then name
+    expect(val(run(figs, { sort: "interval" }))?.rows.map((r) => r.name)).toEqual(["Ben", "Cy", "Ana"]); // known gaps, shortest first
+  });
+  it("under a failed history read the last-visit sort still orders by the most recent visit, which needs no history", () => {
+    const figs = [fig("a", { lastVisitDate: "2026-11-01" }), fig("b", { lastVisitDate: "2026-11-20" }), fig("c", { lastVisitDate: "2026-11-10" })];
+    expect(val(run(figs, { sort: "last_visit", historyFailure: "read_failed" }))?.rows.map((r) => r.name)).toEqual(["Ben", "Cy", "Ana"]);
+  });
+  it("with the period money unreadable no paid figure, total or unconfirmed count is known, and none is the count of every client", () => {
+    const t = val(run([fig("a", { periodPaidCents: null }), fig("b", { periodPaidCents: 500 })], { periodMoneyFailure: "currency_unknown" }));
+    expect(t?.rows.map((r) => r.periodPaidCents)).toEqual([null, null]);
+    expect(t?.paidAcrossSeenCents).toBeNull();
+    expect(t?.seenWithoutConfirmedPayment).toBeNull();
+    expect(t?.periodMoney).toEqual({ available: false, reason: "currency_unknown" });
+  });
+  it("with the period money readable the unconfirmed count is exact and the money is available", () => {
+    const t = val(run([fig("a", { periodPaidCents: null }), fig("b", { periodPaidCents: 500 })]));
+    expect(t?.seenWithoutConfirmedPayment).toBe(1);
+    expect(t?.paidAcrossSeenCents).toBe(500);
+    expect(t?.periodMoney).toEqual({ available: true });
+  });
   it("a null paid amount ranks last and is never counted as zero in the total", () => {
     const t = val(run([fig("a", { periodPaidCents: null }), fig("b", { periodPaidCents: 100 })]));
     expect(t?.rows.map((r) => r.name)).toEqual(["Ben", "Ana"]);

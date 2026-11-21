@@ -47,7 +47,7 @@ export function clientsCsv(view: OverviewView, opts: { preparedOn: string }): st
     add("Clients", "All clients", String(t.value.chipCounts.all));
     add("Clients", "No next booking", t.value.chipCounts.noNextBooking === null ? "Not available" : String(t.value.chipCounts.noNextBooking), "A confirmed booking still to come with anyone counts as a next booking.");
     add("Clients", "Beyond their usual visit interval", t.value.chipCounts.beyondUsual === null ? "Not available" : String(t.value.chipCounts.beyondUsual));
-    add("Clients", "Seen clients with no confirmed payment", String(t.value.seenWithoutConfirmedPayment), "Their paid figure is not available, not zero.");
+    add("Clients", "Seen clients with no confirmed payment", t.value.seenWithoutConfirmedPayment === null ? "Not available" : String(t.value.seenWithoutConfirmedPayment), "Their paid figure is not available, not zero.");
   } else add("Clients", "Client table", t && !t.available ? unavailableText(t.reason) : unavailableText("read_failed"));
 
   const r = view.clientsReconciliation;

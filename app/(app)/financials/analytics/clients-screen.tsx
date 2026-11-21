@@ -220,7 +220,9 @@ export function ClientsScreen({ view, params, clients, notices, practitionerOpti
                 <p className="text-xs text-fg" role="status" data-history-unavailable="">First visit, average gap and beyond usual: {FIGURE_UNAVAILABLE_COPY[table.value.history.reason]}</p>
               ) : null}
               <p className="text-xs text-fg-muted">{beyondUsualNote(DEFAULT_BEYOND_USUAL_FACTOR)}{view.filterKind !== "all" ? ` ${BEYOND_USUAL_FILTER_NOTE}` : ""}</p>
-              {table.value.seenWithoutConfirmedPayment > 0 ? (
+              {!table.value.periodMoney.available ? (
+                <p className="text-xs text-fg" role="status" data-period-money-unavailable="">Paid in period: {FIGURE_UNAVAILABLE_COPY[table.value.periodMoney.reason]}</p>
+              ) : table.value.seenWithoutConfirmedPayment !== null && table.value.seenWithoutConfirmedPayment > 0 ? (
                 <p className="text-xs text-fg-muted">{plural(table.value.seenWithoutConfirmedPayment, "client seen has", "clients seen have")} no confirmed payment this period, so their paid figure is not available, not zero.</p>
               ) : null}
             </>
