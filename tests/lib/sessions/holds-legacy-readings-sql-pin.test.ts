@@ -10,7 +10,7 @@ import {
 // A NON-database pin: the TypeScript twin's column lists must equal the columns named in the SQL function text, so dropping a column from
 // either side fails here even where no database is running. The database agreement test (machine-switches.db.test.ts) pins behaviour.
 
-const SQL = readFileSync("docs/proposals/machine-switches.sql", "utf8");
+const SQL = readFileSync("supabase/migrations/0366_machine_switches.sql", "utf8");
 const FN = (() => {
   const i = SQL.indexOf("create or replace function public.block_holds_legacy_readings");
   expect(i).toBeGreaterThan(-1);

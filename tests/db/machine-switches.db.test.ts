@@ -6,7 +6,7 @@ import { blockHoldsLegacyReadings } from "../../lib/sessions/holds-legacy-readin
 
 // Machine switches: the DB behaviour of the settings tables, the owner and lazy-unit commands, the seed, and the amended identity command.
 // Synthetic data only. While the SQL is unnumbered this applies it onto an OWNED local stack once; when numbered it is part of the chain.
-const SQL_PATH = "docs/proposals/machine-switches.sql";
+const SQL_PATH = "supabase/migrations/0366_machine_switches.sql";
 const KEY = "charting_new_view_xcell";
 const PUR = "dectro-apilus:xcell-pur";
 const SEN = "dectro-apilus:senior-3g";
@@ -44,13 +44,22 @@ const setLegacyMode = (block: string) => adminTx(async (q) => { await q(`set loc
 const unitOf = async (studio: string, profile: string, version = 1) =>
   (await adminQuery(`insert into public.studio_machines (studio_id, machine_profile_id, machine_profile_version, display_name) values ($1,$2,$3,$4) returning id`, [studio, profile, version, `Unit ${randomUUID().slice(0, 8)}`])).rows[0].id as string;
 
+// The seed starts xCell Pur OFF. Most tests below exercise what an owner who HAS turned it on can do, so they start from that state.
+const seedOn = async (label: string): Promise<SeededStudio> => {
+  const s = await seedStudio(label);
+  await adminQuery(`update public.studio_machine_models set enabled = true where studio_id = $1 and profile_id = $2`, [s.studioId, PUR]);
+  await adminQuery(`update public.studio_machine_default set default_profile_id = $2, ask_each_visit = false where studio_id = $1`, [s.studioId, PUR]);
+  return s;
+};
+
 beforeAll(async () => {
+  // The migration is part of the chain: this suite NEVER replays its SQL (a replay would change a catalog that may be measured or sealed).
   const have = await adminQuery(`select to_regprocedure('public.set_studio_machine_model(uuid,text,boolean)') as p`);
-  if (!have.rows[0].p) await adminQuery(readFileSync(SQL_PATH, "utf8"));
+  if (!have.rows[0].p) throw new Error("The machine-switches migration is not on this stack. Build a fresh stack from the chain; this suite does not apply it.");
   await adminQuery(`insert into public.machine_profile_mode_contract (machine_profile_id, machine_profile_version, mode_key) values ($1,1,'multiplex') on conflict do nothing`, [PUR]);
   await adminQuery(`insert into public.machine_profile_mode_contract (machine_profile_id, machine_profile_version, mode_key) values ($1,3,'flash') on conflict do nothing`, [SEN]);
-  A = await seedStudio("sw-a");
-  B = await seedStudio("sw-b");
+  A = await seedOn("sw-a");
+  B = await seedOn("sw-b");
   memA = await seedMember(A, "sw-ma");
   recept = randomUUID();
   await adminQuery(`insert into auth.users (id, email) values ($1,$2)`, [recept, `sw-r-${recept.slice(0, 8)}@harness.local`]);
@@ -63,9 +72,10 @@ afterAll(async () => {
 });
 
 describe("the seed: once, by a trigger on studios, never re-run", () => {
-  it("a studio created by ANY path is seeded: xCell Pur on and the default, Senior and Junior off", async () => {
-    expect(await models(A.studioId)).toEqual({ [PUR]: true, [SEN]: false, [JUN]: false });
-    expect(await dflt(A.studioId)).toEqual({ default_profile_id: PUR, ask_each_visit: false });
+  it("a studio created by ANY path is seeded with EVERY model off and the default Ask: no studio starts with xCell Pur on", async () => {
+    const R = await seedStudio("sw-rawseed");
+    expect(await models(R.studioId)).toEqual({ [PUR]: false, [SEN]: false, [JUN]: false });
+    expect(await dflt(R.studioId)).toEqual({ default_profile_id: null, ask_each_visit: true });
   });
 
   it("re-running the seed changes nothing, and a model the owner turned off STAYS off", async () => {
@@ -77,14 +87,14 @@ describe("the seed: once, by a trigger on studios, never re-run", () => {
   });
 
   it("Senior and Junior are seeded ON exactly where the studio already has a live unit of that model", async () => {
-    const S = await seedStudio("sw-seedunits");
+    const S = await seedOn("sw-seedunits");
     await unitOf(S.studioId, SEN, 3);
     const retired = await unitOf(S.studioId, JUN, 3);
     await adminQuery(`update public.studio_machines set retired_at = now() where id = $1`, [retired]);
     await adminQuery(`delete from public.studio_machine_models where studio_id=$1`, [S.studioId]);
     await adminQuery(`delete from public.studio_machine_default where studio_id=$1`, [S.studioId]);
     await adminQuery(`select public.seed_studio_machine_settings($1)`, [S.studioId]);
-    expect(await models(S.studioId)).toEqual({ [PUR]: true, [SEN]: true, [JUN]: false });
+    expect(await models(S.studioId)).toEqual({ [PUR]: false, [SEN]: true, [JUN]: false });
   });
 
   it("registering a Senior unit LATER does not switch the model on", async () => {
@@ -120,7 +130,7 @@ describe("owner commands", () => {
   });
 
   it("turning the DEFAULT model off repairs the default to the next enabled model, else Ask, and records both changes by user id", async () => {
-    const S = await seedStudio("sw-repair");
+    const S = await seedOn("sw-repair");
     expect(await setModel(S.userId, S.studioId, SEN, true)).toBe("changed");
     expect(await setModel(S.userId, S.studioId, PUR, false)).toBe("changed");
     expect(await dflt(S.studioId)).toEqual({ default_profile_id: SEN, ask_each_visit: false });
@@ -135,7 +145,7 @@ describe("owner commands", () => {
   });
 
   it("the default must be a model that is switched on; Ask and a model are exclusive; bad arguments are refused", async () => {
-    const S = await seedStudio("sw-default");
+    const S = await seedOn("sw-default");
     expect((await failure(setDefault(S.userId, S.studioId, SEN, false)))?.message).toMatch(/switched on/);
     expect(await setDefault(S.userId, S.studioId, null, true)).toBe("changed");
     expect(await dflt(S.studioId)).toEqual({ default_profile_id: null, ask_each_visit: true });
@@ -172,7 +182,7 @@ describe("get_studio_machine_choices: no argument, the caller's own studios, the
 
 describe("ensure_studio_machine_for_save: lazy, idempotent, bound to a real block", () => {
   it("creates one unit the first time, reuses it after, writes one event with the actor, and the switch alone created nothing", async () => {
-    const S = await seedStudio("sw-ensure");
+    const S = await seedOn("sw-ensure");
     const sess = await seedSession(S);
     const before = Number((await adminQuery(`select count(*)::int n from public.studio_machines where studio_id=$1`, [S.studioId])).rows[0].n);
     expect(before).toBe(0);
@@ -186,13 +196,13 @@ describe("ensure_studio_machine_for_save: lazy, idempotent, bound to a real bloc
   });
 
   it("two concurrent saves produce ONE live unit", async () => {
-    const S = await seedStudio("sw-race");
+    const S = await seedOn("sw-race");
     const sess = await seedSession(S);
     const ids = await Promise.all(Array.from({ length: 12 }, () => ensure(S.userId, sess.blockId, PUR)));
     expect(new Set(ids).size, `every concurrent save must get the same unit, got ${[...new Set(ids)].join(",")}`).toBe(1);
     expect(ids[0]).toMatch(/^[0-9a-f-]{36}$/);
     // deterministic overlap: A creates the unit and stays uncommitted; B starts meanwhile and must end up with A's unit, never a spurious refusal
-    const S2 = await seedStudio("sw-race-hold");
+    const S2 = await seedOn("sw-race-hold");
     const sess2 = await seedSession(S2);
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
@@ -217,7 +227,7 @@ describe("ensure_studio_machine_for_save: lazy, idempotent, bound to a real bloc
   });
 
   it("refuses a model that is switched off, the rollout off, a block of another studio, a receptionist and an unknown profile; never takes a studio argument", async () => {
-    const S = await seedStudio("sw-refuse");
+    const S = await seedOn("sw-refuse");
     const sess = await seedSession(S);
     expect((await failure(ensure(S.userId, sess.blockId, SEN)))?.message).toMatch(/not switched on/);
     expect((await failure(ensure(B.userId, sess.blockId, PUR)))?.message).toBe("Not available.");
@@ -232,7 +242,7 @@ describe("ensure_studio_machine_for_save: lazy, idempotent, bound to a real bloc
   });
 
   it("an archived practitioner is refused", async () => {
-    const S = await seedStudio("sw-archived");
+    const S = await seedOn("sw-archived");
     const sess = await seedSession(S);
     const m = await seedMember(S, "sw-arch");
     await adminQuery(`update public.practitioners set active = false where id = $1`, [m.practitionerId]);
@@ -240,8 +250,8 @@ describe("ensure_studio_machine_for_save: lazy, idempotent, bound to a real bloc
   });
 
   it("NEVER recreates a unit the owner retired, decided from THAT studio's history only", async () => {
-    const S = await seedStudio("sw-retired");
-    const T = await seedStudio("sw-other");
+    const S = await seedOn("sw-retired");
+    const T = await seedOn("sw-other");
     const sS = await seedSession(S);
     const sT = await seedSession(T);
     const first = await ensure(S.userId, sS.blockId, PUR);
@@ -254,7 +264,7 @@ describe("ensure_studio_machine_for_save: lazy, idempotent, bound to a real bloc
   });
 
   it("an unpublished model creates nothing", async () => {
-    const S = await seedStudio("sw-unpub");
+    const S = await seedOn("sw-unpub");
     const sess = await seedSession(S);
     await adminQuery(`update public.studio_machine_models set enabled = true where studio_id=$1 and profile_id=$2`, [S.studioId, JUN]);
     expect(await ensure(S.userId, sess.blockId, JUN)).toBe("unpublished");
@@ -263,7 +273,7 @@ describe("ensure_studio_machine_for_save: lazy, idempotent, bound to a real bloc
 
 describe("events: closed shapes, append-only, by user id", () => {
   it("a free-text or extra-key value is refused for every kind", async () => {
-    const S = await seedStudio("sw-shape");
+    const S = await seedOn("sw-shape");
     const ins = (kind: string, value: unknown, profile: string | null = PUR) =>
       failure(adminQuery(`insert into public.studio_machine_setting_events (studio_id, kind, profile_id, value) values ($1,$2,$3,$4::jsonb)`, [S.studioId, kind, profile, JSON.stringify(value)]));
     expect(await ins("model_set", { enabled: true })).toBeNull();
@@ -287,7 +297,7 @@ describe("events: closed shapes, append-only, by user id", () => {
   });
 
   it("removing a studio removes its settings and events (CASCADE) and is never blocked by them", async () => {
-    const S = await seedStudio("sw-cascade");
+    const S = await seedOn("sw-cascade");
     await setModel(S.userId, S.studioId, SEN, true);
     expect(await eventCount(S.studioId)).toBe(1);
     const gone = await failure(adminQuery(`delete from public.studios where id = $1`, [S.studioId]));
@@ -328,7 +338,7 @@ describe("apply_block_machine_identity: the xCell Pur model with a legacy-column
   const LEG_MODES = ["thermolysis", "blend", "galvanic"];
 
   it("records Pur + each legacy mode (no unit) and with the studio's own Pur unit, as the legacy modes, without a contract row", async () => {
-    const S = await seedStudio("sw-id-ok");
+    const S = await seedOn("sw-id-ok");
     for (const mode of LEG_MODES) {
       const s = await seedSession(S);
       await identity(s.blockId, S.studioId, PUR, null, mode);
@@ -341,8 +351,8 @@ describe("apply_block_machine_identity: the xCell Pur model with a legacy-column
   });
 
   it("is refused for an unknown mode, no mode, a different model, another studio's unit, and a unit of another profile", async () => {
-    const S = await seedStudio("sw-id-no");
-    const T = await seedStudio("sw-id-other");
+    const S = await seedOn("sw-id-no");
+    const T = await seedOn("sw-id-other");
     const s = await seedSession(S);
     expect((await failure(identity(s.blockId, S.studioId, PUR, null, "bogus")))?.message).toMatch(/mode needs a registered machine/);
     expect((await failure(identity(s.blockId, S.studioId, PUR, null, null)))?.message).toMatch(/must be the xCell Pur machine/);
@@ -355,7 +365,7 @@ describe("apply_block_machine_identity: the xCell Pur model with a legacy-column
   });
 
   it("a NEW assignment is refused when the model is switched off or the rollout is off; the refusal writes nothing", async () => {
-    const S = await seedStudio("sw-id-off");
+    const S = await seedOn("sw-id-off");
     const s = await seedSession(S);
     await setModel(S.userId, S.studioId, PUR, false);
     expect((await failure(identity(s.blockId, S.studioId, PUR, null, "thermolysis")))?.message).toMatch(/not available for new settings/);
@@ -366,7 +376,7 @@ describe("apply_block_machine_identity: the xCell Pur model with a legacy-column
   });
 
   it("an EXISTING block with an UNCHANGED identity still saves with the model off and the rollout Off; a CHANGED one does not", async () => {
-    const S = await seedStudio("sw-id-keep");
+    const S = await seedOn("sw-id-keep");
     const s = await seedSession(S);
     await identity(s.blockId, S.studioId, PUR, null, "thermolysis");
     await setModel(S.userId, S.studioId, PUR, false);
@@ -379,7 +389,7 @@ describe("apply_block_machine_identity: the xCell Pur model with a legacy-column
   });
 
   it("a block holding legacy readings takes the Pur legacy identity, but another native identity is still refused (0310's rule stands)", async () => {
-    const S = await seedStudio("sw-id-readings");
+    const S = await seedOn("sw-id-readings");
     const s = await seedSession(S);
     await adminTx(async (q) => { await q(`set local session_replication_role = replica`); await q(`update public.session_blocks set energy_level = 3 where id = $1`, [s.blockId]); });
     await identity(s.blockId, S.studioId, PUR, null, "thermolysis");
@@ -388,7 +398,7 @@ describe("apply_block_machine_identity: the xCell Pur model with a legacy-column
   });
 
   it("D3/D4: a block with a stale legacy mode and frequency takes a native identity and keeps those columns untouched; an entry with a legacy reading still blocks the native identity", async () => {
-    const S = await seedStudio("sw-d34");
+    const S = await seedOn("sw-d34");
     const s = await seedSession(S);
     await adminTx(async (q) => { await q(`set local session_replication_role = replica`); await q(`update public.session_blocks set mode = 'galv', machine_frequency = '13.56 MHz' where id = $1`, [s.blockId]); });
     const senior = await unitOf(S.studioId, SEN, 3);
@@ -398,7 +408,7 @@ describe("apply_block_machine_identity: the xCell Pur model with a legacy-column
     expect(row.machine_frequency).toBe("13.56 MHz");
     expect(row.machine_profile_id).toBe(SEN);
     expect((await adminQuery(`select public.block_holds_legacy_readings($1) h`, [s.blockId])).rows[0].h).toBe(false);
-    const S2 = await seedStudio("sw-d4");
+    const S2 = await seedOn("sw-d4");
     const s2 = await seedSession(S2);
     await adminQuery(`insert into public.electrolysis_entries (session_id, block_id, area, mode, galvanic_ma) values ($1,$2,'Upper lip','galv',2)`, [s2.sessionId, s2.blockId]);
     const senior2 = await unitOf(S2.studioId, SEN, 3);
@@ -406,7 +416,7 @@ describe("apply_block_machine_identity: the xCell Pur model with a legacy-column
   });
 
   it("an UNTOUCHED saved block is not frozen: a block saved with only an area, the sticky frequency and a mode selection can still change machine, and so can one whose only entry has no reading", async () => {
-    const S = await seedStudio("sw-untouched");
+    const S = await seedOn("sw-untouched");
     const s = await seedSession(S);
     await adminTx(async (q) => { await q(`set local session_replication_role = replica`); await q(`update public.session_blocks set mode = 'thermo', machine_frequency = '27.12 MHz' where id = $1`, [s.blockId]); });
     await adminQuery(`insert into public.electrolysis_entries (session_id, block_id, area, mode) values ($1,$2,'Upper lip','thermo')`, [s.sessionId, s.blockId]);
@@ -421,7 +431,7 @@ describe("apply_block_machine_identity: the xCell Pur model with a legacy-column
   });
 
   it("the legacy xCell identity (no unit, no mode) is untouched, and a historical legacy-xCell block reopens unchanged", async () => {
-    const S = await seedStudio("sw-id-legacy");
+    const S = await seedOn("sw-id-legacy");
     const s = await seedSession(S);
     await setLegacyMode(s.blockId);
     await identity(s.blockId, S.studioId, LEGACY, null, null);
@@ -437,7 +447,7 @@ describe("apply_block_machine_identity: the xCell Pur model with a legacy-column
   });
 
   it("0310's contract rules still hold for a native unit (a mode outside the contract is refused)", async () => {
-    const S = await seedStudio("sw-id-0310");
+    const S = await seedOn("sw-id-0310");
     const s = await seedSession(S);
     const senior = await unitOf(S.studioId, SEN, 3);
     expect((await failure(identity(s.blockId, S.studioId, SEN, senior, "not-a-mode")))?.message).toMatch(/does not offer that mode/);
@@ -452,7 +462,7 @@ describe("DB-level freeze: a block holding readings cannot change its machine id
   const later = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
   it("refuses a change of model, unit or mode once an entry holds a reading; first assignment and an unchanged identity stay allowed; a soft-deleted entry is not a reading", async () => {
-    const S = await seedStudio("sw-frz");
+    const S = await seedOn("sw-frz");
     const s = await seedSession(S);
     await adminQuery(`update public.session_blocks set machine_profile_id=$2, machine_mode_key='thermolysis' where id=$1`, [s.blockId, PUR]); // first assignment
     const [q, p] = ENTRY(s.blockId, S.studioId);
@@ -467,7 +477,7 @@ describe("DB-level freeze: a block holding readings cannot change its machine id
   });
 
   it("COST of the block share lock: a burst of 200 reading writes timed with and without the trigger (measured, reported, loosely bounded)", async () => {
-    const S = await seedStudio("sw-cost");
+    const S = await seedOn("sw-cost");
     const s = await seedSession(S);
     const burst = async () => {
       const t0 = performance.now();
@@ -484,7 +494,7 @@ describe("DB-level freeze: a block holding readings cannot change its machine id
   });
 
   it("RACE A: a reading write in flight holds the block; a concurrent identity change waits, then is refused", async () => {
-    const S = await seedStudio("sw-race-a");
+    const S = await seedOn("sw-race-a");
     const s = await seedSession(S);
     await adminQuery(`update public.session_blocks set machine_profile_id=$2, machine_mode_key='thermolysis' where id=$1`, [s.blockId, PUR]);
     let release!: () => void;
@@ -504,7 +514,7 @@ describe("DB-level freeze: a block holding readings cannot change its machine id
   });
 
   it("RACE B: an identity change in flight holds the block; a concurrent reading write waits and then lands under the NEW identity", async () => {
-    const S = await seedStudio("sw-race-b");
+    const S = await seedOn("sw-race-b");
     const s = await seedSession(S);
     await adminQuery(`update public.session_blocks set machine_profile_id=$2, machine_mode_key='thermolysis' where id=$1`, [s.blockId, PUR]);
     let release!: () => void;
@@ -529,7 +539,7 @@ describe("DB-level freeze: a block holding readings cannot change its machine id
 
 describe("Privacy conditions: role gate, invoker lock, freeze as the lowest writing role", () => {
   it("A: a practitioner-role member may use choices and ensure; a user whose practitioners row has any other role is refused (receptionist, when the chain allows that role)", async () => {
-    const S = await seedStudio("sw-role");
+    const S = await seedOn("sw-role");
     const sess = await seedSession(S);
     const mem = await seedMember(S, "sw-role-m");
     expect((await choices(mem.userId)).length).toBeGreaterThan(0);
@@ -544,7 +554,7 @@ describe("Privacy conditions: role gate, invoker lock, freeze as the lowest writ
   it("A (receptionist): a user who is an active studio receptionist and has NO practitioners row is refused by choices and ensure; practitioners.role never holds 'receptionist' in any chain", async () => {
     const have = (await adminQuery(`select to_regclass('public.studio_receptionists') t`)).rows[0].t;
     if (!have) { console.log("studio_receptionists is not in this chain; the stacked run exercises this case"); return; }
-    const S = await seedStudio("sw-recep");
+    const S = await seedOn("sw-recep");
     const sess = await seedSession(S);
     const u = randomUUID();
     await adminQuery(`insert into auth.users (id, email) values ($1,$2)`, [u, `sw-recep-${u.slice(0, 8)}@harness.local`]);
@@ -557,8 +567,8 @@ describe("Privacy conditions: role gate, invoker lock, freeze as the lowest writ
 
   it("B: the share-lock trigger is SECURITY INVOKER, and another studio's caller cannot lock this studio's block (even through a failing insert held open)", async () => {
     expect((await adminQuery(`select prosecdef from pg_proc where proname='reading_write_share_lock_block'`)).rows[0].prosecdef).toBe(false);
-    const S = await seedStudio("sw-lock-a");
-    const O = await seedStudio("sw-lock-b");
+    const S = await seedOn("sw-lock-a");
+    const O = await seedOn("sw-lock-b");
     const s = await seedSession(S);
     let blockedByLock: unknown = "not run";
     await adminTx(async (q) => {
@@ -575,7 +585,7 @@ describe("Privacy conditions: role gate, invoker lock, freeze as the lowest writ
   });
 
   it("C: the freeze sees every entry as the lowest writing role (a practitioner member): the member can read the block's entries, and a direct identity change is refused by the freeze or by privileges, never silently allowed", async () => {
-    const S = await seedStudio("sw-frz-role");
+    const S = await seedOn("sw-frz-role");
     const mem = await seedMember(S, "sw-frz-m");
     const s = await seedSession(S);
     await adminQuery(`update public.session_blocks set machine_profile_id=$2, machine_mode_key='thermolysis' where id=$1`, [s.blockId, PUR]);
@@ -588,7 +598,7 @@ describe("Privacy conditions: role gate, invoker lock, freeze as the lowest writ
   });
 
   it("down: carries a rollout-Off refusal (the behavioural run is the manual down rehearsal: data checks fire first, so a populated test database cannot reach it)", () => {
-    const d = readFileSync("docs/proposals/machine-switches.down.sql", "utf8");
+    const d = readFileSync("supabase/rollbacks/0366_machine_switches.down.sql", "utf8");
     expect(d).toMatch(/platform_rollouts r where r\.key = 'charting_new_view_xcell' and r\.mode <> 'off'/);
     expect(d).toMatch(/rollout is not Off/);
   });
@@ -601,7 +611,7 @@ describe("Insurance conditions: one live Pur unit, forced RLS, one readings defi
     Number((await adminQuery(`select count(*)::int n from public.studio_machines where studio_id=$1 and machine_profile_id=$2 and retired_at is null`, [studio, PUR])).rows[0].n);
 
   it("R1: the database holds at most one live xCell Pur unit per studio; two concurrent owner registrations leave exactly one; a retired unit frees the slot", async () => {
-    const S = await seedStudio("sw-uniq");
+    const S = await seedOn("sw-uniq");
     const results = await Promise.allSettled([register(S.userId, S.studioId, "Room 1 xCell"), register(S.userId, S.studioId, "Room 2 xCell")]);
     expect(results.filter((r) => r.status === "fulfilled").length).toBe(1);
     expect(await liveXcell(S.studioId)).toBe(1);
@@ -629,7 +639,7 @@ describe("Insurance conditions: one live Pur unit, forced RLS, one readings defi
   });
 
   it("C3: the database function and the application helper agree on what 'holds legacy readings' means, case by case", async () => {
-    const S = await seedStudio("sw-agree");
+    const S = await seedOn("sw-agree");
     type Case = { name: string; block?: Record<string, unknown>; entry?: Record<string, unknown>; deleted?: boolean; reading: boolean };
     const cases: Case[] = [
       { name: "empty", reading: false },
@@ -673,7 +683,7 @@ describe("Insurance conditions: one live Pur unit, forced RLS, one readings defi
   });
 
   it("C4: concurrent saves on one block never deadlock (no 40P01), across reading writes and identity changes in both orders", async () => {
-    const S = await seedStudio("sw-deadlock");
+    const S = await seedOn("sw-deadlock");
     for (let round = 0; round < 6; round++) {
       const s = await seedSession(S);
       await adminQuery(`update public.session_blocks set machine_profile_id=$2, machine_mode_key='thermolysis' where id=$1`, [s.blockId, PUR]);
@@ -687,10 +697,10 @@ describe("Insurance conditions: one live Pur unit, forced RLS, one readings defi
   it("C5: ensure goes through the shared writability guard and refuses a finalized or void session", async () => {
     const src = (await adminQuery(`select prosrc from pg_proc where proname='ensure_studio_machine_for_save'`)).rows[0].prosrc as string;
     expect(src).toMatch(/assert_session_writable/);
-    const S = await seedStudio("sw-final");
+    const S = await seedOn("sw-final");
     const s = await seedSession(S);
     expect(await ensure(S.userId, s.blockId, PUR)).toMatch(/^[0-9a-f-]{36}$/);
-    const S2 = await seedStudio("sw-final2");
+    const S2 = await seedOn("sw-final2");
     const s2 = await seedSession(S2);
     await seedLegacyRecordStatus(s2.sessionId, "finalized");
     expect((await failure(ensure(S2.userId, s2.blockId, PUR)))?.message).toBe("Not available.");
@@ -698,7 +708,7 @@ describe("Insurance conditions: one live Pur unit, forced RLS, one readings defi
   });
 
   it("native MultiPlex readings do NOT freeze the identity (each reading carries its own unit, model and mode; the existing unit correction stays possible)", async () => {
-    const S = await seedStudio("sw-native");
+    const S = await seedOn("sw-native");
     const s = await seedSession(S);
     const unit = await unitOf(S.studioId, PUR, 1);
     await adminQuery(`update public.session_blocks set machine_profile_id=$2, studio_machine_id=$3, machine_mode_key='multiplex' where id=$1`, [s.blockId, PUR, unit]);
@@ -712,7 +722,7 @@ describe("Insurance conditions: one live Pur unit, forced RLS, one readings defi
   });
 
   it("C6: ensure answers a unit id or one of three refusal codes (name_taken shown here; retired and unpublished above); the application treats any non-id text as a refusal", async () => {
-    const S = await seedStudio("sw-codes");
+    const S = await seedOn("sw-codes");
     const s = await seedSession(S);
     const other = await unitOf(S.studioId, SEN, 3);
     await adminQuery(`update public.studio_machines set display_name = 'Dectro xCell' where id = $1`, [other]);
@@ -721,10 +731,10 @@ describe("Insurance conditions: one live Pur unit, forced RLS, one readings defi
 });
 
 describe("the down", () => {
-  const DOWN_PATH = "docs/proposals/machine-switches.down.sql";
+  const DOWN_PATH = "supabase/rollbacks/0366_machine_switches.down.sql";
 
   it("REFUSES while a block holds a Pur identity (N1); nothing is dropped", async () => {
-    const S = await seedStudio("sw-down");
+    const S = await seedOn("sw-down");
     const s = await seedSession(S);
     await identity(s.blockId, S.studioId, PUR, null, "thermolysis");
     const e = await failure(adminQuery(readFileSync(DOWN_PATH, "utf8")));
@@ -738,5 +748,60 @@ describe("the down", () => {
     const a = orig.indexOf("create or replace function public.apply_block_machine_identity(");
     const body = orig.slice(a, orig.indexOf("$$;", a) + 3);
     expect(readFileSync(DOWN_PATH, "utf8")).toContain(body);
+  });
+});
+
+describe("answer A: the owner's switch decides, old history is not needed, and the unit comes only from a successful first save", () => {
+  const unitCount = async (studio: string) =>
+    Number((await adminQuery(`select count(*)::int n from public.studio_machines where studio_id=$1 and machine_profile_id=$2`, [studio, PUR])).rows[0].n);
+
+  it("NO HISTORY: a studio with no machine, no legacy xCell entry and no unit is refused until its owner turns the model on; turning it on creates nothing; the first save creates exactly one", async () => {
+    const S = await seedStudio("sw-nohist");
+    const sess = await seedSession(S);
+    expect(await unitCount(S.studioId)).toBe(0);
+    expect((await failure(ensure(S.userId, sess.blockId, PUR)))?.message).toMatch(/not switched on/);
+    expect(await unitCount(S.studioId)).toBe(0);
+    expect(await setModel(S.userId, S.studioId, PUR, true)).toBe("changed");
+    expect(await unitCount(S.studioId), "the switch alone creates no machine record").toBe(0);
+    const id = await ensure(S.userId, sess.blockId, PUR);
+    expect(id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(await unitCount(S.studioId)).toBe(1);
+    expect(await ensure(S.userId, sess.blockId, PUR), "a double save returns the same unit").toBe(id);
+    expect(await unitCount(S.studioId)).toBe(1);
+  });
+
+  it("THE WRONG MODEL IS ON: only Senior is switched on, so the xCell first save is refused and creates nothing", async () => {
+    const S = await seedStudio("sw-wrongmodel");
+    const sess = await seedSession(S);
+    expect(await setModel(S.userId, S.studioId, SEN, true)).toBe("changed");
+    expect((await failure(ensure(S.userId, sess.blockId, PUR)))?.message).toMatch(/not switched on/);
+    expect(await unitCount(S.studioId)).toBe(0);
+  });
+
+  it("FIRST SAVE ONLY AFTER SUCCESS: a block whose save was rolled back, a block that does not exist and a deleted block give no unit", async () => {
+    const S = await seedStudio("sw-failedsave");
+    await setModel(S.userId, S.studioId, PUR, true);
+    const sess = await seedSession(S);
+    const lostBlock = randomUUID();
+    await failure(adminTx(async (q) => {
+      await q(`insert into public.session_blocks (id, studio_id, session_id) values ($1,$2,$3)`, [lostBlock, S.studioId, sess.sessionId]);
+      throw new Error("the save failed after the block insert");
+    }));
+    expect((await failure(ensure(S.userId, lostBlock, PUR)))?.message).toBe("Not available.");
+    expect((await failure(ensure(S.userId, randomUUID(), PUR)))?.message).toBe("Not available.");
+    await adminQuery(`update public.session_blocks set deleted_at = now() where id = $1`, [sess.blockId]);
+    expect((await failure(ensure(S.userId, sess.blockId, PUR)))?.message).toBe("Not available.");
+    expect(await unitCount(S.studioId)).toBe(0);
+  });
+
+  it("another studio's owner cannot switch this studio's model on, and a receptionist (no practitioner row) cannot save into it", async () => {
+    const S = await seedStudio("sw-others");
+    const other = await seedStudio("sw-others-b");
+    const sess = await seedSession(S);
+    expect((await failure(setModel(other.userId, S.studioId, PUR, true)))?.message).toBe("Not available.");
+    expect((await models(S.studioId))[PUR]).toBe(false);
+    await setModel(S.userId, S.studioId, PUR, true);
+    expect((await failure(ensure(recept, sess.blockId, PUR)))?.message).toBe("Not available.");
+    expect(await unitCount(S.studioId)).toBe(0);
   });
 });
