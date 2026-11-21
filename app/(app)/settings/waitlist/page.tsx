@@ -22,6 +22,9 @@ import { declineOwnerEmailActivation } from "@/lib/waitlist/decline-owner-email-
 import { waitlistDeclineAnswersEnabled } from "@/lib/waitlist/decline-answers-gate";
 import { readFollowUps } from "@/lib/waitlist/followups-owner";
 import { loadLinkableAppointments } from "@/lib/waitlist/followup-linkable";
+import { loadManualBookingChoices } from "@/lib/waitlist/manual-booking-choices";
+import { bookedManuallyNoticeFrom, waitlistBookedManuallyEnabled } from "@/lib/waitlist/booked-manually-notice";
+import { BookedManuallyForm, BookedManuallyNotice } from "@/components/waitlist/booked-manually-form";
 import { loadReplyContacts } from "@/lib/waitlist/reply-contact";
 import { DeclineFollowUpSection } from "@/components/waitlist/decline-follow-up-section";
 import { DeclineEmailFailedNotice } from "@/components/waitlist/decline-email-failed-notice";
@@ -354,7 +357,7 @@ export default async function WaitlistSettingsPage({
   // an array. Both values are browser-controlled, so the type says so rather
   // than lying about it — and neither reaches a query except through the
   // validation immediately below.
-  searchParams?: Promise<{ section?: string | string[]; page?: string | string[]; fu?: string | string[] }>;
+  searchParams?: Promise<{ section?: string | string[]; page?: string | string[]; fu?: string | string[]; bm?: string | string[] }>;
 }) {
   const { practitioner, studio } = await requirePractitionerWithStudio();
 
@@ -668,6 +671,19 @@ export default async function WaitlistSettingsPage({
     studio.id,
     followUpOpenRows.flatMap((r) => (r.invitationId ? [r.invitationId] : [])),
   );
+  // "Booked manually": read only behind its own flag (the command exists only once its migration is applied). All of a person's appointments are offered.
+  const bookedManuallyOn = waitlistBookedManuallyEnabled();
+  const manualChoices = bookedManuallyOn
+    ? await loadManualBookingChoices(
+        supabase,
+        studio.id,
+        rows.filter((r) => r.status !== "converted" && r.status !== "removed").map((r) => ({ id: r.id, email: r.email })),
+        (iso, hint) =>
+          new Intl.DateTimeFormat("en-US", { timeZone: studio.timezone ?? "UTC", dateStyle: "medium", timeStyle: "short" }).format(new Date(iso)) +
+          (hint ? ` · ${hint}` : ""),
+      )
+    : null;
+  const bookedManualNotice = bookedManuallyOn ? bookedManuallyNoticeFrom(firstParam(params.bm)) : null;
   const fuParam = firstParam(params.fu);
   const followUpNotice = fuParam === "done" || fuParam === "already" || fuParam === "refused" || fuParam === "failed" ? fuParam : null;
   // 0204 refuses an INVITED booking while admission is Closed until 0323 is applied (and while unreadable), so Send is
@@ -971,6 +987,7 @@ export default async function WaitlistSettingsPage({
             );
           })()}
 
+          {bookedManualNotice !== null && <BookedManuallyNotice result={bookedManualNotice} />}
           {declineAnswersOn &&
             (followUps?.kind === "ok" ? (
               <DeclineFollowUpSection
@@ -983,6 +1000,7 @@ export default async function WaitlistSettingsPage({
                 capped={followUps.capped === true}
                 contacts={followUpContacts?.kind === "ok" ? followUpContacts.byEntry : null}
                 renderedEntryIds={new Set(rows.map((r) => r.id))}
+                manualChoices={manualChoices}
               />
             ) : (
               <p id="follow-up" className="scroll-mt-[calc(var(--settings-top,4.5rem)+4rem)] text-sm text-neutral-600 min-[700px]:scroll-mt-[calc(var(--settings-top,4.5rem)+1rem)] dark:text-neutral-400" role="status">
@@ -1502,6 +1520,14 @@ export default async function WaitlistSettingsPage({
                                     : null
                                 }
                               />
+                            </details>
+                          )}
+                          {manualChoices !== null && row.status !== "converted" && row.status !== "removed" && (
+                            <details className="w-full min-w-0" data-testid="row-booked-manually">
+                              <summary className="min-h-[44px] cursor-pointer list-none rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium">
+                                Booked manually
+                              </summary>
+                              <BookedManuallyForm entryId={row.id} choices={manualChoices.get(row.id) ?? []} />
                             </details>
                           )}
                       </li>
