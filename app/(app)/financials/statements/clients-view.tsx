@@ -2,6 +2,7 @@ import { PendingLink } from "@/components/pending-link";
 import { EmptyState } from "@/components/ui/empty-state";
 import { CONTROL_MIN_TOUCH, FOCUS_RING, cx } from "@/components/ui/control-base";
 import { DIRECTORY_MONTH_NOTE, offDocumentMoneyNotice, pageDirectory, type DirectoryResult } from "@/lib/finance/statement-directory";
+import { splitCurrency } from "@/lib/finance/statement-money";
 import type { YearMonth } from "@/lib/finance/statement-period";
 import { FINDER_TOO_MANY, STATEMENT_READ_UNAVAILABLE, clientStatementHref, clientsListHref, CLIENTS_PAGE_SIZE } from "@/lib/finance/statement-screen";
 
@@ -40,55 +41,64 @@ export function ClientsView({ month, monthLabel, maxMonth, timezone, notice, pag
 
   return (
     <div className="space-y-6">
-      <header className="space-y-3">
-        <h1 className="text-2xl font-semibold text-fg">Statements</h1>
-        <StatementsTabs active="clients" month={month} />
-        <MonthControls base="/financials/statements" month={month} maxMonth={maxMonth} />
+      <header className="space-y-4">
+        <p className="text-sm text-fg-muted">Business &nbsp;/&nbsp; Statements</p>
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <h1 className="text-[clamp(32px,4vw,46px)] font-bold leading-[1.07] tracking-[-2px] text-fg">Clients this month</h1>
+          <MonthControls base="/financials/statements" month={month} maxMonth={maxMonth} />
+        </div>
+        <div className="flex flex-wrap items-start gap-3">
+          <StatementsTabs active="clients" month={month} />
+          <section aria-labelledby="stmt-find" className="min-w-0 flex-1 basis-60 md:max-w-sm">
+            <h2 id="stmt-find" className="sr-only">Find a client</h2>
+            {finder.state === "ok" ? (
+              <ClientFinder month={month} monthLabel={monthLabel} clients={finder.clients} monthVisits={monthVisits} lastVisits={finder.lastVisits} />
+            ) : (
+              <p className="text-sm text-fg">{finder.state === "too_many" ? FINDER_TOO_MANY : STATEMENT_READ_UNAVAILABLE.read_failed}</p>
+            )}
+          </section>
+        </div>
         {notice ? <p className="text-sm text-fg" role="status">{notice}</p> : null}
       </header>
 
-      <section aria-labelledby="stmt-find" className="space-y-2">
-        <h2 id="stmt-find" className="sr-only">Find a client</h2>
-        {finder.state === "ok" ? (
-          <ClientFinder month={month} monthLabel={monthLabel} clients={finder.clients} monthVisits={monthVisits} lastVisits={finder.lastVisits} />
-        ) : (
-          <p className="text-sm text-fg">{finder.state === "too_many" ? FINDER_TOO_MANY : STATEMENT_READ_UNAVAILABLE.read_failed}</p>
-        )}
-      </section>
-
       <section aria-labelledby="stmt-clients" className="space-y-3">
-        <h2 id="stmt-clients" className="text-lg font-medium text-fg">Clients with visits in {monthLabel}</h2>
-        <p className="text-sm text-fg-muted">{DIRECTORY_MONTH_NOTE} Month and day boundaries use the studio&apos;s timezone ({timezone}).</p>
+        <div>
+          <h2 id="stmt-clients" className="text-[21px] font-semibold tracking-[-0.65px] text-fg">{monthLabel}</h2>
+          {paged && paged.totals.clientCount > 0 ? <p className="text-sm text-fg-muted">{paged.totals.clientCount} {paged.totals.clientCount === 1 ? "client" : "clients"} with visits</p> : null}
+        </div>
         {!directory.ok ? (
           <p className="text-sm text-fg" role="alert">{STATEMENT_READ_UNAVAILABLE[directory.reason] ?? STATEMENT_READ_UNAVAILABLE.read_failed}</p>
         ) : paged && paged.totals.clientCount === 0 ? (
           <EmptyState title={`No client visits in ${monthLabel}.`} description="A client appears here once they have a completed visit, a fee or a payment recorded in the month. Use Find a client to open anyone's full history." />
         ) : paged ? (
           <>
-            <p className="text-sm text-fg" aria-live="polite">
-              {paged.totals.clientCount} {paged.totals.clientCount === 1 ? "client" : "clients"} · {paged.totals.visitCount} {paged.totals.visitCount === 1 ? "visit" : "visits"} · {format(paged.totals.paidCents)} paid
-              {paged.totals.awaitingCount > 0 ? ` · ${paged.totals.awaitingCount} ${paged.totals.awaitingCount === 1 ? "visit" : "visits"} awaiting payment confirmation` : ""}
-            </p>
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto rounded-xl border border-line bg-white">
               <table className="w-full text-sm">
                 <caption className="sr-only">Clients with visits in {monthLabel}</caption>
-                <thead>
-                  <tr className="text-left text-fg-muted">
-                    <th scope="col" className="py-2 pr-3 font-normal">Client</th>
-                    <th scope="col" className="py-2 pr-3 text-right font-normal">Visits</th>
-                    <th scope="col" className="py-2 pr-3 text-right font-normal">Total paid</th>
-                    <th scope="col" className="py-2 font-normal">Payment status</th>
+                {/* The reference draws no column heads; they stay for screen readers. */}
+                <thead className="sr-only">
+                  <tr>
+                    <th scope="col" className="px-[18px] py-3">Client</th>
+                    <th scope="col" className="px-3 py-3">Visits</th>
+                    <th scope="col" className="px-[18px] py-3 text-right">Total paid</th>
+                    <th scope="col" className="px-[18px] py-3 text-right"><span className="sr-only">Document</span></th>
                   </tr>
                 </thead>
                 <tbody>
                   {paged.rows.map((r) => (
-                    <tr key={r.clientId} className="border-t border-line">
-                      <th scope="row" className="py-1 pr-3 text-left font-normal">
-                        <PendingLink href={clientStatementHref(r.clientId, month)} className={cx("inline-flex items-center underline", CONTROL_MIN_TOUCH, FOCUS_RING)}>{r.name}</PendingLink>
+                    <tr key={r.clientId} className="border-t border-line hover:bg-surface-sunken">
+                      <th scope="row" className="px-[18px] py-3 text-left font-normal">
+                        <PendingLink href={clientStatementHref(r.clientId, month)} className={cx("inline-flex items-center font-semibold text-fg underline underline-offset-[3px]", CONTROL_MIN_TOUCH, FOCUS_RING)}>{r.name}</PendingLink>
                       </th>
-                      <td className="py-2 pr-3 text-right tabular-nums">{r.visitCount}</td>
-                      <td className="py-2 pr-3 text-right tabular-nums">{format(r.paidCents)}</td>
-                      <td className="py-2 text-fg-muted">{rowStatusText(r)}</td>
+                      <td className="px-3 py-3 tabular-nums text-fg">{r.visitCount} {r.visitCount === 1 ? "visit" : "visits"}</td>
+                      <td className="px-[18px] py-3 text-right tabular-nums">
+                        <span className="block font-medium text-fg">{splitCurrency(format(r.paidCents)).amount}</span>
+                        <span className="block text-xs text-fg-muted">{rowStatusText(r)}</span>
+                      </td>
+                      <td className="px-[18px] py-3 text-right">
+                        {/* The row's document action: opens that client's statement for the month, where Print / Save as PDF and Export CSV already work. */}
+                        <PendingLink href={clientStatementHref(r.clientId, month)} aria-label={`Statement for ${r.name}`} className={cx("inline-flex items-center rounded-lg border border-line-strong bg-white px-3 text-sm text-fg hover:bg-surface-sunken", CONTROL_MIN_TOUCH, FOCUS_RING)}>Statement</PendingLink>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -101,7 +111,15 @@ export function ClientsView({ month, monthLabel, maxMonth, timezone, notice, pag
                 {paged.page < paged.pageCount ? <PendingLink href={clientsListHref(month, paged.page + 1)} className={cx("underline", CONTROL_MIN_TOUCH, FOCUS_RING)}>Next page</PendingLink> : null}
               </nav>
             ) : null}
-            <p className="text-sm text-fg-muted">The counts and totals above cover every client in the month, not only this page.</p>
+            {/* The explanation and the month's totals, kept as a footnote under the list (the totals cover every client in the month, not only this page). */}
+            <div className="space-y-1 text-sm text-fg-muted" aria-live="polite">
+              <p>
+                {paged.totals.clientCount} {paged.totals.clientCount === 1 ? "client" : "clients"} · {paged.totals.visitCount} {paged.totals.visitCount === 1 ? "visit" : "visits"} · {format(paged.totals.paidCents)} paid
+                {paged.totals.awaitingCount > 0 ? ` · ${paged.totals.awaitingCount} ${paged.totals.awaitingCount === 1 ? "visit" : "visits"} awaiting payment confirmation` : ""}
+              </p>
+              <p>The counts and totals for the month cover every client, not only this page.</p>
+              <p>{DIRECTORY_MONTH_NOTE} Month and day boundaries use the studio&apos;s timezone ({timezone}).</p>
+            </div>
           </>
         ) : null}
         {offNotice ? <p className="text-sm text-fg" role="status">{offNotice}</p> : null}

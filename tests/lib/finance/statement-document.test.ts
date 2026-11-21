@@ -10,6 +10,8 @@ import {
   VISIT_FLAGS,
   VISIT_STATES,
   awaitingVisitLine,
+  feeBasisLabel,
+  FEE_BASIS_LABEL,
   FEE_REASON_COPY,
   toCsvRows,
   toIssueSnapshot,
@@ -204,10 +206,10 @@ describe("the approved missing-payment example is representable exactly", () => 
     expect(d.totals.visitCount).toBe(5);
     expect(paidSummaryLine(d, fmt)).toBe("$510 paid · 1 visit awaiting payment confirmation");
   });
-  it("Nov 19, 2026 · $60 fee · No payment recorded, and NO aggregate balance", () => {
+  it("Nov 19, 2026 · $60 agreed fee · No payment recorded, and NO aggregate balance", () => {
     expect(d.awaiting).toHaveLength(1);
     const v = d.visits.find((x) => x.localDate === "2026-11-19")!;
-    expect(awaitingVisitLine(v, fmt)).toBe("Nov 19, 2026 · $60 fee · No payment recorded");
+    expect(awaitingVisitLine(v, fmt)).toBe("Nov 19, 2026 · $60 agreed fee · No payment recorded");
     expect(d.balanceDue.kind).toBe("not_established");
   });
   it("with NO recorded fee source the same visit says 'Fee not recorded', never a price", () => {
@@ -638,5 +640,29 @@ describe("the document shows the display name", () => {
     expect(doc([], { client: { id: "c", name: "Alexandra Smith", preferred_name: "Alex" } }).client.name).toBe("Alex");
     expect(doc([], { client: { id: "c", name: "Alexandra Smith", preferred_name: "  " } }).client.name).toBe("Alexandra Smith");
     expect(doc([], { client: { id: "c", name: "Alexandra Smith" } }).client.name).toBe("Alexandra Smith");
+  });
+});
+
+describe("what a visit's amount is called: 'Agreed fee' only when price evidence backs it; an amount taken from a payment is 'Charged'", () => {
+  const legacy = (cents: number | null): FeeCandidate => ({ source: "legacy_fee", cents });
+  it("a settlement quote (the price the owner recorded) is the ONLY source labelled 'Agreed fee'", () => {
+    expect(feeBasisLabel(resolveRecordedFee([quote(6000)]))).toBe("Agreed fee");
+    expect(feeBasisLabel(resolveRecordedFee([charged(6000)]))).toBe("Charged");
+    expect(feeBasisLabel(resolveRecordedFee([legacy(6000)]))).toBe("Charged");
+    expect(FEE_BASIS_LABEL).toEqual({ settlement_quote: "Agreed fee", card_attempt: "Charged", legacy_fee: "Charged" });
+  });
+  it("a quote beside a card charge is still the agreed fee; a card charge alone is never promoted to one", () => {
+    expect(feeBasisLabel(resolveRecordedFee([charged(7000), quote(6000)]))).toBe("Agreed fee");
+    expect(feeBasisLabel(resolveRecordedFee([charged(7000)]))).not.toMatch(/agreed/i);
+  });
+  it("no label when no amount is recorded, including when two records of one source disagree", () => {
+    expect(feeBasisLabel(resolveRecordedFee([]))).toBeNull();
+    expect(feeBasisLabel(resolveRecordedFee([charged(7000), charged(8000)]))).toBeNull();
+  });
+  it("the dated awaiting line says what the amount is", () => {
+    const d1 = doc([visit({ localDate: "2026-11-19", startsAt: "2026-11-19T15:00:00Z", feeCandidates: [charged(6000)] })]);
+    expect(awaitingVisitLine(d1.visits[0], fmt)).toBe("Nov 19, 2026 · $60 charged · No payment recorded");
+    const d2 = doc([visit({ localDate: "2026-11-19", startsAt: "2026-11-19T15:00:00Z", feeCandidates: [quote(6000)] })]);
+    expect(awaitingVisitLine(d2.visits[0], fmt)).toBe("Nov 19, 2026 · $60 agreed fee · No payment recorded");
   });
 });

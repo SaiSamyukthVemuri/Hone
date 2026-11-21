@@ -1,4 +1,4 @@
-import { formatLocalDate, type BalanceDue, type DocumentVisit, type FeeItem, type StatementDocument, type VisitState } from "@/lib/finance/statement-document";
+import { feeBasisLabel, formatLocalDate, type BalanceDue, type DocumentVisit, type FeeItem, type StatementDocument, type VisitState } from "@/lib/finance/statement-document";
 import { clientDisplayName } from "@/lib/clients/identity";
 import { foldForSearch } from "@/lib/clients/name-search";
 import { AMOUNT_KINDS } from "@/lib/finance/statement";
@@ -71,8 +71,10 @@ export function lastVisitDetail(lastVisitLocalDate: string | null | undefined): 
  * name with another result it then adds what tells them apart: the last visit date, or, when the last-visit lookup was not made or the client has
  * never had a visit, the plain "Same name as another client" (never a second "No visits" after "No visits in <month>").
  */
-export function finderOptionLine(args: { monthLabel: string; monthVisitCount: number | null; sameNameAsAnother: boolean; lastVisit: string | null | undefined; lastVisitsLoaded: boolean }): string {
-  const { monthLabel, monthVisitCount, sameNameAsAnother, lastVisit, lastVisitsLoaded } = args;
+export function finderOptionLine(args: { monthLabel: string; monthVisitCount: number | null; sameNameAsAnother: boolean; lastVisit: string | null | undefined; lastVisitsLoaded: boolean; showMonthCount?: boolean }): string {
+  const { monthLabel, monthVisitCount, sameNameAsAnother, lastVisit, lastVisitsLoaded, showMonthCount = true } = args;
+  // A screen that does not load the month's counts (the Studio tab) leaves the count out entirely: no "unavailable", which would read as an error, and never a zero.
+  if (!showMonthCount) return sameNameAsAnother ? (lastVisitsLoaded && lastVisit ? lastVisitDetail(lastVisit) : "Same name as another client") : "";
   const month =
     monthVisitCount === null
       ? `Visit count for ${monthLabel} unavailable`
@@ -94,6 +96,17 @@ export const VISIT_STATE_LABEL: Record<VisitState, string> = {
 
 export function visitFeeText(v: DocumentVisit | FeeItem, fmt: (cents: number) => string): string {
   return v.fee.state === "recorded" ? fmt(v.fee.cents) : "Fee not recorded";
+}
+
+/** What the amount IS: "Agreed fee" (backed by price evidence) or "Charged" (taken from a payment); null when no amount is recorded. */
+export function visitFeeBasis(v: DocumentVisit | FeeItem): string | null {
+  return feeBasisLabel(v.fee);
+}
+
+/** The amount and what it is, as one line of text: "$120.00 · Agreed fee", "$25.00 · Charged", or "Fee not recorded". */
+export function visitFeeWithBasis(v: DocumentVisit | FeeItem, fmt: (cents: number) => string): string {
+  const basis = feeBasisLabel(v.fee);
+  return basis ? `${visitFeeText(v, fmt)} · ${basis}` : visitFeeText(v, fmt);
 }
 
 /** One visit's payment lines, kept together: "Card · $60.00". A row that carries no amount says so rather than showing a number. */

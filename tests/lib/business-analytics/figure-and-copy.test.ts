@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { ANALYTICS_ACCESS_NOTE, BEYOND_USUAL_NOTE, FIRST_TIME_NOTE, NO_NEXT_BOOKING_NOTE, TREATMENT_CONTEXT_NOTE } from "@/lib/business-analytics/copy";
+import { ANALYTICS_ACCESS_NOTE, FIRST_TIME_NOTE, INTERVAL_NOTE, TREATMENT_CONTEXT_NOTE, beyondUsualNote, noNextBookingNote } from "@/lib/business-analytics/copy";
 import { FIGURE_UNAVAILABLE_COPY, figureFrom, unavailableText, type FigureRead } from "@/lib/business-analytics/figure";
 
 describe("a window over the cap makes only that figure unavailable", () => {
@@ -22,7 +22,7 @@ describe("a window over the cap makes only that figure unavailable", () => {
     expect(_typed).toBeNull();
   });
   it("every failure reason has words", () => {
-    for (const r of ["too_many_appointments", "read_failed", "currency_unknown", "not_reconciled"] as const) expect(FIGURE_UNAVAILABLE_COPY[r].length).toBeGreaterThan(10);
+    for (const r of ["too_many_appointments", "read_failed", "currency_unknown", "not_reconciled", "no_evidence_read"] as const) expect(FIGURE_UNAVAILABLE_COPY[r].length).toBeGreaterThan(10);
   });
 });
 
@@ -34,10 +34,24 @@ describe("fixed copy that must stay true", () => {
     expect(ANALYTICS_ACCESS_NOTE).toContain("Only payment records are restricted to the owner in the database");
   });
   it("labels say what the data cannot", () => {
+    expect(INTERVAL_NOTE).toContain("With a team-member filter, only that team member's visits are used.");
     expect(FIRST_TIME_NOTE).toContain("first visit recorded in Hone");
-    expect(NO_NEXT_BOOKING_NOTE).toContain("last 12 months");
-    expect(BEYOND_USUAL_NOTE).toContain("1.5 times");
+    expect(noNextBookingNote(12)).toContain("last 12 months");
+    expect(noNextBookingNote()).not.toMatch(/last \d+ month/); // no look-back in use, none named
+    expect(beyondUsualNote(1.5)).toContain("1.5 times");
     expect(TREATMENT_CONTEXT_NOTE).toContain("how many treatments were recorded and the date of the latest");
+  });
+});
+
+const MODULES = ["chart-geometry.ts", "copy.ts", "figure.ts", "money-format.ts", "money-metrics.ts", "named-clients.ts", "overview-csv.ts", "overview-model.ts", "overview-params.ts", "period.ts", "reconcile.ts", "reconciliation-line.ts", "service-value.ts", "visit-metrics.ts"];
+
+describe("the analytics server folder is the only place that reads", () => {
+  it("holds the one loader, which is owner-gated first and never writes or uses a service role", () => {
+    const dir = path.resolve(__dirname, "../../../lib/business-analytics/server");
+    expect(readdirSync(dir).sort()).toEqual(["client-names-read.ts", "overview-read.ts"]);
+    const code = readFileSync(path.join(dir, "overview-read.ts"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    expect(code).toMatch(/if \(practitioner\.role !== "owner"\) return \{ access: "refused" \};\n  const supabase/);
+    expect(code).not.toMatch(/service_role|createServiceClient|admin|\.(insert|update|upsert|delete|rpc)\(|appointment_payments|price_cents/);
   });
 });
 
@@ -45,13 +59,15 @@ describe("the analytics modules stay pure (no I/O, no routes, no UI, no studio i
   const dir = path.resolve(__dirname, "../../../lib/business-analytics");
   const files = readdirSync(dir).filter((f) => f.endsWith(".ts"));
   it("has the modules and nothing else", () => {
-    expect(files.sort()).toEqual(["copy.ts", "figure.ts", "money-metrics.ts", "period.ts", "reconcile.ts", "visit-metrics.ts"]);
+    expect(files.sort()).toEqual(MODULES);
   });
-  for (const f of ["copy.ts", "figure.ts", "money-metrics.ts", "period.ts", "reconcile.ts", "visit-metrics.ts"]) {
+  for (const f of MODULES) {
     it(`${f} imports no server code, database client, framework or clock`, () => {
       const src = readFileSync(path.join(dir, f), "utf8");
       const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
       expect(code).not.toMatch(/server-only|@\/lib\/supabase|from "next|from "react|createClient|\.from\(|fetch\(|process\.env|Date\.now|new Date\(\)/);
+      expect(code).not.toMatch(/services\.price_cents|price_cents/); // a past visit is never priced from today's list
+      expect(src).not.toMatch(/revenue|by payment date/i); // neither money figure is ever called revenue or "by payment date"
       expect(code).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i); // no id literal
     });
   }

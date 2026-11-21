@@ -1,6 +1,6 @@
 "use client";
 
-import { useReducer } from "react";
+import { useEffect, useReducer } from "react";
 import {
   DEFAULT_PAGE_SIZE,
   chooserReducer,
@@ -21,12 +21,19 @@ export function RecipientChooser({
   candidates,
   pageSize = DEFAULT_PAGE_SIZE,
   initialSelected = [],
+  onSelectionChange,
 }: {
   candidates: readonly Candidate[];
   pageSize?: number;
   initialSelected?: readonly string[];
+  /** Reports the size of the whole selection (all pages), so a line elsewhere can follow what is actually chosen. */
+  onSelectionChange?: (count: number) => void;
 }) {
   const [state, dispatch] = useReducer(chooserReducer, initialSelected, initialChooserState);
+  const selectedCount = state.selected.size;
+  useEffect(() => {
+    onSelectionChange?.(selectedCount);
+  }, [selectedCount, onSelectionChange]);
   const filtered = filterCandidates(candidates, state.query);
   const view = pageOf(filtered, state.page, pageSize);
   const pageIds = view.items.map((c) => c.entryId);
@@ -39,8 +46,8 @@ export function RecipientChooser({
       <input
         type="search"
         autoComplete="off"
-        aria-label="Search waiting people by name or email"
-        placeholder="Search by name or email"
+        aria-label="Search by name"
+        placeholder="Search by name"
         value={state.query}
         onChange={(e) => dispatch({ type: "query", query: e.target.value })}
         onKeyDown={(e) => {

@@ -89,7 +89,7 @@ describe("money is decimal with a separate currency column", () => {
     expect(row[header.indexOf("paid")]).toBe("60.00");
     expect(row[header.indexOf("fee")]).toBe("60.00");
     expect(row[header.indexOf("currency")]).toBe("CAD");
-    expect(parse(statementCsv(doc([visit()])))[HDR]).toBe("Visit,2026-11-03,10:00,Service A,Practitioner One,Fee recorded,60.00,Paid,,60.00,0.00,0.00,,CAD");
+    expect(parse(statementCsv(doc([visit()])))[HDR]).toBe("Visit,2026-11-03,10:00,Service A,Practitioner One,Agreed fee,60.00,Paid,,60.00,0.00,0.00,,CAD");
   });
   it("a visit with no fee record has a blank fee, not 0.00", () => {
     const rows = statementCsvLines(doc([visit({ feeCandidates: [], lines: [] })]));
@@ -192,7 +192,7 @@ describe("the text columns read exactly as the screen does", () => {
     for (const t of text) expect(t, t).not.toMatch(/^[a-z]+(_[a-z]+)+$|^(visit|paid|unknown|recorded|not_recorded|settled|unconfirmed)$/);
     expect(rows.map((r) => at(r, "row_type"))).toEqual(["Visit", "Visit", "No-show fee", "Not completed"]);
     expect(rows.map((r) => at(r, "state"))).toEqual(["Payment not confirmed", "Paid", "Paid", "Not completed"]);
-    expect(at(rows[1], "fee_state")).toBe("Fee recorded");
+    expect(at(rows[1], "fee_state")).toBe("Agreed fee");
     expect(at(rows[0], "fee_state")).toBe("Fee not recorded");
     expect(at(rows[0], "reasons")).toBe("No payment recorded");
   });
@@ -267,5 +267,19 @@ describe("source guard: the serializer is pure", () => {
     const imports = [...src.matchAll(/from "([^"]+)"/g)].map((m) => m[1]).sort();
     expect(imports).toEqual(["@/lib/csv", "@/lib/finance/statement-directory", "@/lib/finance/statement-document", "@/lib/finance/statement-period", "@/lib/finance/statement-screen"]);
     expect(src).not.toMatch(/Date\.now|new Date|fetch\(|process\.env|supabase|cookies\(|headers\(/);
+  });
+});
+
+describe("the fee_state column says what the amount is (a payment-derived amount is never 'Agreed fee')", () => {
+  const at = (r: string[], col: string) => r[[...STATEMENT_CSV_COLUMNS].indexOf(col as never)];
+  it("quote -> Agreed fee; card charge -> Charged; legacy fee -> Charged; none -> Fee not recorded", () => {
+    const v = (feeCandidates: never[]) => visit({ feeCandidates, lines: [{ kind: "collected_card_session", cents: 6000, source: "card" } as never] });
+    const labels = [
+      [{ source: "settlement_quote", cents: 6000 }],
+      [{ source: "card_attempt", cents: 6000 }],
+      [{ source: "legacy_fee", cents: 6000 }],
+      [],
+    ].map((cand, i) => at(statementCsvLines(doc([v(cand as never)]))[HDR], "fee_state"));
+    expect(labels).toEqual(["Agreed fee", "Charged", "Charged", "Fee not recorded"]);
   });
 });

@@ -138,7 +138,8 @@ describe("both channels, one invitation, one link", () => {
     expect(email.invitationId).toBe("inv-1");
     expect(sms.invitationUrl).toBe(`https://hone.care/invitation/${RAW}`);
     expect(sms.invitationUrl).toBe(email.invitationUrl);
-    expect(sms.studio).toMatchObject({ id: "studio-1", name: "Willow" });
+    expect(sms.studio).toMatchObject({ id: "studio-1", name: "Willow", timezone: "America/Vancouver" });
+    expect(email.studio).toMatchObject({ timezone: "America/Vancouver" });
   });
 });
 
