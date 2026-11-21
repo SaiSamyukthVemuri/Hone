@@ -124,3 +124,14 @@ describe("when the server finds the estimate at zero and asks", () => {
     expect(beyondEstimateConfirmOpen(none)).toBe(false);
   });
 });
+
+describe("the boundary does not announce the question as an outcome", () => {
+  it("renders nothing for a needs-confirmation answer, and still renders an ordinary refusal", async () => {
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { createElement } = await import("react");
+    const { InvitationOutcomeNotice } = await import("@/components/waitlist/invite-outcome-boundary");
+    const answer = (code: "needs_estimate_confirmation" | "no_capacity") => ({ entryId: "e", entryName: "Pat", notice: invitationNoticeFor({ state: "refused", code }) });
+    expect(renderToStaticMarkup(createElement(InvitationOutcomeNotice, { submitted: answer("needs_estimate_confirmation") as never }))).toBe("");
+    expect(renderToStaticMarkup(createElement(InvitationOutcomeNotice, { submitted: answer("no_capacity") as never }))).toContain("invite-outcome");
+  });
+});

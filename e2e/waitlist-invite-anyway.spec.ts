@@ -151,9 +151,12 @@ for (const [label, viewport] of [
       expect(await liveInvitations(p.id)).toBe(0);
       expect(readResendLedger(mark).filter((r) => r.to.toLowerCase() === p.email.toLowerCase())).toHaveLength(0);
 
+      // The question itself is not an outcome: nothing is announced above the queue for it.
+      await expect(page.locator('[data-testid="invite-outcome"]')).toHaveCount(0);
+
       await confirm.locator('[data-testid="composer-invite-anyway"]').click();
       await expect(page.locator('[data-testid="invite-outcome"]').first()).toBeVisible({ timeout: 60_000 });
-      expect(await liveInvitations(p.id)).toBe(1);
+      await expect.poll(() => liveInvitations(p.id), { timeout: 30_000 }).toBe(1);
       expect(readResendLedger(mark).filter((r) => r.to.toLowerCase() === p.email.toLowerCase())).toHaveLength(1);
     });
   });
