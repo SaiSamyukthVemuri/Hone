@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { ensureOpenRound } from "@/lib/waitlist/auto-round";
 
 // The over-invite batch's database port: typed wrappers over the batch commands (create, preview, claim, admit with a batch item, settle, replace).
 // Every command is service_role-only, so the caller passes the SERVICE client; the actor id is the confirming owner's AUTH user id, resolved from
@@ -231,7 +232,20 @@ function issued(r: Record<string, unknown>): IssuedInvitation | null {
   return { invitationId, rawToken, issuedAt: a, expiresAt: b, deliveryEmail: str(r.delivery_email), deliveryName: str(r.delivery_name) };
 }
 
+/**
+ * A studio with no OPEN admission round answers `no_round_open`, and the issuer needs one. The round is plumbing the owner never chooses, so it is
+ * opened here through the SAME `ensureOpenRound` the single invitation uses (same allowance, same owner as actor), and the admit is retried ONCE.
+ * `no_round_open` is refused BEFORE anything is created, so the retry cannot double-issue. If no round can be opened, or the retry still answers
+ * `no_round_open`, the answer is the closed code `no_round_open` (the worker records the item skipped under that reason; the entry stays waiting).
+ */
 export async function admitBatchItem(db: Rpc, item: ClaimedItem, fit: number | null): Promise<AdmitOutcome> {
+  const first = await admitOnce(db, item, fit);
+  if (!(first.ok && first.result === "no_round_open")) return first;
+  if (!(await ensureOpenRound(db, item.studioId, item.actorUserId))) return first;
+  return admitOnce(db, item, fit);
+}
+
+async function admitOnce(db: Rpc, item: ClaimedItem, fit: number | null): Promise<AdmitOutcome> {
   const { data, error } = await db.rpc("admit_new_client_waitlist_entry", {
     p_studio_id: item.studioId,
     p_actor_user_id: item.actorUserId,
@@ -260,6 +274,16 @@ export type ReplaceOutcome =
 
 /** `expectedInvitationId` is the latest invitation the caller re-checked. If another instance already replaced it the command answers `state_changed` and changes nothing. */
 export async function replaceInvitation(db: Rpc, input: { studioId: string; actorUserId: string; entryId: string; expectedInvitationId: string | null }): Promise<ReplaceOutcome> {
+  const noRound = (r: ReplaceOutcome) => r.ok && r.result === "refused:no_round_open";
+  const first = await replaceOnce(db, input);
+  if (!noRound(first)) return first;
+  // No open round: the command undid its own steps (nothing was replaced), so opening a round and asking ONCE again cannot double-issue.
+  if (!(await ensureOpenRound(db, input.studioId, input.actorUserId))) return { ok: true, result: "refused" };
+  const again = await replaceOnce(db, input);
+  return noRound(again) ? { ok: true, result: "refused" } : again;
+}
+
+async function replaceOnce(db: Rpc, input: { studioId: string; actorUserId: string; entryId: string; expectedInvitationId: string | null }): Promise<ReplaceOutcome> {
   const { data, error } = await db.rpc("replace_waitlist_invitation", {
     p_studio_id: input.studioId,
     p_actor_user_id: input.actorUserId,
@@ -270,6 +294,7 @@ export async function replaceInvitation(db: Rpc, input: { studioId: string; acto
   const row = rows(data)?.[0];
   const result = str(row?.result);
   if (!row || !result) return { ok: false, code: "bad_shape" };
+  if (result === "refused:no_round_open") return { ok: true, result }; // only replaceInvitation reads this; it never leaves the port
   if (result !== "replaced") return { ok: true, result: closed(result, REPLACE_REFUSAL_CODES) };
   const got = issued({ ...row, delivery_email: null, delivery_name: null });
   return got ? { ok: true, result: "replaced", issued: got } : { ok: false, code: "bad_shape" };
