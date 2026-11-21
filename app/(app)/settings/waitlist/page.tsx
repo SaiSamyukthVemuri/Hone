@@ -62,6 +62,7 @@ import {
 } from "./profile-actions";
 import { recordProspectSmsConsentFormAction } from "./consent-actions";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
+import { expirySummary, rowExpiry, summaryText } from "@/lib/waitlist/invitation-expiry-display";
 import { formatLocalDateLabel, localDateString, localLongDate } from "@/lib/booking/tz";
 // `claimWaitlistEntryAction` and `claimNextWaitlistEntriesAction` are
 // deliberately NOT imported. Both still exist, are still tested and still reach
@@ -652,6 +653,9 @@ export default async function WaitlistSettingsPage({
   /** Recorded provider outcome per invited entry. ABSENT means never recorded,
    *  which is NOT the same as the observed verdict `unknown`. */
   const deliveryByEntry = new Map<string, InvitationDeliveryState>();
+  /** The LIVE invitation's database `expires_at` per invited entry, for display only. Filled from the live read below; stays
+   *  empty when that read fails, so no expiry text is ever shown from an unknown state. */
+  const expiryByEntry = new Map<string, string>();
   const attention = await loadNeedsAttention(supabase, studio.id);
   const declined = await loadDeclinedAttention(supabase, studio.id);
   // The outbox has no policy for the user client (0325), so its status is read inside this helper, which builds its own server-only client. This page's data reads stay on the RLS client.
@@ -796,6 +800,7 @@ export default async function WaitlistSettingsPage({
         ) {
           deliveryByEntry.set(inv.entry_id, inv.delivery_disposition);
         }
+        expiryByEntry.set(inv.entry_id, inv.expires_at);
         const expiresAt = new Date(inv.expires_at).getTime();
         cycleByEntry.set(inv.entry_id, {
           // A LIVE row whose clock has passed is the only thing that may be
@@ -806,6 +811,10 @@ export default async function WaitlistSettingsPage({
       }
     }
   }
+
+  const expirySummaryLine = summaryText(
+    expirySummary([...expiryByEntry.values()], studio.timezone, now),
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -875,6 +884,12 @@ export default async function WaitlistSettingsPage({
       <p className="text-sm font-medium" aria-live="polite">
         Waitlist entries: <span className="tabular-nums">{active}</span>
       </p>
+      {expirySummaryLine && (
+        <p data-testid="invitation-expiry-summary" className="text-sm text-fg-muted">
+          {expirySummaryLine}{" "}
+          <span className="text-xs">As of {allowanceAsOf}.</span>
+        </p>
+      )}
       <p className="flex flex-wrap gap-x-4 text-sm" data-testid="waitlist-tools-nav">
         <Link href="/settings/waitlist/search" className="underline">
           Search the waitlist by name
@@ -1288,6 +1303,23 @@ export default async function WaitlistSettingsPage({
                               observed verdict and says so. This is what survives
                               the practitioner navigating away, which no amount of
                               in-page state could do. */}
+                          {row.status === "invited" &&
+                            (() => {
+                              const raw = expiryByEntry.get(row.id);
+                              const e = raw === undefined ? null : rowExpiry(raw, studio.timezone, now);
+                              if (e === null) return null;
+                              return (
+                                <p
+                                  data-testid="row-invitation-expiry"
+                                  data-state={e.kind}
+                                  className="text-sm text-neutral-500"
+                                >
+                                  {e.kind === "open"
+                                    ? `Expires ${e.label}, in ${e.remaining}.`
+                                    : `Deadline was ${e.label}. It has passed.`}
+                                </p>
+                              );
+                            })()}
                           {row.status === "invited" &&
                             deliveryByEntry.has(row.id) && (
                               <p

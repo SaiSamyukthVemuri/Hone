@@ -3141,3 +3141,95 @@ describe("owner follow-up cards render with ZERO active entries (Codex P2)", () 
     }
   });
 });
+
+// ===========================================================================
+// EXPIRY VISIBILITY — display only. The text comes ONLY from the live row's `expires_at`.
+// Time is fixed at 2026-08-23T09:00:00Z; the studio is America/Toronto (EDT).
+// ===========================================================================
+describe("each active invitation shows its exact expiry and the time left", () => {
+  const at = (iso: string) => new Date(iso).toISOString();
+
+  it("shows the deadline in the studio's zone, the time left, and a summary of the next expiry", async () => {
+    scenario.rows = [
+      entry({ id: "e-a", status: "invited" }),
+      entry({ id: "e-b", status: "invited" }),
+      entry({ id: "e-c", status: "invited" }),
+    ];
+    scenario.count = 3;
+    scenario.liveInvitations = [
+      { entry_id: "e-a", expires_at: at("2026-08-23T13:30:00Z") }, // 4 h 30 min
+      { entry_id: "e-b", expires_at: at("2026-08-24T08:59:00Z") }, // inside 24 h
+      { entry_id: "e-c", expires_at: at("2026-08-26T09:00:00Z") }, // 3 days
+    ];
+    const html = await render();
+    expect(html).toContain("9:30 AM EDT");
+    expect(html).toContain("in 4 h 30 min");
+    expect(html).toContain("in 3 days");
+    const summary = html.match(/data-testid="invitation-expiry-summary"[^>]*>(.*?)<\/p>/s)?.[1] ?? "";
+    expect(summary).toContain("9:30 AM EDT");
+    expect(summary).toContain("in 4 h 30 min");
+    expect(summary).toContain("2 expire within 24 hours");
+    expect(summary).toContain("As of");
+    expect((html.match(/data-testid="row-invitation-expiry"/g) ?? []).length).toBe(3);
+  });
+
+  it("a deadline that has passed says so, and is not counted as about to expire", async () => {
+    scenario.rows = [entry({ id: "e-old", status: "invited" }), entry({ id: "e-new", status: "invited" })];
+    scenario.count = 2;
+    scenario.liveInvitations = [
+      { entry_id: "e-old", expires_at: at("2026-08-23T08:00:00Z") },
+      { entry_id: "e-new", expires_at: at("2026-08-23T10:00:00Z") },
+    ];
+    const html = await render();
+    expect(html).toContain('data-state="deadline_passed"');
+    expect(html).toContain("It has passed.");
+    expect(html).not.toMatch(/in -|-\d+ min/);
+    expect(html).toContain("1 expires within 24 hours");
+  });
+
+  it("with no open invitation there is no summary line", async () => {
+    scenario.rows = [entry({ id: "e-old", status: "invited" })];
+    scenario.count = 1;
+    scenario.liveInvitations = [{ entry_id: "e-old", expires_at: at("2026-08-23T08:00:00Z") }];
+    const html = await render();
+    expect(html).not.toContain("invitation-expiry-summary");
+  });
+
+  it("an UNREADABLE invitation read shows no expiry text at all (never a guess)", async () => {
+    scenario.rows = [entry({ id: "e-x", status: "invited" })];
+    scenario.count = 1;
+    scenario.invitationsError = { code: "57014" };
+    const html = await render();
+    expect(html).not.toContain("row-invitation-expiry");
+    expect(html).not.toContain("invitation-expiry-summary");
+    expect(html).toContain("could not be checked");
+  });
+
+  it("a redeemed entry (no live row) shows no expiry", async () => {
+    scenario.rows = [entry({ id: "e-used", status: "invited" })];
+    scenario.count = 1;
+    scenario.liveInvitations = [];
+    scenario.redeemedInvitations = [{ entry_id: "e-used" }];
+    const html = await render();
+    expect(html).not.toContain("row-invitation-expiry");
+  });
+
+  it("RULE, not spelling: the expiry text is built only from the live read's expires_at", () => {
+    const src = readFileSync(
+      path.join(process.cwd(), "app/(app)/settings/waitlist/page.tsx"),
+      "utf8",
+    );
+    // The only writer of the per-row expiry map is the live-row loop, and it copies the row's own column.
+    const writes = [...src.matchAll(/expiryByEntry\.set\(([^)]*)\)/g)].map((m) => m[1]!.replace(/\s+/g, ""));
+    expect(writes).toEqual(["inv.entry_id,inv.expires_at"]);
+    // Both the per-row line and the summary read that same map, and nothing else.
+    expect(src).toMatch(/rowExpiry\(\s*raw,/);
+    expect(src).toMatch(/expirySummary\(\s*\[\.\.\.expiryByEntry\.values\(\)\]/);
+    // The expiry is never derived from an issue time, a fixed TTL or a client clock.
+    const helper = readFileSync(
+      path.join(process.cwd(), "lib/waitlist/invitation-expiry-display.ts"),
+      "utf8",
+    );
+    expect(helper).not.toMatch(/issued_at|issuedAt|TTL|setHours|setDate/);
+  });
+});
