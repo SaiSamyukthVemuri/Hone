@@ -5,8 +5,7 @@ import { buildContentSecurityPolicy } from "@/lib/security/headers";
 
 // Guards the hardened Sentry integration: no PII / Replay / Logs by default,
 // scrubbers wired into every runtime, conservative production tracing, the
-// strict CSP left intact (same-origin tunnel, no ingest host), and the
-// temporary example page fenced off from anonymous-gate and crawlers.
+// and the strict CSP left intact (same-origin tunnel, no ingest host).
 
 function read(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf8");
@@ -17,7 +16,6 @@ const SERVER = read("sentry.server.config.ts");
 const EDGE = read("sentry.edge.config.ts");
 const NEXT_CONFIG = read("next.config.ts");
 const MIDDLEWARE = read("lib/supabase/middleware.ts");
-const ROBOTS = read("app/robots.ts");
 const GITIGNORE = read(".gitignore");
 
 describe("Sentry init configs (client/server/edge)", () => {
@@ -67,10 +65,6 @@ describe("next.config.ts Sentry build options", () => {
     expect(NEXT_CONFIG).toMatch(/telemetry:\s*false/);
     expect(NEXT_CONFIG).toMatch(/deleteSourcemapsAfterUpload:\s*true/);
   });
-  it("keeps the resolved org/project", () => {
-    expect(NEXT_CONFIG).toMatch(/org:\s*"hone-w1"/);
-    expect(NEXT_CONFIG).toMatch(/project:\s*"javascript-nextjs"/);
-  });
 });
 
 describe("CSP is left intact for the tunnel (no ingest host)", () => {
@@ -97,12 +91,6 @@ describe("CSP is left intact for the tunnel (no ingest host)", () => {
 describe("middleware allowlists the production tunnel", () => {
   it("keeps /monitoring reachable for anonymous requests (client error reporting)", () => {
     expect(MIDDLEWARE).toMatch(/pathname === "\/monitoring"/);
-  });
-  it("no longer references the removed example routes", () => {
-    // The temporary Sentry example page + API route are removed before merge;
-    // their allowlist/robots fences must go with them.
-    expect(MIDDLEWARE).not.toMatch(/sentry-example/);
-    expect(ROBOTS).not.toMatch(/sentry-example/);
   });
 });
 

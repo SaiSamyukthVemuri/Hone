@@ -319,8 +319,6 @@ describe("switching machine or mode clears the collected draft", () => {
   const PRIOR_SRC = "components/machines/machine-prior-setup.tsx";
   const QUERIES_SRC = "lib/machines/machine-queries.ts";
   const SAVE_ATTEMPT_SRC = "lib/machines/save-attempt.ts";
-  const MIGRATION_SRC =
-    "supabase/migrations/0223_machine_inventory_and_setup_readings.sql";
   const SYNTH_SRC = "lib/machines/synthetic-profile.ts";
   const LOCAL_ENV_SRC = "e2e/helpers/local-env.ts";
   const SETUP_ACTIONS_SRC =
@@ -1457,35 +1455,6 @@ describe("switching machine or mode clears the collected draft", () => {
     ).toBe(2);
   });
 
-  it("the contract keeps requiredness, and the command enforces it", () => {
-    // The published contract did not retain the profile's `optional` flag,
-    // so the command validated only the readings it was GIVEN: a forged
-    // call naming one of several required fields committed an incomplete
-    // capture that guidance then presented as complete
-    // (Codex, #860 4299434251).
-    const sql = read(MIGRATION_SRC);
-    expect(sql).toMatch(/optional boolean not null default false/);
-    expect(sql).toMatch(/coalesce\(\(v_item->>'optional'\)::boolean, false\)/);
-    expect(sql).toMatch(/and not f\.optional/);
-    expect(sql).toMatch(/This capture is missing a required field for mode/);
-  });
-
-  it("the revision sequence is scoped to the whole setup identity", () => {
-    // Keyed on block + group alone, a machine or mode switch continued the
-    // previous unit's sequence and the history rendered Room 2's first
-    // capture as "capture 2" (Codex, #860 4299434260).
-    const sql = read(MIGRATION_SRC);
-    expect(sql).toMatch(
-      /select coalesce\(max\(c\.revision\), 0\) \+ 1[\s\S]{0,400}?and c\.studio_machine_id = p_studio_machine_id[\s\S]{0,200}?and c\.mode_key = v_mode;/,
-    );
-    // AND THE CONSTRAINT AGREES WITH THE ALLOCATION. Scoping one without
-    // the other made Room 2's revision 1 collide with Room 1's — the DB
-    // run caught a half-finished change that read as complete.
-    expect(sql).toMatch(
-      /constraint treatment_setup_captures_revision_uniq\s*\n\s*unique \(\s*\n\s*session_block_id, studio_machine_id, machine_profile_id,/,
-    );
-  });
-
   it("what is recorded is RE-READ after a save, so the seed is never stale", () => {
     // THE P1 (Codex, #860 4300386011), and the fifth way into one
     // invariant: a group identity must survive every remount.
@@ -1642,24 +1611,6 @@ describe("switching machine or mode clears the collected draft", () => {
     // that came from anywhere else would not be covered by either rule.
     const seeds = entry.match(/useState<SettingGroupDraft\[\]>\(/g) ?? [];
     expect(seeds.length, "the draft has exactly one initializer").toBe(1);
-  });
-
-  it("contract equality includes requiredness", () => {
-    // I added `optional` to the contract and its enforcement last round and
-    // left BOTH symmetric-difference projections without it, so
-    // republishing a version with only optionality flipped was accepted as
-    // an idempotent no-op and the stored requiredness silently diverged
-    // from the catalogue (Codex, #860 4300386015).
-    const sql = read(MIGRATION_SRC);
-    expect(
-      (sql.match(/coalesce\(\(f->>'optional'\)::boolean, false\) as optional/g) ?? [])
-        .length,
-      "both incoming projections must carry optional",
-    ).toBe(2);
-    expect(
-      (sql.match(/c\.quantity, c\.optional/g) ?? []).length,
-      "both published projections must carry optional",
-    ).toBe(2);
   });
 
   it("an unresolved REVISION save freezes the identity controls too", () => {

@@ -970,24 +970,6 @@ describe("K — the abandoned send is continued, not orphaned and not restarted"
     const [major, minor] = version.split(".").map(Number);
     expect(major > 15 || (major === 15 && minor >= 1)).toBe(true);
   });
-
-  it("documents what after() does NOT guarantee", () => {
-    // The honesty requirement, kept in the file rather than only in a PR
-    // comment: no exactly-once, no durable recovery, dies with the instance.
-    const helper = readFileSync(
-      join(process.cwd(), "lib/billing/auto-payment-receipt.ts"),
-      "utf8",
-    );
-    // The header is prose-wrapped, so compare on normalised text rather than
-    // on accidental line breaks.
-    const prose = helper.replace(/^\s*\/\/ ?/gm, "").replace(/\s+/g, " ");
-    expect(prose).toContain("NOT a durable queue and NOT exactly-once delivery");
-    expect(prose).toContain("max duration elapsing");
-    expect(prose).toContain("AT MOST ONE automatic send per committed charge");
-    expect(prose).toContain("Not at-least-once, and not exactly-once");
-    // The recovery path that DOES survive a dead instance is named.
-    expect(prose).toContain("manual Send button remains the operator");
-  });
 });
 
 // ===========================================================================

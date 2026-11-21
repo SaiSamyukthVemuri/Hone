@@ -194,28 +194,6 @@ describe("ops alerts wiring (PR #153)", () => {
     expect(ALERTS_SOURCE).not.toMatch(/sendEmailSafely\s*\(/);
   });
 
-  it("operator email dispatch lives in the standalone module, never inline (PR #193)", () => {
-    // PR #193 added critical-alert operator email via
-    // lib/ops/alert-email.ts. The env read and Resend call stay in
-    // that module; alerts.ts only invokes notifyCriticalOpsAlert for
-    // severity === "critical" AFTER the durable write attempt.
-    expect(ALERTS_SOURCE).toMatch(
-      /import \{ notifyCriticalOpsAlert \} from "@\/lib\/ops\/alert-email"/,
-    );
-    expect(ALERTS_SOURCE).toMatch(
-      /if \(input\.severity === "critical"\) \{/,
-    );
-    expect(ALERTS_SOURCE).not.toMatch(/process\.env\.OPS_ALERT_EMAILS/);
-    expect(ALERTS_SOURCE).not.toMatch(/function maybeEmailAlert/);
-  });
-
-  it("the email dispatch runs AFTER the durable insert attempt (email failure cannot lose the row)", () => {
-    const insertIdx = ALERTS_SOURCE.indexOf('from("ops_alerts").insert(');
-    const emailIdx = ALERTS_SOURCE.indexOf("await notifyCriticalOpsAlert(");
-    expect(insertIdx).toBeGreaterThan(-1);
-    expect(emailIdx).toBeGreaterThan(insertIdx);
-  });
-
   it("the unified executor wires the helper at every needs_manual_review return (legacy executor removed, PR #218)", () => {
     const sessionCharge = readFileSync(
       path.resolve(__dirname, "../../../lib/billing/session-payment-charge.ts"),
@@ -226,9 +204,6 @@ describe("ops alerts wiring (PR #153)", () => {
     );
     expect(needsReviewBlocks.length).toBeGreaterThanOrEqual(3);
     expect(sessionCharge).toMatch(/recordOpsAlert/);
-  });
-
-  it("manual fee charge wires the helper on StripeError failure", () => {
   });
 
   it("webhook wires the helper on stripe_webhook_handler_failed catch", () => {

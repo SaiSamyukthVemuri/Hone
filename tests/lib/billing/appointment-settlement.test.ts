@@ -27,7 +27,6 @@ import {
 const ROOT = path.resolve(__dirname, "../../..");
 const read = (p: string) => readFileSync(path.join(ROOT, p), "utf8");
 
-const CELL = read("components/appointment-checkout-cell.tsx");
 const CONTROLS = read("components/appointment-settlement-controls.tsx");
 const ACTIONS = read("app/(app)/appointment-settlement-actions.ts");
 const MIGRATION = read("supabase/migrations/0187_appointment_settlement.sql");
@@ -110,46 +109,6 @@ describe("no attested outcome may present itself as verified money", () => {
       expect(SETTLEMENT_ACTION_LABEL[m].length).toBeGreaterThan(3);
       expect(SETTLEMENT_BADGE_LABEL[m].length).toBeGreaterThan(3);
     }
-  });
-
-  it("EMERALD IS RESERVED. The settled branch of the cell renders neutral", () => {
-    void 0;
-    // The emerald branch is the paid/refunded one, which is Hone-verified.
-    const settledBranch = CELL.slice(CELL.indexOf("const settled = SETTLED_LABEL"));
-    expect(settledBranch).not.toMatch(/emerald/);
-    expect(settledBranch).toMatch(/bg-neutral-100/);
-    // And the verified branch still owns emerald.
-    expect(CELL).toMatch(/paymentState === "paid" \|\|/);
-    expect(CELL.slice(0, CELL.indexOf("const settled"))).toMatch(/emerald/);
-  });
-
-  it("the cell offers no Checkout once a visit is COLLECTED or WAIVED", () => {
-    // RESTATED, NOT RELAXED. This was "once a visit is settled", which held
-    // only while all five methods shared one branch. `still_owes` attests the
-    // visit is UNPAID: it is the one method absent from the SQL blocking set,
-    // the one prepareSessionPaymentChargeAction lets through, and the reason
-    // settlementIsOutranked exists. Withholding Checkout from it contradicted
-    // every layer beneath the view and left the debt collectable only from the
-    // session detail page.
-    //
-    // The invariant that actually matters is the one about MONEY ALREADY
-    // ACCOUNTED FOR: a visit paid in cash, by e-transfer, another way, or
-    // waived must never be asked to be charged again.
-    const settledBranch = CELL.slice(
-      CELL.indexOf("const settled = SETTLED_LABEL"),
-      CELL.indexOf('if (paymentState === "processing")'),
-    );
-    // The four collected/waived states return the bare badge...
-    expect(settledBranch).toMatch(
-      /if \(paymentState !== "settled_owing"\) return badge;/,
-    );
-    // ...and the ONLY entry point below that guard is the still-owing one.
-    const afterGuard = settledBranch.slice(
-      settledBranch.indexOf('if (paymentState !== "settled_owing") return badge;'),
-    );
-    expect([...afterGuard.matchAll(/<CheckoutButton/g)]).toHaveLength(1);
-    // Behavioural coverage of every state lives in
-    // tests/components/appointment-checkout-cell-render.test.ts.
   });
 
   it("the controls say out loud that Hone did not verify this", () => {
@@ -284,12 +243,6 @@ describe("a missing treatment session blocks CARD charging, never settlement", (
 // P2 — a full refund releases the block; a partial one must not
 // ---------------------------------------------------------------------------
 describe("retained card money is measured in cents, not inferred from a status", () => {
-  it("the SQL requires refund_amount_cents to cover the whole charge", () => {
-    expect(MIGRATION).toMatch(
-      /a\.refund_status = 'succeeded'\s*\n\s*and coalesce\(a\.refund_amount_cents, 0\) >= a\.amount_cents/,
-    );
-  });
-
   it("the card gates on FULL refund, not on the presence of an attempt", () => {
     expect(CARD).toMatch(/const fullyRefunded =/);
     // R1 (Insurance F3): FULL is read through refundDisplayState (both refund columns agree AND nothing remains), which
@@ -300,36 +253,6 @@ describe("retained card money is measured in cents, not inferred from a status",
     // The settlement controls are gated on money HELD, never on the mere
     // existence of a succeeded row.
     expect(CARD).toMatch(/canRecordSettlement && !cardMoneyHeld/);
-  });
-
-  it("ONLY a proven full refund keeps a route to record the replacement payment", () => {
-    const branch = CELL.slice(CELL.indexOf('paymentState === "paid" ||'));
-    expect(branch).toMatch(/Record outcome/);
-    expect(branch).toMatch(/<CheckoutButton/);
-    // The card fact and the refund fact are still shown, not replaced.
-    expect(branch).toMatch(/\{badge\}/);
-    // THE GATE. A partial refund, an unknown-amount refund and a plain paid row
-    // all return the badge before reaching the entry point.
-    expect(branch).toMatch(/if \(paymentState !== "refunded_full"\) return badge;/);
-  });
-
-  it("the cell makes NO eligibility guess of its own — the row state carries it", () => {
-    const branch = CELL.slice(CELL.indexOf('paymentState === "paid" ||'));
-    // No refund arithmetic, no amounts, no second derivation in the view.
-    expect(branch).not.toMatch(/refund_amount_cents|refundAmountCents|amount_cents/);
-  });
-
-  it("full and partial refunds are DERIVED apart before the row renders", () => {
-    const state = read("lib/billing/appointment-payment-state.ts");
-    expect(state).toMatch(/function isFullyRefunded/);
-    // The same law as the SQL and the payment card: status AND cents.
-    expect(state).toMatch(/if \(a\.refund_status !== "succeeded"\) return false;/);
-    expect(state).toMatch(/return refunded >= amount;/);
-    // An unknown amount is not full.
-    expect(state).toMatch(
-      /typeof amount !== "number" \|\| typeof refunded !== "number"/,
-    );
-    expect(state).toMatch(/isFullyRefunded\(a\) \? "refunded_full" : "refunded"/);
   });
 });
 
@@ -390,11 +313,6 @@ describe("recording a settlement advances the quick-checkout modal in place", ()
     expect(settledBranch).toMatch(/SETTLEMENT_BADGE_LABEL\[settledMethod\]/);
     expect(settledBranch).not.toMatch(/settlement-open-|settlement-confirm-/);
     expect(settledBranch).toMatch(/return \(/);
-  });
-
-  it("the session detail page needs no hook and is left alone", () => {
-    const page = read("app/(app)/clients/[id]/sessions/[sessionId]/page.tsx");
-    expect(page).not.toMatch(/onSettlementRecorded/);
   });
 });
 

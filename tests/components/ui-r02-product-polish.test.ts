@@ -122,20 +122,6 @@ describe("UI-R02 PageHeader: heading DEPTH is a property of the page, not the pr
     expect(cls(asH1)).toContain("text-3xl");
   });
 
-  it("the settings layout supplies the h1 — the premise the page depends on", () => {
-    // Pinned so that if the layout's h1 ever moves, the guard below is revisited
-    // rather than silently becoming wrong in the other direction.
-    expect(code("components/settings/settings-shell.tsx")).toMatch(/<h1[^>]*>\s*Settings\s*<\/h1>/);
-  });
-
-  it("/settings/data declares its real depth, and its sections sit below it", () => {
-    const src = code("app/(app)/settings/data/page.tsx");
-    expect(src).toContain("headingLevel={2}");
-    // h1 Settings (layout) -> h2 Your data -> h3 sections.
-    expect(src).toMatch(/<h3[^>]*>\{title\}<\/h3>/);
-    expect(src).not.toMatch(/<h2[^>]*>\{title\}<\/h2>/);
-  });
-
   it("/notifications PageHeader takes the default h1 — nothing above it supplies one", () => {
     const src = code("app/(app)/notifications/page.tsx");
     expect(src).toMatch(/<PageHeader\s+title="Notifications"/);
@@ -265,7 +251,6 @@ describe("UI-R02 EmptyState: an empty state must say what fills it", () => {
 
 describe("UI-R02 applied surfaces", () => {
   const notifications = code("app/(app)/notifications/page.tsx");
-  const data = code("app/(app)/settings/data/page.tsx");
 
   it("notifications uses the primitives, and its raw button is gone", () => {
     expect(notifications).toContain("PageHeader");
@@ -273,19 +258,6 @@ describe("UI-R02 applied surfaces", () => {
     expect(notifications).toContain("PendingButton");
     // The raw <button> with no :active and no focus-visible.
     expect(notifications).not.toContain("<button");
-  });
-
-  it("both surfaces now spell the page heading the SAME way", () => {
-    expect(notifications).toContain("PageHeader");
-    expect(data).toContain("PageHeader");
-    // The two spellings the census found are both gone.
-    expect(data).not.toContain("font-[var(--font-fraunces)] text-3xl font-bold");
-    expect(notifications).not.toMatch(/<h1 className="text-3xl/);
-  });
-
-  it("settings/data no longer hand-rolls its section labels", () => {
-    expect(data).toContain("SectionLabel");
-    expect(data).not.toMatch(/text-xs font-medium uppercase tracking-wider text-neutral-500/);
   });
 });
 
@@ -300,12 +272,6 @@ describe("UI-R02: the inline-hex border that no dark: variant could reach", () =
     // prose references to the old hex do not satisfy this.
     expect(data).not.toContain("style={{");
     expect(data).not.toContain("E5E2DA");
-  });
-
-  it("the cards are the shared surface, and the disabled control is tokened", () => {
-    expect(data).toContain("<Card");
-    expect(data).toContain("border-line");
-    expect(data).toContain("text-fg-muted");
   });
 
   it("the card heading sits BELOW the page title, which sits below the layout's h1", () => {

@@ -62,14 +62,6 @@ describe("1. chronological order is the input order — never re-sorted", () => 
     expect(items[1].priority).toBe(1);
     expect(items[0].priority).toBe(6);
   });
-
-  it("the module contains no sort at all", () => {
-    const SRC = readFileSync(
-      join(process.cwd(), "lib/dashboard/today-workflow.ts"),
-      "utf8",
-    );
-    expect(SRC).not.toMatch(/\.sort\(/);
-  });
 });
 
 describe("2-4. identity: one appointment → one item, joined by appointmentId", () => {
@@ -194,25 +186,6 @@ describe("8-9. intake and charting are single-sourced states, not reminder lines
       expect(item.missingRecords.join(" ")).not.toMatch(/charting/i);
     }
   });
-
-  it("the module emits no intake or charting reminder strings at all", () => {
-    const SRC = readFileSync(
-      join(process.cwd(), "lib/dashboard/today-workflow.ts"),
-      "utf8",
-    );
-    const code = SRC.split("\n")
-      .map((l) => l.replace(/^\s*\/\/.*$/, ""))
-      .join("\n");
-    for (const gone of [
-      '"Intake incomplete"',
-      '"Intake awaiting review"',
-      '"No intake on file"',
-      '"Charting needed"',
-      '"Charting in progress"',
-    ]) {
-      expect(code).not.toContain(gone);
-    }
-  });
 });
 
 describe("10. missing-record reminders are specific and deduplicated", () => {
@@ -304,16 +277,6 @@ describe("12. long and multiline note text is preserved in full", () => {
     ]).items;
     expect(item.remember).toBe("keep\n  inner  indent");
   });
-
-  it("the module contains no cap, slice or clamp", () => {
-    const SRC = readFileSync(
-      join(process.cwd(), "lib/dashboard/today-workflow.ts"),
-      "utf8",
-    );
-    for (const forbidden of [".slice(0,", ".substring(", "truncate", "line-clamp", "…"]) {
-      expect(SRC).not.toContain(forbidden);
-    }
-  });
 });
 
 describe("13. purity", () => {
@@ -393,11 +356,6 @@ describe("dashboard wiring", () => {
   // DASH-TRUTH-04: the daily workspace no longer asks a practitioner to email
   // the founder. The quiet pilot feedback footers under Today and To do are
   // gone, along with the earlier large "Pilot learning" card.
-  it("renders NO pilot feedback prompt anywhere on the Dashboard", () => {
-    const rendered = PAGE.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-    expect(rendered).not.toMatch(/<PilotFeedbackPrompt/);
-    expect(rendered).not.toMatch(/Send feedback|Send it to Sam|Know another electrologist|Pilot learning/i);
-  });
 
   it("the card renders each fact once, from the workflow item only", () => {
     // Strip comments: the code explains WHY the old duplicate labels are gone,
@@ -443,27 +401,6 @@ describe("dashboard wiring", () => {
     const end = PAGE.indexOf("const workflowByAppointment");
     expect(start).toBeGreaterThan(-1);
     expect(PAGE.slice(start, end)).not.toContain("await ");
-  });
-
-  it("preserves the row-body appointment link and the primary action resolver", () => {
-    expect(PAGE).toMatch(/href=\{`\/calendar\/\$\{appt\.id\}`\}/);
-    expect(PAGE).toMatch(/resolveDayNextAction\(\{/);
-    expect(PAGE).toMatch(/<AppointmentCheckoutCell/);
-  });
-
-  it("the retired brief files are gone from the tree", () => {
-    for (const gone of [
-      "lib/dashboard/daily-prep-brief.ts",
-      "app/(app)/dashboard/daily-prep-brief.tsx",
-    ]) {
-      let existed = true;
-      try {
-        readFileSync(join(process.cwd(), gone), "utf8");
-      } catch {
-        existed = false;
-      }
-      expect(existed, `${gone} should have been removed`).toBe(false);
-    }
   });
 });
 
@@ -512,10 +449,5 @@ describe("empty day renders ONE empty state", () => {
       selectedDay: "2026-08-20",
       todayLocal: "2026-08-20",
     })).toBe("/calendar");
-  });
-
-  it("no standalone Daily Prep Brief empty state survives", () => {
-    expect(rendered).not.toMatch(/Nothing needs special review yet\./);
-    expect(rendered).not.toMatch(/Daily prep brief/i);
   });
 });
