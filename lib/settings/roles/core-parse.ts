@@ -1,5 +1,6 @@
 import {
   CATALOG,
+  basisValue,
   scopeRank,
   type PermissionDef,
   type Role,
@@ -22,7 +23,10 @@ import {
   type RoleError,
   type RoleErrorCode,
   type RolePreview,
+  type ReviewRow,
+  type ReviewTable,
   type StoredRemoval,
+  REVIEW_TIMINGS,
 } from "./api";
 
 // Pure parsers for what the permission core (0287) returns. The core computes every diff, refusal and affected person; these only
@@ -116,6 +120,33 @@ function parseStoredRemoved(raw: unknown, role: Role): StoredRemoval[] {
   return out;
 }
 
+const SCOPES = ["off", "own", "studio"] as const;
+const asScope = (v: unknown): ReviewRow["shownBefore"] | null => (SCOPES as readonly unknown[]).includes(v) ? (v as ReviewRow["shownBefore"]) : null;
+
+/** The review table of preview_role_changes_at. Anything that is not exactly that shape is refused whole: a table is never half-trusted. */
+export function parseReview(raw: Json): ReviewTable | null {
+  const hash = str(raw.review_hash);
+  const version = num(raw.review_version);
+  if (!Array.isArray(raw.review) || hash === null || !/^[0-9a-f]{64}$/.test(hash) || version === null) return null;
+  const rows: ReviewRow[] = [];
+  for (const r of raw.review) {
+    if (!isObj(r) || !isRole(r.role)) return null;
+    const key = str(r.key);
+    const shownBefore = asScope(r.shown_before);
+    const requested = asScope(r.requested);
+    const effectiveBefore = asScope(r.effective_before);
+    const effectiveAfter = asScope(r.effective_after);
+    const timing = str(r.timing);
+    const storedBefore = r.stored_before === null ? null : asScope(r.stored_before);
+    const storedAfter = r.stored_after === null ? null : asScope(r.stored_after);
+    if (!key || !shownBefore || !requested || !effectiveBefore || !effectiveAfter || typeof r.written !== "boolean") return null;
+    if (!timing || !(REVIEW_TIMINGS as readonly string[]).includes(timing)) return null;
+    if ((r.stored_before !== null && storedBefore === null) || (r.stored_after !== null && storedAfter === null)) return null;
+    rows.push({ role: r.role, key, label: byKey.get(key)?.label ?? key, storedBefore, shownBefore, requested, storedAfter, written: r.written, effectiveBefore, effectiveAfter, timing: timing as ReviewRow["timing"] });
+  }
+  return { rows, hash, version };
+}
+
 export function parsePreview(raw: unknown): PreviewResult {
   if (!isObj(raw)) return { ok: false, error: UNEXPECTED };
   if (raw.ok !== true) return { ok: false, error: parseError(raw) };
@@ -134,7 +165,10 @@ export function parsePreview(raw: unknown): PreviewResult {
     const count = isObj(affected[role]) ? (num((affected[role] as Json).count) ?? people.length) : people.length;
     roles.push({ role, diff: toDiff(raw.changes[role], sensitive, role === "practitioner" ? narrowings : []), people, count, storedRemoved: parseStoredRemoved(raw.stored_removed, role) });
   }
-  return { ok: true, preview: { version, roles } };
+  // Only preview_role_changes_at carries a table; the other previews (reset, adopt, activation) do not.
+  const review = "review" in raw ? parseReview(raw) : null;
+  if ("review" in raw && review === null) return { ok: false, error: UNEXPECTED };
+  return { ok: true, preview: { version, roles, review } };
 }
 
 /** preview_activation: the same diff shape as any preview, plus the keys it covers and the hash a commit must present. */
@@ -195,8 +229,9 @@ function auditChanges(
     return { before: b, after: a, storedBefore: sb, storedAfter: sa };
   }
   for (const k of Object.keys(after)) {
-    // `_review` is the reviewed-save stamp ({version, hash}) the database adds beside the permission map: metadata, never a permission change.
-    if (k === "_review") continue;
+    // Keys that begin with "_" are the database's own bookkeeping on the audit row (0361 `_review`: the version and hash a save was reviewed
+    // against). They are not permissions and are never shown.
+    if (k.startsWith("_")) continue;
     if (kind === "staff_role_changed") {
       if (k === "role") {
         b.Role = String(pre.role ?? "unset");
@@ -295,7 +330,13 @@ export function parseState(raw: unknown): CoreState | null {
         customised = true;
       }
     }
-    policies[role] = { basis, values, gates, server: { stored: { ...values }, effective, source } } as StudioPolicy;
+    // ONE normalised map, built here and nowhere else: what the owner is SHOWN for every key (the stored choice, else the studio basis value).
+    // The page's saved policy and its draft both start as this map, so "is it dirty", "what changed" and "rebase after a stale save" are plain
+    // equality, and no client code derives a before-value (Codex 4582593018, 4585249966; Insurance N3). `server.stored` is the same baseline:
+    // the effective-value logic asks whether a draft differs from what was SHOWN, not from what happens to be a row.
+    const shown: Record<string, Scope> = { ...values };
+    for (const d of CATALOG as readonly PermissionDef[]) if (shown[d.key] === undefined) shown[d.key] = basisValue(d, role, basis);
+    policies[role] = { basis, values: shown, gates, server: { stored: { ...shown }, effective, source } } as StudioPolicy;
   }
   return { version, basis, policies, reviewed: basis === "new_studio" || customised, staffRoleChange: gates.staff_role_change === true };
 }

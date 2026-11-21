@@ -8,7 +8,7 @@ import { catalogByKey, effectiveScope, enforcementOf, scopeRank, type Role, type
 // answer; the mirror is used only to describe an UNSAVED draft change, and never to claim more than the core says is in force.
 
 export type ServerEffective = {
-  /** The owner's saved choice per key, as the core returned it (absent = nothing stored). */
+  /** What the owner was SHOWN for every key before any draft: the stored choice, else the studio basis value (one normalised map built in parseState). A draft is compared with this, never with "is there a row". */
   stored: Record<string, Scope>;
   /** What is in force now, per key. */
   effective: Record<string, Scope>;

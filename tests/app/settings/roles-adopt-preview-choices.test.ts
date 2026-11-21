@@ -39,6 +39,7 @@ async function mount(over: Record<string, unknown>) {
     root!.render(
       createElement(RolesEditor, {
         policies: { practitioner: policy, receptionist: policy },
+        version: 4,
         reviewed: false,
         writable: true,
         notWritableReason: null,
@@ -81,6 +82,12 @@ describe("the adoption preview lists the saved choices adoption changes", () => 
     const panel = host!.querySelector('[data-testid="roles-preview"]');
     expect(panel?.textContent ?? "").not.toMatch(/Nothing would change/);
     expect(host!.querySelector('[data-choice-change="receptionist:appt.cancel"]')?.textContent ?? "").toMatch(/Cancel appointments: Off to Whole studio/);
+  });
+  it("union: the Adopt preview prints the server-read choices and never the Save review's table block", async () => {
+    await mount({ previewAdopt: adoptPreview([choice]) });
+    await openAdopt();
+    expect(host!.querySelector('[data-testid="preview-saved-choices"]')).not.toBeNull();
+    expect(host!.querySelector('[data-testid="review-saved-choices"]')).toBeNull();
   });
   it("control: with no choice change and no access change it still says nothing would change", async () => {
     await mount({ previewAdopt: adoptPreview([]) });
