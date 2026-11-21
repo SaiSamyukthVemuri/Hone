@@ -82,40 +82,27 @@ describe("header fit", () => {
     }
   });
 
-  it("Business is an OWNER-ONLY nav entry on both breakpoints, to /dashboard/capacity", () => {
-    // OWNER-CAP follow-up. The browser spec proves what an owner and a
-    // practitioner each actually SEE; this is the cheap source-level pin that
-    // the entry is role-gated at all, on both surfaces, and points at the one
-    // route that exists — there is no /business hub.
+  it("Business is an OWNER-ONLY menu on both breakpoints, listing Capacity and Statements", () => {
+    // OWNER-CAP follow-up, extended for the monthly statement. The browser spec proves what an owner and a practitioner each
+    // actually SEE; this is the cheap source-level pin that the menu is role-gated at all, on both surfaces, and that both
+    // surfaces take their destinations from ONE shared list. There is no /business hub.
     const MOBILE = read("app/(app)/MobileMenu.tsx");
-    // NAV-ACK-02: same repair as the Records item above — the gate and the
-    // destination are the properties, not the element's tag name or the
-    // distance between its href and its label.
-    const gated = LAYOUT.match(
-      /\{practitioner\.role === "owner" && \(\s*<(\w+)[^>]*href="\/dashboard\/capacity"[^>]*>([\s\S]*?)<\/\1>/,
-    );
-    expect(gated).not.toBeNull();
-    expect(gated![2].trim()).toBe("Business");
-    expect(MOBILE).toMatch(
-      /role === "owner"\s*\?\s*\[\{ href: "\/dashboard\/capacity", label: "Business" \}\]/,
-    );
-    // UNCONDITIONAL would be the defect, so assert the gate is the ONLY way
-    // either file mentions the route: exactly one occurrence each, and both
-    // inside the role branches pinned above.
+    const LIST = read("lib/nav/business-menu.ts");
+    expect(LAYOUT).toMatch(/\{practitioner\.role === "owner" && <BusinessMenu \/>\}/);
+    expect(MOBILE).toMatch(/role === "owner" && \(\s*<div role="group"[\s\S]*?BUSINESS_MENU_ITEMS\.map/);
+    expect(LIST).toContain('href: "/dashboard/capacity", label: "Capacity"');
+    expect(LIST).toContain('href: "/financials/statement", label: "Statements"');
+    // UNCONDITIONAL would be the defect: neither shell file may name either route outside the gated branch, so neither names it at all.
     for (const [name, src] of [
       ["layout", LAYOUT],
       ["mobile menu", MOBILE],
     ] as const) {
-      expect(
-        src.match(/"\/dashboard\/capacity"/g)?.length,
-        `${name} must link the owner surface exactly once`,
-      ).toBe(1);
+      expect(src, `${name} must take the routes from the shared list`).not.toMatch(/"\/dashboard\/capacity"|"\/financials\/statement"/);
     }
     // No /business hub was invented to hold it.
     expect(existsSync(join(process.cwd(), "app/(app)/business"))).toBe(false);
-    // ...and the role came from data the shell already had. A second
-    // practitioner/role lookup in the layout would be the extra query this
-    // change promised not to add.
+    // ...and the role came from data the shell already had. A second practitioner/role lookup in the layout would be the extra
+    // query this change promised not to add.
     expect(LAYOUT.match(/requirePractitionerWithStudio\(\)/g)?.length).toBe(1);
     expect(LAYOUT).not.toMatch(/getCurrentPractitioner\b/);
   });

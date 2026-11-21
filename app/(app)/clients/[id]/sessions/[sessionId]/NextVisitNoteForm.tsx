@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
+import { useRegisterVisitSaver, type SaveOutcome } from "@/components/charting-visit-save";
 import type { NextSessionNoteResult } from "./actions";
+import { useReportVisitDraft } from "@/components/charting-visit-draft";
 
 // PR #191 (Chloe smoke feedback). The "Plan for next visit" form
 // previously gave no feedback on save; Chloe could not tell whether
@@ -31,30 +33,71 @@ export function NextVisitNoteForm({
   const [note, setNote] = useState(initialNote);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [pending, startTransition] = useTransition();
+  // An edit counter, so the visit card can order forms by recency WITHOUT holding a second copy of the note's text.
+  const [edits, setEdits] = useState(0);
+  // "This visit" (New view): a note with changes is unsaved (a failed save leaves it unsaved too), and a failed save needs attention. Display only.
+  useReportVisitDraft("next-visit-note", {
+    machine: null,
+    draftAreas: [],
+    unsaved: status.kind === "dirty" || status.kind === "saving" || status.kind === "error",
+    attention: status.kind === "error",
+    activity: `${note.length}:${edits}`,
+  });
 
-  function save() {
+  // THE ONE SAVE. The button and Save visit both run it, so there is one path, and it returns what happened on every exit.
+  async function runSave(): Promise<SaveOutcome> {
     setStatus({ kind: "saving" });
-    startTransition(async () => {
-      const formData = new FormData();
-      formData.set("session_id", sessionId);
-      formData.set("client_id", clientId);
-      formData.set("next_session_note", note);
-      const result = await action(formData);
-      if (result.ok) {
-        setStatus({ kind: "saved", cleared: result.cleared });
-      } else {
-        setStatus({ kind: "error", message: result.error });
-      }
-    });
+    const formData = new FormData();
+    formData.set("session_id", sessionId);
+    formData.set("client_id", clientId);
+    formData.set("next_session_note", note);
+    const result = await action(formData);
+    if (result.ok) {
+      setStatus({ kind: "saved", cleared: result.cleared });
+      return { status: "saved" };
+    }
+    setStatus({ kind: "error", message: result.error });
+    return { status: "failed", message: result.error };
   }
 
+  // A lost answer is shown as not saved (the form stays usable), never thrown out of the transition.
+  function guardedSave(): Promise<SaveOutcome> {
+    return runSave().catch(() => {
+      setStatus({ kind: "error", message: "That did not save." });
+      return { status: "unknown" } as SaveOutcome;
+    });
+  }
+  // Runs the save inside a transition (so `pending` engages exactly as for the button) and hands back its outcome.
+  function startSave(): Promise<SaveOutcome> {
+    let p!: Promise<SaveOutcome>;
+    startTransition(async () => {
+      p = guardedSave();
+      await p;
+    });
+    return p;
+  }
+
+  function save() {
+    void startSave();
+  }
+
+  // SAVE VISIT: only a note with changes is saved, and never while this form is mid-save.
+  const rootRef = useRef<HTMLDivElement>(null);
+  useRegisterVisitSaver("note", "Next-visit note", rootRef, () => {
+    if (pending || status.kind === "saving") return Promise.resolve<SaveOutcome>({ status: "held", message: "A save is already in progress." });
+    // An error is retryable: the note is still unsaved.
+    if (status.kind !== "dirty" && status.kind !== "error") return Promise.resolve<SaveOutcome>({ status: "nothing" });
+    return startSave();
+  });
+
   return (
-    <div className="flex flex-col gap-3">
+    <div ref={rootRef} className="flex flex-col gap-3">
       <textarea
         rows={2}
         value={note}
         onChange={(e) => {
           setNote(e.target.value);
+          setEdits((n) => n + 1);
           if (status.kind !== "dirty") setStatus({ kind: "dirty" });
         }}
         placeholder="e.g. Upper lip: start lower and check sensitivity. Chin: continue same settings."
