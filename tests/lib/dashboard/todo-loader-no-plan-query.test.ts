@@ -40,7 +40,7 @@ vi.mock("@/lib/supabase/server", () => ({
         rec.columns = String(cols ?? "");
         return q;
       };
-      for (const m of ["eq", "in", "gte", "lte", "lt", "gt", "neq", "is", "order", "limit"]) {
+      for (const m of ["eq", "in", "gte", "lte", "lt", "gt", "neq", "is", "not", "order", "limit"]) {
         q[m] = chain(m);
       }
       q.then = (resolve: (v: { data: unknown[]; error: null }) => unknown) =>

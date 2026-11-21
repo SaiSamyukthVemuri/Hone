@@ -286,11 +286,11 @@ describe("identity comes from the session, per call", () => {
   });
 
   it("an authenticated request gets ITS OWN scope, derived not supplied", async () => {
-    signIn("studio-fett", "pract-sabrina");
+    signIn("studio-fett", "pract-owner-a");
     const ctx = await actions.loadMachineSetupContext(ROUTE);
     expect(ctx.scope).toEqual({
       studioId: "studio-fett",
-      practitionerId: "pract-sabrina",
+      practitionerId: "pract-owner-a",
     });
   });
 
@@ -302,14 +302,14 @@ describe("identity comes from the session, per call", () => {
   });
 
   it("reports DATABASE persistence when the remembered read succeeds", async () => {
-    signIn("studio-fett", "pract-sabrina");
+    signIn("studio-fett", "pract-owner-a");
     const ctx = await actions.loadMachineSetupContext(ROUTE);
     expect(ctx.persistence.kind).toBe("database");
     expect(ctx.persistence.persisted).toBe(true);
   });
 
   it("falls back to NO persistence when that read FAILS, rather than claiming it", async () => {
-    signIn("studio-fett", "pract-sabrina");
+    signIn("studio-fett", "pract-owner-a");
     DB.selectError = { message: "connection reset" };
     const ctx = await actions.loadMachineSetupContext(ROUTE);
     expect(ctx.persistence.kind).toBe("none");
@@ -318,15 +318,15 @@ describe("identity comes from the session, per call", () => {
   });
 
   it("an empty studio is reported as empty, not unreadable", async () => {
-    signIn("studio-fett", "pract-sabrina");
+    signIn("studio-fett", "pract-owner-a");
     const ctx = await actions.loadMachineSetupContext(ROUTE);
     expect(ctx.inventoryReason).toMatch(/no machine registered yet/i);
   });
 
   it("only an owner may manage machines", async () => {
-    signIn("studio-fett", "pract-sabrina", "practitioner");
+    signIn("studio-fett", "pract-owner-a", "practitioner");
     expect((await actions.loadMachineSetupContext(ROUTE)).canManageMachines).toBe(false);
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     expect((await actions.loadMachineSetupContext(ROUTE)).canManageMachines).toBe(true);
   });
 });
@@ -342,7 +342,7 @@ describe("registration refuses a profile the server does not offer", () => {
   });
 
   it("refuses a BLOCKED real profile, so no model is activated by registering it", async () => {
-    signIn("studio-fett", "pract-sabrina");
+    signIn("studio-fett", "pract-owner-a");
     for (const id of [
       "silhouettone:evolution-st-350",
       "permanence-gemm:gemm-16",
@@ -360,7 +360,7 @@ describe("registration refuses a profile the server does not offer", () => {
   });
 
   it("refuses an invented profile id", async () => {
-    signIn("studio-fett", "pract-sabrina");
+    signIn("studio-fett", "pract-owner-a");
     const r = await actions.registerMachineAction({
       profileId: "acme:whatever",
       displayName: "Room 1",
@@ -370,7 +370,7 @@ describe("registration refuses a profile the server does not offer", () => {
   });
 
   it("refuses an empty or over-long name before any write", async () => {
-    signIn("studio-fett", "pract-sabrina");
+    signIn("studio-fett", "pract-owner-a");
     for (const name of ["", "   ", "x".repeat(81)]) {
       const r = await actions.registerMachineAction({
         profileId: "synthetic:demo-multineedle",
@@ -390,6 +390,184 @@ describe("registration refuses a profile the server does not offer", () => {
   });
 });
 
+describe("the studio's one xCell: registration of the xCell Pur unit (HON-71)", () => {
+  const PUR = "dectro-apilus:xcell-pur";
+  const published = (modes: string[]) => modes.map((m) => ({ mode_key: m, machine_profile_version: 1 }));
+  const purRow = (over: Record<string, unknown> = {}) => ({
+    id: "22222222-2222-4222-8222-222222222222", studio_id: "studio-fett", machine_profile_id: PUR, machine_profile_version: 1,
+    display_name: "Dectro xCell", installed_options: [], retired_at: null, ...over,
+  });
+  const wrote = () => DB.calls.some((c) => c.fn === "register_studio_machine");
+  const GATE = "HONE_CHARTING_NEW_VIEW_STUDIO_IDS";
+  const LISTED_STUDIO = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"; // synthetic
+  const OTHER_STUDIO = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"; // synthetic
+  beforeEach(() => { vi.stubEnv(GATE, "all"); }); // the cases below are about the registration rules; the gate cases set their own value
+
+  it("registers it through the existing owner command once its contract is published and the studio has none", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = [];
+    DB.rpcResult = "33333333-3333-4333-8333-333333333333";
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r).toMatchObject({ ok: true, machineId: "33333333-3333-4333-8333-333333333333" });
+    expect(wrote()).toBe(true);
+  });
+
+  it("UNPUBLISHED stays unregisterable: no contract rows, no write", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = [];
+    DB.rowsFor.studio_machines = [];
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/No published field contract/);
+    expect(wrote()).toBe(false);
+  });
+
+  it("a SECOND registration is refused with a clear message, and nothing is written", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = [purRow()];
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "xCell second room" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/already has its xCell registered/);
+    expect(wrote()).toBe(false);
+  });
+
+  it("an unreadable inventory refuses too (it cannot be shown that none exists)", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.errorFor.studio_machines = { message: "connection reset" };
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r.ok).toBe(false);
+    expect(wrote()).toBe(false);
+  });
+
+  it("a RETIRED xCell does not block a new one (the inventory read excludes retired units)", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = []; // listStudioMachines filters retired units in SQL
+    DB.rpcResult = "44444444-4444-4444-8444-444444444444";
+    expect((await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" })).ok).toBe(true);
+  });
+
+  it("the guard is specific to the xCell: another model's registration is not blocked by an existing xCell", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["flash", "microflash", "multiplex", "blend", "omniblend", "multiblend", "electrolysis"]).map((r) => ({ ...r, machine_profile_version: 3 }));
+    DB.rowsFor.studio_machines = [purRow()];
+    DB.rpcResult = "55555555-5555-4555-8555-555555555555";
+    const r = await actions.registerMachineAction({ profileId: "dectro-apilus:senior-3g", displayName: "Room 2" });
+    expect(r.ok).toBe(true);
+  });
+
+  it("the xCell's name is FIXED: a posted name is ignored, so the unique name index is the atomic one-per-studio guarantee", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = [];
+    DB.rpcResult = "88888888-8888-4888-8888-888888888888";
+    expect((await actions.registerMachineAction({ profileId: PUR, displayName: "Room 4 laser" })).ok).toBe(true);
+    const call = DB.calls.find((c) => c.fn === "register_studio_machine");
+    expect(call?.args.p_display_name).toBe("Dectro xCell");
+  });
+  it("RACE: two owner tabs both pass the inventory read; the second insert hits the unique name index and gets the same clear message", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = []; // both tabs saw none
+    DB.rpcError = { message: 'duplicate key value violates unique constraint "studio_machines_studio_display_name_uniq"', code: "23505" };
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r).toMatchObject({ ok: false, code: "rejected", error: "This studio already has its xCell registered." });
+  });
+  it("RACE: an UNRELATED unique violation (23505 on another constraint) or a matching message without the code is NOT disguised", async () => {
+    for (const err of [
+      { message: 'duplicate key value violates unique constraint "some_other_uniq"', code: "23505" },
+      { message: 'duplicate key value violates unique constraint "studio_machines_studio_display_name_uniq"', code: "42501" },
+      { message: "already exists" },
+    ]) {
+      signIn("studio-fett", "pract-owner-a");
+      DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+      DB.rowsFor.studio_machines = [];
+      DB.rpcError = err;
+      const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.error).not.toBe("This studio already has its xCell registered.");
+    }
+  });
+  it("RACE: another database error on the xCell is NOT disguised as 'already registered'", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = [];
+    DB.rpcError = { message: "Only the studio owner may register a machine.", code: "42501" };
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/Only the studio owner/);
+  });
+  it("a non-xCell model keeps the name the owner typed", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["flash", "microflash", "multiplex", "blend", "omniblend", "multiblend", "electrolysis"]).map((r) => ({ ...r, machine_profile_version: 3 }));
+    DB.rowsFor.studio_machines = [];
+    DB.rpcResult = "99999999-9999-4999-8999-999999999999";
+    await actions.registerMachineAction({ profileId: "dectro-apilus:senior-3g", displayName: "Room 2" });
+    expect(DB.calls.find((c) => c.fn === "register_studio_machine")?.args.p_display_name).toBe("Room 2");
+  });
+  it("ROLLOUT GATE: unset means nobody, and the refusal is the generic one, before any contract or inventory read", async () => {
+    vi.stubEnv(GATE, "");
+    signIn(LISTED_STUDIO, "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = []; // unpublished too: the generic gate message must win, so the gate ran first
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toMatch(/not offered yet/);
+      expect(r.error).not.toMatch(/No published field contract|allowlist|studio/i);
+    }
+    expect(wrote()).toBe(false);
+  });
+  it("ROLLOUT GATE: an UNLISTED studio is refused by the action even though the form was forged and the contract is published", async () => {
+    vi.stubEnv(GATE, LISTED_STUDIO);
+    signIn(OTHER_STUDIO, "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = [];
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/not offered yet/);
+    expect(wrote()).toBe(false);
+  });
+  it("ROLLOUT GATE: a LISTED studio may register it, and 'all' (a test value) also passes", async () => {
+    vi.stubEnv(GATE, `${LISTED_STUDIO},${OTHER_STUDIO}`);
+    signIn(LISTED_STUDIO, "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = [];
+    DB.rpcResult = "66666666-6666-4666-8666-666666666666";
+    expect((await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" })).ok).toBe(true);
+  });
+  it("ROLLOUT GATE: an unpublished contract is refused even for a listed studio", async () => {
+    vi.stubEnv(GATE, LISTED_STUDIO);
+    signIn(LISTED_STUDIO, "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = [];
+    DB.rowsFor.studio_machines = [];
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/No published field contract/);
+  });
+  it("ROLLOUT GATE: another model is not affected by the gate (3G registers with the gate unset)", async () => {
+    vi.stubEnv(GATE, "");
+    signIn(OTHER_STUDIO, "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["flash", "microflash", "multiplex", "blend", "omniblend", "multiblend", "electrolysis"]).map((r) => ({ ...r, machine_profile_version: 3 }));
+    DB.rowsFor.studio_machines = [];
+    DB.rpcResult = "77777777-7777-4777-8777-777777777777";
+    expect((await actions.registerMachineAction({ profileId: "dectro-apilus:senior-3g", displayName: "Room 2" })).ok).toBe(true);
+  });
+  it("the studio the gate tests is the authenticated scope's, never a posted value", () => {
+    const body = CODE.slice(CODE.indexOf("export async function registerMachineAction"));
+    expect(body).toContain("xcellRegistrationAllowed(scope.studioId)");
+    expect(body).not.toMatch(/xcellRegistrationAllowed\(input\./);
+  });
+
+  it("the owner check stays in the database command, and the settings page itself shows only the owner notice to anyone else", () => {
+    expect(CODE).toContain("registerStudioMachine(db");
+    const page = readFileSync(path.resolve(__dirname, "../../../app/(app)/settings/machines/page.tsx"), "utf8");
+    expect(page).toMatch(/role !== "owner"[\s\S]{0,120}OwnerOnlyNotice/);
+  });
+});
+
 describe("the prior-setup read is scoped to the ROUTE CLIENT, not the studio", () => {
   // The defect this replaced: latestRecordedSetup took only a studio id, so in
   // a studio with more than one client the panel showed whichever block was
@@ -402,7 +580,7 @@ describe("the prior-setup read is scoped to the ROUTE CLIENT, not the studio", (
   });
 
   it("AUTHORIZES the route client against the server-derived studio", async () => {
-    signIn("studio-fett", "pract-sabrina");
+    signIn("studio-fett", "pract-owner-a");
     await actions.loadMachineSetupContext(ROUTE);
     expect(LINEAGE.calls).toEqual([
       {
@@ -415,7 +593,7 @@ describe("the prior-setup read is scoped to the ROUTE CLIENT, not the studio", (
   });
 
   it("refuses rather than reading when the session is not this client's", async () => {
-    signIn("studio-fett", "pract-sabrina");
+    signIn("studio-fett", "pract-owner-a");
     LINEAGE.throws = new Error("Session does not belong to this client.");
     await expect(
       actions.loadMachineSetupContext(ROUTE),
@@ -423,7 +601,7 @@ describe("the prior-setup read is scoped to the ROUTE CLIENT, not the studio", (
   });
 
   it("asks the database for THIS CLIENT's latest setup, by name", async () => {
-    signIn("studio-fett", "pract-sabrina");
+    signIn("studio-fett", "pract-owner-a");
     DB.calls.length = 0;
     await actions.loadMachineSetupContext(ROUTE);
     const call = DB.calls.find((c) => c.fn === "latest_setup_for_client");
@@ -472,7 +650,7 @@ describe("the prior-setup read is scoped to the ROUTE CLIENT, not the studio", (
 function synthDevice() {
   vi.stubEnv("HONE_SYNTHETIC_MACHINE_PROFILE", "1");
   vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "http://127.0.0.1:54321");
-  signIn("studio-fett", "pract-sabrina", "owner");
+  signIn("studio-fett", "pract-owner-a", "owner");
   DB.rows = [
     {
       id: "dev-1",
@@ -915,7 +1093,7 @@ describe("reading metadata is DERIVED from the profile, never accepted", () => {
     // flag.
     vi.stubEnv("HONE_SYNTHETIC_MACHINE_PROFILE", "1");
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "http://127.0.0.1:54321");
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.rows = [
       {
         id: "dev-1",
@@ -1470,7 +1648,7 @@ describe("a failed recorded-captures read is reported, not flattened", () => {
   // captures exist, no captures exist, and the question could not be answered.
 
   it("reports unavailable when the read fails", async () => {
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.errorFor.treatment_setup_readings = { message: "connection reset" };
 
     const ctx = await actions.loadMachineSetupContext({
@@ -1487,7 +1665,7 @@ describe("a failed recorded-captures read is reported, not flattened", () => {
   it("does NOT report unavailable when the block simply has nothing", async () => {
     // The ordinary empty case must stay empty, or every first capture would
     // carry a warning about a failure that did not happen.
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.rowsFor.treatment_setup_readings = [];
 
     const ctx = await actions.loadMachineSetupContext({
@@ -1503,7 +1681,7 @@ describe("a failed recorded-captures read is reported, not flattened", () => {
     // A third state again: no block means nothing is recorded against it and
     // nothing failed. Reporting a failure here would warn her on every new
     // treatment area.
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     const ctx = await actions.loadMachineSetupContext(ROUTE);
     expect(ctx.recordedSetupUnavailable).toBe(false);
   });
@@ -1584,7 +1762,7 @@ describe("previous-treatment guidance excludes the session being charted", () =>
   // that the action hands the authorized route session down rather than
   // omitting it or inventing one.
   it("passes the ROUTE's sessionId as the exclusion", async () => {
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     await actions.loadMachineSetupContext(ROUTE);
 
     const call = DB.calls.find((c) => c.fn === "latest_setup_for_client");
@@ -1602,7 +1780,7 @@ describe("previous-treatment guidance excludes the session being charted", () =>
     // Guards the shape of the fix rather than its presence: passing null or
     // an empty string would satisfy "a third argument exists" while excluding
     // nothing, and `is distinct from null` excludes no row.
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     await actions.loadMachineSetupContext(ROUTE);
     const call = DB.calls.find((c) => c.fn === "latest_setup_for_client");
     expect(call!.args.p_exclude_session_id).toBeTruthy();
@@ -1618,7 +1796,7 @@ describe("readingsForBlockAction reports a DEFINITIVE refusal apart from a trans
   });
 
   it("a refused route (the session is not this client's, or a lineage lookup error) is UNAVAILABLE, not an accusation of access", async () => {
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     const { SessionLineageError } = await import("@/lib/sessions/session-lineage");
     LINEAGE.throws = new SessionLineageError("Treatment session not found.");
     try {
@@ -1629,13 +1807,13 @@ describe("readingsForBlockAction reports a DEFINITIVE refusal apart from a trans
   });
 
   it("the database's not-found for the block (deleted in another tab) is UNAVAILABLE", async () => {
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.errorFor.treatment_setup_readings = { message: "Unknown treatment block for this session.", code: "P0002" } as never;
     expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false, refused: "unavailable" });
   });
 
   it("an insufficient-privilege error from the database is an ACCESS refusal", async () => {
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.errorFor.treatment_setup_readings = { message: "permission denied", code: "42501" } as never;
     expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false, refused: "access" });
   });
@@ -1643,7 +1821,7 @@ describe("readingsForBlockAction reports a DEFINITIVE refusal apart from a trans
   // ONE retry of the (STABLE, side-effect-free) read, only for a CODE-LESS error.
   const readCalls = () => DB.calls.filter((c) => c.fn === "setup_readings_for_block").length;
   it("RETRY: a code-less error then success returns the readings (no failure for the caller), after exactly two reads", async () => {
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.readSequence = [{ message: "FetchError: socket hang up" }, null];
     const out = await actions.readingsForBlockAction(input);
     expect(out.ok).toBe(true);
@@ -1651,14 +1829,14 @@ describe("readingsForBlockAction reports a DEFINITIVE refusal apart from a trans
   });
 
   it("RETRY: two code-less failures are reported as a failure (not a refusal), after exactly two reads", async () => {
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.readSequence = [{ message: "Unexpected token < in JSON" }, { message: "Unexpected token < in JSON" }];
     expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false });
     expect(readCalls()).toBe(2);
   });
 
   it("RETRY NEGATIVE CONTROL: a CODED error is a definite database answer and is never retried", async () => {
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.readSequence = [{ message: "boom", code: "XX000" }, null];
     expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false });
     expect(readCalls(), "one read only").toBe(1);
@@ -1669,7 +1847,7 @@ describe("readingsForBlockAction reports a DEFINITIVE refusal apart from a trans
   });
 
   it("NEGATIVE CONTROL: a transient database failure is NOT a refusal", async () => {
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.errorFor.treatment_setup_readings = { message: "connection reset", code: "08006" } as never;
     expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false });
   });
@@ -1698,11 +1876,11 @@ describe("loadMachineSetupContext reads the block's recorded captures", () => {
     decimals: 0,
     observation_source: "practitioner-entered",
     recorded_at: "2026-10-14T14:00:00Z",
-    recorded_by_practitioner_id: "pract-sabrina",
+    recorded_by_practitioner_id: "pract-owner-a",
   };
 
   it("returns them when a block is being charted", async () => {
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.rowsFor = { treatment_setup_readings: [READING_ROW] };
     const ctx = await actions.loadMachineSetupContext({
       clientId: "client-1",
@@ -1717,7 +1895,7 @@ describe("loadMachineSetupContext reads the block's recorded captures", () => {
   it("returns NONE without a block, which in create mode is simply true", async () => {
     // The block has no row yet, so nothing is recorded against it. The read
     // must not happen at all rather than returning something arbitrary.
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.rowsFor = { treatment_setup_readings: [READING_ROW] };
     const ctx = await actions.loadMachineSetupContext({
       clientId: "client-1",
@@ -1729,7 +1907,7 @@ describe("loadMachineSetupContext reads the block's recorded captures", () => {
   it("degrades to EMPTY when the read fails, rather than losing the chart", async () => {
     // This surface is reassurance. A failed cosmetic read must not cost her
     // the machine panel, so it must not throw.
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.errorFor = { treatment_setup_readings: { message: "boom" } };
     const ctx = await actions.loadMachineSetupContext({
       clientId: "client-1",
@@ -1745,7 +1923,7 @@ describe("loadMachineSetupContext reads the block's recorded captures", () => {
     // A treatment recorded on a unit that has since been retired is exactly
     // the case that must still name it, and only the server can see one.
     // `machinesByIds` has no retired filter; the device list does.
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.rowsFor = {
       treatment_setup_readings: [READING_ROW],
       studio_machines: [
@@ -2133,6 +2311,36 @@ describe("recordBlockMachineIdentityAction without 0301", () => {
   });
 });
 
+
+// ===========================================================================
+// MULTIPLEX ON AN AREA THAT ALREADY HOLDS xCELL VALUES IS REFUSED BY THE SERVER (one xCell, one Mode control).
+// The Mode control hides MultiPlex for such an area, but a stale tab or a crafted request must not reach the area's identity: the
+// command refuses it inside its transaction and the action reports it as rejected, never saved.
+// ===========================================================================
+describe("recordBlockMachineIdentityAction refuses MultiPlex on a legacy-valued area (server side)", () => {
+  const multiplex = {
+    clientId: "client-ana", sessionId: "session-1", blockId: "block-legacy",
+    deviceId: UNIT_ID, modeKey: "multiplex", profileId: null as string | null, idempotencyKey: "pick-key-0002",
+  };
+  beforeEach(() => arrangeUnit({ machine_profile_id: "dectro-apilus:xcell-pur", machine_profile_version: 1 }));
+
+  it("the command's refusal is returned as rejected: no identity is reported as stored", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcError = { code: "P0001", message: "This area already holds xCell Pur readings; add a new area for another machine." };
+    const out = await actions.recordBlockMachineIdentityAction(multiplex);
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.code).toBe("rejected");
+    expect((out as { identity?: unknown }).identity).toBeUndefined();
+    expect(DB.calls.some((c) => c.fn === "record_block_machine_identity")).toBe(true);
+  });
+
+  it("NEGATIVE CONTROL: the same request on an area with no legacy values is stored", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcResult = { ...RECEIPT("v3"), machine_profile_id: "dectro-apilus:xcell-pur", machine_mode_key: "multiplex" };
+    expect((await actions.recordBlockMachineIdentityAction(multiplex)).ok).toBe(true);
+  });
+});
 
 // ===========================================================================
 // AN IMPOSSIBLE UNIT / MODE PAIR IS REFUSED BEFORE ANYTHING IS WRITTEN

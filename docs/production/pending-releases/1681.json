@@ -1,0 +1,1 @@
+{"pr":1681,"runtime":true,"migrations":["supabase/migrations/0364_waitlist_replace_lock_order_and_live_only.sql"],"release_receipt":"01-ops/1681-release-receipt.json"}

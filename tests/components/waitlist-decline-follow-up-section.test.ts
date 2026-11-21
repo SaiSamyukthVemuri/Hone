@@ -224,3 +224,25 @@ describe("Booked manually on the card", () => {
     expect(render([row()], { manualChoices: new Map() })).not.toContain("card-booked-manually");
   });
 });
+
+describe('what "Mark handled" means is said on the card', () => {
+  it("an open decline card says handled closes the response only: no booking recorded, nobody removed from the list", () => {
+    const html = render([row()]);
+    const m = html.match(/data-testid="handled-meaning"[^>]*>([^<]*)</);
+    expect(m, "the explanation is rendered").not.toBeNull();
+    const text = m![1];
+    expect(text).toMatch(/closes this response only/);
+    expect(text).toMatch(/does not record a booking/);
+    expect(text).toMatch(/or remove them from the waiting list/);
+    expect(text).toMatch(/link that booking first/);
+    // and never claims the opposite
+    expect(text).not.toMatch(/removes them|is booked|will be booked/i);
+  });
+  it("a withdrawal card has no handled explanation (it has no Mark handled)", () => {
+    expect(render([row({ kind: "withdrawal" })])).not.toContain("handled-meaning");
+  });
+  it("a closed handled card does not read as resolved: it says the place on the list was not changed", () => {
+    const html = render([row({ status: "handled", closedAt: "2026-11-10T10:00:00Z" })]);
+    expect(html).toContain("This closed the response only; it did not change their place on the waiting list.");
+  });
+});

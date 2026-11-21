@@ -261,7 +261,7 @@ describe("0324 the residual race, proved as it stands", () => {
 
 describe("0324 privileges", () => {
   const INTERNAL = "public.count_waitlist_competing_invitations_internal(uuid,date,date,smallint[])";
-  const ADMIT_SIG = "public.admit_new_client_waitlist_entry(uuid,uuid,uuid,uuid,date,date,smallint[],integer,integer)";
+  const ADMIT_SIG = "public.admit_new_client_waitlist_entry(uuid,uuid,uuid,uuid,date,date,smallint[],integer,integer,uuid)";
 
   it("the internal count is executable by no role", async () => {
     for (const role of ["anon", "authenticated", "service_role"]) {

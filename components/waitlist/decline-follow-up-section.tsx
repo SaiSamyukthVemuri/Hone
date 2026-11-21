@@ -236,6 +236,11 @@ export function DeclineFollowUpSection({
                   <p className="text-neutral-600 dark:text-neutral-400">
                     Book now opens the calendar. After you book, the appointment appears here to link, which also covers someone who booked elsewhere.
                   </p>
+                  {r.kind === "decline" ? (
+                    <p className="text-neutral-600 dark:text-neutral-400" data-testid="handled-meaning">
+                      {HANDLED_MEANING}
+                    </p>
+                  ) : null}
                 </div>
               ) : (
                 <p className="mt-2 text-neutral-600 dark:text-neutral-400">{STATUS_COPY[r.status]}</p>
@@ -259,8 +264,12 @@ export function DeclineFollowUpSection({
   );
 }
 
+/** "Handled" means the response was dealt with. It is NOT a booking and does not move the person off the waiting list. */
+export const HANDLED_MEANING =
+  "Mark handled closes this response only. It does not record a booking or remove them from the waiting list. If you booked them yourself, link that booking first.";
+
 const STATUS_COPY: Record<Exclude<FollowUpRow["status"], "open">, string> = {
-  handled: "Handled.",
+  handled: "Handled. This closed the response only; it did not change their place on the waiting list.",
   kept: "Kept on the waitlist.",
   booked: "Booked and linked.",
   removed: "Removed from the waitlist.",

@@ -1,4 +1,5 @@
-import { localDateString, localDayOfWeek, formatLocalDateLabel, localTimeString12h } from "@/lib/booking/tz";
+import { invitationExpiryLabel } from "./invitation-deadline";
+import { localDateString, localDayOfWeek, formatLocalDateLabel } from "@/lib/booking/tz";
 import {
   evaluateInvitationScope,
   type InvitationScope,
@@ -433,11 +434,11 @@ export function groupSlotsByDay(
     });
 }
 
-/** "Thu, Nov 13 at 3:00 PM" in the studio's zone, or nothing for an unreadable instant. */
+/** Same absolute deadline as the email, with an explicit studio timezone. */
 export function openUntil(expiresAt: string, tz: string): { inviteOpenUntil?: string } {
   const at = new Date(expiresAt);
   if (Number.isNaN(at.getTime())) return {};
-  return { inviteOpenUntil: `${formatSlotDayLabel(localDateString(at, tz))} at ${localTimeString12h(at, tz)} (studio time)` };
+  return { inviteOpenUntil: invitationExpiryLabel(at, tz) };
 }
 
 /** "Mon, Sep 7" -- short enough for a phone, unambiguous across a week. */

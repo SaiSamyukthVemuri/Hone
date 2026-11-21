@@ -33,6 +33,31 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
+    path: "app/(app)/settings/waitlist/over-invite/actions.ts",
+    purpose:
+      "Owner-confirmed invite beyond the estimate: creates the owner's one batch, runs only THAT batch's first rounds, stops it, and runs the owner's separately confirmed retries.",
+    why: "The batch commands (create, preview, claim, settle, replace, stop) are `security definer` with EXECUTE granted to service_role ALONE, so no browser role reaches them and this module is the only application path. Every action resolves the studio and the acting practitioner server-side via getCurrentPractitionerWithStudio() and refuses a non-owner before anything runs; the form supplies a selection, a service and a window, never a studio, user or role id. The confirm action's rounds are claimed in `scoped` mode (its own batch AND its own owner, checked in the database against the batch's studio), never the unscoped claim, which only the background route may use. The retry targets are read through the OWNER's session (RLS) from the batches shown, never posted. This file performs no waitlist DML of its own.",
+    scopeGuard: "getCurrentPractitionerWithStudio",
+  },
+  {
+    path: "app/(app)/settings/waitlist/over-invite/page.tsx",
+    purpose: "Owner-only page for the over-invite flow: the consultation-fit estimate and a read-only preview of the selection (no recipient, no write).",
+    why: "computeConsultationFit and the preview command are read-only helpers that need the service client. The page resolves the studio and the practitioner server-side via requirePractitionerWithStudio() and renders only an owner notice for a non-owner; every call is scoped to that studio and that owner. Persisted progress is read through the owner's own session (RLS), not this client, and the chooser receives names only.",
+    scopeGuard: "requirePractitionerWithStudio",
+  },
+  {
+    path: "lib/waitlist/over-invite-deliver.ts",
+    purpose: "Delivery of one invitation email for a batch item: the studio's sender details and the observed-delivery record.",
+    why: "Internal server-only helper used by the worker and the owner's retry after the claim or replace has authorised the item. The service client reads only the studio's own sender row, by the studio id the item itself names. It does NOT read the waitlist entries: service_role has no table privilege there, so the recipient address comes from the admit command's own answer, or, on a retry, from the owner's own session reader (RLS) passed in by the caller. Nothing here returns an address, a name or a token to a caller. It sends only the existing invitation email, with no SMS path.",
+    scopeGuard: '.eq("id", studioId)',
+  },
+  {
+    path: "lib/waitlist/over-invite-run.ts",
+    purpose: "Server-side runner for the over-invite batch: claims rounds (scoped to one batch and owner, or the background round-robin), and settles each item.",
+    why: "The claim, admit, settle and replace commands are `security definer` with EXECUTE granted to service_role ALONE. Callers are exactly two: the owner's confirm action (scoped mode, its own batch and owner) and the background route behind its CRON_SECRET check (background mode). The claim modes are a closed pair and any other shape claims nothing before reaching the database; every settle names the item's own studio and entry, and the database refuses a mismatch.",
+    scopeGuard: "ClaimMode",
+  },
+  {
     path: "app/(app)/settings/waitlist/consent-actions.ts",
     purpose:
       "0208 owner surface — the sole caller of record_waitlist_sms_consent_by_practitioner, and a phone-wide STOP read before it.",
@@ -285,12 +310,6 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   },
   {
     path: "app/(app)/clients/[id]/sessions/[sessionId]/payment-actions.ts",
-    purpose: "Authenticated practitioner server action/query.",
-    why: "Service-role write/read-through after the caller's studio is resolved via getCurrentPractitionerWithStudio(); every query is scoped to that studio.id.",
-    scopeGuard: "getCurrentPractitionerWithStudio",
-  },
-  {
-    path: "app/(app)/clients/[id]/sessions/new/actions.ts",
     purpose: "Authenticated practitioner server action/query.",
     why: "Service-role write/read-through after the caller's studio is resolved via getCurrentPractitionerWithStudio(); every query is scoped to that studio.id.",
     scopeGuard: "getCurrentPractitionerWithStudio",
@@ -710,6 +729,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     path: "lib/billing/close-declined-fee-attempt.ts",
     purpose: "Payment ledger helper (owner-only Close declined attempt).",
     why: "Invoked only by the owner-authenticated closeDeclinedFeeAttemptAction; uses service-role to read and update the one payment_charge_attempts row. Scoped by studio_id and attempt id; it cancels only the PaymentIntent already stored on that row (never creates one) through the single cancelPaymentIntentConfirmed call site.",
+    scopeGuard: '.eq("studio_id"',
+  },
+  {
+    path: "lib/billing/cancel-declined-session-intent.ts",
+    purpose: "Payment ledger helper (close the original Stripe attempt of a failed, declined session payment).",
+    why: "Invoked only by the signature-verified payment_intent.payment_failed handler after the attempt is recorded failed; uses service-role to read the one payment_charge_attempts row and record stripe_status canceled on it. Scoped by studio_id and attempt id; it cancels only the intent stored on that row after verifying identity, never another attempt, and never writes the failed status.",
     scopeGuard: '.eq("studio_id"',
   },
   {
