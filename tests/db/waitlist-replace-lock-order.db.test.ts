@@ -8,6 +8,8 @@ afterAll(async () => { await closePool(); });
 
 // replace_waitlist_invitation: the round is locked first (no deadlock with redemption), a replace is for a LIVE invitation only, and a replaced item starts a new attempt.
 // Synthetic data, owned local stack.
+// DEFENSIVE CASE: the three ended-stamp tests insert an invitation that carries a stamp while its entry reads 'invited'. The real release, decline and expire commands move the entry out of 'invited'
+// in the same transaction, so this state is unreachable through the application's own commands; the refusal is defence in depth and the tests prove it holds if the state ever arises.
 // Fixture states are reached WITHOUT touching the append-only guard on the invitation table (nothing is disabled or bypassed): a row is INSERTed in the state under test (the guard
 // is an UPDATE guard), and the entry is moved to 'invited' the way the issue command moves it. The elapsed invitation is inserted with its window already in the past, the
 // stamped (ended) one with its stamp set at insert, and the legacy one without a round, so no column is ever changed after the fact.
@@ -64,7 +66,7 @@ describe("a replace is for a LIVE invitation only", () => {
     expect((await q(`select released_at from public.new_client_waitlist_invitations where id = $1`, [l.invId]))[0].released_at).toBeNull();
   });
   for (const col of ["expired_at", "released_at", "declined_at"] as const) {
-    it(`an invitation stamped ${col} is refused: invitation_ended, nothing written`, async () => {
+    it(`defensive: an invitation stamped ${col} (a state the application's own commands never leave behind: they move the entry out of invited) is refused: invitation_ended, nothing written`, async () => {
       const l = await seedInserted({ stamp: col }); // an invitation carrying the stamp while its entry reads invited
       const r = await replace(l);
       expect(r[0].result).toBe("invitation_ended");
