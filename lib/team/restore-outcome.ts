@@ -1,5 +1,5 @@
-// Restoring a removed practitioner (Team page). The locked command set_practitioner_active_locked (0150) already accepts p_active = true for an
-// owner, and returns a text outcome; the only other refusal is a database CHECK from the receptionist membership guard (0216). This file is the
+// Restoring a removed practitioner (Team page). The locked command that removal already uses accepts p_active = true for an
+// owner, and returns a text outcome; the only other refusal is a database CHECK from the receptionist membership guard. This file is the
 // ONE place that turns those into a code the page can show as a sentence, so a refusal never reaches the generic error boundary and never leaks
 // database text.
 
