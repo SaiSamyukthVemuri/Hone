@@ -1,0 +1,25 @@
+{
+  "purpose": "The two baseline fields that change when the window reads are captured with the macOS variant runner on Sam's Mac. A proposal beside BASELINE-PROPOSED.json, not a baseline: OPS assembles the baseline at the window. Apply BOTH edits to the W-1 baseline; no other field changes. Sam accepted runner 471ecb9d on 25 Oct (D2) and his Mac check verified the installer, archive, supabase-go, runner and manifest.",
+  "edits": [
+    {
+      "path": "runner_sha256",
+      "current": "ec9b7c568a69d3b776ee9c643bcb52eb567639ab9cb0c995b33f59cf6d974468",
+      "proposed": "471ecb9d18116f9b5c898400d9dae0aa898be5aa795b2788c44eacdefeb27357",
+      "derivation": "sha256sum run-window-read-macos.sh (shasum -a 256 on macOS). The variant hashes its own file (BASH_SOURCE), so every sidecar it writes carries this value. The pinned Linux runner's value is the current one."
+    },
+    {
+      "path": "manifest_sha256",
+      "current": "c2af651c9b87720e4332e25a4b6b34831f07c5dbf94dc394fcc6805ae8d6b4b2",
+      "proposed": "2b1608a9ec43caf97bd9ead3fe1d10895652a080a4b8ae0a891a17be3038cd94",
+      "derivation": "sha256 of the 14-line MANIFEST.sha256 (g09d included). Same edit as BASELINE-PROPOSED.json."
+    }
+  ],
+  "diff": "- \"runner_sha256\": \"ec9b7c568a69d3b776ee9c643bcb52eb567639ab9cb0c995b33f59cf6d974468\"\n+ \"runner_sha256\": \"471ecb9d18116f9b5c898400d9dae0aa898be5aa795b2788c44eacdefeb27357\"\n- \"manifest_sha256\": \"c2af651c9b87720e4332e25a4b6b34831f07c5dbf94dc394fcc6805ae8d6b4b2\"\n+ \"manifest_sha256\": \"2b1608a9ec43caf97bd9ead3fe1d10895652a080a4b8ae0a891a17be3038cd94\"",
+  "unchanged_fields": ["project_ref_sha256", "planned_duration_minutes", "g4_max_age_hours", "g3", "g09", "required_checks", "s1"],
+  "consequences": [
+    "Sidecars from the pinned Linux runner (ec9b7c56...) FAIL S0-14 against this baseline: captured by a different runner. Capture every window file with the macOS variant, or use the Linux baseline for Linux captures; never mix runners in one result directory.",
+    "Sidecars from earlier variant copies (891119ac..., d7cc1b24...) also FAIL S0-14. Re-run any file captured with them.",
+    "Every sidecar must also carry manifest_sha256 2b1608a9... (captured under the 14-file manifest)."
+  ],
+  "proof": "baseline-repin-proof.test.mjs, section COMPARATOR-REPIN; the comparator, its tests, the manifest, the gate files and both runners are untouched."
+}

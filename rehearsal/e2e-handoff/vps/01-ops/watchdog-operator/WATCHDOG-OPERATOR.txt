@@ -1,0 +1,15 @@
+Hone #1035 S1 watchdog: download, verify, run (Terminal 2). OPS, for the reviewed watchdog d3-watchdog.zsh 1011530ffdfaddde0bb5ff54a0f0abcd19da9cf13456718f2efd9ab21f11a885 and runbook general/D3-OPERATOR-RUNBOOK.md b2eedb91466dcb52906e577285620a3734b90d6d319b86883eda4f3a0105c51e.
+
+1. Before the window, download and verify (one line; installs nothing unless the sha256 matches):
+
+( set -u; S=$(mktemp -d) && scp -q sam@100.123.145.56:/home/sam/hone-handoffs/2026-10-18/general/d3-watchdog.zsh "$S/" && [ "$(shasum -a 256 "$S/d3-watchdog.zsh" | cut -d " " -f1)" = 1011530ffdfaddde0bb5ff54a0f0abcd19da9cf13456718f2efd9ab21f11a885 ] && [ -d "$HOME/hone-s1/supabase-cli" ] && cp "$S/d3-watchdog.zsh" "$HOME/hone-s1/d3-watchdog.zsh" && echo "d3-watchdog.zsh: sha256 OK, installed" ) || echo "STOP: download or sha256 check failed; nothing was installed"
+
+2. In the window, when s1-apply.sh tells you to start the watchdog (after its dry run), open a NEW Terminal window (Terminal 2) and paste these three lines one at a time:
+
+cd "$HOME/hone-s1" && [ "$(shasum -a 256 d3-watchdog.zsh | cut -d " " -f1)" = 1011530ffdfaddde0bb5ff54a0f0abcd19da9cf13456718f2efd9ab21f11a885 ] && echo "watchdog sha256 OK" || echo "STOP: watchdog sha256 mismatch"
+export WD_USER=postgres.alhhybgqdmcdyzpybykj WD_HOSTPORT=aws-1-us-east-1.pooler.supabase.com:5432 WD_SSLMODE=require WD_MAX=1800 WD_PIN_WAIT=600
+if [ "$(shasum -a 256 d3-watchdog.zsh | cut -d " " -f1)" = 1011530ffdfaddde0bb5ff54a0f0abcd19da9cf13456718f2efd9ab21f11a885 ]; then zsh d3-watchdog.zsh; else echo "STOP: watchdog sha256 mismatch; do not start the push"; fi
+
+Type the database password at the hidden prompt. Wait for BOTH lines "WATCHDOG armed (self-test ok)" and "watching for the push session to start" (about 2 minutes), then answer yes, yes in s1-apply.sh. Before you type APPLY, look at Terminal 2: it must still be watching; if it printed STOP or BLIND, do not type APPLY. Never press Ctrl-C in Terminal 1. Everything else (PINNED, STOP, BLIND, cancel, after a cancel) is in the runbook sections 2, 4 and 5.
+
+Notes: WD_PIN_WAIT=600 gives you 10 minutes after armed to confirm in s1-apply.sh and start the push (Insurance W1); WD_MAX=1800 is OPS's proposal (Q13), leaving about 18 minutes for the push after arming and the pin wait; if Sam chooses another value, change only that number. The project ref is an identifier, not a secret; it appears in this file and in shell history. The directory ~/hone-s1 holds ./supabase-cli, which the watchdog uses, and the watchdog writes its own supabase/.temp/cli-latest there.
