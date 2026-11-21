@@ -98,6 +98,8 @@ export async function loadUnpaidAttention(opts: {
     refundAmountCents: number | null;
     providerRefundStatus: string | null;
     currency: string | null;
+    refundsSucceededCents: number | null;
+    refundsInflightCount: number;
   };
   const cardsByAppt = new Map<string, Card[]>();
   if (sessionToAppt.size > 0) {
@@ -111,10 +113,12 @@ export async function loadUnpaidAttention(opts: {
       refund_amount_cents: number | null;
       stripe_refund_status: string | null;
       currency: string | null;
+      refunds_succeeded_cents: number | null;
+      refunds_inflight_count: number | null;
     }>([...sessionToAppt.keys()], (chunk) =>
       supabase
         .from("payment_charge_attempts")
-        .select("id, created_at, session_id, status, amount_cents, refund_status, refund_amount_cents, stripe_refund_status, currency")
+        .select("id, created_at, session_id, status, amount_cents, refund_status, refund_amount_cents, stripe_refund_status, currency, refunds_succeeded_cents, refunds_inflight_count")
         .eq("studio_id", studioId)
         .eq("charge_reason", "session_payment")
         .eq("stripe_livemode", livemode)
@@ -139,6 +143,8 @@ export async function loadUnpaidAttention(opts: {
         refundAmountCents: a.refund_amount_cents,
         providerRefundStatus: a.stripe_refund_status,
         currency: a.currency,
+        refundsSucceededCents: typeof a.refunds_succeeded_cents === "number" ? a.refunds_succeeded_cents : null,
+        refundsInflightCount: typeof a.refunds_inflight_count === "number" ? a.refunds_inflight_count : 0,
       });
       cardsByAppt.set(owner.appt, bucket);
     }

@@ -242,7 +242,10 @@ describe("resolved-row livemode guard — symmetric across ALL mutating handlers
       expect(body).toMatch(/livemodeRowMismatch:\s*true/);
       // The guard sits BEFORE the row-mutating UPDATE (no mutation on mismatch).
       const guard = body.indexOf("livemodeRowMismatch: true");
-      const update = body.indexOf("reconcileBoundEvent(event, ctx, attempt)");
+      // handleChargeRefunded reconciles the event whose refund list may have been read (refundEvent); the others reconcile the event itself.
+      const updates = ["reconcileBoundEvent(event, ctx, attempt)", "reconcileBoundEvent(refundEvent, ctx, attempt, evidenceKind)"]
+        .map((s) => body.indexOf(s)).filter((i) => i > -1);
+      const update = updates.length ? Math.min(...updates) : -1;
       expect(guard).toBeGreaterThan(-1);
       expect(update).toBeGreaterThan(-1);
       expect(guard).toBeLessThan(update);
@@ -355,6 +358,12 @@ describe("charge.refunded: full vs partial discrimination", () => {
       /severity:\s*"critical"[\s\S]{0,400}charge_refunded_partial_out_of_band/,
     );
     expect(HELPER).toMatch(/partialRefundIgnored:\s*true/);
+  });
+
+  it("HON-49: a partial refund whose list is recorded is a WARNING (charge_refunded_partial_recorded) and returns partialRefundRecorded; the row's older refund columns are not touched", () => {
+    expect(HELPER).toMatch(/severity:\s*"warning",\s*event:\s*"charge_refunded_partial_recorded"/);
+    expect(HELPER).toMatch(/partialRefundRecorded:\s*true/);
+    expect(HELPER).toMatch(/if \(!isFullRefund && historyRecorded\)/);
   });
 
   it("the partial-refund safeDetails carries the amount captured + amount refunded", () => {

@@ -40,6 +40,8 @@ function attempt(
     refundedAt: null,
     stripeRefundId: null,
     cumulativeFullRefundVerified: false,
+    refundsSucceededCents: null,
+    refundsInflightCount: 0,
     refundFailureCode: null,
     refundFailureMessageSafe: null,
     ...over,
@@ -221,5 +223,23 @@ describe("formatCadFromCents", () => {
   it("formats or blanks", () => {
     expect(formatCadFromCents(22500)).toBe("$225.00");
     expect(formatCadFromCents(null)).toBe("");
+  });
+});
+
+describe("HON-49 (0358): the headline reads the refund history", () => {
+  it("a recorded partial refund (2000 of 22500) reads 'Partly refunded' with the amount that went back", () => {
+    const s = derivePaymentSummary(attempt({ refundsSucceededCents: 2000, refundsInflightCount: 0 }));
+    expect(s).toMatchObject({ kind: "refunded", headline: "Partly refunded", amountCents: 2000 });
+  });
+  it("a recorded refund of the whole charge reads 'Refunded' with the charge amount", () => {
+    const s = derivePaymentSummary(attempt({ refundsSucceededCents: 22500, refundsInflightCount: 0 }));
+    expect(s).toMatchObject({ kind: "refunded", headline: "Refunded", amountCents: 22500 });
+  });
+  it("a refund still in flight beside a recorded one reads 'Refund processing'", () => {
+    const s = derivePaymentSummary(attempt({ refundsSucceededCents: 2000, refundsInflightCount: 1 }));
+    expect(s.kind).toBe("refund_pending");
+  });
+  it("a charge whose history was never established reads exactly as before (Paid)", () => {
+    expect(derivePaymentSummary(attempt({ refundsSucceededCents: null })).kind).toBe("paid");
   });
 });

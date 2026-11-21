@@ -31,6 +31,9 @@ export type CollectedMoneyRow = {
   stripeRefundId: string | null;
   /** Server-derived: the signed cumulative full-refund receipt exists (0240). Required so a caller cannot forget it; the event id is never carried. */
   cumulativeFullRefundVerified: boolean;
+  /** HON-49 (0358) refund history summary (payment_charge_attempts.refunds_succeeded_cents / refunds_inflight_count). Omitted or null = never established. */
+  refundsSucceededCents?: number | null;
+  refundsInflightCount?: number | null;
   /** payment_charge_attempts.stripe_livemode. Only `true` is real money; a test-mode or unknown mode is never collected. */
   stripeLivemode: boolean | null;
 };
@@ -84,6 +87,8 @@ function add(line: CollectedLine, row: CollectedMoneyRow, studioCurrency: string
     providerRefundStatus: row.providerRefundStatus,
     stripeRefundId: row.stripeRefundId,
     cumulativeFullRefundVerified: row.cumulativeFullRefundVerified === true,
+    refundsSucceededCents: row.refundsSucceededCents ?? null,
+    refundsInflightCount: row.refundsInflightCount ?? null,
   });
   if (refund.kind === "not_refunded" || refund.kind === "failed") {
     // No refund happened (a failed refund with no provider trace left the money in place).

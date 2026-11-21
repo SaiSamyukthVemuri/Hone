@@ -8,8 +8,8 @@ import {
 import { createFakeStripe } from "@/lib/stripe/e2e-fake-stripe";
 
 // The Stripe seam for the session-payment charge/refund execution path. This is
-// the ONLY place the fake processor can be substituted, and only for that path
-// (the webhook / account / setup-intent callers keep using getStripe() directly).
+// the ONLY place the fake processor can be substituted: the session-payment charge/refund path and the webhook's read of a charge's refund list
+// (the refund-list module). The account and setup-intent callers keep using getStripe() directly.
 //
 // In PRODUCTION this is behaviourally IDENTICAL to getStripe(): the fake
 // activation guard is fail-closed and rejects every deployed environment, so
