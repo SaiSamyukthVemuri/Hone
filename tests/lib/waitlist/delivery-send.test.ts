@@ -480,11 +480,7 @@ describe("the CHALLENGE window and the CAPABILITY ceiling are different things",
     expect(challengeMailability(issued, ok, punctual).mailable).toBe(true);
   });
 
-  it("P2-A: the invitation states an ABSOLUTE instant in a FIXED zone", () => {
-    // Every duration shape failed, and so did a studio-zoned instant. Remaining
-    // time drifted between retries; the minted window was stable and lied; a
-    // studio-zoned instant was stable and truthful but read mutable state. A
-    // fixed zone is the only shape that is all three.
+  it("the invitation retains an absolute, explicitly labelled UTC fallback", () => {
     const exp = new Date("2026-09-10T17:00:00.000Z");
     const label = invitationExpiryLabel(exp);
     expect(label).toContain("September 10, 2026");
@@ -747,9 +743,8 @@ describe("STABLE PAYLOAD: what the event-only key actually requires", () => {
     expect(after.calls[0].payload.subject).toContain("Willow Electrolysis & Skin");
   });
 
-  it("the timezone is still not read: it cannot move the copy at all", async () => {
-    // The one studio field that stays excluded. The expiry renders in a FIXED
-    // zone, so an operator changing the studio timezone moves nothing.
+  it("the invitation renders the server-resolved studio timezone", async () => {
+    // One delivery event is rendered once; its bounded retry reuses that payload.
     const a = recordingTransport(ACCEPTED);
     const b = recordingTransport(ACCEPTED);
     const args = {
@@ -760,15 +755,23 @@ describe("STABLE PAYLOAD: what the event-only key actually requires", () => {
     };
     await sendWaitlistInvitationEmail({
       ...args,
-      studio: { ...STUDIO, timezone: "America/Toronto" } as typeof STUDIO,
+      studio: { ...STUDIO, timezone: "America/Toronto" },
       transport: a.transport,
     });
     await sendWaitlistInvitationEmail({
       ...args,
-      studio: { ...STUDIO, timezone: "Asia/Tokyo" } as typeof STUDIO,
+      studio: { ...STUDIO, timezone: "Asia/Tokyo" },
       transport: b.transport,
     });
-    expect(a.calls[0].payload).toEqual(b.calls[0].payload);
+    for (const body of [a.calls[0].payload.text, a.calls[0].payload.html]) {
+      expect(body).toContain("America/Toronto");
+      expect(body).toContain("8:00 AM EDT");
+    }
+    for (const body of [b.calls[0].payload.text, b.calls[0].payload.html]) {
+      expect(body).toContain("Asia/Tokyo");
+      expect(body).toContain("9:00 PM");
+    }
+    expect(a.calls[0].idempotencyKey).toBe(b.calls[0].idempotencyKey);
   });
 
   it("the only tenant-derived value in the key is the immutable studio id", async () => {
@@ -787,7 +790,7 @@ describe("STABLE PAYLOAD: what the event-only key actually requires", () => {
     expect(key).not.toContain("Willow");
   });
 
-  it("the expiry renders in a FIXED zone, so no timezone input can move it", () => {
+  it("a missing studio timezone stays explicitly UTC", () => {
     const exp = new Date("2026-09-10T17:00:00.000Z");
     const label = invitationExpiryLabel(exp);
     expect(label).toContain("September 10, 2026");
@@ -1160,11 +1163,14 @@ describe("CONTROL A: the one retry INSIDE a single invocation is byte-identical"
     // the payload object is built once and reused, so the second attempt cannot
     // differ even if the template changed on disk in between. This is what
     // makes the provider replay rather than refuse.
+    const studio = { ...STUDIO, timezone: "America/Toronto" };
     const attempts: { payload: ProviderPayload; key?: string }[] = [];
     const transport: IdempotentEmailTransport = {
       emails: {
         send: async (payload, options) => {
           attempts.push({ payload, key: options?.idempotencyKey });
+          // Even a timezone correction during delivery cannot rerender a retry.
+          studio.timezone = "Asia/Tokyo";
           // First attempt ambiguous, second accepted.
           return attempts.length === 1
             ? { data: null, error: { name: "concurrent_idempotent_requests" } }
@@ -1174,7 +1180,7 @@ describe("CONTROL A: the one retry INSIDE a single invocation is byte-identical"
     };
 
     const out = await sendWaitlistInvitationEmail({
-      studio: STUDIO,
+      studio,
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
@@ -1186,6 +1192,8 @@ describe("CONTROL A: the one retry INSIDE a single invocation is byte-identical"
     expect(attempts[1].key).toBe(attempts[0].key);
     // Byte-identical, and the SAME object — the payload is built once.
     expect(attempts[1].payload).toBe(attempts[0].payload);
+    expect(attempts[1].payload.text).toContain("America/Toronto");
+    expect(attempts[1].payload.text).not.toContain("Asia/Tokyo");
     expect(out.disposition.delivered).toBe("yes");
   });
 

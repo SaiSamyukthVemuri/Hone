@@ -171,8 +171,8 @@ describe("Find a client (mounted)", () => {
       expect(x).toMatch(/Same name as another client/);
       expect(x).not.toMatch(/Last visit/);
     }
-    // and the page itself withholds the lookup above the cap
-    expect(read("app/(app)/financials/statements/page.tsx")).toMatch(/sameName\.length <= LAST_VISIT_MAX_CLIENTS \? await loadLastVisitDates\([^)]*\) : null/);
+    // and the shared finder loader (used by both tabs) withholds the lookup above the cap
+    expect(read("app/(app)/financials/statements/finder-data.ts")).toMatch(/sameName\.length <= LAST_VISIT_MAX_CLIENTS \? await loadLastVisitDates\([^)]*\) : null/);
   });
   it("does not search email or phone: only the shown name is matched", () => {
     const el = mountFinder();
@@ -301,13 +301,13 @@ const stmtProps = (document: ReturnType<typeof docFor>, over = {}) => ({ documen
 describe("a client's statement", () => {
   it("shows date, local time, service, duration, practitioner, payment status, methods and amounts for each visit", () => {
     const out = html(createElement(ClientStatementView, stmtProps(docFor([visit()]))));
-    for (const t of ["Nov 3, 2026, 10:00", "Service A", "60 min", "Practitioner One", "Paid", "$60.00"]) expect(out).toContain(t);
+    for (const t of ["Nov 3", "10:00 AM", "Service A", "60 min", "Practitioner One", "Paid", "$60.00"]) expect(out).toContain(t);
     expect(out).toMatch(/\$60\.00 paid/);
   });
   it("keeps a visit's split payments together in one row", () => {
     const split = visit({ lines: [{ kind: "collected_card_session", cents: 4000 }, { kind: "collected_cash", cents: 2000 }] });
     const out = html(createElement(ClientStatementView, stmtProps(docFor([split]))));
-    expect(out.match(/<tr /g)?.length).toBe(2); // header + ONE visit row
+    expect(out.match(/<details class="group/g)?.length).toBe(1); // ONE visit row
     expect(out).toMatch(/\$40\.00/);
     expect(out).toMatch(/\$20\.00/);
   });
@@ -315,10 +315,23 @@ describe("a client's statement", () => {
     const unpaid = visit({ appointmentId: "a2", localDate: "2026-11-19", feeCandidates: [{ source: "settlement_quote", cents: 6000 }], lines: [] });
     const out = html(createElement(ClientStatementView, stmtProps(docFor([visit(), unpaid]))));
     expect(out).toMatch(/\$60\.00 paid · 1 visit awaiting payment confirmation/);
-    expect(out).toMatch(/Nov 19, 2026 · \$60\.00 fee · No payment recorded/);
+    expect(out).toMatch(/Nov 19, 2026 · \$60\.00 agreed fee · No payment recorded/);
     expect(out).toMatch(/Balance due is not shown yet/);
     expect(out).toMatch(/waived, or noted as still owed/);
     expect(out).not.toMatch(/Balance due \$/);
+  });
+  it("names what each amount IS: 'Agreed fee' only with price evidence, 'Charged' for a payment-derived amount; the basis wording sits in the row's expander", () => {
+    const card = visit({ appointmentId: "a2", localDate: "2026-11-04", feeCandidates: [{ source: "card_attempt" as const, cents: 7000 }] });
+    const out = html(createElement(ClientStatementView, stmtProps(docFor([visit(), card]))));
+    expect(out).toMatch(/<dt[^>]*>Fee<\/dt><dd>\$60\.00 · Agreed fee<\/dd>/);
+    expect(out).toMatch(/<dt[^>]*>Fee<\/dt><dd>\$70\.00 · Charged<\/dd>/);
+    expect(out).toMatch(/<span class="text-right">Collected<\/span>/); // the column shows what was collected; the fee and its basis are inside the expander
+    expect(out).not.toMatch(/\$70\.00[^<]{0,12}Agreed fee/);
+  });
+  it("a cancellation or no-show fee line says what its amount is too", () => {
+    const noShow = { appointmentId: "f1", clientId: "c-ada-1", localDate: "2026-11-05", startsAt: "2026-11-05T15:00:00Z", reason: "no_show_fee", feeCandidates: [{ source: "card_attempt", cents: 2500 }], lines: [{ kind: "collected_card_fee", cents: 2500, source: "card" }] };
+    const out = html(createElement(ClientStatementView, stmtProps(docFor([visit()], { kind: "month", month: "2026-11" }, { feeItems: [noShow] }))));
+    expect(out).toMatch(/\$25\.00 · Charged/);
   });
   it("shows a visit with no fee record as 'Fee not recorded', never a number", () => {
     const out = html(createElement(ClientStatementView, stmtProps(docFor([visit({ feeCandidates: [], lines: [] })]))));
@@ -356,14 +369,19 @@ describe("what reaches the browser, and where a last visit date may go", () => {
     const src = read("app/(app)/financials/statements/client-finder.tsx");
     const type = src.match(/export type FinderOption = \{([^}]*)\}/)?.[1] ?? "";
     expect(type.split(";").map((f) => f.trim().split(":")[0]).filter(Boolean)).toEqual(["id", "displayName", "archived"]);
-    // and what the page hands it is built from exactly those three, after the owner gate
-    const page = strip(read("app/(app)/financials/statements/page.tsx"));
-    const gate = page.indexOf('practitioner.role !== "owner"');
-    const build = page.indexOf("const options = found.clients.map");
-    expect(gate).toBeGreaterThan(-1);
-    expect(build).toBeGreaterThan(gate);
-    expect(page.slice(build, build + 260)).toMatch(/\{ id: c\.id, displayName: clientDisplayName\([^)]*\), archived: c\.archived \}/);
-    expect(page).not.toMatch(/clients: found\.clients/);
+    // what the shared loader hands it is built from exactly those three, and BOTH tabs' pages call it only after the owner gate
+    const loader = strip(read("app/(app)/financials/statements/finder-data.ts"));
+    const build = loader.indexOf("const options = found.clients.map");
+    expect(build).toBeGreaterThan(-1);
+    expect(loader.slice(build, build + 260)).toMatch(/\{ id: c\.id, displayName: clientDisplayName\([^)]*\), archived: c\.archived \}/);
+    expect(loader).not.toMatch(/clients: found\.clients/);
+    for (const f of ["app/(app)/financials/statements/page.tsx", "app/(app)/financials/statement/page.tsx"]) {
+      const page = strip(read(f));
+      const gate = page.indexOf('practitioner.role !== "owner"');
+      const call = page.indexOf("await loadFinderState(");
+      expect(gate, f).toBeGreaterThan(-1);
+      expect(call, f).toBeGreaterThan(gate);
+    }
   });
   it("a client's stored or legal name, preferred name and contact details never reach the browser through the finder", () => {
     const html = (() => {

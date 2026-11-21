@@ -1,4 +1,5 @@
-import { formatMoney } from "@/lib/billing/payment-jurisdiction";
+import { formatStatementMoney } from "@/lib/finance/statement-money";
+import { monthRange } from "@/lib/finance/statement-period";
 import { loadOwnerClientStatement } from "@/lib/finance/owner-client-statement";
 import { STATEMENTS_OWNER_ONLY, STATEMENT_READ_UNAVAILABLE, clientStatementHref } from "@/lib/finance/statement-screen";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
@@ -37,7 +38,10 @@ export default async function ClientStatementPrintPage({
       document={result.document}
       offDocumentWithMoney={result.offDocumentWithMoney}
       backHref={clientStatementHref(clientId, result.month, result.view)}
-      format={(c) => formatMoney(c, result.currency)}
+      timezone={studio.timezone}
+      currency={result.currency}
+      monthLabel={monthRange(result.month).label}
+      format={(c) => formatStatementMoney(c, result.currency)}
     />
   );
 }
