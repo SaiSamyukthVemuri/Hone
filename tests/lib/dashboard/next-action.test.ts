@@ -7,6 +7,7 @@ import { resolveNextAction } from "@/lib/dashboard/next-action";
 // directly; the dashboard wiring is source-pinned.
 
 const base = {
+  canEditRecords: true,
   clientId: "c1",
   appointmentId: "a1",
   hasHistory: false,

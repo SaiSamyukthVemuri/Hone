@@ -34,7 +34,7 @@ const session = (over: Record<string, unknown>) => ({
 
 describe("buildNeedsAttention grouping", () => {
   it("folds aftercare and probe-lot gaps on ONE session into one entry", () => {
-    const assistant = buildMissingRecordsAssistant({
+    const assistant = buildMissingRecordsAssistant({ canEditRecords: true,
       unchartedAppointments: [],
       incompleteIntakes: [],
       sessions: [session({ aftercareMarked: false, probeLotMissing: true })],
@@ -54,7 +54,7 @@ describe("buildNeedsAttention grouping", () => {
   });
 
   it("keeps two sessions of one client, and two clients, as separate entries", () => {
-    const assistant = buildMissingRecordsAssistant({
+    const assistant = buildMissingRecordsAssistant({ canEditRecords: true,
       unchartedAppointments: [],
       incompleteIntakes: [],
       sessions: [
@@ -72,7 +72,7 @@ describe("buildNeedsAttention grouping", () => {
   });
 
   it("puts preparation (intake) before documentation, then newest first", () => {
-    const assistant = buildMissingRecordsAssistant({
+    const assistant = buildMissingRecordsAssistant({ canEditRecords: true,
       unchartedAppointments: [
         { appointmentId: "ap1", clientId: "c1", clientName: "Client One", startedAt: "2026-10-12T15:00:00.000Z" },
       ],
@@ -94,7 +94,7 @@ describe("buildNeedsAttention grouping", () => {
   });
 
   it("merges an intake-review and an incomplete-intake issue for one client", () => {
-    const assistant = buildMissingRecordsAssistant({
+    const assistant = buildMissingRecordsAssistant({ canEditRecords: true,
       unchartedAppointments: [],
       sessions: [],
       incompleteIntakes: [{ clientId: "c1", clientName: "Client One" }],
@@ -112,7 +112,7 @@ describe("buildNeedsAttention grouping", () => {
 
   it("keeps non-grouped to-do items reachable as 'others' and drops grouped kinds", () => {
     const out = buildNeedsAttention({
-      assistant: buildMissingRecordsAssistant({
+      assistant: buildMissingRecordsAssistant({ canEditRecords: true,
         unchartedAppointments: [],
         sessions: [],
         incompleteIntakes: [],
@@ -147,7 +147,7 @@ describe("buildNeedsAttention grouping", () => {
 
   it("empty inputs give an empty, honest result", () => {
     const out = buildNeedsAttention({
-      assistant: buildMissingRecordsAssistant({
+      assistant: buildMissingRecordsAssistant({ canEditRecords: true,
         unchartedAppointments: [],
         sessions: [],
         incompleteIntakes: [],
@@ -162,7 +162,7 @@ describe("buildNeedsAttention grouping", () => {
 describe("buildNeedsAttention unavailable checks", () => {
   it("carries the names of unreadable checks through unchanged", () => {
     const out = buildNeedsAttention({
-      assistant: buildMissingRecordsAssistant({
+      assistant: buildMissingRecordsAssistant({ canEditRecords: true,
         unchartedAppointments: [],
         sessions: [],
         incompleteIntakes: [],
@@ -178,10 +178,10 @@ describe("buildNeedsAttention unavailable checks", () => {
 describe("buildNeedsAttention per-session record details", () => {
   const gap = { sessionId: "s1", clientId: "c1", clientName: "Client One", startedAt: "2026-10-10T15:00:00.000Z" };
   const empty = () =>
-    buildMissingRecordsAssistant({ unchartedAppointments: [], sessions: [], incompleteIntakes: [] });
+    buildMissingRecordsAssistant({ canEditRecords: true, unchartedAppointments: [], sessions: [], incompleteIntakes: [] });
 
   it("groups a details gap with the same session's aftercare gap", () => {
-    const assistant = buildMissingRecordsAssistant({
+    const assistant = buildMissingRecordsAssistant({ canEditRecords: true,
       unchartedAppointments: [],
       incompleteIntakes: [],
       sessions: [session({ aftercareMarked: false })],
@@ -213,12 +213,12 @@ describe("buildNeedsAttention per-session record details", () => {
 
 describe("buildNeedsAttention preparation tier", () => {
   const empty = () =>
-    buildMissingRecordsAssistant({ unchartedAppointments: [], sessions: [], incompleteIntakes: [] });
+    buildMissingRecordsAssistant({ canEditRecords: true, unchartedAppointments: [], sessions: [], incompleteIntakes: [] });
   const intakes = [
     { clientId: "c1", clientName: "Client One", submittedAt: "2026-10-09T10:00:00Z" },
     { clientId: "c2", clientName: "Client Two", submittedAt: "2026-10-10T10:00:00Z" },
   ];
-  const doc = buildMissingRecordsAssistant({
+  const doc = buildMissingRecordsAssistant({ canEditRecords: true,
     unchartedAppointments: [],
     incompleteIntakes: [],
     sessions: [session({ sessionId: "s5", clientId: "c3", clientName: "Client Three", aftercareMarked: false, startedAt: "2026-10-11T15:00:00.000Z" })],
@@ -253,7 +253,7 @@ describe("buildNeedsAttention preparation tier", () => {
 
 describe("buildNeedsAttention truncation warning (Codex P2)", () => {
   const empty = () =>
-    buildMissingRecordsAssistant({ unchartedAppointments: [], sessions: [], incompleteIntakes: [] });
+    buildMissingRecordsAssistant({ canEditRecords: true, unchartedAppointments: [], sessions: [], incompleteIntakes: [] });
 
   it("counts treatment-memory clients the attention source capped away", () => {
     const out = buildNeedsAttention({
@@ -283,7 +283,7 @@ describe("buildNeedsAttention truncation warning (Codex P2)", () => {
 
 describe("buildNeedsAttention one card per client id", () => {
   const empty = () =>
-    buildMissingRecordsAssistant({ unchartedAppointments: [], sessions: [], incompleteIntakes: [] });
+    buildMissingRecordsAssistant({ canEditRecords: true, unchartedAppointments: [], sessions: [], incompleteIntakes: [] });
   const memory = (clientId: string, name: string, reason: string, detail: string | null) => ({
     ...todoItem("treatment_memory", `treatment_memory:${clientId}`),
     subject: { kind: "client", id: clientId, label: name } as DashboardTodoItem["subject"],
@@ -293,7 +293,7 @@ describe("buildNeedsAttention one card per client id", () => {
 
   it("folds a client's sessions, intake and reaction into ONE card", () => {
     const out = buildNeedsAttention({
-      assistant: buildMissingRecordsAssistant({
+      assistant: buildMissingRecordsAssistant({ canEditRecords: true,
         unchartedAppointments: [],
         incompleteIntakes: [],
         sessions: [

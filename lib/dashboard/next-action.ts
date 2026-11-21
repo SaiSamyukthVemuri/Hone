@@ -18,6 +18,9 @@ export type NextActionInput = {
   sessionId: string | null;
   // That session has at least one non-deleted treatment area.
   hasChartedArea: boolean;
+  // clin.edit_records. Starting a chart creates a session, so without it no start-a-chart link is offered (read-only chart mode, Team's
+  // sweep follow-up). REQUIRED, not optional: a caller that forgets it fails to compile instead of offering the link.
+  canEditRecords: boolean;
 };
 
 export type NextAction = {
@@ -25,6 +28,7 @@ export type NextAction = {
     | "Review Before Today"
     | "Open client"
     | "Chart appointment"
+    | "Open appointment"
     | "Continue charting"
     | "View session";
   href: string;
@@ -54,6 +58,10 @@ export function resolveNextAction(input: NextActionInput): NextAction {
 
   // Completed without any charting: the record is the gap.
   if (input.status === "completed") {
+    if (!input.canEditRecords) {
+      // Read-only chart mode: the appointment page explains it; no link that starts a session.
+      return { label: "Open appointment", href: `/calendar/${input.appointmentId}`, chip: "Charting needed" };
+    }
     return {
       label: "Chart appointment",
       href: `${clientHref}/sessions/new?appointment_id=${input.appointmentId}`,

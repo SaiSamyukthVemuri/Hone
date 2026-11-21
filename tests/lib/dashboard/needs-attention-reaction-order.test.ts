@@ -36,7 +36,7 @@ function build(opts: { docClients: number; prepClients?: number; studio?: boolea
     aftercareMarked: false,
     probeLotMissing: false,
   }));
-  const assistant = buildMissingRecordsAssistant({ unchartedAppointments: [], incompleteIntakes: [], sessions });
+  const assistant = buildMissingRecordsAssistant({ canEditRecords: true, unchartedAppointments: [], incompleteIntakes: [], sessions });
   const prep = Array.from({ length: opts.prepClients ?? 0 }, (_, i) => ({
     clientId: `p${i}`,
     clientName: `Prep Client ${i}`,

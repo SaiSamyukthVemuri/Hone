@@ -53,7 +53,7 @@ export type MissingRecordItem = {
   date: string | null;
   // Existing, safe, studio-scoped route.
   href: string;
-  actionLabel: "Chart appointment" | "Review session" | "Open client";
+  actionLabel: "Chart appointment" | "Open appointment" | "Review session" | "Open client";
   // Short status chip.
   chip: string;
   // Structured source ids so a consumer can group by client + session without
@@ -96,6 +96,8 @@ export type MissingRecordsInput = {
   sessions: ReadonlyArray<RecordedSession>;
   incompleteIntakes: ReadonlyArray<IncompleteIntake>;
   limit?: number;
+  // clin.edit_records. Required: without it the "Chart appointment" rows link to the appointment, not to a session-start page.
+  canEditRecords: boolean;
 };
 
 export type MissingRecordsAssistant = {
@@ -151,8 +153,10 @@ export function buildMissingRecordsAssistant(
       clientName: a.clientName,
       reason: "Completed appointment, charting needed.",
       date: a.startedAt,
-      href: `${clientHref(a.clientId)}/sessions/new?appointment_id=${a.appointmentId}`,
-      actionLabel: "Chart appointment",
+      href: input.canEditRecords
+        ? `${clientHref(a.clientId)}/sessions/new?appointment_id=${a.appointmentId}`
+        : `/calendar/${a.appointmentId}`,
+      actionLabel: input.canEditRecords ? "Chart appointment" : "Open appointment",
       chip: "Charting needed",
       sessionId: null,
       appointmentId: a.appointmentId,
@@ -298,7 +302,7 @@ export async function getMissingRecordsAssistant(
   const supabase = await createClient();
   // Roles R4: derived treatment data is treatment data. Without clin.view_records nothing is read and the result is empty.
   if (!(await requirePermission(supabase, studioId, "clin.view_records")).allowed) return {
-      ...buildMissingRecordsAssistant({ unchartedAppointments: [], sessions: [], incompleteIntakes: [], limit: options.limit }),
+      ...buildMissingRecordsAssistant({ unchartedAppointments: [], sessions: [], incompleteIntakes: [], canEditRecords: false, limit: options.limit }),
       notAvailable: true,
     };
 
@@ -473,5 +477,7 @@ export async function getMissingRecordsAssistant(
     sessions: recordedSessions,
     incompleteIntakes,
     limit: options.limit,
+    // Asked only here, after clin.view_records was already allowed above.
+    canEditRecords: (await requirePermission(supabase, studioId, "clin.edit_records")).allowed,
   });
 }
