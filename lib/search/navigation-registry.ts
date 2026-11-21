@@ -940,6 +940,11 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
     reason: "The Clients statements screens are new and are not yet reachable from the menu or Global Search; the search entry ships with the menu entry in the navigation change, so a destination is never searchable before it is linkable.",
   },
   {
+    route: "/settings/waitlist/over-invite",
+    reason:
+      "Owner-only invite-beyond-the-estimate page, reached from a link on the waitlist page. It follows its parent: the waitlist Settings tab appears only for a studio whose durable waitlist is switched on, so listing this page in Global Search would offer a page its studio cannot otherwise reach. Search does not advertise it separately.",
+  },
+  {
     route: "/calendar/check-practitioner",
     reason:
       "Owner-only review of open appointments whose recorded practitioner may be wrong (HON-44, before completion becomes assigned-only). Reached from the owner's Calendar toolbar and Team settings (Review practitioner assignments), not a destination to search for.",
