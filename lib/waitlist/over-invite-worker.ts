@@ -89,9 +89,8 @@ export async function runBatchChunk(
  * pass finds nothing. Every studio with pending items that the round has room for therefore progresses in every round, and a single studio on its own
  * still fills the whole round (one item per pass, `total` passes) so its pace is unchanged. Only the BACKGROUND mode does this: the owner's own batch
  * (scoped) is one studio's by construction and is claimed in one call as before.
- * The command cannot reach beyond `total` studios in one round, because it has no rotation: more studios than slots still wait for an earlier
- * studio's pending items to be sent. A later studio's wait therefore lasts until the earlier studios' batches are done; a true rotation would need a
- * change to the claim command itself.
+ * The command cannot reach beyond `total` studios in one round, because it has no rotation: more studios than slots wait until an earlier studio has
+ * no pending items left (each item ends sent, failed, unknown or skipped); a true rotation would need a change to the claim command itself.
  */
 async function claimRound(deps: WorkerDeps, limits: { perStudio: number; total: number; leaseSeconds: number }, mode: ClaimMode): Promise<ClaimOutcome> {
   if (mode.mode !== "background") return deps.claim(limits, mode);
