@@ -9,6 +9,8 @@ const inviteToBook = vi.fn();
 const readRule = vi.fn();
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+// The server's own estimate: there is room, so the invitation takes the normal path.
+vi.mock("@/app/(app)/settings/waitlist/window-capacity-actions", () => ({ estimateWindowCapacityAction: async () => ({ ok: true, fit: 5, outstanding: 0, open: 5, outstandingScope: "window" }) }));
 vi.mock("@/lib/supabase/queries", () => ({
   getCurrentPractitionerWithStudio: (...a: unknown[]) => getCurrentPractitionerWithStudio(...a),
 }));
@@ -46,7 +48,7 @@ const form = () => {
 
 beforeEach(() => {
   for (const m of [getCurrentPractitionerWithStudio, getNewClientAdmissionMode, inviteToBook, readRule]) m.mockReset();
-  getCurrentPractitionerWithStudio.mockResolvedValue({ studio: { id: "s", slug: "studio-a" } });
+  getCurrentPractitionerWithStudio.mockResolvedValue({ studio: { id: "s", slug: "studio-a" }, practitioner: { role: "owner" } });
   inviteToBook.mockResolvedValue({ state: "refused" });
   readRule.mockResolvedValue("absent");
 });

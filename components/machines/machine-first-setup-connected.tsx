@@ -6,6 +6,9 @@ import { Button } from "@/components/ui/button";
 import { SectionLabel } from "@/components/ui/section-label";
 import { MachineFirstSetupPanel } from "./machine-first-setup-panel";
 import { NO_PERSISTENCE } from "@/lib/machines/selection-store";
+import { selectableDevices } from "@/lib/machines/selection";
+import { preselectOnlyChoice } from "@/lib/machines/preselect";
+import { useChartingView } from "@/components/charting-view-context";
 import type { MachineSetupContext } from "@/app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions";
 
 // MPX-03 — the panel with its identity resolved on the server, ON DEMAND.
@@ -136,6 +139,8 @@ export type MachineFirstSetupConnectedProps = {
     /** True for a pick the practitioner made; false for one the panel resolved. */
     explicit: boolean,
   ) => void;
+  /** Forwarded to the panel: the model of the unit now chosen, for the New view's "This visit" card. Display only. */
+  onChosenModel?: (model: string | null) => void;
 };
 
 type MachineFirstSetupPanelRecord = NonNullable<
@@ -220,6 +225,7 @@ export function MachineFirstSetupConnected({
   onKindChange,
   onSavedDeviceChange,
   onIdentityDraft,
+  onChosenModel,
   blockVersion,
   onBlockVersion,
   legacyReadingsLocked = false,
@@ -240,6 +246,8 @@ export function MachineFirstSetupConnected({
   const [refreshFailedAfterSave, setRefreshFailedAfterSave] = useState(false);
   const [refusedAfterSave, setRefusedAfterSave] = useState<"access" | "unavailable" | null>(null);
   const [state, setState] = useState<"idle" | "loading" | "failed">("idle");
+  // A hook: called here, before any early return, never conditionally. Read by the one-choice preselect below.
+  const isNewView = useChartingView() === "new";
 
   const open = useCallback(async () => {
     setState("loading");
@@ -620,6 +628,13 @@ export function MachineFirstSetupConnected({
   const hold = holdAutoSelect;
   const newAreaLast = !hasSaved && !blockId && !hold ? (ctx.clientLastMachine ?? null) : null;
   const autoRemembered = hold ? null : (ctx.remembered ?? null);
+  // THE ONE-CHOICE PRESELECT: New view only, a NEW area only, and only when nothing else would choose (no saved unit, no client-last, no
+  // remembered machine, nothing held; the panel also ignores it when a restored or remembered-unavailable selection exists). Read once at mount by the panel's initial state, so a
+  // later view switch or re-render never changes a selection. A display default: it saves nothing.
+  const onlyChoice =
+    isNewView && !hold && !hasSaved && !blockId && !newAreaLast && !autoRemembered && ctx.scope
+      ? preselectOnlyChoice(selectableDevices(ctx.scope, ctx.devices, ctx.catalogue.length > 0 ? ctx.catalogue : undefined), ctx.legacyMachine !== null, ctx.multiplexRoute !== null && ctx.legacyMachine !== null)
+      : null;
 
   if (refusedAfterSave) {
     return (
@@ -635,6 +650,7 @@ export function MachineFirstSetupConnected({
       scope={ctx.scope}
       devices={ctx.devices}
       initialDeviceId={newAreaLast ? newAreaLast.deviceId : (autoRemembered?.deviceId ?? null)}
+      onlyChoice={onlyChoice}
       // The remembered MODE, which the loader has always resolved and which
       // nothing forwarded - so the panel silently used each profile's first
       // active mode and recorded against the wrong field contract.
@@ -699,6 +715,7 @@ export function MachineFirstSetupConnected({
               )
       }
       inventoryReason={ctx.inventoryReason}
+      onChosenModel={onChosenModel}
       persistence={ctx.persistence ?? NO_PERSISTENCE}
       // The catalogue is whatever the SERVER resolved, so the synthetic demo
       // profile reaches the client only when the server's gate allowed it.

@@ -255,9 +255,9 @@ describe("NAV-ACK-01 · scope stays bounded", () => {
     }
   });
 
-  it("MobileMenu's Business destination is unchanged (#666 is not revived)", () => {
+  it("MobileMenu's Business destinations come from the shared list and no /business hub is revived (#666)", () => {
     const code = codeOnly(read(MOBILE_MENU));
-    expect(code).toContain('href: "/dashboard/capacity"');
+    expect(code).toContain("BUSINESS_MENU_ITEMS");
     expect(code).not.toContain('"/business"');
   });
 

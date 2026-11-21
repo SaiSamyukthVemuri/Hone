@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 277,
-    "last": "0357_cancellation_fee_tiers.sql",
-    "sha256": "e10630954fbc0efe3c338bf08f0ea92c15bff20ab044ff5932587d0c3703f0e7"
+    "count": 279,
+    "last": "0364_waitlist_replace_lock_order_and_live_only.sql",
+    "sha256": "faeea5c1613f60274a9f5650284180efffe036a369d256596c84935314b2ca12"
   },
   "public": {
     "tables": [
@@ -145,6 +145,8 @@
       "waitlist_decline_owner_emails",
       "waitlist_erase_records",
       "waitlist_followups",
+      "waitlist_invitation_batch_items",
+      "waitlist_invitation_batches",
       "waitlist_invitation_bookings",
       "waitlist_invitation_followups",
       "waitlist_retention_runs",
@@ -235,6 +237,7 @@
       "claim_stripe_account_country_alert",
       "claim_stripe_event",
       "claim_studio_sms_provisioning",
+      "claim_waitlist_batch_items",
       "claim_waitlist_invitation_sms",
       "claim_waitlist_join_ack_sms",
       "claim_welcome_email_attempt",
@@ -283,6 +286,7 @@
       "create_recurring_break_rule_and_materialize",
       "create_session_block_with_areas",
       "create_treatment_image_metadata",
+      "create_waitlist_invitation_batch",
       "create_waitlist_public_appointment",
       "current_privacy_version",
       "current_terms_version",
@@ -444,6 +448,7 @@
       "preview_adopt_new_defaults",
       "preview_reset",
       "preview_role_changes",
+      "preview_waitlist_over_invite",
       "process_email_provider_event",
       "public_booking_local_to_utc",
       "public_booking_practitioner_options",
@@ -533,6 +538,7 @@
       "reorder_studio_service",
       "repair_bump_appointment_sync_version",
       "repair_enqueue_orphan_link_delete",
+      "replace_waitlist_invitation",
       "report_delivery_concern",
       "request_waitlist_withdrawal",
       "requeue_new_client_waitlist_entry",
@@ -596,6 +602,7 @@
       "settle_platform_lead_alert",
       "settle_postcare_send",
       "settle_sms_message",
+      "settle_waitlist_batch_item",
       "setup_capture_history_for_block",
       "setup_readings_for_block",
       "show_studio_service",
@@ -609,6 +616,7 @@
       "soft_delete_session_area",
       "soft_delete_session_block",
       "start_session",
+      "stop_waitlist_batch",
       "stripe_account_provisioning_payment_country",
       "studio_account_acceptable_for_jurisdiction",
       "studio_capacity_enabled",

@@ -198,6 +198,9 @@ describe("every failure the adapter may report is one a command can produce", ()
       // named rather than normalised onto `unavailable`, which now means "we
       // could not find out" and must not absorb an answer the server gave.
       "admission_round_full",
+      // The server's own availability estimate, read before anything is sent: it could not be read (retry), or it is zero and the owner must confirm.
+      "estimate_unreadable",
+      "needs_estimate_confirmation",
       "no_admission_round",
       // 0324: the consultations that fit are covered by live invitations.
       "no_capacity",

@@ -846,6 +846,12 @@ describe("this module is UNREACHABLE from the application", () => {
   const SANCTIONED_INTEGRATION_ENTRY = [
     "app/(app)/settings/waitlist/invite-actions.ts",
     "app/(app)/settings/waitlist/page.tsx",
+    // The owner's over-invite surface: its delivery reuses today's `deliverInvitation` from the same adapter, so it reaches the contract through
+    // it. Three files only (the page, its server action and the cron route that sends confirmed batches); a fourth root still fails here.
+    "app/(app)/settings/waitlist/over-invite/actions.ts",
+    "app/(app)/settings/waitlist/over-invite/page.tsx",
+    // The background route that sends the owner's CONFIRMED batches (cron pattern): the same delivery function, reached through the run module.
+    "app/api/cron/waitlist-invitation-batches/route.ts",
   ];
 
   it("no prototype entry point is reachable from the SHIPPED APPLICATION, at ANY depth", { timeout: 30_000 }, () => {

@@ -100,15 +100,21 @@ describe("source guards", () => {
   it("no print, export, download or mutation surface exists on the statement", () => {
     const src = files.map(read).join("\n");
     expect(src).not.toMatch(/window\.print|text\/csv|download=|Content-Disposition|"use server"/i);
-    // The ONE permitted form is the month picker: a GET to this page with a single month field and one submit button. No other form, method or control.
+    // The ONE permitted form is the month picker, which is the shared MonthControls (a GET to this page with a single month field and one submit button).
+    // The statement view itself carries no form, button or input of its own.
     const view = read("app/(app)/financials/statement/statement-view.tsx");
-    expect(src.match(/<form\b/gi)?.length).toBe(1);
-    expect(src.match(/<button\b/gi)?.length).toBe(1);
-    expect(view).toMatch(/<form method="get" action="\/financials\/statement"/);
-    expect(view.match(/<input\b/gi)?.length).toBe(1);
-    expect(view).toMatch(/<input type="month" name="month"/);
-    expect(view).toMatch(/<button type="submit"/);
-    expect(src).not.toMatch(/method="post"|method='post'|formAction|onSubmit|<textarea|<select|type="(hidden|file|password|text)"/i);
+    expect(view).not.toMatch(/<form\b|<button\b|<input\b|<textarea|<select|onSubmit|formAction/i);
+    expect(view).toMatch(/<MonthControls base="\/financials\/statement"/);
+    const chrome = read("app/(app)/financials/statements/statements-chrome.tsx");
+    expect(chrome.match(/<form\b/gi)?.length).toBe(1);
+    expect(chrome).toMatch(/<form method="get" action=\{base\}/);
+    expect(chrome.match(/<button\b/gi)?.length).toBe(1);
+    expect(chrome).toMatch(/<button type="submit"/);
+    const picker = read("app/(app)/financials/statements/month-picker-input.tsx");
+    expect(picker.match(/<input\b/gi)?.length).toBe(1);
+    expect(picker).toMatch(/type="month"\s+name="month"/);
+    // the only other input is the hidden view field the client statement's month form carries; nothing here posts, uploads or reads free text
+    expect(src).not.toMatch(/method="post"|method='post'|formAction|<textarea|<select|type="(file|password|text)"/i);
   });
   it("the money tables it reads are exactly the owner-readable ones, plus appointments, sessions and services", () => {
     const src = read("lib/finance/statement-read.ts");
