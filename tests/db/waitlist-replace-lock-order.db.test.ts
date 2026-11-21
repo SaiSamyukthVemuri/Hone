@@ -6,9 +6,8 @@ import { adminQuery, closePool, resolveLocalDbUrl, seedStudio } from "./helpers/
 const q = async <T = any>(text: string, params: unknown[] = []): Promise<T[]> => (await adminQuery(text, params)).rows as T[];
 afterAll(async () => { await closePool(); });
 
-// 0364 -- replace_waitlist_invitation: the round is locked first (no deadlock with redemption), a replace is for a LIVE invitation only, and a replaced item starts a new
-// attempt (Codex P1 / P2 / P3 on 0363).
-// Synthetic data, owned local stack. NOT YET RUN: written against the 0363 helpers; a lane must run it on the T3 stack and the mutants (mutants/).
+// replace_waitlist_invitation: the round is locked first (no deadlock with redemption), a replace is for a LIVE invitation only, and a replaced item starts a new attempt.
+// Synthetic data, owned local stack.
 const day = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
 let n = 0;
 async function seedLive() {
@@ -30,7 +29,7 @@ type L = Awaited<ReturnType<typeof seedLive>>;
 const replace = (l: L, expected: string = l.invId) =>
   q(`select * from public.replace_waitlist_invitation($1,$2,$3,$4)`, [l.studioId, l.userId, l.entryId, expected]);
 
-describe("P2: a replace is for a LIVE invitation only", () => {
+describe("a replace is for a LIVE invitation only", () => {
   it("an invitation whose time has run out (status still invited) is refused: invitation_expired, nothing written, no new invitation", async () => {
     const l = await seedLive();
     await q(`update public.new_client_waitlist_invitations set issued_at = now() - interval '3 days', expires_at = now() - interval '1 hour' where id = $1`, [l.invId]);
@@ -61,10 +60,10 @@ describe("P2: a replace is for a LIVE invitation only", () => {
   });
 });
 
-// P1: two sessions. D takes redemption's lock order on the same invitation (the invitation's round FOR UPDATE, then the invitation FOR UPDATE) while R replaces
-// it. On 0363 R holds the invitation (inside release) and waits for the round while D holds the round and waits for the invitation: a deadlock (40P01).
-// On 0364 R takes the round right after the studio, so it waits BEFORE touching the entry or the invitation and D gets the invitation.
-describe("P1: a replace and a redemption on one invitation never deadlock", () => {
+// Two sessions. D takes redemption's lock order on the same invitation (the invitation's round FOR UPDATE, then the invitation FOR UPDATE) while R replaces
+// it. In the previous body R held the invitation (inside release) and waits for the round while D holds the round and waits for the invitation: a deadlock (40P01).
+// Now R takes the round right after the studio, so it waits BEFORE touching the entry or the invitation and D gets the invitation.
+describe("a replace and a redemption on one invitation never deadlock", () => {
   it("D holds the round, R (replace) starts, D then takes the invitation: no 40P01, D proceeds, R completes after D commits", async () => {
     const l = await seedLive();
     expect(l.roundId, "the invitation is bound to an admission round").toBeTruthy();
@@ -77,7 +76,7 @@ describe("P1: a replace and a redemption on one invitation never deadlock", () =
       await D.query(`select 1 from public.studio_waitlist_admission_rounds where id = $1 for update`, [l.roundId]);
       const rPromise = R.query(`select * from public.replace_waitlist_invitation($1,$2,$3,$4)`, [l.studioId, l.userId, l.entryId, l.invId]).then(
         (res) => ({ ok: true as const, res }), (err) => ({ ok: false as const, err }));
-      await new Promise((r) => setTimeout(r, 1500)); // R is now waiting (0364: on the round; 0363: on the round while holding the invitation)
+      await new Promise((r) => setTimeout(r, 1500)); // R is now waiting (now: on the round, before touching the invitation; previously: on the round while holding the invitation)
       let dErr: any = null;
       try { await D.query(`select 1 from public.new_client_waitlist_invitations where id = $1 for update`, [l.invId]); } catch (e) { dErr = e; }
       expect(dErr?.code, "redemption's second lock must not deadlock").toBeUndefined();
@@ -131,7 +130,7 @@ describe("lock order with the other takers", () => {
   }, 30_000);
 });
 
-describe("P3: a replaced item starts a new attempt", () => {
+describe("a replaced item starts a new attempt", () => {
   async function withItem() {
     const l = await seedLive();
     const item = (await q(`select id, state, attempts from public.waitlist_invitation_batch_items where entry_id = $1`, [l.entryId]))[0];

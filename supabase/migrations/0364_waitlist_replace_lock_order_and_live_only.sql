@@ -1,5 +1,5 @@
--- 0364 -- replace_waitlist_invitation: the round is locked first (no deadlock with redemption), an ended or elapsed invitation is refused, and a replaced item starts a new attempt.
--- Forward fix to the applied 0363 (frozen). One function redefined; nothing else touched. Results gain two closed codes: invitation_ended, invitation_expired.
+-- replace_waitlist_invitation: the round is locked first (no deadlock with redemption), an ended or elapsed invitation is refused, and a replaced item starts a new attempt.
+-- A forward fix to the earlier migration (frozen). One function redefined; nothing else touched. Results gain two closed codes: invitation_ended, invitation_expired.
 begin;
 set local lock_timeout = '5s';
 
@@ -17,8 +17,8 @@ begin
   -- THE STUDIO LOCK FIRST, the same outer mutex admit and create take, so two replaces (or a replace and an admit) in one studio
   -- serialise instead of deadlocking on the entry rows (40P01). Order everywhere: owner -> studio -> entry.
   perform 1 from public.studios s where s.id = p_studio_id for no key update;
-  -- 0364 (Codex P1 on 0363): THE ROUND IS LOCKED RIGHT AFTER THE STUDIO, before the entry and before any release. Order: studio -> round -> entry -> invitation.
-  -- Redemption (redeem_new_client_waitlist_invitation_verified) takes the invitation's round and THEN the invitation; 0363 reached the round only at issue,
+  -- THE ROUND IS LOCKED RIGHT AFTER THE STUDIO, before the entry and before any release. Order: studio -> round -> entry -> invitation.
+  -- Redemption (redeem_new_client_waitlist_invitation_verified) takes the invitation's round and THEN the invitation; the previous body reached the round only at issue,
   -- AFTER release had locked the invitation, so a replace holding the invitation and waiting for the round could deadlock with a redemption holding the
   -- round and waiting for the invitation (40P01, uncaught). Entry -> invitation (release, decline, expire) is kept: no path takes the round after an
   -- entry it does not already hold under the studio lock. The unlocked read only discovers WHICH round to lock; the invitation is re-read under the locks.
@@ -45,7 +45,7 @@ begin
     return query select 'state_changed'::text, null::uuid, null::text, null::timestamptz, null::timestamptz; return; end if;
   if v_old.redeemed_at is not null then
     return query select 'invitation_redeemed'::text, null::uuid, null::text, null::timestamptz, null::timestamptz; return; end if;
-  -- 0364 (Codex P2 on 0363): a replace is for a LIVE invitation only (the live count is unchanged and no capacity check runs). An invitation that has
+  -- A replace is for a LIVE invitation only (the live count is unchanged and no capacity check runs). An invitation that has
   -- ended (expired, released or declined stamp) or whose time has run out (the wall clock, read under the locks) is not live: replacing it would mint a
   -- NEW live invitation without a capacity check or a new over-invite confirmation. Refused with a closed code; the owner requeues the person, or
   -- admits them again through a confirmed batch.
@@ -90,7 +90,7 @@ begin
     if v_issue.result <> 'issued' then raise exception '%', v_issue.result using errcode = 'WA001'; end if;
     select i.issued_at, i.expires_at into v_issued, v_expires from public.new_client_waitlist_invitations i where i.id = v_issue.invitation_id;
     -- A batch item that pointed at the old invitation follows the new one.
-    -- 0364 (Codex P3 on 0363): the item starts a NEW delivery attempt. It is re-initialised to 'issued' with the new invitation and the NEW invitation's issued_at (a stale value would let the next claim sweep it to unknown before its delivery finishes),
+    -- The item starts a NEW delivery attempt. It is re-initialised to 'issued' with the new invitation and the NEW invitation's issued_at (a stale value would let the next claim sweep it to unknown before its delivery finishes),
     -- the attempt count incremented, and the old attempt's outcome (reason, settled_at) cleared, so the replacement's answer can be settled (a timeout
     -- is settled 'unknown', which settle allows only from 'issued') and the abandoned-delivery sweep (state = 'issued') covers it. The old attempt is
     -- kept only as the attempt count: the table has no per-attempt audit column.
@@ -120,9 +120,9 @@ do $$
 declare v_fn regprocedure := 'public.replace_waitlist_invitation(uuid, uuid, uuid, uuid)'::regprocedure; v_role text;
 begin
   foreach v_role in array array['anon','authenticated'] loop
-    if pg_catalog.has_function_privilege(v_role, v_fn, 'EXECUTE') then raise exception '0364: % must not execute %', v_role, v_fn; end if;
+    if pg_catalog.has_function_privilege(v_role, v_fn, 'EXECUTE') then raise exception 'replace_waitlist_invitation: % must not execute %', v_role, v_fn; end if;
   end loop;
-  if not pg_catalog.has_function_privilege('service_role', v_fn, 'EXECUTE') then raise exception '0364: service_role must execute %', v_fn; end if;
+  if not pg_catalog.has_function_privilege('service_role', v_fn, 'EXECUTE') then raise exception 'replace_waitlist_invitation: service_role must execute %', v_fn; end if;
 end $$;
 
 commit;

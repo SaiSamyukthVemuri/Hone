@@ -1,4 +1,4 @@
--- 0364 DOWN. Restores 0363's replace_waitlist_invitation byte for byte (the applied body).
+-- DOWN. Restores the previous replace_waitlist_invitation byte for byte (the previous body).
 begin;
 set local lock_timeout = '5s';
 
