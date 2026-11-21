@@ -391,3 +391,80 @@ describe("over-invite worker against the real batch commands", () => {
     expect(r.ok && r.result).toBe("no_live_invitation");
   });
 });
+
+// ---- migration 0364: replace takes the round before the invitation, refuses an ended or elapsed invitation, and starts a NEW attempt ----------------------
+// Requires 0364 in the stack. Against 0363 alone the first two tests fail by design (the item stays `failed`; an elapsed invitation is replaced).
+describe("replace after 0364", () => {
+  async function refusedItem(label: string) {
+    const f = await seed(label);
+    const ids = await entries(f, 1);
+    await batch(f, ids, { fit: 0 });
+    const out = await drain(deps(() => "refused"));
+    const item = out.find((o) => o.status === "failed" && o.reason === "delivery_refused")!;
+    expect(item).toBeDefined();
+    return { f, item };
+  }
+  const row = async (itemId: string) =>
+    (await q(`select state, reason_class, invitation_id, attempts, settled_at, issued_at from public.waitlist_invitation_batch_items where id=$1`, [itemId]))[0];
+
+  it("a replaced failed item starts a new attempt: issued, the old outcome cleared, attempts + 1, the new invitation", async () => {
+    const { f, item } = await refusedItem("0364a");
+    const before = await row(item.itemId);
+    expect(before).toMatchObject({ state: "failed", reason_class: "delivery_refused" });
+    const rep = await replaceInvitation(db, { studioId: f.studioId, actorUserId: f.userId, entryId: item.entryId, expectedInvitationId: before.invitation_id });
+    expect(rep.ok && rep.result).toBe("replaced");
+    const after = await row(item.itemId);
+    expect(after).toMatchObject({ state: "issued", reason_class: null, settled_at: null, attempts: before.attempts + 1 });
+    expect(after.invitation_id).not.toBe(before.invitation_id);
+    expect(new Date(after.issued_at).getTime()).toBeGreaterThan(new Date(before.issued_at).getTime());
+    // The replacement's answer can now be settled, including `unknown` (which settle allows only from issued).
+    const settled = await settleItem(db, { itemId: item.itemId, studioId: f.studioId, entryId: item.entryId }, "unknown", "delivery_unknown", null, after.invitation_id);
+    expect(settled.ok && settled.result).toBe("settled");
+    expect(await row(item.itemId)).toMatchObject({ state: "unknown", reason_class: "delivery_unknown" });
+  });
+
+  it("an invitation whose time has run out is refused as invitation_expired: nothing is replaced and the item is untouched", async () => {
+    const { f, item } = await refusedItem("0364b");
+    const before = await row(item.itemId);
+    await q(`update public.new_client_waitlist_invitations set issued_at = now() - interval '3 hours', expires_at = now() - interval '1 hour' where id=$1`, [before.invitation_id]);
+    const rep = await replaceInvitation(db, { studioId: f.studioId, actorUserId: f.userId, entryId: item.entryId, expectedInvitationId: before.invitation_id });
+    expect(rep.ok && rep.result).toBe("invitation_expired");
+    expect(await row(item.itemId)).toMatchObject({ state: "failed", reason_class: "delivery_refused", invitation_id: before.invitation_id, attempts: before.attempts });
+  });
+
+  it("an invitation that has ended (expired stamp) is refused as invitation_ended", async () => {
+    const { f, item } = await refusedItem("0364c");
+    const before = await row(item.itemId);
+    await q(`update public.new_client_waitlist_invitations set expired_at = now() where id=$1`, [before.invitation_id]);
+    const rep = await replaceInvitation(db, { studioId: f.studioId, actorUserId: f.userId, entryId: item.entryId, expectedInvitationId: before.invitation_id });
+    expect(rep.ok && ["invitation_ended", "no_live_invitation"].includes(rep.result)).toBe(true);
+    expect(await row(item.itemId)).toMatchObject({ state: "failed", invitation_id: before.invitation_id });
+  });
+
+  it("the owner's retry of an elapsed invitation delivers nothing and the item is counted as ended by the progress view", async () => {
+    const { f, item } = await refusedItem("0364d");
+    const before = await row(item.itemId);
+    await q(`update public.new_client_waitlist_invitations set issued_at = now() - interval '3 hours', expires_at = now() - interval '1 hour' where id=$1`, [before.invitation_id]);
+    let delivered = 0;
+    const r = await retryDeliveries(
+      {
+        kind: "refused",
+        stillRetryable: async ({ itemId }) => {
+          const [x] = await q(`select state, invitation_id from public.waitlist_invitation_batch_items where id=$1`, [itemId]);
+          return { state: x.state, invitationId: x.invitation_id };
+        },
+        replace: (entryId, expectedInvitationId) => replaceInvitation(db, { studioId: f.studioId, actorUserId: f.userId, entryId, expectedInvitationId }),
+        deliver: async () => (delivered++, "accepted"),
+        settle: (t, o, why, expected, invitationId) => settleItem(db, t, o, why, expected ?? null, invitationId ?? null),
+        sleep: async () => {},
+      },
+      [{ entryId: item.entryId, itemId: item.itemId, studioId: f.studioId }],
+    );
+    expect(delivered).toBe(0);
+    expect(r[0]).toMatchObject({ status: "skipped", reason: "invitation_expired" });
+    const after = await row(item.itemId);
+    expect(after).toMatchObject({ state: "failed", reason_class: "invitation_expired" });
+    const { tallyItems } = await import("@/lib/waitlist/over-invite-progress");
+    expect(tallyItems([{ state: after.state, reason_class: after.reason_class, issued_at: null }]).ended).toBe(1);
+  });
+});
