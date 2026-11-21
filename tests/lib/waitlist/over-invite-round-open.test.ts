@@ -52,11 +52,41 @@ describe("admit for a studio with no open round", () => {
     expect(count(s.calls, "admit_new_client_waitlist_entry")).toBe(2);
     expect(count(s.calls, "open_new_client_waitlist_admission_round")).toBe(1);
   });
-  it("a round that cannot be opened (refused or an error) is the closed code and admit is not repeated", async () => {
-    for (const s of [studio({ opens: "not_owner" }), studio({ error: true })]) {
+  it("a DEFINITIVE refusal to open a round is the closed code no_round_open, and admit is not repeated", async () => {
+    for (const opens of ["not_owner", "unknown_studio", "invalid_input"]) {
+      const s = studio({ opens });
       expect(await admitBatchItem(s.db, item, null)).toEqual({ ok: true, result: "no_round_open" });
       expect(count(s.calls, "admit_new_client_waitlist_entry")).toBe(1);
     }
+  });
+  it("a LOST answer from the open command (error, throw, unreadable shape) is a transient failure, never the closed skip, and admit is not repeated", async () => {
+    const lost: ((n: string) => unknown)[] = [
+      () => ({ data: null, error: { code: "57014" } }),
+      () => { throw new Error("network"); },
+      () => ({ data: [{ nothing: 1 }], error: null }),
+      () => ({ data: null, error: null }),
+    ];
+    for (const answer of lost) {
+      const calls: string[] = [];
+      const db = { rpc: async (n: string) => (calls.push(n), n.startsWith("open_") ? answer(n) : { data: [{ result: "no_round_open" }], error: null }) } as never;
+      expect(await admitBatchItem(db, item, null)).toEqual({ ok: false, code: "unavailable" });
+      expect(count(calls, "admit_new_client_waitlist_entry")).toBe(1);
+    }
+  });
+  it("a lost answer leaves the item CLAIMED: nothing is settled, nothing is delivered, and it is not skipped", async () => {
+    const db = { rpc: async (n: string) => (n.startsWith("open_") ? { data: null, error: { code: "57014" } } : { data: [{ result: "no_round_open" }], error: null }) } as never;
+    const settled: string[] = [];
+    const d: WorkerDeps = {
+      claim: async () => ({ ok: true, items: [item] }),
+      admit: (it) => admitBatchItem(db, it, null),
+      settle: async (t, o, r) => (settled.push(`${t.itemId}:${o}:${r}`), { ok: true, result: "settled" }),
+      deliver: async () => { throw new Error("must not deliver"); },
+      mayStillSend: async () => "sendable",
+      sleep: async () => {},
+    };
+    const r = await runBatchChunk(d, undefined, { mode: "background" });
+    expect(r.ok && r.outcomes[0]).toMatchObject({ status: "failed", reason: "settle_failed" });
+    expect(settled).toEqual([]);
   });
   it("an answer other than no_round_open never opens a round", async () => {
     const calls: string[] = [];
@@ -105,10 +135,18 @@ describe("replace for a studio with no open round (the retry path)", () => {
     expect(await replaceInvitation(s.db, input)).toMatchObject({ ok: true, result: "replaced" });
     expect(s.calls).toEqual(["replace_waitlist_invitation", "open_new_client_waitlist_admission_round", "replace_waitlist_invitation"]);
   });
-  it("a round that cannot be opened is the closed value `refused`, with no second replace and no free text", async () => {
+  it("a DEFINITIVE refusal to open a round is the closed value `refused`, with no second replace and no free text", async () => {
     const s = studio({ opens: "not_owner" });
     expect(await replaceInvitation(s.db, input)).toEqual({ ok: true, result: "refused" });
     expect(count(s.calls, "replace_waitlist_invitation")).toBe(1);
+  });
+  it("a LOST answer from the open command is a transient failure, so the retry puts the item back; never `refused`, and no second replace", async () => {
+    for (const answer of [() => ({ data: null, error: { code: "57014" } }), () => { throw new Error("network"); }, () => ({ data: [{ nothing: 1 }], error: null })]) {
+      const calls: string[] = [];
+      const db = { rpc: async (n: string) => (calls.push(n), n.startsWith("open_") ? answer() : { data: [{ result: "refused:no_round_open" }], error: null }) } as never;
+      expect(await replaceInvitation(db, input)).toEqual({ ok: false, code: "unavailable" });
+      expect(count(calls, "replace_waitlist_invitation")).toBe(1);
+    }
   });
   it("a second no_round_open ends as `refused` after exactly one extra ask", async () => {
     const calls: string[] = [];

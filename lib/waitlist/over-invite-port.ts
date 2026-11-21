@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { ensureOpenRound } from "@/lib/waitlist/auto-round";
+import { tryOpenRound, type RoundOutcome } from "@/lib/waitlist/auto-round";
 
 // The over-invite batch's database port: typed wrappers over the batch commands (create, preview, claim, admit with a batch item, settle, replace).
 // Every command is service_role-only, so the caller passes the SERVICE client; the actor id is the confirming owner's AUTH user id, resolved from
@@ -232,16 +232,29 @@ function issued(r: Record<string, unknown>): IssuedInvitation | null {
   return { invitationId, rawToken, issuedAt: a, expiresAt: b, deliveryEmail: str(r.delivery_email), deliveryName: str(r.delivery_name) };
 }
 
+/** A thrown call is a lost answer too. */
+async function roundOutcome(db: Rpc, studioId: string, actorUserId: string): Promise<RoundOutcome> {
+  try {
+    return await tryOpenRound(db, studioId, actorUserId);
+  } catch {
+    return "unknown";
+  }
+}
+
 /**
  * A studio with no OPEN admission round answers `no_round_open`, and the issuer needs one. The round is plumbing the owner never chooses, so it is
  * opened here through the SAME `ensureOpenRound` the single invitation uses (same allowance, same owner as actor), and the admit is retried ONCE.
- * `no_round_open` is refused BEFORE anything is created, so the retry cannot double-issue. If no round can be opened, or the retry still answers
- * `no_round_open`, the answer is the closed code `no_round_open` (the worker records the item skipped under that reason; the entry stays waiting).
+ * `no_round_open` is refused BEFORE anything is created, so the retry cannot double-issue. If the command DEFINITIVELY refuses to open a round, or the
+ * retry still answers `no_round_open`, the answer is the closed code `no_round_open` (the worker records the item skipped under that reason; the entry
+ * stays waiting). If the open command's answer is LOST (error, throw, unknown shape) the result is a transient port failure, never a skip.
  */
 export async function admitBatchItem(db: Rpc, item: ClaimedItem, fit: number | null): Promise<AdmitOutcome> {
   const first = await admitOnce(db, item, fit);
   if (!(first.ok && first.result === "no_round_open")) return first;
-  if (!(await ensureOpenRound(db, item.studioId, item.actorUserId))) return first;
+  const round = await roundOutcome(db, item.studioId, item.actorUserId);
+  // A lost answer says nothing about the round: it is a TRANSIENT failure (the worker leaves the item claimed for lease recovery), never a skip.
+  if (round === "unknown") return { ok: false, code: "unavailable" };
+  if (round === "refused") return first;
   return admitOnce(db, item, fit);
 }
 
@@ -278,7 +291,10 @@ export async function replaceInvitation(db: Rpc, input: { studioId: string; acto
   const first = await replaceOnce(db, input);
   if (!noRound(first)) return first;
   // No open round: the command undid its own steps (nothing was replaced), so opening a round and asking ONCE again cannot double-issue.
-  if (!(await ensureOpenRound(db, input.studioId, input.actorUserId))) return { ok: true, result: "refused" };
+  const round = await roundOutcome(db, input.studioId, input.actorUserId);
+  // A lost answer is transient (the retry puts the item back so it can be offered again); only a definitive refusal is `refused`.
+  if (round === "unknown") return { ok: false, code: "unavailable" };
+  if (round === "refused") return { ok: true, result: "refused" };
   const again = await replaceOnce(db, input);
   return noRound(again) ? { ok: true, result: "refused" } : again;
 }
