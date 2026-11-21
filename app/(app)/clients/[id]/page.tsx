@@ -383,8 +383,11 @@ export default async function ClientCheatSheetPage({
     needsSessionsData
       ? getAppointmentsForClientProfile(studio.id, client.id)
       : Promise.resolve([] as Awaited<ReturnType<typeof getAppointmentsForClientProfile>>),
-    // Rendered outside every tab block, so always needed.
-    getActiveServices(studio.id, priceReads),
+    // Rendered outside every tab block, so always needed. The PUBLISHED
+    // service-list price is deliberately NOT stripped for a practitioner (Sam,
+    // decision 2): they quote it when booking. Client pricing, session prices
+    // and the card read stay owner-only above.
+    getActiveServices(studio.id),
     needsIntake
       ? getLatestIntakeForClient(studio.id, client.id)
       : Promise.resolve(null),
