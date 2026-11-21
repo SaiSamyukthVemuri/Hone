@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 280,
+    "count": 281,
     "last": "0364_waitlist_replace_lock_order_and_live_only.sql",
-    "sha256": "6a1bd1e4dfeae762aa7f54b1588dbf3cb5a6771605369ee15fc0f1c0d201a4e9"
+    "sha256": "d41f3b4d33ead6015df8a2387e682242ca7a8a326ecf22c511defe3d51ba1e0e"
   },
   "public": {
     "tables": [
@@ -435,9 +435,14 @@
       "perm_fail",
       "perm_rank",
       "perm_reason_ok",
+      "perm_review_hash",
+      "perm_review_hash_input",
+      "perm_review_involved",
+      "perm_review_timing",
       "perm_run_activation",
       "perm_run_basis",
       "perm_run_changes",
+      "perm_run_changes_reviewed",
       "perm_scope_source",
       "permission_audit_append_only",
       "platform_lead_alerts_guard",
@@ -448,6 +453,7 @@
       "preview_adopt_new_defaults",
       "preview_reset",
       "preview_role_changes",
+      "preview_role_changes_at",
       "preview_waitlist_over_invite",
       "process_email_provider_event",
       "public_booking_local_to_utc",
@@ -566,6 +572,7 @@
       "save_client_card_on_file",
       "save_client_card_on_file_ordered",
       "save_role_permissions",
+      "save_role_permissions_reviewed",
       "save_weekly_availability",
       "service_is_bookable_by_new_client",
       "session_actor_practitioner",
