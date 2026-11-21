@@ -136,6 +136,10 @@ const scenario = {
   liveInvitations: [] as Array<Record<string, unknown>>,
   // The studio-wide expiry read (no entry-id filter): null serves the same rows as the live read; a test seeds it to put an expiry OFF the page.
   studioExpiries: null as Array<Record<string, unknown>> | null,
+  // The exact count PostgREST would report for that read (Content-Range). Absent means "the rows seeded". A test sets it above 1000 to model the API's row ceiling.
+  studioExpiryCount: null as number | null,
+  // A failure of the summary read alone (the page's own invitation reads still succeed).
+  studioExpiriesError: null as { code: string } | null,
   // The REDEEMED invitation read, asked separately.
   redeemedInvitations: [] as Array<Record<string, unknown>>,
   invitationsError: null as { code: string } | null,
@@ -192,6 +196,8 @@ function reset() {
     removeError: null,
     liveInvitations: [],
     studioExpiries: null,
+    studioExpiryCount: null,
+    studioExpiriesError: null,
     redeemedInvitations: [],
     invitationsError: null,
     services: [],
@@ -390,8 +396,18 @@ vi.mock("@/lib/supabase/server", () => ({
           const asksRedeemed = shape.filters.some((f) => f[0] === "not");
           // The studio-wide expiry summary read: the live predicate with NO entry-id list.
           if (!asksRedeemed && !shape.filters.some((f) => f[0] === "in")) {
-            const src = scenario.studioExpiries ?? scenario.liveInvitations;
-            return { data: src.map((r) => ({ expires_at: r.expires_at })), error: null };
+            if (scenario.studioExpiriesError) return { data: null, count: null, error: scenario.studioExpiriesError };
+            // THE FAKE HONOURS THE FILTERS AND THE API ROW CEILING. It answers only a read scoped to this studio with all four terminal stamps null,
+            // so a read that dropped one of those terms gets nothing back; and it returns at most min(limit, max_rows = 1000) rows with the EXACT
+            // count beside them only when the read asked for one, as the real Data API does.
+            const isNull = (c: string) => shape.filters.some((f) => f[0] === "is" && f[1] === c && f[2] === null);
+            const scoped =
+              shape.filters.some((f) => f[0] === "eq" && f[1] === "studio_id" && f[2] === STUDIO_ID) &&
+              ["redeemed_at", "expired_at", "released_at", "declined_at"].every(isNull);
+            const src = scoped ? (scenario.studioExpiries ?? scenario.liveInvitations) : [];
+            const rows = src.slice(0, Math.min(shape.limit ?? 1000, 1000)).map((r) => ({ expires_at: r.expires_at }));
+            const count = shape.options.count === "exact" ? (scoped ? (scenario.studioExpiryCount ?? src.length) : 0) : null;
+            return { data: rows, count, error: null };
           }
           return {
             data: asksRedeemed ? scenario.redeemedInvitations : scenario.liveInvitations,
@@ -3200,6 +3216,8 @@ describe("each active invitation shows its exact expiry and the time left", () =
     // …and the read is one small one: expires_at only, scoped to the studio, no entry id and no name.
     const reads = queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns === "expires_at");
     expect(reads).toHaveLength(1);
+    expect(reads[0]!.options).toEqual({ count: "exact" });
+    expect(reads[0]!.limit).toBe(1000);
     expect(reads[0]!.filters.some((f) => f[0] === "in")).toBe(false);
     expect(reads[0]!.filters.find((f) => f[0] === "eq" && f[1] === "studio_id")?.[2]).toBe(STUDIO_ID);
     for (const col of ["redeemed_at", "expired_at", "released_at", "declined_at"]) {
@@ -3207,14 +3225,46 @@ describe("each active invitation shows its exact expiry and the time left", () =
     }
   });
 
-  it("over the cap the summary is withheld, never partial", async () => {
+  it("THE API ROW CEILING: 1000 rows back but an exact count of 1500 shows NO summary, never a partial one", async () => {
+    // The real Data API returns at most max_rows = 1000 rows whatever limit was asked for, so a length-only check can never see the cut.
     scenario.rows = [entry({ id: "e-on-page", status: "invited" })];
     scenario.count = 1;
     scenario.liveInvitations = [{ entry_id: "e-on-page", expires_at: at("2026-08-28T09:00:00Z") }];
-    scenario.studioExpiries = Array.from({ length: 5001 }, () => ({ expires_at: at("2026-08-28T09:00:00Z") }));
+    scenario.studioExpiries = Array.from({ length: 1000 }, () => ({ expires_at: at("2026-08-28T09:00:00Z") }));
+    scenario.studioExpiryCount = 1500;
     const html = await render();
     expect(html).not.toContain("invitation-expiry-summary");
     expect(html).toContain("row-invitation-expiry"); // the per-row line is unaffected
+  });
+
+  it("exactly 1000 live invitations with an exact count of 1000 IS complete and shows the summary", async () => {
+    scenario.rows = [entry({ id: "e-on-page", status: "invited" })];
+    scenario.count = 1;
+    scenario.liveInvitations = [{ entry_id: "e-on-page", expires_at: at("2026-08-28T09:00:00Z") }];
+    scenario.studioExpiries = Array.from({ length: 1000 }, () => ({ expires_at: at("2026-08-28T09:00:00Z") }));
+    const html = await render();
+    expect(html).toContain("invitation-expiry-summary");
+  });
+
+  it("an unreadable exact count shows no summary", async () => {
+    scenario.rows = [entry({ id: "e-on-page", status: "invited" })];
+    scenario.count = 1;
+    scenario.liveInvitations = [{ entry_id: "e-on-page", expires_at: at("2026-08-28T09:00:00Z") }];
+    scenario.studioExpiryCount = Number.NaN;
+    const html = await render();
+    expect(html).not.toContain("invitation-expiry-summary");
+  });
+
+  it("a FAILED summary read shows no summary, logs once, and leaves the per-row lines", async () => {
+    scenario.rows = [entry({ id: "e-on-page", status: "invited" })];
+    scenario.count = 1;
+    scenario.liveInvitations = [{ entry_id: "e-on-page", expires_at: at("2026-08-28T09:00:00Z") }];
+    scenario.studioExpiries = [{ expires_at: at("2026-08-23T11:00:00Z") }];
+    scenario.studioExpiriesError = { code: "57014" };
+    const html = await render();
+    expect(html).not.toContain("invitation-expiry-summary");
+    expect(html).toContain("row-invitation-expiry");
+    expect(consoleErrors.filter((l) => l.includes("waitlist_invitation_expiry_summary_read_failed"))).toHaveLength(1);
   });
 
   it("a deadline that has passed says so, and is not counted as about to expire", async () => {

@@ -90,8 +90,12 @@ import { cookies } from "next/headers";
 import { LIFECYCLE_NOTICE_COOKIE, lifecycleNoticeCopy } from "@/lib/waitlist/lifecycle-notice";
 import { dbErrorCode } from "@/lib/logging/error-class";
 import { OwnerOnlyNotice } from "@/components/settings/view-heading";
-/** The most live invitations the studio-wide expiry summary will read; beyond it the summary is withheld, never partial. */
-const EXPIRY_SUMMARY_CAP = 5000;
+/**
+ * The most rows ONE Data API statement returns (supabase/config.toml `max_rows = 1000`; hosted is not assumed to be any higher). The studio-wide
+ * expiry summary asks for exactly this many and trusts them only when the EXACT count PostgREST reports (Content-Range, which the ceiling does
+ * not bound) equals the rows returned. A studio with more live invitations than this gets no summary, never a partial one.
+ */
+const EXPIRY_SUMMARY_PAGE = 1000;
 
 // ===========================================================================
 // NEW-CLIENT WAITLIST — OPERATOR QUEUE (WAIT-02)
@@ -817,19 +821,20 @@ export default async function WaitlistSettingsPage({
   // THE SUMMARY IS STUDIO-WIDE, NOT PAGE-WIDE. The rows above are one page of the invited section, so a summary built from them would name
   // the wrong "next" expiry and undercount "within 24 hours" once an invitation on another page expires sooner. This is its own small
   // owner-RLS read of `expires_at` ONLY (no entry id, no name) over every LIVE invitation of the studio, with the same four-column predicate
-  // as the one-live-per-entry index. Over the cap it is not a partial answer: no summary is shown, and no summary is shown when it fails.
+  // as the one-live-per-entry index. It is trusted ONLY when the exact count equals the rows returned: a response cut at the API's row ceiling,
+  // an unreadable count or a failed read shows no summary at all. It is never a partial answer.
   let studioExpiries: string[] | null = null;
   {
     const all = await supabase
       .from("new_client_waitlist_invitations")
-      .select("expires_at")
+      .select("expires_at", { count: "exact" })
       .eq("studio_id", studio.id)
       .is("redeemed_at", null)
       .is("expired_at", null)
       .is("released_at", null)
       .is("declined_at", null)
-      .limit(EXPIRY_SUMMARY_CAP + 1);
-    if (all.error || !Array.isArray(all.data) || all.data.length > EXPIRY_SUMMARY_CAP) {
+      .limit(EXPIRY_SUMMARY_PAGE);
+    if (all.error || !Array.isArray(all.data) || typeof all.count !== "number" || all.count !== all.data.length) {
       if (all.error) {
         console.error(
           JSON.stringify({
