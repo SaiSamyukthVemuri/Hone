@@ -50,6 +50,7 @@ describe("rankClientsTable", () => {
   it("with the period money unreadable no paid figure, total or unconfirmed count is known, and none is the count of every client", () => {
     const t = val(run([fig("a", { periodPaidCents: null }), fig("b", { periodPaidCents: 500 })], { periodMoneyFailure: "currency_unknown" }));
     expect(t?.rows.map((r) => r.periodPaidCents)).toEqual([null, null]);
+    expect(t?.rows.map((r) => r.name)).toEqual(["Ana", "Ben"]); // the spend sort cannot use a paid figure that is unknown, so it falls to visits then name
     expect(t?.paidAcrossSeenCents).toBeNull();
     expect(t?.seenWithoutConfirmedPayment).toBeNull();
     expect(t?.periodMoney).toEqual({ available: false, reason: "currency_unknown" });
