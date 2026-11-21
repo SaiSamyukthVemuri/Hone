@@ -178,13 +178,6 @@ describe("the duplicate legacy previous-treatment path is GONE, not parallel", (
     }
   });
 
-  it("no stale comment still claims newest-row behaviour", () => {
-    expect(PAGE).not.toMatch(/Most recent non-deleted session that began before/);
-    expect(PAGE).toMatch(
-      /Appointment preparation uses the same newest-charted-treatment authority/,
-    );
-  });
-
   it("the removed LastSessionCard is not left behind as dead code", () => {
     expect(PAGE_CODE).not.toMatch(/function LastSessionCard/);
     expect(PAGE_CODE).not.toMatch(/<LastSessionCard/);

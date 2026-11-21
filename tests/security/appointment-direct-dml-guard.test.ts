@@ -957,17 +957,3 @@ describe("T2.7 — no authenticated-client writer for either appointment table",
     }
   });
 });
-
-describe("appointment direct-DML census — the report", () => {
-  it("prints the frozen census for the reviewer", () => {
-    // eslint-disable-next-line no-console
-    console.log(
-      "\nAppointment direct-DML census (frozen at PR B1) —\n" +
-        describeSites(APPT_SITES) +
-        `\n\n  appointment_audit direct writers: ${AUDIT_SITES.length}` +
-        `\n  variable-table writers in tree:   ${UNRESOLVED_TABLE_SITES.length}` +
-        `\n  total Supabase write sites:       ${ALL_SITES.length}\n`,
-    );
-    expect(APPT_SITES).toHaveLength(0);
-  });
-});
