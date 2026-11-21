@@ -117,7 +117,7 @@ describe("a replace and a redemption on one invitation never deadlock", () => {
 
 describe("lock order with the other takers", () => {
   it("a legacy invitation (no round) and a redemption-style invitation lock: no deadlock, the replace completes after the lock is released", async () => {
-    const l = await seedInserted({ withRound: false }); // a pre-0192 style invitation: redemption locks only the invitation
+    const l = await seedInserted({ withRound: false }); // an invitation without a round: redemption locks only the invitation
     const url = resolveLocalDbUrl();
     const D = new pg.Client({ connectionString: url }); const R = new pg.Client({ connectionString: url });
     await D.connect(); await R.connect();
