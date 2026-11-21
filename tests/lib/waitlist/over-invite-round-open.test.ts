@@ -88,6 +88,46 @@ describe("admit for a studio with no open round", () => {
     expect(r.ok && r.outcomes[0]).toMatchObject({ status: "failed", reason: "settle_failed" });
     expect(settled).toEqual([]);
   });
+  it("a temporary failure while opening the round, then a recovery round after the lease: the recipient is invited and mailed EXACTLY ONCE", async () => {
+    // A tiny queue: the item stays claimed while nothing settled it, and is claimable again once its lease has passed.
+    let faulty = true;
+    let open = false;
+    const calls: string[] = [];
+    const db = {
+      rpc: async (n: string) => {
+        calls.push(n);
+        if (n.startsWith("open_")) {
+          if (faulty) return { data: null, error: { code: "57014" } };
+          open = true;
+          return { data: [{ result: "opened" }], error: null };
+        }
+        return { data: [open ? { result: "admitted", ...issuedRow } : { result: "no_round_open" }], error: null };
+      },
+    } as never;
+    const state = { settled: [] as string[], delivered: 0, claimable: true };
+    const d: WorkerDeps = {
+      claim: async () => ({ ok: true, items: state.claimable ? [item] : [] }),
+      admit: (it) => admitBatchItem(db, it, null),
+      settle: async (t, o, r) => (state.settled.push(`${t.itemId}:${o}:${r}`), (state.claimable = false), { ok: true, result: "settled" }),
+      deliver: async () => (state.delivered++, "accepted"),
+      mayStillSend: async () => "sendable",
+      sleep: async () => {},
+    };
+    const first = await runBatchChunk(d, undefined, { mode: "background" });
+    expect(first.ok && first.outcomes[0]).toMatchObject({ status: "failed", reason: "settle_failed" });
+    expect(state.settled).toEqual([]);
+    expect(state.delivered).toBe(0);
+    expect(state.claimable).toBe(true); // still claimed and eligible: nothing recorded it as over
+    faulty = false; // the lease has passed and the fault is gone
+    const second = await runBatchChunk(d, undefined, { mode: "background" });
+    expect(second.ok && second.outcomes[0]).toMatchObject({ status: "sent" });
+    expect(state.delivered).toBe(1);
+    expect(state.settled).toEqual(["i1:sent:null"]);
+    expect(calls.filter((c) => c === "admit_new_client_waitlist_entry").length).toBe(3); // refused, refused (round not open), admitted
+    const third = await runBatchChunk(d, undefined, { mode: "background" });
+    expect(third.ok && third.claimed).toBe(0);
+    expect(state.delivered).toBe(1);
+  });
   it("an answer other than no_round_open never opens a round", async () => {
     const calls: string[] = [];
     const db = { rpc: async (n: string) => (calls.push(n), { data: [{ result: "no_capacity" }], error: null }) } as never;

@@ -567,4 +567,62 @@ describe("a studio with no open admission round", () => {
     expect(answers).toEqual(["opened", "round_already_open"]);
     expect(await rounds(f.studioId)).toEqual({ total: 1, open: 1 });
   });
+
+  // The fault is injected in the port's CALL of the open command (a wrapper over the real database), not in the database and not in any guard.
+  const withOpenFault = (answer: () => unknown) =>
+    ({
+      rpc: (name: string, args: Record<string, unknown>) => (name === "open_new_client_waitlist_admission_round" ? Promise.resolve(answer()) : (db as { rpc: (n: string, a: Record<string, unknown>) => Promise<unknown> }).rpc(name, args)),
+    }) as never;
+  const faultyDeps = (faultDb: never, log: string[]): WorkerDeps => ({ ...deps(() => "accepted", log), admit: (item) => admitBatchItem(faultDb, item, null) });
+  const FIVE = { perStudio: 5, total: 5, leaseSeconds: 5 };
+  async function drainWith(d: WorkerDeps, limits: typeof FIVE) {
+    const out = [];
+    for (let i = 0; i < 20; i++) {
+      const r = await runBatchChunk(d, limits, { mode: "background" });
+      if (!r.ok || r.claimed === 0) break;
+      out.push(...r.outcomes);
+    }
+    return out;
+  }
+
+  it("(a) a definitive refusal to open the round skips each recipient under the closed reason no_round_open; the entries stay waiting and nothing is mailed", async () => {
+    const f = await seed("nr5", { openRound: false });
+    const ids = await entries(f, 3);
+    await batch(f, ids, { fit: 0 });
+    const log: string[] = [];
+    const r = await runBatchChunk(faultyDeps(withOpenFault(() => ({ data: [{ result: "not_owner" }], error: null })), log), FIVE, { mode: "background" });
+    expect(r.ok && r.outcomes.map((o) => (o.status === "skipped" ? o.reason : o.status))).toEqual(["no_round_open", "no_round_open", "no_round_open"]);
+    expect(log).toHaveLength(0);
+    const items = await q(`select state, reason_class from public.waitlist_invitation_batch_items bi join public.waitlist_invitation_batches b on b.id = bi.batch_id where b.studio_id=$1`, [f.studioId]);
+    expect(items.every((i) => i.state === "skipped" && i.reason_class === "no_round_open")).toBe(true);
+    const st = await q(`select status from public.new_client_waitlist_entries where studio_id=$1`, [f.studioId]);
+    expect(st.every((e) => e.status === "waiting")).toBe(true);
+    expect(await rounds(f.studioId)).toEqual({ total: 0, open: 0 });
+  });
+
+  it("(b) a temporary failure while opening the round leaves every recipient CLAIMED; after the lease a recovery round invites and mails each EXACTLY ONCE", async () => {
+    const f = await seed("nr6", { openRound: false });
+    const ids = await entries(f, 3);
+    await batch(f, ids, { fit: 0 });
+    const log: string[] = [];
+    const lost = faultyDeps(withOpenFault(() => ({ data: null, error: { code: "57014" } })), log);
+    const first = await runBatchChunk(lost, FIVE, { mode: "background" });
+    expect(first.ok && first.outcomes.every((o) => o.status === "failed" && o.reason === "settle_failed")).toBe(true);
+    expect(log).toHaveLength(0);
+    const mid = await q(`select state, reason_class, invitation_id from public.waitlist_invitation_batch_items bi join public.waitlist_invitation_batches b on b.id = bi.batch_id where b.studio_id=$1`, [f.studioId]);
+    expect(mid.every((i) => i.state === "claimed" && i.reason_class === null && i.invitation_id === null)).toBe(true);
+    expect(await rounds(f.studioId)).toEqual({ total: 0, open: 0 });
+    // Before the lease has passed nothing is claimable again; after it, the recovery round (fault gone) takes them.
+    expect((await runBatchChunk(deps(() => "accepted", log), FIVE, { mode: "background" })).ok && log.length).toBe(0);
+    await new Promise((res) => setTimeout(res, 5_500));
+    const out = await drainWith(deps(() => "accepted", log), FIVE);
+    expect(out.filter((o) => o.status === "sent")).toHaveLength(3);
+    expect(out.filter((o) => o.status === "skipped")).toHaveLength(0);
+    expect(new Set(log).size).toBe(3);
+    expect(log).toHaveLength(3);
+    for (const id of ids) expect(await liveInvitations(id)).toBe(1);
+    expect(await rounds(f.studioId)).toEqual({ total: 1, open: 1 });
+    expect((await drainWith(deps(() => "accepted", log), FIVE)).length).toBe(0);
+    expect(log).toHaveLength(3);
+  }, 40_000);
 });
