@@ -204,10 +204,8 @@ describe("replace", () => {
     expect((await q(`select * from public.replace_waitlist_invitation($1,$2,$3,(select i.id from public.new_client_waitlist_invitations i where i.entry_id=$3 order by i.issued_at desc limit 1))`, [f.studioId, f.userId, e]))[0].result).toBe("no_live_invitation");
     await create(f, [e], { fit: 0, shown: 0 }); const c = (await claim())[0]; await admitItem(f, c.item_id, e);
     expect((await q(`select * from public.replace_waitlist_invitation($1,$2,$3,(select i.id from public.new_client_waitlist_invitations i where i.entry_id=$3 order by i.issued_at desc limit 1))`, [f.studioId, m.userId, e]))[0].result).toBe("not_owner");
-    // The redeemed state is INSERTED as a newer invitation row; nothing disables, bypasses or edits the append-only guard.
-    await q(`insert into public.new_client_waitlist_invitations (studio_id, entry_id, token_hash, issued_at, expires_at, issued_by_practitioner_id, scope_service_id, scope_start_date, scope_end_date, redeemed_at)
-             select i.studio_id, i.entry_id, encode(sha256(convert_to(gen_random_uuid()::text,'UTF8')),'hex'), now(), now() + interval '72 hours', i.issued_by_practitioner_id, i.scope_service_id, i.scope_start_date, i.scope_end_date, now()
-             from public.new_client_waitlist_invitations i where i.entry_id=$1 order by i.issued_at desc limit 1`, [e]);
+    // A first-time outcome on a live invitation is allowed by the append-only guard (it only refuses rewriting an outcome already set), so nothing here disables or bypasses it.
+    await q(`update public.new_client_waitlist_invitations set redeemed_at = now() where entry_id=$1`, [e]);
     expect((await q(`select * from public.replace_waitlist_invitation($1,$2,$3,(select i.id from public.new_client_waitlist_invitations i where i.entry_id=$3 order by i.issued_at desc limit 1))`, [f.studioId, f.userId, e]))[0].result).toBe("invitation_redeemed");
     expect((await q(`select status from public.new_client_waitlist_entries where id=$1`, [e]))[0].status).toBe("invited");
     void e2;
