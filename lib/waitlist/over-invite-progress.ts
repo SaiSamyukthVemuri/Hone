@@ -22,7 +22,7 @@ export type BatchProgress = {
   skipped: number;
   /** Not sent because the owner stopped the rest. */
   stopped: number;
-  /** The invitation was released or expired before it was sent. */
+  /** The invitation was released or expired before it was sent (or, for a retry, was found over). */
   ended: number;
   /** Anything else that failed. */
   otherFailed: number;
@@ -55,6 +55,8 @@ export function tallyItems(rows: readonly ItemRow[], now: number = Date.now()): 
         t.unknown += 1;
         t.unknownRetryable += 1;
       }
+      // A retry found the invitation already over (0364): it ended, it did not fail to send.
+      else if (r.reason_class === "invitation_ended" || r.reason_class === "invitation_expired") t.ended += 1;
       else t.otherFailed += 1;
     }
   }

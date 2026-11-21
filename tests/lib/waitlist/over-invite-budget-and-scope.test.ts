@@ -367,7 +367,7 @@ describe("the retry mark gates everything after it", () => {
       expect(r[0]).toMatchObject({ status: "skipped", reason: "no_longer_retryable" });
     });
   }
-  it("the sent settle names the expected state: the retry mark leaves the item in failed", async () => {
+  it("the sent settle names the new invitation and no expected state (0364 sets the item back to issued, 0363 left it failed)", async () => {
     const calls: string[] = [];
     await retryDeliveries(
       {
@@ -380,8 +380,9 @@ describe("the retry mark gates everything after it", () => {
       },
       [{ entryId: "e", itemId: "i-sent", studioId: "s" }],
     );
-    // The mark names the state seen (unknown); every later settle names `failed`, the state the mark left behind.
-    expect(calls).toEqual(["failed:retry_started:unknown", "sent:null:failed"]);
+    // The mark names the state seen (unknown). After the replace the item is `failed` (0363) or `issued` (0364), so the later settle names no state;
+    // the new invitation id is its guard (see over-invite-0364-compat.test.ts).
+    expect(calls).toEqual(["failed:retry_started:unknown", "sent:null:undefined"]);
   });
 });
 

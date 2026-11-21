@@ -214,6 +214,8 @@ export const ADMIT_REFUSAL_CODES = [
 ] as const;
 export const REPLACE_REFUSAL_CODES = [
   "not_owner", "not_found", "no_live_invitation", "invitation_redeemed", "invalid_service", "pending_owner_review", "state_changed",
+  // 0364: an invitation that has ended (expired, released or declined stamp) or whose time has run out is no longer live, so it is not replaced.
+  "invitation_ended", "invitation_expired",
 ] as const;
 const closed = (result: string, set: readonly string[]): string => (set.includes(result) ? result : "refused");
 

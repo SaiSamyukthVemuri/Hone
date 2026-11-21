@@ -14,6 +14,8 @@ import { SPACING_MS, reasonFor, type DeliveryState } from "./over-invite-worker"
 // guarantee is the rule below: NOTHING is delivered unless replace answered "replaced". An item left `retry_started` by a crash is never offered again.
 
 export type RetryKind = "refused" | "unknown";
+/** The replace refusals that mean the invitation is over (0364). Recorded under their own reason class; the progress view reads them as "ended". */
+const ENDED_REASONS: ReadonlySet<string> = new Set(["invitation_ended", "invitation_expired"]);
 const ORIGINAL_REASON: Record<RetryKind, string> = { refused: "delivery_refused", unknown: "delivery_unknown" };
 
 export type RetryDeps = {
@@ -88,8 +90,11 @@ async function retryOne(deps: RetryDeps, target: SettleTarget, entryId: string):
     }
     // A PERMANENT refusal (already redeemed, no live invitation, not found, ...): retrying can never succeed. Record it under a fixed reason that no
     // retry selects, so a later click moves on to the items that CAN be retried instead of re-picking this one forever.
-    await deps.settle(target, "failed", "retry_not_possible", "failed", seen.invitationId);
-    return skipped(reasonFor(rep.result.replace(/:.*/, "")));
+    // An invitation that ENDED (or ran out of time) while the delivery was failing is recorded under its own fixed reason, so the progress view
+    // counts it as "invitation ended" instead of a generic failure. Like `retry_not_possible`, no retry selects it.
+    const refusal = reasonFor(rep.result.replace(/:.*/, ""));
+    await deps.settle(target, "failed", ENDED_REASONS.has(refusal) ? refusal : "retry_not_possible", "failed", seen.invitationId);
+    return skipped(refusal);
   }
   let state: DeliveryState;
   try {
@@ -98,12 +103,16 @@ async function retryOne(deps: RetryDeps, target: SettleTarget, entryId: string):
     state = "unknown"; // a thrown delivery is UNKNOWN, never refused
   }
   if (state === "accepted") {
-    const s = await deps.settle(target, "sent", null, "failed", rep.issued.invitationId);
-    return s.ok ? { entryId, status: "sent" } : { entryId, status: "failed", reason: "settle_failed" };
+    const s = await deps.settle(target, "sent", null, undefined, rep.issued.invitationId);
+    return s.ok && s.result === "settled" ? { entryId, status: "sent" } : { entryId, status: "failed", reason: "settle_failed" };
   }
+  // WHAT STATE THE ITEM IS IN AFTER A REPLACE IS NOT OURS TO ASSUME. Under 0363 it stayed `failed` (only its invitation moved); from 0364 the replace
+  // starts a new attempt and sets it back to `issued`. So the settles below name no expected STATE; the expected INVITATION (the one just issued) is the
+  // guard, and it is unique to this attempt: a late answer for any earlier invitation can never settle this one. A settle that does not answer
+  // `settled` is reported as not recorded, never as sent.
   // A new invitation is out, so the item records how THIS attempt ended: refused stays retryable, anything else is recorded unknown and is only ever
   // offered through the unknown-retry action. (The database allows `unknown` only from issued, so it is `failed` with that reason.)
   const reason = state === "refused" ? "delivery_refused" : "delivery_unknown";
-  const s = await deps.settle(target, "failed", reason, "failed", rep.issued.invitationId);
-  return { entryId, status: "failed", reason: s.ok ? reason : "settle_failed" };
+  const s = await deps.settle(target, "failed", reason, undefined, rep.issued.invitationId);
+  return { entryId, status: "failed", reason: s.ok && s.result === "settled" ? reason : "settle_failed" };
 }
