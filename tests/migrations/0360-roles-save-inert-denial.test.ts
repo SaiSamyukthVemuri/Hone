@@ -37,7 +37,7 @@ describe("0360 source contract", () => {
     expect(headOf(UP)).toBe(headOf(OLD));
   });
 
-  it("changes the body in exactly these places: declarations, the locked basis read, the apply condition, and one comment", () => {
+  it("changes the body in exactly these places: declarations, the locked basis read, the apply condition, the prerequisite check, and one comment", () => {
     const before = bodyOf(OLD).split("\n");
     const after = bodyOf(UP).split("\n");
     const removed = before.filter((l) => !after.includes(l));
@@ -46,11 +46,24 @@ describe("0360 source contract", () => {
       "select spp.version into v_version from public.studio_permission_policy spp where spp.studio_id = p_studio for update;",
       "if v_scope <> v_base or (v_stored_prev is not null and v_stored_prev <> v_scope) then",
       "v_apply := v_apply || jsonb_build_array(jsonb_build_object('role', v_role, 'key', v_key, 'scope', v_scope, 'base', coalesce(v_stored_prev, v_base)));",
+      // the prerequisite check (Codex P2 4620000794): the 0287 block that used release-dependent effective access
+      "-- Prerequisites must hold on the RESULTING set.",
+      "select * into c from public.permission_catalog where key = v_item ->> 'key';",
+      "foreach v_req in array c.requires loop",
+      "v_cap := public.perm_effective_scope(p_studio, v_item ->> 'role', v_req, array[v_item ->> 'key']);",
+      "if public.perm_rank(v_cap) < public.perm_rank(v_item ->> 'scope') then",
+      "message = public.perm_fail('prerequisite_unmet', v_item ->> 'key', v_item ->> 'role', null, jsonb_build_object('blocked_by', v_req))::text;",
       "-- edited that key or only raised a prerequisite that had been capping it (Privacy E1). Judged on the resulting maps.", // comment only: no review-lane reference in a migration
     ]);
     expect(added.some((l) => l.includes("or v_scope <> v_shown then"))).toBe(true);
     // the condition is ADDITIVE: the old test is still a disjunct
     expect(bodyOf(UP)).toContain("v_scope <> v_base or (v_stored_prev is not null and v_stored_prev <> v_scope) or v_scope <> v_shown");
+    // the prerequisite check judges the INTENDED policy over the whole requires chain and no longer asks the release-dependent resolver
+    const body = bodyOf(UP);
+    expect(body).toContain("with recursive req_chain(k) as (");
+    expect(body).toContain("jsonb_build_object('blocked_by', v_anc.k)");
+    expect(body).not.toContain("v_cap := public.perm_effective_scope(");
+    expect(body).toMatch(/select s\.scope from public\.studio_role_permissions s where s\.studio_id = p_studio and s\.role = v_item ->> 'role' and s\.key = v_anc\.k/);
     // access resolution is not touched
     expect(UP).not.toMatch(/create or replace function public\.perm_(base_scope|effective_scope|scope_source)/);
   });

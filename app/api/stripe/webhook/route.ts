@@ -84,7 +84,10 @@ import {
   handleChargeDisputeCreated,
   shouldIgnoreLiveModeEvent,
 } from "@/lib/billing/payment-webhook-reconciliation";
-import { PaymentOriginalBindingPendingError } from "@/lib/billing/payment-webhook-reconciliation";
+import {
+  PaymentDeclineCleanupRetryError,
+  PaymentOriginalBindingPendingError,
+} from "@/lib/billing/payment-webhook-reconciliation";
 import {
   PaymentWebhookMaintenanceDeferral,
   paymentWebhookMaintenanceOn,
@@ -279,7 +282,10 @@ export async function POST(req: Request): Promise<Response> {
     // structural line, no page/email, then the same release and 500.
     if (err instanceof PaymentWebhookMaintenanceDeferral) {
       logInternal("stripe_webhook_maintenance_deferred", { eventType: err.eventType });
-    } else if (!(err instanceof PaymentOriginalBindingPendingError)) {
+    } else if (
+      !(err instanceof PaymentOriginalBindingPendingError) &&
+      !(err instanceof PaymentDeclineCleanupRetryError)
+    ) {
       logInternal("stripe_webhook_handler_failed", {
         eventId: event.id,
         eventType: event.type,

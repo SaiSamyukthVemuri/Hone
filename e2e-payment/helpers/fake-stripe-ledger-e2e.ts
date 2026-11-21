@@ -192,6 +192,26 @@ export function configureFakeStripeOutcome(
   renameSync(tmp, p);
 }
 
+// Pins when the fake sends the decline event: "after" the charge call returns (default) or "before_return".
+export function configureFakeStripeWebhookTiming(
+  timing: "after" | "before_return",
+  runId: string = activeRunId(),
+): void {
+  const p = configPath(runId);
+  let cfg: Record<string, unknown> = {};
+  if (existsSync(p)) {
+    try {
+      cfg = JSON.parse(readFileSync(p, "utf8"));
+    } catch {
+      cfg = {};
+    }
+  }
+  cfg.webhookTiming = timing;
+  const tmp = `${p}.e2e.tmp`;
+  writeFileSync(tmp, JSON.stringify(cfg), { mode: 0o600 });
+  renameSync(tmp, p);
+}
+
 export function clearFakeStripeOutcome(runId: string = activeRunId()): void {
   const p = configPath(runId);
   if (existsSync(p)) rmSync(p, { force: true });

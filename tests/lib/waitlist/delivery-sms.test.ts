@@ -97,7 +97,7 @@ const sleeps: number[] = [];
 const send = () =>
   sendWaitlistInvitationSms({
     admin: admin(),
-    studio: { id: "studio-1", name: "Willow" },
+    studio: { id: "studio-1", name: "Willow", timezone: "America/Toronto" },
     invitationId: "inv-1",
     invitationUrl: URL_,
     sleep: async (ms) => {
@@ -151,7 +151,7 @@ describe("an eligible prospect is texted once, with the secure link and the emai
     const body = form().get("Body")!;
     expect(body).toContain("Willow");
     expect(body).toContain(URL_);
-    expect(body).toContain(invitationExpiryLabel(new Date(EXPIRES)));
+    expect(body).toContain(invitationExpiryLabel(new Date(EXPIRES), "America/Toronto"));
     expect(body).toMatch(/STOP/);
     expect(form().get("To")).toBe("+16045550199");
     expect(form().get("StatusCallback")).toBe(`https://hone.care/api/twilio/message-status?m=${ROW}`);

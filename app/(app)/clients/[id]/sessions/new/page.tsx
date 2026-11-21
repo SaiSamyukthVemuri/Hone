@@ -176,7 +176,7 @@ export default async function NewSessionPage({
       <div>
         <Link
           href={`/clients/${encodeURIComponent(id)}?tab=sessions`}
-          className="min-w-0 [overflow-wrap:anywhere] text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+          className="inline-flex min-h-[44px] min-w-0 items-center [overflow-wrap:anywhere] text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
         >
           ← {clientDisplayName(data.client)}
         </Link>
@@ -204,18 +204,18 @@ export default async function NewSessionPage({
           <p>{refusalCopy.body}</p>
           <div className="flex flex-wrap gap-4 pt-1">
             {appointmentLinkable ? (
-              <Link href={appointmentPath(appointmentId)} className="font-medium hover:underline">
+              <Link href={appointmentPath(appointmentId)} className="inline-flex min-h-[44px] items-center font-medium hover:underline">
                 Open the appointment
               </Link>
             ) : (
-              <Link href="/calendar" className="font-medium hover:underline">
+              <Link href="/calendar" className="inline-flex min-h-[44px] items-center font-medium hover:underline">
                 Open the calendar
               </Link>
             )}
             {refusal === "check_failed" && appointmentId && (
               <Link
                 href={`/clients/${encodeURIComponent(id)}/sessions/new?appointment_id=${encodeURIComponent(appointmentId)}`}
-                className="font-medium hover:underline"
+                className="inline-flex min-h-[44px] items-center font-medium hover:underline"
               >
                 Try again
               </Link>
@@ -223,11 +223,11 @@ export default async function NewSessionPage({
             {offerUnlinkedStart && (
               // The copy offers starting WITHOUT the appointment; this is that path
               // (no appointment_id, so nothing is linked to a missing booking).
-              <Link href={`/clients/${encodeURIComponent(id)}/sessions/new`} className="font-medium hover:underline">
+              <Link href={`/clients/${encodeURIComponent(id)}/sessions/new`} className="inline-flex min-h-[44px] items-center font-medium hover:underline">
                 Start a session without an appointment
               </Link>
             )}
-            <Link href={`/clients/${encodeURIComponent(id)}`} className="min-w-0 [overflow-wrap:anywhere] font-medium hover:underline">
+            <Link href={`/clients/${encodeURIComponent(id)}`} className="inline-flex min-h-[44px] min-w-0 items-center [overflow-wrap:anywhere] font-medium hover:underline">
               Back to {clientDisplayName(data.client)}
             </Link>
           </div>

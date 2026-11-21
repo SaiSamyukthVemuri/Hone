@@ -36,6 +36,7 @@ import {
 } from "@/lib/waitlist/b4-invitation-draft";
 import {
   adapterMissingReason,
+  BEYOND_ESTIMATE_CONFIRM_TEXT,
   type AdapterCapabilities,
 } from "@/lib/waitlist/invite-to-book-contract";
 import {
@@ -295,7 +296,7 @@ function StatefulInviteComposer(props: InviteComposerProps) {
           if (cancelled) return;
           setCapacity(
             r.ok
-              ? { status: "ok", lines: capacityLines({ fit: r.fit, outstanding: r.outstanding, open: r.open }, r.outstandingScope) }
+              ? { status: "ok", lines: capacityLines({ fit: r.fit, outstanding: r.outstanding, open: r.open }, r.outstandingScope), open: r.open }
               : { status: "unavailable" },
           );
         })
@@ -339,6 +340,65 @@ function StatefulInviteComposer(props: InviteComposerProps) {
  * admission: the first may already hold the round's allowance while its answer
  * is still on the wire.
  */
+/**
+ * What a form submission does when the estimate may be zero. At zero, only the explicit "Invite anyway" (and the composer's own Cancel) go through;
+ * Send, or an Enter key that submits through it, asks first. Above zero, or with no estimate, every submission goes through as it always did.
+ */
+export function beyondEstimateSubmitStep(input: { atZero: boolean; via: string | null | undefined }): "ask" | "send" {
+  if (!input.atZero) return "send";
+  return input.via === "composer-invite-anyway" || input.via === "composer-cancel" ? "send" : "ask";
+}
+
+/**
+ * Is the confirmation showing? Two things open it: the page's own estimate reads zero and the owner pressed Send for this scope, or the SERVER found
+ * the estimate at zero and answered "needs confirmation" to a press for this scope. Cancel dismisses that particular answer; a new press makes a new
+ * answer, so it asks again.
+ */
+export function beyondEstimateConfirmOpen(input: {
+  atZero: boolean;
+  confirmFor: string | null;
+  scope: string;
+  answer: { notice: { needsConfirmation?: boolean } } | null;
+  dismissed: object | null;
+}): boolean {
+  if (input.atZero && input.confirmFor === input.scope) return true;
+  return input.answer !== null && input.answer.notice.needsConfirmation === true && input.answer !== input.dismissed;
+}
+
+/**
+ * The confirmation when the estimate is zero. "Invite anyway" submits this same form with the one explicit field the server reads; Cancel closes the
+ * confirmation and sends nothing. The button is disabled while the send is in flight, so a double press cannot send twice.
+ */
+export function BeyondEstimateConfirm({ disabled, onCancel }: { disabled: boolean; onCancel: () => void }) {
+  const { pending } = useFormStatus();
+  return (
+    <div data-testid="composer-beyond-confirm" role="alert" className="flex flex-col gap-3">
+      <p className="text-sm leading-snug">{BEYOND_ESTIMATE_CONFIRM_TEXT}</p>
+      <div className="flex flex-col gap-2 min-[480px]:flex-row">
+        <button
+          type="submit"
+          name={COMPOSER_FIELD_NAMES.allowBeyondEstimate}
+          value="true"
+          disabled={disabled || pending}
+          data-testid="composer-invite-anyway"
+          className={buttonClasses({ variant: "primary", size: "md", fullWidth: true })}
+        >
+          {pending ? "Sending\u2026" : "Invite anyway"}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={pending}
+          data-testid="composer-beyond-cancel"
+          className={buttonClasses({ variant: "quiet", size: "md", fullWidth: true })}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function SendInvitationButton({
   disabled,
   describedBy,
@@ -423,8 +483,10 @@ export type InviteComposerProps = {
 export type CapacityView =
   | { status: "idle" }
   | { status: "loading" }
-  | { status: "ok"; lines: string[] }
+  | { status: "ok"; lines: string[]; /** Invitations the estimate still allows for this scope. 0 means "Invite anyway" asks first. */ open?: number }
   | { status: "unavailable" };
+
+export { BEYOND_ESTIMATE_CONFIRM_TEXT };
 
 /**
  * The rendering half, PURE and exported so the whole surface can be proved
@@ -506,7 +568,17 @@ export function InviteComposerView({
   const answered = useInviteOutcomeFor(entryId);
   const sending = useInviteOutcomePending();
   const [sentKey, setSentKey] = useState<string | null>(null);
-  const inlineAnswer = answered !== null && sentKey !== null && sentKey === scopeKey(draft) && !sending ? answered : null;
+  // AT AN ESTIMATE OF ZERO, SEND ASKS FIRST. The estimate is advice, so it never blocks, but the owner must say "Invite anyway" explicitly. The
+  // confirmation belongs to the scope it was opened for: changing the service or the window closes it, so it can never confirm a scope nobody saw.
+  const atZero = capacity.status === "ok" && capacity.open === 0;
+  const [confirmFor, setConfirmFor] = useState<string | null>(null);
+  // THE SERVER MAY ASK TOO. If the page thought there was room but the server's own estimate is zero, it sends nothing and answers "needs
+  // confirmation"; the same confirmation then opens here (until the owner cancels it), so nothing is ever sent silently.
+  const [dismissed, setDismissed] = useState<object | null>(null);
+  const answerForScope = answered !== null && sentKey !== null && sentKey === scopeKey(draft) && !sending ? answered : null;
+  const confirming = beyondEstimateConfirmOpen({ atZero, confirmFor, scope: scopeKey(draft), answer: answerForScope, dismissed });
+  // The confirmation carries the question itself, so the bare answer is not shown beside it.
+  const inlineAnswer = answerForScope !== null && answerForScope.notice.needsConfirmation !== true ? answerForScope : null;
   // The answer is inserted ABOVE Send and pushes it down, so a press near the bottom of a phone screen left the answer (and Send) below the fold.
   // When an answer first appears, bring the pair into view with the least movement; focus stays where it was, and an unchanged answer re-rendering
   // does not scroll again (the effect follows the answer, not the render). Reduced motion gets an instant jump.
@@ -530,7 +602,14 @@ export function InviteComposerView({
       onSubmit={(e) => {
         // Cancel submits this form too, to its own binding; only Send sends a window.
         const by = (e.nativeEvent as SubmitEvent).submitter;
-        if (by?.getAttribute("data-testid") !== "composer-cancel") setSentKey(scopeKey(draft));
+        const via = by?.getAttribute("data-testid");
+        // At zero, only the explicit "Invite anyway" may send. Send itself, and an Enter key that submits through it, opens the confirmation instead.
+        if (beyondEstimateSubmitStep({ atZero, via }) === "ask") {
+          e.preventDefault();
+          setConfirmFor(scopeKey(draft));
+          return;
+        }
+        if (via !== "composer-cancel") setSentKey(scopeKey(draft));
       }}
       className="flex flex-col"
       data-testid="invite-composer"
@@ -811,10 +890,20 @@ export function InviteComposerView({
             control is the one a thumb reaches for; putting Cancel first in
             source order to get it visually left on a desktop would put it under
             the thumb on every phone. */}
-        <SendInvitationButton
-          disabled={sendDisabled}
-          describedBy={sendReason ? waitlistDomId(entryId, "composer-send-reason") : undefined}
-        />
+        {confirming ? (
+          <BeyondEstimateConfirm
+            disabled={sendDisabled}
+            onCancel={() => {
+              setConfirmFor(null);
+              setDismissed(answerForScope);
+            }}
+          />
+        ) : (
+          <SendInvitationButton
+            disabled={sendDisabled}
+            describedBy={sendReason ? waitlistDomId(entryId, "composer-send-reason") : undefined}
+          />
+        )}
         </div>
         <button
           // Submits to its OWN binding, so dismissing is a real action rather

@@ -130,6 +130,8 @@ export type MachineOutcome<T> =
   | {
       ok: false;
       error: string;
+      /** The database's SQLSTATE, when the failing call reported one (set by registerStudioMachine). */
+      dbCode?: string;
       /**
        * The request's fate is UNKNOWN - it may have committed.
        *
@@ -327,7 +329,7 @@ export async function registerStudioMachine(
     p_installed_options: input.installedOptions ?? [],
   });
   if (error) {
-    return { ok: false, error: fail(error, "Could not register the machine.") };
+    return { ok: false, error: fail(error, "Could not register the machine."), ...(error.code ? { dbCode: String(error.code) } : {}) };
   }
   return { ok: true, value: String(data) };
 }

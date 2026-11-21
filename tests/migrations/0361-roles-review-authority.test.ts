@@ -9,7 +9,7 @@ import { isRepoMax } from "./helpers/migration-state";
 const UP = readFileSync("supabase/migrations/0361_roles_review_authority.sql", "utf8");
 const DOWN = readFileSync("supabase/rollbacks/0361_roles_review_authority.down.sql", "utf8");
 const PREV = readFileSync("supabase/migrations/0360_roles_save_inert_denial.sql", "utf8");
-const SEALED_0360_BODY_MD5 = "e1f64999b3fda06d586261447acbaca0"; // prosrc of perm_run_changes after 0360 (recorded in the 0360 PR)
+const SEALED_0360_BODY_MD5 = "6650cbbb16c82bdcffd4f50da443c6a5"; // prosrc of perm_run_changes after 0360 (recorded in the 0360 PR)
 
 const bodyOf = (sql: string, name: string) => {
   const from = sql.indexOf(`create or replace function public.${name}(`);
@@ -72,6 +72,23 @@ describe("0361 source contract", () => {
     const added = next.filter((l) => !prevSet.has(l.trim())).join("\n");
     for (const must of ["v_applies", "v_rows", "v_review", "v_hash", "review_changed", "'review_hash', v_hash", "'_review'"]) expect(added).toContain(must);
     expect(added).not.toMatch(/\bnow\(\)|clock_timestamp|random\(|gen_random_uuid/);
+  });
+
+  it("a released row capped by a prerequisite is labelled capped_by_prerequisite BEFORE perm_review_timing is asked; the race raise is untouched (Codex 4623898452)", () => {
+    const body = bodyOf(UP, "perm_run_changes_reviewed");
+    const at = body.indexOf("then 'capped_by_prerequisite'");
+    const ask = body.indexOf("else public.perm_review_timing(");
+    expect(at).toBeGreaterThan(-1);
+    expect(ask).toBeGreaterThan(at);
+    const cond = body.slice(body.lastIndexOf("'timing', case", at), at);
+    // only a written, released row; never the narrow-release raise (that stays perm_review_timing's); only when the effective value is below the request
+    // because a direct prerequisite's effective value is below it
+    for (const must of ["(r.value ->> 'written')::boolean", "rel.released_at is not null", "rel.release_kind = 'narrow'", "<> r.value ->> 'requested'", "unnest(pcc.requires)", "perm_rank(v_after_eff"]) expect(cond).toContain(must);
+    // perm_review_timing itself keeps its single race raise and gains no new branch or argument
+    const timing = bodyOf(UP, "perm_review_timing");
+    expect(timing.match(/review_changed/g)?.length).toBe(1);
+    expect(timing).not.toContain("capped_by_prerequisite");
+    expect(headOf(UP, "perm_review_timing")).toContain("p_released boolean, p_kind text, p_snapshot text, p_requested text, p_effective_before text, p_effective_after text, p_written boolean, p_active boolean");
   });
 
   it("every new function is SECURITY DEFINER or immutable-pure, with an empty search_path", () => {

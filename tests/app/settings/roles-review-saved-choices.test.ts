@@ -30,9 +30,11 @@ const people = [{ id: "p2", name: "Alex Practitioner", email: "alex@example.test
 const failing = async () => ({ ok: false as const, error: { code: "unavailable" as const } });
 const previewOk = async () => ({ ok: true as const, preview: { version: 3, roles: [] } });
 const emptyDiff = { changes: [], fixedNarrowings: [], widened: 0, narrowed: 0, newlyEnabledSensitive: 0 };
+// The saved-choice summary now comes from the SERVER (read at the previewed version), so a preview carries `choices`.
+const serverChoices = [{ role: "practitioner" as const, key: KEY, label: "Cancel appointments", from: "studio" as const, to: "off" as const }];
 const effectivePreview = {
   ok: true as const,
-  preview: { version: 7, roles: [{ role: "practitioner" as const, diff: { ...emptyDiff, narrowed: 1 }, people: [{ id: "p2", name: "Alex Practitioner", state: "active" as const }], count: 1, storedRemoved: [] }] },
+  preview: { version: 7, roles: [{ role: "practitioner" as const, diff: { ...emptyDiff, narrowed: 1 }, people: [{ id: "p2", name: "Alex Practitioner", state: "active" as const }], count: 1, storedRemoved: [] }], choices: serverChoices },
 };
 const HASH = "ab".repeat(32);
 // The table is the DATABASE's. It deliberately disagrees with the page's own saved state (saved: Whole studio; table says the owner was shown Own
@@ -100,6 +102,15 @@ async function review() {
 }
 
 describe("Codex 4582227072: the review lists the stored choices, separately from effective access", () => {
+  it("union: the Save review prints the database's table ONLY: even if a preview also carried server-read choices, the Reset/Adopt choices block is not drawn beside it", async () => {
+    const both = (() => { const p = inertPreview as unknown as { preview: Record<string, unknown> }; return { ok: true as const, preview: { ...p.preview, choices: [{ role: "practitioner", key: KEY, label: "Cancel appointments", from: "studio", to: "off" }] } }; })() as never;
+    await mount({ previewSave: async () => both });
+    await chooseOff();
+    await review();
+    expect(q('[data-testid="review-saved-choices"]')).not.toBeNull();
+    expect(q('[data-testid="preview-saved-choices"]')).toBeNull();
+    expect(q(`[data-saved-choice="practitioner:${KEY}"]`)?.textContent ?? "").not.toMatch(/Whole studio to Off/);
+  });
   it("an inert change (effective access unchanged) shows under its own heading", async () => {
     await mount({ previewSave: async () => inertPreview });
     await chooseOff();

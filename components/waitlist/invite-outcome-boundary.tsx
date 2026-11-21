@@ -129,6 +129,8 @@ export function InvitationOutcomeNotice({
 }) {
   if (!submitted) return null;
   const { notice, entryName, entryId } = submitted;
+  // "Needs confirmation" is a question for the owner, asked beside Send by the composer. It is not an outcome, so it is not announced here as one.
+  if (notice.needsConfirmation === true) return null;
   const tone =
     notice.tone === "success"
       ? "border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200"
