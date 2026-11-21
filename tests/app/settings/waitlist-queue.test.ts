@@ -134,6 +134,8 @@ const scenario = {
   // The LIVE invitation read — the rows whose three terminal stamps are all
   // null. At most one per entry, by the 0189 unique index.
   liveInvitations: [] as Array<Record<string, unknown>>,
+  // The studio-wide expiry read (no entry-id filter): null serves the same rows as the live read; a test seeds it to put an expiry OFF the page.
+  studioExpiries: null as Array<Record<string, unknown>> | null,
   // The REDEEMED invitation read, asked separately.
   redeemedInvitations: [] as Array<Record<string, unknown>>,
   invitationsError: null as { code: string } | null,
@@ -189,6 +191,7 @@ function reset() {
     removeResult: "removed",
     removeError: null,
     liveInvitations: [],
+    studioExpiries: null,
     redeemedInvitations: [],
     invitationsError: null,
     services: [],
@@ -385,6 +388,11 @@ vi.mock("@/lib/supabase/server", () => ({
           // one asks `is null` on all three terminal stamps; the REDEEMED one
           // asks `not redeemed_at is null`.
           const asksRedeemed = shape.filters.some((f) => f[0] === "not");
+          // The studio-wide expiry summary read: the live predicate with NO entry-id list.
+          if (!asksRedeemed && !shape.filters.some((f) => f[0] === "in")) {
+            const src = scenario.studioExpiries ?? scenario.liveInvitations;
+            return { data: src.map((r) => ({ expires_at: r.expires_at })), error: null };
+          }
           return {
             data: asksRedeemed ? scenario.redeemedInvitations : scenario.liveInvitations,
             error: null,
@@ -1867,7 +1875,9 @@ describe("action visibility follows the row's lifecycle state", () => {
     scenario.rows = [entry({ status: "waiting" })];
     scenario.count = 1;
     await render();
-    expect(queries.filter((q) => q.table === "new_client_waitlist_invitations")).toHaveLength(0);
+    // The studio-wide expiry summary (expires_at only) is a constant-cost read of its own, not a per-row one; it is counted separately.
+    expect(queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns !== "expires_at")).toHaveLength(0);
+    expect(queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns === "expires_at")).toHaveLength(1);
     // Five section reads, plus the needs-attention card's own read (id,name).
     expect(queries.filter((q) => q.table === "new_client_waitlist_entries" && q.columns !== "id,name" && q.columns !== "id,name,released_at")).toHaveLength(5);
     expect(queries.filter((q) => q.table === "new_client_waitlist_entries" && q.columns === "id,name")).toHaveLength(1);
@@ -1883,7 +1893,7 @@ describe("action visibility follows the row's lifecycle state", () => {
     // (0313), which exists only because an invited entry does. Identity comes
     // from the 0189 unique index, never from ordering — so none of them
     // carries an `order`.
-    const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations");
+    const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns !== "expires_at");
     expect(inv).toHaveLength(3);
     for (const q of inv) expect(q.orders).toEqual([]);
   });
@@ -1895,7 +1905,7 @@ describe("action visibility follows the row's lifecycle state", () => {
     scenario.count = 1;
     await render();
     // The declined-times card's own read (entry_id,declined_at) is a separate, card-level read.
-    const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns !== "entry_id,declined_at");
+    const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns !== "entry_id,declined_at" && q.columns !== "expires_at");
     expect(inv).toHaveLength(2);
     for (const q of inv) expect(q.orders).toEqual([]);
   });
@@ -3173,6 +3183,40 @@ describe("each active invitation shows its exact expiry and the time left", () =
     expect((html.match(/data-testid="row-invitation-expiry"/g) ?? []).length).toBe(3);
   });
 
+  it("THE SUMMARY IS STUDIO-WIDE: an earlier expiry OFF this page is the next one, and is counted", async () => {
+    // This page holds one invited row expiring in 5 days. Another invitation, on a page not shown, expires in 2 hours.
+    scenario.rows = [entry({ id: "e-on-page", status: "invited" })];
+    scenario.count = 150;
+    scenario.liveInvitations = [{ entry_id: "e-on-page", expires_at: at("2026-08-28T09:00:00Z") }];
+    scenario.studioExpiries = [
+      { expires_at: at("2026-08-28T09:00:00Z") },
+      { expires_at: at("2026-08-23T11:00:00Z") }, // off the page, 2 h
+      { expires_at: at("2026-08-23T20:00:00Z") }, // off the page, 11 h
+    ];
+    const html = await render();
+    const summary = html.match(/data-testid="invitation-expiry-summary"[^>]*>(.*?)<\/p>/s)?.[1] ?? "";
+    expect(summary).toContain("in 2 h.");
+    expect(summary).toContain("2 expire within 24 hours");
+    // …and the read is one small one: expires_at only, scoped to the studio, no entry id and no name.
+    const reads = queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns === "expires_at");
+    expect(reads).toHaveLength(1);
+    expect(reads[0]!.filters.some((f) => f[0] === "in")).toBe(false);
+    expect(reads[0]!.filters.find((f) => f[0] === "eq" && f[1] === "studio_id")?.[2]).toBe(STUDIO_ID);
+    for (const col of ["redeemed_at", "expired_at", "released_at", "declined_at"]) {
+      expect(reads[0]!.filters.some((f) => f[0] === "is" && f[1] === col), col).toBe(true);
+    }
+  });
+
+  it("over the cap the summary is withheld, never partial", async () => {
+    scenario.rows = [entry({ id: "e-on-page", status: "invited" })];
+    scenario.count = 1;
+    scenario.liveInvitations = [{ entry_id: "e-on-page", expires_at: at("2026-08-28T09:00:00Z") }];
+    scenario.studioExpiries = Array.from({ length: 5001 }, () => ({ expires_at: at("2026-08-28T09:00:00Z") }));
+    const html = await render();
+    expect(html).not.toContain("invitation-expiry-summary");
+    expect(html).toContain("row-invitation-expiry"); // the per-row line is unaffected
+  });
+
   it("a deadline that has passed says so, and is not counted as about to expire", async () => {
     scenario.rows = [entry({ id: "e-old", status: "invited" }), entry({ id: "e-new", status: "invited" })];
     scenario.count = 2;
@@ -3222,9 +3266,11 @@ describe("each active invitation shows its exact expiry and the time left", () =
     // The only writer of the per-row expiry map is the live-row loop, and it copies the row's own column.
     const writes = [...src.matchAll(/expiryByEntry\.set\(([^)]*)\)/g)].map((m) => m[1]!.replace(/\s+/g, ""));
     expect(writes).toEqual(["inv.entry_id,inv.expires_at"]);
-    // Both the per-row line and the summary read that same map, and nothing else.
+    // The per-row line reads that map.
     expect(src).toMatch(/rowExpiry\(\s*raw,/);
-    expect(src).toMatch(/expirySummary\(\s*\[\.\.\.expiryByEntry\.values\(\)\]/);
+    // The summary is NOT built from the page's rows: it reads its own studio-wide set.
+    expect(src).toMatch(/expirySummary\(\s*studioExpiries,/);
+    expect(src).not.toMatch(/expirySummary\(\s*\[\.\.\.expiryByEntry/);
     // The expiry is never derived from an issue time, a fixed TTL or a client clock.
     const helper = readFileSync(
       path.join(process.cwd(), "lib/waitlist/invitation-expiry-display.ts"),

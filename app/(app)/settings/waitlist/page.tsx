@@ -90,6 +90,8 @@ import { cookies } from "next/headers";
 import { LIFECYCLE_NOTICE_COOKIE, lifecycleNoticeCopy } from "@/lib/waitlist/lifecycle-notice";
 import { dbErrorCode } from "@/lib/logging/error-class";
 import { OwnerOnlyNotice } from "@/components/settings/view-heading";
+/** The most live invitations the studio-wide expiry summary will read; beyond it the summary is withheld, never partial. */
+const EXPIRY_SUMMARY_CAP = 5000;
 
 // ===========================================================================
 // NEW-CLIENT WAITLIST — OPERATOR QUEUE (WAIT-02)
@@ -812,9 +814,38 @@ export default async function WaitlistSettingsPage({
     }
   }
 
-  const expirySummaryLine = summaryText(
-    expirySummary([...expiryByEntry.values()], studio.timezone, now),
-  );
+  // THE SUMMARY IS STUDIO-WIDE, NOT PAGE-WIDE. The rows above are one page of the invited section, so a summary built from them would name
+  // the wrong "next" expiry and undercount "within 24 hours" once an invitation on another page expires sooner. This is its own small
+  // owner-RLS read of `expires_at` ONLY (no entry id, no name) over every LIVE invitation of the studio, with the same four-column predicate
+  // as the one-live-per-entry index. Over the cap it is not a partial answer: no summary is shown, and no summary is shown when it fails.
+  let studioExpiries: string[] | null = null;
+  {
+    const all = await supabase
+      .from("new_client_waitlist_invitations")
+      .select("expires_at")
+      .eq("studio_id", studio.id)
+      .is("redeemed_at", null)
+      .is("expired_at", null)
+      .is("released_at", null)
+      .is("declined_at", null)
+      .limit(EXPIRY_SUMMARY_CAP + 1);
+    if (all.error || !Array.isArray(all.data) || all.data.length > EXPIRY_SUMMARY_CAP) {
+      if (all.error) {
+        console.error(
+          JSON.stringify({
+            event: "waitlist_invitation_expiry_summary_read_failed",
+            studioId: studio.id,
+            code: all.error.code ?? "unknown",
+            timestamp: new Date().toISOString(),
+          }),
+        );
+      }
+    } else {
+      studioExpiries = (all.data as Array<{ expires_at: string }>).map((r) => r.expires_at);
+    }
+  }
+  const expirySummaryLine =
+    studioExpiries === null ? null : summaryText(expirySummary(studioExpiries, studio.timezone, now));
 
   return (
     <div className="flex flex-col gap-6">
