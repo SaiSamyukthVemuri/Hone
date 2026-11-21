@@ -55,7 +55,7 @@ export function tallyItems(rows: readonly ItemRow[], now: number = Date.now()): 
         t.unknown += 1;
         t.unknownRetryable += 1;
       }
-      // A retry found the invitation already over (0364): it ended, it did not fail to send.
+      // A retry found the invitation already over: it ended, it did not fail to send.
       else if (r.reason_class === "invitation_ended" || r.reason_class === "invitation_expired") t.ended += 1;
       else t.otherFailed += 1;
     }

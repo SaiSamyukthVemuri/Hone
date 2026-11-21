@@ -6,14 +6,14 @@ import { replaceInvitation, type SettleOutcome } from "@/lib/waitlist/over-invit
 import { retryDeliveries } from "@/lib/waitlist/over-invite-retry";
 import { SENDING_WINDOW_MS, tallyItems } from "@/lib/waitlist/over-invite-progress";
 
-// Migration 0364 changes the applied 0363 replace in three ways this app must follow: (1) two new closed refusal codes, invitation_ended and
-// invitation_expired; (2) a replaced FAILED item starts a new attempt, so it goes back to `issued` with its old outcome cleared (0363 left it `failed`);
-// (3) the lock order, which is invisible here. These tests pin what the app does with (1) and (2), and that it works both before and after 0364.
+// The current replace command differs from the older one in three ways this app must follow: (1) two new closed refusal codes, invitation_ended and
+// invitation_expired; (2) a replaced FAILED item starts a new attempt, so it goes back to `issued` with its old outcome cleared (the older one left it `failed`);
+// (3) the lock order, which is invisible here. These tests pin what the app does with (1) and (2), and that it works with the older and the current command.
 
 const issued = { invitationId: "inv-2", rawToken: "t", issuedAt: new Date(), expiresAt: new Date(), deliveryEmail: "a@b.test", deliveryName: null };
 const target = [{ entryId: "e", itemId: "i", studioId: "s" }];
 
-describe("the port's closed refusal set knows the 0364 codes", () => {
+describe("the port's closed refusal set knows the ended and expired codes", () => {
   const rpc = (result: string) => ({ rpc: async () => ({ data: [{ result }], error: null }) }) as never;
   const input = { studioId: "s", actorUserId: "a", entryId: "e", expectedInvitationId: "inv-1" };
   for (const code of ["invitation_ended", "invitation_expired"]) {
@@ -87,7 +87,7 @@ function world(replaceLeavesState: "failed" | "issued") {
   return { item, log, settle, replace };
 }
 
-describe("a retry settles the replacement whether the item is `failed` (0363) or `issued` (0364) after the replace", () => {
+describe("a retry settles the replacement whether the item is `failed` (older replace) or `issued` (current replace) after the replace", () => {
   for (const after of ["failed", "issued"] as const) {
     it(`accepted delivery is recorded sent (item ${after} after replace)`, async () => {
       const w = world(after);
@@ -153,7 +153,7 @@ describe("a retry settles the replacement whether the item is `failed` (0363) or
   });
 });
 
-describe("the progress view of an item a 0364 replace has reset", () => {
+describe("the progress view of an item a replace has reset", () => {
   const now = Date.parse("2026-11-21T12:00:00Z");
   const iso = (msAgo: number) => new Date(now - msAgo).toISOString();
   it("a replaced item (issued, fresh, no reason) is Sending, not refused and not failed", () => {

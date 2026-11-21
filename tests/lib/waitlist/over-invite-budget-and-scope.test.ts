@@ -207,7 +207,7 @@ describe("what is retryable: only the right rows", () => {
     mixed("5", "issued", null),
     mixed("6", "sent", null),
     mixed("7", "skipped", "owner_stopped"),
-    // 0364: a retry that found the invitation over. A SAFE STOP: no retry kind may ever select these again.
+    // A retry that found the invitation over. A SAFE STOP: no retry kind may ever select these again.
     mixed("8", "failed", "invitation_expired"),
     mixed("9", "failed", "invitation_ended"),
   ];
@@ -222,7 +222,7 @@ describe("what is retryable: only the right rows", () => {
   });
 });
 
-describe("an invitation found over is a SAFE STOP (0364): recorded once, counted ended, never retried or re-claimed", () => {
+describe("an invitation found over is a SAFE STOP: recorded once, counted ended, never retried or re-claimed", () => {
   for (const code of ["invitation_expired", "invitation_ended"]) {
     it(`${code}: one replace attempt, no delivery, and no later click selects the item again`, async () => {
       const { loadRefusedTargets, loadUnknownTargets } = await import("@/lib/waitlist/over-invite-shown");
@@ -403,7 +403,7 @@ describe("the retry mark gates everything after it", () => {
       expect(r[0]).toMatchObject({ status: "skipped", reason: "no_longer_retryable" });
     });
   }
-  it("the sent settle names the new invitation and no expected state (0364 sets the item back to issued, 0363 left it failed)", async () => {
+  it("the sent settle names the new invitation and no expected state (a replaced item goes back to issued; older behaviour left it failed)", async () => {
     const calls: string[] = [];
     await retryDeliveries(
       {
@@ -416,8 +416,8 @@ describe("the retry mark gates everything after it", () => {
       },
       [{ entryId: "e", itemId: "i-sent", studioId: "s" }],
     );
-    // The mark names the state seen (unknown). After the replace the item is `failed` (0363) or `issued` (0364), so the later settle names no state;
-    // the new invitation id is its guard (see over-invite-0364-compat.test.ts).
+    // The mark names the state seen (unknown). After the replace the item is `failed` (older replace) or `issued` (current replace), so the later settle names no state;
+    // the new invitation id is its guard (see over-invite-replace-compat.test.ts).
     expect(calls).toEqual(["failed:retry_started:unknown", "sent:null:undefined"]);
   });
 });

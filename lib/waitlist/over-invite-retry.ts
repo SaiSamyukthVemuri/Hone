@@ -14,7 +14,7 @@ import { SPACING_MS, reasonFor, type DeliveryState } from "./over-invite-worker"
 // guarantee is the rule below: NOTHING is delivered unless replace answered "replaced". An item left `retry_started` by a crash is never offered again.
 
 export type RetryKind = "refused" | "unknown";
-/** The replace refusals that mean the invitation is over (0364). Recorded under their own reason class; the progress view reads them as "ended". */
+/** The replace refusals that mean the invitation is over. Recorded under their own reason class; the progress view reads them as "ended". */
 const ENDED_REASONS: ReadonlySet<string> = new Set(["invitation_ended", "invitation_expired"]);
 const ORIGINAL_REASON: Record<RetryKind, string> = { refused: "delivery_refused", unknown: "delivery_unknown" };
 
@@ -106,7 +106,7 @@ async function retryOne(deps: RetryDeps, target: SettleTarget, entryId: string):
     const s = await deps.settle(target, "sent", null, undefined, rep.issued.invitationId);
     return s.ok && s.result === "settled" ? { entryId, status: "sent" } : { entryId, status: "failed", reason: "settle_failed" };
   }
-  // WHAT STATE THE ITEM IS IN AFTER A REPLACE IS NOT OURS TO ASSUME. Under 0363 it stayed `failed` (only its invitation moved); from 0364 the replace
+  // WHAT STATE THE ITEM IS IN AFTER A REPLACE IS NOT OURS TO ASSUME. Older replace behaviour left it `failed` (only its invitation moved); the current one
   // starts a new attempt and sets it back to `issued`. So the settles below name no expected STATE; the expected INVITATION (the one just issued) is the
   // guard, and it is unique to this attempt: a late answer for any earlier invitation can never settle this one. A settle that does not answer
   // `settled` is reported as not recorded, never as sent.
