@@ -363,7 +363,7 @@ function invitationUrlFor(rawToken: string): string {
   return `${getRequiredAppOrigin()}/invitation/${rawToken}`;
 }
 
-async function deliverInvitation(args: {
+export async function deliverInvitation(args: {
   studio: DeliveryStudio;
   invitationId: string;
   recipientEmail: string;

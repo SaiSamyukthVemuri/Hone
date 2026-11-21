@@ -234,6 +234,8 @@ export const BROWSER_GROUPS = {
       // moves waiting -> invited, the composer unmounts, and the delivery
       // disposition must still be on screen. Same waitlist surface, same group.
       "waitlist-invitation-delivery-status.spec.ts",
+      // The owner reaches invite-beyond-the-estimate through normal navigation, confirms once, and every chosen client is sent exactly once.
+      "waitlist-over-invite.spec.ts",
       // SENTRY-BOOKING-ERR-01: the /book/[slug] error boundary contains a failed
       // or stale Server Action and recovers. A diff to app/book/** selects this
       // group, which is the diff that can break it.
