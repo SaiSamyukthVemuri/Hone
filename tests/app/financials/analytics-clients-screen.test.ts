@@ -285,6 +285,40 @@ describe("the Clients tab: money on a visit with no client recorded", () => {
   });
 });
 
+describe("the Clients tab: a no-client visit whose payment is unverified", () => {
+  it("adds nothing to the no-client money, even though part of a payment is on record", () => {
+    // 20.00 paid in cash against a 90.00 quote, no attestation: partial_payment_unverified, so the visit is UNKNOWN with 2000 cents recorded.
+    const extra = [
+      ...appointments,
+      appt("done-noclient", "completed", "2026-11-10T15:00:00Z", "pr-1", null as never),
+      appt("done-noclient-partial", "completed", "2026-11-11T15:00:00Z", "pr-1", null as never),
+    ];
+    const withMoney = {
+      ...money,
+      settlementRows: [
+        ...money.settlementRows,
+        { appointmentId: "done-noclient", method: "paid_cash", amountCents: 4000, currency: "cad", quotedAmountCents: 4000 },
+        { appointmentId: "done-noclient-partial", method: "paid_cash", amountCents: 2000, currency: "cad", quotedAmountCents: 9000 },
+      ],
+    };
+    const v = view({}, { current: { ok: true, value: { appointments: extra, money: { ok: true, value: withMoney as never } } }, followThrough: { ok: true, value: { past: extra, future: [] } } });
+    const r = v.clientsReconciliation;
+    expect(r && r.available && r.value.noClientPaidCents).toBe(4000);
+  });
+});
+
+describe("the Clients tab: the sort indicator under a failed read", () => {
+  const paidHeader = (html: string) => [...html.matchAll(/<th scope="col"([^>]*)>([\s\S]*?)<\/th>/g)].find((m) => m[2]!.includes("Paid in period"))?.[1] ?? "";
+  it("the Paid column is not marked descending while the period money could not be read", () => {
+    const v = view({}, { current: { ok: true, value: { appointments, money: { ok: false, reason: "read_failed" } } } as never });
+    expect(table(v)?.sort).toBe("spend");
+    expect(paidHeader(render(v))).not.toContain("aria-sort");
+  });
+  it("and it IS marked descending when the money was read", () => {
+    expect(paidHeader(render(view()))).toContain('aria-sort="descending"');
+  });
+});
+
 describe("the Clients tab: the first-visit column", () => {
   it("is headed First visit, because it is the first completed visit recorded in Hone, not when the client record was made", () => {
     const html = render(view());
