@@ -6,7 +6,8 @@ import { adminQuery, closePool, resolveLocalDbUrl, seedStudio } from "./helpers/
 const q = async <T = any>(text: string, params: unknown[] = []): Promise<T[]> => (await adminQuery(text, params)).rows as T[];
 afterAll(async () => { await closePool(); });
 
-// 0364 -- replace_waitlist_invitation: round-before-invitation lock order, and a replace is for a LIVE invitation only (Codex P1 / P2 on 0363).
+// 0364 -- replace_waitlist_invitation: the round is locked first (no deadlock with redemption), a replace is for a LIVE invitation only, and a replaced item starts a new
+// attempt (Codex P1 / P2 / P3 on 0363).
 // Synthetic data, owned local stack. NOT YET RUN: written against the 0363 helpers; a lane must run it on the T3 stack and the mutants (mutants/).
 const day = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
 let n = 0;
@@ -62,7 +63,7 @@ describe("P2: a replace is for a LIVE invitation only", () => {
 
 // P1: two sessions. D takes redemption's lock order on the same invitation (the invitation's round FOR UPDATE, then the invitation FOR UPDATE) while R replaces
 // it. On 0363 R holds the invitation (inside release) and waits for the round while D holds the round and waits for the invitation: a deadlock (40P01).
-// On 0364 R takes the round first, so it waits BEFORE touching the invitation and D gets the invitation.
+// On 0364 R takes the round right after the studio, so it waits BEFORE touching the entry or the invitation and D gets the invitation.
 describe("P1: a replace and a redemption on one invitation never deadlock", () => {
   it("D holds the round, R (replace) starts, D then takes the invitation: no 40P01, D proceeds, R completes after D commits", async () => {
     const l = await seedLive();
@@ -89,4 +90,100 @@ describe("P1: a replace and a redemption on one invitation never deadlock", () =
       await D.end(); await R.end();
     }
   }, 30_000);
+});
+
+describe("lock order with the other takers", () => {
+  it("a legacy invitation (no round) and a redemption-style invitation lock: no deadlock, the replace completes after the lock is released", async () => {
+    const l = await seedLive();
+    await q(`update public.new_client_waitlist_invitations set admission_round_id = null where id = $1`, [l.invId]); // a pre-0192 style invitation: redemption locks only the invitation
+    const url = resolveLocalDbUrl();
+    const D = new pg.Client({ connectionString: url }); const R = new pg.Client({ connectionString: url });
+    await D.connect(); await R.connect();
+    try {
+      await D.query("begin");
+      await D.query(`select 1 from public.new_client_waitlist_invitations where id = $1 for update`, [l.invId]);
+      const rp = R.query(`select * from public.replace_waitlist_invitation($1,$2,$3,$4)`, [l.studioId, l.userId, l.entryId, l.invId]).then((res) => ({ ok: true as const, res }), (err) => ({ ok: false as const, err }));
+      await new Promise((r) => setTimeout(r, 1500));
+      await D.query("commit");
+      const out = await rp;
+      if (!out.ok) expect((out.err as any).code).not.toBe("40P01");
+      expect(out.ok && out.res.rows[0].result).toBe("replaced");
+    } finally { try { await D.query("rollback"); } catch { /* ended */ } await D.end(); await R.end(); }
+  }, 30_000);
+  it("entry-then-invitation takers (release, decline, expire) are not inverted: D holds the entry and asks for the invitation while a replace is waiting: no 40P01", async () => {
+    const l = await seedLive();
+    const url = resolveLocalDbUrl();
+    const D = new pg.Client({ connectionString: url }); const R = new pg.Client({ connectionString: url });
+    await D.connect(); await R.connect();
+    try {
+      await D.query("begin");
+      await D.query(`select 1 from public.new_client_waitlist_entries where id = $1 for update`, [l.entryId]);
+      const rp = R.query(`select * from public.replace_waitlist_invitation($1,$2,$3,$4)`, [l.studioId, l.userId, l.entryId, l.invId]).then((res) => ({ ok: true as const, res }), (err) => ({ ok: false as const, err }));
+      await new Promise((r) => setTimeout(r, 1500));
+      let dErr: any = null;
+      try { await D.query(`select 1 from public.new_client_waitlist_invitations where id = $1 for update`, [l.invId]); } catch (e) { dErr = e; }
+      expect(dErr?.code).toBeUndefined();
+      await D.query("commit");
+      const out = await rp;
+      if (!out.ok) expect((out.err as any).code).not.toBe("40P01");
+      expect(out.ok && out.res.rows[0].result).toBe("replaced");
+    } finally { try { await D.query("rollback"); } catch { /* ended */ } await D.end(); await R.end(); }
+  }, 30_000);
+});
+
+describe("P3: a replaced item starts a new attempt", () => {
+  async function withItem() {
+    const l = await seedLive();
+    const item = (await q(`select id, state, attempts from public.waitlist_invitation_batch_items where entry_id = $1`, [l.entryId]))[0];
+    return { l, itemId: item.id as string };
+  }
+  const settle = (l: L, itemId: string, outcome: string, reason: string | null, inv: string) =>
+    q<{ settle_waitlist_batch_item: string }>(`select public.settle_waitlist_batch_item($1,$2,$3,$4,$5,null,$6)`, [itemId, l.studioId, l.entryId, outcome, reason, inv]).then((r) => r[0].settle_waitlist_batch_item);
+  const row = async (itemId: string) => (await q(`select state, invitation_id, reason_class, settled_at, attempts, issued_at from public.waitlist_invitation_batch_items where id = $1`, [itemId]))[0];
+  it("a FAILED item replaced: issued on the new invitation, old outcome cleared, issued_at = the NEW invitation's issued_at, attempts + 1, and settle unknown then succeeds", async () => {
+    const { l, itemId } = await withItem();
+    const before = (await row(itemId)).attempts;
+    expect(await settle(l, itemId, "failed", "provider_error", l.invId)).toBe("settled");
+    const r = await replace(l);
+    expect(r[0].result).toBe("replaced");
+    const it = await row(itemId);
+    expect(it).toMatchObject({ state: "issued", invitation_id: r[0].invitation_id, reason_class: null, settled_at: null, attempts: before + 1 });
+    expect(new Date(it.issued_at).getTime()).toBe(new Date(r[0].issued_at).getTime());
+    expect(await settle(l, itemId, "unknown", "delivery_unconfirmed", r[0].invitation_id)).toBe("settled");
+    expect((await row(itemId)).state).toBe("unknown");
+  });
+  it("a replaced UNKNOWN item is reset the same way", async () => {
+    const { l, itemId } = await withItem();
+    expect(await settle(l, itemId, "unknown", "delivery_unconfirmed", l.invId)).toBe("settled");
+    const r = await replace(l);
+    expect(r[0].result).toBe("replaced");
+    expect(await row(itemId)).toMatchObject({ state: "issued", invitation_id: r[0].invitation_id, reason_class: null, settled_at: null });
+  });
+  it("a claim INSIDE the lease does not sweep the replaced item; one AFTER the lease does", async () => {
+    const { l, itemId } = await withItem();
+    expect(await settle(l, itemId, "failed", "provider_error", l.invId)).toBe("settled");
+    const r = await replace(l);
+    expect(r[0].result).toBe("replaced");
+    await q(`select * from public.claim_waitlist_batch_items(1,1,600)`); // lease 600 s: the fresh issued_at is inside it
+    expect((await row(itemId)).state).toBe("issued");
+    await q(`update public.waitlist_invitation_batch_items set issued_at = now() - interval '1 hour' where id = $1`, [itemId]);
+    await q(`select * from public.claim_waitlist_batch_items(1,1,600)`);
+    expect(await row(itemId)).toMatchObject({ state: "unknown", reason_class: "delivery_unconfirmed" });
+  });
+  it("a late answer for the OLD invitation stays state_changed and changes nothing", async () => {
+    const { l, itemId } = await withItem();
+    expect(await settle(l, itemId, "failed", "provider_error", l.invId)).toBe("settled");
+    const r = await replace(l);
+    const before = await row(itemId);
+    expect(await settle(l, itemId, "sent", null, l.invId)).toBe("state_changed");
+    expect(await row(itemId)).toEqual(before);
+    expect(r[0].invitation_id).not.toBe(l.invId);
+  });
+  it("the refusal set stays closed: every result string is a known one", async () => {
+    const known = new Set(["replaced","not_owner","not_found","no_live_invitation","invitation_redeemed","invitation_ended","invitation_expired","invalid_service","pending_owner_review","state_changed"]);
+    const l = await seedLive();
+    const outs = [(await replace(l, randomUUID()))[0].result, (await q(`select * from public.replace_waitlist_invitation($1,$2,$3,$4)`, [l.studioId, randomUUID(), l.entryId, l.invId]))[0].result,
+      (await q(`select * from public.replace_waitlist_invitation($1,$2,$3,$4)`, [l.studioId, l.userId, randomUUID(), l.invId]))[0].result];
+    for (const o of outs) expect(known.has(o) || /^refused:[a-z_]+$/.test(o), o).toBe(true);
+  });
 });

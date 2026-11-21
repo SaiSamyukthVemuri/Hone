@@ -1,4 +1,4 @@
--- 0364 -- replace_waitlist_invitation: round-before-invitation lock order (no deadlock with redemption) and refusal of an ended or elapsed invitation.
+-- 0364 -- replace_waitlist_invitation: the round is locked first (no deadlock with redemption), an ended or elapsed invitation is refused, and a replaced item starts a new attempt.
 -- Forward fix to the applied 0363 (frozen). One function redefined; nothing else touched. Results gain two closed codes: invitation_ended, invitation_expired.
 begin;
 set local lock_timeout = '5s';
@@ -17,18 +17,16 @@ begin
   -- THE STUDIO LOCK FIRST, the same outer mutex admit and create take, so two replaces (or a replace and an admit) in one studio
   -- serialise instead of deadlocking on the entry rows (40P01). Order everywhere: owner -> studio -> entry.
   perform 1 from public.studios s where s.id = p_studio_id for no key update;
-  -- 0364 (Codex P1 on 0363): THE LOCK ORDER IS studio -> round -> invitation -> entry, the order redemption already takes (redeem_new_client_waitlist_
-  -- invitation_verified: the invitation's round, THEN the invitation). 0363 locked the invitation (inside release) first and reached the round only at
-  -- issue, so a redemption holding the round and waiting for the invitation could deadlock with a replace holding the invitation and waiting for the
-  -- round (40P01, uncaught). The unlocked read only discovers WHICH round and invitation to lock; every fact is re-read under the locks below.
+  -- 0364 (Codex P1 on 0363): THE ROUND IS LOCKED RIGHT AFTER THE STUDIO, before the entry and before any release. Order: studio -> round -> entry -> invitation.
+  -- Redemption (redeem_new_client_waitlist_invitation_verified) takes the invitation's round and THEN the invitation; 0363 reached the round only at issue,
+  -- AFTER release had locked the invitation, so a replace holding the invitation and waiting for the round could deadlock with a redemption holding the
+  -- round and waiting for the invitation (40P01, uncaught). Entry -> invitation (release, decline, expire) is kept: no path takes the round after an
+  -- entry it does not already hold under the studio lock. The unlocked read only discovers WHICH round to lock; the invitation is re-read under the locks.
   select i.id, i.admission_round_id into v_disc, v_disc_round
     from public.new_client_waitlist_invitations i
    where i.entry_id = p_entry_id and i.studio_id = p_studio_id order by i.issued_at desc limit 1;
   if v_disc_round is not null then
     perform 1 from public.studio_waitlist_admission_rounds ar where ar.id = v_disc_round for update;
-  end if;
-  if v_disc is not null then
-    perform 1 from public.new_client_waitlist_invitations i where i.id = v_disc for update;
   end if;
   select e.status into v_status from public.new_client_waitlist_entries e where e.id = p_entry_id and e.studio_id = p_studio_id for update;
   if v_status is null then return query select 'not_found'::text, null::uuid, null::text, null::timestamptz, null::timestamptz; return; end if;
@@ -92,7 +90,13 @@ begin
     if v_issue.result <> 'issued' then raise exception '%', v_issue.result using errcode = 'WA001'; end if;
     select i.issued_at, i.expires_at into v_issued, v_expires from public.new_client_waitlist_invitations i where i.id = v_issue.invitation_id;
     -- A batch item that pointed at the old invitation follows the new one.
-    update public.waitlist_invitation_batch_items bi set invitation_id = v_issue.invitation_id
+    -- 0364 (Codex P3 on 0363): the item starts a NEW delivery attempt. It is re-initialised to 'issued' with the new invitation and the NEW invitation's issued_at (a stale value would let the next claim sweep it to unknown before its delivery finishes),
+    -- the attempt count incremented, and the old attempt's outcome (reason, settled_at) cleared, so the replacement's answer can be settled (a timeout
+    -- is settled 'unknown', which settle allows only from 'issued') and the abandoned-delivery sweep (state = 'issued') covers it. The old attempt is
+    -- kept only as the attempt count: the table has no per-attempt audit column.
+    update public.waitlist_invitation_batch_items bi
+       set state = 'issued', invitation_id = v_issue.invitation_id, issued_at = v_issued,
+           attempts = bi.attempts + 1, reason_class = null, settled_at = null
      where bi.entry_id = p_entry_id and bi.invitation_id = v_old.id and bi.state in ('issued','unknown','failed');
     return query select 'replaced'::text, v_issue.invitation_id, v_issue.raw_token, v_issued, v_expires;
     return;
