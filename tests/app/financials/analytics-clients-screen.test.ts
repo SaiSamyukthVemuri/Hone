@@ -103,6 +103,34 @@ describe("the Clients tab: the table", () => {
   });
 });
 
+describe("the Clients tab: a failed or over-cap history read", () => {
+  it("never treats the period as the whole history: first visit, gap and beyond usual are Not available with the fixed sentence", () => {
+    const failed = view({}, { history: { ok: false, reason: "too_many_appointments" } });
+    const rows = table(failed)?.rows ?? [];
+    expect(rows.length).toBe(3);
+    for (const r of rows) {
+      expect(r.firstVisitDate).toBeNull();
+      expect(r.averageGapDays).toBeNull();
+      expect(r.beyondUsual).toBeNull();
+    }
+    const quinn = rows.find((r) => r.name === "Quinn Quoted");
+    expect(quinn?.lastVisitDate).toBe("2026-11-05"); // the latest visit is in the period, so it needs no history
+    expect(quinn?.periodPaidCents).toBe(9000);
+    const html = render(failed);
+    expect(html).toContain("data-history-unavailable");
+    expect(text(html)).toContain(FIGURE_UNAVAILABLE_COPY.too_many_appointments);
+    expect(table(failed)?.chipCounts.beyondUsual).toBeNull();
+  });
+  it("the Overview cards that need history are unavailable too, not a period-only figure", () => {
+    const failed = view({}, { history: { ok: false, reason: "read_failed" } });
+    expect(failed.returning.available).toBe(false);
+    expect(failed.interval.available).toBe(false);
+  });
+  it("a good history read keeps the earlier first visit", () => {
+    expect(table(view())?.rows.find((r) => r.name === "Quinn Quoted")?.firstVisitDate).toBe("2026-10-01");
+  });
+});
+
 describe("the Clients tab: sort, chip and page", () => {
   it("sorts by name, visits and last visit with the documented tiebreaks", () => {
     expect(table(view({ sort: "name" }))?.rows.map((r) => r.name)).toEqual(["Nia Noprice", "Olive Over", "Quinn Quoted"]);

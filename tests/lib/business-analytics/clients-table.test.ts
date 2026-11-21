@@ -20,6 +20,24 @@ describe("rankClientsTable", () => {
     expect(t?.rows[0].lifetimePaidCents).toBeNull();
     expect(t?.lifetime).toEqual({ available: false, reason: "too_many_appointments" });
   });
+  it("with a failed history read, first visit, average gap and beyond usual are unknown, even if figures were passed in", () => {
+    const t = val(run([fig("a", { averageGapDays: 30, beyondUsual: true })], { historyFailure: "too_many_appointments" }));
+    expect(t?.rows[0].firstVisitDate).toBeNull();
+    expect(t?.rows[0].averageGapDays).toBeNull();
+    expect(t?.rows[0].beyondUsual).toBeNull();
+    expect(t?.rows[0].lastVisitDate).toBe("2026-11-01");
+    expect(t?.chipCounts.beyondUsual).toBeNull();
+    expect(t?.history).toEqual({ available: false, reason: "too_many_appointments" });
+  });
+  it("with a failed history read the beyond-usual chip is refused, never an unfiltered or period-only table", () => {
+    expect(run([fig("a", { beyondUsual: true })], { chip: "beyond_usual", historyFailure: "read_failed" })).toEqual({ available: false, reason: "read_failed" });
+  });
+  it("with a good history read the history columns are shown and the table says so", () => {
+    const t = val(run([fig("a", { averageGapDays: 30 })]));
+    expect(t?.rows[0].firstVisitDate).toBe("2026-01-01");
+    expect(t?.rows[0].averageGapDays).toBe(30);
+    expect(t?.history).toEqual({ available: true });
+  });
   it("a null paid amount ranks last and is never counted as zero in the total", () => {
     const t = val(run([fig("a", { periodPaidCents: null }), fig("b", { periodPaidCents: 100 })]));
     expect(t?.rows.map((r) => r.name)).toEqual(["Ben", "Ana"]);

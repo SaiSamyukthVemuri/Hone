@@ -76,6 +76,8 @@ export type ClientsTable = {
   rows: ClientsTableRow[];
   /** Whether the Lifetime column could be worked out, and if not, why. Only that column is affected. */
   lifetime: { available: true } | { available: false; reason: ReadFailure };
+  /** Whether the visit-history columns (first visit, average gap, beyond usual) could be worked out, and if not, why. */
+  history: { available: true } | { available: false; reason: ReadFailure };
   /** Money kept in the period across EVERY client seen (named or not), and how many of them have no confirmed payment. */
   paidAcrossSeenCents: number;
   seenWithoutConfirmedPayment: number;
@@ -89,6 +91,8 @@ export function rankClientsTable(args: {
   page: number;
   pageSize?: number;
   lifetimeFailure: ReadFailure | null;
+  /** Set when the earlier-appointments read failed or hit its cap: first visit, average gap and beyond-usual are then unknown, and say so. */
+  historyFailure?: ReadFailure | null;
 }): Figure<ClientsTable> {
   if (!args.lookup.ok) return { available: false, reason: "read_failed" };
   const pageSize = args.pageSize ?? CLIENTS_PAGE_SIZE;
@@ -100,12 +104,13 @@ export function rankClientsTable(args: {
     if (f.periodVisits < 1) continue;
     const name = usableName(names.get(f.clientId));
     if (name === null) continue;
-    listed.push({ clientId: f.clientId, name, periodVisits: f.periodVisits, periodPaidCents: f.periodPaidCents, lifetimePaidCents: args.lifetimeFailure === null ? f.lifetimePaidCents : null, averageGapDays: f.averageGapDays, lastVisitDate: f.lastVisitDate, f });
+    listed.push({ clientId: f.clientId, name, periodVisits: f.periodVisits, periodPaidCents: f.periodPaidCents, lifetimePaidCents: args.lifetimeFailure === null ? f.lifetimePaidCents : null, averageGapDays: args.historyFailure ? null : f.averageGapDays, lastVisitDate: f.lastVisitDate, f });
   }
   const counted = args.figures.filter((f) => f.periodVisits >= 1);
+  const historyFailed = (args.historyFailure ?? null) !== null;
   const flagKnown = (pick: (f: ClientTableFigure) => boolean | null) => listed.every((r) => pick(r.f) !== null);
   const nextKnown = flagKnown((f) => f.hasNextBooking);
-  const beyondKnown = flagKnown((f) => f.beyondUsual);
+  const beyondKnown = !historyFailed && flagKnown((f) => f.beyondUsual);
   const chipCounts = {
     all: listed.length,
     noNextBooking: nextKnown ? listed.filter((r) => r.f.hasNextBooking === false).length : null,
@@ -123,14 +128,14 @@ export function rankClientsTable(args: {
     return {
       rowKey: `row-${(paged.page - 1) * paged.pageSize + i + 1}`,
       name: r.name,
-      firstVisitDate: f.firstVisitDate,
+      firstVisitDate: historyFailed ? null : f.firstVisitDate,
       periodVisits: f.periodVisits,
       periodPaidCents: f.periodPaidCents,
       lifetimePaidCents: r.lifetimePaidCents,
-      averageGapDays: f.averageGapDays,
+      averageGapDays: historyFailed ? null : f.averageGapDays,
       lastVisitDate: f.lastVisitDate,
       hasNextBooking: f.hasNextBooking,
-      beyondUsual: f.beyondUsual,
+      beyondUsual: historyFailed ? null : f.beyondUsual,
     };
   });
 
@@ -150,6 +155,7 @@ export function rankClientsTable(args: {
       rowsTo: rows.length === 0 ? 0 : (paged.page - 1) * paged.pageSize + rows.length,
       rows,
       lifetime: args.lifetimeFailure === null ? { available: true } : { available: false, reason: args.lifetimeFailure },
+      history: args.historyFailure ? { available: false, reason: args.historyFailure } : { available: true },
       paidAcrossSeenCents: counted.reduce((n, f) => n + (f.periodPaidCents ?? 0), 0),
       seenWithoutConfirmedPayment: counted.filter((f) => f.periodPaidCents === null).length,
     },
