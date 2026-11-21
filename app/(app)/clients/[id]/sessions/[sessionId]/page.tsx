@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { clientDisplayName } from "@/lib/clients/identity";
 import { FromLastVisitBand } from "@/components/from-last-visit-band";
 import { notFound } from "next/navigation";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
@@ -58,6 +59,11 @@ import {
   updateSessionPerformerAction,
 } from "./actions";
 import { createClient } from "@/lib/supabase/server";
+import { CHARTING_VIEW_STUDIOS_ENV } from "@/lib/charting/view-preference";
+import { chartingViewForPage } from "@/lib/charting/page-view";
+import { NewViewHint, NewViewOnlyStep } from "@/components/charting-view-context";
+import { ChartingViewShell, ChartingViewToggle, ChartingVisitSummary } from "@/components/charting-view-shell";
+import { buildVisitSummary } from "@/lib/charting/visit-summary";
 import { loadPreviousVisitNote } from "@/lib/sessions/previous-visit-note";
 import {
   attachChartEntryToPlanAction,
@@ -76,10 +82,12 @@ import {
   chartingLabel,
   aftercareLabel,
   completionLabel,
+  autoPostcareNote,
   postcareLabel,
 } from "@/lib/sessions/finish-appointment";
 import { MarkAppointmentCompleteControl } from "@/components/appointment/mark-complete-control";
 import { PostcareSection } from "@/components/appointment/postcare-section";
+import { shouldAutoSendPostcare } from "@/app/(app)/calendar/postcare-auto-send";
 import { ClinicalNotesSection } from "@/components/clinical-notes-section";
 import { getAppointmentSettlements } from "@/lib/billing/appointment-settlement";
 import {
@@ -566,7 +574,9 @@ export default async function SessionDetailPage({
       .map((b) => b.id),
   );
 
-  const clientFirstName = clientData.client.name.split(/\s+/)[0] || clientData.client.name;
+  // Staff screen wording: the name the client goes by (HON-58). The postcare PREVIEW below keeps the stored name on purpose (it must match the send).
+  const clientShownName = clientDisplayName(clientData.client);
+  const clientFirstName = clientShownName.split(/\s+/)[0] || clientShownName;
   // " · 1 laser session previously" / " · 3 laser sessions previously"
   const priorLaserClause =
     priorLaserCount > 0
@@ -583,29 +593,47 @@ export default async function SessionDetailPage({
   const isFinalized =
     session.record_status === "finalized" || session.record_status === "void";
 
+  // THE CURRENT / NEW VIEW SWITCH. Hidden unless the rollout setting names this studio (or says all); then nothing
+  // below changes at all and no extra read happens. When it is available, the person's own saved choice is read from
+  // their sign-in profile (a failed read means Current). It is a display choice only and decides nothing else.
+  const { toggleVisible: chartingToggleVisible, view: chartingInitialView } = await chartingViewForPage({
+    studioId: practitioner.studio_id,
+    rawGate: process.env[CHARTING_VIEW_STUDIOS_ENV],
+    readMetadata: async () => {
+      const {
+        data: { user: authUser },
+      } = await (await createClient()).auth.getUser();
+      return authUser?.user_metadata;
+    },
+  });
+
   // Everything above is server work the practitioner waits on; the render
   // below is what they finally see.
   domainSpan.end();
 
-  return (
+  const page = (
     <div className="flex flex-col gap-8">
       <div className="flex flex-col gap-3">
         <Link
           href={`/clients/${id}?tab=sessions`}
           className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
         >
-          ← {clientData.client.name}
+          ← {clientShownName}
         </Link>
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h1 className="text-3xl font-semibold tracking-tight capitalize">
-            {session.modality} session
-          </h1>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <h1 className="text-3xl font-semibold tracking-tight capitalize">
+              {session.modality} session
+            </h1>
+            {chartingToggleVisible ? <ChartingViewToggle /> : null}
+          </div>
           <EditSessionStartedAt
             sessionId={session.id}
             clientId={id}
             startedAtIso={session.started_at}
           />
         </div>
+        <NewViewHint testId="new-view-subtitle">Chart each area, then review the visit.</NewViewHint>
         {/* PR #199 (Chloe iPad retest): the inline line under the
             title is the ONLY performer surface. The separate
             "Performed by" card/dropdown is gone; this line carries a
@@ -826,6 +854,8 @@ export default async function SessionDetailPage({
 
       <SessionPhotos clientId={id} photos={sessionPhotos} />
 
+      {/* New view only (nothing renders in Current view): step 4. The section below is the existing next-visit form, unchanged. */}
+
       {/* PR #190 (clinical memory): plan for the NEXT visit. Saved on
           sessions.next_session_note and shown as "From last visit"
           when the client returns. Optional; empty save clears it. */}
@@ -867,6 +897,8 @@ export default async function SessionDetailPage({
 
           Everything above still saves as you go; nothing here is a new
           lifecycle system. */}
+      {/* New view only: step 5. The finish checklist, postcare and payment below are the existing controls, unchanged and in their existing order. */}
+      <NewViewOnlyStep n={4} title="Review & finish" />
       <section
         data-testid="finish-appointment"
         className="flex flex-col gap-4 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800"
@@ -946,6 +978,26 @@ export default async function SessionDetailPage({
           >
             {completionLabel(finishState.completion)}
           </span>
+          {(() => {
+            // The SAME predicate the automatic send uses, asked with the status Finish will produce.
+            const eligibility = shouldAutoSendPostcare({
+              deliveryMode: studio.postcare_delivery_mode,
+              status: "completed",
+              serviceModality: finishAppt?.serviceModality ?? null,
+              clientEmail: clientData.client.email ?? null,
+              aftercareText: studio.postcare_aftercare_text,
+            });
+            const note = autoPostcareNote(studio.postcare_delivery_mode, finishState.completion.kind, eligibility);
+            return note ? (
+              <p
+                data-testid="finish-auto-postcare-note"
+                data-auto-postcare={eligibility.ok ? "will_send" : "will_not_send"}
+                className="text-xs text-neutral-600 dark:text-neutral-400"
+              >
+                {note}
+              </p>
+            ) : null;
+          })()}
           {/* Mounted for BOTH before_start and ready. The shared control owns
               the disabled state AND the timer that re-enables the button the
               moment starts_at passes: mounting it only when already "ready"
@@ -1065,6 +1117,7 @@ export default async function SessionDetailPage({
           withdrawn for one. */}
       {isOwner && sessionPaymentEligibility && (
       <div id="session-payment">
+        <NewViewOnlyStep n={5} title="Session payment" />
         <SessionPaymentPrepareCard
           sessionId={session.id}
           clientId={id}
@@ -1107,6 +1160,33 @@ export default async function SessionDetailPage({
         </div>
       )}
     </div>
+  );
+
+  if (!chartingToggleVisible) return page;
+  const visit = buildVisitSummary({
+    modality: session.modality,
+    blocks: blockData?.blocks,
+    laserEntries: session.laser_entries,
+    nextSessionNote: session.next_session_note,
+  });
+  return (
+    // key = this session: another session's page can never inherit this one's view state.
+    <ChartingViewShell
+      key={session.id}
+      initialView={chartingInitialView}
+      summary={
+        <ChartingVisitSummary
+          clientName={clientShownName}
+          kind={visit.kind}
+          areas={visit.areas}
+          count={visit.count}
+          nextVisitNoteRecorded={visit.nextVisitNoteRecorded}
+          paymentStep={Boolean(isOwner && sessionPaymentEligibility)}
+        />
+      }
+    >
+      {page}
+    </ChartingViewShell>
   );
 }
 

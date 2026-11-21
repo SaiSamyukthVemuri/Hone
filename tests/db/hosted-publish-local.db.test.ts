@@ -30,7 +30,11 @@ describe.skipIf(!process.env.HONE_HOSTED_LOCAL_PROOF)("the hosted client against
     for (const row of plan.publish) {
       const existing = await client.readContract(row);
       if (existing) expect(same(existing, projectPlanRow(row)), `${row.p_mode_key}: a row already on the stack must already equal the plan`).toBe(true);
-      else await client.rpc(RPC, row);
+      else {
+        // The runner's stop on the sync's result relies on this: a NEW mode returns exactly the planned field count, as a JSON number.
+        const out = await client.rpc(RPC, row);
+        expect(out, `${row.p_mode_key}: the sync returns the number of field rows it inserted`).toBe(row.p_fields.length);
+      }
       const back = await client.readContract(row);
       expect(back, `${row.p_mode_key} is present after publishing`).not.toBeNull();
       expect(same(back, projectPlanRow(row)), `${row.p_mode_key} reads back equal to projectPlanRow`).toBe(true);

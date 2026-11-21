@@ -7,9 +7,8 @@ import path from "node:path";
 
 // 0193 — WAIT-ADMIT-01, proved against a real local PostgreSQL.
 //
-// The static contract (what the migration SAYS) is pinned in
-// tests/migrations/0193-waitlist-admission-authority.test.ts. This file proves
-// the BEHAVIOUR that file cannot see: that a member is genuinely refused, that
+// This file proves
+// the BEHAVIOUR a reading of the migration text cannot see: that a member is genuinely refused, that
 // an imported join date genuinely survives the trigger, and that a prospect
 // holding a valid token genuinely cannot move their own position in the queue.
 //
@@ -31,7 +30,7 @@ const COMMANDS = [
   // the migration's source matrix, so a drift in its posture would have been
   // proved by nothing: the behavioural tests below call it through the ADMIN
   // connection, which says nothing about which roles may execute it.
-  "public.admit_new_client_waitlist_entry(uuid,uuid,uuid,uuid,date,date,smallint[],integer,integer)",
+  "public.admit_new_client_waitlist_entry(uuid,uuid,uuid,uuid,date,date,smallint[],integer,integer,uuid)",
   "public.create_practitioner_waitlist_entry(uuid,uuid,text,text,text,text)",
   "public.import_legacy_waitlist_entry(uuid,uuid,text,text,timestamptz,text,text)",
   "public.set_waitlist_entry_availability(uuid,uuid,uuid,text)",
@@ -81,9 +80,7 @@ async function openRound(studio: Seeded, allowance: number): Promise<string> {
 /**
  * THE FRONTIER, DERIVED FROM 0193 AND CHECKED AGAINST THE LIVE DATABASE.
  *
- * The source-side twin of this guard lives in
- * tests/migrations/0193-waitlist-admission-authority.test.ts. This one closes
- * the other half: that the ACLs PostgreSQL actually holds match the set the
+ * This guard checks that the ACLs PostgreSQL actually holds match the set the
  * migration declares, so neither a missing matrix entry nor a missing REVOKE
  * can hide. Signature-aware, because an overload with the same name is drift
  * this suite has already had to be rewritten once to catch.
@@ -128,11 +125,11 @@ const GRANTED_IN_MIGRATION = (() => {
   while ((m = re.exec(MIGRATION_SQL)) !== null) {
     found.push(`${m[1]}(${m[2]!.split(",").map((a) => a.trim()).join(",")})`);
   }
-  // 0324 REPLACED admit_ at a wider signature (a ninth argument, the send-time fit) and dropped the
+  // 0324 REPLACED admit_ at a wider signature (a ninth argument, the send-time fit) and 0362 widened it again (a tenth, the batch item); each dropped the
   // 0193 one, so 0193's own text names a signature the applied chain no longer holds.
   return found.map((sig) =>
     sig === "public.admit_new_client_waitlist_entry(uuid,uuid,uuid,uuid,date,date,smallint[],integer)"
-      ? "public.admit_new_client_waitlist_entry(uuid,uuid,uuid,uuid,date,date,smallint[],integer,integer)"
+      ? "public.admit_new_client_waitlist_entry(uuid,uuid,uuid,uuid,date,date,smallint[],integer,integer,uuid)"
       : sig,
   );
 })();
@@ -2716,7 +2713,7 @@ describe("the studio lock mode is compatible with FK key-share", () => {
     // The primary product seam. Its OUTER lock is the one the runtime races
     // could not see at all: removing it left the suite fully green.
     ["admit_new_client_waitlist_entry",
-     "p_studio_id uuid, p_actor_user_id uuid, p_entry_id uuid, p_service_id uuid, p_start_date date, p_end_date date, p_allowed_weekdays smallint[], p_ttl_hours integer, p_fit integer"],
+     "p_studio_id uuid, p_actor_user_id uuid, p_entry_id uuid, p_service_id uuid, p_start_date date, p_end_date date, p_allowed_weekdays smallint[], p_ttl_hours integer, p_fit integer, p_batch_item_id uuid"],
   ];
 
   /**

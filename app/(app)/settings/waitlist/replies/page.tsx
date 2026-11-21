@@ -3,6 +3,8 @@ import { OwnerOnlyNotice } from "@/components/settings/view-heading";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { countTimesFeedback, listTimesFeedback } from "@/lib/waitlist/times-feedback-owner";
 import { waitlistTimesFeedbackEnabled } from "@/lib/waitlist/times-feedback";
+import { loadReplyContacts } from "@/lib/waitlist/reply-contact";
+import { ReplyContactDetails } from "@/components/waitlist/reply-contact";
 import { acknowledgeReplyAction } from "./actions";
 
 // 0319 — replies from people who said the offered times don't work. OWNER ONLY:
@@ -30,6 +32,9 @@ export default async function RepliesPage({
     listTimesFeedback(studio.id, practitioner.user_id),
     countTimesFeedback(studio.id, practitioner.user_id),
   ]);
+  // Contact is read by ENTRY ID (never by name), here, after the owner check above, through the owner's own session.
+  const contacts =
+    list.kind === "ok" ? await loadReplyContacts(studio.id, list.rows.map((r) => r.entryId)) : null;
   return (
     <main className="mx-auto flex max-w-2xl flex-col gap-4 p-4 text-sm">
       <h1 className="text-lg font-medium">Replies to review</h1>
@@ -59,6 +64,11 @@ export default async function RepliesPage({
             <li key={r.invitationId} className="rounded-lg border p-3">
               <p className="font-medium">{r.entryName}</p>
               <p className="mt-1 whitespace-pre-wrap">{r.note ?? "No message left."}</p>
+              <ReplyContactDetails
+                entryId={r.entryId}
+                showEntryLink={false}
+                contact={contacts?.kind === "ok" ? (contacts.byEntry.get(r.entryId) ?? null) : null}
+              />
               <form action={acknowledgeReplyAction} className="mt-2">
                 <input type="hidden" name="invitationId" value={r.invitationId} />
                 <button type="submit" className="min-h-[44px] underline">

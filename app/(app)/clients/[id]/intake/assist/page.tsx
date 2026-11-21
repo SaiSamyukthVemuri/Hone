@@ -1,4 +1,6 @@
 import { questionnaireForRow, QUESTIONNAIRE_UNAVAILABLE } from "@/lib/intake/questionnaire";
+import { clientDisplayName } from "@/lib/clients/identity";
+import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
 import { intakeRevision } from "@/lib/intake/revision";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
@@ -34,12 +36,14 @@ export default async function AssistedIntakePage({
   const { studio } = await requirePractitionerWithStudio();
 
   const supabase = await createClient();
-  const { data: client, error: clientErr } = await supabase
+  const { data: client, error: clientErr } = await readWithPreferredName((includePreferred) =>
+    supabase
     .from("clients")
-    .select("id, name")
+    .select(`id, ${preferredNameColumn(includePreferred)}name`)
     .eq("studio_id", studio.id)
     .eq("id", id)
-    .maybeSingle();
+    .maybeSingle<{ id: string; name: string; preferred_name?: string | null }>(),
+  );
   // A cross-studio or absent client is a 404, identical to the review page,
   // it does not disclose that the row exists somewhere else.
   if (clientErr) notFound();
@@ -94,14 +98,14 @@ export default async function AssistedIntakePage({
           ← Health intake
         </Link>
         <h1 className="min-w-0 [overflow-wrap:anywhere] text-3xl font-semibold tracking-tight">
-          Complete intake with {client.name}
+          Complete intake with {clientDisplayName(client)}
         </h1>
       </div>
 
       <AssistedIntakeEditor
         questionnaireSnapshot={intake.questionnaire_snapshot}
         clientId={id}
-        clientName={client.name}
+        clientName={clientDisplayName(client)}
         intakeId={intake.id}
         initialStep={initialStep}
         initialResponses={responses}

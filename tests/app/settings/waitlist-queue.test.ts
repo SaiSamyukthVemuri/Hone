@@ -864,7 +864,21 @@ describe("rendered rows", () => {
 
     // No links: a waiting person has no client record to navigate to, and
     // offering one would imply they are already a client.
-    expect(html).not.toMatch(/<a\s/);
+    // The ONLY links on the page are the two owner-only tools in the page header (search, released history, archived), which are not about any
+    // person; they are removed here and pinned exactly, so a link on a ROW is still refused.
+    const nav = /<p[^>]*data-testid="waitlist-tools-nav"[\s\S]*?<\/p>/.exec(html);
+    expect(nav).not.toBeNull();
+    expect([...nav![0].matchAll(/href="([^"]+)"/g)].map((m) => m[1])).toEqual([
+      "/settings/waitlist/search",
+      "/settings/waitlist/released",
+      "/settings/waitlist/archived",
+    ]);
+    // The owner-only "Invite beyond the estimate" section is the one other link, also not about any person: pinned exactly, removed, and a link on a
+    // ROW is still refused.
+    const beyond = /<section[^>]*data-testid="over-invite-link"[\s\S]*?<\/section>/.exec(html);
+    expect(beyond).not.toBeNull();
+    expect([...beyond![0].matchAll(/href="([^"]+)"/g)].map((m) => m[1])).toEqual(["/settings/waitlist/over-invite"]);
+    expect(html.replace(nav![0], "").replace(beyond![0], "")).not.toMatch(/<a\s/);
   });
 
   // =========================================================================
