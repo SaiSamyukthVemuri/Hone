@@ -20,6 +20,12 @@ export type ServiceRoleAllowlistEntry = {
 
 export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
+    path: "lib/email/send-appointment.ts",
+    purpose: "DELIVERY-VISIBILITY-03: the booking confirmation joins the email delivery ledger.",
+    why: "Bookkeeping only, after the send decision its caller already made. sendBookingConfirmationToClient builds the admin client ONLY to call the service-role-only begin_appointment_email_message (which re-checks that the appointment belongs to the studio it names) and settle_email_message on the row it just created. It reads no other table and accepts no caller-chosen row id. Fail-soft: without it the same email is sent, untagged.",
+    scopeGuard: "beginAppointmentEmailMessage",
+  },
+  {
     path: "app/(app)/settings/waitlist/profile-actions.ts",
     purpose:
       "WAIT-04A owner surface — the sole caller of set_waitlist_entry_availability, create_practitioner_waitlist_entry and import_legacy_waitlist_entry (all migration 0193).",
