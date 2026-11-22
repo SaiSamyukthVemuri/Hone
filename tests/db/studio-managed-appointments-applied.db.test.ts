@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
 import { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { adminQuery, adminTx, closePool, resolveLocalDbUrl, seedStudio } from "./helpers/harness";
+import { patchedNames, patchedWhere, proposalHandle } from "./helpers/managed-appointments-proposal";
 
 // APPLIED-STATE qualification of the studio-managed proposal. The sibling file
 // proves the proposal inside a rolled-back transaction; two behaviours need real
@@ -14,47 +14,17 @@ import { adminQuery, adminTx, closePool, resolveLocalDbUrl, seedStudio } from ".
 // definitions read before it; the test then asserts the catalog is exactly as it
 // was. DB test files run serially (fileParallelism: false), so no other file sees
 // the applied state. A numbered migration is NOT assumed.
-const proposal = readFileSync(new URL("../../docs/proposals/studio-managed-appointments/UP.sql", import.meta.url), "utf8");
-const patched = [
-  "create_public_appointment", "create_public_appointment_v2", "create_public_appointment_for_new_client",
-  "create_public_appointment_for_new_client_v2", "create_waitlist_public_appointment",
-  "redeem_and_book_waitlist_invitation", "public_cancel_appointment_with_token", "reschedule_appointment_v3",
-];
-const patchedWhere = `n.nspname='public' and p.proname=any($1) and (p.proname<>'public_cancel_appointment_with_token' or p.pronargs=7)`;
-
-async function snapshot() {
-  return (await adminQuery(
-    `select p.oid, p.proowner, p.proconfig, p.proacl::text, pg_get_functiondef(p.oid) as definition
-       from pg_proc p join pg_namespace n on n.oid=p.pronamespace where ${patchedWhere} order by p.oid`, [patched])).rows;
-}
+const patched = patchedNames;
 const rows = async (text: string, params: unknown[] = []) => (await adminQuery(text, params)).rows;
 const hash64 = () => (randomUUID() + randomUUID()).replace(/-/g, "");
 
-let originals: { oid: number; definition: string }[] = [];
-let before: unknown[] = [];
+const handle = proposalHandle();
 
-beforeAll(async () => {
-  const present = await rows(`select 1 from information_schema.columns where table_schema='public' and table_name='studios' and column_name='studio_managed_appointments'`);
-  if (present.length) throw new Error("the proposal is already applied on this database; refusing to run");
-  before = await snapshot();
-  originals = before as { oid: number; definition: string }[];
-  await adminQuery(proposal);
-});
+beforeAll(() => handle.apply());
 
+// Tears down only what THIS suite applied; a refused (already-applied) run touches nothing.
 afterAll(async () => {
-  try {
-    const applied = await rows(`select 1 from information_schema.columns where table_schema='public' and table_name='studios' and column_name='studio_managed_appointments'`);
-    if (applied.length) {
-      // create or replace keeps identity and ACLs; the saved text is the pre-proposal definition.
-      for (const o of originals) await adminQuery(o.definition);
-      await adminQuery(`drop function public.set_studio_managed_appointments(uuid, boolean)`);
-      await adminQuery(`drop function public.assert_client_self_service_open(uuid)`);
-      await adminQuery(`alter table public.studios drop column studio_managed_appointments`);
-    }
-    expect(await snapshot()).toEqual(before);
-  } finally {
-    await closePool();
-  }
+  try { await handle.teardown(); } finally { await closePool(); }
 });
 
 type Fx = { studioId: string; userId: string; clientId: string; serviceId: string };
