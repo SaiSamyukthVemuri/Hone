@@ -1,3 +1,13 @@
+## Default development workflow
+
+Use pstack for all Hone development work. Before starting a task, read
+[Hone's pstack workflow](docs/engineering/pstack.md), then load the upstream
+entry point and the relevant playbook as directed there. Apply it to the current
+task; do not require the operator to repeat a slash command.
+
+`ENGINEERING_STANDARDS.md`, `DESIGN.md`, repository delivery rules, and the
+operator's current authorization take precedence over upstream defaults.
+
 <!-- OPENWIKI:START -->
 
 ## OpenWiki

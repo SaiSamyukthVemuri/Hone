@@ -24,11 +24,13 @@ export type FinderProps = {
   /** Eligible visits in the selected month, by client id; absent means none. */
   /** NULL when the month's counts could not be read: the finder then states no count at all (never a zero). */
   monthVisits: Readonly<Record<string, number>> | null;
+  /** False on the Studio tab, which does not load per-client month counts: the result line then states no count at all. Default true. */
+  showMonthCount?: boolean;
   /** Last visit dates (studio-local), only for clients that share a name; absent means the detail could not be read. */
   lastVisits: Readonly<Record<string, string | null>> | null;
 };
 
-export function ClientFinder({ month, monthLabel, clients, monthVisits, lastVisits }: FinderProps) {
+export function ClientFinder({ month, monthLabel, clients, monthVisits, lastVisits, showMonthCount = true }: FinderProps) {
   const router = useRouter();
   const listId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -62,8 +64,8 @@ export function ClientFinder({ month, monthLabel, clients, monthVisits, lastVisi
 
   const expanded = state.open && outcome.state !== "prompt";
   return (
-    <div className="relative max-w-md">
-      <label htmlFor={`${listId}-input`} className="block text-sm font-medium text-fg">
+    <div className="relative">
+      <label htmlFor={`${listId}-input`} className="sr-only">
         Find a client
       </label>
       <input
@@ -80,13 +82,13 @@ export function ClientFinder({ month, monthLabel, clients, monthVisits, lastVisi
         value={state.query}
         onChange={(e) => setState(onFinderInput(e.target.value))}
         onKeyDown={onKeyDown}
-        className={cx("mt-1 w-full rounded border border-line bg-surface px-3 py-2 text-sm text-fg", CONTROL_MIN_TOUCH, FOCUS_RING)}
+        className={cx("w-full rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm text-fg placeholder:text-fg-muted", CONTROL_MIN_TOUCH, FOCUS_RING)}
       />
       <p className="sr-only" role="status" aria-live="polite">
         {outcome.state === "results" ? `${options.length} ${options.length === 1 ? "client" : "clients"} found` : outcome.state === "none" ? FINDER_NO_MATCH : ""}
       </p>
       {expanded ? (
-        <div id={listId} className="absolute z-10 mt-1 w-full rounded-lg border border-line bg-surface shadow-sm">
+        <div id={listId} className="absolute z-10 mt-1 w-full rounded-xl border border-line-strong bg-surface p-1 shadow-lg">
           {outcome.state === "none" ? (
             <div className="space-y-1 p-3 text-sm text-fg">
               <p>{FINDER_NO_MATCH}</p>
@@ -108,9 +110,10 @@ export function ClientFinder({ month, monthLabel, clients, monthVisits, lastVisi
                   className={cx("cursor-pointer px-3 py-2 text-sm text-fg", CONTROL_MIN_TOUCH, "flex-col items-start justify-center", state.active === i && "bg-surface-sunken")}
                 >
                   <span className="font-medium">{o.displayName}{o.archived ? " (archived)" : ""}</span>
-                  <span className="text-xs text-fg-muted">
-                    {finderOptionLine({ monthLabel, monthVisitCount: o.monthVisitCount, sameNameAsAnother: o.sameNameAsAnother, lastVisit: lastVisits?.[o.clientId], lastVisitsLoaded: lastVisits !== null })}
-                  </span>
+                  {(() => {
+                    const line = finderOptionLine({ monthLabel, monthVisitCount: o.monthVisitCount, sameNameAsAnother: o.sameNameAsAnother, lastVisit: lastVisits?.[o.clientId], lastVisitsLoaded: lastVisits !== null, showMonthCount });
+                    return line ? <span className="text-xs text-fg-muted">{line}</span> : null;
+                  })()}
                 </li>
               ))}
             </ul>
@@ -118,7 +121,7 @@ export function ClientFinder({ month, monthLabel, clients, monthVisits, lastVisi
           {outcome.state === "results" && outcome.truncated ? <p className="border-t border-line p-2 text-xs text-fg-muted">Showing the first matches. Type more of the name to narrow the list.</p> : null}
         </div>
       ) : (
-        <p className="mt-1 text-xs text-fg-muted">{FINDER_PROMPT}</p>
+        <p className="sr-only">{FINDER_PROMPT}</p>
       )}
     </div>
   );

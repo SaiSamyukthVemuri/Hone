@@ -793,6 +793,8 @@ describe("a real caller can bind this composer and receive the draft", () => {
       serviceId: "svc-1",
       windowDays: 14,
       allowedWeekdays: [1, 3],
+      // A plain send never carries the owner's "Invite anyway".
+      beyondEstimate: false,
     });
   });
 

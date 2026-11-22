@@ -82,7 +82,7 @@ describe("header fit", () => {
     }
   });
 
-  it("Business is an OWNER-ONLY menu on both breakpoints, listing Capacity and Statements", () => {
+  it("Business is an OWNER-ONLY menu on both breakpoints, listing Capacity, Statements and Analytics", () => {
     // OWNER-CAP follow-up, extended for the monthly statement. The browser spec proves what an owner and a practitioner each
     // actually SEE; this is the cheap source-level pin that the menu is role-gated at all, on both surfaces, and that both
     // surfaces take their destinations from ONE shared list. There is no /business hub.
@@ -92,12 +92,13 @@ describe("header fit", () => {
     expect(MOBILE).toMatch(/role === "owner" && \(\s*<div role="group"[\s\S]*?BUSINESS_MENU_ITEMS\.map/);
     expect(LIST).toContain('href: "/dashboard/capacity", label: "Capacity"');
     expect(LIST).toContain('href: "/financials/statement", label: "Statements"');
+    expect(LIST).toContain('href: "/financials/analytics", label: "Analytics"');
     // UNCONDITIONAL would be the defect: neither shell file may name either route outside the gated branch, so neither names it at all.
     for (const [name, src] of [
       ["layout", LAYOUT],
       ["mobile menu", MOBILE],
     ] as const) {
-      expect(src, `${name} must take the routes from the shared list`).not.toMatch(/"\/dashboard\/capacity"|"\/financials\/statement"/);
+      expect(src, `${name} must take the routes from the shared list`).not.toMatch(/"\/dashboard\/capacity"|"\/financials\/statement"|"\/financials\/analytics"/);
     }
     // No /business hub was invented to hold it.
     expect(existsSync(join(process.cwd(), "app/(app)/business"))).toBe(false);

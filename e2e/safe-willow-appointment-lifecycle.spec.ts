@@ -129,7 +129,7 @@ test("SAFE-WILLOW: appointment move + token resolution + cross-tenant isolation"
     const apage = await anon.newPage();
 
     await apage.goto(`/reschedule/${token}`);
-    await expect(apage.getByText("Choose a new time that works better for you.")).toBeVisible();
+    await expect(apage.getByRole("heading", { name: "Reschedule appointment" })).toBeVisible();
     await expect(apage.getByText(/can't be used right now/i)).toHaveCount(0);
 
     await apage.goto(`/manage/${token}`);

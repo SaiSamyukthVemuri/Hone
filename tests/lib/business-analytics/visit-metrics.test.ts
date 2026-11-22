@@ -124,8 +124,11 @@ describe("no next booking and beyond usual interval", () => {
     v("c3", "2025-11-18"), // before the 12-month look-back (today 2026-11-19 -> 2025-11-19)
     v("c4", "2025-11-19"), // exactly at the look-back start: included
   ];
-  it("lists clients seen in the look-back with no future booking, as of today", () => {
-    expect(noNextBooking({ visits: facts, clientsWithFutureBooking: new Set(["c2"]), todayLocal: "2026-11-19" })).toEqual(["c1", "c4"]);
+  it("with no look-back given, lists every client with a completed visit and no future booking, however long ago (the reference's scope)", () => {
+    expect(noNextBooking({ visits: facts, clientsWithFutureBooking: new Set(["c2"]), todayLocal: "2026-11-19" })).toEqual(["c1", "c3", "c4"]);
+  });
+  it("a 12-month look-back, when asked for, keeps the start date inclusive", () => {
+    expect(noNextBooking({ visits: facts, clientsWithFutureBooking: new Set(["c2"]), todayLocal: "2026-11-19", lookbackMonths: 12 })).toEqual(["c1", "c4"]);
   });
   it("the look-back is a parameter", () => {
     expect(noNextBooking({ visits: facts, clientsWithFutureBooking: new Set(), todayLocal: "2026-11-19", lookbackMonths: 2 })).toEqual(["c1", "c2"]); // from 2026-09-19: the 2025 visits fall outside

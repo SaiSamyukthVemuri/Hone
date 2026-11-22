@@ -174,8 +174,12 @@ describe("source tripwire: no browser input path can name a fit", () => {
 
   it("p_fit is assigned from the server's own computation and nothing else", () => {
     const assignments = ADAPTER.match(/p_fit:\s*[^,\n]+/g) ?? [];
-    expect(assignments).toEqual(["p_fit: fit.fit"]);
+    // The one other value is the owner's explicit "Invite anyway": the command's largest accepted number, chosen only on `input.beyondEstimate === true`.
+    expect(assignments).toEqual(["p_fit: fitForCommand"]);
     expect(ADAPTER).toMatch(/const fit = await computeConsultationFit\(/);
+    expect(ADAPTER).toMatch(/fitForCommand = fit\.fit;/);
+    expect(ADAPTER).toMatch(/fitForCommand = NO_ESTIMATE_LIMIT;/);
+    expect(ADAPTER).toMatch(/const beyondEstimate = input\.beyondEstimate === true;/);
   });
 
   it("the send action reads no field named like a fit or a cap", () => {

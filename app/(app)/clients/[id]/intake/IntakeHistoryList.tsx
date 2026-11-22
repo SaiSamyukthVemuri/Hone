@@ -140,7 +140,7 @@ function IntakeHistoryRow({
           pendingLabel="Opening intake version…"
           className="text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
         >
-          View →
+          View version
         </PendingLink>
       </div>
       <div className="flex flex-col gap-0.5 text-xs text-neutral-600 dark:text-neutral-400">

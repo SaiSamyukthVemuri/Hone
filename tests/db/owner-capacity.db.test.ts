@@ -551,13 +551,13 @@ describe("owner capacity briefing", () => {
     // client does not cancel their appointments, so a calendar-wide claim would
     // be an overstatement the number cannot support.
     expect(markup).not.toContain("Treatment time on the calendar");
-    expect(markup).toContain("Future treatment time for current clients");
+    expect(markup).toContain("Current clients’ upcoming treatment time");
     // All four facts the copy must carry, asserted individually so a future
     // rewrite cannot quietly drop one.
     expect(markup).toMatch(/Current, non-archived clients only/);
     expect(markup).toMatch(/Treatment appointments only/);
     expect(markup).toMatch(/consultations and buffers are excluded/i);
-    expect(markup).toMatch(/Future treatment time/);
+    expect(markup).toMatch(/Treatment time booked/);
 
     // BOOKING DEPTH IS TREATMENT-ONLY, and every visible label must say so.
     // The bands exclude consultations, so a client whose only future booking is
@@ -569,7 +569,7 @@ describe("owner capacity briefing", () => {
     expect(markup).not.toMatch(/nothing\s+(?:booked|on the calendar)/i);
     expect(markup).not.toContain("every future appointment");
     expect(markup).toMatch(/who has no treatment booked/i);
-    expect(markup).toMatch(/Counted across future treatment appointments only/);
+    expect(markup).toMatch(/Counted cumulatively across future treatment appointments only/);
     expect(markup).toMatch(/Consultations do not count/);
     expect(markup).toContain("No treatment booked");
     expect(markup).toContain("1 or more treatments");

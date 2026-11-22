@@ -284,7 +284,7 @@ async function assertShellAt(
   await expect(sheet, `${at}: the Menu opens`).toBeVisible();
   await expect(mobileWorkingSurfaces(page), `${at}: working surfaces`).toHaveText(
     opts.owner
-      ? ["Dashboard", "Clients", "Calendar", "Records", "Capacity", "Statements"]
+      ? ["Dashboard", "Clients", "Calendar", "Records", "Capacity", "Statements", "Analytics"]
       : ["Dashboard", "Clients", "Calendar", "Records"],
   );
   await expect(
@@ -295,6 +295,9 @@ async function assertShellAt(
     opts.owner ? 1 : 0,
   );
   await expect(sheet.locator('a[href="/financials/statement"]')).toHaveCount(
+    opts.owner ? 1 : 0,
+  );
+  await expect(sheet.locator('a[href="/financials/analytics"]'), `${at}: Analytics is owner-only`).toHaveCount(
     opts.owner ? 1 : 0,
   );
   // The account actions the desktop button would have offered.
@@ -453,7 +456,7 @@ test("an owner reaches the capacity briefing", async ({ page }) => {
     page.getByRole("heading", { name: "Future treatment booking depth" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Future treatment time for current clients" }),
+    page.getByRole("heading", { name: "Current clients’ upcoming treatment time" }),
   ).toBeVisible();
 });
 
@@ -478,7 +481,7 @@ test("an ordinary practitioner is refused the owner aggregate", async ({ page })
   for (const section of [
     "Clients",
     "Future treatment booking depth",
-    "Future treatment time for current clients",
+    "Current clients’ upcoming treatment time",
   ]) {
     await expect(
       page.getByRole("heading", { name: section, exact: true }),
@@ -813,17 +816,20 @@ test("an owner's desktop navigation carries the Business menu, once, and it reac
   // CLOSED, the menu offers no link to either owner surface: nothing is hidden-but-present.
   await expect(nav.locator('a[href="/dashboard/capacity"]')).toHaveCount(0);
   await expect(nav.locator('a[href="/financials/statement"]')).toHaveCount(0);
+  await expect(nav.locator('a[href="/financials/analytics"]')).toHaveCount(0);
 
   // THE WHOLE ROW, IN ORDER: the four working-surface links untouched, then the Business button.
   await expect(nav.getByRole("link")).toHaveText(["Dashboard", "Clients", "Calendar", "Records"]);
 
-  // Open it: exactly two items, once each BY DESTINATION as well.
+  // Open it: exactly three items, once each BY DESTINATION as well.
   await business.click();
   await expect(business).toHaveAttribute("aria-expanded", "true");
   const panel = nav.getByRole("group", { name: "Business" });
-  await expect(panel.getByRole("link")).toHaveText(["Capacity", "Statements"]);
+  await expect(panel.getByRole("link")).toHaveText(["Capacity", "Statements", "Analytics"]);
   await expect(nav.locator('a[href="/dashboard/capacity"]')).toHaveCount(1);
   await expect(nav.locator('a[href="/financials/statement"]')).toHaveCount(1);
+  await expect(nav.locator('a[href="/financials/analytics"]')).toHaveCount(1);
+  await expect(panel.getByRole("link", { name: "Analytics", exact: true })).toHaveAttribute("href", "/financials/analytics");
 
   // Escape closes it and puts focus back on the button.
   await page.keyboard.press("Escape");
@@ -890,7 +896,7 @@ test("an owner starts on the dashboard, opens Business, then Statements, and cho
   // This seeded studio has NO payment jurisdiction yet, so the owner reaches the page's own honest "currency not set" state: no
   // heading, no month picker, no figure. The owner check is the one the page always had; nothing is loosened here.
   await expect(page.getByText("This studio's payment currency is not set, so money cannot be totalled. Nothing is shown.")).toBeVisible();
-  await expect(page.getByRole("heading", { name: /^Money statement:/ })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Monthly statements" })).toHaveCount(0);
   // The menu reads as the current section on the statement page in either state.
   await expect(nav.getByRole("button", { name: "Business", exact: true })).toHaveAttribute("aria-current", "page");
 
@@ -903,7 +909,7 @@ test("an owner starts on the dashboard, opens Business, then Statements, and cho
   );
   try {
     await page.goto("/financials/statement");
-    await expect(page.getByRole("heading", { name: /^Money statement:/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Monthly statements" })).toBeVisible();
     // The item inside the open menu is the current one.
     await nav.getByRole("button", { name: "Business", exact: true }).click();
     await expect(nav.getByRole("link", { name: "Statements", exact: true })).toHaveAttribute("aria-current", "page");
@@ -912,10 +918,11 @@ test("an owner starts on the dashboard, opens Business, then Statements, and cho
 
     // Choose a month with the picker; the page answers for exactly that month.
     const picker = page.getByRole("form", { name: "Choose a month" });
+    // The picker submits itself when a month is chosen; the "Show month" button stays for keyboard and no-script use (visible on focus).
     await picker.getByLabel("Month").fill("2026-01");
-    await picker.getByRole("button", { name: "Show month" }).click();
     await page.waitForURL("**/financials/statement?month=2026-01");
-    await expect(page.getByRole("heading", { name: /^Money statement: January 2026/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Monthly statements" })).toBeVisible();
+    await expect(page.getByText("January 2026 · Total collected")).toBeVisible();
     await expect(picker.getByLabel("Month")).toHaveValue("2026-01");
   } finally {
     await sql(`delete from public.studio_payment_jurisdictions where studio_id = $1 and verification_reference = 'e2e business menu statement'`, [seed.studioId]);
@@ -955,7 +962,7 @@ test("a practitioner typing the statement URL is refused, with no money shown", 
   // The direct URL is refused.
   await page.goto("/financials/statement");
   await expect(page.getByText("Only the studio owner can see the money statement.")).toBeVisible();
-  await expect(page.getByRole("heading", { name: /^Money statement:/ })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Monthly statements" })).toHaveCount(0);
 });
 
 test("a practitioner gets no Business entry on the desktop nav, and the route still refuses them", async ({
@@ -1036,6 +1043,10 @@ test("an owner's mobile menu carries the Business group, and tapping an item clo
   await expect(statement).toHaveCount(1);
   await expect(statement).toHaveAttribute("href", "/financials/statement");
   expect((await statement.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  const analytics = nav.getByRole("link", { name: "Analytics", exact: true });
+  await expect(analytics).toHaveCount(1);
+  await expect(analytics).toHaveAttribute("href", "/financials/analytics");
+  expect((await analytics.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   // Bound to the SHEET'S OWN SUBTREE, so the hidden desktop link is not merely
   // out of the a11y tree — it is out of the search scope entirely.
   await expect(nav.locator('a[href="/dashboard/capacity"]')).toHaveCount(1);
@@ -1051,6 +1062,7 @@ test("an owner's mobile menu carries the Business group, and tapping an item clo
     "Records",
     "Capacity",
     "Statements",
+    "Analytics",
   ]);
   await expect(nav.getByRole("link", { name: "Settings" })).toBeVisible();
 

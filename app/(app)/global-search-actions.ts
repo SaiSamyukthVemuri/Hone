@@ -21,6 +21,12 @@ import {
   type NavSearchContext,
 } from "@/lib/search/navigation-registry";
 import { mergeMemoryBlockRows } from "@/lib/search/treatment-memory-merge";
+import {
+  appointmentIdsForReference,
+  normalizeAppointmentReference,
+  REFERENCE_SCAN_CAP,
+  REFERENCE_SCAN_PAGE,
+} from "@/lib/search/appointment-reference";
 import { clientDisplayName } from "@/lib/clients/identity";
 import { isMissingColumnError } from "@/lib/db/missing-column";
 import { PREFERRED_NAME_COLUMN, preferredNameColumn } from "@/lib/clients/preferred-name-read";
@@ -286,7 +292,7 @@ async function searchClientRowsWith(
 // clientsTruncated: the client scan stopped at its bound, so the client results
 // are the first matches, not necessarily all of them (SEARCH-SCAN-BOUND).
 type GlobalSearchResponse =
-  | { ok: true; results: SearchResult[]; clientsTruncated?: true }
+  | { ok: true; results: SearchResult[]; clientsTruncated?: true; referenceTruncated?: true }
   | { ok: false };
 
 export async function globalSearchAction(
@@ -510,17 +516,7 @@ async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> 
     if (seenAppointments.has(id)) continue;
     seenAppointments.add(id);
     if (seenAppointments.size > APPOINTMENT_CAP) break;
-    const client = Array.isArray(a.client) ? a.client[0] : a.client;
-    const service = Array.isArray(a.service) ? a.service[0] : a.service;
-    results.push({
-      id: `appointment:${id}`,
-      type: "appointment",
-      title: (client?.name as string) || "Appointment",
-      subtitle: (service?.name as string) || undefined,
-      href: `/calendar/${id}`,
-      date: fmtDate(a.starts_at as string),
-      badge: (a.status as string) || undefined,
-    });
+    results.push(appointmentResult(a));
   }
 
   // Merge the two memory paths into one result set. Deduplication by block id
@@ -623,10 +619,85 @@ async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> 
 
   results.push(...navResults(query, navContext));
 
+  // An exact appointment reference leads the list: it is a precise identifier, so
+  // its matches come before the fuzzy ones and are never pushed out by the caps.
+  const reference = normalizeAppointmentReference(query);
+  const byReference = reference
+    ? await appointmentReferenceResults(supabase, studioId, reference)
+    : { results: [], truncated: false };
+  const referenceIds = new Set(byReference.results.map((r) => r.id));
+
   return {
     ok: true,
-    results: capResults(results),
+    results: capResults([...byReference.results, ...results.filter((r) => !referenceIds.has(r.id))]),
     ...(clientSearch.truncated ? { clientsTruncated: true as const } : {}),
+    ...(byReference.truncated ? { referenceTruncated: true as const } : {}),
+  };
+}
+
+// One appointment row projected onto the shared result shape. Used by the ordinary appointment results and by the
+// reference lookup, so the stored client name is read in exactly one place here.
+function appointmentResult(a: {
+  id?: unknown; starts_at?: unknown; status?: unknown; client?: unknown; service?: unknown;
+}): SearchResult {
+  const client = (Array.isArray(a.client) ? a.client[0] : a.client) as { name?: string | null } | null | undefined;
+  const service = (Array.isArray(a.service) ? a.service[0] : a.service) as { name?: string | null } | null | undefined;
+  const id = a.id as string;
+  return {
+    id: `appointment:${id}`,
+    type: "appointment",
+    title: (client?.name as string) || "Appointment",
+    subtitle: (service?.name as string) || undefined,
+    href: `/calendar/${id}`,
+    date: fmtDate(a.starts_at as string),
+    badge: (a.status as string) || undefined,
+  };
+}
+
+// Appointment reference (the six characters in a booking or cancellation email
+// subject). Scoped to the caller's studio with the user client; the reference is
+// recomputed from ids the caller can already read, so it is an identifier and not a
+// credential. Cancelled appointments are included. A read failure fails the whole
+// search like every other read here (DAT-002); a scan that reaches its bound says so.
+async function appointmentReferenceResults(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  studioId: string,
+  reference: string,
+): Promise<{ results: SearchResult[]; truncated: boolean }> {
+  const matched: string[] = [];
+  let truncated = false;
+  for (let offset = 0; ; ) {
+    const { data, error } = await supabase
+      .from("appointments")
+      .select("id")
+      .eq("studio_id", studioId)
+      .order("id")
+      .range(offset, offset + REFERENCE_SCAN_PAGE - 1);
+    if (error) throw new SearchReadFailed();
+    const page = (data ?? []) as Array<{ id: string }>;
+    if (page.length === 0) break;
+    matched.push(...appointmentIdsForReference(reference, page.map((r) => r.id)));
+    offset += page.length;
+    if (offset >= REFERENCE_SCAN_CAP) {
+      // At the bound: one probe row says whether anything lies beyond it.
+      const probe = await supabase.from("appointments").select("id").eq("studio_id", studioId).order("id").range(offset, offset);
+      if (probe.error) throw new SearchReadFailed();
+      truncated = (probe.data ?? []).length > 0;
+      break;
+    }
+  }
+  if (matched.length === 0) return { results: [], truncated };
+  const rows = rowsOrFail(
+    await supabase
+      .from("appointments")
+      .select("id, starts_at, status, client:clients(name), service:services(name)")
+      .eq("studio_id", studioId)
+      .in("id", matched)
+      .order("starts_at", { ascending: false }),
+  );
+  return {
+    truncated,
+    results: rows.map(appointmentResult),
   };
 }
 

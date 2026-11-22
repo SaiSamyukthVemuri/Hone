@@ -35,7 +35,7 @@ test.describe("hashed appointment token resolves on the public surfaces", () => 
     // to the generic error instead.
     await page.goto(`/reschedule/${token}`);
     await expect(
-      page.getByText("Choose a new time that works better for you."),
+      page.getByRole("heading", { name: "Reschedule appointment" }),
     ).toBeVisible();
     await expect(
       page.getByText(/can't be used right now/i),

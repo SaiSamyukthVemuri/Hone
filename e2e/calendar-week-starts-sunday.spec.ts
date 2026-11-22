@@ -132,7 +132,9 @@ for (const mode of [
         }
         const group = surface.getByRole("button", { name: "Choose from 5 appointments", exact: true });
         await expect(group).toHaveCount(1);
-        for (const expected of bookings) await expect(surface.getByRole("button").filter({ hasText: expected.clientName })).toHaveCount(0);
+        // No client has a card of its own in the group's span: a button is NAMED by its client only for an individual card (the
+        // group's accessible name is its count). The group itself now shows who is inside it, so look at buttons by accessible name.
+        for (const expected of bookings) await expect(surface.getByRole("button", { name: expected.clientName })).toHaveCount(0);
         await group.scrollIntoViewIfNeeded();
         const bounds = await group.boundingBox();
         expect(bounds!.width).toBeGreaterThanOrEqual(44);
