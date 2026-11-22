@@ -2,10 +2,10 @@ import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { adminQuery, asRole, asUser, closePool, seedMember, seedStudio } from "./helpers/harness";
 
-// The access-event record (restore audit). Synthetic ids only. Each claim has a control that would fail if the record were missing or wrong:
-//  * a real change in EITHER direction writes exactly one record (who, to whom, which action, which studio);
+// The access-event record (restore audit, RESTORES ONLY: who restored whom, and when; removals are deliberately not recorded). Synthetic ids only. Each claim has a control that would fail if the record were missing or wrong:
+//  * a real RESTORE writes exactly one record (who, to whom, which studio); a removal writes none;
 //  * a request that changes nothing writes none; a refusal writes none; the return values are exactly the ones the command always had;
-//  * eight concurrent removals of the same member write ONE record (the row lock serialises them and the later ones find the value already changed);
+//  * eight concurrent restores of the same member write ONE record (the row lock serialises them and the later ones find the value already changed);
 //  * no API role can read or write the table; the command is still callable by the service role only.
 
 afterAll(async () => {
@@ -17,44 +17,43 @@ const setActive = async (studioId: string, actor: string, target: string, active
 const events = async (studioId: string) =>
   (await adminQuery("select actor_practitioner_id a, target_practitioner_id t, action, studio_id s from public.practitioner_access_events where studio_id=$1 order by created_at, id", [studioId])).rows;
 
-describe("practitioner_access_events: one record per real change, both directions", () => {
-  it("remove then restore: two records, in order, with the owner as actor and the member as target", async () => {
+describe("practitioner_access_events: one record per real restore, none for removals", () => {
+  it("remove then restore: only the restore is recorded, with the owner as actor and the member as target", async () => {
     const A = await seedStudio("pae-both");
     const m = await seedMember(A, "pae-both-m");
     expect(await events(A.studioId)).toHaveLength(0);
     expect(await setActive(A.studioId, A.practitionerId, m.practitionerId, false)).toBe("ok");
+    expect(await events(A.studioId)).toHaveLength(0); // a removal writes nothing (CONTROL for the restore below)
     expect(await setActive(A.studioId, A.practitionerId, m.practitionerId, true)).toBe("ok");
     const rows = await events(A.studioId);
-    expect(rows.map((r) => r.action)).toEqual(["removed", "restored"]);
-    for (const r of rows) {
-      expect(r.a).toBe(A.practitionerId);
-      expect(r.t).toBe(m.practitionerId);
-      expect(r.s).toBe(A.studioId);
-    }
+    expect(rows.map((r) => r.action)).toEqual(["restored"]);
+    expect(rows[0].a).toBe(A.practitionerId);
+    expect(rows[0].t).toBe(m.practitionerId);
+    expect(rows[0].s).toBe(A.studioId);
     expect((await adminQuery("select active from public.practitioners where id=$1", [m.practitionerId])).rows[0].active).toBe(true);
   });
 
-  it("a request that changes nothing writes nothing (already removed; already active; null counts as false)", async () => {
+  it("a request that changes nothing writes nothing (already active; null counts as false and is a removal; already removed)", async () => {
     const A = await seedStudio("pae-noop");
     const m = await seedMember(A, "pae-noop-m");
     expect(await setActive(A.studioId, A.practitionerId, m.practitionerId, true)).toBe("ok"); // already active
-    expect(await events(A.studioId)).toHaveLength(0);
-    expect(await setActive(A.studioId, A.practitionerId, m.practitionerId, null)).toBe("ok"); // null = false: a real removal
-    expect((await events(A.studioId)).map((r) => r.action)).toEqual(["removed"]);
+    expect(await setActive(A.studioId, A.practitionerId, m.practitionerId, null)).toBe("ok"); // null = false: a removal, not recorded
     expect(await setActive(A.studioId, A.practitionerId, m.practitionerId, false)).toBe("ok"); // already removed
-    expect(await setActive(A.studioId, A.practitionerId, m.practitionerId, null)).toBe("ok");
-    expect(await events(A.studioId)).toHaveLength(1);
+    expect(await events(A.studioId)).toHaveLength(0);
+    expect(await setActive(A.studioId, A.practitionerId, m.practitionerId, true)).toBe("ok"); // the one real restore
+    expect(await setActive(A.studioId, A.practitionerId, m.practitionerId, true)).toBe("ok"); // repeated: nothing more
+    expect((await events(A.studioId)).map((r) => r.action)).toEqual(["restored"]);
   });
 
-  it("eight concurrent removals of the same member write exactly one record; eight concurrent restores afterwards write exactly one more", async () => {
+  it("eight concurrent restores of the same removed member write exactly one record; eight concurrent removals write none", async () => {
     const A = await seedStudio("pae-conc");
     const m = await seedMember(A, "pae-conc-m");
-    const r1 = await Promise.all(Array.from({ length: 8 }, () => setActive(A.studioId, A.practitionerId, m.practitionerId, false)));
-    expect(r1.every((r) => r === "ok")).toBe(true);
-    expect((await events(A.studioId)).map((r) => r.action)).toEqual(["removed"]);
+    const r0 = await Promise.all(Array.from({ length: 8 }, () => setActive(A.studioId, A.practitionerId, m.practitionerId, false)));
+    expect(r0.every((r) => r === "ok")).toBe(true);
+    expect(await events(A.studioId)).toHaveLength(0);
     const r2 = await Promise.all(Array.from({ length: 8 }, () => setActive(A.studioId, A.practitionerId, m.practitionerId, true)));
     expect(r2.every((r) => r === "ok")).toBe(true);
-    expect((await events(A.studioId)).map((r) => r.action)).toEqual(["removed", "restored"]);
+    expect((await events(A.studioId)).map((r) => r.action)).toEqual(["restored"]);
   });
 
   it("refusals write nothing and return the same codes as before", async () => {
@@ -77,6 +76,7 @@ describe("practitioner_access_events: one record per real change, both direction
     const B = await seedStudio("pae-iso-b");
     const m = await seedMember(A, "pae-iso-m");
     await setActive(A.studioId, A.practitionerId, m.practitionerId, false);
+    await setActive(A.studioId, A.practitionerId, m.practitionerId, true);
     expect(await events(A.studioId)).toHaveLength(1);
     expect(await events(B.studioId)).toHaveLength(0);
   });
@@ -112,10 +112,11 @@ describe("practitioner_access_events: shape and privileges", () => {
     const A = await seedStudio("pae-priv");
     const m = await seedMember(A, "pae-priv-m");
     await setActive(A.studioId, A.practitionerId, m.practitionerId, false);
+    await setActive(A.studioId, A.practitionerId, m.practitionerId, true);
     for (const userId of [A.userId, m.userId]) {
       await expect(asUser(userId, (q) => q("select * from public.practitioner_access_events"))).rejects.toMatchObject({ code: "42501" });
       await expect(
-        asUser(userId, (q) => q("insert into public.practitioner_access_events (studio_id, action) values ($1,'removed')", [A.studioId])),
+        asUser(userId, (q) => q("insert into public.practitioner_access_events (studio_id, action) values ($1,'restored')", [A.studioId])),
       ).rejects.toMatchObject({ code: "42501" });
     }
     await expect(asRole("anon", (q) => q("select * from public.practitioner_access_events"))).rejects.toMatchObject({ code: "42501" });

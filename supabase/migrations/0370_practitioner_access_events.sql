@@ -1,16 +1,15 @@
--- Practitioner access events: a record of every real change to a team member's access (removed / restored), written by the same database command that makes the change.
+-- Practitioner access events: a record of every RESTORE of a team member's access (who restored whom, and when), written by the same database command that makes the change.
 --
 -- WHAT CHANGES. One new append-only table, public.practitioner_access_events, and one function replaced: public.set_practitioner_active_locked.
 -- The function keeps its signature, return values, language, security setting, search_path, lock order and the unconditional update. The only addition is
--- that, under the existing row lock on the target, it compares the stored value with the requested one and, only when they DIFFER, inserts one record.
+-- that, under the existing row lock on the target, it compares the stored value with the requested one and, only when a RESTORE really changes the value (inactive to active), inserts one record.
 -- A repeated or concurrent request finds the value already changed (the target row is locked for update before the read), so it writes no second record;
 -- a request that changes nothing writes none.
 --
--- WHAT THE TABLE HOLDS. studio, who did it (the owner), who it was done to, the action ('removed' or 'restored') and the time. No client data, no names,
+-- WHAT THE TABLE HOLDS. studio, who did it (the owner), who it was done to, the action ('restored') and the time. No client data, no names,
 -- no email, no free text. RLS is on and FORCED with no policy: no signed-in user can read or write it. Only the database owner (this function) writes.
 --
--- BOTH DIRECTIONS, ONE LINE TO DROP REMOVALS. The block between "REMOVAL-RECORD BEGIN" and "REMOVAL-RECORD END" below is the only place a removal is
--- recorded. Deleting that block (and nothing else) leaves a migration that records restores only; 'removed' stays allowed by the table's check.
+-- RESTORES ONLY. Removals are deliberately not recorded here (a separate later item); the function's removal path is unchanged.
 --
 -- Rollback: the paired down file restores the previous function body and drops the table (its rows go with it).
 begin;
@@ -21,7 +20,7 @@ create table public.practitioner_access_events (
   studio_id               uuid not null references public.studios (id) on delete cascade,
   actor_practitioner_id   uuid references public.practitioners (id) on delete set null,
   target_practitioner_id  uuid references public.practitioners (id) on delete set null,
-  action                  text not null check (action in ('removed', 'restored')),
+  action                  text not null check (action in ('restored')),
   created_at              timestamptz not null default now()
 );
 
@@ -73,18 +72,10 @@ begin
      set active = v_new_active
    where id = p_target_practitioner_id and studio_id = p_studio_id;
 
-  -- A record is written only when the value really changed, under the row lock taken above.
-  if v_old_active is distinct from v_new_active then
-    if v_new_active then
-      insert into public.practitioner_access_events (studio_id, actor_practitioner_id, target_practitioner_id, action)
-      values (p_studio_id, p_actor_practitioner_id, p_target_practitioner_id, 'restored');
-    end if;
-    -- REMOVAL-RECORD BEGIN (delete this whole block to record restores only)
-    if not v_new_active then
-      insert into public.practitioner_access_events (studio_id, actor_practitioner_id, target_practitioner_id, action)
-      values (p_studio_id, p_actor_practitioner_id, p_target_practitioner_id, 'removed');
-    end if;
-    -- REMOVAL-RECORD END
+  -- A record is written only when a restore really changed the value, under the row lock taken above.
+  if v_new_active and v_old_active is distinct from v_new_active then
+    insert into public.practitioner_access_events (studio_id, actor_practitioner_id, target_practitioner_id, action)
+    values (p_studio_id, p_actor_practitioner_id, p_target_practitioner_id, 'restored');
   end if;
   return 'ok';
 end;

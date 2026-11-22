@@ -16,8 +16,6 @@ const bodyOf = (sql: string) => {
   return sql.slice(open, sql.indexOf("$$;", open));
 };
 const headOf = (sql: string) => sql.slice(sql.indexOf(FN), sql.indexOf("as $$", sql.indexOf(FN)));
-const BEGIN = "-- REMOVAL-RECORD BEGIN";
-const END = "-- REMOVAL-RECORD END";
 
 describe("0370 source contract", () => {
   it("is the current maximum migration (only the max may assert this)", () => {
@@ -49,7 +47,7 @@ describe("0370 source contract", () => {
     expect(UP).not.toMatch(/create policy/i);
     expect(UP).toContain("revoke all on table public.practitioner_access_events from public, anon, authenticated, service_role;");
     expect(UP).toContain("grant select on table public.practitioner_access_events to service_role;");
-    expect(UP).toContain("check (action in ('removed', 'restored'))");
+    expect(UP).toContain("check (action in ('restored'))");
   });
 
   it("restates the function's revoke by name for all four roles and grants service_role only", () => {
@@ -59,7 +57,7 @@ describe("0370 source contract", () => {
     expect(code).not.toMatch(/\bgrant\b[^;]*\bto (anon|authenticated|public)\b/i);
   });
 
-  it("reads the stored value under the same row lock that guards the write, and records only when it differs", () => {
+  it("reads the stored value under the same row lock that guards the write, and records only a restore that really changed it", () => {
     const body = bodyOf(UP);
     const lock = body.indexOf("for update;");
     const update = body.indexOf("update public.practitioners");
@@ -68,8 +66,9 @@ describe("0370 source contract", () => {
     expect(lock).toBeGreaterThan(-1);
     expect(update).toBeGreaterThan(lock);
     expect(firstInsert).toBeGreaterThan(update);
-    expect(body).toContain("if v_old_active is distinct from v_new_active then");
-    expect((body.match(/insert into public\.practitioner_access_events/g) ?? []).length).toBe(2);
+    expect(body).toContain("if v_new_active and v_old_active is distinct from v_new_active then");
+    expect((body.match(/insert into public\.practitioner_access_events/g) ?? []).length).toBe(1);
+    expect(body).not.toContain("'removed'");
     expect(body).not.toMatch(/\bnow\(\)|clock_timestamp|random\(/); // the time comes from the column default, nothing else is invented
   });
 
@@ -84,21 +83,16 @@ describe("0370 source contract", () => {
     expect(body).not.toMatch(/\bdelete\s+from\b/i);
   });
 
-  it("removals are recorded in exactly one marked block, and dropping that block leaves a valid, restores-only migration", () => {
+  it("removals are not recorded: the removal path is the previous one, and the record insert sits inside the restore-only condition", () => {
     const body = bodyOf(UP);
-    const a = body.indexOf(BEGIN);
-    const b = body.indexOf(END);
-    expect(a).toBeGreaterThan(-1);
-    expect(b).toBeGreaterThan(a);
-    const block = body.slice(a, b + END.length);
-    expect((block.match(/'removed'/g) ?? []).length).toBe(1);
-    expect((body.match(/'removed'/g) ?? []).length).toBe(1); // nowhere else in the body
-    const dropped = UP.slice(0, UP.indexOf(BEGIN)) + UP.slice(UP.indexOf(END) + END.length);
-    const dbody = bodyOf(dropped);
-    expect(dbody).not.toContain("'removed'");
-    expect(dbody).toContain("'restored'");
-    expect((dbody.match(/insert into public\.practitioner_access_events/g) ?? []).length).toBe(1);
-    expect(dropped).toContain("check (action in ('removed', 'restored'))"); // the table still allows both, so the choice can be reversed later
+    const cond = body.indexOf("if v_new_active and v_old_active is distinct from v_new_active then");
+    const ins = body.indexOf("insert into public.practitioner_access_events");
+    const end = body.indexOf("end if;", cond);
+    expect(cond).toBeGreaterThan(-1);
+    expect(ins).toBeGreaterThan(cond);
+    expect(ins).toBeLessThan(end);
+    expect(body).not.toMatch(/'removed'|REMOVAL/);
+    expect(UP).not.toMatch(/REMOVAL-RECORD/);
   });
 
   it("the down file restores the previous body byte for byte and drops the table", () => {
