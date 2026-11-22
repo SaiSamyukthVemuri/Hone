@@ -2,6 +2,13 @@
 
 Hone is a production pilot SaaS. Every contribution touches a system that real clients and a real studio depend on. This guide is the floor for what every PR must do.
 
+## Development workflow
+
+Use [Hone's pstack workflow](docs/engineering/pstack.md) for development tasks.
+It includes the one-time Claude Code installation and the adapters for Cursor
+and agents that read `AGENTS.md`. Engineering standards and release authority
+remain canonical.
+
 ## Local setup
 
 ```bash
