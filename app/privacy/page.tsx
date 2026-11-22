@@ -460,8 +460,9 @@ export default function PrivacyPolicyPage() {
         <li>the event time and a booking-derived event identifier</li>
         <li>the booking page address (event source URL)</li>
         <li>
-          hashed contact identifiers, such as a hashed email or phone number,
-          where consent and configuration permit
+          a hashed email address, where consent and configuration permit. A
+          phone number or text-message consent given for appointment texts is
+          never included.
         </li>
         <li>
           a generic service category only, such as consultation, electrolysis,
