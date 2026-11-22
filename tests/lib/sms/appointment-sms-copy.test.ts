@@ -8,6 +8,7 @@ import {
   APPOINTMENT_SMS_CONSENT_V1,
   APPOINTMENT_SMS_HELP_REPLY,
   APPOINTMENT_SMS_STOP_REPLY,
+  WAITLIST_SMS_NOTICE_LINES,
   appointmentSmsConsentLabel,
 } from "@/lib/sms/appointment-sms-copy";
 import { GSM7_SEGMENT_UNITS, gsm7Units } from "@/lib/sms/gsm7";
@@ -36,6 +37,24 @@ describe("the opt-in disclosure carries every required element", () => {
   });
 });
 
+describe("the waitlist notice beside the stored v2 question", () => {
+  const n = WAITLIST_SMS_NOTICE_LINES.join(" ");
+  it("names Hone and the studio, frequency, rates, HELP/STOP, per-studio scope and not-a-condition", () => {
+    expect(n).toContain("from Hone on behalf of the studio you are joining");
+    expect(n).toContain("one text when you join and one for each invitation to book");
+    expect(n).toContain("Msg & data rates may apply");
+    expect(n).toContain("Reply HELP for help, STOP to opt out");
+    expect(n).toContain("this studio's waitlist only");
+    expect(n).toContain("Consent isn't a condition of joining");
+  });
+  it("the form renders the shared fieldset and the stored version stays v2", () => {
+    const form = read("app/book/[slug]/NewClientWaitlistForm.tsx");
+    expect(form).toContain("<WaitlistSmsConsentFieldset");
+    expect(form).toMatch(/useState<\s*typeof SMS_CONSENT_ANSWER_YES \| typeof SMS_CONSENT_ANSWER_NO \| null\s*>\(null\)/);
+    expect(read("lib/waitlist/prospect-sms-consent.ts")).toContain('SMS_JOIN_CONSENT_TEXT_VERSION = "waitlist_sms_operational_v2"');
+  });
+});
+
 describe("auto-replies", () => {
   it("HELP reply is GSM-7 and one segment", () => {
     const u = gsm7Units(APPOINTMENT_SMS_HELP_REPLY);
@@ -44,7 +63,7 @@ describe("auto-replies", () => {
   });
   it("STOP reply is unchanged from before", () => {
     expect(APPOINTMENT_SMS_STOP_REPLY).toBe(
-      "You have been opted out of Hone appointment texts. Email reminders may still be sent.",
+      "You have been opted out of Hone appointment and waitlist texts. Email reminders may still be sent.",
     );
   });
   it("HELP and INFO are help keywords; START, UNSTOP and STOP are not", () => {
@@ -81,7 +100,7 @@ describe("one source: the form, the route and the evidence page use it", () => {
     expect(page).not.toMatch(/\+?1?\d{3}[-. ]?\d{3}[-. ]?\d{4}/);
   });
   it("the page is public (exact middleware match) and the policies carry the anchored SMS section", () => {
-    expect(read("lib/supabase/middleware.ts")).toContain('pathname === "/sms-consent"');
+    for (const r of ["/sms-consent", "/sms-terms"]) expect(read("lib/supabase/middleware.ts")).toContain(`pathname === "${r}"`);
     for (const p of ["app/privacy/page.tsx", "app/terms/page.tsx"]) {
       const s = read(p);
       expect(s).toContain('id="appointment-text-messages"');

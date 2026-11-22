@@ -2,9 +2,11 @@ import type { Metadata } from "next";
 import { H2, H3, P, UL, PolicyLayout } from "@/app/_components/PolicyLayout";
 import { marketingMetadata } from "@/lib/marketing/metadata";
 import { AppointmentSmsConsent } from "@/components/sms/AppointmentSmsConsent";
+import { WaitlistSmsConsentFieldset } from "@/components/sms/WaitlistSmsConsentFieldset";
 import {
   APPOINTMENT_SMS_CONSENT_V1,
   APPOINTMENT_SMS_FREQUENCY,
+  WAITLIST_SMS_FREQUENCY,
   APPOINTMENT_SMS_CONSENT_VERSION,
   APPOINTMENT_SMS_CONSENT_VERSION_V1,
   APPOINTMENT_SMS_HELP_REPLY,
@@ -16,7 +18,10 @@ import {
   build24hReminderSms,
   build2hReminderSms,
   buildBookingConfirmationSms,
+  buildWaitlistInvitationSms,
+  buildWaitlistJoinAckSms,
 } from "@/lib/sms/templates";
+import { SMS_JOIN_CONSENT_TEXT_VERSION, SMS_OPERATIONAL_CONSENT_TEXT_VERSION } from "@/lib/waitlist/prospect-sms-consent";
 
 // PUBLIC, no login. The evidence of how a person opts in to Hone appointment texts, for carriers and reviewers.
 // EVERYTHING HERE COMES FROM THE SAME CODE THE PRODUCT RUNS: the checkbox is the real component (disabled, with a synthetic studio
@@ -52,12 +57,24 @@ const samples: ReadonlyArray<{ title: string; body: string }> = [
     }),
   },
   {
-    title: "Reminder, a few hours before",
+    title: "Reminder, a few hours before (when a studio turns it on)",
     body: build2hReminderSms({
       studioName: SYNTHETIC_STUDIO,
       startsAt: SYNTHETIC_START,
       timezone: TZ,
       manageUrl: EXAMPLE_LINK,
+    }),
+  },
+];
+
+const waitlistSamples: ReadonlyArray<{ title: string; body: string }> = [
+  { title: "Waitlist: acknowledgement, sent when someone who said Yes joins", body: buildWaitlistJoinAckSms({ studioName: SYNTHETIC_STUDIO }) },
+  {
+    title: "Waitlist: invitation to book, sent beside the invitation email",
+    body: buildWaitlistInvitationSms({
+      studioName: SYNTHETIC_STUDIO,
+      invitationUrl: "https://hone.care/invitation/example",
+      expiresAtLabel: "Friday, June 7 at 5:00 PM",
     }),
   },
 ];
@@ -82,25 +99,33 @@ export default function SmsConsentPage() {
           client booked with.
         </li>
         <li>
-          <strong>Purpose:</strong> appointment confirmations and reminders only. No marketing or promotional texts.
+          <strong>Purpose:</strong> appointment confirmations and reminders, and, only for people who say Yes on a studio&rsquo;s waitlist
+          form, waitlist updates from that studio. No marketing or promotional texts.
         </li>
         <li>
-          <strong>Frequency:</strong> {APPOINTMENT_SMS_FREQUENCY}.
+          <strong>Frequency:</strong> appointment texts, {APPOINTMENT_SMS_FREQUENCY}. Waitlist texts, {WAITLIST_SMS_FREQUENCY}.
         </li>
         <li>
           <strong>Rates:</strong> message and data rates may apply.
         </li>
         <li>
-          <strong>Help and opt-out:</strong> reply HELP for help, or STOP to opt out. STOP stops appointment texts from every studio on Hone
-          to that number.
+          <strong>Help and opt-out:</strong> reply HELP for help, or STOP to opt out. STOP stops Hone texts from every studio on Hone to that
+          number.
         </li>
         <li>
-          <strong>Not part of this program:</strong> waitlist texts. They are a separate matter with their own consent and are not covered
-          by this page.
+          <strong>Studio-specific consent:</strong> saying Yes on one studio&rsquo;s waitlist covers that studio&rsquo;s waitlist only; it does
+          not subscribe anyone to other studios.
+        </li>
+        <li>
+          <strong>Terms:</strong>{" "}
+          <a className="underline" href="/sms-terms">
+            SMS Terms
+          </a>
+          .
         </li>
       </UL>
 
-      <H2 id="opt-in">Where and how a person opts in</H2>
+      <H2 id="opt-in">Where and how a person opts in: appointment texts</H2>
       <P>
         On the studio&rsquo;s public booking page, in the booking form, the client sees the following optional box next to the phone number
         they enter. It is never pre-ticked, it is not required, and the client can book without it. This is the real form component, shown
@@ -125,9 +150,40 @@ export default function SmsConsentPage() {
         not widened by the newer wording.
       </P>
 
+      <H2 id="waitlist-opt-in">Where and how a person opts in: waitlist texts</H2>
+      <P>
+        When a studio runs a waitlist for new clients, the join form asks the question below. Neither answer is preselected, and answering No
+        still joins the waitlist with the same place in the queue. This is the real form component, shown read-only (nothing can be submitted
+        from this page) with a made-up studio name.
+      </P>
+      <div
+        role="img"
+        aria-label="The waitlist text-message question exactly as shown on the join form, with no answer selected"
+        className="rounded-md border p-4"
+        style={{ borderColor: "var(--color-hairline-strong)" }}
+      >
+        <WaitlistSmsConsentFieldset questionId="sms-consent-preview-question" answer={null} preview />
+      </div>
+      <P>
+        The consent text that is stored with a Yes is <strong>{SMS_JOIN_CONSENT_TEXT_VERSION}</strong>: the question above. The notice under the
+        question (sender, frequency, rates, HELP and STOP, and the links) sits next to that stored text; it does not change it. Earlier waitlist
+        consents were given under {SMS_OPERATIONAL_CONSENT_TEXT_VERSION} or the same question, and are not widened.
+      </P>
+
       <H2 id="sample-messages">Sample messages</H2>
       <P>These are produced by the same code that sends the real messages, from made-up details.</P>
       {samples.map((m) => (
+        <div key={m.title}>
+          <H3 id={m.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}>{m.title}</H3>
+          <P>
+            <span className="block rounded-md border p-3 font-mono text-[0.9375rem]" style={{ borderColor: "var(--color-hairline-strong)" }}>
+              {m.body}
+            </span>
+          </P>
+        </div>
+      ))}
+      <H3 id="waitlist-samples">Waitlist texts</H3>
+      {waitlistSamples.map((m) => (
         <div key={m.title}>
           <H3 id={m.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}>{m.title}</H3>
           <P>
@@ -163,6 +219,10 @@ export default function SmsConsentPage() {
       <P>
         <a className="underline" href="/privacy#appointment-text-messages">
           Privacy Policy: appointment text messages
+        </a>
+        {" · "}
+        <a className="underline" href="/sms-terms">
+          SMS Terms
         </a>
         {" · "}
         <a className="underline" href="/terms#appointment-text-messages">

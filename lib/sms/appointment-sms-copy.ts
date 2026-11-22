@@ -23,7 +23,7 @@ export const APPOINTMENT_SMS_CONSENT_V1 = {
 } as const;
 
 /** The program, named once. */
-export const APPOINTMENT_SMS_PROGRAM_NAME = "Hone appointment texts";
+export const APPOINTMENT_SMS_PROGRAM_NAME = "Hone appointment and waitlist texts";
 
 /** The one contact a client is pointed to for help. A real mailbox the product already names for support. */
 export const APPOINTMENT_SMS_SUPPORT_EMAIL = "support@hone.care";
@@ -31,6 +31,16 @@ export const APPOINTMENT_SMS_SUPPORT_EMAIL = "support@hone.care";
 /** Where the client can read the policies. Same-origin paths, never form input. */
 export const APPOINTMENT_SMS_PRIVACY_PATH = "/privacy#appointment-text-messages";
 export const APPOINTMENT_SMS_TERMS_PATH = "/terms#appointment-text-messages";
+/** The short public SMS terms page (program, frequency, rates, HELP/STOP, support). */
+export const SMS_TERMS_PATH = "/sms-terms";
+
+/** Waitlist opt-in: a notice shown BESIDE the stored v2 question (the question text itself is unchanged). */
+export const WAITLIST_SMS_FREQUENCY = "usually one text when you join and one for each invitation to book";
+export const WAITLIST_SMS_NOTICE_LINES: ReadonlyArray<string> = [
+  `Texts come from Hone on behalf of the studio you are joining, about this waitlist only: ${WAITLIST_SMS_FREQUENCY}.`,
+  "Msg & data rates may apply. Reply HELP for help, STOP to opt out. This applies to this studio's waitlist only.",
+  "Consent isn't a condition of joining. If you say No, we email you instead and your place is the same.",
+];
 
 /** The checkbox label. `studioName` is the server-resolved studio name, never form input. */
 export function appointmentSmsConsentLabel(studioName: string): string {
@@ -51,7 +61,7 @@ export const APPOINTMENT_SMS_CONSENT_DISCLOSURE: ReadonlyArray<string> = [
 
 /** Reply to HELP and INFO. One GSM-7 segment (checked by a test). */
 export const APPOINTMENT_SMS_HELP_REPLY =
-  `${APPOINTMENT_SMS_PROGRAM_NAME}: confirmations and reminders for your booking. ` +
+  `${APPOINTMENT_SMS_PROGRAM_NAME}: sent by Hone on behalf of your studio. ` +
   `Msg & data rates may apply. Reply STOP to opt out. Help: ${APPOINTMENT_SMS_SUPPORT_EMAIL}`;
 
 /** Reply to STOP (the existing text, moved here unchanged). */

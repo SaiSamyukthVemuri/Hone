@@ -65,8 +65,8 @@ describe("HELP and INFO are answered with the program description", () => {
       expect(res.status).toBe(200);
       const xml = await res.text();
       expect(xml).toContain("<Message>");
-      expect(xml).toContain("Hone appointment texts");
-      expect(xml).toContain("confirmations and reminders");
+      expect(xml).toContain("Hone appointment and waitlist texts");
+      expect(xml).toContain("sent by Hone on behalf of your studio");
       expect(xml).toContain("Msg &amp; data rates may apply");
       expect(xml).toContain("Reply STOP to opt out");
       expect(xml).toContain("support@hone.care");
@@ -111,6 +111,6 @@ describe("nothing else changes", () => {
       xml = "";
     }
     expect(h.adminCreated).toBeGreaterThan(0);
-    expect(xml).not.toContain("Hone appointment texts: confirmations");
+    expect(xml).not.toContain("Hone appointment and waitlist texts: confirmations");
   });
 });

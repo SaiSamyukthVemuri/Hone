@@ -264,9 +264,17 @@ export default function PrivacyPolicyPage() {
         If you tick the text-message box when you book online, Hone sends you
         text messages <strong>on behalf of the studio you booked with</strong>:
         appointment confirmations and reminders only. Nothing else is sent
-        under this consent. Hone does not send marketing or promotional texts,
-        and texts about a studio&rsquo;s waitlist are a separate matter that
-        this section does not cover.
+        under this consent. Hone does not send marketing or promotional texts.
+      </P>
+      <P>
+        If a studio runs a waitlist for new clients and you answer Yes to its
+        text-message question when you join, Hone also texts you on that
+        studio&rsquo;s behalf about that waitlist only: usually one text when
+        you join and one for each invitation to book. That Yes applies to that
+        studio&rsquo;s waitlist only; it does not subscribe you to other
+        studios. Answering No still joins the waitlist, with email used
+        instead. Rates, HELP and STOP work as described below, and the full
+        program terms are at /sms-terms.
       </P>
       <UL>
         <li>

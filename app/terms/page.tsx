@@ -67,8 +67,14 @@ export default function TermsOfServicePage() {
         <a className="underline" href="/privacy#appointment-text-messages">
           Privacy Policy
         </a>
-        . Waitlist texts are not part of this program. A studio that uses text
-        messages must only text people who have opted in.
+        . Where a person answers Yes on a studio&rsquo;s waitlist form, Hone
+        also texts them on that studio&rsquo;s behalf about that waitlist only,
+        and that Yes applies to that studio only. See the{" "}
+        <a className="underline" href="/sms-terms">
+          SMS Terms
+        </a>
+        . A studio that uses text messages must only text people who have
+        opted in.
       </P>
 
       <H2 id="eligibility">3. Eligibility</H2>
