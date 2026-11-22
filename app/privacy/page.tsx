@@ -47,7 +47,7 @@ const EFFECTIVE_DATE = "May 22, 2026";
 
 // When the text below was last revised. A fact about this file, not a legal
 // determination.
-const LAST_UPDATED = "October 10, 2026";
+const LAST_UPDATED = "November 22, 2026";
 
 export default function PrivacyPolicyPage() {
   return (
@@ -258,6 +258,71 @@ export default function PrivacyPolicyPage() {
         </li>
       </UL>
 
+      <H3 id="appointment-text-messages">Appointment text messages</H3>
+      <P>
+        If you tick the text-message box when you book online, Hone sends you
+        text messages <strong>on behalf of the studio you booked with</strong>:
+        appointment confirmations and reminders only. Nothing else is sent
+        under this consent. Hone does not send marketing or promotional texts.
+        Appointment texts go to clients who opted in on that studio&rsquo;s
+        booking form; they then cover that client&rsquo;s appointments at that
+        studio, including ones the studio books for them.
+      </P>
+      <P>
+        If a studio runs a waitlist for new clients, Hone also texts on that
+        studio&rsquo;s behalf about that waitlist only: usually one text when
+        you join and one for each invitation to book. Waitlist texts are sent
+        only to people who agreed: either by answering Yes on the studio&rsquo;s
+        waitlist form, or by telling the studio they agree, which the studio
+        then records in Hone for that studio&rsquo;s waitlist only. Your
+        agreement applies to that studio&rsquo;s waitlist only; it does not
+        subscribe you to other studios. Answering No still joins the waitlist, with email used
+        instead. Rates, HELP and STOP work as described below, and the full
+        program terms are at /sms-terms.
+      </P>
+      <UL>
+        <li>
+          <strong>When:</strong> a confirmation after you book, plus a
+          reminder about 24 hours before and another a few hours before, when
+          the studio has those reminders turned on. That is usually up to 3
+          messages per booking (a confirmation and two reminders); a
+          rescheduled booking starts again, and the number depends on your
+          appointments and waitlist activity.
+        </li>
+        <li>
+          <strong>Rates:</strong> message and data rates may apply, as charged
+          by your mobile carrier.
+        </li>
+        <li>
+          <strong>Help and opting out:</strong> reply <strong>HELP</strong> for
+          help, or email support@hone.care. Reply <strong>STOP</strong> at any
+          time to opt out; this opts that number out of every matching client and waitlist record at that time, across studios, and email may still be used for
+          appointment messages.
+        </li>
+        <li>
+          <strong>Not a condition of booking:</strong> the box is optional and
+          never pre-ticked, and you can book without it.
+        </li>
+        <li>
+          <strong>Who decides and who sends:</strong> the studio decides
+          whether to use text messages and which reminders to turn on; Hone
+          sends them, from a Hone phone number, and handles your reply.
+        </li>
+        <li>
+          <strong>Your choice:</strong> opting in is optional. Consent you gave
+          earlier stays under the wording it was given under; newer wording
+          applies only to consents given from now on. We keep your mobile
+          number with your booking or waitlist record, and a record of when and
+          where you agreed.
+        </li>
+        <li>
+          <strong>Who handles them:</strong> we use Twilio, our service
+          provider, to deliver the texts. We do not sell your mobile number or
+          your text-message consent, and we do not share them with third
+          parties for marketing or promotional purposes.
+        </li>
+      </UL>
+
       <H2 id="where-we-store-data">5. Where we store data</H2>
       <P>
         Personal information is stored on infrastructure provided by{" "}
@@ -411,8 +476,9 @@ export default function PrivacyPolicyPage() {
         <li>the event time and a booking-derived event identifier</li>
         <li>the booking page address (event source URL)</li>
         <li>
-          hashed contact identifiers, such as a hashed email or phone number,
-          where consent and configuration permit
+          a hashed email address, where consent and configuration permit. A
+          phone number or text-message consent given for appointment texts is
+          never included.
         </li>
         <li>
           a generic service category only, such as consultation, electrolysis,

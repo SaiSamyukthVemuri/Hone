@@ -299,7 +299,7 @@ test.describe("new client at a waitlisted studio", () => {
       /use the name, email and phone number you enter here/i,
     );
     await expect(collectionNotice).toBeVisible();
-    const privacyLink = page.getByRole("link", { name: /privacy policy/i });
+    const privacyLink = collectionNotice.getByRole("link", { name: /privacy policy/i });
     await expect(privacyLink).toBeVisible();
     await expect(privacyLink).toHaveAttribute("href", "/privacy");
 
