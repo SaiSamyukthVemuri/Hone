@@ -52,6 +52,7 @@ import {
 } from "@/lib/email/send-appointment";
 import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
 import { stampPublicBookingConsent } from "@/lib/booking/public-consent-stamp";
+import { APPOINTMENT_SMS_CONSENT_VERSION } from "@/lib/sms/appointment-sms-copy";
 import { normalizePhoneForMatch, normalizePhoneForSms } from "@/lib/sms/twilio";
 import { readClientConsentPhone } from "@/lib/sms/consent-phone-read";
 import { isBookableByNewClient } from "@/lib/booking/consultation";
@@ -1171,7 +1172,15 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
           // existingClient is the row looked up above under THIS studio (.eq("studio_id", studio.id)), so the replacement can only act on
           // a client of the studio the booking is for; the function matches by that client id and the number its consent is bound to.
           const replacing = consentIsForOtherNumber && boundPhone != null ? boundPhone : undefined;
-          const stamp = await stampPublicBookingConsent(admin, existingClient.id, new Date().toISOString(), replacing);
+          const stamp = await stampPublicBookingConsent(
+            admin,
+            existingClient.id,
+            new Date().toISOString(),
+            replacing,
+            // The wording the booking form shows; recorded only for a replacement consent. W1 (the new-client command) takes no version, so a
+            // brand-new client's first consent is stored without one: a stated limit, not a defect.
+            APPOINTMENT_SMS_CONSENT_VERSION,
+          );
           if (stamp.result === "error") {
             // Soft fail. The booking and the email path must not break
             // because of a consent-stamp error; future bookings can

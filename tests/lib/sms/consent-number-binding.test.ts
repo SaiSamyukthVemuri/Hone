@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { passesConsentGate } from "@/lib/sms/consent-gate";
 import { CONSENT_PHONE_UNKNOWN, readClientConsentPhone } from "@/lib/sms/consent-phone-read";
+import { APPOINTMENT_SMS_CONSENT_VERSION } from "@/lib/sms/appointment-sms-copy";
 import { stampPublicBookingConsent } from "@/lib/booking/public-consent-stamp";
 
 // A consent is for the number it was given for. The gate, the fail-closed reader, the fresh-consent stamp and the wiring of
@@ -161,6 +162,15 @@ describe("every sender of a text carries the bound number (source contracts)", (
     expect(s.indexOf("smsConsent && normalizePhoneForSms(phone) === null")).toBeLessThan(s.indexOf("limitPublicBooking({"));
     expect(s).toMatch(/consentIsForOtherNumber/);
     expect(s).toMatch(/submittedDigits === storedDigits/);
+  });
+  it("the public booking re-stamp records the current wording id (v2), and W1's new-client command takes none (stated limit)", () => {
+    expect(APPOINTMENT_SMS_CONSENT_VERSION).toBe("appointment_sms_consent_v2");
+    const s = read("app/book/[slug]/actions.ts");
+    expect(s).toMatch(/import \{ APPOINTMENT_SMS_CONSENT_VERSION \} from "@\/lib\/sms\/appointment-sms-copy"/);
+    const call = s.slice(s.indexOf("stampPublicBookingConsent(\n"), s.indexOf("if (stamp.result === \"error\")"));
+    expect(call).toContain("replacing,");
+    expect(call).toContain("APPOINTMENT_SMS_CONSENT_VERSION,");
+    expect(s).not.toMatch(/p_sms_consent_text_version/);
   });
   it("the edit screen tells staff that changing a consenting client's number pauses their texts", () => {
     expect(read("app/(app)/clients/[id]/edit/page.tsx")).toMatch(/texts to them stop until they confirm the new number/);

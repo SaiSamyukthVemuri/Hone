@@ -122,7 +122,7 @@ describe("stampPublicBookingConsent", () => {
 describe("the public booking action uses it", () => {
   const src = readFileSync("app/book/[slug]/actions.ts", "utf8");
   it("stamps an existing client's consent only through stampPublicBookingConsent", () => {
-    expect(src).toContain("stampPublicBookingConsent(admin, existingClient.id,");
+    expect(src).toMatch(/stampPublicBookingConsent\(\s*admin,\s*existingClient\.id,/);
     expect(src).not.toMatch(/sms_consent_at:\s*nowIso/);
   });
   it("adopts both the consent and the opt-out the stamp reports", () => {
