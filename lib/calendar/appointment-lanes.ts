@@ -97,3 +97,22 @@ export function calendarGroupNeedsChooser(
   if (group.ids.some(id => id.startsWith("block:"))) return group.ids.length > 1;
   return group.ids.some(id => appointmentNeedsChooser({ ...layout, columns: lanes.get(id)?.columns ?? 0 }));
 }
+
+
+// A chooser button stands for several appointments. Its span is already drawn
+// at the real occupied height, so list who is inside it instead of a bare
+// count: the calendar itself then shows each client. Display only; selection
+// still goes through the chooser. Unknown or too-small geometry shows the
+// count alone, which is the safe path.
+export const CHOOSER_ROW_PX = 14;
+export const CHOOSER_PADDING_PX = 8;
+
+export function chooserSummaryRows(count: number, heightPx: number): { shown: number; more: number } {
+  if (!Number.isSafeInteger(count) || count < 1 || !Number.isFinite(heightPx) || heightPx <= 0) {
+    return { shown: 0, more: Math.max(0, Number.isSafeInteger(count) ? count : 0) };
+  }
+  const capacity = Math.floor((heightPx - CHOOSER_PADDING_PX) / CHOOSER_ROW_PX);
+  if (count <= capacity) return { shown: count, more: 0 };
+  if (capacity < 2) return { shown: 0, more: count };
+  return { shown: capacity - 1, more: count - (capacity - 1) };
+}

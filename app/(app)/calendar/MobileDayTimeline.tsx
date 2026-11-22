@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRef, useState } from "react";
-import { calendarCollisionGroups, timedBlockCollisionId } from "@/lib/calendar/appointment-lanes";
+import { calendarCollisionGroups, timedBlockCollisionId, chooserSummaryRows } from "@/lib/calendar/appointment-lanes";
 import { AppointmentOverlapChooser } from "./AppointmentOverlapChooser";
 import type { StudioTimedBlock } from "@/lib/types/database";
 import type {
@@ -346,8 +346,21 @@ export function MobileDayTimeline({
               aria-label={`Choose from ${members.length} appointments`}
               className="absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 border-neutral-500 bg-neutral-100 px-2 py-1 text-left text-sm text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100"
               onClick={(event) => { event.stopPropagation(); setOverlapIds(group.ids); }}>
-              <span className="block font-semibold">{members.length} appointments</span>
-              <span className="block tabular-nums">{formatTimeForStudio(start, tz, timeFormat)}</span>
+              {(() => {
+                const rows = chooserSummaryRows(members.length, height);
+                return rows.shown === 0 ? <>
+                  <span className="block font-semibold">{members.length} appointments</span>
+                  <span className="block tabular-nums">{formatTimeForStudio(start, tz, timeFormat)}</span>
+                </> : <>
+                  {members.slice(0, rows.shown).map(m => (
+                    <span key={m.id} data-chooser-row="" className="flex h-[14px] items-center gap-1 text-[11px] leading-[14px]">
+                      <span className="shrink-0 tabular-nums opacity-80">{formatTimeForStudio(new Date(m.starts_at), tz, timeFormat)}</span>
+                      <span className="truncate font-semibold">{m.client?.name?.trim() || "Client"}</span>
+                    </span>
+                  ))}
+                  {rows.more > 0 && <span className="block h-[14px] text-[11px] font-semibold leading-[14px]">+{rows.more} more</span>}
+                </>;
+              })()}
             </button>
           );
           const clientName = a.client?.name?.trim() || "Client";

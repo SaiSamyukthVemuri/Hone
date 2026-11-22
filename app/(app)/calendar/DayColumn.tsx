@@ -13,7 +13,7 @@
 // the overlay on truly empty space.
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import { appointmentLanes, calendarCollisionGroups, timedBlockCollisionId, calendarGroupNeedsChooser } from "@/lib/calendar/appointment-lanes";
+import { appointmentLanes, calendarCollisionGroups, timedBlockCollisionId, calendarGroupNeedsChooser, chooserSummaryRows } from "@/lib/calendar/appointment-lanes";
 import type { Service, StudioTimedBlock } from "@/lib/types/database";
 import type {
   AppointmentWithPractitionerColor,
@@ -965,10 +965,21 @@ export function DayColumn({
             if (members.length === 1) setPreview(a);
             else setOverlapIds(group.ids);
           }}>
-          {members.length === 1 ? <OverlapAppointmentSummary appointment={a} tz={tz} timeFormat={timeFormat} /> : <>
-            <span className="block font-semibold">{members.length} appointments</span>
-            <span className="block tabular-nums">{formatTimeForStudio(new Date(a.starts_at), tz, timeFormat)}</span>
-          </>}
+          {members.length === 1 ? <OverlapAppointmentSummary appointment={a} tz={tz} timeFormat={timeFormat} /> : (() => {
+            const rows = chooserSummaryRows(members.length, group.height);
+            return rows.shown === 0 ? <>
+              <span className="block font-semibold">{members.length} appointments</span>
+              <span className="block tabular-nums">{formatTimeForStudio(new Date(a.starts_at), tz, timeFormat)}</span>
+            </> : <>
+              {members.slice(0, rows.shown).map(m => (
+                <span key={m.id} data-chooser-row="" className="flex h-[14px] items-center gap-1 text-[11px] leading-[14px]">
+                  <span className="shrink-0 tabular-nums opacity-80">{formatTimeForStudio(new Date(m.starts_at), tz, timeFormat)}</span>
+                  <span className="truncate font-semibold">{m.client?.name?.trim() || "Client"}</span>
+                </span>
+              ))}
+              {rows.more > 0 && <span className="block h-[14px] text-[11px] font-semibold leading-[14px]">+{rows.more} more</span>}
+            </>;
+          })()}
         </button>;
       })}
       <AppointmentOverlapChooser blockScopeNames={blockScopeNames} timedBlocks={selectedBlocks} onSelectBlock={(block) => setEditingBlock(block)} appointments={selectedOverlaps} tz={tz} timeFormat={timeFormat} returnTo={returnTo}
