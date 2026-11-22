@@ -189,11 +189,14 @@ export function AppointmentCheckoutCell({
     );
   }
 
+  // chargeable or no_session → the shared Checkout entry. The modal resolves the
+  // accurate state (and routes to charting when there is no session yet).
+  //
   // A completed visit with a session, NO card money and NO settlement, whose
   // service the studio has not priced at zero, is unpaid, and the row now says
   // so beside Checkout. A visit whose price is simply not set also qualifies
   // (`chargeable` does not require a known price). A neutral fact: never
-  // emerald, never "Paid", no amount, no charge. Claimed only for
+  // green, never "Paid", no amount, no charge. Claimed only for
   // `chargeable`; `no_session` and `unavailable` claim nothing.
   //
   // OWNER-ONLY BY CONSTRUCTION, not by this component: both callers render the
@@ -214,8 +217,7 @@ export function AppointmentCheckoutCell({
     );
   }
 
-  // no_session → the shared Checkout entry. The modal resolves the
-  // accurate state (and routes to charting when there is no session yet).
+  // no_session (and anything else) → the ordinary Checkout entry alone.
   return (
     <CheckoutButton appointmentId={appointmentId} status={status} variant="compact" />
   );
