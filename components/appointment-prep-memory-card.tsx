@@ -181,7 +181,7 @@ export function AppointmentPrepMemoryCard({
               data-testid="prep-full-chart-link"
               className="text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
             >
-              Open full chart →
+              Open full chart
             </Link>
           )}
         </div>
@@ -248,7 +248,7 @@ export function AppointmentPrepMemoryCard({
                 href={fullChartHref}
                 className="font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
               >
-                Open full chart →
+                Open full chart
               </Link>
             </p>
           )}

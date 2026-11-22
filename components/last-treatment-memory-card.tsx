@@ -71,7 +71,7 @@ export function LastTreatmentMemoryCard({
             href={`/clients/${clientId}/sessions/${memory.sessionId}`}
             className="text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
           >
-            Open full chart →
+            Open full chart
           </Link>
         </div>
         <p className="text-sm text-neutral-700 dark:text-neutral-300">
@@ -257,7 +257,7 @@ export function LastTreatmentMemoryCard({
             href={notesHref}
             className="text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
           >
-            Full notes →
+            Full notes
           </Link>
         </div>
         {hasNotes ? (

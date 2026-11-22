@@ -7,7 +7,6 @@ import { SiteFooter } from "../../_components/marketing/SiteFooter";
 import {
   MarketingSurface,
   Container,
-  Eyebrow,
   Display,
   Subtitle,
 } from "../../_components/marketing/primitives";
@@ -120,8 +119,7 @@ export default function ChecklistArticlePage() {
         <article>
           <Container size="prose" className="pb-6 pt-4 lg:pt-5">
             <Reveal immediate>
-              <Eyebrow>Guide</Eyebrow>
-              <Display className="mt-2.5">{article.title}</Display>
+              <Display>{article.title}</Display>
               <ArticleByline article={article} />
               <p className="mt-8 text-[1.0625rem] leading-[1.7] text-ink">
                 A good electrolysis treatment record does two jobs: it protects the client, and
