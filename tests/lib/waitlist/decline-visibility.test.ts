@@ -73,7 +73,7 @@ describe("answersFor", () => {
     expect(answersFor("i1", true, ok([fu({})], true))).toEqual({ kind: "answers", why: "too early", better: "evenings" });
     expect(answersFor("i9", true, ok([fu({})]))).toEqual({ kind: "none_on_record" });
   });
-  it("P2: the invitation-scoped read decides when the page list has no row: an erased closed follow-up is 'erased', never 'none'", () => {
+  it("the invitation-scoped read decides when the page list has no row: an erased closed follow-up is 'erased', never 'none'", () => {
     const erased = fu({ invitationId: "i9", status: "handled", whyNotWork: null, betterTimes: null, answersErasedAt: "2026-09-01T00:00:00Z", closedAt: "2026-08-25T00:00:00Z" });
     const scoped = new Map([["i9", ok([erased])]]);
     expect(answersFor("i9", true, ok([fu({})]), scoped)).toEqual({ kind: "erased", at: "2026-09-01T00:00:00Z" });

@@ -870,7 +870,9 @@ export default async function WaitlistSettingsPage({
     const shownIds = latestDeclinePerPerson(declineRecords.rows).slice(0, DECLINED_SHOW_MAX).map((r) => r.entry_id);
     const facts = await loadDeclinedEntryFacts(supabase, studio.id, shownIds);
     declinedFactsUnreadable = facts === null;
-    declinedList = declinedPeople(declineRecords, facts);
+    // ONE bounded list of the people actually shown (never the whole set, which can be 1000): the facts, the answers reads and the position
+    // reads below all use it, so their cost is at most DECLINED_SHOW_MAX each, whatever the total.
+    declinedList = declinedPeople(declineRecords, facts).slice(0, DECLINED_SHOW_MAX);
     declinedContacts = await loadReplyContacts(studio.id, shownIds);
     // The page-wide follow-up list leaves out closed follow-ups whose answers were erased or are past retention, so for every shown person it
     // does not already cover, ask the existing command for THAT invitation's follow-ups (any state) before saying anything about answers.

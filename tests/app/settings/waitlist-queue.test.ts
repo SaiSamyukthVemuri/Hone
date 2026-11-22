@@ -3517,7 +3517,7 @@ describe("people who declined: the summary count and the declined view", () => {
     };
     const rowOf = (html: string, id: string) => html.match(new RegExp(`<li[^>]*data-entry-id="${id}"[^>]*data-testid="declined-row"[\\s\\S]*?</li>`))?.[0] ?? "";
 
-    it("P2: a CLOSED follow-up whose answers were erased (which the page list leaves out) reads as removed, never 'No answers on record'", async () => {
+    it("a CLOSED follow-up whose answers were erased (which the page list leaves out) reads as removed, never 'No answers on record'", async () => {
       seed();
       followUp.scoped = { i3: { kind: "ok", rows: [fuRow("i3", "e-b", { status: "handled", whyNotWork: null, betterTimes: null, answersErasedAt: "2026-09-01T00:00:00.000Z", closedAt: "2026-08-25T00:00:00.000Z" })] } };
       const html = await withGate({ kind: "ok", rows: [fuRow("i2", "e-a")] }); // the page list has Alex only
@@ -3551,6 +3551,34 @@ describe("people who declined: the summary count and the declined view", () => {
       seed();
       await render({ view: "declined" });
       expect(followUp.scopedCalls).toEqual([]);
+    });
+  });
+
+  describe("S1: every per-person read is bounded to the people SHOWN, whatever the total", () => {
+    it("60 people declined, answers gate ON: at most 50 scoped answer reads and at most 50 position counts, and 50 rows", async () => {
+      scenario.rows = [entry({ id: "w1", status: "waiting" })];
+      scenario.count = 1;
+      const ids = Array.from({ length: 60 }, (_, i) => `e${String(i).padStart(2, "0")}`);
+      // Newest first by decline time: e00 is the most recent.
+      scenario.declinedInvitations = ids.map((id, i) => ({ id: `i-${id}`, entry_id: id, declined_at: new Date(Date.UTC(2026, 7, 22, 10, 0, 0) - i * 60_000).toISOString() }));
+      scenario.declineEntries = ids.map((id) => ({ id, name: `P ${id}`, status: "waiting", joined_at: "2026-07-01T12:00:00+00:00" }));
+      process.env.WAITLIST_DECLINE_ANSWERS = "1";
+      followUp.followUps = { kind: "ok", rows: [] };
+      let html = "";
+      try {
+        html = await render({ view: "declined" });
+      } finally {
+        delete process.env.WAITLIST_DECLINE_ANSWERS;
+        followUp.followUps = null;
+      }
+      expect((html.match(/data-testid="declined-row"/g) ?? []).length).toBe(50);
+      expect(html).toContain("Showing the 50 most recent of 60.");
+      expect(followUp.scopedCalls.length).toBe(50);
+      expect(new Set(followUp.scopedCalls)).toEqual(new Set(ids.slice(0, 50).map((id) => `i-${id}`))); // the 50 shown, not the 10 oldest
+      const positions = queries.filter((q) => q.table === "new_client_waitlist_entries" && q.filters.some((f) => f[0] === "or"));
+      expect(positions.length).toBe(50);
+      const factsRead = queries.find((q) => q.columns === "id,name,status,joined_at")!;
+      expect(((factsRead.filters.find((f) => f[0] === "in" && f[1] === "id")?.[2] ?? []) as string[]).length).toBe(50);
     });
   });
 
