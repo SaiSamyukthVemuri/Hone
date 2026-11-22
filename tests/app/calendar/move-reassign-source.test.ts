@@ -2,19 +2,16 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// PR B Part 4 — the move action routes through the atomic move/reassign command
-// (0143), not the legacy time-only RPC (0133) — no bypassable alternative.
+// PR B Part 4 — the arguments the move action hands the atomic move/reassign
+// command (0143). That it calls that command is proved behaviourally in
+// tests/lib/calendar/move-appointment-actions.test.ts.
 
 const MOVE = readFileSync(
   join(process.cwd(), "app/(app)/calendar/move-appointment-actions.ts"),
   "utf8",
 );
 
-describe("move action — routes through move_or_reassign_appointment (0143)", () => {
-  it("calls the new command and no longer calls the legacy time-only RPC", () => {
-    expect(MOVE).toMatch(/\.rpc\("move_or_reassign_appointment"/);
-    expect(MOVE).not.toMatch(/\.rpc\("practitioner_move_appointment"/);
-  });
+describe("move action — move_or_reassign_appointment (0143) arguments", () => {
   it("passes the actor + a server-resolved target (Item 7: NULL for time-only, a validated id for owner reassignment)", () => {
     expect(MOVE).toMatch(/p_actor_practitioner_id: practitioner\.id/);
     // Item 7: the action resolves `target` — NULL for a time-only move (member /

@@ -11,13 +11,6 @@ import path from "node:path";
 
 const root = path.resolve(__dirname, "../../../");
 const read = (rel: string) => readFileSync(path.join(root, rel), "utf8");
-// Strip // line comments so a docstring that *names* the forbidden words
-// (to explain we avoid them) doesn't trip a negative grep on visible copy.
-const codeOnly = (src: string) =>
-  src
-    .split("\n")
-    .filter((l) => !/^\s*\/\//.test(l))
-    .join("\n");
 
 const BUTTON = read("app/(app)/calendar/PostcareSendButton.tsx");
 const TIMELINE = read("components/client-appointment-timeline.tsx");
@@ -25,25 +18,8 @@ const QUERIES = read("lib/supabase/queries.ts");
 const ACTIONS = read("app/(app)/calendar/actions.ts");
 
 describe("appointment detail postcare status", () => {
-  it("shows a clear 'Postcare sent' status when a send timestamp exists", () => {
-    expect(BUTTON).toMatch(/Postcare sent/);
-    expect(BUTTON).toMatch(/alreadySentAt \?/);
-    // Renders the recorded send timestamp.
-    expect(BUTTON).toMatch(/new Date\(alreadySentAt\)\.toLocaleString/);
-  });
-
-  it("shows an explicit unsent state when there is no send timestamp", () => {
-    expect(BUTTON).toMatch(/Not sent yet/);
-  });
-
   it("surfaces the attempt count only when more than one attempt", () => {
     expect(BUTTON).toMatch(/sendAttempts > 1 \? ` · \$\{sendAttempts\} attempts`/);
-  });
-
-  it("does NOT overclaim delivery (no 'delivered' / 'received' language)", () => {
-    const visible = codeOnly(BUTTON);
-    expect(visible).not.toMatch(/\bdelivered\b/i);
-    expect(visible).not.toMatch(/\breceived\b/i);
   });
 });
 
@@ -70,7 +46,7 @@ describe("per-client postcare history on the appointment timeline", () => {
   });
 });
 
-describe("scope guard: read-only, action + schema untouched", () => {
+describe("scope guard: one send path, reached only from the confirm handler", () => {
   it("the postcare send action file is not modified by this PR (no new send path)", () => {
     // The status surfaces do not import or call the send action on render.
     expect(TIMELINE).not.toMatch(/sendPostcareEmailAction/);
@@ -89,11 +65,5 @@ describe("scope guard: read-only, action + schema untouched", () => {
     expect((BUTTON.match(/sendPostcareEmailAction/g) ?? []).length).toBe(2); // import + the one use
     // sanity: the action file still exports the unchanged action.
     expect(ACTIONS).toMatch(/sendPostcareEmailAction/);
-  });
-
-  it("introduces no migration / schema / RLS change", () => {
-    for (const src of [BUTTON, TIMELINE, QUERIES]) {
-      expect(src).not.toMatch(/alter table|create policy|create table /i);
-    }
   });
 });

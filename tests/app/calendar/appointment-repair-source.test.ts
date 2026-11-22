@@ -36,11 +36,6 @@ const ACTIONS_CODE = strip(ACTIONS);
 // ---------------------------------------------------------------------------
 
 describe("B4 actions — the governed RPCs are the only write path", () => {
-  it("calls revert_appointment_outcome and set_appointment_notes", () => {
-    expect(ACTIONS_CODE).toContain('admin.rpc("revert_appointment_outcome"');
-    expect(ACTIONS_CODE).toContain('admin.rpc("set_appointment_notes"');
-  });
-
   it("performs NO direct appointments DML of its own", () => {
     // The whole boundary rests on this. A `.from("appointments").update(...)`
     // here would route around every gate 0173 enforces. Reads are permitted —

@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// 0313 flag guards. ADDED beside the existing redeem-first guards; none of those
-// is reworded. They pin that the new path is reachable only behind the flag, that
-// the old path is still what runs without it, and that the flag fails closed.
+// 0313 flag guards. That the command runs only behind the flag, and redeem-first
+// without it, is proved behaviourally in waitlist-command-no-write-before-proof.test.ts.
+// These pin what that test does not: the flag is exactly "1", there is one
+// redeem call site, and a missing command or an uncertain outcome fails closed.
 
 const ROOT = join(__dirname, "..", "..", "..");
 const SRC = readFileSync(join(ROOT, "app/book/[slug]/actions.ts"), "utf8");
@@ -15,16 +16,6 @@ const code = strip(SRC);
 describe("0313 flag", () => {
   it("is off unless the env value is exactly 1", () => {
     expect(strip(FLAG)).toMatch(/process\.env\.WAITLIST_BOOKING_COMMAND === "1"/);
-  });
-
-  it("the new command is reached only through the flag-gated binding", () => {
-    expect(code.match(/redeem_and_book_waitlist_invitation/g)).toHaveLength(1);
-    expect(code).toMatch(/const invitedCommand =\s*invitationAuth\?\.kind === "authorized" && waitlistBookingCommandEnabled\(\)/);
-    expect(code).toMatch(/invitedCommand\s*\?\s*await admin\.rpc\("redeem_and_book_waitlist_invitation"/);
-  });
-
-  it("the redeem-first path still runs when the flag is off", () => {
-    expect(code).toMatch(/if \(invitationAuth\?\.kind === "authorized" && !invitedCommand\) \{\s*const redeemed = await consumeInvitationForBooking\(/);
   });
 
   it("flag-on never redeems before the command: consume is only inside the flag-off block", () => {

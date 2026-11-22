@@ -22,7 +22,7 @@ function blockFor(name: string): string {
   return rel === -1 ? PAGE.slice(startIdx) : PAGE.slice(startIdx, after + rel);
 }
 
-describe("PR #181: NextStepCard replaces the bare 'Completed' placeholder", () => {
+describe("PR #181: completed appointments render NextStepCard", () => {
   it("the completed branch dispatches to <NextStepCard ...>", () => {
     expect(PAGE).toMatch(
       /typedStatus === "completed"[\s\S]{0,200}<NextStepCard/,

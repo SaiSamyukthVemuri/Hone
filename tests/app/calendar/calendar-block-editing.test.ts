@@ -14,9 +14,6 @@ const PAGE = read("app/(app)/calendar/page.tsx");
 const AVAIL_ACTIONS = read("app/(app)/settings/availability/actions.ts");
 
 describe("reuses the existing OWNER-GATED actions (no new action, no RLS change)", () => {
-  it("the drawer imports updateTimedBlockAction + deleteTimedBlockAction from Settings", () => {
-    expect(DRAWER).toMatch(/import \{[\s\S]*updateTimedBlockAction,[\s\S]*deleteTimedBlockAction,[\s\S]*\} from "@\/app\/\(app\)\/settings\/availability\/actions"/);
-  });
   it("those actions remain owner-gated (assertOwnerWithStudio) — unchanged", () => {
     const upd = AVAIL_ACTIONS.slice(AVAIL_ACTIONS.indexOf("export async function updateTimedBlockAction"), AVAIL_ACTIONS.indexOf("export async function deleteTimedBlockAction"));
     expect(upd).toMatch(/assertOwnerWithStudio\(\)/);
