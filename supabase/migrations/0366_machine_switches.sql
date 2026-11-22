@@ -236,7 +236,7 @@ declare
   v_session uuid;
   v_client uuid;
 begin
-  if v_uid is null or p_block_id is null
+  if v_uid is null or p_block_id is null or p_profile is null or p_profile = ''
      or p_profile not in ('dectro-apilus:xcell-pur', 'dectro-apilus:senior-3g', 'dectro-apilus:junior-3g') then
     raise exception 'Not available.' using errcode = '42501';
   end if;
