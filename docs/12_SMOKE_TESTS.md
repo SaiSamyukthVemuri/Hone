@@ -1483,3 +1483,29 @@ When opening a PR, the report MUST explicitly call out which smoke steps were no
 - Anything requiring the Vercel production env dashboard.
 
 The DB/RLS integration lane (PR #220) removed several items from this list: cross-studio RLS isolation, audit-trail immutability and trigger behavior, the clinical delete posture, the double-booking constraint, and the claim RPCs are now exercised on a real local database in CI instead of requiring manual SQL against production. What the DB lane still cannot verify: production-specific state (data drift, policies edited outside migrations: the prod catalog audit recipe in docs/09 remains the check for that), Stripe/Resend/Twilio behavior, and the browser.
+
+## Custom client groups — qualification pending (HON-14)
+
+Use synthetic data on the owned local stack after the reviewed
+[client-groups proposal](proposals/client-groups/README.md) is installed there.
+
+1. As owner, Clients → Manage groups: create Active and Follow up; case/space
+   variants resolve to the existing group; empty/control/overlong names refuse.
+2. Rename Follow up. In a stale second tab, attempt another rename: refusal retains
+   the draft and asks to reload rather than overwriting the first change.
+3. On a client Overview, assign both groups, remove only one, reload and verify.
+4. Filter directory by the remaining group; combine search/intake/last-visit/sort,
+   cross page boundaries and open/close overview. Counts and URL state agree.
+5. Empty valid group: No clients match. Empty studio: No clients yet. Unknown,
+   foreign or unavailable group: explicit retry/remove-filter guidance, no all-row fallback.
+6. Archive and restore a fixture using the existing flow; memberships survive both.
+7. As practitioner/nonowner, directory/profile have no group controls or names;
+   direct management route and commands deny. SQL qualification includes anon/service.
+8. Without proposal relations/RPCs, ordinary directory works, groups say unavailable,
+   selected filter refuses. Network/uncertain command failure never claims saved.
+9. Check keyboard focus, pending/double-submit prevention, and phone/tablet layout
+   with long names. Existing neutral theme and 44px controls remain consistent.
+
+Automated browser journey: `e2e/client-groups.spec.ts`; schema absence causes an
+explicit pending-qualification skip. DB qualification is transaction/rollback only
+in `tests/db/client-groups.db.test.ts`. Neither has been run on a hosted database.
