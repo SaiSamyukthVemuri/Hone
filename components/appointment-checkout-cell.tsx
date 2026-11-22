@@ -189,10 +189,12 @@ export function AppointmentCheckoutCell({
     );
   }
 
-  // A completed visit with a session, a known positive price and NO card
-  // money and NO settlement is unpaid, and the row now says so beside Checkout.
-  // A neutral fact: never emerald, never "Paid", no amount, no charge. Claimed
-  // only for `chargeable`; `no_session` (price not resolved) claims nothing.
+  // A completed visit with a session, NO card money and NO settlement, whose
+  // service the studio has not priced at zero, is unpaid, and the row now says
+  // so beside Checkout. A visit whose price is simply not set also qualifies
+  // (`chargeable` does not require a known price). A neutral fact: never
+  // emerald, never "Paid", no amount, no charge. Claimed only for
+  // `chargeable`; `no_session` and `unavailable` claim nothing.
   //
   // OWNER-ONLY BY CONSTRUCTION, not by this component: both callers render the
   // cell for the owner only and load payment state for the owner only (money

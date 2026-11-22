@@ -262,8 +262,9 @@ describe("HON-45: a part payment is never badged as the visit paid", () => {
 // Cardless completion already works and records nothing as paid; the gap was
 // that the row showed only a Checkout button, with no statement that the visit
 // is unpaid. The label is a neutral fact (never emerald, never "Paid"), sits
-// BESIDE Checkout, and is claimed only for `chargeable` (a session exists, the
-// price is known and positive, no terminal charge or settlement).
+// BESIDE Checkout, and is claimed only for `chargeable` (a session exists, no
+// terminal charge or settlement, and the price is not explicitly zero; an
+// unpriced visit also qualifies).
 describe("a completed, unpaid, chargeable visit reads Not paid yet", () => {
   it("chargeable renders the Not paid yet label AND the ordinary Checkout", () => {
     const html = render("chargeable");
