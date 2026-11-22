@@ -118,6 +118,14 @@ describe("a raw member can never set the evidence, and it is write-once for ever
     await expect(asUser(A.userId, (q) => q(`update public.clients set sms_consent_phone = '+14165550107' where id = $1`, [id]))).rejects.toMatchObject(DENIED);
     await expect(asUser(A.userId, (q) => q(`update public.clients set sms_consent_text_version = 'x_v1' where id = $1`, [id]))).rejects.toMatchObject(DENIED);
   });
+  it("the table grant lets a member UPDATE the column, so the trigger is the guard: a member update is refused on a consented client, to another number or to the same one", async () => {
+    const g = await adminQuery(`select has_column_privilege('authenticated', 'public.clients', 'sms_consent_phone', 'update') as u`);
+    expect(g.rows[0].u).toBe(true);
+    const id = await client("+14165550108", true);
+    await expect(asUser(A.userId, (q) => q(`update public.clients set sms_consent_phone = '+14165550199' where id = $1`, [id]))).rejects.toMatchObject(DENIED);
+    await expect(asUser(A.userId, (q) => q(`update public.clients set sms_consent_phone = null where id = $1`, [id]))).rejects.toMatchObject(DENIED);
+    expect((await ev(id)).p).toBe("+14165550108");
+  });
   it("the bound number and the wording version cannot be changed afterwards, even by a trusted writer", async () => {
     const id = randomUUID();
     await asService(
@@ -257,6 +265,16 @@ describe("fresh consent for the number now on file replaces the old consent and 
     expect(rows.map((r) => r.kind)).toEqual(["recorded", "recorded"]);
     expect(rows.map((r) => r.ch)).toEqual([false, true]);
   });
+  it("a replacement carries the wording version supplied with it, and NULL when none is supplied (never the previous one)", async () => {
+    const id = randomUUID();
+    await asService(`insert into public.clients (id, studio_id, name, phone, sms_consent_at, sms_consent_source, sms_consent_text_version) values ($1,$2,'tv','+14165550151',now(),'public_booking','booking_sms_v1')`, [id, A.studioId]);
+    await asUser(A.userId, (q) => q(`update public.clients set phone = '+14165550152' where id = $1`, [id]));
+    await asService(`update public.clients set sms_consent_at = ${later}, sms_consent_source = 'public_booking' where id = $1`, [id]);
+    expect((await ev(id)).v).toBeNull();
+    await asUser(A.userId, (q) => q(`update public.clients set phone = '+14165550153' where id = $1`, [id]));
+    await asService(`update public.clients set sms_consent_at = now() + interval '2 seconds', sms_consent_source = 'public_booking', sms_consent_text_version = 'booking_sms_v2' where id = $1`, [id]);
+    expect((await ev(id)).v).toBe("booking_sms_v2");
+  });
   it("a LEGACY consent that was edited, then replaced, keeps a snapshot of the consent it replaced", async () => {
     const id = await legacy("+14165550134");
     await asUser(A.userId, (q) => q(`update public.clients set phone = '+14165550135' where id = $1`, [id]));
@@ -308,6 +326,11 @@ describe("the down", () => {
     };
     expect(body(down)).toBe(body(readFileSync("supabase/migrations/0211_client_sms_permission_guard.sql", "utf8")));
     expect(down).toContain("534c7e27a810ea277e6d437a7b3d7eea");
+    const viewText = (t: string) => {
+      const a = t.indexOf("create or replace view public.reminder_sms_eligible_appointments");
+      return t.slice(a, t.indexOf(";", a)).replace(/\s+/g, " ").trim();
+    };
+    expect(viewText(down)).toBe(viewText(readFileSync("supabase/migrations/0199_reminder_sms_candidate_selection.sql", "utf8")));
     expect(down).toMatch(/restored view column list/);
   });
 });

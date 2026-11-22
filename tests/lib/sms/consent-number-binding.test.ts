@@ -94,13 +94,34 @@ describe("the fresh-consent stamp is a compare-and-set on the bound number", () 
 
 describe("every sender of a text carries the bound number (source contracts)", () => {
   const read = (p: string) => readFileSync(p, "utf8");
-  it("the five senders of a confirmation and the cron select and pass sms_consent_phone", () => {
-    for (const f of ["app/book/[slug]/actions.ts", "app/reschedule/[token]/actions.ts", "app/portal/rebook-actions.ts", "app/(app)/calendar/actions.ts"]) {
-      expect(read(f), f).toMatch(/sms_consent_phone/);
-    }
-    for (const f of ["app/api/cron/appointment-reminders/route.ts", "lib/cron/reminder-candidate-query.ts"]) {
-      expect(read(f), f).toMatch(/sms_consent_phone/);
-    }
+  // Per path: the client object handed to the gate carries a value for sms_consent_phone that is read from the row (never a literal), and the row is
+  // selected with the column. The type requirement (the next test) is the compile-time pin; these assert each path's actual wiring.
+  const handed = (src: string) => [...src.matchAll(/\bsms_consent_phone:\s*([^,\n}]+)/g)].map((m) => m[1].trim()).filter((v) => !/^(string|null)\b/.test(v));
+  const notLiteral = (vals: string[]) => vals.length > 0 && vals.every((v) => !/^(null|undefined|["'`])/.test(v));
+  const paths: [string, number][] = [
+    ["app/book/[slug]/actions.ts", 1],
+    ["app/reschedule/[token]/actions.ts", 1],
+    ["app/portal/rebook-actions.ts", 1],
+    ["app/(app)/calendar/actions.ts", 2],
+  ];
+  for (const [f, n] of paths) {
+    it(`${f} selects the column and hands the row's value to the gate (${n} call${n > 1 ? "s" : ""})`, () => {
+      const src = read(f);
+      expect(src).toMatch(/\.select\("[^"]*sms_consent_phone[^"]*"\)/);
+      const v = handed(src);
+      expect(v.length, f).toBeGreaterThanOrEqual(n);
+      expect(notLiteral(v), `${f}: ${v.join(" | ")}`).toBe(true);
+    });
+  }
+  it("the public booking reads the bound number fresh before building the confirmation client", () => {
+    const src = read("app/book/[slug]/actions.ts");
+    expect(src.indexOf("readClientConsentPhone(admin, clientId, clientSmsConsentAt)")).toBeGreaterThan(0);
+    expect(src.indexOf("readClientConsentPhone(admin, clientId, clientSmsConsentAt)")).toBeLessThan(src.indexOf("sms_consent_phone: clientSmsConsentPhone"));
+  });
+  it("the cron selects the column at both its queries, and sendReminder hands its client straight to the gate", () => {
+    expect(read("app/api/cron/appointment-reminders/route.ts")).toMatch(/client:clients\([^)]*sms_consent_phone/);
+    expect(read("lib/cron/reminder-candidate-query.ts")).toMatch(/client:clients!inner\([^)]*sms_consent_phone/);
+    expect(read("lib/sms/send-appointment.ts")).toMatch(/passesConsentGate\(\{\s*studio: args\.studio,\s*client: args\.client,/);
   });
   it("the gate input requires the field, so a caller that omits it does not compile", () => {
     expect(read("lib/sms/consent-gate.ts")).toMatch(/Pick<Client, "phone" \| "sms_consent_at" \| "sms_consent_phone" \| "sms_opted_out_at">/);

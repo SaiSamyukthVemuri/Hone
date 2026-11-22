@@ -27,7 +27,8 @@
 -- edit-screen notice).
 --
 -- OWNERSHIP. Runs as the migration owner. Touches clients (two new nullable columns, a trigger), one new function, and one
--- view definition (same columns). It scans no table.
+-- view definition (same columns). It reads no table of any size: adding the nullable columns is a catalog change, and the constraints are checked
+-- against columns that are null in every existing row.
 begin;
 set local lock_timeout = '5s';
 
@@ -130,6 +131,11 @@ begin
       raise exception 'clients: SMS consent evidence is write-once; fresh consent may replace it only for a different number' using errcode = 'check_violation';
     end if;
     new.sms_consent_phone := public.sms_normalized_phone(new.phone);
+    -- The wording version belongs to the NEW consent: it is the one supplied with the replacement, and is NULL when none (or the old one) was
+    -- supplied, so a replacement never carries the previous consent's wording version.
+    if new.sms_consent_text_version is not distinct from old.sms_consent_text_version then
+      new.sms_consent_text_version := null;
+    end if;
     return new;
   end if;
   if new.sms_consent_text_version is distinct from old.sms_consent_text_version then
