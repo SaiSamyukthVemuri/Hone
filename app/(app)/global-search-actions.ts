@@ -516,17 +516,7 @@ async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> 
     if (seenAppointments.has(id)) continue;
     seenAppointments.add(id);
     if (seenAppointments.size > APPOINTMENT_CAP) break;
-    const client = Array.isArray(a.client) ? a.client[0] : a.client;
-    const service = Array.isArray(a.service) ? a.service[0] : a.service;
-    results.push({
-      id: `appointment:${id}`,
-      type: "appointment",
-      title: (client?.name as string) || "Appointment",
-      subtitle: (service?.name as string) || undefined,
-      href: `/calendar/${id}`,
-      date: fmtDate(a.starts_at as string),
-      badge: (a.status as string) || undefined,
-    });
+    results.push(appointmentResult(a));
   }
 
   // Merge the two memory paths into one result set. Deduplication by block id
@@ -645,6 +635,25 @@ async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> 
   };
 }
 
+// One appointment row projected onto the shared result shape. Used by the ordinary appointment results and by the
+// reference lookup, so the stored client name is read in exactly one place here.
+function appointmentResult(a: {
+  id?: unknown; starts_at?: unknown; status?: unknown; client?: unknown; service?: unknown;
+}): SearchResult {
+  const client = (Array.isArray(a.client) ? a.client[0] : a.client) as { name?: string | null } | null | undefined;
+  const service = (Array.isArray(a.service) ? a.service[0] : a.service) as { name?: string | null } | null | undefined;
+  const id = a.id as string;
+  return {
+    id: `appointment:${id}`,
+    type: "appointment",
+    title: (client?.name as string) || "Appointment",
+    subtitle: (service?.name as string) || undefined,
+    href: `/calendar/${id}`,
+    date: fmtDate(a.starts_at as string),
+    badge: (a.status as string) || undefined,
+  };
+}
+
 // Appointment reference (the six characters in a booking or cancellation email
 // subject). Scoped to the caller's studio with the user client; the reference is
 // recomputed from ids the caller can already read, so it is an identifier and not a
@@ -688,19 +697,7 @@ async function appointmentReferenceResults(
   );
   return {
     truncated,
-    results: rows.map((a) => {
-      const client = Array.isArray(a.client) ? a.client[0] : a.client;
-      const service = Array.isArray(a.service) ? a.service[0] : a.service;
-      return {
-        id: `appointment:${a.id as string}`,
-        type: "appointment" as const,
-        title: (client?.name as string) || "Appointment",
-        subtitle: (service?.name as string) || undefined,
-        href: `/calendar/${a.id as string}`,
-        date: fmtDate(a.starts_at as string),
-        badge: (a.status as string) || undefined,
-      };
-    }),
+    results: rows.map(appointmentResult),
   };
 }
 
