@@ -64,6 +64,11 @@ const CHIPS: ReadonlyArray<{ chip: ClientChip; label: string }> = [
   { chip: "beyond_usual", label: "Beyond usual interval" },
 ];
 
+/** A column whose figures could not be read is not an order the table is in: its header must not claim "descending". */
+function columnUnknown(key: string, t: { periodMoney: { available: boolean }; lifetime: { available: boolean }; history: { available: boolean } }): boolean {
+  return (key === "paid" && !t.periodMoney.available) || (key === "lifetime" && !t.lifetime.available) || (key === "gap" && !t.history.available);
+}
+
 const COLUMNS: ReadonlyArray<{ key: string; label: string; sort?: ClientSort; align?: "right" }> = [
   { key: "name", label: "Client", sort: "name" },
   { key: "since", label: "First visit" },
@@ -181,7 +186,7 @@ export function ClientsScreen({ view, params, clients, notices, practitionerOpti
                     <thead>
                       <tr className="border-b border-line text-left text-fg-muted">
                         {COLUMNS.map((c) => (
-                          <th key={c.key} scope="col" aria-sort={c.sort && c.sort === table.value.sort ? "descending" : undefined} className={cx("px-3 py-2 font-medium", c.align === "right" && "text-right")}>
+                          <th key={c.key} scope="col" aria-sort={c.sort && c.sort === table.value.sort && !columnUnknown(c.key, table.value) ? "descending" : undefined} className={cx("px-3 py-2 font-medium", c.align === "right" && "text-right")}>
                             {c.sort ? (
                               <a href={href({ sort: c.sort, page: 1 })} className={cx("underline-offset-2 hover:underline", FOCUS_RING, c.sort === table.value.sort && "font-semibold text-fg")}>{c.label}</a>
                             ) : (
