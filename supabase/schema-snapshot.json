@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 278,
-    "last": "0364_waitlist_replace_lock_order_and_live_only.sql",
-    "sha256": "f50af41463b89c161e5340051bfe0cb5fcef7986108241515ea33230741282ac"
+    "count": 279,
+    "last": "0367_waitlist_invitation_booking_counts.sql",
+    "sha256": "1c53cf34b0a4189ac39c56aebd0e9006a9598f7aeca9dd64cc30517b276806d9"
   },
   "public": {
     "tables": [
@@ -629,6 +629,7 @@
       "waitlist_answer_erase_by",
       "waitlist_closed_invited_booking_enabled",
       "waitlist_decline_answers_record_cascade_erase",
+      "waitlist_invitation_booking_counts",
       "waitlist_invitation_booking_state",
       "waitlist_prospect_suppression_candidates",
       "waitlist_retention_health",
