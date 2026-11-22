@@ -56,7 +56,7 @@ async function entry(studioId: string, status = "waiting"): Promise<string> {
 
 type Stamp = "none" | "redeemed" | "declined" | "expired" | "released";
 /** One invitation, issued at `issuedAt` (an ISO instant). The insert trigger stamps issued_at = now(), so the instant is moved afterwards as the table owner. */
-async function invitation(s: SeededStudio, entryId: string, issuedAt: string, stamp: Stamp = "none"): Promise<string> {
+async function invitation(s: SeededStudio, entryId: string, issuedAt: string, stamp: Stamp = "none", closed = false): Promise<string> {
   const id = randomUUID();
   await adminQuery(
     `insert into public.new_client_waitlist_invitations (id, studio_id, entry_id, token_hash, expires_at, issued_by_practitioner_id)
@@ -71,9 +71,11 @@ async function invitation(s: SeededStudio, entryId: string, issuedAt: string, st
               redeemed_at = case when $3 = 'redeemed' then $2::timestamptz + interval '1 hour' end,
               declined_at = case when $3 = 'declined' then $2::timestamptz + interval '1 hour' end,
               expired_at  = case when $3 = 'expired'  then $2::timestamptz + interval '3 days' end,
-              released_at = case when $3 = 'released' then $2::timestamptz + interval '1 hour' end
+              released_at = case when $3 = 'released' then $2::timestamptz + interval '1 hour' end,
+              closed_at = case when $4 then $2::timestamptz + interval '2 hours' end,
+              closed_by_practitioner_id = case when $4 then $5::uuid end
         where id = $1`,
-      [id, issuedAt, stamp],
+      [id, issuedAt, stamp, closed, s.practitionerId],
     );
   } finally {
     await adminQuery(`alter table public.new_client_waitlist_invitations enable trigger new_client_waitlist_invitations_append_only`);
@@ -153,6 +155,28 @@ describe("the owner gets counts, and each figure counts only what it says", () =
     expect(r.booked_linked_live).toBe(0);
     expect(r.booked_then_cancelled).toBe(0);
     expect(r.converted_unlinked).toBe(1);
+  });
+
+  it("an earlier cycle that was redeemed, closed unbooked and requeued is NOT a conversion: a LATER invitation booked, so only that one is a booking", async () => {
+    const s = await seedStudio("cnt-closed");
+    const e = await entry(s.studioId, "converted"); // the entry is converted now, by the later cycle
+    await invitation(s, e, at(0), "redeemed", true); // first cycle: redeemed, closed unbooked (closed_at stamped), no link
+    const later = await invitation(s, e, at(10), "redeemed"); // second cycle: redeemed and booked, with a link
+    await link(s, later, await appointment(s, "confirmed"));
+    const r = await countsAs(s.userId, s.studioId);
+    expect(r.invitations_total).toBe(2);
+    expect(r.people_invited).toBe(1);
+    expect(r.booked_linked_live).toBe(1);
+    expect(r.converted_unlinked, "the closed first cycle is not an unlinked conversion").toBe(0);
+    // The same holds when the report covers only the first cycle's period.
+    expect((await countsAs(s.userId, s.studioId, at(-1), at(5))).converted_unlinked).toBe(0);
+  });
+
+  it("a redeemed invitation that was NOT closed on a converted entry is still an unlinked conversion (control)", async () => {
+    const s = await seedStudio("cnt-notclosed");
+    const e = await entry(s.studioId, "converted");
+    await invitation(s, e, at(0), "redeemed");
+    expect((await countsAs(s.userId, s.studioId)).converted_unlinked).toBe(1);
   });
 
   it("one person with several invitations is one person and several invitations", async () => {
