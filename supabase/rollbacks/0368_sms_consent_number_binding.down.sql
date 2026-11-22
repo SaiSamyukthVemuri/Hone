@@ -40,7 +40,7 @@ select a.id,
    and c.sms_consent_at is not null
    and c.sms_opted_out_at is null;
 
--- The previous 0211 guard, byte for byte (comments inside the body are part of the stored source).
+-- The previous guard, byte for byte (comments inside the body are part of the stored source).
 create or replace function public.clients_sms_permission_guard()
 returns trigger
 language plpgsql
@@ -115,6 +115,17 @@ begin
 end;
 $$;
 
+do $$
+begin
+  if (select pg_catalog.md5(p.prosrc) from pg_catalog.pg_proc p where p.oid = pg_catalog.to_regprocedure('public.clients_sms_permission_guard()')) is distinct from '534c7e27a810ea277e6d437a7b3d7eea' then
+    raise exception 'refusing: the restored guard body is not the expected one' using errcode = 'check_violation';
+  end if;
+  if (select pg_catalog.string_agg(a.attname::text, ',' order by a.attnum) from pg_catalog.pg_attribute a
+       where a.attrelid = pg_catalog.to_regclass('public.reminder_sms_eligible_appointments') and a.attnum > 0 and not a.attisdropped)
+     is distinct from 'id,starts_at,studio_id,sms_reminder_24h_sent_at,sms_reminder_2h_sent_at,sms_reminder_24h_send_attempts,sms_reminder_2h_send_attempts,send_24h_sms_reminders,send_2h_sms_reminders' then
+    raise exception 'refusing: the restored view column list is not the expected one' using errcode = 'check_violation';
+  end if;
+end $$;
 drop trigger if exists clients_sms_consent_event_writer on public.clients;
 drop function if exists public.clients_sms_consent_event_writer();
 drop table if exists public.client_sms_consent_events;

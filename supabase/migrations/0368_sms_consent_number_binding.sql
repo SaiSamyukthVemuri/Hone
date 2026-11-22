@@ -6,7 +6,7 @@
 -- member may edit clients.phone freely. Every send gate reads the current phone beside the old consent, so a corrected,
 -- replaced or later-added number inherits a consent that was never given for it.
 --
--- What this does, in four parts (Part 2 carries the one open product choice, marked below; Part 4 is fresh consent for a changed number).
+-- What this does, in four parts.
 --   1. Two new columns on clients: sms_consent_phone (the normalized number the consent was given for) and
 --      sms_consent_text_version (the wording the client saw). One BEFORE trigger sets the number in the SAME statement that
 --      records consent, for every writer (the new-client booking command, the existing-client stamp, any future path), so no
@@ -14,16 +14,17 @@
 --   2. The spend-time gate: the single SQL definition of "a reminder appointment worth loading" (the view
 --      reminder_sms_eligible_appointments) requires the current normalized number to equal the number consented for.
 --   3. Existing rows. NOTHING is backfilled: the only available fact about an old consent is the current phone, which would
---      claim a number we cannot prove. A legacy consent keeps sms_consent_phone NULL. What the gate does for those rows is the
---      OPEN PRODUCT CHOICE (see GATE POLICY). Chosen here: allow them as today, and bind them to the number they hold the first
---      time that number is changed, so every drift AFTER this migration is caught and only pre-migration drift stays unprovable.
+--      claim a number we cannot prove. A consent recorded before this change keeps sms_consent_phone NULL and keeps texting the
+--      client's current number until that number is first changed. At that first change the database binds the consent to the
+--      number the client held just before the edit, so from then on the consent no longer covers the new number. Number changes
+--      made before this migration cannot be detected.
 --
 --   4. Fresh consent. A client who changed number can consent again for the number now on file: a trusted writer may then REPLACE the consent
 --      (later time, different number, no STOP). The client SMS permission guard gets that one exception, and every consent recorded or replaced is kept in an
 --      append-only record (client_sms_consent_events).
 --
--- NOT IN THIS FILE: a phone-level suppression list (separate, optional part, scoped in the cutover note), and the application
--- changes (the existing-client stamp passing the wording version, the TypeScript gate and the edit-screen notice).
+-- NOT IN THIS FILE: a phone-level suppression list, and the application changes (the TypeScript gate, the booking action and the
+-- edit-screen notice).
 --
 -- OWNERSHIP. Runs as the migration owner. Touches clients (two new nullable columns, a trigger), one new function, and one
 -- view definition (same columns). It scans no table.
@@ -259,16 +260,17 @@ begin
 end;
 $$;
 
--- (b) Every consent that is recorded or replaced is kept: append-only, studio-scoped, written only by the trigger below. The number is stored as a
--- fingerprint (sha256 of the normalized number; equality evidence, not secrecy, since the number itself sits on the client row).
+-- (b) Every consent that is recorded or replaced is kept: append-only, studio-scoped, written only by the trigger below. It holds no phone number
+-- and no fingerprint of one; the number a consent covers lives on the client row. The record is permanent while the client exists: it is deleted
+-- only together with its client row (foreign key, on delete cascade); no other delete, update or truncate is possible.
 create table if not exists public.client_sms_consent_events (
   id             uuid primary key default gen_random_uuid(),
   studio_id      uuid not null,
-  client_id      uuid not null,
+  client_id      uuid not null references public.clients (id) on delete cascade,
   kind           text not null check (kind in ('recorded', 'superseded')),
   consented_at   timestamptz not null,
   source         text,
-  phone_sha256   text check (phone_sha256 is null or phone_sha256 ~ '^[0123456789abcdef]{64}$'),
+  number_changed_from_previous_consent boolean not null default false,
   text_version   text check (text_version is null or text_version ~ '^[a-z0-9_]{1,64}$'),
   recorded_at    timestamptz not null default pg_catalog.now()
 );
@@ -277,7 +279,7 @@ alter table public.client_sms_consent_events enable row level security;
 alter table public.client_sms_consent_events force row level security;
 revoke all on public.client_sms_consent_events from public, anon, authenticated, service_role;
 comment on table public.client_sms_consent_events is
-  'Append-only record of each SMS consent recorded or replaced on a client: when, the source, a fingerprint of the number it was for, the wording version. No policy: no API role reads or writes it.';
+  'Append-only record of each SMS consent recorded or replaced on a client: when, the source, the wording version, and whether the number changed from the previous consent. It holds no number. No policy: no API role reads or writes it.';
 
 create or replace function public.client_sms_consent_events_guard()
 returns trigger
@@ -285,6 +287,10 @@ language plpgsql
 set search_path = pg_catalog, pg_temp
 as $$
 begin
+  -- the one allowed delete: the cascade from the client row being deleted (its parent is already gone)
+  if tg_op = 'DELETE' and not exists (select 1 from public.clients c where c.id = old.client_id) then
+    return old;
+  end if;
   raise exception 'client_sms_consent_events is append-only' using errcode = 'check_violation';
 end;
 $$;
@@ -313,18 +319,13 @@ begin
     -- the consent being replaced: kept as a snapshot when no earlier event already describes it (a consent from before this migration)
     if old.sms_consent_at is not null
        and not exists (select 1 from public.client_sms_consent_events e where e.client_id = old.id and e.consented_at = old.sms_consent_at) then
-      insert into public.client_sms_consent_events (studio_id, client_id, kind, consented_at, source, phone_sha256, text_version)
-      values (old.studio_id, old.id, 'superseded', old.sms_consent_at, old.sms_consent_source,
-              case when old.sms_consent_phone is null or old.sms_consent_phone = '-' then null
-                   else pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(old.sms_consent_phone, 'UTF8')), 'hex') end,
-              old.sms_consent_text_version);
+      insert into public.client_sms_consent_events (studio_id, client_id, kind, consented_at, source, text_version)
+      values (old.studio_id, old.id, 'superseded', old.sms_consent_at, old.sms_consent_source, old.sms_consent_text_version);
     end if;
   end if;
-  insert into public.client_sms_consent_events (studio_id, client_id, kind, consented_at, source, phone_sha256, text_version)
-  values (new.studio_id, new.id, 'recorded', new.sms_consent_at, new.sms_consent_source,
-          case when new.sms_consent_phone is null or new.sms_consent_phone = '-' then null
-               else pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(new.sms_consent_phone, 'UTF8')), 'hex') end,
-          new.sms_consent_text_version);
+  insert into public.client_sms_consent_events (studio_id, client_id, kind, consented_at, source, text_version, number_changed_from_previous_consent)
+  values (new.studio_id, new.id, 'recorded', new.sms_consent_at, new.sms_consent_source, new.sms_consent_text_version,
+          tg_op = 'UPDATE' and old.sms_consent_at is not null);
   return new;
 end;
 $$;
@@ -335,14 +336,9 @@ revoke all privileges on function public.client_sms_consent_events_guard() from 
 revoke all privileges on function public.clients_sms_consent_event_writer() from public, anon, authenticated, service_role;
 
 -- ---------------------------------------------------------------------------
--- 2. The spend-time gate (selection side). GATE POLICY, THE OPEN PRODUCT CHOICE: one predicate line decides what a LEGACY
--- consent (sms_consent_phone null) does.
---   A (this draft): allowed, as today. The number it holds is used until it is changed; the change binds it and then the
---      consent stops covering the new number.
---   B (fail closed): replace the line with  c.sms_consent_phone = c.sms_phone  . Every pre-migration consent stops texting
---      until the client consents again.
--- Both refuse a bound consent whose number no longer matches. The TypeScript gate (passesConsentGate) must carry the same
--- predicate; the parity tests extend to it.
+-- 2. The spend-time gate (selection side). A bound consent whose number no longer matches the number on the client is not selected. A
+-- consent recorded before this change (number null) is still selected, and is bound at the first change of the number. The TypeScript gate
+-- carries the same predicate.
 -- ---------------------------------------------------------------------------
 create or replace view public.reminder_sms_eligible_appointments
 with (security_invoker = true) as

@@ -34,7 +34,7 @@ export async function stampPublicBookingConsent(
   clientId: string,
   nowIso: string,
   /**
-   * 0368 FRESH CONSENT. Set when the client already has a consent that was given for a DIFFERENT number (the stored number changed after it):
+   * FRESH CONSENT. Set when the client already has a consent that was given for a DIFFERENT number (the stored number changed after it):
    * the value is the number that consent is bound to. The write is then a compare-and-set on that bound number, so an overlapping booking
    * that already replaced it matches no row (and is adopted below), and the database accepts it only for a later consent, a different
    * number and no STOP. Omit it for a first consent.

@@ -868,7 +868,7 @@ export type Client = {
   // small allowlist.
   sms_consent_at: string | null;
   sms_consent_source: "public_booking" | "practitioner" | "import" | null;
-  // Migration 0368: the normalized number the consent was given for. NULL on a consent recorded before the binding existed (no number can be proved
+  // The normalized number the consent was given for. NULL on a consent recorded before the binding existed (no number can be proved
   // for it); "-" marks a consent that had no number. Set only by the database; never written by the application.
   sms_consent_phone: string | null;
   sms_consent_text_version: string | null;

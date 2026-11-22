@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { adminQuery, adminTx, asUser, closePool, seedStudio, type SeededStudio } from "./helpers/harness";
@@ -203,12 +203,11 @@ describe("a LEGACY consent (no bound number): allowed as before, bound at the fi
 });
 
 
-const sha = (n: string) => createHash("sha256").update(n).digest("hex");
 const events = async (id: string) =>
-  (await adminQuery(`select kind, source, phone_sha256 h, text_version v from public.client_sms_consent_events where client_id = $1 order by recorded_at, kind desc`, [id])).rows as {
+  (await adminQuery(`select kind, source, number_changed_from_previous_consent ch, text_version v from public.client_sms_consent_events where client_id = $1 order by recorded_at, kind desc`, [id])).rows as {
     kind: string;
     source: string | null;
-    h: string | null;
+    ch: boolean;
     v: string | null;
   }[];
 const later = "now() + interval '1 second'";
@@ -220,7 +219,7 @@ describe("every consent is kept in an append-only record", () => {
       `insert into public.clients (id, studio_id, name, phone, sms_consent_at, sms_consent_source, sms_consent_text_version) values ($1,$2,'ev','+14165550130',now(),'public_booking','booking_sms_v1')`,
       [id, A.studioId],
     );
-    expect(await events(id)).toEqual([{ kind: "recorded", source: "public_booking", h: sha("+14165550130"), v: "booking_sms_v1" }]);
+    expect(await events(id)).toEqual([{ kind: "recorded", source: "public_booking", ch: false, v: "booking_sms_v1" }]);
   });
   it("no API role can read or write the record, and nobody can change or delete a row", async () => {
     const id = await client("+14165550131", true);
@@ -229,6 +228,20 @@ describe("every consent is kept in an append-only record", () => {
     await expect(adminQuery(`update public.client_sms_consent_events set source = 'x' where client_id = $1`, [id])).rejects.toMatchObject(REFUSED);
     await expect(adminQuery(`delete from public.client_sms_consent_events where client_id = $1`, [id])).rejects.toMatchObject(REFUSED);
     await expect(adminQuery(`truncate public.client_sms_consent_events`)).rejects.toMatchObject(REFUSED);
+  });
+});
+
+describe("the record holds no number and goes only with its client", () => {
+  it("has no phone or fingerprint column", async () => {
+    const r = await adminQuery(`select column_name from information_schema.columns where table_schema = 'public' and table_name = 'client_sms_consent_events' and (column_name like '%phone%' or column_name like '%sha%')`);
+    expect(r.rows).toEqual([]);
+  });
+  it("is deleted with its client row, and in no other way", async () => {
+    const id = await client("+14165550150", true);
+    expect((await events(id)).length).toBe(1);
+    await expect(adminQuery(`delete from public.client_sms_consent_events where client_id = $1`, [id])).rejects.toMatchObject(REFUSED);
+    await adminQuery(`delete from public.clients where id = $1`, [id]);
+    expect((await events(id)).length).toBe(0);
   });
 });
 
@@ -242,7 +255,7 @@ describe("fresh consent for the number now on file replaces the old consent and 
     expect([e.p, e.v]).toEqual(["+14165550133", "booking_sms_v1"]);
     const rows = await events(id);
     expect(rows.map((r) => r.kind)).toEqual(["recorded", "recorded"]);
-    expect(rows.map((r) => r.h)).toEqual([sha("+14165550132"), sha("+14165550133")]);
+    expect(rows.map((r) => r.ch)).toEqual([false, true]);
   });
   it("a LEGACY consent that was edited, then replaced, keeps a snapshot of the consent it replaced", async () => {
     const id = await legacy("+14165550134");
@@ -252,7 +265,8 @@ describe("fresh consent for the number now on file replaces the old consent and 
     expect((await ev(id)).p).toBe("+14165550135");
     const rows = await events(id);
     expect(rows.map((r) => r.kind).sort()).toEqual(["recorded", "superseded"]);
-    expect(rows.find((r) => r.kind === "superseded")?.h).toBe(sha("+14165550134"));
+    expect(rows.find((r) => r.kind === "recorded")?.ch).toBe(true);
+    expect(rows.find((r) => r.kind === "superseded")?.ch).toBe(false);
   });
   it("is refused when the number is the same, when a STOP exists, when the time is not later, for an unbound legacy row, and for a member", async () => {
     const same = await client("+14165550136", true);
@@ -293,5 +307,7 @@ describe("the down", () => {
       return t.slice(b, t.indexOf("$$;", b));
     };
     expect(body(down)).toBe(body(readFileSync("supabase/migrations/0211_client_sms_permission_guard.sql", "utf8")));
+    expect(down).toContain("534c7e27a810ea277e6d437a7b3d7eea");
+    expect(down).toMatch(/restored view column list/);
   });
 });

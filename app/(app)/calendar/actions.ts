@@ -939,7 +939,7 @@ type DispatchParams = {
   // older callers; the SMS attempt fails the consent gate cleanly
   // when missing or null.
   clientSmsConsentAt?: string | null;
-  /** REQUIRED (migration 0368): the number the consent was given for. Omitting it would read as a legacy consent. */
+  /** REQUIRED: the number the consent was given for. Omitting it would read as a legacy consent. */
   clientSmsConsentPhone: string | null;
   clientSmsOptedOutAt?: string | null;
   notes: string | null;

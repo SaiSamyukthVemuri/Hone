@@ -563,7 +563,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   if (!phone) {
     return { ok: false, error: "Please enter a phone number." };
   }
-  // 0368: text-message consent is for a NUMBER. Ticking the box with a number that cannot receive texts would record consent that covers
+  // Text-message consent is for a NUMBER. Ticking the box with a number that cannot receive texts would record consent that covers
   // nothing, so it is refused here, before anything is written (the database refuses it too, as the backstop).
   if (smsConsent && normalizePhoneForSms(phone) === null) {
     return { ok: false, error: "Enter a valid mobile number to receive text messages, or untick the text-message box." };
@@ -1147,7 +1147,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       //      different phone number on the public form.
       // We also do not overwrite an already-set sms_consent_at; the
       // earlier source-of-truth wins.
-      //   3. (0368) A consent that was given for a DIFFERENT number than the one
+      //   3. A consent that was given for a DIFFERENT number than the one
       //      on file (the number was changed after it) is replaced by this fresh
       //      one, again only when the submitted phone matches the number on file.
       const boundPhone = existingClient.sms_consent_phone ?? null;
@@ -2058,7 +2058,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // itself. It is NOT total: the consent/toggle gate and the `claim_sms_send`
   // race guard run BEFORE that try. Contained at the boundary rather than by
   // editing the helper, so SMS product behaviour is unchanged by this PR.
-  // 0368: the number the consent was given for is read fresh (the commands do not return it), failing closed.
+  // The number the consent was given for is read fresh (the commands do not return it), failing closed.
   const clientSmsConsentPhone = await readClientConsentPhone(admin, clientId, clientSmsConsentAt);
   await postCommit("public_booking_confirmation_sms_threw", undefined, () =>
     sendBookingConfirmationSmsToClient({
