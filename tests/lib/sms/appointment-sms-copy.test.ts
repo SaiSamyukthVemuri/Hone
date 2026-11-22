@@ -150,3 +150,34 @@ describe("public wording stays true (STOP scope, who is texted, who operates Hon
     expect(u as number).toBeLessThanOrEqual(GSM7_SEGMENT_UNITS);
   });
 });
+
+describe("the read-only copies are renderable from a SERVER page (no event handler in preview)", () => {
+  for (const f of ["components/sms/AppointmentSmsConsent.tsx", "components/sms/WaitlistSmsConsentFieldset.tsx"]) {
+    it(`${f}: the preview branch carries no onChange`, () => {
+      const src = read(f);
+      const start = src.indexOf("...(preview");
+      const dc = src.indexOf("defaultChecked: false", start);
+      expect(start, f).toBeGreaterThan(-1);
+      expect(dc, f).toBeGreaterThan(start);
+      // Everything from the spread's opening to the preview object's end must carry no handler.
+      expect(src.slice(start, src.indexOf("}", dc)), f).not.toMatch(/onChange/);
+    });
+  }
+});
+
+describe("the evidence page's screenshots", () => {
+  it("every screenshot the page references exists under public/ as a real PNG, with the right dimensions", () => {
+    const page = read("app/sms-consent/page.tsx");
+    const files = [...page.matchAll(/file: "([^"]+\.png)"[^}]*?width: (\d+), height: (\d+)/g)];
+    expect(files.length).toBe(5);
+    for (const [, file, w, h] of files) {
+      const bytes = readFileSync(join(process.cwd(), "public/sms-consent", file));
+      expect(bytes.subarray(1, 4).toString("latin1"), file).toBe("PNG");
+      expect(bytes.readUInt32BE(16), file).toBe(Number(w));
+      expect(bytes.readUInt32BE(20), file).toBe(Number(h));
+    }
+  });
+  it("the middleware matcher lets .png through without a login", () => {
+    expect(read("middleware.ts")).toMatch(/\.\*\\\\\.\(\?:svg\|png/);
+  });
+});

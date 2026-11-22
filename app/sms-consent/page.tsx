@@ -81,6 +81,14 @@ const waitlistSamples: ReadonlyArray<{ title: string; body: string }> = [
   },
 ];
 
+const SCREENSHOTS: ReadonlyArray<{ file: string; alt: string; caption: string; width: number; height: number }> = [
+  { file: "booking-form-sms-optin-unticked.png", alt: "The public booking form with the appointment text-message box, not ticked", caption: "Booking form: the appointment text-message box, never pre-ticked, with its disclosure and links.", width: 980, height: 1799 },
+  { file: "booking-form-sms-optin-ticked.png", alt: "The public booking form with the appointment text-message box ticked by the client", caption: "Booking form: the same box after the client ticks it.", width: 980, height: 1799 },
+  { file: "waitlist-join-form-sms-question.png", alt: "The waitlist join form with the text-message Yes/No question, neither chosen", caption: "Waitlist join form: the Yes/No question with neither answer chosen, and the notice beside it.", width: 980, height: 1500 },
+  { file: "waitlist-join-form-sms-yes.png", alt: "The waitlist join form with Yes chosen", caption: "Waitlist join form: after the person answers Yes.", width: 980, height: 1500 },
+  { file: "owner-record-consent-form.png", alt: "The studio owner's screen for recording consent a person gave the studio outside Hone", caption: "Studio owner screen: recording that a person told the studio they agree to waitlist texts, with where the evidence is and the day (or that the day is not known).", width: 631, height: 551 },
+];
+
 export default function SmsConsentPage() {
   return (
     <PolicyLayout
@@ -183,6 +191,19 @@ export default function SmsConsentPage() {
         waitlist only. Only an owner of that studio can record it, and a number that has already replied STOP is refused. The person can reply
         STOP at any time, which ends it.
       </P>
+
+      <H2 id="screenshots">Screenshots of the real screens</H2>
+      <P>
+        These were captured from the real application, running against a test database, with a made-up studio (&ldquo;Example Studio&rdquo;) and made-up
+        people. They contain no real client or studio data.
+      </P>
+      {SCREENSHOTS.map((shot) => (
+        <figure key={shot.file} className="my-4">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={`/sms-consent/${shot.file}`} alt={shot.alt} width={shot.width} height={shot.height} className="h-auto w-full max-w-[640px] border" loading="lazy" />
+          <figcaption className="mt-1 text-[13px]">{shot.caption}</figcaption>
+        </figure>
+      ))}
 
       <H2 id="sample-messages">Sample messages</H2>
       <P>These are produced by the same code that sends the real messages, from made-up details.</P>

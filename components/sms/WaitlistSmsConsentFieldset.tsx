@@ -34,8 +34,9 @@ export function WaitlistSmsConsentFieldset({
         type="radio"
         name={preview ? undefined : SMS_CONSENT_ANSWER_FIELD}
         value={value}
-        checked={answer === value}
-        onChange={() => onChange?.(value)}
+        {...(preview
+          ? { defaultChecked: false } // server-rendered on /sms-consent: no event handler may cross to the element
+          : { checked: answer === value, onChange: () => onChange?.(value) })}
         disabled={preview}
         className={`h-4 w-4 ${FOCUS_RING}`}
       />

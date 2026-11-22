@@ -25,9 +25,11 @@ export function AppointmentSmsConsent({
       <input
         type="checkbox"
         name={preview ? undefined : "sms_consent_checkbox"}
-        checked={checked}
-        onChange={(e) => onChange?.(e.target.checked)}
-        readOnly={preview}
+        {...(preview
+          ? // The evidence page renders this on the SERVER: a server component cannot hand an event handler to an element, so the
+            // read-only copy carries none (and is uncontrolled, always unticked).
+            { defaultChecked: false }
+          : { checked, onChange: (e: React.ChangeEvent<HTMLInputElement>) => onChange?.(e.target.checked) })}
         disabled={preview}
         className="mt-1 h-4 w-4 flex-none"
       />
