@@ -2,7 +2,7 @@ import type { FollowUpList } from "@/lib/waitlist/followups-owner";
 
 // DECLINE VISIBILITY. PURE: no I/O, no clock, nothing is sent or written.
 //
-// WHAT "DECLINED" MEANS HERE, AND NOTHING ELSE. A person declined when the invitation row carries `declined_at` (0192): they pressed "None of
+// WHAT "DECLINED" MEANS HERE, AND NOTHING ELSE. A person declined when the invitation row carries `declined_at`: they pressed "None of
 // these times work" (or said they no longer need an appointment). It is NEVER inferred from a passed deadline (that is an invitation that
 // expired without a response: `expired_at`, or `expires_at` in the past with nothing stamped) and NEVER from `released_at` alone (that is a
 // release, whose reason is not recorded: the database keeps the same stamp for an owner release and a person's withdrawal). A test pins that
