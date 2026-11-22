@@ -76,6 +76,8 @@ export type DeclineAnswers =
   | { kind: "not_collected" }
   | { kind: "unreadable" }
   | { kind: "none_on_record" }
+  /** The follow-up list was cut at its cap and this person's row is not in it: their answers may exist, so "none on record" would be a guess. */
+  | { kind: "may_be_missing" }
   | { kind: "erased"; at: string | null }
   | { kind: "answers"; why: string; better: string };
 
@@ -87,7 +89,7 @@ export function answersFor(invitationId: string, answersOn: boolean, followUps: 
   if (!answersOn) return { kind: "not_collected" };
   if (followUps === null || followUps.kind !== "ok") return { kind: "unreadable" };
   const f = followUps.rows.find((r) => r.kind === "decline" && r.invitationId === invitationId);
-  if (!f) return { kind: "none_on_record" };
+  if (!f) return followUps.capped === true ? { kind: "may_be_missing" } : { kind: "none_on_record" };
   if (f.answersErasedAt) return { kind: "erased", at: f.answersErasedAt };
   if (f.whyNotWork === null && f.betterTimes === null) return { kind: "none_on_record" };
   return { kind: "answers", why: f.whyNotWork ?? "", better: f.betterTimes ?? "" };

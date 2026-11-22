@@ -101,6 +101,8 @@ export function DeclinedSection({
                         ? "Reasons and preferred times are not being collected yet."
                         : a.kind === "unreadable"
                           ? "We couldn’t load their answers just now."
+                          : a.kind === "may_be_missing"
+                            ? "Their answers may not be shown: the list is long."
                           : a.kind === "erased"
                             ? "Their answers have been removed from view."
                             : "No answers on record."}
@@ -108,9 +110,14 @@ export function DeclinedSection({
                   )}
                   <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
                     {canLink ? (
-                      <Link href={`/settings/waitlist?section=${p.entryStatus}#entry-${p.entryId}`} className="underline" data-testid="declined-entry-link">
-                        Open their waitlist entry
-                      </Link>
+                      <>
+                        <Link href={`/settings/waitlist?section=${p.entryStatus}#entry-${p.entryId}`} className="underline" data-testid="declined-entry-link">
+                          Open their waitlist entry
+                        </Link>
+                        <span className="text-xs text-neutral-600" data-testid="declined-entry-hint">
+                          If this entry isn’t on the first page of its section, use the section’s pages to find it.
+                        </span>
+                      </>
                     ) : (
                       <span className="text-neutral-600" data-testid="declined-entry-state">
                         {p.entryStatus === null ? "Their entry could not be read." : "Their entry is no longer on the waitlist."}

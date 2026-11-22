@@ -238,7 +238,14 @@ const followUp = vi.hoisted(() => ({
   attention: null as unknown,
   declined: null as unknown,
   replies: null as unknown,
+  // The owner follow-up read (0325 answers). Null serves the real read, which the harness has no command for; a test seeds a list.
+  followUps: null as unknown,
 }));
+vi.mock("@/lib/waitlist/followups-owner", async (orig) => {
+  const a = await orig<typeof import("@/lib/waitlist/followups-owner")>();
+  return { ...a, readFollowUps: vi.fn(async (...args: Parameters<typeof a.readFollowUps>) =>
+    (followUp.followUps as Awaited<ReturnType<typeof a.readFollowUps>> | null) ?? a.readFollowUps(...args)) };
+});
 vi.mock("@/lib/waitlist/needs-attention", async (orig) => {
   const a = await orig<typeof import("@/lib/waitlist/needs-attention")>();
   return { ...a, loadNeedsAttention: vi.fn(async (...args: Parameters<typeof a.loadNeedsAttention>) =>
@@ -3460,6 +3467,39 @@ describe("people who declined: the summary count and the declined view", () => {
     expect(html).not.toMatch(/<details[^>]*data-testid="declined-contact"[^>]*\sopen/);
     // Every link outside the disclosure is free of names and contact details (the Email and Call links live inside it, by design).
     for (const m of outside.matchAll(/href="([^"]*)"/g)) expect(m[1]!, m[1]).not.toMatch(/Alex|Bo%20|alex@|bo@|%40|5550100/);
+  });
+
+  describe("with the answers gate ON and the follow-up list capped", () => {
+    const fuRow = (invitationId: string, entryId: string) => ({
+      followupId: `f-${invitationId}`, kind: "decline", invitationId, entryId, clientName: "X", openedAt: "2026-08-21T10:00:00.000Z", status: "open",
+      whyNotWork: "Mornings are hard", betterTimes: "Weekday evenings", answersErasedAt: null, submittedAt: "2026-08-21T10:00:00.000Z", closedAt: null, eraseBy: null,
+    });
+    const withGate = async (list: unknown) => {
+      process.env.WAITLIST_DECLINE_ANSWERS = "1";
+      followUp.followUps = list;
+      try {
+        return await render({ view: "declined" });
+      } finally {
+        delete process.env.WAITLIST_DECLINE_ANSWERS;
+        followUp.followUps = null;
+      }
+    };
+    it("a person whose follow-up row may be cut off is NOT told 'No answers on record'; a person whose row is present still shows their answers", async () => {
+      seed();
+      const html = await withGate({ kind: "ok", capped: true, rows: [fuRow("i2", "e-a")] });
+      const rowOf = (id: string) => html.match(new RegExp(`<li[^>]*data-entry-id="${id}"[^>]*data-testid="declined-row"[\\s\\S]*?</li>`))?.[0] ?? "";
+      expect(rowOf("e-a")).toContain("Mornings are hard"); // Alex's row (i2) was returned, in the DECLINED row itself
+      const bo = rowOf("e-b");
+      expect(bo).toContain("Their answers may not be shown: the list is long.");
+      expect(bo).not.toContain("No answers on record.");
+    });
+    it("the same missing row on an UNcapped list honestly reads 'No answers on record'", async () => {
+      seed();
+      const html = await withGate({ kind: "ok", rows: [fuRow("i2", "e-a")] });
+      const bo = html.match(/<li[^>]*data-entry-id="e-b"[^>]*data-testid="declined-row"[\s\S]*?<\/li>/)?.[0] ?? "";
+      expect(bo).toContain("No answers on record.");
+      expect(bo).not.toContain("may not be shown");
+    });
   });
 
   it("the unreadable-names state says so and still shows the declines", async () => {

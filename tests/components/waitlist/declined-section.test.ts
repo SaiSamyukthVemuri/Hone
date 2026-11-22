@@ -46,6 +46,12 @@ describe("DeclinedSection", () => {
     expect(html).toContain(text);
     expect(html).not.toContain("Mornings are hard");
   });
+  it("a capped list with no match says the answers may not be shown, and the entry link carries the first-page hint", () => {
+    const html = render({ followUps: { kind: "ok", rows: [], capped: true } as FollowUpList });
+    expect(html).toContain("Their answers may not be shown: the list is long.");
+    expect(html).not.toContain("No answers on record.");
+    expect(html).toContain("If this entry isn’t on the first page of its section, use the section’s pages to find it.");
+  });
   it("a person whose entry is gone has no link, only the honest sentence", () => {
     const html = render({ people: [person({ entryStatus: "removed" })] });
     expect(html).not.toContain("declined-entry-link");

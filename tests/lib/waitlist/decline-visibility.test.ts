@@ -68,6 +68,11 @@ describe("answersFor", () => {
     expect(answersFor("i2", true, ok([fu({})]))).toEqual({ kind: "none_on_record" });
     expect(answersFor("i1", true, ok([fu({ kind: "withdrawal" })]))).toEqual({ kind: "none_on_record" });
   });
+  it("a CAPPED list with no match is 'may be missing', never 'none on record'; a match in a capped list still shows its answers", () => {
+    expect(answersFor("i9", true, ok([fu({})], true))).toEqual({ kind: "may_be_missing" });
+    expect(answersFor("i1", true, ok([fu({})], true))).toEqual({ kind: "answers", why: "too early", better: "evenings" });
+    expect(answersFor("i9", true, ok([fu({})]))).toEqual({ kind: "none_on_record" });
+  });
   it("an erased answer reads as erased; empty answers read as none", () => {
     expect(answersFor("i1", true, ok([fu({ answersErasedAt: "2026-09-01T00:00:00Z", whyNotWork: null, betterTimes: null })]))).toEqual({ kind: "erased", at: "2026-09-01T00:00:00Z" });
     expect(answersFor("i1", true, ok([fu({ whyNotWork: null, betterTimes: null })]))).toEqual({ kind: "none_on_record" });
