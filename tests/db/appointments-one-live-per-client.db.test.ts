@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { adminQuery, closePool, resolveLocalDbUrl } from "./helpers/harness";
-import { dropSynthStudio, seedSynthStudioB, type SynthStudio } from "./helpers/synth-fleet";
+import { dropSynthStudio, seedStudioWideOpenAllWeek, seedSynthStudioB, type SynthStudio } from "./helpers/synth-fleet";
 
 // ONE LIVE APPOINTMENT PER CLIENT, SERVICE AND EXACT START, enforced by the database.
 //
@@ -199,5 +199,66 @@ describe("legitimate bookings still work", () => {
       await c.end();
     }
     expect(await live(B.clientId, start)).toHaveLength(2);
+  }, 40_000);
+});
+
+describe("a move or a reschedule onto a key the same client already holds", () => {
+  const TOKEN_Y = hash64();
+  /** A confirmed appointment written directly, so each case holds exactly the keys it names. */
+  async function seed(practitionerId: string, start: string, tokenHash = hash64()) {
+    const end = new Date(new Date(start).getTime() + 60 * 60_000).toISOString();
+    return (await adminQuery(
+      `insert into public.appointments (id, studio_id, practitioner_id, client_id, service_id, starts_at, ends_at, duration_minutes, status, cancellation_token_hash)
+       values (gen_random_uuid(),$1,$2,$3,$4,$5::timestamptz,$6::timestamptz,60,'confirmed',$7) returning id, starts_at::text s, ends_at::text e`,
+      [B.studioId, practitionerId, B.clientId, serviceId, start, end, tokenHash],
+    )).rows[0] as { id: string; s: string; e: string };
+  }
+  const row = async (id: string) => (await adminQuery(`select practitioner_id, starts_at::text s, status from public.appointments where id=$1`, [id])).rows[0];
+  const ownerId = () => B.practitioners.find((p) => p.role === "owner")!.practitionerId;
+  const P = (i: number) => B.practitioners[i]!.practitionerId;
+  const err = (e: unknown) => e as { code?: string; message?: string };
+
+  it("an in-app move onto it fails on the rule's index, and the original is untouched", async () => {
+    await seedStudioWideOpenAllWeek(B.studioId);
+    const held = startsAt(5, 10);
+    await seed(P(1), held);
+    const y = await seed(P(2), startsAt(5, 13));
+    let caught: { code?: string; message?: string } | null = null;
+    await adminQuery(
+      `select * from public.move_or_reassign_appointment($1,$2,$3,$4,$5::timestamptz,$6::timestamptz,$7::timestamptz)`,
+      [y.id, B.studioId, ownerId(), P(2), y.s, y.e, held],
+    ).catch((e) => { caught = err(e); });
+    expect(caught, "the move raised").not.toBeNull();
+    expect(caught!.code).toBe("23505");
+    expect(caught!.message).toContain(INDEX);
+    const after = await row(y.id);
+    expect(after.status).toBe("confirmed");
+    expect(new Date(after.s).toISOString()).toBe(new Date(y.s).toISOString());
+    expect(after.practitioner_id).toBe(P(2));
+  }, 40_000);
+
+  it("the same move to a start the client does NOT hold still succeeds (control)", async () => {
+    await seedStudioWideOpenAllWeek(B.studioId);
+    await seed(P(1), startsAt(5, 10));
+    const y = await seed(P(2), startsAt(5, 13));
+    const r = await adminQuery(
+      `select * from public.move_or_reassign_appointment($1,$2,$3,$4,$5::timestamptz,$6::timestamptz,$7::timestamptz)`,
+      [y.id, B.studioId, ownerId(), P(2), y.s, y.e, startsAt(5, 15)],
+    );
+    expect(r.rows[0].result).toBe("moved");
+  }, 40_000);
+
+  it("a public reschedule onto it fails on the rule's index, and the original survives", async () => {
+    await seedStudioWideOpenAllWeek(B.studioId);
+    const held = startsAt(6, 10);
+    await seed(P(1), held);
+    const y = await seed(P(2), startsAt(6, 13), TOKEN_Y);
+    let caught: { code?: string; message?: string } | null = null;
+    await adminQuery(`select * from public.reschedule_appointment_v2($1,$2,$3::timestamptz,$4,true,null)`, [y.id, TOKEN_Y, held, hash64()]).catch((e) => { caught = err(e); });
+    expect(caught, "the reschedule raised").not.toBeNull();
+    expect(caught!.code).toBe("23505");
+    expect(caught!.message).toContain(INDEX);
+    expect((await row(y.id)).status, "the original is still confirmed: the successor and the cancel rolled back together").toBe("confirmed");
+    expect(await live(B.clientId, held)).toHaveLength(1);
   }, 40_000);
 });
