@@ -958,7 +958,7 @@ export function DayColumn({
         const a = members[0];
         return <button key={group.ids.join(":")} type="button"
           style={{ top: group.top, height: group.height }}
-          className={`absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 px-2 py-1 text-left text-xs ${members.length === 1 ? appointmentCardClasses(a.service) : "border-neutral-500 bg-neutral-100 text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100"} ${members.length === 1 && appointmentDisplayStatus(a.status, a.ends_at) !== "upcoming" ? "opacity-60" : ""} ${members.length === 1 && appointmentDisplayStatus(a.status, a.ends_at) === "no_show" ? NO_SHOW_CARD_CLASS : ""}`}
+          className={`@container absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 px-2 py-1 text-left text-xs ${members.length === 1 ? appointmentCardClasses(a.service) : "border-neutral-500 bg-neutral-100 text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100"} ${members.length === 1 && appointmentDisplayStatus(a.status, a.ends_at) !== "upcoming" ? "opacity-60" : ""} ${members.length === 1 && appointmentDisplayStatus(a.status, a.ends_at) === "no_show" ? NO_SHOW_CARD_CLASS : ""}`}
           aria-label={members.length > 1 ? `Choose from ${members.length} appointments` : undefined}
           onClick={(event) => {
             event.stopPropagation();
@@ -973,7 +973,7 @@ export function DayColumn({
             </> : <>
               {members.slice(0, rows.shown).map(m => (
                 <span key={m.id} data-chooser-row="" className="flex h-[14px] items-center gap-1 text-[11px] leading-[14px]">
-                  <span className="shrink-0 tabular-nums opacity-80">{formatTimeForStudio(new Date(m.starts_at), tz, timeFormat)}</span>
+                  <span className="hidden shrink-0 tabular-nums opacity-80 @min-[7rem]:inline">{formatTimeForStudio(new Date(m.starts_at), tz, timeFormat)}</span>
                   <span className="truncate font-semibold">{m.client?.name?.trim() || "Client"}</span>
                 </span>
               ))}
