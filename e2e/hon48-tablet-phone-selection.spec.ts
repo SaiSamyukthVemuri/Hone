@@ -32,7 +32,7 @@ void _a; void _b; void _c;
 
 let seed: Awaited<ReturnType<typeof seedE2eStudio>>;
 let day: string;
-let cluster: Array<{ id: string; name: string }> = [];
+const cluster: Array<{ id: string; name: string }> = [];
 let practitionerId = "";
 
 test.beforeAll(async () => {
@@ -134,7 +134,7 @@ for (const [label, device] of [["iPad portrait", IPAD], ["iPad landscape", IPAD_
 
 const IPAD_820 = { ...IPAD, viewport: { width: 820, height: 1180 } };
 const IPAD_1180 = { ...IPAD_LAND, viewport: { width: 1180, height: 820 } };
-let lone: Array<{ id: string; name: string; practitionerId: string }> = [];
+const lone: Array<{ id: string; name: string; practitionerId: string }> = [];
 let allFive: string[] = [];
 
 test.describe("iPad: crowded items are named on the calendar", () => {
