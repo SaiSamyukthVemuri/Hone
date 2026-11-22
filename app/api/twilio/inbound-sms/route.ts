@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import {
+  isHelpKeyword,
   isStopKeyword,
   maskedPhone,
   normalizePhoneForMatch,
@@ -15,6 +16,7 @@ import {
   readProspectSuppressionCandidates,
 } from "@/lib/sms/suppression-candidates";
 import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
+import { APPOINTMENT_SMS_HELP_REPLY, APPOINTMENT_SMS_STOP_REPLY } from "@/lib/sms/appointment-sms-copy";
 
 // Twilio inbound SMS webhook (PR Twilio v1).
 //
@@ -56,10 +58,14 @@ import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const STOP_TWIML =
-  '<?xml version="1.0" encoding="UTF-8"?>' +
-  "<Response><Message>You have been opted out of Hone appointment texts. " +
-  "Email reminders may still be sent.</Message></Response>";
+// The reply texts live in lib/sms/appointment-sms-copy.ts (the one source the booking checkbox and /sms-consent also print).
+function messageTwiml(text: string): string {
+  const escaped = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return '<?xml version="1.0" encoding="UTF-8"?>' + "<Response><Message>" + escaped + "</Message></Response>";
+}
+
+const STOP_TWIML = messageTwiml(APPOINTMENT_SMS_STOP_REPLY);
+const HELP_TWIML = messageTwiml(APPOINTMENT_SMS_HELP_REPLY);
 
 const EMPTY_TWIML =
   '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
@@ -167,6 +173,12 @@ export async function POST(req: Request): Promise<Response> {
   const body = typeof formParams.Body === "string" ? formParams.Body : "";
   const messageSid =
     typeof formParams.MessageSid === "string" ? formParams.MessageSid : null;
+
+  if (isHelpKeyword(body)) {
+    // HELP / INFO: a reply to the sender, nothing proactive, no data read or written, the body is not logged.
+    logEvent("twilio_inbound_help", { messageSid });
+    return twimlResponse(HELP_TWIML);
+  }
 
   if (!isStopKeyword(body)) {
     // v1 is opt-out only: any other inbound message is acknowledged

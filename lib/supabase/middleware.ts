@@ -42,6 +42,8 @@ export async function updateSession(request: NextRequest) {
     pathname === "/demo" ||
     pathname === "/privacy" ||
     pathname === "/terms" ||
+    // Public evidence of the appointment-SMS opt-in flow (carrier / reviewer link). No login, no data.
+    pathname === "/sms-consent" ||
     // Public marketing category / feature / resource pages (the flagship
     // marketing site). Anonymous visitors and search-engine crawlers must reach
     // these without a /login bounce. Feature routes are listed by exact match

@@ -47,7 +47,7 @@ const EFFECTIVE_DATE = "May 22, 2026";
 
 // When the text below was last revised. A fact about this file, not a legal
 // determination.
-const LAST_UPDATED = "October 10, 2026";
+const LAST_UPDATED = "November 22, 2026";
 
 export default function PrivacyPolicyPage() {
   return (
@@ -256,6 +256,46 @@ export default function PrivacyPolicyPage() {
         <li>
           Access practitioner data except as needed for support (with
           permission) or required by law
+        </li>
+      </UL>
+
+      <H3 id="appointment-text-messages">Appointment text messages</H3>
+      <P>
+        If you tick the text-message box when you book online, Hone sends you
+        text messages <strong>on behalf of the studio you booked with</strong>:
+        appointment confirmations and reminders only. Nothing else is sent
+        under this consent. Hone does not send marketing or promotional texts,
+        and texts about a studio&rsquo;s waitlist are a separate matter that
+        this section does not cover.
+      </P>
+      <UL>
+        <li>
+          <strong>When:</strong> a confirmation after you book, and a
+          confirmation if the appointment is rescheduled, plus a reminder about
+          24 hours before and another a few hours before, when the studio has
+          those reminders turned on. That is usually up to 3 messages per
+          appointment.
+        </li>
+        <li>
+          <strong>Rates:</strong> message and data rates may apply, as charged
+          by your mobile carrier.
+        </li>
+        <li>
+          <strong>Help and opting out:</strong> reply <strong>HELP</strong> for
+          help, or email support@hone.care. Reply <strong>STOP</strong> at any
+          time to opt out; this stops appointment texts from every studio on
+          Hone to that number, and email may still be used for appointment
+          messages.
+        </li>
+        <li>
+          <strong>Not a condition of booking:</strong> the box is optional and
+          never pre-ticked, and you can book without it.
+        </li>
+        <li>
+          <strong>Who handles them:</strong> we use Twilio, our service
+          provider, to deliver the texts. We do not sell your mobile number or
+          your text-message consent, and we do not share them with third
+          parties for marketing or promotional purposes.
         </li>
       </UL>
 
