@@ -398,14 +398,14 @@ declare
   v_pur_legacy boolean := false;
 begin
   -- THE HELD VERSION IS CHECKED INSIDE THIS TRANSACTION, under the row lock
-  -- (Codex 4476240827, decided by OPS). A caller that holds the block's
+  -- A caller that holds the block's
   -- updated_at passes it; a mismatch is the same refusal as the block commands'
   -- own stale check, so a write by another tab between the caller's read and
   -- this call is detected, never overwritten. The NEW updated_at comes back from
   -- the same UPDATE ... RETURNING, so the caller adopts exactly the version its
   -- own write produced and no separate read can race it.
   --
-  -- THE SESSION MUST BE LIVE, AND IS LOCKED BEFORE THE BLOCK (Codex 4486745915).
+  -- THE SESSION MUST BE LIVE, AND IS LOCKED BEFORE THE BLOCK.
   -- assert_session_writable (frozen) does not look at sessions.deleted_at, and
   -- soft_delete_session stamps the session and leaves its blocks alone, so a direct
   -- call could change the machine identity of a block in a removed session. The session is
@@ -446,7 +446,7 @@ begin
   -- A SAME-KEY REPLAY IS ANSWERED FROM ITS RECEIPT, BEFORE ANY CHECK THAT DEPENDS ON THE BLOCK'S CURRENT STATE.
   -- The earlier attempt committed and its answer was lost; the block may since have been edited, the unit retired or
   -- the version moved on, none of which changes what that attempt did. The stored version is the one THAT write
-  -- produced (never the current one, Insurance N-8), so the caller adopts it and any later edit still conflicts on
+  -- produced (never the current one), so the caller adopts it and any later edit still conflicts on
   -- its next save. The same key with a different identity is refused, never answered with the original.
   if v_key is not null then
     if p_receipt_kind is null or p_receipt_kind not in ('identity', 'readings', 'create') then
@@ -459,7 +459,7 @@ begin
       coalesce(nullif(btrim(coalesce(p_profile_id, '')), ''), '') || '|' ||
       coalesce(p_studio_machine_id::text, '') || '|' ||
       coalesce(nullif(btrim(coalesce(p_mode_key, '')), ''), ''));
-    -- THE READINGS KIND NEVER REPLAYS FROM HERE (Privacy RV-1). A readings replay is decided by the submission command's own claim
+    -- THE READINGS KIND NEVER REPLAYS FROM HERE. A readings replay is decided by the submission command's own claim
     -- (record_treatment_setup_submission, in the wrapper): this function is reached only for a submission the wrapper judged NEW.
     -- If the claim were ever gone while this key's receipt remained, answering from the receipt would hand back a stale version for
     -- readings that were just written; a new submission instead writes a fresh receipt over the stale one (below).
@@ -495,7 +495,7 @@ begin
      where m.id = p_studio_machine_id
        and m.studio_id = p_studio_id
        and m.retired_at is null
-       -- LOCK THE UNIT BEFORE ACCEPTING IT (Codex 4487384239). retire_studio_machine serialises only through its UPDATE row lock, so an
+       -- LOCK THE UNIT BEFORE ACCEPTING IT. retire_studio_machine serialises only through its UPDATE row lock, so an
        -- unlocked read here could see retired_at null, lose the race to a committed retire, and then record a retired unit on the block.
        -- FOR SHARE (taken after the session and block locks, so the order stays session, block, unit) makes a concurrent retire wait, and
        -- under READ COMMITTED the predicate is then re-evaluated against the committed row: a retired unit is refused below.
@@ -566,10 +566,10 @@ begin
     end if;
   end if;
 
-  -- AN AREA THAT ALREADY HOLDS xCell Pur READINGS NEVER GETS A NATIVE IDENTITY (Codex 4471593271, decided by OPS; protects
+  -- AN AREA THAT ALREADY HOLDS xCell Pur READINGS NEVER GETS A NATIVE IDENTITY (this protects
   -- the studio's existing records). Two machines' settings on one area, or the second overwriting the first, is the harm.
   -- The same list the app's lock uses: the legacy columns on the block and the legacy reading columns on its entries.
-  -- A soft-deleted entry is not a reading (OPS decision on Insurance LK-1).
+  -- A soft-deleted entry is not a reading.
   -- Choosing the legacy xCell Pur machine itself stays allowed. The block row is already locked above, so this read is
   -- consistent with the write below. A new area (create wrapper) has no readings at this point.
   if v_profile <> 'dectro-apilus:xcell' and not v_pur_legacy and public.block_holds_legacy_readings(p_block_id) then

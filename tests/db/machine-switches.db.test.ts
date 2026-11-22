@@ -195,6 +195,16 @@ describe("ensure_studio_machine_for_save: lazy, idempotent, bound to a real bloc
     expect((await adminQuery(`select actor_user_id from public.studio_machine_setting_events where studio_id=$1 and kind='unit_created'`, [S.studioId])).rows[0].actor_user_id).toBe(S.userId);
   });
 
+  it("a null or empty profile is refused and creates nothing", async () => {
+    const S = await seedOn("sw-nullprofile");
+    const sess = await seedSession(S);
+    const nullish = (profile: string | null) =>
+      asUser(S.userId, async (q) => (await q(`select public.ensure_studio_machine_for_save($1,$2) as r`, [sess.blockId, profile])).rows[0].r as string);
+    expect((await failure(nullish(null)))?.message).toBe("Not available.");
+    expect((await failure(nullish("")))?.message).toBe("Not available.");
+    expect(Number((await adminQuery(`select count(*)::int n from public.studio_machines where studio_id=$1`, [S.studioId])).rows[0].n)).toBe(0);
+  });
+
   it("two concurrent saves produce ONE live unit", async () => {
     const S = await seedOn("sw-race");
     const sess = await seedSession(S);
@@ -388,7 +398,7 @@ describe("apply_block_machine_identity: the xCell Pur model with a legacy-column
     } finally { await setRollout("all"); }
   });
 
-  it("a block holding legacy readings takes the Pur legacy identity, but another native identity is still refused (0310's rule stands)", async () => {
+  it("a block holding legacy readings takes the Pur legacy identity, but another native identity is still refused (the existing identity rules stand)", async () => {
     const S = await seedOn("sw-id-readings");
     const s = await seedSession(S);
     await adminTx(async (q) => { await q(`set local session_replication_role = replica`); await q(`update public.session_blocks set energy_level = 3 where id = $1`, [s.blockId]); });
@@ -397,7 +407,7 @@ describe("apply_block_machine_identity: the xCell Pur model with a legacy-column
     expect((await failure(identity(s.blockId, S.studioId, SEN, senior, null)))?.message).toMatch(/already holds xCell Pur readings/);
   });
 
-  it("D3/D4: a block with a stale legacy mode and frequency takes a native identity and keeps those columns untouched; an entry with a legacy reading still blocks the native identity", async () => {
+  it("a block with a stale legacy mode and frequency takes a native identity and keeps those columns untouched; an entry with a legacy reading still blocks the native identity", async () => {
     const S = await seedOn("sw-d34");
     const s = await seedSession(S);
     await adminTx(async (q) => { await q(`set local session_replication_role = replica`); await q(`update public.session_blocks set mode = 'galv', machine_frequency = '13.56 MHz' where id = $1`, [s.blockId]); });
@@ -446,8 +456,8 @@ describe("apply_block_machine_identity: the xCell Pur model with a legacy-column
     } finally { await setRollout("all"); }
   });
 
-  it("0310's contract rules still hold for a native unit (a mode outside the contract is refused)", async () => {
-    const S = await seedOn("sw-id-0310");
+  it("the existing contract rules still hold for a native unit (a mode outside the contract is refused)", async () => {
+    const S = await seedOn("sw-id-contract");
     const s = await seedSession(S);
     const senior = await unitOf(S.studioId, SEN, 3);
     expect((await failure(identity(s.blockId, S.studioId, SEN, senior, "not-a-mode")))?.message).toMatch(/does not offer that mode/);
@@ -537,8 +547,8 @@ describe("DB-level freeze: a block holding readings cannot change its machine id
   });
 });
 
-describe("Privacy conditions: role gate, invoker lock, freeze as the lowest writing role", () => {
-  it("A: a practitioner-role member may use choices and ensure; a user whose practitioners row has any other role is refused (receptionist, when the chain allows that role)", async () => {
+describe("role gate, invoker lock, freeze as the lowest writing role", () => {
+  it("a practitioner-role member may use choices and ensure; a user whose practitioners row has any other role is refused (receptionist, when the chain allows that role)", async () => {
     const S = await seedOn("sw-role");
     const sess = await seedSession(S);
     const mem = await seedMember(S, "sw-role-m");
@@ -551,7 +561,7 @@ describe("Privacy conditions: role gate, invoker lock, freeze as the lowest writ
     expect((await failure(ensure(rec.userId, sess.blockId, PUR)))?.message).toBe("Not available.");
   });
 
-  it("A (receptionist): a user who is an active studio receptionist and has NO practitioners row is refused by choices and ensure; practitioners.role never holds 'receptionist' in any chain", async () => {
+  it("a receptionist: a user who is an active studio receptionist and has NO practitioners row is refused by choices and ensure; practitioners.role never holds 'receptionist' in any chain", async () => {
     const have = (await adminQuery(`select to_regclass('public.studio_receptionists') t`)).rows[0].t;
     if (!have) { console.log("studio_receptionists is not in this chain; the stacked run exercises this case"); return; }
     const S = await seedOn("sw-recep");
@@ -565,7 +575,7 @@ describe("Privacy conditions: role gate, invoker lock, freeze as the lowest writ
     expect(chk).not.toMatch(/receptionist/);
   });
 
-  it("B: the share-lock trigger is SECURITY INVOKER, and another studio's caller cannot lock this studio's block (even through a failing insert held open)", async () => {
+  it("the share-lock trigger is SECURITY INVOKER, and another studio's caller cannot lock this studio's block (even through a failing insert held open)", async () => {
     expect((await adminQuery(`select prosecdef from pg_proc where proname='reading_write_share_lock_block'`)).rows[0].prosecdef).toBe(false);
     const S = await seedOn("sw-lock-a");
     const O = await seedOn("sw-lock-b");
@@ -584,7 +594,7 @@ describe("Privacy conditions: role gate, invoker lock, freeze as the lowest writ
     expect(blockedByLock, "a foreign caller must not hold a lock on this studio's block").toBeNull();
   });
 
-  it("C: the freeze sees every entry as the lowest writing role (a practitioner member): the member can read the block's entries, and a direct identity change is refused by the freeze or by privileges, never silently allowed", async () => {
+  it("the freeze sees every entry as the lowest writing role (a practitioner member): the member can read the block's entries, and a direct identity change is refused by the freeze or by privileges, never silently allowed", async () => {
     const S = await seedOn("sw-frz-role");
     const mem = await seedMember(S, "sw-frz-m");
     const s = await seedSession(S);
@@ -604,13 +614,13 @@ describe("Privacy conditions: role gate, invoker lock, freeze as the lowest writ
   });
 });
 
-describe("Insurance conditions: one live Pur unit, forced RLS, one readings definition, no deadlock, writable session, text codes", () => {
+describe("one live Pur unit, forced RLS, one readings definition, no deadlock, writable session, text codes", () => {
   const register = (user: string, studio: string, name: string) =>
     asUser(user, async (q) => (await q(`select public.register_studio_machine($1,$2,1,$3,'{}') as r`, [studio, PUR, name])).rows[0].r as string);
   const liveXcell = async (studio: string) =>
     Number((await adminQuery(`select count(*)::int n from public.studio_machines where studio_id=$1 and machine_profile_id=$2 and retired_at is null`, [studio, PUR])).rows[0].n);
 
-  it("R1: the database holds at most one live xCell Pur unit per studio; two concurrent owner registrations leave exactly one; a retired unit frees the slot", async () => {
+  it("the database holds at most one live xCell Pur unit per studio; two concurrent owner registrations leave exactly one; a retired unit frees the slot", async () => {
     const S = await seedOn("sw-uniq");
     const results = await Promise.allSettled([register(S.userId, S.studioId, "Room 1 xCell"), register(S.userId, S.studioId, "Room 2 xCell")]);
     expect(results.filter((r) => r.status === "fulfilled").length).toBe(1);
@@ -624,21 +634,21 @@ describe("Insurance conditions: one live Pur unit, forced RLS, one readings defi
     expect(await liveXcell(S.studioId)).toBe(1);
   });
 
-  it("C1: row level security is FORCED on the three tables", async () => {
+  it("row level security is FORCED on the three tables", async () => {
     for (const t of ["studio_machine_models", "studio_machine_default", "studio_machine_setting_events"]) {
       const c = (await adminQuery(`select relrowsecurity, relforcerowsecurity from pg_class where oid = $1::regclass`, [`public.${t}`])).rows[0];
       expect(c, t).toEqual({ relrowsecurity: true, relforcerowsecurity: true });
     }
   });
 
-  it("C2: the freeze trigger is SECURITY DEFINER and not callable by any role", async () => {
+  it("the freeze trigger is SECURITY DEFINER and not callable by any role", async () => {
     expect((await adminQuery(`select prosecdef from pg_proc where proname='session_blocks_machine_identity_freeze'`)).rows[0].prosecdef).toBe(true);
     for (const r of ["anon", "authenticated", "service_role"]) {
       expect((await adminQuery(`select has_function_privilege($1,'public.session_blocks_machine_identity_freeze()','execute') p`, [r])).rows[0].p, r).toBe(false);
     }
   });
 
-  it("C3: the database function and the application helper agree on what 'holds legacy readings' means, case by case", async () => {
+  it("the database function and the application helper agree on what 'holds legacy readings' means, case by case", async () => {
     const S = await seedOn("sw-agree");
     type Case = { name: string; block?: Record<string, unknown>; entry?: Record<string, unknown>; deleted?: boolean; reading: boolean };
     const cases: Case[] = [
@@ -682,7 +692,7 @@ describe("Insurance conditions: one live Pur unit, forced RLS, one readings defi
     }
   });
 
-  it("C4: concurrent saves on one block never deadlock (no 40P01), across reading writes and identity changes in both orders", async () => {
+  it("concurrent saves on one block never deadlock (no 40P01), across reading writes and identity changes in both orders", async () => {
     const S = await seedOn("sw-deadlock");
     for (let round = 0; round < 6; round++) {
       const s = await seedSession(S);
@@ -694,7 +704,7 @@ describe("Insurance conditions: one live Pur unit, forced RLS, one readings defi
     }
   });
 
-  it("C5: ensure goes through the shared writability guard and refuses a finalized or void session", async () => {
+  it("ensure goes through the shared writability guard and refuses a finalized or void session", async () => {
     const src = (await adminQuery(`select prosrc from pg_proc where proname='ensure_studio_machine_for_save'`)).rows[0].prosrc as string;
     expect(src).toMatch(/assert_session_writable/);
     const S = await seedOn("sw-final");
@@ -721,7 +731,7 @@ describe("Insurance conditions: one live Pur unit, forced RLS, one readings defi
     expect(await failure(adminQuery(`update public.session_blocks set machine_mode_key='flash' where id=$1`, [s.blockId]))).toBeNull();
   });
 
-  it("C6: ensure answers a unit id or one of three refusal codes (name_taken shown here; retired and unpublished above); the application treats any non-id text as a refusal", async () => {
+  it("ensure answers a unit id or one of three refusal codes (name_taken shown here; retired and unpublished above); the application treats any non-id text as a refusal", async () => {
     const S = await seedOn("sw-codes");
     const s = await seedSession(S);
     const other = await unitOf(S.studioId, SEN, 3);
@@ -733,7 +743,7 @@ describe("Insurance conditions: one live Pur unit, forced RLS, one readings defi
 describe("the down", () => {
   const DOWN_PATH = "supabase/rollbacks/0366_machine_switches.down.sql";
 
-  it("REFUSES while a block holds a Pur identity (N1); nothing is dropped", async () => {
+  it("REFUSES while a block holds a Pur identity; nothing is dropped", async () => {
     const S = await seedOn("sw-down");
     const s = await seedSession(S);
     await identity(s.blockId, S.studioId, PUR, null, "thermolysis");
@@ -743,7 +753,7 @@ describe("the down", () => {
     expect((await adminQuery(`select md5(prosrc) m from pg_proc where proname='apply_block_machine_identity'`)).rows[0].m).not.toBe("218c39a20344d2effd4d934f702b0338");
   });
 
-  it("restores 0310's function body byte for byte (the down text carries it unchanged)", () => {
+  it("restores the previous function body byte for byte (the down text carries it unchanged)", () => {
     const orig = readFileSync("supabase/migrations/0310_block_machine_identity_mode_contract.sql", "utf8");
     const a = orig.indexOf("create or replace function public.apply_block_machine_identity(");
     const body = orig.slice(a, orig.indexOf("$$;", a) + 3);
@@ -751,7 +761,7 @@ describe("the down", () => {
   });
 });
 
-describe("answer A: the owner's switch decides, old history is not needed, and the unit comes only from a successful first save", () => {
+describe("the owner's switch decides, old history is not needed, and the unit comes only from a successful first save", () => {
   const unitCount = async (studio: string) =>
     Number((await adminQuery(`select count(*)::int n from public.studio_machines where studio_id=$1 and machine_profile_id=$2`, [studio, PUR])).rows[0].n);
 
