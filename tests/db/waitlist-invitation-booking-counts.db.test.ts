@@ -38,9 +38,17 @@ let seq = 0;
 async function entry(studioId: string, status = "waiting"): Promise<string> {
   seq += 1;
   const id = randomUUID();
+  // The entry table's cycle-evidence check requires each status's own stamps, so a fixture states them rather than bypassing the check.
   await adminQuery(
-    `insert into public.new_client_waitlist_entries (id, studio_id, name, email, phone, status, source, joined_at, joined_at_provenance)
-     values ($1, $2, 'Fixture Person', $3, $4, $5, 'public_booking', now() - interval '60 days', 'form')`,
+    `insert into public.new_client_waitlist_entries
+       (id, studio_id, name, email, phone, status, source, joined_at, joined_at_provenance,
+        claimed_at, claimed_by_practitioner_id, invited_at, converted_at, converted_client_id)
+     select $1, $2, 'Fixture Person', $3, $4, $5, 'public_booking', now() - interval '60 days', 'form',
+            case when $5 <> 'waiting' then now() - interval '50 days' end,
+            case when $5 <> 'waiting' then (select id from public.practitioners where studio_id = $2 limit 1) end,
+            case when $5 in ('invited', 'converted') then now() - interval '49 days' end,
+            case when $5 = 'converted' then now() - interval '48 days' end,
+            case when $5 = 'converted' then (select id from public.clients where studio_id = $2 limit 1) end`,
     [id, studioId, `f${seq}-${id.slice(0, 8)}@example.com`, `+1647${String(1000000 + seq)}`, status],
   );
   return id;
