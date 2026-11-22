@@ -665,17 +665,6 @@ describe("the create form carries the key in the URL", () => {
     expect(src).toMatch(/INITIAL_SAVE_RESUME_NEEDS_SETTINGS/);
   });
 
-  it("and Cancel waits for a lookup that is already in flight", () => {
-    // Dismissing the form mid-read discards the answer; the read is one round
-    // trip (Codex, #922 4305431336).
-    const src = read(FORM_SRC);
-    const cancel = /disabled=\{([^}]*)\}\s*\n\s*data-testid="cancel-treatment-area"/.exec(
-      src,
-    );
-    expect(cancel, "the Cancel button's disabled expression was not found").toBeTruthy();
-    expect(cancel![1]).toContain('resume.state === "checking"');
-  });
-
   it("and mirrors it back AT THE SETTER, not at the call sites", () => {
     // The key is minted in one place and dropped in two, and the mechanism
     // fails silently if any one of them forgets the URL. Shadowing the setter

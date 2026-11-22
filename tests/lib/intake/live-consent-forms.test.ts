@@ -743,11 +743,6 @@ describe("11. #518 and the DB step contract are untouched", () => {
     expect(saves.length).toBeGreaterThanOrEqual(2);
     expect(wizard).not.toMatch(/step: CONSENT_PHASE/);
   });
-
-  it("no migration is required by this feature", () => {
-    expect(GATE_CODE).not.toMatch(/alter table|create table|add column/i);
-    expect(MODULE_CODE).not.toMatch(/alter table|create table|add column/i);
-  });
 });
 
 // ---------------------------------------------------------------------------

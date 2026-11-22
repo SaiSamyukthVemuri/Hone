@@ -10,8 +10,8 @@ import {
 // Launch hard hold: LIVE-mode charging is session-payments-only; manual
 // no-show / late-cancellation fees are blocked server-side (prepare AND
 // execute). Test mode is unaffected. This suite proves the pure allowlist
-// logic + pins the integration points (prepare eligibility, execute action,
-// UI copy) and that session_payment is NOT gated.
+// logic + pins the integration points (prepare eligibility, execute action)
+// and that session_payment is NOT gated.
 
 function read(rel: string): string {
   return readFileSync(path.resolve(__dirname, "../../../", rel), "utf8");

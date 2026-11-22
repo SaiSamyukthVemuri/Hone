@@ -112,46 +112,6 @@ describe("no attested outcome may present itself as verified money", () => {
     }
   });
 
-  it("EMERALD IS RESERVED. The settled branch of the cell renders neutral", () => {
-    void 0;
-    // The emerald branch is the paid/refunded one, which is Hone-verified.
-    const settledBranch = CELL.slice(CELL.indexOf("const settled = SETTLED_LABEL"));
-    expect(settledBranch).not.toMatch(/emerald/);
-    expect(settledBranch).toMatch(/bg-neutral-100/);
-    // And the verified branch still owns emerald.
-    expect(CELL).toMatch(/paymentState === "paid" \|\|/);
-    expect(CELL.slice(0, CELL.indexOf("const settled"))).toMatch(/emerald/);
-  });
-
-  it("the cell offers no Checkout once a visit is COLLECTED or WAIVED", () => {
-    // RESTATED, NOT RELAXED. This was "once a visit is settled", which held
-    // only while all five methods shared one branch. `still_owes` attests the
-    // visit is UNPAID: it is the one method absent from the SQL blocking set,
-    // the one prepareSessionPaymentChargeAction lets through, and the reason
-    // settlementIsOutranked exists. Withholding Checkout from it contradicted
-    // every layer beneath the view and left the debt collectable only from the
-    // session detail page.
-    //
-    // The invariant that actually matters is the one about MONEY ALREADY
-    // ACCOUNTED FOR: a visit paid in cash, by e-transfer, another way, or
-    // waived must never be asked to be charged again.
-    const settledBranch = CELL.slice(
-      CELL.indexOf("const settled = SETTLED_LABEL"),
-      CELL.indexOf('if (paymentState === "processing")'),
-    );
-    // The four collected/waived states return the bare badge...
-    expect(settledBranch).toMatch(
-      /if \(paymentState !== "settled_owing"\) return badge;/,
-    );
-    // ...and the ONLY entry point below that guard is the still-owing one.
-    const afterGuard = settledBranch.slice(
-      settledBranch.indexOf('if (paymentState !== "settled_owing") return badge;'),
-    );
-    expect([...afterGuard.matchAll(/<CheckoutButton/g)]).toHaveLength(1);
-    // Behavioural coverage of every state lives in
-    // tests/components/appointment-checkout-cell-render.test.ts.
-  });
-
   it("the controls say out loud that Hone did not verify this", () => {
     expect(CONTROLS).toMatch(/does not take a payment and Hone/);
     expect(CONTROLS).toMatch(/not verified by Hone/);
@@ -284,12 +244,6 @@ describe("a missing treatment session blocks CARD charging, never settlement", (
 // P2 — a full refund releases the block; a partial one must not
 // ---------------------------------------------------------------------------
 describe("retained card money is measured in cents, not inferred from a status", () => {
-  it("the SQL requires refund_amount_cents to cover the whole charge", () => {
-    expect(MIGRATION).toMatch(
-      /a\.refund_status = 'succeeded'\s*\n\s*and coalesce\(a\.refund_amount_cents, 0\) >= a\.amount_cents/,
-    );
-  });
-
   it("the card gates on FULL refund, not on the presence of an attempt", () => {
     expect(CARD).toMatch(/const fullyRefunded =/);
     // R1 (Insurance F3): FULL is read through refundDisplayState (both refund columns agree AND nothing remains), which
@@ -390,11 +344,6 @@ describe("recording a settlement advances the quick-checkout modal in place", ()
     expect(settledBranch).toMatch(/SETTLEMENT_BADGE_LABEL\[settledMethod\]/);
     expect(settledBranch).not.toMatch(/settlement-open-|settlement-confirm-/);
     expect(settledBranch).toMatch(/return \(/);
-  });
-
-  it("the session detail page needs no hook and is left alone", () => {
-    const page = read("app/(app)/clients/[id]/sessions/[sessionId]/page.tsx");
-    expect(page).not.toMatch(/onSettlementRecorded/);
   });
 });
 

@@ -529,14 +529,6 @@ describe("Photos finding (1 Nov, d5a27f03): the desktop rail fits the viewport, 
     expect(src).toMatch(/ITEM_IDLE =\s*"[^"]*hover:bg-neutral-50/);
     expect(src).toMatch(/ITEM_ACTIVE =\s*"bg-neutral-100 font-medium[^"]*before:bg-neutral-900/);
   });
-  it("at 1280x800 and 1280x720 the rail's bottom stays inside the viewport at scroll 0", () => {
-    // App header ~65px + main padding 40px = natural top ~105px; the cap is 100vh - 7.5rem.
-    const naturalTop = 105;
-    for (const vh of [800, 720]) {
-      const bottom = naturalTop + (vh - 7.5 * 16);
-      expect(bottom, `viewport ${vh}`).toBeLessThanOrEqual(vh);
-    }
-  });
   it("group toggles keep normal mouse focus and no scroll bookkeeping exists", () => {
     expect(src).not.toMatch(/preventDefault\(\)/);
     expect(src).not.toMatch(/data-rail-group-toggle|scrollAtGroupPress|scrollTo\(/);

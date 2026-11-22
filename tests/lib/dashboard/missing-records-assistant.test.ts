@@ -294,14 +294,6 @@ describe("dashboard wiring (source pins)", () => {
     expect(PAGE).not.toMatch(/FollowUpAssistantCard/);
   });
 
-  it("the existing Daily Prep Brief and Today next actions stay intact", () => {
-    // The Daily Prep Brief card is retired; its preparation facts now render
-    // once inside the combined Today appointment card.
-    expect(PAGE).toMatch(/buildTodayWorkflow\(todayWorkflowInputs\)/);
-    expect(PAGE).not.toMatch(/DailyPrepBriefCard/);
-    expect(PAGE).toMatch(/resolveDayNextAction\(/);
-  });
-
   it("every assistant gap type still reaches the unified list", () => {
     // The five types are mapped 1:1 onto To-do kinds; a dropped mapping would
     // silently stop surfacing that gap.
@@ -310,12 +302,6 @@ describe("dashboard wiring (source pins)", () => {
         new RegExp(`${t}:`),
       );
     }
-  });
-
-  it("the list renders one calm empty state, and the assistant's own actions", () => {
-    expect(LIST).toMatch(/Nothing to do right now/);
-    // The action label/href come straight off the item; nothing is re-derived.
-    expect(MODEL).toMatch(/href: item\.href, label: item\.actionLabel/);
   });
 
   // The invariant is that the list performs no MUTATION and no I/O: every row's

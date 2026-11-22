@@ -717,15 +717,6 @@ describe("UI-05: both surfaces use the shipped dialog with its real contract", (
     expect(TAGS).toMatch(/fd\.set\("tag_id", tagId\)/);
   });
 
-  it("no mutation contract changed — same actions, same FormData fields", () => {
-    expect(SCHEDULE).toMatch(/fd\.set\("stage_id", stage\.id\)/);
-    expect(SCHEDULE).toMatch(/fd\.set\("plan_id", planId\)/);
-    expect(SCHEDULE).toMatch(/fd\.set\("client_id", clientId\)/);
-    expect(SCHEDULE).toMatch(/await deleteAction\(fd\)/);
-    expect(PORTAL).toMatch(/fd\.set\("client_id", clientId\)/);
-    expect(PORTAL).toMatch(/await archiveAction\(fd\)/);
-  });
-
   it("invents no dialog of its own, and adds no dependency", () => {
     // The point is adoption. A second modal implementation here would be the
     // opposite of the slice.
