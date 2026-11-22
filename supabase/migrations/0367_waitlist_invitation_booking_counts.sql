@@ -2,7 +2,8 @@
 --
 -- Read-only. It writes nothing and returns five integers, never a name, a contact detail or a token. The booking
 -- figures come only from the explicit invitation-to-appointment link written by the booking command; nothing
--- is inferred from times. A conversion that has no link row is reported on its own, never as a booking.
+-- is inferred from times. A conversion that has no link row is reported on its own, never as a booking. An invitation whose cycle was closed
+-- unbooked (closed_at stamped) is never a conversion: a later invitation on the same entry made it.
 --
 -- The cohort is the invitations ISSUED in the period: start inclusive, end exclusive, either end may be null (open).
 -- Every figure describes that one cohort, so they share one denominator.
@@ -42,7 +43,7 @@ begin
     pg_catalog.count(distinct i.entry_id)::integer,
     (pg_catalog.count(*) filter (where b.invitation_id is not null and a.status is distinct from 'cancelled'))::integer,
     (pg_catalog.count(*) filter (where b.invitation_id is not null and a.status = 'cancelled'))::integer,
-    (pg_catalog.count(*) filter (where b.invitation_id is null and i.redeemed_at is not null and e.status = 'converted'))::integer
+    (pg_catalog.count(*) filter (where b.invitation_id is null and i.redeemed_at is not null and i.closed_at is null and e.status = 'converted'))::integer
     from public.new_client_waitlist_invitations i
     join public.new_client_waitlist_entries e
       on e.id = i.entry_id and e.studio_id = i.studio_id

@@ -3,7 +3,7 @@
   "migrations": {
     "count": 279,
     "last": "0367_waitlist_invitation_booking_counts.sql",
-    "sha256": "ebafdb13275f7dd1ea98c0f8d0f79301a97d71385ea90dc7726d3453dd6a3d83"
+    "sha256": "dbfb1cc9dcd8bb56e8c9b857dd0608a85abca7230da6651053d766b57b72e7ab"
   },
   "public": {
     "tables": [
