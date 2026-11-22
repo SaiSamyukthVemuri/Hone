@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { seedE2eStudio, seedE2eMember, sql, type E2eSeed } from "./helpers/seed";
 import { loginAsOwner, loginByMagicLink } from "./helpers/flows";
+import { listMessageIds, waitForMagicLink } from "./helpers/mail";
 import { E2E_APP_ORIGIN } from "./helpers/local-env";
 
 // Team removal and restore, end to end, on a SYNTHETIC studio on the LOCAL stack (never a real studio). The story, in one serial test:
@@ -17,6 +18,7 @@ test.describe.configure({ mode: "serial" });
 
 let seed: E2eSeed;
 let memberA: { email: string; displayName: string; practitionerId: string };
+let clientName: string;
 let memberB: { email: string; displayName: string; practitionerId: string };
 
 const events = async (): Promise<Array<{ action: string; actor: string; target: string }>> =>
@@ -34,10 +36,24 @@ async function signInAs(page: Page, email: string): Promise<void> {
   await loginByMagicLink(page, email);
 }
 
+// The removed member's own sign-in succeeds (they still have a login) but lands on /no-access, not on the dashboard, so loginByMagicLink (which waits for the dashboard) cannot be used.
+async function signInExpectNoAccess(page: Page, email: string): Promise<void> {
+  await page.context().clearCookies();
+  await page.goto("/login");
+  await page.getByLabel("I am using my invited email address").check();
+  await page.locator("#login-email").fill(email);
+  const seen = await listMessageIds(email);
+  await page.getByRole("button", { name: /send magic link/i }).click();
+  await page.goto(await waitForMagicLink(email, E2E_APP_ORIGIN, { excludeIds: seen }));
+  await page.waitForURL(/\/no-access/, { timeout: 30_000 });
+}
+
 test.beforeAll(async () => {
   seed = await seedE2eStudio();
   memberA = await seedE2eMember(seed);
   memberB = await seedE2eMember(seed);
+  clientName = `Synthetic Restore Client ${seed.runId}`;
+  await sql("insert into public.clients (id, studio_id, name, email) values (gen_random_uuid(), $1, $2, $3)", [seed.studioId, clientName, `restore-client-${seed.runId}@harness.local`]);
 });
 
 test("remove, the removed see nothing, a colleague keeps clinical access and not finances, a conflict is refused, restore records once", async ({ page }) => {
@@ -54,16 +70,15 @@ test("remove, the removed see nothing, a colleague keeps clinical access and not
   await expect(page.getByTestId("team-removed").getByText(memberA.displayName)).toBeVisible();
 
   // 2. the removed member sees nothing
-  await signInAs(page, memberA.email);
-  await page.waitForURL(/\/no-access/, { timeout: 30_000 });
+  await signInExpectNoAccess(page, memberA.email);
   await page.goto("/clients");
   await page.waitForURL(/\/no-access/, { timeout: 30_000 });
-  await expect(page.getByText(seed.clientName)).toHaveCount(0);
+  await expect(page.getByText(clientName)).toHaveCount(0);
 
   // 3. colleague B: records yes, finances no
   await signInAs(page, memberB.email);
   await page.goto("/clients");
-  await expect(page.getByText(seed.clientName).first()).toBeVisible();
+  await expect(page.getByText(clientName).first()).toBeVisible();
   await page.goto("/financials");
   await expect(page.getByText(/Only the studio owner can see studio financials/i)).toBeVisible();
 
@@ -83,7 +98,7 @@ test("remove, the removed see nothing, a colleague keeps clinical access and not
   expect(await events()).toHaveLength(0);
 
   // 5. the conflict is cleared; the restore works and writes exactly one record
-  await sql("update public.studio_receptionists set active = false where studio_id = $1 and user_id = $2", [seed.studioId, aUser]);
+  await sql("update public.studio_receptionists set active = false, deactivated_at = now() where studio_id = $1 and user_id = $2", [seed.studioId, aUser]);
   await page.goto("/settings/team");
   await page.getByTestId("team-removed").getByRole("listitem").filter({ hasText: memberA.displayName }).getByRole("button", { name: "Restore" }).click();
   await expect(page.getByTestId("team-restore-notice")).toContainText(/^Restored\./);
@@ -95,7 +110,7 @@ test("remove, the removed see nothing, a colleague keeps clinical access and not
 
   // 6. a repeated click from the stale page changes nothing
   await stale.getByTestId("team-removed").getByRole("listitem").filter({ hasText: memberA.displayName }).getByRole("button", { name: "Restore" }).click();
-  await stale.waitForLoadState("networkidle");
+  await expect(stale.getByTestId("team-restore-notice")).toBeVisible(); // the repeated request was answered before the count is read
   expect(await events()).toHaveLength(1);
   expect(await activeOf(memberA.practitionerId)).toBe(true);
   await stale.close();
@@ -103,5 +118,5 @@ test("remove, the removed see nothing, a colleague keeps clinical access and not
   // 7. A is back
   await signInAs(page, memberA.email);
   await page.goto("/clients");
-  await expect(page.getByText(seed.clientName).first()).toBeVisible();
+  await expect(page.getByText(clientName).first()).toBeVisible();
 });
