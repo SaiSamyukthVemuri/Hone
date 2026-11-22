@@ -13,7 +13,6 @@ import {
   APPOINTMENT_SMS_CONSENT_VERSION_V1,
   APPOINTMENT_SMS_HELP_REPLY,
   APPOINTMENT_SMS_PROGRAM_NAME,
-  APPOINTMENT_SMS_STOP_REPLY,
   APPOINTMENT_SMS_SUPPORT_EMAIL,
 } from "@/lib/sms/appointment-sms-copy";
 import {
@@ -238,9 +237,8 @@ export default function SmsConsentPage() {
       </P>
       <H3 id="reply-stop">A person replies STOP (or STOPALL, UNSUBSCRIBE, CANCEL, END, QUIT)</H3>
       <P>
-        <span className="block rounded-md border p-3 font-mono text-[0.9375rem]" style={{ borderColor: "var(--color-hairline-strong)" }}>
-          {APPOINTMENT_SMS_STOP_REPLY}
-        </span>
+        The confirmation a person receives after STOP is the standard reply from their carrier and Twilio; Hone does not send its own. Hone records
+        the opt-out against every matching client and waitlist record at that time, across studios.
       </P>
       <P>
         After STOP, no further appointment texts are sent to that number. Questions can also be sent to{" "}

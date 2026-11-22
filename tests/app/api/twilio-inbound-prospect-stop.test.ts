@@ -458,3 +458,38 @@ describe("MSG-007 success-path log privacy", () => {
     );
   });
 });
+
+// ===========================================================================
+// STOP-family replies are EMPTY TwiML: the carrier/Twilio confirmation is the only one
+// ===========================================================================
+// On a toll-free number the carrier answers STOP itself and Twilio blocks the number, so a TwiML <Message> from Hone would be a
+// duplicate (or fail 21610). The opt-out RECORDING is unchanged: every keyword below still stamps the matching rows.
+describe("STOP-family keywords record the opt-out and return an EMPTY response", () => {
+  for (const word of ["STOP", "stop", " Stop ", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"]) {
+    it(`"${word.trim()}" stamps the matching rows and sends no <Message>`, async () => {
+      h.clients = [{ id: "c1", studio_id: "s1", phone: "604-555-0199", sms_opted_out_at: null }];
+      h.prospects = [P("p1", "s1", "604-555-0199")];
+      const res = await post({ From: "+16045550199", To: "+15550001111", Body: word, MessageSid: "SM9" });
+      expect(res.status).toBe(200);
+      const xml = await res.text();
+      expect(xml).not.toContain("<Message>");
+      expect(xml).toContain("<Response></Response>");
+      expect(h.clientUpdates.length).toBeGreaterThan(0);
+      expect(h.suppressCalls.length).toBeGreaterThan(0);
+    });
+  }
+
+  it("a STOP with no usable digits is also an empty response", async () => {
+    const res = await post({ From: "ab-cd-ef-gh", To: "+15550001111", Body: "STOP", MessageSid: "SM10" });
+    expect(res.status).toBe(200);
+    expect(await res.text()).not.toContain("<Message>");
+  });
+
+  it("a failed opt-out write is still a failure (not an empty 200), so Twilio retries", async () => {
+    h.clients = [{ id: "c1", studio_id: "s1", phone: "604-555-0199", sms_opted_out_at: null }];
+    h.failClientUpdate = true;
+    const res = await post({ From: "+16045550199", To: "+15550001111", Body: "STOP", MessageSid: "SM11" });
+    expect(res.status).toBeGreaterThanOrEqual(500);
+  });
+});
+

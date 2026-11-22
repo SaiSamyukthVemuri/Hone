@@ -7,7 +7,6 @@ import {
   APPOINTMENT_SMS_CONSENT_VERSION_V1,
   APPOINTMENT_SMS_CONSENT_V1,
   APPOINTMENT_SMS_HELP_REPLY,
-  APPOINTMENT_SMS_STOP_REPLY,
   WAITLIST_SMS_NOTICE_LINES,
   WAITLIST_SMS_AUDIENCE,
   APPOINTMENT_SMS_AUDIENCE,
@@ -63,11 +62,6 @@ describe("auto-replies", () => {
     expect(u).not.toBeNull();
     expect(u as number).toBeLessThanOrEqual(GSM7_SEGMENT_UNITS);
   });
-  it("STOP reply is unchanged from before", () => {
-    expect(APPOINTMENT_SMS_STOP_REPLY).toBe(
-      "You have been opted out of Hone appointment and waitlist texts. Email reminders may still be sent.",
-    );
-  });
   it("HELP and INFO are help keywords; START, UNSTOP and STOP are not", () => {
     expect(isHelpKeyword("help")).toBe(true);
     expect(isHelpKeyword(" INFO ")).toBe(true);
@@ -91,7 +85,7 @@ describe("one source: the form, the route and the evidence page use it", () => {
   it("the route sends the shared HELP and STOP replies", () => {
     const route = read("app/api/twilio/inbound-sms/route.ts");
     expect(route).toContain("APPOINTMENT_SMS_HELP_REPLY");
-    expect(route).toContain("APPOINTMENT_SMS_STOP_REPLY");
+    expect(route).not.toContain("STOP_REPLY");
   });
   it("the page builds its samples with the real template functions and renders the real component", () => {
     const page = read("app/sms-consent/page.tsx");
@@ -143,11 +137,6 @@ describe("public wording stays true (STOP scope, who is texted, who operates Hon
       expect(t, f).not.toMatch(/\bEIN\b/);
     }
     for (const f of ["app/privacy/page.tsx", "app/terms/page.tsx"]) expect(read(f), f).toContain("Hone Care, Inc.");
-  });
-  it("the STOP reply is GSM-7 and one segment", () => {
-    const u = gsm7Units(APPOINTMENT_SMS_STOP_REPLY);
-    expect(u).not.toBeNull();
-    expect(u as number).toBeLessThanOrEqual(GSM7_SEGMENT_UNITS);
   });
 });
 

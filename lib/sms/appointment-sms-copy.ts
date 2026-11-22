@@ -69,7 +69,3 @@ export const APPOINTMENT_SMS_CONSENT_DISCLOSURE: ReadonlyArray<string> = [
 export const APPOINTMENT_SMS_HELP_REPLY =
   `${APPOINTMENT_SMS_PROGRAM_NAME}: sent by Hone on behalf of your studio. ` +
   `Msg & data rates may apply. Reply STOP to opt out. Help: ${APPOINTMENT_SMS_SUPPORT_EMAIL}`;
-
-/** Reply to STOP (the existing text, moved here unchanged). */
-export const APPOINTMENT_SMS_STOP_REPLY =
-  `You have been opted out of ${APPOINTMENT_SMS_PROGRAM_NAME}. Email reminders may still be sent.`;
