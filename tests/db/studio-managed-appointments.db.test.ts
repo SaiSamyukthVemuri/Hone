@@ -11,7 +11,7 @@ const names = ["create_public_appointment", "create_public_appointment_v2", "cre
 type Fixture = { studio: string; other: string; owner: string; member: string; practitioner: string; client: string; appointment: string; token: string; service: string };
 
 async function catalog() {
-  return (await adminQuery(`select p.oid, p.proacl::text, pg_get_functiondef(p.oid) as definition from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname=any($1) order by p.oid`, [names])).rows;
+  return (await adminQuery(`select p.oid, p.proowner, p.proconfig, p.proacl::text, pg_get_functiondef(p.oid) as definition from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname=any($1) order by p.oid`, [names])).rows;
 }
 async function withProposal(run: (q: UserQuery, f: Fixture) => Promise<void>) {
   const before = await catalog();
@@ -39,13 +39,14 @@ async function actor(q: UserQuery, user: string, role = "authenticated") {
   else if(role === "service_role") await q("set local role service_role");
   else await q("set local role anon");
 }
-async function denied(q: UserQuery, sql: string, params: unknown[] = []) {
+async function denied(q: UserQuery, sql: string, params: unknown[] = [], message?: string) {
   await q("savepoint refusal");
-  let error: { code?: string } | undefined;
-  try { await q(sql,params); } catch (e) { error=e as {code?:string}; }
+  let error: { code?: string; message?: string } | undefined;
+  try { await q(sql,params); } catch (e) { error=e as {code?:string; message?:string}; }
   await q("rollback to savepoint refusal");
   await q("release savepoint refusal");
   expect(error?.code).toBe("42501");
+  if (message) expect(error?.message).toBe(message);
 }
 afterAll(closePool);
 
@@ -56,6 +57,7 @@ describe("studio-managed appointments proposal against the real migrated databas
     await q(`insert into public.practitioners(id,studio_id,user_id,display_name,email,role,active) values (gen_random_uuid(),$1,$2,'Second owner','owner@harness.local','owner',true)`,[f.other,f.owner]);
     await actor(q,f.owner);
     expect((await q(`select public.set_studio_managed_appointments($1,true) as enabled`,[f.studio])).rows[0].enabled).toBe(true);
+    expect((await q(`select studio_managed_appointments from public.studios where id=$1`,[f.other])).rows[0].studio_managed_appointments).toBe(false);
     expect((await q(`select public.set_studio_managed_appointments($1,false) as enabled`,[f.studio])).rows[0].enabled).toBe(false);
     await q("reset role");
     expect((await q(`select client_cancellation_enabled,client_reschedule_enabled,new_client_admission_mode from public.studios where id=$1`,[f.studio])).rows[0]).toEqual(original);
@@ -83,7 +85,7 @@ describe("studio-managed appointments proposal against the real migrated databas
       const castTypes=(await q(`select format_type(t,null) as type from unnest($1::oid[]) with ordinality as a(t,n) order by n`,[types])).rows;
       const args=castTypes.map((t,i)=>`$${i+1}::${t.type}`).join(",");
       await actor(q,f.owner,"service_role");
-      await denied(q,`select * from public.${cmd.proname}(${args})`,params);
+      await denied(q,`select * from public.${cmd.proname}(${args})`,params,"Client self-service unavailable");
       await q("reset role");
     }
     expect((await q(`select (select count(*) from public.appointments where studio_id=$1) as appointments,(select count(*) from public.clients where studio_id=$1) as clients`,[f.studio])).rows[0]).toEqual(before);
