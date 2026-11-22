@@ -209,7 +209,7 @@ function CapacityBriefing({ briefing }: { briefing: OwnerCapacityBriefing }) {
           work was still on it. The measurement is right for the population this
           page is about; the label was the defect. */}
       <section>
-        <SectionLabel as="h2">Current clients’ booked treatment time</SectionLabel>
+        <SectionLabel as="h2">Current clients’ upcoming treatment time</SectionLabel>
         <div className="mt-3">
           <Card
             label="Treatment time booked"

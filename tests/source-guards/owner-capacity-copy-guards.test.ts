@@ -56,7 +56,7 @@ describe("owner capacity copy — never claims more than the figure supports", (
     expect(page).toMatch(/Counted cumulatively across future treatment appointments only/);
     expect(page).toMatch(/Consultations do not count/);
     expect(page).toMatch(/No treatment booked/);
-    expect(page).toMatch(/Current clients’ booked treatment time/);
+    expect(page).toMatch(/Current clients’ upcoming treatment time/);
   });
 
   it("the dashboard entry point to the capacity page does not over-claim", () => {
