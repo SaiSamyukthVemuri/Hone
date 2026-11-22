@@ -126,7 +126,7 @@ const mobileNav = (page: Page) =>
  * decision says Business belongs.
  */
 const mobileWorkingSurfaces = (page: Page) =>
-  mobileNav(page).locator("xpath=./a");
+  mobileNav(page).locator('xpath=./a | ./div[@role="group"]/a');
 
 /** Below Tailwind's `lg`: the desktop row is display:none, the Menu is the nav. */
 const PHONE = { width: 390, height: 844 };
@@ -212,18 +212,30 @@ async function assertShellAt(
 
   if (desktop) {
     // (4) FIVE ITEMS, ONE LINE, NO COLLISION.
+    // Business is the owner's menu BUTTON, not a link: the links are the four working surfaces for every role, and the owner's row
+    // has the Business button after them.
     const items = nav.getByRole("link");
-    await expect(items, `${at}: the primary row`).toHaveText(
-      opts.owner
-        ? ["Dashboard", "Clients", "Calendar", "Records", "Business"]
-        : ["Dashboard", "Clients", "Calendar", "Records"],
-    );
+    await expect(items, `${at}: the primary row`).toHaveText(["Dashboard", "Clients", "Calendar", "Records"]);
+    await expect(
+      nav.getByRole("button", { name: "Business", exact: true }),
+      `${at}: Business menu is owner-only`,
+    ).toHaveCount(opts.owner ? 1 : 0);
     const boxes = await items.evaluateAll((els) =>
       els.map((el) => {
         const r = el.getBoundingClientRect();
         return { top: r.top, height: r.height, right: r.right };
       }),
     );
+    if (opts.owner) {
+      // The Business button is part of the row: same top edge, and its right edge counts toward where the row ends.
+      const rb = await nav
+        .getByRole("button", { name: "Business", exact: true })
+        .evaluate((el) => {
+          const r = el.getBoundingClientRect();
+          return { top: r.top, height: r.height, right: r.right };
+        });
+      boxes.push(rb);
+    }
     const first = boxes[0]!;
     for (const [i, b] of boxes.entries()) {
       expect(b.top, `${at}: item ${i} shares the row's top edge`).toBeCloseTo(
@@ -272,14 +284,17 @@ async function assertShellAt(
   await expect(sheet, `${at}: the Menu opens`).toBeVisible();
   await expect(mobileWorkingSurfaces(page), `${at}: working surfaces`).toHaveText(
     opts.owner
-      ? ["Dashboard", "Clients", "Calendar", "Records", "Business"]
+      ? ["Dashboard", "Clients", "Calendar", "Records", "Capacity", "Statements"]
       : ["Dashboard", "Clients", "Calendar", "Records"],
   );
   await expect(
-    sheet.getByRole("link", { name: "Business", exact: true }),
-    `${at}: Business is owner-only`,
+    sheet.getByTestId("mobile-nav-business-heading"),
+    `${at}: the Business group is owner-only`,
   ).toHaveCount(opts.owner ? 1 : 0);
   await expect(sheet.locator('a[href="/dashboard/capacity"]')).toHaveCount(
+    opts.owner ? 1 : 0,
+  );
+  await expect(sheet.locator('a[href="/financials/statement"]')).toHaveCount(
     opts.owner ? 1 : 0,
   );
   // The account actions the desktop button would have offered.
@@ -781,7 +796,7 @@ test("an ordinary practitioner is offered the capacity entry neither in search n
 // still meets the same server-side refusal it always did. Proving only the
 // first would describe a protection this change does not provide.
 
-test("an owner's desktop navigation carries Business, once, and it reaches the briefing", async ({
+test("an owner's desktop navigation carries the Business menu, once, and it reaches Capacity and the Statements", async ({
   page,
 }) => {
   await loginAsOwner(page, seed);
@@ -792,48 +807,156 @@ test("an owner's desktop navigation carries Business, once, and it reaches the b
 
   const nav = primaryNav(page);
   await expect(nav).toBeVisible();
-  const business = nav.getByRole("link", { name: "Business", exact: true });
+  const business = nav.getByRole("button", { name: "Business", exact: true });
   await expect(business).toHaveCount(1);
-  await expect(business).toHaveAttribute("href", "/dashboard/capacity");
-  // Once BY DESTINATION as well: a second, relabelled link to the owner
-  // surface is a duplicate entry point that counting by name cannot see.
-  await expect(nav.locator('a[href="/dashboard/capacity"]')).toHaveCount(1);
+  await expect(business).toHaveAttribute("aria-expanded", "false");
+  // CLOSED, the menu offers no link to either owner surface: nothing is hidden-but-present.
+  await expect(nav.locator('a[href="/dashboard/capacity"]')).toHaveCount(0);
+  await expect(nav.locator('a[href="/financials/statement"]')).toHaveCount(0);
 
-  // THE WHOLE ROW, IN ORDER. Business sits AFTER Records, and the four working
-  // surfaces are untouched — a nav that gained Business by displacing Records,
-  // or that grew a sixth item, fails here rather than passing four separate
-  // presence checks.
-  await expect(nav.getByRole("link")).toHaveText([
-    "Dashboard",
-    "Clients",
-    "Calendar",
-    "Records",
-    "Business",
-  ]);
+  // THE WHOLE ROW, IN ORDER: the four working-surface links untouched, then the Business button.
+  await expect(nav.getByRole("link")).toHaveText(["Dashboard", "Clients", "Calendar", "Records"]);
+
+  // Open it: exactly two items, once each BY DESTINATION as well.
+  await business.click();
+  await expect(business).toHaveAttribute("aria-expanded", "true");
+  const panel = nav.getByRole("group", { name: "Business" });
+  await expect(panel.getByRole("link")).toHaveText(["Capacity", "Statements"]);
+  await expect(nav.locator('a[href="/dashboard/capacity"]')).toHaveCount(1);
+  await expect(nav.locator('a[href="/financials/statement"]')).toHaveCount(1);
+
+  // Escape closes it and puts focus back on the button.
+  await page.keyboard.press("Escape");
+  await expect(panel).toHaveCount(0);
+  await expect(business).toBeFocused();
+
+  // KEYBOARD: Enter on the focused button opens it; Escape closes it and returns focus.
+  await business.focus();
+  await page.keyboard.press("Enter");
+  await expect(business).toHaveAttribute("aria-expanded", "true");
+  await page.keyboard.press("Escape");
+  await expect(panel).toHaveCount(0);
+  await expect(business).toBeFocused();
+  // Tab out of the last link closes it.
+  await business.click();
+  await panel.getByRole("link").last().focus();
+  await page.keyboard.press("Tab");
+  await expect(panel).toHaveCount(0);
+  // A click outside closes it.
+  await business.click();
+  await expect(panel).toBeVisible();
+  await page.getByRole("main").click({ position: { x: 5, y: 5 } });
+  await expect(panel).toHaveCount(0);
+
+  // BACK does not reopen it: choose Capacity, come back, and the menu is closed.
+  await business.click();
+  await panel.getByRole("link", { name: "Capacity", exact: true }).click();
+  await page.waitForURL("**/dashboard/capacity");
+  await page.goBack();
+  await page.waitForURL("**/dashboard");
+  await expect(business).toHaveAttribute("aria-expanded", "false");
+  await expect(panel).toHaveCount(0);
 
   // THE CTA CANNOT SATISFY THE NAV LOCATOR — the negative control, run inline
-  // against the real page rather than asserted in a comment. The dashboard's
-  // own link to the identical route exists right now, in <main>, and the nav
-  // locator does not see it; nor does the nav carry anything named the way the
-  // CTA is named.
+  // against the real page: the dashboard's own link to the capacity route
+  // exists right now, in <main>, and the nav locator does not see it.
   await expect(
     page.getByRole("main").locator('a[href="/dashboard/capacity"]'),
   ).toHaveCount(1);
-  await expect(
-    nav.getByRole("link", { name: /Practice capacity/ }),
-  ).toHaveCount(0);
+  await expect(nav.getByRole("link", { name: /Practice capacity/ })).toHaveCount(0);
 
-  // WHERE IT GOES, not just that it exists.
+  // WHERE EACH GOES, not just that it exists. Capacity first.
   await business.click();
+  await panel.getByRole("link", { name: "Capacity", exact: true }).click();
   await page.waitForURL("**/dashboard/capacity");
-  await expect(
-    page.getByRole("heading", { name: "Practice capacity" }),
-  ).toBeVisible();
-  // ...and it is still there once you have arrived: this is a permanent entry,
-  // not a one-shot promotion that disappears on the destination.
-  await expect(
-    primaryNav(page).getByRole("link", { name: "Business", exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Practice capacity" })).toBeVisible();
+  // ...still there once you have arrived, and now lit as the current section.
+  await expect(primaryNav(page).getByRole("button", { name: "Business", exact: true })).toHaveAttribute("aria-current", "page");
+
+  // Then the Statements, from the same menu.
+  await primaryNav(page).getByRole("button", { name: "Business", exact: true }).click();
+  await primaryNav(page).getByRole("link", { name: "Statements", exact: true }).click();
+  await page.waitForURL("**/financials/statement");
+});
+
+test("an owner starts on the dashboard, opens Business, then Statements, and chooses a month", async ({ page }) => {
+  await loginAsOwner(page, seed);
+  await page.goto("/dashboard");
+
+  const nav = primaryNav(page);
+  await nav.getByRole("button", { name: "Business", exact: true }).click();
+  await nav.getByRole("link", { name: "Statements", exact: true }).click();
+  await page.waitForURL("**/financials/statement");
+  // This seeded studio has NO payment jurisdiction yet, so the owner reaches the page's own honest "currency not set" state: no
+  // heading, no month picker, no figure. The owner check is the one the page always had; nothing is loosened here.
+  await expect(page.getByText("This studio's payment currency is not set, so money cannot be totalled. Nothing is shown.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Monthly statements" })).toHaveCount(0);
+  // The menu reads as the current section on the statement page in either state.
+  await expect(nav.getByRole("button", { name: "Business", exact: true })).toHaveAttribute("aria-current", "page");
+
+  // Give the studio a payment jurisdiction (local synthetic row), then the statement renders and a month can be chosen.
+  await sql(
+    `insert into public.studio_payment_jurisdictions (studio_id, payment_country, payment_currency, source, verification_reference)
+     values ($1,'CA','cad','operator','e2e business menu statement')
+     on conflict (studio_id) do nothing`,
+    [seed.studioId],
+  );
+  try {
+    await page.goto("/financials/statement");
+    await expect(page.getByRole("heading", { name: "Monthly statements" })).toBeVisible();
+    // The item inside the open menu is the current one.
+    await nav.getByRole("button", { name: "Business", exact: true }).click();
+    await expect(nav.getByRole("link", { name: "Statements", exact: true })).toHaveAttribute("aria-current", "page");
+    await expect(nav.getByRole("link", { name: "Capacity", exact: true })).not.toHaveAttribute("aria-current", "page");
+    await page.keyboard.press("Escape");
+
+    // Choose a month with the picker; the page answers for exactly that month.
+    const picker = page.getByRole("form", { name: "Choose a month" });
+    // The picker submits itself when a month is chosen; the "Show month" button stays for keyboard and no-script use (visible on focus).
+    await picker.getByLabel("Month").fill("2026-01");
+    await page.waitForURL("**/financials/statement?month=2026-01");
+    await expect(page.getByRole("heading", { name: "Monthly statements" })).toBeVisible();
+    await expect(page.getByText("January 2026 · Total collected")).toBeVisible();
+    await expect(picker.getByLabel("Month")).toHaveValue("2026-01");
+  } finally {
+    await sql(`delete from public.studio_payment_jurisdictions where studio_id = $1 and verification_reference = 'e2e business menu statement'`, [seed.studioId]);
+  }
+});
+
+test("a slow navigation from the Business menu keeps its pending mark visible, then the menu closes", async ({ page }) => {
+  await loginAsOwner(page, seed);
+  await page.goto("/dashboard");
+  // Slow the destination's page request (not its prefetch) so the pending state is observable.
+  await page.route("**/financials/statement**", async (route) => {
+    const h = route.request().headers();
+    if (h["rsc"] && !h["next-router-prefetch"]) await new Promise((r) => setTimeout(r, 4000));
+    await route.continue();
+  });
+  const nav = primaryNav(page);
+  await nav.getByRole("button", { name: "Business", exact: true }).click();
+  const statements = nav.locator('a[href="/financials/statement"]');
+  await statements.click();
+  // WHILE SLOW: the menu is still open and the link still carries its mark and its spoken status.
+  await expect(nav.getByRole("group", { name: "Business" })).toBeVisible();
+  await expect(statements.locator('[data-link-pending="true"]')).toBeVisible();
+  await expect(statements.getByRole("status")).toHaveText("Opening Statements…");
+  await page.screenshot({ path: process.env.HONE_SHOT_DIR ? `${process.env.HONE_SHOT_DIR}/05-pending-mark-1440.png` : undefined });
+  // THEN: the navigation commits and the menu closes.
+  await page.waitForURL("**/financials/statement");
+  await expect(nav.getByRole("group", { name: "Business" })).toHaveCount(0);
+});
+
+test("a practitioner typing the statement URL is refused, with no money shown", async ({ page }) => {
+  await loginByMagicLink(page, member.email);
+  // Search finds nothing for the statement: owner entries are filtered before matching.
+  await page.goto("/clients");
+  await page.getByPlaceholder("Search clients, appointments, notes...").fill("monthly statement");
+  await expect(page.getByText("No results found.")).toBeVisible();
+  await expect(page.locator('a[href="/financials/statement"]')).toHaveCount(0);
+  // The direct URL is refused.
+  await page.goto("/financials/statement");
+  await expect(page.getByText("Only the studio owner can see the money statement.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Monthly statements" })).toHaveCount(0);
 });
 
 test("a practitioner gets no Business entry on the desktop nav, and the route still refuses them", async ({
@@ -857,6 +980,8 @@ test("a practitioner gets no Business entry on the desktop nav, and the route st
     nav.getByRole("link", { name: "Business", exact: true }),
   ).toHaveCount(0);
   await expect(nav.locator('a[href="/dashboard/capacity"]')).toHaveCount(0);
+  await expect(nav.locator('a[href="/financials/statement"]')).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Business", exact: true })).toHaveCount(0);
 
   // NOT ANYWHERE IN THE SHELL EITHER — by name and by destination. No disabled
   // item, no "no permission" placeholder, no hidden-but-present markup that a
@@ -865,6 +990,7 @@ test("a practitioner gets no Business entry on the desktop nav, and the route st
     page.getByRole("link", { name: "Business", exact: true }),
   ).toHaveCount(0);
   await expect(page.locator('a[href="/dashboard/capacity"]')).toHaveCount(0);
+  await expect(page.locator('a[href="/financials/statement"]')).toHaveCount(0);
 
   // AND THE HIDING IS NOT THE AUTHORITY. Typing the route directly still meets
   // the page's own server-side owner check, exactly as before this entry
@@ -881,7 +1007,7 @@ test("a practitioner gets no Business entry on the desktop nav, and the route st
   }
 });
 
-test("an owner's mobile menu carries Business, and tapping it closes the menu and lands", async ({
+test("an owner's mobile menu carries the Business group, and tapping an item closes the menu and lands", async ({
   page,
 }) => {
   await loginAsOwner(page, seed);
@@ -900,9 +1026,17 @@ test("an owner's mobile menu carries Business, and tapping it closes the menu an
   const nav = mobileNav(page);
   await expect(nav).toBeVisible();
 
-  const business = nav.getByRole("link", { name: "Business", exact: true });
+  await expect(nav.getByTestId("mobile-nav-business-heading")).toHaveText("Business");
+  await expect(nav.getByRole("group", { name: "Business" })).toHaveCount(1);
+  // ANNOUNCED: the group has its accessible name in the accessibility tree.
+  expect(await nav.ariaSnapshot()).toContain('group "Business"');
+  const business = nav.getByRole("link", { name: "Capacity", exact: true });
   await expect(business).toHaveCount(1);
   await expect(business).toHaveAttribute("href", "/dashboard/capacity");
+  const statement = nav.getByRole("link", { name: "Statements", exact: true });
+  await expect(statement).toHaveCount(1);
+  await expect(statement).toHaveAttribute("href", "/financials/statement");
+  expect((await statement.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   // Bound to the SHEET'S OWN SUBTREE, so the hidden desktop link is not merely
   // out of the a11y tree — it is out of the search scope entirely.
   await expect(nav.locator('a[href="/dashboard/capacity"]')).toHaveCount(1);
@@ -916,7 +1050,8 @@ test("an owner's mobile menu carries Business, and tapping it closes the menu an
     "Clients",
     "Calendar",
     "Records",
-    "Business",
+    "Capacity",
+    "Statements",
   ]);
   await expect(nav.getByRole("link", { name: "Settings" })).toBeVisible();
 
@@ -955,6 +1090,8 @@ test("a practitioner's mobile menu has no Business entry", async ({ page }) => {
     nav.getByRole("link", { name: "Business", exact: true }),
   ).toHaveCount(0);
   await expect(nav.locator('a[href="/dashboard/capacity"]')).toHaveCount(0);
+  await expect(nav.locator('a[href="/financials/statement"]')).toHaveCount(0);
+  await expect(nav.getByTestId("mobile-nav-business-heading")).toHaveCount(0);
   // Their account section is untouched, so nothing was withheld wholesale.
   await expect(nav.getByRole("link", { name: "Settings" })).toBeVisible();
   await expect(nav.getByRole("button", { name: "Sign out" })).toBeVisible();

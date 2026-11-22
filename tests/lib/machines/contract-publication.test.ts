@@ -94,6 +94,7 @@ describe("deployment contract publication selection", () => {
     expect(plan.publish.map((m) => `${m.p_machine_profile_id}@${m.p_machine_profile_version}:${m.p_mode_key}`)).toEqual([
       ...["flash", "microflash", "multiplex", "blend", "omniblend", "multiblend", "electrolysis"].map((k) => `dectro-apilus:senior-3g@3:${k}`),
       ...["flash", "blend", "electrolysis"].map((k) => `dectro-apilus:junior-3g@3:${k}`),
+      "dectro-apilus:xcell-pur@1:multiplex",
     ]);
     expect(plan.skipped.filter((s) => s.profileId === "dectro-apilus:junior-3g" && s.version === 3).map((s) => s.mode)).toEqual(["thermolysis", "omniblend"]);
     const senior = plan.skipped.filter((s) => s.profileId === "dectro-apilus:senior-3g" && s.version === 2);

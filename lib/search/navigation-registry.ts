@@ -221,6 +221,18 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     visibility: "owner",
     priority: 95,
   },
+  {
+    id: "financials-statement",
+    title: "Statements",
+    category: "Navigation",
+    href: "/financials/statement",
+    description: "Visits and money for one month",
+    // Owner-only like Capacity, and advertised under Business. Presentation only: the page and its read refuse any role but owner
+    // before any query, and the money tables are owner-readable only (0254).
+    keywords: ["statements", "monthly statement", "statement", "money statement", "business", "income", "revenue", "payments this month", "month end"],
+    visibility: "owner",
+    priority: 94,
+  },
 
   // --- Record Keeping sections ------------------------------------------
   // Exposure Incidents is deliberately absent; see NON_SEARCHABLE_ROUTES.
@@ -916,9 +928,31 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
   reason: string;
 }> = [
   {
+    route: "/financials/analytics",
+    reason: "Owner-only, no navigation link until the layout is accepted and the redaction tests land; it is registered with the navigation change that adds the menu entry.",
+  },
+  {
+    route: "/financials/analytics/print",
+    reason: "The printable form of the owner-only Analytics screen; reached only from that screen's Print link, never searched.",
+  },
+  {
+    route: "/financials/statements",
+    reason: "The Clients statements screens are new and are not yet reachable from the menu or Global Search; the search entry ships with the menu entry in the navigation change, so a destination is never searchable before it is linkable.",
+  },
+  {
+    route: "/settings/waitlist/over-invite",
+    reason:
+      "Owner-only invite-beyond-the-estimate page, reached from a link on the waitlist page. It follows its parent: the waitlist Settings tab appears only for a studio whose durable waitlist is switched on, so listing this page in Global Search would offer a page its studio cannot otherwise reach. Search does not advertise it separately.",
+  },
+  {
     route: "/calendar/check-practitioner",
     reason:
       "Owner-only review of open appointments whose recorded practitioner may be wrong (HON-44, before completion becomes assigned-only). Reached from the owner's Calendar toolbar and Team settings (Review practitioner assignments), not a destination to search for.",
+  },
+  {
+    route: "/dashboard/unfinished",
+    reason:
+      "The full list behind the dashboard's 'N visits not finished · View all' line (HON-45). A drill-down from the dashboard, not a destination to search for.",
   },
   {
     route: "/records/print",
@@ -974,6 +1008,21 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
     route: "/settings/waitlist/replies",
     reason:
       "Owner-only list of the replies people left when the offered times did not suit them (0319). It holds clients' own words, appears only when the reply feature is switched on, and is reached from the count on the waitlist page, so listing it in Global Search would offer an empty or refused page to everyone else.",
+  },
+  {
+    route: "/settings/waitlist/search",
+    reason:
+      "Owner-only name search over the waitlist, reached from a link on the waitlist page. It follows its parent: the waitlist Settings tab appears only for a studio whose durable waitlist is switched on, so listing it in Global Search would offer an empty or refused page to everyone else.",
+  },
+  {
+    route: "/settings/waitlist/archived",
+    reason:
+      "Owner-only read-only view of waitlist entries an owner removed, reached from a link on the waitlist page. It follows its parent: listing it in Global Search would offer an empty or refused page to every studio that has not enabled the waitlist and to non-owners.",
+  },
+  {
+    route: "/settings/waitlist/released",
+    reason:
+      "Owner-only read-only history of released and expired waitlist entries, reached from a link on the waitlist page. It follows its parent: listing it in Global Search would offer an empty or refused page to every studio that has not enabled the waitlist and to non-owners.",
   },
   {
     route: "/settings/payments/refresh",

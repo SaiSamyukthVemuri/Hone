@@ -474,3 +474,80 @@ for (const path of ["create reply", "known-original reconciliation"]) {
     }
   });
 }
+
+// A THROWN DECLINE BINDS THE INTENT. Real Stripe answers a declined off-session charge with a card error that carries the
+// PaymentIntent (requires_payment_method). The row must store that id, or the payment_intent.payment_failed event that
+// finishes the attempt can never match it. Nothing else changes: no failed write, no cancel, the critical alert stays.
+describe("a thrown decline that carries a live PaymentIntent binds the intent id and writes nothing terminal", () => {
+  const declineWith = (pi: Record<string, unknown>) =>
+    new Stripe.errors.StripeCardError(
+      raw({ code: "card_declined", type: "card_error", statusCode: 402, payment_intent: pi }) as never,
+    );
+  const PI = { id: "pi_thrown_decline", status: "requires_payment_method", amount: AMOUNT, currency: "cad" };
+  const bindWrites = () => h.updates.filter((u) => "stripe_payment_intent_id" in u && u.status === undefined);
+
+  it("binds the id and the status on the pending claim, keeps the critical alert, writes no failure, and cancels nothing", async () => {
+    h.createError = declineWith(PI);
+    const r = await run();
+    expect(r).toMatchObject({ ok: false, outcome: "needs_manual_review", stripePaymentIntentId: PI.id });
+    expect(bindWrites()).toEqual([{ stripe_payment_intent_id: PI.id, stripe_status: "requires_payment_method" }]);
+    expect(wroteFailed(), "never a terminal failure from a non-canceled intent").toBe(false);
+    expect(raisedManualReview()).toBe(true);
+  });
+  it("an error that names an intent id but NO status binds the id and does not write a status (nothing is blanked)", async () => {
+    h.createError = declineWith({ id: "pi_thrown_no_status", amount: AMOUNT, currency: "cad" });
+    const r = await run();
+    expect(r).toMatchObject({ ok: false, outcome: "needs_manual_review", stripePaymentIntentId: "pi_thrown_no_status" });
+    expect(bindWrites()).toEqual([{ stripe_payment_intent_id: "pi_thrown_no_status" }]);
+    expect(bindWrites()[0]).not.toHaveProperty("stripe_status");
+    expect(wroteFailed()).toBe(false);
+    expect(raisedManualReview()).toBe(true);
+  });
+  it("a requires_action intent on a thrown error binds too, and is not written failed", async () => {
+    h.createError = declineWith({ ...PI, id: "pi_thrown_action", status: "requires_action" });
+    await run();
+    expect(bindWrites()).toEqual([{ stripe_payment_intent_id: "pi_thrown_action", stripe_status: "requires_action" }]);
+    expect(wroteFailed()).toBe(false);
+  });
+  it("a replay under the SAME idempotency key binds the same id again, never a second charge", async () => {
+    h.createError = declineWith(PI);
+    await run();
+    h.claimResult = "already_pending";
+    await run();
+    expect(new Set(h.createKeys).size).toBe(1);
+    expect(h.createKeys[0]).toBe(`hone:session_payment:${ATTEMPT}:v1`);
+    expect(new Set(bindWrites().map((u) => u.stripe_payment_intent_id))).toEqual(new Set([PI.id]));
+    expect(wroteFailed()).toBe(false);
+  });
+  it("an attempt that already holds ANOTHER intent id refuses to overwrite it, and still raises the manual-review alert", async () => {
+    h.rows.payment_charge_attempts = { ...ATTEMPT_ROW, stripe_payment_intent_id: "pi_other" };
+    h.createError = declineWith(PI);
+    const r = await run();
+    expect(r).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+    expect(h.updates.some((u) => u.stripe_payment_intent_id === PI.id)).toBe(false);
+    expect(h.alerts.some((a) => a.event === "session_payment_nonterminal_write_refused")).toBe(true);
+    expect(raisedManualReview()).toBe(true);
+    expect(wroteFailed()).toBe(false);
+  });
+  it("a canceled intent on the error still takes the terminal failed path (unchanged)", async () => {
+    h.createError = declineWith({ ...PI, id: "pi_thrown_canceled", status: "canceled" });
+    const r = await run();
+    expect(r).toMatchObject({ ok: false, outcome: "failed" });
+    expect(wroteFailed()).toBe(true);
+    expect(bindWrites()).toEqual([]);
+  });
+  it("a decline with NO intent still records failed and binds nothing (unchanged)", async () => {
+    h.createError = new Stripe.errors.StripeInvalidRequestError(raw({ type: "invalid_request_error", statusCode: 400 }));
+    const r = await run();
+    expect(r).toMatchObject({ ok: false, outcome: "failed" });
+    expect(wroteFailed()).toBe(true);
+    expect(bindWrites()).toEqual([]);
+  });
+  it("a RETURNED declined intent is unchanged: retained by the same write and reported as manual review", async () => {
+    h.createReply = { ...PI, customer: "cus_test", livemode: false };
+    const r = await run();
+    expect(r).toMatchObject({ ok: false, outcome: "needs_manual_review", stripePaymentIntentId: PI.id });
+    expect(h.updates).toContainEqual({ stripe_payment_intent_id: PI.id, stripe_status: "requires_payment_method" });
+    expect(wroteFailed()).toBe(false);
+  });
+});

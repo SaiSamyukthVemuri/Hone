@@ -323,7 +323,7 @@ describe("5 · a SETTLED close clears only its own key", () => {
 // that had committed made a duplicate treatment area. Source contract (the
 // wiring, not the behaviour; the form has no component harness):
 describe("submit() enforces the recovery gates for every caller", () => {
-  const gates = FORM.slice(FORM.indexOf("const saveBlocked ="), FORM.indexOf("function submit()"));
+  const gates = FORM.slice(FORM.indexOf("const saveBlocked ="), FORM.indexOf("function runSave()"));
 
   it("one named predicate holds every gate the Save button had", () => {
     for (const g of [
@@ -341,7 +341,9 @@ describe("submit() enforces the recovery gates for every caller", () => {
   });
 
   it("submit() returns before anything else when the predicate holds, so no create (and no unkeyed create) can start", () => {
-    expect(FORM).toMatch(/function submit\(\) \{\s*if \(saveBlocked\) return;\s*setError\(null\);/);
+    // ONE save function (`runSave`) holds the gate; the button and Save visit both call it, so neither can bypass it.
+    expect(FORM).toMatch(/function runSave\(\): Promise<SaveOutcome> \{\s*if \(saveBlocked\) return Promise\.resolve\(\{ status: "held"[^\n]*\n(?:[^\n]*\n)*?\s*setError\(null\);/);
+    expect(FORM).toMatch(/function submit\(\) \{\s*startTransition\(async \(\) => \{\s*await runSave\(\);/);
   });
 
   it("the Save button lists the same flags, and Try again is withheld by the predicate", () => {

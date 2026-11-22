@@ -110,7 +110,12 @@ for (const device of [
           await expect(options).not.toHaveCount(0, { timeout: T });
           const values = await options.evaluateAll((els) => els.map((e) => (e as HTMLOptionElement).value));
           expect(values.some((v) => v.startsWith("synthetic:")), "the app server must not offer a synthetic profile").toBe(false);
-          expect([...values].sort()).toEqual(["dectro-apilus:junior-3g", "dectro-apilus:senior-3g"]);
+          // The two 3G models are offered exactly as before; the xCell Pur row is published in the same plan but is never offered here.
+          expect([...values].filter((v) => v.endsWith("-3g")).sort()).toEqual(["dectro-apilus:junior-3g", "dectro-apilus:senior-3g"]);
+          // The xCell is offered ONLY to a studio on the rollout allowlist and only once published. This app server
+          // sets no rollout allowlist, so the e2e studio is unlisted: the list is the two 3G models only. The listed-and-published case is proved in the unit
+          // tests (tests/app/machines/machine-setup-actions.test.ts, tests/components/xcell-one-choice-mounted.test.ts).
+          expect([...values].filter((v) => !v.endsWith("-3g"))).toEqual([]);
           if (REAL_PATH) {
             // OWNER REGISTRATION through the real path (registerMachineAction), gated on the published contract.
             await page.locator("#machine-model").selectOption(profile.profileId);

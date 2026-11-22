@@ -104,6 +104,7 @@ vi.mock("@/lib/supabase/queries", () => ({ getCurrentPractitionerWithStudio: por
 vi.mock("@/lib/rate-limit/public", () => ({ limitPractitionerClientEmail: portal.limit }));
 vi.mock("@/lib/email/send-appointment", () => ({ sendEmailSafely: portal.send }));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({ from: portal.from }) }));
+vi.mock("@/lib/portal/portal-access-gate", () => ({ studioPortalAccess: async () => ({ allowed: true, studioName: "Studio" }) })); // HON-47: portal ON for these cases; the portal-off refusal is tests/app/clients/portal-message-portal-off.test.ts
 vi.mock("@/lib/email/studio-identity", () => ({ resolveReplyTo: vi.fn(), studioClientContactEmail: vi.fn() }));
 vi.mock("@/lib/email/templates/portal-message-notification", () => ({ buildPortalMessageNotificationEmail: vi.fn() }));
 vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: () => "https://hone.example.test" }));

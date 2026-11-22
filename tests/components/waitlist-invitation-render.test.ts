@@ -618,10 +618,10 @@ describe("HON-7 offer: the whole window and the invitation's own close", () => {
   it("the close time the server builds is stated in studio time, and the screen shows it verbatim", async () => {
     const { openUntil } = await import("@/lib/waitlist/invitation-offer");
     const built = openUntil("2026-09-10T19:00:00.000Z", "America/Toronto");
-    expect(built.inviteOpenUntil).toBe("Thu, Sep 10 at 3:00 PM (studio time)");
+    expect(built.inviteOpenUntil).toBe("Thursday, September 10, 2026 at 3:00 PM EDT (America/Toronto)");
     expect(openUntil("not a date", "America/Toronto")).toEqual({});
     const html = render({ ...base, ...built });
-    expect(html).toContain("Book by Thu, Sep 10 at 3:00 PM (studio time)");
+    expect(html).toContain("Book by Thursday, September 10, 2026 at 3:00 PM EDT (America/Toronto)");
   });
 
   it.each([
