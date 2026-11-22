@@ -11,7 +11,7 @@ import { OverviewInvalidPeriod, OverviewScreen } from "./overview-screen";
 // Business → Analytics → Overview. Owner-only, READ-ONLY: no write, no Stripe, no mail, no service-role client, no migration.
 // ===========================================================================
 // THE GATE IS ON THE PAGE, before any read; the loader repeats it as its own first statement. FINANCIAL TRUTH IS NEVER CACHED.
-// The screen is shown only by a direct address for now: it has no navigation entry yet.
+// Reached from the owner's Business menu on desktop and mobile.
 export const dynamic = "force-dynamic";
 
 export const metadata = { title: "Analytics" };
