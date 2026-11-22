@@ -202,6 +202,11 @@ describe("the Clients tab: sort, chip and page", () => {
     const html = render(view({}, { followThrough: { ok: false, reason: "read_failed" } }), { sort: "spend", chip: "all", page: 1 });
     expect(html).not.toContain("data-clients-reset");
   });
+  it("a table that cannot load with chip=all (a failed client lookup) draws no All clients reset: it would link to the very same view", () => {
+    const html = render(view({}, { names: { ok: false, reason: "read_failed" } as never }), { sort: "spend", chip: "all", page: 1 });
+    expect(html).toContain('data-figure="cl-table"'); // the table really is unavailable
+    expect(html).not.toContain("data-clients-reset");
+  });
   it("pages of 25: a page past the end is empty, not an error, and the line says what is shown", () => {
     const past = view({ page: 9 });
     expect(table(past)?.rows).toEqual([]);
