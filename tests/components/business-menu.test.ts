@@ -6,21 +6,27 @@ import { matchNavEntries, NAV_ENTRIES, NON_SEARCHABLE_ROUTES, type NavSearchCont
 
 const read = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
 
-// The owner's Business menu: Capacity and Statements. Presentation only; the pages keep their own owner checks.
+// The owner's Business menu: Capacity, Statements and Analytics. Presentation only; the pages keep their own owner checks.
 
 describe("the Business menu's destinations", () => {
-  it("has exactly two items, in order: Capacity, then Statements, each pointing at its existing page", () => {
+  it("has exactly three items, in order: Capacity, Statements, then Analytics, each pointing at its existing page", () => {
     expect(BUSINESS_MENU_LABEL).toBe("Business");
     expect(BUSINESS_MENU_ITEMS.map((i) => [i.label, i.href])).toEqual([
       ["Capacity", "/dashboard/capacity"],
       ["Statements", "/financials/statement"],
+      ["Analytics", "/financials/analytics"],
     ]);
   });
 
-  it("the menu reads as current on either page and its subtree, and on nothing else", () => {
+  it("the menu reads as current on each page and its subtree, and on nothing else", () => {
     expect(isBusinessPath("/dashboard/capacity")).toBe(true);
     expect(isBusinessPath("/dashboard/capacity/")).toBe(true);
     expect(isBusinessPath("/financials/statement")).toBe(true);
+    expect(isBusinessPath("/financials/analytics")).toBe(true);
+    expect(isBusinessPath("/financials/analytics/")).toBe(true);
+    expect(isBusinessPath("/financials/analytics/clients")).toBe(true);
+    expect(isBusinessPath("/financials/analytics/print")).toBe(true);
+    expect(isBusinessPath("/financials/analytics-archive")).toBe(false);
     expect(isBusinessPath("/dashboard")).toBe(false);
     expect(isBusinessPath("/financials")).toBe(false);
     expect(isBusinessPath("/financials/statement-archive")).toBe(false);
@@ -35,7 +41,7 @@ describe("who sees the menu (presentation only)", () => {
     expect(layout.match(/<BusinessMenu/g)).toHaveLength(1);
   });
 
-  it("the phone sheet lists the same two items for the owner role only, with a Business heading", () => {
+  it("the phone sheet lists the same items for the owner role only, with a Business heading", () => {
     const mobile = read("app/(app)/MobileMenu.tsx");
     expect(mobile).toMatch(/BUSINESS_MENU_ITEMS\.map\(\(item\) => workItem\(item, true\)\)/);
     // The heading labels a real group (role=group + aria-labelledby), rendered only for the owner role.
