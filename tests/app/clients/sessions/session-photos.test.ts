@@ -78,7 +78,7 @@ describe("session photos: Codex P1 4301862700 / P2 4301862702", () => {
   it("loads EAGERLY: no lazy request that could outlive the 60 s URL", () => {
     expect(section).not.toMatch(/loading="lazy"/);
     // An original that still fails shows a reload note, never a broken image.
-    expect(section).toMatch(/Photo unavailable — reload to view/);
+    expect(section).toMatch(/Photo unavailable\. Reload to view\./);
   });
 
   it("signs the grid derivative only AFTER the original, and falls back to it", () => {

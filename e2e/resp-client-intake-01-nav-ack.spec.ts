@@ -19,7 +19,7 @@ import { loginAsOwner } from "./helpers/flows";
 // idle") against a primitive the repository already ships.
 //
 // Two of the six were worse than silent. `Add skin & hair analysis` and the
-// intake history `View →` were raw `<a>` elements pointing at in-app URLs, so a
+// intake history `View version` were raw `<a>` elements pointing at in-app URLs, so a
 // tap left the client router entirely: zero RSC requests, one DOCUMENT request,
 // and the live document destroyed — to change a query string on the page the
 // practitioner was already on.
@@ -208,7 +208,7 @@ test.describe("RESP-CLIENT-INTAKE-01: the clinical navigation slice acknowledges
     await loginAsOwner(page, seed);
     await page.goto(`/clients/${clientId}?tab=sessions`);
 
-    const control = page.getByRole("link", { name: "Open →" }).first();
+    const control = page.getByRole("link", { name: "Open session" }).first();
     await expect(control).toBeVisible();
 
     const { navigations } = await proveAcknowledgement(page, {
@@ -237,7 +237,7 @@ test.describe("RESP-CLIENT-INTAKE-01: the clinical navigation slice acknowledges
     await loginAsOwner(page, seed);
     await page.goto(`/clients/${clientId}?tab=health`);
 
-    const control = page.getByRole("link", { name: "View intake →" }).first();
+    const control = page.getByRole("link", { name: "View intake" }).first();
     await expect(control).toBeVisible();
 
     const { navigations } = await proveAcknowledgement(page, {
@@ -342,7 +342,7 @@ test.describe("RESP-CLIENT-INTAKE-01: the two raw anchors are soft navigations n
     expect(new URL(page.url()).search).toBe("?tab=treatment");
   });
 
-  test("Intake history View →: RSC soft navigation, document NOT replaced", async ({
+  test("Intake history View version: RSC soft navigation, document NOT replaced", async ({
     page,
   }) => {
     const { seed, clientId } = await seedFixture();
@@ -351,7 +351,7 @@ test.describe("RESP-CLIENT-INTAKE-01: the two raw anchors are soft navigations n
 
     // The OLDER of the two seeded intakes — the row the page is not already
     // showing, so the tap is a genuine version switch.
-    const control = page.getByRole("link", { name: "View →" }).last();
+    const control = page.getByRole("link", { name: "View version" }).last();
     await expect(control).toBeVisible();
 
     let rsc = 0;
@@ -429,7 +429,7 @@ test.describe("RESP-CLIENT-INTAKE-01: the proof discriminates", () => {
   // A TRUE NO-OP MUST NOT FABRICATE PENDING STATE.
   //
   // The intake history row you are ALREADY viewing still renders its own
-  // `View →`, whose href is exactly the current URL. Nothing is fetched and
+  // `View version`, whose href is exactly the current URL. Nothing is fetched and
   // nothing changes, so there is no interval to acknowledge — and arming one
   // would leave a mark with no navigation to clear it, which is the permanent
   // busy state NAV-ACK-01 already had to repair once.
@@ -441,7 +441,7 @@ test.describe("RESP-CLIENT-INTAKE-01: the proof discriminates", () => {
 
     // Land on a specific version first, so the row's href === the current URL.
     await page.goto(`/clients/${clientId}/intake`);
-    const first = page.getByRole("link", { name: "View →" }).first();
+    const first = page.getByRole("link", { name: "View version" }).first();
     await expect(first).toBeVisible();
     await first.click();
     await page.waitForURL((u) => u.search.startsWith("?intake="), {
@@ -451,7 +451,7 @@ test.describe("RESP-CLIENT-INTAKE-01: the proof discriminates", () => {
     const currentUrl = page.url();
     // The SAME row that is now on screen: its href is exactly the current URL,
     // which is what makes this a true no-op rather than a version switch.
-    const sameRow = page.getByRole("link", { name: "View →" }).first();
+    const sameRow = page.getByRole("link", { name: "View version" }).first();
     const href = await sameRow.getAttribute("href");
     expect(currentUrl).toContain(href!);
 

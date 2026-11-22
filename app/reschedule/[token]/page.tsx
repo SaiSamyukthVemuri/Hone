@@ -84,16 +84,12 @@ export default async function ReschedulePage({
             // summary card + helper copy + the slot picker.
             <>
               <div>
-                <EyebrowCaption>Reschedule appointment</EyebrowCaption>
                 <h1
-                  className="font-[var(--font-fraunces)] mt-8 text-[36px] font-bold leading-tight md:text-[48px]"
+                  className="font-[var(--font-fraunces)] text-[36px] font-bold leading-tight md:text-[48px]"
                   style={{ letterSpacing: "-0.025em" }}
                 >
                   Reschedule appointment
                 </h1>
-                <p className="mt-4 text-[16px] leading-relaxed text-[#0A0A0A]">
-                  Choose a new time that works better for you.
-                </p>
               </div>
 
               {/* Current appointment summary. No address: the

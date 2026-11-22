@@ -3,7 +3,6 @@ import type { ReactNode } from "react";
 import { CONTROL_MIN_TOUCH, FOCUS_RING, cx } from "@/components/ui/control-base";
 import {
   ANALYTICS_ACCESS_NOTE,
-  ANALYTICS_SUBTITLE,
   ANALYTICS_TABS,
   ANALYTICS_TITLE,
   COLLECTED_DEFINITION,
@@ -212,10 +211,7 @@ export function Tabs({ current = "Overview", query = "" }: { current?: "Overview
 
 export function PageTitle() {
   return (
-    <div className="space-y-1">
-      <h1 className="text-4xl font-semibold tracking-tight text-fg">{ANALYTICS_TITLE}</h1>
-      <p className="text-sm text-fg-muted">{ANALYTICS_SUBTITLE}</p>
-    </div>
+    <h1 className="text-4xl font-semibold tracking-tight text-fg">{ANALYTICS_TITLE}</h1>
   );
 }
 
@@ -407,7 +403,7 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
         </div>
 
         <div className="space-y-3">
-          <h2 className="text-xl font-semibold tracking-tight text-fg">Clients keep coming back</h2>
+          <h2 className="text-xl font-semibold tracking-tight text-fg">Returning clients</h2>
           <Card id="ov-returning" title="Returning and first-time clients" figure={view.returning} note={FIRST_TIME_NOTE}>
             {(r) =>
               r.returningPercent.known ? (
@@ -484,7 +480,7 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
               )
             }
           </Card>
-          <Card id="ov-month-new" title="New relationships" figure={view.returning}>
+          <Card id="ov-month-new" title="First-time clients" figure={view.returning}>
             {(r) => (
               <>
                 <p className="text-xl font-semibold text-fg">{plural(r.firstTime, "first-time client", "first-time clients")}</p>
@@ -528,11 +524,11 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
 
       <section aria-labelledby="ov-follow" className="space-y-3">
         <div>
-          <h2 id="ov-follow" className="text-xl font-semibold tracking-tight text-fg">Follow-through</h2>
-          <p className="text-sm text-fg-muted">Current as of {asOfText(view.asOfLocal)} &middot; a starting point for your review.</p>
+          <h2 id="ov-follow" className="text-xl font-semibold tracking-tight text-fg">Booking follow-up</h2>
+          <p className="text-sm text-fg-muted">Current as of {asOfText(view.asOfLocal)}.</p>
         </div>
         <div className="grid gap-3 sm:grid-cols-3">
-          <Card id="ov-nonext" title="Clients without a next booking" figure={view.noNextBooking} note={noNextBookingNote()}>
+          <Card id="ov-nonext" title="No next booking" figure={view.noNextBooking} note={noNextBookingNote()}>
             {(n) => <p className={BIG}>{n.count}</p>}
           </Card>
           <Card id="ov-beyond" title="Beyond their usual visit interval" figure={view.beyondUsual} note={<>{beyondUsualNote(DEFAULT_BEYOND_USUAL_FACTOR)}{view.filterKind !== "all" ? ` ${BEYOND_USUAL_FILTER_NOTE}` : ""}</>}>
@@ -552,10 +548,10 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
 
       <section aria-labelledby="ov-value" className="space-y-2">
         <details open={print} className="rounded-xl border border-line bg-surface p-4" data-reconciliation="">
-          <summary id="ov-value" className={cx("cursor-pointer text-sm font-medium text-fg", FOCUS_RING)}>Service value and collected: how the figures reconcile</summary>
+          <summary id="ov-value" className={cx("cursor-pointer text-sm font-medium text-fg", FOCUS_RING)}>Service value and collected</summary>
           <div className="mt-4 space-y-4">
             <p className="text-sm text-fg-muted">{NEVER_SUMMED_NOTE}</p>
-            <Card id="ov-split" title="What the collected total is made of" figure={view.collected}>
+            <Card id="ov-split" title="Collected breakdown" figure={view.collected}>
               {(c) => (
                 <div className="space-y-2">
                   <table className="w-full text-left text-sm">
@@ -632,3 +628,4 @@ function SplitRow({ label, value, strong = false }: { label: string; value: stri
     </tr>
   );
 }
+

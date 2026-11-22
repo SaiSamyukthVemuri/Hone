@@ -1610,7 +1610,7 @@ export default async function ClientCheatSheetPage({
                   pendingLabel="Opening intake…"
                   className="inline-flex items-center min-h-[44px] min-w-[44px] text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
                 >
-                  View intake →
+                  View intake
                 </PendingLink>
               </div>
               {/* PR #293 follow-up: surface the Resend intake link CTA on the
@@ -1640,7 +1640,7 @@ export default async function ClientCheatSheetPage({
                 pendingLabel="Opening intake…"
                 className="inline-flex items-center min-h-[44px] min-w-[44px] text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
               >
-                View intake →
+                View intake
               </PendingLink>
             </div>
           )}
@@ -1655,7 +1655,7 @@ export default async function ClientCheatSheetPage({
                 pendingLabel="Opening intake…"
                 className="inline-flex items-center min-h-[44px] min-w-[44px] text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
               >
-                View intake →
+                View intake
               </PendingLink>
             </div>
           )}
@@ -1732,7 +1732,7 @@ export default async function ClientCheatSheetPage({
                         pendingLabel="Opening session…"
                         className="inline-flex items-center min-h-[44px] min-w-[44px] text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
                       >
-                        Open →
+                        Open session
                       </PendingLink>
                     </div>
                     {/* The same per-area summary the charting screen

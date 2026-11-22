@@ -15,7 +15,7 @@ const text = (html: string) => html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " "
 describe("Waitlist Analytics uses the existing tabs and factual presentation", () => {
   it("has the shared Analytics title, active Waitlist tab, existing theme and waitlist review navigation", () => {
     const html = render(); const plain = text(html);
-    expect(plain).toContain("Your practice, in perspective.");
+    expect(plain).toContain("Analytics");
     expect(html).toContain('aria-current="page"'); expect(html).toContain('href="/financials/analytics"'); expect(html).toContain('href="/financials/analytics/clients"');
     expect(html).toContain('href="/settings/waitlist"'); expect(html).toContain("bg-surface"); expect(html).toContain("border-line");
     expect(plain).toContain("Capacity for up to 3 more invitations."); expect(plain).toContain("minimums");
