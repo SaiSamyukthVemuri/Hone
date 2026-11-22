@@ -297,6 +297,7 @@ export const BROWSER_GROUPS = {
       "cancellation-fee-rules.spec.ts",
       "invitation-reconciliation.spec.ts",
       "invite-only.spec.ts",
+      "team-restore-audit.spec.ts",
       // Connected practitioner journey (opt-in: self-skips unless MULTI_PRACTITIONER_JOURNEY_E2E=1, so a targeted lane lists it but runs nothing).
       "practitioner-journey.spec.ts",
       // FETT photos (HON-43): Photos-tab grid thumbnails survive a reload and
