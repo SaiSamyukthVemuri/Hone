@@ -175,7 +175,7 @@ test.describe("iPad: crowded items are named on the calendar", () => {
 
         // 1. Visible on the calendar surface, before anything is tapped.
         for (const c of cluster) {
-          const row = page.locator("[data-chooser-row]").filter({ hasText: c.name }).first();
+          const row = page.locator("[data-chooser-row]:visible").filter({ hasText: c.name }).first();
           await expect(row, `${c.name} is named on the calendar (${label} ${view})`).toBeVisible();
           // Day with five practitioners scrolls sideways inside the grid: bring the column into view first.
           await row.scrollIntoViewIfNeeded();

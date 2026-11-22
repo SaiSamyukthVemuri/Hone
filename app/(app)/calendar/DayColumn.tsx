@@ -974,7 +974,7 @@ export function DayColumn({
               {members.slice(0, rows.shown).map(m => (
                 <span key={m.id} data-chooser-row="" className="flex h-[14px] items-center gap-1 text-[11px] leading-[14px]">
                   <span className="hidden shrink-0 tabular-nums opacity-80 @min-[7rem]:inline">{formatTimeForStudio(new Date(m.starts_at), tz, timeFormat)}</span>
-                  <span className="truncate font-semibold">{m.client?.name?.trim() || "Client"}</span>
+                  <span className="truncate font-semibold" title={m.client?.name?.trim() || "Client"}>{m.client?.name?.trim() || "Client"}</span>
                 </span>
               ))}
               {rows.more > 0 && <span className="block h-[14px] text-[11px] font-semibold leading-[14px]">+{rows.more} more</span>}
