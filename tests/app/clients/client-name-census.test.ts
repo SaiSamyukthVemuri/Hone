@@ -59,6 +59,7 @@ const BASELINE: ReadonlyArray<readonly [string, number, Status]> = [
   ["lib/finance/statement-document.ts", 2, "helper"],
   ["lib/notifications/appointment-cancel-notification.ts", 1, "gap"],
   ["lib/record-keeping/queries.ts", 2, "unreviewed"],
+  ["lib/records/print/day-document.ts", 1, "fine"],
 ];
 
 // Why each "gap" is one. Confirmed by reading the file; NOT fixed in the PR that records them (each is a separate decision or change).
@@ -79,6 +80,7 @@ const FINE_REASON: Record<string, string> = {
   "app/api/cron/appointment-reminders/route.ts": "the treatment-time line now names the client through the shared loader (communication name); the two stored-name reads left are the loader's fallback argument and a template parameter the client reminder does not render",
   "lib/email/send-appointment.ts": "the client-facing sites (the treatment-time line, the trusted-render path) take the loader's communication name and fall back to the stored name; the stored-name reads left are those fallbacks. The practitioner and cancellation emails it sends take the same loader's name (pinned by their rendered output in tests/lib/email/client-email-names.test.ts)",
   "app/(app)/clients/[id]/sessions/[sessionId]/page.tsx": "the one remaining read feeds the postcare PREVIEW, which is pinned to the stored name so it matches the send; the page's screen wording uses clientDisplayName",
+  "lib/records/print/day-document.ts": "the clinical day packet is clinical output: clinicalPacketName composes the legal identity with the preferred name beside it from the identity read (readPrintIdentities, via the page), and the one stored-name read is only that function's fallback argument",
   "lib/clients/name-search.ts": "search deliberately matches BOTH the stored and the preferred name (tests/lib/clients/name-search.test.ts)",
 };
 
@@ -165,6 +167,7 @@ describe("statuses are true of the files they are attached to", () => {
     const ALLOWED = new Set([
       "app/(app)/clients/[id]/edit/page.tsx",
       "app/(app)/clients/[id]/legal-identity-actions.ts",
+      "app/(app)/records/print/_packet/day-packet-view.tsx",
       "app/(app)/records/print/page.tsx",
       "components/intake/intake-question-field.tsx",
       "components/legal-identity-form.tsx",
@@ -175,6 +178,7 @@ describe("statuses are true of the files they are attached to", () => {
       "lib/clinical-records/insurer-field-gaps.ts",
       "lib/intake/questions.ts",
       "lib/observability/sentry-scrub.ts",
+      "lib/records/print/day-document.ts",
     ]);
     const readers: string[] = [];
     for (const dir of ["app", "components", "lib"]) for (const f of walk(dir)) if (LEGAL.test(read(f))) readers.push(f);
