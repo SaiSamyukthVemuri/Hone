@@ -266,7 +266,8 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // skipped files: no added run time. The set (about 11 minutes with a reused build) is run on demand on an owned stack.
     // 63 with the charting New view spec joining `sessions`. It is OPT-IN (needs the rollout setting set to "all" on the app server) and self-skips in every
     // CI lane, so, like the HON-48 specs above, the cost is one listed skipped file and no added run time.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(63);
+    // 64 with the mode-bags browser spec joining `sessions` (it runs in the sessions lane: three cases, no opt-in).
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(64);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {

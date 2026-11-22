@@ -41,6 +41,8 @@ export const BROWSER_GROUPS = {
       // The optional New view of the session chart. Opt-in: it is skipped unless the app server is started with the rollout setting set to "all",
       // so the ordinary lanes only list it; the device matrix runs it through playwright.charting.config.ts.
       "charting-new-view.spec.ts",
+      // Per-mode reading bags: switching a block's mode parks and restores the readings, and a held save writes only the chosen mode's fields.
+      "charting-mode-bags.spec.ts",
       // Budget context is a peer section of the Consultation & Skin/Hair
       // surface, so it belongs with the clinical-notes coverage.
       "client-budget-context.spec.ts",
