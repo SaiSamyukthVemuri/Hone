@@ -55,7 +55,7 @@ afterEach(() => {
 });
 
 describe("the Business menu, mounted", () => {
-  it("is closed to begin with, and the button opens it to exactly the two links", () => {
+  it("is closed to begin with, and the button opens it to exactly the three links", () => {
     mount();
     expect(trigger().getAttribute("aria-expanded")).toBe("false");
     expect(panel()).toBeNull();
@@ -64,6 +64,7 @@ describe("the Business menu, mounted", () => {
     expect(links().map((a) => [a.textContent, a.getAttribute("href")])).toEqual([
       ["Capacity", "/dashboard/capacity"],
       ["Statements", "/financials/statement"],
+      ["Analytics", "/financials/analytics"],
     ]);
   });
 
@@ -79,10 +80,27 @@ describe("the Business menu, mounted", () => {
   it("Tab out closes it: focus moving to something outside the menu", () => {
     mount();
     click(trigger());
-    const last = link("Statements");
+    const last = link("Analytics");
     last.focus();
     act(() => void last.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: outside })));
     expect(panel()).toBeNull();
+  });
+
+  it("Analytics reads as the current page on its Overview, Clients and Print screens, and on nothing outside its subtree", () => {
+    for (const path of ["/financials/analytics", "/financials/analytics/clients", "/financials/analytics/print"]) {
+      state.path = path;
+      mount();
+      expect(trigger().getAttribute("aria-current"), path).toBe("page");
+      click(trigger());
+      expect(link("Analytics").getAttribute("aria-current"), path).toBe("page");
+      expect(link("Statements").getAttribute("aria-current"), path).toBeNull();
+      act(() => root?.unmount());
+      host?.remove();
+      outside?.remove();
+    }
+    state.path = "/financials/analytics-archive";
+    mount();
+    expect(trigger().getAttribute("aria-current")).toBeNull();
   });
 
   it("focus moving between the menu's own controls does NOT close it", () => {
