@@ -176,6 +176,32 @@ describe("the Clients tab: sort, chip and page", () => {
     expect(table(plain)?.chipCounts.noNextBooking).toBeNull();
     expect(text(render(plain))).toContain("No next booking (not available)");
   });
+  it("an unavailable chip is not a link, so it cannot be selected into a table that then cannot load", () => {
+    const html = render(view({}, { followThrough: { ok: false, reason: "read_failed" } }));
+    expect(html).not.toMatch(/href="[^"]*chip=no_next_booking/);
+    expect(text(html)).toContain("No next booking (not available)");
+    expect(html).toMatch(/<a[^>]*href="[^"]*"[^>]*>\s*All clients/); // the others stay links
+    const hist = render(view({}, { history: { ok: false, reason: "too_many_appointments" } }));
+    expect(hist).not.toMatch(/href="[^"]*chip=beyond_usual/);
+    expect(text(hist)).toContain("Beyond usual interval (not available)");
+  });
+  it("a table that cannot load under a selected chip (a bookmark) still offers an All clients link that clears the chip", () => {
+    for (const [chip, over] of [
+      ["no_next_booking", { followThrough: { ok: false, reason: "read_failed" } }],
+      ["beyond_usual", { history: { ok: false, reason: "too_many_appointments" } }],
+    ] as const) {
+      const html = render(view({ chip }, over as Partial<OverviewInput>), { sort: "spend", chip, page: 1 });
+      expect(html).toContain('data-figure="cl-table"'); // the table really is unavailable
+      const reset = html.match(/<a[^>]*data-clients-reset=""[^>]*>[^<]*All clients[^<]*<\/a>/)?.[0] ?? "";
+      expect(reset).not.toBe("");
+      expect(reset).not.toContain("chip=");
+      expect(reset).toContain("/financials/analytics/clients");
+    }
+  });
+  it("when the table loads the All clients chip is the reset, so no separate reset link is drawn", () => {
+    const html = render(view({}, { followThrough: { ok: false, reason: "read_failed" } }), { sort: "spend", chip: "all", page: 1 });
+    expect(html).not.toContain("data-clients-reset");
+  });
   it("pages of 25: a page past the end is empty, not an error, and the line says what is shown", () => {
     const past = view({ page: 9 });
     expect(table(past)?.rows).toEqual([]);

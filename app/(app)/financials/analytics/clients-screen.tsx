@@ -152,6 +152,14 @@ export function ClientsScreen({ view, params, clients, notices, practitionerOpti
               <nav aria-label="Filter clients" className="flex flex-wrap gap-2">
                 {CHIPS.map(({ chip, label }) => {
                   const n = chip === "all" ? table.value.chipCounts.all : chip === "no_next_booking" ? table.value.chipCounts.noNextBooking : table.value.chipCounts.beyondUsual;
+                  // A chip whose count cannot be read is NOT a link: selecting it would make the table unavailable and take this navigation away.
+                  if (n === null) {
+                    return (
+                      <span key={chip} aria-disabled="true" data-chip-unavailable="" className="inline-flex items-center rounded-full border border-line bg-surface px-3 py-1 text-sm text-fg-muted">
+                        {label} (not available)
+                      </span>
+                    );
+                  }
                   return (
                     <a
                       key={chip}
@@ -227,7 +235,15 @@ export function ClientsScreen({ view, params, clients, notices, practitionerOpti
               ) : null}
             </>
           ) : (
-            <p className="rounded-xl border border-line bg-surface p-4 text-sm text-fg" role="status" data-figure="cl-table">{FIGURE_UNAVAILABLE_COPY[table.reason]}</p>
+            <>
+              <p className="rounded-xl border border-line bg-surface p-4 text-sm text-fg" role="status" data-figure="cl-table">{FIGURE_UNAVAILABLE_COPY[table.reason]}</p>
+              {clients.chip !== "all" ? (
+                // A bookmarked or hand-typed filter can leave the table unavailable; the owner always keeps a way back to every client.
+                <p className="text-sm">
+                  <a href={href({ chip: "all", page: 1 })} data-clients-reset="" className={cx("underline", FOCUS_RING)}>All clients</a>
+                </p>
+              ) : null}
+            </>
           )}
         </div>
       </section>
