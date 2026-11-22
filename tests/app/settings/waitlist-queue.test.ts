@@ -36,6 +36,8 @@ import {
 // asks the right questions and renders the right answers.
 
 const STUDIO_ID = "44444444-4444-4444-8444-444444444444";
+/** The decline-visibility count read (every declined invitation of the studio): a constant-cost read of its own, counted separately from the per-row reads. */
+const DECLINE_COUNT_READ = "id,entry_id,declined_at";
 /**
  * The one entries projection. 0208 added the four SMS-standing columns; the
  * evidence reference and the recorder are deliberately absent, because the
@@ -140,6 +142,13 @@ const scenario = {
   studioExpiryCount: null as number | null,
   // A failure of the summary read alone (the page's own invitation reads still succeed).
   studioExpiriesError: null as { code: string } | null,
+  // DECLINE VISIBILITY. The declined-invitation read (id,entry_id,declined_at), its exact count, a failure of that read alone, the names/states read
+  // for the people listed, and the contact read (id,email,phone) the existing contact view uses.
+  declinedInvitations: [] as Array<Record<string, unknown>>,
+  declinedCount: null as number | null,
+  declinedError: null as { code: string } | null,
+  declineEntries: [] as Array<Record<string, unknown>>,
+  contactRows: [] as Array<Record<string, unknown>>,
   // The REDEEMED invitation read, asked separately.
   redeemedInvitations: [] as Array<Record<string, unknown>>,
   invitationsError: null as { code: string } | null,
@@ -198,6 +207,11 @@ function reset() {
     studioExpiries: null,
     studioExpiryCount: null,
     studioExpiriesError: null,
+    declinedInvitations: [],
+    declinedCount: null,
+    declinedError: null,
+    declineEntries: [],
+    contactRows: [],
     redeemedInvitations: [],
     invitationsError: null,
     services: [],
@@ -386,6 +400,22 @@ vi.mock("@/lib/supabase/server", () => ({
             : { data: scenario.preferences, error: null };
         }
 
+        // The decline-visibility reads, answered from their own seeds. The fake honours the studio scope, and returns the exact count only when asked.
+        if (table === "new_client_waitlist_invitations" && shape.columns === DECLINE_COUNT_READ) {
+          if (scenario.declinedError) return { data: null, count: null, error: scenario.declinedError };
+          const scoped =
+            shape.filters.some((f) => f[0] === "eq" && f[1] === "studio_id" && f[2] === STUDIO_ID) &&
+            shape.filters.some((f) => f[0] === "not" && f[1] === "declined_at");
+          const src = scoped ? scenario.declinedInvitations : [];
+          const rows = src.slice(0, Math.min(shape.limit ?? 1000, 1000));
+          return { data: rows, count: shape.options.count === "exact" ? (scenario.declinedCount ?? src.length) : null, error: null };
+        }
+        if (table === "new_client_waitlist_entries" && (shape.columns === "id,name,status" || shape.columns === "id,email,phone")) {
+          const ids = (shape.filters.find((f) => f[0] === "in" && f[1] === "id")?.[2] ?? []) as string[];
+          const src = shape.columns === "id,name,status" ? scenario.declineEntries : scenario.contactRows;
+          return { data: src.filter((r) => ids.includes(r.id as string)), error: null };
+        }
+
         if (table === "new_client_waitlist_invitations") {
           if (scenario.invitationsError) {
             return { data: null, error: scenario.invitationsError };
@@ -551,7 +581,7 @@ const { removeWaitlistEntryAction } = await import(
  * opens /settings/waitlist.
  */
 const render = async (
-  searchParams: { section?: string | string[]; page?: string | string[] } = {},
+  searchParams: { section?: string | string[]; page?: string | string[]; view?: string | string[] } = {},
 ) =>
   renderToStaticMarkup(
     await WaitlistSettingsPage({ searchParams: Promise.resolve(searchParams) }),
@@ -1892,7 +1922,7 @@ describe("action visibility follows the row's lifecycle state", () => {
     scenario.count = 1;
     await render();
     // The studio-wide expiry summary (expires_at only) is a constant-cost read of its own, not a per-row one; it is counted separately.
-    expect(queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns !== "expires_at")).toHaveLength(0);
+    expect(queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns !== "expires_at" && q.columns !== DECLINE_COUNT_READ)).toHaveLength(0);
     expect(queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns === "expires_at")).toHaveLength(1);
     // Five section reads, plus the needs-attention card's own read (id,name).
     expect(queries.filter((q) => q.table === "new_client_waitlist_entries" && q.columns !== "id,name" && q.columns !== "id,name,released_at")).toHaveLength(5);
@@ -1909,7 +1939,7 @@ describe("action visibility follows the row's lifecycle state", () => {
     // (0313), which exists only because an invited entry does. Identity comes
     // from the 0189 unique index, never from ordering — so none of them
     // carries an `order`.
-    const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns !== "expires_at");
+    const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns !== "expires_at" && q.columns !== DECLINE_COUNT_READ);
     expect(inv).toHaveLength(3);
     for (const q of inv) expect(q.orders).toEqual([]);
   });
@@ -1921,7 +1951,7 @@ describe("action visibility follows the row's lifecycle state", () => {
     scenario.count = 1;
     await render();
     // The declined-times card's own read (entry_id,declined_at) is a separate, card-level read.
-    const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns !== "entry_id,declined_at" && q.columns !== "expires_at");
+    const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns !== "entry_id,declined_at" && q.columns !== "expires_at" && q.columns !== DECLINE_COUNT_READ);
     expect(inv).toHaveLength(2);
     for (const q of inv) expect(q.orders).toEqual([]);
   });
@@ -3158,8 +3188,10 @@ describe("owner follow-up cards render with ZERO active entries (Codex P2)", () 
     const src = readFileSync(path.join(process.cwd(), "app/(app)/settings/waitlist/page.tsx"), "utf8")
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/^\s*\/\/.*$/gm, "");
-    const branch = src.indexOf("{active === 0 ? (");
+    // The declined view (`?view=declined`) now wraps the active-entries branch: it is the FIRST conditional, and the active branch is its else.
+    const branch = src.indexOf("{viewDeclined ? (");
     expect(branch).toBeGreaterThan(-1);
+    expect(src.indexOf(": active === 0 ? (")).toBeGreaterThan(branch);
     for (const marker of ['id="needs-attention-heading"', 'data-testid="declined-card"', 'id="replies-heading"']) {
       const at = src.indexOf(marker);
       expect(at, marker).toBeGreaterThan(-1);
@@ -3327,5 +3359,160 @@ describe("each active invitation shows its exact expiry and the time left", () =
       "utf8",
     );
     expect(helper).not.toMatch(/issued_at|issuedAt|TTL|setHours|setDate/);
+  });
+});
+
+// ===========================================================================
+// DECLINE VISIBILITY — display only. A decline is the invitation's own `declined_at`; nothing is sent, written or logged beyond a code.
+// Time is fixed at 2026-08-23T09:00:00Z; the studio is America/Toronto (EDT).
+// ===========================================================================
+describe("people who declined: the summary count and the declined view", () => {
+  const dec = (id: string, entryId: string, at: string) => ({ id, entry_id: entryId, declined_at: new Date(at).toISOString() });
+  const seed = () => {
+    scenario.rows = [entry({ id: "w1", status: "waiting" })];
+    scenario.count = 1;
+    scenario.declinedInvitations = [
+      dec("i3", "e-b", "2026-08-22T10:00:00Z"),
+      dec("i2", "e-a", "2026-08-21T10:00:00Z"),
+      dec("i1", "e-a", "2026-08-10T10:00:00Z"), // the same person's earlier decline: counted once
+    ];
+    scenario.declineEntries = [
+      { id: "e-a", name: "Alex Rivers", status: "waiting" },
+      { id: "e-b", name: "Bo Tanaka", status: "removed" },
+    ];
+    scenario.contactRows = [
+      { id: "e-a", email: "alex@example.invalid", phone: "+14165550100" },
+      { id: "e-b", email: "bo@example.invalid", phone: null },
+    ];
+  };
+
+  it("the summary counts PEOPLE (not invitations), links to the view, and carries no name or contact", async () => {
+    seed();
+    const html = await render();
+    const line = html.match(/data-testid="declined-summary"[^>]*>(.*?)<\/p>/s)?.[1] ?? "";
+    expect(line).toContain("2 people have declined.");
+    expect(line).toContain('href="/settings/waitlist?view=declined"');
+    for (const secret of ["Alex", "Bo Tanaka", "alex@example.invalid", "+14165550100", "bo@example.invalid"]) expect(html, secret).not.toContain(secret);
+    expect(html).not.toContain('data-testid="declined-people"');
+  });
+
+  it("nobody declined: the count says 0 and offers no link", async () => {
+    scenario.rows = [entry({ id: "w1", status: "waiting" })];
+    scenario.count = 1;
+    const html = await render();
+    expect(html).toContain("0 people have declined.");
+    expect(html).not.toContain("declined-view-link");
+  });
+
+  it("an UNREADABLE decline read says it could not count, never 0", async () => {
+    seed();
+    scenario.declinedError = { code: "57014" };
+    const html = await render();
+    expect(html).toContain("we couldn");
+    expect(html).not.toContain("0 people have declined");
+    expect(html).not.toContain("declined-view-link");
+  });
+
+  it("a response cut at the API's 1000-row ceiling (exact count 1500) shows no count, never a partial one", async () => {
+    scenario.rows = [entry({ id: "w1", status: "waiting" })];
+    scenario.count = 1;
+    scenario.declinedInvitations = Array.from({ length: 1000 }, (_, i) => dec(`i${i}`, `e${i}`, "2026-08-20T10:00:00Z"));
+    scenario.declinedCount = 1500;
+    const html = await render();
+    expect(html).toContain("we couldn");
+    expect(html).not.toMatch(/\d+ people have declined/);
+  });
+
+  it("the declined view lists each person once: name, when they declined in the studio's zone, and an entry link only where it can land", async () => {
+    seed();
+    const html = await render({ view: "declined" });
+    expect(html).toContain('data-testid="declined-people"');
+    expect((html.match(/data-testid="declined-row"/g) ?? []).length).toBe(2);
+    expect(html).toContain("Alex Rivers");
+    expect(html).toContain("Declined Aug 21, 2026, 6:00 AM EDT");
+    // The waiting entry links to its own section; the removed one has no section to land in.
+    expect(html).toContain('href="/settings/waitlist?section=waiting#entry-e-a"');
+    expect(html).not.toContain("#entry-e-b");
+    expect(html).toContain("Their entry is no longer on the waitlist.");
+    // Newest decline first.
+    expect(html.indexOf("Bo Tanaka")).toBeLessThan(html.indexOf("Alex Rivers"));
+  });
+
+  it("the three outcomes stay separate: the note names all three, and 'declined' is never said of a passed deadline or a release", async () => {
+    seed();
+    scenario.rows = [entry({ id: "w1", status: "invited" })];
+    scenario.liveInvitations = [{ entry_id: "w1", expires_at: new Date("2026-08-23T08:00:00Z").toISOString() }]; // deadline passed, nothing stamped
+    const html = await render({ view: "declined" });
+    expect(html).toContain("expired with no reply");
+    expect(html).toContain("released");
+    expect((html.match(/data-testid="declined-row"/g) ?? []).length).toBe(2); // the expired invitation's entry is NOT a row
+    expect(html).not.toContain("Jo Smith");
+  });
+
+  it("contact details are only inside each person's closed 'Contact details' disclosure, and never in the address", async () => {
+    seed();
+    const html = await render({ view: "declined" });
+    const blocks = [...html.matchAll(/<details[^>]*data-testid="declined-contact"[^>]*>([\s\S]*?)<\/details>/g)].map((m) => m[1]!);
+    expect(blocks.length).toBe(2);
+    expect(blocks.join("")).toContain("alex@example.invalid");
+    const outside = html.replace(/<details[^>]*data-testid="declined-contact"[^>]*>[\s\S]*?<\/details>/g, "");
+    for (const secret of ["alex@example.invalid", "bo@example.invalid", "+14165550100", "(416) 555-0100"]) expect(outside, secret).not.toContain(secret);
+    expect(html).not.toMatch(/<details[^>]*data-testid="declined-contact"[^>]*\sopen/);
+    // Every link outside the disclosure is free of names and contact details (the Email and Call links live inside it, by design).
+    for (const m of outside.matchAll(/href="([^"]*)"/g)) expect(m[1]!, m[1]).not.toMatch(/Alex|Bo%20|alex@|bo@|%40|5550100/);
+  });
+
+  it("the unreadable-names state says so and still shows the declines", async () => {
+    seed();
+    scenario.declineEntries = [];
+    const html = await render({ view: "declined" });
+    expect(html).toContain("A person on the waitlist");
+    expect(html).toContain("Their entry could not be read.");
+  });
+
+  it("with the answers gate off the rows say answers are not collected (not 'none on record')", async () => {
+    seed();
+    const html = await render({ view: "declined" });
+    expect(html).toContain("not being collected yet");
+  });
+
+  it("an unreadable decline read in the view says so, and never 'nobody declined'", async () => {
+    seed();
+    scenario.declinedError = { code: "57014" };
+    const html = await render({ view: "declined" });
+    expect(html).toContain('data-testid="declined-unknown"');
+    expect(html).not.toContain("Nobody has declined");
+  });
+
+  it("a non-owner never reaches the view", async () => {
+    seed();
+    scenario.role = "practitioner";
+    const html = await render({ view: "declined" });
+    expect(html).not.toContain("declined-people");
+    expect(html).not.toContain("Alex Rivers");
+  });
+
+  it("reads: owner session only, the studio's scope, and the view is not pulled by any other value", async () => {
+    seed();
+    await render({ view: "something-else" });
+    expect(queries.some((q) => q.columns === "id,name,status")).toBe(false);
+    expect(queries.some((q) => q.columns === "id,email,phone")).toBe(false);
+    const read = queries.find((q) => q.table === "new_client_waitlist_invitations" && q.columns === DECLINE_COUNT_READ)!;
+    expect(read.options).toEqual({ count: "exact" });
+    expect(read.filters.find((f) => f[0] === "eq" && f[1] === "studio_id")?.[2]).toBe(STUDIO_ID);
+    expect(read.filters.some((f) => f[0] === "not" && f[1] === "declined_at")).toBe(true);
+  });
+
+  it("RULE: a decline comes only from declined_at; the feature sends nothing and writes nothing", () => {
+    const read = readFileSync(path.join(process.cwd(), "lib/waitlist/decline-visibility-read.ts"), "utf8");
+    const pure = readFileSync(path.join(process.cwd(), "lib/waitlist/decline-visibility.ts"), "utf8");
+    const comp = readFileSync(path.join(process.cwd(), "components/waitlist/declined-section.tsx"), "utf8");
+    expect(read).toMatch(/\.not\("declined_at", "is", null\)/);
+    const code = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    for (const t of [code(read), code(pure), code(comp)]) {
+      expect(t).not.toMatch(/expired_at|released_at|expires_at/);
+      expect(t).not.toMatch(/\.(insert|update|upsert|delete|rpc)\(/);
+      expect(t).not.toMatch(/sendEmail|sendSms|resend|twilio|createAdminClient|console\./i);
+    }
   });
 });
