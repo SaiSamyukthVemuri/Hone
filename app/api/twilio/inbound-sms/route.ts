@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import {
+  isHelpKeyword,
   isStopKeyword,
   maskedPhone,
   normalizePhoneForMatch,
@@ -15,6 +16,7 @@ import {
   readProspectSuppressionCandidates,
 } from "@/lib/sms/suppression-candidates";
 import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
+import { APPOINTMENT_SMS_HELP_REPLY } from "@/lib/sms/appointment-sms-copy";
 
 // Twilio inbound SMS webhook (PR Twilio v1).
 //
@@ -56,10 +58,16 @@ import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const STOP_TWIML =
-  '<?xml version="1.0" encoding="UTF-8"?>' +
-  "<Response><Message>You have been opted out of Hone appointment texts. " +
-  "Email reminders may still be sent.</Message></Response>";
+// The reply texts live in lib/sms/appointment-sms-copy.ts (the one source the booking checkbox and /sms-consent also print).
+function messageTwiml(text: string): string {
+  const escaped = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return '<?xml version="1.0" encoding="UTF-8"?>' + "<Response><Message>" + escaped + "</Message></Response>";
+}
+
+// STOP-family keywords get an EMPTY response. The opt-out confirmation a person receives is the carrier's / Twilio's own (on a toll-free
+// number the carrier answers STOP itself and Twilio blocks the number, so a <Message> from here would be a duplicate or fail 21610).
+// The opt-out RECORDING below is unchanged. HELP/INFO keep Hone's reply; START/UNSTOP remain a no-op.
+const HELP_TWIML = messageTwiml(APPOINTMENT_SMS_HELP_REPLY);
 
 const EMPTY_TWIML =
   '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
@@ -168,6 +176,12 @@ export async function POST(req: Request): Promise<Response> {
   const messageSid =
     typeof formParams.MessageSid === "string" ? formParams.MessageSid : null;
 
+  if (isHelpKeyword(body)) {
+    // HELP / INFO: a reply to the sender, nothing proactive, no data read or written, the body is not logged.
+    logEvent("twilio_inbound_help", { messageSid });
+    return twimlResponse(HELP_TWIML);
+  }
+
   if (!isStopKeyword(body)) {
     // v1 is opt-out only: any other inbound message is acknowledged
     // with an empty TwiML and not persisted. We do not log the body
@@ -178,11 +192,10 @@ export async function POST(req: Request): Promise<Response> {
 
   const fromDigits = normalizePhoneForMatch(from);
   if (fromDigits.length === 0) {
-    // No digits to match against; nothing to opt out. Still ack with
-    // the STOP TwiML so the sender's phone confirms the carrier's
-    // STOP filter rather than seeing a silent failure.
+    // No digits to match against; nothing to opt out. Still ack with an
+    // empty response: the carrier's own STOP confirmation is the reply.
     logEvent("twilio_inbound_stop_no_digits", { messageSid });
-    return twimlResponse(STOP_TWIML);
+    return twimlResponse(EMPTY_TWIML);
   }
 
   const admin = createAdminClient();
@@ -476,5 +489,5 @@ export async function POST(req: Request): Promise<Response> {
     messageSid,
   });
 
-  return twimlResponse(STOP_TWIML);
+  return twimlResponse(EMPTY_TWIML);
 }

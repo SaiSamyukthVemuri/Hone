@@ -299,7 +299,7 @@ test.describe("new client at a waitlisted studio", () => {
       /use the name, email and phone number you enter here/i,
     );
     await expect(collectionNotice).toBeVisible();
-    const privacyLink = page.getByRole("link", { name: /privacy policy/i });
+    const privacyLink = collectionNotice.getByRole("link", { name: /privacy policy/i });
     await expect(privacyLink).toBeVisible();
     await expect(privacyLink).toHaveAttribute("href", "/privacy");
 
@@ -648,6 +648,16 @@ test.describe("the studio's waitlist queue", () => {
     await expect(page.getByText(email, { exact: true })).toBeVisible();
     await expect(page.getByText("416 555 0142")).toBeVisible();
 
+    // The owner's invitation-to-booking summary: counts only, with its period stated, and what is not tracked said plainly. No invitation has
+    // been sent in this studio, so the invitations are zero, whichever way the booked figures read (the database command may not be applied).
+    const summary = page.getByTestId("invitation-booking-summary");
+    await expect(summary).toBeVisible();
+    await expect(summary.getByTestId("invitation-booking-period")).toContainText("Invitations sent in the last 30 days");
+    await expect(summary.locator('[data-row="email-opens"] td')).toHaveText("Not tracked");
+    await expect(summary.locator('[data-row="page-visits"] td')).toHaveText("Not tracked");
+    await expect(summary).not.toContainText("Queue Person");
+    await expect(summary).not.toContainText(email);
+
     // 390px: the queue is usable on a phone and does not overflow.
     await page.setViewportSize({ width: 390, height: 844 });
     const overflow = await page.evaluate(
@@ -795,6 +805,8 @@ test.describe("the studio's waitlist queue", () => {
     ).toBeVisible({ timeout: 20_000 });
     await expect(page.getByText("Hidden Person", { exact: true })).toHaveCount(0);
     await expect(page.getByText(email, { exact: true })).toHaveCount(0);
+    // The summary is the owner's: a non-owner is refused before it is read or drawn.
+    await expect(page.getByTestId("invitation-booking-summary")).toHaveCount(0);
   });
 
   test("another studio's owner sees their OWN queue, never this one's", async ({ page }) => {

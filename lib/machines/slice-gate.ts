@@ -30,18 +30,30 @@ export type SliceViolation = { profileId: string; modeKey: string; reason: strin
  * no capture hold, no field with an unverified aspect, no open question naming it (or '*', or the frequency), every field's evidence
  * resolvable on the profile, and no ENFORCED range (a disputed bound must stay a note, never a validation that rejects a real value).
  */
-export function sliceViolations(profile: MachineProfile): SliceViolation[] {
+export function sliceViolations(profile: MachineProfile, options: { acceptDeviceConfirmed?: boolean } = {}): SliceViolation[] {
+  // DEFAULT IS STRICT. Only a caller that names `acceptDeviceConfirmed` (today: the xCell Pur, whose fields are observed on the
+  // practitioner's own unit) may treat a device-confirmed field or mode as qualifying; the 3G profiles never pass it.
+  const qualifies = (v: string) => v === "manufacturer-documented" || (options.acceptDeviceConfirmed === true && v === "device-confirmed");
   const out: SliceViolation[] = [];
   const evidenceIds = new Set(profile.evidence.map((e) => e.id));
   const blocked = (key: string) => profile.openQuestions.some((q) => q.blocks.some((t) => t === "*" || t === "@frequency" || t === key || t.startsWith(`${key}.`)));
+  // The frequency is checked DIRECTLY, not only through an open question: resolving or deleting the question must not be enough to offer
+  // a mode whose frequency was never established. (planContractPublication and catalogueIntegrity refuse it too; this is the third lock.)
+  const f = profile.frequency;
+  const frequencyProblem =
+    f.kind === "unverified" ? "frequency is unverified"
+    : (f.kind === "fixed" || f.kind === "selectable") && (f.verification === "unverified" || f.verification === "pending-evidence")
+      ? `frequency verification is ${f.verification}`
+      : null;
   for (const mode of profile.modes) {
     const add = (reason: string) => out.push({ profileId: profile.profileId, modeKey: mode.key, reason });
+    if (frequencyProblem) add(frequencyProblem);
     if (mode.captureHold) add("capture hold");
     if (blocked(mode.key)) add("open question blocks it");
-    if (mode.verification !== "manufacturer-documented") add(`mode verification is ${mode.verification}`);
+    if (!qualifies(mode.verification)) add(`mode verification is ${mode.verification}`);
     for (const { field } of modeFields(mode)) {
       if (field.unverified?.length) add(`${field.key}: unverified ${field.unverified.join(",")}`);
-      if (field.verification !== "manufacturer-documented") add(`${field.key}: verification ${field.verification}`);
+      if (!qualifies(field.verification)) add(`${field.key}: verification ${field.verification}`);
       if (field.ranges?.length) add(`${field.key}: enforces a range`);
       if (!field.evidence.length || field.evidence.some((id) => !evidenceIds.has(id))) add(`${field.key}: evidence missing`);
     }
