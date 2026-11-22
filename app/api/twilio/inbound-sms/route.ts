@@ -16,7 +16,7 @@ import {
   readProspectSuppressionCandidates,
 } from "@/lib/sms/suppression-candidates";
 import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
-import { APPOINTMENT_SMS_HELP_REPLY, APPOINTMENT_SMS_STOP_REPLY } from "@/lib/sms/appointment-sms-copy";
+import { APPOINTMENT_SMS_HELP_REPLY } from "@/lib/sms/appointment-sms-copy";
 
 // Twilio inbound SMS webhook (PR Twilio v1).
 //
@@ -64,7 +64,9 @@ function messageTwiml(text: string): string {
   return '<?xml version="1.0" encoding="UTF-8"?>' + "<Response><Message>" + escaped + "</Message></Response>";
 }
 
-const STOP_TWIML = messageTwiml(APPOINTMENT_SMS_STOP_REPLY);
+// STOP-family keywords get an EMPTY response. The opt-out confirmation a person receives is the carrier's / Twilio's own (on a toll-free
+// number the carrier answers STOP itself and Twilio blocks the number, so a <Message> from here would be a duplicate or fail 21610).
+// The opt-out RECORDING below is unchanged. HELP/INFO keep Hone's reply; START/UNSTOP remain a no-op.
 const HELP_TWIML = messageTwiml(APPOINTMENT_SMS_HELP_REPLY);
 
 const EMPTY_TWIML =
@@ -190,11 +192,10 @@ export async function POST(req: Request): Promise<Response> {
 
   const fromDigits = normalizePhoneForMatch(from);
   if (fromDigits.length === 0) {
-    // No digits to match against; nothing to opt out. Still ack with
-    // the STOP TwiML so the sender's phone confirms the carrier's
-    // STOP filter rather than seeing a silent failure.
+    // No digits to match against; nothing to opt out. Still ack with an
+    // empty response: the carrier's own STOP confirmation is the reply.
     logEvent("twilio_inbound_stop_no_digits", { messageSid });
-    return twimlResponse(STOP_TWIML);
+    return twimlResponse(EMPTY_TWIML);
   }
 
   const admin = createAdminClient();
@@ -488,5 +489,5 @@ export async function POST(req: Request): Promise<Response> {
     messageSid,
   });
 
-  return twimlResponse(STOP_TWIML);
+  return twimlResponse(EMPTY_TWIML);
 }

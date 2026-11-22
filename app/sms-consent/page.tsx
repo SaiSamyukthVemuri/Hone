@@ -13,7 +13,6 @@ import {
   APPOINTMENT_SMS_CONSENT_VERSION_V1,
   APPOINTMENT_SMS_HELP_REPLY,
   APPOINTMENT_SMS_PROGRAM_NAME,
-  APPOINTMENT_SMS_STOP_REPLY,
   APPOINTMENT_SMS_SUPPORT_EMAIL,
 } from "@/lib/sms/appointment-sms-copy";
 import {
@@ -27,7 +26,7 @@ import { SMS_JOIN_CONSENT_TEXT_VERSION, SMS_OPERATIONAL_CONSENT_TEXT_VERSION } f
 
 // PUBLIC, no login. The evidence of how a person opts in to Hone appointment texts, for carriers and reviewers.
 // EVERYTHING HERE COMES FROM THE SAME CODE THE PRODUCT RUNS: the checkbox is the real component (disabled, with a synthetic studio
-// name), the disclosure and the HELP / STOP replies are the constants the inbound route sends, and the sample messages are built by the
+// name), the disclosure and the HELP reply is the constant the inbound route sends (STOP gets no Hone reply: the carrier's is the only one), and the sample messages are built by the
 // real template functions from synthetic inputs. No real studio, client, phone number or link appears.
 
 export const metadata: Metadata = marketingMetadata("/sms-consent");
@@ -236,14 +235,17 @@ export default function SmsConsentPage() {
           {APPOINTMENT_SMS_HELP_REPLY}
         </span>
       </P>
+      <P>
+        On the toll-free number, HELP is answered by Twilio&rsquo;s standard toll-free response; the reply shown here is Hone&rsquo;s own and is used
+        where HELP reaches Hone.
+      </P>
       <H3 id="reply-stop">A person replies STOP (or STOPALL, UNSUBSCRIBE, CANCEL, END, QUIT)</H3>
       <P>
-        <span className="block rounded-md border p-3 font-mono text-[0.9375rem]" style={{ borderColor: "var(--color-hairline-strong)" }}>
-          {APPOINTMENT_SMS_STOP_REPLY}
-        </span>
+        The confirmation a person receives after STOP is the standard reply from their carrier and Twilio; Hone does not send its own. Hone records
+        the opt-out against every matching client and waitlist record at that time, across studios.
       </P>
       <P>
-        After STOP, no further appointment texts are sent to that number. Questions can also be sent to{" "}
+        After STOP, no further texts are sent to that number. Questions can also be sent to{" "}
         <a className="underline" href={`mailto:${APPOINTMENT_SMS_SUPPORT_EMAIL}`}>
           {APPOINTMENT_SMS_SUPPORT_EMAIL}
         </a>
