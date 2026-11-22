@@ -1,7 +1,7 @@
--- 0367: owner-only COUNTS of the waitlist invitations a studio sent in a period, and how many became a booking.
+-- Owner-only COUNTS of the waitlist invitations a studio sent in a period, and how many became a booking.
 --
 -- Read-only. It writes nothing and returns five integers, never a name, a contact detail or a token. The booking
--- figures come only from the explicit invitation-to-appointment link written by the booking command (0313); nothing
+-- figures come only from the explicit invitation-to-appointment link written by the booking command; nothing
 -- is inferred from times. A conversion that has no link row is reported on its own, never as a booking.
 --
 -- The cohort is the invitations ISSUED in the period: start inclusive, end exclusive, either end may be null (open).
@@ -72,7 +72,7 @@ begin
      or not pg_catalog.has_function_privilege('authenticated', v_fn, 'EXECUTE')
      or exists (select 1 from pg_catalog.pg_proc p cross join lateral pg_catalog.aclexplode(p.proacl) a
                  where p.oid = v_fn::oid and a.grantee = 0) then
-    raise exception '0367: waitlist_invitation_booking_counts must be executable by authenticated only';
+    raise exception 'waitlist_invitation_booking_counts must be executable by authenticated only';
   end if;
 end;
 $$;
