@@ -690,8 +690,8 @@ function PendingPanel({
     <div className="flex flex-col gap-3 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
       <h4 className="font-medium">Charge pending.</h4>
       <p className="text-xs">
-        The previous click is still resolving with Stripe. Click Refresh
-        to recheck; the system will not create a second PaymentIntent.
+        The previous payment attempt is still being checked. Use Refresh status
+        to check it again. Hone will not create another payment attempt.
       </p>
       <button
         type="button"

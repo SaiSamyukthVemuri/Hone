@@ -188,7 +188,7 @@ export default function ElectrolysisSoftwarePage() {
             as a slogan before the body said it plainly; the bodies stand. */}
         <Section tone="warm">
           <Container>
-            <Title className="max-w-2xl">At a glance</Title>
+            <Title className="max-w-2xl">How Hone works</Title>
             <SpecRows>
               <SpecRow>
                 <SpecRowHead>Who it&rsquo;s for</SpecRowHead>

@@ -78,7 +78,7 @@ export function SessionTimeline({
                     href={`/clients/${clientId}/sessions/${s.id}`}
                     className="inline-flex items-center min-h-[44px] min-w-[44px] text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
                   >
-                    Open session →
+                    Open session
                   </Link>
                 </div>
               </div>

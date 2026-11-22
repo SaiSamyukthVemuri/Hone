@@ -149,7 +149,7 @@ export function ClientsScreen({ view, params, clients, notices, practitionerOpti
       </section>
 
       <section aria-labelledby="cl-table-h" className="space-y-3" data-clients-table="">
-        <h2 id="cl-table-h" className="text-xl font-semibold tracking-tight text-fg">Client insights</h2>
+        <h2 id="cl-table-h" className="text-xl font-semibold tracking-tight text-fg">Clients seen</h2>
         <p className="hidden text-sm text-fg-muted print:block" data-print-only-note="">{CLIENTS_PRINT_NOTE}</p>
         <div className="space-y-3 print:hidden" data-print-hidden="">
           {table.available ? (
@@ -291,3 +291,4 @@ function ReconRow({ label, value, strong = false }: { label: string; value: stri
     </div>
   );
 }
+

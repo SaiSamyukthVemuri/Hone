@@ -60,7 +60,7 @@ function SessionPhotoCell({ clientId, photo: p }: { clientId: string; photo: Ses
     <li className="flex flex-col gap-1">
       {state.stage === "broken" || !state.src ? (
         <p className="flex aspect-square w-full items-center justify-center rounded-md bg-neutral-100 p-2 text-center text-xs text-neutral-600 dark:bg-neutral-900 dark:text-neutral-300">
-          Photo unavailable — reload to view
+          Photo unavailable. Reload to view.
         </p>
       ) : (
         // eslint-disable-next-line @next/next/no-img-element -- short-lived signed URL
