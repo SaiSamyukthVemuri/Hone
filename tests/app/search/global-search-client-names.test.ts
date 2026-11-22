@@ -504,7 +504,9 @@ describe("global search panel: a bounded client scan is never shown as complete"
 
   it("says the client list is partial, and never says No results found. while it is", () => {
     expect(panel).toContain("Showing the first client matches. Refine your search to find more.");
-    expect(panel).toMatch(/groups\.length === 0 && !clientsTruncated \? \(/);
+    // The empty state is also withheld while an appointment-reference scan was cut short (it has its own notice).
+    expect(panel).toMatch(/groups\.length === 0 && !clientsTruncated && !referenceTruncated \? \(/);
+    expect(panel).toContain("This appointment reference was not searched in full.");
   });
 });
 
