@@ -18,7 +18,7 @@ export default function TermsOfServicePage() {
     <PolicyLayout
       title="Hone Terms of Service"
       effectiveDate="May 22, 2026"
-      lastUpdated="May 22, 2026"
+      lastUpdated="November 22, 2026"
     >
       <H2 id="acceptance">1. Acceptance of these terms</H2>
       <P>
