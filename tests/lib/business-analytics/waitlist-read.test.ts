@@ -9,7 +9,7 @@ vi.mock("@/lib/waitlist/invitation-booking-summary-read", () => ({ loadCommandCo
 import { loadWaitlistAnalytics } from "@/lib/business-analytics/server/waitlist-read";
 const now = new Date("2026-11-22T12:00:00Z");
 const studio = { id: "own-studio", timezone: "UTC" };
-function fake({ count = 1, rows = [{ status: "waiting", joined_at: "2026-11-20T12:00:00Z" }], error = null as unknown, servicesCount = 3, invitationsCount = 4 } = {}) {
+function fake({ count = 1, rows = [{ status: "waiting", joined_at: "2026-11-20T12:00:00Z" }], error = null as unknown, servicesCount = 3, invitationsCount = 4, invitationRows = [{ entry_id: "person-a" }, { entry_id: "person-a" }, { entry_id: "person-b" }, { entry_id: "person-c" }] } = {}) {
   const calls: Array<{ table: string; selected?: string; filters: Array<[string, string, unknown]> }> = [];
   const db = { from: (table: string) => {
     const call = { table, selected: undefined as string | undefined, filters: [] as Array<[string, string, unknown]> }; calls.push(call);
@@ -17,7 +17,7 @@ function fake({ count = 1, rows = [{ status: "waiting", joined_at: "2026-11-20T1
       { id: "consult", name: "Consultation", modality: "consultation", active: true },
       { id: "treatment", name: "Treatment", modality: "thermolysis", active: true },
       { id: "inactive", name: "Consultation inactive", modality: "consultation", active: false },
-    ], count: servicesCount, error } : call.selected === "entry_id" ? { data: [{ entry_id: "person-a" }, { entry_id: "person-a" }, { entry_id: "person-b" }, { entry_id: "person-c" }], count: invitationsCount, error } : { count: 2, error };
+    ], count: servicesCount, error } : call.selected === "entry_id" ? { data: invitationRows, count: invitationsCount, error } : { count: 2, error };
     type Query = { select: (s: string) => Query; order: () => Query; limit: () => Query; then: (resolve: (r: unknown) => unknown) => Promise<unknown> } & Record<"eq" | "in" | "gte" | "is", (column: string, value: unknown) => Query>;
     const filter = (op: string) => (column: string, value: unknown): Query => { call.filters.push([op, column, value]); return q; };
     const q: Query = { select: (s) => { call.selected = s; return q; }, order: () => q, limit: () => q, then: (resolve) => Promise.resolve(result()).then(resolve), eq: filter("eq"), in: filter("in"), gte: filter("gte"), is: filter("is") };
@@ -67,6 +67,22 @@ describe("waitlist owner session loader", () => {
       const r = await loadWaitlistAnalytics({ role: "owner" }, studio, {}, now, db);
       expect(r.access === "granted" && r.view.summary.peopleInvited).toBeNull();
     }
+  });
+  it("withholds distinct people when the row count matches the rows but the cohort total is different", async () => {
+    h.outcomes.mockResolvedValue({ total: 5, declined: 1, linkUsed: 1, expiredRecorded: 0, released: 0, open: 3, deadlinePassed: 0 });
+    const { db } = fake({ invitationsCount: 4 });
+    const r = await loadWaitlistAnalytics({ role: "owner" }, studio, {}, now, db);
+    expect(r.access === "granted" && r.view.summary.peopleInvited).toBeNull();
+  });
+  it("withholds distinct people when the count equals the cohort total but fewer rows came back", async () => {
+    const { db } = fake({ invitationsCount: 4, invitationRows: [{ entry_id: "person-a" }, { entry_id: "person-b" }, { entry_id: "person-c" }] });
+    const r = await loadWaitlistAnalytics({ role: "owner" }, studio, {}, now, db);
+    expect(r.access === "granted" && r.view.summary.peopleInvited).toBeNull();
+  });
+  it("control: count, rows and cohort total all agreeing does show distinct people", async () => {
+    const { db } = fake();
+    const r = await loadWaitlistAnalytics({ role: "owner" }, studio, {}, now, db);
+    expect(r.access === "granted" && r.view.summary.peopleInvited).toBe(3);
   });
   it("failed reads are unknown, not zero, while unrelated invitation counts survive", async () => {
     const { db } = fake({ error: { code: "42501" } }); const r = await loadWaitlistAnalytics({ role: "owner" }, studio, {}, now, db);

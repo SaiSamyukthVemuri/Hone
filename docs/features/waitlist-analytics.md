@@ -12,16 +12,23 @@ existing waitlist workflow; it never creates an invitation or sends a message.
 - People invited: distinct waitlist entries in that cohort, from the existing
   owner-only booking-count command. While that command is unavailable, a bounded
   owner-session read counts entry references and returns only the aggregate.
-  An incomplete read or a cohort-total mismatch leaves this figure unavailable.
+  An incomplete read or a cohort-total mismatch leaves this figure unavailable;
+  that mismatch check belongs to the fallback read. With the command present,
+  People invited can show while Booked through invitation and the rate are
+  withheld, because those need the outcome counts to reconcile with the command.
 - Booked through invitation: an appointment explicitly linked by the canonical
   booking command. Includes bookings later cancelled; cancellation is also
   shown separately. Redemption alone is only **Link used**.
 - Invitation-to-booking rate: linked bookings / issued invitations. Pending
   invitations remain in the denominator. This is not a mature-cohort rate or
-  a forecast. Missing attribution, empty cohorts or inconsistent counts have no
-  displayed rate.
+  a forecast. A missing booking-count command, an empty cohort or counts that do
+  not reconcile have no displayed rate. When some people used their link and were
+  booked without a recorded link to the invitation, the rate still shows linked
+  bookings only, and the card says how many more bookings are not counted, so it
+  reads as a minimum.
 - Delivery disposition: accepted by the provider, refused, uncertain, or not
-  recorded. Provider acceptance is not delivery, an email open or a page view.
+  recorded. The four counts are read separately and are not checked to add up to
+  the cohort total, so each is a reading, not a partition. Provider acceptance is not delivery, an email open or a page view.
 - Active waitlist: current waiting, claimed and invited entries. Median and
   longest wait include everyone in those states, from their original join date.
   This population does not assert readiness, consent or availability matching.

@@ -71,6 +71,15 @@ describe("waitlist analytics: unsupported figures read in words, never zero", ()
     expect(t).toContain("Invitation-to-booking rate Not available");
     expect(t).not.toContain("0%");
   });
+  it("unlinked bookings: the rate is a labelled minimum that says how many bookings it leaves out", () => {
+    const t = page({ command: { ...command, bookedLinkedLive: 2, bookedThenCancelled: 1, convertedUnlinked: 2 } });
+    expect(t).toContain("30%");
+    expect(t).toContain("3 linked bookings ÷ 10 issued invitations");
+    expect(t).toContain("2 more bookings were made without a link to an invitation and are not counted, so this is a minimum.");
+  });
+  it("no unlinked bookings: no minimum sentence", () => {
+    expect(page({ command: { ...command, convertedUnlinked: 0 } })).not.toContain("so this is a minimum");
+  });
   it("the one place a figure is a real zero is a resolved cohort that booked nobody, and it says 0%", () => {
     const t = page({ command: { ...command, bookedLinkedLive: 0, bookedThenCancelled: 0 } });
     expect(t).toContain("Booked through invitation 0");
