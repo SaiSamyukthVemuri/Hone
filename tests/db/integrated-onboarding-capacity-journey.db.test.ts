@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { adminQuery, asUser, closePool, seedMember } from "./helpers/harness";
+import { clientFor } from "./helpers/client-per-practitioner";
 import {
   dropSynthStudio,
   seedSynthStudioB,
@@ -77,10 +78,10 @@ const availRows = (scope: string | null) =>
 type BookOut =
   | { ok: true; result: string; id: string | null }
   | { ok: false; code: string | undefined };
-const bookV2 = (actor: string, target: string, start: string, service: string): Promise<BookOut> =>
+const bookV2 = async (actor: string, target: string, start: string, service: string): Promise<BookOut> =>
   adminQuery(
     `select * from public.create_internal_appointment_v2($1,$2,$3,$4,$5,$6::timestamptz,$7,$8,$9,$10)`,
-    [S.studioId, actor, target, S.clientId, service, start, hash64(), null, null, false],
+    [S.studioId, actor, target, await clientFor(S.studioId, target), service, start, hash64(), null, null, false],
   )
     .then((r) => ({
       ok: true as const,

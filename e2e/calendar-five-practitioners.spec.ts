@@ -76,7 +76,8 @@ function getStudio(): Promise<Studio> {
 }
 
 const column = (page: Page, id: string) => page.locator(`[data-testid="team-day-column"][data-practitioner-id="${id}"]`);
-const cardsFor = (loc: ReturnType<Page["locator"]>, clientName: string) => loc.getByRole("button").filter({ hasText: clientName }).filter({ hasNotText: /Open quick-book/ });
+// A card is a button on the desktop grids and a link on the phone timeline.
+const cardsFor = (loc: ReturnType<Page["locator"]>, clientName: string) => loc.locator("a, button").filter({ hasText: clientName }).filter({ hasNotText: /Open quick-book/ });
 const offset = (hhmm: string) => { const [h, m] = hhmm.split(":").map(Number); return (h! - GRID_START_HOUR) * 60 + m!; };
 
 for (const [label, vp] of Object.entries(VIEWPORTS)) {
@@ -132,9 +133,23 @@ for (const [label, vp] of Object.entries(VIEWPORTS)) {
           await expect(cardsFor(surface(), q.clientName), `${p.key} selected: ${q.key}'s appointment ${expected ? "is" : "is not"} on ${s.day}`).toHaveCount(expected);
         }
       }
-      await page.goto(`/calendar?view=week&day=${s.day}`);
+      await page.goto(`/calendar?view=week&day=${s.day}&people=${s.people.map((x) => x.id).join(",")}`);
       await expect(surface()).toBeVisible({ timeout: 60_000 });
-      for (const p of s.people.filter((x) => x.at)) await expect(cardsFor(surface(), p.clientName), `everyone selected: ${p.key} is drawn once`).toHaveCount(1);
+      // Everyone selected: appointments that overlap in time share one date column, so the page offers a chooser ("Choose from N appointments"). Whichever
+      // way the page draws them, each one is listed once, with ITS OWN client and ITS OWN practitioner, and nobody else's.
+      const chooser = page.getByRole("button", { name: /^Choose from \d+ appointments$/ });
+      let scope: ReturnType<Page["locator"]> = surface();
+      if (await chooser.count()) {
+        await chooser.first().click();
+        scope = page.getByRole("dialog", { name: /Choose an appointment/ });
+        await expect(scope).toBeVisible({ timeout: 15_000 });
+      }
+      for (const p of s.people.filter((x) => x.at)) {
+        const row = cardsFor(scope, p.clientName);
+        await expect(row, `everyone selected: ${p.key} is listed once`).toHaveCount(1, { timeout: 15_000 });
+        await expect(row, `and under ${p.key}'s own name`).toContainText(p.name);
+      }
+      expect(await cardsFor(scope, s.people[4]!.clientName).count(), "the practitioner who is off that day has nothing listed").toBe(0);
       // the sidebar lists all five active practitioners, including the one who is off that day
       if (label === "desktop") await expect(page.getByTestId("calendar-sidebar-practitioner")).toHaveCount(5);
     });

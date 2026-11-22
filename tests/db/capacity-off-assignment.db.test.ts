@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { adminQuery, closePool } from "./helpers/harness";
+import { clientFor } from "./helpers/client-per-practitioner";
 import { dropSynthStudio, seedSynthStudioB, type SynthStudio } from "./helpers/synth-fleet";
 
 // Sam 1 Nov: assignment is not a capacity feature. In a capacity-OFF studio the owner can record WHICH
@@ -46,10 +47,10 @@ async function setup(capacity: boolean) {
   }
 }
 
-const book = (actor: string, target: string, start: string) =>
+const book = async (actor: string, target: string, start: string) =>
   adminQuery(
     `select * from public.create_internal_appointment_v2($1,$2,$3,$4,$5,$6::timestamptz,$7,null,null,false)`,
-    [B.studioId, actor, target, B.clientId, serviceId, start, hash64()],
+    [B.studioId, actor, target, await clientFor(B.studioId, target), serviceId, start, hash64()],
   ).then((r) => r.rows[0] as { result: string; appointment_id: string | null });
 
 const assigneeOf = async (id: string) =>

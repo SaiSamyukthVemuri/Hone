@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { adminQuery, asUser, closePool } from "./helpers/harness";
+import { clientFor } from "./helpers/client-per-practitioner";
 import { dropSynthStudio, seedSynthStudioB, type SynthStudio } from "./helpers/synth-fleet";
 
 // HON-48 simultaneous booking, MOVE versus BOOK. #1337 proves booking against booking. This file proves a move racing a booking
@@ -60,7 +61,7 @@ async function setup(capacity: boolean) {
 async function existing(practitionerId: string, start: string): Promise<{ id: string; startsAt: string; endsAt: string }> {
   const r = await adminQuery(
     `select * from public.create_internal_appointment_v2($1,$2,$3,$4,$5,$6::timestamptz,$7,null,null,false)`,
-    [B.studioId, owner(), practitionerId, B.clientId, serviceId, start, hash64()],
+    [B.studioId, owner(), practitionerId, await clientFor(B.studioId, practitionerId), serviceId, start, hash64()],
   );
   expect((r.rows[0] as { result: string }).result).toBe("created");
   const a = await adminQuery(
@@ -87,7 +88,7 @@ const bookerService = (actor: () => string, target: () => string, start: string)
   try {
     const r = await adminQuery(
       `select * from public.create_internal_appointment_v2($1,$2,$3,$4,$5,$6::timestamptz,$7,null,null,false)`,
-      [B.studioId, actor(), target(), B.clientId, serviceId, start, hash64()],
+      [B.studioId, actor(), target(), await clientFor(B.studioId, target()), serviceId, start, hash64()],
     );
     const row = r.rows[0] as { result: string };
     if (row.result === "created") return { kind: "created", detail: "created" };
@@ -98,7 +99,8 @@ const bookerService = (actor: () => string, target: () => string, start: string)
 };
 const bookerDesk = (target: () => string, start: string) => async (): Promise<Outcome> => {
   try {
-    const r = await asUser(deskUserId, (x) => x(`select * from public.receptionist_create_appointment($1,$2,$3,$4,$5::timestamptz)`, [B.studioId, target(), B.clientId, serviceId, start]));
+    const cid = await clientFor(B.studioId, target());
+    const r = await asUser(deskUserId, (x) => x(`select * from public.receptionist_create_appointment($1,$2,$3,$4,$5::timestamptz)`, [B.studioId, target(), cid, serviceId, start]));
     const row = r.rows[0] as { result: string };
     if (row.result === "created") return { kind: "created", detail: "created" };
     return { kind: HONEST_REFUSALS.has(row.result) ? "refused" : "error", detail: row.result };

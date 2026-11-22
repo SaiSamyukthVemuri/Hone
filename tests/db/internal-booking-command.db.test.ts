@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, afterEach, describe, expect, it } from "vitest";
 import { Client } from "pg";
 import { adminQuery, asRole, asUser, closePool, resolveLocalDbUrl } from "./helpers/harness";
+import { clientFor } from "./helpers/client-per-practitioner";
 import { dropSynthStudio, seedSynthStudioA, seedStudioWideOpenAllWeek, seedSynthStudioB, type SynthStudio } from "./helpers/synth-fleet";
 import { randomUUID } from "node:crypto";
 
@@ -45,7 +46,7 @@ afterAll(async () => {
 });
 
 type BookOut = { ok: true; result: string; id: string | null } | { ok: false; code: string | undefined };
-const book = (
+const book = async (
   actor: string,
   target: string,
   start: string,
@@ -69,7 +70,7 @@ const book = (
       B.studioId,
       actor,
       target,
-      opts.client ?? B.clientId,
+      opts.client ?? (await clientFor(B.studioId, target)),
       opts.service ?? serviceId,
       start,
       hash64(),

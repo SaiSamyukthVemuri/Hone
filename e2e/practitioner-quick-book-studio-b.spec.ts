@@ -213,7 +213,7 @@ test.describe("desktop calendar Quick Book (capacity ON)", () => {
     const slot = d.getByRole("button", { name: SLOT });
     await expect(slot.first()).toBeVisible({ timeout: 20_000 });
     const before = await apptIds(seed.studioId, clientId);
-    await slot.last().click(); // A @ last (distinct resource from owner's B @ last)
+    await slot.nth(-2).click(); // A @ second to last: a different start from the owner's B @ last (one client holds one live appointment per service and start)
 
     await d.getByRole("button", { name: /^Book appointment$/ }).click();
     await expect(d).toBeHidden({ timeout: 20_000 });
@@ -340,7 +340,7 @@ test.describe("mobile calendar Quick Book (capacity ON)", () => {
     const slot = d.getByRole("button", { name: SLOT });
     await expect(slot.first()).toBeVisible({ timeout: 20_000 });
     const before = await apptIds(seed.studioId, clientId);
-    await slot.first().click(); // A @ first (distinct from desktop member's A @ last)
+    await slot.nth(1).click(); // A @ second (a different start from every other booking of this client in the file: one client holds one live appointment per service and start)
     await d.getByRole("button", { name: /^Book appointment$/ }).click();
     await expect(d).toBeHidden({ timeout: 20_000 });
 

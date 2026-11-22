@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { adminQuery, asUser, closePool } from "./helpers/harness";
+import { clientFor } from "./helpers/client-per-practitioner";
 import { dropSynthStudio, seedSynthStudioB, type SynthStudio } from "./helpers/synth-fleet";
 
 // HON-48 simultaneous booking. Several actors (the owner, a second practitioner,
@@ -81,7 +82,7 @@ const practitionerBooks =
       try {
         const r = await adminQuery(
           `select * from public.create_internal_appointment_v2($1,$2,$3,$4,$5,$6::timestamptz,$7,null,null,$8)`,
-          [B.studioId, actor(), target(), B.clientId, serviceId, start, hash64(), outside],
+          [B.studioId, actor(), target(), await clientFor(B.studioId, target()), serviceId, start, hash64(), outside],
         );
         const row = r.rows[0] as { result: string };
         if (row.result === "created") return { kind: "created", detail: "created" };
@@ -97,11 +98,12 @@ const receptionistBooks = (name: string, target: () => string): Racer => ({
   name,
   run: async (start) => {
     try {
+      const cid = await clientFor(B.studioId, target());
       const r = await asUser(deskUserId, (x) =>
         x(`select * from public.receptionist_create_appointment($1,$2,$3,$4,$5::timestamptz)`, [
           B.studioId,
           target(),
-          B.clientId,
+          cid,
           serviceId,
           start,
         ]),
