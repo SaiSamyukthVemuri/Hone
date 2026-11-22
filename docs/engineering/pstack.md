@@ -61,6 +61,10 @@ with upstream defaults. Apply these adaptations before executing a playbook:
   configuration, inherit the session model rather than inventing model IDs or
   forcing upstream's provider defaults. Never present same-model workers as
   independent vendors. Do not alter global model preferences for this rollout.
+  When spawning pstack's `poteto-agent`, always pass an explicit model equal to
+  the session's configured model; its bundled frontmatter model is not used.
+  Where the host cannot pass one, use the host's general agent with the same
+  brief instead.
 - **Unavailable tools.** Map todo, forge, and browser steps to available tools.
   Use the GitHub connector when it is the selected integration. The Codex host
   owns worker creation and workspace isolation; do not pass Cursor-only fields.
@@ -68,7 +72,8 @@ with upstream defaults. Apply these adaptations before executing a playbook:
   work. Never claim a skipped check passed.
 - **Authority.** Pstack is a workflow, not permission to merge, deploy, apply
   hosted migrations, change providers or credentials, operate live payments,
-  send customer/team messages, or delete records. Honor existing per-change
+  send customer/team messages, delete records, or install system software or
+  run piped install scripts. Honor existing per-change
   authorization and holds. Do not bypass a tool refusal through another agent,
   credential, or execution route. A playbook may not send repository content,
   client data, production identifiers or secrets to any model or service beyond
