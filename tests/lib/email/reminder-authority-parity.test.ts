@@ -82,7 +82,7 @@ describe("operation-path render parity with the legacy reminder", () => {
 
   async function render(studio: Record<string, unknown>, visibility: unknown) {
     const { buildAppointmentEmailOperationPayload } = await import("@/lib/email/send-appointment");
-    const payload = buildAppointmentEmailOperationPayload(projection(studio) as never, "reminder_24h", "appointment-1", visibility);
+    const payload = buildAppointmentEmailOperationPayload(projection(studio) as never, "reminder_24h", "appointment-1", visibility, undefined, true);
     expect(payload).not.toBeNull();
     const p = payload as unknown as { subject: string; html: string; text: string };
     return { ...p, all: `${p.subject}\n${p.html}\n${p.text}` };
@@ -168,5 +168,63 @@ describe("operation caller reads address visibility before freezing the request"
     expect(body).toMatch(/from\("studios"\)\.select\("address_visibility"\)/);
     expect(body).toMatch(/resolveOperationAddressVisibility\(/);
     expect(body.indexOf('from("studios")')).toBeLessThan(body.indexOf("adapter.freeze("));
+  });
+});
+
+describe("the reminder email's portal link follows the portal switch", () => {
+  beforeEach(() => {
+    vi.stubEnv("NEXT_PUBLIC_APP_ORIGIN", "https://example.invalid");
+    vi.stubEnv("APPOINTMENT_SIGNING_SECRET", "synthetic-appointment-secret-32-bytes");
+    vi.stubEnv("INTAKE_SIGNING_SECRET", "synthetic-intake-secret-32-bytes");
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  const projection = () => ({
+    appointment: { id: "appointment-1", studio_id: "studio", client_id: "client", status: "confirmed" as const, starts_at: "2026-10-23T12:00:00.000Z", ends_at: "2026-10-23T13:00:00.000Z", duration_minutes: 60 },
+    client: { id: "client", name: "Synthetic Client", email: "client@harness.local" },
+    studio: { id: "studio", name: "Original studio", address: "1 Synthetic Street", slug: "original-studio", timezone: "America/Toronto", owner_email: null, postcare_contact_email: null },
+    service: null, practitioner: null, treatmentTime: null, intake: null, attachments: null,
+  });
+  async function text(portalEnabled: boolean) {
+    const { buildAppointmentEmailOperationPayload } = await import("@/lib/email/send-appointment");
+    const p = buildAppointmentEmailOperationPayload(projection() as never, "reminder_24h", "appointment-1", "both", undefined, portalEnabled) as unknown as { html: string; text: string };
+    expect(p).not.toBeNull();
+    return `${p.html}\n${p.text}`;
+  }
+
+  it("portal ON: the reminder carries the studio's portal sign-in link", async () => {
+    expect(await text(true)).toContain("/portal/login?studio=original-studio");
+  });
+  it("portal OFF: the reminder carries NO portal link (and still carries the appointment details)", async () => {
+    const all = await text(false);
+    expect(all).not.toContain("/portal/login");
+    expect(all).not.toMatch(/secure client portal/i);
+    expect(all).toContain("Original studio");
+  });
+
+  it("resolveOperationPortalEnabled: an absent column is the default (on); a false value, a missing row, any other failure and a non-boolean are closed", async () => {
+    const { resolveOperationPortalEnabled: r } = await import("@/lib/email/send-appointment");
+    const miss = { code: "42703", message: 'column studios.client_portal_enabled does not exist' };
+    expect(r({ data: null, error: miss })).toBe(true);
+    expect(r({ data: null, error: { code: "PGRST204", message: "Could not find the 'client_portal_enabled' column of 'studios' in the schema cache" } })).toBe(true);
+    expect(r({ data: {}, error: null })).toBe(true); // key absent: the policy loader's default
+    expect(r({ data: { client_portal_enabled: true }, error: null })).toBe(true);
+    expect(r({ data: { client_portal_enabled: false }, error: null })).toBe(false);
+    expect(r({ data: null, error: null })).toBe(false); // no row
+    expect(r({ data: { client_portal_enabled: null }, error: null })).toBe(false);
+    expect(r({ data: { client_portal_enabled: "false" }, error: null })).toBe(false);
+    expect(r({ data: null, error: { code: "57014", message: "statement timeout" } })).toBe(false);
+    expect(r({ data: null, error: { code: "42703", message: "column studios.other does not exist" } })).toBe(false); // a DIFFERENT missing column is not ours
+  });
+
+  it("the operation caller reads the switch before freezing the request and passes it to the renderer (source contract)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("lib/email/send-appointment.ts", "utf8");
+    const body = src.slice(src.indexOf("export async function sendAppointmentReminderOperation"));
+    expect(body).toMatch(/resolveOperationPortalEnabled\(\s*await admin\.from\("studios"\)\.select\("client_portal_enabled"\)\.eq\("id", studioId\)\.maybeSingle\(\)\)/);
+    expect(body).toMatch(/buildAppointmentEmailOperationPayload\(original, purpose, appointmentId, addressVisibility, nameFields, portalEnabled\)/);
+    expect(body.indexOf("client_portal_enabled")).toBeLessThan(body.indexOf("adapter.freeze("));
+    // the renderer feeds the flag into the shared link decision, with no literal
+    expect(src).toMatch(/portalLoginUrlForStudio\(\{ slug: p\.studio\.slug\.trim\(\), client_portal_enabled: portalEnabled \}\)/);
   });
 });

@@ -147,6 +147,7 @@ export type DeliveryResult = {
 export type DeliveryStudio = {
   id: string;
   name?: string | null;
+  timezone?: string | null;
   postcare_contact_email?: string | null;
   owner_email?: string | null;
 };
@@ -251,7 +252,7 @@ export async function sendWaitlistInvitationEmail(args: {
     // failed: remaining time drifted between retries and moved the key; the
     // minted window was stable but claimed "3 days" on a send made a day after
     // issuance. A fixed point is stable AND stays true when delivery is late.
-    expiresAtLabel: invitationExpiryLabel(args.expiresAt),
+    expiresAtLabel: invitationExpiryLabel(args.expiresAt, args.studio.timezone),
     // Per-invitation subject reference (the email subject sweep). Derived from
     // the invitation id, the same event this send is keyed on.
     invitationReference: emailWaitlistReference(args.invitationId),

@@ -211,7 +211,7 @@ describe("the handoff's shape, pinned on source", () => {
     // refused by the command after a round trip.
     const src = read(FORM);
     expect(src).toMatch(/if \(machineDraft\?\.blocking\)/);
-    expect(src).toMatch(/setError\(machineDraft\.blocking\)/);
+    expect(src).toMatch(/fail\(machineDraft\.blocking\)/);
   });
 
   it("the FORM OFFERS the retry, and keeps its key alive to make it safe", () => {
@@ -1891,7 +1891,7 @@ describe("a lost create answer keeps its key AND its identity", () => {
     expect(src).toMatch(/if \(createAttemptRef\.current !== null\) return;\s*identityDraftRef\.current = choice;/);
   });
   it("a refusal after a lost answer keeps the key, freezes the form and says reload; only a first-attempt refusal drops it", () => {
-    const m = src.match(/if \("unresolved" in res && res\.unresolved\) \{[\s\S]*?return;\n      \}/)!;
+    const m = src.match(/if \("unresolved" in res && res\.unresolved\) \{[\s\S]*?\n        \}\n      \}/)!;
     expect(m).not.toBeNull();
     const body = m[0];
     expect(body).toMatch(/else if \(createAttemptRef\.current\.unresolved\) \{[\s\S]*?CREATE_REFUSED_AFTER_LOST_ANSWER[\s\S]*?setSaveUnresolved\(true\)/);

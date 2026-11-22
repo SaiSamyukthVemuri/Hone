@@ -33,8 +33,15 @@ export function registrationProblem(
   return null;
 }
 
+/** The model the form acts on: the person's choice while it is still listed, otherwise the first listed model (what the menu then shows). */
+export function reconcileProfileId(chosen: string, models: ReadonlyArray<RegisterableModel>): string {
+  return models.some((m) => m.profileId === chosen) ? chosen : (models[0]?.profileId ?? "");
+}
+
 export function MachineRegisterForm({ models, register, contractCheckFailed = false }: Props) {
-  const [profileId, setProfileId] = useState(models[0]?.profileId ?? "");
+  const [chosen, setProfileId] = useState(models[0]?.profileId ?? "");
+  // Derived on every render, so a model that has left the list (a registration removed it) can never be submitted while the menu shows another.
+  const profileId = reconcileProfileId(chosen, models);
   const [displayName, setDisplayName] = useState("");
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(
     null,

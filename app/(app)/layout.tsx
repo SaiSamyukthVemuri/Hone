@@ -6,6 +6,7 @@ import { PrimaryNavLink } from "./PrimaryNavLink";
 import { AppMain } from "./AppMain";
 import { MobileMenu } from "./MobileMenu";
 import { AccountMenu } from "./AccountMenu";
+import { BusinessMenu } from "./BusinessMenu";
 import { SignOutFlightProvider } from "./signout-flight";
 import { GlobalSearch } from "./GlobalSearch";
 import { createClient } from "@/lib/supabase/server";
@@ -20,6 +21,7 @@ import { AppFooter } from "@/app/_components/AppFooter";
 import { SafeAnalytics } from "@/app/_components/SafeAnalytics";
 import { identifyServerUser } from "@/lib/analytics/server";
 import { timed } from "@/lib/observability/perf-timing";
+import { showWaitlistInPrimaryNav } from "@/lib/settings/nav-registry";
 import { scopeNotificationsToViewer } from "@/lib/notifications/owner-only-events";
 
 export default async function AppLayout({
@@ -63,12 +65,23 @@ export default async function AppLayout({
   // Willow follow-up: overdue disinfectant "Replace now" records also count
   // toward the badge (computed, not persisted) so the operational safety alert is
   // visible from every page. Two bounded studio-scoped reads, run together.
-  const [unreadPersisted, overdueDisinfectantCount] = await timed(
+  //
+  // "Waitlist" in the main navigation follows the Settings tab's own rule for the
+  // CURRENT studio and role (never broader), and fails closed. It needs only the
+  // identity above, so it runs WITH these reads instead of ahead of them, and is
+  // measured under its own span so its cost is visible in production timings.
+  const [unreadPersisted, overdueDisinfectantCount, showWaitlist] = await timed(
     "shell.support-reads",
     () =>
       Promise.all([
         loadUnreadNotificationCount(studio.id, practitioner.role === "owner", practitioner.id),
         loadOverdueDisinfectantCount(studio.id, studio.timezone),
+        timed("shell.waitlist-nav", () =>
+          showWaitlistInPrimaryNav({
+            role: practitioner.role === "owner" ? "owner" : "practitioner",
+            studio,
+          }),
+        ),
       ]),
   );
   const unreadNotifications = unreadPersisted + overdueDisinfectantCount;
@@ -155,6 +168,16 @@ export default async function AppLayout({
               >
                 Calendar
               </PrimaryNavLink>
+              {showWaitlist && (
+                <PrimaryNavLink
+                  href="/settings/waitlist"
+                  match="section"
+                  testId="nav-waitlist"
+                  pendingLabel="Opening Waitlist…"
+                >
+                  Waitlist
+                </PrimaryNavLink>
+              )}
               {/* PR #229: Notifications moved out of the main tab
                   row to the header bell (right side, both
                   breakpoints), so the primary nav competes less and
@@ -178,27 +201,19 @@ export default async function AppLayout({
                   so financials and the rest of the owner business
                   intelligence can land behind this same word without
                   renaming the tab under owners who learned it. Today
-                  it goes straight to the one surface that exists;
-                  there is deliberately no /business hub standing empty.
+                  it is a small menu of the two owner surfaces that exist,
+                  Capacity and Statements; there is deliberately
+                  no /business hub standing empty.
 
                   OWNER-ONLY PRESENTATION, and only that. The role comes
                   from the practitioner this layout ALREADY resolved — no
                   second lookup, no extra query. Hiding the tab protects
-                  nothing: /dashboard/capacity keeps its own server-side
-                  owner check, which is the authority, and a practitioner
+                  nothing: /dashboard/capacity and /financials/statement
+                  each keep their own server-side owner check, which is the authority, and a practitioner
                   typing the route still meets it. This just stops
                   advertising a surface they cannot use, rather than
                   offering a disabled item or a permission placeholder. */}
-              {practitioner.role === "owner" && (
-                <PrimaryNavLink
-                  href="/dashboard/capacity"
-                  match="section"
-                  testId="nav-business"
-                  pendingLabel="Opening Business…"
-                >
-                  Business
-                </PrimaryNavLink>
-              )}
+              {practitioner.role === "owner" && <BusinessMenu />}
               {/* PR #231: Settings and Admin moved into the account
                   dropdown; the primary nav is the working surfaces. */}
             </nav>
@@ -243,6 +258,7 @@ export default async function AppLayout({
               studioName={studio.name}
               role={practitioner.role}
               canSwitchStudio={canSwitchStudio}
+              showWaitlist={showWaitlist}
             />
           </div>
         </div>
