@@ -1168,6 +1168,8 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
           // FIRST write; an overlapping booking that got there first, or a STOP
           // that landed meanwhile, is adopted from the row rather than lost
           // (lib/booking/public-consent-stamp.ts).
+          // existingClient is the row looked up above under THIS studio (.eq("studio_id", studio.id)), so the replacement can only act on
+          // a client of the studio the booking is for; the function matches by that client id and the number its consent is bound to.
           const replacing = consentIsForOtherNumber && boundPhone != null ? boundPhone : undefined;
           const stamp = await stampPublicBookingConsent(admin, existingClient.id, new Date().toISOString(), replacing);
           if (stamp.result === "error") {

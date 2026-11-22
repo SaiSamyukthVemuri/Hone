@@ -98,6 +98,19 @@ describe("the fresh-consent stamp is a compare-and-set on the bound number", () 
     expect(r.result).toBe("stamped");
     expect(calls).toEqual([{ fn: "replace_client_sms_consent", args: { p_client_id: "c1", p_bound_phone: "+14165550100", p_consent_at: "T", p_text_version: "booking_sms_v2" } }]);
   });
+  it("an error from the replacement function is reported with its code (never swallowed), and so is a throw", async () => {
+    const failing = { rpc: () => Promise.resolve({ data: null, error: { code: "42501" } }), from: () => { throw new Error("no direct write"); } };
+    expect(await stampPublicBookingConsent(failing as never, "c1", "T", "+14165550100")).toEqual({ result: "error", code: "42501" });
+    const throwing = { rpc: () => { throw new Error("boom"); } };
+    expect(await stampPublicBookingConsent(throwing as never, "c1", "T", "+14165550100")).toEqual({ result: "error", code: null });
+  });
+  it("the booking action logs a code-only event for a failed stamp, and looks the client up under the booking's own studio", () => {
+    const src = readFileSync("app/book/[slug]/actions.ts", "utf8");
+    expect(src).toMatch(/stamp\.result === "error"[\s\S]{0,400}logInternalBookingError\("public_booking_sms_consent_update_failed", \{\s*code: stamp\.code,/);
+    const lookup = src.indexOf('.select("id, name, email, phone, sms_consent_at, sms_consent_phone, sms_opted_out_at")');
+    expect(lookup).toBeGreaterThan(0);
+    expect(src.slice(lookup, lookup + 200)).toContain('.eq("studio_id", studio.id)');
+  });
   it("no row replaced (false) falls through to adopting what is on record", async () => {
     const admin = {
       rpc: () => Promise.resolve({ data: false, error: null }),
