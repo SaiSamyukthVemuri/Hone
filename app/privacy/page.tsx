@@ -63,8 +63,7 @@ export default function PrivacyPolicyPage() {
         practice operations.
       </P>
       <P>
-        Hone is operated by <strong>Sam Vemuri</strong> (an individual
-        operating as Hone, pending incorporation), located in Ontario, Canada.
+        Hone is operated by <strong>Hone Care, Inc.</strong>, a Delaware corporation.
       </P>
       <P>
         For privacy-related questions, contact us at{" "}
@@ -620,8 +619,7 @@ export default function PrivacyPolicyPage() {
         </a>
       </P>
       <P>
-        <strong>Operator:</strong> Sam Vemuri (operating as Hone, pending
-        incorporation), Ontario, Canada
+        <strong>Operator:</strong> Hone Care, Inc., a Delaware corporation
       </P>
       <P>
         <strong>Filing a complaint:</strong> Office of the Privacy Commissioner

@@ -30,8 +30,7 @@ export default function TermsOfServicePage() {
         bound by these Terms. If you do not agree, do not use Hone.
       </P>
       <P>
-        Hone is operated by <strong>Sam Vemuri</strong> (an individual
-        operating as Hone, pending incorporation), located in Ontario, Canada.
+        Hone is operated by <strong>Hone Care, Inc.</strong>, a Delaware corporation.
         References in these Terms to &ldquo;we,&rdquo; &ldquo;us,&rdquo; and
         &ldquo;our&rdquo; refer to this operator.
       </P>
@@ -576,8 +575,7 @@ export default function TermsOfServicePage() {
         forthcoming, will be provided upon request)
       </P>
       <P>
-        <strong>Operator:</strong> Sam Vemuri (operating as Hone, pending
-        incorporation), Ontario, Canada
+        <strong>Operator:</strong> Hone Care, Inc., a Delaware corporation
       </P>
     </PolicyLayout>
   );
