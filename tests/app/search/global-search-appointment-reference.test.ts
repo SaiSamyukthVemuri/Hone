@@ -320,3 +320,62 @@ describe("appointment reference search", () => {
     expect(exact.ok && exact.referenceTruncated).toBeFalsy();
   });
 });
+
+// Hardening: the defences the first set did not pin (Insurance's review notes on the reference lookup).
+describe("appointment reference search: pinned defences", () => {
+  it("the detail read is scoped to the caller's studio too, not only the id scan", async () => {
+    tables.appointments = [appt("a-1", STUDIO_A)];
+    await globalSearchAction(emailBookingReference("a-1"));
+    const detail = queries.filter((q) => q.table === "appointments" && q.select !== "id");
+    expect(detail.length, "the detail read ran").toBeGreaterThan(0);
+    for (const q of detail) expect(q.eq).toContainEqual(["studio_id", STUDIO_A]);
+    // And it asks for exactly the ids the scan matched, never a wider set.
+    expect(detail.some((q) => q.in.some(([col, ids]) => col === "id" && ids.length === 1 && ids[0] === "a-1"))).toBe(true);
+  });
+
+  it("a read error on the probe at the scan bound fails the search instead of reading as 'not truncated'", async () => {
+    tables.appointments = ["a-1", "a-2", "a-3", "a-4", "a-5", "a-6"].map((id) => appt(id, STUDIO_A));
+    let idReads = 0;
+    // Bound 4, page 2: reads 1 and 2 are the pages, read 3 is the probe one row past the bound.
+    fault.when = (q) => q.table === "appointments" && q.select === "id" && ++idReads === 3;
+    expect(await globalSearchAction("ZZZZZZ")).toEqual({ ok: false });
+    expect(fault.failed).toBe(1);
+  });
+
+  it("an appointment found by its reference AND by an ordinary match appears once, reference first", async () => {
+    tables.clients = [{ id: "c-1", studio_id: STUDIO_A, name: "DUPDUP Doe", email: null, phone: null, archived_at: null }];
+    tables.appointments = [
+      appt("dup-9", STUDIO_A, { client_id: "c-1", client: { name: "DUPDUP Doe" } }),
+      appt("a-1", STUDIO_A, { client_id: "c-1", client: { name: "DUPDUP Doe" }, starts_at: "2026-11-20T18:00:00Z" }),
+    ];
+    const r = await globalSearchAction("dupdup");
+    expect(r.ok).toBe(true);
+    const ids = idsOf(r);
+    expect(ids.filter((id) => id === "appointment:dup-9")).toHaveLength(1);
+    expect(ids[0]).toBe("appointment:dup-9");
+    expect(new Set(ids).size, "no appointment is listed twice").toBe(ids.length);
+  });
+
+  it("an appointment result has exactly one shape, from the reference path and from the ordinary path", async () => {
+    tables.clients = [{ id: "c-1", studio_id: STUDIO_A, name: "Zed Ordinary", email: null, phone: null, archived_at: null }];
+    tables.appointments = [appt("a-1", STUDIO_A, { client_id: "c-1", client: { name: "Zed Ordinary" }, status: "confirmed", starts_at: "2026-11-25T18:00:00Z" })];
+    const want = {
+      id: "appointment:a-1", type: "appointment", title: "Zed Ordinary", subtitle: "Facial",
+      href: "/calendar/a-1", date: "2026-11-25", badge: "confirmed",
+    };
+    const ordinary = await globalSearchAction("Ordinary");
+    const viaOrdinary = ordinary.ok ? ordinary.results.find((x) => x.id === "appointment:a-1") : undefined;
+    expect(viaOrdinary).toStrictEqual(want);
+    const byRef = await globalSearchAction(emailBookingReference("a-1"));
+    const viaReference = byRef.ok ? byRef.results.find((x) => x.id === "appointment:a-1") : undefined;
+    expect(viaReference).toStrictEqual(want);
+  });
+
+  it("guard: the search action builds an appointment result in one place", async () => {
+    const src = await import("node:fs").then((fs) => fs.readFileSync("app/(app)/global-search-actions.ts", "utf8"));
+    expect(src.match(/type: "appointment"/g) ?? []).toHaveLength(1);
+    expect(src.match(/function appointmentResult\(/g) ?? []).toHaveLength(1);
+    expect(src).toContain("results.push(appointmentResult(a))");
+    expect(src).toContain("rows.map(appointmentResult)");
+  });
+});
