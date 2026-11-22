@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import {
   buildGettingStarted,
+  checklistLinkDestination,
   legacyChecklistMayOfferNextStep,
   nextSetupStep,
   getGettingStartedSignals,
@@ -49,7 +50,7 @@ function Item({ item }: { item: ChecklistItem }) {
           href={item.href}
           className="text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
         >
-          Open {item.label}
+          Open {checklistLinkDestination(item.href)}
         </Link>
       )}
     </li>

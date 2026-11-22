@@ -210,7 +210,7 @@ function DeclinedView({ keptOnList, answered }: { keptOnList: boolean; answered?
   if (answered === "answers") {
     return (
       <div className="flex flex-col gap-4" data-testid="declined-answers">
-        <h1 className="text-xl text-[#0A0A0A]">Thanks. Your reply is saved</h1>
+        <h1 className="text-xl text-[#0A0A0A]">Thanks. Your reply is saved for the studio</h1>
         <p className="text-sm text-[#6B6B6B]">{DECLINE_CONFIRMATION}</p>
       </div>
     );
@@ -226,7 +226,7 @@ function DeclinedView({ keptOnList, answered }: { keptOnList: boolean; answered?
   if (keptOnList) {
     return (
       <div className="flex flex-col gap-4">
-        <h1 className="text-xl text-[#0A0A0A]">Your reply is saved</h1>
+        <h1 className="text-xl text-[#0A0A0A]">Thanks. Your reply is saved for the studio</h1>
         <p className="text-sm text-[#6B6B6B]">
           You keep your original join date. This invitation is closed, so these times can’t be
           booked from this link. The studio decides who is invited next and may send you a new

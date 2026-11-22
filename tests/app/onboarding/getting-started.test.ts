@@ -172,7 +172,7 @@ describe("placement + page", () => {
     expect(PAGE).toMatch(/Done/);
     expect(PAGE).toMatch(/To do/);
     expect(PAGE).toMatch(/Review/);
-    expect(PAGE).toMatch(/Open \{item.label\}/);
+    expect(PAGE).toMatch(/Open \{checklistLinkDestination\(item\.href\)\}/);
   });
 });
 

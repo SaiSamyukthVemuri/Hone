@@ -48,7 +48,7 @@ function slotButtons(page: Page) {
 async function openReschedule(page: Page, token: string) {
   await page.goto(`/reschedule/${token}`);
   await expect(
-    page.getByText("Choose a new time that works better for you."),
+    page.getByRole("heading", { name: "Reschedule appointment" }),
   ).toBeVisible();
 }
 

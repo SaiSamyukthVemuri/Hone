@@ -557,7 +557,7 @@ describe("owner capacity briefing", () => {
     expect(markup).toMatch(/Current, non-archived clients only/);
     expect(markup).toMatch(/Treatment appointments only/);
     expect(markup).toMatch(/consultations and buffers are excluded/i);
-    expect(markup).toMatch(/Future treatment time/);
+    expect(markup).toMatch(/Treatment time booked/);
 
     // BOOKING DEPTH IS TREATMENT-ONLY, and every visible label must say so.
     // The bands exclude consultations, so a client whose only future booking is
