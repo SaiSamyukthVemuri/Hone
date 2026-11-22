@@ -72,3 +72,15 @@ describe("the current waiting pool", () => {
     expect(pool).toMatchObject({ total: 2, waiting: 1, claimed: 1, agedCount: 0, medianDays: null, longestDays: null });
   });
 });
+
+describe("capacity filters", () => {
+  const services = [{ id: "own-consult", name: "Consultation" }];
+  it("defaults to a loaded eligible service and 7 days", () => expect(parseWaitlistParams({}, services)).toEqual({ serviceId: "own-consult", days: 7, notices: [] }));
+  it("rejects foreign or repeated service params instead of selecting another service", () => {
+    for (const service of ["foreign-service", ["own-consult", "foreign-service"]]) expect(parseWaitlistParams({ service }, services).serviceId).toBeNull();
+  });
+  it("accepts only the supported horizons", () => {
+    for (const days of ["7", "14", "28"]) expect(parseWaitlistParams({ days }, services).days).toBe(Number(days));
+    for (const days of ["900", "-1", ["7", "28"], "junk"]) expect(parseWaitlistParams({ days }, services).notices.length).toBeGreaterThan(0);
+  });
+});
