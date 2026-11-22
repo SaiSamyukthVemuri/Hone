@@ -299,7 +299,7 @@ describe("the Overview layout", () => {
   const text = (h: string) => h.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/\s+/g, " ");
   it("has the new title, the Overview tab as current, Clients as the one link, and the other three as disabled text", () => {
     expect(html).toContain("<h1");
-    expect(text(html)).toContain("Your practice, in perspective.");
+    expect(html).toMatch(/<h1[^>]*>Analytics<\/h1>/);
     const tabs = html.match(/<ul[^>]*aria-label="Analytics sections"[^>]*>([\s\S]*?)<\/ul>/)?.[1] ?? "";
     expect(tabs).toContain('aria-current="page"');
     expect((tabs.match(/aria-disabled="true"/g) ?? []).length).toBe(3);
@@ -498,7 +498,7 @@ describe("the named client lists on the page", () => {
   it("shows the three lists with display names, in order, and the cap sentence", () => {
     const html = render(named(NAMES));
     const s = section(html);
-    expect(s).toContain("Your client relationships");
+    expect(s).toContain("Client rankings");
     const spend = card(html, "ov-top-spenders") ?? "";
     expect(spend.indexOf("Olive Over")).toBeGreaterThan(-1);
     expect(spend.indexOf("Olive Over")).toBeLessThan(spend.indexOf("Quinn Quoted")); // $95.00 before $90.00
@@ -595,3 +595,4 @@ describe("the named client lists on the page", () => {
     expect(candidateClientIds(input({ current: { ok: false, reason: "read_failed" } }))).toEqual([]);
   });
 });
+
