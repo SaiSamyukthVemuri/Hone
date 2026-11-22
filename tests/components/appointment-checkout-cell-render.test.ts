@@ -257,3 +257,48 @@ describe("HON-45: a part payment is never badged as the visit paid", () => {
   });
 });
 
+
+// A completed visit with NO card money and NO settlement says so.
+// Cardless completion already works and records nothing as paid; the gap was
+// that the row showed only a Checkout button, with no statement that the visit
+// is unpaid. The label is a neutral fact (never emerald, never "Paid"), sits
+// BESIDE Checkout, and is claimed only for `chargeable` (a session exists, no
+// terminal charge or settlement, and the price is not explicitly zero; an
+// unpriced visit also qualifies).
+describe("a completed, unpaid, chargeable visit reads Not paid yet", () => {
+  it("chargeable renders the Not paid yet label AND the ordinary Checkout", () => {
+    const html = render("chargeable");
+    expect(html).toContain('data-testid="appointment-not-paid-yet"');
+    expect(html).toContain("Not paid yet");
+    expect(hasCheckout(html)).toBe(true);
+    expect(html).not.toContain("emerald");
+    expect(html).not.toContain("Paid<");
+  });
+
+  it.each([
+    "paid",
+    "processing",
+    "refunded",
+    "refunded_full",
+    "free",
+    "unavailable",
+    "no_session",
+    "settled_cash",
+    "settled_waived",
+    "settled_owing",
+    "settled_collected_none",
+  ])("%s never renders the Not paid yet label (no claim beyond what is known)", (state) => {
+    expect(render(state)).not.toContain("Not paid yet");
+  });
+
+  it("a visit that is not completed renders nothing at all", () => {
+    const html = renderToStaticMarkup(
+      createElement(AppointmentCheckoutCell, {
+        appointmentId: APPT,
+        status: "confirmed",
+        paymentState: "chargeable",
+      } as never) as ReactNode,
+    );
+    expect(html).toBe("");
+  });
+});

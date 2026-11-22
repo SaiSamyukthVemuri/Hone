@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { calendarCollisionGroups, timedBlockCollisionId } from "@/lib/calendar/appointment-lanes";
-import { AppointmentOverlapChooser } from "./AppointmentOverlapChooser";
+import { AppointmentOverlapChooser, OverlapSummaryRows } from "./AppointmentOverlapChooser";
 import type { StudioTimedBlock } from "@/lib/types/database";
 import type {
   AppointmentWithPractitionerColor,
@@ -344,10 +344,9 @@ export function MobileDayTimeline({
           if (members.length > 1) return (
             <button key={group.ids.join(":")} type="button" style={{ top, height }}
               aria-label={`Choose from ${members.length} appointments`}
-              className="absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 border-neutral-500 bg-neutral-100 px-2 py-1 text-left text-sm text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100"
+              className="@container absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 border-neutral-500 bg-neutral-100 px-2 py-1 text-left text-sm text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100"
               onClick={(event) => { event.stopPropagation(); setOverlapIds(group.ids); }}>
-              <span className="block font-semibold">{members.length} appointments</span>
-              <span className="block tabular-nums">{formatTimeForStudio(start, tz, timeFormat)}</span>
+              <OverlapSummaryRows members={members} height={height} tz={tz} timeFormat={timeFormat} />
             </button>
           );
           const clientName = a.client?.name?.trim() || "Client";
