@@ -10,7 +10,7 @@ import { clientNameOf, TZ } from "./hon48-support/five-user-team";
 // iPhone 13: touch input, a coarse pointer, the device viewport. It is NOT a physical iPad and NOT the WebKit engine; the
 // human recheck on a real device stays open.
 //
-// Opt-in: HON48_FIVE_USER_E2E=1.
+// Runs in the required calendar lane.
 //
 // The report: on an iPad, nearby appointments in the day calendar were hidden in one "multiple appointments" bubble. A
 // calendar of 15-minute appointments back to back is the case that crowds: each card is drawn at least 44 px tall, so
@@ -22,7 +22,6 @@ import { clientNameOf, TZ } from "./hon48-support/five-user-team";
 //   * choosing each opens THAT appointment (the preview drawer, or the appointment's own page), never a neighbour;
 //   * the chooser, when used, lists all three: nothing is hidden behind a count alone.
 
-test.skip(process.env.HON48_FIVE_USER_E2E !== "1", "opt-in HON-48 tablet/phone proof; set HON48_FIVE_USER_E2E=1");
 test.describe.configure({ mode: "serial" });
 
 const { defaultBrowserType: _a, ...IPAD } = devices["iPad Pro 11"];

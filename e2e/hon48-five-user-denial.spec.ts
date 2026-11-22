@@ -5,7 +5,7 @@ import { closeTeam, clientNameOf, rows, setupFiveUserTeam, TZ, type Team } from 
 
 // HON-48 five-user proof, part 3: ROLE AND TWO-STUDIO DENIAL, by direct request (not by hidden buttons).
 //
-// Opt-in: HON48_FIVE_USER_E2E=1. The five-user studio (A) and a SECOND studio (B) with its own owner, client and appointment.
+// Runs in the required calendar lane. The five-user studio (A) and a SECOND studio (B) with its own owner, client and appointment.
 //
 //   X  every one of the five users requests studio B's appointment page directly: not found, and none of B's data is on
 //      their calendar; the same holds the other way round for studio B's owner against an appointment of studio A
@@ -13,7 +13,6 @@ import { closeTeam, clientNameOf, rows, setupFiveUserTeam, TZ, type Team } from 
 //
 // Synthetic data only.
 
-test.skip(process.env.HON48_FIVE_USER_E2E !== "1", "opt-in HON-48 five-user proof; set HON48_FIVE_USER_E2E=1");
 test.describe.configure({ mode: "serial" });
 
 let t: Team;

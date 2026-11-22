@@ -266,6 +266,9 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // skipped files: no added run time. The set (about 11 minutes with a reused build) is run on demand on an owned stack.
     // 63 with the charting New view spec joining `sessions`. It is OPT-IN (needs the rollout setting set to "all" on the app server) and self-skips in every
     // CI lane, so, like the HON-48 specs above, the cost is one listed skipped file and no added run time.
+    // The five HON-48 five-user specs above are NO LONGER opt-in: they run in the required calendar lane (23 cases, about 3 minutes measured on an
+    // owned stack). RECORDED AS A DECISION per the note above. The count is unchanged because the files were already listed; only the self-skip went.
+    // hon48-commit-visibility-timing stays opt-in (HON48_TIMING_E2E=1), as do the two day-layout matrices and calendar-own-first.
     expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(63);
   });
 
