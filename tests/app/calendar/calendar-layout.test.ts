@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { compile } from "tailwindcss";
-import { appointmentLanes, appointmentCollisionGroups, appointmentNeedsChooser, calendarCollisionGroups, calendarGroupNeedsChooser } from "@/lib/calendar/appointment-lanes";
+import { appointmentLanes, appointmentCollisionGroups, appointmentNeedsChooser, calendarCollisionGroups, calendarGroupNeedsChooser, chooserSummaryRows } from "@/lib/calendar/appointment-lanes";
 
 // PR B — calendar layout usability (layout-only; no booking logic). The calendar
 // body now scrolls INTERNALLY (fits the viewport) with a sticky day header and a
@@ -235,5 +235,47 @@ describe("appointment and timed-block rendered hit collisions", () => {
     expect(DAYCOL).toContain("onSelectBlock={(block) => setEditingBlock(block)}");
     expect(DAYCOL).toContain("onClick={() => setEditingBlock(tb)}");
     expect(DAYCOL).toContain("onClick={() => setPreview(a)}");
+  });
+});
+
+describe("chooser button names the clients it stands for (iPad visibility)", () => {
+  it("lists every client when the occupied span has room: three back-to-back 15-minute items", () => {
+    const [group] = appointmentCollisionGroups([
+      { id: "a", top: 240, height: 13 }, { id: "b", top: 255, height: 13 }, { id: "c", top: 270, height: 13 },
+    ]);
+    expect(group.ids).toEqual(["a", "b", "c"]);
+    expect(chooserSummaryRows(group.ids.length, group.height)).toEqual({ shown: 3, more: 0 });
+  });
+  it("keeps a '+N more' row instead of dropping anyone silently when the span is short", () => {
+    expect(chooserSummaryRows(5, 44)).toEqual({ shown: 1, more: 4 });
+    expect(chooserSummaryRows(3, 44)).toEqual({ shown: 1, more: 2 });
+  });
+  it("count equal to capacity shows every row and never a '+1 more' (the exact-fit boundary)", () => {
+    // height 74 leaves 66 px = 4 rows of 14 px; 44 leaves 36 px = 2 rows.
+    expect(chooserSummaryRows(4, 74)).toEqual({ shown: 4, more: 0 });
+    expect(chooserSummaryRows(2, 44)).toEqual({ shown: 2, more: 0 });
+    expect(chooserSummaryRows(5, 74)).toEqual({ shown: 3, more: 2 });
+    expect(chooserSummaryRows(3, 44)).toEqual({ shown: 1, more: 2 });
+  });
+  it("falls back to the count alone when not even a name plus a more-row fits", () => {
+    expect(chooserSummaryRows(2, 20)).toEqual({ shown: 0, more: 2 });
+    expect(chooserSummaryRows(4, 30)).toEqual({ shown: 0, more: 4 });
+  });
+  it.each([NaN, Infinity, 0, -5])("unknown geometry %s stays on the safe count-only path", height => {
+    expect(chooserSummaryRows(3, height)).toEqual({ shown: 0, more: 3 });
+  });
+  it("never claims more rows shown than appointments exist and always accounts for all of them", () => {
+    for (let count = 1; count <= 12; count++) for (const h of [44, 60, 74, 120, 300]) {
+      const r = chooserSummaryRows(count, h);
+      expect(r.shown + r.more).toBe(count);
+      expect(r.shown).toBeLessThanOrEqual(count);
+    }
+  });
+  it("the chooser still never loses the appointment-count accessible name or the existing selection path", async () => {
+    const day = await import("node:fs").then(fs => fs.readFileSync("app/(app)/calendar/DayColumn.tsx", "utf8"));
+    expect(day).toContain("`Choose from ${members.length} appointments`");
+    expect(day).toContain("<OverlapSummaryRows members={members} height={group.height}");
+    const chooser = await import("node:fs").then(fs => fs.readFileSync("app/(app)/calendar/AppointmentOverlapChooser.tsx", "utf8"));
+    expect(chooser).toContain("chooserSummaryRows(members.length, height)");
   });
 });
