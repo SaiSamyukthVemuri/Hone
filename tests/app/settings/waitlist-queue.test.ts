@@ -3554,7 +3554,7 @@ describe("people who declined: the summary count and the declined view", () => {
     });
   });
 
-  describe("S1: every per-person read is bounded to the people SHOWN, whatever the total", () => {
+  describe("every per-person read is bounded to the people SHOWN, whatever the total", () => {
     it("60 people declined, answers gate ON: at most 50 scoped answer reads and at most 50 position counts, and 50 rows", async () => {
       scenario.rows = [entry({ id: "w1", status: "waiting" })];
       scenario.count = 1;
