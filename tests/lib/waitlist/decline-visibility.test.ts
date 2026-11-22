@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   answersFor,
+  answerStateText,
   declinedAtLabel,
   declinedCount,
   declinedPageHref,
@@ -137,5 +138,18 @@ describe("declinedPageHref and the outcome note", () => {
     expect(DECLINE_OUTCOME_NOTE).toContain("“Expired”");
     expect(DECLINE_OUTCOME_NOTE).toContain("“Released — reason not recorded”");
     expect(DECLINE_OUTCOME_NOTE).not.toMatch(/cancel/i);
+  });
+});
+
+describe("answerStateText: every state names its own arm", () => {
+  it("says exactly the sentence for each known state", () => {
+    expect(answerStateText({ kind: "not_collected" })).toBe("Answer not collected");
+    expect(answerStateText({ kind: "none_on_record" })).toBe("Answer not collected");
+    expect(answerStateText({ kind: "unreadable" })).toBe("We couldn’t load their answers just now.");
+    expect(answerStateText({ kind: "may_be_missing" })).toBe("Their answers may not be shown: the list is long.");
+    expect(answerStateText({ kind: "erased", at: "2026-09-01T00:00:00Z" })).toBe("Answer erased");
+  });
+  it("a state it does not know never reads as 'Answer erased' (or as any other state)", () => {
+    expect(answerStateText({ kind: "some_future_state" } as never)).toBeNull();
   });
 });

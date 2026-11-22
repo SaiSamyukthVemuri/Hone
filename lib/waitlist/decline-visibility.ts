@@ -118,6 +118,26 @@ export function answersFor(
   return followUps.capped === true ? { kind: "may_be_missing" } : { kind: "none_on_record" };
 }
 
+/**
+ * The words for every answer state except the answers themselves. Each state names its own arm: a state this function does not know reads as
+ * nothing at all, never silently as "Answer erased" (or as any other state).
+ */
+export function answerStateText(a: Exclude<DeclineAnswers, { kind: "answers" }>): string | null {
+  switch (a.kind) {
+    case "not_collected":
+    case "none_on_record":
+      return "Answer not collected";
+    case "unreadable":
+      return "We couldn’t load their answers just now.";
+    case "may_be_missing":
+      return "Their answers may not be shown: the list is long.";
+    case "erased":
+      return "Answer erased";
+    default:
+      return null;
+  }
+}
+
 export const DECLINE_OUTCOME_NOTE = `These people declined the times offered (“${OUTCOME_DECLINED_LABEL}”). That is different from an invitation that ended as “${OUTCOME_EXPIRED_LABEL}” and from one shown as “${OUTCOME_RELEASED_LABEL}”. Neither of those appears here.`;
 
 export type DeclinedPageWindow = { page: number; pageCount: number; from: number; to: number };

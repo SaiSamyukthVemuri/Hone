@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ReplyContactDetails } from "@/components/waitlist/reply-contact";
 import type { ReplyContact } from "@/lib/waitlist/reply-contact-pure";
 import {
+  answerStateText,
   answersFor,
   DECLINE_OUTCOME_NOTE,
   declinedAtLabel,
@@ -110,13 +111,7 @@ export function DeclinedSection({
                     </dl>
                   ) : (
                     <p className="mt-1 text-neutral-600" data-testid="declined-answers-state" data-state={a.kind}>
-                      {a.kind === "not_collected" || a.kind === "none_on_record"
-                        ? "Answer not collected"
-                        : a.kind === "unreadable"
-                          ? "We couldn’t load their answers just now."
-                          : a.kind === "may_be_missing"
-                            ? "Their answers may not be shown: the list is long."
-                            : "Answer erased"}
+                      {answerStateText(a)}
                     </p>
                   )}
                   <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
