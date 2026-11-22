@@ -66,6 +66,9 @@ import { expirySummary, rowExpiry, summaryText } from "@/lib/waitlist/invitation
 import { declinedCount, declinedPageWindow, declinedPeople, declinedSummaryText, DECLINED_PAGE_PARAM, DECLINED_VIEW, latestDeclinePerPerson } from "@/lib/waitlist/decline-visibility";
 import { loadDeclinedEntryFacts, loadDeclineRecords, loadEntryQueuePages, loadScopedFollowUps } from "@/lib/waitlist/decline-visibility-read";
 import { DeclinedSection } from "@/components/waitlist/declined-section";
+import { InvitationBookingSummary } from "@/components/waitlist/invitation-booking-summary";
+import { buildInvitationBookingSummary, periodStart, SUMMARY_PERIOD_DAYS } from "@/lib/waitlist/invitation-booking-summary";
+import { loadCommandCounts, loadOutcomeCounts } from "@/lib/waitlist/invitation-booking-summary-read";
 import { formatLocalDateLabel, localDateString, localLongDate } from "@/lib/booking/tz";
 // `claimWaitlistEntryAction` and `claimNextWaitlistEntriesAction` are
 // deliberately NOT imported. Both still exist, are still tested and still reach
@@ -859,6 +862,14 @@ export default async function WaitlistSettingsPage({
   // is a number of people only; names, answers and contact details are read ONLY for the people listed in the declined view (the first
   // DECLINED_SHOW_MAX), after the owner check above, and none of them reaches the address, a log or the summary.
   const viewDeclined = firstParam(params.view) === DECLINED_VIEW;
+  // INVITATION-TO-BOOKING SUMMARY (owner only: the page gate above). Counts only, read with the owner's own session, after the owner check. The
+  // period is the last SUMMARY_PERIOD_DAYS days; nothing here writes, sends or tracks.
+  const summaryStart = periodStart(now, SUMMARY_PERIOD_DAYS);
+  const [summaryCommand, summaryOutcomes] = await Promise.all([
+    loadCommandCounts(supabase, studio.id, summaryStart),
+    loadOutcomeCounts(supabase, studio.id, summaryStart, new Date(now).toISOString()),
+  ]);
+  const bookingSummary = buildInvitationBookingSummary({ periodStartIso: summaryStart, command: summaryCommand, outcomes: summaryOutcomes });
   const declineRecords = await loadDeclineRecords(supabase, studio.id);
   const declinedTotal = declinedCount(declineRecords);
   let declinedList: ReturnType<typeof declinedPeople> = [];
@@ -981,6 +992,7 @@ export default async function WaitlistSettingsPage({
           <span className="text-xs">As of {allowanceAsOf}.</span>
         </p>
       )}
+      <InvitationBookingSummary summary={bookingSummary} timeZone={studio.timezone} />
       <p className="flex flex-wrap gap-x-4 text-sm" data-testid="waitlist-tools-nav">
         <Link href="/settings/waitlist/search" className="underline">
           Search the waitlist by name

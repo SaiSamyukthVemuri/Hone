@@ -38,6 +38,8 @@ import {
 const STUDIO_ID = "44444444-4444-4444-8444-444444444444";
 /** The decline-visibility count read (every declined invitation of the studio): a constant-cost read of its own, counted separately from the per-row reads. */
 const DECLINE_COUNT_READ = "id,entry_id,declined_at";
+// The invitation-to-booking summary's own reads: exact HEAD-ONLY counts under the period filter (constant cost, seven per page), counted separately below.
+const isSummaryRead = (q: QueryShape) => q.table === "new_client_waitlist_invitations" && q.filters.some((f) => f[0] === "gte" && f[1] === "issued_at");
 /**
  * The one entries projection. 0208 added the four SMS-standing columns; the
  * evidence reference and the recorder are deliberately absent, because the
@@ -121,6 +123,9 @@ function capacityQuery(): QueryShape {
   return q;
 }
 const rpcCalls: RpcCall[] = [];
+const userRpcCalls: RpcCall[] = [];
+const summaryRpc: { error: null | { code: string } } = { error: null };
+const SUMMARY_ROW = { invitations_total: 20, people_invited: 17, booked_linked_live: 5, booked_then_cancelled: 1, converted_unlinked: 1 };
 const revalidated: string[] = [];
 const consoleErrors: string[] = [];
 const consoleWarns: string[] = [];
@@ -191,6 +196,8 @@ function reset() {
   queries.length = 0;
   clientInstances.length = 0;
   rpcCalls.length = 0;
+  userRpcCalls.length = 0;
+  summaryRpc.error = null;
   revalidated.length = 0;
   consoleErrors.length = 0;
   consoleWarns.length = 0;
@@ -538,6 +545,18 @@ vi.mock("@/lib/supabase/server", () => ({
           shape.filters.push(["is", column, value]);
           return builder;
         },
+        gte(column: string, value: unknown) {
+          shape.filters.push(["gte", column, value]);
+          return builder;
+        },
+        gt(column: string, value: unknown) {
+          shape.filters.push(["gt", column, value]);
+          return builder;
+        },
+        lte(column: string, value: unknown) {
+          shape.filters.push(["lte", column, value]);
+          return builder;
+        },
         or(expression: string) {
           shape.filters.push(["or", "", expression]);
           return builder;
@@ -563,6 +582,11 @@ vi.mock("@/lib/supabase/server", () => ({
         },
       };
       return builder;
+    },
+    // The owner's own session may call the summary command (the only rpc it makes); recorded apart from the admin client's.
+    async rpc(fn: string, args: Record<string, unknown>) {
+      userRpcCalls.push({ fn, args });
+      return summaryRpc.error ? { data: null, error: summaryRpc.error } : { data: [SUMMARY_ROW], error: null };
     },
     };
   },
@@ -1943,6 +1967,45 @@ describe("action visibility follows the row's lifecycle state", () => {
     expect(html).not.toContain("either way");
   });
 
+  it("the invitation-to-booking summary costs a constant number of reads, whatever the rows: seven head-only counts and one command call", async () => {
+    for (const rows of [[entry({ status: "waiting" })], [entry({ id: "e-a", status: "invited" }), entry({ id: "e-b", status: "released" })]]) {
+      queries.length = 0;
+      rpcCalls.length = 0;
+      userRpcCalls.length = 0;
+      scenario.rows = rows;
+      scenario.count = rows.length;
+      await render();
+      const reads = queries.filter(isSummaryRead);
+      expect(reads).toHaveLength(7);
+      for (const q of reads) {
+        expect(q.options).toEqual({ count: "exact", head: true });
+        expect(q.columns).toBe("id");
+        expect(q.filters.some((f) => f[0] === "eq" && f[1] === "studio_id")).toBe(true);
+      }
+      expect(userRpcCalls.map((c) => c.fn)).toEqual(["waitlist_invitation_booking_counts"]);
+      expect(userRpcCalls[0]!.args).toMatchObject({ p_studio_id: STUDIO_ID });
+      expect(Object.keys(userRpcCalls[0]!.args).sort()).toEqual(["p_from", "p_studio_id"]);
+      // and nothing the summary does reaches the service-role client
+      expect(rpcCalls.filter((c) => c.fn === "waitlist_invitation_booking_counts")).toHaveLength(0);
+    }
+  });
+
+  it("the page shows the summary with the command's counts, and Not available for the booked figures when the command fails", async () => {
+    scenario.rows = [entry({ status: "waiting" })];
+    scenario.count = 1;
+    const html = await render();
+    expect(html).toContain('data-testid="invitation-booking-summary"');
+    expect(html).toMatch(/data-testid="invitation-people">17</);
+    expect(html).toMatch(/data-row="booked"[\s\S]*?data-value="5"/);
+    expect(html).toContain("Not tracked");
+    summaryRpc.error = { code: "PGRST202" };
+    consoleErrors.length = 0;
+    const failed = await render();
+    expect(failed).toContain('data-testid="invitation-booking-unavailable"');
+    expect(failed).toMatch(/data-row="booked"[\s\S]*?data-value="unavailable"/);
+    expect(failed).toMatch(/data-testid="invitation-people">Not available</);
+  });
+
   it("the invitation window is read ONLY for rows whose controls depend on it", async () => {
     // WIDENED BY 0200, AND STILL BOUNDED. `released` rows joined `invited` ones
     // because requeue's availability now depends on whether this entry's
@@ -1953,7 +2016,7 @@ describe("action visibility follows the row's lifecycle state", () => {
     scenario.count = 1;
     await render();
     // The studio-wide expiry summary (expires_at only) is a constant-cost read of its own, not a per-row one; it is counted separately.
-    expect(queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns !== "expires_at" && q.columns !== DECLINE_COUNT_READ)).toHaveLength(0);
+    expect(queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns !== "expires_at" && q.columns !== DECLINE_COUNT_READ && !isSummaryRead(q))).toHaveLength(0);
     expect(queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns === "expires_at")).toHaveLength(1);
     // Five section reads, plus the needs-attention card's own read (id,name).
     expect(queries.filter((q) => q.table === "new_client_waitlist_entries" && q.columns !== "id,name" && q.columns !== "id,name,released_at")).toHaveLength(5);
@@ -1970,7 +2033,7 @@ describe("action visibility follows the row's lifecycle state", () => {
     // (0313), which exists only because an invited entry does. Identity comes
     // from the 0189 unique index, never from ordering — so none of them
     // carries an `order`.
-    const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns !== "expires_at" && q.columns !== DECLINE_COUNT_READ);
+    const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns !== "expires_at" && q.columns !== DECLINE_COUNT_READ && !isSummaryRead(q));
     expect(inv).toHaveLength(3);
     for (const q of inv) expect(q.orders).toEqual([]);
   });
@@ -1982,7 +2045,7 @@ describe("action visibility follows the row's lifecycle state", () => {
     scenario.count = 1;
     await render();
     // The declined-times card's own read (entry_id,declined_at) is a separate, card-level read.
-    const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns !== "entry_id,declined_at" && q.columns !== "expires_at" && q.columns !== DECLINE_COUNT_READ);
+    const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns !== "entry_id,declined_at" && q.columns !== "expires_at" && q.columns !== DECLINE_COUNT_READ && !isSummaryRead(q));
     expect(inv).toHaveLength(2);
     for (const q of inv) expect(q.orders).toEqual([]);
   });
