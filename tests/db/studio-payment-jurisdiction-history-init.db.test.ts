@@ -705,4 +705,18 @@ describe("J9-G the money-table universe fails closed (F5)", () => {
     );
     expect(await init(s.studioId)).toBe("initialized");
   });
+
+  // 0358: payment_charge_refunds has amount_cents and currency, so it is money-SHAPED. It is listed in the commands' pinned universe and
+  // exempted from the per-table checks because every row's currency is its attempt's and the attempts are checked. Only the database can
+  // show both halves: that the command does not refuse it as an unlisted table, and that a refund row changes nothing about the outcome.
+  it("a payment_charge_refunds row on a checked attempt neither refuses as unlisted nor changes the outcome (the exemption is real)", async () => {
+    const { s } = await activeCa("g-charge-refunds");
+    await adminQuery(
+      `insert into public.payment_charge_refunds
+         (attempt_id, studio_id, stripe_refund_id, amount_cents, currency, status, evidence_kind, first_event_id, last_event_id, last_event_created)
+       select a.id, a.studio_id, 're_j9_${rid()}', 1000, a.currency, 'succeeded', 'signed_event', 'evt_j9_${rid()}', 'evt_j9_${rid()}', 1
+         from public.payment_charge_attempts a where a.studio_id = '${s.studioId}' limit 1`,
+    );
+    expect(await init(s.studioId)).toBe("initialized");
+  });
 });

@@ -1935,6 +1935,13 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "The studio's current cancellation fee tiers: one row per studio holding the notice window in hours, a fixed or percentage rate for the notice window and for the same day, whether charging is switched on, the revision and a hash of the policy text the owner reviewed. It is studio payment configuration, not client data, and holds no free text. It is not in this export yet; it is decided together with the studio's other payment settings.",
   },
+  payment_charge_refunds: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "One row per provider refund of a card charge (0358): the provider's refund id, amount, currency, status and the event ids that recorded it. Studio-owned payment history, so PENDING rather than EXCLUDED; the same class as studio_manual_fee_setting_changes. It carries no client column and no free text, only the attempt it belongs to, so it needs no field review, but whether an owner's export includes it is decided with the other payment records.",
+  },
   studio_manual_fee_setting_changes: {
     kind: "pending",
     ticket: "TRUTH-01B",
