@@ -1,4 +1,5 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { adminQuery, adminTx, asUser, closePool, seedStudio, type SeededStudio } from "./helpers/harness";
 
@@ -201,11 +202,96 @@ describe("a LEGACY consent (no bound number): allowed as before, bound at the fi
   });
 });
 
+
+const sha = (n: string) => createHash("sha256").update(n).digest("hex");
+const events = async (id: string) =>
+  (await adminQuery(`select kind, source, phone_sha256 h, text_version v from public.client_sms_consent_events where client_id = $1 order by recorded_at, kind desc`, [id])).rows as {
+    kind: string;
+    source: string | null;
+    h: string | null;
+    v: string | null;
+  }[];
+const later = "now() + interval '1 second'";
+
+describe("every consent is kept in an append-only record", () => {
+  it("a consent recorded at insert writes one event with the number fingerprint and the wording version", async () => {
+    const id = randomUUID();
+    await asService(
+      `insert into public.clients (id, studio_id, name, phone, sms_consent_at, sms_consent_source, sms_consent_text_version) values ($1,$2,'ev','+14165550130',now(),'public_booking','booking_sms_v1')`,
+      [id, A.studioId],
+    );
+    expect(await events(id)).toEqual([{ kind: "recorded", source: "public_booking", h: sha("+14165550130"), v: "booking_sms_v1" }]);
+  });
+  it("no API role can read or write the record, and nobody can change or delete a row", async () => {
+    const id = await client("+14165550131", true);
+    await expect(asUser(A.userId, (q) => q(`select * from public.client_sms_consent_events where client_id = $1`, [id]))).rejects.toMatchObject(DENIED);
+    await expect(asService(`select * from public.client_sms_consent_events where client_id = $1`, [id])).rejects.toMatchObject(DENIED);
+    await expect(adminQuery(`update public.client_sms_consent_events set source = 'x' where client_id = $1`, [id])).rejects.toMatchObject(REFUSED);
+    await expect(adminQuery(`delete from public.client_sms_consent_events where client_id = $1`, [id])).rejects.toMatchObject(REFUSED);
+    await expect(adminQuery(`truncate public.client_sms_consent_events`)).rejects.toMatchObject(REFUSED);
+  });
+});
+
+describe("fresh consent for the number now on file replaces the old consent and keeps it", () => {
+  it("a trusted writer can replace a consent whose number changed: the new number is bound, the old consent is kept", async () => {
+    const id = await client("+14165550132", true);
+    await asUser(A.userId, (q) => q(`update public.clients set phone = '+14165550133' where id = $1`, [id]));
+    expect((await ev(id)).p).toBe("+14165550132");
+    await asService(`update public.clients set sms_consent_at = ${later}, sms_consent_source = 'public_booking', sms_consent_text_version = 'booking_sms_v1' where id = $1`, [id]);
+    const e = await ev(id);
+    expect([e.p, e.v]).toEqual(["+14165550133", "booking_sms_v1"]);
+    const rows = await events(id);
+    expect(rows.map((r) => r.kind)).toEqual(["recorded", "recorded"]);
+    expect(rows.map((r) => r.h)).toEqual([sha("+14165550132"), sha("+14165550133")]);
+  });
+  it("a LEGACY consent that was edited, then replaced, keeps a snapshot of the consent it replaced", async () => {
+    const id = await legacy("+14165550134");
+    await asUser(A.userId, (q) => q(`update public.clients set phone = '+14165550135' where id = $1`, [id]));
+    expect((await ev(id)).p).toBe("+14165550134");
+    await asService(`update public.clients set sms_consent_at = ${later}, sms_consent_source = 'public_booking' where id = $1`, [id]);
+    expect((await ev(id)).p).toBe("+14165550135");
+    const rows = await events(id);
+    expect(rows.map((r) => r.kind).sort()).toEqual(["recorded", "superseded"]);
+    expect(rows.find((r) => r.kind === "superseded")?.h).toBe(sha("+14165550134"));
+  });
+  it("is refused when the number is the same, when a STOP exists, when the time is not later, for an unbound legacy row, and for a member", async () => {
+    const same = await client("+14165550136", true);
+    await expect(asService(`update public.clients set sms_consent_at = ${later}, sms_consent_source = 'public_booking' where id = $1`, [same])).rejects.toMatchObject(REFUSED);
+
+    const stopped = await client("+14165550137", true);
+    await asUser(A.userId, (q) => q(`update public.clients set phone = '+14165550138' where id = $1`, [stopped]));
+    await asService(`update public.clients set sms_opted_out_at = now(), sms_opt_out_source = 'twilio_stop' where id = $1`, [stopped]);
+    await expect(asService(`update public.clients set sms_consent_at = ${later}, sms_consent_source = 'public_booking' where id = $1`, [stopped])).rejects.toMatchObject(REFUSED);
+
+    const old = await client("+14165550139", true);
+    await asUser(A.userId, (q) => q(`update public.clients set phone = '+14165550140' where id = $1`, [old]));
+    await expect(asService(`update public.clients set sms_consent_at = now() - interval '1 day', sms_consent_source = 'public_booking' where id = $1`, [old])).rejects.toMatchObject(REFUSED);
+    await expect(asUser(A.userId, (q) => q(`update public.clients set sms_consent_at = ${later}, sms_consent_source = 'public_booking' where id = $1`, [old]))).rejects.toMatchObject(DENIED);
+
+    const unbound = await legacy("+14165550141");
+    await expect(asService(`update public.clients set sms_consent_at = ${later}, sms_consent_source = 'public_booking' where id = $1`, [unbound])).rejects.toMatchObject(REFUSED);
+    expect((await events(old)).length).toBe(1);
+  });
+  it("a replaced consent makes the appointment eligible again for the new number", async () => {
+    const id = await client("+14165550142", true);
+    const appt = await appointment(id);
+    await asUser(A.userId, (q) => q(`update public.clients set phone = '+14165550143' where id = $1`, [id]));
+    expect(await eligible(appt)).toBe(false);
+    await asService(`update public.clients set sms_consent_at = ${later}, sms_consent_source = 'public_booking' where id = $1`, [id]);
+    expect(await eligible(appt)).toBe(true);
+  });
+});
+
 describe("the down", () => {
   it("restores the previous view text and refuses while evidence exists (read from the files)", async () => {
-    const { readFileSync } = await import("node:fs");
     const down = readFileSync("supabase/rollbacks/0368_sms_consent_number_binding.down.sql", "utf8");
-    expect(down).toMatch(/refusing: clients hold SMS consent binding evidence/);
+    expect(down).toMatch(/refusing: SMS consent binding evidence or consent events exist/);
     expect(down).not.toMatch(/sms_consent_phone = c\.sms_phone/);
+    const body = (t: string) => {
+      const a = t.indexOf("create or replace function public.clients_sms_permission_guard()");
+      const b = t.indexOf("as $$", a) + 5;
+      return t.slice(b, t.indexOf("$$;", b));
+    };
+    expect(body(down)).toBe(body(readFileSync("supabase/migrations/0211_client_sms_permission_guard.sql", "utf8")));
   });
 });

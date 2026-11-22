@@ -33,13 +33,23 @@ export async function stampPublicBookingConsent(
   admin: SupabaseClient,
   clientId: string,
   nowIso: string,
+  /**
+   * 0368 FRESH CONSENT. Set when the client already has a consent that was given for a DIFFERENT number (the stored number changed after it):
+   * the value is the number that consent is bound to. The write is then a compare-and-set on that bound number, so an overlapping booking
+   * that already replaced it matches no row (and is adopted below), and the database accepts it only for a later consent, a different
+   * number and no STOP. Omit it for a first consent.
+   */
+  replacingBoundPhone?: string,
 ): Promise<ConsentStampResult> {
   try {
-    const { data, error } = await admin
+    const target = admin
       .from("clients")
       .update({ sms_consent_at: nowIso, sms_consent_source: "public_booking" })
-      .eq("id", clientId)
-      .is("sms_consent_at", null)
+      .eq("id", clientId);
+    const { data, error } = await (replacingBoundPhone === undefined
+      ? target.is("sms_consent_at", null)
+      : target.eq("sms_consent_phone", replacingBoundPhone)
+    )
       .is("sms_opted_out_at", null)
       .select("sms_consent_at");
     if (error) return { result: "error", code: error.code ?? null };

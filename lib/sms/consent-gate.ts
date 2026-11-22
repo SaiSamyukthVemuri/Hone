@@ -18,7 +18,7 @@ export type ConsentGateInput = {
     | "send_24h_sms_reminders"
     | "send_2h_sms_reminders"
   >;
-  client: Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at">;
+  client: Pick<Client, "phone" | "sms_consent_at" | "sms_consent_phone" | "sms_opted_out_at">;
   smsType: SmsType;
 };
 
@@ -50,6 +50,12 @@ export function passesConsentGate(input: ConsentGateInput): ConsentGateResult {
   }
   const normalized = normalizePhoneForSms(client.phone ?? null);
   if (!normalized) return { ok: false, reason: "invalid_phone" };
+  // Migration 0368: a consent is for the number it was given for. A bound consent that does not match the number the client holds now does not
+  // authorize this destination. A legacy consent (no bound number, null) is allowed as before, until its number is first changed. The caller
+  // MUST pass the stored value: the field is required, so a caller that forgets it does not compile instead of reading as "legacy".
+  if (client.sms_consent_phone !== null && client.sms_consent_phone !== normalized) {
+    return { ok: false, reason: "consent_for_other_number" };
+  }
 
   return { ok: true, normalizedPhone: normalized };
 }

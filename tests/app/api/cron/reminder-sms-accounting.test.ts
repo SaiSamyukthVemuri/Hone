@@ -49,7 +49,7 @@ const h = vi.hoisted(() => {
       name: "Client",
       email: null,
       phone: "604-555-0199",
-      sms_consent_at: "2026-09-01T00:00:00Z",
+      sms_consent_at: "2026-09-01T00:00:00Z", sms_consent_phone: null,
       sms_opted_out_at: null,
     },
     practitioner: null,

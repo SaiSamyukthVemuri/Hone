@@ -41,7 +41,7 @@ const input = (client: SupabaseClient) => ({
     send_24h_sms_reminders: true,
     send_2h_sms_reminders: true,
   },
-  client: { phone: "+16475550123", sms_consent_at: "2026-10-01T00:00:00Z", sms_opted_out_at: null },
+  client: { phone: "+16475550123", sms_consent_at: "2026-10-01T00:00:00Z", sms_consent_phone: null, sms_opted_out_at: null },
   intakeUrl: null,
   manageUrl: null,
 });

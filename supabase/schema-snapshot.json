@@ -3,7 +3,7 @@
   "migrations": {
     "count": 279,
     "last": "0368_sms_consent_number_binding.sql",
-    "sha256": "541498ec78a61c0beb098b8a3cdbee3773e84f54e82da05d0e3e221feca9700b"
+    "sha256": "1be104fc7c42cd8e1fb6b16511417bce7d6b936d3dff5fcdcdcb2d9cc23e06c1"
   },
   "public": {
     "tables": [
@@ -38,6 +38,7 @@
       "client_portal_messages",
       "client_portal_sessions",
       "client_pricing",
+      "client_sms_consent_events",
       "client_stripe_customers",
       "client_tags",
       "clients",
@@ -239,10 +240,12 @@
       "client_legal_identities_revision",
       "client_legal_name_access_audit_immutable",
       "client_personal_notes_set_studio_id",
+      "client_sms_consent_events_guard",
       "clients_erase_waitlist_decline_answers",
       "clients_identity_guard",
       "clients_portrait_integrity",
       "clients_sms_consent_binding_guard",
+      "clients_sms_consent_event_writer",
       "clients_sms_permission_guard",
       "close_delivery_concern",
       "close_new_client_waitlist_admission_round",

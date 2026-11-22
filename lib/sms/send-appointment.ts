@@ -310,7 +310,7 @@ type SendConfirmationInput = {
     // HON-47. Required on Studio since 0234, but absent on a hand-built input and
     // then meaning today's behaviour: only clientSelfServicePolicyFromStudio reads them.
     ClientSelfServiceStudioFlags;
-  client: Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at">;
+  client: Pick<Client, "phone" | "sms_consent_at" | "sms_consent_phone" | "sms_opted_out_at">;
   intakeUrl: string | null;
   // Single neutral manage-appointment link the SMS carries. Resolves
   // to /manage/<token>, which surfaces both reschedule and cancel as
@@ -387,7 +387,7 @@ export type SendReminderInput = {
     // HON-47. Required on Studio since 0234, but absent on a hand-built input and
     // then meaning today's behaviour: only clientSelfServicePolicyFromStudio reads them.
     ClientSelfServiceStudioFlags;
-  client: Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at">;
+  client: Pick<Client, "phone" | "sms_consent_at" | "sms_consent_phone" | "sms_opted_out_at">;
   /**
    * The neutral /manage/<token> link for a start, or null. A BUILDER rather
    * than a URL: the token expires at the appointment's start, so it is minted

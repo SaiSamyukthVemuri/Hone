@@ -70,6 +70,11 @@ export default async function EditClientPage({
         hiddenFields={{ client_id: id }}
         baseline={baselineFromRow(c as unknown as Record<string, unknown>)}
         saveAnywayLabel="Save changes anyway"
+        phoneHelperText={
+          c.sms_consent_at && !c.sms_opted_out_at
+            ? "This client agreed to text messages for their current number. If you change the number, texts to them stop until they confirm the new number, which they can do by ticking the text-message box on their next booking."
+            : undefined
+        }
       />
 
       {legal.ok ? (

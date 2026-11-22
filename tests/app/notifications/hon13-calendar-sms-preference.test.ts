@@ -109,7 +109,7 @@ beforeEach(() => {
     name: "Synthetic Client",
     email: "client@example.test",
     phone: "+16045550100",
-    sms_consent_at: "2026-09-01T00:00:00Z",
+    sms_consent_at: "2026-09-01T00:00:00Z", sms_consent_phone: null,
     sms_opted_out_at: null,
   };
 });
