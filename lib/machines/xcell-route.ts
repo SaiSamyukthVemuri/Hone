@@ -45,7 +45,7 @@ export function xcellMultiplexRoute(input: {
 export const XCELL_MULTIPLEX_RETIRED_MESSAGE = "The studio's xCell has been retired, so MultiPlex cannot be used. Ask the studio owner to add the xCell again in Settings.";
 
 /**
- * MULTIPLEX FOLLOWS THE OWNER'S SWITCH (Sam, 21 Nov 2026, answer A). The studio's old xCell history is not an input: the owner enabling the
+ * MULTIPLEX FOLLOWS THE OWNER'S SWITCH (a product decision). The studio's old xCell history is not an input: the owner enabling the
  * model is. This decides only what the picker and the save should do; the unit record itself is created by the database command, once, inside
  * the first successful MultiPlex save.
  *  - not enabled, or the layout is not published (or its read failed), or the profile or mode is not active: not offered (null);

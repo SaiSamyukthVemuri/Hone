@@ -480,7 +480,7 @@ export async function loadMachineSetupContext(input: {
   let multiplexRoute: XcellMultiplexRoute | null = null;
   let multiplexRefusal: string | null = null;
   let multiplexCreateAtFirstSave = false;
-  // THE OWNER'S SWITCH (answer A). Unavailable until its migration exists, and then nothing below changes. When it is available and on, the
+  // THE OWNER'S SWITCH. Unavailable until its migration exists, and then nothing below changes. When it is available and on, the
   // xCell choice is offered by the switch even for a studio with no xCell history.
   let xcellSwitch: XcellModelSwitch = { available: false };
   try {

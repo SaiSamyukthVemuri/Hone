@@ -4,7 +4,7 @@ import type { StudioDevice } from "../../../lib/machines/selection";
 import { XCELL_PUR_PROFILE_ID } from "../../../lib/machines/xcell-pur";
 import { xcellMultiplexSwitchRoute } from "../../../lib/machines/xcell-route";
 
-// Product decision (Sam, 21 Nov 2026, answer A): MultiPlex follows the OWNER'S SWITCH, not the studio's old xCell history. After the owner
+// Product decision: MultiPlex follows the OWNER'S SWITCH, not the studio's old xCell history. After the owner
 // enables the model, the unit record is created on the first SUCCESSFUL MultiPlex save, exactly once. A retired unit is never silently
 // recreated: MultiPlex refuses and says so. These pin the DECISION; the once-only creation under a double save or a race is a database
 // property and is pinned by the DB test of the new command.
@@ -20,7 +20,7 @@ const base = {
   clientLastUnitId: null as string | null,
 };
 
-describe("answer A: the owner's switch decides, old xCell history is not read", () => {
+describe("the owner's switch decides, old xCell history is not read", () => {
   it("a studio with NO history and NO unit, model enabled: MultiPlex is offered and the unit will be created at the first save", () => {
     expect(xcellMultiplexSwitchRoute(base)).toEqual({ kind: "create-at-first-save", modeKey: "multiplex" });
   });
