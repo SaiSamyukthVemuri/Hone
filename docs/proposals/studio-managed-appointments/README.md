@@ -29,10 +29,28 @@ unexpected-owner commands. A missing studio continues to the existing command's
 validation. Authenticated/anonymous/service roles cannot call the private guard
 directly. Only authenticated owners may call the setting command.
 
+### Booking-related commands outside the guarded set
+
+Checked against the migrated chain (and pinned by the applied-state DB test), so
+a reader does not assume the mode reaches something it does not:
+
+- `reschedule_appointment_v2` is not patched. It delegates to the guarded
+  `reschedule_appointment_v3`, so it refuses under the mode through that call.
+- `cancel_appointment_core` is not patched. No client-facing role, and not the
+  service role, may execute it, so a client cannot reach it.
+- The first-generation `reschedule_appointment` and
+  `finalize_card_required_public_booking` were dropped by earlier migrations and
+  do not exist in the chain. The apply package must confirm that on the hosted
+  catalog with a read-only check; if either still exists there, it needs the same
+  guard in the same change.
+
+If any of these gains a client-facing caller, or one of the dropped names is
+created again, it needs the same guard in the same change.
+
 ## Qualification before release
 
-1. Coordinate a migration number with the existing OPS registry. Do not reuse
-   held portal migration 0252 or a number another writer reserved. Promote
+1. Coordinate a migration number with the repository's migration queue. Do not
+   reuse a number that is held or that another writer has reserved. Promote
    `UP.sql` into the migration chain only after review and numbering. Regenerate
    the schema snapshot and DB types through the repository's existing process.
 2. On an owned isolated local stack, verify the paired API/SQL target and source
