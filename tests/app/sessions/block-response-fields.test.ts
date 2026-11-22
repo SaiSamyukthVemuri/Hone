@@ -91,6 +91,13 @@ describe("block actions: response validation and persistence", () => {
     expect(updateBody).toMatch(/p_block: blockFields/);
     expect(updateBody).not.toMatch(/\.update\(blockFields\)/);
   });
+
+  it("both input types accept the optional response fields", () => {
+    // Three declarations: ClinicalResponseInput (the validator's own
+    // type) plus CreateAreaWithEntryInput and UpdateAreaWithEntryInput.
+    const hits = ACTIONS.match(/toleranceRating\?: number \| null;/g) ?? [];
+    expect(hits.length).toBe(3);
+  });
 });
 
 describe("block form: optional capture, round-trip on edit", () => {
@@ -140,5 +147,9 @@ describe("blocks view: old null records render without clutter", () => {
     expect(VIEW).toMatch(
       /\{\(block\.caution_for_next_session \|\| block\.caution_note\) && \(/,
     );
+  });
+
+  it("caution renders with its note when present", () => {
+    expect(VIEW).toMatch(/Caution for next session/);
   });
 });

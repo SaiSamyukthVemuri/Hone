@@ -84,6 +84,49 @@ describe("PR #174 patch: activeAttempt vs latestHistoricalAttempt", () => {
     );
     expect(CARD).not.toMatch(/showPrepareForm\s*=[\s\S]{0,200}!latestAttempt/);
   });
+
+  it("AttemptStatusPanel is only rendered for activeAttempt (not for terminal-non-success rows)", () => {
+    // PR #174's invariant — the panel keys off `activeAttempt`, never
+    // `latestAttempt`, so a terminal-non-success row cannot resurrect it — is
+    // unchanged. FREE-01 (review 3777045531) added ONE further suppression in
+    // the same direction: an attempt prepared at a positive price whose service
+    // has since become $0 must not keep offering Run charge. That narrows the
+    // condition; it can never widen it, because the `activeAttempt` conjunct
+    // still has to hold.
+    expect(CARD).toMatch(
+      /\{activeAttempt && \(\s*\n?\s*<AttemptStatusPanel/,
+    );
+    // the gate is still activeAttempt-based, not latestAttempt-based
+    expect(CARD).not.toMatch(/\{latestAttempt && [\s\S]{0,80}<AttemptStatusPanel/);
+  });
+
+  it("renders a PreviousTerminalCallout for failed / cancelled / blocked latest rows when no active attempt", () => {
+    expect(CARD).toMatch(/function PreviousTerminalCallout/);
+    expect(CARD).toMatch(/\{previousTerminalAttempt && \(\s*\n?\s*<PreviousTerminalCallout/);
+  });
+
+  it("PreviousTerminalCallout only matches terminal-retry statuses (failed / cancelled / blocked)", () => {
+    const block = blockFor("PreviousTerminalCallout");
+    expect(block).toMatch(/case "failed":/);
+    expect(block).toMatch(/case "cancelled":/);
+    expect(block).toMatch(/case "blocked":/);
+    // Active statuses are deliberately not handled here.
+    expect(block).not.toMatch(/case "ready":/);
+    expect(block).not.toMatch(/case "pending_stripe":/);
+    expect(block).not.toMatch(/case "succeeded":/);
+  });
+
+  it("declares TERMINAL_RETRY_STATUSES set with exactly failed / cancelled / blocked", () => {
+    expect(CARD).toMatch(
+      /const TERMINAL_RETRY_STATUSES = new Set\(\[\s*\n?\s*"failed",\s*\n?\s*"cancelled",\s*\n?\s*"blocked",\s*\n?\s*\]\)/,
+    );
+  });
+
+  it("the BlockedPanel (no-eligibility) branch also gates on !activeAttempt (not !latestAttempt)", () => {
+    expect(CARD).toMatch(
+      /!eligibility\.eligible && !activeAttempt && !prepareJustSucceeded/,
+    );
+  });
 });
 
 describe("PR #174 patch: failed / cancelled / blocked terminal rows do NOT block new prepare", () => {
@@ -93,6 +136,24 @@ describe("PR #174 patch: failed / cancelled / blocked terminal rows do NOT block
   // ever in ACTIVE_STATUSES (and therefore can never satisfy the
   // !activeAttempt gate).
 
+  it("ACTIVE_STATUSES does NOT contain 'failed'", () => {
+    const block =
+      CARD.match(/const ACTIVE_STATUSES = new Set\(\[[\s\S]*?\]\)/)?.[0] ?? "";
+    expect(block).not.toMatch(/"failed"/);
+  });
+
+  it("ACTIVE_STATUSES does NOT contain 'cancelled'", () => {
+    const block =
+      CARD.match(/const ACTIVE_STATUSES = new Set\(\[[\s\S]*?\]\)/)?.[0] ?? "";
+    expect(block).not.toMatch(/"cancelled"/);
+  });
+
+  it("ACTIVE_STATUSES does NOT contain 'blocked'", () => {
+    const block =
+      CARD.match(/const ACTIVE_STATUSES = new Set\(\[[\s\S]*?\]\)/)?.[0] ?? "";
+    expect(block).not.toMatch(/"blocked"/);
+  });
+
   it("ACTIVE_STATUSES matches the PR #172 duplicate-protection partial unique (ready / pending_stripe / succeeded)", () => {
     expect(CARD).toMatch(
       /const ACTIVE_STATUSES = new Set\(\[\s*\n?\s*"ready",\s*\n?\s*"pending_stripe",\s*\n?\s*"succeeded",\s*\n?\s*\]\)/,
@@ -100,15 +161,97 @@ describe("PR #174 patch: failed / cancelled / blocked terminal rows do NOT block
   });
 });
 
+describe("PR #174: status dispatch architecture", () => {
+  it("a single AttemptStatusPanel dispatches on attempt.status", () => {
+    expect(CARD).toMatch(/function AttemptStatusPanel/);
+    expect(CARD).toMatch(/switch \(attempt\.status\)/);
+  });
+
+  it("dispatches to a per-status subcomponent for every status enum value", () => {
+    for (const fn of [
+      "ReadyPanel",
+      "PendingPanel",
+      "SucceededPanel",
+      "FailedPanel",
+      "CancelledPanel",
+      "BlockedAttemptPanel",
+      "UnknownStatusPanel",
+    ]) {
+      expect(CARD).toMatch(new RegExp(`function ${fn}\\(`));
+    }
+  });
+
+  it("the active attempt picker prefers a non-terminal active status", () => {
+    // ACTIVE_STATUSES = ready / pending_stripe / succeeded so the
+    // duplicate-protection slot is the most-recent active row.
+    expect(CARD).toMatch(/ACTIVE_STATUSES = new Set/);
+    expect(CARD).toMatch(
+      /ACTIVE_STATUSES[\s\S]{0,200}"ready"[\s\S]{0,40}"pending_stripe"[\s\S]{0,40}"succeeded"/,
+    );
+  });
+});
+
+describe("PR #174: ReadyPanel (active prepared row)", () => {
+  it("renders the compact 'Ready to charge' summary + prepared timestamp (no processor internals)", () => {
+    const block = blockFor("ReadyPanel");
+    // Compact card: derivePaymentSummary → "Ready to charge · $X"; a "Prepared …
+    // not yet charged" subline. No raw status label, no PaymentIntent inline.
+    expect(block).toMatch(/<PaymentSummaryCard/);
+    expect(block).toMatch(/derivePaymentSummary\(attempt\)/);
+    expect(block).toMatch(/Prepared/);
+    expect(block).toMatch(/<FormattedDateTime iso=\{attempt\.createdAt\}/);
+  });
+
+  it("renders the Run charge button with a two-click confirm", () => {
+    const block = blockFor("ReadyPanel");
+    expect(block).toMatch(/Run charge/);
+    expect(block).toMatch(/Confirm: run charge/);
+    expect(block).toMatch(/setConfirmExecute\(true\)/);
+    expect(block).toMatch(/fd\.set\("confirm_charge",\s*"true"\)/);
+  });
+
+  it("uses a plain 'Charge client' caution (no processor-internal wording)", () => {
+    const block = blockFor("ReadyPanel");
+    expect(block).toMatch(/Charge client/);
+    expect(block).toMatch(/saved card will be charged/);
+    // Developer-oriented "connected account / PaymentIntent" wording is gone
+    // from the default face (any ids live in the owner-only disclosure).
+    expect(block).not.toMatch(/creates a Stripe PaymentIntent on the studio/);
+  });
+});
+
 describe("PR #174: PendingPanel (post-claim, no terminal status)", () => {
+  it("shows a compact processing summary + may need manual review", () => {
+    const block = blockFor("PendingPanel");
+    // "Payment processing" comes from derivePaymentSummary; the manual-review
+    // hint stays in the subline.
+    expect(block).toMatch(/<PaymentSummaryCard/);
+    expect(block).toMatch(/derivePaymentSummary\(attempt\)/);
+    expect(block).toMatch(/may need manual review/);
+  });
+
   it("does NOT render the Run charge button (the row is not 'ready')", () => {
     const block = blockFor("PendingPanel");
     expect(block).not.toMatch(/Run charge/);
     expect(block).not.toMatch(/Confirm: run charge/);
   });
+
+  it("keeps the PaymentIntent id owner-only (in the technical disclosure)", () => {
+    const block = blockFor("PendingPanel");
+    expect(block).toMatch(/<TechnicalPaymentDetails/);
+    expect(block).toMatch(/attempt\.stripePaymentIntentId/);
+  });
 });
 
 describe("compact SucceededPanel (post-refresh)", () => {
+  it("shows the compact 'Paid'/'Refunded' summary (derivePaymentSummary), not 'Charge succeeded'", () => {
+    const block = blockFor("SucceededPanel");
+    expect(block).toMatch(/<PaymentSummaryCard/);
+    expect(block).toMatch(/derivePaymentSummary\(attempt\)/);
+    expect(block).not.toMatch(/Charge succeeded/);
+    expect(block).not.toMatch(/Payment complete/);
+  });
+
   it("processor identifiers are OWNER-ONLY (technicalRowsForAttempt), never inline", () => {
     const block = blockFor("SucceededPanel");
     expect(block).toMatch(/<TechnicalPaymentDetails[\s\S]{0,120}technicalRowsForAttempt\(attempt\)/);
@@ -116,6 +259,18 @@ describe("compact SucceededPanel (post-refresh)", () => {
     expect(block).not.toMatch(/PaymentIntent:\s*\{?\s*attempt\.stripePaymentIntentId/);
     expect(block).not.toMatch(/Charge:\s*\{?\s*attempt\.stripeChargeId/);
     expect(block).not.toMatch(/Refund:\s*\{?\s*attempt\.stripeRefundId/);
+  });
+
+  it("shows charged_at as the compact subline", () => {
+    const block = blockFor("SucceededPanel");
+    expect(block).toMatch(/attempt\.chargedAt/);
+    expect(block).toMatch(/<FormattedDateTime iso=\{attempt\.chargedAt\}/);
+  });
+
+  it("drops the developer 'connected account' wording + keeps the receipt sub-panel", () => {
+    const block = blockFor("SucceededPanel");
+    expect(block).not.toMatch(/ran on the studio(&apos;|')s Stripe connected account/);
+    expect(block).toMatch(/<ReceiptSubPanel/);
   });
 
   it("does NOT render the Run charge button (post-refresh terminal-success state)", () => {
@@ -136,10 +291,30 @@ describe("PR #174: FailedPanel (terminal in this PR)", () => {
     expect(block).not.toMatch(/Failure:\s*\{?\s*attempt\.failureMessageSafe/);
   });
 
+  it("keeps the raw code / message / PaymentIntent OWNER-ONLY", () => {
+    const block = blockFor("FailedPanel");
+    expect(block).toMatch(/<TechnicalPaymentDetails[\s\S]{0,120}technicalRowsForAttempt\(attempt\)/);
+  });
+
+  it("tells the practitioner to prepare a new attempt rather than retry", () => {
+    const block = blockFor("FailedPanel");
+    expect(block).toMatch(/Prepare a new session payment attempt/);
+  });
+
   it("does NOT render the Run charge button (failed is terminal in PR #173)", () => {
     const block = blockFor("FailedPanel");
     expect(block).not.toMatch(/Run charge/);
     expect(block).not.toMatch(/Confirm: run charge/);
+  });
+
+  it("does NOT render the Prepare form (terminal status excludes the form)", () => {
+    // The form is gated by `eligibility.eligible && !latestAttempt`,
+    // and a succeeded row IS a latest attempt, so the form is
+    // structurally hidden. The succeeded panel itself does not
+    // render a form either.
+    const block = blockFor("SucceededPanel");
+    expect(block).not.toMatch(/<form/);
+    expect(block).not.toMatch(/Prepare session payment/);
   });
 });
 
@@ -174,6 +349,45 @@ describe("PR #174: forbidden copy not present anywhere in actionable JSX", () =>
 
   it("does NOT say 'Collect payment'", () => {
     expect(CARD_CODE).not.toMatch(/Collect payment/);
+  });
+
+  it("does NOT say 'Payment complete'", () => {
+    expect(CARD_CODE).not.toMatch(/Payment complete/);
+  });
+
+  it("does NOT say 'Live payment'", () => {
+    expect(CARD_CODE).not.toMatch(/Live payment/);
+  });
+
+  // Compact-card update: "Receipt sent" is now the DESIRED practitioner copy
+  // (Chloe's feedback). The privacy guard is that the FULL email is never
+  // rendered inline — the card masks it via maskReceiptEmail.
+  it("masks the receipt email — never renders the full address inline", () => {
+    expect(CARD).toMatch(/maskReceiptEmail\(/);
+    // No inline `<code>{...receiptEmailTo...}</code>` full-email render remains.
+    expect(CARD_CODE).not.toMatch(/<code>\{[^}]*receiptEmailTo[^}]*\}<\/code>/);
+  });
+});
+
+describe("PR #174: status labels reflect post-execute reality (PR #173 already shipped)", () => {
+  it("'ready' label says 'Ready' not the pre-PR-#173 'ready to charge in a future PR' string", () => {
+    // The file header comment legitimately documents the old
+    // label for context; what matters is the actual STATUS_LABEL
+    // map value. We check the map definition specifically.
+    expect(CARD).toMatch(/ready:\s*"Ready"/);
+    expect(CARD).not.toMatch(/ready:\s*"Prepared \(ready to charge/);
+  });
+
+  it("'succeeded' label says '(test mode)' so the practitioner cannot mistake it for live", () => {
+    expect(CARD).toMatch(/succeeded:\s*"Succeeded"/);
+  });
+
+  it("'failed' label says '(test mode)'", () => {
+    expect(CARD).toMatch(/failed:\s*"Failed"/);
+  });
+
+  it("'pending_stripe' label says 'Pending Stripe'", () => {
+    expect(CARD).toMatch(/pending_stripe:\s*"Pending Stripe"/);
   });
 });
 

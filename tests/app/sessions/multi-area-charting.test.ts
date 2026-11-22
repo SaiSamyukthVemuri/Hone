@@ -20,9 +20,23 @@ describe("MultiAreaEditor behaviour", () => {
     expect(EDITOR).toMatch(/Apply this side to all/);
     expect(EDITOR).toMatch(/LATERALITY_VALUES\.map/);
   });
+  it("shows the areas-treated helper copy", () => {
+    expect(EDITOR).toMatch(/Areas treated with these settings/);
+    expect(EDITOR).toMatch(/Select every area treated using this settings setup/);
+    expect(EDITOR).toMatch(/settings block only when the treatment settings change/);
+  });
 });
 
 describe("block-setup-form drives the structured areas set", () => {
+  it("mounts the MultiAreaEditor bound to draft.areas + submits `areas`", () => {
+    expect(FORM).toMatch(/<MultiAreaEditor/);
+    expect(FORM).toMatch(/value=\{draft\.areas\}/);
+    expect(FORM).toMatch(/areas: draft\.areas/);
+  });
+  it("renames the primary CTA to settings-block wording", () => {
+    expect(FORM).toMatch(/"Add settings block"/);
+    expect(FORM).toMatch(/"Edit settings block"/);
+  });
   it("seeds the editor from structured rows or legacy fallback on edit", () => {
     expect(FORM).toMatch(/areas: resolveBlockAreas\(initialAreas \?\? \[\]/);
   });

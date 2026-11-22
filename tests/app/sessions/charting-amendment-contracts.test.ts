@@ -14,7 +14,58 @@ const SIMPLE = read(`${BASE}/simplified-entry-form.tsx`);
 const FORM = read(`${BASE}/block-setup-form.tsx`);
 const ENTRY_ROW = read("components/entry-row.tsx");
 
-describe("PicoBlend precision — the server action keeps decimals", () => {
+describe("SimplifiedEntryForm parity with BlockSetupForm (Chloe)", () => {
+  it("(1) labels the pulse control exactly 'Thermolysis pulse count'", () => {
+    expect(SIMPLE).toMatch(/>Thermolysis pulse count</);
+    expect(SIMPLE).not.toMatch(/>Pulse count</); // old standalone label gone
+  });
+
+  it("(2) the pulse control is structurally INSIDE the thermolysis section", () => {
+    // Machine order (Chloe): the GALVANIC group now renders first, so the pulse
+    // control's containment is asserted against the thermolysis block itself
+    // rather than by "before galvanic", which is no longer true.
+    const thermoStart = SIMPLE.indexOf('block.mode === "thermo" || block.mode === "blend"');
+    const galvStart = SIMPLE.indexOf('block.mode === "galv" || block.mode === "blend"');
+    const pulse = SIMPLE.indexOf("Thermolysis pulse count");
+    expect(thermoStart).toBeGreaterThan(-1);
+    expect(galvStart).toBeGreaterThan(-1);
+    expect(galvStart).toBeLessThan(thermoStart); // galvanic group comes first
+    expect(pulse).toBeGreaterThan(thermoStart); // ...and pulse is inside thermolysis
+    // Nothing galvanic separates the thermolysis readings from the pulse control.
+    const thermoBlock = SIMPLE.slice(thermoStart, pulse);
+    expect(thermoBlock).not.toMatch(/Galvanic mA|Units of lye/);
+  });
+
+  it("(3) no standalone `mode !== \"galv\"` pulse section remains", () => {
+    expect(SIMPLE).not.toMatch(/block\.mode !== "galv" && \(/);
+  });
+
+  it("(4) uses the unified heading + helper, with no separate reaction section", () => {
+    expect(SIMPLE).toMatch(/\{OBSERVATIONS_RESPONSE_HEADING\}/);
+    expect(SIMPLE).toMatch(/\{OBSERVATIONS_RESPONSE_HELPER\}/);
+    expect(SIMPLE).not.toMatch(/TREATMENT_OBSERVATIONS_HEADING|CLIENT_RESPONSE_HEADING/);
+    expect(SIMPLE).not.toMatch(/REACTION_TYPES\.map/);
+  });
+
+  it("(5) Additional notes is large: rows={8} + min-h-[12rem], resizable, full-width", () => {
+    const notes = SIMPLE.slice(SIMPLE.indexOf("ADDITIONAL_NOTES_HEADING"));
+    expect(notes).toMatch(/rows=\{8\}/);
+    expect(notes).toMatch(/min-h-\[12rem\]/);
+    expect(notes).toMatch(/resize-y/);
+    expect(notes).toMatch(/w-full/);
+  });
+});
+
+describe("PicoBlend precision — native input constraints accept the exact values", () => {
+  it("(6) galvanic mA uses step='0.01' in BOTH forms (accepts 0.74)", () => {
+    expect(FORM).toMatch(/Galvanic mA[\s\S]{0,200}?step="0\.01"/);
+    expect(SIMPLE).toMatch(/Galvanic mA[\s\S]{0,200}?step="0\.01"/);
+  });
+  it("(7) thermolysis duration uses step='0.001' in BOTH forms (accepts 0.733)", () => {
+    expect(FORM).toMatch(/Thermolysis duration \(s\)[\s\S]{0,300}?step="0\.001"/);
+    expect(SIMPLE).toMatch(/Thermolysis duration \(s\)[\s\S]{0,300}?step="0\.001"/);
+  });
+
   it("(7b) the simplified-form server action parses fractional readings as DECIMALS (not parseInt), so 0.733 / 0.74 never truncate", () => {
     const ACTIONS = read(`${BASE}/actions.ts`);
     // Would fail if reverted to pickInteger (parseInt truncates 0.733 → 0).

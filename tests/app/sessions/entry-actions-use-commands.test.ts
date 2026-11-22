@@ -31,6 +31,11 @@ describe("addLaserEntryAction — calls create_laser_entry", () => {
     expect(body).not.toMatch(/from\("laser_entries"\)[\s\S]{0,200}?\.insert\(/);
   });
 
+  it("passes the session and the asserted client", () => {
+    expect(body).toMatch(/p_session_id:\s*sessionId/);
+    expect(body).toMatch(/p_client_id:\s*clientId/);
+  });
+
   it("preserves its equipment-params shaping and zone requirement", () => {
     expect(body).toMatch(/p_equipment_params:/);
     expect(body).toMatch(/Object\.keys\(equipmentParams\)\.length > 0 \? equipmentParams : null/);
@@ -58,6 +63,11 @@ describe("addElectrolysisEntryAction — calls add_electrolysis_pass", () => {
   it("calls the 0166 command and no longer inserts directly", () => {
     expect(body).toMatch(/rpc\("add_electrolysis_pass"/);
     expect(body).not.toMatch(/from\("electrolysis_entries"\)[\s\S]{0,400}?\.insert\(/);
+  });
+
+  it("passes the session and the asserted client", () => {
+    expect(body).toMatch(/p_session_id:\s*sessionId/);
+    expect(body).toMatch(/p_client_id:\s*clientId/);
   });
 
   it("hands block resolution to the command instead of creating one itself", () => {
