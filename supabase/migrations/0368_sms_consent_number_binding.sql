@@ -76,8 +76,9 @@ declare
   v_member constant boolean := current_user in ('anon', 'authenticated');
 begin
   if tg_op = 'INSERT' then
-    if v_member and (new.sms_consent_phone is not null or new.sms_consent_text_version is not null) then
-      raise exception 'clients: SMS consent evidence is recorded only by governed paths (role %)', current_user using errcode = '42501';
+    if v_member and (new.sms_consent_at is not null or new.sms_consent_source is not null
+                     or new.sms_consent_phone is not null or new.sms_consent_text_version is not null) then
+      raise exception 'clients: SMS consent is recorded only by governed paths (role %)', current_user using errcode = '42501';
     end if;
     if new.sms_consent_at is null then
       if new.sms_consent_phone is not null or new.sms_consent_text_version is not null then
@@ -93,7 +94,9 @@ begin
   end if;
 
   -- UPDATE
-  if v_member and (new.sms_consent_phone is distinct from old.sms_consent_phone
+  if v_member and (new.sms_consent_at is distinct from old.sms_consent_at
+                   or new.sms_consent_source is distinct from old.sms_consent_source
+                   or new.sms_consent_phone is distinct from old.sms_consent_phone
                    or new.sms_consent_text_version is distinct from old.sms_consent_text_version) then
     raise exception 'clients: SMS consent evidence is recorded only by governed paths (role %)', current_user using errcode = '42501';
   end if;
