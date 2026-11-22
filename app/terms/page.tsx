@@ -57,8 +57,8 @@ export default function TermsOfServicePage() {
         Where a studio has turned this on and a client has opted in on the
         studio&rsquo;s booking page, Hone sends that client appointment
         confirmations and reminders by text message on the studio&rsquo;s
-        behalf. Usually this is up to 3 messages per appointment, plus a
-        confirmation if the appointment is rescheduled. Message and data rates
+        behalf. Usually this is up to 3 messages per booking (a confirmation
+        and two reminders); a rescheduled booking starts again. Message and data rates
         may apply. Reply HELP for help (or email support@hone.care) and STOP to
         opt out; STOP applies to appointment texts from every studio on Hone.
         Consent is not a condition of booking. Hone does not use these texts

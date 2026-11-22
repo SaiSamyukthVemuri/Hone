@@ -39,8 +39,12 @@ export function appointmentSmsConsentLabel(studioName: string): string {
 }
 
 /** The disclosure lines under the label, in order. */
+/** Frequency, in one place: the form, the evidence page and the policies' wording all follow this. A reschedule creates a new booking with its own reminders. */
+export const APPOINTMENT_SMS_FREQUENCY =
+  "usually up to 3 messages per booking (a confirmation and two reminders); a rescheduled booking starts again";
+
 export const APPOINTMENT_SMS_CONSENT_DISCLOSURE: ReadonlyArray<string> = [
-  "Appointment confirmations and reminders only. Usually up to 3 messages per appointment, plus a confirmation if it's rescheduled.",
+  `Appointment confirmations and reminders only. Messages: ${APPOINTMENT_SMS_FREQUENCY}.`,
   "Msg & data rates may apply. Reply HELP for help, STOP to opt out.",
   "Consent isn't a condition of booking. Email will still be used for appointment messages.",
 ];

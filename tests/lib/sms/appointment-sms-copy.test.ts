@@ -24,8 +24,7 @@ describe("the opt-in disclosure carries every required element", () => {
   });
   it("states purpose, frequency, rates, HELP, STOP and that consent is not a condition", () => {
     expect(disclosure).toContain("confirmations and reminders only");
-    expect(disclosure).toContain("up to 3 messages per appointment");
-    expect(disclosure).toContain("if it's rescheduled");
+    expect(disclosure).toContain("usually up to 3 messages per booking (a confirmation and two reminders); a rescheduled booking starts again");
     expect(disclosure).toContain("Msg & data rates may apply");
     expect(disclosure).toContain("Reply HELP for help, STOP to opt out");
     expect(disclosure).toContain("Consent isn't a condition of booking");
@@ -64,7 +63,9 @@ describe("one source: the form, the route and the evidence page use it", () => {
     expect(form).toContain("<AppointmentSmsConsent");
     expect(form).toContain("studioName={studioName}");
     expect(form).not.toContain("Text me appointment confirmations and reminders.");
-    expect(form).toMatch(/useState\(false\)/);
+    expect(form).toContain("const [smsConsent, setSmsConsent] = useState(false);");
+    const usage = form.slice(form.indexOf("<AppointmentSmsConsent"), form.indexOf("/>", form.indexOf("<AppointmentSmsConsent")));
+    expect(usage).not.toMatch(/required|defaultChecked|checked=\{true\}/);
   });
   it("the route sends the shared HELP and STOP replies", () => {
     const route = read("app/api/twilio/inbound-sms/route.ts");

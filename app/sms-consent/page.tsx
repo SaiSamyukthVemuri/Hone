@@ -4,6 +4,7 @@ import { marketingMetadata } from "@/lib/marketing/metadata";
 import { AppointmentSmsConsent } from "@/components/sms/AppointmentSmsConsent";
 import {
   APPOINTMENT_SMS_CONSENT_V1,
+  APPOINTMENT_SMS_FREQUENCY,
   APPOINTMENT_SMS_CONSENT_VERSION,
   APPOINTMENT_SMS_CONSENT_VERSION_V1,
   APPOINTMENT_SMS_HELP_REPLY,
@@ -32,7 +33,7 @@ const EXAMPLE_LINK = "https://hone.care/example";
 
 const samples: ReadonlyArray<{ title: string; body: string }> = [
   {
-    title: "Confirmation, sent after booking (and again if the appointment is rescheduled)",
+    title: "Confirmation, sent after booking (a rescheduled booking starts again)",
     body: buildBookingConfirmationSms({
       studioName: SYNTHETIC_STUDIO,
       startsAt: SYNTHETIC_START,
@@ -84,7 +85,7 @@ export default function SmsConsentPage() {
           <strong>Purpose:</strong> appointment confirmations and reminders only. No marketing or promotional texts.
         </li>
         <li>
-          <strong>Frequency:</strong> usually up to 3 messages per appointment, plus a confirmation if the appointment is rescheduled.
+          <strong>Frequency:</strong> {APPOINTMENT_SMS_FREQUENCY}.
         </li>
         <li>
           <strong>Rates:</strong> message and data rates may apply.

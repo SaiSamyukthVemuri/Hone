@@ -270,11 +270,11 @@ export default function PrivacyPolicyPage() {
       </P>
       <UL>
         <li>
-          <strong>When:</strong> a confirmation after you book, and a
-          confirmation if the appointment is rescheduled, plus a reminder about
-          24 hours before and another a few hours before, when the studio has
-          those reminders turned on. That is usually up to 3 messages per
-          appointment.
+          <strong>When:</strong> a confirmation after you book, plus a
+          reminder about 24 hours before and another a few hours before, when
+          the studio has those reminders turned on. That is usually up to 3
+          messages per booking (a confirmation and two reminders); a
+          rescheduled booking starts again.
         </li>
         <li>
           <strong>Rates:</strong> message and data rates may apply, as charged
