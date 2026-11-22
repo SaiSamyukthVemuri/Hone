@@ -20,7 +20,10 @@ const booking = vi.hoisted(() => ({
   emptySlots: false,
   onSlotsRead: null as null | (() => void),
   rpcResult: "created",
-  rpcError: null as null | { code: string },
+  repeatId: null as null | string,
+  repeatError: false,
+  repeatFilters: [] as Record<string, unknown>[],
+  rpcError: null as null | { code: string; message?: string },
   clientEmail: vi.fn(async () => ({ ok: true })),
   practitionerEmail: vi.fn(async () => ({ ok: true })),
   rpc: vi.fn(async () => ({ data: [{ result: booking.rpcResult, appointment_id: "appointment" }], error: booking.rpcError })),
@@ -32,7 +35,16 @@ vi.mock("@/lib/supabase/queries", () => ({ getCurrentPractitionerWithStudio: asy
   studio: { id: "studio", timezone: "America/Toronto", practitioner_capacity_enabled: booking.capacityEnabled,
     default_appointment_duration_minutes: 60, buffer_minutes: 0, send_confirmation_emails: true },
 }) }));
-vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({ rpc: booking.rpc }) }));
+vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({ rpc: booking.rpc, from: (table: string) => {
+  // The repeat lookup: appointments filtered by studio, client, service, exact start, status (and the target practitioner).
+  const f: Record<string, unknown> = { table };
+  const q: Record<string, unknown> = {
+    select: () => q,
+    eq: (k: string, v: unknown) => { f[k] = v; return q; },
+    limit: async () => { booking.repeatFilters.push(f); return booking.repeatError ? { data: null, error: { message: "x" } } : { data: booking.repeatId ? [{ id: booking.repeatId }] : [], error: null }; },
+  };
+  return q;
+} }) }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ from: (table: string) => {
   const filters: Record<string, unknown> = {};
   const query: Record<string, unknown> = {
@@ -75,7 +87,7 @@ function bookFor(target = "B") {
 beforeEach(() => {
   booking.onSlotsRead = null;
   booking.capacityEnabled = true;
-  booking.slotError = null; booking.emptySlots = false; booking.rpcResult = "created"; booking.rpcError = null;
+  booking.slotError = null; booking.emptySlots = false; booking.rpcResult = "created"; booking.rpcError = null; booking.repeatId = null; booking.repeatError = false; booking.repeatFilters = [];
   vi.clearAllMocks(); booking.assignedId = "B"; booking.lookupError = false;
   booking.assigned = { id: "B", studio_id: "studio", active: true, display_name: "Assigned B", email: "b@example.test" };
 });
@@ -230,5 +242,72 @@ describe("SCH-002 internal client discovery uses its typed retryable refusal", (
   it("retains a successful slot read without any booking command", async () => {
     expect(await discover()).toEqual({ ok: true, slots: [{ start: "2099-01-01T15:00:00.000Z", end: "2099-01-01T16:00:00.000Z" }] });
     expect(booking.rpc).not.toHaveBeenCalled();
+  });
+});
+
+describe("a repeat of a booking that already exists writes nothing", () => {
+  it("answers with the existing appointment, without the slot check and without the booking command", async () => {
+    booking.repeatId = "existing";
+    const slotsRead = vi.fn();
+    booking.onSlotsRead = slotsRead;
+    expect(await bookFor()).toEqual({ ok: true, appointmentId: "existing" });
+    expect(booking.rpc).not.toHaveBeenCalled();
+    expect(slotsRead).not.toHaveBeenCalled();
+    expect(booking.clientEmail).not.toHaveBeenCalled();
+  });
+  it("matches on this studio, client, service, exact start, live status and the practitioner it books for", async () => {
+    booking.repeatId = "existing";
+    await bookFor();
+    expect(booking.repeatFilters[0]).toMatchObject({ table: "appointments", studio_id: "studio", client_id: "client", status: "confirmed" });
+    expect(booking.repeatFilters[0]!.practitioner_id).toBeTruthy();
+    expect(booking.repeatFilters[0]).toHaveProperty("service_id");
+    expect(booking.repeatFilters[0]).toHaveProperty("starts_at");
+  });
+  it("no repeat: the booking command runs exactly once, as before", async () => {
+    expect(await bookFor()).toEqual({ ok: true, appointmentId: "appointment" });
+    expect(booking.rpc).toHaveBeenCalledTimes(1);
+  });
+  it("an unreadable lookup falls through to the normal write (never a silent refusal, never a second check skipped)", async () => {
+    booking.repeatError = true;
+    expect(await bookFor()).toEqual({ ok: true, appointmentId: "appointment" });
+    expect(booking.rpc).toHaveBeenCalledTimes(1);
+  });
+  it("a double submit after the first committed makes exactly one write and both answers name one appointment", async () => {
+    const first = await bookFor();
+    booking.repeatId = "appointment"; // the first request's appointment now exists
+    const second = await bookFor();
+    expect(first).toEqual({ ok: true, appointmentId: "appointment" });
+    expect(second).toEqual({ ok: true, appointmentId: "appointment" });
+    expect(booking.rpc).toHaveBeenCalledTimes(1);
+  });
+  it("does not hide a genuine refusal: a first request the command refuses is still refused", async () => {
+    booking.rpcResult = "invalid_service";
+    const r = await bookFor();
+    expect(r.ok).toBe(false);
+  });
+});
+
+describe("the database's one-live-appointment rule loses a simultaneous repeat", () => {
+  const rule = { code: "23505", message: 'duplicate key value violates unique constraint "appointments_one_live_per_client_service_start"' };
+  it("answers with the appointment that exists, not an error", async () => {
+    booking.rpcError = rule;
+    booking.repeatId = "winner";
+    // the early repeat check would already have answered; simulate the race: nothing existed at the check, the rule fired at the write
+    let reads = 0;
+    const original = booking.repeatId;
+    Object.defineProperty(booking, "repeatId", { configurable: true, get: () => (reads++ === 0 ? null : original), set: () => undefined });
+    expect(await bookFor()).toEqual({ ok: true, appointmentId: "winner" });
+    Object.defineProperty(booking, "repeatId", { configurable: true, writable: true, value: null });
+  });
+  it("is the taken-slot answer when the winner cannot be found", async () => {
+    booking.rpcError = rule;
+    const r = await bookFor();
+    expect(r).toMatchObject({ ok: false, code: "slot_taken" });
+  });
+  it("another unique violation is NOT read as a repeat", async () => {
+    booking.rpcError = { code: "23505", message: 'violates unique constraint "something_else"' };
+    const r = await bookFor();
+    expect(r).toMatchObject({ ok: false });
+    expect((r as { code?: string }).code).toBeUndefined();
   });
 });

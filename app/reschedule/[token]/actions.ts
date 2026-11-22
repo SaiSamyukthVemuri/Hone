@@ -92,6 +92,7 @@ import {
   getTreatmentTimeContextForEmail,
 } from "@/lib/treatment-time/queries";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+import { isLiveRepeatViolation } from "@/lib/booking/live-duplicate";
 
 // Public reschedule collapse string. Returned for every user-facing
 // outcome that depends on the appointment's existence or state,
@@ -909,7 +910,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   );
 
   if (rpcErr) {
-    if (rpcErr.code === "23P01" || rpcErr.code === "HB001") {
+    if (rpcErr.code === "23P01" || rpcErr.code === "HB001" || isLiveRepeatViolation(rpcErr)) {
       console.error(
         JSON.stringify({
           event: "booking_slot_collision",

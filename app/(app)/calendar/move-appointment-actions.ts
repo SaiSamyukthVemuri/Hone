@@ -12,6 +12,7 @@ import { utcInstantFromLocal, localTimeString } from "@/lib/booking/tz";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { notifyAppointmentMoved, type MoveNotificationStatus } from "@/lib/email/notify-appointment-moved";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { isLiveRepeatViolation } from "@/lib/booking/live-duplicate";
 
 // Practitioner Move appointment: the ONE shared backend workflow used by mobile,
 // tablet and desktop. Two typed server actions:
@@ -413,7 +414,8 @@ export async function moveAppointmentAction(input: {
     // §7.11: an exclusion violation (double-book / block / break / blockout) -> safe conflict copy.
     if (
       (error as { code?: string }).code === "23P01" ||
-      (error as { code?: string }).code === "HB001"
+      (error as { code?: string }).code === "HB001" ||
+      isLiveRepeatViolation(error as { code?: string; message?: string })
     ) {
       return { ok: false, code: "conflict", error: "That time is no longer available. Choose another time." };
     }

@@ -82,7 +82,7 @@ test("owner books A, then B — distinct practitioner assignments", async ({ pag
   await page.getByLabel("Practitioner").selectOption({ label: B.displayName });
   const slotB = page.getByRole("button", { name: SLOT });
   await expect(slotB.first()).toBeVisible({ timeout: 20_000 });
-  await slotB.last().click();
+  await slotB.nth(-2).click(); // the one before A's: one client holds one live appointment per service and start (the first listed time can be past today)
   await expect(page.getByTestId("assigned-practitioner")).toContainText(B.displayName);
   await page.getByRole("button", { name: /^Confirm$/ }).click();
   await page.waitForURL(/\/calendar\//, { timeout: 20_000 });
@@ -116,7 +116,7 @@ test("member sees no selector and books only themselves", async ({ page }) => {
   await expect(page.getByLabel("Practitioner")).toHaveCount(0);
   const slot = page.getByRole("button", { name: SLOT });
   await expect(slot.first()).toBeVisible({ timeout: 20_000 });
-  await slot.last().click();
+  await slot.nth(-3).click(); // a start no other booking of this client in the file uses (one client holds one live appointment per service and start)
   await page.getByRole("button", { name: /^Confirm$/ }).click();
   await page.waitForURL(/\/calendar\//, { timeout: 20_000 });
   const appts = await getClientAppointmentsWithPractitioner(seed.studioId, clientId);

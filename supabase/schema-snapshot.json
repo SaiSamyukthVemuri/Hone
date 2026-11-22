@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 278,
-    "last": "0364_waitlist_replace_lock_order_and_live_only.sql",
-    "sha256": "f50af41463b89c161e5340051bfe0cb5fcef7986108241515ea33230741282ac"
+    "count": 279,
+    "last": "0365_appointments_one_live_per_client_service_start.sql",
+    "sha256": "715f3a84b021d213bda8e914807166accf149334f9c083418d4df237e8ff5d0c"
   },
   "public": {
     "tables": [

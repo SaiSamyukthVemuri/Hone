@@ -616,3 +616,26 @@ describe("0171 — the raw token never reaches a log", () => {
     }
   });
 });
+
+describe("one live appointment per client, service and start: the public reschedule's unique-violation mapping", () => {
+  const RULE = 'duplicate key value violates unique constraint "appointments_one_live_per_client_service_start"';
+  const TAKEN = { ok: false, error: "That time is no longer available. Please choose another time.", code: "slot_taken" };
+
+  it("a unique violation on the rule answers as a taken slot, and nothing is sent", async () => {
+    scenario.rpcError = { code: "23505", message: RULE };
+    expect(await rescheduleAppointmentViaTokenAction(form())).toEqual(TAKEN);
+    expect(sentEmails).toHaveLength(0);
+    expect(notifications).toHaveLength(0);
+  });
+  it("an exclusion violation answers the same way (control)", async () => {
+    scenario.rpcError = { code: "23P01", message: "conflicting key value violates exclusion constraint" };
+    expect(await rescheduleAppointmentViaTokenAction(form())).toEqual(TAKEN);
+  });
+  it("a DIFFERENT unique violation is not mapped to a taken slot", async () => {
+    scenario.rpcError = { code: "23505", message: 'duplicate key value violates unique constraint "appointments_cancellation_token_hash_uniq"' };
+    const r = await rescheduleAppointmentViaTokenAction(form());
+    expect(r.ok).toBe(false);
+    expect(r).not.toHaveProperty("code", "slot_taken");
+    expect(sentEmails).toHaveLength(0);
+  });
+});

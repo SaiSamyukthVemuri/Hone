@@ -74,6 +74,8 @@ let scannedDates: string[] = [];
 const rangeCalls: Array<{ dates: string[]; durationMinutes: number }> = [];
 
 const scenario = {
+  repeatId: null as string | null,
+  repeatError: false,
   session: {
     id: "session-1",
     studioId: SESSION_STUDIO,
@@ -139,6 +141,10 @@ const SERVICE_ROWS = [
 ];
 
 function resolveRow(table: string, f: Record<string, unknown>) {
+  if (table === "appointments") {
+    if (scenario.repeatError) return { data: null, error: { message: "x" } };
+    return { data: scenario.repeatId ? [{ id: scenario.repeatId }] : [], error: null };
+  }
   if (table === "clients") {
     if (scenario.clientReadError) return { data: null, error: scenario.clientReadError };
     // Tenancy is HONOURED, not assumed: a client id that does not sit under the
@@ -467,6 +473,8 @@ beforeEach(() => {
   throwIn.clear();
   delete process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV];
   Object.assign(scenario, {
+    repeatId: null,
+    repeatError: false,
     session: {
       id: "session-1",
       studioId: SESSION_STUDIO,
@@ -1607,5 +1615,45 @@ describe("9844333201179 advisory read failures defer only to the locked command"
     expect(next).toMatchObject({ ok: false, code: "unavailable" });
     expect("slots" in day).toBe(false); expect("date" in next).toBe(false);
     expect(slotCalls).toHaveLength(0); expect(commits()).toHaveLength(0);
+  });
+});
+
+describe("a repeat of a rebook that already exists writes nothing", () => {
+  it("answers as a taken slot, with no booking command, no email and no management link", async () => {
+    scenario.repeatId = "11111111-1111-4111-8111-111111111111";
+    const out = await bookAnotherAppointmentAction(form());
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("unreachable");
+    expect(out.code).toBe("slot_taken");
+    expect(commits()).toHaveLength(0);
+    expect(emails).toHaveLength(0);
+  });
+  it("the lookup is for the SESSION client, this service, this exact start and a live appointment only", async () => {
+    await bookAnotherAppointmentAction(form());
+    const lookup = reads.find((r) => r.table === "appointments");
+    expect(lookup?.filters).toMatchObject({ studio_id: SESSION_STUDIO, client_id: SESSION_CLIENT, status: "confirmed" });
+    expect(lookup?.filters).toHaveProperty("service_id");
+    expect(lookup?.filters).toHaveProperty("starts_at", START_ISO);
+  });
+  it("no repeat: exactly one booking command", async () => {
+    await bookAnotherAppointmentAction(form());
+    expect(commits()).toHaveLength(1);
+  });
+  it("an unreadable lookup falls through to the normal write", async () => {
+    scenario.repeatError = true;
+    const out = await bookAnotherAppointmentAction(form());
+    expect(out.ok).toBe(true);
+    expect(commits()).toHaveLength(1);
+  });
+});
+
+describe("the database's one-live-appointment rule loses a simultaneous rebook", () => {
+  it("answers as a taken slot, with no email", async () => {
+    scenario.commandError = { code: "23505", message: 'duplicate key value violates unique constraint "appointments_one_live_per_client_service_start"' } as never;
+    const out = await bookAnotherAppointmentAction(form());
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("unreachable");
+    expect(out.code).toBe("slot_taken");
+    expect(emails).toHaveLength(0);
   });
 });

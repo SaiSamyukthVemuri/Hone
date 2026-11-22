@@ -27,7 +27,7 @@ type St = {
   appt: Record<string, unknown> | null;
   slots: Array<{ start: string; end: string; startLabel: string }>;
   rpcResult: unknown;
-  rpcError: { code?: string } | null;
+  rpcError: { code?: string; message?: string } | null;
   rpcCalls: Array<{ name: string; args: Record<string, unknown> }>;
 };
 
@@ -173,6 +173,19 @@ describe("custom_time — owner authorization", () => {
     state.rpcError = { code: "23P01" };
     const res = await moveAppointmentAction(baseMove());
     expect(res).toEqual({ ok: false, code: "conflict", error: "That time is no longer available. Choose another time." });
+  });
+
+  it("maps a unique violation on the one-live-appointment rule to the same conflict copy", async () => {
+    state.rpcError = { code: "23505", message: 'duplicate key value violates unique constraint "appointments_one_live_per_client_service_start"' };
+    const res = await moveAppointmentAction(baseMove());
+    expect(res).toEqual({ ok: false, code: "conflict", error: "That time is no longer available. Choose another time." });
+  });
+
+  it("does NOT map a different unique violation to a conflict", async () => {
+    state.rpcError = { code: "23505", message: 'duplicate key value violates unique constraint "some_other_unique"' };
+    const res = await moveAppointmentAction(baseMove());
+    expect(res).toMatchObject({ ok: false });
+    expect(res).not.toHaveProperty("code", "conflict");
   });
 });
 

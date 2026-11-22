@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, afterEach, describe, expect, it } from "vitest";
 import { adminQuery, closePool } from "./helpers/harness";
+import { clientFor } from "./helpers/client-per-practitioner";
 import { dropSynthStudio, seedStudioWideOpenAllWeek, seedSynthStudioB, type SynthStudio } from "./helpers/synth-fleet";
 import { randomUUID } from "node:crypto";
 
@@ -45,7 +46,7 @@ async function seedAppt(practitionerId: string, start: string) {
        (id, studio_id, practitioner_id, client_id, service_id, starts_at, ends_at, duration_minutes, status, cancellation_token_hash)
      values (gen_random_uuid(),$1,$2,$3,$4,$5::timestamptz,$6::timestamptz,30,'confirmed',$7)
      returning id, starts_at::text s, ends_at::text e`,
-    [B.studioId, practitionerId, B.clientId, serviceId, start, end, hash64()],
+    [B.studioId, practitionerId, await clientFor(B.studioId, practitionerId), serviceId, start, end, hash64()],
   );
   return { id: r.rows[0].id as string, exp: r.rows[0].s as string, expEnd: r.rows[0].e as string };
 }

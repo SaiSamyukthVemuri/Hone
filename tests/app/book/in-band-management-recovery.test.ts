@@ -80,7 +80,7 @@ const scenario = {
   commandRefuses: false,
   slotError: null as unknown,
   emptySlots: false,
-  commandError: null as null | { code: string },
+  commandError: null as null | { code: string; message?: string },
 };
 
 /** Any real error message could carry a token or address; none may be logged. */
@@ -882,5 +882,27 @@ describe("SCH-002 public submit advisory availability failures", () => {
   it.each([new Error("unexpected programming error"), "availability_read_failed:blockouts"])("propagates unclassified/non-Error throws without command", async (failure) => {
     scenario.slotError = failure;
     await expect(book()).rejects.toBe(failure); expect(rpcCalls).toEqual([]);
+  });
+});
+
+describe("one live appointment per client, service and start: the public form's unique-violation mapping", () => {
+  const RULE = 'duplicate key value violates unique constraint "appointments_one_live_per_client_service_start"';
+  const TAKEN = { ok: false, code: "slot_taken", error: "That time is no longer available. Please choose another time." };
+
+  it("a unique violation on the rule answers exactly as a taken slot and sends nothing", async () => {
+    scenario.commandError = { code: "23505", message: RULE };
+    expect(await book()).toEqual(TAKEN);
+    expect(confirmationEmails).toEqual([]);
+  });
+  it("an exclusion violation answers the same way (control)", async () => {
+    scenario.commandError = { code: "23P01" };
+    expect(await book()).toEqual(TAKEN);
+  });
+  it("a DIFFERENT unique violation is not mapped to a taken slot", async () => {
+    scenario.commandError = { code: "23505", message: 'duplicate key value violates unique constraint "appointments_cancellation_token_hash_uniq"' };
+    const res = await book();
+    expect(res).toMatchObject({ ok: false });
+    expect(res).not.toHaveProperty("code", "slot_taken");
+    expect(confirmationEmails).toEqual([]);
   });
 });

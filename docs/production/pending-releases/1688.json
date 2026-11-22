@@ -1,0 +1,1 @@
+{"pr":1688,"runtime":true,"migrations":["supabase/migrations/0365_appointments_one_live_per_client_service_start.sql"],"release_receipt":"01-ops/1688-release-receipt.json"}

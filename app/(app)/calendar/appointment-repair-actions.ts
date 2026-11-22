@@ -31,6 +31,7 @@
 import { revalidatePath } from "next/cache";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { isLiveRepeatViolation } from "@/lib/booking/live-duplicate";
 // Constants and types live in a plain module: a `"use server"` file may export
 // ONLY async functions, so `export const` here is a build error.
 import {
@@ -247,7 +248,12 @@ export async function revertAppointmentOutcomeAction(
     // browser cannot satisfy them with whitespace.
     p_reason: reason,
   });
-  if (error) return { ok: false, error: GENERIC_FAILURE };
+  if (error) {
+    // Restoring to confirmed can land on a key the same client already holds (one live appointment per client, service and start): the same plain answer
+    // as a time that has been taken, never the generic failure.
+    if (isLiveRepeatViolation(error)) return { ok: false, error: REVERT_MESSAGES.slot_conflict };
+    return { ok: false, error: GENERIC_FAILURE };
+  }
 
   const result = mapSentinel(data, REVERT_MESSAGES);
   if (result.ok) {
