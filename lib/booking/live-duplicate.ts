@@ -49,17 +49,22 @@ export async function findLiveDuplicateAppointment(
     practitionerId?: string | null;
   },
 ): Promise<LiveDuplicateLookup> {
-  let query = admin
-    .from("appointments")
-    .select("id")
-    .eq("studio_id", q.studioId)
-    .eq("client_id", q.clientId)
-    .eq("service_id", q.serviceId)
-    .eq("starts_at", q.startsAtIso)
-    .eq("status", "confirmed");
-  if (q.practitionerId) query = query.eq("practitioner_id", q.practitionerId);
-  const { data, error } = await query.limit(1);
-  if (error) return { state: "unreadable" };
-  const row = (data as { id: string }[] | null)?.[0];
-  return row ? { state: "found", appointmentId: row.id } : { state: "none" };
+  // A look-up that THROWS (a dropped connection) is as unreadable as one that returns an error: the caller falls through to the normal write.
+  try {
+    let query = admin
+      .from("appointments")
+      .select("id")
+      .eq("studio_id", q.studioId)
+      .eq("client_id", q.clientId)
+      .eq("service_id", q.serviceId)
+      .eq("starts_at", q.startsAtIso)
+      .eq("status", "confirmed");
+    if (q.practitionerId) query = query.eq("practitioner_id", q.practitionerId);
+    const { data, error } = await query.limit(1);
+    if (error) return { state: "unreadable" };
+    const row = (data as { id: string }[] | null)?.[0];
+    return row ? { state: "found", appointmentId: row.id } : { state: "none" };
+  } catch {
+    return { state: "unreadable" };
+  }
 }

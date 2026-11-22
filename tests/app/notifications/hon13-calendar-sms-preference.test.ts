@@ -31,6 +31,11 @@ vi.mock("@/lib/supabase/queries", () => ({
 vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => ({
     rpc: async () => ({ data: [{ result: "created", appointment_id: "appointment" }], error: null }),
+    // the live-repeat look-up reads appointments: a realistic answer is "no live appointment found", so the real path runs (not the throw fall-through)
+    from: () => {
+      const q: Record<string, unknown> = { select: () => q, eq: () => q, limit: async () => ({ data: [], error: null }) };
+      return q;
+    },
   }),
 }));
 vi.mock("@/lib/supabase/server", () => ({

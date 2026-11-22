@@ -36,6 +36,12 @@ describe("findLiveDuplicateAppointment", () => {
   it("an unreadable lookup is its own answer, never 'none'", async () => {
     expect(await findLiveDuplicateAppointment(fakeAdmin({ data: null, error: { message: "x" } }).admin, Q)).toEqual({ state: "unreadable" });
   });
+  it("a lookup that THROWS (a dropped connection, a client without the table API) is unreadable too, never an exception", async () => {
+    const thrower = { from: () => { throw new TypeError("admin.from is not a function"); } } as never;
+    expect(await findLiveDuplicateAppointment(thrower, Q)).toEqual({ state: "unreadable" });
+    const rejecter = { from: () => ({ select: () => ({ eq: () => ({ eq: () => ({ eq: () => ({ eq: () => ({ eq: () => ({ limit: async () => { throw new Error("network"); } }) }) }) }) }) }) }) } as never;
+    expect(await findLiveDuplicateAppointment(rejecter, Q)).toEqual({ state: "unreadable" });
+  });
 });
 
 describe("isLiveRepeatViolation", () => {
