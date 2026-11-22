@@ -961,6 +961,14 @@ export function resolveOperationPortalEnabled(read: VisibilityRead): boolean {
   return v === undefined ? true : v === true;
 }
 
+/** Whether the client-self-service links are withheld from an operation email. A studio that manages appointments itself withholds them, and so does one
+ * whose policy cannot be read: an unreadable policy withdraws the links but never stops the reminder. A decision only; it returns no text from the read. */
+export function resolveOperationStudioManaged(read: VisibilityRead): boolean {
+  if (read.error) return true;
+  if (!read.data) return true;
+  return studioManagesAppointments(read.data as object);
+}
+
 /** Trusted renderer consumes ONLY the closed SQL projection, never a cron
  * joined row. This creates no dispatch permission; URL bytes are frozen once. */
 export function buildAppointmentEmailOperationPayload(projection: EmailOperationRender, purpose: "reminder_24h" | "reminder_2h", appointmentId: string, addressVisibility: unknown, nameFields: ClientIdentityFields | undefined, portalEnabled: boolean, studioManaged = false): EmailPayload | null {
@@ -1046,7 +1054,7 @@ export async function sendAppointmentReminderOperation(admin: SupabaseClient, st
     const selfServiceRead = await admin.from("studios").select("*").eq("id", studioId).maybeSingle();
     const portalEnabled = resolveOperationPortalEnabled(selfServiceRead);
     // An unreadable policy withdraws links but does not stop appointment reminders.
-    const studioManaged = Boolean(selfServiceRead.error) || !selfServiceRead.data || studioManagesAppointments(selfServiceRead.data);
+    const studioManaged = resolveOperationStudioManaged(selfServiceRead);
     // HON-58: the treatment-time sentence names the client by the name they go by. The 0247 projection carries only the stored
     // name, so the preferred name is read here, once, before the request is frozen; a failed read leaves the stored name.
     const nameFields = "kind" in render ? undefined : await loadTreatmentTimeNameFields(admin, studioId, render.client.id, render.client.name);
