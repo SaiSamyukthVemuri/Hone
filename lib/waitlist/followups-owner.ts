@@ -75,12 +75,17 @@ export async function exportDeclineAnswersPage(
   }
 }
 
-export async function readFollowUps(studioId: string, actorUserId: string | null): Promise<FollowUpList> {
+/**
+ * With no `invitationId`: the page read (every open follow-up plus closed ones whose answers still exist). With one: THAT invitation's follow-ups in
+ * whatever state, including closed ones whose answers were erased or are past retention (the command's own optional third argument).
+ */
+export async function readFollowUps(studioId: string, actorUserId: string | null, invitationId?: string): Promise<FollowUpList> {
   if (!actorUserId) return { kind: "unknown" };
   try {
     const { data, error } = await createAdminClient().rpc("read_waitlist_followups", {
       p_studio_id: studioId,
       p_actor_user_id: actorUserId,
+      ...(invitationId ? { p_invitation_id: invitationId } : {}),
     });
     if (error || !Array.isArray(data)) return { kind: "unknown" };
     const rows: FollowUpRow[] = [];

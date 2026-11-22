@@ -1,4 +1,4 @@
-import type { FollowUpList } from "@/lib/waitlist/followups-owner";
+import type { FollowUpList, FollowUpRow } from "@/lib/waitlist/followups-owner";
 
 // DECLINE VISIBILITY. PURE: no I/O, no clock, nothing is sent or written.
 //
@@ -17,7 +17,7 @@ export type DeclineInvitationRow = { id: string; entry_id: string; declined_at: 
 
 export type DeclineRecords = { kind: "unknown" } | { kind: "ok"; rows: DeclineInvitationRow[] };
 
-export type EntryFacts = { name: string; status: string };
+export type EntryFacts = { name: string; status: string; joinedAt?: string | null };
 
 export type DeclinedPerson = {
   entryId: string;
@@ -85,14 +85,33 @@ export type DeclineAnswers =
  * What the person wrote when they declined, from the owner's existing follow-up read, matched by INVITATION id (never by name). `answersOn` is the
  * WAITLIST_DECLINE_ANSWERS gate: off means answers are not collected, which is different from "none on record".
  */
-export function answersFor(invitationId: string, answersOn: boolean, followUps: FollowUpList | null): DeclineAnswers {
+export function answersFor(
+  invitationId: string,
+  answersOn: boolean,
+  followUps: FollowUpList | null,
+  /** The invitation-scoped reads (any state, erased and past-retention included), keyed by invitation id. Decides when the page list has no row. */
+  scoped?: ReadonlyMap<string, FollowUpList>,
+): DeclineAnswers {
   if (!answersOn) return { kind: "not_collected" };
+  const isThis = (r: FollowUpRow) => r.kind === "decline" && r.invitationId === invitationId;
+  const fromRow = (f: FollowUpRow): DeclineAnswers => {
+    if (f.answersErasedAt) return { kind: "erased", at: f.answersErasedAt };
+    if (f.whyNotWork === null && f.betterTimes === null) return { kind: "none_on_record" };
+    return { kind: "answers", why: f.whyNotWork ?? "", better: f.betterTimes ?? "" };
+  };
+  // A row the page list returned is used as is.
+  const pageRow = followUps !== null && followUps.kind === "ok" ? followUps.rows.find(isThis) : undefined;
+  if (pageRow) return fromRow(pageRow);
+  // The page list leaves out closed follow-ups whose answers were erased or are past retention, so its silence proves nothing: the
+  // invitation-scoped read decides. "None on record" is said only when that read succeeded and found no decline follow-up.
+  const own = scoped?.get(invitationId);
+  if (own !== undefined) {
+    if (own.kind !== "ok") return { kind: "unreadable" };
+    const f = own.rows.find(isThis);
+    return f ? fromRow(f) : { kind: "none_on_record" };
+  }
   if (followUps === null || followUps.kind !== "ok") return { kind: "unreadable" };
-  const f = followUps.rows.find((r) => r.kind === "decline" && r.invitationId === invitationId);
-  if (!f) return followUps.capped === true ? { kind: "may_be_missing" } : { kind: "none_on_record" };
-  if (f.answersErasedAt) return { kind: "erased", at: f.answersErasedAt };
-  if (f.whyNotWork === null && f.betterTimes === null) return { kind: "none_on_record" };
-  return { kind: "answers", why: f.whyNotWork ?? "", better: f.betterTimes ?? "" };
+  return followUps.capped === true ? { kind: "may_be_missing" } : { kind: "none_on_record" };
 }
 
 export const DECLINE_OUTCOME_NOTE =

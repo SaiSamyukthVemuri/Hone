@@ -15,7 +15,7 @@ const render = (over: Partial<Parameters<typeof DeclinedSection>[0]> = {}) =>
     createElement(DeclinedSection, {
       people: [person()], total: 1, timeZone: "America/Toronto", answersOn: true,
       followUps: { kind: "ok", rows: [fu()] } as FollowUpList,
-      contacts: new Map([["e1", { kind: "entry" as const, email: "alex@example.invalid", phone: "+14165550100" }]]),
+      entryPages: new Map([["e1", 1]]), contacts: new Map([["e1", { kind: "entry" as const, email: "alex@example.invalid", phone: "+14165550100" }]]),
       entryFactsUnreadable: false, linkableStatuses: new Set(["waiting", "invited", "released"]), backHref: "/settings/waitlist", ...over,
     }),
   );
@@ -50,7 +50,22 @@ describe("DeclinedSection", () => {
     const html = render({ followUps: { kind: "ok", rows: [], capped: true } as FollowUpList });
     expect(html).toContain("Their answers may not be shown: the list is long.");
     expect(html).not.toContain("No answers on record.");
-    expect(html).toContain("If this entry isn’t on the first page of its section, use the section’s pages to find it.");
+    expect(html).not.toContain("first page of its section");
+  });
+  it("the entry link carries the page the entry is on (only past the first), and no page means no link", () => {
+    const at = (n: number | undefined) => render({ entryPages: n === undefined ? new Map() : new Map([["e1", n]]) });
+    expect(at(1)).toContain('href="/settings/waitlist?section=waiting#entry-e1"');
+    expect(at(3)).toContain('href="/settings/waitlist?section=waiting&amp;page=3#entry-e1"');
+    const none = at(undefined);
+    expect(none).not.toContain("declined-entry-link");
+    expect(none).toContain("its page could not be worked out");
+    expect(render({ entryPages: null })).not.toContain("declined-entry-link");
+  });
+  it("an erased scoped follow-up reads as removed in the row", () => {
+    const erased = { kind: "ok", rows: [fu({ followupId: "f9", status: "handled", whyNotWork: null, betterTimes: null, answersErasedAt: "2026-09-01T00:00:00Z" })] } as FollowUpList;
+    const html = render({ followUps: { kind: "ok", rows: [] } as FollowUpList, scopedFollowUps: new Map([["i1", erased]]) });
+    expect(html).toContain("removed from view");
+    expect(html).not.toContain("No answers on record.");
   });
   it("a person whose entry is gone has no link, only the honest sentence", () => {
     const html = render({ people: [person({ entryStatus: "removed" })] });

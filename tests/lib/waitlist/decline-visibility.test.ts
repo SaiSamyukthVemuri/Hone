@@ -73,6 +73,21 @@ describe("answersFor", () => {
     expect(answersFor("i1", true, ok([fu({})], true))).toEqual({ kind: "answers", why: "too early", better: "evenings" });
     expect(answersFor("i9", true, ok([fu({})]))).toEqual({ kind: "none_on_record" });
   });
+  it("P2: the invitation-scoped read decides when the page list has no row: an erased closed follow-up is 'erased', never 'none'", () => {
+    const erased = fu({ invitationId: "i9", status: "handled", whyNotWork: null, betterTimes: null, answersErasedAt: "2026-09-01T00:00:00Z", closedAt: "2026-08-25T00:00:00Z" });
+    const scoped = new Map([["i9", ok([erased])]]);
+    expect(answersFor("i9", true, ok([fu({})]), scoped)).toEqual({ kind: "erased", at: "2026-09-01T00:00:00Z" });
+    expect(answersFor("i9", true, ok([fu({})], true), scoped)).toEqual({ kind: "erased", at: "2026-09-01T00:00:00Z" }); // a capped page list changes nothing
+    expect(answersFor("i9", true, { kind: "unknown" }, scoped)).toEqual({ kind: "erased", at: "2026-09-01T00:00:00Z" }); // nor does an unreadable one
+    expect(answersFor("i9", true, ok([]), new Map([["i9", ok([])]]))).toEqual({ kind: "none_on_record" }); // read fine, nothing there
+    expect(answersFor("i9", true, ok([]), new Map([["i9", { kind: "unknown" } as FollowUpList]]))).toEqual({ kind: "unreadable" });
+    expect(answersFor("i9", true, ok([]), new Map([["i9", ok([fu({ kind: "withdrawal", invitationId: "i9" })])]]))).toEqual({ kind: "none_on_record" });
+    expect(answersFor("i9", false, ok([]), scoped)).toEqual({ kind: "not_collected" });
+  });
+  it("a row the page list DID return wins over a scoped read", () => {
+    const scoped = new Map([["i1", ok([fu({ whyNotWork: "stale", answersErasedAt: "2026-09-01T00:00:00Z" })])]]);
+    expect(answersFor("i1", true, ok([fu({})]), scoped)).toEqual({ kind: "answers", why: "too early", better: "evenings" });
+  });
   it("an erased answer reads as erased; empty answers read as none", () => {
     expect(answersFor("i1", true, ok([fu({ answersErasedAt: "2026-09-01T00:00:00Z", whyNotWork: null, betterTimes: null })]))).toEqual({ kind: "erased", at: "2026-09-01T00:00:00Z" });
     expect(answersFor("i1", true, ok([fu({ whyNotWork: null, betterTimes: null })]))).toEqual({ kind: "none_on_record" });

@@ -148,6 +148,8 @@ const scenario = {
   declinedCount: null as number | null,
   declinedError: null as { code: string } | null,
   declineEntries: [] as Array<Record<string, unknown>>,
+  aheadOf: {} as Record<string, number>,
+  positionError: null as { code: string } | null,
   contactRows: [] as Array<Record<string, unknown>>,
   // The REDEEMED invitation read, asked separately.
   redeemedInvitations: [] as Array<Record<string, unknown>>,
@@ -211,6 +213,8 @@ function reset() {
     declinedCount: null,
     declinedError: null,
     declineEntries: [],
+    aheadOf: {},
+    positionError: null,
     contactRows: [],
     redeemedInvitations: [],
     invitationsError: null,
@@ -240,11 +244,20 @@ const followUp = vi.hoisted(() => ({
   replies: null as unknown,
   // The owner follow-up read. Null serves the real read, which the harness has no command for; a test seeds a list.
   followUps: null as unknown,
+  // Per-invitation answers to the invitation-scoped form of the read, keyed by invitation id. A test seeds these; absent means the page list is served.
+  scoped: {} as Record<string, unknown>,
+  scopedCalls: [] as string[],
 }));
 vi.mock("@/lib/waitlist/followups-owner", async (orig) => {
   const a = await orig<typeof import("@/lib/waitlist/followups-owner")>();
-  return { ...a, readFollowUps: vi.fn(async (...args: Parameters<typeof a.readFollowUps>) =>
-    (followUp.followUps as Awaited<ReturnType<typeof a.readFollowUps>> | null) ?? a.readFollowUps(...args)) };
+  return { ...a, readFollowUps: vi.fn(async (...args: Parameters<typeof a.readFollowUps>) => {
+    const inv = args[2];
+    if (inv) {
+      followUp.scopedCalls.push(inv);
+      return (followUp.scoped[inv] as Awaited<ReturnType<typeof a.readFollowUps>> | undefined) ?? { kind: "ok" as const, rows: [] };
+    }
+    return (followUp.followUps as Awaited<ReturnType<typeof a.readFollowUps>> | null) ?? a.readFollowUps(...args);
+  }) };
 });
 vi.mock("@/lib/waitlist/needs-attention", async (orig) => {
   const a = await orig<typeof import("@/lib/waitlist/needs-attention")>();
@@ -417,9 +430,16 @@ vi.mock("@/lib/supabase/server", () => ({
           const rows = src.slice(0, Math.min(shape.limit ?? 1000, 1000));
           return { data: rows, count: shape.options.count === "exact" ? (scenario.declinedCount ?? src.length) : null, error: null };
         }
-        if (table === "new_client_waitlist_entries" && (shape.columns === "id,name,status" || shape.columns === "id,email,phone")) {
+        // The position read: a head-only exact count of the entries AHEAD of one entry in its section, answered from a per-entry seed.
+        if (table === "new_client_waitlist_entries" && shape.options.head === true && shape.filters.some((f) => f[0] === "or")) {
+          const orFilter = String(shape.filters.find((f) => f[0] === "or")?.[2] ?? "");
+          const entryId = orFilter.match(/id\.lt\.([^)]+)\)/)?.[1] ?? "";
+          if (scenario.positionError) return { data: null, count: null, error: scenario.positionError };
+          return { data: null, count: scenario.aheadOf[entryId] ?? 0, error: null };
+        }
+        if (table === "new_client_waitlist_entries" && (shape.columns === "id,name,status,joined_at" || shape.columns === "id,email,phone")) {
           const ids = (shape.filters.find((f) => f[0] === "in" && f[1] === "id")?.[2] ?? []) as string[];
-          const src = shape.columns === "id,name,status" ? scenario.declineEntries : scenario.contactRows;
+          const src = shape.columns === "id,name,status,joined_at" ? scenario.declineEntries : scenario.contactRows;
           return { data: src.filter((r) => ids.includes(r.id as string)), error: null };
         }
 
@@ -516,6 +536,10 @@ vi.mock("@/lib/supabase/server", () => ({
         },
         is(column: string, value: unknown) {
           shape.filters.push(["is", column, value]);
+          return builder;
+        },
+        or(expression: string) {
+          shape.filters.push(["or", "", expression]);
           return builder;
         },
         not(column: string, op: string, value: unknown) {
@@ -3159,6 +3183,8 @@ describe("closed admission blocks the owner's invite until 0323 is applied (0204
 describe("owner follow-up cards render with ZERO active entries (Codex P2)", () => {
   afterEach(() => {
     followUp.attention = followUp.declined = followUp.replies = null;
+    followUp.scoped = {};
+    followUp.scopedCalls = [];
     vi.unstubAllEnvs();
   });
   const empty = () => {
@@ -3374,6 +3400,11 @@ describe("each active invitation shows its exact expiry and the time left", () =
 // Time is fixed at 2026-08-23T09:00:00Z; the studio is America/Toronto (EDT).
 // ===========================================================================
 describe("people who declined: the summary count and the declined view", () => {
+  beforeEach(() => {
+    followUp.scoped = {};
+    followUp.scopedCalls = [];
+    followUp.followUps = null;
+  });
   const dec = (id: string, entryId: string, at: string) => ({ id, entry_id: entryId, declined_at: new Date(at).toISOString() });
   const seed = () => {
     scenario.rows = [entry({ id: "w1", status: "waiting" })];
@@ -3384,8 +3415,8 @@ describe("people who declined: the summary count and the declined view", () => {
       dec("i1", "e-a", "2026-08-10T10:00:00Z"), // the same person's earlier decline: counted once
     ];
     scenario.declineEntries = [
-      { id: "e-a", name: "Alex Rivers", status: "waiting" },
-      { id: "e-b", name: "Bo Tanaka", status: "removed" },
+      { id: "e-a", name: "Alex Rivers", status: "waiting", joined_at: "2026-07-01T12:00:00+00:00" },
+      { id: "e-b", name: "Bo Tanaka", status: "removed", joined_at: "2026-07-02T12:00:00+00:00" },
     ];
     scenario.contactRows = [
       { id: "e-a", email: "alex@example.invalid", phone: "+14165550100" },
@@ -3438,7 +3469,7 @@ describe("people who declined: the summary count and the declined view", () => {
     expect(html).toContain("Alex Rivers");
     expect(html).toContain("Declined Aug 21, 2026, 6:00 AM EDT");
     // The waiting entry links to its own section; the removed one has no section to land in.
-    expect(html).toContain('href="/settings/waitlist?section=waiting#entry-e-a"');
+    expect(html).toContain('href="/settings/waitlist?section=waiting#entry-e-a"'); // nobody ahead of them: page 1
     expect(html).not.toContain("#entry-e-b");
     expect(html).toContain("Their entry is no longer on the waitlist.");
     // Newest decline first.
@@ -3469,10 +3500,10 @@ describe("people who declined: the summary count and the declined view", () => {
     for (const m of outside.matchAll(/href="([^"]*)"/g)) expect(m[1]!, m[1]).not.toMatch(/Alex|Bo%20|alex@|bo@|%40|5550100/);
   });
 
-  describe("with the answers gate ON and the follow-up list capped", () => {
-    const fuRow = (invitationId: string, entryId: string) => ({
+  describe("with the answers gate ON: the page list is not the whole truth", () => {
+    const fuRow = (invitationId: string, entryId: string, over: Record<string, unknown> = {}) => ({
       followupId: `f-${invitationId}`, kind: "decline", invitationId, entryId, clientName: "X", openedAt: "2026-08-21T10:00:00.000Z", status: "open",
-      whyNotWork: "Mornings are hard", betterTimes: "Weekday evenings", answersErasedAt: null, submittedAt: "2026-08-21T10:00:00.000Z", closedAt: null, eraseBy: null,
+      whyNotWork: "Mornings are hard", betterTimes: "Weekday evenings", answersErasedAt: null, submittedAt: "2026-08-21T10:00:00.000Z", closedAt: null, eraseBy: null, ...over,
     });
     const withGate = async (list: unknown) => {
       process.env.WAITLIST_DECLINE_ANSWERS = "1";
@@ -3484,21 +3515,89 @@ describe("people who declined: the summary count and the declined view", () => {
         followUp.followUps = null;
       }
     };
-    it("a person whose follow-up row may be cut off is NOT told 'No answers on record'; a person whose row is present still shows their answers", async () => {
+    const rowOf = (html: string, id: string) => html.match(new RegExp(`<li[^>]*data-entry-id="${id}"[^>]*data-testid="declined-row"[\\s\\S]*?</li>`))?.[0] ?? "";
+
+    it("P2: a CLOSED follow-up whose answers were erased (which the page list leaves out) reads as removed, never 'No answers on record'", async () => {
       seed();
-      const html = await withGate({ kind: "ok", capped: true, rows: [fuRow("i2", "e-a")] });
-      const rowOf = (id: string) => html.match(new RegExp(`<li[^>]*data-entry-id="${id}"[^>]*data-testid="declined-row"[\\s\\S]*?</li>`))?.[0] ?? "";
-      expect(rowOf("e-a")).toContain("Mornings are hard"); // Alex's row (i2) was returned, in the DECLINED row itself
-      const bo = rowOf("e-b");
-      expect(bo).toContain("Their answers may not be shown: the list is long.");
+      followUp.scoped = { i3: { kind: "ok", rows: [fuRow("i3", "e-b", { status: "handled", whyNotWork: null, betterTimes: null, answersErasedAt: "2026-09-01T00:00:00.000Z", closedAt: "2026-08-25T00:00:00.000Z" })] } };
+      const html = await withGate({ kind: "ok", rows: [fuRow("i2", "e-a")] }); // the page list has Alex only
+      const bo = rowOf(html, "e-b");
+      expect(bo).toContain("Their answers have been removed from view.");
       expect(bo).not.toContain("No answers on record.");
+      expect(followUp.scopedCalls).toEqual(["i3"]); // only the person the page list does not cover is asked about
+      expect(rowOf(html, "e-a")).toContain("Mornings are hard");
     });
-    it("the same missing row on an UNcapped list honestly reads 'No answers on record'", async () => {
+    it("a person the scoped read finds NO decline follow-up for honestly reads 'No answers on record'", async () => {
       seed();
       const html = await withGate({ kind: "ok", rows: [fuRow("i2", "e-a")] });
-      const bo = html.match(/<li[^>]*data-entry-id="e-b"[^>]*data-testid="declined-row"[\s\S]*?<\/li>/)?.[0] ?? "";
-      expect(bo).toContain("No answers on record.");
-      expect(bo).not.toContain("may not be shown");
+      expect(rowOf(html, "e-b")).toContain("No answers on record.");
+    });
+    it("a failed scoped read says the answers could not be loaded, never 'none'", async () => {
+      seed();
+      followUp.scoped = { i3: { kind: "unknown" } };
+      const html = await withGate({ kind: "ok", rows: [fuRow("i2", "e-a")] });
+      const bo = rowOf(html, "e-b");
+      expect(bo).toContain("We couldn’t load their answers just now.");
+      expect(bo).not.toContain("No answers on record.");
+    });
+    it("an unreadable page list does not stop the scoped reads from answering", async () => {
+      seed();
+      followUp.scoped = { i3: { kind: "ok", rows: [fuRow("i3", "e-b", { whyNotWork: "Too far" })] } };
+      const html = await withGate({ kind: "unknown" });
+      expect(rowOf(html, "e-b")).toContain("Too far");
+      expect(followUp.scopedCalls.sort()).toEqual(["i2", "i3"]);
+    });
+    it("with the gate OFF no scoped read is made at all", async () => {
+      seed();
+      await render({ view: "declined" });
+      expect(followUp.scopedCalls).toEqual([]);
+    });
+  });
+
+  describe("the entry link opens the page that CONTAINS the entry", () => {
+    const seedLinks = (ahead: Record<string, number>) => {
+      seed();
+      scenario.declineEntries = [
+        { id: "e-a", name: "Alex Rivers", status: "waiting", joined_at: "2026-07-01T12:00:00+00:00" },
+        { id: "e-b", name: "Bo Tanaka", status: "invited", joined_at: "2026-07-02T12:00:00+00:00" },
+      ];
+      scenario.aheadOf = ahead;
+    };
+    it("page = floor(entries ahead / 100) + 1, on the entry's own section, with the page only past the first", async () => {
+      seedLinks({ "e-a": 250, "e-b": 99 });
+      const html = await render({ view: "declined" });
+      expect(html).toContain('href="/settings/waitlist?section=waiting&amp;page=3#entry-e-a"');
+      expect(html).toContain('href="/settings/waitlist?section=invited#entry-e-b"'); // 99 ahead is still page 1
+      expect(html).not.toContain("first page of its section");
+    });
+    it("exactly 100 ahead is page 2", async () => {
+      seedLinks({ "e-a": 100, "e-b": 0 });
+      expect(await render({ view: "declined" })).toContain("section=waiting&amp;page=2#entry-e-a");
+    });
+    it("the position read is the queue's own order: this studio, this status, strictly before by (joined_at, id), head-only and exact", async () => {
+      seedLinks({});
+      await render({ view: "declined" });
+      const q = queries.filter((x) => x.table === "new_client_waitlist_entries" && x.options.head === true && x.filters.some((f) => f[0] === "or"));
+      expect(q.length).toBe(2);
+      const a = q.find((x) => x.filters.some((f) => f[0] === "eq" && f[1] === "status" && f[2] === "waiting"))!;
+      expect(a.options).toEqual({ count: "exact", head: true });
+      expect(a.filters.find((f) => f[0] === "eq" && f[1] === "studio_id")?.[2]).toBe(STUDIO_ID);
+      expect(a.filters.find((f) => f[0] === "or")?.[2]).toBe("joined_at.lt.2026-07-01T12:00:00+00:00,and(joined_at.eq.2026-07-01T12:00:00+00:00,id.lt.e-a)");
+    });
+    it("a position that cannot be read gives plain text, never a link that might open the wrong page", async () => {
+      seedLinks({});
+      scenario.positionError = { code: "57014" };
+      const html = await render({ view: "declined" });
+      expect(html).not.toContain("declined-entry-link");
+      expect(html).not.toContain("#entry-e-a");
+      expect(html).toContain("its page could not be worked out just now");
+    });
+    it("a person whose entry has no section (removed) is not position-read at all", async () => {
+      seed();
+      await render({ view: "declined" });
+      const heads = queries.filter((x) => x.filters.some((f) => f[0] === "or"));
+      expect(heads.every((x) => x.filters.some((f) => f[0] === "eq" && f[1] === "status" && f[2] !== "removed"))).toBe(true);
+      expect(heads.length).toBe(1);
     });
   });
 
@@ -3535,7 +3634,8 @@ describe("people who declined: the summary count and the declined view", () => {
   it("reads: owner session only, the studio's scope, and the view is not pulled by any other value", async () => {
     seed();
     await render({ view: "something-else" });
-    expect(queries.some((q) => q.columns === "id,name,status")).toBe(false);
+    expect(queries.some((q) => q.columns === "id,name,status,joined_at")).toBe(false);
+    expect(followUp.scopedCalls).toEqual([]);
     expect(queries.some((q) => q.columns === "id,email,phone")).toBe(false);
     const read = queries.find((q) => q.table === "new_client_waitlist_invitations" && q.columns === DECLINE_COUNT_READ)!;
     expect(read.options).toEqual({ count: "exact" });

@@ -22,9 +22,11 @@ export function DeclinedSection({
   timeZone,
   answersOn,
   followUps,
+  scopedFollowUps,
   contacts,
   entryFactsUnreadable,
   linkableStatuses,
+  entryPages,
   backHref,
 }: {
   /** Every person who declined, newest first. Only the first DECLINED_SHOW_MAX are listed. */
@@ -34,10 +36,14 @@ export function DeclinedSection({
   timeZone: string;
   answersOn: boolean;
   followUps: FollowUpList | null;
+  /** Each shown invitation's own follow-ups (any state), which decide the answers when the page list has no row for it. */
+  scopedFollowUps?: ReadonlyMap<string, FollowUpList>;
   contacts: ReadonlyMap<string, ReplyContact> | null;
   entryFactsUnreadable: boolean;
   /** The entry states that have a section on this page, so a link is offered only where it can land. */
   linkableStatuses: ReadonlySet<string>;
+  /** The queue page each entry sits on in its section. An entry absent here has no known page, so no link is offered for it. */
+  entryPages: ReadonlyMap<string, number> | null;
   backHref: string;
 }) {
   const shown = people.slice(0, DECLINED_SHOW_MAX);
@@ -82,8 +88,10 @@ export function DeclinedSection({
           ) : null}
           <ul className="flex flex-col gap-3" data-testid="declined-list">
             {shown.map((p) => {
-              const a = answersFor(p.invitationId, answersOn, followUps);
-              const canLink = p.entryStatus !== null && linkableStatuses.has(p.entryStatus);
+              const a = answersFor(p.invitationId, answersOn, followUps, scopedFollowUps);
+              const inQueue = p.entryStatus !== null && linkableStatuses.has(p.entryStatus);
+              const entryPage = entryPages?.get(p.entryId);
+              const canLink = inQueue && typeof entryPage === "number";
               return (
                 <li key={p.invitationId} data-entry-id={p.entryId} data-testid="declined-row" className="rounded-lg border border-line bg-surface p-4 text-sm">
                   <p className="font-medium" data-testid="declined-name">{p.name || "A person on the waitlist"}</p>
@@ -111,16 +119,21 @@ export function DeclinedSection({
                   <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
                     {canLink ? (
                       <>
-                        <Link href={`/settings/waitlist?section=${p.entryStatus}#entry-${p.entryId}`} className="underline" data-testid="declined-entry-link">
+                        <Link
+                          href={`/settings/waitlist?section=${p.entryStatus}${entryPage > 1 ? `&page=${entryPage}` : ""}#entry-${p.entryId}`}
+                          className="underline"
+                          data-testid="declined-entry-link"
+                        >
                           Open their waitlist entry
                         </Link>
-                        <span className="text-xs text-neutral-600" data-testid="declined-entry-hint">
-                          If this entry isn’t on the first page of its section, use the section’s pages to find it.
-                        </span>
                       </>
                     ) : (
                       <span className="text-neutral-600" data-testid="declined-entry-state">
-                        {p.entryStatus === null ? "Their entry could not be read." : "Their entry is no longer on the waitlist."}
+                        {p.entryStatus === null
+                          ? "Their entry could not be read."
+                          : !inQueue
+                            ? "Their entry is no longer on the waitlist."
+                            : "Their entry is on the waitlist, but its page could not be worked out just now. Find them in the waitlist above."}
                       </span>
                     )}
                   </p>

@@ -64,7 +64,7 @@ import { recordProspectSmsConsentFormAction } from "./consent-actions";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { expirySummary, rowExpiry, summaryText } from "@/lib/waitlist/invitation-expiry-display";
 import { declinedCount, declinedPeople, declinedSummaryText, DECLINED_SHOW_MAX, DECLINED_VIEW, latestDeclinePerPerson } from "@/lib/waitlist/decline-visibility";
-import { loadDeclinedEntryFacts, loadDeclineRecords } from "@/lib/waitlist/decline-visibility-read";
+import { loadDeclinedEntryFacts, loadDeclineRecords, loadEntryQueuePages, loadScopedFollowUps } from "@/lib/waitlist/decline-visibility-read";
 import { DeclinedSection } from "@/components/waitlist/declined-section";
 import { formatLocalDateLabel, localDateString, localLongDate } from "@/lib/booking/tz";
 // `claimWaitlistEntryAction` and `claimNextWaitlistEntriesAction` are
@@ -864,12 +864,31 @@ export default async function WaitlistSettingsPage({
   let declinedList: ReturnType<typeof declinedPeople> = [];
   let declinedFactsUnreadable = false;
   let declinedContacts: Awaited<ReturnType<typeof loadReplyContacts>> | null = null;
+  let declinedScoped: Awaited<ReturnType<typeof loadScopedFollowUps>> | undefined;
+  let declinedEntryPages: Map<string, number> | null = null;
   if (viewDeclined && declineRecords.kind === "ok") {
     const shownIds = latestDeclinePerPerson(declineRecords.rows).slice(0, DECLINED_SHOW_MAX).map((r) => r.entry_id);
     const facts = await loadDeclinedEntryFacts(supabase, studio.id, shownIds);
     declinedFactsUnreadable = facts === null;
     declinedList = declinedPeople(declineRecords, facts);
     declinedContacts = await loadReplyContacts(studio.id, shownIds);
+    // The page-wide follow-up list leaves out closed follow-ups whose answers were erased or are past retention, so for every shown person it
+    // does not already cover, ask the existing command for THAT invitation's follow-ups (any state) before saying anything about answers.
+    if (declineAnswersOn) {
+      const covered = new Set(followUps?.kind === "ok" ? followUps.rows.filter((r) => r.kind === "decline").map((r) => r.invitationId) : []);
+      const need = declinedList.map((p) => p.invitationId).filter((id) => !covered.has(id));
+      declinedScoped = await loadScopedFollowUps(studio.id, practitioner.user_id, need);
+    }
+    // Where each entry sits in its own section, so the link opens the page that contains it.
+    if (facts !== null) {
+      const placed = declinedList.flatMap((p) => {
+        const f = facts.get(p.entryId);
+        return f && typeof f.joinedAt === "string" && (SECTION_STATUSES as readonly string[]).includes(f.status)
+          ? [{ id: p.entryId, status: f.status, joinedAt: f.joinedAt }]
+          : [];
+      });
+      declinedEntryPages = await loadEntryQueuePages(supabase, studio.id, placed, SECTION_PAGE_SIZE);
+    }
   }
 
   return (
@@ -1134,9 +1153,11 @@ export default async function WaitlistSettingsPage({
           timeZone={studio.timezone ?? "UTC"}
           answersOn={declineAnswersOn}
           followUps={followUps}
+          scopedFollowUps={declinedScoped}
           contacts={declinedContacts?.kind === "ok" ? declinedContacts.byEntry : null}
           entryFactsUnreadable={declinedFactsUnreadable}
           linkableStatuses={new Set<string>(SECTION_STATUSES)}
+          entryPages={declinedEntryPages}
           backHref={QUEUE_PATH}
         />
       ) : active === 0 ? (
