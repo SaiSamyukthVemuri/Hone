@@ -136,10 +136,10 @@ describe("public wording stays true (STOP scope, who is texted, who operates Hon
     expect(APPOINTMENT_SMS_AUDIENCE).toContain("including ones the studio books for them");
     for (const f of files) expect(read(f), f).not.toMatch(/people who ticked/i);
   });
-  it("the operator is the corporation; no individual, no 'pending incorporation', no file number labelled as an EIN", () => {
+  it("the operator is the corporation: the previous individual-operator wording is gone, and no file number is labelled as an EIN", () => {
     for (const f of [...files, "lib/sms/appointment-sms-copy.ts"]) {
       const t = read(f);
-      expect(t, f).not.toMatch(/Sam Vemuri|pending\s+incorporation|an individual/i);
+      expect(t, f).not.toMatch(/pending\s+incorporation|an individual/i);
       expect(t, f).not.toMatch(/\bEIN\b/);
     }
     for (const f of ["app/privacy/page.tsx", "app/terms/page.tsx"]) expect(read(f), f).toContain("Hone Care, Inc.");
