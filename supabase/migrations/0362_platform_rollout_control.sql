@@ -1,12 +1,11 @@
 -- ===========================================================================
--- Platform rollout control (xCell MultiPlex and New view). MIGRATION PROPOSAL. UNNUMBERED. NOT A MIGRATION.
--- Lives under docs/proposals until OPS allocates a number at seal, then is copied UNCHANGED to
--- supabase/migrations/<number>_platform_rollout_control.sql. Hosted application needs Sam's own per-change authorization.
--- No backfill of existing rows; it touches no studio, machine, reading, capture or block table. The one seeded row is the control itself, mode off.
+-- Platform rollout control (xCell MultiPlex and New view).
+-- Adds the control that decides, per studio, whether the new charting view and the xCell offer are available. No backfill of existing rows; it
+-- touches no studio, machine, reading, capture or block table. The one seeded row is the control itself, mode off.
 --
--- Two tables and four service-role-only commands. The admin identity is app-level (ADMIN_EMAILS), so the DATABASE cannot verify the actor: the
+-- Two tables and a set of service-role-only commands. The admin identity is app-level (ADMIN_EMAILS), so the DATABASE cannot verify the actor: the
 -- service-role-only grant is the boundary, exactly as for every existing admin write. The caller passes the actor's user id and email, taken from
--- the authenticated session after isAdmin (never from form input). Every change writes its audit row (admin_action_events, 0113) IN THE SAME
+-- the authenticated session after isAdmin (never from form input). Every change writes its audit row (admin_action_events) IN THE SAME
 -- TRANSACTION with constant action/target_type values and metadata built here (mode before/after, or the studio id) and nothing caller-supplied.
 -- ===========================================================================
 begin;

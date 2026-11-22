@@ -30,14 +30,29 @@ function resultOf(data: unknown): string | null {
   return null;
 }
 
-/** True when a round is open afterwards (opened now, or already open). */
-export async function ensureOpenRound(admin: Rpc, studioId: string, actorUserId: string): Promise<boolean> {
+/**
+ * THREE outcomes, because a lost answer is not a refusal.
+ *  - "open": a round is open afterwards (opened now, or already open).
+ *  - "refused": the command answered with a closed result that says no round can be opened (not the owner, unknown studio, ...). Definitive.
+ *  - "unknown": the command could not be reached, threw, or answered in a shape this code does not know. Nothing is known about the round, so the
+ *    caller must NOT turn this into a permanent outcome. A THROWN call is not caught here (the single invitation's behaviour is unchanged); a caller that
+ *    must survive one treats it as "unknown".
+ */
+export type RoundOutcome = "open" | "refused" | "unknown";
+
+export async function tryOpenRound(admin: Rpc, studioId: string, actorUserId: string): Promise<RoundOutcome> {
   const { data, error } = await admin.rpc("open_new_client_waitlist_admission_round", {
     p_studio_id: studioId,
     p_actor_user_id: actorUserId,
     p_allowance: AUTO_ROUND_ALLOWANCE,
   });
-  if (error) return false;
+  if (error) return "unknown";
   const result = resultOf(data);
-  return result === "opened" || result === "round_already_open";
+  if (result === null) return "unknown";
+  return result === "opened" || result === "round_already_open" ? "open" : "refused";
+}
+
+/** True when a round is open afterwards (opened now, or already open). Anything else, including a lost answer, is false (the single invitation's rule). */
+export async function ensureOpenRound(admin: Rpc, studioId: string, actorUserId: string): Promise<boolean> {
+  return (await tryOpenRound(admin, studioId, actorUserId)) === "open";
 }

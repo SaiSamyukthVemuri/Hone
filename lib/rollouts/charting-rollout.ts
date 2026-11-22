@@ -2,7 +2,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 
-// The ONE server resolver for the platform rollout of xCell MultiPlex and New view (design: XCELL-ADMIN-ROLLOUT-DESIGN). The mode (off, pilot,
+// The ONE server resolver for the platform rollout of xCell MultiPlex and New view. The mode (off, pilot,
 // all) and the pilot list are set by an authorized Hone admin in /admin/rollouts; nothing here reads an environment variable.
 //
 // * READ PER REQUEST, NEVER CACHED: nothing is memoized across calls, and the read is an rpc (a POST), which a framework never caches.
@@ -53,7 +53,7 @@ export function resetRolloutAlertWindowForTests(): void {
 }
 
 /**
- * The NEW-SETUP route gate (Insurance E1, E2). An EXISTING MultiPlex block keeps its route whatever the rollout says (re-saving it while off keeps its
+ * The NEW-SETUP route gate. An EXISTING MultiPlex block keeps its route whatever the rollout says (re-saving it while off keeps its
  * saved identity). Otherwise: on = offer it, off = do not, error = REFUSE with a retryable message. It never degrades to the legacy machine.
  */
 export function xcellRouteDecision(o: { existingBlockUsesXcellPur: boolean; rollout: RolloutRead }): "offer" | "hide" | "refuse" {

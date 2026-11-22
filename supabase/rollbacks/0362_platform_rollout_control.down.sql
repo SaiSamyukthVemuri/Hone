@@ -1,4 +1,4 @@
--- ROLLBACK of the platform rollout control. DRAFT FOR REVIEW. authorizes_nothing: true.
+-- ROLLBACK of the platform rollout control.
 -- REFUSES unless the mode is 'off' AND no pilot row exists: a live rollout is never silently removed. STEPS: set the mode Off and remove every
 -- pilot studio in the admin page (or the commands) FIRST, then run this. Audit rows in admin_action_events are never touched.
 begin;

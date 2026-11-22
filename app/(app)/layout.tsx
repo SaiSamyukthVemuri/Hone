@@ -6,6 +6,7 @@ import { PrimaryNavLink } from "./PrimaryNavLink";
 import { AppMain } from "./AppMain";
 import { MobileMenu } from "./MobileMenu";
 import { AccountMenu } from "./AccountMenu";
+import { BusinessMenu } from "./BusinessMenu";
 import { SignOutFlightProvider } from "./signout-flight";
 import { GlobalSearch } from "./GlobalSearch";
 import { createClient } from "@/lib/supabase/server";
@@ -200,27 +201,19 @@ export default async function AppLayout({
                   so financials and the rest of the owner business
                   intelligence can land behind this same word without
                   renaming the tab under owners who learned it. Today
-                  it goes straight to the one surface that exists;
-                  there is deliberately no /business hub standing empty.
+                  it is a small menu of the two owner surfaces that exist,
+                  Capacity and Statements; there is deliberately
+                  no /business hub standing empty.
 
                   OWNER-ONLY PRESENTATION, and only that. The role comes
                   from the practitioner this layout ALREADY resolved — no
                   second lookup, no extra query. Hiding the tab protects
-                  nothing: /dashboard/capacity keeps its own server-side
-                  owner check, which is the authority, and a practitioner
+                  nothing: /dashboard/capacity and /financials/statement
+                  each keep their own server-side owner check, which is the authority, and a practitioner
                   typing the route still meets it. This just stops
                   advertising a surface they cannot use, rather than
                   offering a disabled item or a permission placeholder. */}
-              {practitioner.role === "owner" && (
-                <PrimaryNavLink
-                  href="/dashboard/capacity"
-                  match="section"
-                  testId="nav-business"
-                  pendingLabel="Opening Business…"
-                >
-                  Business
-                </PrimaryNavLink>
-              )}
+              {practitioner.role === "owner" && <BusinessMenu />}
               {/* PR #231: Settings and Admin moved into the account
                   dropdown; the primary nav is the working surfaces. */}
             </nav>

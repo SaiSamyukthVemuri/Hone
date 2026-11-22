@@ -20,6 +20,8 @@ import {
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import { checkIdentityChoice } from "@/lib/machines/identity-choice";
+import { isCanonicalRetryKey, NON_CANONICAL_KEY_MESSAGE } from "@/lib/machines/retry-key";
+import { createReceiptLookup, guardXcellRollout } from "@/lib/machines/xcell-rollout-guard";
 import { currentProfile } from "@/lib/machines/profile-contract";
 import { resolveWritingIdentity } from "@/lib/supabase/writing-identity";
 import { listStudioDevices } from "@/lib/machines/studio-devices";
@@ -980,27 +982,31 @@ function normalizedChips(r: EntryReadingsInput): string[] {
 // Server-side range validation mirroring the DB CHECK (migration 0042) so
 // the practitioner gets a clean message instead of an opaque constraint
 // violation. Empty/null values are always allowed.
+// One wording for every range refusal: field name, then the range, then "Nothing was saved." The submitted value is never echoed.
+// The message is built here from constants only, so the checks return a finished refusal and the callers pass it on unchanged.
+const NOTHING_SAVED = "Nothing was saved.";
+function rangeText(label: string, min: number, max?: number, whole?: boolean): string {
+  const range = max !== undefined ? `between ${min} and ${max}` : `${min} or more`;
+  return `${label} must be ${range}${whole ? " (a whole number)" : ""}. ${NOTHING_SAVED}`;
+}
+function outside(v: number | null | undefined, min: number, max?: number, whole?: boolean): boolean {
+  if (v == null) return false;
+  return !Number.isFinite(v) || v < min || (max !== undefined && v > max) || (whole === true && !Number.isInteger(v));
+}
 function validateReadings(
   r: EntryReadingsInput,
 ): { ok: true } | { ok: false; error: string } {
-  const nonNeg: ReadonlyArray<[number | null | undefined, string]> = [
-    [r.galvanicMa, "Galvanic mA"],
-    [r.galvanicDurationSeconds, "Galvanic duration"],
-    [r.thermolysisDurationSeconds, "Thermolysis duration"],
-    [r.unitsOfLye, "Units of lye"],
+  // The column types: mA, thermolysis duration and units of lye
+  // are numeric (decimals are intended); galvanic duration and thermolysis intensity are integer, so a fraction is refused, not rounded.
+  const checks: ReadonlyArray<[number | null | undefined, string, number, number | undefined, boolean]> = [
+    [r.galvanicMa, "Galvanic mA", 0, undefined, false],
+    [r.galvanicDurationSeconds, "Galvanic duration", 0, undefined, true],
+    [r.thermolysisDurationSeconds, "Thermolysis duration", 0, undefined, false],
+    [r.unitsOfLye, "Units of lye", 0, undefined, false],
+    [r.thermolysisIntensityPercent, "Thermolysis intensity", 0, 100, true],
   ];
-  for (const [v, label] of nonNeg) {
-    if (v != null && (!Number.isFinite(v) || v < 0)) {
-      return { ok: false, error: `${label} must be a non-negative number.` };
-    }
-  }
-  const percent: ReadonlyArray<[number | null | undefined, string]> = [
-    [r.thermolysisIntensityPercent, "Thermolysis intensity"],
-  ];
-  for (const [v, label] of percent) {
-    if (v != null && (!Number.isFinite(v) || v < 0 || v > 100)) {
-      return { ok: false, error: `${label} must be between 0 and 100.` };
-    }
+  for (const [v, label, min, max, whole] of checks) {
+    if (outside(v, min, max, whole)) return { ok: false, error: rangeText(label, min, max, whole) };
   }
   // Pulse delay: validated only when multiple pulses were done (pulse_count >
   // 1). A single-pulse entry carries no delay, so a stale draft value is
@@ -1008,8 +1014,29 @@ function validateReadings(
   if (clampPulseCount(r.pulseCount) > 1 && r.pulseDelaySeconds != null) {
     const d = r.pulseDelaySeconds;
     if (!Number.isFinite(d) || d < PULSE_DELAY_MIN || d > PULSE_DELAY_MAX) {
-      return { ok: false, error: PULSE_DELAY_RANGE_ERROR };
+      return { ok: false, error: `${PULSE_DELAY_RANGE_ERROR} ${NOTHING_SAVED}` };
     }
+  }
+  return { ok: true };
+}
+
+const MINUTES_MAX_SERVER = 1440; // the form's own ceiling (a day)
+// energy_level, minutes_performed, hairs_treated and pulse_count are integer columns, so a fraction is refused rather than left for the database
+// to reject or round. Energy level is a whole number only where the ENTRY stores it (the same rule as entryMachineSnapshot: not for Galvanic);
+// the block column itself is numeric, so a Galvanic block carrying a stale hidden fraction still saves, as it always did (a negative is still refused).
+function validateSetupNumbers(
+  input: { mode?: string | null; energyLevel?: number | null; minutesPerformed?: number | null },
+  r: EntryReadingsInput,
+): { ok: true } | { ok: false; error: string } {
+  const keepsEnergyLevel = input.mode !== "galv";
+  const checks: ReadonlyArray<[number | null | undefined, string, number, number | undefined, boolean]> = [
+    [input.energyLevel, "Energy level", 0, undefined, keepsEnergyLevel],
+    [input.minutesPerformed, "Minutes", 0, MINUTES_MAX_SERVER, true],
+    [r.hairsTreated, "Hairs treated", 0, undefined, true],
+    [r.pulseCount, "Pulse count", PULSE_COUNT_MIN, PULSE_COUNT_MAX, true],
+  ];
+  for (const [v, label, min, max, whole] of checks) {
+    if (outside(v, min, max, whole)) return { ok: false, error: rangeText(label, min, max, whole) };
   }
   return { ok: true };
 }
@@ -1276,8 +1303,11 @@ export async function createTreatmentAreaWithEntryAction(
   const readings = input.readings ?? {};
   const area = blockPrimaryArea;
 
+  // Both checks run before anything is written (only reads precede them), so a refusal writes nothing, and says so.
   const readingsCheck = validateReadings(readings);
   if (!readingsCheck.ok) return readingsCheck;
+  const setupCheck = validateSetupNumbers(input, readings);
+  if (!setupCheck.ok) return setupCheck;
 
   // The first entry's area is the treatment area. An entry needs a (NOT
   // NULL) area, so readings can't be saved without one.
@@ -1422,11 +1452,19 @@ export async function createTreatmentAreaWithEntryAction(
   // and nothing reaches here without settings.
   const withSetup =
     input.initialSetup != null && input.initialSetup.groups.length > 0;
+  // A RETRY KEY THAT IS NOT ALREADY CANONICAL IS REFUSED BEFORE ANYTHING IS READ OR SENT (lib/machines/retry-key.ts): the receipt lookup and the
+  // command must see the very same string. A bare-create key shorter than 8 characters has always meant "no key", and still does.
+  if (
+    (withSetup && !isCanonicalRetryKey(input.initialSetup!.idempotencyKey)) ||
+    (!withSetup && typeof input.createKey === "string" && input.createKey.length >= 8 && !isCanonicalRetryKey(input.createKey))
+  ) {
+    return { ok: false, error: NON_CANONICAL_KEY_MESSAGE };
+  }
   // A SETTINGS-FREE CREATE CARRIES A KEY TOO. 0223's command takes a key with no groups (its settings half is nullable
   // and it still writes the claim), so a retry of a bare save whose answer was lost is answered with the original area.
   const bareKey =
-    !withSetup && typeof input.createKey === "string" && input.createKey.trim().length >= 8
-      ? input.createKey.trim()
+    !withSetup && typeof input.createKey === "string" && input.createKey.length >= 8
+      ? input.createKey
       : null;
 
   // EVERY READING IS VALIDATED BEFORE ANY OF IT IS SENT, through the SAME
@@ -1455,6 +1493,14 @@ export async function createTreatmentAreaWithEntryAction(
         error: "That machine is not registered to this studio.",
       };
     }
+    // THE ROLLOUT, ASKED AGAIN AT WRITE TIME (a new area has no stored identity, so there is no existing-block exemption here).
+    const rolloutOk = await guardXcellRollout(db, {
+      studioId: studio.id,
+      unitProfileId: device.profileId,
+      deviceId: setup.machineId,
+      receipt: createReceiptLookup(db, input.sessionId, setup.idempotencyKey),
+    });
+    if (!rolloutOk.ok) return { ok: false, error: rolloutOk.error, unresolved: rolloutOk.reason === "receipt" };
     // THE CURRENT VERSION (Codex, #860 4308488012), and here it decides
     // whether a CLINICAL VALUE is accepted: `validateSubmittedReadings` below
     // checks each reading against this profile's field contract, so a
@@ -1507,6 +1553,16 @@ export async function createTreatmentAreaWithEntryAction(
     // answers a repeated key first and refuses a NEW write itself; an unreadable inventory keeps the key (unknown).
     if (!allowed.ok && allowed.reason === "unreadable") return { ok: false, error: allowed.error, unresolved: true };
     if (!allowed.ok && allowed.reason !== "availability") return { ok: false, error: allowed.error, unresolved: false };
+    // THE ROLLOUT, ASKED AGAIN AT WRITE TIME: a form opened while the xCell unit was offered can still submit after it was switched Off.
+    if (allowed.ok) {
+      const rolloutOk = await guardXcellRollout(supabase as unknown as MachineDb, {
+        studioId: studio.id,
+        unitProfileId: allowed.unitProfileId,
+        deviceId: identity.machineId,
+        receipt: createReceiptLookup(supabase as unknown as MachineDb, input.sessionId, bareKey),
+      });
+      if (!rolloutOk.ok) return { ok: false, error: rolloutOk.error, unresolved: rolloutOk.reason === "receipt" };
+    }
   }
   // Built once so the older command can be called with the same arguments when
   // 0301 is not applied yet (see the fallback below).
@@ -1827,8 +1883,11 @@ export async function updateTreatmentAreaWithEntryAction(
   const readings = input.readings ?? {};
   const area = blockPrimaryArea;
 
+  // Both checks run before anything is written (only reads precede them), so a refusal writes nothing, and says so.
   const readingsCheck = validateReadings(readings);
   if (!readingsCheck.ok) return readingsCheck;
+  const setupCheck = validateSetupNumbers(input, readings);
+  if (!setupCheck.ok) return setupCheck;
 
   // Creating a new first entry (block had none) needs an area, same NOT NULL
   // reason as create. Updating an existing entry keeps its current area when

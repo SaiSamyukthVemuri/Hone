@@ -64,7 +64,7 @@ describe("a failed read raises ONE rate-limited ops alert (an outage is not sile
   });
 });
 
-describe("the NEW-SETUP route decision (Insurance E1 and E2)", () => {
+describe("the new-setup route decision: an existing block keeps its machine, a new setup follows the rollout", () => {
   it("an EXISTING MultiPlex block keeps its route whatever the rollout says, including a failed read", () => {
     for (const rollout of ["on", "off", "error"] as const) expect(xcellRouteDecision({ existingBlockUsesXcellPur: true, rollout })).toBe("offer");
   });
