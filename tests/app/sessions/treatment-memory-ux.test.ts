@@ -51,7 +51,7 @@ describe("1. a new treatment area never auto-copies the previous area", () => {
 describe("2. copy settings: area-aware", () => {
   const copyFn = codeOnly(FORM).slice(
     codeOnly(FORM).indexOf("function copySettings"),
-    codeOnly(FORM).indexOf("function submit"),
+    codeOnly(FORM).indexOf("function runSave"),
   );
 
   it("prefers the most recent saved area matching the selected area", () => {

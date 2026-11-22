@@ -36,6 +36,7 @@
  * reading.
  */
 
+import { machineModelLabel } from "./display-name";
 import {
   activeModes,
   type MachineMode,
@@ -202,7 +203,7 @@ export async function resolveSelection(
       profile,
       reason:
         profile.availabilityReason ??
-        `${profile.manufacturer} ${profile.model} is not offered for new capture.`,
+        `${machineModelLabel(profile)} is not offered for new capture.`,
     };
   }
   if (device.profileVersion !== profile.version) {
@@ -286,7 +287,7 @@ export function checkDeviceChoice(
       code: "profile_not_offered",
       message:
         profile.availabilityReason ??
-        `${profile.manufacturer} ${profile.model} is not offered for new capture.`,
+        `${machineModelLabel(profile)} is not offered for new capture.`,
     };
   }
   if (device.profileVersion !== profile.version) {

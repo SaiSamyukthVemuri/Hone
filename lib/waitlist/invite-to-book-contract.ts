@@ -143,6 +143,12 @@ export type InviteToBookInput = {
    *  a browser may name an entry, never a tenant, an actor or a role. */
   entryId: string;
   scope: BookingScope;
+  /**
+   * The owner's explicit "Invite anyway" after the estimate said no consultation availability remains. It overrides ONLY that estimate: the
+   * command still checks the owner, the studio, the entry's state, any open owner review, the service and scope, a live invitation already out and
+   * the admission round, exactly as for any other invitation. Absent or false means the estimate applies as always.
+   */
+  beyondEstimate?: boolean;
   // NO WINDOW. Level 3 is a FIXED 48-hour opportunity: the adapter supplies
   // `WAIT_INVITATION_TTL_HOURS` and no caller may name one. This field used to
   // be `expiresInHours: number` with a 1..168 bound, which is what let the
@@ -220,6 +226,10 @@ export const INVITE_TO_BOOK_FAILURES = [
   "admission_round_full",
   // 0324: the consultations that fit are already spoken for by live invitations.
   "no_capacity",
+  // The server could not read the availability estimate, so nothing was sent. Retryable: it is never treated as zero and never honours the override.
+  "estimate_unreadable",
+  // The server's own estimate is zero and the owner has not confirmed: nothing was sent, and the surface must ask first.
+  "needs_estimate_confirmation",
   // The send command this release calls is not in the database yet (0324 not applied). The call was
   // refused BEFORE it ran, so nothing was created: a definite answer, not a lost one.
   "not_yet_available",
@@ -404,9 +414,17 @@ export type InvitationNoticeTone = "success" | "warning" | "error";
 export type InvitationNotice = {
   tone: InvitationNoticeTone;
   message: string;
+  /** True when the server found the estimate at zero and is asking the owner to confirm: the surface shows the confirmation, never a bare error. */
+  needsConfirmation?: boolean;
   /** True when an invitation is KNOWN to exist — the retry-safety signal. */
   invitationExists: boolean;
 };
+
+/** The question the owner is asked when the estimate is zero. Said once, so the page's question and the server's cannot differ. */
+export const BEYOND_ESTIMATE_CONFIRM_TEXT =
+  "No estimated consultation availability remains. Invite this person anyway? They may find no appointments available.";
+/** Shown when the availability estimate could not be read. Nothing was sent. */
+export const ESTIMATE_UNREADABLE_COPY = "Couldn\u2019t check availability. Please try again.";
 
 /** Shown when the admit command refuses because the person's reply is waiting for the owner. Neutral: no name, no answer, no reason. */
 export const PENDING_OWNER_REVIEW_COPY =
@@ -453,6 +471,10 @@ export function invitationRefusalCopy(code: DefiniteInviteToBookRefusal): string
       return CAPACITY_EXHAUSTED_COPY;
     case "no_capacity":
       return NO_CAPACITY_COPY;
+    case "estimate_unreadable":
+      return ESTIMATE_UNREADABLE_COPY;
+    case "needs_estimate_confirmation":
+      return BEYOND_ESTIMATE_CONFIRM_TEXT;
     case "not_yet_available":
       return NOT_YET_AVAILABLE_COPY;
     // 0325: not a failure to retry. The person replied to an earlier invitation and the reply is waiting for the owner.
@@ -537,6 +559,7 @@ export function invitationNoticeFor(
       tone: "error",
       message: invitationRefusalCopy(outcome.code),
       invitationExists: false,
+      ...(outcome.code === "needs_estimate_confirmation" ? { needsConfirmation: true } : {}),
     };
   }
   // `indeterminate`. NOT an error tone: an invitation may exist and may already

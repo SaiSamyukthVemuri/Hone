@@ -179,20 +179,17 @@ describe("a correctly linked B chart completes B only when B is confirmed and ha
     expect(runtime.postcare).not.toHaveBeenCalled();
   });
 
-  it("a failed completion is fail-soft: no postcare, and the chart still opens", async () => {
-    runtime.adminRpc.mockResolvedValue({ error: { code: "P0001", message: "synthetic refusal" } });
-    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  it("HON-45: a PAST CONFIRMED appointment stays confirmed when its chart is started: no completion, no postcare", async () => {
+    // The default appointment here is confirmed and ended in the past, i.e. exactly what PR #180 used to auto-complete.
     await expect(startSessionAction(form())).rejects.toThrow("REDIRECT:/clients/client/sessions/chart");
-    expect(runtime.adminRpc).toHaveBeenCalledTimes(1);
+    expect(runtime.adminRpc).not.toHaveBeenCalled();
     expect(runtime.postcare).not.toHaveBeenCalled();
-    log.mockRestore();
   });
 
-  it("separate appointments get separate charts: B's new chart completes B, never A", async () => {
+  it("separate appointments get separate charts: B's new chart opens and leaves B's status alone", async () => {
     runtime.rpc.mockResolvedValue({ data: [{ session_id: "chart-b", reused: false }], error: null });
     await expect(startSessionAction(form())).rejects.toThrow("REDIRECT:/clients/client/sessions/chart-b");
-    expect(runtime.adminRpc).toHaveBeenCalledTimes(1);
-    expect(runtime.adminRpc).toHaveBeenCalledWith("mark_appointment_complete", expect.objectContaining({ p_appointment_id: B }));
+    expect(runtime.adminRpc).not.toHaveBeenCalled();
     expect(runtime.analytics).toHaveBeenCalledWith(expect.objectContaining({ properties: expect.objectContaining({ is_new_session: true }) }));
   });
 });
