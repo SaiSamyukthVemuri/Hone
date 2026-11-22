@@ -238,7 +238,7 @@ const followUp = vi.hoisted(() => ({
   attention: null as unknown,
   declined: null as unknown,
   replies: null as unknown,
-  // The owner follow-up read (0325 answers). Null serves the real read, which the harness has no command for; a test seeds a list.
+  // The owner follow-up read. Null serves the real read, which the harness has no command for; a test seeds a list.
   followUps: null as unknown,
 }));
 vi.mock("@/lib/waitlist/followups-owner", async (orig) => {
