@@ -189,7 +189,30 @@ export function AppointmentCheckoutCell({
     );
   }
 
-  // chargeable or no_session → the shared Checkout entry. The modal resolves the
+  // P5. A completed visit with a session, a known positive price and NO card
+  // money and NO settlement is unpaid, and the row now says so beside Checkout.
+  // A neutral fact: never emerald, never "Paid", no amount, no charge. Claimed
+  // only for `chargeable`; `no_session` (price not resolved) claims nothing.
+  //
+  // OWNER-ONLY BY CONSTRUCTION, not by this component: both callers render the
+  // cell for the owner only and load payment state for the owner only (money
+  // reads are owner-only since 0254). A non-owner version is therefore NOT a
+  // flag flip here; it needs a non-owner-safe, amount-free derivation first.
+  if (paymentState === "chargeable") {
+    return (
+      <span className="inline-flex flex-wrap items-center gap-2">
+        <span
+          data-testid="appointment-not-paid-yet"
+          className="inline-flex items-center rounded-full bg-neutral-100 px-2.5 py-1 text-xs font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
+        >
+          Not paid yet
+        </span>
+        <CheckoutButton appointmentId={appointmentId} status={status} variant="compact" />
+      </span>
+    );
+  }
+
+  // no_session → the shared Checkout entry. The modal resolves the
   // accurate state (and routes to charting when there is no session yet).
   return (
     <CheckoutButton appointmentId={appointmentId} status={status} variant="compact" />
