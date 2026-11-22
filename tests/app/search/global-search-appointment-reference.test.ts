@@ -321,7 +321,7 @@ describe("appointment reference search", () => {
   });
 });
 
-// Hardening: the defences the first set did not pin (Insurance's review notes on the reference lookup).
+// Hardening: the defences the first set did not pin.
 describe("appointment reference search: pinned defences", () => {
   it("the detail read is scoped to the caller's studio too, not only the id scan", async () => {
     tables.appointments = [appt("a-1", STUDIO_A)];
