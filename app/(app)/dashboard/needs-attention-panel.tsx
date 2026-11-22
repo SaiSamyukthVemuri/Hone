@@ -34,6 +34,7 @@ const ACTION_CLASS =
 const BADGE: Record<AttentionItemKind, string> = {
   intake_review: "Intake",
   intake_incomplete: "Intake form",
+  unfinished: "Not finished",
   charting: "Charting",
   aftercare: "Aftercare",
   probe_lot: "Probe lot",

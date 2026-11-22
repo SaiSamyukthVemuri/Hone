@@ -29,11 +29,13 @@ describe("HON-8 first-slice activation candidate (software profile only)", () =>
   });
   it("publishes only active, fully verified modes, and only v3", () => {
     const plan = planContractPublication();
-    expect(plan.publish.every((m) => m.p_machine_profile_version === 3)).toBe(true);
-    expect(plan.publish).toHaveLength(10);
+    // Scoped to the 3G models: xCell Pur publishes its own single v1 row (pinned in xcell-pur-profile.test.ts).
+    const threeG = plan.publish.filter((m) => m.p_machine_profile_id.match(/apilus:(senior|junior)-3g/));
+    expect(threeG.every((m) => m.p_machine_profile_version === 3)).toBe(true);
+    expect(threeG).toHaveLength(10);
   });
   it("leaves older versions of both models blocked", () => {
-    for (const p of MACHINE_CATALOGUE.filter((x) => x.profileId.includes("apilus-3g") && x.version < 3)) expect(p.availability).toBe("blocked");
+    for (const p of MACHINE_CATALOGUE.filter((x) => x.profileId.match(/apilus:(senior|junior)-3g/) && x.version < 3)) expect(p.availability).toBe("blocked");
   });
   it("passes the slice gate for every ACTIVE mode; only the blocked modes violate it", () => {
     for (const p of [junior, senior]) {

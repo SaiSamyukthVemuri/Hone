@@ -151,7 +151,7 @@ describe("missing data is never a claim", () => {
 describe("params and href", () => {
   it("parses and bounds the URL state; junk falls back to defaults", () => {
     expect(parseDirectoryParams({ q: "  ann ", filter: ["intake_review", "bogus"], sort: "next", page: "3" })).toEqual({
-      q: "ann", filters: ["intake_review"], sort: "next", page: 3,
+      q: "ann", filters: ["intake_review"], sort: "next", lastVisit: "any", page: 3,
     });
     expect(parseDirectoryParams({ page: "-4", sort: "x" })).toMatchObject({ page: 1, sort: "name" });
     expect(parseDirectoryParams({ page: "abc" }).page).toBe(1);

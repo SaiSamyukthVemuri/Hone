@@ -131,6 +131,7 @@ async function resolveSession(): Promise<
         studio: {
           id: studio.id,
           name: studio.name ?? null,
+          timezone: studio.timezone ?? null,
           // COMMS-01A: a client-facing send speaks as the studio and offers a
           // reply path. These ride along from a row already fetched.
           postcare_contact_email:
@@ -188,6 +189,9 @@ function windowToDates(
   const start = localDateString(now, timezone);
   return { start, end: addDays(start, scope.windowDays - 1) };
 }
+
+/** The largest value the command's capacity argument accepts (a 32-bit integer): no competing count can reach it, so the capacity guard cannot refuse. */
+const NO_ESTIMATE_LIMIT = 2_147_483_647;
 
 const NOT_IMPLEMENTED_ATOMICALLY: InviteToBookFailure = "unavailable";
 
@@ -362,7 +366,7 @@ function invitationUrlFor(rawToken: string): string {
   return `${getRequiredAppOrigin()}/invitation/${rawToken}`;
 }
 
-async function deliverInvitation(args: {
+export async function deliverInvitation(args: {
   studio: DeliveryStudio;
   invitationId: string;
   recipientEmail: string;
@@ -578,14 +582,25 @@ class AdmissionCommandAdapter implements WaitlistInvitationAdapter {
     // THE FIT IS COMPUTED HERE, AT SEND TIME, from the slot engine and the exact selections being
     // sent. It is never read from the browser: no field of `input` carries one. 0324's guard
     // enforces this number under the studio lock. Not computable -> nothing is sent.
-    const fit = await computeConsultationFit({
-      admin,
-      studioId,
-      serviceId: input.scope.serviceId,
-      windowDays: input.scope.windowDays,
-      allowedWeekdays: weekdays,
-    });
-    if (!fit.ok) return refusedOrIndeterminate("unavailable");
+    //
+    // THE OWNER'S EXPLICIT "INVITE ANYWAY" OVERRIDES THIS ESTIMATE AND NOTHING ELSE. The capacity guard is the only check that reads `p_fit`, and it
+    // runs before the others without replacing any of them, so passing the largest value the command accepts lifts exactly that one refusal. The
+    // estimate is not computed in that case (it would not be used). Every other guard in the command still applies.
+    const beyondEstimate = input.beyondEstimate === true;
+    let fitForCommand: number;
+    if (beyondEstimate) {
+      fitForCommand = NO_ESTIMATE_LIMIT;
+    } else {
+      const fit = await computeConsultationFit({
+        admin,
+        studioId,
+        serviceId: input.scope.serviceId,
+        windowDays: input.scope.windowDays,
+        allowedWeekdays: weekdays,
+      });
+      if (!fit.ok) return refusedOrIndeterminate("unavailable");
+      fitForCommand = fit.fit;
+    }
 
     // The admission round is plumbing the owner never sees (lib/waitlist/auto-round.ts). It is NOT opened
     // before the send: when 0324 is not applied the send answers "not yet available" and a round opened
@@ -604,7 +619,7 @@ class AdmissionCommandAdapter implements WaitlistInvitationAdapter {
         // `input.expiresInHours` to read: the contract no longer has the field,
         // so this cannot silently fall back to a caller's value.
         p_ttl_hours: WAIT_INVITATION_TTL_HOURS,
-        p_fit: fit.fit,
+        p_fit: fitForCommand,
       });
     let { data, error } = await admit();
     // A FULL ROUND IS NO LONGER RETRIED HERE: 0324's admit rotates a full round itself, under its own
