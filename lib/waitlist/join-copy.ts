@@ -52,7 +52,7 @@ export const AREAS_HELP =
 
 export const AVAILABILITY_LEGEND = "When are you generally available?";
 export const AVAILABILITY_HELP =
-  "A general answer is enough — we'll confirm exact times when we contact you.";
+  "A general answer is enough. We'll confirm exact times when we contact you.";
 
 /** Confirmation. Says what happens next and nothing about when. */
 export const JOINED_HEADING = "You're on the waitlist.";
@@ -81,7 +81,7 @@ export const COMPLETE_POSITION_UNCHANGED =
   "Answering these does not move you up or down the waitlist.";
 
 export const COMPLETE_SUBMIT = "Save my details";
-export const COMPLETE_DONE_HEADING = "Thanks — that's everything we need.";
+export const COMPLETE_DONE_HEADING = "Your details are saved.";
 
 /** What an operator-facing surface says about a blocked invitation. */
 export const INVITE_BLOCKED_INCOMPLETE =
@@ -152,7 +152,7 @@ export const MOBILE_CANDIDATE_NOTE =
  * promise it replaced.
  */
 export const MOBILE_ON_FILE_UNUSABLE =
-  "We can't use the mobile number on file, and it can't be changed from this page — so your details can't be completed yet. Please contact the studio.";
+  "We can't use the mobile number on file, and it can't be changed from this page. Your details can't be completed yet. Please contact the studio.";
 
 // --- The collection notice, and what it may honestly claim -------------------
 

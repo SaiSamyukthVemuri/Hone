@@ -180,7 +180,7 @@ function CapacityBriefing({ briefing }: { briefing: OwnerCapacityBriefing }) {
             a comment stating the wrong product rule is how it comes back. */}
         <SectionLabel as="h2">Future treatment booking depth</SectionLabel>
         <p className="mt-1 text-xs text-fg-muted">
-          Counted across future treatment appointments only, cumulatively — a client
+          Counted cumulatively across future treatment appointments only. A client
           with three booked treatments appears in all three bands. Consultations do
           not count.
         </p>
@@ -209,7 +209,7 @@ function CapacityBriefing({ briefing }: { briefing: OwnerCapacityBriefing }) {
           work was still on it. The measurement is right for the population this
           page is about; the label was the defect. */}
       <section>
-        <SectionLabel as="h2">Future treatment time for current clients</SectionLabel>
+        <SectionLabel as="h2">Current clients’ booked treatment time</SectionLabel>
         <div className="mt-3">
           <Card
             label="Treatment time booked"
@@ -226,7 +226,7 @@ function CapacityBriefing({ briefing }: { briefing: OwnerCapacityBriefing }) {
 
       <p className="text-xs text-fg-muted">
         Read-only. This page answers who is in treatment and who has no treatment
-        booked — a booked consultation is not treatment. It does not yet report how
+        booked. A booked consultation is not treatment. It does not yet report how
         soon a new client could be seen, weekly capacity, or new-client demand.
       </p>
     </div>

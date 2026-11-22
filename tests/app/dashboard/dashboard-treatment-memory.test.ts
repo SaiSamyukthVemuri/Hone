@@ -208,7 +208,7 @@ describe("every #517 field family is reachable from Today", () => {
 //
 //   1. the toggle <button>'s click bubbled to that ancestor link, so one press
 //      both opened the region and pushed a route;
-//   2. once open, the embedded card rendered an <a> ("Open full chart →")
+//   2. once open, the embedded card rendered an <a> ("Open full chart")
 //      inside an <a>, which is invalid HTML with undefined activation.
 //
 // FIX, in two halves, both pinned here:
@@ -320,10 +320,10 @@ describe("D1: the disclosure never navigates away from the Dashboard", () => {
 
   it("the EMBEDDED card carries no full-chart navigation CTA", () => {
     expect(MEMORY_UI).toMatch(/showFullChartLink=\{false\}/);
-    // Both of the card's "Open full chart →" affordances obey the capability —
+    // Both of the card's "Open full chart" affordances obey the capability —
     // the header one and the one in the blockless branch. Neither may be
     // unconditional, or the Dashboard disclosure gets a link out anyway.
-    const cta = [...CARD.matchAll(/Open full chart →/g)];
+    const cta = [...CARD.matchAll(/Open full chart/g)];
     expect(cta.length, "the card has exactly two full-chart affordances").toBe(2);
     for (const m of cta) {
       const preceding = CARD.slice(Math.max(0, m.index! - 400), m.index!);

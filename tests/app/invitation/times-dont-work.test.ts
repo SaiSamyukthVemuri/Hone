@@ -69,7 +69,7 @@ describe("0319 times-don't-work wiring", () => {
     expect(SCREEN).toMatch(/maxLength=\{500\}/);
     expect(SCREEN).toContain("You keep your original join date");
     expect(SCREEN).toContain("Please don’t include health");
-    expect(SCREEN).toContain("your reply is saved for the studio");
+    expect(SCREEN).toContain("Your reply is saved");
     expect(SCREEN).not.toContain("we’ve let the studio know");
     expect(SCREEN).toContain("nothing is booked or held in the meantime");
   });

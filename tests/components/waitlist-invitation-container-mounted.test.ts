@@ -170,11 +170,11 @@ describe("InvitationContainer background refresh", () => {
     await act(async () => {
       btn.click();
     });
-    expect(host.textContent).toContain("your reply is saved for the studio");
+    expect(host.textContent).toContain("Your reply is saved");
     await act(async () => {
       landLate(offer());
     });
-    expect(host.textContent).toContain("your reply is saved for the studio");
+    expect(host.textContent).toContain("Your reply is saved");
     expect(host.querySelector("textarea")).toBeNull();
   });
 

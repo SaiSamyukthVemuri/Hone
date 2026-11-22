@@ -49,7 +49,7 @@ function Item({ item }: { item: ChecklistItem }) {
           href={item.href}
           className="text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
         >
-          Open →
+          Open {item.label}
         </Link>
       )}
     </li>

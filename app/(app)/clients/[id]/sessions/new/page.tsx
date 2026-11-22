@@ -266,7 +266,7 @@ export default async function NewSessionPage({
                 href={`/clients/${encodeURIComponent(id)}/sessions/${previousMeta.sessionId}`}
                 className="self-start text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
               >
-                Open full chart →
+                Open full chart
               </Link>
             </div>
           ) : (

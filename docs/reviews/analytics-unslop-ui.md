@@ -2,7 +2,7 @@
 
 Verdict: Light.
 
-Scope: Business > Analytics Overview, Clients, invalid-period header and shared print header. This is the first scoped application of the requested cleanup to Hone, not an app-wide redesign or a claim that other screens were audited.
+Scope: Business > Analytics Overview, Clients, invalid-period header and shared print header. This records the initial Analytics pass. The subsequent repository-wide audit and validation supersede its original scope and test limitations; see [repo-unslop-ui.md](repo-unslop-ui.md).
 
 Reference: https://github.com/felipebasurto/unslop-ui/blob/main/skills/unslop-ui/SKILL.md
 Read blob: 94df3c6e03b96a05ceb2093e95df66a054524766 (1.0.1).
@@ -58,5 +58,5 @@ Only the two existing heading assertions were updated. Tests render the real scr
 ## Tasks
 
 - U23 (report only): Overview and Clients use equal headline cards. A separate owner-directed design pass could prioritize the most useful figure; this cleanup does not choose or alter that hierarchy.
-- A wider app copy/surface audit is separate. Calendar, Roles, charting, consent/legal text and clinical printing have concurrent writers or specific decisions and were not changed.
+- The repository-wide follow-up is recorded in [repo-unslop-ui.md](repo-unslop-ui.md), including deliberate keeps and current validation.
 

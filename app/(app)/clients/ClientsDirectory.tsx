@@ -269,7 +269,7 @@ function DirectoryRowView({
             pendingLabel="Opening client…"
             className="inline-flex min-h-11 items-center rounded-md border border-neutral-300 px-3 text-xs font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
           >
-            Open
+            Open client
           </PendingLink>
           {archived && (
             <UnarchiveRowControl client={{ id: row.id }} />

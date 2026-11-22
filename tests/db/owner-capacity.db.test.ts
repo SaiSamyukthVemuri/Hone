@@ -551,7 +551,7 @@ describe("owner capacity briefing", () => {
     // client does not cancel their appointments, so a calendar-wide claim would
     // be an overstatement the number cannot support.
     expect(markup).not.toContain("Treatment time on the calendar");
-    expect(markup).toContain("Future treatment time for current clients");
+    expect(markup).toContain("Current clients’ booked treatment time");
     // All four facts the copy must carry, asserted individually so a future
     // rewrite cannot quietly drop one.
     expect(markup).toMatch(/Current, non-archived clients only/);

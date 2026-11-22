@@ -456,7 +456,7 @@ test("an owner reaches the capacity briefing", async ({ page }) => {
     page.getByRole("heading", { name: "Future treatment booking depth" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Future treatment time for current clients" }),
+    page.getByRole("heading", { name: "Current clients’ booked treatment time" }),
   ).toBeVisible();
 });
 
@@ -481,7 +481,7 @@ test("an ordinary practitioner is refused the owner aggregate", async ({ page })
   for (const section of [
     "Clients",
     "Future treatment booking depth",
-    "Future treatment time for current clients",
+    "Current clients’ booked treatment time",
   ]) {
     await expect(
       page.getByRole("heading", { name: section, exact: true }),
