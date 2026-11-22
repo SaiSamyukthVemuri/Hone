@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 278,
-    "last": "0364_waitlist_replace_lock_order_and_live_only.sql",
-    "sha256": "f50af41463b89c161e5340051bfe0cb5fcef7986108241515ea33230741282ac"
+    "count": 279,
+    "last": "0370_practitioner_access_events.sql",
+    "sha256": "65b6621c45b42e9110d55a1a71ff255021002960b471a1a623525813596514ea"
   },
   "public": {
     "tables": [
@@ -75,6 +75,7 @@
       "pending_invitations",
       "photos",
       "platform_lead_alerts",
+      "practitioner_access_events",
       "practitioner_notifications",
       "practitioners",
       "probe_lots",
