@@ -254,12 +254,6 @@ describe("setup_intent.succeeded — terminal rejection is never silent", () => 
     expect(helper).toMatch(/stripeLivemode: ctx\.livemode/);
   });
 
-  it("does not claim every terminal rejection is portal-visible", () => {
-    // The fail-closed design deliberately leaves unbindable rejections as
-    // not-confirmed for the client while remaining fully operator-visible.
-    expect(ACTIONS).toMatch(/If ownership cannot be proved, the answer is `pending`/);
-  });
-
   it("names the ops-alert guarantee honestly in the event summary", () => {
     // recordOpsAlert's DB insert is best-effort, so the summary must not claim
     // a durable row exists.

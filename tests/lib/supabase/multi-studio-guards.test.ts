@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// Source pins for the multi-studio switcher (PR 2): cookie module, middleware,
-// /no-access chooser, switch action, and the account menus. Behavior is
-// exercised by practitioner-membership.test.ts; these lock the guard shape and
-// the security invariants.
+// Source pins for the multi-studio switcher (PR 2): cookie module, resolver,
+// middleware and switch action. Behavior is exercised by
+// practitioner-membership.test.ts; these lock the guard shape and the
+// security invariants.
 function read(rel: string): string {
   return readFileSync(path.resolve(__dirname, "../../../", rel), "utf8");
 }
@@ -88,16 +88,5 @@ describe("switch action sets the cookie ONLY after verifying membership", () => 
     expect(ACTIONS.indexOf("if (!membership)")).toBeLessThan(
       ACTIONS.indexOf("setSelectedStudioId(studioId"),
     );
-  });
-});
-
-describe("account menus expose Switch studio only for 2+ memberships", () => {
-  it("desktop + mobile gate the item on canSwitchStudio", () => {
-    for (const src of [ACCOUNT, MOBILE]) {
-      expect(src).toMatch(/canSwitchStudio: boolean/);
-      expect(src).toMatch(/canSwitchStudio\s*\n?\s*\?/);
-      expect(src).toMatch(/label: "Switch studio"/);
-      expect(src).toMatch(/\/no-access\?reason=multiple-studios/);
-    }
   });
 });

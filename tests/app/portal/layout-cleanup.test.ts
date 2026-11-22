@@ -2,21 +2,8 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// PR #159. Portal layout cleanup. Chloe's smoke test surfaced:
-//   * "The portal's just a little cluttered looking."
-//   * "It doesn't really make sense to show them the signed forms
-//      if they can't click on it and see what they signed."
-//   * "I think the care instructions should be toggled open
-//      automatically."
-//   * "The email me button should be at the top."
-//   * "Change 'Your info' to your appointments / upcoming
-//      appointments."
-//
-// This file pins each of those changes textually so a future
-// refactor that reverts one of them is caught by `npm test`. The
-// tests deliberately do NOT assert against the PR #158 card-
-// authorization guidance copy (that has its own test file); they
-// only cover what PR #159 added or reorganized.
+// PR #159. Portal layout cleanup. What stays pinned here: the portal page
+// moves no money and never imports the Supabase admin client.
 
 const PORTAL_PATH = path.resolve(
   __dirname,

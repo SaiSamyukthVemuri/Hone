@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// Provider-agnostic marketing/analytics privacy + consent framework (docs/UI
+// Provider-agnostic marketing/analytics privacy + consent framework (UI
 // copy only — no tracking enabled, no sender, no provider receives data).
 
 function read(rel: string): string {

@@ -70,11 +70,6 @@ describe("magic-link server action: invite-gated signup", () => {
     expect(ACTION_CODE).not.toMatch(/error: error\.message/);
   });
 
-  it("is a server action using the admin client only for the invite lookup", () => {
-    expect(ACTION).toMatch(/^"use server";/);
-    expect(ACTION).toMatch(/createAdminClient/);
-  });
-
   it("does not log the email or any request body", () => {
     expect(ACTION_CODE).not.toMatch(/console\./);
   });

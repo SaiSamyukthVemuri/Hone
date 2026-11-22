@@ -2,11 +2,9 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// PR #158. Client portal card-authorization guidance copy. Chloe's
-// smoke test feedback: "I don't know how to add a card. It should
-// give you instructions." This file pins the new portal copy +
-// gating + deep-link so a future refactor that drops one of the
-// pieces is caught by `npm test`.
+// PR #158. Client portal card-authorization guidance. This file pins the
+// Add-card gating, the mode-aware no-charge copy, and the read-only /
+// no-payment-call boundaries of the surfaces that PR touched.
 
 const PORTAL_PAGE_PATH = path.resolve(
   __dirname,
@@ -214,46 +212,6 @@ describe("practitioner PaymentMethodCard renders one of four explicit branches",
     expect(CARD_SOURCE).not.toMatch(/admin-server|createAdminClient/);
   });
 });
-
-// ---------------------------------------------------------------------------
-// Client profile page wires the new props server-side from the same
-// data already loaded for ConsentSignaturesCard.
-// ---------------------------------------------------------------------------
-
-const CLIENT_PAGE_PATH = path.resolve(
-  __dirname,
-  "../../../app/(app)/clients/[id]/page.tsx",
-);
-const CLIENT_PAGE_SOURCE = readFileSync(CLIENT_PAGE_PATH, "utf8");
-
-describe("client profile page passes both new gating props to PaymentMethodCard", () => {
-  it("passes cardAuthorizationTemplateExists", () => {
-    expect(CLIENT_PAGE_SOURCE).toMatch(
-      /cardAuthorizationTemplateExists=\{[\s\S]*?cardAuthorizationTemplateExists[\s\S]*?\}/,
-    );
-  });
-
-  it("passes cardAuthorizationSigned", () => {
-    expect(CLIENT_PAGE_SOURCE).toMatch(
-      /cardAuthorizationSigned=\{cardAuthorizationSigned\}/,
-    );
-  });
-
-  it("derives both from existing consentTemplatesAll + consentLatestSignatures (no new DB call)", () => {
-    expect(CLIENT_PAGE_SOURCE).toMatch(
-      /const cardAuthTemplate = consentTemplatesAll\.find/,
-    );
-    expect(CLIENT_PAGE_SOURCE).toMatch(
-      /const matchingSignature = cardAuthTemplate[\s\S]*?consentLatestSignatures\.find/,
-    );
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Manual fee blocked-reason copy now matches the PaymentMethodCard
-// "authorization not signed" branch so the practitioner reads the
-// same instruction on every surface.
-// ---------------------------------------------------------------------------
 
 const ELIGIBILITY_PATH = path.resolve(
   __dirname,

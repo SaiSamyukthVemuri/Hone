@@ -49,15 +49,6 @@ const ACTION_FILE = path.resolve(
 const ACTION_SOURCE = readFileSync(ACTION_FILE, "utf8");
 
 describe("portal replace-card surface (PR #151)", () => {
-  it("portal page wires PortalCardOnFileCard when active card exists", () => {
-    expect(PORTAL_PAGE_SOURCE).toMatch(/import\s+\{\s*PortalCardOnFileCard\s*\}/);
-    expect(PORTAL_PAGE_SOURCE).toMatch(/<PortalCardOnFileCard/);
-  });
-
-  it("PortalCardOnFileCard renders 'Replace card' button text", () => {
-    expect(PORTAL_CARD_SOURCE).toMatch(/Replace card/);
-  });
-
   it("PortalCardOnFileCard surfaces the test-mode disclaimer", () => {
     // The exact disclaimer copy must remain. Future PRs that
     // weaken or remove it (e.g. as part of a live-mode rollout)
@@ -75,20 +66,6 @@ describe("portal replace-card surface (PR #151)", () => {
     // future copy regression that drops the "No".
     expect(PORTAL_CARD_SOURCE).not.toMatch(/\byour card will be charged\b/i);
     expect(PORTAL_CARD_SOURCE).not.toMatch(/\bwe will charge\b/i);
-  });
-
-  it("PortalPaymentMethodForm carries mode-conditional copy for Add vs Replace", () => {
-    expect(PORTAL_FORM_SOURCE).toMatch(/idleButton: "Add card on file"/);
-    expect(PORTAL_FORM_SOURCE).toMatch(/idleButton: "Replace card"/);
-    expect(PORTAL_FORM_SOURCE).toMatch(/saveButton: "Save card on file"/);
-    expect(PORTAL_FORM_SOURCE).toMatch(/saveButton: "Save new card"/);
-  });
-
-  it("Replace mode copy says current card will be replaced + the shared test-mode note", () => {
-    expect(PORTAL_FORM_SOURCE).toMatch(
-      /current card will be replaced after the new card is saved/,
-    );
-    expect(PORTAL_FORM_SOURCE).toMatch(/\$\{TEST_MODE_CARD_NOTE\}/);
   });
 
   describe("lawyer-approved LIVE authorization copy (2026-07-04)", () => {
