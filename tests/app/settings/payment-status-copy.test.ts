@@ -41,14 +41,40 @@ describe("banned stale claims are gone from PR-A surfaces", () => {
       }
     });
   }
+
+  it("live-ready presenter copy itself never contains banned strings (belt)", () => {
+    const presenter = read("lib/payments/payment-status-presenter.ts");
+    expect(presenter).not.toMatch(/future update/i);
+    expect(presenter).not.toMatch(/becomes available/i);
+    expect(presenter).not.toMatch(/Client payments are not enabled/i);
+  });
 });
 
-describe("Settings → Payments stays truthful", () => {
+describe("Settings → Payments is presenter-driven", () => {
   const page = read("app/(app)/settings/payments/PaymentsView.tsx");
   const component = read("app/(app)/settings/payments/PaymentsSettings.tsx");
 
+  it("page derives banner + portal + booking copy from the presenter", () => {
+    expect(page).toMatch(/from "@\/lib\/payments\/payment-status-presenter"/);
+    expect(page).toMatch(/connectBannerCopy\(runtimeMode, connect\)/);
+    expect(page).toMatch(/derivePortalCardCapability\(/);
+    expect(page).toMatch(/bookingCardCopy\(bookingCardCollection\(\)\)/);
+    // Runtime mode from the deployment, not the row.
+    expect(page).toMatch(/const runtimeMode = currentRuntimeMode\(\)/);
+  });
+
   it("the read-error path degrades to 'unknown', never an all-clear", () => {
     expect(page).toMatch(/error\s*\n?\s*\? undefined/);
+  });
+
+  it("component renders the banner + messages as data (no static claims)", () => {
+    expect(component).toMatch(/\{banner\.headline\}/);
+    expect(component).toMatch(/\{banner\.detail\}/);
+    expect(component).toMatch(/\{portalCardMessage\}/);
+    expect(component).toMatch(/\{bookingCardMessage\}/);
+    // The old row-derived test banner is gone.
+    expect(component).not.toMatch(/showTestBanner/);
+    expect(component).not.toMatch(/Test mode: not collecting payments/);
   });
 
   it("the mode readiness row keys off the RUNTIME (row-null bug fixed)", () => {
@@ -56,6 +82,25 @@ describe("Settings → Payments stays truthful", () => {
     expect(component).not.toMatch(/const isTestMode = livemode !== true/);
     // Test-branch copy stays available for test runtime.
     expect(component).toMatch(/Test mode: no live charges/);
+  });
+
+  it("live-ready / test-ready / payouts-warning copy is exactly the approved wording (presenter source)", () => {
+    const presenter = read("lib/payments/payment-status-presenter.ts");
+    expect(presenter).toMatch(/Live payments are ready\./);
+    expect(presenter).toMatch(
+      /accept live payments through Hone after a client saves an authorized card on file/,
+    );
+    expect(presenter).toMatch(/Test payment setup is ready\./);
+    expect(presenter).toMatch(/without moving real money/);
+    expect(presenter).toMatch(
+      /Charges may be enabled, but payouts are not ready\. Finish payout setup before charging clients\./,
+    );
+    expect(presenter).toMatch(
+      /Portal card-on-file is available\. Clients can sign the card authorization and save a card in the client portal\./,
+    );
+    expect(presenter).toMatch(
+      /Booking-time card collection is off\. Clients can still book without entering a card\./,
+    );
   });
 
   it("manual-fee posture: configuration only, never automatic; fee card keeps 'Money is not charged here'", () => {

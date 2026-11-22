@@ -2,16 +2,29 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// PR #167. Settings -> Consent forms: a new template lands as Draft +
-// is_live=false, and going live is a separate, owner-only step. These
-// source-grep tests pin the server actions that carry that safety
-// property (no behavioural test drives them yet).
+// PR #167. Settings -> Consent forms gained an explicit "Live in
+// client portal" toggle and the create action now forces a new
+// row to land as Draft + is_live=false. These source-grep tests
+// pin both the wire-up and the helper copy so the safety
+// property survives future refactors.
+
+const EDITOR_PATH = path.resolve(
+  __dirname,
+  "../../../../app/(app)/settings/consent/ConsentTemplatesEditor.tsx",
+);
+const EDITOR = readFileSync(EDITOR_PATH, "utf8");
 
 const ACTIONS_PATH = path.resolve(
   __dirname,
   "../../../../app/(app)/settings/consent/actions.ts",
 );
 const ACTIONS = readFileSync(ACTIONS_PATH, "utf8");
+
+const PAGE_PATH = path.resolve(
+  __dirname,
+  "../../../../app/(app)/settings/consent/page.tsx",
+);
+const PAGE = readFileSync(PAGE_PATH, "utf8");
 
 describe("Settings -> Consent: new templates default to draft + not live", () => {
   it("createConsentTemplateAction inserts status='draft' and is_live=false", () => {
@@ -37,9 +50,76 @@ describe("Settings -> Consent: new templates default to draft + not live", () =>
       "";
     expect(block).not.toMatch(/fdStr\(formData, "status"\)/);
   });
+
+  it("the create form helper copy names the consequence", () => {
+    // Practitioner needs to know what happens after Save. The
+    // exact wording is pinned so a future visual refactor that
+    // removes the explanatory block is caught.
+    expect(EDITOR).toContain(
+      "New forms are saved as Draft. They are not shown to clients until",
+    );
+    expect(EDITOR).toContain("you mark them Active and then Live in client portal.");
+  });
+
+  it("the create form no longer auto-stamps status='active' on submit", () => {
+    expect(EDITOR).not.toMatch(/fd\.set\("status", "active"\)/);
+  });
+});
+
+describe("Settings -> Consent: per-template Live toggle", () => {
+  it("the editor accepts a setLiveAction prop", () => {
+    expect(EDITOR).toMatch(/setLiveAction:\s*ActionStatus/);
+  });
+
+  it("the editor handles the live toggle via a handleLive function", () => {
+    expect(EDITOR).toMatch(/function handleLive\(/);
+    expect(EDITOR).toMatch(/fd\.set\("is_live"/);
+  });
+
+  it("a Make live button is rendered when status='active' && !is_live", () => {
+    expect(EDITOR).toMatch(
+      /t\.status === "active" && !t\.is_live[\s\S]{0,500}Make live in client portal/,
+    );
+  });
+
+  it("a Hide from portal button is rendered when is_live=true", () => {
+    expect(EDITOR).toMatch(
+      /t\.is_live[\s\S]{0,500}Hide from client portal/,
+    );
+  });
+
+  it("the Live/Draft badge renders next to the status label", () => {
+    expect(EDITOR).toMatch(/function LiveBadge/);
+    // The badge component appears in the row layout
+    expect(EDITOR).toMatch(/<LiveBadge isLive=\{t\.is_live\}/);
+  });
+});
+
+describe("Settings -> Consent: action wire-up", () => {
+  it("page.tsx imports setConsentTemplateLiveAction", () => {
+    expect(PAGE).toMatch(/setConsentTemplateLiveAction/);
+  });
+
+  it("page.tsx passes setLiveAction to the editor", () => {
+    expect(PAGE).toMatch(/setLiveAction=\{setConsentTemplateLiveAction\}/);
+  });
+
+  it("page.tsx mentions 'Live in client portal' in the header copy", () => {
+    expect(PAGE).toContain("Live in client portal");
+  });
 });
 
 describe("setConsentTemplateLiveAction (server)", () => {
+  it("rejects making a non-active template live with a clear message", () => {
+    // The DB CHECK constraint would reject a (is_live=true,
+    // status!=active) UPDATE; the action must catch that
+    // pre-flight so the practitioner sees a useful message
+    // instead of a generic 500.
+    expect(ACTIONS).toMatch(
+      /Mark the template active first, then make it live in the client portal/,
+    );
+  });
+
   it("is studio-scoped and owner-only", () => {
     const fn =
       ACTIONS.match(

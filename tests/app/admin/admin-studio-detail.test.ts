@@ -56,3 +56,37 @@ describe("privacy: no raw client data is selected or rendered", () => {
     expect(PAGE_CODE).not.toMatch(/phone|\baddress\b/i);
   });
 });
+
+describe("shows operational metadata + aggregate counts + setup flags", () => {
+  it("uses embedded aggregate counts for the studio", () => {
+    expect(PAGE_CODE).toMatch(/practitioners\(count\)/);
+    expect(PAGE_CODE).toMatch(/clients\(count\)/);
+    expect(PAGE_CODE).toMatch(/services\(count\)/);
+    expect(PAGE_CODE).toMatch(/studio_availability_default\(count\)/);
+    expect(PAGE_CODE).toMatch(/appointments\(count\)/);
+    expect(PAGE_CODE).toMatch(/imported_treatment_memories\(count\)/);
+  });
+
+  it("renders metadata, counts, setup checks, and the disabled-payments flag", () => {
+    expect(PAGE).toMatch(/Owner email/);
+    expect(PAGE).toMatch(/Timezone/);
+    expect(PAGE).toMatch(/Booking/);
+    expect(PAGE).toMatch(/Owner invite/);
+    expect(PAGE).toMatch(/Counts/);
+    expect(PAGE).toMatch(/Setup checks/);
+    // PR B: the inverted hardcoded "Live payments disabled" green flag is
+    // gone; payments render as a state-driven capability flag + per-mode
+    // status cards (redacted, counts only).
+    expect(PAGE).not.toMatch(/Live payments disabled/);
+    expect(PAGE).toMatch(/Payments \(\$\{payments\.runtimeMode\} mode\)/);
+    expect(PAGE).toMatch(/PaymentModeCard/);
+    expect(PAGE).toMatch(/account ids are redacted/);
+    // Aggregate-only disclaimer.
+    expect(PAGE).toMatch(/Aggregate counts only/);
+  });
+
+  it("links back to the console and the New Studio Wizard", () => {
+    expect(PAGE).toMatch(/href="\/admin"/);
+    expect(PAGE).toMatch(/href="\/admin\/studios\/new"/);
+  });
+});
