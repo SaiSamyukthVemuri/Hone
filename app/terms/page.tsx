@@ -30,8 +30,8 @@ export default function TermsOfServicePage() {
         bound by these Terms. If you do not agree, do not use Hone.
       </P>
       <P>
-        Hone is operated by <strong>Sam Vemuri</strong> (an individual
-        operating as Hone, pending incorporation), located in Ontario, Canada.
+        Hone is operated by <strong>Hone Care, Inc.</strong>, a Delaware
+        corporation (&ldquo;Hone&rdquo;).
         References in these Terms to &ldquo;we,&rdquo; &ldquo;us,&rdquo; and
         &ldquo;our&rdquo; refer to this operator.
       </P>
@@ -58,18 +58,23 @@ export default function TermsOfServicePage() {
         studio&rsquo;s booking page, Hone sends that client appointment
         confirmations and reminders by text message on the studio&rsquo;s
         behalf. Usually this is up to 3 messages per booking (a confirmation
-        and two reminders); a rescheduled booking starts again. Message and data rates
+        and two reminders); a rescheduled booking starts again, and the
+        number depends on a person&rsquo;s appointments and waitlist activity. Message and data rates
         may apply. Reply HELP for help (or email support@hone.care) and STOP to
-        opt out; STOP applies to appointment texts from every studio on Hone.
+        opt out; STOP opts that number out of every matching client and waitlist record at that time, across studios.
         Consent is not a condition of booking. Hone does not use these texts
         for marketing, and does not sell or share mobile numbers or text-message
         consent for marketing. See the{" "}
         <a className="underline" href="/privacy#appointment-text-messages">
           Privacy Policy
         </a>
-        . Where a person answers Yes on a studio&rsquo;s waitlist form, Hone
-        also texts them on that studio&rsquo;s behalf about that waitlist only,
-        and that Yes applies to that studio only. See the{" "}
+        . Appointment texts go to clients who opted in on that studio&rsquo;s
+        booking form, and cover that client&rsquo;s appointments at that
+        studio, including ones the studio books for them. Waitlist texts are
+        sent only to people who agreed: either by answering Yes on the
+        studio&rsquo;s waitlist form, or by telling the studio they agree,
+        which the studio then records in Hone for that studio&rsquo;s waitlist
+        only. See the{" "}
         <a className="underline" href="/sms-terms">
           SMS Terms
         </a>
@@ -601,8 +606,7 @@ export default function TermsOfServicePage() {
         forthcoming, will be provided upon request)
       </P>
       <P>
-        <strong>Operator:</strong> Sam Vemuri (operating as Hone, pending
-        incorporation), Ontario, Canada
+        <strong>Operator:</strong> Hone Care, Inc., a Delaware corporation
       </P>
     </PolicyLayout>
   );

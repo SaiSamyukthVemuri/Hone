@@ -7,6 +7,8 @@ import {
   APPOINTMENT_SMS_CONSENT_V1,
   APPOINTMENT_SMS_FREQUENCY,
   WAITLIST_SMS_FREQUENCY,
+  APPOINTMENT_SMS_AUDIENCE,
+  WAITLIST_SMS_AUDIENCE,
   APPOINTMENT_SMS_CONSENT_VERSION,
   APPOINTMENT_SMS_CONSENT_VERSION_V1,
   APPOINTMENT_SMS_HELP_REPLY,
@@ -87,7 +89,7 @@ export default function SmsConsentPage() {
       lastUpdated="November 22, 2026"
     >
       <P>
-        Hone is software that studios use to manage appointments. When a client books online with a studio, they can choose to receive
+        Hone is software, operated by Hone Care, Inc., a Delaware corporation, that studios use to manage appointments. When a client books online with a studio, they can choose to receive
         appointment confirmations and reminders by text message. This page shows exactly how that choice is offered, what is sent, and how
         to get help or stop. It uses a made-up studio, &ldquo;{SYNTHETIC_STUDIO}&rdquo;, and no real person&rsquo;s details.
       </P>
@@ -99,8 +101,11 @@ export default function SmsConsentPage() {
           client booked with.
         </li>
         <li>
-          <strong>Purpose:</strong> appointment confirmations and reminders, and, only for people who say Yes on a studio&rsquo;s waitlist
-          form, waitlist updates from that studio. No marketing or promotional texts.
+          <strong>Purpose:</strong> appointment confirmations and reminders, and waitlist updates from a studio. No marketing or promotional texts.
+        </li>
+        <li>{APPOINTMENT_SMS_AUDIENCE}</li>
+        <li>
+          {WAITLIST_SMS_AUDIENCE} The join acknowledgement text goes only to people who answered Yes on the form.
         </li>
         <li>
           <strong>Frequency:</strong> appointment texts, {APPOINTMENT_SMS_FREQUENCY}. Waitlist texts, {WAITLIST_SMS_FREQUENCY}.
@@ -109,8 +114,7 @@ export default function SmsConsentPage() {
           <strong>Rates:</strong> message and data rates may apply.
         </li>
         <li>
-          <strong>Help and opt-out:</strong> reply HELP for help, or STOP to opt out. STOP stops Hone texts from every studio on Hone to that
-          number.
+          <strong>Help and opt-out:</strong> reply HELP for help, or STOP to opt out. STOP opts that number out of every matching client and waitlist record at that time, across studios.
         </li>
         <li>
           <strong>Studio-specific consent:</strong> saying Yes on one studio&rsquo;s waitlist covers that studio&rsquo;s waitlist only; it does
@@ -168,6 +172,16 @@ export default function SmsConsentPage() {
         The consent text that is stored with a Yes is <strong>{SMS_JOIN_CONSENT_TEXT_VERSION}</strong>: the question above. The notice under the
         question (sender, frequency, rates, HELP and STOP, and the links) sits next to that stored text; it does not change it. Earlier waitlist
         consents were given under {SMS_OPERATIONAL_CONSENT_TEXT_VERSION} or the same question, and are not widened.
+      </P>
+
+      <H3 id="studio-recorded">Waitlist consent recorded by the studio</H3>
+      <P>
+        A person can also tell a studio, outside Hone, that they agree to waitlist texts. A studio owner can then record that in Hone on the
+        person&rsquo;s waitlist entry. The owner states that the person agreed to texts about this waitlist and any appointment offered from it,
+        gives a short reference to where that agreement is recorded, and gives the day they agreed or says the day is not known. Hone stores
+        that consent on that entry only, marked as recorded by the practitioner and limited to that purpose, so it covers that studio&rsquo;s
+        waitlist only. Only an owner of that studio can record it, and a number that has already replied STOP is refused. The person can reply
+        STOP at any time, which ends it.
       </P>
 
       <H2 id="sample-messages">Sample messages</H2>

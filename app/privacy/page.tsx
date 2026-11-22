@@ -63,8 +63,8 @@ export default function PrivacyPolicyPage() {
         practice operations.
       </P>
       <P>
-        Hone is operated by <strong>Sam Vemuri</strong> (an individual
-        operating as Hone, pending incorporation), located in Ontario, Canada.
+        Hone is operated by <strong>Hone Care, Inc.</strong>, a Delaware
+        corporation (&ldquo;Hone&rdquo;).
       </P>
       <P>
         For privacy-related questions, contact us at{" "}
@@ -265,14 +265,19 @@ export default function PrivacyPolicyPage() {
         text messages <strong>on behalf of the studio you booked with</strong>:
         appointment confirmations and reminders only. Nothing else is sent
         under this consent. Hone does not send marketing or promotional texts.
+        Appointment texts go to clients who opted in on that studio&rsquo;s
+        booking form; they then cover that client&rsquo;s appointments at that
+        studio, including ones the studio books for them.
       </P>
       <P>
-        If a studio runs a waitlist for new clients and you answer Yes to its
-        text-message question when you join, Hone also texts you on that
+        If a studio runs a waitlist for new clients, Hone also texts on that
         studio&rsquo;s behalf about that waitlist only: usually one text when
-        you join and one for each invitation to book. That Yes applies to that
-        studio&rsquo;s waitlist only; it does not subscribe you to other
-        studios. Answering No still joins the waitlist, with email used
+        you join and one for each invitation to book. Waitlist texts are sent
+        only to people who agreed: either by answering Yes on the studio&rsquo;s
+        waitlist form, or by telling the studio they agree, which the studio
+        then records in Hone for that studio&rsquo;s waitlist only. Your
+        agreement applies to that studio&rsquo;s waitlist only; it does not
+        subscribe you to other studios. Answering No still joins the waitlist, with email used
         instead. Rates, HELP and STOP work as described below, and the full
         program terms are at /sms-terms.
       </P>
@@ -282,7 +287,8 @@ export default function PrivacyPolicyPage() {
           reminder about 24 hours before and another a few hours before, when
           the studio has those reminders turned on. That is usually up to 3
           messages per booking (a confirmation and two reminders); a
-          rescheduled booking starts again.
+          rescheduled booking starts again, and the number depends on your
+          appointments and waitlist activity.
         </li>
         <li>
           <strong>Rates:</strong> message and data rates may apply, as charged
@@ -291,13 +297,24 @@ export default function PrivacyPolicyPage() {
         <li>
           <strong>Help and opting out:</strong> reply <strong>HELP</strong> for
           help, or email support@hone.care. Reply <strong>STOP</strong> at any
-          time to opt out; this stops appointment texts from every studio on
-          Hone to that number, and email may still be used for appointment
-          messages.
+          time to opt out; this opts that number out of every matching client and waitlist record at that time, across studios, and email may still be used for
+          appointment messages.
         </li>
         <li>
           <strong>Not a condition of booking:</strong> the box is optional and
           never pre-ticked, and you can book without it.
+        </li>
+        <li>
+          <strong>Who decides and who sends:</strong> the studio decides
+          whether to use text messages and which reminders to turn on; Hone
+          sends them, from a Hone phone number, and handles your reply.
+        </li>
+        <li>
+          <strong>Your choice:</strong> opting in is optional. Consent you gave
+          earlier stays under the wording it was given under; newer wording
+          applies only to consents given from now on. We keep your mobile
+          number with your booking or waitlist record, and a record of when and
+          where you agreed.
         </li>
         <li>
           <strong>Who handles them:</strong> we use Twilio, our service
@@ -669,8 +686,7 @@ export default function PrivacyPolicyPage() {
         </a>
       </P>
       <P>
-        <strong>Operator:</strong> Sam Vemuri (operating as Hone, pending
-        incorporation), Ontario, Canada
+        <strong>Operator:</strong> Hone Care, Inc., a Delaware corporation
       </P>
       <P>
         <strong>Filing a complaint:</strong> Office of the Privacy Commissioner

@@ -36,6 +36,12 @@ export const SMS_TERMS_PATH = "/sms-terms";
 
 /** Waitlist opt-in: a notice shown BESIDE the stored v2 question (the question text itself is unchanged). */
 export const WAITLIST_SMS_FREQUENCY = "usually one text when you join and one for each invitation to book";
+/** Who appointment texts and waitlist texts go to, in one sentence each. The pages and policies say exactly this. */
+export const APPOINTMENT_SMS_AUDIENCE =
+  "Appointment texts go to clients who opted in on that studio's booking form; they then cover that client's appointments at that studio, including ones the studio books for them.";
+export const WAITLIST_SMS_AUDIENCE =
+  "Waitlist texts are sent only to people who agreed: either by answering Yes on the studio's waitlist form, or by telling the studio they agree, which the studio then records in Hone for that studio's waitlist only.";
+
 export const WAITLIST_SMS_NOTICE_LINES: ReadonlyArray<string> = [
   `Texts come from Hone on behalf of the studio you are joining, about this waitlist only: ${WAITLIST_SMS_FREQUENCY}.`,
   "Msg & data rates may apply. Reply HELP for help, STOP to opt out. This applies to this studio's waitlist only.",

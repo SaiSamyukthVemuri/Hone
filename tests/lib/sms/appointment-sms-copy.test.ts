@@ -9,6 +9,8 @@ import {
   APPOINTMENT_SMS_HELP_REPLY,
   APPOINTMENT_SMS_STOP_REPLY,
   WAITLIST_SMS_NOTICE_LINES,
+  WAITLIST_SMS_AUDIENCE,
+  APPOINTMENT_SMS_AUDIENCE,
   appointmentSmsConsentLabel,
 } from "@/lib/sms/appointment-sms-copy";
 import { GSM7_SEGMENT_UNITS, gsm7Units } from "@/lib/sms/gsm7";
@@ -107,5 +109,44 @@ describe("one source: the form, the route and the evidence page use it", () => {
       expect(s).toMatch(/Reply HELP|reply <strong>HELP/);
       expect(s).toMatch(/waitlist/i);
     }
+  });
+});
+
+describe("public wording stays true (STOP scope, who is texted, who operates Hone)", () => {
+  const files = ["app/sms-consent/page.tsx", "app/sms-terms/page.tsx", "app/privacy/page.tsx", "app/terms/page.tsx"];
+  const flat = (p: string) => read(p).replace(/&rsquo;/g, "'").replace(/\s+/g, " ").replace(/\{" "\}/g, " ");
+  const STOP_SCOPE = "opts that number out of every matching client and waitlist record at that time, across studios";
+  it("STOP is described as opting out the matching records at that time, never as 'every studio's texts'", () => {
+    for (const f of ["app/sms-consent/page.tsx", "app/sms-terms/page.tsx", "app/terms/page.tsx", "app/privacy/page.tsx"]) {
+      const t = read(f);
+      expect(t, f).not.toMatch(/(?:stops?|applies to)[^.]{0,40}texts from every studio/i);
+      expect(t, f).not.toMatch(/honou?red across all studios/i);
+    }
+    for (const f of files) expect(read(f).replace(/\s+/g, " "), f).toContain(STOP_SCOPE);
+  });
+  it("waitlist texts are described as sent to people who agreed, by the form or recorded by the studio", () => {
+    expect(WAITLIST_SMS_AUDIENCE).toContain("either by answering Yes on the studio's waitlist form, or by telling the studio they agree");
+    for (const f of ["app/privacy/page.tsx", "app/terms/page.tsx"]) {
+      expect(flat(f), f).toContain("only to people who agreed");
+      expect(flat(f), f).toMatch(/telling the studio they agree/);
+    }
+    for (const f of ["app/sms-consent/page.tsx", "app/sms-terms/page.tsx"]) expect(read(f), f).toContain("WAITLIST_SMS_AUDIENCE");
+  });
+  it("appointment texts are not described as 'people who ticked the box'", () => {
+    expect(APPOINTMENT_SMS_AUDIENCE).toContain("including ones the studio books for them");
+    for (const f of files) expect(read(f), f).not.toMatch(/people who ticked/i);
+  });
+  it("the operator is the corporation; no individual, no 'pending incorporation', no file number labelled as an EIN", () => {
+    for (const f of [...files, "lib/sms/appointment-sms-copy.ts"]) {
+      const t = read(f);
+      expect(t, f).not.toMatch(/Sam Vemuri|pending\s+incorporation|an individual/i);
+      expect(t, f).not.toMatch(/\bEIN\b/);
+    }
+    for (const f of ["app/privacy/page.tsx", "app/terms/page.tsx"]) expect(read(f), f).toContain("Hone Care, Inc.");
+  });
+  it("the STOP reply is GSM-7 and one segment", () => {
+    const u = gsm7Units(APPOINTMENT_SMS_STOP_REPLY);
+    expect(u).not.toBeNull();
+    expect(u as number).toBeLessThanOrEqual(GSM7_SEGMENT_UNITS);
   });
 });

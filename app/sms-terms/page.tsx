@@ -7,6 +7,8 @@ import {
   APPOINTMENT_SMS_SUPPORT_EMAIL,
   APPOINTMENT_SMS_FREQUENCY,
   WAITLIST_SMS_FREQUENCY,
+  APPOINTMENT_SMS_AUDIENCE,
+  WAITLIST_SMS_AUDIENCE,
 } from "@/lib/sms/appointment-sms-copy";
 
 // PUBLIC, no login. The SMS program terms a carrier or reviewer can open. Wording comes from the same constants the form, the route and
@@ -22,6 +24,10 @@ export default function SmsTermsPage() {
     >
       <H2 id="program">The program</H2>
       <P>
+        Hone Care, Inc., a Delaware corporation (&ldquo;Hone&rdquo;), operates the Hone software. The studio decides whether to use text
+        messages and which reminders to turn on; Hone sends them from a Hone phone number.
+      </P>
+      <P>
         {APPOINTMENT_SMS_PROGRAM_NAME} are text messages that Hone sends on behalf of a studio that uses Hone, to a person who opted in on
         that studio&rsquo;s booking or waitlist page. They are not marketing messages.
       </P>
@@ -30,9 +36,12 @@ export default function SmsTermsPage() {
           <strong>Appointment texts:</strong> confirmations and reminders about a booking: {APPOINTMENT_SMS_FREQUENCY}.
         </li>
         <li>
-          <strong>Waitlist texts:</strong> only if you said Yes on a studio&rsquo;s waitlist form, and only for that studio: {WAITLIST_SMS_FREQUENCY}.
+          <strong>Waitlist texts:</strong> {WAITLIST_SMS_FREQUENCY}.
         </li>
+        <li>{APPOINTMENT_SMS_AUDIENCE}</li>
+        <li>{WAITLIST_SMS_AUDIENCE}</li>
       </UL>
+      <P>The number of messages varies with a person&rsquo;s appointments and waitlist activity.</P>
       <H2 id="opt-in">Opting in</H2>
       <P>
         Opting in is optional and never pre-selected. Consent is not a condition of booking or of joining a waitlist. You can see the exact
@@ -53,8 +62,7 @@ export default function SmsTermsPage() {
           .
         </li>
         <li>
-          Reply <strong>STOP</strong> (or STOPALL, UNSUBSCRIBE, CANCEL, END, QUIT) to opt out. STOP applies to Hone texts from every studio to
-          that number. Email may still be used.
+          Reply <strong>STOP</strong> (or STOPALL, UNSUBSCRIBE, CANCEL, END, QUIT) to opt out. STOP opts that number out of every matching client and waitlist record at that time, across studios. Email may still be used.
         </li>
       </UL>
       <H2 id="carriers">Carriers and delivery</H2>
