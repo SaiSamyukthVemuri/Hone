@@ -1049,6 +1049,13 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       "An owner's own tidy-up of the Dashboard Needs attention list (dismiss and restore events). View state, not studio content: it holds record identifiers (client, appointment, session ids) and, for unpaid reminders, the dismissed outstanding amount; no names, free text or clinical content. Every reminder it hides is recomputed from records that ARE exported.",
   },
 
+  // Staff access audit: which owner restored which team member, and when. No client content, and no page shows it yet.
+  practitioner_access_events: {
+    kind: "excluded",
+    category: "derived",
+    reason: "Staff access audit, no client content, no page yet; revisit when it is shown.",
+  },
+
   // security
   calendar_connection_secrets: {
     kind: "excluded",

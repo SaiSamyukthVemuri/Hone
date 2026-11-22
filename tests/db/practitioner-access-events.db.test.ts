@@ -94,7 +94,7 @@ describe("practitioner_access_events: shape and privileges", () => {
     expect(Number((await adminQuery("select count(*) n from pg_policies where schemaname='public' and tablename='practitioner_access_events'")).rows[0].n)).toBe(0);
   });
 
-  it("anon, authenticated and public hold no privilege; the service role may only read", async () => {
+  it("anon, authenticated and the service role hold no privilege on the table", async () => {
     const privs = ["select", "insert", "update", "delete", "truncate", "references", "trigger"];
     for (const role of ["anon", "authenticated"]) {
       for (const p of privs) {
@@ -102,8 +102,7 @@ describe("practitioner_access_events: shape and privileges", () => {
         expect(r.rows[0].h, `${role} ${p}`).toBe(false);
       }
     }
-    expect((await adminQuery("select has_table_privilege('service_role','public.practitioner_access_events','select') h")).rows[0].h).toBe(true);
-    for (const p of ["insert", "update", "delete", "truncate"]) {
+    for (const p of ["select", "insert", "update", "delete", "truncate"]) {
       expect((await adminQuery("select has_table_privilege('service_role','public.practitioner_access_events',$1) h", [p])).rows[0].h, `service_role ${p}`).toBe(false);
     }
   });

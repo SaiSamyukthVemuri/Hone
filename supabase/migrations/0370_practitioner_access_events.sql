@@ -29,9 +29,8 @@ create index practitioner_access_events_studio_idx on public.practitioner_access
 alter table public.practitioner_access_events enable row level security;
 alter table public.practitioner_access_events force row level security;
 
--- No policy exists. Strip every grant from every API role by name, then give the service role read-only access (the owner function writes as the table owner).
+-- No policy exists. Strip every grant from every API role by name; nothing reads the table yet, and the owner function writes as the table owner.
 revoke all on table public.practitioner_access_events from public, anon, authenticated, service_role;
-grant select on table public.practitioner_access_events to service_role;
 
 create or replace function public.set_practitioner_active_locked(
   p_studio_id              uuid,

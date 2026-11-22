@@ -46,7 +46,7 @@ describe("0370 source contract", () => {
     expect(UP).toContain("alter table public.practitioner_access_events force row level security;");
     expect(UP).not.toMatch(/create policy/i);
     expect(UP).toContain("revoke all on table public.practitioner_access_events from public, anon, authenticated, service_role;");
-    expect(UP).toContain("grant select on table public.practitioner_access_events to service_role;");
+    expect(UP).not.toMatch(/grant[^;]*on table public\.practitioner_access_events/i);
     expect(UP).toContain("check (action in ('restored'))");
   });
 

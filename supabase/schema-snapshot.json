@@ -3,7 +3,7 @@
   "migrations": {
     "count": 279,
     "last": "0370_practitioner_access_events.sql",
-    "sha256": "989f8c7f9da4fdeda73cb3f90b8c9a7ba58636fde00fa63521c3e7ccc51dd41a"
+    "sha256": "65b6621c45b42e9110d55a1a71ff255021002960b471a1a623525813596514ea"
   },
   "public": {
     "tables": [
