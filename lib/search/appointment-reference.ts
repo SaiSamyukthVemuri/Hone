@@ -1,6 +1,6 @@
 import { emailBookingReference } from "@/lib/email/booking-reference";
 
-// Appointment-reference lookup (HON-48 roadmap). The six-character reference in
+// Appointment-reference lookup. The six-character reference in
 // booking and cancellation email subjects is DERIVED from the appointment id
 // (lib/email/booking-reference.ts): one-way, not stored, not a credential. So a
 // lookup cannot ask the database for it; it recomputes the reference for the

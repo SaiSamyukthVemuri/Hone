@@ -161,7 +161,7 @@ function builder(table: string, select: string) {
       record.limit = n;
       return chain;
     },
-    // HON-58: the client-name candidate reads (non-ASCII names; paged).
+    // The client-name candidate reads (non-ASCII names; paged).
     filter(col: string, op: string, value: string) {
       if (op !== "match") throw new Error(`fake supabase: unsupported filter ${op}`);
       const re = new RegExp(value, "u");
