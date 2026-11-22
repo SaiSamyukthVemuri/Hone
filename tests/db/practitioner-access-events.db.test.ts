@@ -5,7 +5,7 @@ import { adminQuery, asRole, asUser, closePool, seedMember, seedStudio } from ".
 // The access-event record (restore audit, RESTORES ONLY: who restored whom, and when; removals are deliberately not recorded). Synthetic ids only. Each claim has a control that would fail if the record were missing or wrong:
 //  * a real RESTORE writes exactly one record (who, to whom, which studio); a removal writes none;
 //  * a request that changes nothing writes none; a refusal writes none; the return values are exactly the ones the command always had;
-//  * eight concurrent restores of the same member write ONE record (the row lock serialises them and the later ones find the value already changed);
+//  * eight concurrent restores of the same member write ONE record (the studio lock serialises them and the later ones find the value already changed);
 //  * no API role can read or write the table; the command is still callable by the service role only.
 
 afterAll(async () => {

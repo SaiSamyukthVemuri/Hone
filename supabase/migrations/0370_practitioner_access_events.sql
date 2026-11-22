@@ -2,8 +2,8 @@
 --
 -- WHAT CHANGES. One new append-only table, public.practitioner_access_events, and one function replaced: public.set_practitioner_active_locked.
 -- The function keeps its signature, return values, language, security setting, search_path, lock order and the unconditional update. The only addition is
--- that, under the existing row lock on the target, it compares the stored value with the requested one and, only when a RESTORE really changes the value (inactive to active), inserts one record.
--- A repeated or concurrent request finds the value already changed (the target row is locked for update before the read), so it writes no second record;
+-- that, under the studio lock and the target's row lock it already takes, it compares the stored value with the requested one and, only when a RESTORE really changes the value (inactive to active), inserts one record.
+-- A repeated or concurrent request finds the value already changed (the studio is locked by the owner check, and the target row for update, before the read), so it writes no second record;
 -- a request that changes nothing writes none.
 --
 -- WHAT THE TABLE HOLDS. studio, who did it (the owner), who it was done to, the action ('restored') and the time. No client data, no names,
@@ -72,7 +72,7 @@ begin
      set active = v_new_active
    where id = p_target_practitioner_id and studio_id = p_studio_id;
 
-  -- A record is written only when a restore really changed the value, under the row lock taken above.
+  -- A record is written only when a restore really changed the value, under the locks taken above.
   if v_new_active and v_old_active is distinct from v_new_active then
     insert into public.practitioner_access_events (studio_id, actor_practitioner_id, target_practitioner_id, action)
     values (p_studio_id, p_actor_practitioner_id, p_target_practitioner_id, 'restored');
