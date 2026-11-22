@@ -88,7 +88,7 @@ describe("the other calendar actions that read a client's name", () => {
   });
   it("the booking and cancellation lookups use the stored name only for the client's own email, never for a staff screen", () => {
     // They feed dispatchBookingEmails / sendCancellationEmail (client-facing communications, a separate change), not a page.
-    const bookLookup = src.indexOf('.select("id, name, email, phone, sms_consent_at, sms_opted_out_at")');
+    const bookLookup = src.indexOf('.select("id, name, email, phone, sms_consent_at, sms_consent_phone, sms_opted_out_at")');
     const cancelLookup = src.indexOf('.select("name, email")');
     expect(bookLookup).toBeGreaterThan(0);
     expect(cancelLookup).toBeGreaterThan(0);

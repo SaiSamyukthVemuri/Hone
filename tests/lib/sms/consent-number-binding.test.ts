@@ -167,9 +167,8 @@ describe("every sender of a text carries the bound number (source contracts)", (
     expect(APPOINTMENT_SMS_CONSENT_VERSION).toBe("appointment_sms_consent_v2");
     const s = read("app/book/[slug]/actions.ts");
     expect(s).toMatch(/import \{ APPOINTMENT_SMS_CONSENT_VERSION \} from "@\/lib\/sms\/appointment-sms-copy"/);
-    const call = s.slice(s.indexOf("stampPublicBookingConsent(\n"), s.indexOf("if (stamp.result === \"error\")"));
-    expect(call).toContain("replacing,");
-    expect(call).toContain("APPOINTMENT_SMS_CONSENT_VERSION,");
+    const call = s.slice(s.indexOf("stampPublicBookingConsent(admin"), s.indexOf("if (stamp.result === \"error\")"));
+    expect(call).toContain("replacing, APPOINTMENT_SMS_CONSENT_VERSION)");
     expect(s).not.toMatch(/p_sms_consent_text_version/);
   });
   it("the edit screen tells staff that changing a consenting client's number pauses their texts", () => {
