@@ -59,13 +59,20 @@ export function outcomeOf(f: InvitationFacts, nowMs: number): InvitationOutcome 
   return new Date(f.expiresAt).getTime() > nowMs ? "open" : "deadline_passed_unrecorded";
 }
 
+// THE THREE OUTCOME LABELS, EXACTLY, wherever an invitation outcome is shown. "Released" never says who released: the database records no actor
+// (an owner release and a person's withdrawal share the stamp), so the reason is "not recorded", with an em dash.
+export const OUTCOME_DECLINED_LABEL = "Declined";
+export const OUTCOME_EXPIRED_LABEL = "Expired";
+export const OUTCOME_RELEASED_LABEL = "Released — reason not recorded";
+
 const OUTCOME_LABEL: Record<InvitationOutcome, string> = {
   booked_link_used: "Link used",
-  declined: "Declined",
-  expired: "Expired (not booked within the window)",
-  released: "Released (reason not recorded)",
+  declined: OUTCOME_DECLINED_LABEL,
+  expired: OUTCOME_EXPIRED_LABEL,
+  released: OUTCOME_RELEASED_LABEL,
   open: "Open",
-  deadline_passed_unrecorded: "Deadline passed (expiry not yet recorded)",
+  // A deadline that has passed with no stamp yet is an expired invitation; the "Deadline" line shows the instant and no "Expiry recorded at" line appears.
+  deadline_passed_unrecorded: OUTCOME_EXPIRED_LABEL,
 };
 
 function when(iso: string, timeZone: string): string {
