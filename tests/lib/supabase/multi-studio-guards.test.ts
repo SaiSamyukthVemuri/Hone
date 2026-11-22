@@ -12,7 +12,10 @@ function read(rel: string): string {
 const COOKIE = read("lib/supabase/selected-studio.ts");
 const QUERIES = read("lib/supabase/queries.ts");
 const MW = read("lib/supabase/middleware.ts");
+const NOACCESS = read("app/(auth)/no-access/page.tsx");
 const ACTIONS = read("app/(auth)/no-access/actions.ts");
+const ACCOUNT = read("app/(app)/AccountMenu.tsx");
+const MOBILE = read("app/(app)/MobileMenu.tsx");
 
 describe("selected-studio cookie is httpOnly + secure-in-prod + sameSite=lax", () => {
   it("sets a hardened cookie and offers read/set/clear", () => {
@@ -58,6 +61,16 @@ describe("middleware validates the cookie against the active studio set", () => 
   });
   it("clears a stale/forged selection cookie on the redirect", () => {
     expect(MW).toMatch(/cookies\.delete\("hone_selected_studio"\)/);
+  });
+});
+
+describe("/no-access renders a real chooser for 2+ memberships", () => {
+  it("lists active studios as switch forms (not a dead-end error)", () => {
+    expect(NOACCESS).toMatch(/listActiveStudioMemberships/);
+    expect(NOACCESS).toMatch(/action=\{switchStudioAction\}/);
+    expect(NOACCESS).toMatch(/name="studio_id"/);
+    expect(NOACCESS).toMatch(/Choose a studio/);
+    expect(NOACCESS).toMatch(/memberships\.length === 1/);
   });
 });
 

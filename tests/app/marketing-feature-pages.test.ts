@@ -46,6 +46,19 @@ describe("pillar + feature pages", () => {
       const raw = read(p.file);
       const scan = stripComments(raw).replace(/\s+/g, " ");
 
+      it("has exactly one H1 (Display)", () => {
+        expect((raw.match(/<Display\b/g) ?? []).length).toBe(1);
+      });
+
+      it("uses the shared metadata helper for its own path", () => {
+        expect(scan).toMatch(new RegExp(`marketingMetadata\\("${p.path.replace(/\//g, "\\/")}"\\)`));
+      });
+
+      it("has the truthful walkthrough CTA and internal links", () => {
+        expect(scan).toMatch(/WALKTHROUGH/);
+        expect(scan).toMatch(/RelatedLinks/);
+      });
+
       it("has no unreleased-capability / Calendar / overclaim language", () => {
         for (const rx of FORBIDDEN) {
           expect(scan, `matched ${rx}`).not.toMatch(rx);

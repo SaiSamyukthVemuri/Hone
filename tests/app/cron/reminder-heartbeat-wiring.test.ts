@@ -22,6 +22,8 @@ const ADMIN = read("app/admin/page.tsx");
 const MATERIALIZE = read("app/api/cron/materialize-recurring-breaks/route.ts");
 const RECONCILE = read("app/api/cron/calendar-reconcile/route.ts");
 const SYNC = read("app/api/cron/calendar-sync/route.ts");
+const ALERTS = read("lib/ops/alerts.ts");
+const SCHEDULE = read("lib/cron/reminder-schedule.ts");
 
 // Every Vercel-scheduled cron that must independently evaluate reminder health.
 const INDEPENDENT_MONITOR_ROUTES: ReadonlyArray<readonly [string, string]> = [
@@ -227,6 +229,15 @@ describe("several independent Vercel crons evaluate reminder health (PR OPS-01)"
     },
   );
 
+  // Detection must survive ANY single one of these routes failing or being
+  // unregistered. Fewer than two callers reinstates the single point of failure.
+  it("at least three independent scheduled callers exist (no single point of failure)", () => {
+    const callers = INDEPENDENT_MONITOR_ROUTES.filter(([, src]) =>
+      /await recordReminderSchedulerHealthAlert\(\)/.test(src),
+    );
+    expect(callers.length).toBeGreaterThanOrEqual(3);
+  });
+
   // Each caller must be a cron Vercel actually runs, otherwise it is decoration.
   it("every monitor caller is a registered vercel.json cron", () => {
     const crons: Array<{ path: string; schedule: string }> = JSON.parse(
@@ -253,6 +264,58 @@ describe("several independent Vercel crons evaluate reminder health (PR OPS-01)"
     const check = RECONCILE.indexOf("recordReminderSchedulerHealthAlert(");
     expect(gate).toBeGreaterThan(-1);
     expect(check).toBeGreaterThan(gate);
+  });
+
+  // Three callers per day must still produce ONE alert per outage. The dedupe
+  // is the mechanism; pin that it is still keyed on an unresolved row.
+  it("multiple callers stay non-spammy via the unresolved-row dedupe", () => {
+    expect(HEARTBEAT).toMatch(/\.eq\("event", event\)/);
+    expect(HEARTBEAT).toMatch(/\.is\("resolved_at", null\)/);
+  });
+});
+
+describe("monitoring thresholds track the shipped cadence (PR OPS-01)", () => {
+  it("both thresholds are derived from CRON_INTERVAL_MINUTES, not magic numbers", () => {
+    expect(HEARTBEAT).toMatch(
+      /REMINDER_DEGRADED_AFTER_MINUTES = CRON_INTERVAL_MINUTES \* 2/,
+    );
+    expect(HEARTBEAT).toMatch(
+      /REMINDER_STALE_AFTER_MINUTES = CRON_INTERVAL_MINUTES \* 3/,
+    );
+  });
+
+  it("the heartbeat module imports the cadence rather than restating 15", () => {
+    expect(HEARTBEAT).toMatch(
+      /import \{ CRON_INTERVAL_MINUTES \} from "@\/lib\/cron\/reminder-schedule"/,
+    );
+    // No bare 15-minute literal in the threshold code.
+    const code = codeOnly(HEARTBEAT);
+    expect(code).not.toMatch(/AFTER_MINUTES\s*=\s*\d+\s*;/);
+  });
+
+  it("the canonical cadence constant is still 15 minutes", () => {
+    expect(SCHEDULE).toMatch(/CRON_INTERVAL_MINUTES = 15/);
+    expect(SCHEDULE).toMatch(
+      /APPOINTMENT_REMINDER_CRON_SCHEDULE = "\*\/15 \* \* \* \*"/,
+    );
+  });
+});
+
+describe("admin card renders all four states (PR OPS-01)", () => {
+  it("labels degraded distinctly instead of falling through to Missing", () => {
+    expect(ADMIN).toMatch(/"Degraded"/);
+    expect(ADMIN).toMatch(/status\.status === "degraded"/);
+  });
+
+  it("still renders every other state", () => {
+    for (const label of ["Healthy", "Stale", "Missing"]) {
+      expect(ADMIN).toContain(`"${label}"`);
+    }
+  });
+
+  it("surfaces both thresholds so the operator can see the contract", () => {
+    expect(ADMIN).toMatch(/degradedAfterMinutes/);
+    expect(ADMIN).toMatch(/staleAfterMinutes/);
   });
 });
 
@@ -287,6 +350,22 @@ describe("OPS-01.1 P1-A/P2-A: the writer records real INVOCATION evidence", () =
     expect(fn).toMatch(/try\s*\{/);
     expect(fn).toMatch(/catch/);
     expect(fn).toMatch(/if \(!redis\) return/);
+  });
+
+  it("the classifier consumes BOTH axes, not recency alone", () => {
+    expect(HEARTBEAT).toMatch(/observedIntervalMinutes/);
+    expect(HEARTBEAT).toMatch(/worseHealth\(recencyStatus/);
+  });
+
+  it("cadence evidence is explicit, never fabricated", () => {
+    expect(HEARTBEAT).toMatch(/cadenceEvidence/);
+    expect(HEARTBEAT).toMatch(/"measured"|"unavailable"/);
+  });
+
+  it("no new dependency and no database table for cadence", () => {
+    const code = codeOnly(HEARTBEAT);
+    expect(code).not.toMatch(/from "(?!@upstash\/redis|@\/lib|server-only)/);
+    expect(code).not.toMatch(/create table|CREATE TABLE/i);
   });
 });
 
@@ -342,6 +421,25 @@ describe("OPS-01.1 P1-B: dedupe reads severity, not just existence", () => {
     const block = start > -1 && end > start ? HEARTBEAT.slice(start, end) : "";
     expect(block).not.toBe("");
     expect(block).toMatch(/\}\s*catch\s*\{\s*existingUnresolved = null;/);
+  });
+
+  // The legacy row is operator-owned history; making a test pass by rewriting
+  // it would be worse than letting the critical row sit beside it.
+  it("does NOT auto-resolve the legacy warning row", () => {
+    const code = codeOnly(HEARTBEAT);
+    expect(code).not.toMatch(/resolved_at:\s/);
+    expect(code).not.toMatch(/\.update\(/);
+  });
+});
+
+describe("OPS-01.1 admin card surfaces measured cadence honestly", () => {
+  it("shows the observed interval", () => {
+    expect(ADMIN).toMatch(/observedIntervalMinutes/);
+    expect(ADMIN).toMatch(/Observed cadence/);
+  });
+
+  it("says 'not yet measured' rather than implying a healthy cadence", () => {
+    expect(ADMIN).toMatch(/not yet measured/);
   });
 });
 
@@ -407,6 +505,11 @@ describe("P2 3775413510: the Lua rejects impossible dates, not just bad shapes",
     expect(HEARTBEAT).toMatch(/if d < 1 or d > 31 then return nil end/);
     expect(HEARTBEAT).toMatch(/if h > 23 or mi > 59 or sec > 59 then return nil end/);
   });
+
+  it("documents that it must never be more permissive than Date.parse", () => {
+    // the comment wraps across lines, so match across the newline
+    expect(HEARTBEAT).toMatch(/never be MORE permissive[\s\S]{0,12}than Date\.parse/);
+  });
 });
 
 describe("P3 3775413519: documented safe_details keys match the builder", () => {
@@ -425,6 +528,37 @@ describe("P3 3775413519: documented safe_details keys match the builder", () => 
         `\`${key}\``,
       );
     }
+  });
+});
+
+describe("P2 3775518504: the Lua rejects hour 24 outright", () => {
+  it("bounds the hour at 23, not 24", () => {
+    expect(HEARTBEAT).toMatch(/if h > 23 or mi > 59 or sec > 59 then return nil end/);
+    expect(HEARTBEAT).not.toMatch(/if h > 24/);
+  });
+
+  it("explains why rejecting it loses nothing", () => {
+    expect(HEARTBEAT).toMatch(/toISOString\(\) NEVER emits hour 24/);
+  });
+});
+
+describe("P3 3775518514: the runbook health table describes BOTH axes", () => {
+  const DOC = read("docs/08_EMAIL_SMS_AND_CRON.md");
+
+  it("states that health is the worse of recency and cadence", () => {
+    expect(DOC).toMatch(/worse of two independent axes/i);
+  });
+
+  it("gives the cadence-only example an operator would otherwise misread", () => {
+    expect(DOC).toMatch(/10 minutes old is still \*\*degraded\*\*/);
+  });
+
+  it("the table column is not framed as heartbeat age alone", () => {
+    expect(DOC).toMatch(/\| State \| Worse axis \(recency \*\*or\*\* cadence\) \|/);
+  });
+
+  it("documents the unavailable-cadence warm-up honestly", () => {
+    expect(DOC).toMatch(/reported as `unavailable` until two successive invocations/);
   });
 });
 
