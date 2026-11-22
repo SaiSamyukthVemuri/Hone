@@ -62,6 +62,7 @@ import {
 } from "./profile-actions";
 import { recordProspectSmsConsentFormAction } from "./consent-actions";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
+import { expirySummary, rowExpiry, summaryText } from "@/lib/waitlist/invitation-expiry-display";
 import { formatLocalDateLabel, localDateString, localLongDate } from "@/lib/booking/tz";
 // `claimWaitlistEntryAction` and `claimNextWaitlistEntriesAction` are
 // deliberately NOT imported. Both still exist, are still tested and still reach
@@ -89,6 +90,12 @@ import { cookies } from "next/headers";
 import { LIFECYCLE_NOTICE_COOKIE, lifecycleNoticeCopy } from "@/lib/waitlist/lifecycle-notice";
 import { dbErrorCode } from "@/lib/logging/error-class";
 import { OwnerOnlyNotice } from "@/components/settings/view-heading";
+/**
+ * The most rows ONE Data API statement returns (supabase/config.toml `max_rows = 1000`; hosted is not assumed to be any higher). The studio-wide
+ * expiry summary asks for exactly this many and trusts them only when the EXACT count PostgREST reports (Content-Range, which the ceiling does
+ * not bound) equals the rows returned. A studio with more live invitations than this gets no summary, never a partial one.
+ */
+const EXPIRY_SUMMARY_PAGE = 1000;
 
 // ===========================================================================
 // NEW-CLIENT WAITLIST — OPERATOR QUEUE (WAIT-02)
@@ -652,6 +659,9 @@ export default async function WaitlistSettingsPage({
   /** Recorded provider outcome per invited entry. ABSENT means never recorded,
    *  which is NOT the same as the observed verdict `unknown`. */
   const deliveryByEntry = new Map<string, InvitationDeliveryState>();
+  /** The LIVE invitation's database `expires_at` per invited entry, for display only. Filled from the live read below; stays
+   *  empty when that read fails, so no expiry text is ever shown from an unknown state. */
+  const expiryByEntry = new Map<string, string>();
   const attention = await loadNeedsAttention(supabase, studio.id);
   const declined = await loadDeclinedAttention(supabase, studio.id);
   // The outbox has no policy for the user client (0325), so its status is read inside this helper, which builds its own server-only client. This page's data reads stay on the RLS client.
@@ -796,6 +806,7 @@ export default async function WaitlistSettingsPage({
         ) {
           deliveryByEntry.set(inv.entry_id, inv.delivery_disposition);
         }
+        expiryByEntry.set(inv.entry_id, inv.expires_at);
         const expiresAt = new Date(inv.expires_at).getTime();
         cycleByEntry.set(inv.entry_id, {
           // A LIVE row whose clock has passed is the only thing that may be
@@ -806,6 +817,40 @@ export default async function WaitlistSettingsPage({
       }
     }
   }
+
+  // THE SUMMARY IS STUDIO-WIDE, NOT PAGE-WIDE. The rows above are one page of the invited section, so a summary built from them would name
+  // the wrong "next" expiry and undercount "within 24 hours" once an invitation on another page expires sooner. This is its own small
+  // owner-RLS read of `expires_at` ONLY (no entry id, no name) over every LIVE invitation of the studio, with the same four-column predicate
+  // as the one-live-per-entry index. It is trusted ONLY when the exact count equals the rows returned: a response cut at the API's row ceiling,
+  // an unreadable count or a failed read shows no summary at all. It is never a partial answer.
+  let studioExpiries: string[] | null = null;
+  {
+    const all = await supabase
+      .from("new_client_waitlist_invitations")
+      .select("expires_at", { count: "exact" })
+      .eq("studio_id", studio.id)
+      .is("redeemed_at", null)
+      .is("expired_at", null)
+      .is("released_at", null)
+      .is("declined_at", null)
+      .limit(EXPIRY_SUMMARY_PAGE);
+    if (all.error || !Array.isArray(all.data) || typeof all.count !== "number" || all.count !== all.data.length) {
+      if (all.error) {
+        console.error(
+          JSON.stringify({
+            event: "waitlist_invitation_expiry_summary_read_failed",
+            studioId: studio.id,
+            code: all.error.code ?? "unknown",
+            timestamp: new Date().toISOString(),
+          }),
+        );
+      }
+    } else {
+      studioExpiries = (all.data as Array<{ expires_at: string }>).map((r) => r.expires_at);
+    }
+  }
+  const expirySummaryLine =
+    studioExpiries === null ? null : summaryText(expirySummary(studioExpiries, studio.timezone, now));
 
   return (
     <div className="flex flex-col gap-6">
@@ -875,6 +920,12 @@ export default async function WaitlistSettingsPage({
       <p className="text-sm font-medium" aria-live="polite">
         Waitlist entries: <span className="tabular-nums">{active}</span>
       </p>
+      {expirySummaryLine && (
+        <p data-testid="invitation-expiry-summary" className="text-sm text-fg-muted">
+          {expirySummaryLine}{" "}
+          <span className="text-xs">As of {allowanceAsOf}.</span>
+        </p>
+      )}
       <p className="flex flex-wrap gap-x-4 text-sm" data-testid="waitlist-tools-nav">
         <Link href="/settings/waitlist/search" className="underline">
           Search the waitlist by name
@@ -1288,6 +1339,23 @@ export default async function WaitlistSettingsPage({
                               observed verdict and says so. This is what survives
                               the practitioner navigating away, which no amount of
                               in-page state could do. */}
+                          {row.status === "invited" &&
+                            (() => {
+                              const raw = expiryByEntry.get(row.id);
+                              const e = raw === undefined ? null : rowExpiry(raw, studio.timezone, now);
+                              if (e === null) return null;
+                              return (
+                                <p
+                                  data-testid="row-invitation-expiry"
+                                  data-state={e.kind}
+                                  className="text-sm text-neutral-500"
+                                >
+                                  {e.kind === "open"
+                                    ? `Expires ${e.label}, in ${e.remaining}.`
+                                    : `Deadline was ${e.label}. It has passed.`}
+                                </p>
+                              );
+                            })()}
                           {row.status === "invited" &&
                             deliveryByEntry.has(row.id) && (
                               <p
