@@ -63,8 +63,7 @@ export default function PrivacyPolicyPage() {
         practice operations.
       </P>
       <P>
-        Hone is operated by <strong>Hone Care, Inc.</strong>, a Delaware
-        corporation (&ldquo;Hone&rdquo;).
+        Hone is operated by <strong>Hone Care, Inc.</strong>, a Delaware corporation.
       </P>
       <P>
         For privacy-related questions, contact us at{" "}

@@ -30,8 +30,7 @@ export default function TermsOfServicePage() {
         bound by these Terms. If you do not agree, do not use Hone.
       </P>
       <P>
-        Hone is operated by <strong>Hone Care, Inc.</strong>, a Delaware
-        corporation (&ldquo;Hone&rdquo;).
+        Hone is operated by <strong>Hone Care, Inc.</strong>, a Delaware corporation.
         References in these Terms to &ldquo;we,&rdquo; &ldquo;us,&rdquo; and
         &ldquo;our&rdquo; refer to this operator.
       </P>
