@@ -4,7 +4,7 @@ import { passesConsentGate } from "@/lib/sms/consent-gate";
 import { CONSENT_PHONE_UNKNOWN, readClientConsentPhone } from "@/lib/sms/consent-phone-read";
 import { stampPublicBookingConsent } from "@/lib/booking/public-consent-stamp";
 
-// Migration 0368: a consent is for the number it was given for. The gate, the fail-closed reader, the fresh-consent stamp and the wiring of
+// A consent is for the number it was given for. The gate, the fail-closed reader, the fresh-consent stamp and the wiring of
 // every caller that builds the client object for a send.
 
 const studio = { id: "s1", send_confirmation_sms: true, send_24h_sms_reminders: true, send_2h_sms_reminders: true };

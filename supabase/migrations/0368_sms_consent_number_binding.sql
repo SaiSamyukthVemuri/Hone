@@ -1,7 +1,6 @@
 -- ===========================================================================
--- 0368: A CLIENT'S SMS CONSENT IS BOUND TO THE NUMBER IT WAS GIVEN FOR
+-- A CLIENT'S SMS CONSENT IS BOUND TO THE NUMBER IT WAS GIVEN FOR
 -- ===========================================================================
--- DRAFT, UNSEALED, authorizes_nothing: true. Not applied anywhere.
 --
 -- The problem. clients.sms_consent_at records THAT a client agreed to texts, not WHICH number they agreed for, and a studio
 -- member may edit clients.phone freely. Every send gate reads the current phone beside the old consent, so a corrected,
@@ -20,7 +19,7 @@
 --      time that number is changed, so every drift AFTER this migration is caught and only pre-migration drift stays unprovable.
 --
 --   4. Fresh consent. A client who changed number can consent again for the number now on file: a trusted writer may then REPLACE the consent
---      (later time, different number, no STOP). The 0211 guard gets that one exception, and every consent recorded or replaced is kept in an
+--      (later time, different number, no STOP). The client SMS permission guard gets that one exception, and every consent recorded or replaced is kept in an
 --      append-only record (client_sms_consent_events).
 --
 -- NOT IN THIS FILE: a phone-level suppression list (separate, optional part, scoped in the cutover note), and the application
@@ -64,7 +63,7 @@ comment on column public.clients.sms_consent_text_version is
   'The wording version the client agreed to, supplied by the governed writer. NULL when the writer did not supply one. Write-once.';
 
 -- ---------------------------------------------------------------------------
--- The binding trigger. SECURITY INVOKER, so current_user is the real caller (the 0211 pattern): anon and authenticated are
+-- The binding trigger. SECURITY INVOKER, so current_user is the real caller (the same pattern as the permission guard): anon and authenticated are
 -- raw API callers, the booking command runs as its owner and the stamp as service_role, both trusted.
 -- ---------------------------------------------------------------------------
 create or replace function public.clients_sms_consent_binding_guard()
@@ -169,7 +168,7 @@ comment on function public.clients_sms_consent_binding_guard() is
 
 -- ---------------------------------------------------------------------------
 -- 4. Fresh consent for a different number, and the record of every consent.
--- (a) The 0211 guard is re-created from its CURRENT body, asserted by md5, with ONE added exception to "consent evidence is write-once":
+-- (a) The client SMS permission guard is re-created from its CURRENT body, asserted by md5, with ONE added exception to "consent evidence is write-once":
 --     a later consent for a different bound number, no STOP. Everything else in the body is unchanged.
 -- ---------------------------------------------------------------------------
 do $$
@@ -221,7 +220,7 @@ begin
         current_user using errcode = '42501';
     end if;
     -- Rule 2: consent evidence is write-once, for everyone.
-    -- 0368: the one exception is a FRESH consent for a different number (the binding trigger has already checked it and set the number):
+    -- The one exception is a FRESH consent for a different number (the binding trigger has already checked it and set the number):
     -- the bound number changed, it is a later consent, and no STOP exists.
     if (old.sms_consent_at is not null or old.sms_consent_source is not null)
        and not (old.sms_consent_phone is not null

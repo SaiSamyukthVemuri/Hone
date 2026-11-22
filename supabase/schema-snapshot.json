@@ -3,7 +3,7 @@
   "migrations": {
     "count": 279,
     "last": "0368_sms_consent_number_binding.sql",
-    "sha256": "24017447a40c5dffe6b4084efe2d3adde8b64f371ac7ae474d840c406ad06541"
+    "sha256": "54799719fed38ec9642e7127cddfce260382d77004b95f286a298933b88a0684"
   },
   "public": {
     "tables": [
