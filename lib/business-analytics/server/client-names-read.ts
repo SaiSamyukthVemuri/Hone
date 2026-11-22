@@ -15,9 +15,10 @@ import type { NameLookup } from "../named-clients";
 // IN THE QUERY, so an excluded client's name is never fetched at all; the model then leaves out anyone the query did not return, or whose resulting name is
 // blank.
 //
-// THE NAME SHOWN is the app's one rule (`clientDisplayName`): the preferred name when one is set, else the stored name. The legal name is never read here and
-// never shown where a preferred one exists. A database that does not have the preferred-name column yet is read without it, exactly as the other
-// surfaces do (`readWithPreferredName`), so the lists show the stored name until it exists.
+// THE NAME SHOWN is the app's one rule (`clientDisplayName`): the preferred name when one is set, else the stored name. Both fields are read, and the stored
+// name is shown only when no preferred name is set. The separate legal identity (given, middle and family names) is never selected and never shown. A
+// database that does not have the preferred-name column yet is read without it, exactly as the other surfaces do (`readWithPreferredName`), so the lists
+// show the stored name until it exists.
 //
 // The schema has no erased or anonymised marker on a client today (erasure is handled case by case, and nothing is purged), so archived is the only
 // removal flag there is. When a marker is added it belongs here, in the query, and a test must pin it.

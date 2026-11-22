@@ -10,6 +10,7 @@ import type { Studio } from "@/lib/types/database";
 import { FORMER_TEAM_MEMBER_LABEL, UNNAMED_TEAM_MEMBER_LABEL } from "../copy";
 import type { FigureRead } from "../figure";
 import { readClientNames } from "./client-names-read";
+import type { ClientChip, ClientSort } from "../clients-table";
 import type { NameLookup } from "../named-clients";
 import { buildOverview, candidateClientIds, type FollowThroughData, type HistoryData, type OverviewView, type PractitionerInfo, type WindowData } from "../overview-model";
 import { parseOverviewParams, type OverviewParams, type RawParams } from "../overview-params";
@@ -49,6 +50,14 @@ async function readWindow(supabase: SupabaseClient, studioId: string, timezone: 
       money: money.ok ? { ok: true, value: { cardRows: money.cardRows, settlementRows: money.settlementRows, legacyFeeRows: money.legacyFeeRows } } : { ok: false, reason: "read_failed" },
     },
   };
+}
+
+/** The earlier appointments with their money, for the lifetime column. Over the money read's cap it says so; it never truncates. */
+async function readLifetimeHistory(supabase: SupabaseClient, studioId: string, history: FigureRead<HistoryData>): Promise<FigureRead<WindowData>> {
+  if (!history.ok) return { ok: false, reason: history.reason };
+  const money = await readMoneyForAppointments(supabase, studioId, history.value.appointments.map((a) => a.id));
+  if (!money.ok) return readFailure("read_failed");
+  return { ok: true, value: { appointments: history.value.appointments, money: { ok: true, value: { cardRows: money.cardRows, settlementRows: money.settlementRows, legacyFeeRows: money.legacyFeeRows } } } };
 }
 
 const readFailure = (reason: "read_failed" | "too_many_appointments"): { ok: false; reason: "read_failed" | "too_many_appointments" } => ({ ok: false, reason });
@@ -92,7 +101,7 @@ export async function loadOverview(
   studioCurrency: string | null,
   raw: RawParams,
   /** `names: false` skips the client-name read entirely: the printed page never shows names, so it never reads them. */
-  opts: { strict: boolean; names?: boolean },
+  opts: { strict: boolean; names?: boolean; clients?: { sort: ClientSort; chip: ClientChip; page: number } },
   now: Date,
   supabaseClient: SupabaseClient | undefined = undefined,
 ): Promise<OverviewRead> {
@@ -138,7 +147,9 @@ export async function loadOverview(
   };
   // Names for the clients this period's visits name, read after the owner check and for no one else.
   const names: NameLookup = opts.names === false ? { ok: false } : await readClientNames(supabase, studio.id, candidateClientIds(input));
-  const view = buildOverview({ ...input, names });
+  // The Clients tab also needs the money on the earlier visits, for its lifetime column. A failure there affects only that column.
+  const clients = opts.clients ? { ...opts.clients, lifetimeHistory: await readLifetimeHistory(supabase, studio.id, history) } : undefined;
+  const view = buildOverview({ ...input, names, clients });
   const practitionerOptions = optionsFor(people.rows, parsed.params);
   return { access: "granted", ok: true, view, params: parsed.params, notices: parsed.notices, practitionerOptions };
 }

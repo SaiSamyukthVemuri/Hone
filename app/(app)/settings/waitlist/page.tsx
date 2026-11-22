@@ -63,6 +63,9 @@ import {
 import { recordProspectSmsConsentFormAction } from "./consent-actions";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { expirySummary, rowExpiry, summaryText } from "@/lib/waitlist/invitation-expiry-display";
+import { declinedCount, declinedPageWindow, declinedPeople, declinedSummaryText, DECLINED_PAGE_PARAM, DECLINED_VIEW, latestDeclinePerPerson } from "@/lib/waitlist/decline-visibility";
+import { loadDeclinedEntryFacts, loadDeclineRecords, loadEntryQueuePages, loadScopedFollowUps } from "@/lib/waitlist/decline-visibility-read";
+import { DeclinedSection } from "@/components/waitlist/declined-section";
 import { formatLocalDateLabel, localDateString, localLongDate } from "@/lib/booking/tz";
 // `claimWaitlistEntryAction` and `claimNextWaitlistEntriesAction` are
 // deliberately NOT imported. Both still exist, are still tested and still reach
@@ -361,7 +364,7 @@ export default async function WaitlistSettingsPage({
   // an array. Both values are browser-controlled, so the type says so rather
   // than lying about it — and neither reaches a query except through the
   // validation immediately below.
-  searchParams?: Promise<{ section?: string | string[]; page?: string | string[]; fu?: string | string[] }>;
+  searchParams?: Promise<{ section?: string | string[]; page?: string | string[]; fu?: string | string[]; view?: string | string[]; dpage?: string | string[] }>;
 }) {
   const { practitioner, studio } = await requirePractitionerWithStudio();
 
@@ -852,6 +855,47 @@ export default async function WaitlistSettingsPage({
   const expirySummaryLine =
     studioExpiries === null ? null : summaryText(expirySummary(studioExpiries, studio.timezone, now));
 
+  // DECLINE VISIBILITY. A decline is the invitation's own `declined_at` and nothing else (never a passed deadline, never a release). The count
+  // is a number of people only; names, answers and contact details are read ONLY for the people listed in the declined view (the first
+  // DECLINED_SHOW_MAX), after the owner check above, and none of them reaches the address, a log or the summary.
+  const viewDeclined = firstParam(params.view) === DECLINED_VIEW;
+  const declineRecords = await loadDeclineRecords(supabase, studio.id);
+  const declinedTotal = declinedCount(declineRecords);
+  let declinedList: ReturnType<typeof declinedPeople> = [];
+  let declinedFactsUnreadable = false;
+  let declinedContacts: Awaited<ReturnType<typeof loadReplyContacts>> | null = null;
+  let declinedScoped: Awaited<ReturnType<typeof loadScopedFollowUps>> | undefined;
+  let declinedEntryPages: Map<string, number> | null = null;
+  const allDeclined = declineRecords.kind === "ok" ? latestDeclinePerPerson(declineRecords.rows) : [];
+  const declinedWindow = declinedPageWindow(allDeclined.length, firstParam((params as Record<string, string | string[] | undefined>)[DECLINED_PAGE_PARAM]));
+  if (viewDeclined && declineRecords.kind === "ok") {
+    // ONE bounded list: the people on THIS page (at most DECLINED_SHOW_MAX of all that declined). The facts, contact, answers and position
+    // reads below all use it, so each costs at most one page whatever the total, and every recorded decline is reachable by paging.
+    const pageRows = allDeclined.slice(declinedWindow.from, declinedWindow.to);
+    const shownIds = pageRows.map((r) => r.entry_id);
+    const facts = await loadDeclinedEntryFacts(supabase, studio.id, shownIds);
+    declinedFactsUnreadable = facts === null;
+    declinedList = declinedPeople({ kind: "ok", rows: pageRows }, facts);
+    declinedContacts = await loadReplyContacts(studio.id, shownIds);
+    // The page-wide follow-up list leaves out closed follow-ups whose answers were erased or are past retention, so for every shown person it
+    // does not already cover, ask the existing command for THAT invitation's follow-ups (any state) before saying anything about answers.
+    if (declineAnswersOn) {
+      const covered = new Set(followUps?.kind === "ok" ? followUps.rows.filter((r) => r.kind === "decline").map((r) => r.invitationId) : []);
+      const need = declinedList.map((p) => p.invitationId).filter((id) => !covered.has(id));
+      declinedScoped = await loadScopedFollowUps(studio.id, practitioner.user_id, need);
+    }
+    // Where each entry sits in its own section, so the link opens the page that contains it.
+    if (facts !== null) {
+      const placed = declinedList.flatMap((p) => {
+        const f = facts.get(p.entryId);
+        return f && typeof f.joinedAt === "string" && (SECTION_STATUSES as readonly string[]).includes(f.status)
+          ? [{ id: p.entryId, status: f.status, joinedAt: f.joinedAt }]
+          : [];
+      });
+      declinedEntryPages = await loadEntryQueuePages(supabase, studio.id, placed, SECTION_PAGE_SIZE);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-6">
       {lifecycleNotice && (
@@ -919,6 +963,17 @@ export default async function WaitlistSettingsPage({
 
       <p className="text-sm font-medium" aria-live="polite">
         Waitlist entries: <span className="tabular-nums">{active}</span>
+      </p>
+      <p data-testid="declined-summary" className="text-sm text-fg-muted">
+        {declinedSummaryText(declinedTotal)}
+        {declinedTotal !== null && declinedTotal > 0 && !viewDeclined ? (
+          <>
+            {" "}
+            <Link href={`${QUEUE_PATH}?view=${DECLINED_VIEW}`} prefetch={false} className="underline" data-testid="declined-view-link">
+              View the people who declined
+            </Link>
+          </>
+        ) : null}
       </p>
       {expirySummaryLine && (
         <p data-testid="invitation-expiry-summary" className="text-sm text-fg-muted">
@@ -1096,7 +1151,22 @@ export default async function WaitlistSettingsPage({
             </section>
           )}
 
-      {active === 0 ? (
+      {viewDeclined ? (
+        <DeclinedSection
+          people={declinedList}
+          total={declinedTotal}
+          timeZone={studio.timezone ?? "UTC"}
+          answersOn={declineAnswersOn}
+          followUps={followUps}
+          scopedFollowUps={declinedScoped}
+          contacts={declinedContacts?.kind === "ok" ? declinedContacts.byEntry : null}
+          entryFactsUnreadable={declinedFactsUnreadable}
+          linkableStatuses={new Set<string>(SECTION_STATUSES)}
+          entryPages={declinedEntryPages}
+          pageWindow={declinedWindow}
+          backHref={QUEUE_PATH}
+        />
+      ) : active === 0 ? (
         <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
           Nobody is waiting right now. New-client requests from your booking
           page will appear here.
