@@ -3,9 +3,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // Willow P1-B source pins: the remove-area action calls the atomic RPC with the
-// right payload, the UI is wired with an attached-data warning + required
-// reason, and the control is draft-only (the page gates the whole editor on
-// !isFinalized; the RPC rejects finalized as the backstop).
+// right payload and a required reason, and the control is draft-only (the page
+// gates the whole editor on !isFinalized; the RPC rejects finalized as the backstop).
 
 const ROOT = process.cwd();
 const ACTIONS = readFileSync(

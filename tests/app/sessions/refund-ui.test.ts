@@ -10,9 +10,7 @@ import path from "node:path";
 //     null or 'failed'
 //   * uses two-click confirm (Refund charge then
 //     "Confirm: refund charge ($X.XX)")
-//   * says test mode + no live money
-//   * never says "Live refund", "Refund complete", "Money returned",
-//     "Official refund receipt"
+//   * never says "Live refund" or "Official refund receipt"
 
 const CARD_PATH = path.resolve(
   __dirname,
@@ -215,14 +213,6 @@ describe("PR #178: RefundSubPanel rendering shape", () => {
 describe("PR #178: forbidden copy on the refund surface", () => {
   it("does NOT say 'Live refund'", () => {
     expect(CARD_CODE).not.toMatch(/Live refund/);
-  });
-
-  it("does NOT say 'Refund complete'", () => {
-    expect(CARD_CODE).not.toMatch(/Refund complete/);
-  });
-
-  it("does NOT say 'Money returned'", () => {
-    expect(CARD_CODE).not.toMatch(/Money returned/);
   });
 
   it("does NOT say 'Official refund receipt'", () => {

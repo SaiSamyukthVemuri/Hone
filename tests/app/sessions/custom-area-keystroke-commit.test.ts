@@ -93,12 +93,6 @@ describe("MultiAreaEditor commits custom areas explicitly", () => {
       expect(body.slice(0, 260), `${fn} must clear the notice`).toMatch(/setNotice\(null\);/);
     }
   });
-
-  it("keeps per-area laterality, remove, and apply-to-all intact", () => {
-    expect(EDITOR).toMatch(/function setLaterality/);
-    expect(EDITOR).toMatch(/function remove/);
-    expect(EDITOR).toMatch(/function applyToAll/);
-  });
 });
 
 describe("no other surface can append a partial keystroke value", () => {

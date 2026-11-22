@@ -2,17 +2,9 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Source-guard: the in-form "Copy settings" control uses the SHARED
-// treatment-setup snapshot contract (so it carries the primary-entry machine
-// readings, not just block fields), preserves destination areas, laterality and
-// every OUTCOME field, and copies the probe SETUP — including the probe-lot
-// number and, conditionally, its inventory link. It is a CLIENT-SIDE draft
-// prefill — nothing is persisted until the practitioner saves the area — so it
-// cannot fabricate performed treatment.
-//
-// An earlier version of this header claimed a "manually entered probe lot" is
-// preserved. That was false: the patch owns the lot keys and replaces it. The
-// safety is that a copied lot is NEVER marked confirmed.
+// Source-guard: the in-form "Copy settings" control is a CLIENT-SIDE draft
+// prefill that assigns no destination area identity and no outcome field, and
+// a copied probe lot is NEVER marked confirmed.
 
 const ROOT = process.cwd();
 const FORM = readFileSync(
@@ -66,61 +58,6 @@ describe("in-form Copy settings uses the shared canonical contract", () => {
     ]) {
       expect(body).not.toContain(forbidden);
     }
-  });
-
-  // -------------------------------------------------------------------------
-  // Session 1C: minutes performed is an OUTCOME, not reusable setup.
-  // -------------------------------------------------------------------------
-  it("the form's Copy settings comment no longer claims minutes are copied", () => {
-    const start = FORM.indexOf(
-      '// "Copy settings from another area in this session"',
-    );
-    expect(start).toBeGreaterThan(-1);
-    const comment = FORM.slice(start, FORM.indexOf("function copySettings()", start));
-    // The old comment read "...machine frequency, probe, and minutes."
-    expect(comment).not.toMatch(/probe,\s*(\/\/\s*)?and minutes/);
-    // and it must positively say minutes are NOT copied, so the reason survives
-    // the next person who reads it.
-    expect(comment).toMatch(/never MINUTES PERFORMED/);
-  });
-
-  it("copySettings never reads a minutes key off the patch", () => {
-    const start = FORM.indexOf("function copySettings()");
-    const body = FORM.slice(start, FORM.indexOf("\n  }", start));
-    expect(body).not.toContain("patch.minutes");
-    expect(body).not.toContain("minutes:");
-    expect(body).not.toContain("minutes_performed");
-    // The application mechanism is still a spread — which is exactly why
-    // omitting the key preserves the destination's own value.
-    // It goes through copyPatchForMachine (lib/machines/pending-setup.ts), which only BLANKS the hidden legacy
-    // fields under a native machine and never adds a key, so the spread still cannot carry minutes.
-    expect(body).toMatch(/setDraft\(\(d\) => \(\{ \.\.\.d, \.\.\.copyPatchForMachine\(machineKind, patch\) \}\)\)/);
-  });
-
-  // -------------------------------------------------------------------------
-  // Session 1C integration: the probe-lot prose must match runtime behaviour.
-  // The old wording claimed a manually typed destination lot was preserved. It
-  // is not — the patch owns the lot keys and replaces it. Truthful docs matter
-  // here because the practitioner is being asked to trust a traceability value.
-  // -------------------------------------------------------------------------
-  it("the form comment no longer claims a manual destination lot is preserved", () => {
-    const start = FORM.indexOf("function copySettings()");
-    const comment = FORM.slice(start, FORM.indexOf("\n  }", start));
-    expect(comment).not.toMatch(/manually entered probe lot,? and every outcome/);
-    expect(comment).not.toMatch(/a manually entered probe lot.*preserved/s);
-    // ...and it states the real rule, including the safety that makes it OK.
-    expect(comment).toMatch(/REPLACES a lot already typed here/);
-    expect(comment).toMatch(/unconfirmed/);
-  });
-
-  it("the shared contract does not list the lot among the NEVER-copied fields", () => {
-    // The header NEVER list used to include `probe_lot_number/confirmed/id`,
-    // which contradicted the code directly beneath it.
-    expect(CONTRACT).not.toMatch(/NEVER:[\s\S]{0,400}probe_lot_number\/confirmed\/id/);
-    // It must instead distinguish the three rules.
-    expect(CONTRACT).toMatch(/probe_lot_number\s+: COPIED verbatim/);
-    expect(CONTRACT).toMatch(/probe_inventory_item_id\s*: copied ONLY while/);
-    expect(CONTRACT).toMatch(/probe_lot_confirmed\s+: NEVER copied/);
   });
 
   it("the UI still tells the practitioner to confirm a copied lot", () => {

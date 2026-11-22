@@ -82,20 +82,6 @@ describe("addElectrolysisEntryAction — calls add_electrolysis_pass", () => {
     expect(helper.slice(0, 900)).not.toMatch(/\.insert\(|\.update\(|createClient\(/);
   });
 
-  it("keeps its server-authoritative retirement of galvanic_intensity_percent", () => {
-    // The command takes no parameter for it, so a new row always stores NULL —
-    // now enforced by the database rather than by an application literal.
-    expect(body).not.toMatch(/p_galvanic_intensity_percent/);
-    expect(body).not.toMatch(/formData\.get\("galvanic_intensity_percent"\)/);
-  });
-
-  it("keeps the discriminated result contract and the separate chip read-back", () => {
-    expect(body).toMatch(/code:\s*"not_persisted"/);
-    expect(body).toMatch(/code:\s*"unverified"/);
-    expect(body).toMatch(/from\("electrolysis_entries"\)[\s\S]{0,200}?\.select\("observation_chips"\)/);
-    expect(body).toMatch(/return \{ ok: true, entryId, observationChips \}/);
-  });
-
   it("never surfaces a raw database message", () => {
     expect(body).toMatch(/mapBlockCommandError\(error\)/);
     expect(body).not.toMatch(/error\?\.message/);

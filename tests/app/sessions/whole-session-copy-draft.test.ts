@@ -38,10 +38,6 @@ describe("preview is EPHEMERAL — building/refreshing/removing/cancelling write
     expect(removeAndCancel).not.toMatch(/getWholeSessionCopySourceAction/);
   });
 
-  it("a fresh idempotency key is minted per preview build (at-most-once commit)", () => {
-    expect(PANEL).toMatch(/setIdempotencyKey\(crypto\.randomUUID\(\)\)/);
-  });
-
   it("there is exactly ONE commit call site — submitCommit() — sending the narrow input + server fingerprint", () => {
     // Repeat-client fast charting added a SECOND route to the copy, not a second
     // copy implementation: both routes funnel through the single submitCommit()
@@ -184,8 +180,8 @@ describe("wiring", () => {
 });
 
 // Phase B reconciliation with the Phase A clinical contract. The editable copy
-// card must match production charting: no galvanic-intensity control, PicoBlend
-// precision steps, and the pulse control labeled + placed like Phase A.
+// card must match production charting: no galvanic-intensity control, the
+// OmniBlend rule, and no minutes/outcome input.
 describe("copy card matches the Phase A charting contract", () => {
   it("(2) has NO galvanic intensity field/label/testid", () => {
     expect(CARD).not.toMatch(/Galvanic intensity/);

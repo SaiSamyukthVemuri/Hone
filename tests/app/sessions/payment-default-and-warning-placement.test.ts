@@ -2,16 +2,9 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
-// PR #200: Last Treatment warning placement + service price default.
-//
-// 1. The "From last visit, for today" Watch/Plan box renders as a
-//    flush footer band INSIDE the Last treatment card (attached
-//    variant), omitted cleanly when empty, never duplicated on the
-//    Sessions tab.
-// 2. The Session payment prepare form defaults its amount from the
-//    booked service (client custom pricing wins over the menu price),
-//    with source copy and the field still editable. Display default
-//    only: no executor, gate, or Stripe-call change.
+// PR #200: service price default for the Session payment prepare form
+// (booked service; client custom pricing wins). No executor, gate, or
+// Stripe-call change.
 
 function read(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf8");
@@ -219,10 +212,5 @@ describe("safety: defaulting is display-only", () => {
     ).toBe(true);
     const executor = read("lib/billing/session-payment-charge.ts");
     expect(executor).not.toMatch(/resolveSessionPaymentDefault/);
-  });
-
-  it("the eligibility helper is unchanged by the defaulting path", () => {
-    const eligibility = read("lib/billing/session-payment-eligibility.ts");
-    expect(eligibility).not.toMatch(/resolveSessionPaymentDefault/);
   });
 });

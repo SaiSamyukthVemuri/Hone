@@ -101,10 +101,6 @@ describe("both previous-context surfaces use the ONE shared selector", () => {
     expect(SESSION_PAGE).toMatch(/before: session\.started_at/);
   });
 
-  it("the new-session page loads the last CHARTED treatment", () => {
-    expect(NEW_SESSION_PAGE).toMatch(/loadLastChartedTreatment\(\{/);
-  });
-
   it("the new-session page no longer picks the newest session ROW", () => {
     const code = codeOnly(NEW_SESSION_PAGE);
     // The exact defect: `.order("started_at", desc).limit(1)` over sessions

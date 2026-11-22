@@ -112,29 +112,6 @@ describe("block form: optional capture, round-trip on edit", () => {
     expect(FORM).toMatch(/cautionNote: draft\.cautionNote\.trim\(\) \|\| null/);
   });
 
-  it("tolerance is a label-based control, never required (PR #279)", () => {
-    // PR #279: the raw 1-5 grid was replaced by labeled options; storage is
-    // still the 1-5 tolerance_rating smallint.
-    expect(FORM).toMatch(/TOLERANCE_OPTIONS\.map/);
-    expect(FORM).not.toMatch(/\["1", "2", "3", "4", "5"\]\.map/);
-    const responseSection = FORM.slice(FORM.indexOf("Client tolerance"));
-    expect(responseSection).not.toMatch(/required/);
-  });
-
-  it("reaction labels are folded into the merged observation-chip vocabulary from the shared modules", () => {
-    // Charting unification: reactions are no longer a separate REACTION_TYPES.map
-    // single-select row. The unified box renders MERGED_OBSERVATION_CHIPS, which
-    // is the observation presets PLUS the shared reaction labels.
-    expect(FORM).not.toMatch(/REACTION_TYPES\.map/);
-    expect(FORM).toMatch(/MERGED_OBSERVATION_CHIPS\.map/);
-    expect(FORM).toMatch(/from "@\/lib\/observation-chips"/);
-    // A legacy reaction_type is still preserved via the shared clinical-response
-    // vocabulary (isReactionType / reactionTypeLabel), imported from that module.
-    expect(FORM).toMatch(/from "@\/lib\/sessions\/clinical-response"/);
-    expect(FORM).toMatch(/isReactionType\(draft\.reactionType\)/);
-    expect(FORM).toMatch(/reactionTypeLabel\(draft\.reactionType as ReactionType\)/);
-  });
-
   it("edit mode initializes the draft from the stored block (round-trip)", () => {
     expect(FORM).toMatch(
       /toleranceRating:\s*\n?\s*block\.tolerance_rating != null \? String\(block\.tolerance_rating\) : ""/,

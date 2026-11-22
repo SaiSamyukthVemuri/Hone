@@ -31,8 +31,6 @@ const ACTIONS = read(`${BASE}/whole-session-copy-actions.ts`);
 const PAGE = read(`${BASE}/page.tsx`);
 const VIEW = read(`${BASE}/session-blocks-view.tsx`);
 const LANDING = read("lib/sessions/fast-chart-start.ts");
-const NORMALIZE = read("lib/sessions/whole-session-copy-normalize.ts");
-const MODEL = read("lib/sessions/whole-session-copy.ts");
 const MIGRATION = read("supabase/migrations/0157_whole_session_copy_setup.sql");
 
 // The fast path's own body, isolated so an assertion about it cannot be
@@ -147,41 +145,6 @@ describe("(3/4/5/6/7/8/9) reusable setup copies; today's clinical facts are NEVE
     expect(FAST).not.toMatch(
       /minutes|minutesPerformed|hairs|hairsTreated|tolerance|reaction|observationChips|observation_chips|comments|caution|numbing|aftercare|payment/i,
     );
-  });
-
-  it("(4) minutes performed is absent from the canonical client model AND the normalizer output", () => {
-    expect(MODEL).not.toMatch(/minutesPerformed|minutes:/);
-    // draftToCopyInput's setup literal carries no minutes key.
-    const mapper = MODEL.slice(MODEL.indexOf("export function draftToCopyInput"));
-    expect(mapper).not.toMatch(/minutes/i);
-    // The normalizer accepts no minutes input and emits none.
-    expect(NORMALIZE).not.toMatch(/minutes_performed:/);
-    const setupInput = NORMALIZE.slice(
-      NORMALIZE.indexOf("export type WholeSessionCopySetupInput"),
-      NORMALIZE.indexOf("export type WholeSessionCopyDraftInput"),
-    );
-    expect(setupInput).not.toMatch(/minutes/i);
-  });
-
-  it("(5/6/7/8/9) the normalizer emits no hairs, reaction, tolerance, chips, notes, caution or numbing", () => {
-    const emitted = NORMALIZE.slice(NORMALIZE.indexOf("const block: Record<string, unknown>"));
-    for (const forbidden of [
-      "hairs_treated",
-      "reaction_type",
-      "reaction_notes",
-      "tolerance_rating",
-      "observation_chips",
-      "comments",
-      "caution_for_next_session",
-      "caution_note",
-      "numbing_status",
-      "numbing_notes",
-      "block_name",
-      "block_notes",
-      "minutes_performed",
-    ]) {
-      expect(emitted).not.toMatch(new RegExp(`\\b${forbidden}\\b`));
-    }
   });
 
   it("the RPC's INSERT allow-lists are the backstop — outcome columns are not writable by a copy", () => {

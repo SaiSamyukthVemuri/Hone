@@ -2,20 +2,8 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// PR #181. Source-grep tests pin the cleaner payment-card state
-// model. The card now:
-//   * Gates the local prepareJustSucceeded banner on !activeAttempt
-//     so it cannot conflict with the persisted SucceededPanel /
-//     refunded state.
-//   * Calls router.refresh() after a successful Prepare so the
-//   persisted ready row replaces the local banner immediately.
-//   * Promotes refund_status='succeeded' to the top heading
-//     ("Payment refunded") with a refund details block below
-//     the charge details. Receipt + Refund sub-panels still
-//   render below as the per-section detail.
-//   * Wraps the SessionPaymentPrepareCard in <div id="session-
-//   payment"> so the calendar NextStepCard's "Go to billing"
-//   deep link lands here.
+// PR #181. Source-grep tests for the payment card: processor identifiers are
+// owner-only, and forbidden copy never appears on the payment surface.
 
 const CARD_PATH = path.resolve(
   __dirname,

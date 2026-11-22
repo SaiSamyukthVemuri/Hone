@@ -9,10 +9,8 @@ import { join } from "node:path";
 // selected pass is voided — never the block/area, session, appointment, client,
 // other passes, or photos.
 //
-// Source-level guarantees (matching the clinical-lineage / last-treatment-cleanup
-// house style). True DB behavior (A stays after B removed, cross-studio reject,
-// no double-void) is guaranteed by the code mechanisms asserted below and is a
-// candidate for a follow-up db-integration test.
+// Source-level guarantees. DB behavior (A stays after B removed, cross-studio
+// reject, no double-void) is proven in tests/db/remove-pass-soft-delete.db.test.ts.
 
 function read(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf8");

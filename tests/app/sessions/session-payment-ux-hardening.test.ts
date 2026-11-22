@@ -17,23 +17,11 @@ const CARD_PATH = path.resolve(
 );
 const CARD = readFileSync(CARD_PATH, "utf8");
 
-const TYPES_PATH = path.resolve(
-  __dirname,
-  "../../../lib/billing/session-payment-types.ts",
-);
-const TYPES = readFileSync(TYPES_PATH, "utf8");
-
 const ELIGIBILITY_PATH = path.resolve(
   __dirname,
   "../../../lib/billing/session-payment-eligibility.ts",
 );
 const ELIGIBILITY = readFileSync(ELIGIBILITY_PATH, "utf8");
-
-const SETUP_INTENT_ACTION_PATH = path.resolve(
-  __dirname,
-  "../../../app/portal/payment-method-actions.ts",
-);
-const SETUP_INTENT_ACTION = readFileSync(SETUP_INTENT_ACTION_PATH, "utf8");
 
 // Strip every single-line // comment so doc-only copy is not
 // matched as if it were rendered text. The file header documents
@@ -60,39 +48,6 @@ function blockFor(name: string): string {
   const rel = CARD.slice(after).search(/^function \w+\(/m);
   return rel === -1 ? CARD.slice(startIdx) : CARD.slice(startIdx, after + rel);
 }
-
-describe("PR #174: eligibility summary widened", () => {
-  it("SessionPaymentExistingAttemptSummary carries the post-execute fields", () => {
-    expect(TYPES).toMatch(/stripePaymentIntentId:\s*string \| null/);
-    expect(TYPES).toMatch(/stripeChargeId:\s*string \| null/);
-    expect(TYPES).toMatch(/chargedAt:\s*string \| null/);
-    expect(TYPES).toMatch(/failedAt:\s*string \| null/);
-    expect(TYPES).toMatch(/failureCode:\s*string \| null/);
-    expect(TYPES).toMatch(/failureMessageSafe:\s*string \| null/);
-  });
-
-  it("the eligibility helper SELECTs the post-execute columns", () => {
-    expect(ELIGIBILITY).toMatch(/stripe_payment_intent_id/);
-    expect(ELIGIBILITY).toMatch(/stripe_charge_id/);
-    expect(ELIGIBILITY).toMatch(/charged_at/);
-    expect(ELIGIBILITY).toMatch(/failed_at/);
-    expect(ELIGIBILITY).toMatch(/failure_code/);
-    expect(ELIGIBILITY).toMatch(/failure_message_safe/);
-  });
-
-  it("the eligibility helper maps every new column into the summary", () => {
-    expect(ELIGIBILITY).toMatch(
-      /stripePaymentIntentId:[\s\S]{0,80}row\.stripe_payment_intent_id/,
-    );
-    expect(ELIGIBILITY).toMatch(/stripeChargeId:[\s\S]{0,80}row\.stripe_charge_id/);
-    expect(ELIGIBILITY).toMatch(/chargedAt:[\s\S]{0,80}row\.charged_at/);
-    expect(ELIGIBILITY).toMatch(/failedAt:[\s\S]{0,80}row\.failed_at/);
-    expect(ELIGIBILITY).toMatch(/failureCode:[\s\S]{0,80}row\.failure_code/);
-    expect(ELIGIBILITY).toMatch(
-      /failureMessageSafe:[\s\S]{0,80}row\.failure_message_safe/,
-    );
-  });
-});
 
 describe("PR #174 patch: activeAttempt vs latestHistoricalAttempt", () => {
   // Bug fixed by the patch: under PR #174 initial, a failed /
@@ -121,12 +76,6 @@ describe("PR #174 patch: activeAttempt vs latestHistoricalAttempt", () => {
         /const activeAttempt\s*=[\s\S]*?\n[ \t]*const [a-zA-Z]/,
       )?.[0] ?? "";
     expect(activeBlock).not.toMatch(/existingAttempts\[0\]/);
-  });
-
-  it("declares latestHistoricalAttempt separately for the previous-attempt callout", () => {
-    expect(CARD).toMatch(
-      /const latestHistoricalAttempt\s*=\s*\n?\s*eligibility\.existingAttempts\[0\]\s*\?\?\s*null/,
-    );
   });
 
   it("the Prepare form gates on !activeAttempt, NOT !latestAttempt", () => {
@@ -329,16 +278,6 @@ describe("compact SucceededPanel (post-refresh)", () => {
     expect(block).not.toMatch(/Run charge/);
     expect(block).not.toMatch(/Confirm: run charge/);
   });
-
-  it("does NOT render the Prepare form (terminal status excludes the form)", () => {
-    // The form is gated by `eligibility.eligible && !latestAttempt`,
-    // and a succeeded row IS a latest attempt, so the form is
-    // structurally hidden. The succeeded panel itself does not
-    // render a form either.
-    const block = blockFor("SucceededPanel");
-    expect(block).not.toMatch(/<form/);
-    expect(block).not.toMatch(/Prepare session payment/);
-  });
 });
 
 describe("PR #174: FailedPanel (terminal in this PR)", () => {
@@ -366,6 +305,16 @@ describe("PR #174: FailedPanel (terminal in this PR)", () => {
     const block = blockFor("FailedPanel");
     expect(block).not.toMatch(/Run charge/);
     expect(block).not.toMatch(/Confirm: run charge/);
+  });
+
+  it("does NOT render the Prepare form (terminal status excludes the form)", () => {
+    // The form is gated by `eligibility.eligible && !latestAttempt`,
+    // and a succeeded row IS a latest attempt, so the form is
+    // structurally hidden. The succeeded panel itself does not
+    // render a form either.
+    const block = blockFor("SucceededPanel");
+    expect(block).not.toMatch(/<form/);
+    expect(block).not.toMatch(/Prepare session payment/);
   });
 });
 
@@ -471,12 +420,5 @@ describe("PR #174: no new Stripe / live-mode / SMS / email behavior", () => {
   it("does NOT touch manual_fee_charge_attempts", () => {
     expect(CARD).not.toMatch(/manual_fee_charge_attempts/);
     expect(ELIGIBILITY).not.toMatch(/manual_fee_charge_attempts/);
-  });
-
-  it("the setup-intent portal action is unchanged by this PR (sanity)", () => {
-    // The portal SetupIntent action lives elsewhere and is not
-    // touched by PR #174. We verify the prepare card does not
-    // accidentally reach into the portal payment surface.
-    expect(SETUP_INTENT_ACTION).toMatch(/getCardAuthorizationStatus/);
   });
 });

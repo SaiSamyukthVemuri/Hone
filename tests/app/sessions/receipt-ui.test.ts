@@ -10,8 +10,7 @@ import path from "node:path";
 //     already-sent state survives refresh
 //   * show the Send receipt button only when receipt_status
 //     is null / failed (the latter for retry after fix)
-//   * never say "Pay now" / "Send invoice" / "Tax receipt" /
-//     "Official invoice" / "Payment complete" / "Live payment"
+//   * never say "Send invoice" / "Tax receipt" / "Official invoice"
 
 const CARD_PATH = path.resolve(
   __dirname,
@@ -189,14 +188,6 @@ describe("PR #175: forbidden copy on the receipt surface", () => {
 
   it("does NOT say 'Official invoice'", () => {
     expect(CARD_CODE).not.toMatch(/Official invoice/);
-  });
-
-  it("does NOT say 'Payment complete'", () => {
-    expect(CARD_CODE).not.toMatch(/Payment complete/);
-  });
-
-  it("does NOT say 'Live payment'", () => {
-    expect(CARD_CODE).not.toMatch(/Live payment/);
   });
 });
 

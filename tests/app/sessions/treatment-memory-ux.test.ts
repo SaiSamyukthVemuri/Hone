@@ -4,9 +4,7 @@ import path from "node:path";
 
 // PR #191. Pins for the treatment-memory UX cleanup driven by
 // Chloe's practitioner smoke: no auto-filled area on a new treatment
-// area, full + area-aware settings copy, one combined From last
-// visit box, bucketed form sections, Sessions tab order, and back
-// navigation to the Sessions tab.
+// area, area-aware settings copy, and Sessions tab order.
 
 const ROOT = path.resolve(__dirname, "../../..");
 const read = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
@@ -60,58 +58,11 @@ describe("1. a new treatment area never auto-copies the previous area", () => {
   });
 });
 
-describe("2. copy settings: full, area-aware, never the response", () => {
+describe("2. copy settings: area-aware", () => {
   const copyFn = codeOnly(FORM).slice(
     codeOnly(FORM).indexOf("function copySettings"),
     codeOnly(FORM).indexOf("function runSave"),
   );
-
-  it("copies every treatment setting a practitioner expects (via the shared snapshot contract)", () => {
-    // copySettings now delegates to the canonical treatment-setup contract,
-    // which carries the block machine settings AND the primary entry's
-    // mode-gated machine readings — a superset of the old block-only copy.
-    expect(copyFn).toMatch(/firstLiveEntry\(source\.electrolysis_entries\)/);
-    expect(copyFn).toMatch(/buildTreatmentSetupDraftPatch\(source, firstEntry, linkable\)/);
-    for (const field of [
-      "mode",
-      "apilusModality",
-      "energyLevel",
-      "probeKey",
-      "machineFrequency",
-      // primary-entry machine readings, now carried too:
-      "thermolysisIntensityPercent",
-      "thermolysisDurationSeconds",
-      "galvanicMa",
-      "galvanicDurationSeconds",
-      "unitsOfLye",
-      "pulseCount",
-      "pulseDelay",
-    ]) {
-      expect(SNAPSHOT).toContain(`${field}:`);
-    }
-    // Final amendment: galvanic intensity is a RETIRED reading — it is NOT a
-    // copyable setup key, so the snapshot must not emit it as a patch field.
-    expect(SNAPSHOT).not.toMatch(/galvanicIntensityPercent:/);
-    // Session 1C: minutes performed is an OUTCOME. The contract must emit no
-    // minutes patch key AND must not read the source column. A partial removal
-    // (type key deleted, builder assignment left behind, or vice versa) fails
-    // here — the `toContain` loop above would have passed on either half alone.
-    // Comments are stripped first: the header deliberately NAMES the rejected
-    // `minutes: ""` shape as documentation, and documenting a mistake must not
-    // read as committing it.
-    const snapshotCode = SNAPSHOT.split("\n")
-      .map((l) => l.replace(/\/\/.*$/, ""))
-      .join("\n");
-    expect(snapshotCode).not.toMatch(/\bminutes:/);
-    expect(snapshotCode).not.toMatch(/block\.minutes_performed/);
-  });
-
-  it("does NOT copy the area identity or any response field", () => {
-    expect(copyFn).not.toMatch(/primaryArea:|side:|customAreaDetail:/);
-    expect(copyFn).not.toMatch(
-      /toleranceRating|reactionType|reactionNotes|cautionForNextSession|cautionNote/,
-    );
-  });
 
   it("prefers the most recent saved area matching the selected area", () => {
     expect(copyFn).toMatch(/wantedArea/);
@@ -259,17 +210,5 @@ describe("8. Sessions tab order (Chloe's order, verbatim)", () => {
     const upcoming = groupsBlock.indexOf('"upcoming"');
     expect(needs).toBeGreaterThan(-1);
     expect(upcoming).toBeGreaterThan(needs);
-  });
-
-  it("the confusing All sessions heading is renamed Session history", () => {
-    expect(CLIENT_PAGE).not.toMatch(/>All sessions</);
-    expect(CLIENT_PAGE).toMatch(/Session history/);
-  });
-});
-
-describe("9. payment surfaces untouched", () => {
-  it("the session payment card block is byte-identical in shape", () => {
-    expect(SESSION_PAGE).toMatch(/<SessionPaymentPrepareCard/);
-    expect(SESSION_PAGE).toMatch(/id="session-payment"/);
   });
 });

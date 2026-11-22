@@ -2,12 +2,8 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// PR #269. Visual treatment-area picker V1: the region-grouped AreaPicker (chips
-// over AREA_REGIONS) is framed in the charting form as a "Chart part" card with
-// a live "Area being charted" preview. Reuse-only (session_blocks
-// primary_area / side / custom_area_detail) — NO migration, NO new dependency,
-// NO image storage / upload / drawing / canvas / sketch / OCR / AI, and NO
-// copied Jane assets. Source-grep, no DB/network.
+// PR #269. Visual treatment-area picker V1 is reuse-only: NO copied Jane
+// assets. Source-grep, no DB/network.
 
 function read(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf8");

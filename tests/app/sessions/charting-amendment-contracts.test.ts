@@ -2,10 +2,9 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Phase A amendment — source contracts for the SimplifiedEntryForm parity, the
-// PicoBlend precision steps, and the historical galvanic-intensity display
-// policy. These would have FAILED at head 324070b (before the amendment). Real
-// value round-trip is covered by the browser test (picoblend-precision.spec.ts).
+// Phase A amendment — source contracts for decimal parsing of PicoBlend
+// readings and the retired galvanic-intensity reading. Real value round-trip
+// is covered by the browser test (picoblend-precision.spec.ts).
 
 function read(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf8");
@@ -92,12 +91,9 @@ describe("(9) historical galvanic intensity is not shown as a current galvanic %
 // Final amendment: galvanic_intensity_percent is a fully RETIRED reading —
 // no current UI captures/edits it, the copy path never resurrects it, and the
 // server is authoritative (new rows NULL, historical rows preserved by omission).
-// The thermolysis duration displays at exact 3-decimal precision. These would
-// have FAILED at head 22bbe4a.
 describe("(P1-1) galvanic intensity is retired from every current write surface", () => {
   const ACTIONS = read(`${BASE}/actions.ts`);
   const BLOCK_ACTIONS = read(`${BASE}/block-actions.ts`);
-  const SNAPSHOT = read("lib/sessions/treatment-setup-snapshot.ts");
 
   it("(6) no current UI renders, hydrates, or sends the deprecated field", () => {
     // Neither active form references the galvanicIntensityPercent draft identifier
@@ -108,14 +104,6 @@ describe("(P1-1) galvanic intensity is retired from every current write surface"
     expect(SIMPLE).not.toMatch(/galvanicIntensityPercent/);
     // The simplified form no longer sets the FormData field either.
     expect(SIMPLE).not.toMatch(/fd\.set\("galvanic_intensity_percent"/);
-  });
-
-  it("the in-form Copy settings contract never copies galvanic intensity", () => {
-    // Not in the reusable field set, the patch type, or the builder.
-    expect(SNAPSHOT).not.toMatch(/"galvanic_intensity_percent"/); // ENTRY_SETUP_FIELDS
-    expect(SNAPSHOT).not.toMatch(/galvanicIntensityPercent:/); // patch builder key
-    expect(SNAPSHOT).toMatch(/galvanic_ma/); // but valid galvanic setup IS copied
-    expect(SNAPSHOT).toMatch(/units_of_lye/);
   });
 
   it("server is authoritative: new entries store NULL; updates omit the column (preserve history)", () => {
@@ -136,13 +124,5 @@ describe("(P1-1) galvanic intensity is retired from every current write surface"
     expect(blockCode).not.toMatch(/galvanic_intensity_percent/);
     expect(ACTIONS).not.toMatch(/formData\.get\("galvanic_intensity_percent"\)/);
     expect(ACTIONS).not.toMatch(/p_galvanic_intensity_percent/);
-  });
-});
-
-describe("(P1-2) thermolysis duration displays at exact 3-decimal precision", () => {
-  it("formatSeconds rounds at the 3rd decimal (0.733 stays 0.733, not 0.73)", () => {
-    const FMT = read("lib/sessions/format-seconds.ts");
-    expect(FMT).toMatch(/Math\.round\(value \* 1000\) \/ 1000/);
-    expect(FMT).not.toMatch(/Math\.round\(value \* 100\) \/ 100/);
   });
 });

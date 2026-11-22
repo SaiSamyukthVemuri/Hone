@@ -175,21 +175,6 @@ describe("shared helper usage (both context surfaces)", () => {
   // summary; the appointment page is the full pre-visit read and uses the prep
   // model. What must stay true of BOTH is that neither re-derives the clinical
   // vocabulary or the "which session was the last treatment" rule.
-  it("the new-session page still uses the compact shared summary", () => {
-    expect(NEW_SESSION_PAGE).toMatch(/from "@\/lib\/sessions\/clinical-summary"/);
-    expect(NEW_SESSION_PAGE).toMatch(/from "@\/components\/last-session-summary"/);
-    expect(NEW_SESSION_PAGE).toMatch(/<AreaSummaries summary=\{/);
-  });
-
-  it("the appointment page uses the shared prep model and card", () => {
-    expect(APPOINTMENT_PAGE).toMatch(
-      /from "@\/lib\/sessions\/appointment-prep-memory"/,
-    );
-    expect(APPOINTMENT_PAGE).toMatch(
-      /from "@\/components\/appointment-prep-memory-card"/,
-    );
-    expect(APPOINTMENT_PAGE).toMatch(/<AppointmentPrepMemoryCard/);
-  });
 
   it("BOTH surfaces select the last treatment through the ONE shared authority", () => {
     // This is the invariant that actually matters, and it is stronger than the

@@ -2,10 +2,9 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Chloe charting-usability polish (no-migration UI PR). Source-guard the three
-// narrow behaviours; the live browser behaviour (collapse → open → save,
-// independent chip persistence, multiline notes round-trip, 390px no-overflow)
-// is proven in e2e/charting-usability-polish.spec.ts.
+// Chloe charting-usability polish (no-migration UI PR). Source-guards for the
+// unified observations box; the live browser behaviour is proven in
+// e2e/charting-usability-polish.spec.ts.
 
 function read(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf8");

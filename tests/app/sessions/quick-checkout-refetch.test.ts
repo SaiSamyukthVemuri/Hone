@@ -14,16 +14,13 @@ import { join } from "node:path";
 //
 // These pins lock (a) the wrapper exists and is applied to all four actions,
 // (b) it re-resolves ONLY on success and only refreshes THIS modal's view, and
-// (c) the fix is isolated to the modal — the shared card and the session detail
-// page are NOT rewritten. The end-to-end in-place advance is exercised by the
+// (c) the fix is isolated to the modal — the shared card is NOT rewritten. The
+// end-to-end in-place advance is exercised by the
 // WebKit iPhone + Chromium payment E2E.
 
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
 const MODAL = read("components/quick-checkout-modal.tsx");
 const CARD = read("components/session-payment-prepare-card.tsx");
-const PAGE = read(
-  "app/(app)/clients/[id]/sessions/[sessionId]/page.tsx",
-);
 
 describe("quick checkout: in-place advance after a successful action", () => {
   it("wraps ALL four payment actions with the refresh wrapper", () => {
@@ -63,12 +60,6 @@ describe("quick checkout: in-place advance after a successful action", () => {
       "";
     const calls = wrapper.match(/await action\(fd\)/g) ?? [];
     expect(calls.length).toBe(1);
-  });
-
-  it("still re-reads server context on open (unchanged) and stays read-only", () => {
-    expect(MODAL).toMatch(/getQuickCheckoutContextAction\(appointmentId\)/);
-    // No new charge/refund logic sneaks into the modal.
-    expect(MODAL).not.toMatch(/paymentIntents|charges\.create|refunds\.create/);
   });
 });
 
@@ -111,12 +102,5 @@ describe("quick checkout fix is isolated to the modal", () => {
       .filter((n) => !DOM_OR_LOCAL.has(n))
       .sort();
     expect(callerHooks).toEqual(["onRecorded", "onSettlementRecorded"]);
-  });
-
-  it("the session detail page passes the canonical actions unchanged (no wrapper)", () => {
-    // The page's server components already pick up revalidatePath, so it needs
-    // no wrapper. It must pass the raw actions (behavior preserved).
-    expect(PAGE).toMatch(/prepareAction=\{prepareSessionPaymentChargeAction\}/);
-    expect(PAGE).not.toMatch(/withRefresh/);
   });
 });

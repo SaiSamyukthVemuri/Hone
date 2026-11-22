@@ -2,10 +2,8 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// PR #204: charting field order follows Chloe's actual treatment
-// flow, and "From last visit, for today" is BLUE treatment-memory
-// context (not amber warning styling). Layout/color only: no schema,
-// save-action, copy-settings, or sticky-frequency change.
+// PR #204: charting field order follows Chloe's actual treatment flow.
+// Layout only: no schema or save-action change.
 
 function read(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf8");

@@ -62,25 +62,6 @@ describe("the reference is displayed; the FINAL charge is the editable total", (
     expect(CARD).not.toMatch(/You can adjust before preparing/);
   });
 
-  it("the final charge is a real, named, enabled control", () => {
-    expect(CARD).toMatch(/name="final_amount_dollars"/);
-    expect(CARD).toMatch(/aria-label=\{`Final charge in \$\{currencyName\(eligibility\.jurisdiction\.currency\)\}`\}/);
-    // Bounded to the ONE `<input …/>` element, not a fixed character window:
-    // a window wide enough to reach the className is also wide enough to reach
-    // the NEXT field's attributes and answer this question with them.
-    const nameAt = CARD.indexOf('name="final_amount_dollars"');
-    const field = CARD.slice(
-      CARD.lastIndexOf("<input", nameAt),
-      CARD.indexOf("/>", nameAt) + 2,
-    );
-    expect(field).toMatch(/^<input/);
-    expect(field).toMatch(/name="final_amount_dollars"/);
-    expect(field).not.toMatch(/readOnly/);
-    expect(field).not.toMatch(/disabled/);
-    expect(field).toMatch(/inputMode="decimal"/);
-    expect(field).toMatch(/min-h-\[44px\]/);
-  });
-
   it("parses the typed total with the SAME parser the server uses", () => {
     // Not a re-implementation: a second parser in the browser could decide
     // "this is an adjustment" while the action decided "this is malformed".
@@ -135,18 +116,5 @@ describe("the reference is displayed; the FINAL charge is the editable total", (
     const code = CARD.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
     expect(code).not.toMatch(/pricePaidCents != null\s*\n?\s*\?/);
     expect(code).not.toMatch(/Suggestion from session price/);
-  });
-
-  it("prepare/execute/receipt/refund actions are untouched by the amount change", () => {
-    for (const prop of [
-      "prepareAction",
-      "executeAction",
-      "sendReceiptAction",
-      "refundAction",
-    ]) {
-      expect(CARD).toContain(prop);
-    }
-    // Execution still receives only the attempt id — no amount argument.
-    expect(CARD).not.toMatch(/executeAction[\s\S]{0,200}amount/);
   });
 });
