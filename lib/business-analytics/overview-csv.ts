@@ -36,7 +36,7 @@ export function overviewCsvFileName(range: { startLocal: string; lastLocal: stri
   return `analytics-${range.startLocal}-to-${range.lastLocal}.csv`;
 }
 
-const FILTER_TEXT: Record<OverviewView["filterKind"], string> = {
+export const FILTER_TEXT: Record<OverviewView["filterKind"], string> = {
   all: "All team members",
   one: "One team member (filtered)",
   unattributed: "Bookings with no team member (filtered)",
