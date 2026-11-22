@@ -9,7 +9,7 @@ vi.mock("@/lib/waitlist/invitation-booking-summary-read", () => ({ loadCommandCo
 import { loadWaitlistAnalytics } from "@/lib/business-analytics/server/waitlist-read";
 const now = new Date("2026-11-22T12:00:00Z");
 const studio = { id: "own-studio", timezone: "UTC" };
-function fake({ count = 1, rows = [{ status: "waiting", joined_at: "2026-11-20T12:00:00Z" }], error = null as unknown, servicesCount = 3, invitationsCount = 4, invitationRows = [{ entry_id: "person-a" }, { entry_id: "person-a" }, { entry_id: "person-b" }, { entry_id: "person-c" }] } = {}) {
+function fake({ count = 1, rows = [{ status: "waiting", joined_at: "2026-11-20T12:00:00Z", joined_at_provenance: "form" }] as Array<Record<string, unknown>>, error = null as unknown, servicesCount = 3, invitationsCount = 4, invitationRows = [{ entry_id: "person-a" }, { entry_id: "person-a" }, { entry_id: "person-b" }, { entry_id: "person-c" }] } = {}) {
   const calls: Array<{ table: string; selected?: string; filters: Array<[string, string, unknown]> }> = [];
   const db = { from: (table: string) => {
     const call = { table, selected: undefined as string | undefined, filters: [] as Array<[string, string, unknown]> }; calls.push(call);
@@ -83,6 +83,17 @@ describe("waitlist owner session loader", () => {
     const { db } = fake();
     const r = await loadWaitlistAnalytics({ role: "owner" }, studio, {}, now, db);
     expect(r.access === "granted" && r.view.summary.peopleInvited).toBe(3);
+  });
+  it("reads the join-date provenance and keeps unknown-date entries out of the waits", async () => {
+    const rows = [
+      { status: "waiting", joined_at: "2026-11-12T12:00:00Z", joined_at_provenance: "form" },
+      { status: "waiting", joined_at: "2026-11-22T11:00:00Z", joined_at_provenance: "unknown" },
+      { status: "invited", joined_at: "2026-11-22T11:00:00Z" },
+    ];
+    const { db, calls } = fake({ count: 3, rows });
+    const r = await loadWaitlistAnalytics({ role: "owner" }, studio, {}, now, db);
+    expect(calls.some((c) => (c.selected ?? "").includes("joined_at_provenance"))).toBe(true);
+    expect(r.access === "granted" && r.view.pool).toEqual({ total: 3, waiting: 2, claimed: 0, invited: 1, agedCount: 1, medianDays: 10, longestDays: 10 });
   });
   it("failed reads are unknown, not zero, while unrelated invitation counts survive", async () => {
     const { db } = fake({ error: { code: "42501" } }); const r = await loadWaitlistAnalytics({ role: "owner" }, studio, {}, now, db);

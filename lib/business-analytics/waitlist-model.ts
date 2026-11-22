@@ -1,10 +1,12 @@
+import { joinedAtClaim, mayRenderAsWait } from "@/lib/waitlist/entry-provenance";
 import { buildInvitationBookingSummary, type CommandCounts, type Count, type InvitationBookingSummary, type OutcomeCounts } from "@/lib/waitlist/invitation-booking-summary";
 
 export const WAITLIST_HORIZONS = [7, 14, 28] as const;
 export type WaitlistHorizon = typeof WAITLIST_HORIZONS[number];
 export type WaitlistService = { id: string; name: string };
-export type WaitingEntry = { status: "waiting" | "claimed" | "invited"; joinedAt: string };
-export type WaitingPool = { total: number; waiting: number; claimed: number; invited: number; medianDays: number; longestDays: number };
+export type WaitingEntry = { status: "waiting" | "claimed" | "invited"; joinedAt: string; provenance?: string | null };
+/** `agedCount` entries have a recorded join date; the other `total - agedCount` do not, so they carry no wait. Waits are null when no entry has a known date. */
+export type WaitingPool = { total: number; waiting: number; claimed: number; invited: number; agedCount: number; medianDays: number | null; longestDays: number | null };
 export type DeliveryCounts = { accepted: Count; refused: Count; unknown: Count; unrecorded: Count };
 export type WaitlistAnalyticsView = {
   asOf: string;
@@ -17,23 +19,33 @@ export type WaitlistAnalyticsView = {
   delivery: DeliveryCounts;
 };
 
-/** These records are the current active pool, not a historical queue or a claim of invitation eligibility. */
+/**
+ * These records are the current active pool, not a historical queue or a claim of invitation eligibility.
+ * Every entry is counted, but a wait is computed only from entries whose join date is recorded (form or studio-supplied).
+ * An imported entry with no known date holds its import time in `joined_at`, which is not a join date, so it contributes no wait.
+ */
 export function summarizeWaitingPool(entries: readonly WaitingEntry[], now: Date): WaitingPool | null {
   const ages: number[] = [];
   const counts = { waiting: 0, claimed: 0, invited: 0 };
+  let total = 0;
   for (const entry of entries) {
-    const joined = Date.parse(entry.joinedAt);
-    if (!Number.isFinite(joined) || joined > now.getTime() || !(entry.status in counts)) return null;
+    if (!(entry.status in counts)) return null;
     counts[entry.status]++;
+    total++;
+    const claim = joinedAtClaim(entry.provenance, entry.joinedAt);
+    if (!mayRenderAsWait(claim)) continue;
+    const joined = Date.parse(claim.joinedAt);
+    if (!Number.isFinite(joined) || joined > now.getTime()) return null;
     ages.push((now.getTime() - joined) / 86_400_000);
   }
   ages.sort((a, b) => a - b);
   const middle = Math.floor(ages.length / 2);
   return {
-    total: ages.length,
+    total,
     ...counts,
-    medianDays: ages.length === 0 ? 0 : ages.length % 2 ? ages[middle] : (ages[middle - 1] + ages[middle]) / 2,
-    longestDays: ages.length === 0 ? 0 : ages[ages.length - 1],
+    agedCount: ages.length,
+    medianDays: ages.length === 0 ? null : ages.length % 2 ? ages[middle] : (ages[middle - 1] + ages[middle]) / 2,
+    longestDays: ages.length === 0 ? null : ages[ages.length - 1],
   };
 }
 

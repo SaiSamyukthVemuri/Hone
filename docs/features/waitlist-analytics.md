@@ -29,8 +29,12 @@ existing waitlist workflow; it never creates an invitation or sends a message.
 - Delivery disposition: accepted by the provider, refused, uncertain, or not
   recorded. The four counts are read separately and are not checked to add up to
   the cohort total, so each is a reading, not a partition. Provider acceptance is not delivery, an email open or a page view.
-- Active waitlist: current waiting, claimed and invited entries. Median and
-  longest wait include everyone in those states, from their original join date.
+- Active waitlist: current waiting, claimed and invited entries. Every entry is
+  counted. Median and longest wait use only entries with a recorded join date
+  (the booking form, or a date the studio supplied). An imported entry with no
+  known join date holds its import time in `joined_at`, which is not a join date,
+  so it adds no wait; the page says how many entries are excluded, and shows
+  Not available when no entry has a known date.
   This population does not assert readiness, consent or availability matching.
 - Capacity: the same conservative consultation estimator used by the waitlist
   composer, for the selected eligible consultation and next 7, 14 or 28 dates

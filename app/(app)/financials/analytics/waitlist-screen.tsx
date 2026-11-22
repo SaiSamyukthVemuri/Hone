@@ -11,6 +11,8 @@ import { BUTTON, PageTitle, Tabs } from "./overview-screen";
 
 const BIG = "text-3xl font-semibold tabular-nums tracking-tight text-fg";
 const INPUT = cx("rounded-lg border border-line bg-surface px-2 text-fg", CONTROL_MIN_TOUCH, FOCUS_RING);
+const waitText = (pool: { total: number; agedCount: number } | null, days: number | null | undefined) =>
+  !pool ? "Not available" : pool.total === 0 ? "No one waiting" : pool.agedCount === 0 || days == null ? "Not available" : daysText(days);
 const daysText = (days: number) => `${Math.round(days * 10) / 10} ${Math.round(days * 10) / 10 === 1 ? "day" : "days"}`;
 
 function Panel({ title, children, note }: { title: string; children: ReactNode; note?: string }) {
@@ -77,9 +79,9 @@ export function WaitlistScreen({ read, capacity }: { read: Extract<WaitlistRead,
     </section>
 
     <div className="grid gap-3 lg:grid-cols-2">
-      <Panel title="People currently waiting" note="Current waiting, claimed and invited entries, not everyone who has ever joined. Waiting time runs from the original join date and includes people still waiting.">
-        <div className="grid gap-3 sm:grid-cols-3"><div><p className="text-sm text-fg-muted">Active waitlist</p><p className={BIG}>{pool ? pool.total : "Not available"}</p></div><div><p className="text-sm text-fg-muted">Median wait</p><p className="text-xl font-semibold text-fg">{pool && pool.total > 0 ? daysText(pool.medianDays) : pool ? "No one waiting" : "Not available"}</p></div><div><p className="text-sm text-fg-muted">Longest wait</p><p className="text-xl font-semibold text-fg">{pool && pool.total > 0 ? daysText(pool.longestDays) : pool ? "No one waiting" : "Not available"}</p></div></div>
-        <dl><Row label="Waiting" value={pool ? String(pool.waiting) : "Not available"} /><Row label="Claimed for invitation" value={pool ? String(pool.claimed) : "Not available"} /><Row label="Invited" value={pool ? String(pool.invited) : "Not available"} /></dl><p className="text-sm text-fg-muted">Waiting does not mean ready to invite. Matching service, consent, contact details and times still need to be checked.</p>
+      <Panel title="People currently waiting" note="Current waiting, claimed and invited entries, not everyone who has ever joined. Waiting time runs from the recorded join date and includes people still waiting.">
+        <div className="grid gap-3 sm:grid-cols-3"><div><p className="text-sm text-fg-muted">Active waitlist</p><p className={BIG}>{pool ? pool.total : "Not available"}</p></div><div><p className="text-sm text-fg-muted">Median wait</p><p className="text-xl font-semibold text-fg">{waitText(pool, pool?.medianDays)}</p></div><div><p className="text-sm text-fg-muted">Longest wait</p><p className="text-xl font-semibold text-fg">{waitText(pool, pool?.longestDays)}</p></div></div>
+        {pool && pool.total > pool.agedCount ? <p className="text-sm text-fg" role="status">{pool.total - pool.agedCount} {pool.total - pool.agedCount === 1 ? "entry has" : "entries have"} no recorded join date and {pool.total - pool.agedCount === 1 ? "is" : "are"} excluded from the wait figures. They are still counted below.</p> : null}<dl><Row label="Waiting" value={pool ? String(pool.waiting) : "Not available"} /><Row label="Claimed for invitation" value={pool ? String(pool.claimed) : "Not available"} /><Row label="Invited" value={pool ? String(pool.invited) : "Not available"} /></dl><p className="text-sm text-fg-muted">Waiting does not mean ready to invite. Matching service, consent, contact details and times still need to be checked.</p>
       </Panel>
       <Panel title="Keeping the studio full">
         <p className="text-sm font-medium text-fg">Not enough data for a reliable forecast.</p><p className="text-sm text-fg-muted">Consultation openings do not measure all available treatment hours. A studio fill target and the waitlist size needed to sustain it also need service-duration matching, consultation-to-treatment conversion and repeat-visit history.</p>

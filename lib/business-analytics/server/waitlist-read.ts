@@ -18,13 +18,13 @@ export type WaitlistRead = { access: "refused" } | {
 async function readPool(db: SupabaseClient, studioId: string, now: Date) {
   try {
     const r = await db.from("new_client_waitlist_entries")
-      .select("status,joined_at", { count: "exact" }).eq("studio_id", studioId)
+      .select("status,joined_at,joined_at_provenance", { count: "exact" }).eq("studio_id", studioId)
       .in("status", ACTIVE_STATES).order("id").limit(READ_CAP);
     if (r.error || !Array.isArray(r.data) || r.count === null || r.count !== r.data.length) return null;
     const entries: WaitingEntry[] = [];
     for (const row of r.data) {
       if (!ACTIVE_STATES.includes(row.status) || typeof row.joined_at !== "string") return null;
-      entries.push({ status: row.status as WaitingEntry["status"], joinedAt: row.joined_at });
+      entries.push({ status: row.status as WaitingEntry["status"], joinedAt: row.joined_at, provenance: typeof row.joined_at_provenance === "string" ? row.joined_at_provenance : null });
     }
     return summarizeWaitingPool(entries, now);
   } catch { return null; }
