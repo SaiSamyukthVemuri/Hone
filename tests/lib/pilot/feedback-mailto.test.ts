@@ -1,6 +1,6 @@
 import { COMPOSED_DASHBOARD } from "../../app/dashboard/helpers/composed-dashboard";
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   buildPilotFeedbackMailto,
@@ -123,6 +123,29 @@ describe("Pilot Love Loop: source pins (helper + components)", () => {
   it("the feedback prompt is link-only (mailto anchors, no client JS)", () => {
     expect(PROMPT).not.toMatch(/"use client"|onClick|<button|<form|action=/);
     expect(PROMPT).toMatch(/href=\{buildPilotFeedbackMailto/);
+  });
+
+  it("the prompt copy is quiet and optional, never a growth/referral nag", () => {
+    expect(PROMPT).toMatch(/Was this useful\?/);
+    expect(PROMPT).toMatch(/Not really/);
+    expect(PROMPT).not.toMatch(
+      /refer a friend|invite your contacts|help us grow|claim your reward|share client/i,
+    );
+  });
+
+  it("CHLOE D4: the Pilot learning card component is DELETED, not orphaned", () => {
+    // A caller census ran before deleting it: the component was imported by
+    // exactly one file (the dashboard page) and referenced nowhere else, so it
+    // is genuinely dead rather than merely unrendered. The shared
+    // feedback-mailto helper is NOT deleted — PilotFeedbackPrompt still uses
+    // it, which is the whole reason this file still exists.
+    expect(
+      existsSync(join(process.cwd(), "app/(app)/dashboard/pilot-learning.tsx")),
+      "pilot-learning.tsx should be deleted",
+    ).toBe(false);
+    expect(existsSync(join(process.cwd(), "lib/pilot/feedback-mailto.ts"))).toBe(
+      true,
+    );
   });
 });
 

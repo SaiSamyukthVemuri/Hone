@@ -251,6 +251,7 @@ describe("UI-R02 EmptyState: an empty state must say what fills it", () => {
 
 describe("UI-R02 applied surfaces", () => {
   const notifications = code("app/(app)/notifications/page.tsx");
+  const data = code("app/(app)/settings/data/page.tsx");
 
   it("notifications uses the primitives, and its raw button is gone", () => {
     expect(notifications).toContain("PageHeader");
@@ -272,6 +273,12 @@ describe("UI-R02: the inline-hex border that no dark: variant could reach", () =
     // prose references to the old hex do not satisfy this.
     expect(data).not.toContain("style={{");
     expect(data).not.toContain("E5E2DA");
+  });
+
+  it("the cards are the shared surface, and the disabled control is tokened", () => {
+    expect(data).toContain("<Card");
+    expect(data).toContain("border-line");
+    expect(data).toContain("text-fg-muted");
   });
 
   it("the card heading sits BELOW the page title, which sits below the layout's h1", () => {

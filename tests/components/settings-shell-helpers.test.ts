@@ -174,6 +174,21 @@ describe("Settings R2: the remaining edit-then-save forms are guarded (Insurance
     expect(src).toMatch(/useUnsavedChangesGuard\(|<FormDirtyGuard/);
     expect(src).toContain(key);
   });
+  it("G1: a successful tracking save puts the trimmed values back in the inputs", () => {
+    const src = read("app/(app)/settings/tracking/TrackingProviderForm.tsx");
+    expect(src).toMatch(/setPixelId\(\(cur\) => \(cur === sentRawPixel \? sent\.pixelId : cur\)\)/);
+    expect(src).toMatch(/setTestCode\(\(cur\) => \(cur === sentRawTest \? sent\.testCode : cur\)\)/);
+  });
+});
+
+describe("Insurance #1297 G1: the tracking form reads clean after a save with stray spaces", () => {
+  const read = (rel: string) =>
+    require("node:fs").readFileSync(require("node:path").resolve(__dirname, "../..", rel), "utf8") as string;
+  it("a successful save puts the trimmed values back in the inputs", () => {
+    const src = read("app/(app)/settings/tracking/TrackingProviderForm.tsx");
+    expect(src).toMatch(/setPixelId\(\(cur\) => \(cur === sentRawPixel \? sent\.pixelId : cur\)\)/);
+    expect(src).toMatch(/setTestCode\(\(cur\) => \(cur === sentRawTest \? sent\.testCode : cur\)\)/);
+  });
 });
 
 describe("Insurance #1297 / Codex: edits typed while a tracking save is in flight survive it", () => {
@@ -369,6 +384,15 @@ describe("Reference fidelity (1 Nov): names, scope chip, same-route pick and Sta
   const root = path.resolve(__dirname, "../..");
   const read = (f: string) => readFileSync(path.join(root, f), "utf8");
 
+  it("rail items use Sam's and the artifact's names", () => {
+    const reg = read("lib/settings/nav-registry.ts");
+    expect(reg).toMatch(/label: "Studio details"/);
+    expect(reg).not.toMatch(/label: "Details"/);
+    expect(reg).toMatch(/label: "Text-message preferences"/);
+    expect(reg).toMatch(/label: "Cancellation and no-show policy"/);
+    expect(reg).toMatch(/label: "Personal details"/);
+  });
+
   it("every rail leaf view that uses SettingsViewHeading is titled exactly like its rail item", () => {
     const fs = require("node:fs") as typeof import("node:fs");
     const reg = read("lib/settings/nav-registry.ts");
@@ -386,6 +410,12 @@ describe("Reference fidelity (1 Nov): names, scope chip, same-route pick and Sta
       const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/&/g, "(?:&|and)");
       expect(src, `${href} heading should read "${label}"`).toMatch(new RegExp(`(title=\\{?"${escaped}"|data-settings-heading[^>]*>${escaped}<)`));
     }
+  });
+
+  it("the scope sits in a chip beside the title", () => {
+    const src = read("components/settings/view-heading.tsx");
+    expect(src).toMatch(/rounded-full border/);
+    expect(src).toMatch(/justify-between/);
   });
 
   it("a rail pick of the open view moves focus to its heading", () => {

@@ -440,6 +440,40 @@ describe("UI-05: ESLint is the enforcement authority for native dialogs", () => 
       "lib/finance gets dialog cover ONLY from the repeated set in the FIN block",
     ).toBe(true);
   }, 120_000);
+
+  it("the repetition is deliberate — neither block relies on option merging", async () => {
+    // ESLint flat config REPLACES a rule's options; it does not merge them.
+    // Nothing in this mechanism may depend on merging, so the shared sets are
+    // spread into BOTH objects. This pins the structural fact that made the
+    // effective-config assertions above pass.
+    const cfg = read("eslint.config.mjs");
+    for (const [name, expected] of [
+      ["NATIVE_DIALOG_GLOBALS", 2],
+      ["NATIVE_DIALOG_ERASED_SHADOWS", 2],
+    ] as const) {
+      const spreads = (cfg.match(new RegExp(`\\.\\.\\.${name}`, "g")) ?? []).length;
+      expect(spreads, `${name} must be spread into both blocks, found ${spreads}`).toBe(expected);
+    }
+    // The receiver half is no longer an options array, so its "both blocks"
+    // fact is the plugin registration plus the rule entry — same claim, same
+    // count, expressed in the shape the new mechanism actually has.
+    for (const [needle, expected] of [
+      ['"hone-dialog": nativeDialogPlugin', 2],
+      [`"${RECEIVER_RULE}": "error"`, 2],
+    ] as const) {
+      const hits = cfg.split(needle).length - 1;
+      expect(hits, `${needle} must appear in both blocks, found ${hits}`).toBe(expected);
+    }
+    // Declared once each, so the two spreads cannot drift apart.
+    for (const name of [
+      "NATIVE_DIALOG_GLOBALS",
+      "NATIVE_DIALOG_ERASED_SHADOWS",
+      // The receiver half, declared once for the same anti-drift reason.
+      "nativeDialogPlugin",
+    ]) {
+      expect((cfg.match(new RegExp(`const ${name} =`, "g")) ?? []).length, `${name} declared once`).toBe(1);
+    }
+  });
 });
 
 describe("UI-05: the sweep is a CENSUS/BACKSTOP, not a semantic authority", () => {

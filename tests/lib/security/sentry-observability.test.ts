@@ -65,6 +65,10 @@ describe("next.config.ts Sentry build options", () => {
     expect(NEXT_CONFIG).toMatch(/telemetry:\s*false/);
     expect(NEXT_CONFIG).toMatch(/deleteSourcemapsAfterUpload:\s*true/);
   });
+  it("keeps the resolved org/project", () => {
+    expect(NEXT_CONFIG).toMatch(/org:\s*"hone-w1"/);
+    expect(NEXT_CONFIG).toMatch(/project:\s*"javascript-nextjs"/);
+  });
 });
 
 describe("CSP is left intact for the tunnel (no ingest host)", () => {

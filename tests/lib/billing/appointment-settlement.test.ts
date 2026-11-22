@@ -27,6 +27,7 @@ import {
 const ROOT = path.resolve(__dirname, "../../..");
 const read = (p: string) => readFileSync(path.join(ROOT, p), "utf8");
 
+const CELL = read("components/appointment-checkout-cell.tsx");
 const CONTROLS = read("components/appointment-settlement-controls.tsx");
 const ACTIONS = read("app/(app)/appointment-settlement-actions.ts");
 const MIGRATION = read("supabase/migrations/0187_appointment_settlement.sql");
@@ -253,6 +254,36 @@ describe("retained card money is measured in cents, not inferred from a status",
     // The settlement controls are gated on money HELD, never on the mere
     // existence of a succeeded row.
     expect(CARD).toMatch(/canRecordSettlement && !cardMoneyHeld/);
+  });
+
+  it("ONLY a proven full refund keeps a route to record the replacement payment", () => {
+    const branch = CELL.slice(CELL.indexOf('paymentState === "paid" ||'));
+    expect(branch).toMatch(/Record outcome/);
+    expect(branch).toMatch(/<CheckoutButton/);
+    // The card fact and the refund fact are still shown, not replaced.
+    expect(branch).toMatch(/\{badge\}/);
+    // THE GATE. A partial refund, an unknown-amount refund and a plain paid row
+    // all return the badge before reaching the entry point.
+    expect(branch).toMatch(/if \(paymentState !== "refunded_full"\) return badge;/);
+  });
+
+  it("the cell makes NO eligibility guess of its own — the row state carries it", () => {
+    const branch = CELL.slice(CELL.indexOf('paymentState === "paid" ||'));
+    // No refund arithmetic, no amounts, no second derivation in the view.
+    expect(branch).not.toMatch(/refund_amount_cents|refundAmountCents|amount_cents/);
+  });
+
+  it("full and partial refunds are DERIVED apart before the row renders", () => {
+    const state = read("lib/billing/appointment-payment-state.ts");
+    expect(state).toMatch(/function isFullyRefunded/);
+    // The same law as the SQL and the payment card: status AND cents.
+    expect(state).toMatch(/if \(a\.refund_status !== "succeeded"\) return false;/);
+    expect(state).toMatch(/return refunded >= amount;/);
+    // An unknown amount is not full.
+    expect(state).toMatch(
+      /typeof amount !== "number" \|\| typeof refunded !== "number"/,
+    );
+    expect(state).toMatch(/isFullyRefunded\(a\) \? "refunded_full" : "refunded"/);
   });
 });
 
