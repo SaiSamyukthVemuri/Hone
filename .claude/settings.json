@@ -1,0 +1,15 @@
+{
+  "extraKnownMarketplaces": {
+    "cursor-plugins": {
+      "source": {
+        "source": "github",
+        "repo": "cursor/plugins",
+        "ref": "7a583913eb1b8d1a0ee76753d1a2cf072e7b54f9"
+      },
+      "autoUpdate": false
+    }
+  },
+  "enabledPlugins": {
+    "pstack@cursor-plugins": true
+  }
+}
