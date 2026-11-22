@@ -1158,3 +1158,43 @@ test("a practitioner gets no Business at any width, in either shell mode", async
     await expect(page.locator('a[href="/dashboard/capacity"]')).toHaveCount(0);
   }
 });
+
+for (const viewport of [{ width: 1440, height: 900 }, PHONE]) {
+  test(`an owner reaches Waitlist analytics and changes capacity at ${viewport.width}px`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await loginAsOwner(page, seed);
+    await page.goto("/financials/analytics");
+    const tabs = page.getByRole("list", { name: "Analytics sections" });
+    const waitlist = tabs.getByRole("link", { name: "Waitlist", exact: true });
+    await expect(waitlist).toBeVisible();
+    expect((await waitlist.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await waitlist.click();
+    await page.waitForURL("**/financials/analytics/waitlist");
+    await expect(page.getByRole("heading", { name: "Waitlist", exact: true })).toBeVisible();
+    await expect(tabs.locator('[aria-current="page"]')).toHaveText("Waitlist");
+    await expect(page.getByRole("heading", { name: "From invitation to booking" })).toBeVisible();
+    const engagement = page.getByRole("heading", { name: "Delivery and engagement" }).locator("..");
+    await expect(engagement.getByText("Invitation-page views", { exact: true }).locator("..").getByText("Not tracked", { exact: true })).toBeVisible();
+    await expect(engagement.getByText("Email opens", { exact: true }).locator("..").getByText("Not tracked", { exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Review waitlist", exact: true })).toHaveAttribute("href", "/settings/waitlist");
+    const planner = page.getByRole("form", { name: "Consultation capacity" });
+    await planner.getByLabel("Look ahead").selectOption("14");
+    await planner.getByRole("button", { name: "Show capacity", exact: true }).click();
+    await expect(page).toHaveURL(/\/financials\/analytics\/waitlist\?.*days=14/);
+    await expect(planner.getByLabel("Look ahead")).toHaveValue("14");
+    await expect(page.getByText("Invitations issued in the last 30 days", { exact: false })).toBeVisible();
+    const geometry = await page.locator("main").evaluate((main) => ({ width: main.clientWidth, scrollWidth: main.scrollWidth }));
+    expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.width + 1);
+    await tabs.getByRole("link", { name: "Clients", exact: true }).click();
+    await page.waitForURL("**/financials/analytics/clients");
+    await expect(tabs.locator('[aria-current="page"]')).toHaveText("Clients");
+  });
+}
+
+test("a practitioner cannot read Waitlist analytics by navigating directly", async ({ page }) => {
+  await loginByMagicLink(page, member.email);
+  await page.goto("/financials/analytics/waitlist");
+  await expect(page.getByText(/Only the studio owner can (see|open) [Aa]nalytics\./)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "From invitation to booking" })).toHaveCount(0);
+  await expect(page.getByRole("form", { name: "Consultation capacity" })).toHaveCount(0);
+});

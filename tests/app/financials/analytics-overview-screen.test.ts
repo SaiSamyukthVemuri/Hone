@@ -297,14 +297,15 @@ describe("a period with no visits at all draws no false zero (U3, through the re
 describe("the Overview layout", () => {
   const html = render(healthy());
   const text = (h: string) => h.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/\s+/g, " ");
-  it("has the new title, the Overview tab as current, Clients as the one link, and the other three as disabled text", () => {
+  it("has the new title, the Overview tab as current, Clients and Waitlist as links, and the other three as disabled text", () => {
     expect(html).toContain("<h1");
     expect(text(html)).toContain("Your practice, in perspective.");
     const tabs = html.match(/<ul[^>]*aria-label="Analytics sections"[^>]*>([\s\S]*?)<\/ul>/)?.[1] ?? "";
     expect(tabs).toContain('aria-current="page"');
     expect((tabs.match(/aria-disabled="true"/g) ?? []).length).toBe(3);
     const links = [...tabs.matchAll(/<a [^>]*href="([^"]*)"/g)].map((m) => m[1].replace(/&amp;/g, "&"));
-    expect(links).toHaveLength(1);
+    expect(links).toHaveLength(2);
+    expect(links).toContain("/financials/analytics/waitlist");
     expect(links[0].startsWith("/financials/analytics/clients")).toBe(true); // the period and team member travel with it, nothing personal
     expect(text(tabs)).toMatch(/Capacity.*not available yet.*Treatments.*not available yet.*Team.*not available yet/);
   });

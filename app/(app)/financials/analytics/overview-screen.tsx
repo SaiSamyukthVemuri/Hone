@@ -184,9 +184,9 @@ export function Controls({ params, options, action = OVERVIEW_PATH, hidden = [] 
   );
 }
 
-/** The tab bar: the current tab is plain text; Overview and Clients are links (carrying the period and team member, never anything personal); the rest are plain disabled text until they exist. */
-export function Tabs({ current = "Overview", query = "" }: { current?: "Overview" | "Clients"; query?: string }) {
-  const href = (t: string): string | null => (t === "Overview" ? `${OVERVIEW_PATH}${query}` : t === "Clients" ? `${CLIENTS_PATH}${query}` : null);
+/** The current tab is plain text. Overview and Clients carry their period/team query; Waitlist starts with its own capacity controls. Unbuilt tabs stay disabled. */
+export function Tabs({ current = "Overview", query = "" }: { current?: "Overview" | "Clients" | "Waitlist"; query?: string }) {
+  const href = (t: string): string | null => (t === "Overview" ? `${OVERVIEW_PATH}${query}` : t === "Clients" ? `${CLIENTS_PATH}${query}` : t === "Waitlist" ? "/financials/analytics/waitlist" : null);
   return (
     <div className="space-y-1">
       <ul className="inline-flex flex-wrap gap-1 rounded-xl bg-surface-sunken p-1 text-sm" aria-label="Analytics sections">
@@ -195,11 +195,11 @@ export function Tabs({ current = "Overview", query = "" }: { current?: "Overview
           return (
             <li key={t}>
               {t === current ? (
-                <span aria-current="page" className="inline-flex items-center rounded-lg bg-surface px-4 py-2 font-semibold text-fg shadow-[0_1px_3px_#0002]">{t}</span>
+                <span aria-current="page" className={cx("inline-flex items-center rounded-lg bg-surface px-4 py-2 font-semibold text-fg shadow-[0_1px_3px_#0002]", CONTROL_MIN_TOUCH)}>{t}</span>
               ) : link ? (
-                <a href={link} className={cx("inline-flex items-center rounded-lg px-4 py-2 text-fg-muted hover:text-fg", FOCUS_RING)}>{t}</a>
+                <a href={link} className={cx("inline-flex items-center rounded-lg px-4 py-2 text-fg-muted hover:text-fg", CONTROL_MIN_TOUCH, FOCUS_RING)}>{t}</a>
               ) : (
-                <span aria-disabled="true" className="inline-flex items-center rounded-lg px-4 py-2 text-fg-muted">{t}<span className="sr-only"> (not available yet)</span></span>
+                <span aria-disabled="true" className={cx("inline-flex items-center rounded-lg px-4 py-2 text-fg-muted", CONTROL_MIN_TOUCH)}>{t}<span className="sr-only"> (not available yet)</span></span>
               )}
             </li>
           );
