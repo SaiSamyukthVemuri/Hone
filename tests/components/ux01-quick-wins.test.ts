@@ -169,7 +169,7 @@ describe("UX-01 QW2 · bounded, and provably not UX-03", () => {
     expect(nav).not.toContain("SegmentedControl");
   });
 
-  it("only the five SECTION links moved; the wordmark and bell did not", () => {
+  it("only the five SECTION links moved (Waitlist is shown conditionally; Business is the BusinessMenu leaf); the wordmark and bell did not", () => {
     expect(layout).toContain('data-testid="nav-wordmark"');
     expect(layout).toContain('data-testid="nav-notifications"');
     expect(layout.match(/<PrimaryNavLink[\s>]/g) ?? []).toHaveLength(5);

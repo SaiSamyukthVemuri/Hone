@@ -3,6 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { SectionLabel } from "@/components/ui/section-label";
 import { nativeFieldGroups } from "@/lib/machines/charting";
+import { NewViewHint } from "@/components/charting-view-context";
 import {
   addGroup,
   channelChoices,
@@ -183,6 +184,9 @@ export function SettingDraftFields({
           {fieldGroups.map((fieldGroup) => (
             <div key={fieldGroup.key} className="flex flex-col gap-2">
               <SectionLabel size="caption">{fieldGroup.label}</SectionLabel>
+              {fieldGroup.fields.some((f) => f.key === "displayed_el" || f.key === "displayed_ul") ? (
+                <NewViewHint testId="new-view-hint-blank">Enter the displayed readings. Blank stays blank.</NewViewHint>
+              ) : null}
               <div className="grid gap-3 md:grid-cols-2">
                 {fieldGroup.fields.map((f) => {
                   const k = draftKey(fieldGroup.key, f);

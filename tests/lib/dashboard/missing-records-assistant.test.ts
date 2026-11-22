@@ -334,3 +334,51 @@ describe("dashboard wiring (source pins)", () => {
     expect(LIST).toMatch(/data-testid="todo-disclosure-toggle"/);
   });
 });
+
+// HON-45: starting a chart no longer completes the appointment, so a PAST appointment that is still CONFIRMED and has a chart is
+// open until Finish. It must surface here or it stays confirmed forever. A pointer only: nothing is completed, sent or charged.
+describe("unfinished visits (past, confirmed, charted)", () => {
+  const unfinished = (over: Record<string, unknown> = {}) => ({
+    appointmentId: "ap9",
+    sessionId: "s9",
+    clientId: "c9",
+    clientName: "Rae T.",
+    startedAt: "2026-06-12T15:00:00.000Z",
+    ...over,
+  });
+
+  it("produces one 'Finish visit' item pointing at the session page", () => {
+    const out = build({ unfinishedAppointments: [unfinished()] });
+    expect(out.items).toHaveLength(1);
+    expect(out.items[0]).toMatchObject({
+      id: "unfinished:ap9",
+      type: "unfinished",
+      priority: 1,
+      clientId: "c9",
+      actionLabel: "Finish visit",
+      chip: "Not finished",
+      href: "/clients/c9/sessions/s9",
+      sessionId: "s9",
+      appointmentId: "ap9",
+    });
+  });
+
+  it("never links to a payment, charge or completion route (it is a pointer, not an action)", () => {
+    const out = build({ unfinishedAppointments: [unfinished()] });
+    expect(out.items[0].href).not.toMatch(/pay|charge|complete|api|send/i);
+  });
+
+  it("omitted input leaves every existing result exactly as it was", () => {
+    expect(build({}).items).toEqual([]);
+    expect(build({ unchartedAppointments: [appt()] }).items.map((i) => i.type)).toEqual(["charting"]);
+  });
+
+  it("sorts with the other priority-1 gap by recency, and does not displace the others", () => {
+    const out = build({
+      unchartedAppointments: [appt({ appointmentId: "old", startedAt: "2026-06-01T10:00:00.000Z", clientId: "c1" })],
+      unfinishedAppointments: [unfinished({ startedAt: "2026-06-12T15:00:00.000Z" })],
+      sessions: [session({ aftercareMarked: false })],
+    });
+    expect(out.items.map((i) => i.type)).toEqual(["unfinished", "charting", "aftercare"]);
+  });
+});

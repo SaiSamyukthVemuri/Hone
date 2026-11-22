@@ -56,14 +56,15 @@ const codeOnly = (source: string) =>
 const code = codeOnly(raw);
 const navCode = codeOnly(read(NAVLINK));
 
-/** The seven anchors, and the form each one must take. */
+/** The seven anchors (one of them conditional; Business is the BusinessMenu leaf, pinned below), and the form each one must take. */
 const ANCHORS = [
   { testId: "nav-wordmark", href: "/dashboard", form: "label", attr: "data-testid" },
   { testId: "nav-dashboard", href: "/dashboard", form: "label", attr: "testId" },
   { testId: "nav-clients", href: "/clients", form: "label", attr: "testId" },
   { testId: "nav-calendar", href: "/calendar", form: "label", attr: "testId" },
+  // Rendered only where the Settings Waitlist tab's own rule allows it; still one acknowledging anchor in the source.
+  { testId: "nav-waitlist", href: "/settings/waitlist", form: "label", attr: "testId" },
   { testId: "nav-records", href: "/records", form: "label", attr: "testId" },
-  { testId: "nav-business", href: "/dashboard/capacity", form: "label", attr: "testId" },
   { testId: "nav-notifications", href: "/notifications", form: "container", attr: "data-testid" },
 ] as const;
 
@@ -89,7 +90,7 @@ describe("NAV-ACK-02 · the primary navigation acknowledges", () => {
     expect(code).not.toMatch(/<Link[\s>]/);
   });
 
-  it("renders exactly seven acknowledging anchors — six labels, one container", () => {
+  it("renders exactly seven acknowledging anchors — six labels, one container (Business is its own leaf menu)", () => {
     // UX-01 QW2 moved the five SECTION links into `PrimaryNavLink`, a client
     // leaf that renders `PendingLink` itself (it needs `usePathname`, which a
     // server layout cannot call). The count below therefore treats a
@@ -214,7 +215,9 @@ describe("NAV-ACK-02 · adopting the contract changed nothing else", () => {
     // a bare prefix match lights both on the capacity page. Dashboard is
     // therefore `exact` and every other section owns its subtree.
     expect(code).toMatch(/href="\/dashboard"\s+match="exact"/);
-    expect(code).toMatch(/href="\/dashboard\/capacity"\s+match="section"/);
+    // Business is no longer a section link: it is the owner-only BusinessMenu, whose own current rule covers both of its pages.
+    expect(code).toMatch(/\{practitioner\.role === "owner" && <BusinessMenu \/>\}/);
+    expect(code).not.toMatch(/href="\/dashboard\/capacity"/);
     expect(code).toMatch(/href="\/clients"\s+match="section"/);
   });
 
@@ -234,5 +237,18 @@ describe("NAV-ACK-02 · adopting the contract changed nothing else", () => {
     // PR #228: the horizontal nav is desktop-only; the compact shell uses the
     // menu instead. An acknowledgement must not change WHICH shell renders.
     expect(code).toMatch(/className="hidden items-center gap-0\.5 whitespace-nowrap text-sm lg:flex lg:gap-1"/);
+  });
+});
+
+describe("NAV-ACK-02 · the owner's Business menu keeps the acknowledgement contract", () => {
+  const menu = codeOnly(read("app/(app)/BusinessMenu.tsx"));
+  it("renders its two destinations through the shipped PendingLink, each with a request-describing label", () => {
+    expect(menu).toContain('from "@/components/pending-link"');
+    expect(menu.match(/<PendingLink[\s>]/g) ?? []).toHaveLength(1);
+    expect(menu).toContain("pendingLabel={`Opening ${item.label}…`}");
+    expect(menu).not.toMatch(/from\s*"next\/link"/);
+  });
+  it("its trigger keeps the nav-business test id", () => {
+    expect(menu).toContain('data-testid="nav-business"');
   });
 });

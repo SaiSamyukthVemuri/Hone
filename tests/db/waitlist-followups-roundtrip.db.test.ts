@@ -3,7 +3,16 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { adminQuery, closePool, seedStudio } from "./helpers/harness";
 
+// This file replays 0325's down and up on the shared test database, which puts 0325's bodies of the transition guard, the event trigger
+// and the 9-argument admit back. Later migrations that REDEFINE those functions must be re-applied after it (fileParallelism false), or
+// every file that runs later sees a database that does not match the migration head (and two admit overloads make 9-argument calls
+// ambiguous). NAMED, not discovered: a directory walk is refused by the "no DB suite walks a whole source root" guard, and a renumbering
+// makes this fail loudly.
+const REAPPLY_AFTER_ROUNDTRIP = ["0363_waitlist_batch_and_replace.sql"];
 afterAll(async () => {
+  for (const f of REAPPLY_AFTER_ROUNDTRIP) {
+    await adminQuery(readFileSync(join(__dirname, "..", "..", "supabase", "migrations", f), "utf8"), []);
+  }
   await closePool();
 });
 

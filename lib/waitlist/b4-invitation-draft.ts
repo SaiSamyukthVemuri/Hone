@@ -887,6 +887,8 @@ export const COMPOSER_FIELD_NAMES = {
   windowDaysCustom: "window_days_custom",
   allowedDaysPreset: "allowed_days_preset",
   allowedWeekdays: "allowed_weekdays",
+  // The owner's explicit "Invite anyway" when the estimate says nothing is left. Read only as the exact text "true".
+  allowBeyondEstimate: "allow_beyond_estimate",
   // NO EXPIRY FIELD. `expires_in_hours` and `expires_in_hours_custom` were
   // removed with the question. Their absence is asserted rather than assumed:
   // the composer test proves no control submits under either name, so a
@@ -920,6 +922,8 @@ export type InviteSubmission = {
   serviceId: string | null;
   windowDays: number | null;
   allowedWeekdays: ReadonlyArray<number> | null;
+  /** True only when the owner pressed "Invite anyway" (the field is exactly "true"). It lifts the capacity estimate and nothing else. */
+  beyondEstimate: boolean;
 };
 
 function numberOrNull(value: FormDataEntryValue | null): number | null {
@@ -996,6 +1000,7 @@ export function inviteSubmissionFromFormData(formData: FormData): InviteSubmissi
     ok: true,
     submission: {
     entryId: typeof entryId === "string" ? entryId : "",
+    beyondEstimate: formData.get(COMPOSER_FIELD_NAMES.allowBeyondEstimate) === "true",
     serviceId: service,
     windowDays: presetOrCustom(
       formData,

@@ -17,7 +17,11 @@ describe("machine publication operator entry", () => {
     const { sha256, ...plan } = dryRun();
     expect(sha256).toBe(createHash("sha256").update(JSON.stringify(plan)).digest("hex"));
     // First slice: the ten v3 modes publish; Junior Thermolysis and OmniBlend (and every v1/v2 contract) are skipped with reasons.
-    expect(plan.publish).toHaveLength(10);
+    // Deliberately 10 + 1: the ten Senior/Junior 3G v3 rows (pinned below) plus the one xCell Pur MultiPlex row.
+    const rows: { p_machine_profile_id: string }[] = plan.publish;
+    expect(rows.filter((r) => r.p_machine_profile_id.endsWith("-3g"))).toHaveLength(10);
+    expect(rows.filter((r) => r.p_machine_profile_id === "dectro-apilus:xcell-pur")).toHaveLength(1);
+    expect(rows).toHaveLength(11);
     expect(plan.skipped.length).toBeGreaterThan(0);
     expect(JSON.stringify(plan)).not.toContain("test-secret-must-not-appear");
   }, 20000);

@@ -46,7 +46,7 @@ describe("SimplifiedEntryForm uses STRUCTURED chips, not legacy append-to-commen
     expect(src).toMatch(/setRecovery\(/);
     // The save button is disabled and submit() short-circuits while in recovery.
     expect(src).toMatch(/disabled=\{pending \|\| recovery !== null\}/);
-    expect(src).toMatch(/if \(recovery\) return;/);
+    expect(src).toMatch(/if \(recovery\) return Promise\.resolve\(\{ status: "held"/);
   });
 });
 

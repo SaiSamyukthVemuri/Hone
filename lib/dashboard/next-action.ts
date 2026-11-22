@@ -18,6 +18,9 @@ export type NextActionInput = {
   sessionId: string | null;
   // That session has at least one non-deleted treatment area.
   hasChartedArea: boolean;
+  // The appointment's end has passed, judged by the caller against ONE instant (this resolver reads no clock).
+  // Optional so existing callers keep their exact behaviour; omitted means "not known to have ended".
+  hasEnded?: boolean;
 };
 
 export type NextAction = {
@@ -26,10 +29,11 @@ export type NextAction = {
     | "Open client"
     | "Chart appointment"
     | "Continue charting"
-    | "View session";
+    | "View session"
+    | "Finish visit";
   href: string;
   // Optional charting-state chip for the row.
-  chip: "Charting needed" | "Charted" | null;
+  chip: "Charting needed" | "Charted" | "Not finished" | null;
 };
 
 export function resolveNextAction(input: NextActionInput): NextAction {
@@ -38,6 +42,16 @@ export function resolveNextAction(input: NextActionInput): NextAction {
   // A linked session decides first, regardless of appointment status:
   // charting is in flight or done, so point at it.
   if (input.sessionId) {
+    // HON-45: charting no longer completes the appointment, so a past CONFIRMED appointment that has a chart is
+    // still OPEN. Say so, and point at the session page where the explicit Finish appointment control lives.
+    // Nothing here completes, sends or charges: it is a pointer only.
+    if (input.status === "confirmed" && input.hasEnded === true) {
+      return {
+        label: "Finish visit",
+        href: `${clientHref}/sessions/${input.sessionId}`,
+        chip: "Not finished",
+      };
+    }
     if (input.hasChartedArea) {
       return {
         label: "View session",
