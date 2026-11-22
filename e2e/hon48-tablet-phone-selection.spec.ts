@@ -181,6 +181,9 @@ test.describe("iPad: crowded items are named on the calendar", () => {
           expect(box, `${c.name} row is on screen`).not.toBeNull();
           expect(box!.x + box!.width, `${c.name} stays inside the viewport`).toBeLessThanOrEqual(device.viewport.width + 1);
         }
+        if (process.env.HON48_SHOT_DIR) {
+          await page.screenshot({ path: `${process.env.HON48_SHOT_DIR}/ipad-${label.replace(/ /g, "")}-${view}.png` });
+        }
         // 2. The one-per-practitioner appointments are not swallowed by the cluster (Day: other columns).
         if (view === "day") {
           for (const l of lone) {
