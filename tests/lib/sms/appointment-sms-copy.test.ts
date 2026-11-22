@@ -181,3 +181,33 @@ describe("the evidence page's screenshots", () => {
     expect(read("middleware.ts")).toMatch(/\.\*\\\\\.\(\?:svg\|png/);
   });
 });
+
+describe("preview renders carry no function-valued prop on any host element (the server-render rule)", () => {
+  type El = { type: unknown; props?: Record<string, unknown> } | string | number | null | undefined | boolean | El[];
+  function offenders(node: El, out: string[] = []): string[] {
+    if (Array.isArray(node)) { node.forEach((n) => offenders(n, out)); return out; }
+    if (!node || typeof node !== "object") return out;
+    const { type, props = {} } = node as { type: unknown; props?: Record<string, unknown> };
+    if (typeof type === "function") {
+      // A component element: expand it so its host output is checked too.
+      try { offenders((type as (p: unknown) => El)(props), out); } catch { /* a component needing a runtime is not expanded */ }
+      return out;
+    }
+    if (typeof type === "string") {
+      for (const [k, v] of Object.entries(props)) if (typeof v === "function") out.push(`<${type}> ${k}`);
+    }
+    offenders(props.children as El, out);
+    return out;
+  }
+  it("AppointmentSmsConsent preview=true", async () => {
+    const { AppointmentSmsConsent } = await import("@/components/sms/AppointmentSmsConsent");
+    expect(offenders(AppointmentSmsConsent({ studioName: "Example Studio", checked: false, preview: true }) as El)).toEqual([]);
+  });
+  it("WaitlistSmsConsentFieldset preview=true", async () => {
+    const { WaitlistSmsConsentFieldset } = await import("@/components/sms/WaitlistSmsConsentFieldset");
+    expect(offenders(WaitlistSmsConsentFieldset({ questionId: "q", answer: null, preview: true }) as El)).toEqual([]);
+  });
+  it("the walker does see a handler (non-vacuity)", () => {
+    expect(offenders({ type: "input", props: { onChange: () => {} } })).toEqual(["<input> onChange"]);
+  });
+});
