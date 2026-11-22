@@ -3,10 +3,10 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 // PR #256: admin studio-detail privacy follow-up. Pins that the operator-only
-// /admin/studios/[id] page shows operational metadata + AGGREGATE counts only,
-// and no longer selects or renders raw client names/contacts or any clinical /
+// /admin/studios/[id] page selects no raw client names/contacts and no clinical /
 // payment / token / audit content. End-to-end (no seeded client name appears)
-// is proven by e2e/new-studio-wizard.spec.ts.
+// is proven by e2e/new-studio-wizard.spec.ts; the access gate by
+// tests/security/sec-002-admin-route-requests.test.ts.
 
 const ROOT = path.resolve(__dirname, "../../..");
 function read(rel: string): string {
@@ -21,19 +21,6 @@ function codeOnly(src: string): string {
 
 const PAGE = read("app/admin/studios/[id]/page.tsx");
 const PAGE_CODE = codeOnly(PAGE);
-const LAYOUT = read("app/admin/layout.tsx");
-
-describe("operator-only access (reuses the /admin layout isAdmin gate)", () => {
-  it("the admin layout still guards every /admin route incl. studio detail", () => {
-    expect(LAYOUT).toMatch(/if \(!user\) redirect\("\/login"\);/);
-    expect(LAYOUT).toMatch(/if \(!isAdmin\(user\.email\)\) redirect\("\/dashboard"\);/);
-  });
-
-  it("reads via the service-role admin client (gated by the layout)", () => {
-    expect(PAGE).toMatch(/from "@\/lib\/supabase\/admin-server"/);
-    expect(PAGE_CODE).toMatch(/createAdminClient\(\)/);
-  });
-});
 
 describe("privacy: no raw client data is selected or rendered", () => {
   it("does NOT run a standalone clients / practitioners / invitations ROW select", () => {

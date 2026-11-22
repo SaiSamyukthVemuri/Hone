@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// PR #257: Quick Import V1 action/page safety pins. The pure pipeline is
-// covered by tests/lib/import/quick-import.test.ts; the live RLS write path by
-// tests/db/quick-import.db.test.ts; the full flow by e2e/quick-import.spec.ts.
-// These source-pins lock the non-negotiable safety posture of the server side.
+// PR #257: Quick Import V1 action safety pins. The pure pipeline is covered by
+// tests/lib/import/quick-import.test.ts; the live RLS write path by
+// tests/db/quick-import.db.test.ts; the full flow by e2e/quick-import.spec.ts;
+// the owner + operator gate (zero writes on denial) by
+// ./operator-assisted-gate.test.ts. These source-pins lock the absence
+// properties a behavioural test cannot see.
 
 const ROOT = path.resolve(__dirname, "../../../..");
 function read(rel: string): string {

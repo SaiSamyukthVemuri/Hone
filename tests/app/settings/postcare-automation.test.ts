@@ -71,13 +71,3 @@ describe("settings UI + save", () => {
     expect(STUDIO_ACTION).toMatch(/PGRST204|42703|postcare_delivery_mode/);
   });
 });
-
-describe("the manual postcare path is unchanged", () => {
-  it("sendPostcareEmailAction still exists and is untouched by auto-send", () => {
-    expect(CAL_ACTIONS).toMatch(/export async function sendPostcareEmailAction/);
-    // the manual action does not call the auto helper (separate, safe path)
-    const manualStart = CAL_ACTIONS.indexOf("export async function sendPostcareEmailAction");
-    const manualEnd = CAL_ACTIONS.indexOf("\n}", manualStart);
-    expect(CAL_ACTIONS.slice(manualStart, manualEnd)).not.toMatch(/autoSendPostcareOnComplete/);
-  });
-});

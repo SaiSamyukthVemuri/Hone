@@ -5,8 +5,8 @@ import { COMPOSED_DASHBOARD } from "./helpers/composed-dashboard";
 
 // Flag-off contract for the onboarding-v2 dashboard integration (migration
 // 0140). PRIME DIRECTIVE: while studios.onboarding_v2_enabled is not exactly
-// true, the dashboard must render exactly as today — the legacy getting-started
-// link / footer, NO wizard, NO onboarding signal queries. This source-level
+// true, the dashboard must render the legacy getting-started card, NO wizard,
+// NO onboarding signal queries. This source-level
 // contract (mirrors the capacity flag-off contract style) pins that gating so a
 // later edit can't silently leak the v2 experience to every studio.
 

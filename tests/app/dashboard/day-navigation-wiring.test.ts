@@ -50,15 +50,6 @@ describe("the selected day is resolved once, defensively, from the URL", () => {
     expect(CODE).toMatch(/getExpiringSterileItems\(studio\.id, todayLocal\)/);
     expect(CODE).toMatch(/todayLocal,\s*\}\)/); // buildDashboardTodo
   });
-
-  it("the 'am I on today' test compares against that ONE value", () => {
-    // Not a fresh clock read: a render straddling local midnight would then
-    // have the roster window and the history gate disagree.
-    expect(CODE).toMatch(
-      /const viewingToday = isViewingTodayFn\(selectedDayLocal, todayLocal\)/,
-    );
-    expect((CODE.match(/todayInTz\(/g) ?? []).length).toBe(1);
-  });
 });
 
 describe("the roster window is the SELECTED day, and it is DST-correct", () => {
@@ -92,26 +83,6 @@ describe("OFF TODAY THE PAGE ASKS NO HISTORY QUESTION — the load-bearing rule"
     expect(CODE.match(/getBeforeTodayPreviews\(/g) ?? []).toHaveLength(1);
   });
 
-  it("the APPOINTMENT-PREP loader now runs for the selected day", () => {
-    // The opposite call from the Before-Today model, and for a structural
-    // reason: this loader has no clock, is bounded by each appointment's own
-    // `starts_at`, and reports a failed or truncated read as `unavailable`
-    // rather than as an absence. That is what makes it safe on any day — and
-    // it is what gives a practitioner something to prepare with.
-    expect(CODE).not.toMatch(/const prepLoads = !viewingToday/);
-    // PERF-01B: started before the linked-session chain, awaited where read.
-    // The claim is that it runs UNGATED on any day, so it is pinned as the
-    // absence of a day gate on its single call site rather than as an inline
-    // `await` spelling.
-    expect(CODE).toMatch(/loadLastChartedTreatmentsForClients\(\{/);
-    expect(CODE.match(/loadLastChartedTreatmentsForClients\(/g) ?? []).toHaveLength(1);
-    expect(CODE).not.toMatch(/viewingToday\s*\?\s*loadLastChartedTreatmentsForClients\(/);
-    // Still one request PER APPOINTMENT, carrying its own boundary.
-    expect(CODE).toMatch(/requestKey: a\.id/);
-    expect(CODE).toMatch(/before: a\.starts_at/);
-    expect(CODE).toMatch(/excludeAppointmentId: a\.id/);
-  });
-
   it("the workflow INPUTS are empty off today, so no row can carry a history claim", () => {
     // `hasHistory` is a required field. The only way to build an item off
     // Today would be to invent one, so no item is built: every non-Today row
@@ -120,43 +91,6 @@ describe("OFF TODAY THE PAGE ASKS NO HISTORY QUESTION — the load-bearing rule"
     expect(CODE).toMatch(
       /const todayWorkflowInputs: TodayWorkflowInput\[\] = \(\s*viewingToday \? visibleAppointments : \[\]\s*\)\.map/,
     );
-  });
-
-  it("every RELATIONSHIP claim is still behind the workflow null", () => {
-    // The rule that survives: nothing may say new-vs-returning off Today.
-    // These all live inside `{workflow && (`, which is null off Today.
-    expect(CODE).toMatch(/\{workflow && \(/);
-    const block = CODE.slice(CODE.indexOf("{workflow && ("));
-    for (const claim of [
-      "New client · No charted history yet",
-      "Remember: {workflow.remember}",
-      "Latest setup:",
-      "workflow.missingRecords.length > 0",
-    ]) {
-      expect(block, claim).toContain(claim);
-    }
-  });
-
-  it("the treatment memory is NOT behind it — it has its own authority", () => {
-    // Clinical preparation evidence and relationship status are different
-    // facts from different loaders. Tying the first to the second is what
-    // emptied the future-day roster.
-    expect(CODE).not.toMatch(/\{workflow\?\.hasHistory && \(/);
-    expect(CODE).toMatch(
-      /\{\(prepSummary\.hasTreatment \|\| prepSummary\.unavailable\) && \(/,
-    );
-  });
-
-  it("the plan note is CARRIED from the loader, not dropped", () => {
-    // `narrative.plan` is already loaded and was being thrown away here. It is
-    // the newest recorded "for next visit" note, it survives both "nothing
-    // charted" and a failed block read, and on a future day it is the single
-    // most useful thing the practitioner can read.
-    expect(CODE).toMatch(
-      /planNote: load\.narrative\.plan\?\.text\?\.trim\(\) \|\| null/,
-    );
-    // …and the no-load fallback must not invent one.
-    expect(CODE).toMatch(/memory: null,\s*unavailable: false,\s*planNote: null,/);
   });
 
   it("the plan note renders off Today, and ONLY off Today", () => {

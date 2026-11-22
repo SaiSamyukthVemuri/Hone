@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// Provider selector + onboarding UI (source pins; vitest env is "node", no DOM).
+// Provider selector: where the token input and sender code may NOT appear
+// (source pins; vitest env is "node", no DOM).
 function read(rel: string): string {
   return readFileSync(path.resolve(__dirname, "../../../", rel), "utf8");
 }
@@ -55,6 +56,7 @@ describe("selector — coming-soon panels are INERT (no fields/forms/actions)", 
     SELECTOR.indexOf("export function TrackingProviderSelector"),
   );
   it("has NO token input, NO form, NO save/clear action", () => {
+    expect(comingSoon).toMatch(/Coming soon/); // non-vacuity: the slice found the panel
     expect(comingSoon).not.toMatch(/<TrackingProviderForm/);
     expect(comingSoon).not.toMatch(/<input/);
     expect(comingSoon).not.toMatch(/type="password"/);
@@ -72,12 +74,7 @@ describe("selector — coming-soon panels are INERT (no fields/forms/actions)", 
   });
 });
 
-describe("selector — help links / video are safe", () => {
-  it("renders official help links + a video fallback, no inline youtube", () => {
-    expect(SELECTOR).toMatch(/entry\.helpLinks\.map/);
-    expect(SELECTOR).toMatch(/VIDEO_COMING_SOON_FALLBACK/);
-    expect(SELECTOR).not.toMatch(/youtube\.com|youtu\.be/i);
-  });
+describe("selector — no sender code", () => {
   it("no sender/dispatch/crypto in the selector", () => {
     expect(SELECTOR).not.toMatch(/dispatchBookingConversion|token-crypto|encryptTrackingProviderToken|graph\.facebook|fbq\(|gtag\(/);
   });

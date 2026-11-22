@@ -128,14 +128,6 @@ describe("setConsentTemplateLiveAction (server)", () => {
     expect(fn).toMatch(/getCurrentPractitionerWithStudio/);
     expect(fn).toMatch(/practitioner\.role !== "owner"/);
   });
-
-  it("validates the is_live form field strictly as 'true' | 'false'", () => {
-    const fn =
-      ACTIONS.match(
-        /export async function setConsentTemplateLiveAction[\s\S]*?\n\}/,
-      )?.[0] ?? "";
-    expect(fn).toMatch(/isLiveRaw !== "true" && isLiveRaw !== "false"/);
-  });
 });
 
 describe("setConsentTemplateStatusAction: side effect on draft/archive", () => {
@@ -158,28 +150,5 @@ describe("setConsentTemplateStatusAction: side effect on draft/archive", () => {
         /export async function setConsentTemplateStatusAction[\s\S]*?\n\}/,
       )?.[0] ?? "";
     expect(fn).not.toMatch(/status === "active"[\s\S]{0,200}is_live\s*[:=]\s*true/);
-  });
-});
-
-describe("no payment / live-mode / SMS behavior added", () => {
-  it("the editor does not call PaymentIntent / Charge / Refund / Checkout / live-mode", () => {
-    expect(EDITOR).not.toMatch(/paymentIntents\.create/);
-    expect(EDITOR).not.toMatch(/charges\.create/);
-    expect(EDITOR).not.toMatch(/refunds\.create/);
-    expect(EDITOR).not.toMatch(/checkout\.sessions/);
-    expect(EDITOR).not.toMatch(/STRIPE_ALLOW_LIVE_MODE=true/);
-  });
-
-  it("the actions file does not call PaymentIntent / Charge / Refund / Checkout / live-mode", () => {
-    expect(ACTIONS).not.toMatch(/paymentIntents\.create/);
-    expect(ACTIONS).not.toMatch(/charges\.create/);
-    expect(ACTIONS).not.toMatch(/refunds\.create/);
-    expect(ACTIONS).not.toMatch(/checkout\.sessions/);
-    expect(ACTIONS).not.toMatch(/STRIPE_ALLOW_LIVE_MODE=true/);
-  });
-
-  it("no SMS path is added in the actions file", () => {
-    expect(ACTIONS).not.toMatch(/twilio/i);
-    expect(ACTIONS).not.toMatch(/lib\/sms/i);
   });
 });

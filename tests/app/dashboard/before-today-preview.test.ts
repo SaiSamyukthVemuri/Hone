@@ -127,8 +127,8 @@ describe("placement + reuse", () => {
     expect(PAGE).toMatch(/workflow=\{workflowByAppointment\.get\(appt\.id\) \?\? null\}/);
     expect(PAGE).toMatch(/Before today/);
     // Chloe dashboard-memory fix: the Remember note is rendered WHOLE — the
-    // 70-char cap is gone. Full-visibility is pinned in its own suite
-    // (tests/app/dashboard/dashboard-memory-visibility.test.ts).
+    // 70-char cap is gone. Full-visibility is proved in the browser
+    // (e2e/dashboard-memory-visibility.spec.ts).
     expect(PAGE).toMatch(/Remember: \{workflow\.remember\}/);
     expect(PAGE).toMatch(/Latest setup: \{workflow\.setup \?\? "Not recorded"\}/);
     // ONE relationship line now: the old card said "No charted history yet."

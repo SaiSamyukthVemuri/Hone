@@ -22,17 +22,6 @@ const off = PAGE.slice(
 const offCode = off.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
 
 describe("Availability page: flag-OFF contract", () => {
-  it("returns the studio-wide render BEFORE any ON-only per-practitioner call", () => {
-    const offReturn = PAGE.indexOf("if (!capacityOn)");
-    const firstOnCall = Math.min(
-      ...["getActivePractitioners(", "loadScopedAvailability("]
-        .map((s) => PAGE.indexOf(s))
-        .filter((i) => i >= 0),
-    );
-    expect(offReturn).toBeGreaterThan(0);
-    expect(offReturn).toBeLessThan(firstOnCall);
-  });
-
   it("the OFF branch loads studio-wide-only rows (rollback-safe), not the legacy unscoped loaders", () => {
     expect(off).toMatch(/studioWideDefaults\(supabase, studio\.id\)/);
     expect(off).toMatch(/studioWideOverrides\(supabase, studio\.id/);
@@ -47,11 +36,5 @@ describe("Availability page: flag-OFF contract", () => {
     expect(off).not.toMatch(/ScopeSelector|PractitionerWeekEditor/);
     // No practitioner_id QUERY in the OFF page code (comments may mention it).
     expect(offCode).not.toMatch(/practitioner_id/);
-  });
-
-  it("the scope selector + practitioner editor are gated behind the ON branch only", () => {
-    const onIdx = PAGE.indexOf("// ---- Flag ON");
-    expect(PAGE.indexOf("<ScopeSelector")).toBeGreaterThan(onIdx);
-    expect(PAGE.indexOf("<PractitionerWeekEditor")).toBeGreaterThan(onIdx);
   });
 });

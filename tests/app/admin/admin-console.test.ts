@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// PR #255: Admin Console V1. Source-pins the operator console surface, the
-// discoverable New Studio Wizard CTA, the cheap setup-health counts, and —
-// critically — that NO client-level clinical data is read into the console.
-// Access control is the existing /admin layout isAdmin gate (pinned below);
-// end-to-end behaviour is proven by e2e/new-studio-wizard.spec.ts.
+// PR #255: Admin Console V1. Source-pins that NO client-level clinical data is
+// read into the console. Access control (middleware, layout and page gates) is
+// proven at request level by tests/security/sec-002-admin-route-requests.test.ts;
+// the rendered surface by e2e/new-studio-wizard.spec.ts.
 
 const ROOT = path.resolve(__dirname, "../../..");
 function read(rel: string): string {
@@ -106,15 +105,5 @@ describe("data privacy: NO client-level clinical data in the console", () => {
     // No audit/token CONTENT is selected here. A nav link to /admin/audit is fine —
     // the audit log lives on its own isAdmin-gated page, not the console home.
     expect(PAGE_CODE).not.toMatch(/\btoken\b|audit_event|\.from\("[^"]*audit/i);
-  });
-});
-
-describe("invite-only posture is not weakened", () => {
-  it("introduces no public self-serve studio-creation route", () => {
-    expect(existsSync(path.join(ROOT, "app/studios"))).toBe(false);
-    expect(existsSync(path.join(ROOT, "app/signup"))).toBe(false);
-    expect(existsSync(path.join(ROOT, "app/(auth)/signup"))).toBe(false);
-    // The wizard stays operator-only under app/admin.
-    expect(existsSync(path.join(ROOT, "app/admin/studios/new/page.tsx"))).toBe(true);
   });
 });

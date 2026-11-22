@@ -2,12 +2,13 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 
-// PR #254: internal New Studio Wizard. Source-pins the operator-only access,
-// the two service-role writes (studios + owner pending_invitation), and the
-// invariants that must not regress: NO direct practitioner insert, NO
-// payment/Stripe surface, and the PR #253 invite-only gate stays closed for
-// non-operators. End-to-end behaviour is proven by
-// tests/db/new-studio-wizard.db.test.ts and e2e/new-studio-wizard.spec.ts.
+// PR #254: internal New Studio Wizard. Source-pins the create action's own
+// isAdmin re-check and the invariants that must not regress: NO direct
+// practitioner insert, no orphan studio, NO payment/Stripe surface, and no
+// public studio-creation route. The route gates (middleware, layout, page) are
+// proven by tests/security/sec-002-admin-route-requests.test.ts; end-to-end
+// behaviour by tests/db/new-studio-wizard.db.test.ts and
+// e2e/new-studio-wizard.spec.ts.
 
 const ROOT = path.resolve(__dirname, "../../..");
 function read(rel: string): string {

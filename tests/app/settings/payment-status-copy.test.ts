@@ -4,14 +4,12 @@ import path from "node:path";
 
 // PR A of the app-wide smart-payment-status plan: practitioner surfaces
 // derive payment copy from the shared presenter instead of making static
-// claims. This suite pins:
+// claims. The presenter's own copy and derivation are proved in
+// tests/lib/payments/payment-status-presenter.test.ts. This suite pins:
 //   * the banned stale strings are GONE from the PR-A surfaces
-//   * Settings → Payments renders the presenter banner (live-ready /
-//     test-ready / payouts-warning all reachable via connectBannerCopy)
-//   * the mode row + banner key off the RUNTIME, never the nullable row
-//   * portal card-on-file + booking-collection copy come from the presenter
-//   * getting-started + launch + policy surfaces no longer claim payments
-//     are off / future
+//   * the mode row keys off the RUNTIME, never the nullable row
+//   * a failed read degrades to unknown; manual fees are never automatic
+//   * public booking stays card-free; getting-started counts are mode-scoped
 
 function read(rel: string): string {
   return readFileSync(path.resolve(__dirname, "../../../", rel), "utf8");
