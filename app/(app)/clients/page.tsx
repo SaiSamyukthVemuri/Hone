@@ -1,5 +1,5 @@
 import { readGroups, readGroupMembers, readClientGroups } from "@/lib/client-groups/queries";
-import { groupFilter, filterGroup, unavailable } from "@/lib/client-groups/model";
+import { groupFilter, scopeToGroup, unavailable } from "@/lib/client-groups/model";
 import { directoryHref } from "@/lib/clients/directory-query";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -104,7 +104,7 @@ export default async function ClientsPage({
   // undefined: not needed this request; null: needed and unavailable; a map: the whole set.
   const wholeLastVisitMap = wholeLastVisits === null ? undefined : wholeLastVisits.ok ? wholeLastVisits.value : null;
   const allIdentityRows = source.map(projectStaffRow);
-  const identityRows = selectedGroup ? (members.available ? filterGroup(allIdentityRows, members.value) : []) : allIdentityRows;
+  const identityRows = scopeToGroup(allIdentityRows, selectedGroup, members);
   let aggregates: DirectoryAggregates = {
     nextAppointments: wholeNext,
     intake: wholeIntake,

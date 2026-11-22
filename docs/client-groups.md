@@ -5,6 +5,8 @@ Follow up or Completed. These are labels chosen by the studio, not a statement
 that treatment has finished or that a client can book, owes money or has consented.
 Nothing is sent when a group changes.
 
+Group names are visible to owners only. Don't put health details or reasons for treatment in a name.
+
 From **Clients → Manage groups**, create or rename a group. Names contain 1–60
 characters, are unique regardless of capitalisation and surrounding spaces, and
 are limited to 100 groups per studio. A rename updates the label wherever it is
@@ -26,6 +28,6 @@ the ordinary directory remains usable and the group section says unavailable.
 A requested group that cannot be checked stops results until retried or removed;
 it never silently expands the selection to all clients.
 
-Deployment is pending the [reviewed SQL proposal](proposals/client-groups/README.md)
-and OPS qualification. This document describes the prepared workflow, not proof
-that a hosted migration has been applied.
+Groups need the database support in the [SQL proposal](proposals/client-groups/README.md),
+which is checked on a local test database before it is numbered. Until that support
+is installed, the groups section says unavailable and the directory works as before.

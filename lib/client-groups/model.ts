@@ -13,6 +13,11 @@ export function groupFilter(value: string | string[] | undefined): string | unde
   // Keep invalid selections so the server can refuse them rather than silently showing all clients.
   return (Array.isArray(value) ? value[0] : value) || undefined;
 }
+/** The rows a selected group shows. An unreadable membership shows NO rows, never every client. */
+export function scopeToGroup<T extends { id: string }>(all: T[], selected: string | undefined, members: GroupRead<ReadonlySet<string>>): T[] {
+  if (!selected) return all;
+  return members.available ? filterGroup(all, members.value) : [];
+}
 export function filterGroup<T extends { id: string }>(rows: T[], members: ReadonlySet<string>): T[] {
   return rows.filter((row) => members.has(row.id));
 }

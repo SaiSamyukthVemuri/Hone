@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupName, groupFilter, filterGroup } from "@/lib/client-groups/model";
+import { groupName, groupFilter, filterGroup, scopeToGroup } from "@/lib/client-groups/model";
 import { readGroups, readGroupMembers, readClientGroups } from "@/lib/client-groups/queries";
 import { directoryHref } from "@/lib/clients/directory-query";
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -30,6 +30,32 @@ describe("custom client groups", () => {
     const url = directoryHref({ view: "archived", group: id(1), q: "A", page: 2, client: id(49), sort: "name" });
     const params = new URL(url, "https://example.test").searchParams;
     expect(params.get("group")).toBe(id(1)); expect(params.get("page")).toBe("2"); expect(params.get("client")).toBe(id(49));
+  });
+  it("an unreadable membership shows no rows; it never falls back to every client", () => {
+    const rows = [{ id: id(1) }, { id: id(2) }];
+    expect(scopeToGroup(rows, id(9), { available: false })).toEqual([]);
+    expect(scopeToGroup(rows, id(9), { available: true, value: new Set([id(2)]) })).toEqual([rows[1]]);
+    expect(scopeToGroup(rows, undefined, { available: false })).toEqual(rows);
+  });
+  it("one repeated client id is refused even when the count still adds up", async () => {
+    // count 1 and one distinct id: only the repeat check can refuse this.
+    expect(await readGroupMembers(fake(() => ({ data: [{ client_id: id(2) }, { client_id: id(2) }], count: 1, error: null })).db, id(5), true, id(1))).toEqual({ available: false });
+  });
+  it("a short or changing labels page is never accepted as complete", async () => {
+    const catalogue = { available: true as const, value: [group] };
+    const row = { client_id: id(3), group_id: id(1) };
+    for (const response of [{ data: [row], count: 2, error: null }, { data: [row], count: null, error: null }, { data: [row, { client_id: id(3), group_id: id(1) }], count: 1, error: null }]) {
+      expect(await readClientGroups(fake(() => response).db, id(5), true, [id(3)], catalogue)).toEqual({ available: false });
+    }
+    // a short page that promises more must stop at once, not keep asking
+    const short = fake((_, start) => ({ data: start ? [] : [row], count: 2, error: null }));
+    expect(await readClientGroups(short.db, id(5), true, [id(3)], catalogue)).toEqual({ available: false });
+    expect(short.calls).toHaveLength(1);
+    const full = Array.from({ length: 500 }, (_, n) => ({ client_id: id(3), group_id: id(1000 + n) }));
+    const many = { available: true as const, value: full.map((r) => ({ id: r.group_id, name: "G", updated_at: "2030-01-01T00:00:00Z" })) };
+    // a second page that is short of the promised 501, then one whose count changed
+    expect(await readClientGroups(fake((_, start) => ({ data: start ? [] : full, count: 501, error: null })).db, id(5), true, [id(3)], many)).toEqual({ available: false });
+    expect(await readClientGroups(fake((_, start) => ({ data: start ? [{ client_id: id(3), group_id: id(1000) }] : full, count: start ? 502 : 501, error: null })).db, id(5), true, [id(3)], many)).toEqual({ available: false });
   });
   it("denies nonowners before any read, including catalogue and visible membership", async () => {
     const { db, calls } = fake(() => ({ data: [group], count: 1, error: null }));

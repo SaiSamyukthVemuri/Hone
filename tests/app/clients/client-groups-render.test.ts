@@ -38,5 +38,6 @@ describe("client groups render in existing directory and profile", () => {
     const unavailable = renderToStaticMarkup(createElement(ClientGroupsCard, { clientId: "c1", catalogue: { available: false }, assigned: { available: false } }));
     expect(unavailable).toContain("unavailable"); expect(unavailable).not.toContain("No groups assigned");
     expect(renderToStaticMarkup(createElement(GroupCatalogue, { groups: [] }))).toContain("Create group");
+    expect(renderToStaticMarkup(createElement(GroupCatalogue, { groups: [] }))).toContain("Group names are visible to owners only");
   });
 });

@@ -1484,7 +1484,7 @@ When opening a PR, the report MUST explicitly call out which smoke steps were no
 
 The DB/RLS integration lane (PR #220) removed several items from this list: cross-studio RLS isolation, audit-trail immutability and trigger behavior, the clinical delete posture, the double-booking constraint, and the claim RPCs are now exercised on a real local database in CI instead of requiring manual SQL against production. What the DB lane still cannot verify: production-specific state (data drift, policies edited outside migrations: the prod catalog audit recipe in docs/09 remains the check for that), Stripe/Resend/Twilio behavior, and the browser.
 
-## Custom client groups — qualification pending (HON-14)
+## Custom client groups — checks before it is turned on
 
 Use synthetic data on the owned local stack after the reviewed
 [client-groups proposal](proposals/client-groups/README.md) is installed there.
@@ -1506,6 +1506,8 @@ Use synthetic data on the owned local stack after the reviewed
 9. Check keyboard focus, pending/double-submit prevention, and phone/tablet layout
    with long names. Existing neutral theme and 44px controls remain consistent.
 
-Automated browser journey: `e2e/client-groups.spec.ts`; schema absence causes an
-explicit pending-qualification skip. DB qualification is transaction/rollback only
-in `tests/db/client-groups.db.test.ts`. Neither has been run on a hosted database.
+Automated browser journey: `e2e/client-groups.spec.ts`; when the database support is
+missing it records a skip, which is not a pass. Database checks are in
+`tests/db/client-groups.db.test.ts` (rolled-back transactions) and
+`tests/db/client-groups-applied.db.test.ts` (the support installed for real, then removed).
+Both run on a local test database only.

@@ -1,16 +1,19 @@
-# Custom client groups proposal (HON-14)
+# Custom client groups proposal
 
-Status: application and proposal prepared; **unnumbered and unapplied**. OPS owns
-migration numbering, qualification, production apply and activation. No hosted
-schema, client data, booking eligibility, payments, consent or outbound delivery
-is changed by preparing this proposal.
+Status: the application and this SQL proposal are prepared. The SQL has no migration
+number yet; numbering, the checks below and turning it on are separate steps that need
+approval. Preparing the proposal changes no client data, booking eligibility, payments,
+consent or outbound messages.
 
 ## Data and authority
+
+Group names are visible to owners only. Don't put health details or reasons for treatment in a name.
 
 `client_groups` is a reusable, owner-only studio catalogue (at most 100 names,
 trimmed, 1–60 characters, case-insensitive uniqueness). Stable UUIDs survive
 renames. `client_group_memberships` links one client to any number of groups.
-Composite foreign keys prove both links share the studio. Archiving/restoring a
+Composite foreign keys prove both links share the studio, and they cascade, so
+erasing a client or deleting a studio is never blocked by group data. Archiving/restoring a
 client leaves memberships untouched. Existing clinical `client_tags` are separate
 and remain unchanged and hidden from the main profile.
 
@@ -42,22 +45,24 @@ filters do not reveal existence or fall back to all clients.
 
 ## Qualification and rollout
 
-1. Review exact UP/DOWN SQL and assign the next OPS-controlled migration number
+1. Review exact UP/DOWN SQL and assign the next free migration number
    after reconciling held changes. Do not copy over an existing reservation.
-2. Run `tests/db/client-groups.db.test.ts` with the existing paired local API/SQL
-   guard on an owned isolated stack. Each test installs the proposal when both
-   relations are absent, or exercises the already-installed implementation. It
-   always rolls back fixtures and compares the function/table catalogue; a
-   partially installed schema refuses qualification.
+2. Run `tests/db/client-groups.db.test.ts` and `tests/db/client-groups-applied.db.test.ts`
+   with the existing paired local API/SQL guard on an owned isolated stack. The first
+   installs the proposal inside a transaction when both relations are absent (or uses
+   the installed one), always rolls back, and compares the catalogue. The second installs
+   the proposal for real, checks exact privileges, tenant isolation and concurrent commands
+   on separate connections, then runs `DOWN.sql` and requires the whole catalogue to equal
+   its state before. It refuses a database that already has the groups tables.
 3. Review direct-write/role denials, tenant FKs, duplicate/stale/idempotent results,
    cap and multi-studio owner behavior. Exercise concurrent catalogue creation at
    99 groups and same-pair assign/remove in the qualification slot.
 4. On an owned disposable browser stack, install only the reviewed proposal with
-   operator authority, then run `e2e/client-groups.spec.ts`. The browser spec never
+   local authority, then run `e2e/client-groups.spec.ts`. The browser spec never
    installs DDL and explicitly skips if the proposal is missing. A skip is pending
    qualification, not successful workflow evidence. Use existing local egress guards
    and synthetic fixtures; the normal disposable-stack reset owns cleanup.
-5. Obtain exact-package production authorization before hosted apply. Regenerate
+5. Get explicit approval for the exact package before it is applied to production. Regenerate
    schema snapshot/docs/production record only when promoted to a numbered migration.
 6. Deploy app after qualified DB apply, or safely before it in unavailable mode.
    Verify owner directory/profile/manage flows and nonowner absence, then record
@@ -71,13 +76,12 @@ outcome asks to reload; it never promises that nothing changed. No automatic ret
 Existing logging does not receive names, client ids or SQL errors from this feature.
 
 Prefer app rollback while retaining additive catalogue data. `DOWN.sql` removes
-only the feature functions and tables, **destroying group labels and memberships**;
-use it only with explicit authorization after evidence/export, never as automatic
+only the feature functions and tables, **destroying every group label and every
+membership**; export first, use it only with explicit authorization, never as automatic
 cleanup on production. It does not alter clients or their operational state.
 
 ## Validation status
 
-Pure/session-fake/action/rendered/mounted tests run without a database. Actual DB
-and full browser qualification require the owned local stack and are pending in
-this preparation environment (no PostgreSQL/Docker execution available). No claim
-of live deployment or owner acceptance is made.
+Pure/session-fake/action/rendered/mounted tests run without a database. The database
+and browser checks need an owned local stack. No claim of live use or owner acceptance
+is made.

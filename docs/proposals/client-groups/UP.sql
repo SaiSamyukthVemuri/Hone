@@ -3,7 +3,7 @@ set local lock_timeout = '5s';
 
 create table public.client_groups (
   id uuid primary key default gen_random_uuid(),
-  studio_id uuid not null references public.studios(id),
+  studio_id uuid not null references public.studios(id) on delete cascade,
   name text not null check (name = btrim(name) and char_length(name) between 1 and 60 and name !~ '[[:cntrl:]]'),
   name_key text generated always as (lower(btrim(name))) stored,
   created_at timestamptz not null default now(),
@@ -12,12 +12,12 @@ create table public.client_groups (
   unique (id, studio_id)
 );
 create table public.client_group_memberships (
-  studio_id uuid not null references public.studios(id),
+  studio_id uuid not null references public.studios(id) on delete cascade,
   client_id uuid not null,
   group_id uuid not null,
   created_at timestamptz not null default now(),
   primary key (studio_id, client_id, group_id),
-  foreign key (client_id, studio_id) references public.clients(id, studio_id),
+  foreign key (client_id, studio_id) references public.clients(id, studio_id) on delete cascade,
   foreign key (group_id, studio_id) references public.client_groups(id, studio_id)
 );
 create index client_group_memberships_filter on public.client_group_memberships(studio_id, group_id, client_id);
@@ -32,7 +32,7 @@ grant select (id,studio_id,name,created_at,updated_at) on public.client_groups t
 grant select (studio_id,client_id,group_id,created_at) on public.client_group_memberships to authenticated;
 
 create function public.create_client_group(p_studio_id uuid, p_name text) returns jsonb
-language plpgsql security definer set search_path = pg_catalog, pg_temp as $$
+language plpgsql security definer set search_path = pg_catalog, pg_temp set lock_timeout = '5s' as $$
 declare v_group public.client_groups%rowtype; v_name text := btrim(p_name);
 begin
   if not coalesce(public.is_studio_owner(p_studio_id), false) then return jsonb_build_object('status','denied'); end if;
@@ -47,7 +47,7 @@ begin
 end $$;
 
 create function public.rename_client_group(p_studio_id uuid, p_group_id uuid, p_name text, p_expected_name text, p_expected_updated_at timestamptz) returns jsonb
-language plpgsql security definer set search_path = pg_catalog, pg_temp as $$
+language plpgsql security definer set search_path = pg_catalog, pg_temp set lock_timeout = '5s' as $$
 declare v_group public.client_groups%rowtype; v_name text := btrim(p_name);
 begin
   if not coalesce(public.is_studio_owner(p_studio_id),false) then return jsonb_build_object('status','denied'); end if;
@@ -62,7 +62,7 @@ begin
 end $$;
 
 create function public.set_client_group_membership(p_studio_id uuid, p_client_id uuid, p_group_id uuid, p_assigned boolean) returns jsonb
-language plpgsql security definer set search_path = pg_catalog, pg_temp as $$
+language plpgsql security definer set search_path = pg_catalog, pg_temp set lock_timeout = '5s' as $$
 begin
   if not coalesce(public.is_studio_owner(p_studio_id),false) then return jsonb_build_object('status','denied'); end if;
   if p_assigned is null then return jsonb_build_object('status','invalid'); end if;

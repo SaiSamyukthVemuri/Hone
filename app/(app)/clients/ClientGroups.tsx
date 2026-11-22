@@ -94,7 +94,10 @@ function GroupNameForm({ group }: { group?: ClientGroup }) {
 
 export function GroupCatalogue({ groups }: { groups: ClientGroup[] }) {
   return <div className="flex flex-col gap-6">
-    <section className="rounded-lg border border-neutral-200 p-5"><GroupNameForm /></section>
+    <section className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5">
+      <p className="text-sm text-neutral-600">Group names are visible to owners only. Don&apos;t put health details or reasons for treatment in a name.</p>
+      <GroupNameForm />
+    </section>
     <section className="flex flex-col gap-5 rounded-lg border border-neutral-200 p-5">
       <h2 className="text-lg font-medium">Your groups <span className="text-sm font-normal text-neutral-500">{groups.length} of 100</span></h2>
       {groups.length === 0 ? <p className="text-sm text-neutral-500">No groups yet. Create your first group above.</p> : groups.map((group) => <GroupNameForm key={group.id} group={group} />)}
