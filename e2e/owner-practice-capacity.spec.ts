@@ -284,7 +284,7 @@ async function assertShellAt(
   await expect(sheet, `${at}: the Menu opens`).toBeVisible();
   await expect(mobileWorkingSurfaces(page), `${at}: working surfaces`).toHaveText(
     opts.owner
-      ? ["Dashboard", "Clients", "Calendar", "Records", "Capacity", "Statements"]
+      ? ["Dashboard", "Clients", "Calendar", "Records", "Capacity", "Statements", "Analytics"]
       : ["Dashboard", "Clients", "Calendar", "Records"],
   );
   await expect(
@@ -295,6 +295,9 @@ async function assertShellAt(
     opts.owner ? 1 : 0,
   );
   await expect(sheet.locator('a[href="/financials/statement"]')).toHaveCount(
+    opts.owner ? 1 : 0,
+  );
+  await expect(sheet.locator('a[href="/financials/analytics"]'), `${at}: Analytics is owner-only`).toHaveCount(
     opts.owner ? 1 : 0,
   );
   // The account actions the desktop button would have offered.
@@ -813,17 +816,20 @@ test("an owner's desktop navigation carries the Business menu, once, and it reac
   // CLOSED, the menu offers no link to either owner surface: nothing is hidden-but-present.
   await expect(nav.locator('a[href="/dashboard/capacity"]')).toHaveCount(0);
   await expect(nav.locator('a[href="/financials/statement"]')).toHaveCount(0);
+  await expect(nav.locator('a[href="/financials/analytics"]')).toHaveCount(0);
 
   // THE WHOLE ROW, IN ORDER: the four working-surface links untouched, then the Business button.
   await expect(nav.getByRole("link")).toHaveText(["Dashboard", "Clients", "Calendar", "Records"]);
 
-  // Open it: exactly two items, once each BY DESTINATION as well.
+  // Open it: exactly three items, once each BY DESTINATION as well.
   await business.click();
   await expect(business).toHaveAttribute("aria-expanded", "true");
   const panel = nav.getByRole("group", { name: "Business" });
-  await expect(panel.getByRole("link")).toHaveText(["Capacity", "Statements"]);
+  await expect(panel.getByRole("link")).toHaveText(["Capacity", "Statements", "Analytics"]);
   await expect(nav.locator('a[href="/dashboard/capacity"]')).toHaveCount(1);
   await expect(nav.locator('a[href="/financials/statement"]')).toHaveCount(1);
+  await expect(nav.locator('a[href="/financials/analytics"]')).toHaveCount(1);
+  await expect(panel.getByRole("link", { name: "Analytics", exact: true })).toHaveAttribute("href", "/financials/analytics");
 
   // Escape closes it and puts focus back on the button.
   await page.keyboard.press("Escape");
@@ -1037,6 +1043,10 @@ test("an owner's mobile menu carries the Business group, and tapping an item clo
   await expect(statement).toHaveCount(1);
   await expect(statement).toHaveAttribute("href", "/financials/statement");
   expect((await statement.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  const analytics = nav.getByRole("link", { name: "Analytics", exact: true });
+  await expect(analytics).toHaveCount(1);
+  await expect(analytics).toHaveAttribute("href", "/financials/analytics");
+  expect((await analytics.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   // Bound to the SHEET'S OWN SUBTREE, so the hidden desktop link is not merely
   // out of the a11y tree — it is out of the search scope entirely.
   await expect(nav.locator('a[href="/dashboard/capacity"]')).toHaveCount(1);
@@ -1052,6 +1062,7 @@ test("an owner's mobile menu carries the Business group, and tapping an item clo
     "Records",
     "Capacity",
     "Statements",
+    "Analytics",
   ]);
   await expect(nav.getByRole("link", { name: "Settings" })).toBeVisible();
 

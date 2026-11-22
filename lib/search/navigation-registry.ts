@@ -929,11 +929,11 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
 }> = [
   {
     route: "/financials/analytics",
-    reason: "Owner-only, no navigation link until the layout is accepted and the redaction tests land; it is registered with the navigation change that adds the menu entry.",
+    reason: "Owner-only Analytics is reached from the Business menu. Global Search discovery is outside this menu change.",
   },
   {
     route: "/financials/analytics/clients",
-    reason: "The owner-only Clients tab of Analytics; excluded for the same reason as the Overview (no navigation link until the layout is accepted), and reached only from the Overview tab strip, never searched. It lists clients by name, so it must never become discoverable through Global Search.",
+    reason: "The owner-only Clients tab of Analytics is reached from the Overview tab strip, never searched. It lists clients by name, so it must never become discoverable through Global Search.",
   },
   {
     route: "/financials/analytics/print",
