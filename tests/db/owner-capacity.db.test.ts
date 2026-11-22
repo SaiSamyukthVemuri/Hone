@@ -569,7 +569,7 @@ describe("owner capacity briefing", () => {
     expect(markup).not.toMatch(/nothing\s+(?:booked|on the calendar)/i);
     expect(markup).not.toContain("every future appointment");
     expect(markup).toMatch(/who has no treatment booked/i);
-    expect(markup).toMatch(/Counted across future treatment appointments only/);
+    expect(markup).toMatch(/Counted cumulatively across future treatment appointments only/);
     expect(markup).toMatch(/Consultations do not count/);
     expect(markup).toContain("No treatment booked");
     expect(markup).toContain("1 or more treatments");
