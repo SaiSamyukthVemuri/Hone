@@ -612,7 +612,7 @@ const { removeWaitlistEntryAction } = await import(
  * opens /settings/waitlist.
  */
 const render = async (
-  searchParams: { section?: string | string[]; page?: string | string[]; view?: string | string[] } = {},
+  searchParams: { section?: string | string[]; page?: string | string[]; view?: string | string[]; dpage?: string | string[] } = {},
 ) =>
   renderToStaticMarkup(
     await WaitlistSettingsPage({ searchParams: Promise.resolve(searchParams) }),
@@ -3481,8 +3481,8 @@ describe("people who declined: the summary count and the declined view", () => {
     scenario.rows = [entry({ id: "w1", status: "invited" })];
     scenario.liveInvitations = [{ entry_id: "w1", expires_at: new Date("2026-08-23T08:00:00Z").toISOString() }]; // deadline passed, nothing stamped
     const html = await render({ view: "declined" });
-    expect(html).toContain("expired with no reply");
-    expect(html).toContain("released");
+    expect(html).toContain("“Expired”");
+    expect(html).toContain("“Released — reason not recorded”");
     expect((html.match(/data-testid="declined-row"/g) ?? []).length).toBe(2); // the expired invitation's entry is NOT a row
     expect(html).not.toContain("Jo Smith");
   });
@@ -3522,15 +3522,16 @@ describe("people who declined: the summary count and the declined view", () => {
       followUp.scoped = { i3: { kind: "ok", rows: [fuRow("i3", "e-b", { status: "handled", whyNotWork: null, betterTimes: null, answersErasedAt: "2026-09-01T00:00:00.000Z", closedAt: "2026-08-25T00:00:00.000Z" })] } };
       const html = await withGate({ kind: "ok", rows: [fuRow("i2", "e-a")] }); // the page list has Alex only
       const bo = rowOf(html, "e-b");
-      expect(bo).toContain("Their answers have been removed from view.");
-      expect(bo).not.toContain("No answers on record.");
+      expect(bo).toContain("Answer erased");
+      expect(bo).not.toContain("Answer not collected");
       expect(followUp.scopedCalls).toEqual(["i3"]); // only the person the page list does not cover is asked about
       expect(rowOf(html, "e-a")).toContain("Mornings are hard");
     });
-    it("a person the scoped read finds NO decline follow-up for honestly reads 'No answers on record'", async () => {
+    it("a person the scoped read finds NO decline follow-up for reads 'Answer not collected'", async () => {
       seed();
       const html = await withGate({ kind: "ok", rows: [fuRow("i2", "e-a")] });
-      expect(rowOf(html, "e-b")).toContain("No answers on record.");
+      expect(rowOf(html, "e-b")).toContain("Answer not collected");
+      expect(rowOf(html, "e-b")).not.toContain("Answer erased");
     });
     it("a failed scoped read says the answers could not be loaded, never 'none'", async () => {
       seed();
@@ -3538,7 +3539,7 @@ describe("people who declined: the summary count and the declined view", () => {
       const html = await withGate({ kind: "ok", rows: [fuRow("i2", "e-a")] });
       const bo = rowOf(html, "e-b");
       expect(bo).toContain("We couldn’t load their answers just now.");
-      expect(bo).not.toContain("No answers on record.");
+      expect(bo).not.toContain("Answer not collected");
     });
     it("an unreadable page list does not stop the scoped reads from answering", async () => {
       seed();
@@ -3554,31 +3555,76 @@ describe("people who declined: the summary count and the declined view", () => {
     });
   });
 
-  describe("every per-person read is bounded to the people SHOWN, whatever the total", () => {
-    it("60 people declined, answers gate ON: at most 50 scoped answer reads and at most 50 position counts, and 50 rows", async () => {
+  describe("ALL recorded declines are reachable by paging, and every per-person read is bounded to ONE page", () => {
+    const ids = Array.from({ length: 120 }, (_, i) => `e${String(i).padStart(3, "0")}`);
+    const seed120 = () => {
       scenario.rows = [entry({ id: "w1", status: "waiting" })];
       scenario.count = 1;
-      const ids = Array.from({ length: 60 }, (_, i) => `e${String(i).padStart(2, "0")}`);
-      // Newest first by decline time: e00 is the most recent.
+      // Newest first by decline time: e000 is the most recent.
       scenario.declinedInvitations = ids.map((id, i) => ({ id: `i-${id}`, entry_id: id, declined_at: new Date(Date.UTC(2026, 7, 22, 10, 0, 0) - i * 60_000).toISOString() }));
       scenario.declineEntries = ids.map((id) => ({ id, name: `P ${id}`, status: "waiting", joined_at: "2026-07-01T12:00:00+00:00" }));
+    };
+    const renderGated = async (searchParams: Parameters<typeof render>[0]) => {
       process.env.WAITLIST_DECLINE_ANSWERS = "1";
       followUp.followUps = { kind: "ok", rows: [] };
-      let html = "";
       try {
-        html = await render({ view: "declined" });
+        return await render(searchParams);
       } finally {
         delete process.env.WAITLIST_DECLINE_ANSWERS;
         followUp.followUps = null;
       }
-      expect((html.match(/data-testid="declined-row"/g) ?? []).length).toBe(50);
-      expect(html).toContain("Showing the 50 most recent of 60.");
+    };
+    const rowsIn = (html: string) => [...html.matchAll(/data-entry-id="(e\d+)" data-testid="declined-row"/g)].map((m) => m[1]!);
+    const factIds = () => ((queries.find((q) => q.columns === "id,name,status,joined_at")!.filters.find((f) => f[0] === "in" && f[1] === "id")?.[2] ?? []) as string[]);
+
+    it("page 1 of 120 people: the 50 newest, with a Next link; reads are 50 scoped, 50 positions, 50 facts, 50 contacts", async () => {
+      seed120();
+      const html = await renderGated({ view: "declined" });
+      expect(rowsIn(html)).toEqual(ids.slice(0, 50));
+      expect(html).toContain("Showing 1–50 of 120, newest first. Page 1 of 3.");
+      expect(html).toContain('href="/settings/waitlist?view=declined&amp;dpage=2"');
+      expect(html).not.toContain("declined-prev");
       expect(followUp.scopedCalls.length).toBe(50);
-      expect(new Set(followUp.scopedCalls)).toEqual(new Set(ids.slice(0, 50).map((id) => `i-${id}`))); // the 50 shown, not the 10 oldest
-      const positions = queries.filter((q) => q.table === "new_client_waitlist_entries" && q.filters.some((f) => f[0] === "or"));
-      expect(positions.length).toBe(50);
-      const factsRead = queries.find((q) => q.columns === "id,name,status,joined_at")!;
-      expect(((factsRead.filters.find((f) => f[0] === "in" && f[1] === "id")?.[2] ?? []) as string[]).length).toBe(50);
+      expect(queries.filter((q) => q.table === "new_client_waitlist_entries" && q.filters.some((f) => f[0] === "or")).length).toBe(50);
+      expect(factIds()).toEqual(ids.slice(0, 50));
+      const contactIds = (queries.find((q) => q.columns === "id,email,phone")?.filters.find((f) => f[0] === "in" && f[1] === "id")?.[2] ?? []) as string[];
+      expect(contactIds).toEqual(ids.slice(0, 50)); // contact details are read for this page's people only
+    });
+    it("page 2 shows people 51-100 and page 3 the last 20: every recorded decline is reachable, with each one's date", async () => {
+      seed120();
+      const p2 = await renderGated({ view: "declined", dpage: "2" });
+      expect(rowsIn(p2)).toEqual(ids.slice(50, 100));
+      expect(p2).toContain("Showing 51–100 of 120");
+      expect(p2).toContain('href="/settings/waitlist?view=declined"'); // Previous
+      expect(p2).toContain('href="/settings/waitlist?view=declined&amp;dpage=3"');
+      expect(followUp.scopedCalls.length).toBe(50);
+      expect(new Set(followUp.scopedCalls)).toEqual(new Set(ids.slice(50, 100).map((id) => `i-${id}`))); // THIS page's people only
+      expect(factIds()).toEqual(ids.slice(50, 100));
+      expect(p2).toContain("Declined Aug 22, 2026"); // each row carries its date
+      followUp.scopedCalls = [];
+      const p3 = await renderGated({ view: "declined", dpage: "3" });
+      expect(rowsIn(p3)).toEqual(ids.slice(100));
+      expect(p3).toContain("Showing 101–120 of 120");
+      expect(p3).not.toContain("declined-next");
+      expect(followUp.scopedCalls.length).toBe(20);
+    });
+    it("a page past the end shows the last page, and an unreadable page number shows page 1", async () => {
+      seed120();
+      expect(rowsIn(await renderGated({ view: "declined", dpage: "99" }))).toEqual(ids.slice(100));
+      expect(rowsIn(await renderGated({ view: "declined", dpage: "0" }))).toEqual(ids.slice(0, 50));
+      expect(rowsIn(await renderGated({ view: "declined", dpage: "abc" }))).toEqual(ids.slice(0, 50));
+    });
+    it("no name or contact detail is in any paging address", async () => {
+      seed120();
+      const html = await renderGated({ view: "declined", dpage: "2" });
+      const nav = html.match(/data-testid="declined-pages"[\s\S]*?<\/nav>/)?.[0] ?? "";
+      expect(nav).not.toBe("");
+      for (const m of nav.matchAll(/href="([^"]*)"/g)) expect(m[1]!).toMatch(/^\/settings\/waitlist\?view=declined(&amp;dpage=\d+)?$/);
+    });
+    it("50 or fewer people: no paging controls", async () => {
+      seed();
+      const html = await render({ view: "declined" });
+      expect(html).not.toContain("declined-pages");
     });
   });
 
@@ -3640,7 +3686,7 @@ describe("people who declined: the summary count and the declined view", () => {
   it("with the answers gate off the rows say answers are not collected (not 'none on record')", async () => {
     seed();
     const html = await render({ view: "declined" });
-    expect(html).toContain("not being collected yet");
+    expect(html).toContain("Answer not collected");
   });
 
   it("an unreadable decline read in the view says so, and never 'nobody declined'", async () => {

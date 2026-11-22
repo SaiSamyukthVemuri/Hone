@@ -5,7 +5,9 @@ import {
   answersFor,
   DECLINE_OUTCOME_NOTE,
   declinedAtLabel,
+  declinedPageHref,
   DECLINED_SHOW_MAX,
+  type DeclinedPageWindow,
   type DeclinedPerson,
 } from "@/lib/waitlist/decline-visibility";
 import type { FollowUpList } from "@/lib/waitlist/followups-owner";
@@ -27,9 +29,10 @@ export function DeclinedSection({
   entryFactsUnreadable,
   linkableStatuses,
   entryPages,
+  pageWindow,
   backHref,
 }: {
-  /** Every person who declined, newest first. Only the first DECLINED_SHOW_MAX are listed. */
+  /** The people on THIS page (at most DECLINED_SHOW_MAX), newest decline first. */
   people: readonly DeclinedPerson[];
   /** Null when the decline records could not be read: the section says so, never "nobody declined". */
   total: number | null;
@@ -44,6 +47,8 @@ export function DeclinedSection({
   linkableStatuses: ReadonlySet<string>;
   /** The queue page each entry sits on in its section. An entry absent here has no known page, so no link is offered for it. */
   entryPages: ReadonlyMap<string, number> | null;
+  /** Which page of all the people who declined this is. */
+  pageWindow: DeclinedPageWindow;
   backHref: string;
 }) {
   const shown = people.slice(0, DECLINED_SHOW_MAX);
@@ -81,9 +86,9 @@ export function DeclinedSection({
           {answersOn && followUps?.kind === "ok" && followUps.capped === true ? (
             <p className="text-xs text-neutral-600">Some answers may not be shown: the response list is capped.</p>
           ) : null}
-          {total > shown.length ? (
+          {total > DECLINED_SHOW_MAX ? (
             <p className="text-sm text-neutral-600" data-testid="declined-showing">
-              Showing the {shown.length} most recent of {total}.
+              Showing {pageWindow.from + 1}–{pageWindow.to} of {total}, newest first. Page {pageWindow.page} of {pageWindow.pageCount}.
             </p>
           ) : null}
           <ul className="flex flex-col gap-3" data-testid="declined-list">
@@ -105,15 +110,13 @@ export function DeclinedSection({
                     </dl>
                   ) : (
                     <p className="mt-1 text-neutral-600" data-testid="declined-answers-state" data-state={a.kind}>
-                      {a.kind === "not_collected"
-                        ? "Reasons and preferred times are not being collected yet."
+                      {a.kind === "not_collected" || a.kind === "none_on_record"
+                        ? "Answer not collected"
                         : a.kind === "unreadable"
                           ? "We couldn’t load their answers just now."
                           : a.kind === "may_be_missing"
                             ? "Their answers may not be shown: the list is long."
-                          : a.kind === "erased"
-                            ? "Their answers have been removed from view."
-                            : "No answers on record."}
+                            : "Answer erased"}
                     </p>
                   )}
                   <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
@@ -145,6 +148,20 @@ export function DeclinedSection({
               );
             })}
           </ul>
+          {pageWindow.pageCount > 1 ? (
+            <nav aria-label="Pages of people who declined" className="flex flex-wrap items-center gap-3 text-sm" data-testid="declined-pages">
+              {pageWindow.page > 1 ? (
+                <Link href={declinedPageHref(backHref, pageWindow.page - 1)} rel="prev" className="underline" data-testid="declined-prev">
+                  Previous page
+                </Link>
+              ) : null}
+              {pageWindow.page < pageWindow.pageCount ? (
+                <Link href={declinedPageHref(backHref, pageWindow.page + 1)} rel="next" className="underline" data-testid="declined-next">
+                  Next page
+                </Link>
+              ) : null}
+            </nav>
+          ) : null}
         </>
       )}
     </section>

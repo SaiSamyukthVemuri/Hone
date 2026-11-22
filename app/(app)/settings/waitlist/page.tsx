@@ -63,7 +63,7 @@ import {
 import { recordProspectSmsConsentFormAction } from "./consent-actions";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { expirySummary, rowExpiry, summaryText } from "@/lib/waitlist/invitation-expiry-display";
-import { declinedCount, declinedPeople, declinedSummaryText, DECLINED_SHOW_MAX, DECLINED_VIEW, latestDeclinePerPerson } from "@/lib/waitlist/decline-visibility";
+import { declinedCount, declinedPageWindow, declinedPeople, declinedSummaryText, DECLINED_PAGE_PARAM, DECLINED_VIEW, latestDeclinePerPerson } from "@/lib/waitlist/decline-visibility";
 import { loadDeclinedEntryFacts, loadDeclineRecords, loadEntryQueuePages, loadScopedFollowUps } from "@/lib/waitlist/decline-visibility-read";
 import { DeclinedSection } from "@/components/waitlist/declined-section";
 import { formatLocalDateLabel, localDateString, localLongDate } from "@/lib/booking/tz";
@@ -364,7 +364,7 @@ export default async function WaitlistSettingsPage({
   // an array. Both values are browser-controlled, so the type says so rather
   // than lying about it — and neither reaches a query except through the
   // validation immediately below.
-  searchParams?: Promise<{ section?: string | string[]; page?: string | string[]; fu?: string | string[]; view?: string | string[] }>;
+  searchParams?: Promise<{ section?: string | string[]; page?: string | string[]; fu?: string | string[]; view?: string | string[]; dpage?: string | string[] }>;
 }) {
   const { practitioner, studio } = await requirePractitionerWithStudio();
 
@@ -866,13 +866,16 @@ export default async function WaitlistSettingsPage({
   let declinedContacts: Awaited<ReturnType<typeof loadReplyContacts>> | null = null;
   let declinedScoped: Awaited<ReturnType<typeof loadScopedFollowUps>> | undefined;
   let declinedEntryPages: Map<string, number> | null = null;
+  const allDeclined = declineRecords.kind === "ok" ? latestDeclinePerPerson(declineRecords.rows) : [];
+  const declinedWindow = declinedPageWindow(allDeclined.length, firstParam((params as Record<string, string | string[] | undefined>)[DECLINED_PAGE_PARAM]));
   if (viewDeclined && declineRecords.kind === "ok") {
-    const shownIds = latestDeclinePerPerson(declineRecords.rows).slice(0, DECLINED_SHOW_MAX).map((r) => r.entry_id);
+    // ONE bounded list: the people on THIS page (at most DECLINED_SHOW_MAX of all that declined). The facts, contact, answers and position
+    // reads below all use it, so each costs at most one page whatever the total, and every recorded decline is reachable by paging.
+    const pageRows = allDeclined.slice(declinedWindow.from, declinedWindow.to);
+    const shownIds = pageRows.map((r) => r.entry_id);
     const facts = await loadDeclinedEntryFacts(supabase, studio.id, shownIds);
     declinedFactsUnreadable = facts === null;
-    // ONE bounded list of the people actually shown (never the whole set, which can be 1000): the facts, the answers reads and the position
-    // reads below all use it, so their cost is at most DECLINED_SHOW_MAX each, whatever the total.
-    declinedList = declinedPeople(declineRecords, facts).slice(0, DECLINED_SHOW_MAX);
+    declinedList = declinedPeople({ kind: "ok", rows: pageRows }, facts);
     declinedContacts = await loadReplyContacts(studio.id, shownIds);
     // The page-wide follow-up list leaves out closed follow-ups whose answers were erased or are past retention, so for every shown person it
     // does not already cover, ask the existing command for THAT invitation's follow-ups (any state) before saying anything about answers.
@@ -1160,6 +1163,7 @@ export default async function WaitlistSettingsPage({
           entryFactsUnreadable={declinedFactsUnreadable}
           linkableStatuses={new Set<string>(SECTION_STATUSES)}
           entryPages={declinedEntryPages}
+          pageWindow={declinedWindow}
           backHref={QUEUE_PATH}
         />
       ) : active === 0 ? (

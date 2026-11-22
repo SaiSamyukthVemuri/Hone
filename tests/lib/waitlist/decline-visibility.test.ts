@@ -3,6 +3,9 @@ import {
   answersFor,
   declinedAtLabel,
   declinedCount,
+  declinedPageHref,
+  declinedPageWindow,
+  DECLINE_OUTCOME_NOTE,
   declinedPeople,
   declinedSummaryText,
   latestDeclinePerPerson,
@@ -106,5 +109,33 @@ describe("labels", () => {
     expect(declinedSummaryText(2)).toBe("2 people have declined.");
     expect(declinedSummaryText(0)).toBe("0 people have declined.");
     expect(declinedSummaryText(null)).toContain("couldn’t count");
+  });
+});
+
+describe("declinedPageWindow", () => {
+  it("covers every person exactly once across the pages of 50", () => {
+    expect(declinedPageWindow(0, "1")).toEqual({ page: 1, pageCount: 1, from: 0, to: 0 });
+    expect(declinedPageWindow(50, "1")).toEqual({ page: 1, pageCount: 1, from: 0, to: 50 });
+    expect(declinedPageWindow(51, "2")).toEqual({ page: 2, pageCount: 2, from: 50, to: 51 });
+    expect(declinedPageWindow(120, "2")).toEqual({ page: 2, pageCount: 3, from: 50, to: 100 });
+    expect(declinedPageWindow(120, "3")).toEqual({ page: 3, pageCount: 3, from: 100, to: 120 });
+  });
+  it("an unreadable page is page 1 and one past the end is the last page", () => {
+    for (const bad of [undefined, "", "abc", "0", "-3", "1.5x", null, 7]) expect(declinedPageWindow(120, bad).page).toBe(1);
+    expect(declinedPageWindow(120, "99").page).toBe(3);
+    expect(declinedPageWindow(120, "3abc").page).toBe(3);
+  });
+});
+
+describe("declinedPageHref and the outcome note", () => {
+  it("the address carries the view and a page number only, and page 1 carries none", () => {
+    expect(declinedPageHref("/settings/waitlist", 1)).toBe("/settings/waitlist?view=declined");
+    expect(declinedPageHref("/settings/waitlist", 3)).toBe("/settings/waitlist?view=declined&dpage=3");
+  });
+  it("the note uses the three outcome labels exactly", () => {
+    expect(DECLINE_OUTCOME_NOTE).toContain("“Declined”");
+    expect(DECLINE_OUTCOME_NOTE).toContain("“Expired”");
+    expect(DECLINE_OUTCOME_NOTE).toContain("“Released — reason not recorded”");
+    expect(DECLINE_OUTCOME_NOTE).not.toMatch(/cancel/i);
   });
 });

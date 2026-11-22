@@ -1,4 +1,5 @@
 import type { FollowUpList, FollowUpRow } from "@/lib/waitlist/followups-owner";
+import { OUTCOME_DECLINED_LABEL, OUTCOME_EXPIRED_LABEL, OUTCOME_RELEASED_LABEL } from "@/lib/waitlist/invitation-history";
 
 // DECLINE VISIBILITY. PURE: no I/O, no clock, nothing is sent or written.
 //
@@ -9,7 +10,10 @@ import type { FollowUpList, FollowUpRow } from "@/lib/waitlist/followups-owner";
 // the only source of a decline is `declined_at`.
 
 export const DECLINED_VIEW = "declined";
+/** People per page of the declined view. Every per-person read is bounded to one page. */
 export const DECLINED_SHOW_MAX = 50;
+/** The address parameter for the declined view's page. A number only: no name or contact detail ever goes in an address. */
+export const DECLINED_PAGE_PARAM = "dpage";
 /** The most invitation rows one Data API statement returns (config.toml max_rows). The count is trusted only when the exact count equals the rows returned. */
 export const DECLINE_READ_PAGE = 1000;
 
@@ -114,8 +118,23 @@ export function answersFor(
   return followUps.capped === true ? { kind: "may_be_missing" } : { kind: "none_on_record" };
 }
 
-export const DECLINE_OUTCOME_NOTE =
-  "These people declined the times offered. That is different from an invitation that expired with no reply, and from one that was released (the reason for a release is not recorded). Neither of those appears here.";
+export const DECLINE_OUTCOME_NOTE = `These people declined the times offered (“${OUTCOME_DECLINED_LABEL}”). That is different from an invitation that ended as “${OUTCOME_EXPIRED_LABEL}” and from one shown as “${OUTCOME_RELEASED_LABEL}”. Neither of those appears here.`;
+
+export type DeclinedPageWindow = { page: number; pageCount: number; from: number; to: number };
+
+/** The requested page (1-based; anything unreadable is page 1) clamped to the pages that exist, and the 0-based slice [from, to) it covers. */
+export function declinedPageWindow(total: number, requested: unknown): DeclinedPageWindow {
+  const pageCount = Math.max(1, Math.ceil(total / DECLINED_SHOW_MAX));
+  const n = typeof requested === "string" ? Number.parseInt(requested, 10) : Number.NaN;
+  const page = Number.isFinite(n) && n >= 1 ? Math.min(n, pageCount) : 1;
+  const from = (page - 1) * DECLINED_SHOW_MAX;
+  return { page, pageCount, from, to: Math.min(total, from + DECLINED_SHOW_MAX) };
+}
+
+/** The declined view's address for a page: the view and a page number only. */
+export function declinedPageHref(base: string, page: number): string {
+  return page <= 1 ? `${base}?view=${DECLINED_VIEW}` : `${base}?view=${DECLINED_VIEW}&${DECLINED_PAGE_PARAM}=${page}`;
+}
 
 export function declinedSummaryText(count: number | null): string {
   if (count === null) return "People who declined: we couldn’t count them just now.";
