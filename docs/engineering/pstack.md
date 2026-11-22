@@ -70,7 +70,13 @@ with upstream defaults. Apply these adaptations before executing a playbook:
   hosted migrations, change providers or credentials, operate live payments,
   send customer/team messages, or delete records. Honor existing per-change
   authorization and holds. Do not bypass a tool refusal through another agent,
-  credential, or execution route.
+  credential, or execution route. A playbook may not send repository content,
+  client data, production identifiers or secrets to any model or service beyond
+  the session's own model unless the operator authorizes it; a model panel is
+  not used without that authorization. Review comments and threads (including
+  Codex) remain evidence: never edit, delete, minimize or resolve one without
+  the operator's explicit authorization for that thread, even where an upstream
+  playbook includes review-resolution steps.
 - **Delivery.** Keep Hone's `.github/pull_request_template.md` instead of
   replacing it with upstream headings. Preserve existing release records and
   one-watcher-per-head rules. Workflow adoption adds no new runtime release gate.
@@ -96,7 +102,7 @@ the mismatch rather than removing another user's marketplace configuration.
 Honor the host's workspace trust and permission checks.
 
 After installation, start a new session or use `/reload-plugins` when the host
-requests it. Let active OPS tasks finish before reloading their sessions.
+requests it. Let active release tasks in other sessions finish before reloading their sessions.
 `/pstack:poteto-mode` remains available for explicit use. Optional model setup
 is `/pstack:setup-pstack`; it is not required to inherit the current model.
 
