@@ -131,11 +131,10 @@ begin
       raise exception 'clients: SMS consent evidence is write-once; fresh consent may replace it only for a different number' using errcode = 'check_violation';
     end if;
     new.sms_consent_phone := public.sms_normalized_phone(new.phone);
-    -- The wording version belongs to the NEW consent: it is the one supplied with the replacement, and is NULL when none (or the old one) was
-    -- supplied, so a replacement never carries the previous consent's wording version.
-    if new.sms_consent_text_version is not distinct from old.sms_consent_text_version then
-      new.sms_consent_text_version := null;
-    end if;
+    -- The wording version belongs to the NEW consent. It is never read from the column (an update cannot say whether the column was supplied or
+    -- merely left as it was): the replacement function sets a transaction-local setting in the same transaction, and a replacement made any other
+    -- way has none, so its version is NULL. Never the previous consent's version.
+    new.sms_consent_text_version := nullif(pg_catalog.current_setting('hone.sms_consent_version', true), '');
     return new;
   end if;
   if new.sms_consent_text_version is distinct from old.sms_consent_text_version then
@@ -340,6 +339,32 @@ create trigger clients_sms_consent_event_writer after insert or update of sms_co
   for each row execute function public.clients_sms_consent_event_writer();
 revoke all privileges on function public.client_sms_consent_events_guard() from public, anon, authenticated, service_role;
 revoke all privileges on function public.clients_sms_consent_event_writer() from public, anon, authenticated, service_role;
+
+-- (c) The one way a fresh consent for a changed number is recorded. It carries the wording version into the same transaction as the update, so the
+-- version is unambiguous (v2 replacing v2 stays v2). SECURITY INVOKER: it runs as the caller, so the binding trigger and the permission guard
+-- apply unchanged. Only service_role may call it. Returns true when a consent was replaced; false when no row matched (the bound number is
+-- no longer the one expected, a STOP exists, or the client is gone), in which case nothing was written.
+create or replace function public.replace_client_sms_consent(p_client_id uuid, p_bound_phone text, p_consent_at timestamptz, p_text_version text)
+returns boolean
+language plpgsql
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_rows integer;
+begin
+  perform pg_catalog.set_config('hone.sms_consent_version', coalesce(p_text_version, ''), true);
+  update public.clients
+     set sms_consent_at = p_consent_at, sms_consent_source = 'public_booking'
+   where id = p_client_id
+     and sms_consent_phone = p_bound_phone
+     and sms_opted_out_at is null;
+  get diagnostics v_rows = row_count;
+  perform pg_catalog.set_config('hone.sms_consent_version', '', true);
+  return v_rows = 1;
+end;
+$$;
+revoke all privileges on function public.replace_client_sms_consent(uuid, text, timestamptz, text) from public, anon, authenticated, service_role;
+grant execute on function public.replace_client_sms_consent(uuid, text, timestamptz, text) to service_role;
 
 -- ---------------------------------------------------------------------------
 -- 2. The spend-time gate (selection side). A bound consent whose number no longer matches the number on the client is not selected. A

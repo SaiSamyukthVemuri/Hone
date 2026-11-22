@@ -83,12 +83,27 @@ describe("the fresh-consent stamp is a compare-and-set on the bound number", () 
     expect(r.calls).toContain("is:sms_consent_at,null");
     expect(r.calls.some((c) => c.startsWith("eq:sms_consent_phone"))).toBe(false);
   });
-  it("a replacement is matched on the number the old consent is bound to, and still requires no opt-out", async () => {
-    const r = recorder();
-    expect((await stampPublicBookingConsent(r.admin, "c1", "T", "+14165550100")).result).toBe("stamped");
-    expect(r.calls).toContain("eq:sms_consent_phone,+14165550100");
-    expect(r.calls).toContain("is:sms_opted_out_at,null");
-    expect(r.calls).not.toContain("is:sms_consent_at,null");
+  it("a replacement goes through the replacement function with the bound number and the wording version, never a plain update", async () => {
+    const calls: { fn: string; args: Record<string, unknown> }[] = [];
+    const admin = {
+      rpc: (fn: string, args: Record<string, unknown>) => {
+        calls.push({ fn, args });
+        return Promise.resolve({ data: true, error: null });
+      },
+      from: () => {
+        throw new Error("a replacement must not write the table directly");
+      },
+    };
+    const r = await stampPublicBookingConsent(admin as never, "c1", "T", "+14165550100", "booking_sms_v2");
+    expect(r.result).toBe("stamped");
+    expect(calls).toEqual([{ fn: "replace_client_sms_consent", args: { p_client_id: "c1", p_bound_phone: "+14165550100", p_consent_at: "T", p_text_version: "booking_sms_v2" } }]);
+  });
+  it("no row replaced (false) falls through to adopting what is on record", async () => {
+    const admin = {
+      rpc: () => Promise.resolve({ data: false, error: null }),
+      from: () => ({ select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: { sms_consent_at: "X", sms_opted_out_at: null }, error: null }) }) }) }),
+    };
+    expect(await stampPublicBookingConsent(admin as never, "c1", "T", "+14165550100")).toEqual({ result: "already_recorded", smsConsentAt: "X", smsOptedOutAt: null });
   });
 });
 

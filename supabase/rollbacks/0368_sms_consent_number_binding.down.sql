@@ -126,6 +126,7 @@ begin
     raise exception 'refusing: the restored view column list is not the expected one' using errcode = 'check_violation';
   end if;
 end $$;
+drop function if exists public.replace_client_sms_consent(uuid, text, timestamptz, text);
 drop trigger if exists clients_sms_consent_event_writer on public.clients;
 drop function if exists public.clients_sms_consent_event_writer();
 drop table if exists public.client_sms_consent_events;

@@ -3,7 +3,7 @@
   "migrations": {
     "count": 279,
     "last": "0368_sms_consent_number_binding.sql",
-    "sha256": "61bc836d80b3c0801b855d6441b4a5ad54502569cd6e1146f75b780088569565"
+    "sha256": "feed7dea50abb80d03d5ba584620555160db684ad07ccaebad96ede11151915b"
   },
   "public": {
     "tables": [
@@ -507,6 +507,7 @@
       "reorder_studio_service",
       "repair_bump_appointment_sync_version",
       "repair_enqueue_orphan_link_delete",
+      "replace_client_sms_consent",
       "replace_waitlist_invitation",
       "report_delivery_concern",
       "request_waitlist_withdrawal",

@@ -219,6 +219,8 @@ const events = async (id: string) =>
     v: string | null;
   }[];
 const later = "now() + interval '1 second'";
+const replaceVia = async (id: string, bound: string, version: string | null, at = later) =>
+  (await asService(`select public.replace_client_sms_consent($1, $2, ${at}, $3) as ok`, [id, bound, version])).rows[0].ok as boolean;
 
 describe("every consent is kept in an append-only record", () => {
   it("a consent recorded at insert writes one event with the number fingerprint and the wording version", async () => {
@@ -258,22 +260,46 @@ describe("fresh consent for the number now on file replaces the old consent and 
     const id = await client("+14165550132", true);
     await asUser(A.userId, (q) => q(`update public.clients set phone = '+14165550133' where id = $1`, [id]));
     expect((await ev(id)).p).toBe("+14165550132");
-    await asService(`update public.clients set sms_consent_at = ${later}, sms_consent_source = 'public_booking', sms_consent_text_version = 'booking_sms_v1' where id = $1`, [id]);
+    expect(await replaceVia(id, "+14165550132", "booking_sms_v1")).toBe(true);
     const e = await ev(id);
     expect([e.p, e.v]).toEqual(["+14165550133", "booking_sms_v1"]);
     const rows = await events(id);
     expect(rows.map((r) => r.kind)).toEqual(["recorded", "recorded"]);
     expect(rows.map((r) => r.ch)).toEqual([false, true]);
   });
-  it("a replacement carries the wording version supplied with it, and NULL when none is supplied (never the previous one)", async () => {
+  it("the wording version of a replacement is the one supplied with it: v2 over v2 stays v2, none supplied gives NULL, null over v2 gives v2", async () => {
+    const mk = async (phone: string, version: string | null) => {
+      const id = randomUUID();
+      await asService(`insert into public.clients (id, studio_id, name, phone, sms_consent_at, sms_consent_source, sms_consent_text_version) values ($1,$2,'tv',$3,now(),'public_booking',$4)`, [id, A.studioId, phone, version]);
+      await asUser(A.userId, (q) => q(`update public.clients set phone = $2 where id = $1`, [id, phone.replace(/.$/, "9")]));
+      return id;
+    };
+    const same = await mk("+14165550160", "booking_sms_v2");
+    expect(await replaceVia(same, "+14165550160", "booking_sms_v2")).toBe(true);
+    expect((await ev(same)).v).toBe("booking_sms_v2");
+    const none = await mk("+14165550161", "booking_sms_v2");
+    expect(await replaceVia(none, "+14165550161", null)).toBe(true);
+    expect((await ev(none)).v).toBeNull();
+    const fromNull = await mk("+14165550162", null);
+    expect(await replaceVia(fromNull, "+14165550162", "booking_sms_v2")).toBe(true);
+    expect((await ev(fromNull)).v).toBe("booking_sms_v2");
+    expect((await events(same)).map((r) => r.v)).toEqual(["booking_sms_v2", "booking_sms_v2"]);
+  });
+  it("a replacement made by a plain update, even one that names a version, records no version (the function is the only carrier)", async () => {
     const id = randomUUID();
-    await asService(`insert into public.clients (id, studio_id, name, phone, sms_consent_at, sms_consent_source, sms_consent_text_version) values ($1,$2,'tv','+14165550151',now(),'public_booking','booking_sms_v1')`, [id, A.studioId]);
-    await asUser(A.userId, (q) => q(`update public.clients set phone = '+14165550152' where id = $1`, [id]));
-    await asService(`update public.clients set sms_consent_at = ${later}, sms_consent_source = 'public_booking' where id = $1`, [id]);
+    await asService(`insert into public.clients (id, studio_id, name, phone, sms_consent_at, sms_consent_source, sms_consent_text_version) values ($1,$2,'raw','+14165550163',now(),'public_booking','booking_sms_v1')`, [id, A.studioId]);
+    await asUser(A.userId, (q) => q(`update public.clients set phone = '+14165550164' where id = $1`, [id]));
+    await asService(`update public.clients set sms_consent_at = ${later}, sms_consent_source = 'public_booking', sms_consent_text_version = 'booking_sms_v9' where id = $1`, [id]);
     expect((await ev(id)).v).toBeNull();
-    await asUser(A.userId, (q) => q(`update public.clients set phone = '+14165550153' where id = $1`, [id]));
-    await asService(`update public.clients set sms_consent_at = now() + interval '2 seconds', sms_consent_source = 'public_booking', sms_consent_text_version = 'booking_sms_v2' where id = $1`, [id]);
-    expect((await ev(id)).v).toBe("booking_sms_v2");
+  });
+  it("the replacement function matches on the bound number and refuses for a STOP, and no API role can call it", async () => {
+    const id = await client("+14165550165", true);
+    await asUser(A.userId, (q) => q(`update public.clients set phone = '+14165550166' where id = $1`, [id]));
+    expect(await replaceVia(id, "+14165550999", "booking_sms_v1")).toBe(false);
+    await expect(asUser(A.userId, (q) => q(`select public.replace_client_sms_consent($1, '+14165550165', now(), null)`, [id]))).rejects.toMatchObject(DENIED);
+    await asService(`update public.clients set sms_opted_out_at = now(), sms_opt_out_source = 'twilio_stop' where id = $1`, [id]);
+    expect(await replaceVia(id, "+14165550165", "booking_sms_v1")).toBe(false);
+    expect((await ev(id)).p).toBe("+14165550165");
   });
   it("a LEGACY consent that was edited, then replaced, keeps a snapshot of the consent it replaced", async () => {
     const id = await legacy("+14165550134");
