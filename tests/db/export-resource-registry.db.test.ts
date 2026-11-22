@@ -922,7 +922,8 @@ describe("what is excluded, and on what grounds", () => {
       // attention list. View state, not studio content; every reminder it hides is recomputed from records that ARE exported.
       // 8 -> 10 derived: waitlist_followups and waitlist_decline_owner_emails (0325, HON-7), the owner's follow-up queue and its
       // delivery ledger. Operational; the client's own answers are exported through export_waitlist_decline_answers.
-      derived: 10,
+      // 10 -> 11 derived: practitioner_access_events (0370), the staff access audit (who restored whom, and when): no client content, no page yet.
+      derived: 11,
       // 2 -> 3 deliberate_privacy: waitlist_erase_records (0325), ids and dates only, kept 30 days.
       deliberate_privacy: 3,
     });
