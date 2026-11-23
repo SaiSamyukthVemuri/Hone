@@ -1085,7 +1085,7 @@ describe("PR CI — path-aware lane selection", () => {
     // this red rather than silently reinstating the cancellation.
     expect(budget("db-integration")).toBeGreaterThan(12);
     expect(budget("db-integration")).toBeLessThanOrEqual(20);
-    // payment-browser-e2e: TARGET ~10 min, HARD TIMEOUT 18. It carried a single
+    // payment-browser-e2e: TARGET ~10 min, HARD TIMEOUT 23 (was 18). It carried a single
     // 10 that served as both, which is precisely the shape the comment below
     // warns about. F-PAY-002 measured the lane at 9.6-10.4 min locally across
     // repeated runs of 57 serial specs — i.e. the ceiling and the observed run
@@ -1118,7 +1118,7 @@ describe("PR CI — path-aware lane selection", () => {
     // 12 -> 15 (2026-10-23): ~5.8 min measured p90 + the bounded install step
     // (6 min ceiling) + margin must fit. TARGET stays ~6 min (CLAUDE.md section 4).
     expect(budget("mobile-completion-e2e")).toBe(15);
-    // Targeted hard timeout 15, measured extended hard timeout 25 — both above
+    // Targeted hard timeout 15, measured extended hard timeout 35 (was 25) — both above
     // their <10 min targets. Parsed, not line-matched, so reformatting the
     // workflow cannot silently break this guard.
     //

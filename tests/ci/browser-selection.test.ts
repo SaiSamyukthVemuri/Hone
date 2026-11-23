@@ -335,7 +335,7 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
   it("a full-matrix diff with NO browser groups is planned as the EXTENDED lane", () => {
     // `vitest.config.ts` yields no groups, so `browser_specs` is empty and the
     // shard command runs the WHOLE suite. The workflow treats that as extended
-    // coverage — 4 shards, 18 min — and this planner has to agree, or it tells
+    // coverage — 4 shards, 35 min — and this planner has to agree, or it tells
     // a contributor the targeted lane runs when CI runs the other one.
     const p = plan("vitest.config.ts");
     expect(p.full_matrix_required).toBe(true);

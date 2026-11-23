@@ -220,7 +220,7 @@ jobs:
               // This job is gated on `browser_run || full_matrix_required`, so
               // reaching it with NO groups can only mean the second: the whole
               // suite, unselected. That is extended coverage by definition, and
-              // it must be treated as such -- 4 shards and the 18 min ceiling.
+              // it must be treated as such -- 4 shards and the 35 min ceiling.
               // Before this line it fell through the targeted branch and ran the
               // entire suite split across the TARGETED shard count under the
               // TARGETED 15 min cap, which is strictly less time and fewer

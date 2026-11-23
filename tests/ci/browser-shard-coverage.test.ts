@@ -214,7 +214,7 @@ describe("the step that emits the matrix actually RUNS", () => {
     //
     // Before this was fixed the whole suite ran under the TARGETED shard count
     // and the TARGETED 15 min ceiling, while the identical workload gets 4
-    // shards and 18 min when it is named extended: fewer runners and less time
+    // shards and 35 min when it is named extended: fewer runners and less time
     // for strictly more work. Both shards would be cut at the cap and the
     // required check fails closed behind them.
     const script = stepScript("Select browser groups");

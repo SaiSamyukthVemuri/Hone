@@ -75,7 +75,7 @@ jobs:
             timeout: 30
           # Browser ceilings are FAILURE CEILINGS sized to setup plus tests, not
           # targets. Each shard runs the same quarter of the full suite as ci.yml's
-          # extended shard; payment matches ci.yml's 18.
+          # extended shard; payment matches ci.yml's 23.
           # CORE SHARDS 25 -> 35 and PAYMENT 18 -> 23 (2026-11-23). ci.yml's extended
           # shards have a 35 min ceiling because they also run the native 3G proof;
           # these four do not, but their quarter-suite work is the same and nightly
