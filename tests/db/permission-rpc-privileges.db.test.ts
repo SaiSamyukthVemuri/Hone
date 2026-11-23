@@ -1,7 +1,12 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { RPC_NAMES, RPC_PRIVILEGES } from "../security/permission-coverage.registry";
+import { rpcPrivilegeDrift } from "../security/rpc-privilege-drift";
 import { adminQuery, closePool } from "./helpers/harness";
 
+// The permission engine function is absent on a database built from the repository migrations alone (local and CI
+// stacks): it is then asserted absent and only that row is exempt (tests/security/rpc-privilege-drift.ts). Every other
+// command is always compared.
+//
 // Reads the REAL execute privileges of every database command the app calls by name, from a migrated database, and
 // requires them to equal what permission-coverage.registry.ts records. A grant that widens (an `anon` or `authenticated`
 // letter appearing) fails here and is reviewed. Local database only, read only.
@@ -27,7 +32,7 @@ describe("database commands the app calls: who can run them", () => {
       [RPC_NAMES],
     );
     const live = Object.fromEntries(rows.map((r: { name: string; grants: string }) => [r.name, r.grants]));
-    const drift = RPC_NAMES.filter((n) => live[n] !== RPC_PRIVILEGES[n]).map((n) => `${n}: recorded ${RPC_PRIVILEGES[n]}, database ${live[n]}`);
+    const drift = rpcPrivilegeDrift(RPC_NAMES, live, RPC_PRIVILEGES);
     expect(drift).toEqual([]);
   });
 
