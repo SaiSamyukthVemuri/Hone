@@ -52,7 +52,7 @@ describe("app shell: responsive navigation", () => {
     // account button's 12ch cap. At md that overflowed the page by up to 145px.
     const MENU = read("app/(app)/MobileMenu.tsx");
     expect(LAYOUT).toMatch(/className="hidden items-center gap-0\.5[^"]*lg:flex/); // primary nav
-    expect(LAYOUT).toMatch(/className="hidden items-center gap-3 lg:flex"/); // desktop controls
+    expect(LAYOUT).toMatch(/className="hidden min-w-0 items-center gap-3 lg:flex"/); // desktop controls
     expect(LAYOUT).toMatch(/className="flex items-center gap-1\.5 lg:hidden"/); // compact controls
     expect(MENU).toMatch(/className="relative lg:hidden"/); // MobileMenu root
 

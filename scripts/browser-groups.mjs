@@ -463,6 +463,9 @@ export const BROWSER_GROUPS = {
     description: "cross-cutting responsive behaviour",
     specs: [
       "mobile-ux.spec.ts",
+      // The desktop header cluster fits at every width from 1024 up for the widest case (owner, Waitlist link,
+      // a name that fills the 12ch cap): no sideways page scroll, account button never clipped.
+      "header-cluster-fit.spec.ts",
       // SIGNOUT-01: the authenticated Sign out path on BOTH shells, proved by
       // real session destruction in auth.sessions rather than by a pathname.
       //
