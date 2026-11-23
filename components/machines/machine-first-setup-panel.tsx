@@ -242,6 +242,10 @@ export type MachineFirstSetupPanelProps = {
    * settings returns to the existing workflow. Null means nothing about the xCell choice changes.
    */
   multiplexRoute?: { deviceId: string; modeKey: string } | null;
+  /** Why MultiPlex is refused for this studio (every xCell unit retired), in plain words, or null. Shown under the machine choice; nothing is created. */
+  multiplexRefusal?: string | null;
+  /** The owner's switch is on and the studio has no unit yet: the database command creates it at the first successful MultiPlex save. Carried through for the screens that will say so; this form creates nothing and shows nothing for it. */
+  multiplexCreateAtFirstSave?: boolean;
   /**
    * The host form's MULTIPLEX pick in its ONE Mode control (there is no second selector here). Each pick bumps `seq`: `want` true
    * binds this NEW area to the routed unit, false returns it to the existing xCell workflow. Acted on only when the sequence changes.
@@ -368,6 +372,7 @@ function MachineFirstSetupPanelImpl({
   onSelectMachine,
   legacyMachine = null,
   multiplexRoute = null,
+  multiplexRefusal = null,
   multiplexRequest = null,
   initialLegacyChosen = false,
   nativeLocked = false,
@@ -834,6 +839,11 @@ function MachineFirstSetupPanelImpl({
             )}
           </select>
         </FieldLabel>
+      )}
+      {multiplexRefusal && legacyMachine !== null && (
+        <p role="note" data-testid="xcell-multiplex-refusal" className="mt-1 text-sm text-[var(--color-muted)]">
+          {multiplexRefusal}
+        </p>
       )}
       {scope && rolloutNotice && selectable.length > 0 && (
         <p className="text-sm text-amber-800 dark:text-amber-300" role="status" data-testid="machine-rollout-unavailable">

@@ -686,6 +686,8 @@ export function MachineFirstSetupConnected({
       // area was saved as it.
       legacyMachine={ctx.legacyMachine}
       multiplexRoute={ctx.multiplexRoute}
+      multiplexRefusal={ctx.multiplexRefusal}
+      multiplexCreateAtFirstSave={ctx.multiplexCreateAtFirstSave}
       multiplexRequest={multiplexRequest}
       nativeLocked={Boolean(blockId) && legacyReadingsLocked}
       // THE SAVED UNIT, from the area's own record: not from the panel's current pick, which can be a remembered

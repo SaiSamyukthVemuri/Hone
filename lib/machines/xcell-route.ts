@@ -1,6 +1,7 @@
 import { currentProfile, type MachineProfile } from "./profile-contract";
 import { XCELL_PUR_PROFILE_ID } from "./xcell-pur";
 import type { StudioDevice } from "./selection";
+import type { XcellModelSwitch } from "./xcell-switch-seam";
 
 /**
  * ONE xCell CHOICE, TWO WAYS TO STORE IT (HON-71).
@@ -38,4 +39,86 @@ export function xcellMultiplexRoute(input: {
     .filter((d) => d.profileId === profile.profileId && d.profileVersion === profile.version && d.retiredAt === null)
     .sort((a, b) => a.deviceId.localeCompare(b.deviceId))[0];
   return unit ? { deviceId: unit.deviceId, modeKey: XCELL_MULTIPLEX_MODE_KEY } : null;
+}
+
+/** Shown when every xCell unit the studio ever had is retired. A retired unit is never recreated by a save. */
+export const XCELL_MULTIPLEX_RETIRED_MESSAGE = "The studio's xCell has been retired, so MultiPlex cannot be used. Ask the studio owner to add the xCell again in Settings.";
+
+/**
+ * MULTIPLEX FOLLOWS THE OWNER'S SWITCH (a product decision). The studio's old xCell history is not an input: the owner enabling the
+ * model is. This decides only what the picker and the save should do; the unit record itself is created by the database command, once, inside
+ * the first successful MultiPlex save.
+ *  - not enabled, or the layout is not published (or its read failed), or the profile or mode is not active: not offered (null);
+ *  - a live unit of this model and version exists: use it (the client's last-used live unit, else the lowest id);
+ *  - no unit was ever registered: offered, and the unit is created at the first save;
+ *  - units exist but every one is retired: refused. A retired unit is never silently recreated.
+ */
+export type XcellMultiplexSwitchRoute =
+  | { kind: "use-unit"; deviceId: string; modeKey: "multiplex" }
+  | { kind: "create-at-first-save"; modeKey: "multiplex" }
+  | { kind: "refused"; reason: "retired" };
+
+export function xcellMultiplexSwitchRoute(input: {
+  modelEnabled: boolean;
+  catalogue: readonly MachineProfile[];
+  devices: readonly StudioDevice[];
+  /** Mode keys published for the profile's CURRENT version, or null when the read failed (then nothing is offered). */
+  publishedModes: readonly string[] | null;
+  /** The client's last-used unit id, or null. Honoured only when it is a live unit of this model. */
+  clientLastUnitId: string | null;
+}): XcellMultiplexSwitchRoute | null {
+  if (!input.modelEnabled || input.publishedModes === null) return null;
+  const profile = currentProfile(input.catalogue, XCELL_PUR_PROFILE_ID);
+  if (!profile || profile.availability !== "active") return null;
+  if (!profile.modes.some((m) => m.key === XCELL_MULTIPLEX_MODE_KEY && m.availability === "active")) return null;
+  if (!input.publishedModes.includes(XCELL_MULTIPLEX_MODE_KEY)) return null;
+  const ofModel = input.devices.filter((d) => d.profileId === profile.profileId && d.profileVersion === profile.version);
+  const live = ofModel.filter((d) => d.retiredAt === null).sort((a, b) => a.deviceId.localeCompare(b.deviceId));
+  if (live.length > 0) {
+    const last = input.clientLastUnitId ? live.find((d) => d.deviceId === input.clientLastUnitId) : undefined;
+    return { kind: "use-unit", deviceId: (last ?? live[0]).deviceId, modeKey: XCELL_MULTIPLEX_MODE_KEY };
+  }
+  if (ofModel.length > 0) return { kind: "refused", reason: "retired" };
+  return { kind: "create-at-first-save", modeKey: XCELL_MULTIPLEX_MODE_KEY };
+}
+
+export type XcellMultiplexOffer = {
+  /** The unit to route MultiPlex through, or null. */
+  route: XcellMultiplexRoute | null;
+  /** The switch is on and the studio has never had a unit: the database command will create it at the first successful MultiPlex save. App code creates nothing. */
+  createAtFirstSave: boolean;
+  /** Set when every unit is retired: shown to the practitioner. */
+  refusal: string | null;
+  /** The owner's switch, not old history, is what offers the xCell choice. */
+  legacyOfferedBySwitch: boolean;
+};
+
+/**
+ * THE PICKER'S ONE DECISION. While the owner's switch is unavailable the answer is exactly the old history route (no behaviour change). Once
+ * it is available the switch decides and old history is not read.
+ */
+export function resolveXcellMultiplexOffer(input: {
+  switchState: XcellModelSwitch;
+  legacyOffered: boolean;
+  catalogue: readonly MachineProfile[];
+  devices: readonly StudioDevice[];
+  publishedModes: readonly string[] | null;
+  clientLastUnitId: string | null;
+}): XcellMultiplexOffer {
+  if (!input.switchState.available) {
+    const route = xcellMultiplexRoute({ legacyOffered: input.legacyOffered, catalogue: input.catalogue, devices: input.devices, publishedModes: input.publishedModes });
+    return { route, createAtFirstSave: false, refusal: null, legacyOfferedBySwitch: false };
+  }
+  if (!input.switchState.enabled) return { route: null, createAtFirstSave: false, refusal: null, legacyOfferedBySwitch: false };
+  const r = xcellMultiplexSwitchRoute({
+    modelEnabled: true,
+    catalogue: input.catalogue,
+    devices: input.devices,
+    publishedModes: input.publishedModes,
+    clientLastUnitId: input.clientLastUnitId,
+  });
+  if (r === null) return { route: null, createAtFirstSave: false, refusal: null, legacyOfferedBySwitch: true };
+  if (r.kind === "use-unit") return { route: { deviceId: r.deviceId, modeKey: r.modeKey }, createAtFirstSave: false, refusal: null, legacyOfferedBySwitch: true };
+  if (r.kind === "refused") return { route: null, createAtFirstSave: false, refusal: XCELL_MULTIPLEX_RETIRED_MESSAGE, legacyOfferedBySwitch: true };
+  return { route: null, createAtFirstSave: true, refusal: null, legacyOfferedBySwitch: true };
 }
