@@ -87,10 +87,14 @@ async function dbWeekAndDay(u: User): Promise<{ week: number; day: number }> {
   return r;
 }
 
+const APPT_CHIP = 'span[title]:has([data-testid="month-chip-swatch"])';
+
 async function monthCellTotal(page: Page, day: string): Promise<number> {
   const cell = page.locator(`a[href*="day=${day}"]`).first();
   await expect(cell).toBeVisible({ timeout: 20_000 });
-  const chips = await cell.locator("span[title]").count();
+  // An appointment chip carries its practitioner's swatch. A block is drawn as a titled chip too (MEASURED, first runs), so counting every
+  // titled chip would count cy's lunch block in everyone's cell.
+  const chips = await cell.locator(APPT_CHIP).count();
   const more = (await cell.innerText()).match(/\+(\d+)\s+more/i);
   return chips + Number(more?.[1] ?? 0);
 }
@@ -130,6 +134,10 @@ for (const key of Object.keys(COUNTS)) {
 
     await page.goto(monthUrl(t.day, [u.practitionerId]));
     expect(await monthCellTotal(page, t.day), `${key}: the Month day cell accounts for every one of their bookings that day`).toBe(db.day);
+    await expect(
+      page.locator(`a[href*="day=${t.day}"]`).first().locator(`span[title="Lunch · Only ${cy.name}"]`),
+      `${key}: Month draws the lunch block once, naming cy`,
+    ).toHaveCount(1);
   });
 }
 
@@ -139,7 +147,7 @@ test("the crowded day (ed, five back to back) is readable in Month: three chips 
   await page.goto(monthUrl(t.day, [ed.practitionerId]));
   const cell = page.locator(`a[href*="day=${t.day}"]`).first();
   await expect(cell).toBeVisible({ timeout: 20_000 });
-  expect(await cell.locator("span[title]").count()).toBe(3);
+  expect(await cell.locator(APPT_CHIP).count()).toBe(3);
   await expect(cell).toContainText("+2 more");
 });
 
