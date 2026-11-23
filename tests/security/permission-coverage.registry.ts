@@ -448,6 +448,9 @@ export const PATH_DECISIONS: Readonly<Record<string, Readonly<Record<string, str
   "app/api/google-calendar/oauth/callback/route.ts": {
     GET: "not_staff(oauth)+admin",
   },
+  "app/api/notifications/summary/route.ts": {
+    GET: "staff",
+  },
   "app/api/stripe/webhook/route.ts": {
     POST: "not_staff(webhook)+admin",
   },
