@@ -1,0 +1,1 @@
+{"pr":1718,"runtime":true,"migrations":["supabase/migrations/0368_sms_consent_number_binding.sql"],"release_receipt":"01-ops/1718-release-receipt.json"}
