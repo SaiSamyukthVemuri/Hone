@@ -1,3 +1,4 @@
+import { WAITLIST_PATH } from "@/lib/waitlist/paths";
 import { PendingLink } from "@/components/pending-link";
 import { PrimaryNavLink } from "./PrimaryNavLink";
 import { AppMain } from "./AppMain";
@@ -168,7 +169,7 @@ export default async function AppLayout({
               </PrimaryNavLink>
               {showWaitlist && (
                 <PrimaryNavLink
-                  href="/settings/waitlist"
+                  href={WAITLIST_PATH}
                   match="section"
                   testId="nav-waitlist"
                   pendingLabel="Opening Waitlist…"

@@ -1,3 +1,4 @@
+import { WAITLIST_PATH } from "@/lib/waitlist/paths";
 import Link from "next/link";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { redirect } from "next/navigation";
@@ -259,7 +260,7 @@ export default async function LaunchChecklistPage() {
         : provenBlockers.has("wait_admission")
           ? "New clients join the waitlist instead of booking directly. Invited clients can still book."
           : "Waitlist admission is off, so new clients are not routed to the waitlist.",
-      cta: { label: "Open Waitlist settings", href: "/settings/waitlist" },
+      cta: { label: "Open Waitlist settings", href: WAITLIST_PATH },
     },
     // NEW-CLIENT-MODE-01. A deliberate closure is a state the owner chose, not
     // a step they failed to finish, so it renders "manual" beside the admission

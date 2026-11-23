@@ -1,3 +1,4 @@
+import { WAITLIST_PATH } from "@/lib/waitlist/paths";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -129,7 +130,9 @@ describe("NAV-ACK-02 · the primary navigation acknowledges", () => {
       // directly. Both spellings are the same fact, so the table names which
       // one each anchor uses rather than accepting either.
       expect(code).toContain(`${anchor.attr}="${anchor.testId}"`);
-      expect(code).toContain(`href="${anchor.href}"`);
+      // The Waitlist link takes its path from the one constant (HON-104); the constant's value is the same string and is pinned in tests/lib/waitlist/waitlist-paths.test.ts.
+      const spelling = anchor.href === WAITLIST_PATH ? "href={WAITLIST_PATH}" : `href="${anchor.href}"`;
+      expect(code).toContain(spelling);
     });
   }
 });

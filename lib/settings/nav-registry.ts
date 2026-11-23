@@ -1,3 +1,4 @@
+import { WAITLIST_PATH } from "@/lib/waitlist/paths";
 import "server-only";
 
 import { launchNav } from "@/app/(app)/settings/launch/nav";
@@ -121,7 +122,7 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsNavEntry> = [
     id: "waitlist",
     group: "studio",
     label: "Waitlist",
-    href: "/settings/waitlist",
+    href: WAITLIST_PATH,
     roles: OWNER,
     visibleWhen: waitlistVisible,
     order: 50,

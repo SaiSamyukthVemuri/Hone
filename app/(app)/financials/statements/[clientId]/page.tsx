@@ -4,6 +4,7 @@ import { loadOwnerClientStatement } from "@/lib/finance/owner-client-statement";
 import { STATEMENT_MONTH_NOTICE } from "@/lib/finance/statement-copy";
 import { monthRange, resolveStatementMonth, yearMonthOf } from "@/lib/finance/statement-period";
 import { STATEMENTS_OWNER_ONLY, STATEMENT_READ_UNAVAILABLE, clientsListHref } from "@/lib/finance/statement-screen";
+import { timed } from "@/lib/observability/perf-timing";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 
 import { ClientStatementView } from "../client-statement-view";
@@ -26,7 +27,7 @@ export default async function ClientStatementPage({
   params: Promise<{ clientId: string }>;
   searchParams: Promise<{ month?: string | string[]; view?: string | string[] }>;
 }) {
-  const { practitioner, studio } = await requirePractitionerWithStudio();
+  const { practitioner, studio } = await timed("statements.identity", () => requirePractitionerWithStudio());
   if (practitioner.role !== "owner") {
     return <section className="rounded-lg border border-line bg-surface-sunken p-6 text-sm text-fg">{STATEMENTS_OWNER_ONLY}</section>;
   }
@@ -34,7 +35,7 @@ export default async function ClientStatementPage({
   const { clientId } = await params;
   const sp = await searchParams;
   const now = new Date();
-  const result = await loadOwnerClientStatement({ practitioner, studio, clientId, monthParam: sp.month, viewParam: sp.view, now });
+  const result = await timed("statements.domain", () => loadOwnerClientStatement({ practitioner, studio, clientId, monthParam: sp.month, viewParam: sp.view, now }));
   if (!result.ok) {
     const { month } = resolveStatementMonth(sp.month, yearMonthOf(localDateString(now, studio.timezone)));
     return (
