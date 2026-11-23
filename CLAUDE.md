@@ -241,7 +241,23 @@ Confirm `has_table_privilege(...)` before trusting a failing lane.
   green — do not re-ask. A **changed head invalidates the authorization**.
 - **No post-merge full CI rerun.** After merging, verify only: branch
   containment, deployment success where applicable, and a clean tree.
-- **Green CI is not merge authorization.**
+- **Green CI is not merge authorization** on its own. It becomes one only
+  under the standing routine-merge authorization below.
+- **Standing routine-merge authorization** (operator, 2026-11-23). The OPS
+  coordinator merges a routine PR for approved work without asking again
+  when every one of these holds on the PR's **current head commit**:
+  all required CI lanes have passed, the required reviews have passed,
+  every review finding is fixed or does not apply (threads handled as in
+  *Resolving a thread* below), the release records are current, and there
+  is no outstanding hold. If the head changes, recheck the new commit and
+  proceed only when it qualifies again. After merging, verify the
+  deployment where one applies, and report the result to the operator
+  with anything they should test.
+  This authorization does **not** cover: production database migration
+  applies, feature or flag activation, payment or provider changes, live
+  sends, infrastructure changes, force-pushes, direct pushes to the
+  production branch, release exceptions, or a finding that needs a
+  product decision. Those still go to the operator for explicit approval.
 
 ### DRAFT-DEFERRED
 
