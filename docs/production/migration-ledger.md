@@ -266,8 +266,8 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 ### The 0362 apply (out of order; facts as recorded by the operator, 2026-11-23; apply record `01-ops/0362-APPLY-RESULT-20261123T2332Z.md`)
 
 - **What it is.** `0362_platform_rollout_control.sql`: the platform rollout control, two new tables with row security on and no policy, one rollout row in mode off and no pilot entry. It changes no existing table or data. **Its file is not on this tree yet**: the carrier is a separate, unmerged change, whose merge is a separate decision. No rollout is turned on and no application release is authorized by this record.
-- **Approval.** The owner ran the apply in person, under written authorization for this exact sealed package: apply 0362 only, a plain push, without `--include-all`.
-- **Package.** SEAL-SHA256SUMS `4d572172…`; sealed file sha256 `0ad74806…` and rollback file sha256 `7bbbbf0b…`. The dry run listed exactly one migration, `0362`.
+- **Approval.** The owner ran the apply in person, under written authorization for this exact sealed package: apply 0362 only.
+- **Package.** SEAL-SHA256SUMS `4d572172…`; sealed file sha256 `0ad74806…` and rollback file sha256 `7bbbbf0b…`. One push of `0362` only (`db push --include-all`, because `0362` is below the hosted maximum; the dry run listed exactly `0362`).
 - **Pre-apply reads (re-run inside the apply).** 280 history rows, max `0364`, `0362` absent.
 - **Apply.** The push exited 0; the marker was written at 2026-11-23T23:32:42Z.
 - **Read-back (2026-11-23, 23:32:43Z to 23:32:46Z, client side).** **OVERALL PASS**: 281 history rows, max `0364`, `0362` present once; both tables with row security on and no policy; one rollout row in mode off and no pilot entry; grants as sealed; the seven function bodies as sealed; the public catalog equal to the sealed post-0362 fingerprint; the reconcile is done. The operator's independent read afterwards gave 281 rows, max `0364`, `0362` once, version-list md5 `f3e28494ebab5166b855367648ed372f`.
