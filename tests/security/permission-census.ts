@@ -22,6 +22,8 @@ export type Evidence = {
   ownerGuard: boolean;
   /** The helper the entry calls at the top level that carries the owner guard, or null when the guard is its own. */
   ownerVia: string | null;
+  /** How the guard refuses: by throwing (aborts the caller) or by returning a value the caller must check. */
+  ownerKind: "throws" | "returns" | null;
   /** Uses a service-role client, which bypasses row security. */
   adminClient: boolean;
   /** Keys it asks the permission engine about (observe only today). */
@@ -68,6 +70,16 @@ const comparesOwner = (n: ts.Node): boolean => {
   return found;
 };
 
+/** How a refusal leaves: by throwing (or notFound/redirect), which aborts the caller, or by returning a value the caller must check. */
+const refusalKind = (s: ts.Statement): "throws" | "returns" | null => {
+  const last = ts.isBlock(s) ? s.statements[s.statements.length - 1] : s;
+  if (!last) return null;
+  if (ts.isThrowStatement(last)) return "throws";
+  if (ts.isReturnStatement(last)) return "returns";
+  if (ts.isExpressionStatement(last) && ts.isCallExpression(last.expression) && ["notFound", "redirect", "forbidden"].includes(calleeName(last.expression) ?? "")) return "throws";
+  return null;
+};
+
 const endsInRefusal = (s: ts.Statement): boolean => {
   const last = ts.isBlock(s) ? s.statements[s.statements.length - 1] : s;
   if (!last) return false;
@@ -76,21 +88,30 @@ const endsInRefusal = (s: ts.Statement): boolean => {
   return false;
 };
 
-function ownerGuard(body: ts.Node): boolean {
-  if (!ts.isBlock(body)) return false;
-  return body.statements.some((s) => {
-    if (ts.isIfStatement(s)) {
-      // Refuses when the actor is NOT owner: `role !== "owner"`, possibly OR-ed with more conditions.
-      const cond = s.expression;
-      const refusesNonOwner = (c: ts.Expression): boolean => {
-        if (ts.isParenthesizedExpression(c)) return refusesNonOwner(c.expression);
-        if (ts.isBinaryExpression(c) && c.operatorToken.kind === ts.SyntaxKind.BarBarToken) return refusesNonOwner(c.left) || refusesNonOwner(c.right);
-        return ts.isBinaryExpression(c) && c.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken && comparesOwner(c);
-      };
-      return refusesNonOwner(cond) && endsInRefusal(s.thenStatement);
-    }
-    return false;
-  });
+// The statements that run unconditionally at the top of a body. A `try` is looked into only when its catch cannot
+// fall through (it returns or throws), because then a guard inside the try still protects everything after it.
+function topStatements(body: ts.Node): ts.Statement[] {
+  if (!ts.isBlock(body)) return [];
+  const out: ts.Statement[] = [];
+  for (const st of body.statements) {
+    out.push(st);
+    if (ts.isTryStatement(st) && (!st.catchClause || endsInRefusal(st.catchClause.block))) out.push(...topStatements(st.tryBlock));
+  }
+  return out;
+}
+
+function ownerGuard(body: ts.Node): "throws" | "returns" | null {
+  if (!ts.isBlock(body)) return null;
+  // Refuses when the actor is NOT owner: `role !== "owner"`, possibly OR-ed with more conditions.
+  const refusesNonOwner = (c: ts.Expression): boolean => {
+    if (ts.isParenthesizedExpression(c)) return refusesNonOwner(c.expression);
+    if (ts.isBinaryExpression(c) && c.operatorToken.kind === ts.SyntaxKind.BarBarToken) return refusesNonOwner(c.left) || refusesNonOwner(c.right);
+    return ts.isBinaryExpression(c) && c.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken && comparesOwner(c);
+  };
+  for (const s of topStatements(body)) {
+    if (ts.isIfStatement(s) && refusesNonOwner(s.expression) && endsInRefusal(s.thenStatement)) return refusalKind(s.thenStatement);
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -177,12 +198,12 @@ function lookup(root: string, file: string, name: string): { file: string; node:
 const bodyOf = (node: ts.Node): ts.Node => (ts.isFunctionDeclaration(node) || isFunctionLike(node) ? (node.body ?? node) : node);
 
 function topLevelCalls(body: ts.Node): string[] {
-  if (!ts.isBlock(body)) return [];
   const names: string[] = [];
-  for (const st of body.statements) {
+  for (const st of topStatements(body)) {
     let e: ts.Expression | undefined;
     if (ts.isExpressionStatement(st)) e = st.expression;
     else if (ts.isVariableStatement(st)) e = st.declarationList.declarations[0]?.initializer;
+    if (e && ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.EqualsToken) e = e.right;
     while (e && (ts.isAwaitExpression(e) || ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isNonNullExpression(e))) e = e.expression;
     if (e && ts.isCallExpression(e) && ts.isIdentifier(e.expression)) names.push(e.expression.text);
   }
@@ -209,7 +230,8 @@ function evidenceOf(root: string, file: string, node: ts.Node, depth = 0, seen: 
   const body = bodyOf(node);
   const staff = new Set([...calls].filter((c) => STAFF_HELPERS.has(c)));
   let staffVia: string | null = staff.size ? null : null;
-  let guard = ownerGuard(body);
+  let ownerKind = ownerGuard(body);
+  let guard = ownerKind !== null;
   let ownerVia: string | null = null;
   const topCalls = new Set(topLevelCalls(body));
   if (depth < MAX_DEPTH) {
@@ -224,6 +246,7 @@ function evidenceOf(root: string, file: string, node: ts.Node, depth = 0, seen: 
       if (!guard && sub.ownerGuard && topCalls.has(name)) {
         guard = true;
         ownerVia = name;
+        ownerKind = sub.ownerKind;
       }
     }
   }
@@ -232,6 +255,7 @@ function evidenceOf(root: string, file: string, node: ts.Node, depth = 0, seen: 
     staffVia: staff.size && [...calls].some((c) => STAFF_HELPERS.has(c)) ? null : staffVia,
     ownerGuard: guard,
     ownerVia,
+    ownerKind,
     adminClient: [...calls].some((c) => ADMIN_CLIENT_FACTORIES.has(c)),
     observed: observed.sort(),
     calls: [...calls].sort(),
@@ -330,4 +354,51 @@ export function censusRpcs(root: string): RpcCall[] {
     }
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Decisions
+// ---------------------------------------------------------------------------
+// One short string per entry, `<kind>[(<detail>)][+admin]`:
+//   observed(keys)      asks the permission engine (observe only today) and is otherwise gated as below
+//   owner(helper|self)  refuses a non-owner at the top of its body; the guard is its own or the named helper's, and
+//                       a helper's guard throws, so it aborts the entry. Anything before the guard may run for anyone.
+//   owner?(helper)      the helper only RETURNS a refusal value for a non-owner; the entry is owner-gated if it checks
+//                       that value, which this census does not verify. Read the entry before relying on it.
+//   staff               reaches the practitioner-and-studio helper: any ACTIVE PRACTITIONER of the studio, no role
+//                       distinction, and a receptionist is not one. The engine is not asked yet.
+//   not_staff(class)    no staff session by design; the class says which kind of caller (checked against the path)
+//   unresolved(reason)  nothing found and no class fits. A ratchet in the test: it may only shrink.
+//   +admin              also uses a service-role client, which bypasses row security
+export const NOT_STAFF_CLASSES: Record<string, RegExp> = {
+  auth: /^app\/\(auth\)\/|^app\/\(app\)\/dashboard\/actions\.ts$/,
+  platform_admin: /^app\/admin\/|^app\/api\/admin\//,
+  public_booking: /^app\/book\/|^app\/actions\//,
+  portal: /^app\/portal\//,
+  token_link: /\[token\]/,
+  cron: /^app\/api\/cron\//,
+  webhook: /^app\/api\/(stripe|twilio)\//,
+  oauth: /^app\/api\/google-calendar\//,
+  telemetry: /^app\/(ingest|monitoring)\//,
+};
+
+export function notStaffClass(file: string): string | null {
+  for (const [cls, re] of Object.entries(NOT_STAFF_CLASSES)) if (re.test(file)) return cls;
+  return null;
+}
+
+export function decisionOf(entry: PathEntry): string {
+  const ev = entry.evidence;
+  if (!ev) return "unresolved(export has no analysable body)";
+  const admin = ev.adminClient ? "+admin" : "";
+  if (ev.observed.length) return `observed(${[...new Set(ev.observed)].join(",")})${admin}`;
+  if (ev.ownerGuard) {
+    // A guard of its own, or a helper that throws, aborts the entry. A helper that only RETURNS a refusal value
+    // (a null studio id, say) is owner-gated only if the caller checks that value, which is not verified here.
+    if (ev.ownerVia === null) return `owner(self)${admin}`;
+    return ev.ownerKind === "throws" ? `owner(${ev.ownerVia})${admin}` : `owner?(${ev.ownerVia})${admin}`;
+  }
+  if (ev.staffHelper.length) return `staff${admin}`;
+  const cls = notStaffClass(entry.file);
+  return cls ? `not_staff(${cls})${admin}` : `unresolved(no gate found)${admin}`;
 }

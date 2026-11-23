@@ -212,7 +212,7 @@ describe("every call site is statement-only", () => {
     expect(sites.length).toBeGreaterThanOrEqual(3);
   });
 
-  it("uses no result: each call is `await observePermissionNow(...);` on its own", () => {
+  it("uses no result and never awaits it: each call is `observePermission(...);` on its own", () => {
     expect(sites.filter((s) => !s.ok)).toEqual([]);
   });
 });

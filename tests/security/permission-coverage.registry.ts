@@ -1,0 +1,758 @@
+// The explicit decision for every path that can write or release protected data, held beside the census that finds
+// them (permission-census.ts). permission-coverage.test.ts requires that:
+//   * every exported server action and every HTTP handler of a route file has an entry here, and no entry is stale;
+//   * each entry equals what the code of that entry actually does today (its gate), so a refactor that removes an
+//     owner guard, or adds a service-role client, fails here and is reviewed instead of passing unnoticed;
+//   * every database command the app calls by name is listed, so a new one needs a decision.
+//
+// HOW TO READ AN ENTRY (grammar in permission-census.ts):
+//   observed(keys)      also asks the permission engine, observe only
+//   owner(helper|self)  a non-owner is refused at the top of its body
+//   owner?(helper)      the helper only returns a refusal value; read the entry before relying on it
+//   staff               reaches the practitioner-and-studio helper. A receptionist is not a practitioner, so none of
+//                       these is reachable by one. NO role distinction is found at the top of the body.
+//   not_staff(class)    no staff session by design; the class is checked against the path
+//   +admin              also uses a service-role client (bypasses row security)
+//
+// LIMITS, stated so nobody reads more into them than is there. The census sees only what an entry does itself, or
+// through a helper it calls at the top level, to three calls deep. "staff" therefore means "no owner guard found
+// there", NOT "any practitioner may do this": a guard nested inside a try whose catch carries on, or one that depends
+// on a condition, is not seen. Read the entry. These owner-only cases were confirmed by hand and read as "staff":
+// updateStudioBookingPrefsAction and updateNewClientAdmissionModeAction (assertOwner inside a try), moveServiceAction.
+// Nothing here says the engine governs an entry: only `observed` entries ask it, and only to record the answer.
+//
+// TO ADD AN ENTRY: write what the code does, in the same words the test derives. A new action, route or database
+// command must be added here, with the gate it really has.
+
+export const PATH_DECISIONS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  "app/(app)/appointment-settlement-actions.ts": {
+    recordAppointmentSettlementAction: "staff",
+    waiveAppointmentFeeAction: "staff",
+    supersedeAppointmentSettlementAction: "staff",
+  },
+  "app/(app)/calendar/[id]/manual-fee-actions.ts": {
+    prepareManualFeeChargeAction: "owner(self)+admin",
+    chargeManualFeeAttemptAction: "owner(self)+admin",
+    cancelManualFeeChargeAttemptAction: "owner(self)+admin",
+    closeDeclinedFeeAttemptAction: "owner(self)",
+    sendFeeReceiptAction: "owner(self)",
+    refundFeeAttemptAction: "owner(self)+admin",
+  },
+  "app/(app)/calendar/actions.ts": {
+    bookAppointmentForClientAction: "observed(appt.book)+admin",
+    cancelAppointmentAction: "staff+admin",
+    markAppointmentCompleteAction: "staff+admin",
+    markAppointmentNoShowAction: "staff+admin",
+    createClientForCalendarBookingAction: "staff",
+    fetchLastServiceForClientAction: "staff",
+    sendPostcareEmailAction: "staff+admin",
+  },
+  "app/(app)/calendar/appointment-repair-actions.ts": {
+    loadAppointmentRepairStateAction: "staff+admin",
+    revertAppointmentOutcomeAction: "staff+admin",
+    setAppointmentNotesAction: "staff+admin",
+  },
+  "app/(app)/calendar/calendar-block-actions.ts": {
+    createCalendarTimedBlockAction: "staff",
+  },
+  "app/(app)/calendar/check-practitioner/actions.ts": {
+    reassignOpenAppointmentAction: "owner(self)+admin",
+  },
+  "app/(app)/calendar/move-appointment-actions.ts": {
+    loadMoveSlotsAction: "staff+admin",
+    moveAppointmentAction: "observed(appt.move,appt.reassign)+admin",
+  },
+  "app/(app)/charting-view-actions.ts": {
+    setChartingViewAction: "staff",
+  },
+  "app/(app)/clients/[id]/actions.ts": {
+    updateClientAction: "staff",
+    archiveClientAction: "staff",
+    unarchiveClientAction: "staff",
+    addClientPricingAction: "owner(self)",
+    deleteClientPricingAction: "owner(self)",
+    addClientTagAction: "staff",
+    removeClientTagAction: "staff",
+  },
+  "app/(app)/clients/[id]/booking-actions.ts": {
+    fetchSlotsForClientBookingAction: "staff",
+    fetchEligiblePractitionersAction: "owner(self)",
+  },
+  "app/(app)/clients/[id]/budget-context-actions.ts": {
+    updateClientBudgetContextAction: "staff",
+  },
+  "app/(app)/clients/[id]/clinical-notes-actions.ts": {
+    addClinicalNoteAction: "staff",
+    reviseClinicalNoteAction: "staff",
+  },
+  "app/(app)/clients/[id]/images/actions.ts": {
+    uploadTreatmentImageAction: "staff+admin",
+    getTreatmentImageSignedUrlAction: "staff",
+    updateTreatmentImageNoteAction: "staff",
+    archiveTreatmentImageAction: "staff",
+    setClientPortraitAction: "staff",
+  },
+  "app/(app)/clients/[id]/intake/actions.ts": {
+    markIntakeReviewedAction: "staff",
+    saveIntakeNotesAction: "staff",
+    requestIntakeUpdateAction: "staff+admin",
+    getIntakeLinkAction: "staff+admin",
+    resendIntakeEmailAction: "staff+admin",
+    saveAssistedIntakeStepAction: "staff+admin",
+    handOffAssistedIntakeAction: "staff+admin",
+    startAssistedIntakeAction: "staff",
+  },
+  "app/(app)/clients/[id]/legal-identity-actions.ts": {
+    saveLegalIdentityAction: "staff",
+  },
+  "app/(app)/clients/[id]/personal-notes-actions.ts": {
+    updateClientPersonalNotesAction: "staff",
+  },
+  "app/(app)/clients/[id]/pinned-notes-actions.ts": {
+    addClientPinnedNoteAction: "staff",
+    editClientPinnedNoteAction: "staff+admin",
+    removeClientPinnedNoteAction: "owner(self)",
+  },
+  "app/(app)/clients/[id]/portal-link-actions.ts": {
+    sendPortalLinkAction: "staff+admin",
+  },
+  "app/(app)/clients/[id]/portal-messages-actions.ts": {
+    createPortalMessageAction: "staff+admin",
+    markPortalReplySeenAction: "staff+admin",
+    archivePortalMessageAction: "staff+admin",
+  },
+  "app/(app)/clients/[id]/sessions/[sessionId]/actions.ts": {
+    addElectrolysisEntryAction: "staff",
+    addLaserEntryAction: "staff",
+    deleteElectrolysisEntryAction: "staff",
+    deleteLaserEntryAction: "staff",
+    updateSessionPriceAction: "owner(self)",
+    updateNextSessionNoteAction: "staff",
+    updateSessionPerformerAction: "staff",
+    editSessionStartedAtAction: "staff",
+    softDeleteSessionAction: "staff",
+  },
+  "app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts": {
+    createSessionBlockAction: "staff",
+    updateSessionBlockAction: "staff",
+    copyPreviousSessionAreasAction: "staff",
+    softDeleteSessionBlockAction: "staff",
+    removeSessionAreaAction: "staff",
+    createTreatmentAreaWithEntryAction: "staff",
+    updateTreatmentAreaWithEntryAction: "staff",
+  },
+  "app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts": {
+    loadMachineSetupContext: "staff",
+    rememberMachineSelectionAction: "staff",
+    clearMachineSelectionAction: "staff",
+    recordBlockMachineIdentityAction: "staff",
+    registerMachineAction: "staff",
+    retireMachineAction: "staff",
+    recordReadingsAction: "staff",
+    recordSetupSubmissionAction: "staff",
+    readingsForBlockAction: "staff",
+    listSelectableForCaller: "staff",
+    lookupAreaCreateClaimAction: "staff",
+  },
+  "app/(app)/clients/[id]/sessions/[sessionId]/payment-actions.ts": {
+    prepareSessionPaymentChargeAction: "owner(self)+admin",
+    executeSessionPaymentChargeAction: "owner(self)+admin",
+    sendPaymentChargeReceiptAction: "owner(self)",
+    refundPaymentChargeAttemptAction: "owner(self)+admin",
+  },
+  "app/(app)/clients/[id]/sessions/[sessionId]/whole-session-copy-actions.ts": {
+    getWholeSessionCopySourceAction: "staff",
+    commitWholeSessionCopyAction: "staff+admin",
+  },
+  "app/(app)/clients/[id]/sessions/new/actions.ts": {
+    startSessionAction: "staff",
+  },
+  "app/(app)/clients/[id]/treatment-plans-actions.ts": {
+    createTreatmentPlanAction: "staff",
+    closeTreatmentPlanAction: "staff",
+    attachChartEntryToPlanAction: "staff",
+    detachChartEntryFromPlanAction: "staff",
+    updateTreatmentPlanNotesAction: "staff",
+    createTreatmentPlanStageAction: "staff",
+    updateTreatmentPlanStageAction: "staff",
+    deleteTreatmentPlanStageAction: "staff",
+  },
+  "app/(app)/clients/[id]/treatment-time-actions.ts": {
+    upsertTreatmentGoalAction: "staff",
+  },
+  "app/(app)/clients/new/actions.ts": {
+    createClientAction: "staff",
+  },
+  "app/(app)/dashboard/actions.ts": {
+    signOut: "not_staff(auth)",
+  },
+  "app/(app)/dashboard/attention-actions.ts": {
+    dismissAttentionAction: "staff",
+    restoreAttentionAction: "staff",
+  },
+  "app/(app)/dashboard/onboarding-actions.ts": {
+    setOnboardingStepAction: "owner?(requireOnboardingOwner)",
+    acknowledgeWelcomeAction: "owner?(requireOnboardingOwner)",
+    skipPaymentsAction: "owner?(requireOnboardingOwner)",
+    completeOnboardingAction: "owner?(requireOnboardingOwner)",
+    dismissOnboardingAction: "owner?(requireOnboardingOwner)",
+    reopenOnboardingAction: "owner?(requireOnboardingOwner)",
+    markCelebrationShownAction: "owner?(requireOnboardingOwner)",
+  },
+  "app/(app)/dashboard/prep-memory-actions.ts": {
+    loadAppointmentPrepMemory: "staff",
+  },
+  "app/(app)/financials/analytics/clients/export.csv/route.ts": {
+    GET: "owner(self)",
+  },
+  "app/(app)/financials/analytics/export.csv/route.ts": {
+    GET: "owner(self)",
+  },
+  "app/(app)/financials/statements/[clientId]/export.csv/route.ts": {
+    GET: "owner(self)",
+  },
+  "app/(app)/global-search-actions.ts": {
+    globalSearchAction: "staff",
+  },
+  "app/(app)/notifications/actions.ts": {
+    markAllNotificationsAsReadAction: "staff",
+    markAllReadFormAction: "staff",
+  },
+  "app/(app)/quick-checkout-actions.ts": {
+    getQuickCheckoutContextAction: "owner(self)",
+  },
+  "app/(app)/records/actions.ts": {
+    addSterileItemRecordAction: "staff",
+    addDisinfectantRecordAction: "staff",
+    addExposureIncidentRecordAction: "staff",
+    markAftercareExplainedAction: "staff",
+    updateSterileItemRecordAction: "staff",
+    updateDisinfectantRecordAction: "staff",
+    updateExposureIncidentRecordAction: "owner(self)",
+  },
+  "app/(app)/settings/availability/actions.ts": {
+    upsertDayDefaultAction: "owner(assertOwner)+admin",
+    saveWeeklyDefaultsAction: "owner(assertOwner)+admin",
+    upsertOverrideAction: "owner(assertOwner)+admin",
+    deleteOverrideAction: "owner(assertOwner)+admin",
+    upsertScopedDayDefaultAction: "owner(assertOwnerWithStudio)+admin",
+    resetPractitionerDayAction: "owner(assertOwnerWithStudio)+admin",
+    customizePractitionerWeekAction: "owner(assertOwnerWithStudio)+admin",
+    resetPractitionerWeekAction: "owner(assertOwnerWithStudio)+admin",
+    upsertScopedOverrideAction: "owner(assertOwnerWithStudio)+admin",
+    resetPractitionerOverrideAction: "owner(assertOwnerWithStudio)+admin",
+    createBlockoutAction: "owner(assertOwnerWithStudio)+admin",
+    deleteBlockoutAction: "owner(assertOwner)",
+    createTimedBlockAction: "owner(assertOwnerWithStudio)+admin",
+    updateTimedBlockAction: "owner(assertOwnerWithStudio)+admin",
+    deleteTimedBlockAction: "owner(assertOwnerWithStudio)",
+    createRecurringBreakRuleAction: "owner(assertOwnerWithStudio)+admin",
+    updateRecurringBreakRuleAction: "owner(assertOwnerWithStudio)+admin",
+    toggleRecurringBreakRuleActiveAction: "owner(assertOwnerWithStudio)+admin",
+    deleteRecurringBreakRuleAction: "owner(assertOwnerWithStudio)+admin",
+  },
+  "app/(app)/settings/booking/actions.ts": {
+    updateStudioBookingPrefsAction: "staff",
+    updateNewClientAdmissionModeAction: "staff",
+  },
+  "app/(app)/settings/consent/actions.ts": {
+    createConsentTemplateAction: "owner(self)+admin",
+    updateConsentTemplateAction: "owner(self)+admin",
+    setConsentTemplateStatusAction: "owner(self)+admin",
+    setConsentTemplateLiveAction: "owner(self)+admin",
+  },
+  "app/(app)/settings/data/actions.ts": {
+    exportStudioDataAction: "owner(self)",
+  },
+  "app/(app)/settings/import/actions.ts": {
+    previewImportAction: "owner?(ownerContext)",
+    confirmImportAction: "owner?(ownerContext)",
+  },
+  "app/(app)/settings/payments/actions.ts": {
+    startStripeConnectOnboardingAction: "owner(self)",
+    refreshStripeStatusAction: "owner(self)+admin",
+    openStripeDashboardAction: "owner(self)+admin",
+  },
+  "app/(app)/settings/payments/cancellation-fee-actions.ts": {
+    saveCancellationFeeRulesAction: "staff",
+    setCancellationFeeRulesEnabledAction: "staff",
+  },
+  "app/(app)/settings/payments/fee-amounts-actions.ts": {
+    updateStudioFeeAmountsAction: "owner(self)",
+  },
+  "app/(app)/settings/payments/fee-settings-actions.ts": {
+    setManualFeeEnabledAction: "owner?(owner)",
+    saveManualFeeRuleAction: "owner?(owner)",
+    setManualFeeModeAction: "owner?(owner)",
+    setManualFeePercentAction: "owner?(owner)",
+  },
+  "app/(app)/settings/profile/actions.ts": {
+    updateOwnProfileAction: "staff",
+    updatePractitionerColorAction: "staff",
+    rotateCalendarFeedTokenAction: "staff",
+    clearCalendarFeedTokenAction: "staff",
+  },
+  "app/(app)/settings/profile/google-calendar-actions.ts": {
+    startGoogleCalendarConnectAction: "staff",
+    chooseDestinationModeAction: "owner?(requireOwnerConnectionContext)",
+    startGoogleCalendarEventScopeUpgradeAction: "owner?(requireOwnerConnectionContext)",
+    provisionDedicatedCalendarAction: "owner?(requireOwnerConnectionContext)",
+    listOwnedCalendarsAction: "owner?(requireOwnerConnectionContext)",
+    selectOwnedCalendarAction: "owner?(requireOwnerConnectionContext)",
+    disconnectGoogleCalendarAction: "staff",
+    listWritableCalendarsAction: "staff",
+    selectWriteCalendarAction: "staff",
+    designateSelfAsCalendarOwnerAction: "owner?(requireOwnerConnectionContext)",
+  },
+  "app/(app)/settings/services/actions.ts": {
+    createServiceAction: "owner(assertOwner)",
+    updateServiceAction: "owner(assertOwner)",
+    moveServiceAction: "staff",
+    toggleServiceActiveAction: "owner(assertOwner)",
+  },
+  "app/(app)/settings/studio/actions.ts": {
+    updateStudioAction: "owner(self)",
+    updateStudioDisplayPreferencesAction: "owner(self)",
+    setStudioEmailSettingsAction: "owner(self)",
+    setClientSelfServiceAction: "owner(self)",
+    updateStudioPostcareAction: "owner(self)",
+    updateStudioPolicyAction: "owner(self)",
+  },
+  "app/(app)/settings/studio/sms-settings-actions.ts": {
+    setStudioSmsSettingsAction: "owner(self)",
+  },
+  "app/(app)/settings/team/actions.ts": {
+    invitePractitionerAction: "owner(assertOwner)",
+    revokeInvitationAction: "owner(assertOwner)",
+    removePractitionerAction: "owner(assertOwner)+admin",
+  },
+  "app/(app)/settings/tracking/actions.ts": {
+    saveTrackingProviderConfigAction: "owner?(requireOwner)+admin",
+    clearTrackingTokenAction: "owner?(requireOwner)+admin",
+  },
+  "app/(app)/settings/waitlist/actions.ts": {
+    removeWaitlistEntryAction: "owner(self)+admin",
+    claimWaitlistEntryAction: "owner(runEntryLifecycleCommand)",
+    releaseWaitlistEntryAction: "owner(runEntryLifecycleCommand)",
+    expireWaitlistInvitationAction: "owner(runEntryLifecycleCommand)",
+    requeueWaitlistEntryAction: "owner(runEntryLifecycleCommand)",
+    closeUnbookedWaitlistInvitationAction: "owner(runEntryLifecycleCommand)",
+    claimNextWaitlistEntriesAction: "owner(self)+admin",
+  },
+  "app/(app)/settings/waitlist/consent-actions.ts": {
+    recordProspectSmsConsentAction: "owner(self)+admin",
+    recordProspectSmsConsentFormAction: "staff",
+  },
+  "app/(app)/settings/waitlist/follow-up-actions.ts": {
+    markHandledAction: "owner?(ownerSession)",
+    keepWithdrawalAction: "owner?(ownerSession)",
+    eraseAnswersAction: "owner?(ownerSession)",
+    linkAppointmentAction: "owner?(ownerSession)",
+  },
+  "app/(app)/settings/waitlist/invite-actions.ts": {
+    inviteToBookAction: "staff",
+    inviteToBookFormAction: "staff",
+  },
+  "app/(app)/settings/waitlist/over-invite/actions.ts": {
+    sendOverInviteAction: "owner(self)+admin",
+    stopBatchAction: "owner(self)+admin",
+    retryFailedDeliveriesAction: "staff",
+    retryUnknownDeliveriesAction: "staff",
+  },
+  "app/(app)/settings/waitlist/profile-actions.ts": {
+    setWaitlistAvailabilityAction: "owner?(resolveOwner)+admin",
+    addWaitlistEntryAction: "owner?(resolveOwner)+admin",
+    importLegacyWaitlistEntryAction: "owner?(resolveOwner)+admin",
+    setWaitlistAvailabilityFormAction: "staff",
+    addWaitlistEntryFormAction: "staff",
+    importLegacyWaitlistEntryFormAction: "staff",
+  },
+  "app/(app)/settings/waitlist/replies/actions.ts": {
+    acknowledgeReplyAction: "owner(self)",
+  },
+  "app/(app)/settings/waitlist/texts-actions.ts": {
+    setWaitlistTextsAction: "owner(self)",
+  },
+  "app/(app)/settings/waitlist/window-capacity-actions.ts": {
+    estimateWindowCapacityAction: "owner(self)+admin",
+  },
+  "app/(auth)/accept-invitation/actions.ts": {
+    acceptInvitationAction: "not_staff(auth)+admin",
+  },
+  "app/(auth)/auth/callback/route.ts": {
+    GET: "not_staff(auth)",
+  },
+  "app/(auth)/login/actions.ts": {
+    requestPractitionerMagicLinkAction: "not_staff(auth)+admin",
+  },
+  "app/(auth)/no-access/actions.ts": {
+    signOutFromGate: "not_staff(auth)",
+    switchStudioAction: "not_staff(auth)",
+  },
+  "app/actions/demo.ts": {
+    submitDemoRequest: "not_staff(public_booking)",
+  },
+  "app/actions/waitlist.ts": {
+    submitWaitlistEntry: "not_staff(public_booking)",
+  },
+  "app/admin/actions.ts": {
+    markDemoContactedAction: "not_staff(platform_admin)+admin",
+  },
+  "app/admin/ops-alerts/actions.ts": {
+    sendTestCriticalAlertAction: "not_staff(platform_admin)",
+    resolveOpsAlertAction: "not_staff(platform_admin)+admin",
+  },
+  "app/admin/studios/[id]/actions.ts": {
+    resendWelcomeEmailAction: "not_staff(platform_admin)+admin",
+  },
+  "app/admin/studios/new/actions.ts": {
+    createStudioWithOwnerInvite: "not_staff(platform_admin)+admin",
+  },
+  "app/api/admin/runtime/route.ts": {
+    GET: "not_staff(platform_admin)",
+  },
+  "app/api/calendar/change-fingerprint/route.ts": {
+    GET: "staff",
+  },
+  "app/api/clients/[clientId]/images/[imageId]/signed-url/route.ts": {
+    GET: "staff",
+  },
+  "app/api/cron/appointment-reminders/route.ts": {
+    GET: "not_staff(cron)+admin",
+  },
+  "app/api/cron/calendar-reconcile/route.ts": {
+    GET: "not_staff(cron)+admin",
+  },
+  "app/api/cron/calendar-sync/route.ts": {
+    GET: "not_staff(cron)",
+  },
+  "app/api/cron/materialize-recurring-breaks/route.ts": {
+    GET: "not_staff(cron)+admin",
+  },
+  "app/api/cron/no-show-check/route.ts": {
+    GET: "not_staff(cron)",
+  },
+  "app/api/cron/stuck-fee-sweep/route.ts": {
+    GET: "not_staff(cron)+admin",
+  },
+  "app/api/cron/waitlist-decline-owner-email/route.ts": {
+    GET: "not_staff(cron)+admin",
+  },
+  "app/api/cron/waitlist-invitation-batches/route.ts": {
+    GET: "not_staff(cron)",
+  },
+  "app/api/google-calendar/e2e/authorize/route.ts": {
+    GET: "not_staff(oauth)",
+  },
+  "app/api/google-calendar/oauth/callback/route.ts": {
+    GET: "not_staff(oauth)+admin",
+  },
+  "app/api/stripe/webhook/route.ts": {
+    POST: "not_staff(webhook)+admin",
+  },
+  "app/api/twilio/inbound-sms/route.ts": {
+    POST: "not_staff(webhook)+admin",
+  },
+  "app/api/twilio/message-status/route.ts": {
+    POST: "not_staff(webhook)+admin",
+  },
+  "app/book/[slug]/actions.ts": {
+    fetchPublicSlotsAction: "not_staff(public_booking)+admin",
+    fetchNextAvailableDateAction: "not_staff(public_booking)+admin",
+    publicBookAppointmentAction: "not_staff(public_booking)+admin",
+  },
+  "app/book/[slug]/waitlist-actions.ts": {
+    submitNewClientBookingWaitlistAction: "not_staff(public_booking)",
+  },
+  "app/calendar-feed/[token]/route.ts": {
+    GET: "not_staff(token_link)+admin",
+  },
+  "app/cancel/[token]/actions.ts": {
+    publicCancelAppointmentAction: "not_staff(token_link)+admin",
+    fetchAppointmentForCancelAction: "not_staff(token_link)+admin",
+  },
+  "app/ingest/[...path]/route.ts": {
+    GET: "not_staff(telemetry)",
+    HEAD: "not_staff(telemetry)",
+    POST: "not_staff(telemetry)",
+  },
+  "app/intake/[token]/actions.ts": {
+    saveIntakeStepAction: "not_staff(token_link)+admin",
+    submitIntakeAction: "not_staff(token_link)+admin",
+  },
+  "app/invitation/[token]/actions.ts": {
+    loadInvitationAction: "not_staff(token_link)",
+    requestInvitationProofAction: "not_staff(token_link)",
+    submitInvitationProofAction: "not_staff(token_link)",
+    declineInvitationAction: "not_staff(token_link)",
+    noTimesWorkAction: "not_staff(token_link)+admin",
+    noLongerNeedAction: "not_staff(token_link)",
+    timesDontWorkAction: "not_staff(token_link)",
+    bookInvitationSlotAction: "not_staff(token_link)",
+  },
+  "app/manage/[token]/actions.ts": {
+    fetchAppointmentForManageAction: "not_staff(token_link)+admin",
+  },
+  "app/monitoring/route.ts": {
+    POST: "not_staff(telemetry)",
+  },
+  "app/portal/consent-actions.ts": {
+    signConsentFormAction: "not_staff(portal)+admin",
+  },
+  "app/portal/login/actions.ts": {
+    requestPortalMagicLinkAction: "not_staff(portal)+admin",
+  },
+  "app/portal/logout/actions.ts": {
+    portalLogoutAction: "not_staff(portal)",
+  },
+  "app/portal/payment-method-actions.ts": {
+    createCardSetupIntentAction: "not_staff(portal)+admin",
+    confirmCardPersistedAction: "not_staff(portal)+admin",
+  },
+  "app/portal/portal-message-actions.ts": {
+    markPortalMessageReviewedAction: "not_staff(portal)+admin",
+    createPortalMessageReplyAction: "not_staff(portal)+admin",
+  },
+  "app/portal/rebook-actions.ts": {
+    loadPortalRebookSlotsAction: "not_staff(portal)+admin",
+    loadPortalRebookNextAvailableAction: "not_staff(portal)+admin",
+    bookAnotherAppointmentAction: "not_staff(portal)+admin",
+  },
+  "app/portal/verify/[token]/actions.ts": {
+    verifyPortalMagicLinkAction: "not_staff(portal)+admin",
+  },
+  "app/reschedule/[token]/actions.ts": {
+    fetchAppointmentForRescheduleAction: "not_staff(token_link)+admin",
+    fetchRescheduleSlotsAction: "not_staff(token_link)+admin",
+    fetchNextAvailableDateForRescheduleAction: "not_staff(token_link)+admin",
+    rescheduleAppointmentViaTokenAction: "not_staff(token_link)+admin",
+  },
+};
+
+// Database commands the app calls by name (`.rpc("name")`). The set is pinned so a new one needs a decision.
+// permission-coverage.test.ts checks the set; tests/db/permission-rpc-privileges.db.test.ts reads the real execute
+// privileges of each from a migrated database.
+export const RPC_NAMES: readonly string[] = [
+  "acknowledge_waitlist_times_feedback",
+  "add_electrolysis_pass",
+  "admin_accept_pending_invitation",
+  "admin_complete_onboarding",
+  "admin_mark_onboarding_celebrated",
+  "admit_new_client_waitlist_entry",
+  "appointment_has_blocking_dependents",
+  "archive_treatment_image",
+  "begin_appointment_sms_message",
+  "begin_waitlist_invitation_proof",
+  "calendar_event_link_transition",
+  "claim_calendar_sync_op",
+  "claim_conversion_delivery",
+  "claim_email_send",
+  "claim_new_client_waitlist_entries",
+  "claim_postcare_send",
+  "claim_reminder_sms_send",
+  "claim_session_payment_charge_attempt",
+  "claim_sms_send",
+  "claim_stripe_event",
+  "claim_studio_sms_provisioning",
+  "claim_waitlist_batch_items",
+  "claim_waitlist_invitation_sms",
+  "claim_waitlist_join_ack_sms",
+  "claim_welcome_email_attempt",
+  "complete_stripe_account_provisioning",
+  "complete_stripe_customer_provisioning",
+  "complete_waitlist_invitation_proof",
+  "copy_session_setup",
+  "count_competing_waitlist_invitations",
+  "count_waitlist_times_feedback",
+  "create_block_with_entry",
+  "create_block_with_initial_setup",
+  "create_block_with_initial_setup_and_identity",
+  "create_internal_appointment_v2",
+  "create_laser_entry",
+  "create_or_claim_stripe_account_provisioning",
+  "create_or_claim_stripe_customer_provisioning",
+  "create_practitioner_waitlist_entry",
+  "create_public_appointment",
+  "create_public_appointment_for_new_client",
+  "create_recurring_break_rule_and_materialize",
+  "create_treatment_image_metadata",
+  "create_waitlist_invitation_batch",
+  "create_waitlist_public_appointment",
+  "decline_new_client_waitlist_invitation",
+  "decline_waitlist_invitation_times_unsuitable",
+  "decline_waitlist_invitation_with_answers",
+  "delete_availability_day_locked",
+  "delete_availability_override_locked",
+  "delete_recurring_break_rule",
+  "dismiss_attention_item",
+  "edit_session_started_at",
+  "expire_new_client_waitlist_invitation",
+  "export_waitlist_decline_answers",
+  "fail_studio_sms_provisioning",
+  "finalize_studio_sms_provisioning",
+  "find_recurring_break_conflict",
+  "find_scoped_calendar_conflict",
+  "get_studio_payment_settings_display",
+  "has_studio_permission",
+  "import_legacy_waitlist_entry",
+  "inspect_appointment_email_operation",
+  "issue_scoped_new_client_waitlist_invitation",
+  "join_new_client_waitlist_with_phone_and_sms_answer",
+  "latest_setup_for_client",
+  "list_dismissed_attention",
+  "list_waitlist_times_feedback",
+  "mark_appointment_complete",
+  "mark_appointment_no_show",
+  "mark_stripe_account_provisioning_failed",
+  "mark_stripe_event_processed",
+  "mark_waitlist_mobile_verified",
+  "materialize_recurring_break_rule",
+  "move_or_reassign_appointment",
+  "my_pending_invitation",
+  "observe_appointment_email_operation",
+  "open_new_client_waitlist_admission_round",
+  "practitioner_cancel_appointment",
+  "preview_waitlist_over_invite",
+  "public_cancel_appointment_with_token",
+  "read_waitlist_followup_status",
+  "read_waitlist_followups",
+  "reconcile_bound_payment_event",
+  "reconcile_my_pending_invitation",
+  "record_appointment_settlement",
+  "record_block_machine_identity",
+  "record_calendar_sync_result",
+  "record_client_archive_audit_governed",
+  "record_email_attempt",
+  "record_email_result",
+  "record_new_client_waitlist_conversion",
+  "record_setup_submission_with_identity",
+  "record_sms_delivery_status",
+  "record_sms_result",
+  "record_stripe_account_jurisdiction",
+  "record_studio_export_audit_governed",
+  "record_treatment_setup_group",
+  "record_treatment_setup_submission",
+  "record_waitlist_invitation_delivery",
+  "record_waitlist_invitation_followup",
+  "record_waitlist_retention_failure",
+  "record_waitlist_sms_consent_by_practitioner",
+  "record_welcome_email_result",
+  "redeem_and_book_waitlist_invitation",
+  "redeem_new_client_waitlist_invitation_verified",
+  "register_studio_machine",
+  "release_new_client_waitlist_entry",
+  "release_stripe_event_claim_with_error",
+  "remove_new_client_waitlist_entry",
+  "renew_studio_sms_lease",
+  "reorder_studio_service",
+  "repair_bump_appointment_sync_version",
+  "repair_enqueue_orphan_link_delete",
+  "replace_waitlist_invitation",
+  "request_waitlist_withdrawal",
+  "reschedule_appointment_v2",
+  "resolve_active_studio_sms_sender",
+  "resolve_new_client_waitlist_invitation",
+  "resolve_waitlist_invitation_followup",
+  "resolve_waitlist_invitation_recipient_identity",
+  "restore_attention_item",
+  "restore_attention_item_if_latest",
+  "retire_studio_machine",
+  "revert_appointment_outcome",
+  "run_waitlist_retention_cleanup",
+  "save_client_card_on_file_ordered",
+  "save_weekly_availability",
+  "set_appointment_notes",
+  "set_client_portrait",
+  "set_new_client_admission_mode",
+  "set_next_session_note",
+  "set_own_calendar_feed_token_hash",
+  "set_own_default_machine",
+  "set_own_default_machine_frequency",
+  "set_practitioner_active_locked",
+  "set_session_aftercare_explained",
+  "set_session_performer",
+  "set_session_price",
+  "set_session_treatment_plan",
+  "set_treatment_image_note",
+  "set_waitlist_entry_availability",
+  "settle_postcare_send",
+  "settle_sms_message",
+  "settle_waitlist_batch_item",
+  "setup_readings_for_block",
+  "show_studio_service",
+  "soft_delete_session",
+  "soft_delete_session_area",
+  "soft_delete_session_block",
+  "start_session",
+  "stop_waitlist_batch",
+  "supersede_appointment_settlement",
+  "suppress_waitlist_prospects",
+  "sync_machine_profile_contract",
+  "sync_studio_account_status",
+  "update_block_with_entry",
+  "update_client_profile_if_unchanged",
+  "update_own_practitioner_profile",
+  "update_recurring_break_rule_and_rematerialize",
+  "upsert_availability_day_locked",
+  "upsert_availability_override_locked",
+  "waitlist_closed_invited_booking_enabled",
+  "waitlist_invitation_booking_state",
+  "waitlist_prospect_suppression_candidates",
+  "waitlist_retention_health",
+  "waive_appointment_fee",
+  "whole_session_copy_source_descriptor",
+  "write_intake_revision",
+];
+
+// Call sites whose command name is not a literal, so the census cannot name the command. Each file is listed and must
+// be read by a person; a new one fails the test.
+export const DYNAMIC_RPC_FILES: readonly string[] = [
+  "app/(app)/settings/payments/cancellation-fee-actions.ts",
+  "app/(app)/settings/waitlist/actions.ts",
+  "lib/email/send-appointment.ts",
+  "lib/waitlist/followups-owner.ts",
+  "lib/waitlist/invitation-booking-summary-read.ts",
+  "lib/waitlist/profile-completion-server.ts",
+];
+
+// Findings from reading the code for the two gaps in the Roles record (HON-44, 23 Nov). Each names its entries; the
+// test checks they exist. They record what was FOUND, and are not a statement that anything is fixed.
+export const FINDINGS: ReadonlyArray<{ id: string; entries: readonly string[]; found: string }> = [
+  {
+    id: "messaging-per-send-role",
+    entries: [
+      "app/(app)/calendar/actions.ts#sendPostcareEmailAction",
+      "app/(app)/clients/[id]/intake/actions.ts#resendIntakeEmailAction",
+      "app/(app)/clients/[id]/portal-link-actions.ts#sendPortalLinkAction",
+      "app/(app)/clients/[id]/portal-messages-actions.ts#createPortalMessageAction",
+      "app/(app)/settings/waitlist/invite-actions.ts#inviteToBookAction",
+      "app/(app)/calendar/[id]/manual-fee-actions.ts#sendFeeReceiptAction",
+      "app/(app)/clients/[id]/sessions/[sessionId]/payment-actions.ts#sendPaymentChargeReceiptAction",
+      "app/(app)/settings/waitlist/over-invite/actions.ts#sendOverInviteAction",
+    ],
+    found:
+      "No messaging path asks a per-send permission. Owner-only at the top of the body: the fee receipt, the charge receipt and the over-invite send. " +
+      "Reached by any active practitioner, with no owner guard found and nothing asking the engine: the postcare email, the intake resend, the portal link, " +
+      "the portal message and the waitlist invite. A receptionist reaches none of them, because it is not a practitioner. The retry-deliveries actions " +
+      "(over-invite/actions.ts) read as staff here, but their file has owner checks the census does not follow; they are not claimed either way. " +
+      "Whether each should need a role is a product decision for the messaging keys, not made here.",
+  },
+  {
+    id: "practitioner-settings-own-only",
+    entries: [
+      "app/(app)/settings/profile/actions.ts#updateOwnProfileAction",
+      "app/(app)/settings/profile/actions.ts#updatePractitionerColorAction",
+      "app/(app)/settings/profile/actions.ts#rotateCalendarFeedTokenAction",
+      "app/(app)/settings/profile/actions.ts#clearCalendarFeedTokenAction",
+      "app/(app)/settings/profile/google-calendar-actions.ts#startGoogleCalendarConnectAction",
+      "app/(app)/settings/profile/google-calendar-actions.ts#disconnectGoogleCalendarAction",
+      "app/(app)/settings/profile/google-calendar-actions.ts#selectWriteCalendarAction",
+      "app/(app)/settings/availability/actions.ts#saveWeeklyDefaultsAction",
+    ],
+    found:
+      "The settings a non-owner can reach act on the signed-in practitioner. Name and colour go through the governed own-preference command with no practitioner id " +
+      "in the request, and the feed-token and Google connect and disconnect actions take no practitioner id. selectWriteCalendarAction takes a calendar id from the form; " +
+      "whether it is checked against the actor's own connection was NOT verified. Every availability action is owner-only, so a non-owner has no control over " +
+      "their own availability at all: the engine's own-availability key has no app surface. That is a product gap, not an access hole.",
+  },
+];
