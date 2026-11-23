@@ -1,4 +1,7 @@
+"use client";
+
 import { PendingContainerLink } from "@/components/pending-link";
+import { useNotificationsLive } from "./NotificationsProvider";
 
 // HON-40 shell contract, slot `notifications` (owner: HON-106). Moved VERBATIM out of layout.tsx
 // (step 0): same markup, accessible name, 99+ cap, test id and container form. Rendered twice, once per
@@ -7,7 +10,12 @@ import { PendingContainerLink } from "@/components/pending-link";
 // client JS): inline SVG bell + the same server-computed unread
 // badge the old nav tab carried. The accessible name communicates
 // the count ("Notifications, 3 unread").
-export function NotificationsBell({ unread }: { unread: number }) {
+//
+// HON-106: the count is LIVE. `unread` is the server-rendered number (persisted + computed alerts) and is what shows until, or without,
+// NotificationsProvider; once the provider is mounted both header instances read ITS count, so they always agree.
+export function NotificationsBell({ unread: serverUnread }: { unread: number }) {
+  const live = useNotificationsLive();
+  const unread = live ? live.unread : serverUnread;
   const label =
     unread > 0 ? `Notifications, ${unread} unread` : "Notifications";
   return (
