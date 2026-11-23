@@ -15,6 +15,7 @@ import { WAITLIST_OFFER_DECLINED_BODY, WAITLIST_OFFER_DECLINED_TITLE } from "@/l
 //   3. Each reviewed writer file is scanned for forbidden fields in (a) every writer call IN FULL, with no field-order assumption, and (b) every
 //      declaration those calls refer to (`const body = ...`, `const base = {...}`, spreads) plus any title/body/base/message declaration in the file.
 //   4. Every migration that inserts into the table is discovered and the full list is pinned.
+// NOTE: discovery reads `git ls-files`, so an UNCOMMITTED new file is invisible to a local run (CI runs on the committed tree). This is a TRIPWIRE, not proof.
 // The functions are pure over a {path: source} map so the negative controls at the bottom run the SAME scan over forged sources.
 
 export type Sources = Record<string, string>;
@@ -139,6 +140,8 @@ function callObjects(code: string): string[] {
 }
 
 // Every declaration the calls refer to (spreads, `title: x`, `body: x`) plus every title/body/base/message declaration in the file.
+const RESERVED = new Set("if else for while switch catch function return await async new typeof void try do case default with of in".split(" "));
+
 function resolvedDeclarations(code: string, calls: string[]): string[] {
   const wanted = new Set<string>(["title", "body", "base", "message", "text", "payload", "content"]);
   const grab = (t: string) => {
@@ -151,13 +154,33 @@ function resolvedDeclarations(code: string, calls: string[]): string[] {
   const done = new Set<string>();
   for (let round = 0; round < 6; round++) {
     for (const name of [...wanted]) {
-      if (done.has(name)) continue;
+      if (done.has(name) || RESERVED.has(name)) continue;
       done.add(name);
-      for (const m of code.matchAll(new RegExp(`\\b(?:const|let|var)\\s+${name.replace(/\$/g, "\\$")}\\b[^=;]*=`, "g"))) {
+      const esc = name.replace(/\$/g, "\\$");
+      // const/let/var declarations
+      for (const m of code.matchAll(new RegExp(`\\b(?:const|let|var)\\s+${esc}\\b[^=;]*=`, "g"))) {
         const stmt = statement(code, m.index ?? 0);
-        if (/\bawait\b|\.from\(|\.select\(|\.rpc\(/.test(stmt)) continue;
+        // Only genuine data reads are skipped; an awaited call is followed (its identifiers are queued by grab below).
+        if (/\.from\(|\.select\(|\.rpc\(/.test(stmt)) continue;
+        if (/\bawait\b/.test(stmt)) {
+          // An awaited call: its arguments are data, not text. Follow the CALLED identifier (its definition is scanned), not the statement.
+          for (const c of stmt.matchAll(/\bawait\s+([A-Za-z_$][\w$]*)\s*\(/g)) wanted.add(c[1]);
+          continue;
+        }
         found.push(stmt);
         grab(stmt);
+      }
+      // function declarations and class/object-method builders: `function name(...) {...}`, `async function name`, `name(...) {...}`
+      for (const m of code.matchAll(new RegExp(`(?:\\bfunction\\s+${esc}\\b|^[ \\t]*(?:async\\s+)?${esc})\\s*(?:<[^>]*>)?\\(`, "gm"))) {
+        const paren = (m.index ?? 0) + m[0].length - 1;
+        const params = balanced(code, paren);
+        const rest = code.slice(paren + params.length);
+        const brace = rest.match(/^\s*(?::[^{;]+)?\{/);
+        if (!brace) continue; // a call, not a definition
+        const bodyText = balanced(code, paren + params.length + brace[0].length - 1);
+        const text = `${params}${bodyText}`;
+        found.push(text);
+        grab(text);
       }
     }
   }
@@ -180,9 +203,21 @@ function discoverWriters(files: Sources) {
   return { writers: writers.sort(), aliases, directInserts };
 }
 
+const INSERT_INTO_TABLE = /insert\s+into\s+(?:"?public"?\s*\.\s*)?"?practitioner_notifications"?/i;
 const migrationsInserting = (files: Sources) =>
   Object.keys(files)
-    .filter((p) => p.startsWith("supabase/migrations/") && /insert\s+into\s+(public\.)?"?practitioner_notifications"?/i.test(files[p]))
+    .filter((p) => p.startsWith("supabase/migrations/") && INSERT_INTO_TABLE.test(files[p]))
+    .sort();
+
+// A migration that BUILDS the table name (concatenation) or runs dynamic SQL (`execute`) that names it is not pinnable by the insert match: flag it.
+const migrationsBuildingTheName = (files: Sources) =>
+  Object.keys(files)
+    .filter((p) => {
+      if (!p.startsWith("supabase/migrations/")) return false;
+      const sql = files[p];
+      if (/practitioner_(?:'|")?\s*\|\||\|\|\s*(?:'|")?(?:notifications)\b|'practitioner'\s*\|\|/i.test(sql)) return true;
+      return [...sql.matchAll(/\bexecute\b[^;]*;/gi)].some((m) => /practitioner_notif|notifications/i.test(m[0]));
+    })
     .sort();
 
 function contentViolations(path: string, src: string): string[] {
@@ -204,6 +239,7 @@ function reviewViolations(files: Sources): string[] {
   if (JSON.stringify(migrationsInserting(files)) !== JSON.stringify([...REVIEWED_INSERTING_MIGRATIONS].sort())) {
     out.push(`migrations inserting into the table changed: ${migrationsInserting(files).join(",")}`);
   }
+  for (const m of migrationsBuildingTheName(files)) out.push(`migration builds or executes the notification table name dynamically: ${m}`);
   for (const w of REVIEWED_WRITERS) if (files[w]) out.push(...contentViolations(w, files[w]));
   for (const w of [...REVIEWED_WRITERS, HELPER]) {
     const code = stripComments(files[w] ?? "");
@@ -328,6 +364,33 @@ describe("negative controls: forged writers are caught", () => {
     const added = reviewViolations({ ...clean, ...migOk, "supabase/migrations/0999_new.sql": "insert into public.practitioner_notifications (title) values ('x');" });
     expect(added.some((x) => /migrations inserting/.test(x))).toBe(true);
     expect(reviewViolations({ ...clean }).some((x) => /migrations inserting/.test(x))).toBe(true);
+  });
+
+  it("7a. text built by a `function` declaration or a class-method builder is followed", () => {
+    const fn = "function buildBody(row) { return `${row.private_note} cancelled`; }\nconst body = buildBody(r);\nrecordPractitionerNotificationAndWait({ title: 't', body });";
+    expect(reviewViolations({ ...clean, ...migOk, "lib/notifications/appointment-cancel-notification.ts": fn }).some((x) => /private/.test(x))).toBe(true);
+    const asyncFn = "async function compose(row) { return `${row.legal_name}`; }\nconst body = await compose(r);\nrecordPractitionerNotificationAndWait({ title: 't', body });";
+    expect(reviewViolations({ ...clean, ...migOk, "lib/notifications/appointment-cancel-notification.ts": asyncFn }).some((x) => /legal/.test(x))).toBe(true);
+    const method = "class B {\n  build(row) {\n    return `${row.clinical_notes}`;\n  }\n}\nconst body = new B().build(r);\nrecordPractitionerNotificationAndWait({ title: 't', body });";
+    expect(reviewViolations({ ...clean, ...migOk, "lib/notifications/appointment-cancel-notification.ts": method }).some((x) => /clinical|notes?/.test(x))).toBe(true);
+  });
+
+  it("7b. an AWAITED declaration is followed through the called identifier, not skipped", () => {
+    const src = "const body = await makeText(r);\nconst makeText = (row) => `${row.intake_answers}`;\nrecordPractitionerNotification({ title: 't', body });";
+    expect(reviewViolations({ ...clean, ...migOk, "app/book/[slug]/actions.ts": src }).some((x) => /intake|answers/.test(x))).toBe(true);
+  });
+
+  it("7c. a quoted-identifier insert into the table is discovered as an inserting migration", () => {
+    const v = reviewViolations({ ...clean, ...migOk, "supabase/migrations/0998_q.sql": 'insert into "public"."practitioner_notifications" (title) values (\'x\');' });
+    expect(v.some((x) => /migrations inserting/.test(x))).toBe(true);
+  });
+
+  it.each([
+    ["concatenation", "do $$ begin execute 'insert into ' || 'practitioner_' || 'notifications' || ' (title) values (1)'; end $$;"],
+    ["execute naming it", "do $$ begin execute format('insert into %I (title) values (1)', 'practitioner_notifications'); end $$;"],
+  ])("7d. a migration that builds the table name or executes dynamic SQL naming it is flagged (%s)", (_n, sql) => {
+    const v = reviewViolations({ ...clean, ...migOk, "supabase/migrations/0997_dyn.sql": sql });
+    expect(v.some((x) => /dynamically/.test(x))).toBe(true);
   });
 
   it("a legal-identity read in a writer is flagged (condition b)", () => {
