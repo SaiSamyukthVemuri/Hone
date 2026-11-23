@@ -15,6 +15,7 @@ import {
   getAppointmentPaymentStates,
   type AppointmentPaymentState,
 } from "@/lib/billing/appointment-payment-state";
+import { timed } from "@/lib/observability/perf-timing";
 import {
   requirePractitionerWithStudio,
   getPractitionersForStudio,
@@ -251,7 +252,7 @@ export default async function DashboardPage({
   const period: ReportingPeriod = isReportingPeriod(sp.period)
     ? sp.period
     : "week";
-  const { practitioner, studio } = await requirePractitionerWithStudio();
+  const { practitioner, studio } = await timed("dashboard.identity", () => requirePractitionerWithStudio());
   const isOwner = practitioner.role === "owner";
   const supabase = await createClient();
 

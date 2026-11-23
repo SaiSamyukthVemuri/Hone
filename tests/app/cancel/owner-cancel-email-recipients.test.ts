@@ -203,4 +203,11 @@ describe("owner cancellation email: who receives it", () => {
     await flush();
     expect(emails).toHaveLength(1);
   });
+
+  it("the same address in a different case, or with stray spaces, is still one email", async () => {
+    scenario.ownerEmails = ["Owner@Example.invalid ", "owner@example.invalid"];
+    await publicCancelAppointmentAction(cancelForm());
+    await flush();
+    expect(emails).toHaveLength(1);
+  });
 });

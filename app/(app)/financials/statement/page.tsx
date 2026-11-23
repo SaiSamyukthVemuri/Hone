@@ -6,6 +6,7 @@ import { parsePageParam } from "@/lib/finance/statement-paging";
 import { loadStatementView } from "@/lib/finance/statement-read";
 import { resolveStatementMonth, yearMonthOf } from "@/lib/finance/statement-period";
 import { STATEMENT_MONTH_NOTICE } from "@/lib/finance/statement-copy";
+import { timed } from "@/lib/observability/perf-timing";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 
 import { loadFinderState } from "../statements/finder-data";
@@ -26,7 +27,7 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Money statement" };
 
 export default async function StatementPage({ searchParams }: { searchParams: Promise<{ month?: string | string[]; page?: string | string[] }> }) {
-  const { practitioner, studio } = await requirePractitionerWithStudio();
+  const { practitioner, studio } = await timed("statements.identity", () => requirePractitionerWithStudio());
   if (practitioner.role !== "owner") {
     return (
       <section className="rounded-lg border border-line bg-surface-sunken p-6 text-sm text-fg">
@@ -44,7 +45,7 @@ export default async function StatementPage({ searchParams }: { searchParams: Pr
   const jurisdiction = await getStudioPaymentJurisdiction(studio.id);
   const currency: PaymentCurrency | null = jurisdiction.ok ? jurisdiction.jurisdiction.currency : null;
 
-  const view = await loadStatementView(practitioner, studio, month, currency);
+  const view = await timed("statements.domain", () => loadStatementView(practitioner, studio, month, currency));
   // "Find a client" beside the tabs, as on the Clients tab. Read only AFTER the owner gate above; the month is the one in view.
   const finder = await loadFinderState(practitioner, studio);
   // Wide screens get the reference's content width: a contained breakout of the Statements content only (the app shell and its navigation are unchanged).
