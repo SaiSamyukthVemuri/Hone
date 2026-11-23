@@ -36,6 +36,7 @@ import {
 } from "@/lib/booking/referral-source";
 import { localTimeString12h } from "@/lib/booking/tz";
 import { recordPractitionerNotification } from "@/lib/notifications/practitioner-notifications";
+import { buildBookedText } from "@/lib/notifications/notification-text";
 import { addDays, localDateString, todayInTz } from "@/lib/booking/tz";
 import {
   horizonRangeInStudioTz,
@@ -1874,18 +1875,25 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     clientPreferredName === undefined
       ? await loadCommunicationName(admin, studio.id, clientId, clientName)
       : notificationClientName({ name: clientName, preferred_name: clientPreferredName });
-  await postCommit("public_booking_practitioner_notification_threw", undefined, () =>
-    recordPractitionerNotification({
+  await postCommit("public_booking_practitioner_notification_threw", undefined, () => {
+    // Built INSIDE the closure: a date or timezone formatting failure is contained here, after the booking committed, and loses only the notification.
+    const bookedText = buildBookedText({
+      clientName: notificationName,
+      serviceName: service.name,
+      dayLabel: formatDayLabel(start, studio.timezone),
+      timeLabel: localTimeString12h(start, studio.timezone),
+    });
+    return recordPractitionerNotification({
       studioId: studio.id,
       practitionerId: assignedPractitionerId,
       eventType: "new_booking",
-      title: "New booking",
-      body: `${notificationName} booked ${service.name} for ${formatDayLabel(start, studio.timezone)} at ${localTimeString12h(start, studio.timezone)}.`,
+      title: bookedText.title,
+      body: bookedText.body,
       appointmentId: createdId,
       clientId: clientId,
       href: `/calendar/${createdId}`,
-    }),
-  );
+    });
+  });
 
   // Fire-and-forget marketing/analytics consent capture. The appointment is
   // already committed, so this NEVER fails or delays the booking (a failed

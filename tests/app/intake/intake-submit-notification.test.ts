@@ -40,7 +40,8 @@ describe("intake submit → in-app notification wiring", () => {
     const body = submitBody();
     expect(body).toMatch(/recordPractitionerNotification\(\{/);
     expect(body).toMatch(/eventType: "intake_submitted"/);
-    expect(body).toMatch(/title: "Intake submitted"/);
+    // The title "Intake submitted" is made by the pure builder (behaviour pinned in notification-text.test.ts); the call passes its result through.
+    expect(body).toMatch(/title: intakeText\.title/);
   });
 
   it("is studio-scoped with studio-wide visibility (practitionerId null)", () => {
@@ -83,8 +84,9 @@ describe("intake submit → notification is once-only (idempotent)", () => {
 describe("intake submit → notification is privacy-safe", () => {
   it("body is safe text with a client-name fallback — no raw intake answers", () => {
     const body = submitBody();
-    expect(body).toMatch(/submitted an intake form\./);
-    expect(body).toMatch(/A client submitted an intake form\./);
+    // The wording and the generic fallback are the builder's (pinned by behaviour in notification-text.test.ts); here the call must use it.
+    expect(body).toMatch(/buildIntakeSubmittedText\(\{ clientName: clientName \|\| null \}\)/);
+    expect(body).toMatch(/body: intakeText\.body/);
     // The notification payload must not spread the responses/merged answers.
     const payload = body.slice(body.indexOf("recordPractitionerNotification("));
     expect(payload).not.toMatch(/\bresponses\b/);

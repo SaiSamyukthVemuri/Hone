@@ -88,6 +88,19 @@ describe("HON-54: a future booking assigned to another practitioner", () => {
     expect(await statusOf(appointmentId)).toBe("confirmed");
   });
 
+  it("the assignee presses Finish on the still-future booking: completion is refused (not started yet), the booking stays confirmed, and its one linked session is untouched", async () => {
+    const before = await sessionsFor(appointmentId);
+    expect(before.length, "the chart opened above is the booking's only session").toBe(1);
+    // markAppointmentCompleteAction calls this service-role-only command through the admin client, passing the signed-in practitioner's id.
+    const finish = await attempt(() =>
+      adminQuery(`select public.mark_appointment_complete($1, $2, $3)`, [appointmentId, studio.studioId, assignee.practitionerId]),
+    );
+    expect(finish.ok).toBe(false);
+    expect(finish.ok === false && finish.message).toMatch(/has not started yet/i);
+    expect(await statusOf(appointmentId)).toBe("confirmed");
+    expect(await sessionsFor(appointmentId)).toEqual(before);
+  });
+
   it("reassigned: once the booking belongs to the colleague the old assignee is refused and the colleague can chart (the answer follows the appointment as it is now)", async () => {
     const other = await seedStudio("hon54-reassign");
     const a2 = await seedMember(other, "hon54-a2");
@@ -140,5 +153,15 @@ describe("HON-54: a future booking assigned to another practitioner", () => {
     expect(foreign.ok === false && foreign.message).not.toContain(foreignAppt); // the id, names and times are never echoed
     expect(foreign.ok === false && foreign.message).not.toMatch(/hon54|\d{4}-\d{2}-\d{2}/);
     expect(await sessionsFor(foreignAppt)).toEqual([]);
+  });
+
+  it("control for the Finish case above: the same booking, once it has STARTED, completes through the same call, so that refusal was the start-time gate and not a broken fixture", async () => {
+    await adminQuery(`update public.appointments set starts_at = now() - interval '10 minutes', ends_at = now() + interval '20 minutes' where id = $1`, [appointmentId]);
+    const finish = await attempt(() =>
+      adminQuery(`select public.mark_appointment_complete($1, $2, $3)`, [appointmentId, studio.studioId, assignee.practitionerId]),
+    );
+    expect(finish.ok, finish.ok ? "" : finish.message).toBe(true);
+    expect(await statusOf(appointmentId)).toBe("completed");
+    expect((await sessionsFor(appointmentId)).length).toBe(1);
   });
 });
