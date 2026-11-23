@@ -416,6 +416,9 @@ export const BROWSER_GROUPS = {
       // and reasoning as UI-04: /clients/** has no PATH_TO_GROUP pattern.
       "clients-directory-journey.spec.ts",
       "client-groups.spec.ts",
+      // The counterpart: the client pages with the client-groups tables ABSENT (the repository's own chain, so CI runs it
+      // where client-groups.spec.ts skips). About 21 s, one test. Same group and reasoning as its sibling.
+      "client-groups-absent.spec.ts",
       // #1328 + 0281: the three client-save paths (profile edit with its name revision and audit row, the
       // stale-conflict refusal, the legal-name save and its conflict) at 1280 and 390. Same group and reasoning:
       // /clients/** has no PATH_TO_GROUP pattern.
