@@ -14,7 +14,8 @@ import { STUDIO_SETTINGS, resolveStudioSetting } from "@/lib/studio/settings";
 //   unavailable the setting could not be read; do not send (fail closed) and say so, never a silent guess
 // The one exception is a database that does not have the column yet (Postgres 42703, the application deployed ahead of 0373): that
 // resolves to the registered default, ON, exactly as an absent value does everywhere else in the settings registry, so shipping the
-// code first changes nothing for any studio.
+// code first leaves every send as it was. Saving is guarded separately: the email settings save leaves the two switches out of its
+// update until the studio row it read carries them, so an owner can still save every other setting before 0373 is applied.
 
 export type NoticeSwitchKey = "send_moved_appointment_emails" | "send_client_cancellation_emails";
 export type NoticeSwitchState = "on" | "off" | "unavailable";
