@@ -423,7 +423,8 @@ export function MobileMenu({
           <div className="mt-0.5 flex flex-col gap-0.5 border-t border-neutral-200 pt-1 dark:border-neutral-800">
             {[
               { href: "/settings/profile", label: "Settings" },
-              { href: "/getting-started", label: "Getting Started" },
+              // Owner setup guidance: staff are never shown it.
+              ...(role === "owner" ? [{ href: "/getting-started", label: "Getting Started" }] : []),
               ...(canSwitchStudio
                 ? [
                     {
