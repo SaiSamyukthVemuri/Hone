@@ -12,7 +12,9 @@ import { CLASSIFICATION, PINS, UNPROVEN, INSERT_UNPROVEN } from "./receptionist-
 //   C3  every call runs in a transaction that is rolled back, with in-transaction write counters and a whole-database before/after count;
 //   C4  six actors: this studio's receptionist, another studio's receptionist, an inactive receptionist, a practitioner of another studio who
 //       is not a receptionist, a stranger, and anon; owner positive controls prove the real ids reach the gate;
-//   F3  every public table: SELECT, INSERT, UPDATE and DELETE as a receptionist, a stranger and anon, expecting zero rows or a privilege error.
+//   F3  every public table: SELECT, UPDATE and DELETE as a receptionist, a stranger and anon, expecting zero rows or a privilege error; INSERT likewise
+//       on every table EXCEPT the ones in INSERT_UNPROVEN, which had no row to template an insert from (their insert stopped at a trigger or constraint).
+// Known limits: the name/arity key would miss two overloads of the same arity; the write counter covers the public and auth schemas only.
 // Output is booleans, counts and function or table names only: no row value, name, id or email is printed or snapshotted (C7).
 // SCOPE (C9): database functions and tables in the exposed schemas only. NOT covered: service-role server actions, storage policies, realtime,
 // and the hosted comparison (C8, see the hook at the end), none of which this test can see.
@@ -345,7 +347,7 @@ describe("C2 + C4: the actor matrix with real ids", () => {
   });
 });
 
-describe("F3: every public table, all four verbs", () => {
+describe("F3: every public table: read, update and delete on all; insert on all but the tables listed as unproven for insert", () => {
   async function verbs(actor: Actor, table: string, col: string | null, tpl: { cols: string[]; row: unknown } | null): Promise<{ sel: Outcome; ins: Outcome; upd: Outcome; del: Outcome }> {
     const oneP = (sql: string, params: unknown[]) => one(sql, params);
     const one = async (sql: string, params: unknown[] = []): Promise<Outcome> => {
@@ -376,7 +378,7 @@ describe("F3: every public table, all four verbs", () => {
       del: await one(`delete from public."${table}"`),
     };
   }
-  it("a receptionist, a stranger and anon read zero rows (except a receptionist's own membership row), insert nothing, update zero rows and delete zero rows", async () => {
+  it("(8 tables are unproven for insert, see INSERT_UNPROVEN) a receptionist, a stranger and anon read zero rows (except a receptionist's own membership row), insert nothing, update zero rows and delete zero rows", async () => {
     const cols = new Map<string, string>(
       (await adminQuery(`select distinct on (c.relname) c.relname, a.attname from pg_class c join pg_namespace n on n.oid = c.relnamespace join pg_attribute a on a.attrelid = c.oid
                            where n.nspname='public' and c.relkind in ('r','p') and a.attnum > 0 and not a.attisdropped and a.attgenerated = '' and a.attidentity <> 'a' order by c.relname, a.attnum`)).rows.map(
@@ -403,10 +405,11 @@ describe("F3: every public table, all four verbs", () => {
     for (const k of ["recA", "stranger", "anon"] as const) {
       for (const t of tables) {
         const v = await verbs(actors[k], t, cols.get(t) ?? null, tpls.get(t) ?? null);
-        if (!tpls.get(t) && v.ins.kind.startsWith("error:") && v.ins.kind !== "error:42501") { weakInserts.add(t); continue; }
+        const weak = !tpls.get(t) && v.ins.kind.startsWith("error:") && v.ins.kind !== "error:42501";
+        if (weak) weakInserts.add(t);
         const allowSel = k === "recA" && t === "studio_receptionists" ? 1 : 0;
         if (!(v.sel.kind === "error:42501" || (v.sel.kind === "ok" && v.sel.rows === allowSel))) findings.push(`select ${t} as ${k}: ${v.sel.kind} ${v.sel.rows ?? ""}`);
-        if (v.ins.kind !== "error:42501") findings.push(`insert ${t} as ${k}: ${v.ins.kind}`);
+        if (!weak && v.ins.kind !== "error:42501") findings.push(`insert ${t} as ${k}: ${v.ins.kind}`);
         if (!(v.upd.kind === "error:42501" || (v.upd.kind === "ok" && v.upd.rows === 0))) findings.push(`update ${t} as ${k}: ${v.upd.kind} ${v.upd.rows ?? ""}`);
         if (!(v.del.kind === "error:42501" || (v.del.kind === "ok" && v.del.rows === 0))) findings.push(`delete ${t} as ${k}: ${v.del.kind} ${v.del.rows ?? ""}`);
       }
