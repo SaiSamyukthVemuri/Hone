@@ -283,6 +283,8 @@ export const BROWSER_GROUPS = {
       "team-day-view.spec.ts",
       // HON-48 five-user proof: five synthetic practitioners, simultaneous bookings with one winner, studio isolation, moves, blocks, returning-client lookup,
       // and iPad/iPhone selection. REQUIRED: these run whenever the calendar group is selected (about 3 minutes of serial browser time).
+      // HON-106: the live bell count, two sessions and the role/studio isolation, 1440 and 390.
+      "notifications-live-bell.spec.ts",
       "hon48-five-user-booking.spec.ts",
       "hon48-five-user-moves-blocks.spec.ts",
       "hon48-five-user-denial.spec.ts",

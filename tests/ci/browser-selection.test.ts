@@ -260,6 +260,8 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // Now 56: machine-mode-then-save.spec.ts (HON-8: a mode click then a block save must not conflict with the user's own write; a genuine
     // second-tab edit still does) joined `sessions`. RECORDED AS A DECISION per the note above. Cost: FOUR executed cases (two models x two), each a
     // seeded studio, a magic-link login and a few page loads: about 2 minutes.
+    // Now 64: HON-106's notifications-live-bell.spec.ts joined `calendar` (the shell's bell). RECORDED AS A DECISION per the note above. Cost: EIGHT
+    // executed cases, each a seeded studio and a magic-link login: about 5 minutes in the targeted lane.
     // Now 62 after merging production (production alone: 56): HON-48's six five-user proof specs (hon48-five-user-booking, -moves-blocks, -denial, hon48-tablet-phone-selection,
     // hon48-returning-client-lookup, hon48-commit-visibility-timing) joined `calendar`. RECORDED AS A DECISION per the note above. Five of the six
     // are REQUIRED in the calendar lane and no longer self-skip (the self-skip was removed from those five). Only hon48-commit-visibility-timing
@@ -269,7 +271,7 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // The five HON-48 five-user specs above are NO LONGER opt-in: they run in the required calendar lane (18 declarations, 23 cases after the device and size loops
     // in the tablet and phone spec; about 3 minutes measured on an owned stack). RECORDED AS A DECISION per the note above. The count is unchanged because the files were already listed; only the self-skip went.
     // hon48-commit-visibility-timing stays opt-in (HON48_TIMING_E2E=1), as do the two day-layout matrices and calendar-own-first.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(63);
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(64);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {
