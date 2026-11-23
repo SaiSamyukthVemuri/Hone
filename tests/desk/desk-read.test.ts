@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { DESK_FIELD_MAX, DESK_NAME_ON_FILE, mapDeskScheduleRow, readDeskSchedule, type DeskRpc } from "@/lib/desk/read";
+import { DESK_FIELD_MAX, DESK_NAME_ON_FILE, DESK_SCHEDULE_ROW_CAP, DeskScheduleIncompleteError, mapDeskScheduleRow, readDeskSchedule, type DeskRpc } from "@/lib/desk/read";
 
 // The desk's read is a closed projection: it copies named fields only, and no client name of any kind survives it.
 // Fixtures are synthetic.
@@ -92,5 +92,21 @@ describe("readDeskSchedule", () => {
       const err = await readDeskSchedule(db, "s", "a", "b").then(() => null, (e: Error) => e);
       expect(err?.message).toBe("Failed to load schedule");
     }
+  });
+
+  it("a response that reaches the row cap is reported incomplete, never returned as a partial list", async () => {
+    expect(DESK_SCHEDULE_ROW_CAP).toBe(1000);
+    const below = await readDeskSchedule(dbOf(Array.from({ length: DESK_SCHEDULE_ROW_CAP - 1 }, () => row())), "s", "a", "b");
+    expect(below).toHaveLength(DESK_SCHEDULE_ROW_CAP - 1);
+    for (const n of [DESK_SCHEDULE_ROW_CAP, DESK_SCHEDULE_ROW_CAP + 1]) {
+      const err = await readDeskSchedule(dbOf(Array.from({ length: n }, () => row())), "s", "a", "b").then(() => null, (e: Error) => e);
+      expect(err).toBeInstanceOf(DeskScheduleIncompleteError);
+    }
+  });
+
+  it("counts the rows the database returned, before any unreadable row is dropped", async () => {
+    const rows = Array.from({ length: DESK_SCHEDULE_ROW_CAP }, (_, i) => (i < 10 ? { starts_at: "not a time" } : row()));
+    const err = await readDeskSchedule(dbOf(rows), "s", "a", "b").then(() => null, (e: Error) => e);
+    expect(err).toBeInstanceOf(DeskScheduleIncompleteError);
   });
 });

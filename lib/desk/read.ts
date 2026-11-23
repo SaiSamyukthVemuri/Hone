@@ -58,8 +58,23 @@ export function mapDeskScheduleRow(raw: unknown): DeskScheduleRow | null {
   };
 }
 
+// PostgREST applies its own max_rows (1000 on this stack) to a function response and truncates WITH HTTP 200 and no
+// error (see SESSION_BLOCK_AREA_ROW_LIMIT in lib/supabase/queries.ts, where the same cap is treated as a failed read).
+// A schedule cut at the cap would look complete and silently omit the later appointments, so a response that reaches the
+// cap is reported as INCOMPLETE and no partial list is ever shown. The count is of the rows the database returned, before
+// any row is dropped as unreadable.
+export const DESK_SCHEDULE_ROW_CAP = 1000;
+
+export class DeskScheduleIncompleteError extends Error {
+  constructor() {
+    super("Schedule incomplete");
+    this.name = "DeskScheduleIncompleteError";
+  }
+}
+
 export async function readDeskSchedule(db: DeskRpc, studioId: string, fromIso: string, toIso: string): Promise<DeskScheduleRow[]> {
   const res = await db.rpc("receptionist_calendar_v2", { p_studio_id: studioId, p_from: fromIso, p_to: toIso });
   if (res.error || !Array.isArray(res.data)) throw new Error("Failed to load schedule");
+  if (res.data.length >= DESK_SCHEDULE_ROW_CAP) throw new DeskScheduleIncompleteError();
   return res.data.map(mapDeskScheduleRow).filter((r): r is DeskScheduleRow => r !== null);
 }

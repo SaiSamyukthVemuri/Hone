@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { requireReceptionistWithStudio } from "@/lib/desk/guard";
-import { DESK_NAME_ON_FILE, readDeskSchedule, type DeskRpc, type DeskScheduleRow } from "@/lib/desk/read";
+import { DESK_NAME_ON_FILE, DeskScheduleIncompleteError, readDeskSchedule, type DeskRpc, type DeskScheduleRow } from "@/lib/desk/read";
 import { formatStudioDateTime, formatStudioTime } from "@/lib/desk/time";
 import { ClockFallbackNotice } from "./ClockFallbackNotice";
 
@@ -21,11 +21,13 @@ export default async function DeskSchedulePage() {
   const identity = await requireReceptionistWithStudio();
   const now = Date.now();
   let rows: DeskScheduleRow[] | null = null;
+  let incomplete = false;
   try {
     const supabase = (await createClient()) as unknown as DeskRpc;
     rows = await readDeskSchedule(supabase, identity.studioId, new Date(now - BACK_HOURS * 3_600_000).toISOString(), new Date(now + AHEAD_DAYS * 86_400_000).toISOString());
-  } catch {
+  } catch (e) {
     rows = null;
+    incomplete = e instanceof DeskScheduleIncompleteError;
   }
 
   return (
@@ -35,7 +37,11 @@ export default async function DeskSchedulePage() {
         <p className="mt-1 text-sm text-neutral-500">The next seven days. Client names are not shown on this desk yet; every client reads &ldquo;{DESK_NAME_ON_FILE}&rdquo;.</p>
       </div>
       {rows !== null && <ClockFallbackNotice timezones={rows.map((r) => r.studioTimezone)} />}
-      {rows === null ? (
+      {incomplete ? (
+        <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-6 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+          Schedule incomplete &mdash; too many appointments to show here.
+        </p>
+      ) : rows === null ? (
         <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-6 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
           The schedule is unavailable right now. Try again in a moment.
         </p>

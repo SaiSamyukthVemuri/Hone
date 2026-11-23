@@ -71,4 +71,16 @@ describe("the desk schedule page", () => {
     state.rows = [{ ...base, display_name: STORED, name_on_file: true }];
     expect(await html()).not.toMatch(/<(a|form|input|button|select|textarea)\b/);
   });
+
+  it("a saturated response shows an explicit incomplete state and no partial list; just below the cap renders normally", async () => {
+    state.rows = Array.from({ length: 1000 }, () => ({ ...base, display_name: STORED, name_on_file: true }));
+    const full = await html();
+    expect(full).toMatch(/Schedule incomplete/);
+    expect(full).not.toMatch(/Consultation|Practitioner One/);
+    expect(full.includes("Stored-Surname")).toBe(false);
+    state.rows = Array.from({ length: 999 }, () => ({ ...base, display_name: STORED, name_on_file: true }));
+    const below = await html();
+    expect(below).not.toMatch(/Schedule incomplete/);
+    expect(below.match(/Consultation/g)).toHaveLength(999);
+  });
 });
