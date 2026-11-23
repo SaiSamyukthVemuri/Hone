@@ -6,13 +6,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   role: "owner" as "owner" | "practitioner",
+  // The studio row the action reads: after 0373 it carries both columns; before 0373 it does not.
+  studioRow: { id: "s-1", send_moved_appointment_emails: true, send_client_cancellation_emails: true } as Record<string, unknown>,
   updates: [] as Array<Record<string, unknown>>,
   error: null as null | { code: string },
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/supabase/queries", () => ({
-  getCurrentPractitionerWithStudio: async () => ({ practitioner: { id: "p-1", role: h.role }, studio: { id: "s-1" } }),
+  getCurrentPractitionerWithStudio: async () => ({ practitioner: { id: "p-1", role: h.role }, studio: h.studioRow }),
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
@@ -38,6 +40,7 @@ function form(fields: Record<string, string>): FormData {
 
 beforeEach(() => {
   h.role = "owner";
+  h.studioRow = { id: "s-1", send_moved_appointment_emails: true, send_client_cancellation_emails: true };
   h.updates.length = 0;
   h.error = null;
   vi.spyOn(console, "error").mockImplementation(() => {});
@@ -67,6 +70,20 @@ describe("saving the two client-notice switches", () => {
     await setStudioEmailSettingsAction(form({ [MOVED]: "yes", [CANCEL]: "" }));
     expect(Object.keys(h.updates[0])).not.toContain(MOVED);
     expect(Object.keys(h.updates[0])).not.toContain(CANCEL);
+  });
+
+  it("before 0373 is applied (the studio row has no such columns) the other settings still save and the switches are left out", async () => {
+    h.studioRow = { id: "s-1" };
+    const r = await setStudioEmailSettingsAction(form({ send_confirmation_emails: "false", [MOVED]: "false", [CANCEL]: "false" }));
+    expect(r).toEqual({ ok: true });
+    expect(h.updates[0]).toMatchObject({ send_confirmation_emails: false });
+    expect(Object.keys(h.updates[0])).not.toContain(MOVED);
+    expect(Object.keys(h.updates[0])).not.toContain(CANCEL);
+  });
+
+  it("after 0373 (the studio row carries the columns) both are written", async () => {
+    await setStudioEmailSettingsAction(form({ [MOVED]: "false", [CANCEL]: "true" }));
+    expect(h.updates[0]).toMatchObject({ [MOVED]: false, [CANCEL]: true });
   });
 
   it("a member cannot save them, and nothing is written", async () => {
