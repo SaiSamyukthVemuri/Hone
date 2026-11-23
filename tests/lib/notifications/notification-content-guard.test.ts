@@ -124,3 +124,31 @@ describe("notification content: no private, legal, clinical or intake text", () 
     for (const s of bad) expect(FORBIDDEN.some((re) => re.test(s)), s).toBe(true);
   });
 });
+
+// Condition (b): the only person-name a notification may carry is the DISPLAY name, the field the calendar shows (clientDisplayName: the preferred name
+// where set, else the stored clients.name). A writer must never read the legal-identity columns or helper, even to build a name. Checked over each
+// writer file's whole source (imports included) so a read anywhere in the file fails.
+const LEGAL_IDENTITY_READS = [
+  /legal_given_name|legal_middle_name|legal_family_name|legal_full_name/i,
+  /legal[_ ]?name|legalName/i,
+  /legal-identity/i,
+  /\b(readLegalIdentity|readLegalNamesForStudio|readLegalNamesForClients|LEGAL_IDENTITY_COLUMNS|LegalIdentityRow)\b/,
+  /client_legal_identit/i,
+];
+
+describe("notification writers never read legal identity (display name only)", () => {
+  it.each(EXPECTED_WRITER_FILES)("%s reads no legal-identity column or helper", (f) => {
+    const src = readFileSync(f, "utf8").replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    for (const re of LEGAL_IDENTITY_READS) expect(src, `${f}: ${re}`).not.toMatch(re);
+  });
+
+  it("the shared writer module reads none either", () => {
+    const src = readFileSync("lib/notifications/practitioner-notifications.ts", "utf8").replace(/\/\/[^\n]*/g, "");
+    for (const re of LEGAL_IDENTITY_READS) expect(src).not.toMatch(re);
+  });
+
+  it("negative control: each legal-identity spelling is caught", () => {
+    const bad = ["select('legal_given_name')", "import { readLegalIdentity } from '@/lib/clients/legal-identity'", "client.legalName", "readLegalNamesForClients(x)"];
+    for (const s of bad) expect(LEGAL_IDENTITY_READS.some((re) => re.test(s)), s).toBe(true);
+  });
+});
