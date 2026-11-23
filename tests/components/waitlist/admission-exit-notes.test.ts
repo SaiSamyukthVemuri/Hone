@@ -13,7 +13,7 @@ const html = (status: "released" | "expired" | "invited") =>
 describe("exit wording", () => {
   it("pins the two sentences", () => {
     expect(RETURN_TO_WAITLIST_NOTE).toBe("Puts them back in the waiting queue with the date they first joined.");
-    expect(CANCEL_CAN_BE_RETURNED).toBe("You can return them to the waitlist at any time; they keep the date they first joined.");
+    expect(CANCEL_CAN_BE_RETURNED).toBe("You can return them to the waitlist; they keep the date they first joined.");
   });
   it("Return to waitlist shows its sentence on a released and on an expired entry", () => {
     for (const s of ["released", "expired"] as const) expect(html(s)).toContain(RETURN_TO_WAITLIST_NOTE);
@@ -23,6 +23,11 @@ describe("exit wording", () => {
     expect(h).toContain("The booking link stops working straight away.");
     expect(h).toContain("set aside");
     expect(h).toContain(CANCEL_CAN_BE_RETURNED);
+  });
+  it("no exit sentence promises an open-ended return or keeping: not \"at any time\", \"always\", \"forever\" or \"indefinitely\"", () => {
+    expect(CANCEL_CAN_BE_RETURNED).not.toMatch(/at any time|always|forever|indefinite/i);
+    expect(RETURN_TO_WAITLIST_NOTE).not.toMatch(/at any time|always|forever|indefinite/i);
+    for (const s of ["released", "expired", "invited"] as const) expect(html(s).replace(/<[^>]+>/g, " ")).not.toMatch(/at any time|forever|indefinite/i);
   });
   it("no exit sentence states a number of days or months", () => {
     for (const s of ["released", "expired", "invited"] as const) {
