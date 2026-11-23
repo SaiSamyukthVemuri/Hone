@@ -1,7 +1,7 @@
 // Compares the privileges the database really grants with the ones recorded in permission-coverage.registry.ts.
 // Commands that only exist where the permission engine is installed (absent on a database built from the repository
-// migrations alone, such as local and CI stacks) may be ABSENT, and then must be recorded as nothing else: absence is
-// asserted, never skipped silently, and every other command is still compared. When one is present its grants are
+// migrations alone, such as local and CI stacks) may be ABSENT and are then not counted as drift; every other command is
+// still compared. When one is present its grants are
 // compared like any other.
 
 export const ENGINE_ONLY_RPCS: readonly string[] = ["has_studio_permission"];

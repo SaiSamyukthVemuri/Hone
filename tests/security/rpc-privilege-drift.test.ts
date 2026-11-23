@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { rpcPrivilegeDrift } from "./rpc-privilege-drift";
+import { ENGINE_ONLY_RPCS, rpcPrivilegeDrift } from "./rpc-privilege-drift";
 
 // Both branches of the engine-only rule, and that it never loosens the check for any other command.
 const names = ["has_studio_permission", "some_command", "other_command"];
@@ -7,6 +7,9 @@ const recorded = { has_studio_permission: "-u-D", some_command: "--sD", other_co
 const base = { some_command: "--sD", other_command: "-u-I" };
 
 describe("rpcPrivilegeDrift", () => {
+  it("exempts exactly one command: the permission engine function", () => {
+    expect(ENGINE_ONLY_RPCS).toEqual(["has_studio_permission"]);
+  });
   it("engine installed with the recorded grants: no drift", () => {
     expect(rpcPrivilegeDrift(names, { ...base, has_studio_permission: "-u-D" }, recorded)).toEqual([]);
   });

@@ -707,7 +707,10 @@ export const RPC_NAMES: readonly string[] = [
 // The real EXECUTE privileges of every database command above, read from a migrated database by
 // tests/db/permission-rpc-privileges.db.test.ts and pinned here. One letter per role, in the order anon, authenticated,
 // service_role ("a", "u", "s", or "-" when the role cannot run it), then "D" for security definer or "I" for invoker.
-// A second group after a comma is a second overload. A command the signed-in app user can run ("u") is reachable by a
+// "ABSENT" means no function of that name exists in the public schema of a database built from the repository
+// migrations: the two appointment-email commands below are called by the app but defined only on the hosted database
+// (their grants there are NOT known from here; reading them is a separate, authorized hosted check). A second group after
+// a comma is a second overload. A command the signed-in app user can run ("u") is reachable by a
 // receptionist too, once one has a session, so each of those needs its own gate in the function body, not only in the
 // action that calls it. Read from a database with the permission engine installed; the engine adds no command the app calls.
 export const RPC_PRIVILEGES: Readonly<Record<string, string>> = {
@@ -773,7 +776,7 @@ export const RPC_PRIVILEGES: Readonly<Record<string, string>> = {
   get_studio_payment_settings_display: "-usD",
   has_studio_permission: "-u-D",
   import_legacy_waitlist_entry: "--sD",
-  inspect_appointment_email_operation: "---I",
+  inspect_appointment_email_operation: "ABSENT",
   issue_scoped_new_client_waitlist_invitation: "--sD",
   join_new_client_waitlist_with_phone_and_sms_answer: "--sD",
   latest_setup_for_client: "-u-I",
@@ -787,7 +790,7 @@ export const RPC_PRIVILEGES: Readonly<Record<string, string>> = {
   materialize_recurring_break_rule: "--sD",
   move_or_reassign_appointment: "--sD",
   my_pending_invitation: "-usD",
-  observe_appointment_email_operation: "---I",
+  observe_appointment_email_operation: "ABSENT",
   open_new_client_waitlist_admission_round: "--sD",
   practitioner_cancel_appointment: "--sD",
   preview_waitlist_over_invite: "--sD",
