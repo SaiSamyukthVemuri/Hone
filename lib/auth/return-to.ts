@@ -11,6 +11,7 @@
 // The #fragment is never sent to a server, so a link such as /settings/waitlist?followup=1#follow-up loses its fragment at the sign-in redirect.
 // The query `followup=1` stands in for it: it selects the target whose destination carries the fragment.
 
+import { WAITLIST_PATH } from "@/lib/waitlist/paths";
 export const RETURN_TO_COOKIE = "hone_return_to";
 export const RETURN_TO_COOKIE_MAX_AGE_SECONDS = 60 * 60;
 
@@ -18,8 +19,8 @@ type Target = { key: string; pathname: string; query: string; destination: strin
 
 // Exact entries only. Extend deliberately, one reviewed line at a time.
 export const RETURN_TARGETS: ReadonlyArray<Target> = [
-  { key: "waitlist_followup", pathname: "/settings/waitlist", query: "?followup=1", destination: "/settings/waitlist#follow-up" },
-  { key: "waitlist", pathname: "/settings/waitlist", query: "", destination: "/settings/waitlist" },
+  { key: "waitlist_followup", pathname: WAITLIST_PATH, query: "?followup=1", destination: `${WAITLIST_PATH}#follow-up` },
+  { key: "waitlist", pathname: WAITLIST_PATH, query: "", destination: WAITLIST_PATH },
 ];
 
 /** The target key for a signed-out request, or null. `search` is the raw query string including the leading "?" (or ""). */

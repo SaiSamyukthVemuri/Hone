@@ -263,7 +263,13 @@ describe("SIGNOUT-02b · the pending state outlives the panel", () => {
     const opened = layout.indexOf("<SignOutFlightProvider>");
     const closed = layout.indexOf("</SignOutFlightProvider>");
     expect(opened, "the shell has no sign-out hold provider").toBeGreaterThan(-1);
+    // Step 0 of the HON-40 shell contract moved both menus into HeaderCluster, which the layout renders once,
+    // inside this provider. The menus' provider membership is therefore the cluster's.
+    const cluster = codeOnly(read("app/(app)/HeaderCluster.tsx"));
     for (const menu of ["<AccountMenu", "<MobileMenu"]) {
+      expect(cluster.indexOf(menu), `${menu} is missing from the header cluster`).toBeGreaterThan(-1);
+    }
+    for (const menu of ["<HeaderCluster"]) {
       const at = layout.indexOf(menu);
       expect(at, `${menu} is missing from the shell layout`).toBeGreaterThan(-1);
       expect(

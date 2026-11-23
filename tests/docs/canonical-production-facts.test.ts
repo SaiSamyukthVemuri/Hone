@@ -2191,6 +2191,23 @@ describe("NEGATIVE CONTROLS — the guard actually goes red", () => {
 // ===========================================================================
 
 /** Every 40-hex string in a document, deduplicated. */
+/**
+ * The SHAs in `shas` that are NOT commits in this repository (missing, or present as a tree, blob or tag), in input order.
+ * One `git cat-file --batch-check` process for the whole list. A git failure THROWS: it must never read as "every SHA is fine".
+ */
+export function nonCommitShas(shas: string[]): string[] {
+  if (shas.length === 0) return [];
+  const out = execFileSync("git", ["cat-file", "--batch-check"], { encoding: "utf8", cwd: ROOT, input: shas.join("\n") + "\n", stdio: ["pipe", "pipe", "ignore"] });
+  return nonCommitsIn(shas, out);
+}
+
+/** Reads a `git cat-file --batch-check` answer: one line per SHA, in order. Fewer or more lines than SHAs THROWS, so a truncated answer cannot pass for "all fine". */
+export function nonCommitsIn(shas: string[], batchCheckOutput: string): string[] {
+  const lines = batchCheckOutput.split("\n").filter((l) => l.length > 0);
+  if (lines.length !== shas.length) throw new Error(`git cat-file --batch-check answered ${lines.length} lines for ${shas.length} SHAs`);
+  return shas.filter((_, i) => lines[i].split(" ")[1] !== "commit");
+}
+
 export function shasIn(doc: string): string[] {
   return [...new Set(doc.match(/\b[0-9a-f]{40}\b/g) ?? [])];
 }
@@ -2252,13 +2269,44 @@ describe("RULE A — current-state.md pins a real, current production SHA", () =
     // "Not in this clone" and "not a commit" are different claims and only the
     // second is a defect.
     requireUsableGit("A1");
-    const unreal = shasIn(CURRENT_STATE).filter((sha) => git("cat-file", "-t", sha) !== "commit");
+    const named = shasIn(CURRENT_STATE);
+    // Non-vacuity: an empty extraction would make this pass for the wrong reason. The record lists 216 SHAs today and only ever grows; a floor of 100 catches a
+    // broken extraction without making a normal edit fail.
+    expect(named.length, "the SHA extraction found almost nothing: the check below would be vacuous").toBeGreaterThan(100);
+    const unreal = nonCommitShas(named);
     expect(
       unreal,
       "current-state.md names one or more 40-hex SHAs that are not commits in this " +
         "repository. A fabricated or mistyped SHA reads exactly like a real one; this is the " +
         "only thing that tells them apart. Offending: " + JSON.stringify(unreal),
     ).toEqual([]);
+    // An explicit budget, not the 5 s default: the record names a few hundred SHAs and every refresh adds more, so this check grows with it. It measured
+    // 5.0-5.3 s on a loaded host with one `git cat-file` process per SHA and went red under wide runs while passing alone. The lookups are now ONE
+    // `git cat-file --batch-check` call; the 30 s is headroom for a loaded host, not a licence to be slow.
+  }, 30_000);
+
+  it("A1 negative control: a fabricated SHA, a non-commit object and a missing SHA are each reported; a real commit is not", () => {
+    requireUsableGit("A1 negative control");
+    const head = git("rev-parse", "HEAD") as string;
+    const tree = git("rev-parse", "HEAD^{tree}") as string;
+    const fake = "0123456789abcdef0123456789abcdef01234567";
+    expect(nonCommitShas([head])).toEqual([]);
+    expect(nonCommitShas([fake])).toEqual([fake]);
+    expect(nonCommitShas([tree])).toEqual([tree]);
+    expect(nonCommitShas([head, fake, tree, head])).toEqual([fake, tree]);
+    expect(nonCommitShas([])).toEqual([]);
+  });
+
+  it("A1 a short or long batch answer THROWS instead of passing", () => {
+    const sha = (n: number) => String(n).repeat(40).slice(0, 40);
+    const shas = [sha(1), sha(2), sha(3)];
+    const line = (s: string) => `${s} commit 200`;
+    expect(nonCommitsIn(shas, shas.map(line).join("\n") + "\n")).toEqual([]);
+    expect(() => nonCommitsIn(shas, line(shas[0]) + "\n")).toThrow(/answered 1 lines for 3 SHAs/);
+    expect(() => nonCommitsIn(shas, "")).toThrow(/answered 0 lines for 3 SHAs/);
+    expect(() => nonCommitsIn(shas, shas.map(line).join("\n") + "\n" + line(sha(4)) + "\n")).toThrow(/answered 4 lines for 3 SHAs/);
+    // a missing line in the middle is still a count mismatch, and a "missing" answer is reported, not skipped
+    expect(nonCommitsIn(shas, [line(shas[0]), `${shas[1]} missing`, line(shas[2])].join("\n"))).toEqual([shas[1]]);
   });
 
   it("A1b: every abbreviated SHA presented as the CURRENT baseline matches the pin", () => {
