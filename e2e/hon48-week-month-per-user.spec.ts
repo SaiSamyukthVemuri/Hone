@@ -32,13 +32,19 @@ let everyone: string[];
 const clientsOf: Record<string, string[]> = {}; // user key -> the client names booked with them, after the move
 let lunchNote = "";
 
-async function book(u: User, local: string, serviceId: string): Promise<{ id: string; name: string }> {
+/**
+ * The Month grid's cell for `day`, by its accessible name ("Open YYYY-MM-DD"). NOT `a[href*="day=<day>"]`: the toolbar's Day tab links to
+ * the month's first day, so on the 1st that selector also matches the tab, which comes first in the page, and the cell is never read.
+ */
+const monthCell = (page: Page, day: string) => page.getByRole("link", { name: `Open ${day}`, exact: true });
+
+async function book(u: User, local: string, serviceId: string, day: string = t.day): Promise<{ id: string; name: string }> {
   const { clientId } = await seedE2eClient(t.seed);
   const [row] = await sql<{ id: string }>(
     "insert into public.appointments (id,studio_id,client_id,practitioner_id,service_id,starts_at,ends_at,duration_minutes,buffer_minutes_snapshot,blocked_ends_at,status) " +
       "select gen_random_uuid(),$1,$2,$3,$4,s,s+interval '15 minutes',15,0,s+interval '15 minutes','confirmed' " +
       "from (select (($5::date + $6::time) at time zone $7) as s) t returning id",
-    [t.seed.studioId, clientId, u.practitionerId, serviceId, t.day, local, TZ],
+    [t.seed.studioId, clientId, u.practitionerId, serviceId, day, local, TZ],
   );
   return { id: row.id, name: await clientNameOf(t.seed, clientId) };
 }
@@ -90,7 +96,7 @@ async function dbWeekAndDay(u: User): Promise<{ week: number; day: number }> {
 const APPT_CHIP = 'span[title]:has([data-testid="month-chip-swatch"])';
 
 async function monthCellTotal(page: Page, day: string): Promise<number> {
-  const cell = page.locator(`a[href*="day=${day}"]`).first();
+  const cell = monthCell(page, day);
   await expect(cell).toBeVisible({ timeout: 20_000 });
   // An appointment chip carries its practitioner's swatch. A block is drawn as a titled chip too (MEASURED, first runs), so counting every
   // titled chip would count cy's lunch block in everyone's cell.
@@ -136,7 +142,7 @@ for (const key of Object.keys(COUNTS)) {
     await page.goto(monthUrl(t.day, [u.practitionerId]));
     expect(await monthCellTotal(page, t.day), `${key}: the Month day cell accounts for every one of their bookings that day`).toBe(db.day);
     await expect(
-      page.locator(`a[href*="day=${t.day}"]`).first().locator(`span[title="Lunch · Only ${cy.name}"]`),
+      monthCell(page, t.day).locator(`span[title="Lunch · Only ${cy.name}"]`),
       `${key}: Month draws the lunch block once, naming cy`,
     ).toHaveCount(1);
   });
@@ -146,7 +152,7 @@ test("the crowded day (ed, five back to back) is readable in Month: three chips 
   const ed = t.users.find((u) => u.key === "ed")!;
   const page = t.contexts[t.users.indexOf(ed)].page;
   await page.goto(monthUrl(t.day, [ed.practitionerId]));
-  const cell = page.locator(`a[href*="day=${t.day}"]`).first();
+  const cell = monthCell(page, t.day);
   await expect(cell).toBeVisible({ timeout: 20_000 });
   expect(await cell.locator(APPT_CHIP).count()).toBe(3);
   await expect(cell).toContainText("+2 more");
@@ -157,6 +163,22 @@ test("everyone selected: the Week and Month totals are the sum of the five", asy
   const sum = Object.values(COUNTS).reduce((a, b) => a + b, 0);
   await owner.goto(monthUrl(t.day, everyone));
   expect(await monthCellTotal(owner, t.day)).toBe(sum);
+});
+
+test("a date that is the 1st of a month: the Month grid cell is read, not the toolbar's Day tab", async () => {
+  // The fixture day is today+3, so it only falls on the 1st a few days a year and this would otherwise be proved by chance. Book one
+  // appointment on the 1st of NEXT month and read that cell. If the selector landed on the Day tab (which links to the month's first day
+  // and comes first in the page) it would read 0, not 1.
+  const [m] = await sql<{ first: string }>(
+    "select (date_trunc('month', now() at time zone $1) + interval '1 month')::date::text as first",
+    [TZ],
+  );
+  const ana = t.users.find((u) => u.key === "ana")!;
+  await book(ana, "10:00", t.serviceId, m.first);
+  const owner = t.contexts[0].page;
+  await owner.goto(monthUrl(m.first, [ana.practitionerId]));
+  await expect(monthCell(owner, m.first), "exactly one grid cell is named for the 1st").toHaveCount(1);
+  expect(await monthCellTotal(owner, m.first), "the 1st's own cell accounts for its one booking").toBe(1);
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -187,7 +209,7 @@ test("phone: Month for one practitioner shows their own day total and fits the s
       await page.goto(monthUrl(t.day, [u.practitionerId]));
       expect(await monthCellTotal(page, t.day), `${key}: phone Month day cell`).toBe(COUNTS[key]);
       await noSideScroll(page, `${key} Month`);
-      const box = (await page.locator(`a[href*="day=${t.day}"]`).first().boundingBox())!;
+      const box = (await monthCell(page, t.day).boundingBox())!;
       expect(box.width, "the day cell is a usable tap target").toBeGreaterThanOrEqual(43.5);
       expect(box.height, "the day cell is a usable tap target").toBeGreaterThanOrEqual(43.5);
     }
