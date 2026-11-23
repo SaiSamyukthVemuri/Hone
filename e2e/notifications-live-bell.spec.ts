@@ -401,6 +401,8 @@ test("12. a render that repeats the SAME number is still authoritative, and a re
 
   // A PROBE IN FLIGHT ACROSS the mark-read: the request reads the database BEFORE the mark-read, and its answer arrives AFTER the fresh render.
   for (let i = 0; i < 3; i++) await studioWide(w, `Synthetic later booking ${i}`);
+  await t.page.reload(); // the page now lists the new rows (and the button); the shell renders with 3
+  await expectBoth(t.page, 3);
   let release: () => void = () => {};
   const held = new Promise<void>((r) => { release = r; });
   let readBeforeMarkRead = false;
