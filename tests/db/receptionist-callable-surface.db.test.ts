@@ -141,6 +141,14 @@ function paramsFor(f: FnRow, studio: SeededStudio): unknown[] {
 
 // ---- outcome classification (booleans and kinds only) -----------------------------------------------------------------------------------
 
+// Setup a function needs so that the OWNER's outcome can differ from the receptionist's, run as the database owner INSIDE the probe's own rolled-back
+// transaction (so it never persists and never depends on what another suite committed first). client_id_photo_wording_current answers only once a wording
+// version is approved, and that approval is a database-owner act; on a shared database another suite may already have committed it, on a fresh one nobody
+// has. Approving inside the probe makes both cases identical, so the function is always proven apart: the owner reads the wording, a receptionist gets nothing.
+const PRELUDE: Record<string, string> = {
+  "client_id_photo_wording_current/1": "select public.approve_client_id_photo_wording(version) from public.client_id_photo_wording_versions where approved_at is null",
+};
+
 async function probe(actor: Actor, f: FnRow, studio: SeededStudio): Promise<Outcome> {
   const sql = callSql(f);
   if (!sql) return { kind: "skipped" };
@@ -148,6 +156,12 @@ async function probe(actor: Actor, f: FnRow, studio: SeededStudio): Promise<Outc
   const run = async (q: (t: string, p?: unknown[]) => Promise<{ rows: unknown[]; rowCount: number | null }>) => {
     await q("set local statement_timeout = '8s'");
     await q("set local lock_timeout = '3s'");
+    if (PRELUDE[f.key] && actor.uid !== "anon") {
+      // as the database owner, then back to the caller's role; the JWT claims are a transaction-local setting and survive the role change
+      await q("reset role");
+      await q(PRELUDE[f.key]);
+      await q("set local role authenticated");
+    }
     let outcome: Outcome;
     await q("savepoint s");
     const wq = "select coalesce(sum(n_tup_ins + n_tup_upd + n_tup_del), 0)::int as w, string_agg(relname, ',') filter (where n_tup_ins + n_tup_upd + n_tup_del > 0) as t from pg_stat_xact_all_tables where schemaname in ('public','auth')";
