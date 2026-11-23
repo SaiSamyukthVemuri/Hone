@@ -270,8 +270,12 @@ describe("the shipped column comments are what the catalog actually holds", () =
       "5e70664789cc588e33701109d5207987be65b259fb353def5be192f6340f5f6f",
     postcare_delivery_mode:
       "d857913bed26e5c61ec91162bf59d1a8680edd88605ba179861df3bcf0e0af56",
+    send_client_cancellation_emails:
+      "2783d758abdf6ca2ee29053e021b35751b1b1ba30cd8065a519d9d4f3595e069",
     send_intake_reminders:
       "8b925c11f89dd93809b01711a25199fa3526ee61ac9ffeeb2c38d6fe5d616cf6",
+    send_moved_appointment_emails:
+      "945e940a62e84b9afc1ec83903689d5dfb0f401e252bf19806fb79c32c115e33",
     time_format_preference:
       "bb4f8a9f352072719fa9155f9301c0b59c5171de48e8913eedad7a70d65a8f0a",
   };
