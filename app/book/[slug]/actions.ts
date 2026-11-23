@@ -67,6 +67,7 @@ import {
   clientManagePageAllowed,
   clientOnlineBookingDisabledMessage,
   clientSelfServicePolicyFromStudio,
+  studioManagesAppointments,
 } from "@/lib/booking/client-self-service-policy";
 import {
   NEW_CLIENT_WAITLIST_BOOKING_REFUSAL,
@@ -178,6 +179,7 @@ export async function fetchPublicSlotsAction(params: {
 
   const studio = await getStudioBySlug(params.slug);
   if (!studio) return { ok: false, error: "Studio not found." };
+  if (studioManagesAppointments(studio)) return { ok: false, error: clientOnlineBookingDisabledMessage(studio.name) };
 
   const horizon = horizonRangeInStudioTz(
     studio.timezone,
@@ -327,6 +329,7 @@ export async function fetchNextAvailableDateAction(params: {
 
   const studio = await getStudioBySlug(params.slug);
   if (!studio) return { ok: false, error: "Studio not found." };
+  if (studioManagesAppointments(studio)) return { ok: false, error: clientOnlineBookingDisabledMessage(studio.name) };
 
   const admin = createAdminClient();
 
@@ -579,6 +582,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
 
   const studio = await getStudioBySlug(slug);
   if (!studio) return { ok: false, error: "Studio not found." };
+  if (studioManagesAppointments(studio)) return { ok: false, error: clientOnlineBookingDisabledMessage(studio.name) };
 
   // HON-47. RETURNING-CLIENT ONLINE BOOKING follows the studio's client portal
   // flag. It is NOT new-client admission: new_client_admission_mode below stays
