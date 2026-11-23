@@ -29,6 +29,7 @@ import { writeIntakeRevision } from "@/lib/intake/write-revision";
 
 export type SaveResult = { ok: true; revision: string } | { ok: false; error: string; code?: "conflict" | "terminal" | "unavailable" };
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { loadCommunicationName } from "@/lib/clients/communication-name-loader";
 
 
 const INTAKE_GENERIC_ERROR =
@@ -367,8 +368,12 @@ export async function submitIntakeAction(payload: {
     .eq("id", existing.client_id)
     .eq("studio_id", existing.studio_id)
     .maybeSingle();
-  const clientName =
+  const storedClientName =
     typeof client?.name === "string" ? client.name.trim() : "";
+  // DISPLAY name (the calendar's field: preferred where set), never the legal identity. Empty stays empty (generic wording).
+  const clientName = storedClientName
+    ? await loadCommunicationName(admin, existing.studio_id, existing.client_id, storedClientName)
+    : "";
   recordPractitionerNotification({
     studioId: existing.studio_id,
     practitionerId: null,

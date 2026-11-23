@@ -27,6 +27,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { recordPractitionerNotificationAndWait } from "@/lib/notifications/practitioner-notifications";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { loadCommunicationName } from "@/lib/clients/communication-name-loader";
 import { localTimeString12h } from "@/lib/booking/tz";
 
 import { CANCEL_RECIPIENT_KEY_PREFIX } from "@/lib/notifications/owner-only-events";
@@ -109,7 +110,9 @@ export async function recordAppointmentCancelNotifications(
       input.actorPractitionerId ? readOne(admin, "practitioners", "display_name", input.actorPractitionerId) : null,
       readOwners(admin, studioId),
     ]);
-    const clientName = str(client?.name);
+    // DISPLAY name (the calendar's field: preferred where set), never the legal identity. Fail-soft to the stored name.
+    const storedClientName = str(client?.name);
+    const clientName = storedClientName && clientId ? await loadCommunicationName(admin, studioId, clientId, storedClientName) : storedClientName;
     const what = str(service?.name) ?? "an appointment";
     const tz = str(studio?.timezone);
     const startsAt = str(appt?.starts_at) ? new Date(str(appt?.starts_at) as string) : null;
