@@ -37,6 +37,7 @@ const REVIEWED_READERS = [
   "app/(app)/layout.tsx",
   "app/(app)/notifications/actions.ts",
   "app/(app)/notifications/page.tsx",
+  "app/api/notifications/summary/route.ts",
   "lib/export/resource-registry.ts",
   "lib/notifications/owner-only-events.ts",
 ];
