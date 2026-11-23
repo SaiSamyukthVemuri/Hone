@@ -1,0 +1,113 @@
+import { safeLog } from "@/lib/logging/safe-log";
+
+// OBSERVE-ONLY enforcement point for the Roles permission engine (migration 0287, hosted, no repository file).
+//
+// It asks the database what the engine WOULD answer for the signed-in user and records the answer. It never
+// decides anything: it returns nothing, so no caller can branch on it, and it never throws. Behaviour for every
+// user is exactly what it was before this call existed. Turning a key into a real check is a later change with its
+// own review, and activation is a separate approval.
+//
+// Why observe first: the engine is hosted but nothing in the app asks it. Before any key is allowed to refuse a
+// person, the would-deny rate by role must be known for a real studio. A key that refuses an owner, or refuses a
+// practitioner who is correctly assigned, would show up here first.
+//
+// The database function answers FALSE, not an error, for two mistakes a caller can make, so the call shape is
+// closed and typed instead of a free (key, context) pair:
+//   * an unknown key, and
+//   * an `own` scope with the wrong context argument. appt.book is "own" by practitioner, appt.move is "own" by
+//     appointment, appt.reassign has no own scope. A booking has no appointment yet, so it passes the TARGET
+//     practitioner.
+// A wrong shape would log would-deny for every correctly assigned practitioner and make the evidence noise.
+// tests/db/permission-observe.db.test.ts reads those scopes from the installed engine and fails when this table
+// drifts from it.
+//
+// Logs carry the key, the outcome and the actor's ROLE only. No studio, appointment, client or user id: server
+// logs go to a third party and must stay free of record ids (safe-log.ts).
+//
+// It must be handed the SIGNED-IN user's client. The function resolves the actor from auth.uid(); a service-role
+// client has no such user and would answer false for every key.
+
+export type ObservedPermission =
+  | { readonly key: "appt.book"; readonly practitionerId: string }
+  | { readonly key: "appt.move"; readonly appointmentId: string }
+  | { readonly key: "appt.reassign" };
+
+/** The own-scope context each observed key needs, from the 0287 seed. Pinned against the installed engine by the DB test. */
+export const OBSERVED_KEY_CONTEXT = {
+  "appt.book": "practitioner",
+  "appt.move": "appointment",
+  "appt.reassign": null,
+} as const satisfies Record<ObservedPermission["key"], "practitioner" | "appointment" | null>;
+
+type RpcResult = PromiseLike<{ data: unknown; error: unknown }>;
+export type ObserveDb = {
+  rpc: (fn: "has_studio_permission", args: Record<string, unknown>) => RpcResult;
+};
+
+export type ObserveOutcome = "would_deny" | "unreadable" | "engine_absent";
+
+// A slow engine must never slow a booking or a move. Past this the answer is recorded as unreadable.
+export const OBSERVE_TIMEOUT_MS = 1500;
+
+// Postgres 42883 naming has_studio_permission, or PostgREST PGRST202: the function itself is missing. A present
+// engine whose inner helper is missing (a partial apply) is not "absent"; it is unreadable.
+export function isEngineAbsent(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const { code, message } = error as { code?: unknown; message?: unknown };
+  const text = typeof message === "string" ? message : "";
+  if (code === "PGRST202") return true;
+  if (code === "42883") return /has_studio_permission/i.test(text);
+  return /could not find the function public\.has_studio_permission/i.test(text);
+}
+
+let absentLogged = false;
+/** Test hook: the engine-absent notice is logged once per process. */
+export function resetEngineAbsentNotice(): void {
+  absentLogged = false;
+}
+
+function record(outcome: ObserveOutcome, key: string, actorRole: string): void {
+  if (outcome === "engine_absent") {
+    // Expected on a database without 0287 (local and CI stacks). Once per process, never per request.
+    if (absentLogged) return;
+    absentLogged = true;
+  }
+  try {
+    safeLog.warn(JSON.stringify({ event: "permission_observe", outcome, key, actorRole, timestamp: new Date().toISOString() }));
+  } catch {
+    // Observing must never change what the caller gets.
+  }
+}
+
+function contextArgs(ask: ObservedPermission): { p_appointment: string | null; p_practitioner: string | null } {
+  switch (ask.key) {
+    case "appt.book":
+      return { p_appointment: null, p_practitioner: ask.practitionerId };
+    case "appt.move":
+      return { p_appointment: ask.appointmentId, p_practitioner: null };
+    case "appt.reassign":
+      return { p_appointment: null, p_practitioner: null };
+  }
+}
+
+export async function observePermission(db: ObserveDb, studioId: string, actorRole: string, ask: ObservedPermission): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const call = Promise.resolve(
+      db.rpc("has_studio_permission", { p_studio: studioId, p_key: ask.key, p_client: null, ...contextArgs(ask) }),
+    );
+    const timeout = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), OBSERVE_TIMEOUT_MS);
+    });
+    const raced = await Promise.race([call, timeout]);
+    if (raced === "timeout") return record("unreadable", ask.key, actorRole);
+    const { data, error } = raced;
+    if (error) return record(isEngineAbsent(error) ? "engine_absent" : "unreadable", ask.key, actorRole);
+    if (data === true) return; // The expected answer, and the common one. Silent.
+    record(data === false ? "would_deny" : "unreadable", ask.key, actorRole);
+  } catch (e) {
+    record(isEngineAbsent(e) ? "engine_absent" : "unreadable", ask.key, actorRole);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
