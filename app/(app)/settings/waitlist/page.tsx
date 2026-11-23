@@ -61,6 +61,7 @@ import {
   importLegacyWaitlistEntryFormAction,
 } from "./profile-actions";
 import { recordProspectSmsConsentFormAction } from "./consent-actions";
+import { timed } from "@/lib/observability/perf-timing";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { expirySummary, rowExpiry, summaryText } from "@/lib/waitlist/invitation-expiry-display";
 import { declinedCount, declinedPageWindow, declinedPeople, declinedSummaryText, DECLINED_PAGE_PARAM, DECLINED_VIEW, latestDeclinePerPerson } from "@/lib/waitlist/decline-visibility";
@@ -369,7 +370,7 @@ export default async function WaitlistSettingsPage({
   // validation immediately below.
   searchParams?: Promise<{ section?: string | string[]; page?: string | string[]; fu?: string | string[]; view?: string | string[]; dpage?: string | string[] }>;
 }) {
-  const { practitioner, studio } = await requirePractitionerWithStudio();
+  const { practitioner, studio } = await timed("waitlist.identity", () => requirePractitionerWithStudio());
 
   if (practitioner.role !== "owner") {
     return <OwnerOnlyNotice>Only studio owners can see the new-client waitlist.</OwnerOnlyNotice>;
@@ -413,7 +414,7 @@ export default async function WaitlistSettingsPage({
   const supabase = await createClient();
 
   const rangeFrom = (pageNumber - 1) * SECTION_PAGE_SIZE;
-  const sectionReads = await Promise.all(
+  const sectionReads = await timed("waitlist.domain", () => Promise.all(
     SECTIONS.map(async ({ status }) => {
       // IN A FOCUSED VIEW THE OTHER FOUR SECTIONS ARE STILL COUNTED — head-only,
       // so no rows come back but their exact counts do. Without that, the
@@ -437,7 +438,7 @@ export default async function WaitlistSettingsPage({
         : query);
       return { status, res, from };
     }),
-  );
+  ));
 
   const failed = sectionReads.find(({ res }) => res.error);
   if (failed) {
