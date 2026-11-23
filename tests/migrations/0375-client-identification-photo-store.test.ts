@@ -192,6 +192,16 @@ describe("0375 reservation, drain, consent and bucket rules", () => {
     expect(drain).not.toMatch(/auth\.uid|client_id_photo_actor/);
   });
 
+  it("the reserve cap is five LIVE reservations for this client, each held fifteen minutes", () => {
+    // Offline pin for the cap that tests/db/client-id-photo.db.test.ts proves on a stack: raising or lowering it, or counting other
+    // clients' or expired reservations, must change this.
+    const reserve = createdFunctions().find((f) => f.name === "reserve_client_id_photo_path")!.body;
+    expect(reserve).toMatch(
+      /select count\(\*\) from public\.client_id_photo_pending_object_deletions q\s+where q\.reserved_client_id = p_client_id and q\.reservation and q\.delete_after > now\(\)\) >= 5 then/,
+    );
+    expect(reserve).toMatch(/now\(\) \+ interval '15 minutes'/);
+  });
+
   it("consent is accepted only against the latest approved wording", () => {
     const rec = createdFunctions().find((f) => f.name === "record_client_id_photo_consent")!.body;
     expect(rec).toMatch(/order by w\.approved_at desc, w\.created_at desc\s+limit 1\) latest/);
@@ -242,5 +252,62 @@ describe("0375 keeps ID photos apart from treatment photos and closes the 0231 b
   it("removes the photo on client archive without touching any other lane's function", () => {
     expect(TOP_LEVEL).toMatch(/after update of archived_at on public\.clients/);
     expect(EXECUTABLE).not.toMatch(/create or replace function public\.(archive_client|archive_treatment_image)\b/);
+  });
+});
+
+// The rollback. Behaviour (refusals, a real up / down / up, the restored grants) is proved in tests/db/client-id-photo-roundtrip.db.test.ts.
+const DOWN_FILE = "supabase/rollbacks/0375_client_identification_photo_store.down.sql";
+const down = readFileSync(DOWN_FILE, "utf8");
+const DOWN_EXECUTABLE = down.replace(/--[^\n]*/g, " ");
+
+describe("0375 rollback", () => {
+  it("says plainly, at the top, that it destroys consent evidence, needs a drained store, and is emergency-only", () => {
+    const head = down.split("\nbegin;")[0];
+    expect(head.split("\n")[0]).toMatch(/EMERGENCY ONLY/);
+    expect(head).toMatch(/DESTROYS CONSENT EVIDENCE/);
+    expect(head).toMatch(/seven tables/);
+    expect(head).toMatch(/STORAGE OBJECTS MUST BE DRAINED FIRST/);
+    expect(head).toMatch(/never touches storage/);
+  });
+
+  it("opens its own transaction with a lock timeout, locks BEFORE it checks, refuses, then drops", () => {
+    expect(down).toMatch(/^begin;\nset local lock_timeout = '5s';/m);
+    expect(down.trimEnd().endsWith("commit;")).toBe(true);
+    const lock = down.indexOf("lock table public.client_id_photos, public.client_id_photo_pending_object_deletions in access exclusive mode;");
+    const refusePhotos = down.indexOf("down refused: stored identification photos still exist");
+    const refuseQueue = down.indexOf("down refused: storage objects are still queued for deletion");
+    const firstDrop = down.indexOf("drop trigger if exists");
+    expect(lock).toBeGreaterThan(0);
+    expect(lock).toBeLessThan(refusePhotos);
+    expect(refusePhotos).toBeLessThan(refuseQueue);
+    expect(refuseQueue).toBeLessThan(firstDrop);
+  });
+
+  it("never reaches into storage: no SQL deletes or inserts storage objects or buckets", () => {
+    expect(DOWN_EXECUTABLE).not.toMatch(/\bstorage\.(objects|buckets)\b/i);
+  });
+
+  it("drops every table and every function the up creates, and nothing else", () => {
+    const upTables = [...EXECUTABLE.matchAll(/create table public\.(\w+)/g)].map((m) => m[1]).sort();
+    const downTables = [...DOWN_EXECUTABLE.matchAll(/drop table if exists public\.(\w+);/g)].map((m) => m[1]).sort();
+    expect(upTables).toHaveLength(7);
+    expect(downTables).toEqual(upTables);
+    const upFns = createdFunctions().map((f) => f.name).sort();
+    const downFns = [...DOWN_EXECUTABLE.matchAll(/drop function if exists public\.(\w+)\(/g)].map((m) => m[1]).sort();
+    expect(upFns).toHaveLength(21);
+    expect(downFns).toEqual(upFns);
+    expect(DOWN_EXECUTABLE).not.toMatch(/\bcascade\b/i);
+  });
+
+  it("drops both triggers the up puts on clients", () => {
+    expect(DOWN_EXECUTABLE).toMatch(/drop trigger if exists client_id_photo_on_client_archive on public\.clients;/);
+    expect(DOWN_EXECUTABLE).toMatch(/drop trigger if exists clients_portrait_pointer_frozen on public\.clients;/);
+  });
+
+  it("restores the old setter's grant (authenticated only) and grants nothing else", () => {
+    expect(DOWN_EXECUTABLE).toMatch(/grant execute on function public\.set_client_portrait\(uuid, uuid, uuid\) to authenticated;/);
+    expect([...DOWN_EXECUTABLE.matchAll(/\bgrant\b/gi)]).toHaveLength(1);
+    const grantees = [...DOWN_EXECUTABLE.matchAll(/\bgrant\b[^;]*?\bto\s+([^;]+);/gi)].map((m) => m[1].trim());
+    expect(grantees, "the only grantee is authenticated").toEqual(["authenticated"]);
   });
 });
