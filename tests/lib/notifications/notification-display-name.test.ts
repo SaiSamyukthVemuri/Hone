@@ -147,7 +147,7 @@ describe("the public-flow writers take the preferred name from the client row th
     const src = read("app/reschedule/[token]/actions.ts");
     expect(src).toMatch(/readWithPreferredName\(\(includePreferred\) =>\s*admin\s*\.from\("clients"\)\s*\.select\(`\$\{preferredNameColumn\(includePreferred\)\}name, email, phone, sms_consent_at, sms_opted_out_at`\)\s*\.eq\("id", asserted\.original\.client_id\)\s*\.eq\("studio_id", asserted\.original\.studio_id\)/);
     expect(src).toContain("notificationClientName(clientRow)");
-    expect(src).toMatch(/body: `\$\{notificationName\} rescheduled/);
+    expect(src).toMatch(/buildRescheduledText\(\{\s*clientName: notificationName,/);
     expect(src).not.toContain("loadCommunicationName");
   });
 
@@ -156,7 +156,7 @@ describe("the public-flow writers take the preferred name from the client row th
     expect(src).toMatch(/\.select\(`\$\{preferredNameColumn\(includePreferred\)\}id, name, email, phone, sms_consent_at, sms_opted_out_at, archived_at`\)/);
     expect(src).toContain("clientPreferredName: clientRow.preferred_name ?? null");
     expect(src).toContain("notificationClientName({ name: clientName, preferred_name: clientPreferredName })");
-    expect(src).toMatch(/body: `\$\{notificationName\} booked/);
+    expect(src).toMatch(/buildBookedText\(\{\s*clientName: notificationName,/);
     expect(src).not.toContain("loadCommunicationName");
   });
 
