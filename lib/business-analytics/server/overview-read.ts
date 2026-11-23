@@ -3,7 +3,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { localDateString, utcInstantFromLocal } from "@/lib/booking/tz";
-import { readAppointmentsKeyset, readMoneyForAppointments } from "@/lib/finance/statement-money-read";
+import { APPOINTMENT_READ_CAP, readAppointmentsKeyset, readMoneyForAppointments } from "@/lib/finance/statement-money-read";
 import { timed } from "@/lib/observability/perf-timing";
 import { createClient } from "@/lib/supabase/server";
 import type { Studio } from "@/lib/types/database";
@@ -104,6 +104,8 @@ export async function readSetsSeparately(supabase: SupabaseClient, studioId: str
   return { current, comparison, history, past, future };
 }
 
+// A start time with digits beyond the millisecond is not cut in memory (the cut compares milliseconds) and sends the load to the separate reads. Appointments
+// start on whole minutes, so this does not happen in practice; the guard is an extra, harmless fallback that costs only the old speed, never a different answer.
 const SUB_MILLISECOND = /\.\d{3}\d*[1-9]/;
 
 export async function readSetsShared(supabase: SupabaseClient, studioId: string, timezone: string, period: ResolvedPeriod, now: Date): Promise<ApptSets | null> {
@@ -156,7 +158,12 @@ export async function loadOverview(
   const supabase = supabaseClient ?? (await createClient());
 
   // Names are labels, but a missing one would put a figure under the wrong heading, so a failed read fails the whole page.
-  const people = await timed("analytics.people", () => readStudioPractitioners(supabase, studio.id));
+  // How many appointments the studio has, asked at the same time as the team (so it adds no wait): a studio at or over the single read's row limit goes straight
+  // to the separate reads instead of scanning twenty pages first and then failing. A count that cannot be read just means "try the single read".
+  const [people, appointmentCount] = await Promise.all([
+    timed("analytics.people", () => readStudioPractitioners(supabase, studio.id)),
+    opts.appointmentReads === "separate" ? Promise.resolve(null) : countAppointments(supabase, studio.id),
+  ]);
   if (!people.ok) return { access: "granted", ok: false, reason: "read_failed", notices: [] };
 
   const parsed = parseOverviewParams(raw, { strict: opts.strict, practitionerIds: new Set(people.rows.map((p) => p.id)) });
@@ -175,7 +182,7 @@ export async function loadOverview(
   }
   const period: ResolvedPeriod = resolved.period;
 
-  const strategy = opts.appointmentReads ?? "shared";
+  const strategy = (opts.appointmentReads ?? "shared") === "shared" && !(appointmentCount !== null && appointmentCount >= APPOINTMENT_READ_CAP) ? "shared" : "separate";
   const sets = await timed("analytics.appointments", async () => (strategy === "shared" ? await readSetsShared(supabase, studio.id, studio.timezone, period, now) : null) ?? (await readSetsSeparately(supabase, studio.id, studio.timezone, period, now)));
   // Nothing below depends on another: the two windows' money, and (Clients tab only) the lifetime money, are read at once.
   const history = historyFrom(sets.history);
@@ -209,6 +216,12 @@ export async function loadOverview(
 
 /** The API returns at most 1000 rows whatever limit is asked for, so truncation can only be seen as a FULL page: a page of exactly the cap may be cut off, and a roster that may be incomplete would mislabel people. It fails the page closed. */
 export const PRACTITIONER_PAGE_CAP = 1000;
+
+/** The studio's appointment count (head request, nothing returned); null when it cannot be read. */
+async function countAppointments(supabase: SupabaseClient, studioId: string): Promise<number | null> {
+  const { count, error } = await supabase.from("appointments").select("id", { count: "exact", head: true }).eq("studio_id", studioId);
+  return error || typeof count !== "number" ? null : count;
+}
 
 async function readStudioPractitioners(supabase: SupabaseClient, studioId: string): Promise<{ ok: true; rows: PractitionerInfo[] } | { ok: false }> {
   const { data, error } = await supabase.from("practitioners").select("id, display_name, active").eq("studio_id", studioId).limit(PRACTITIONER_PAGE_CAP);

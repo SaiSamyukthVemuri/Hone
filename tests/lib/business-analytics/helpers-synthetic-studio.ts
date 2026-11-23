@@ -11,6 +11,7 @@ export function table(name: string, rows: Row[], log: { appointmentReads: number
   const filters: Filter[] = [];
   let order: string[] = [];
   let limit = SERVER_MAX_ROWS;
+  let headCount = false;
   const keyset = (or: string) => {
     const m = /^starts_at\.gt\."(.+?)",and\(starts_at\.eq\."(.+?)",id\.gt\."(.+?)"\)$/.exec(or);
     if (!m) throw new Error(`unsupported or(): ${or}`);
@@ -22,6 +23,7 @@ export function table(name: string, rows: Row[], log: { appointmentReads: number
     get: (_t, prop: string) => {
       if (prop === "then")
         return (res: (v: unknown) => void) => {
+          if (headCount) return res({ data: null, count: rows.filter((r) => filters.every((f) => (f.op === "eq" ? r[f.col] === f.val : true))).length, error: null });
           if (name === "appointments") {
             log.appointmentPages += 1;
             if (failAppointmentsAt !== undefined && log.appointmentPages === failAppointmentsAt) return res({ data: null, error: { message: "boom" } });
@@ -47,6 +49,7 @@ export function table(name: string, rows: Row[], log: { appointmentReads: number
         else if (prop === "or") filters.push({ op: "or", col: "", val: keyset(args[0] as string) });
         else if (prop === "order") order.push(args[0] as string);
         else if (prop === "limit") limit = args[0] as number;
+        else if (prop === "select" && (args[1] as { head?: boolean } | undefined)?.head) headCount = true;
         else if (prop === "select" && name === "appointments") log.appointmentReads += 1;
         return self;
       };

@@ -26,7 +26,8 @@ export default async function AnalyticsOverviewPage({ searchParams }: { searchPa
   const jurisdiction = await getStudioPaymentJurisdiction(studio.id);
   const currency: PaymentCurrency | null = jurisdiction.ok ? jurisdiction.jurisdiction.currency : null;
 
-  const read = await timed("analytics.domain", async () => loadOverview(practitioner, studio, currency, await searchParams, { strict: false }, new Date()));
+  const raw = await searchParams;
+  const read = await timed("analytics.domain", () => loadOverview(practitioner, studio, currency, raw, { strict: false }, new Date()));
   if (read.access !== "granted") return null; // unreachable: the role was checked above, and the loader checks it again
   if (!read.ok && read.reason === "period_invalid") return <OverviewInvalidPeriod params={read.params} notices={read.notices} practitionerOptions={read.practitionerOptions} />;
   if (!read.ok) {

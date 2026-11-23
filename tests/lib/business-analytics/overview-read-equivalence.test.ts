@@ -129,6 +129,21 @@ describe("the Overview read: failure and cap semantics are unchanged", () => {
     const shared = await load(studioClient(big).client, "shared");
     expect(shared).toEqual(separate);
   });
+  it("a studio at the single read's row limit goes straight to the separate reads: no wasted twenty-page scan, same answer", async () => {
+    const big = synthetic(10_100);
+    const sep = studioClient(big);
+    const sepResult = await load(sep.client, "separate");
+    const shared = studioClient(big);
+    const sharedResult = await load(shared.client, "shared");
+    expect(sharedResult).toEqual(sepResult);
+    expect(shared.log.appointmentPages, "the count told the loader not to try the single read").toBe(sep.log.appointmentPages);
+  });
+  it("a studio under the limit still uses the single read (the count does not turn it off)", async () => {
+    const small = synthetic(1100);
+    const a = studioClient(small);
+    await load(a.client, "shared");
+    expect(a.log.appointmentPages).toBe(3);
+  });
   it("a start time with sub-millisecond digits is not cut in memory: it falls back and still equals the separate reads", async () => {
     const odd = synthetic(40);
     odd.appointments[10] = { ...odd.appointments[10], starts_at: "2026-11-03T15:00:00.123456+00:00" };

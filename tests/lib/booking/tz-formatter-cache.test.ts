@@ -28,4 +28,19 @@ describe("per-zone formatters give the same text as a new formatter each time", 
     expect(() => localTimeString(new Date(), "Not/AZone")).toThrow(RangeError);
     expect(localDateString(new Date("2026-06-15T12:00:00Z"), "UTC")).toBe("2026-06-15");
   });
+  it("the store is bounded: many zone-name variants still format correctly, and the module's own source caps what it keeps", async () => {
+    // "utc", "UTC", "Etc/UTC", "america/toronto" ... all valid spellings; far more distinct strings than the cap are used
+    const names = Intl.supportedValuesOf("timeZone");
+    expect(names.length).toBeGreaterThan(64);
+    const d = new Date("2026-06-15T12:00:00Z");
+    for (const tz of names) {
+      expect(localDateString(d, tz), tz).toBe(fresh.date(d, tz));
+      expect(localTimeString(d, tz), tz).toBe(fresh.time(d, tz));
+    }
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("lib/booking/tz.ts", "utf8");
+    expect(src).toMatch(/MAX_FORMATTERS_PER_KIND = 64/);
+    expect(src).toMatch(/DATE_FORMATTERS\.size < MAX_FORMATTERS_PER_KIND/);
+    expect(src).toMatch(/TIME_FORMATTERS\.size < MAX_FORMATTERS_PER_KIND/);
+  });
 });

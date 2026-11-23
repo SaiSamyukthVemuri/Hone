@@ -75,12 +75,15 @@ export function localDateString(d: Date, tz: string): string {
 // Building an Intl.DateTimeFormat costs far more than formatting with one, and the Analytics build formats thousands of appointment starts in one zone per
 // request (HON-109), so one formatter per zone is kept. A formatter is immutable and `format` is pure, so the output is identical to building a new one each
 // time; an invalid zone still throws at construction and is not stored.
+// The store is bounded: a zone is stored only after its formatter built successfully (an invalid string throws first), and at most MAX_FORMATTERS_PER_KIND are
+// kept, so no caller can grow it without limit with zone-name variants. Past the cap a formatter is built and used without being stored.
+const MAX_FORMATTERS_PER_KIND = 64;
 const DATE_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
 function dateFormatterFor(tz: string): Intl.DateTimeFormat {
   let f = DATE_FORMATTERS.get(tz);
   if (!f) {
     f = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" });
-    DATE_FORMATTERS.set(tz, f);
+    if (DATE_FORMATTERS.size < MAX_FORMATTERS_PER_KIND) DATE_FORMATTERS.set(tz, f);
   }
   return f;
 }
@@ -108,7 +111,7 @@ function timeFormatterFor(tz: string): Intl.DateTimeFormat {
   let f = TIME_FORMATTERS.get(tz);
   if (!f) {
     f = new Intl.DateTimeFormat("en-CA", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false });
-    TIME_FORMATTERS.set(tz, f);
+    if (TIME_FORMATTERS.size < MAX_FORMATTERS_PER_KIND) TIME_FORMATTERS.set(tz, f);
   }
   return f;
 }
