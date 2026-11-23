@@ -271,7 +271,10 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // The five HON-48 five-user specs above are NO LONGER opt-in: they run in the required calendar lane (18 declarations, 23 cases after the device and size loops
     // in the tablet and phone spec; about 3 minutes measured on an owned stack). RECORDED AS A DECISION per the note above. The count is unchanged because the files were already listed; only the self-skip went.
     // hon48-commit-visibility-timing stays opt-in (HON48_TIMING_E2E=1), as do the two day-layout matrices and calendar-own-first.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(64);
+    // Now 65 after merging production (production alone: 64): hon48-week-month-per-user.spec.ts joined `calendar` (HON-48: per-practitioner Week and Month, desktop and iPhone width). RECORDED AS A
+    // DECISION per the note above. It is REQUIRED, not opt-in: it runs whenever the calendar group is selected. Its added run time is measured on an
+    // owned stack and recorded in the pull request, not assumed here.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(65);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {
