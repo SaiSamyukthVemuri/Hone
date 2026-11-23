@@ -1,7 +1,8 @@
 "use server";
 
 import { loadTreatmentTimeNameFields } from "@/lib/treatment-time/client-first-name";
-import { loadCommunicationName } from "@/lib/clients/communication-name-loader";
+import { notificationClientName } from "@/lib/notifications/client-name";
+import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { requirePortalSessionForAction } from "@/lib/portal/session";
@@ -189,6 +190,8 @@ type PortalBookingContext = {
   /** Straight from the portal session. The only client identity in this file. */
   clientId: string;
   clientName: string;
+  /** The preferred name from the same client read, for the practitioner notification. */
+  clientPreferredName: string | null;
   clientEmail: string | null;
   clientPhone: string | null;
   /**
@@ -232,12 +235,25 @@ async function resolvePortalBookingContext(): Promise<
   // The client must be THIS studio's and must not be archived. Both filters are
   // in the query, so an archived or cross-studio row is simply absent rather
   // than something a later branch has to remember to check.
-  const { data: clientRow, error: clientErr } = await admin
-    .from("clients")
-    .select("id, name, email, phone, sms_consent_at, sms_opted_out_at, archived_at")
-    .eq("id", clientId)
-    .eq("studio_id", studioId)
-    .maybeSingle();
+  // The preferred name rides on this existing read (missing-column-safe), so the bell names the client without a second lookup.
+  const { data: clientRowRaw, error: clientErr } = await readWithPreferredName((includePreferred) =>
+    admin
+      .from("clients")
+      .select(`${preferredNameColumn(includePreferred)}id, name, email, phone, sms_consent_at, sms_opted_out_at, archived_at`)
+      .eq("id", clientId)
+      .eq("studio_id", studioId)
+      .maybeSingle(),
+  );
+  const clientRow = clientRowRaw as {
+    id: string;
+    name: string | null;
+    preferred_name?: string | null;
+    email: string | null;
+    phone: string | null;
+    sms_consent_at: string | null;
+    sms_opted_out_at: string | null;
+    archived_at: string | null;
+  } | null;
   if (clientErr) {
     logRebookError("portal_rebook_client_lookup_failed", {
       code: dbErrorCode(clientErr),
@@ -292,6 +308,7 @@ async function resolvePortalBookingContext(): Promise<
       studio: studioRow as Studio,
       clientId,
       clientName: ((clientRow.name as string | null) ?? "").trim() || "Client",
+      clientPreferredName: clientRow.preferred_name ?? null,
       clientEmail: (clientRow.email as string | null) ?? null,
       clientPhone: (clientRow.phone as string | null) ?? null,
       clientSmsConsentAt: (clientRow.sms_consent_at as string | null) ?? null,
@@ -500,6 +517,7 @@ export async function bookAnotherAppointmentAction(
     studio,
     clientId,
     clientName,
+    clientPreferredName,
     clientEmail,
     clientPhone,
     clientSmsConsentAt,
@@ -726,14 +744,14 @@ export async function bookAnotherAppointmentAction(
     studio.name;
 
   // The notification names the client by their DISPLAY name (the calendar's field: preferred where set), never the legal identity.
-  const notificationClientName = await loadCommunicationName(admin, studio.id, clientId, clientName);
+  const notificationName = notificationClientName({ name: clientName, preferred_name: clientPreferredName });
   await postCommit("portal_rebook_practitioner_notification_threw", undefined, () =>
     recordPractitionerNotification({
       studioId: studio.id,
       practitionerId: assignedPractitionerId,
       eventType: "new_booking",
       title: "New booking",
-      body: `${notificationClientName} booked ${service.service.name} for ${formatDayLabel(start, studio.timezone)} at ${localTimeString12h(start, studio.timezone)}.`,
+      body: `${notificationName} booked ${service.service.name} for ${formatDayLabel(start, studio.timezone)} at ${localTimeString12h(start, studio.timezone)}.`,
       appointmentId: createdId,
       clientId,
       href: `/calendar/${createdId}`,

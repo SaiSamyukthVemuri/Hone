@@ -9,8 +9,8 @@ import { describe, expect, it, vi } from "vitest";
 type Row = Record<string, unknown>;
 const tables: Record<string, Row[]> = {};
 const inserted: Row[] = [];
-let clientReads = 0;
-let hangFromClientRead = 0; // 0 = never hang; N = the Nth and later reads of `clients` never resolve
+let clientReads = 0; // how many times `clients` was read
+let failClientRead = false;
 
 function from(table: string) {
   const filters: Array<[string, unknown]> = [];
@@ -19,7 +19,10 @@ function from(table: string) {
   for (const m of ["select", "order", "limit"]) q[m] = () => q;
   q.eq = (c: string, v: unknown) => (filters.push([c, v]), q);
   q.maybeSingle = () => {
-    if (table === "clients" && hangFromClientRead > 0 && ++clientReads >= hangFromClientRead) return new Promise(() => {});
+    if (table === "clients") {
+      clientReads++;
+      if (failClientRead) return Promise.resolve({ data: null, error: { code: "XX000", message: "boom" } });
+    }
     return Promise.resolve({ data: rows()[0] ?? null, error: null });
   };
   q.insert = async (row: Row) => (table === "practitioner_notifications" ? inserted.push(row) : null, { error: null });
@@ -43,7 +46,7 @@ function seed(client: Row) {
   for (const k of Object.keys(tables)) delete tables[k];
   inserted.length = 0;
   clientReads = 0;
-  hangFromClientRead = 0;
+  failClientRead = false;
   tables.appointments = [{ id: APPT, studio_id: STUDIO, client_id: CLIENT, practitioner_id: OWNER, starts_at: "2026-12-01T17:00:00Z", service_id: "s1", cancelled_at: "2026-11-30T10:00:00Z" }];
   tables.clients = [{ id: CLIENT, studio_id: STUDIO, ...client }];
   tables.services = [{ id: "s1", name: "Consultation" }];
@@ -70,21 +73,21 @@ describe("the cancel writer names the client by display name", () => {
     expect(String(inserted[0].body)).toContain("Katherine Example cancelled");
   });
 
-  it("a HANGING display-name read still writes the notification with the stored name after about 2.5 s", async () => {
+  it("reads the client ONCE (preferred name rides on the row the writer already reads): no separate display-name lookup", async () => {
     seed({ name: "Katherine Example", preferred_name: "Kit" });
-    hangFromClientRead = 2; // the writer's own stored-name read (1st) resolves; the display-name read (2nd) never does
-    vi.useFakeTimers();
-    try {
-      const done = recordAppointmentCancelNotifications(fake as never, { appointmentId: APPT, studioId: STUDIO, reasonLabel: null, actorPractitionerId: null });
-      await vi.advanceTimersByTimeAsync(2400);
-      expect(inserted).toHaveLength(0); // still waiting inside the bound
-      await vi.advanceTimersByTimeAsync(200);
-      await done;
-      expect(inserted.length).toBeGreaterThan(0);
-      for (const r of inserted) expect(String(r.body)).toContain("Katherine Example cancelled");
-    } finally {
-      vi.useRealTimers();
-    }
+    await recordAppointmentCancelNotifications(fake as never, { appointmentId: APPT, studioId: STUDIO, reasonLabel: null, actorPractitionerId: null });
+    expect(clientReads).toBe(1);
+  });
+
+  it("keeps the generic wording when the client has no name, or the row read failed", async () => {
+    seed({ name: "", preferred_name: null });
+    await recordAppointmentCancelNotifications(fake as never, { appointmentId: APPT, studioId: STUDIO, reasonLabel: null, actorPractitionerId: null });
+    expect(String(inserted[0].body)).toContain("A client cancelled");
+    seed({ name: "Katherine Example", preferred_name: "Kit" });
+    failClientRead = true;
+    await recordAppointmentCancelNotifications(fake as never, { appointmentId: APPT, studioId: STUDIO, reasonLabel: null, actorPractitionerId: null });
+    expect(String(inserted[0].body)).toContain("A client cancelled");
+    expect(String(inserted[0].body)).not.toContain("Katherine");
   });
 
   it("a staff cancel names the staff member and the client's display name", async () => {
@@ -106,6 +109,16 @@ describe("the card-change writer names the client by display name", () => {
     expect(String(inserted[0].body)).not.toContain("Katherine");
   });
 
+  it("reads the client ONCE, and a failed read throws so Stripe retries (never a half-named notice)", async () => {
+    seed({ name: "Katherine Example", preferred_name: "Kit" });
+    await ensureCardChangeNotification(fake as never, params);
+    expect(clientReads).toBe(1);
+    seed({ name: "Katherine Example", preferred_name: "Kit" });
+    failClientRead = true;
+    await expect(ensureCardChangeNotification(fake as never, params)).rejects.toThrow(/card_change_client_lookup_failed/);
+    expect(inserted).toHaveLength(0);
+  });
+
   it("falls back to the stored name with no preferred name, and to a generic label for a missing client", async () => {
     seed({ name: "Katherine Example" });
     await ensureCardChangeNotification(fake as never, params);
@@ -117,21 +130,45 @@ describe("the card-change writer names the client by display name", () => {
   });
 });
 
-describe("the public-flow writers build the text from the display-name loader", () => {
-  const cases: Array<[string, RegExp]> = [
-    ["app/book/[slug]/actions.ts", /notificationClientName = await loadCommunicationName\(admin, studio\.id, clientId, clientName\)[\s\S]*?body: `\$\{notificationClientName\} booked/],
-    ["app/portal/rebook-actions.ts", /notificationClientName = await loadCommunicationName\(admin, studio\.id, clientId, clientName\)[\s\S]*?body: `\$\{notificationClientName\} booked/],
-    ["app/reschedule/[token]/actions.ts", /notificationClientName = await loadCommunicationName\(admin, asserted\.original\.studio_id, asserted\.original\.client_id, clientRow\.name\)[\s\S]*?body: `\$\{notificationClientName\} rescheduled/],
-    ["app/intake/[token]/actions.ts", /await loadCommunicationName\(admin, existing\.studio_id, existing\.client_id, storedClientName\)[\s\S]*?\$\{clientName\} submitted an intake form/],
-  ];
-  it.each(cases)("%s", (file, re) => {
-    expect(readFileSync(file, "utf8")).toMatch(re);
+describe("the public-flow writers take the preferred name from the client row they already read", () => {
+  const read = (f: string) => readFileSync(f, "utf8");
+
+  it("reschedule: the existing client select carries preferred_name and the text uses it; no loader call", () => {
+    const src = read("app/reschedule/[token]/actions.ts");
+    expect(src).toMatch(/readWithPreferredName\(\(includePreferred\) =>\s*admin\s*\.from\("clients"\)\s*\.select\(`\$\{preferredNameColumn\(includePreferred\)\}name, email, phone, sms_consent_at, sms_opted_out_at`\)\s*\.eq\("id", asserted\.original\.client_id\)\s*\.eq\("studio_id", asserted\.original\.studio_id\)/);
+    expect(src).toContain("notificationClientName(clientRow)");
+    expect(src).toMatch(/body: `\$\{notificationName\} rescheduled/);
+    expect(src).not.toContain("loadCommunicationName");
   });
 
-  it("none of them reads the stored name directly into a notification body any more", () => {
-    for (const [file] of cases) {
-      const src = readFileSync(file, "utf8");
-      expect(src, file).not.toMatch(/body:\s*`\$\{clientRow\.name\}/);
+  it("rebook: the session client select carries preferred_name, it rides in the context, and the text uses it; no loader call", () => {
+    const src = read("app/portal/rebook-actions.ts");
+    expect(src).toMatch(/\.select\(`\$\{preferredNameColumn\(includePreferred\)\}id, name, email, phone, sms_consent_at, sms_opted_out_at, archived_at`\)/);
+    expect(src).toContain("clientPreferredName: clientRow.preferred_name ?? null");
+    expect(src).toContain("notificationClientName({ name: clientName, preferred_name: clientPreferredName })");
+    expect(src).toMatch(/body: `\$\{notificationName\} booked/);
+    expect(src).not.toContain("loadCommunicationName");
+  });
+
+  it("intake: ONE client read through readClientNameFields; no loader call", () => {
+    const src = read("app/intake/[token]/actions.ts");
+    expect(src).toContain("readClientNameFields(admin, existing.studio_id, existing.client_id)");
+    expect(src).toContain("clientDisplayName(clientFields)");
+    expect(src).not.toContain("loadCommunicationName");
+  });
+
+  it("book: an existing client's preferred name comes from the lookup row; the bounded loader runs ONLY when the row was not read here", () => {
+    const src = read("app/book/[slug]/actions.ts");
+    expect(src).toMatch(/\.select\(`\$\{preferredNameColumn\(includePreferred\)\}id, name, email, phone, sms_consent_at, sms_opted_out_at`\)\s*\.eq\("studio_id", studio\.id\)\s*\.eq\("normalized_email", normalizedEmail\)/);
+    expect(src).toContain("clientPreferredName = existingClient.preferred_name ?? null;");
+    expect(src).toMatch(/clientPreferredName === undefined\s*\?\s*await loadCommunicationName\(admin, studio\.id, clientId, clientName\)\s*:\s*notificationClientName\(\{ name: clientName, preferred_name: clientPreferredName \}\)/);
+    expect(src.match(/loadCommunicationName\(/g)?.length).toBe(1); // exactly one call site: the unknown-row fallback
+  });
+
+  it("card-change and cancel contain no separate display-name lookup", () => {
+    for (const f of ["lib/billing/card-change-notification.ts", "lib/notifications/appointment-cancel-notification.ts"]) {
+      expect(read(f), f).not.toContain("loadCommunicationName");
+      expect(read(f), f).toContain("client-name");
     }
   });
 });

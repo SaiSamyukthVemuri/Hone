@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { ensurePractitionerNotification } from "@/lib/notifications/practitioner-notifications";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import { dbErrorCode } from "@/lib/logging/error-class";
-import { loadCommunicationName } from "@/lib/clients/communication-name-loader";
+import { notificationClientName, readClientNameFields } from "@/lib/notifications/client-name";
 
 // Card-on-file change notification (Chloe's ask): when a client adds or
 // replaces a card through the portal, the studio should see a practitioner-
@@ -127,27 +127,14 @@ export async function ensureCardChangeNotification(
   }
   const isReplacement = (count ?? 0) > 1;
 
-  // 3. Client display name (already shown to every studio member). Fall back
-  //    to a generic label if the row is somehow gone.
-  const { data: client, error: clientErr } = await admin
-    .from("clients")
-    .select("name")
-    .eq("id", clientId)
-    .eq("studio_id", studioId)
-    .maybeSingle();
-  if (clientErr) {
+  // 3. Client DISPLAY name (the calendar's field: preferred where set, else stored; "A client" when neither), from ONE read of the client row.
+  const { fields: clientFields, failure: clientFailure } = await readClientNameFields(admin, studioId, clientId);
+  if (clientFailure) {
     throw new Error(
-      `card_change_client_lookup_failed:${dbErrorCode(clientErr)}`,
+      `card_change_client_lookup_failed:${dbErrorCode(clientFailure)}`,
     );
   }
-  const storedClientName =
-    typeof client?.name === "string" && client.name.trim().length > 0
-      ? client.name.trim()
-      : null;
-  // DISPLAY name (the calendar's field: preferred where set), never the legal identity. Fail-soft: any read problem keeps the stored name.
-  const clientName = storedClientName
-    ? await loadCommunicationName(admin, studioId, clientId, storedClientName)
-    : "A client";
+  const clientName = notificationClientName(clientFields);
 
   const { eventType, title, body, href } = buildCardChangeNotification({
     clientName,

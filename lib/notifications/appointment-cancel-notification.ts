@@ -27,7 +27,8 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { recordPractitionerNotificationAndWait } from "@/lib/notifications/practitioner-notifications";
 import { dbErrorCode } from "@/lib/logging/error-class";
-import { loadCommunicationName } from "@/lib/clients/communication-name-loader";
+import { readClientNameFields } from "@/lib/notifications/client-name";
+import { clientDisplayName } from "@/lib/clients/identity";
 import { localTimeString12h } from "@/lib/booking/tz";
 
 import { CANCEL_RECIPIENT_KEY_PREFIX } from "@/lib/notifications/owner-only-events";
@@ -104,15 +105,14 @@ export async function recordAppointmentCancelNotifications(
     const clientId = str(appt?.client_id);
     const serviceId = str(appt?.service_id);
     const [client, service, studio, actor, owners] = await Promise.all([
-      clientId ? readOne(admin, "clients", "name", clientId) : null,
+      clientId ? readClientNameFields(admin, studioId, clientId).then((r) => r.fields).catch(() => null) : null,
       serviceId ? readOne(admin, "services", "name", serviceId) : null,
       readOne(admin, "studios", "timezone", studioId),
       input.actorPractitionerId ? readOne(admin, "practitioners", "display_name", input.actorPractitionerId) : null,
       readOwners(admin, studioId),
     ]);
-    // DISPLAY name (the calendar's field: preferred where set), never the legal identity. Fail-soft to the stored name.
-    const storedClientName = str(client?.name);
-    const clientName = storedClientName && clientId ? await loadCommunicationName(admin, studioId, clientId, storedClientName) : storedClientName;
+    // DISPLAY name (the calendar's field: preferred where set, else stored), from the one client read above. Empty (no name, or the read failed) keeps the generic wording.
+    const clientName = client ? clientDisplayName(client) || null : null;
     const what = str(service?.name) ?? "an appointment";
     const tz = str(studio?.timezone);
     const startsAt = str(appt?.starts_at) ? new Date(str(appt?.starts_at) as string) : null;

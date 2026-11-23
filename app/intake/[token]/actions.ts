@@ -29,7 +29,8 @@ import { writeIntakeRevision } from "@/lib/intake/write-revision";
 
 export type SaveResult = { ok: true; revision: string } | { ok: false; error: string; code?: "conflict" | "terminal" | "unavailable" };
 import { dbErrorCode } from "@/lib/logging/error-class";
-import { loadCommunicationName } from "@/lib/clients/communication-name-loader";
+import { readClientNameFields } from "@/lib/notifications/client-name";
+import { clientDisplayName } from "@/lib/clients/identity";
 
 
 const INTAKE_GENERIC_ERROR =
@@ -362,18 +363,9 @@ export async function submitIntakeAction(payload: {
   // ops_alerts. The payload carries ONLY the client name (already shown to
   // studio members) + safe text, never intake answers, and never the intake
   // token; href is the authenticated intake review page.
-  const { data: client } = await admin
-    .from("clients")
-    .select("name")
-    .eq("id", existing.client_id)
-    .eq("studio_id", existing.studio_id)
-    .maybeSingle();
-  const storedClientName =
-    typeof client?.name === "string" ? client.name.trim() : "";
-  // DISPLAY name (the calendar's field: preferred where set), never the legal identity. Empty stays empty (generic wording).
-  const clientName = storedClientName
-    ? await loadCommunicationName(admin, existing.studio_id, existing.client_id, storedClientName)
-    : "";
+  // DISPLAY name (the calendar's field: preferred where set, else stored) from ONE read of the client row. Empty (no name, or the read failed) stays generic.
+  const { fields: clientFields } = await readClientNameFields(admin, existing.studio_id, existing.client_id);
+  const clientName = clientFields ? clientDisplayName(clientFields) : "";
   recordPractitionerNotification({
     studioId: existing.studio_id,
     practitionerId: null,
