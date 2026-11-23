@@ -41,6 +41,7 @@ import {
 import { buildIcs } from "@/lib/booking/ical";
 import {
   clientSelfServicePolicyFromStudio,
+  studioManagesAppointments,
   type ClientSelfServiceStudioFlags,
 } from "@/lib/booking/client-self-service-policy";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
@@ -955,13 +956,22 @@ export function resolveOperationAddressVisibility(read: VisibilityRead): unknown
 export function resolveOperationPortalEnabled(read: VisibilityRead): boolean {
   if (read.error) return isMissingColumnError(read.error, "client_portal_enabled");
   if (!read.data || typeof read.data !== "object") return false;
+  if (studioManagesAppointments(read.data)) return false;
   const v = (read.data as Record<string, unknown>).client_portal_enabled;
   return v === undefined ? true : v === true;
 }
 
+/** Whether the client-self-service links are withheld from an operation email. A studio that manages appointments itself withholds them, and so does one
+ * whose policy cannot be read: an unreadable policy withdraws the links but never stops the reminder. A decision only; it returns no text from the read. */
+export function resolveOperationStudioManaged(read: VisibilityRead): boolean {
+  if (read.error) return true;
+  if (!read.data) return true;
+  return studioManagesAppointments(read.data as object);
+}
+
 /** Trusted renderer consumes ONLY the closed SQL projection, never a cron
  * joined row. This creates no dispatch permission; URL bytes are frozen once. */
-export function buildAppointmentEmailOperationPayload(projection: EmailOperationRender, purpose: "reminder_24h" | "reminder_2h", appointmentId: string, addressVisibility: unknown, nameFields: ClientIdentityFields | undefined, portalEnabled: boolean): EmailPayload | null {
+export function buildAppointmentEmailOperationPayload(projection: EmailOperationRender, purpose: "reminder_24h" | "reminder_2h", appointmentId: string, addressVisibility: unknown, nameFields: ClientIdentityFields | undefined, portalEnabled: boolean, studioManaged = false): EmailPayload | null {
   const origin = getRequiredAppOrigin();
   const kind = purpose === "reminder_24h" ? "24h" : "2h";
   const intakeUrl = projection.intake ? generateIntakeLinkUrl(projection.intake.id, origin) : null;
@@ -987,7 +997,7 @@ export function buildAppointmentEmailOperationPayload(projection: EmailOperation
     timezone: p.studio.timezone,
     // HON-47: the same self-service decision every other client email makes.
     ...selfServiceLinksFor(
-      { client_cancellation_enabled: p.studio.client_cancellation_enabled ?? undefined, client_reschedule_enabled: p.studio.client_reschedule_enabled ?? undefined },
+      { client_cancellation_enabled: p.studio.client_cancellation_enabled ?? undefined, client_reschedule_enabled: p.studio.client_reschedule_enabled ?? undefined, studio_managed_appointments: studioManaged },
       { cancellationUrl: `${origin}/cancel/${token}`, rescheduleUrl: `${origin}/reschedule/${token}` },
     ),
     // The portal switch is not in the sealed projection, so the caller reads it (see resolveOperationPortalEnabled) and it is REQUIRED here:
@@ -1041,8 +1051,10 @@ export async function sendAppointmentReminderOperation(admin: SupabaseClient, st
       await admin.from("studios").select("address_visibility").eq("id", studioId).maybeSingle());
     // The portal switch is not in the projection either: read it once here, before the request is frozen. The column does not exist yet,
     // so today this is the missing-column default (on); once it exists, an owner who turned the portal off drops the portal link.
-    const portalEnabled = resolveOperationPortalEnabled(
-      await admin.from("studios").select("client_portal_enabled").eq("id", studioId).maybeSingle());
+    const selfServiceRead = await admin.from("studios").select("*").eq("id", studioId).maybeSingle();
+    const portalEnabled = resolveOperationPortalEnabled(selfServiceRead);
+    // An unreadable policy withdraws links but does not stop appointment reminders.
+    const studioManaged = resolveOperationStudioManaged(selfServiceRead);
     // HON-58: the treatment-time sentence names the client by the name they go by. The 0247 projection carries only the stored
     // name, so the preferred name is read here, once, before the request is frozen; a failed read leaves the stored name.
     const nameFields = "kind" in render ? undefined : await loadTreatmentTimeNameFields(admin, studioId, render.client.id, render.client.name);
@@ -1053,7 +1065,7 @@ export async function sendAppointmentReminderOperation(admin: SupabaseClient, st
     // minimal fake accepts one argument and safely ignores the second.
     const sendWithIdempotency: (payload: EmailPayload, options: Readonly<{ idempotencyKey: string }>) => Promise<unknown> = transport.emails.send.bind(transport.emails);
     const adapter = createProjectedEmailOperationDispatchAdapter({
-      render: (original) => buildAppointmentEmailOperationPayload(original, purpose, appointmentId, addressVisibility, nameFields, portalEnabled),
+      render: (original) => buildAppointmentEmailOperationPayload(original, purpose, appointmentId, addressVisibility, nameFields, portalEnabled, studioManaged),
       currentRuntimeBinding: () => operationRuntime(transport).binding,
       authorize: async (binding, original) => {
         const { data, error } = await rpc("authorize_appointment_email_operation", {
