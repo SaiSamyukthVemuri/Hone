@@ -4,6 +4,7 @@ import { parseClientsParams } from "@/lib/business-analytics/clients-params";
 import { formatExact } from "@/lib/business-analytics/money-format";
 import { loadOverview } from "@/lib/business-analytics/server/overview-read";
 import { STATEMENTS_OWNER_ONLY } from "@/lib/finance/statement-screen";
+import { timed } from "@/lib/observability/perf-timing";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 
 import { ClientsScreen } from "../clients-screen";
@@ -19,7 +20,7 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Analytics: Clients" };
 
 export default async function AnalyticsClientsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
-  const { practitioner, studio } = await requirePractitionerWithStudio();
+  const { practitioner, studio } = await timed("analytics.identity", () => requirePractitionerWithStudio());
   if (practitioner.role !== "owner") {
     return <section className="rounded-lg border border-line bg-surface-sunken p-6 text-sm text-fg">{STATEMENTS_OWNER_ONLY}</section>;
   }
@@ -32,7 +33,7 @@ export default async function AnalyticsClientsPage({ searchParams }: { searchPar
   const clients = parsed.ok ? parsed.params : { sort: "spend" as const, chip: "all" as const, page: 1 };
   const clientNotices = parsed.ok ? parsed.notices : [];
 
-  const read = await loadOverview(practitioner, studio, currency, raw, { strict: false, clients }, new Date());
+  const read = await timed("analytics.domain", () => loadOverview(practitioner, studio, currency, raw, { strict: false, clients }, new Date()));
   if (read.access !== "granted") return null; // unreachable: the role was checked above, and the loader checks it again
   if (!read.ok && read.reason === "period_invalid") return <OverviewInvalidPeriod params={read.params} notices={read.notices} practitionerOptions={read.practitionerOptions} />;
   if (!read.ok) {

@@ -15,6 +15,8 @@ import type { AssembleAppointment, AssembleSettlementRow } from "./statement-doc
 
 const PAGE = 500; // well under the 1000-row cap, so a page can never be silently truncated
 export const MAX_PAGES = 20; // 10,000 appointments per read
+/** A read of this many rows or more fails as too many (the loop below stops at MAX_PAGES full pages). */
+export const APPOINTMENT_READ_CAP = MAX_PAGES * PAGE;
 const FEE_REASONS = ["no_show_fee", "late_cancellation_fee"];
 
 type ApptDb = {

@@ -1,5 +1,6 @@
 "use server";
 
+import { WAITLIST_PATH } from "@/lib/waitlist/paths";
 import { revalidatePath } from "next/cache";
 import { clearLifecycleNotice } from "@/lib/waitlist/lifecycle-notice-cookie";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
@@ -222,7 +223,7 @@ export async function inviteToBookAction(formData: FormData): Promise<InviteActi
   // The queue's rendered state changes on a commit — the entry moves to
   // `invited` and acquires a live invitation. Revalidated only when something
   // actually committed, so a refusal does not churn the page.
-  if (outcome.state === "committed") revalidatePath("/settings/waitlist");
+  if (outcome.state === "committed") revalidatePath(WAITLIST_PATH);
   return { outcome };
 }
 

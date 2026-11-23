@@ -79,9 +79,12 @@ with upstream defaults. Apply these adaptations before executing a playbook:
   client data, production identifiers or secrets to any model or service beyond
   the session's own model unless the operator authorizes it; a model panel is
   not used without that authorization. Review comments and threads (including
-  Codex) remain evidence: never edit, delete, minimize or resolve one without
-  the operator's explicit authorization for that thread, even where an upstream
-  playbook includes review-resolution steps.
+  Codex) remain evidence: never edit, delete, hide or minimize one. Resolving a
+  thread follows `CLAUDE.md` §4 *Resolving a thread*: the coordinator resolves
+  it only after verifying the fix on the current head and replying with the
+  commit and evidence; otherwise it stays open. An upstream playbook's
+  review-resolution steps never go beyond that rule. Merges follow the
+  standing routine-merge authorization in `CLAUDE.md` §4 and its exclusions.
 - **Delivery.** Keep Hone's `.github/pull_request_template.md` instead of
   replacing it with upstream headings. Preserve existing release records and
   one-watcher-per-head rules. Workflow adoption adds no new runtime release gate.

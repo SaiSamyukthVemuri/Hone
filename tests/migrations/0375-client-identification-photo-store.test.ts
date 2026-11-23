@@ -1,0 +1,376 @@
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+import { countVersion, migrationVersions } from "./helpers/migration-state";
+import { grantedRoles, revokedRoles, REQUIRED_REVOKES, BLANKET_FUNCTION_GRANT } from "./helpers/grant-posture";
+
+// 0375 · a separate private client IDENTIFICATION-PHOTO
+// store. Source contract only; behaviour (default OFF, consent, access, deletion,
+// the closed 0231 bypass) is proved against a real database in
+// tests/db/client-id-photo.db.test.ts.
+
+const VERSION = "0375";
+const FILE = "supabase/migrations/0375_client_identification_photo_store.sql";
+const sql = readFileSync(FILE, "utf8");
+/** Executable SQL only: line comments stripped before block comments. */
+const EXECUTABLE = sql.replace(/--[^\n]*/g, " ").replace(/\/\*[\s\S]*?\*\//g, " ");
+/** Top level only (function bodies blanked). */
+const TOP_LEVEL = EXECUTABLE.replace(/\$\$[\s\S]*?\$\$/g, " <body> ");
+
+/** Authenticated commands and the RLS predicate: revoked from all four, granted to authenticated only. */
+const AUTHENTICATED: Array<[string, string]> = [
+  ["client_id_photo_can_read", "uuid, uuid"],
+  ["client_id_photo_wording_current", "uuid"],
+  ["client_id_photo_enabled", "uuid"],
+  ["record_client_id_photo_consent", "uuid, text, text, text, text"],
+  ["withdraw_client_id_photo_consent", "uuid"],
+  ["set_client_id_photo", "uuid, text, integer, integer, integer"],
+  ["remove_client_id_photo", "uuid"],
+  ["reserve_client_id_photo_path", "uuid"],
+];
+/** The deletion queue is drained by the SERVER only: revoked from all four, granted to service_role only. */
+const SERVICE_ROLE_ONLY: Array<[string, string]> = [
+  ["pending_client_id_photo_object_deletions", "integer"],
+  ["ack_client_id_photo_object_deletion", "text"],
+];
+/** Granted to NOBODY: internal helpers, operator commands and trigger functions. */
+const NOBODY: Array<[string, string]> = [
+  ["client_id_photo_actor", "uuid"],
+  ["client_id_photo_switch_on", "uuid"],
+  ["client_id_photo_consent_granted", "uuid, uuid"],
+  ["set_client_id_photo_enabled", "uuid, boolean, text"],
+  ["approve_client_id_photo_wording", "text"],
+  ["client_id_photo_immutable", ""],
+  ["client_id_photo_wording_guard", ""],
+  ["studio_client_id_photo_switch_log_write", ""],
+  ["client_id_photo_queue_object", ""],
+  ["client_id_photo_on_client_archive", ""],
+  ["clients_portrait_pointer_frozen", ""],
+  // the 0231 setter is retired
+  ["set_client_portrait", "uuid, uuid, uuid"],
+];
+
+const TABLES = [
+  "client_id_photo_wording_versions",
+  "studio_client_id_photo_settings",
+  "studio_client_id_photo_switch_log",
+  "client_id_photo_consents",
+  "client_id_photos",
+  "client_id_photo_audit",
+  "client_id_photo_pending_object_deletions",
+];
+
+/** Every function this migration creates, with its body. */
+function createdFunctions(): Array<{ name: string; body: string }> {
+  const out: Array<{ name: string; body: string }> = [];
+  const re = /create or replace function public\.(\w+)\([\s\S]*?\$\$([\s\S]*?)\$\$;/g;
+  for (const m of EXECUTABLE.matchAll(re)) out.push({ name: m[1], body: m[2] });
+  return out;
+}
+
+describe("0375 sits correctly in the migration sequence", () => {
+  it("is present exactly once, above the migrations it builds on", () => {
+    // NO isRepoMax pin: it is a claim about the tree, and goes red in composition.
+    expect(countVersion(VERSION)).toBe(1);
+    const versions = migrationVersions();
+    expect(versions, "clients_id_studio_id_unique").toContain("0001");
+    expect(versions, "0231 pointer and setter").toContain("0231");
+  });
+});
+
+describe("0375's transaction and shape", () => {
+  it("opens its own transaction and arms lock_timeout inside it", () => {
+    expect(sql).toMatch(/^begin;/m);
+    expect(sql).toMatch(/set local lock_timeout = '5s';/);
+    expect(sql.trimEnd().endsWith("commit;")).toBe(true);
+    expect(sql.indexOf("set local lock_timeout")).toBeGreaterThan(sql.indexOf("begin;"));
+  });
+
+  it("OFF by default: no seed row enables a studio and the settings column defaults to false", () => {
+    expect(TOP_LEVEL).toMatch(/enabled boolean not null default false/);
+    expect(TOP_LEVEL).not.toMatch(/insert into public\.studio_client_id_photo_settings/i);
+    expect(EXECUTABLE).toMatch(/coalesce\(\(select s\.enabled from public\.studio_client_id_photo_settings s/);
+  });
+
+  it("seeds the wording UNAPPROVED, so no consent can be recorded until an operator approves it", () => {
+    const seed = TOP_LEVEL.match(/insert into public\.client_id_photo_wording_versions[^;]*;/i)?.[0] ?? "";
+    expect(seed).toContain("'v1.1'");
+    expect(seed).not.toMatch(/approved_at/);
+  });
+
+  it("every table has RLS enabled and every API role revoked by name; only the photo table is readable", () => {
+    for (const t of TABLES) {
+      expect(TOP_LEVEL, t).toMatch(new RegExp(`alter table public\\.${t} enable row level security;`));
+      expect(TOP_LEVEL, t).toMatch(
+        new RegExp(`revoke all on table public\\.${t} from public, anon, authenticated, service_role;`),
+      );
+    }
+    const grants = [...TOP_LEVEL.matchAll(/grant\s+[a-z ,]+\s+on\s+table\s+([\w.]+)\s+to\s+([^;]+);/gi)].map((m) => `${m[1]}->${m[2].trim()}`);
+    expect(grants).toEqual(["public.client_id_photos->authenticated"]);
+    expect(TOP_LEVEL).toMatch(/grant select on table public\.client_id_photos to authenticated;/);
+    const policies = [...TOP_LEVEL.matchAll(/create policy "[^"]*"\s+on\s+([\w.]+)\s+for\s+(\w+)/gi)].map((m) => `${m[1]}:${m[2]}`);
+    expect(policies).toEqual(["public.client_id_photos:select"]);
+    expect(TOP_LEVEL).toMatch(/using \(public\.client_id_photo_can_read\(studio_id, client_id\)\)/);
+  });
+
+  it("the bucket is private, created in an exception wrapper, with NO storage.objects policy", () => {
+    expect(sql).toMatch(/values \('client-identification-photos', 'client-identification-photos', false, 524288/);
+    expect(sql).toMatch(/exception when insufficient_privilege or undefined_table then/);
+    expect(EXECUTABLE).not.toMatch(/storage\.objects/);
+  });
+
+  it("evidence, log, audit and wording are append-only for every role, including truncate", () => {
+    for (const t of ["client_id_photo_consents", "studio_client_id_photo_switch_log", "client_id_photo_audit"]) {
+      expect(TOP_LEVEL).toMatch(new RegExp(`before update or delete on public\\.${t}`));
+      expect(TOP_LEVEL).toMatch(new RegExp(`before truncate on public\\.${t}`));
+    }
+    expect(TOP_LEVEL).toMatch(/before delete on public\.client_id_photo_wording_versions/);
+    expect(TOP_LEVEL).toMatch(/before update on public\.client_id_photo_wording_versions/);
+  });
+
+  it("the photo's path is anchored to its own studio and client, and the audit has no path column", () => {
+    expect(TOP_LEVEL).toMatch(/storage_path ~ \('\^' \|\| studio_id::text \|\| '\/' \|\| client_id::text/);
+    const audit = TOP_LEVEL.match(/create table public\.client_id_photo_audit \(([\s\S]*?)\n\);/)?.[1] ?? "";
+    expect(audit.length).toBeGreaterThan(0);
+    expect(audit).not.toMatch(/storage_path|\burl\b|filename|wording/);
+  });
+});
+
+describe("0375's function privileges", () => {
+  it("revokes EVERY created function from public, anon, authenticated and service_role by name", () => {
+    const created = createdFunctions().map((f) => f.name).sort();
+    const covered = [...AUTHENTICATED, ...SERVICE_ROLE_ONLY, ...NOBODY].map(([n]) => n).filter((n) => n !== "set_client_portrait").sort();
+    expect(created).toEqual(covered);
+  });
+
+  it("authenticated commands: revoked from all four, granted to authenticated only", () => {
+    for (const [fn, args] of AUTHENTICATED) {
+      expect(revokedRoles(EXECUTABLE, fn, args), fn).toEqual(REQUIRED_REVOKES);
+      expect(grantedRoles(EXECUTABLE, fn, args), fn).toEqual(["authenticated"]);
+    }
+  });
+
+  it("drain and ack are granted to service_role ONLY (no actor can acknowledge a deletion)", () => {
+    for (const [fn, args] of SERVICE_ROLE_ONLY) {
+      expect(revokedRoles(EXECUTABLE, fn, args), fn).toEqual(REQUIRED_REVOKES);
+      expect(grantedRoles(EXECUTABLE, fn, args), fn).toEqual(["service_role"]);
+    }
+  });
+
+  it("helpers, operator commands, trigger functions and the retired 0231 setter are granted to nobody", () => {
+    for (const [fn, args] of NOBODY) {
+      expect(revokedRoles(EXECUTABLE, fn, args), fn).toEqual(REQUIRED_REVOKES);
+      expect(grantedRoles(EXECUTABLE, fn, args), fn).toEqual([]);
+    }
+  });
+
+  it("has no blanket function grant", () => {
+    expect(EXECUTABLE).not.toMatch(BLANKET_FUNCTION_GRANT);
+  });
+
+  it("every function is SECURITY DEFINER or a plain trigger guard with an empty search_path", () => {
+    for (const m of EXECUTABLE.matchAll(/create or replace function public\.(\w+)\([\s\S]*?\$\$/g)) {
+      expect(m[0], m[1]).toMatch(/set search_path = ''/);
+    }
+  });
+});
+
+describe("0375 reservation, drain, consent and bucket rules", () => {
+  it("set accepts only a database-reserved path for this client, inside its window, and consumes it", () => {
+    const set = createdFunctions().find((f) => f.name === "set_client_id_photo")!.body;
+    expect(set).toMatch(/q\.reservation[\s\S]*q\.reserved_client_id = p_client_id[\s\S]*q\.delete_after > now\(\)/);
+    expect(set).toMatch(/That upload was not reserved for this client/);
+    const reserve = createdFunctions().find((f) => f.name === "reserve_client_id_photo_path")!.body;
+    expect(reserve).toMatch(/gen_random_uuid\(\)::text \|\| '\.webp'/);
+    expect(reserve).toMatch(/for update/);
+    expect(reserve).toMatch(/insert into public\.client_id_photo_pending_object_deletions/);
+  });
+
+  it("the drain never offers a live photo's path and never an undue reservation", () => {
+    const drain = createdFunctions().find((f) => f.name === "pending_client_id_photo_object_deletions")!.body;
+    expect(drain).toMatch(/q\.delete_after <= now\(\)/);
+    expect(drain).toMatch(/not exists \(select 1 from public\.client_id_photos p where p\.storage_path = q\.storage_path\)/);
+    expect(drain).not.toMatch(/auth\.uid|client_id_photo_actor/);
+  });
+
+  it("the reserve cap is five LIVE reservations for this client, each held fifteen minutes", () => {
+    // Offline pin for the cap that tests/db/client-id-photo.db.test.ts proves on a stack: raising or lowering it, or counting other
+    // clients' or expired reservations, must change this.
+    const reserve = createdFunctions().find((f) => f.name === "reserve_client_id_photo_path")!.body;
+    expect(reserve).toMatch(
+      /select count\(\*\) from public\.client_id_photo_pending_object_deletions q\s+where q\.reserved_client_id = p_client_id and q\.reservation and q\.delete_after > now\(\)\) >= 5 then/,
+    );
+    expect(reserve).toMatch(/now\(\) \+ interval '15 minutes'/);
+  });
+
+  it("consent is accepted only against the latest approved wording", () => {
+    const rec = createdFunctions().find((f) => f.name === "record_client_id_photo_consent")!.body;
+    expect(rec).toMatch(/order by w\.approved_at desc, w\.created_at desc\s+limit 1\) latest/);
+  });
+
+  it("the bucket is hardened on insert and a PUBLIC bucket fails the migration", () => {
+    expect(sql).toMatch(/file_size_limit, allowed_mime_types\)\s+values \('client-identification-photos', 'client-identification-photos', false, 524288, array\['image\/webp'\]\)/);
+    expect(sql).toMatch(/where id = 'client-identification-photos' and public\) then\s+raise exception/);
+    expect(sql).not.toMatch(/set public\s*=\s*true/i);
+  });
+});
+
+describe("0375: cancelling an in-flight upload keeps its queue entry until the reservation window ends", () => {
+  const CANCEL_FUNCTIONS = ["withdraw_client_id_photo_consent", "remove_client_id_photo", "client_id_photo_on_client_archive"];
+
+  it("withdraw, remove and the archive trigger each cancel that client's open reservations by clearing the flag ONLY, and never touch delete_after", () => {
+    const fns = createdFunctions();
+    for (const name of CANCEL_FUNCTIONS) {
+      const body = fns.find((f) => f.name === name)!.body;
+      expect(body, name).toMatch(
+        /update public\.client_id_photo_pending_object_deletions\s+set reservation = false, reserved_client_id = null\s+where reserved_client_id = (p_client_id|new\.id) and reservation;/,
+      );
+      // The race: a cancelled row made due at once can be drained and acknowledged while the upload is still running, and the object
+      // that then lands has no queue entry. Nothing in a cancel path may set the due time.
+      expect(body, `${name} must not set delete_after`).not.toMatch(/delete_after\s*=/);
+    }
+  });
+
+  it("no statement in the migration sets delete_after to now(), and the only place that sets a window end is the reservation", () => {
+    expect(EXECUTABLE).not.toMatch(/delete_after\s*=\s*now\(\)/);
+    const setters = [...EXECUTABLE.matchAll(/delete_after\s*=/g)];
+    // The drain and the ack READ delete_after with <=; no assignment exists at all (the column default makes ordinary deletions due at once).
+    expect(setters).toHaveLength(0);
+  });
+
+  it("the drain offers, and the ack accepts, a row only once its delete_after has passed", () => {
+    const drain = createdFunctions().find((f) => f.name === "pending_client_id_photo_object_deletions")!.body;
+    const ack = createdFunctions().find((f) => f.name === "ack_client_id_photo_object_deletion")!.body;
+    expect(drain).toMatch(/q\.delete_after <= now\(\)/);
+    expect(ack).toMatch(/q\.delete_after <= now\(\)/);
+  });
+
+  it("the reservation window is fifteen minutes, so a change to it is deliberate", () => {
+    const reserve = createdFunctions().find((f) => f.name === "reserve_client_id_photo_path")!.body;
+    const windows = [...reserve.matchAll(/now\(\) \+ interval '([^']+)'/g)].map((m) => m[1]);
+    expect(windows).toEqual(["15 minutes"]);
+    // The invariant that bounds the window is stated in the header (the migration cannot enforce it; there is no upload path here).
+    const header = sql.split("\nbegin;")[0].replace(/\n--\s*/g, " ");
+    expect(header).toMatch(/THE UPLOAD-LIFETIME INVARIANT/);
+    expect(header).toMatch(/unable to create the object after the reservation's delete_after/);
+    expect(header).toMatch(/15-minute window/);
+  });
+});
+
+describe("0375 keeps ID photos apart from treatment photos and closes the 0231 bypass", () => {
+  it("no new function reads or writes treatment_images, the pointer or the 0231 setter, except the pointer freeze", () => {
+    for (const f of createdFunctions()) {
+      expect(f.body, f.name).not.toMatch(/treatment_images/);
+      if (f.name !== "clients_portrait_pointer_frozen") {
+        expect(f.body, f.name).not.toMatch(/portrait_image_id|set_client_portrait/);
+      }
+    }
+    expect(TOP_LEVEL).not.toMatch(/references public\.treatment_images/);
+  });
+
+  it("freezes the pointer for every role, on insert and update, and never calls it a clear", () => {
+    expect(TOP_LEVEL).toMatch(/before insert or update of portrait_image_id on public\.clients/);
+    const body = createdFunctions().find((f) => f.name === "clients_portrait_pointer_frozen")!.body;
+    expect(body).toMatch(/new\.portrait_image_id is not null/);
+    expect(body).toMatch(/tg_op = 'INSERT' or new\.portrait_image_id is distinct from old\.portrait_image_id/);
+  });
+
+  it("does not rewrite or clear any existing pointer (a data write needing its own authorization)", () => {
+    expect(TOP_LEVEL).not.toMatch(/update public\.clients/i);
+    expect(TOP_LEVEL).not.toMatch(/portrait_image_id\s*=\s*null/i);
+  });
+
+  it("removes the photo on client archive without touching any other lane's function", () => {
+    expect(TOP_LEVEL).toMatch(/after update of archived_at on public\.clients/);
+    expect(EXECUTABLE).not.toMatch(/create or replace function public\.(archive_client|archive_treatment_image)\b/);
+  });
+});
+
+// The rollback. Behaviour (refusals, a real up / down / up, the restored grants) is proved in tests/db/client-id-photo-roundtrip.db.test.ts.
+const DOWN_FILE = "supabase/rollbacks/0375_client_identification_photo_store.down.sql";
+const down = readFileSync(DOWN_FILE, "utf8");
+const DOWN_EXECUTABLE = down.replace(/--[^\n]*/g, " ");
+
+describe("0375 rollback", () => {
+  it("says plainly, at the top, that it destroys consent evidence, needs a drained store, and is emergency-only", () => {
+    const head = down.split("\nbegin;")[0];
+    expect(head.split("\n")[0]).toMatch(/EMERGENCY ONLY/);
+    expect(head).toMatch(/DESTROYS CONSENT EVIDENCE/);
+    expect(head).toMatch(/seven tables/);
+    expect(head).toMatch(/STORAGE OBJECTS MUST BE DRAINED FIRST/);
+    expect(head).toMatch(/never touches storage/);
+    expect(head.replace(/\n--\s*/g, " ")).toMatch(/EXPORT THOSE TABLES FIRST/);
+    expect(head).toMatch(/set local hone\.confirm_destroy_consent_evidence = 'yes';/);
+    expect(head, "no session-level set is recommended").not.toMatch(/^--\s+set hone\./m);
+    expect(head.replace(/\n--\s*/g, " ")).toMatch(/NEVER put this setting in alter database \.\.\. set or alter role \.\.\. set/);
+    expect(head).toMatch(/STAYS REVOKED from public, anon, authenticated and\s+--\s+service_role/);
+    // The accepted consequence of dropping the pointer guard, in plain words (line breaks and comment markers ignored).
+    const flat = head.replace(/\n--\s*/g, " ");
+    expect(flat).toContain(
+      "After the down, the pointer column is writable through the clients table as it was before this migration; the old setter stays revoked and the portrait stays off in the application.",
+    );
+  });
+
+  it("opens its own transaction with a lock timeout, locks BEFORE it checks, refuses, then drops", () => {
+    expect(down).toMatch(/^begin;\nset local lock_timeout = '5s';/m);
+    expect(down.trimEnd().endsWith("commit;")).toBe(true);
+    const lock = down.search(
+      /lock table public\.client_id_photos, public\.client_id_photo_pending_object_deletions,\s+public\.client_id_photo_consents, public\.client_id_photo_audit, public\.studio_client_id_photo_switch_log\s+in access exclusive mode;/,
+    );
+    const refuseEvidence = down.indexOf("down refused: consent, withdrawal, switch-log or audit rows exist");
+    const refusePhotos = down.indexOf("down refused: stored identification photos still exist");
+    const refuseQueue = down.indexOf("down refused: storage objects are still queued for deletion");
+    const firstDrop = down.indexOf("drop trigger if exists");
+    expect(lock).toBeGreaterThan(0);
+    expect(lock).toBeLessThan(refusePhotos);
+    expect(refusePhotos).toBeLessThan(refuseQueue);
+    expect(refuseQueue).toBeLessThan(refuseEvidence);
+    expect(refuseEvidence).toBeLessThan(firstDrop);
+  });
+
+  it("refuses on a stored photo row and on a queued storage deletion, each as a real condition that raises (not a constant)", () => {
+    // The behaviour is proved in tests/db/client-id-photo-roundtrip.db.test.ts; these pin the conditions offline, so replacing either one
+    // with `if false` (or dropping its raise) goes red here and not only on a stack.
+    expect(DOWN_EXECUTABLE).toMatch(
+      /if exists \(select 1 from public\.client_id_photos\) then\s+raise exception 'down refused: stored identification photos still exist[^']*' using errcode = 'P0375';\s+end if;/,
+    );
+    expect(DOWN_EXECUTABLE).toMatch(
+      /if exists \(select 1 from public\.client_id_photo_pending_object_deletions\) then\s+raise exception 'down refused: storage objects are still queued for deletion[^']*' using errcode = 'P0375';\s+end if;/,
+    );
+    expect(DOWN_EXECUTABLE).not.toMatch(/if (false|0 = 1|1 = 0)\b/i);
+  });
+
+  it("never reaches into storage: no SQL deletes or inserts storage objects or buckets", () => {
+    expect(DOWN_EXECUTABLE).not.toMatch(/\bstorage\.(objects|buckets)\b/i);
+  });
+
+  it("drops every table and every function the up creates, and nothing else", () => {
+    const upTables = [...EXECUTABLE.matchAll(/create table public\.(\w+)/g)].map((m) => m[1]).sort();
+    const downTables = [...DOWN_EXECUTABLE.matchAll(/drop table if exists public\.(\w+);/g)].map((m) => m[1]).sort();
+    expect(upTables).toHaveLength(7);
+    expect(downTables).toEqual(upTables);
+    const upFns = createdFunctions().map((f) => f.name).sort();
+    const downFns = [...DOWN_EXECUTABLE.matchAll(/drop function if exists public\.(\w+)\(/g)].map((m) => m[1]).sort();
+    expect(upFns).toHaveLength(21);
+    expect(downFns).toEqual(upFns);
+    expect(DOWN_EXECUTABLE).not.toMatch(/\bcascade\b/i);
+  });
+
+  it("drops both triggers the up puts on clients", () => {
+    expect(DOWN_EXECUTABLE).toMatch(/drop trigger if exists client_id_photo_on_client_archive on public\.clients;/);
+    expect(DOWN_EXECUTABLE).toMatch(/drop trigger if exists clients_portrait_pointer_frozen on public\.clients;/);
+  });
+
+  it("grants NOTHING and keeps the old setter revoked from public, anon, authenticated and service_role", () => {
+    expect(DOWN_EXECUTABLE, "no grant statement of any kind").not.toMatch(/\bgrant\b/i);
+    for (const role of ["public", "anon", "authenticated", "service_role"]) {
+      expect(DOWN_EXECUTABLE).toContain(`revoke execute on function public.set_client_portrait(uuid, uuid, uuid) from ${role};`);
+    }
+  });
+
+  it("refuses while consent, withdrawal, switch-log or audit rows exist, unless the session confirms with the exact setting", () => {
+    expect(DOWN_EXECUTABLE).toMatch(
+      /exists \(select 1 from public\.client_id_photo_consents\)[\s\S]*exists \(select 1 from public\.client_id_photo_audit\)[\s\S]*exists \(select 1 from public\.studio_client_id_photo_switch_log\)/,
+    );
+    expect(DOWN_EXECUTABLE).toMatch(/current_setting\('hone\.confirm_destroy_consent_evidence', true\) is distinct from 'yes'/);
+  });
+});

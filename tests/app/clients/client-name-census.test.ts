@@ -45,9 +45,7 @@ const BASELINE: ReadonlyArray<readonly [string, number, Status]> = [
   ["app/(app)/financials/statements/statement-print-view.tsx", 2, "fine"],
   ["app/(app)/global-search-actions.ts", 3, "helper"],
   ["app/api/cron/appointment-reminders/route.ts", 2, "fine"],
-  ["app/intake/[token]/actions.ts", 2, "gap"],
   ["components/client-search.tsx", 1, "unreviewed"],
-  ["lib/billing/card-change-notification.ts", 3, "gap"],
   ["lib/billing/manual-fee-card-view.ts", 1, "gap"],
   ["lib/billing/manual-fee-eligibility.ts", 1, "gap"],
   ["lib/billing/payment-receipt.ts", 3, "helper"],
@@ -57,16 +55,12 @@ const BASELINE: ReadonlyArray<readonly [string, number, Status]> = [
   ["lib/clinical-records/insurer-field-gaps.ts", 1, "helper"],
   ["lib/email/send-appointment.ts", 3, "fine"],
   ["lib/finance/statement-document.ts", 2, "helper"],
-  ["lib/notifications/appointment-cancel-notification.ts", 1, "gap"],
   ["lib/record-keeping/queries.ts", 2, "unreviewed"],
 ];
 
 // Why each "gap" is one. Confirmed by reading the file; NOT fixed in the PR that records them (each is a separate decision or change).
 const GAP_EVIDENCE: Record<string, string> = {
   "app/(app)/clients/[id]/clinical-notes/print/page.tsx": "clinical output prints the stored name; the rule is the legal identity (clientClinicalName) when one is set",
-  "app/intake/[token]/actions.ts": 'staff notification "<stored name> submitted an intake form."',
-  "lib/billing/card-change-notification.ts": "staff notification names the client by the stored name (select name only)",
-  "lib/notifications/appointment-cancel-notification.ts": "staff notification names the client by the stored name (reads name only)",
   "lib/billing/manual-fee-card-view.ts": "owner-facing fee card shows the client by the stored name",
   "lib/billing/manual-fee-eligibility.ts": "reads client:clients(id, name) and hands the stored name to the fee card",
 };

@@ -1686,7 +1686,7 @@ describe("the Settings tab is server-gated", () => {
     expect(LAYOUT).toMatch(
       /return \(\s*\n\s*waitlistLive \|\|\s*\n\s*\(await hasActiveWaitlistEntries\(await createClient\(\), ctx\.studio\.id\)\)\s*\n\s*\);/,
     );
-    expect(LAYOUT).toMatch(/label: "Waitlist",\s*\n\s*href: "\/settings\/waitlist"/);
+    expect(LAYOUT).toMatch(/label: "Waitlist",\s*\n\s*href: WAITLIST_PATH,/);
   });
 
   it("derives the mode from the SERVER-RESOLVED studio, never a browser value", () => {
@@ -1711,7 +1711,7 @@ describe("the Settings tab is server-gated", () => {
   });
 
   it("is an owner-only entry", () => {
-    expect(LAYOUT).toMatch(/href: "\/settings\/waitlist",\s*\n\s*roles: OWNER,\s*\n\s*visibleWhen: waitlistVisible/);
+    expect(LAYOUT).toMatch(/href: WAITLIST_PATH,\s*\n\s*roles: OWNER,\s*\n\s*visibleWhen: waitlistVisible/);
     expect(LAYOUT).toMatch(/if \(ctx\.role !== "owner"\) return false;/);
   });
 

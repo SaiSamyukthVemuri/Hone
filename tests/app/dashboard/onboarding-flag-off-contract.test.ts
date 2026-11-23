@@ -53,7 +53,7 @@ describe("dashboard onboarding-v2 — default-OFF gating", () => {
   });
 
   it("gates the legacy getting-started card behind !onboardingV2On", () => {
-    expect(CODE).toMatch(/\{!onboardingV2On\s*&&\s*!setupComplete\s*&&/);
+    expect(CODE).toMatch(/\{isOwner\s*&&\s*!onboardingV2On\s*&&\s*!setupComplete\s*&&/);
   });
 
   it("the completed-setup footer is GONE from both paths (Chloe D3)", () => {

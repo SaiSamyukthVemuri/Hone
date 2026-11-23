@@ -1,5 +1,6 @@
 "use server";
 
+import { WAITLIST_PATH } from "@/lib/waitlist/paths";
 import { revalidatePath } from "next/cache";
 
 import { todayInTz } from "@/lib/booking/tz";
@@ -205,7 +206,7 @@ export async function recordProspectSmsConsentAction(
     return { ok: false, message: known ?? "Couldn't record that consent. Please try again." };
   }
 
-  revalidatePath("/settings/waitlist");
+  revalidatePath(WAITLIST_PATH);
   return { ok: true };
 }
 

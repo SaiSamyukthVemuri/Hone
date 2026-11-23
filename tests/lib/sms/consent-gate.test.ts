@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { confirmationSmsWillPass, passesConsentGate } from "@/lib/sms/consent-gate";
 import type { SmsType } from "@/lib/types/database";
 
-// HON-13: the one gate every appointment SMS clears before a send is attempted. Pure; no provider, nothing is sent.
+// The one gate every appointment text clears before a send is attempted. Pure; no provider, nothing is sent.
 // Synthetic data only. A studio switch that is off, absent or null sends nothing, and each message type reads its OWN switch.
 
 const CONSENTED = { phone: "+14165550123", sms_consent_at: "2026-10-01T12:00:00Z", sms_opted_out_at: null };
@@ -48,6 +48,19 @@ describe("passesConsentGate", () => {
   it("opt-out is reported ahead of missing consent", () => {
     const client = { phone: "+14165550123", sms_consent_at: null, sms_opted_out_at: "2026-11-01T12:00:00Z" };
     expect(passesConsentGate({ studio: ALL_ON, client, smsType: "confirmation" })).toEqual({ ok: false, reason: "client_opted_out" });
+  });
+
+  it("a formatted number is normalised to the same E.164 form", () => {
+    const client = { ...CONSENTED, phone: "(416) 555-0123" };
+    expect(passesConsentGate({ studio: ALL_ON, client, smsType: "confirmation" })).toEqual({ ok: true, normalizedPhone: "+14165550123" });
+  });
+
+  it.each(TYPES)("%s: only a real true switch sends; a string, number or object in its place sends nothing", (smsType) => {
+    const key = SWITCH[smsType];
+    for (const value of ["true", "false", "yes", 1, {}, []]) {
+      const studio = { ...ALL_ON, [key]: value } as never;
+      expect(passesConsentGate({ studio, client: CONSENTED, smsType })).toEqual({ ok: false, reason: "studio_toggle_off" });
+    }
   });
 
   it.each([null, "", "not a number", "123"])("an unusable phone (%j) is refused, not guessed", (phone) => {

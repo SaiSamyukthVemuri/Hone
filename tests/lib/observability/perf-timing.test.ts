@@ -405,6 +405,11 @@ describe("span names are a closed set", () => {
     expect(surfaceOf("shell.identity")).toBe("shell");
     expect(surfaceOf("client-profile.domain")).toBe("client-profile");
     expect(surfaceOf("records.identity")).toBe("records");
+    // HON-109 slice 1
+    expect(surfaceOf("analytics.appointments")).toBe("analytics");
+    expect(surfaceOf("statements.domain")).toBe("statements");
+    expect(surfaceOf("waitlist.identity")).toBe("waitlist");
+    expect(surfaceOf("dashboard.identity")).toBe("dashboard");
   });
 });
 
