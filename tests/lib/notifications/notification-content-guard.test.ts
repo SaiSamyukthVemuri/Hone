@@ -164,7 +164,15 @@ function resolvedDeclarations(code: string, calls: string[]): string[] {
         if (/\.from\(|\.select\(|\.rpc\(/.test(stmt)) continue;
         if (/\bawait\b/.test(stmt)) {
           // An awaited call: its arguments are data, not text. Follow the CALLED identifier (its definition is scanned), not the statement.
-          for (const c of stmt.matchAll(/\bawait\s+([A-Za-z_$][\w$]*)\s*\(/g)) wanted.add(c[1]);
+          for (const c of stmt.matchAll(/\bawait\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*\(/g)) {
+            wanted.add(c[1].split(".").pop() as string);
+            // The result of this call flows into a name that reaches a notification, so what is PASSED IN matters too: a private
+            // field handed to a name loader (`await loadName(admin, id, row.legal_given_name)`) is scanned and its identifiers followed.
+            const open = (c.index ?? 0) + c[0].length - 1;
+            const args = balanced(stmt, open);
+            found.push(args);
+            grab(args);
+          }
           continue;
         }
         found.push(stmt);
@@ -378,6 +386,21 @@ describe("negative controls: forged writers are caught", () => {
   it("7b. an AWAITED declaration is followed through the called identifier, not skipped", () => {
     const src = "const body = await makeText(r);\nconst makeText = (row) => `${row.intake_answers}`;\nrecordPractitionerNotification({ title: 't', body });";
     expect(reviewViolations({ ...clean, ...migOk, "app/book/[slug]/actions.ts": src }).some((x) => /intake|answers/.test(x))).toBe(true);
+  });
+
+  it("7b2. the ARGUMENTS of an awaited call whose result becomes the body are scanned: a private field passed into a name loader", () => {
+    const W = "app/book/[slug]/actions.ts";
+    const direct = "const name = await loadCommunicationName(admin, studioId, clientId, row.legal_given_name);\nrecordPractitionerNotification({ title: 't', body: `${name} booked` });";
+    expect(reviewViolations({ ...clean, ...migOk, [W]: direct }).some((x) => /legal/.test(x))).toBe(true);
+    const viaLocal = "const stored = row.intake_answers;\nconst name = await loadCommunicationName(admin, studioId, clientId, stored);\nrecordPractitionerNotification({ title: 't', body: `${name} booked` });";
+    expect(reviewViolations({ ...clean, ...migOk, [W]: viaLocal }).some((x) => /intake|answers/.test(x))).toBe(true);
+    const member = "const name = await names.load(admin, studioId, clientId, row.clinical_notes);\nrecordPractitionerNotification({ title: 't', body: `${name} booked` });";
+    expect(reviewViolations({ ...clean, ...migOk, [W]: member }).some((x) => /clinical|notes?/.test(x))).toBe(true);
+  });
+
+  it("7b3. ordinary arguments of an awaited call (ids, the admin client, the stored name) are not flagged", () => {
+    const ok = "const name = await loadCommunicationName(admin, studio.id, clientId, clientName);\nrecordPractitionerNotification({ title: 't', body: `${name} booked` });";
+    expect(reviewViolations({ ...clean, ...migOk, "app/book/[slug]/actions.ts": ok })).toEqual([]);
   });
 
   it("7c. a quoted-identifier insert into the table is discovered as an inserting migration", () => {
