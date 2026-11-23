@@ -386,6 +386,42 @@ test("10. the SERVER number wins: a mark-all-read that LOWERS the count after a 
   expect(left[0].n).toBe("0");
 });
 
+test("12. a render that repeats the SAME number is still authoritative, and a request that read before the mark-read cannot restore the old count", async ({ browser }) => {
+  // ZERO start: the shell renders with 0 unread, a poll raises it to 5, mark-all-read renders 0 AGAIN (the number did not change)
+  const w = await world();
+  const t = await signedIn(browser, w.seed.ownerEmail);
+  await expectBoth(t.page, 0);
+  for (let i = 0; i < 5; i++) await studioWide(w, `Synthetic booking ${i}`);
+  await pollNow(t);
+  await expectBoth(t.page, 5);
+  await t.page.locator('[data-testid="nav-notifications"]:visible').click();
+  await t.page.waitForURL(/\/notifications/, { timeout: 20_000 });
+  await t.page.getByRole("button", { name: "Mark all read" }).click();
+  await expectBoth(t.page, 0); // 0 -> 5 (poll) -> 0 (server render, same number as the first render)
+
+  // A PROBE IN FLIGHT ACROSS the mark-read: the request reads the database BEFORE the mark-read, and its answer arrives AFTER the fresh render.
+  for (let i = 0; i < 3; i++) await studioWide(w, `Synthetic later booking ${i}`);
+  let release: () => void = () => {};
+  const held = new Promise<void>((r) => { release = r; });
+  let readBeforeMarkRead = false;
+  await t.page.route(`**${SUMMARY}`, async (route) => {
+    const res = await route.fetch(); // reads NOW: unread = 3
+    readBeforeMarkRead = true;
+    await held; // ...and is delivered only after the mark-read has rendered
+    await route.fulfill({ response: res });
+  });
+  await t.page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect.poll(() => readBeforeMarkRead, { timeout: 15_000 }).toBe(true);
+  await t.page.getByRole("button", { name: "Mark all read" }).click();
+  await expectBoth(t.page, 0);
+  release();
+  await t.page.waitForTimeout(1_500);
+  await expectBoth(t.page, 0); // the stale answer (3) did not come back
+  const left = await sql<{ n: string }>("select count(*)::text as n from public.practitioner_notifications where studio_id=$1 and read_at is null", [w.seed.studioId]);
+  expect(left[0].n).toBe("0");
+  await t.page.unroute(`**${SUMMARY}`);
+});
+
 test("11. at 390 px both bell instances are in the DOM, one request on load, and the count updates once on both", async ({ browser }) => {
   const w = await world();
   await studioWide(w);
