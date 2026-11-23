@@ -3,7 +3,7 @@
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
-import { addDays, localDateString } from "@/lib/booking/tz";
+import { addDays } from "@/lib/booking/tz";
 import { estimateCapacity } from "@/lib/waitlist/consultation-capacity";
 import { computeConsultationFit } from "@/lib/waitlist/send-time-fit";
 
@@ -95,8 +95,8 @@ export async function estimateWindowCapacityAction(input: {
         .is("released_at", null)
         .is("declined_at", null)
         .gt("expires_at", new Date().toISOString());
-      if (live.error) return { ok: false };
-      outstanding = live.count ?? 0;
+      if (live.error || typeof live.count !== "number" || !Number.isSafeInteger(live.count) || live.count < 0) return { ok: false };
+      outstanding = live.count;
       outstandingScope = "all";
     } else {
       return { ok: false };

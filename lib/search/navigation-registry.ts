@@ -936,6 +936,10 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
     reason: "The owner-only Clients tab of Analytics is reached from the Overview tab strip, never searched. It lists clients by name, so it must never become discoverable through Global Search.",
   },
   {
+    route: "/financials/analytics/waitlist",
+    reason: "The owner-only Waitlist tab of Analytics is reached from the Analytics tab strip, never searched. It reports invitation outcomes and the waiting list, so it must not become discoverable through Global Search.",
+  },
+  {
     route: "/financials/analytics/print",
     reason: "The printable form of the owner-only Analytics screen; reached only from that screen's Print link, never searched.",
   },

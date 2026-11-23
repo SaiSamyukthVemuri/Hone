@@ -30,7 +30,8 @@ vi.mock("@/lib/booking/public-slot-range", () => ({
   fetchPublicSlotsForDates: async () => ({ ok: true, slots: h.slots }),
 }));
 vi.mock("@/lib/supabase/server", () => {
-  const chain: any = {
+  type LiveCountQuery = { eq: () => LiveCountQuery; is: () => LiveCountQuery; gt: () => Promise<typeof h.liveCount> };
+  const chain: LiveCountQuery = {
     eq: () => chain,
     is: () => chain,
     gt: async () => {
@@ -100,6 +101,14 @@ describe("capacity estimate — outstanding invitations", () => {
     h.rpc.mockResolvedValue({ data: null, error: { code: "PGRST202", message: "absent" } });
     h.liveCount = { count: null, error: { code: "42501" } };
     expect(await estimateWindowCapacityAction({ serviceId: SERVICE, windowDays: 14, allowedWeekdays: null })).toEqual({ ok: false });
+  });
+
+  it("never turns an unknown or malformed fallback count into an allowance", async () => {
+    h.rpc.mockResolvedValue({ data: null, error: { code: "PGRST202" } });
+    for (const count of [null, -1, 1.5, Number.NaN]) {
+      h.liveCount = { count, error: null };
+      expect(await estimateWindowCapacityAction({ serviceId: SERVICE, windowDays: 14, allowedWeekdays: null })).toEqual({ ok: false });
+    }
   });
 
   it("rejects a malformed function answer", async () => {

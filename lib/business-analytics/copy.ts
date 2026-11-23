@@ -60,7 +60,7 @@ export const EVIDENCE_NOT_READABLE_NOTE = "This kind of price evidence cannot be
 // The page's own words (the header, the tabs and the follow-through cards).
 // ---------------------------------------------------------------------------
 export const ANALYTICS_TITLE = "Analytics";
-export const ANALYTICS_TABS = ["Overview", "Clients", "Capacity", "Treatments", "Team"] as const;
+export const ANALYTICS_TABS = ["Overview", "Clients", "Waitlist", "Capacity", "Treatments", "Team"] as const;
 export const TABS_NOT_AVAILABLE_NOTE = "Capacity, Treatments and Team are not available yet.";
 /** Charts with unfinished sections come from clinical records, which need their own permissions design before this page can count them. */
 export const UNFINISHED_CHARTS_UNAVAILABLE = "Not available yet. This comes from clinical records, which need their own permissions design before Analytics can show it.";
