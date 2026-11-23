@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createServerClient } from "@supabase/ssr";
 import { adminQuery, asUser, closePool, seedMember } from "./helpers/harness";
 import { getAppointmentPaymentStates } from "@/lib/billing/appointment-payment-state";
+import { loadUnpaidAttention } from "@/lib/dashboard/unpaid-attention";
 import {
   E2E_SERVICE_ROLE_KEY,
   E2E_SUPABASE_URL,
@@ -385,5 +386,68 @@ describe("HON-45 — a cardless clinic completes a charted visit with the amount
     // Still no card fact anywhere, and the chart is untouched.
     expect(await cardFacts(s.studioId)).toEqual({ attempts: 0, accounts: 0, cards: 0 });
     expect(await chartIntact(s)).toEqual(INTACT_UNPAID);
+  });
+});
+
+// HON-45: the facts stay distinct, and the unpaid visit is visible and honest, through the app's own loaders on the real database.
+// What is NOT proved here: a read that FAILS. A real failure cannot be induced on a live stack without breaking it, so that case lives in
+// tests/lib/dashboard/unpaid-attention.test.ts (every table, row caps, jurisdiction) and tests/lib/billing/appointment-payment-state.test.ts.
+async function ownerUnpaid(who: SignedIn, studioId: string, viewerIsOwner = true) {
+  process.env.NEXT_PUBLIC_SUPABASE_URL = E2E_SUPABASE_URL;
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = ANON;
+  process.env.SUPABASE_SERVICE_ROLE_KEY = E2E_SERVICE_ROLE_KEY;
+  jar.clear();
+  for (const [name, value] of who.cookies) jar.set(name, value);
+  let load = await loadUnpaidAttention({ studioId, studioTimezone: TZ, viewerIsOwner, now: new Date(Date.now() + 60_000), windowDays: null });
+  // A fresh JWT can briefly read as issued in the future (PGRST303); that is a failed read, retried here, never accepted as an answer.
+  for (let attempt = 0; viewerIsOwner && !load.ok && attempt < 20; attempt += 1) {
+    await new Promise((r) => setTimeout(r, 250));
+    load = await loadUnpaidAttention({ studioId, studioTimezone: TZ, viewerIsOwner, now: new Date(Date.now() + 60_000), windowDays: null });
+  }
+  return load;
+}
+
+describe("HON-45 — clinical completion, appointment completion, payment and charge are separate facts, and an unpaid visit says so", () => {
+  it("completion alone writes no payment fact: the owner reads exactly 'chargeable', and a non-owner is told 'unavailable', never free or paid", async () => {
+    const s = await cardlessChartedVisit();
+    // The chart is a clinical fact; the appointment is completed; nothing about money exists yet.
+    expect(await chartIntact(s)).toEqual(INTACT_UNPAID);
+    expect(await settlements(s.studioId)).toHaveLength(0);
+    expect(await cardFacts(s.studioId)).toEqual({ attempts: 0, accounts: 0, cards: 0 });
+    const owner = await signIn(s.practitionerId, "hon45-fact-owner");
+    expect(await ownerView(owner, s.studioId, s.appointmentId)).toBe("chargeable");
+    // CONTROL: the same loader for a non-owner issues no query and says unavailable (0254: their money reads return zero rows with no error).
+    const asNonOwner = await getAppointmentPaymentStates(s.studioId, [s.appointmentId], TZ, false);
+    expect(asNonOwner.get(s.appointmentId)).toBe("unavailable");
+  });
+
+  it("the owner's unpaid list shows the finished visit with the full price owed, keeps it owed after 'still owes' is recorded, and drops it only once a payment is recorded", async () => {
+    const s = await cardlessChartedVisit();
+    const owner = await signIn(s.practitionerId, "hon45-list-owner");
+    const itemFor = (load: Awaited<ReturnType<typeof ownerUnpaid>>) => (load.ok ? load.items.find((i) => i.appointmentId === s.appointmentId) : undefined);
+
+    const first = await ownerUnpaid(owner, s.studioId);
+    expect(first.ok).toBe(true);
+    expect(itemFor(first)?.balance).toMatchObject({ kind: "owed", outstandingCents: PRICE });
+
+    expect((await record(owner.userId, s.studioId, s.appointmentId, "still_owes", PRICE)).result).toBe("recorded");
+    const owing = await ownerUnpaid(owner, s.studioId);
+    expect(owing.ok).toBe(true);
+    // A still-owes note is not money received: the whole price stays owed.
+    expect(itemFor(owing)?.balance).toMatchObject({ kind: "owed", outstandingCents: PRICE });
+
+    const owed = (await settlements(s.studioId)).find((r) => r.method === "still_owes")!;
+    expect((await supersede(owner.userId, s.studioId, owed.id, "paid_other_external", PRICE, "insurer paid")).result).toBe("corrected");
+    const paid = await ownerUnpaid(owner, s.studioId);
+    expect(paid.ok).toBe(true);
+    expect(itemFor(paid)).toBeUndefined();
+    // Still no card fact anywhere: paid some other way is not a charge.
+    expect(await cardFacts(s.studioId)).toEqual({ attempts: 0, accounts: 0, cards: 0 });
+  });
+
+  it("a non-owner gets no answer from the unpaid loader, which is not an empty list", async () => {
+    const s = await cardlessChartedVisit();
+    const owner = await signIn(s.practitionerId, "hon45-guard-owner");
+    expect(await ownerUnpaid(owner, s.studioId, false)).toEqual({ ok: false });
   });
 });
