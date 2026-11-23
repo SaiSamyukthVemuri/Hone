@@ -311,6 +311,7 @@ export const PATH_DECISIONS: Readonly<Record<string, Readonly<Record<string, str
     toggleServiceActiveAction: "owner(assertOwner)",
   },
   "app/(app)/settings/studio/actions.ts": {
+    setStudioManagedAppointmentsAction: "owner(self)",
     updateStudioAction: "owner(self)",
     updateStudioDisplayPreferencesAction: "owner(self)",
     setStudioEmailSettingsAction: "owner(self)",
@@ -679,6 +680,7 @@ export const RPC_NAMES: readonly string[] = [
   "set_session_performer",
   "set_session_price",
   "set_session_treatment_plan",
+  "set_studio_managed_appointments",
   "set_treatment_image_note",
   "set_waitlist_entry_availability",
   "settle_postcare_send",
@@ -714,10 +716,11 @@ export const RPC_NAMES: readonly string[] = [
 // tests/db/permission-rpc-privileges.db.test.ts and pinned here. One letter per role, in the order anon, authenticated,
 // service_role ("a", "u", "s", or "-" when the role cannot run it), then "D" for security definer or "I" for invoker.
 // "ABSENT" means no function of that name exists in the public schema of a database built from the repository
-// migrations: the two appointment-email commands below are called by the app but defined only on the hosted database
-// (their grants there are NOT known from here; reading them is a separate, authorized hosted check). The three client-group
-// commands are ABSENT for the same reason in a different way: their migration is not in the repository chain yet. When it
-// lands they will no longer be ABSENT and this test fails until their real grants are recorded, which is intended. A second group after
+// migrations. The two appointment-email commands are absent on production and in the repository (an unapplied
+// operation authority); the app falls back to the legacy path when the call finds no such function. The client-group
+// commands and set_studio_managed_appointments are ABSENT because their migrations are not in the repository chain
+// yet. When one lands it will no longer be ABSENT and this test fails until its real grants are recorded, which is
+// intended. A second group after
 // a comma is a second overload. A command the signed-in app user can run ("u") is reachable by a
 // receptionist too, once one has a session, so each of those needs its own gate in the function body, not only in the
 // action that calls it. Read from a database with the permission engine installed; the engine adds no command the app calls.
@@ -865,6 +868,7 @@ export const RPC_PRIVILEGES: Readonly<Record<string, string>> = {
   set_session_performer: "-u-D",
   set_session_price: "-u-D",
   set_session_treatment_plan: "-u-D",
+  set_studio_managed_appointments: "ABSENT",
   set_treatment_image_note: "-u-D",
   set_waitlist_entry_availability: "--sD",
   settle_postcare_send: "--sD",
