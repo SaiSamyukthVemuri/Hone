@@ -40,6 +40,8 @@ export type SlotMatch =
   | { ok: false; reason: "invalid_slot" };
 
 function studioWeekendDay(startsAt: string, timeZone: string): boolean | null {
+  // A date with no time ("2026-11-28") parses as UTC midnight, which is the previous evening in the Americas: a wrong weekday read silently. Refused.
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(startsAt)) return null;
   const t = Date.parse(startsAt);
   if (!Number.isFinite(t)) return null;
   try {

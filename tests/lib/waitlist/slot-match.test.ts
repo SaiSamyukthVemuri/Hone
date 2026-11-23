@@ -25,6 +25,20 @@ describe("matchSlot", () => {
     expect(ids(matchSlot(TUE, [c("wd", { dayPreference: "weekdays" }), c("we", { dayPreference: "weekends" }), c("both", { dayPreference: "both" })])).sort()).toEqual(["both", "wd"]);
     expect(why(matchSlot(TUE, [c("we", { dayPreference: "weekends" })]))).toEqual({ we: "day_not_preferred" });
   });
+  it("the weekday changes at the STUDIO's midnight, exactly: one second either side (winter, then across the autumn clock change)", () => {
+    const at = (iso: string, pref: "weekdays" | "weekends") => ids(matchSlot({ ...SAT, startsAt: iso }, [c("x", { dayPreference: pref })])).length === 1;
+    // Friday 23:59:59 and Saturday 00:00:00 in Toronto (UTC-5 on 27/28 November).
+    expect(at("2026-11-28T04:59:59Z", "weekdays")).toBe(true);
+    expect(at("2026-11-28T05:00:00Z", "weekends")).toBe(true);
+    expect(at("2026-11-28T05:00:00Z", "weekdays")).toBe(false);
+    // The clocks went back on 1 November: Sunday 23:59:59 and Monday 00:00:00 are 05:00 UTC apart from the summer offset, so a fixed -4 would be wrong.
+    expect(at("2026-11-03T04:59:59Z", "weekdays")).toBe(true); // Monday 23:59:59 stays a weekday...
+    expect(at("2026-11-02T04:59:59Z", "weekends")).toBe(true); // ...and Sunday 23:59:59 is still the weekend
+    expect(at("2026-11-02T05:00:00Z", "weekdays")).toBe(true); // Monday 00:00:00
+  });
+  it("a start with no time of day is refused: it would be read as UTC midnight, the previous evening in the studio's zone", () => {
+    expect(matchSlot({ ...SAT, startsAt: "2026-11-28" }, [c("a")])).toEqual({ ok: false, reason: "invalid_slot" });
+  });
   it("orders by the original join date, ties by entry id, an unknown join date last, and never by input order", () => {
     const list = [c("c", { joinedAt: null }), c("b", { joinedAt: "2026-09-01T00:00:00Z" }), c("a", { joinedAt: "2026-09-01T00:00:00Z" }), c("z", { joinedAt: "2026-08-01T00:00:00Z" }), c("bad", { joinedAt: "not a date" })];
     const forward = ids(matchSlot(SAT, list));
