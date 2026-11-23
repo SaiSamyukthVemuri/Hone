@@ -35,17 +35,20 @@ export const SUMMARY_MAX_IDS = 20;
 export const SEEN_MAX = 200;
 export const ARRIVALS_MAX = 50;
 
-export type Summary = { unread: number; ids: string[] };
+/** An opaque, stable marker of WHO the answer is for (never a raw id). The seen set is only ever reused for the same marker. */
+export type Summary = { unread: number; ids: string[]; viewer: string };
+const VIEWER = /^[0-9a-f]{16}$/;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Validate the endpoint's JSON; anything else is a transient failure, never a number shown on the bell. */
 export function parseSummary(body: unknown): Summary | null {
   if (typeof body !== "object" || body === null) return null;
-  const { unread, ids } = body as { unread?: unknown; ids?: unknown };
+  const { unread, ids, viewer } = body as { unread?: unknown; ids?: unknown; viewer?: unknown };
+  if (typeof viewer !== "string" || !VIEWER.test(viewer)) return null;
   if (typeof unread !== "number" || !Number.isInteger(unread) || unread < 0) return null;
   if (!Array.isArray(ids) || ids.length > SUMMARY_MAX_IDS || !ids.every((i) => typeof i === "string" && UUID.test(i))) return null;
-  return { unread, ids: [...new Set(ids as string[])] };
+  return { unread, ids: [...new Set(ids as string[])], viewer };
 }
 
 export type ProbeResult =
@@ -64,6 +67,8 @@ export type LivePollerState = {
   persistedUnread: number;
   /** True once one answer has been received: the first answer only primes `seen`. */
   primed: boolean;
+  /** Who `seen` belongs to (null until known). A different viewer's answer discards it. */
+  viewer: string | null;
   /** Ids this screen has already accounted for, newest last, bounded. */
   seen: string[];
   /** Ids that arrived after the screen loaded, each exactly once, newest last, bounded. */
@@ -80,7 +85,12 @@ export type LivePollerEvent =
 
 export type LivePollerEffect = { type: "probe" } | { type: "abort" };
 
-export function initialLivePollerState(persistedUnread: number, nowMs: number, initialSeen: readonly string[] = []): LivePollerState {
+export function initialLivePollerState(
+  persistedUnread: number,
+  nowMs: number,
+  initialSeen: readonly string[] = [],
+  initialViewer: string | null = null,
+): LivePollerState {
   return {
     inFlight: false,
     nextProbeAtMs: nowMs,
@@ -89,6 +99,7 @@ export function initialLivePollerState(persistedUnread: number, nowMs: number, i
     stopped: false,
     persistedUnread,
     primed: false,
+    viewer: initialViewer,
     seen: initialSeen.filter((i) => UUID.test(i)).slice(-SEEN_MAX),
     arrivals: [],
   };
@@ -145,7 +156,11 @@ export function stepLivePoller(state: LivePollerState, event: LivePollerEvent): 
       }
       // A little jitter keeps several tabs from probing in lockstep.
       const wait = Math.round(SUMMARY_INTERVAL_MS * (0.9 + 0.2 * event.jitter));
-      const applied = applyIds(next, r.summary.ids);
+      // The seen set belongs to ONE viewer. An answer for a different (or, for a set remembered without a marker, unknown) viewer
+      // means a sign-out and sign-in as someone else in this tab: drop everything remembered and prime afresh.
+      const sameViewer = next.viewer === r.summary.viewer;
+      const base = sameViewer ? next : { ...next, seen: [], arrivals: [], primed: false };
+      const applied = applyIds(base, r.summary.ids);
       return settle(
         {
           ...next,
@@ -154,6 +169,7 @@ export function stepLivePoller(state: LivePollerState, event: LivePollerEvent): 
           nextProbeAtMs: event.nowMs + wait,
           persistedUnread: r.summary.unread,
           primed: true,
+          viewer: r.summary.viewer,
           seen: applied.seen,
           arrivals: applied.arrivals,
         },

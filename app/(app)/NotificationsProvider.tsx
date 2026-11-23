@@ -44,19 +44,26 @@ export function useNotificationsLive(): NotificationsLive | null {
   return useContext(NotificationsContext);
 }
 
-function readSeen(): string[] {
+// The seen set is stored WITH an opaque marker of the viewer it belongs to (from the summary answer), so another person signing in
+// in the same tab never inherits the first person's ids: the poller discards a set whose marker differs from the first answer's.
+function readSeen(): { viewer: string | null; seen: string[] } {
   try {
     const raw = window.sessionStorage.getItem(SEEN_KEY);
-    const parsed: unknown = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    if (typeof parsed !== "object" || parsed === null) return { viewer: null, seen: [] };
+    const { viewer, seen } = parsed as { viewer?: unknown; seen?: unknown };
+    return {
+      viewer: typeof viewer === "string" ? viewer : null,
+      seen: Array.isArray(seen) ? seen.filter((x): x is string => typeof x === "string") : [],
+    };
   } catch {
-    return [];
+    return { viewer: null, seen: [] };
   }
 }
 
-function writeSeen(seen: readonly string[]) {
+function writeSeen(viewer: string | null, seen: readonly string[]) {
   try {
-    window.sessionStorage.setItem(SEEN_KEY, JSON.stringify(seen));
+    window.sessionStorage.setItem(SEEN_KEY, JSON.stringify({ viewer, seen }));
   } catch {
     // storage unavailable (private window, blocked): the seen set still lives in memory for this page
   }
@@ -98,7 +105,8 @@ export function NotificationsProvider({
   }, [initialPersistedUnread, feedBaseline]);
 
   useEffect(() => {
-    let state: LivePollerState = initialLivePollerState(initialPersistedUnread, Date.now(), readSeen());
+    const remembered = readSeen();
+    let state: LivePollerState = initialLivePollerState(initialPersistedUnread, Date.now(), remembered.seen, remembered.viewer);
     let wake: number | undefined;
     let controller: AbortController | null = null;
     let timeout: number | undefined;
@@ -107,7 +115,7 @@ export function NotificationsProvider({
     function publish(prev: LivePollerState, next: LivePollerState) {
       if (next.persistedUnread !== prev.persistedUnread) setPersisted(next.persistedUnread);
       if (next.arrivals !== prev.arrivals) setArrivals(next.arrivals);
-      if (next.seen !== prev.seen) writeSeen(next.seen);
+      if (next.seen !== prev.seen || next.viewer !== prev.viewer) writeSeen(next.viewer, next.seen);
     }
 
     function schedule() {

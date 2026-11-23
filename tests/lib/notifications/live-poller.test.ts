@@ -17,11 +17,13 @@ const VISIBLE: PollerEnv = { visible: true, online: true, dialogOpen: false, edi
 const HIDDEN: PollerEnv = { ...VISIBLE, visible: false };
 const OFFLINE: PollerEnv = { ...VISIBLE, online: false };
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
-const ok = (unread: number, ids: string[] = []): ProbeResult => ({ kind: "ok", summary: { unread, ids } });
+const ME = "aaaaaaaaaaaaaaaa";
+const OTHER = "bbbbbbbbbbbbbbbb";
+const ok = (unread: number, ids: string[] = [], viewer = ME): ProbeResult => ({ kind: "ok", summary: { unread, ids, viewer } });
 
 /** Start a machine, fire its first probe, and return the in-flight state. */
-function inFlight(persisted = 0, seen: string[] = []) {
-  const s = initialLivePollerState(persisted, 0, seen);
+function inFlight(persisted = 0, seen: string[] = [], viewer: string | null = seen.length ? ME : null) {
+  const s = initialLivePollerState(persisted, 0, seen, viewer);
   const out = stepLivePoller(s, { type: "tick", nowMs: 0, env: VISIBLE });
   expect(out.effects).toEqual([{ type: "probe" }]);
   return out.state;
@@ -143,13 +145,49 @@ describe("the count and dedupe by event id", () => {
   });
 });
 
+describe("the seen set belongs to ONE viewer (a sign-out and sign-in as someone else in the same tab)", () => {
+  it("a set remembered for another viewer is discarded: the first person's ids are not carried over, and the first answer only primes", () => {
+    const s = answer(inFlight(0, [id(1), id(2)], OTHER), ok(2, [id(1), id(2)], ME)).state;
+    expect(s.viewer).toBe(ME);
+    expect(s.seen).toEqual([id(1), id(2)]); // re-primed from THIS viewer's own answer, not inherited
+    expect(s.arrivals).toEqual([]);
+  });
+
+  it("an id the previous person had seen is NOT suppressed for the new person once they have arrived", () => {
+    let s = answer(inFlight(0, [id(9)], OTHER), ok(0, [], ME)).state; // new person primes with nothing
+    expect(s.seen).toEqual([]);
+    s = answer(stepLivePoller(s, { type: "returned", nowMs: 2_000, env: VISIBLE }).state, ok(1, [id(9)], ME), 2_000).state;
+    expect(s.arrivals).toEqual([id(9)]);
+  });
+
+  it("a set remembered with NO marker is treated as another viewer's", () => {
+    const s = answer(inFlight(0, [id(1)], null), ok(1, [id(1)], ME)).state;
+    expect(s.viewer).toBe(ME);
+    expect(s.arrivals).toEqual([]);
+  });
+
+  it("the same viewer keeps the remembered set (a reload does not repeat)", () => {
+    const first = answer(inFlight(0, [id(5)], ME), ok(1, [id(5)], ME)).state;
+    expect(first.seen).toEqual([id(5)]);
+  });
+
+  it("a different viewer's answer mid-session (another tab signed in as someone else) starts over", () => {
+    let s = answer(inFlight(), ok(1, [id(1)], ME)).state;
+    s = answer(stepLivePoller(s, { type: "returned", nowMs: 2_000, env: VISIBLE }).state, ok(3, [id(1), id(2), id(3)], OTHER), 2_000).state;
+    expect(s.viewer).toBe(OTHER);
+    expect(s.arrivals).toEqual([]);
+    expect(s.seen).toEqual([id(1), id(2), id(3)]);
+  });
+});
+
 describe("parseSummary refuses anything that is not the contract", () => {
   it.each([
     [null], ["x"], [{}], [{ unread: -1, ids: [] }], [{ unread: 1.5, ids: [] }], [{ unread: "3", ids: [] }],
-    [{ unread: 1, ids: ["not-a-uuid"] }], [{ unread: 1, ids: "x" }], [{ unread: 1, ids: Array(21).fill(id(1)) }],
+    [{ unread: 1, ids: ["not-a-uuid"], viewer: ME }], [{ unread: 1, ids: "x", viewer: ME }], [{ unread: 1, ids: Array(21).fill(id(1)), viewer: ME }],
+    [{ unread: 1, ids: [] }], [{ unread: 1, ids: [], viewer: "not-opaque" }], [{ unread: 1, ids: [], viewer: 5 }],
   ])("%j is not a summary", (body) => expect(parseSummary(body)).toBeNull());
 
   it("accepts the contract and drops duplicate ids", () => {
-    expect(parseSummary({ unread: 2, ids: [id(1), id(1), id(2)] })).toEqual({ unread: 2, ids: [id(1), id(2)] });
+    expect(parseSummary({ unread: 2, ids: [id(1), id(1), id(2)], viewer: ME })).toEqual({ unread: 2, ids: [id(1), id(2)], viewer: ME });
   });
 });

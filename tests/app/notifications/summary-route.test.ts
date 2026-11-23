@@ -47,7 +47,10 @@ describe("GET /api/notifications/summary", () => {
     const res = await GET();
     expect(res.status).toBe(200);
     expect(res.headers.get("Cache-Control")).toBe("no-store, private");
-    expect(await res.json()).toEqual({ unread: 7, ids: [ROW(1), ROW(2)] });
+    const body = (await res.json()) as { unread: number; ids: string[]; viewer: string };
+    expect(body).toEqual({ unread: 7, ids: [ROW(1), ROW(2)], viewer: expect.stringMatching(/^[0-9a-f]{16}$/) });
+    // opaque: never the practitioner id itself
+    expect(JSON.stringify(body)).not.toContain(OWNER);
   });
 
   it("reads only this studio's UNREAD rows, newest first, bounded, with the session client", async () => {
@@ -73,6 +76,31 @@ describe("GET /api/notifications/summary", () => {
 
   it("takes no request parameter: the studio and viewer come from the session", () => {
     expect(readFileSync("app/api/notifications/summary/route.ts", "utf8")).toMatch(/export async function GET\(\)/);
+  });
+
+  it("the viewer marker is stable for a person and differs between people", async () => {
+    const a1 = ((await (await GET()).json()) as { viewer: string }).viewer;
+    const a2 = ((await (await GET()).json()) as { viewer: string }).viewer;
+    identity = ident(STAFF, "practitioner");
+    const b1 = ((await (await GET()).json()) as { viewer: string }).viewer;
+    expect(a1).toBe(a2);
+    expect(b1).not.toBe(a1);
+  });
+
+  it("every ERROR response is also no-store, private (401, 403, 503, 500)", async () => {
+    const NS = "no-store, private";
+    user = null;
+    expect((await GET()).headers.get("Cache-Control")).toBe(NS);
+    user = { id: "u" };
+    identity = async () => { throw new IdentityRefusalError("no-active-practitioner", "nope"); };
+    expect((await GET()).headers.get("Cache-Control")).toBe(NS);
+    identity = async () => { throw new Error("db down"); };
+    expect((await GET()).headers.get("Cache-Control")).toBe(NS);
+    identity = ident(OWNER, "owner");
+    readResult = { data: null, count: null, error: { code: "XX000", message: "x" } };
+    expect((await GET()).headers.get("Cache-Control")).toBe(NS);
+    identity = async () => { throw Object.assign(new Error("r"), { digest: "NEXT_REDIRECT;replace;/login" }); };
+    expect((await GET()).headers.get("Cache-Control")).toBe(NS);
   });
 
   it("401 for no user, 403 for a controlled identity refusal, 503 for an infrastructure error, with no read at all", async () => {

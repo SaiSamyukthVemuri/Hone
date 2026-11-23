@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
@@ -8,7 +9,7 @@ import { SUMMARY_MAX_IDS } from "@/lib/notifications/live-poller";
 // HON-106: "how many unread notifications do I have, and which are new?" One small answer for NotificationsProvider to poll, so the
 // bell is current without a navigation (HON-48's rules, applied to the bell).
 //
-// WHAT IT RETURNS: `{ unread, ids }`: the viewer's unread count and the ids of their newest unread rows. Never a title, a body, a
+// WHAT IT RETURNS: `{ unread, ids, viewer }`: the viewer's unread count, the ids of their newest unread rows, and an opaque marker of who they are. Never a title, a body, a
 // link, a client name or a timestamp: the wording of a toast is a product decision, and the notification centre shows the same
 // viewer exactly what this counted.
 //
@@ -67,7 +68,10 @@ export async function GET() {
       identity.practitioner.id,
     );
     if (error) return json(500, { error: "unavailable" });
-    return json(200, { unread: count ?? 0, ids: (data ?? []).map((r: { id: string }) => r.id) });
+    // An OPAQUE marker of who this answer is for, so a browser can tell that the person behind the tab changed (sign out, sign in as
+    // someone else) and discard what it remembered about the first person. A one-way digest, never the practitioner id itself.
+    const viewer = createHash("sha256").update(`notifications-viewer:${identity.studio.id}:${identity.practitioner.id}`).digest("hex").slice(0, 16);
+    return json(200, { unread: count ?? 0, ids: (data ?? []).map((r: { id: string }) => r.id), viewer });
   } catch {
     return json(500, { error: "unavailable" });
   }
