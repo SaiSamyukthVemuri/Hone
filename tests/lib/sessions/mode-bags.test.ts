@@ -111,4 +111,9 @@ describe("memory-only drafts (source guard)", () => {
   it("no storage, URL, beforeunload or logging in the bag code", () => {
     expect(strip(readFileSync("lib/sessions/mode-bags.ts", "utf8"))).not.toMatch(BAD);
   });
+  it("NEGATIVE CONTROL: the guard itself catches each forbidden shape, and ignores a mention in a comment", () => {
+    for (const bad of ["const x = localStorage.getItem('a');", "sessionStorage.setItem('a','b');", "indexedDB.open('x');", "document.cookie = 'a=b';", "history.pushState({}, '', '/x');", "window.addEventListener('beforeunload', f);", "console.log(bag);", "navigator.sendBeacon('/x');"])
+      expect(strip(bad), bad).toMatch(BAD);
+    expect(strip("// never use localStorage here\n/* console.log */ const ok = 1;")).not.toMatch(BAD);
+  });
 });
