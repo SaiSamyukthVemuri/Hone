@@ -123,3 +123,20 @@ describe("a single studio skips the chooser", () => {
     await expect(requireReceptionistWithStudio()).resolves.toMatchObject({ studioId: "s1" });
   });
 });
+
+describe("the chooser's order is stable", () => {
+  it("the same studios come back in the same order whatever order the database returns them in", async () => {
+    const a = [row(3), row(1), row(2)];
+    state.rows = a;
+    const first = renderToStaticMarkup(await DeskChoosePage());
+    state.rows = [a[2], a[0], a[1]];
+    const second = renderToStaticMarkup(await DeskChoosePage());
+    state.rows = [...a].reverse();
+    const third = renderToStaticMarkup(await DeskChoosePage());
+    expect(second).toBe(first);
+    expect(third).toBe(first);
+    // Position 1 is the lowest studio id, and its button submits that studio.
+    expect(first.indexOf('value="s1"')).toBeLessThan(first.indexOf('value="s2"'));
+    expect(first.indexOf('value="s2"')).toBeLessThan(first.indexOf('value="s3"'));
+  });
+});

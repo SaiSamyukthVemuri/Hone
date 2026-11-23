@@ -5,7 +5,12 @@
 // BEFORE THE FLAG IS TURNED ON (checklist): a receptionist on the books of TWO OR MORE studios with no valid studio
 // selection is sent to /desk/choose (the receptionist chooser). It lists only that user's active receptionist studios,
 // by position and the display name each studio gave them, because a receptionist cannot read a studio's name. Showing
-// real studio names needs a database change and is not done here.
+// real studio names needs a database change and is not done here. THEREFORE: before the flag is enabled for any
+// receptionist who is on the books of two or more studios, either the chooser must show real studio names (that
+// database change) or that receptionist must not be enabled: two studios that gave the same display name are
+// indistinguishable on that page. The selected-studio cookie is shared with the practitioner chooser, so a person who is
+// a practitioner in two or more studios and a receptionist elsewhere sees the practitioner chooser again after picking
+// a desk studio.
 //
 // OPERATIONS: the value is read from the process environment, which a hosted deployment fixes when it is built and
 // started. Changing the variable there takes effect only after a redeploy, so an emergency OFF is a redeploy.

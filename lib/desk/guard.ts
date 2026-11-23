@@ -28,7 +28,10 @@ const loadDeskRows = cache(async (): Promise<DeskRows> => {
   const { data, error } = await supabase.from("studio_receptionists").select("id, studio_id, display_name").eq("user_id", user.id).eq("active", true);
   // A failed read is loud, never "no membership".
   if (error) throw new Error("Failed to load receptionist membership");
-  return { kind: "authenticated", rows: (data ?? []) as ReceptionistRow[] };
+  // A fixed order, so the chooser's positional labels ("Studio 1", "Studio 2") mean the same studio on every load and a
+  // receptionist cannot open the wrong one because the database returned the rows in another order.
+  const rows = [...((data ?? []) as ReceptionistRow[])].sort((a, b) => (a.studio_id < b.studio_id ? -1 : a.studio_id > b.studio_id ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return { kind: "authenticated", rows };
 });
 
 /**
