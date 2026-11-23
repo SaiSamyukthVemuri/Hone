@@ -50,8 +50,10 @@ describe("the desk surface", () => {
   });
 
   it("calls the guard in the layout and in every page (a layout's redirect does not stop its page)", () => {
-    expect(src("app/(desk)/layout.tsx")).toContain("requireReceptionistWithStudio()");
-    for (const p of pages) expect(src(p), p).toContain("requireReceptionistWithStudio()");
+    // On the code with comments removed, and as an awaited call: a commented-out call or a bare reference must not pass.
+    const awaited = /await\s+requireReceptionistWithStudio\(\)/;
+    expect(stripComments(src("app/(desk)/layout.tsx"))).toMatch(awaited);
+    for (const p of pages) expect(stripComments(src(p)), p).toMatch(awaited);
   });
 
   it("is dynamic and never statically generated or revalidated", () => {
