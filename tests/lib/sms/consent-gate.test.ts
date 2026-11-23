@@ -1,0 +1,66 @@
+import { describe, expect, it } from "vitest";
+import { confirmationSmsWillPass, passesConsentGate } from "@/lib/sms/consent-gate";
+import type { SmsType } from "@/lib/types/database";
+
+// HON-13: the one gate every appointment SMS clears before a send is attempted. Pure; no provider, nothing is sent.
+// Synthetic data only. A studio switch that is off, absent or null sends nothing, and each message type reads its OWN switch.
+
+const CONSENTED = { phone: "+14165550123", sms_consent_at: "2026-10-01T12:00:00Z", sms_opted_out_at: null };
+const ALL_ON = { id: "studio", send_confirmation_sms: true, send_24h_sms_reminders: true, send_2h_sms_reminders: true };
+const TYPES: SmsType[] = ["confirmation", "reminder_24h", "reminder_2h"];
+const SWITCH: Record<string, "send_confirmation_sms" | "send_24h_sms_reminders" | "send_2h_sms_reminders"> = {
+  confirmation: "send_confirmation_sms",
+  reminder_24h: "send_24h_sms_reminders",
+  reminder_2h: "send_2h_sms_reminders",
+};
+
+describe("passesConsentGate", () => {
+  it.each(TYPES)("%s: switch on, consented, valid phone passes and returns the normalised number", (smsType) => {
+    expect(passesConsentGate({ studio: ALL_ON, client: CONSENTED, smsType })).toEqual({ ok: true, normalizedPhone: "+14165550123" });
+  });
+
+  it.each(TYPES)("%s: sends nothing when its own switch is off, absent or null (fail closed)", (smsType) => {
+    const key = SWITCH[smsType];
+    for (const value of [false, undefined, null]) {
+      const studio = { ...ALL_ON, [key]: value } as never;
+      expect(passesConsentGate({ studio, client: CONSENTED, smsType })).toEqual({ ok: false, reason: "studio_toggle_off" });
+    }
+  });
+
+  it.each(TYPES)("%s: reads only its own switch, the other two being on changes nothing", (smsType) => {
+    const studio = { id: "studio", send_confirmation_sms: false, send_24h_sms_reminders: false, send_2h_sms_reminders: false, [SWITCH[smsType]]: true } as never;
+    expect(passesConsentGate({ studio, client: CONSENTED, smsType }).ok).toBe(true);
+    for (const other of TYPES.filter((t) => t !== smsType)) {
+      expect(passesConsentGate({ studio, client: CONSENTED, smsType: other })).toEqual({ ok: false, reason: "studio_toggle_off" });
+    }
+  });
+
+  it.each(TYPES)("%s: a client who opted out is never texted, even with consent on file", (smsType) => {
+    const client = { ...CONSENTED, sms_opted_out_at: "2026-11-01T12:00:00Z" };
+    expect(passesConsentGate({ studio: ALL_ON, client, smsType })).toEqual({ ok: false, reason: "client_opted_out" });
+  });
+
+  it.each(TYPES)("%s: no recorded consent means no text", (smsType) => {
+    const client = { ...CONSENTED, sms_consent_at: null };
+    expect(passesConsentGate({ studio: ALL_ON, client, smsType })).toEqual({ ok: false, reason: "client_no_consent" });
+  });
+
+  it("opt-out is reported ahead of missing consent", () => {
+    const client = { phone: "+14165550123", sms_consent_at: null, sms_opted_out_at: "2026-11-01T12:00:00Z" };
+    expect(passesConsentGate({ studio: ALL_ON, client, smsType: "confirmation" })).toEqual({ ok: false, reason: "client_opted_out" });
+  });
+
+  it.each([null, "", "not a number", "123"])("an unusable phone (%j) is refused, not guessed", (phone) => {
+    const client = { ...CONSENTED, phone };
+    expect(passesConsentGate({ studio: ALL_ON, client, smsType: "reminder_24h" })).toEqual({ ok: false, reason: "invalid_phone" });
+  });
+});
+
+describe("confirmationSmsWillPass", () => {
+  it("follows the confirmation switch and the client's consent, and nothing else", () => {
+    expect(confirmationSmsWillPass({ id: "s", send_confirmation_sms: true }, CONSENTED)).toBe(true);
+    expect(confirmationSmsWillPass({ id: "s", send_confirmation_sms: false, send_24h_sms_reminders: true }, CONSENTED)).toBe(false);
+    expect(confirmationSmsWillPass({}, CONSENTED)).toBe(false);
+    expect(confirmationSmsWillPass({ id: "s", send_confirmation_sms: true }, { ...CONSENTED, sms_opted_out_at: "2026-11-01T12:00:00Z" })).toBe(false);
+  });
+});
