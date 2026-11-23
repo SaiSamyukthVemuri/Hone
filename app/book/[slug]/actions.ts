@@ -1,6 +1,9 @@
 "use server";
 
 import { loadTreatmentTimeNameFields } from "@/lib/treatment-time/client-first-name";
+import { loadCommunicationName } from "@/lib/clients/communication-name-loader";
+import { notificationClientName } from "@/lib/notifications/client-name";
+import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
 import { CLIENT_NAME_MAX, CLIENT_NAME_TOO_LONG } from "@/lib/clients/identity";
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
@@ -67,6 +70,7 @@ import {
   clientManagePageAllowed,
   clientOnlineBookingDisabledMessage,
   clientSelfServicePolicyFromStudio,
+  studioManagesAppointments,
 } from "@/lib/booking/client-self-service-policy";
 import {
   NEW_CLIENT_WAITLIST_BOOKING_REFUSAL,
@@ -178,6 +182,7 @@ export async function fetchPublicSlotsAction(params: {
 
   const studio = await getStudioBySlug(params.slug);
   if (!studio) return { ok: false, error: "Studio not found." };
+  if (studioManagesAppointments(studio)) return { ok: false, error: clientOnlineBookingDisabledMessage(studio.name) };
 
   const horizon = horizonRangeInStudioTz(
     studio.timezone,
@@ -327,6 +332,7 @@ export async function fetchNextAvailableDateAction(params: {
 
   const studio = await getStudioBySlug(params.slug);
   if (!studio) return { ok: false, error: "Studio not found." };
+  if (studioManagesAppointments(studio)) return { ok: false, error: clientOnlineBookingDisabledMessage(studio.name) };
 
   const admin = createAdminClient();
 
@@ -579,6 +585,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
 
   const studio = await getStudioBySlug(slug);
   if (!studio) return { ok: false, error: "Studio not found." };
+  if (studioManagesAppointments(studio)) return { ok: false, error: clientOnlineBookingDisabledMessage(studio.name) };
 
   // HON-47. RETURNING-CLIENT ONLINE BOOKING follows the studio's client portal
   // flag. It is NOT new-client admission: new_client_admission_mode below stays
@@ -871,13 +878,25 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // 23505 race-fallback branch, where we re-read the unique-index
   // winner WITHOUT this filter so we can distinguish "no winner" from
   // "winner is archived" and return a non-revealing error.
-  const { data: existingClient, error: lookupErr } = await admin
-    .from("clients")
-    .select("id, name, email, phone, sms_consent_at, sms_opted_out_at")
-    .eq("studio_id", studio.id)
-    .eq("normalized_email", normalizedEmail)
-    .is("archived_at", null)
-    .maybeSingle();
+  // The preferred name rides on this existing read (missing-column-safe), so the bell can name an EXISTING client without a second lookup.
+  const { data: existingClientRaw, error: lookupErr } = await readWithPreferredName((includePreferred) =>
+    admin
+      .from("clients")
+      .select(`${preferredNameColumn(includePreferred)}id, name, email, phone, sms_consent_at, sms_opted_out_at`)
+      .eq("studio_id", studio.id)
+      .eq("normalized_email", normalizedEmail)
+      .is("archived_at", null)
+      .maybeSingle(),
+  );
+  const existingClient = existingClientRaw as {
+    id: string;
+    name: string;
+    preferred_name?: string | null;
+    email: string;
+    phone: string | null;
+    sms_consent_at: string | null;
+    sms_opted_out_at: string | null;
+  } | null;
   if (lookupErr) {
     // PR #261: sqlstate code + studioId + salted email fingerprint;
     // drop raw DB message. The fingerprint correlates repeated
@@ -1070,6 +1089,9 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // before using it. Named so it cannot be mistaken for a real id in a log.
   const NO_CLIENT_RESOLVED = "__transport_failed__";
   let clientName: string;
+  // The client's preferred name where THIS action read the client row; `undefined` = the row was not read here (a new client, or one the command adopted),
+  // so the notification asks the bounded display-name loader instead.
+  let clientPreferredName: string | null | undefined;
   let clientPhone: string | null;
   // SMS consent state used by the SMS confirmation attempt at the
   // bottom. Tracked through both client branches so the dispatch
@@ -1120,6 +1142,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     // branch.
     resolvedClientId = existingClient.id;
     clientName = existingClient.name;
+    clientPreferredName = existingClient.preferred_name ?? null;
     clientPhone = existingClient.phone;
     clientSmsConsentAt = existingClient.sms_consent_at ?? null;
     clientSmsOptedOutAt = existingClient.sms_opted_out_at ?? null;
@@ -1464,6 +1487,8 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // client whose stored phone or consent differs. So whenever the command
   // reports a profile, it replaces what was typed.
   if (commandRow?.client_name !== undefined && commandRow?.client_name !== null) {
+    // A different row than the one read above (adopted by the command): its preferred name is unknown here.
+    if (commandRow.client_id !== undefined && commandRow.client_id !== resolvedClientId) clientPreferredName = undefined;
     clientName = commandRow.client_name as string;
   }
   if (commandRow?.client_phone !== undefined) {
@@ -1844,13 +1869,18 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // BOOK-01 P2-A: the helper itself is synchronous and documented never to
   // throw, but the `body` template is evaluated EAGERLY at this call site, so a
   // date/timezone formatting failure would propagate from here. Contained.
+  // The notification names the client by their DISPLAY name (the calendar's field: preferred where set), never the legal identity.
+  const notificationName =
+    clientPreferredName === undefined
+      ? await loadCommunicationName(admin, studio.id, clientId, clientName)
+      : notificationClientName({ name: clientName, preferred_name: clientPreferredName });
   await postCommit("public_booking_practitioner_notification_threw", undefined, () =>
     recordPractitionerNotification({
       studioId: studio.id,
       practitionerId: assignedPractitionerId,
       eventType: "new_booking",
       title: "New booking",
-      body: `${clientName} booked ${service.name} for ${formatDayLabel(start, studio.timezone)} at ${localTimeString12h(start, studio.timezone)}.`,
+      body: `${notificationName} booked ${service.name} for ${formatDayLabel(start, studio.timezone)} at ${localTimeString12h(start, studio.timezone)}.`,
       appointmentId: createdId,
       clientId: clientId,
       href: `/calendar/${createdId}`,

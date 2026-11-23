@@ -306,6 +306,17 @@ export function returnedTextFindings(file: string, source: string): Array<{ line
     while (p && ts.isParenthesizedExpression(p)) p = p.parent;
     return !!p && ts.isBinaryExpression(p) && p.operatorToken.kind === ts.SyntaxKind.EqualsToken && p.left === (obj.parent === p ? obj : obj.parent);
   };
+  /** The literal is returned (a `return`, an arrow body) or sits under an `as never|any|unknown` cast, looking through parentheses, `as` and `!`. */
+  const isReturnedOrOpaquelyCast = (obj: ts.Node): boolean => {
+    let cur: ts.Node = obj;
+    let p: ts.Node | undefined = obj.parent;
+    while (p && (ts.isParenthesizedExpression(p) || ts.isAsExpression(p) || ts.isNonNullExpression(p) || ts.isSatisfiesExpression(p))) {
+      if (ts.isAsExpression(p) && [ts.SyntaxKind.NeverKeyword, ts.SyntaxKind.AnyKeyword, ts.SyntaxKind.UnknownKeyword].includes(p.type.kind)) return true;
+      cur = p;
+      p = p.parent;
+    }
+    return !!p && ((ts.isReturnStatement(p) && p.expression === cur) || (ts.isArrowFunction(p) && p.body === cur));
+  };
   const visit = (n: ts.Node): void => {
     if (ts.isObjectLiteralExpression(n) && isAssignmentTarget(n)) return;
     // `safeDetails` is the ops-alert detail bag: recordOpsAlert redacts it before
@@ -323,6 +334,18 @@ export function returnedTextFindings(file: string, source: string): Array<{ line
     // `{ ok: false, error }` / `{ detail }`: the shorthand key is the error object itself
     if (ts.isShorthandPropertyAssignment(n) && KEYS.test(n.name.text) && (errorBound(n.name.text, n) || tainted.has(n.name.text))) {
       report(n, [n.name.text]);
+    }
+    // An error-shaped object smuggled out: `{ message: error.message }` returned as it is, or cast through never/any/unknown
+    // (the cast exists to hand an error-shaped value past the type system), under ANY key. The `message` key stays allowed
+    // everywhere else (the ops-alert helpers redact it), so this fires only when the object is returned or opaquely cast.
+    if (ts.isObjectLiteralExpression(n) && isReturnedOrOpaquelyCast(n)) {
+      for (const prop of n.properties) {
+        if (ts.isPropertyAssignment(prop) && prop.name.getText(sf) === "message") {
+          const bad: string[] = [];
+          scan(prop.initializer, true, bad, true);
+          report(prop, bad);
+        }
+      }
     }
     // `{ ...error }` / `{ ...res.error }`: spreads an error's message, details and hint into the result
     if (ts.isSpreadAssignment(n)) {
@@ -391,6 +414,12 @@ describe("the analyzer: RED on every way an error's text reaches a returned valu
     ["a result array element", "const res = await supabase.from('t').select(); return { errors: [res.error] };"],
     ["a promise-all result's error", "const [a, b] = await Promise.all([supabase.from('x').select(), supabase.from('y').select()]); return { error: b.error };"],
     ["a nested literal with details", "return { detail: { text: pgErr.details, code: 'x' } };"],
+    // an error-shaped object smuggled out under any key, or returned, or cast through never/any/unknown
+    ["message: error.message cast through never, returned", "return { message: error.message } as never;"],
+    ["message: error.message cast through never under an unguarded key", "return { ok: false, failure: { message: error.message } as never };"],
+    ["message: error.message cast through unknown then never", "return { ok: false, failure: { message: err.message } as unknown as never };"],
+    ["message: error.message in a returned literal", "return { message: error.message };"],
+    ["message: a template of the error in an arrow body", "const f = () => ({ message: `x ${error.message}` });"],
     // W3: safeDetails is skipped only inside the alert helpers
     ["a safeDetails key on a returned object", "return { ok: false, safeDetails: { error: error.message } };"],
     ["a safeDetails key on a non-alert call", "report({ safeDetails: { error: err.message } });"],
@@ -412,6 +441,9 @@ describe("the analyzer: RED on every way an error's text reaches a returned valu
     ["the alert message key", "await recordOpsAlert({ message: error.message, severity: 'warning' });"],
     ["a message read that is not returned", "const m = error.message; log(m);"],
     ["an unrelated key", "return { note: error.message };"],
+    ["a message of a closed code, returned and cast", "return { message: dbErrorCode(error) } as never;"],
+    ["a fixed message, cast through never", "return { ok: false, failure: { message: 'Could not save.' } as never };"],
+    ["the alert message key in a returned-looking call is still only an argument", "await recordOpsAlert({ message: err.message, severity: 'warning' });"],
     ["a fallback chain on a send result's closed tag", "return { error: result.error ?? 'unknown' };"],
     ["the alert detail bag (redacted by recordOpsAlert)", "await recordOpsAlert({ safeDetails: { attempt_id: id, error: safeError } });"],
     ["the alert detail bag of fireAndForgetOpsAlert", "fireAndForgetOpsAlert({ safeDetails: { error: err.message } });"],

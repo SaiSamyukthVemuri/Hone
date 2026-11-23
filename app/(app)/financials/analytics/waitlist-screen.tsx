@@ -1,3 +1,4 @@
+import { WAITLIST_PATH } from "@/lib/waitlist/paths";
 import type { ReactNode } from "react";
 
 import { PendingButton } from "@/components/pending-button";
@@ -43,7 +44,7 @@ export function WaitlistScreen({ read, capacity }: { read: Extract<WaitlistRead,
     <section aria-labelledby="wl-next" className="space-y-3 rounded-xl border border-line bg-surface-sunken p-4">
       <p className="text-sm font-medium text-fg-muted">Your next move</p><h2 id="wl-next" className="text-2xl font-semibold tracking-tight text-fg">{nextMove}</h2>
       <p className="text-sm text-fg-muted">{available ? `${available.fit} non-overlapping consultation appointments fit the selected dates; ${available.outstanding} outstanding invitations are counted against them. Check each person’s service and availability before inviting.` : "Capacity could not be estimated for the current selection. No invitation count is suggested."}</p>
-      <PendingLink href="/settings/waitlist" className={BUTTON}>Review waitlist</PendingLink>
+      <PendingLink href={WAITLIST_PATH} className={BUTTON}>Review waitlist</PendingLink>
     </section>
 
     <section aria-labelledby="wl-cohort" className="space-y-3">

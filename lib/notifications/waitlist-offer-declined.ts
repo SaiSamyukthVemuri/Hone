@@ -2,7 +2,8 @@
 // the decline, dedupe_key 'waitlist-decline:<invitation_id>'); this module only holds the wording and the link so the UI and the command's
 // tests agree on them. Sam's decision: the bell is as generic as the owner email. The title names no one and the body is empty, so nothing about
 // the person reaches the bell, a screenshot or a log. There is deliberately no name variant: add one and the pinned test fails.
+import { WAITLIST_PATH } from "@/lib/waitlist/paths";
 export const WAITLIST_OFFER_DECLINED_EVENT = "waitlist_offer_declined" as const;
-export const WAITLIST_OFFER_DECLINED_HREF = "/settings/waitlist#follow-up";
+export const WAITLIST_OFFER_DECLINED_HREF = `${WAITLIST_PATH}#follow-up`;
 export const WAITLIST_OFFER_DECLINED_TITLE = "A waitlist response needs your attention";
 export const WAITLIST_OFFER_DECLINED_BODY = "";

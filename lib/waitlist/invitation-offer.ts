@@ -247,6 +247,7 @@ export type InvitationClosedReason =
    * Nor is it the retryable `error` state. Retrying is exactly what cannot
    * help: the service will still be the wrong service on the next tap.
    */
+  | "studio_managed"
   | "unsupported_offer"
   /**
    * The studio is not taking NEW-client bookings at all (admission `closed`, or

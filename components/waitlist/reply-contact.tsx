@@ -1,5 +1,6 @@
 "use client";
 
+import { WAITLIST_PATH } from "@/lib/waitlist/paths";
 import Link from "next/link";
 import { useState } from "react";
 import { buttonClasses } from "@/components/ui/button";
@@ -52,7 +53,7 @@ export function ReplyContactDetails({
   /** False when the entry has been removed from the queue, so the link would land on nothing. */
   showEntryLink?: boolean;
 }) {
-  const entryHref = `/settings/waitlist#entry-${entryId}`;
+  const entryHref = `${WAITLIST_PATH}#entry-${entryId}`;
   if (contact === null) {
     return (
       <p role="status" className="mt-2 text-neutral-600" data-testid="reply-contact-unavailable">
