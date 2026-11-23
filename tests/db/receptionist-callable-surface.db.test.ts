@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { adminQuery, asRole, asUser, closePool, seedMember, seedSession, seedStudio, type SeededStudio } from "./helpers/harness";
+import { refused, shapeOf } from "./receptionist-callable-surface.classify";
 import { CLASSIFICATION, PINS, UNPROVEN, INSERT_UNPROVEN } from "./receptionist-callable-surface.map";
 
 // D9 (Privacy): the database surface a receptionist session can reach, built from the CATALOG, not from the app's call list.
@@ -138,31 +139,6 @@ function paramsFor(f: FnRow, studio: SeededStudio): unknown[] {
 }
 
 // ---- outcome classification (booleans and kinds only) -----------------------------------------------------------------------------------
-function isEmptyish(v: unknown): boolean {
-  return v === null || v === false || v === 0 || v === "" || (Array.isArray(v) && v.length === 0) || (typeof v === "object" && v !== null && !Array.isArray(v) && Object.keys(v as object).length === 0);
-}
-const STATUS_REFUSALS = new Set(["not_authorized", "owner_only", "forbidden", "not_found", "studio_not_found", "no_invitation", "refused"]);
-function shapeOf(rows: { j?: unknown }[], isVoid: boolean): string {
-  if (isVoid) return "void";
-  if (rows.length === 0) return "empty";
-  if (rows.length > 1) return "data";
-  const v = rows[0].j;
-  if (typeof v === "string") return STATUS_REFUSALS.has(v) ? `status:${v}` : v === "" ? "emptyish" : `status-other:${v}`;
-  if (isEmptyish(v)) return v === null ? "null" : v === false ? "false" : "emptyish";
-  if (typeof v === "object" && v !== null && !Array.isArray(v)) {
-    const o = v as Record<string, unknown>;
-    if (o.ok === false) return "json-ok-false";
-    const first = typeof o.status === "string" ? o.status : typeof o.result === "string" ? o.result : Object.values(o).find((x) => typeof x === "string");
-    if (typeof first === "string") {
-      if (STATUS_REFUSALS.has(first)) return `status:${first}`;
-      if (Object.values(o).filter((x) => x !== null && x !== first).length === 0) return `status-other:${first}`;
-    }
-    if (Object.values(o).every(isEmptyish)) return "record-all-empty";
-  }
-  return "data";
-}
-const REFUSAL_KINDS = new Set(["empty", "null", "false", "emptyish", "void", "json-ok-false", "record-all-empty", ...[...STATUS_REFUSALS].map((x) => `status:${x}`)]);
-const refused = (o: Outcome) => o.kind.startsWith("error:") || REFUSAL_KINDS.has(o.kind);
 
 async function probe(actor: Actor, f: FnRow, studio: SeededStudio): Promise<Outcome> {
   const sql = callSql(f);
