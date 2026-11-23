@@ -35,7 +35,11 @@ describe("the bell's number", () => {
 describe("the live count the provider hands both bell instances", () => {
   const withProvider = (persisted: number, computed: number) =>
     renderToStaticMarkup(
-      createElement(NotificationsProvider, { initialPersistedUnread: persisted, computedUnread: computed }, createElement(NotificationsBell, { unread: 0 }), createElement(NotificationsBell, { unread: 0 })),
+      createElement(NotificationsProvider, {
+        initialPersistedUnread: persisted,
+        computedUnread: computed,
+        children: [createElement(NotificationsBell, { key: "a", unread: 0 }), createElement(NotificationsBell, { key: "b", unread: 0 })],
+      }),
     );
 
   it("both instances show persisted + computed, not the fallback prop", () => {

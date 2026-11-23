@@ -36,7 +36,10 @@ const read = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
 const LAYOUT = "app/(app)/layout.tsx";
 const NAVLINK = "app/(app)/PrimaryNavLink.tsx";
 // Step 0 of the HON-40 shell contract moved the bell and the header cluster out of layout.tsx verbatim: the shell is the three files.
-const raw = read(LAYOUT) + "\n" + read("app/(app)/HeaderCluster.tsx") + "\n" + read("app/(app)/NotificationsBell.tsx");
+// The bell is its own client LEAF since HON-106 (it reads the live count from NotificationsProvider); the shell proper is the layout and the header cluster.
+const BELL = read("app/(app)/NotificationsBell.tsx");
+const raw = read(LAYOUT) + "\n" + read("app/(app)/HeaderCluster.tsx") + "\n" + BELL;
+const shellRaw = read(LAYOUT) + "\n" + read("app/(app)/HeaderCluster.tsx");
 
 // The shell DISCUSSES `PendingLink`, `relative` and the rejected label form by
 // name when explaining why the bell differs. Prose must not satisfy or trip a
@@ -191,7 +194,12 @@ describe("NAV-ACK-02 · adopting the contract changed nothing else", () => {
   it("the shell stays a SERVER component", () => {
     // PendingLink is a leaf client island. If the shell itself hydrates, every
     // server-rendered clinical page under it pays for this slice.
-    expect(raw).not.toMatch(/^"use client";/m);
+    expect(shellRaw).not.toMatch(/^"use client";/m);
+  });
+
+  it("the bell is the one client leaf of the slot, and imports no server-only module", () => {
+    expect(BELL).toMatch(/^"use client";/m);
+    expect(BELL).not.toMatch(/from "(next\/headers|server-only|@\/lib\/supabase\/[^"]*)"/);
   });
 
   // SUPERSEDED, deliberately and by owner decision — not quietly.
