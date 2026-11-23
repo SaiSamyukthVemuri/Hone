@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // deliberately alters a row, it edits that row here in the same commit, so the change is visible in review instead of slipping in.
 //
 // These are today's behaviour, quirks included, and are pinned as facts, not endorsed as design: the pulse count and delay travel in EVERY mode; Galvanic
-// drops EL; the add-pass writer drops an OmniBlend modality and sends no minutes. The redesign's server rule (lib/sessions/mode-scope.ts) is not applied here.
+// drops EL; create and edit pass any modality text through while add-pass keeps only a modality from its allowed list, and add-pass sends no minutes. The redesign's server rule (lib/sessions/mode-scope.ts) is not applied here.
 const h = vi.hoisted(() => ({ rpc: vi.fn(), block: { probe_key: null, probe_inventory_item_id: null, probe_lot_number: null, mode: null } as Record<string, unknown> }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
@@ -34,7 +34,7 @@ const A = await import("@/app/(app)/clients/[id]/sessions/[sessionId]/actions");
 
 type Mode = "none" | "thermo" | "galv" | "blend";
 const MODES: Mode[] = ["none", "thermo", "galv", "blend"];
-const MODALITIES: Array<string | null> = [null, "Picoblend", "OmniBlend"];
+const MODALITIES: Array<string | null> = [null, "Picoblend", "Omniblend", "NotAModality"];
 const READ = { thermolysisIntensityPercent: 55, thermolysisDurationSeconds: 1.5, galvanicMa: 2.5, galvanicDurationSeconds: 30, unitsOfLye: 4, pulseCount: 7, pulseDelaySeconds: 0.9, hairsTreated: 12, comments: "n" };
 const base = { clientId: "c1", sessionId: "s1", areas: [{ area: "Upper lip", laterality: "midline" }], minutesPerformed: 9 };
 const modeValue = (m: Mode) => (m === "none" ? null : m);
@@ -57,8 +57,8 @@ const expectedCreateEdit = (m: Mode, modality: string | null) => ({
   galv: { mode: "galv", apilus_modality: null, energy_level: null, ...NO_THERMO, ...GALV, ...SHARED }, // Galvanic drops modality AND EL today
   blend: { mode: "blend", apilus_modality: modality, energy_level: 9, ...THERMO, ...GALV, ...SHARED },
 })[m];
-// The add-pass writer: the same, except an OmniBlend modality is not sent (null) in every mode.
-const expectedAddPass = (m: Mode, modality: string | null) => expectedCreateEdit(m, modality === "OmniBlend" ? null : modality);
+// The add-pass writer: the same, except a modality outside its allowed list is not sent (null) in every mode (Galvanic sends none either way).
+const expectedAddPass = (m: Mode, modality: string | null) => expectedCreateEdit(m, modality === "NotAModality" ? null : modality);
 
 beforeEach(() => h.rpc.mockReset());
 
@@ -108,7 +108,7 @@ describe("the tables are not vacuous", () => {
   it("every mode row differs from the others, and the writers were really called", () => {
     const rows = MODES.map((m) => JSON.stringify(expectedCreateEdit(m, "Picoblend")));
     expect(new Set(rows).size).toBe(4);
-    expect(expectedAddPass("blend", "OmniBlend").apilus_modality).toBeNull();
-    expect(expectedCreateEdit("blend", "OmniBlend").apilus_modality).toBe("OmniBlend");
+    expect(expectedAddPass("blend", "NotAModality").apilus_modality).toBeNull();
+    expect(expectedCreateEdit("blend", "NotAModality").apilus_modality).toBe("NotAModality");
   });
 });
