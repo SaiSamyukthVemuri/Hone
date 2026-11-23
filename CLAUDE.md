@@ -241,7 +241,46 @@ Confirm `has_table_privilege(...)` before trusting a failing lane.
   green — do not re-ask. A **changed head invalidates the authorization**.
 - **No post-merge full CI rerun.** After merging, verify only: branch
   containment, deployment success where applicable, and a clean tree.
-- **Green CI is not merge authorization.**
+- **Green CI is not merge authorization** on its own. It becomes one only
+  under the standing routine-merge authorization below.
+- **Standing routine-merge authorization** (operator, 2026-11-23). The OPS
+  coordinator merges a routine PR for approved work without asking again
+  when every one of these holds on the PR's **current head commit**:
+  the PR is ready for review (not a draft), and every required lane has
+  passed at that head, including the stable `browser e2e (local stack)`
+  aggregator (a deferred, cancelled or wrongly skipped lane is not a pass),
+  the reviews these delivery rules require for
+  that change have passed (the exact-head Codex review and the assigned
+  privacy and quality reviews), every review finding is fixed or does not
+  apply (threads handled as in *Resolving a thread* below), the release
+  records are current, and there is no outstanding hold. "Approved work"
+  means work the operator assigned or approved, directly or through a
+  recorded plan or task. The merge is pinned to the verified commit: merge
+  only if the PR head still equals it. If the head changes, including by a
+  base refresh, recheck the new commit and proceed only when it qualifies
+  again. Only the OPS coordinator holds this authorization; reviewer and
+  lane sessions never merge. While the ENG-LOOP shepherd is shadow evidence,
+  the required reviews above are the evidence; a shepherd
+  `CANDIDATE_READY_FOR_HUMAN_REVIEW` never overrides a missing review or an
+  open finding. After merging, verify the
+  deployment where one applies, and report the result to the operator
+  with anything they should test.
+  This authorization does **not** cover, and these still go to the
+  operator for explicit approval:
+  - a change that adds or edits a migration file, and any production
+    database migration apply;
+  - a change to authentication, accounts, access control (row-level
+    security, grants, roles), consent, or client-data handling;
+  - feature or flag activation, payment or provider changes, live sends,
+    customer or team messages, hosted data writes or deletes, and
+    infrastructure changes;
+  - force-pushes and direct pushes to the production branch;
+  - release exceptions, security exceptions, and any finding that needs a
+    product decision or an exception to a release requirement;
+  - a change to the rules that bound the merger: these delivery rules,
+    this authorization, `ENGINEERING_STANDARDS.md`, `DESIGN.md`, the
+    pstack adaptation in `docs/engineering/pstack.md`, the CI workflows,
+    branch protection, permission settings or credentials.
 
 ### DRAFT-DEFERRED
 
@@ -266,8 +305,9 @@ to GitHub and never merges. Run it:
 - after pushing a PR head;
 - after that head's CI run or a requested review settles — wait with the single
   watcher above, never a new loop;
-- before asking for human merge authorization, quoting its `decision`,
-  `headSha` and `evidenceHash`.
+- before asking for human merge authorization, or before a merge under the
+  standing routine-merge authorization, quoting its `decision`, `headSha`
+  and `evidenceHash`.
 
 Act only on its bounded `nextAction`, inside your own task's authorization:
 
@@ -281,7 +321,7 @@ Act only on its bounded `nextAction`, inside your own task's authorization:
 | `EXTERNAL_BLOCKED` | inspect the failing external check; fix it or escalate |
 | `REVIEW_MISSING` | request a review of the exact head |
 | `UNKNOWN` | follow its `nextAction` when that is a step inside your authorization (retarget, a new branch, split the PR); otherwise escalate with the reason — never read it as green |
-| `CANDIDATE_READY_FOR_HUMAN_REVIEW` | present the exact head to the human; it is **not** merge permission |
+| `CANDIDATE_READY_FOR_HUMAN_REVIEW` | present the exact head to the human; it is **not** merge permission on its own. For a routine PR that meets every condition of the standing routine-merge authorization at that exact head, the OPS coordinator may merge and then report; everything else still goes to the human |
 
 **Codex review comments and threads are evidence, not workspace** (operator
 policy, 2026-10-08). Agents never edit, delete, conceal, minimize or otherwise

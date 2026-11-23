@@ -1,6 +1,7 @@
+import { WAITLIST_OVER_INVITE_PATH } from "@/lib/waitlist/paths";
 import Link from "next/link";
 
-export const OVER_INVITE_LINK_PATH = "/settings/waitlist/over-invite";
+export const OVER_INVITE_LINK_PATH = WAITLIST_OVER_INVITE_PATH;
 export const OVER_INVITE_LINK_LABEL = "Invite beyond the estimate";
 export const OVER_INVITE_LINK_HELP = "Choose waiting clients to invite even when the week looks full. You confirm once; sending continues in the background.";
 

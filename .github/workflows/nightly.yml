@@ -75,7 +75,22 @@ jobs:
             timeout: 30
           # Browser ceilings are FAILURE CEILINGS sized to setup plus tests, not
           # targets. Each shard runs the same quarter of the full suite as ci.yml's
-          # extended shard, so it gets the same 25; payment matches ci.yml's 18.
+          # extended shard; payment matches ci.yml's 23.
+          # CORE SHARDS 25 -> 35 and PAYMENT 18 -> 23 (2026-11-23). ci.yml's extended
+          # shards have a 35 min ceiling because they also run the native 3G proof;
+          # these four do not, but their quarter-suite work is the same and nightly
+          # SETUP is slower than PR CI's. Evidence, scheduled nightlies 11-17..11-22:
+          #  - run 44344780024 shard 2 was CANCELLED at 25.2 min with 212 of 243 tests
+          #    passed and ZERO failures, after 8.7 min of setup before the first test;
+          #    the remaining 31 tests put it at about 28 min.
+          #  - 24 shard-runs finished in 13.3-22.8 min; the latest run's four shards
+          #    took 19.8-21.6.
+          #  - the SAME 243 tests took 17.2 and 11.5 min of Playwright in PR runs
+          #    45106370044 and 45111363604: a 5.7 min swing on identical work.
+          # Repo rule: measured + the 6 min install-step ceiling + 1 = 28 + 7 = 35.
+          # Payment: run 44565261584 took 15.8 min (10.1 min of setup, then 66 passed
+          # in 9.2 min, zero failures) against 18; 15.8 + 7 = 22.8, so 23. The other
+          # nightly payment runs took 9.7-10.7. Mobile and google show no squeeze.
           # At 15, runs 39602074266 and 39781365862 cancelled shards 1 and 3 and
           # google at the ceiling with no assertion failure (google spent 12 of
           # its 15 minutes before the lane step started).
@@ -83,27 +98,27 @@ jobs:
             command: "npx playwright test --shard=1/4"
             needs_supabase: true
             needs_browsers: true
-            timeout: 25
+            timeout: 35
           - lane: "core browser e2e (shard 2/4)"
             command: "npx playwright test --shard=2/4"
             needs_supabase: true
             needs_browsers: true
-            timeout: 25
+            timeout: 35
           - lane: "core browser e2e (shard 3/4)"
             command: "npx playwright test --shard=3/4"
             needs_supabase: true
             needs_browsers: true
-            timeout: 25
+            timeout: 35
           - lane: "core browser e2e (shard 4/4)"
             command: "npx playwright test --shard=4/4"
             needs_supabase: true
             needs_browsers: true
-            timeout: 25
+            timeout: 35
           - lane: "payment e2e (fake stripe)"
             command: "npm run test:e2e:payment"
             needs_supabase: true
             needs_browsers: true
-            timeout: 18
+            timeout: 23
           - lane: "mobile completion e2e"
             command: "npm run test:e2e:mobile"
             needs_supabase: true

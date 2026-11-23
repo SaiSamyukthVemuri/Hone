@@ -132,7 +132,7 @@ export function AccountMenu({
   const roleLabel = role === "owner" ? "Owner" : "Practitioner";
 
   return (
-    <div ref={rootRef} className="relative">
+    <div ref={rootRef} className="relative shrink-0">
       {/* SIGNOUT-02c · THE FORM LIVES OUT HERE, not in the panel.
           `useFormStatus` reports only for the form it runs inside, so the
           observer has to be in the form — and a form inside `{open && …}` is
@@ -216,7 +216,8 @@ export function AccountMenu({
           </div>
           {[
             { href: "/settings/profile", label: "Settings" },
-            { href: "/getting-started", label: "Getting Started" },
+            // Owner setup guidance: staff are never shown it.
+            ...(role === "owner" ? [{ href: "/getting-started", label: "Getting Started" }] : []),
             ...(canSwitchStudio
               ? [{ href: "/no-access?reason=multiple-studios", label: "Switch studio" }]
               : []),

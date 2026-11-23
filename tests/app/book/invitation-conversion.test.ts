@@ -120,13 +120,24 @@ const scenario = {
    * post-commit guard is load-bearing rather than decorative.
    */
   adminFactoryThrows: false,
+  /** The existing client's preferred name on the lookup row. */
+  existingPreferred: null as string | null,
+  /** What the appointment command REPORTS as the client, when it differs from the row the action read (an ADOPTED row). */
+  commandClient: null as null | { id: string; name: string },
+  /** Client rows served to a read BY ID (the display-name loader), keyed by client id. */
+  clientsById: {} as Record<string, { name: string; preferred_name: string | null }>,
 };
+
+/** Ids the display-name loader read, and the notifications the action wrote. */
+const loaderReads: string[] = [];
+const notifications: Array<{ body: string; clientId: string | null }> = [];
 
 function makeChain(table: string) {
   const chain: Record<string, unknown> = {};
   const self = () => chain as never;
   let inserted = false;
   let archivedFiltered = false;
+  let byId: string | null = null;
   const result = () => {
     if (table === "services") return { count: 3, data: [], error: null };
     if (table === "studio_availability_default") {
@@ -142,6 +153,7 @@ function makeChain(table: string) {
   };
   const existingRow = {
     id: EXISTING_CLIENT_ID,
+    preferred_name: scenario.existingPreferred,
     name: "Chloe",
     email: INVITED_EMAIL,
     phone: null,
@@ -150,7 +162,10 @@ function makeChain(table: string) {
   };
   Object.assign(chain, {
     select: self,
-    eq: self,
+    eq: (col: string, val: unknown) => {
+      if (col === "id" && typeof val === "string") byId = val;
+      return chain as never;
+    },
     not: self,
     in: self,
     order: self,
@@ -184,6 +199,12 @@ function makeChain(table: string) {
         };
       }
       if (table === "clients") {
+        if (byId !== null) {
+          // A read BY ID: the display-name loader (the lookup and the race re-read never filter by id).
+          loaderReads.push(byId);
+          const row = scenario.clientsById[byId];
+          return { data: row ?? null, error: null };
+        }
         if (archivedFiltered) {
           // The up-front active-client lookup.
           return scenario.clientPath === "existing"
@@ -287,7 +308,8 @@ const admin = {
             result: scenario.bookingResult,
             // RESOLVE-OR-CREATE, as the command does: the caller's id when it
             // resolved one, otherwise the row the command created.
-            client_id: (args.p_client_id as string | null) ?? NEW_CLIENT_ID,
+            client_id: scenario.commandClient?.id ?? (args.p_client_id as string | null) ?? NEW_CLIENT_ID,
+            ...(scenario.commandClient ? { client_name: scenario.commandClient.name } : {}),
             appointment_id:
               scenario.bookingResult === "created" && !scenario.suppressAppointmentId
                 ? APPT_ID
@@ -305,7 +327,8 @@ const admin = {
     if (fn === "create_public_appointment_for_new_client" && args.p_entry_id != null) {
       if (scenario.bookingError) return { data: null, error: scenario.bookingError };
       const empty = {
-        client_id: (args.p_client_id as string | null) ?? NEW_CLIENT_ID,
+        client_id: scenario.commandClient?.id ?? (args.p_client_id as string | null) ?? NEW_CLIENT_ID,
+        ...(scenario.commandClient ? { client_name: scenario.commandClient.name } : {}),
         appointment_id: null,
         created_at: null,
         starts_at: null,
@@ -338,7 +361,8 @@ const admin = {
           {
             result: "created_and_converted",
             // The composed command returns the client it resolved or created.
-            client_id: (args.p_client_id as string | null) ?? NEW_CLIENT_ID,
+            client_id: scenario.commandClient?.id ?? (args.p_client_id as string | null) ?? NEW_CLIENT_ID,
+            ...(scenario.commandClient ? { client_name: scenario.commandClient.name } : {}),
             appointment_id: scenario.suppressAppointmentId ? null : APPT_ID,
             created_at: new Date().toISOString(),
             starts_at: START_ISO,
@@ -458,7 +482,9 @@ vi.mock("@/lib/sms/send-appointment", () => ({
 vi.mock("@/lib/conversion/dispatch", () => ({ dispatchBookingConversion: async () => {} }));
 vi.mock("@/lib/analytics/server", () => ({ captureServerEvent: () => {} }));
 vi.mock("@/lib/notifications/practitioner-notifications", () => ({
-  recordPractitionerNotification: () => {},
+  recordPractitionerNotification: (p: { body: string; clientId: string | null }) => {
+    notifications.push({ body: p.body, clientId: p.clientId });
+  },
 }));
 
 const { publicBookAppointmentAction } = await import("@/app/book/[slug]/actions");
@@ -533,7 +559,12 @@ beforeEach(() => {
     conversionThrows: false,
     conversionResult: null,
     adminFactoryThrows: false,
+    existingPreferred: null,
+    commandClient: null,
+    clientsById: {},
   });
+  loaderReads.length = 0;
+  notifications.length = 0;
   vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
     logLines.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" "));
   });
@@ -1069,5 +1100,37 @@ describe("B — a DETERMINISTIC refusal still means no booking exists", () => {
       expect(out.code).not.toBe("invitation_booking_indeterminate");
       expect(logLines.join("\n")).toContain("waitlist_invitation_consumed_without_booking");
     }
+  });
+});
+
+// ===========================================================================
+// The bell names the client by DISPLAY name. An existing client's preferred name rides on the lookup row; when the appointment command reports a DIFFERENT
+// client (a row the action never read), the lookup row's preferred name must NOT be used: the bounded loader runs for the command's id instead.
+// ===========================================================================
+
+describe("the practitioner notification names the client by display name (invitation booking of an existing client)", () => {
+  const ADOPTED_ID = RACE_WINNER_ID; // a row the action never read (the fixture's conversion rules know this id)
+
+  it("uses the preferred name from the lookup row, with NO extra client read, when the command reports the same client", async () => {
+    scenario.clientPath = "existing";
+    scenario.existingPreferred = "Lookup Pref";
+    const res = await publicBookAppointmentAction(invited());
+    expect(res.ok, res.ok ? "" : res.error).toBe(true);
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0].body).toMatch(/^Lookup Pref booked /);
+    expect(loaderReads).toEqual([]);
+  });
+
+  it("an ADOPTED row (the command reports a different client id and name): the lookup row's preferred name is NOT used; the loader reads the command's id", async () => {
+    scenario.clientPath = "existing";
+    scenario.existingPreferred = "Lookup Pref";
+    scenario.commandClient = { id: ADOPTED_ID, name: "Adopted Stored" };
+    scenario.clientsById = { [ADOPTED_ID]: { name: "Adopted Stored", preferred_name: "Adopted Pref" } };
+    const res = await publicBookAppointmentAction(invited());
+    expect(res.ok, res.ok ? "" : res.error).toBe(true);
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0].body).toMatch(/^Adopted Pref booked /);
+    expect(notifications[0].body).not.toContain("Lookup Pref");
+    expect(loaderReads).toEqual([ADOPTED_ID]);
   });
 });

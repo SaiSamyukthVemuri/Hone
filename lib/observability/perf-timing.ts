@@ -104,6 +104,21 @@ export const PERF_SPAN_IDS = [
   "calendar.domain",
   "records.identity",
   "records.domain",
+  // HON-109 slice 1. The surfaces the 23 Nov baseline ranked slowest and that had NO span. `.identity` and `.domain` follow the
+  // convention above. `analytics.appointments` and `analytics.money` split the analytics read into its two terms (appointment
+  // rows, then the money for them): they are NOT phase "domain", so domain_total_ms is not double counted.
+  "analytics.identity",
+  "analytics.domain",
+  "analytics.appointments",
+  "analytics.money",
+  "analytics.people",
+  "analytics.names",
+  "analytics.build",
+  "statements.identity",
+  "statements.domain",
+  "waitlist.identity",
+  "waitlist.domain",
+  "dashboard.identity",
   // SESSION-START-01 slice 2. The charting entry path, which the recon showed
   // is the product's worst measured wait and had NO instrumentation at all.
   // Split finely on purpose: the question is not "is it slow" but WHICH term
@@ -172,6 +187,10 @@ export type PerfSurface =
   | "client-profile"
   | "calendar"
   | "records"
+  | "analytics"
+  | "statements"
+  | "waitlist"
+  | "dashboard"
   // A server ACTION, not a page. surfaceOf() reads the prefix, so the action's
   // spans aggregate separately from the page they redirect to — which is the
   // whole point: the recon's hypothesis is that the wait is split across both.
