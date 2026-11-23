@@ -2351,7 +2351,11 @@ jobs:
   storage-photos:
     name: storage photos (not required)
     needs: [changes, records-preflight]
-    if: ${{ github.event.pull_request.draft != true && ( needs.changes.outputs.full_matrix_required == 'true' || (needs.changes.outputs.browser_run == 'true' && needs.changes.outputs.browser_extended == 'true') || needs.changes.outputs.database == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/treatment-image-upload-formats.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-client-portrait.spec.ts') ) }}
+    # CI-COST-03. Not required, so this lane runs after merge only: on the production
+    # push, under the same terms below, never on a pull request. Replayed on 5-19 Nov
+    # 2026: it still ran on 144 (storage) / 149 (webkit) of 164 production pushes, and
+    # 68 of the two lanes' 69 PR failures were setup (apt, Supabase, web server), not tests.
+    if: ${{ github.event_name != 'pull_request' && ( needs.changes.outputs.full_matrix_required == 'true' || (needs.changes.outputs.browser_run == 'true' && needs.changes.outputs.browser_extended == 'true') || needs.changes.outputs.database == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/treatment-image-upload-formats.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-client-portrait.spec.ts') ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
@@ -2608,7 +2612,11 @@ jobs:
   webkit-hon-62:
     name: webkit time inputs (HON-62, not required)
     needs: [changes, records-preflight]
-    if: ${{ github.event.pull_request.draft != true && ( needs.changes.outputs.full_matrix_required == 'true' || (needs.changes.outputs.browser_run == 'true' && needs.changes.outputs.browser_extended == 'true') || contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/finish-appointment-mobile.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-touch-floor.spec.ts') || needs.changes.outputs.payment == 'true' ) }}
+    # CI-COST-03. Not required, so this lane runs after merge only: on the production
+    # push, under the same terms below, never on a pull request. Replayed on 5-19 Nov
+    # 2026: it still ran on 144 (storage) / 149 (webkit) of 164 production pushes, and
+    # 68 of the two lanes' 69 PR failures were setup (apt, Supabase, web server), not tests.
+    if: ${{ github.event_name != 'pull_request' && ( needs.changes.outputs.full_matrix_required == 'true' || (needs.changes.outputs.browser_run == 'true' && needs.changes.outputs.browser_extended == 'true') || contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/finish-appointment-mobile.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-touch-floor.spec.ts') || needs.changes.outputs.payment == 'true' ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:

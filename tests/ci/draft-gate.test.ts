@@ -77,8 +77,13 @@ describe("CI-DRAFT-01 job conditions", () => {
     });
     expect(starters.sort()).toEqual([...HEAVY].sort());
   });
+  // CI-COST-03: the non-required lanes never run on a pull request (draft or not), so
+  // their guard is the event itself; on a push `pull_request.draft` is empty, which
+  // made the draft guard true there, so push behaviour is unchanged.
+  const POST_MERGE_ONLY = new Set(["storage-photos", "webkit-hon-62"]);
   for (const job of HEAVY) {
-    it(`${job}: condition is draft != true && ( <base condition, unchanged> )`, () => {
+    const guard = POST_MERGE_ONLY.has(job) ? "github.event_name != 'pull_request'" : "github.event.pull_request.draft != true";
+    it(`${job}: condition is ${guard} && ( <base condition, unchanged> )`, () => {
       const was = ifLine(base, job);
       expect(was, `${job} had a condition at the base`).not.toBeNull();
       let inner = was!.match(/^\$\{\{ (.*) \}\}$/)![1];
@@ -86,7 +91,7 @@ describe("CI-DRAFT-01 job conditions", () => {
         expect(inner.split(EXTENDED_TERM).length - 1, `${job}: the base has exactly one extended term`).toBe(1);
         inner = LATER_EDITS[job](inner);
       }
-      expect(ifLine(CI, job)).toBe(`\${{ github.event.pull_request.draft != true && ( ${inner} ) }}`);
+      expect(ifLine(CI, job)).toBe(`\${{ ${guard} && ( ${inner} ) }}`);
     });
   }
   for (const job of UNGATED) {
