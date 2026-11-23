@@ -162,8 +162,9 @@ describe("the Overview read: the shared appointment read returns exactly what th
       expect(shared).toMatchObject({ access: "granted", ok: true });
       expect(shared).toEqual(separate);
     });
-    // the Clients tab adds the lifetime money for all history; two periods (one with an empty comparison) are enough to prove it
-    (["month to date (default)", "custom range, preceding comparison"].includes(label) ? it : it.skip)(`Clients tab (with the lifetime money), ${label}: the whole output is identical`, async () => {
+    // the Clients tab adds the lifetime money for all history; two periods are enough to prove it
+    if (!["month to date (default)", "custom range, preceding comparison"].includes(label)) continue;
+    it(`Clients tab (with the lifetime money), ${label}: the whole output is identical`, async () => {
       const clients: Clients = { sort: "spend", chip: "all", page: 1 };
       const separate = await load(studioClient(data).client, "separate", raw, clients);
       const shared = await load(studioClient(data).client, "shared", raw, clients);
