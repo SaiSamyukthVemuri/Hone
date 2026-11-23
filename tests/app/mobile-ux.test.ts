@@ -10,7 +10,9 @@ function read(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf8");
 }
 
-const LAYOUT = read("app/(app)/layout.tsx");
+// Step 0 of the HON-40 shell contract moved the header cluster and the bell out of layout.tsx verbatim, so the
+// shell is the three files together.
+const LAYOUT = read("app/(app)/layout.tsx") + "\n" + read("app/(app)/HeaderCluster.tsx") + "\n" + read("app/(app)/NotificationsBell.tsx");
 const MENU = read("app/(app)/MobileMenu.tsx");
 const ACCOUNT = read("app/(app)/AccountMenu.tsx");
 // SIGNOUT-02: the submit control both shells now delegate to.
@@ -136,11 +138,11 @@ describe("app shell: responsive navigation", () => {
   });
 
   it("the notifications bell carries the destination and the unread count", () => {
-    expect(LAYOUT).toMatch(/function NotificationsBell/);
+    expect(LAYOUT).toMatch(/export function NotificationsBell/);
     expect(LAYOUT).toMatch(/Notifications, \$\{unread\} unread/);
     expect(LAYOUT).toMatch(/href="\/notifications"/);
     // Bell renders in BOTH the desktop group and the mobile group.
-    expect((LAYOUT.match(/<NotificationsBell unread=\{unreadNotifications\} \/>/g) ?? []).length).toBe(2);
+    expect((LAYOUT.match(/<NotificationsBell unread=\{unreadPersisted \+ computedUnread\} \/>/g) ?? []).length).toBe(2);
     // The old full-width Notifications tab is gone from the nav row.
     const navRow = LAYOUT.slice(LAYOUT.indexOf("<nav"), LAYOUT.indexOf("</nav>"));
     expect(navRow).not.toContain('"/notifications"');

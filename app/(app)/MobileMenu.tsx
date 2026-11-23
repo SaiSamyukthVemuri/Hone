@@ -373,6 +373,7 @@ export function MobileMenu({
               be the bold headline: when the display name looks like an
               email, lead with "My account" and demote the address to
               small secondary text. */}
+          {/* HON-40 SHELL CONTRACT, SECTION 1 of 3 · ACCOUNT (owner: HON-107): the identity block. */}
           <div className="border-b border-neutral-200 px-3 pb-2 pt-1 dark:border-neutral-800">
             <p className="truncate text-sm font-medium">
               {displayName.includes("@") ? "My account" : displayName}
@@ -386,6 +387,8 @@ export function MobileMenu({
               </p>
             )}
           </div>
+          {/* HON-40 SHELL CONTRACT, SECTION 2 of 3 · NAVIGATION (owner: HON-98): the working surfaces and the
+              owner's Business group, down to the divider. */}
           {[
             { href: "/dashboard", label: "Dashboard" },
             { href: "/clients", label: "Clients" },
@@ -420,6 +423,9 @@ export function MobileMenu({
               {BUSINESS_MENU_ITEMS.map((item) => workItem(item, true))}
             </div>
           )}
+          {/* HON-40 SHELL CONTRACT, SECTION 3 of 3 · ACCOUNT ACTIONS (owner: HON-107): Settings, Getting
+              Started, Switch studio, Admin and Sign out. Sections 1 and 3 are one slot; 2 is another. A
+              change here that touches section 2, or the reverse, is a shell-owner change. */}
           <div className="mt-0.5 flex flex-col gap-0.5 border-t border-neutral-200 pt-1 dark:border-neutral-800">
             {[
               { href: "/settings/profile", label: "Settings" },
