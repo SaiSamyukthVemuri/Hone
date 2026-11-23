@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
@@ -78,6 +78,11 @@ describe("observePermission is observe-only by construction", () => {
     await observePermissionNow(async () => ({ rpc }), STUDIO, "practitioner", book);
     expect(rpc).toHaveBeenCalledWith("has_studio_permission", expect.objectContaining({ p_key: "appt.book" }));
     expect(logged().some((l) => l.includes('"outcome":"would_deny"'))).toBe(true);
+  });
+
+  it("is typed to return void, so a caller cannot branch on it", () => {
+    expectTypeOf(observePermission).returns.toBeVoid();
+    expectTypeOf(observePermissionNow).returns.resolves.toBeVoid();
   });
 
   it("stays silent when the engine allows", async () => {
