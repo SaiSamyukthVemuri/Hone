@@ -451,6 +451,9 @@ export const PATH_DECISIONS: Readonly<Record<string, Readonly<Record<string, str
   "app/api/notifications/summary/route.ts": {
     GET: "staff",
   },
+  "lib/desk/choose-actions.ts": {
+    chooseDeskStudioAction: "not_staff(desk)",
+  },
   "app/api/stripe/webhook/route.ts": {
     POST: "not_staff(webhook)+admin",
   },
@@ -644,6 +647,7 @@ export const RPC_NAMES: readonly string[] = [
   "record_waitlist_invitation_followup",
   "record_waitlist_retention_failure",
   "record_waitlist_sms_consent_by_practitioner",
+  "receptionist_calendar_v2",
   "record_welcome_email_result",
   "redeem_and_book_waitlist_invitation",
   "redeem_new_client_waitlist_invitation_verified",
@@ -818,6 +822,9 @@ export const RPC_PRIVILEGES: Readonly<Record<string, string>> = {
   record_block_machine_identity: "-u-D",
   record_calendar_sync_result: "--sD",
   record_client_archive_audit_governed: "--sD",
+  // The front desk's one read (0274, name rule 0374): executable by authenticated only, security definer; it refuses anyone who is not this studio's
+  // active receptionist (proved in tests/db/receptionist-desk-projection.db.test.ts and receptionist-callable-surface.db.test.ts).
+  receptionist_calendar_v2: "-u-D",
   record_email_attempt: "--sD",
   record_email_result: "--sD",
   record_new_client_waitlist_conversion: "--sD",

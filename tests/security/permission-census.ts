@@ -379,6 +379,9 @@ export const NOT_STAFF_CLASSES: Record<string, RegExp> = {
   cron: /^app\/api\/cron\//,
   webhook: /^app\/api\/(stripe|twilio)\//,
   oauth: /^app\/api\/google-calendar\//,
+  // The front desk (lib/desk): a signed-in RECEPTIONIST by design, so it never reaches the practitioner-and-studio helper. Its one server action
+  // re-reads the caller's active receptionist rows in the same request before it writes anything (a selected-studio cookie, nothing else).
+  desk: /^lib\/desk\//,
   telemetry: /^app\/(ingest|monitoring)\//,
 };
 

@@ -129,7 +129,9 @@ describe("a receptionist cannot pass the staff helper (what 'staff' rests on)", 
     // The only app or lib file that names the receptionist table is the export registry. When the receptionist desk
     // lands this must change on purpose: the 'staff' decisions above stop meaning "no receptionist".
     const out = execSync(`grep -rl "studio_receptionists" app lib components --include=*.ts --include=*.tsx || true`, { cwd: ROOT }).toString().trim().split("\n").filter(Boolean);
-    expect(out).toEqual(["lib/export/resource-registry.ts"]);
+    // The front desk (lib/desk) reads the caller's OWN receptionist rows, on purpose and only there (its guard and its entry); it is the receptionist
+    // surface, not a staff path, so it does not weaken what "staff" means. A new file naming the table must be added here deliberately.
+    expect([...out].sort()).toEqual(["lib/desk/entry.ts", "lib/desk/guard.ts", "lib/export/resource-registry.ts"]);
   });
 });
 
