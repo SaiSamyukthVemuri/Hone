@@ -36,10 +36,13 @@ const ORIGIN = "https://app.example.invalid";
 function fakeAdmin(studioRow: Record<string, unknown> | null, studioError: { code: string } | null = null) {
   return {
     from(table: string) {
+      let columns = "";
       const chain = {
-        select: () => chain,
+        select: (c: string) => { columns = c; return chain; },
         eq: () => chain,
         maybeSingle: async () => {
+          // The studio's own moved-notice switch (0373) is a separate single-column read; an absent value is the default, ON.
+          if (table === "studios" && columns === "send_moved_appointment_emails") return { data: {}, error: null };
           if (table === "studios") return { data: studioRow, error: studioError };
           return {
             data: {

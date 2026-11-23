@@ -20,7 +20,14 @@ vi.mock("@/lib/supabase/queries", () => ({
   }),
 }));
 vi.mock("@/lib/supabase/admin-server", () => ({
-  createAdminClient: () => ({ rpc: async () => ({ data: "cancelled", error: null }) }),
+  createAdminClient: () => ({
+    rpc: async () => ({ data: "cancelled", error: null }),
+    // The studio's own cancellation-notice switch (0373): a single-column read; an absent value is the default, ON.
+    from: () => {
+      const q = { select: () => q, eq: () => q, maybeSingle: async () => ({ data: {}, error: null }) };
+      return q;
+    },
+  }),
 }));
 vi.mock("@/lib/supabase/server", () => {
   const rows: Record<string, unknown> = {

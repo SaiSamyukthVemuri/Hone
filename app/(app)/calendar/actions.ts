@@ -32,6 +32,7 @@ import { confirmationSmsWillPass } from "@/lib/sms/consent-gate";
 import { localDateString } from "@/lib/booking/tz";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { safeLog } from "@/lib/logging/safe-log";
+import { readNoticeSwitch } from "@/lib/email/notice-switches";
 import { dbErrorCode, failureCode } from "@/lib/logging/error-class";
 
 export type BookResult =
@@ -554,7 +555,18 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
           .maybeSingle()
       : { data: null };
 
-    if (client?.email) {
+    // The studio's own switch for this client notice (0373), read live and independent of the booking-confirmation switch.
+    // OFF is a quiet skip. An unreadable setting is not a yes: nothing is sent and the failure is logged. The owner email sent
+    // when a client cancels through the link is a different notice and is not governed by this switch.
+    const cancelNotice = client?.email
+      ? await readNoticeSwitch(admin, studio.id, "send_client_cancellation_emails")
+      : "off";
+    if (cancelNotice === "unavailable") {
+      safeLog.error(
+        JSON.stringify({ event: "client_cancel_notification_setting_unreadable", timestamp: new Date().toISOString() }),
+      );
+    }
+    if (client?.email && cancelNotice === "on") {
       try {
         await sendCancellationEmail({
       nameReader: admin,

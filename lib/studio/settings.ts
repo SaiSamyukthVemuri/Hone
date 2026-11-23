@@ -33,6 +33,8 @@ export const STUDIO_SETTINGS = {
   send_24h_reminders: { default: true, kind: "preference", readAt: "send-time" },
   send_2h_reminders: { default: true, kind: "preference", readAt: "send-time" },
   send_intake_reminders: { default: true, kind: "preference", readAt: "send-time" },
+  send_moved_appointment_emails: { default: true, kind: "preference", readAt: "send-time" },
+  send_client_cancellation_emails: { default: true, kind: "preference", readAt: "send-time" },
   notify_practitioner_on_new_booking: { default: true, kind: "preference", readAt: "send-time" },
   auto_mark_no_shows: { default: true, kind: "preference", readAt: "send-time" },
   send_no_show_followup: { default: false, kind: "preference", readAt: "send-time" },

@@ -93,6 +93,11 @@ export type Studio = {
   // `select *` before 0186 is applied, so the runtime reads it as
   // `!== false` - absent means enabled, which is the shipped default.
   send_intake_reminders?: boolean;
+  // Migration 0373: the client's moved-appointment and studio-cancellation emails, each its own switch and
+  // INDEPENDENT of send_confirmation_emails. Default true in the database. Optional for rows loaded via `select *`
+  // before 0373 is applied: an absent value reads as ON (the shipped behaviour), never OFF.
+  send_moved_appointment_emails?: boolean;
+  send_client_cancellation_emails?: boolean;
   auto_mark_no_shows: boolean;
   send_no_show_followup: boolean;
   // Migration 0026: opt-in display of client treatment time in emails.

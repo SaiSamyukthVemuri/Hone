@@ -24,6 +24,9 @@ export default async function StudioEmailPage() {
       <EmailSettingsForm
         initial={{
           send_confirmation_emails: studio.send_confirmation_emails,
+          // Absent only on a row read before 0373 is applied; the columns default true, so absent must display as ON.
+          send_moved_appointment_emails: studio.send_moved_appointment_emails ?? true,
+          send_client_cancellation_emails: studio.send_client_cancellation_emails ?? true,
           notify_practitioner_on_new_booking:
             studio.notify_practitioner_on_new_booking,
           send_24h_reminders: studio.send_24h_reminders,

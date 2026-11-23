@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendEmailSafely } from "./send-appointment";
+import { readNoticeSwitch } from "./notice-switches";
 import { resolveReplyTo, studioClientContactEmail } from "@/lib/email/studio-identity";
 import { generateCancellationToken } from "@/lib/booking/tokens";
 import { clientManagePageAllowed } from "@/lib/booking/client-self-service-policy";
@@ -195,6 +196,15 @@ export async function notifyAppointmentMoved(
 
     const email = row.client?.email ?? null;
     if (!email) return "skipped"; // no client email on file -> nothing to send
+
+    // The studio's own switch for this notice (0373), read live, independent of the booking-confirmation switch. OFF is a quiet
+    // skip. An unreadable setting is not a yes: nothing is sent and the move reports the notice as not delivered.
+    const noticeSwitch = await readNoticeSwitch(admin, input.studioId, "send_moved_appointment_emails");
+    if (noticeSwitch === "off") return "skipped";
+    if (noticeSwitch === "unavailable") {
+      await safeMoveAlert(input.studioId, input.appointmentId, "notice_setting_unreadable");
+      return "degraded";
+    }
 
     const tz = row.studio?.timezone ?? "America/Toronto";
     const start = new Date(row.starts_at);
