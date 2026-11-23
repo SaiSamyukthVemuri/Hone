@@ -30,6 +30,10 @@ describe("the desk surface", () => {
     }
   });
 
+  it("has no client component, so no data is ever passed to client props", () => {
+    for (const f of files) expect(/^\s*["']use client["']/m.test(src(f)), f).toBe(false);
+  });
+
   it("writes nothing and has no server action", () => {
     for (const f of files) {
       const s = stripComments(src(f));
