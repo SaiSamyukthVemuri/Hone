@@ -164,6 +164,16 @@ describe("a fresh server render is authoritative (revision), and a stale answer 
     expect(again.effects).toEqual([]);
   });
 
+  it("an unrelated server render while a probe is in flight costs ONE extra probe, at once: the aborted probe is replaced, never lost", () => {
+    const started = stepLivePoller(initialLivePollerState(2, 0, [], null, 1), { type: "tick", nowMs: 0, env: VISIBLE }).state;
+    const rendered = stepLivePoller(started, { type: "baseline", persistedUnread: 2, revision: 2 }); // e.g. a revalidation from an unrelated action
+    expect(rendered.effects).toEqual([{ type: "abort" }]);
+    expect(rendered.state.inFlight).toBe(false);
+    expect(nextLiveWakeDelayMs(rendered.state, 5, VISIBLE)).toBe(0); // the wake is immediate: nothing waits out the interval
+    const next = stepLivePoller(rendered.state, { type: "tick", nowMs: 5, env: VISIBLE });
+    expect(next.effects).toEqual([{ type: "probe", generation: 1 }]);
+  });
+
   it("a baseline with no request in flight bumps the generation without an abort", () => {
     const out = stepLivePoller(initialLivePollerState(1, 0, [], null, 1), { type: "baseline", persistedUnread: 0, revision: 2 });
     expect(out.effects).toEqual([]);
