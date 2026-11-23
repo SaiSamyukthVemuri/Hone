@@ -42,3 +42,17 @@ export function shapeOf(rows: { j?: unknown }[], isVoid: boolean): string {
 }
 export const REFUSAL_KINDS = new Set(["empty", "null", "false", "emptyish", "void", "json-ok-false", "record-all-empty", ...[...STATUS_REFUSALS].map((x) => `status:${x}`)]);
 export const refused = (o: { kind: string }) => o.kind.startsWith("error:") || REFUSAL_KINDS.has(o.kind);
+
+// Vacuity guard (pure, unit-checked). `empty` = tables holding no row on this database; `pinned` = the NO_ROW pin; `fresh` = HONE_FRESH_DB=1.
+// unpinnedEmpty: empty tables that are not pinned (always a failure). staticTargets: every empty table AND every pinned table, so the static closure check is
+// never skipped for a pinned table even when another suite populated it. exactMismatch: only on a fresh database, the empty set must equal the pin.
+export function vacuityPlan(empty: string[], pinned: string[], fresh: boolean): { unpinnedEmpty: string[]; staticTargets: string[]; populatedButPinned: string[]; exactMismatch: boolean } {
+  const pin = new Set(pinned);
+  const emptySet = new Set(empty);
+  return {
+    unpinnedEmpty: empty.filter((t) => !pin.has(t)).sort(),
+    staticTargets: [...new Set([...empty, ...pinned])].sort(),
+    populatedButPinned: pinned.filter((t) => !emptySet.has(t)).sort(),
+    exactMismatch: fresh && (empty.length !== pinned.length || empty.some((t) => !pin.has(t))),
+  };
+}

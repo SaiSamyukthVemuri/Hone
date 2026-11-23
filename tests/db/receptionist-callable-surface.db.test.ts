@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { adminQuery, asRole, asUser, closePool, seedMember, seedSession, seedStudio, type SeededStudio } from "./helpers/harness";
-import { refused, shapeOf } from "./receptionist-callable-surface.classify";
+import { refused, shapeOf, vacuityPlan } from "./receptionist-callable-surface.classify";
 import { ANON_INSERT_BY_DESIGN, CLASSIFICATION, GLOBAL_REFERENCE, NO_ROW, PINS, UNPROVEN, INSERT_UNPROVEN } from "./receptionist-callable-surface.map";
 
 // D9 (Privacy): the database surface a receptionist session can reach, built from the CATALOG, not from the app's call list.
@@ -13,8 +13,9 @@ import { ANON_INSERT_BY_DESIGN, CLASSIFICATION, GLOBAL_REFERENCE, NO_ROW, PINS, 
 //   C3  every call runs in a transaction that is rolled back, with in-transaction write counters and a whole-database before/after count;
 //   C4  six actors: this studio's receptionist, another studio's receptionist, an inactive receptionist, a practitioner of another studio who
 //       is not a receptionist, a stranger, and anon; owner positive controls prove the real ids reach the gate;
-//   F3  every public table: SELECT, UPDATE and DELETE as a receptionist, a stranger and anon, expecting zero rows or a privilege error; INSERT likewise
-//       on every table EXCEPT the ones in INSERT_UNPROVEN, which had no row to template an insert from (their insert stopped at a trigger or constraint).
+//   F3  public tables that HOLD A ROW (on a fresh database) are tried for SELECT, UPDATE and DELETE (and INSERT where a template row exists) as a receptionist,
+//       a stranger and anon. The tables that hold no row on a fresh database are checked by policy SHAPE only (row-level security on, no unconditional policy), which is weak and will be
+//       strengthened. This is NOT a claim that every table is closed to disclosure.
 // Known limits: the name/arity key would miss two overloads of the same arity; the write counter covers the public and auth schemas only.
 // Output is booleans, counts and function or table names only: no row value, name, id or email is printed or snapshotted (C7).
 // SCOPE (C9): database functions and tables in the exposed schemas only. NOT covered: service-role server actions, storage policies, realtime,
@@ -323,7 +324,7 @@ describe("C2 + C4: the actor matrix with real ids", () => {
   });
 });
 
-describe("F3: every public table: read, update and delete on all; insert on all but the tables listed as unproven for insert", () => {
+describe("F3: tables that hold a row are tried for read, update and delete; empty tables are checked by policy shape only (weak)", () => {
   async function verbs(actor: Actor, table: string, col: string | null, tpl: { cols: string[]; row: unknown } | null): Promise<{ sel: Outcome; ins: Outcome; upd: Outcome; del: Outcome }> {
     const oneP = (sql: string, params: unknown[]) => one(sql, params);
     const one = async (sql: string, params: unknown[] = []): Promise<Outcome> => {
@@ -354,7 +355,7 @@ describe("F3: every public table: read, update and delete on all; insert on all 
       del: await one(`delete from public."${table}"`),
     };
   }
-  it("(8 tables are unproven for insert, see INSERT_UNPROVEN) a receptionist, a stranger and anon read zero rows (except a receptionist's own membership row), insert nothing, update zero rows and delete zero rows", async () => {
+  it("on tables that hold a row, a receptionist, a stranger and anon read zero rows (except a receptionist's own membership row), insert nothing, update zero rows and delete zero rows", async () => {
     const cols = new Map<string, string>(
       (await adminQuery(`select distinct on (c.relname) c.relname, a.attname from pg_class c join pg_namespace n on n.oid = c.relnamespace join pg_attribute a on a.attrelid = c.oid
                            where n.nspname='public' and c.relkind in ('r','p') and a.attnum > 0 and not a.attisdropped and a.attgenerated = '' and a.attidentity <> 'a' order by c.relname, a.attnum`)).rows.map(
@@ -377,13 +378,19 @@ describe("F3: every public table: read, update and delete on all; insert on all 
       const row = (await adminQuery(`select to_jsonb(x) as j from public."${t}" x ${hasStudio ? "where studio_id = $1" : ""} limit 1`, hasStudio ? [A.studioId] : [])).rows[0] as { j: unknown } | undefined;
       tpls.set(t, row ? { cols: insertCols.get(t) ?? [], row: row.j } : null);
     }
-    // VACUITY GUARD: a zero-read, update or delete on an EMPTY table proves nothing. Every non-global table must have a template row, or be pinned in NO_ROW with a reason.
+    // VACUITY GUARD (a tripwire, honestly scoped): a zero-read, update or delete on an EMPTY table proves nothing. Every non-global table must have a template row
+    // or be pinned in NO_ROW. The check is one-directional because the shared CI database holds rows other suites seeded, so fewer tables are empty there than on a
+    // fresh stack: noRow must be a SUBSET of NO_ROW, and tables that are populated here but pinned are reported as info. The exact match is asserted only when
+    // HONE_FRESH_DB=1 says the database is fresh.
     const noRow = tables.filter((t) => !(t in GLOBAL_REFERENCE) && !tpls.get(t)).sort();
-    expect(noRow, "tables with no row on a fresh stack (their read, update and delete checks are vacuous; seed a row or pin with a reason)").toEqual(Object.keys(NO_ROW).sort());
+    const plan = vacuityPlan(noRow, Object.keys(NO_ROW).filter((t) => tables.includes(t)), process.env.HONE_FRESH_DB === "1");
+    expect(plan.unpinnedEmpty, "empty tables that are not pinned in NO_ROW (seed a row, or pin with a reason)").toEqual([]);
+    expect(plan.exactMismatch, "fresh database: the empty tables equal the NO_ROW pin").toBe(false);
+    if (plan.populatedButPinned.length > 0) console.log(`INFO ${plan.populatedButPinned.length} pinned tables hold a row in this database (the static check still runs on them)`);
     // For the pinned empty tables the dynamic checks above prove nothing, so show the closure from the catalog instead: row-level security is on, and no policy
     // lets authenticated, anon or public through unconditionally.
     const staticOpen: string[] = [];
-    for (const t of noRow) {
+    for (const t of plan.staticTargets) {
       const rls = (await adminQuery(`select relrowsecurity as on from pg_class where oid = ('public."' || $1 || '"')::regclass`, [t])).rows[0] as { on: boolean };
       const open = Number((await adminQuery(`select count(*)::int as n from pg_policies where schemaname = 'public' and tablename = $1 and permissive = 'PERMISSIVE' and (case when cmd = 'INSERT' then with_check else qual end is null or btrim(case when cmd = 'INSERT' then with_check else qual end) in ('true','(true)')) and (roles && array['authenticated','anon','public']::name[])`, [t])).rows[0].n);
       if (t in ANON_INSERT_BY_DESIGN) {

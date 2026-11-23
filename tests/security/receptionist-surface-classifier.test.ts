@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { refused, shapeOf } from "../db/receptionist-callable-surface.classify";
+import { refused, shapeOf, vacuityPlan } from "../db/receptionist-callable-surface.classify";
 
 // The classifier decides whether a call counted as a refusal. It must fail closed: a response that carries data next to a denial word is data.
 const kind = (j: unknown) => shapeOf([{ j }], false);
@@ -40,5 +40,22 @@ describe("receptionist surface classifier", () => {
   it("treats real data as data", () => {
     expect(kind({ id: "x", name: "y" })).toBe("data");
     expect(shapeOf([{ j: 1 }, { j: 2 }], false)).toBe("data");
+  });
+});
+
+describe("vacuity plan", () => {
+  it("fails an empty table that is not pinned", () => {
+    expect(vacuityPlan(["a", "b"], ["a"], false).unpinnedEmpty).toEqual(["b"]);
+  });
+  it("never skips the static check for a pinned table, even when it is populated here", () => {
+    const p = vacuityPlan(["a"], ["a", "c"], false);
+    expect(p.staticTargets).toEqual(["a", "c"]);
+    expect(p.populatedButPinned).toEqual(["c"]);
+    expect(p.unpinnedEmpty).toEqual([]);
+  });
+  it("asserts the exact pin only on a fresh database", () => {
+    expect(vacuityPlan(["a"], ["a", "c"], false).exactMismatch).toBe(false);
+    expect(vacuityPlan(["a"], ["a", "c"], true).exactMismatch).toBe(true);
+    expect(vacuityPlan(["a", "c"], ["a", "c"], true).exactMismatch).toBe(false);
   });
 });
