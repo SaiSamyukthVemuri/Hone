@@ -5,7 +5,8 @@ import type { SmsType } from "@/lib/types/database";
 // HON-13: the one gate every appointment SMS clears before a send is attempted. Pure; no provider, nothing is sent.
 // Synthetic data only. A studio switch that is off, absent or null sends nothing, and each message type reads its OWN switch.
 
-const CONSENTED = { phone: "+14165550123", sms_consent_at: "2026-10-01T12:00:00Z", sms_opted_out_at: null };
+// 0368: a consent is bound to the number it was given for. The passing fixtures carry that number, equal to the phone the client holds.
+const CONSENTED = { phone: "+14165550123", sms_consent_at: "2026-10-01T12:00:00Z", sms_consent_phone: "+14165550123", sms_opted_out_at: null };
 const ALL_ON = { id: "studio", send_confirmation_sms: true, send_24h_sms_reminders: true, send_2h_sms_reminders: true };
 const TYPES: SmsType[] = ["confirmation", "reminder_24h", "reminder_2h"];
 const SWITCH: Record<string, "send_confirmation_sms" | "send_24h_sms_reminders" | "send_2h_sms_reminders"> = {
@@ -46,13 +47,34 @@ describe("passesConsentGate", () => {
   });
 
   it("opt-out is reported ahead of missing consent", () => {
-    const client = { phone: "+14165550123", sms_consent_at: null, sms_opted_out_at: "2026-11-01T12:00:00Z" };
+    const client = { phone: "+14165550123", sms_consent_at: null, sms_consent_phone: null, sms_opted_out_at: "2026-11-01T12:00:00Z" };
     expect(passesConsentGate({ studio: ALL_ON, client, smsType: "confirmation" })).toEqual({ ok: false, reason: "client_opted_out" });
   });
 
   it.each([null, "", "not a number", "123"])("an unusable phone (%j) is refused, not guessed", (phone) => {
     const client = { ...CONSENTED, phone };
     expect(passesConsentGate({ studio: ALL_ON, client, smsType: "reminder_24h" })).toEqual({ ok: false, reason: "invalid_phone" });
+  });
+  // 0368. A bound consent covers only the number it was given for. A legacy consent (no bound number, null) is allowed, as before,
+  // until the client's number first changes. The gate does NOT refuse an unbound consent; it refuses a bound consent that no longer matches.
+  it.each(TYPES)("%s: a legacy consent with no bound number still passes (allowed until the number is first changed)", (smsType) => {
+    const client = { ...CONSENTED, sms_consent_phone: null };
+    expect(passesConsentGate({ studio: ALL_ON, client, smsType })).toEqual({ ok: true, normalizedPhone: "+14165550123" });
+  });
+
+  it.each(TYPES)("%s: a consent bound to a different number does not authorize the number held now", (smsType) => {
+    const client = { ...CONSENTED, sms_consent_phone: "+14165550999" };
+    expect(passesConsentGate({ studio: ALL_ON, client, smsType })).toEqual({ ok: false, reason: "consent_for_other_number" });
+  });
+
+  it("a bound number is compared after the held phone is normalised", () => {
+    const client = { ...CONSENTED, phone: "(416) 555-0123" };
+    expect(passesConsentGate({ studio: ALL_ON, client, smsType: "confirmation" })).toEqual({ ok: true, normalizedPhone: "+14165550123" });
+  });
+
+  it("opt-out and missing consent are reported ahead of a number mismatch", () => {
+    expect(passesConsentGate({ studio: ALL_ON, client: { ...CONSENTED, sms_consent_phone: "+14165550999", sms_opted_out_at: "2026-11-01T12:00:00Z" }, smsType: "confirmation" })).toEqual({ ok: false, reason: "client_opted_out" });
+    expect(passesConsentGate({ studio: ALL_ON, client: { ...CONSENTED, sms_consent_phone: "+14165550999", sms_consent_at: null }, smsType: "confirmation" })).toEqual({ ok: false, reason: "client_no_consent" });
   });
 });
 
