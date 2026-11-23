@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Moving observes the Roles engine and never obeys it. A non-owner asking for custom_time is refused by the legacy
 // owner gate straight after the observe calls, so the whole path can be driven with a stub and no mutation.
 
-const state: { role: string; engine: { data: unknown; error: unknown } | "throws" } = { role: "practitioner", engine: { data: true, error: null } };
+const state: { role: string; clientThrows: boolean; engine: { data: unknown; error: unknown } | "throws" } = { role: "practitioner", clientThrows: false, engine: { data: true, error: null } };
 const rpc = vi.fn<(fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: unknown }>>(async () => {
   if (state.engine === "throws") throw new Error("engine down");
   return state.engine;
@@ -28,7 +28,12 @@ vi.mock("@/lib/supabase/admin-server", () => {
   });
   return { createAdminClient: () => ({ from: () => q }) };
 });
-vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ rpc }) }));
+vi.mock("@/lib/supabase/server", () => ({
+  createClient: async () => {
+    if (state.clientThrows) throw new Error("cookies unavailable");
+    return { rpc };
+  },
+}));
 
 import { moveAppointmentAction } from "@/app/(app)/calendar/move-appointment-actions";
 
@@ -46,6 +51,7 @@ const keysAsked = () => rpc.mock.calls.map((c) => c[1].p_key);
 beforeEach(() => {
   rpc.mockClear();
   state.role = "practitioner";
+  state.clientThrows = false;
   state.engine = { data: true, error: null };
   vi.spyOn(console, "warn").mockImplementation(() => {});
 });
@@ -61,6 +67,14 @@ describe("moving observes the engine and never obeys it", () => {
     state.engine = engine;
     const r = await moveAppointmentAction(input);
     expect(r).toEqual({ ok: false, error: "Only the studio owner can move appointments outside regular availability." });
+  });
+
+  it("returns the same result when the client for the observe call cannot even be built", async () => {
+    const baseline = await moveAppointmentAction(input);
+    state.clientThrows = true;
+    expect(await moveAppointmentAction(input)).toEqual(baseline);
+    expect(await moveAppointmentAction({ ...input, targetPractitionerId: OTHER })).toEqual(baseline);
+    expect(rpc).toHaveBeenCalledTimes(1); // only the baseline run asked; the two failed-client runs asked nothing
   });
 
   it("asks appt.move about this appointment", async () => {

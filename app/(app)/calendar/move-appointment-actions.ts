@@ -287,9 +287,11 @@ export async function moveAppointmentAction(input: {
     return { ok: false, error: "This appointment can no longer be moved." };
   }
 
-  // Roles engine (0287), OBSERVE ONLY: records what the engine would answer and never changes the outcome. The
+  // Permission engine, OBSERVE ONLY: records what the engine would answer and never changes the outcome. The
   // legacy rules below stay the only authority. A reassignment is asked separately, and only when one was requested.
-  const observeDb = await createClient();
+  // The client is built inside the observer (a thunk), so even a failure to build it cannot change the outcome.
+  let observeClient: Promise<Awaited<ReturnType<typeof createClient>>> | undefined;
+  const observeDb = () => (observeClient ??= createClient());
   observePermission(observeDb, studio.id, practitioner.role, { key: "appt.move", appointmentId });
   if (requestedTarget && requestedTarget !== appt.practitioner_id) {
     observePermission(observeDb, studio.id, practitioner.role, { key: "appt.reassign" });

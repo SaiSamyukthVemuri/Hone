@@ -709,7 +709,7 @@ export const RPC_NAMES: readonly string[] = [
 // service_role ("a", "u", "s", or "-" when the role cannot run it), then "D" for security definer or "I" for invoker.
 // A second group after a comma is a second overload. A command the signed-in app user can run ("u") is reachable by a
 // receptionist too, once one has a session, so each of those needs its own gate in the function body, not only in the
-// action that calls it. Read from a stack with 0287 installed; 0287 adds no command the app calls.
+// action that calls it. Read from a database with the permission engine installed; the engine adds no command the app calls.
 export const RPC_PRIVILEGES: Readonly<Record<string, string>> = {
   acknowledge_waitlist_times_feedback: "--sD",
   add_electrolysis_pass: "-u-D",
@@ -893,7 +893,7 @@ export const DYNAMIC_RPC_FILES: readonly string[] = [
   "lib/waitlist/profile-completion-server.ts",
 ];
 
-// Findings from reading the code for the two gaps in the Roles record (HON-44, 23 Nov). Each names its entries; the
+// Findings from reading the code for the two gaps in the Roles record (read on 23 Nov 2026). Each names its entries; the
 // test checks they exist. They record what was FOUND, and are not a statement that anything is fixed.
 export const FINDINGS: ReadonlyArray<{ id: string; entries: readonly string[]; found: string }> = [
   {

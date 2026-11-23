@@ -1,14 +1,15 @@
 import { after } from "next/server";
 import { safeLog } from "@/lib/logging/safe-log";
 
-// OBSERVE-ONLY enforcement point for the Roles permission engine (migration 0287, hosted, no repository file).
+// OBSERVE-ONLY enforcement point for the Roles permission engine (the database function has_studio_permission;
+// absent on local and CI stacks).
 //
 // It asks the database what the engine WOULD answer for the signed-in user and records the answer. It never
 // decides anything: it returns nothing, so no caller can branch on it, and it never throws. Behaviour for every
 // user is exactly what it was before this call existed. Turning a key into a real check is a later change with its
 // own review, and activation is a separate approval.
 //
-// Why observe first: the engine is hosted but nothing in the app asks it. Before any key is allowed to refuse a
+// Why observe first: nothing in the app asks the engine yet. Before any key is allowed to refuse a
 // person, the would-deny rate by role must be known for a real studio. A key that refuses an owner, or refuses a
 // practitioner who is correctly assigned, would show up here first.
 //
@@ -40,7 +41,7 @@ export type ObservedPermission =
   | { readonly key: "appt.move"; readonly appointmentId: string }
   | { readonly key: "appt.reassign" };
 
-/** The own-scope context each observed key needs, from the 0287 seed. Pinned against the installed engine by the DB test. */
+/** The own-scope context each observed key needs, from the engine's key catalogue. Pinned against the installed engine by the DB test. */
 export const OBSERVED_KEY_CONTEXT = {
   "appt.book": "practitioner",
   "appt.move": "appointment",
@@ -76,7 +77,7 @@ export function resetEngineAbsentNotice(): void {
 
 function record(outcome: ObserveOutcome, key: string, actorRole: string): void {
   if (outcome === "engine_absent") {
-    // Expected on a database without 0287 (local and CI stacks). Once per process, never per request.
+    // Expected on a database without the engine (local and CI stacks). Once per process, never per request.
     if (absentLogged) return;
     absentLogged = true;
   }
@@ -99,7 +100,7 @@ function contextArgs(ask: ObservedPermission): { p_appointment: string | null; p
 }
 
 /** Fire and forget. Returns nothing, so no caller can branch on it, and never throws. */
-export function observePermission(db: ObserveDb, studioId: string, actorRole: string, ask: ObservedPermission): void {
+export function observePermission(db: ObserveDb | (() => Promise<ObserveDb>), studioId: string, actorRole: string, ask: ObservedPermission): void {
   // observePermissionNow never rejects; the catch keeps that a guarantee. The read starts now, on this tick.
   const task = observePermissionNow(db, studioId, actorRole, ask).catch(() => {});
   try {
@@ -110,12 +111,13 @@ export function observePermission(db: ObserveDb, studioId: string, actorRole: st
 }
 
 /** The awaitable form, for tests and the database proof. Request handlers use observePermission. */
-export async function observePermissionNow(db: ObserveDb, studioId: string, actorRole: string, ask: ObservedPermission): Promise<void> {
+export async function observePermissionNow(db: ObserveDb | (() => Promise<ObserveDb>), studioId: string, actorRole: string, ask: ObservedPermission): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const call = Promise.resolve(
-      db.rpc("has_studio_permission", { p_studio: studioId, p_key: ask.key, p_client: null, ...contextArgs(ask) }),
-    );
+    // A thunk lets the caller build the client (a cookie read) inside the never-throws guarantee: a failure to
+    // build it is recorded as unreadable like any other failure, never thrown into the caller.
+    const args = { p_studio: studioId, p_key: ask.key, p_client: null, ...contextArgs(ask) };
+    const call = Promise.resolve(typeof db === "function" ? db().then((client) => client.rpc("has_studio_permission", args)) : db.rpc("has_studio_permission", args));
     const timeout = new Promise<"timeout">((resolve) => {
       timer = setTimeout(() => resolve("timeout"), OBSERVE_TIMEOUT_MS);
     });

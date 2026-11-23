@@ -4,9 +4,8 @@ import { OBSERVED_KEY_CONTEXT, observePermissionNow, resetEngineAbsentNotice, ty
 import { safeLog } from "@/lib/logging/safe-log";
 import { adminQuery, asUser, closePool, seedMember, seedStudio, type SeededStudio } from "./helpers/harness";
 
-// The observe call against the REAL permission engine (migration 0287). The engine is hosted but has no repository
-// file, so it is installed on an owned stack from the carrier; without it this file skips and says so. CI stacks do not
-// have it, so CI exercises only the engine-absent path (tests/lib/permissions/observe-permission.test.ts).
+// The observe call against the REAL permission engine (the database function has_studio_permission). It is absent on
+// local and CI stacks; without it this file skips and says so, so CI exercises only the engine-absent path (tests/lib/permissions/observe-permission.test.ts).
 
 let present = false;
 let studio: SeededStudio;

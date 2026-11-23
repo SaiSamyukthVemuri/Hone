@@ -62,6 +62,24 @@ describe("observePermission is observe-only by construction", () => {
     expect(logged().every((l) => l.includes('"outcome":"unreadable"'))).toBe(true);
   });
 
+  it("never throws when the client is built by a thunk that throws, rejects or hands back nothing", async () => {
+    const thunks: Array<() => Promise<ObserveDb>> = [
+      () => { throw new Error("cookies unavailable"); },
+      () => Promise.reject(new Error("cookies unavailable")),
+      () => Promise.resolve(undefined as unknown as ObserveDb),
+    ];
+    for (const t of thunks) await expect(observePermissionNow(t, STUDIO, "owner", book)).resolves.toBeUndefined();
+    expect(logged().filter((l) => l.includes('"outcome":"unreadable"'))).toHaveLength(3);
+    expect(() => observePermission(thunks[0], STUDIO, "owner", book)).not.toThrow();
+  });
+
+  it("asks through a thunk exactly as through a client", async () => {
+    const rpc = vi.fn(async () => ({ data: false, error: null }));
+    await observePermissionNow(async () => ({ rpc }), STUDIO, "practitioner", book);
+    expect(rpc).toHaveBeenCalledWith("has_studio_permission", expect.objectContaining({ p_key: "appt.book" }));
+    expect(logged().some((l) => l.includes('"outcome":"would_deny"'))).toBe(true);
+  });
+
   it("stays silent when the engine allows", async () => {
     await observePermissionNow(dbReturning({ data: true, error: null }), STUDIO, "owner", book);
     expect(warn).not.toHaveBeenCalled();

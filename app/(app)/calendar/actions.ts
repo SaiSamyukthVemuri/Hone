@@ -203,7 +203,7 @@ export async function bookAppointmentForClientAction(
 
   const supabase = await createClient();
 
-  // Roles engine (0287), OBSERVE ONLY: records what the engine would answer for this booking and never changes
+  // Permission engine, OBSERVE ONLY: records what the engine would answer for this booking and never changes
   // the outcome. A booking has no appointment yet, so the own-scope context is the target practitioner.
   observePermission(supabase, studio.id, practitioner.role, { key: "appt.book", practitionerId: targetPractitionerId });
 
