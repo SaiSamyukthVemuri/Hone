@@ -1118,7 +1118,7 @@ describe("PR CI — path-aware lane selection", () => {
     // 12 -> 15 (2026-10-23): ~5.8 min measured p90 + the bounded install step
     // (6 min ceiling) + margin must fit. TARGET stays ~6 min (CLAUDE.md section 4).
     expect(budget("mobile-completion-e2e")).toBe(15);
-    // Targeted hard timeout 15, measured extended hard timeout 35 (was 25) — both above
+    // Targeted hard timeout 19 (was 15), measured extended hard timeout 35 (was 25) — both above
     // their <10 min targets. Parsed, not line-matched, so reformatting the
     // workflow cannot silently break this guard.
     //

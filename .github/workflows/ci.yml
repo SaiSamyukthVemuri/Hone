@@ -223,7 +223,7 @@ jobs:
               // it must be treated as such -- 4 shards and the 35 min ceiling.
               // Before this line it fell through the targeted branch and ran the
               // entire suite split across the TARGETED shard count under the
-              // TARGETED 15 min cap, which is strictly less time and fewer
+              // TARGETED 19 min cap, which is strictly less time and fewer
               // runners than the same workload gets when it is named extended.
               const fullSuite = !specs || specs.length === 0;
               const extended = r.extended || fullSuite;
