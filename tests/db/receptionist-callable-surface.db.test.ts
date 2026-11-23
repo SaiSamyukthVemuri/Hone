@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { adminQuery, asRole, asUser, closePool, seedMember, seedSession, seedStudio, type SeededStudio } from "./helpers/harness";
 import { refused, shapeOf } from "./receptionist-callable-surface.classify";
-import { CLASSIFICATION, PINS, UNPROVEN, INSERT_UNPROVEN } from "./receptionist-callable-surface.map";
+import { CLASSIFICATION, GLOBAL_REFERENCE, PINS, UNPROVEN, INSERT_UNPROVEN } from "./receptionist-callable-surface.map";
 
 // D9 (Privacy): the database surface a receptionist session can reach, built from the CATALOG, not from the app's call list.
 // A receptionist is a signed-in user with no practitioners row in the studio. This proves, on a real migrated database and by DIRECT calls
@@ -381,10 +381,10 @@ describe("F3: every public table: read, update and delete on all; insert on all 
     for (const k of ["recA", "stranger", "anon"] as const) {
       for (const t of tables) {
         const v = await verbs(actors[k], t, cols.get(t) ?? null, tpls.get(t) ?? null);
-        const weak = !tpls.get(t) && v.ins.kind.startsWith("error:") && v.ins.kind !== "error:42501";
+        const weak = !(t in GLOBAL_REFERENCE) && !tpls.get(t) && v.ins.kind.startsWith("error:") && v.ins.kind !== "error:42501";
         if (weak) weakInserts.add(t);
         const allowSel = k === "recA" && t === "studio_receptionists" ? 1 : 0;
-        if (!(v.sel.kind === "error:42501" || (v.sel.kind === "ok" && v.sel.rows === allowSel))) findings.push(`select ${t} as ${k}: ${v.sel.kind} ${v.sel.rows ?? ""}`);
+        if (!(v.sel.kind === "error:42501" || (v.sel.kind === "ok" && v.sel.rows === allowSel) || (t in GLOBAL_REFERENCE && k !== "anon" && v.sel.kind === "ok"))) findings.push(`select ${t} as ${k}: ${v.sel.kind} ${v.sel.rows ?? ""}`);
         if (!weak && v.ins.kind !== "error:42501") findings.push(`insert ${t} as ${k}: ${v.ins.kind}`);
         if (!(v.upd.kind === "error:42501" || (v.upd.kind === "ok" && v.upd.rows === 0))) findings.push(`update ${t} as ${k}: ${v.upd.kind} ${v.upd.rows ?? ""}`);
         if (!(v.del.kind === "error:42501" || (v.del.kind === "ok" && v.del.rows === 0))) findings.push(`delete ${t} as ${k}: ${v.del.kind} ${v.del.rows ?? ""}`);
@@ -407,3 +407,49 @@ describe("C8 hook: the hosted comparison (NOT RUN HERE; needs the owner's author
     // and absent here goes on a named review list; this test does not read hosted.
   });
 });
+
+describe("F3 addendum: GLOBAL_REFERENCE class (readable by signed-in users by design; self-policing)", () => {
+  it("each has no studio column, exactly one policy (select, for authenticated, unconditional), and refuses every write", async () => {
+    for (const t of Object.keys(GLOBAL_REFERENCE)) {
+      const col = Number((await adminQuery(`select count(*)::int as n from information_schema.columns where table_schema = 'public' and table_name = $1 and column_name in ('studio_id','client_id','practitioner_id','user_id','session_id','appointment_id')`, [t])).rows[0].n);
+      expect(col, `${t} has no studio, client or person column`).toBe(0);
+      // Exact ACL: select for authenticated and service_role, nothing for anon, no write privilege for anyone.
+      const acl = (await adminQuery(`select r || ':' || string_agg(p, ',' order by p) as g from (select r, p from unnest(array['anon','authenticated','service_role']) r, unnest(array['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) p where has_table_privilege(r, ('public."' || $1 || '"')::regclass, p)) x group by r order by r`, [t])).rows.map((r: { g: string }) => r.g);
+      expect(acl, `${t} grants`).toEqual(["authenticated:SELECT", "service_role:SELECT"]);
+      // No foreign key out of the class: a catalog never points at studio, client, practitioner or session data.
+      const fks = (await adminQuery(`select confrelid::regclass::text as r from pg_constraint where conrelid = ('public."' || $1 || '"')::regclass and contype = 'f'`, [t])).rows.map((r: { r: string }) => r.r.replace(/^public\./, "").replace(/"/g, ""));
+      expect(fks.filter((x) => !(x in GLOBAL_REFERENCE)), `${t} foreign keys leave the class`).toEqual([]);
+      const pol = (await adminQuery(`select cmd, roles::text as roles, qual from pg_policies where schemaname = 'public' and tablename = $1`, [t])).rows as { cmd: string; roles: string; qual: string }[];
+      expect(pol, `${t} policies`).toEqual([{ cmd: "SELECT", roles: "{authenticated}", qual: "true" }]);
+      const colsRes = await adminQuery(`select a.attname from pg_attribute a where a.attrelid = ('public."' || $1 || '"')::regclass and a.attnum > 0 and not a.attisdropped and a.attgenerated = '' and a.attidentity <> 'a' order by a.attnum`, [t]);
+      for (const k of ["recA", "stranger", "anon"] as const) {
+        const ins = await verbsFor(actors[k], t, (colsRes.rows[0] as { attname: string }).attname);
+        expect(ins.ins === "error:42501" && (ins.upd === "error:42501" || ins.upd === "zero") && (ins.del === "error:42501" || ins.del === "zero"), `${t} write by ${k}: ${JSON.stringify(ins)}`).toBe(true);
+      }
+    }
+  });
+});
+
+async function verbsFor(actor: Actor, table: string, col: string): Promise<{ ins: string; upd: string; del: string }> {
+  const one = async (sql: string, zeroOk: boolean): Promise<string> => {
+    const run = async (q: (t: string, p?: unknown[]) => Promise<{ rowCount: number | null }>) => {
+      await q("savepoint s");
+      let o: string;
+      try {
+        const r = await q(sql);
+        o = zeroOk && (r.rowCount ?? 0) === 0 ? "zero" : "ok";
+      } catch (e) {
+        o = `error:${(e as { code?: string }).code ?? "unknown"}`;
+      }
+      throw new Rollback({ kind: o });
+    };
+    try {
+      if (actor.uid === "anon") await asRole("anon", (q) => run(q as never));
+      else await asUser(actor.uid, (q) => run(q as never));
+    } catch (e) {
+      if (e instanceof Rollback) return e.outcome.kind;
+    }
+    return "harness";
+  };
+  return { ins: await one(`insert into public."${table}" default values`, false), upd: await one(`update public."${table}" set "${col}" = "${col}"`, true), del: await one(`delete from public."${table}"`, true) };
+}

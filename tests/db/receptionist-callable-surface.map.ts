@@ -182,3 +182,9 @@ export const INSERT_UNPROVEN: Record<string, string> = {
   "treatment_plan_stages": "No row in this table to template an insert from on a fresh stack, so the insert is stopped by a trigger or constraint before the policy is reached. No insert succeeded; the policy itself is not shown by this test.",
   "waitlist": "No row in this table to template an insert from on a fresh stack, so the insert is stopped by a trigger or constraint before the policy is reached. No insert succeeded; the policy itself is not shown by this test."
 };
+
+// GLOBAL_REFERENCE class. Exact grants (asserted): select for authenticated and service_role, none for anon, no write privilege for anyone. Readable by every signed-in user by design (select policy "true", for authenticated), no studio, client or person column, no write by anyone but the service role. Row counts depend on which other suites ran, so the test asserts the structure, not a count.
+export const GLOBAL_REFERENCE: Record<string, string> = {
+  machine_profile_field_contract: "Machine-profile reference catalog (fields, units, choices): the same for every studio, no studio data.",
+  machine_profile_mode_contract: "Machine-profile reference catalog (modes, channels): the same for every studio, no studio data.",
+};
