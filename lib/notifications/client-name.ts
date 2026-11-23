@@ -31,13 +31,13 @@ type NameRead = {
 
 /**
  * ONE read of the client's name fields (stored + preferred), studio-scoped. For the writers whose only client read is the name (card change, cancel, intake).
- * Returns the error untouched so each caller keeps its own policy (the card webhook throws so Stripe retries; the bell writers carry on with the generic label).
+ * Returns only a PII-free failure code (never the database message) so each caller keeps its own policy (the card webhook throws so Stripe retries; the bell writers carry on with the generic label).
  */
 export async function readClientNameFields(
   admin: unknown,
   studioId: string,
   clientId: string,
-): Promise<{ fields: ClientIdentityFields | null; error: { code?: string | null; message?: string | null } | null }> {
+): Promise<{ fields: ClientIdentityFields | null; failure: { code: string | null } | null }> {
   const { data, error } = await readWithPreferredName((includePreferred) =>
     (admin as NameRead)
       .from("clients")
@@ -46,5 +46,8 @@ export async function readClientNameFields(
       .eq("studio_id", studioId)
       .maybeSingle(),
   );
-  return { fields: data ? { name: data.name ?? null, preferred_name: data.preferred_name ?? null } : null, error };
+  return {
+    fields: data ? { name: data.name ?? null, preferred_name: data.preferred_name ?? null } : null,
+    failure: error ? { code: error.code ?? null } : null,
+  };
 }

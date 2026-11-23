@@ -128,10 +128,10 @@ export async function ensureCardChangeNotification(
   const isReplacement = (count ?? 0) > 1;
 
   // 3. Client DISPLAY name (the calendar's field: preferred where set, else stored; "A client" when neither), from ONE read of the client row.
-  const { fields: clientFields, error: clientErr } = await readClientNameFields(admin, studioId, clientId);
-  if (clientErr) {
+  const { fields: clientFields, failure: clientFailure } = await readClientNameFields(admin, studioId, clientId);
+  if (clientFailure) {
     throw new Error(
-      `card_change_client_lookup_failed:${dbErrorCode(clientErr)}`,
+      `card_change_client_lookup_failed:${dbErrorCode(clientFailure)}`,
     );
   }
   const clientName = notificationClientName(clientFields);
