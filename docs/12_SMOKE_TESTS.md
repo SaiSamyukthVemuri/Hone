@@ -1511,3 +1511,23 @@ missing it records a skip, which is not a pass. Database checks are in
 `tests/db/client-groups.db.test.ts` (rolled-back transactions) and
 `tests/db/client-groups-applied.db.test.ts` (the support installed for real, then removed).
 Both run on a local test database only.
+
+## Waitlist Analytics
+
+- As an owner, open Business → Analytics → Waitlist on desktop and mobile.
+  Verify the existing tab styling, readable cards, focus rings and no horizontal
+  overflow. Overview and Clients remain reachable.
+- The cohort says invitations **issued** in the last 30 days. Check the issued
+  and outcome counts against the existing waitlist records. Link use is not
+  booked; booking rows are indented beneath the link-used total. If booking
+  attribution support is absent, booked and conversion say Not available.
+- Provider accepted means accepted for delivery, not Delivered. Email opens and
+  invitation-page views say Not tracked. No fake open rate is displayed.
+- Choose each eligible consultation and next 7 / 14 / 28 days, then Show capacity.
+  Compare with the existing composer estimator. A failed read stays unavailable;
+  unknown outstanding counts never become zero. All-live fallback scope is
+  stated. No capacity estimate reserves an appointment or sends an invitation.
+- Review waitlist opens the existing workflow. No invocation in this analytics
+  journey sends email/SMS or changes admission, consent or appointments.
+- A non-owner opening `/financials/analytics/waitlist` receives the owner-only
+  Analytics sentence. Do not use live customer messages to exercise this check.
