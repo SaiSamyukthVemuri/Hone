@@ -6,7 +6,7 @@ import { emailBookingReference } from "../lib/email/booking-reference";
 
 // HON-48 returning-client lookup and manual scheduling, in a browser, on synthetic data.
 //
-// Opt-in: HON48_FIVE_USER_E2E=1.
+// Runs in the required calendar lane.
 //
 // A client who is already in the studio is found by typing their name into the booking drawer, is listed BEST MATCH FIRST,
 // is chosen, and is booked into a time the user picks, for the practitioner whose column was opened.
@@ -20,7 +20,6 @@ import { emailBookingReference } from "../lib/email/booking-reference";
 //       that appointment (a confirmed and a cancelled one), opens it, and is found by a second practitioner too
 //   R2  another studio's appointment reference finds nothing, and an unknown reference finds nothing (no error)
 
-test.skip(process.env.HON48_FIVE_USER_E2E !== "1", "opt-in HON-48 lookup proof; set HON48_FIVE_USER_E2E=1");
 test.describe.configure({ mode: "serial" });
 
 let t: Team;

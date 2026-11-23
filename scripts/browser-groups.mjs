@@ -281,7 +281,8 @@ export const BROWSER_GROUPS = {
       // practitioner layout, Los Angeles date boundaries, same-practitioner
       // conflict refusal, member create scope and the phone scroll box.
       "team-day-view.spec.ts",
-      // HON-48 five-user proof (opt-in: self-skips unless HON48_FIVE_USER_E2E=1, so a targeted lane lists it but runs nothing).
+      // HON-48 five-user proof: five synthetic practitioners, simultaneous bookings with one winner, studio isolation, moves, blocks, returning-client lookup,
+      // and iPad/iPhone selection. REQUIRED: these run whenever the calendar group is selected (about 3 minutes of serial browser time).
       "hon48-five-user-booking.spec.ts",
       "hon48-five-user-moves-blocks.spec.ts",
       "hon48-five-user-denial.spec.ts",
@@ -414,6 +415,7 @@ export const BROWSER_GROUPS = {
       // overview, book, back, close, Escape, clear) at desktop and phone width. Same group
       // and reasoning as UI-04: /clients/** has no PATH_TO_GROUP pattern.
       "clients-directory-journey.spec.ts",
+      "client-groups.spec.ts",
       // #1328 + 0281: the three client-save paths (profile edit with its name revision and audit row, the
       // stale-conflict refusal, the legal-name save and its conflict) at 1280 and 390. Same group and reasoning:
       // /clients/** has no PATH_TO_GROUP pattern.
