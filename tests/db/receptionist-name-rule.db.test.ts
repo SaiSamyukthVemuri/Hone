@@ -5,7 +5,7 @@ import { adminQuery, asRole, asUser, closePool, seedMember, seedStudio, type See
 // 0374: the database no longer returns a client's stored name to a receptionist. The ACCEPTANCE test, on a real migrated
 // database, by DIRECT calls to the three read functions (what a signed-in person can do outside the app). Synthetic
 // fixtures only: distinctive stored names that appear in no contact field, a preferred name distinct from the stored one,
-// a whitespace-only preferred name. Every assertion on a name is a boolean: a name is never printed or snapshotted.
+// (a whitespace-only preferred name cannot exist: clients_preferred_name_shape refuses it, which a case below pins). Every assertion on a name is a boolean: a name is never printed or snapshotted.
 // It runs twice, with the legal-name switch OFF and ON, because the switch must not change any of it.
 
 const STORED = ["Zorblatt", "Quillfeather", "Vexmoor", "Tillgard", "Wimbrel", "Oakhaven", "Yarrowby", "Pennick", "Fallowmere", "Thistledown"];
@@ -73,7 +73,7 @@ beforeAll(async () => {
   await adminQuery("update public.clients set name = $2, phone = '+1 555 0100', email = 'c0@harness.local' where id = $1", [ids.c0, "Fallowmere Thistledown"]);
   ids.c1 = low; await client(ids.c1, "Zorblatt Quillfeather", null, "+1 555 0111", "c1@harness.local");
   ids.c2 = randomUUID(); await client(ids.c2, "Vexmoor Tillgard", "Bean", "+1 555 0112", "c2@harness.local");
-  ids.c3 = high; await client(ids.c3, "Wimbrel Oakhaven", "   ", "+1 555 0113", "c3@harness.local");
+  ids.c3 = high; await client(ids.c3, "Wimbrel Oakhaven", null, "+1 555 0113", "c3@harness.local");
   ids.c4 = randomUUID(); await client(ids.c4, "Yarrowby Pennick", "100% Pat", "+1 555 0114", "c4@harness.local");
   for (const [i, c] of [ids.c0, ids.c1, ids.c2, ids.c3, ids.c4].entries()) await appt(c, 2 + i);
   spareAppt = await appt(ids.c1, 20);
@@ -86,6 +86,12 @@ describe.each([["OFF", false], ["ON", true]] as const)("legal-name switch %s", (
       "insert into public.studio_legal_name_access (studio_id, receptionist_access) values ($1, $2) on conflict (studio_id) do update set receptionist_access = excluded.receptionist_access",
       [A.studioId, switchOn],
     );
+  });
+
+  describe("fixture constraint", () => {
+    it("a whitespace-only preferred name cannot be stored, so 'no usable preferred name' means none", async () => {
+      await expect(adminQuery("update public.clients set preferred_name = '   ' where id = $1", [ids.c3])).rejects.toMatchObject({ code: "23514" });
+    });
   });
 
   describe("who may call the three functions directly", () => {
@@ -114,7 +120,7 @@ describe.each([["OFF", false], ["ON", true]] as const)("legal-name switch %s", (
       }
       const c = await cal();
       expect(hasStored(c), "calendar").toBe(false);
-      expect(rowsOf(c).length).toBe(5);
+      expect(rowsOf(c).length, "calendar: one appointment each plus the spare").toBe(6);
       const k = await con();
       expect(hasStored(k), "contacts").toBe(false);
       expect(rowsOf(k).length).toBe(5);
@@ -123,7 +129,7 @@ describe.each([["OFF", false], ["ON", true]] as const)("legal-name switch %s", (
       }
     });
 
-    it("name_on_file is true exactly when there is no usable preferred name (none, or whitespace only)", async () => {
+    it("name_on_file is true exactly when there is no usable preferred name (none)", async () => {
       const byId = new Map(rowsOf(await dir()).map((r) => [r.client_id, r]));
       for (const id of [ids.c0, ids.c1, ids.c3]) expect(byId.get(id), id).toMatchObject({ display_name: MARK, name_on_file: true });
       expect(byId.get(ids.c2)).toMatchObject({ display_name: "Bean", name_on_file: false });
