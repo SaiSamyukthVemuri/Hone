@@ -233,6 +233,23 @@ export async function setClientSelfServiceAction(
   return { ok: true };
 }
 
+/** The selected studio comes from the authenticated session, never the form.
+ * The database command independently verifies ownership of that studio. */
+export async function setStudioManagedAppointmentsAction(formData: FormData): Promise<EmailSettingsResult> {
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  if (practitioner.role !== "owner") return { ok: false, error: "Only studio owners can change appointment management." };
+  const raw = formData.get("studio_managed_appointments");
+  if (raw !== "true" && raw !== "false") return { ok: false, error: "Could not save settings. Please try again." };
+  if (typeof (studio as { studio_managed_appointments?: unknown }).studio_managed_appointments !== "boolean") {
+    return { ok: false, error: "Studio-managed appointments is not available yet. Your settings have not changed." };
+  }
+  const db = await createClient();
+  const { data, error } = await db.rpc("set_studio_managed_appointments", { p_studio_id: studio.id, p_enabled: raw === "true" });
+  if (error || data !== (raw === "true")) return { ok: false, error: "Could not confirm appointment management. Reload this page to check the current setting before trying again." };
+  revalidatePath("/settings/studio", "layout");
+  return { ok: true };
+}
+
 // ---------------------------------------------------------------------------
 // updateStudioPostcareAction
 // ---------------------------------------------------------------------------
