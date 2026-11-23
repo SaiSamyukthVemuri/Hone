@@ -6,6 +6,7 @@ import { STATEMENTS_OWNER_ONLY, parseClientsParams } from "@/lib/finance/stateme
 import { loadStatementDirectory } from "@/lib/finance/statement-directory-read";
 import { monthRange, yearMonthOf } from "@/lib/finance/statement-period";
 import { STATEMENT_MONTH_NOTICE } from "@/lib/finance/statement-copy";
+import { timed } from "@/lib/observability/perf-timing";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 
 import { ClientsView, type ClientsViewProps } from "./clients-view";
@@ -21,7 +22,7 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Statements: Clients" };
 
 export default async function StatementsClientsPage({ searchParams }: { searchParams: Promise<{ month?: string | string[]; page?: string | string[] }> }) {
-  const { practitioner, studio } = await requirePractitionerWithStudio();
+  const { practitioner, studio } = await timed("statements.identity", () => requirePractitionerWithStudio());
   if (practitioner.role !== "owner") {
     return <section className="rounded-lg border border-line bg-surface-sunken p-6 text-sm text-fg">{STATEMENTS_OWNER_ONLY}</section>;
   }
@@ -33,7 +34,7 @@ export default async function StatementsClientsPage({ searchParams }: { searchPa
   const jurisdiction = await getStudioPaymentJurisdiction(studio.id);
   const currency: PaymentCurrency | null = jurisdiction.ok ? jurisdiction.jurisdiction.currency : null;
 
-  const read = await loadStatementDirectory(practitioner, studio, currency, month, now);
+  const read = await timed("statements.domain", () => loadStatementDirectory(practitioner, studio, currency, month, now));
   const directory: ClientsViewProps["directory"] =
     read.access === "granted" && read.ok ? { ok: true, value: read.directory } : { ok: false, reason: read.access === "granted" && !read.ok ? read.reason : "read_failed" };
 
