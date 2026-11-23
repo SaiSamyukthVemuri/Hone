@@ -361,8 +361,20 @@ function computeWindow(data: WindowData, w: PeriodWindow, o: Pick<OverviewInput,
   };
 }
 
-const factsOf = (rows: readonly AssembleAppointment[], timezone: string): VisitFact[] =>
-  rows.map((a) => ({ appointmentId: a.id, clientId: a.clientId, localDate: localDateString(new Date(a.startsAt), timezone), practitionerId: a.practitionerId, status: a.status }));
+// The facts of one set of rows, derived ONCE per request. The history set alone was derived about six times (returning, interval, no-next-booking, beyond
+// usual and the Clients tab each asked), each time formatting every appointment's local date, which was most of the build's time (HON-109). The rows array a
+// request holds is never changed, and no caller changes the facts it is given, so the same array and zone return the same facts.
+const FACTS_CACHE = new WeakMap<readonly AssembleAppointment[], Map<string, VisitFact[]>>();
+const factsOf = (rows: readonly AssembleAppointment[], timezone: string): VisitFact[] => {
+  let byZone = FACTS_CACHE.get(rows);
+  if (!byZone) FACTS_CACHE.set(rows, (byZone = new Map()));
+  let facts = byZone.get(timezone);
+  if (!facts) {
+    facts = rows.map((a) => ({ appointmentId: a.id, clientId: a.clientId, localDate: localDateString(new Date(a.startsAt), timezone), practitionerId: a.practitionerId, status: a.status }));
+    byZone.set(timezone, facts);
+  }
+  return facts;
+};
 
 /**
  * Returning, interval and no-next-booking. The practitioner filter decides who counts as SEEN; it never narrows the history (a client is returning if

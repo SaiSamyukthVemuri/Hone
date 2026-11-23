@@ -1,5 +1,6 @@
 "use server";
 
+import { WAITLIST_PATH, WAITLIST_REPLIES_PATH } from "@/lib/waitlist/paths";
 import { clearLifecycleNotice } from "@/lib/waitlist/lifecycle-notice-cookie";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -7,7 +8,7 @@ import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { acknowledgeTimesFeedback } from "@/lib/waitlist/times-feedback-owner";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const PAGE = "/settings/waitlist/replies";
+const PAGE = WAITLIST_REPLIES_PATH;
 
 /**
  * Mark one reply as seen. Studio and actor come from the session, never the form.
@@ -22,6 +23,6 @@ export async function acknowledgeReplyAction(formData: FormData): Promise<void> 
   if (practitioner.role !== "owner") redirect(`${PAGE}?ack=failed`);
   const ok = await acknowledgeTimesFeedback(studio.id, invitationId, practitioner.user_id);
   revalidatePath(PAGE);
-  revalidatePath("/settings/waitlist");
+  revalidatePath(WAITLIST_PATH);
   redirect(ok ? PAGE : `${PAGE}?ack=failed`);
 }

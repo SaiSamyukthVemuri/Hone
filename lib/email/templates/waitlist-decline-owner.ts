@@ -8,12 +8,13 @@
 // The payload is a PURE FUNCTION of the app origin. Two attempts for one outbox row must render identical bytes, because the
 // provider idempotency key depends on the row and the provider answers a changed body under one key with an error, not a replay.
 
+import { WAITLIST_PATH } from "@/lib/waitlist/paths";
 export const WAITLIST_DECLINE_OWNER_SUBJECT = "A waitlist response needs your attention";
 export const WAITLIST_DECLINE_OWNER_BODY =
   "Someone responded to your consultation invitation. Sign in to review their response and follow up.";
 export const WAITLIST_DECLINE_OWNER_BUTTON = "Review response";
 // The query lets #1406's sign-in return work for a signed-out owner (a fragment never reaches the server); the fragment scrolls a signed-in owner.
-export const WAITLIST_DECLINE_OWNER_PATH = "/settings/waitlist?followup=1#follow-up";
+export const WAITLIST_DECLINE_OWNER_PATH = `${WAITLIST_PATH}?followup=1#follow-up`;
 
 export function buildWaitlistDeclineOwnerEmail(input: { appOrigin: string }): { subject: string; html: string; text: string } {
   const url = `${input.appOrigin.replace(/\/+$/, "")}${WAITLIST_DECLINE_OWNER_PATH}`;
