@@ -26,6 +26,17 @@ describe("receptionist surface classifier", () => {
     expect(kind({ status: "no_invitation", choose_studio: true })).toBe("data");
     expect(refused({ kind: kind({ result: "owner_only", amount: 5 }) })).toBe(false);
   });
+  it("rejects free text, emails and ids in denial keys, and a truthy choose_studio", () => {
+    expect(kind({ ok: false, message: "Jane Doe" })).toBe("data");
+    expect(kind({ ok: false, code: "jane@example.com" })).toBe("data");
+    expect(kind({ ok: false, choose_studio: "studio-id-123" })).toBe("data");
+    expect(kind({ ok: false, code: "refused", choose_studio: true })).toBe("data");
+    expect(kind({ ok: false, code: "jane_doe" })).toBe("data");
+  });
+  it("does not read a status word from an arbitrary key", () => {
+    expect(kind({ client: "Jane", result: "not_authorized" })).toBe("data");
+    expect(kind({ whatever: "not_authorized" })).toBe("data");
+  });
   it("treats real data as data", () => {
     expect(kind({ id: "x", name: "y" })).toBe("data");
     expect(shapeOf([{ j: 1 }, { j: 2 }], false)).toBe("data");
