@@ -1,5 +1,6 @@
 "use client";
 
+import { WAITLIST_PATH } from "@/lib/waitlist/paths";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -390,7 +391,7 @@ export function MobileMenu({
             { href: "/dashboard", label: "Dashboard" },
             { href: "/clients", label: "Clients" },
             { href: "/calendar", label: "Calendar" },
-            ...(showWaitlist ? [{ href: "/settings/waitlist", label: "Waitlist" }] : []),
+            ...(showWaitlist ? [{ href: WAITLIST_PATH, label: "Waitlist" }] : []),
             { href: "/records", label: "Records" },
           ].map((item) => workItem(item, false))}
           {/* OWNER-CAP follow-up: the owner's permanent Business entry, the

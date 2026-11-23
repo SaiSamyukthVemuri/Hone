@@ -1,5 +1,6 @@
 "use server";
 
+import { WAITLIST_OVER_INVITE_PATH } from "@/lib/waitlist/paths";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
@@ -141,7 +142,7 @@ export async function sendOverInviteAction(_prev: OverInviteResult, formData: Fo
     if (!created.batchId) return { state: "notice", notice: N.batchSaved };
     // The batch is persisted. Run the first round(s) now; whatever is left is finished by the background route with no page open and no click.
     const first = await runRounds({ budgetMs: FIRST_ROUNDS_BUDGET_MS, mode: { mode: "scoped", studioId: studio.id, batchId: created.batchId, actorUserId: practitioner.user_id } });
-    revalidatePath("/settings/waitlist/over-invite");
+    revalidatePath(WAITLIST_OVER_INVITE_PATH);
     const quantity = created.quantity ?? sub.entryIds.length;
     return {
       state: "progress",
@@ -166,7 +167,7 @@ export async function stopBatchAction(_prev: OverInviteResult, formData: FormDat
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
     if (practitioner.role !== "owner" || !practitioner.user_id) return { state: "notice", notice: N.ownerOnly };
     const r = await stopBatch(createAdminClient(), { studioId: studio.id, actorUserId: practitioner.user_id, batchId, leaseSeconds: DEFAULT_LIMITS.leaseSeconds });
-    revalidatePath("/settings/waitlist/over-invite");
+    revalidatePath(WAITLIST_OVER_INVITE_PATH);
     if (!r.ok) return { state: "notice", notice: N.unavailable };
     if (r.result === "stopped") return { state: "notice", notice: N.stopped(r.cancelled) };
     if (r.result === "nothing_pending") return { state: "notice", notice: N.nothingToStop };
@@ -187,7 +188,7 @@ async function retryAction(kind: "refused" | "unknown", formData: FormData): Pro
     if (targets.length === 0) return { state: "notice", notice: kind === "refused" ? N.nothingToRetry : N.nothingUnknownToRetry };
     const chosen = targets.slice(0, RETRY_CLICK_MAX);
     const out = await retryByKind(kind, studio.id, practitioner.user_id, chosen, supabase);
-    revalidatePath("/settings/waitlist/over-invite");
+    revalidatePath(WAITLIST_OVER_INVITE_PATH);
     return {
       state: "progress",
       quantity: chosen.length,

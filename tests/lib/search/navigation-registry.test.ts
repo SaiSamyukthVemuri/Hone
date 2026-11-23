@@ -446,8 +446,10 @@ describe("href integrity — every registered destination is real", () => {
     );
     expect(src).toMatch(/^import "server-only";/m);
     expect(src).not.toMatch(/createClient|createAdminClient|from\("/);
-    // Exactly one import, and it is the server-only marker.
-    expect(src.match(/^import /gm)).toHaveLength(1);
+    // Exactly two imports: the server-only marker and the pure waitlist path constants (lib/waitlist/paths.ts has no imports of its own, pinned in
+    // tests/source-guards/waitlist-path-literals.test.ts). Nothing else may be imported, so the registry still reads no data source.
+    expect(src.match(/^import /gm)).toHaveLength(2);
+    expect(src).toMatch(/^import \{[^}]*\} from "@\/lib\/waitlist\/paths";/m);
   });
 });
 

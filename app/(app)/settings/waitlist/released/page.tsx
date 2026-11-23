@@ -1,3 +1,4 @@
+import { WAITLIST_PATH, WAITLIST_SEARCH_PATH } from "@/lib/waitlist/paths";
 import Link from "next/link";
 import { OwnerOnlyNotice } from "@/components/settings/view-heading";
 import { InvitationFacts } from "@/components/waitlist/invitation-facts";
@@ -38,10 +39,10 @@ export default async function WaitlistReleasedPage() {
         </ul>
       ) : null}
       <p className="flex gap-4">
-        <Link href="/settings/waitlist/search" className="underline">
+        <Link href={WAITLIST_SEARCH_PATH} className="underline">
           Search the waitlist
         </Link>
-        <Link href="/settings/waitlist" className="underline">
+        <Link href={WAITLIST_PATH} className="underline">
           Back to the waitlist
         </Link>
       </p>
