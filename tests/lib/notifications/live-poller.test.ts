@@ -3,6 +3,7 @@ import {
   SEEN_MAX,
   SUMMARY_INTERVAL_MS,
   applyIds,
+  classifyProbeStatus,
   initialLivePollerState,
   nextLiveWakeDelayMs,
   parseSummary,
@@ -88,6 +89,26 @@ describe("failures", () => {
     expect(s.stopped).toBe(true);
     expect(stepLivePoller(s, { type: "returned", nowMs: 9e9, env: VISIBLE }).effects).toEqual([]);
     expect(nextLiveWakeDelayMs(s, 0, VISIBLE)).toBeNull();
+  });
+
+  it("a transient answer RESETS the 401 strike count: only consecutive 401s stop polling", () => {
+    let s = inFlight();
+    const next = (r: ProbeResult, n: number) => answer(stepLivePoller(s, { type: "returned", nowMs: n, env: VISIBLE }).state, r, n).state;
+    s = answer(s, { kind: "unauthenticated" }, 0).state;
+    s = next({ kind: "unauthenticated" }, 1);
+    expect(s.unauthStrikes).toBe(2);
+    s = next({ kind: "transient" }, 2);
+    expect(s.unauthStrikes).toBe(0);
+    s = next({ kind: "unauthenticated" }, 3);
+    s = next({ kind: "unauthenticated" }, 4);
+    expect(s.stopped).toBe(false); // two since the reset, not three
+    s = next({ kind: "unauthenticated" }, 5);
+    expect(s.stopped).toBe(true);
+  });
+
+  it("an opaque redirect (a manual fetch meeting the middleware) is an authentication answer, never a success", () => {
+    expect(classifyProbeStatus(0, "opaqueredirect")).toBe("unauthenticated");
+    expect(classifyProbeStatus(200, "opaqueredirect")).toBe("unauthenticated");
   });
 
   it("a 401 stops polling only when it repeats; a good answer in between resets the count", () => {

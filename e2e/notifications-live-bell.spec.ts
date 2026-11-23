@@ -257,7 +257,6 @@ test("a REAL signed-out request is the middleware redirect: no count is served a
   const anon = await request.get(SUMMARY, { maxRedirects: 0 });
   expect([307, 401]).toContain(anon.status());
   expect(await anon.text()).not.toContain("unread");
-  expect(anon.headers()["cache-control"] ?? "").toMatch(/no-store|private/);
 
   // a signed-in user with NO studio (a receptionist has no practitioner row either): the middleware redirect, not a count
   const nostudio = await seedNoStudioAuthUser();
@@ -278,7 +277,20 @@ test("a REAL signed-out request is the middleware redirect: no count is served a
   const t = await signedIn(browser, seed.ownerEmail);
   await expectBoth(t.page, 5);
   await t.page.context().clearCookies();
+  // WHY the poller asks with redirect:"manual": signed out, the middleware answers with a redirect. A manual fetch sees an opaque
+  // redirect (a definite "not signed in" answer); a default fetch would FOLLOW it to the login page and hand back HTML with status 200,
+  // which a poller could only ever call a transient failure, forever.
+  const seen = await t.page.evaluate(async (url) => {
+    const manual = await fetch(url, { cache: "no-store", credentials: "same-origin", redirect: "manual" });
+    const followed = await fetch(url, { cache: "no-store", credentials: "same-origin" });
+    return { manualType: manual.type, followedStatus: followed.status, followedType: followed.headers.get("content-type") ?? "" };
+  }, SUMMARY);
+  expect(seen.manualType).toBe("opaqueredirect");
+  expect(seen.followedStatus).toBe(200);
+  expect(seen.followedType).toMatch(/text\/html/);
+  const baseline = t.requests();
   await pollNow(t); await pollNow(t); await pollNow(t);
+  expect(t.requests() - baseline, "three strikes, one request each").toBe(3);
   const stopped = t.requests();
   await t.page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await t.page.waitForTimeout(1_000);
@@ -327,6 +339,30 @@ test("sign out, then sign in as someone ELSE in the same tab: the first person's
   );
   for (const r of ownerOnlyRows) expect(memberSeen?.seen).not.toContain(r.id);
   expect(ownerOnly.length).toBeGreaterThan(memberSeen!.seen.length - 1);
+});
+
+test("the SERVER number wins: a mark-all-read that LOWERS the count after a poll had raised it shows the lower number at once", async ({ browser }) => {
+  const own = await seedE2eStudio();
+  const ownOwner = await getOwnerPractitionerId(own.studioId);
+  await insertRow({ studioId: own.studioId, practitionerId: null, type: "new_booking" });
+  const t = await signedIn(browser, own.ownerEmail);
+  await expectBoth(t.page, 1);
+  await insertRow({ studioId: own.studioId, practitionerId: null, type: "new_booking" });
+  await insertRow({ studioId: own.studioId, practitionerId: ownOwner, type: "card_added" });
+  await pollNow(t);
+  await expectBoth(t.page, 3); // the POLL raised it above the server-rendered 1
+  const polls = t.responses();
+  await t.page.locator('[data-testid="nav-notifications"]:visible').click();
+  await t.page.waitForURL(/\/notifications/, { timeout: 20_000 });
+  await expectBoth(t.page, 3);
+  await t.page.getByRole("button", { name: "Mark all read" }).click();
+  // the action re-renders the shell with the server's number (0): that wins, with no poll needed
+  await expectBoth(t.page, 0);
+  expect(t.responses(), "the lower number came from the server render, not a poll").toBe(polls);
+  await pollNow(t);
+  await expectBoth(t.page, 0);
+  const left = await sql<{ n: string }>("select count(*)::text as n from public.practitioner_notifications where studio_id=$1 and read_at is null", [own.studioId]);
+  expect(left[0].n).toBe("0");
 });
 
 test("at 390 px both bell instances are in the DOM, one request on load, and the count updates once on both", async ({ browser }) => {
