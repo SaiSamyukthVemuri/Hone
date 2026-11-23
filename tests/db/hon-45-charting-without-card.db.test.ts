@@ -450,4 +450,63 @@ describe("HON-45 — clinical completion, appointment completion, payment and ch
     const owner = await signIn(s.practitionerId, "hon45-guard-owner");
     expect(await ownerUnpaid(owner, s.studioId, false)).toEqual({ ok: false });
   });
+
+  it("Finish pressed again, and from two sessions at once, completes the visit once and takes no payment", async () => {
+    const s = await cardlessChartedVisit();
+    const finish = () =>
+      adminQuery(`select public.mark_appointment_complete($1, $2, $3) as r`, [s.appointmentId, s.studioId, s.practitionerId]).then(
+        (r) => ({ ok: true as const, value: JSON.stringify(r.rows[0]?.r ?? null) }),
+        (e: { message?: string }) => ({ ok: false as const, error: String(e.message ?? e) }),
+      );
+    const audit = async () =>
+      (await adminQuery(`select count(*)::int as n from public.appointment_audit where appointment_id = $1 and action = 'marked_complete'`, [s.appointmentId]))
+        .rows[0].n as number;
+    // The fixture already completed it once.
+    expect(await audit()).toBe(1);
+
+    const again = await finish();
+    const together = await Promise.all([finish(), finish()]);
+    // Whatever each repeat answers (a result or a refusal), the facts must not move.
+    console.info("HON-45 D1 repeat results:", JSON.stringify([again, ...together]));
+    expect(await audit()).toBe(1);
+    expect(await chartIntact(s)).toEqual(INTACT_UNPAID);
+    expect(await settlements(s.studioId)).toHaveLength(0);
+    expect(await cardFacts(s.studioId)).toEqual({ attempts: 0, accounts: 0, cards: 0 });
+    const pay = await adminQuery(`select count(*)::int as n from public.appointment_payments where appointment_id = $1`, [s.appointmentId]);
+    expect(pay.rows[0].n).toBe(0);
+  });
+
+  it("two sessions pressing Finish at the same moment on a started visit complete it exactly once", async () => {
+    // A CONFIRMED appointment that has started and not been completed: the real race the repeat case above cannot reach.
+    const s = await seedEligibleQuickCheckoutScenario({
+      label: "hon45-race",
+      connect: "missing_account",
+      withCard: false,
+      bookedService: { name: "Electrolysis 60", priceCents: PRICE },
+      appointmentStatus: "confirmed",
+      withSession: false,
+    });
+    created.push(s.studioId);
+    const finish = () =>
+      adminQuery(`select public.mark_appointment_complete($1, $2, $3) as r`, [s.appointmentId, s.studioId, s.practitionerId]).then(
+        () => "completed" as const,
+        (e: { message?: string }) => String(e.message ?? e),
+      );
+    const before = await adminQuery(`select status from public.appointments where id = $1`, [s.appointmentId]);
+    expect(before.rows[0].status).toBe("confirmed");
+
+    const results = await Promise.all([finish(), finish()]);
+    console.info("HON-45 D1 race results:", JSON.stringify(results));
+    expect(results.filter((r) => r === "completed")).toHaveLength(1);
+    expect(results.filter((r) => r !== "completed")).toEqual([expect.stringMatching(/not confirmed/i)]);
+    const after = await adminQuery(
+      `select (select status from public.appointments where id = $1) as status,
+              (select count(*)::int from public.appointment_audit where appointment_id = $1 and action = 'marked_complete') as audits,
+              (select count(*)::int from public.appointment_payments where appointment_id = $1) as payments`,
+      [s.appointmentId],
+    );
+    expect(after.rows[0]).toEqual({ status: "completed", audits: 1, payments: 0 });
+    expect(await settlements(s.studioId)).toHaveLength(0);
+    expect(await cardFacts(s.studioId)).toEqual({ attempts: 0, accounts: 0, cards: 0 });
+  });
 });
