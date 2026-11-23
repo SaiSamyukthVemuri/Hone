@@ -12,6 +12,7 @@ const ACTIONS = readFileSync(
 );
 
 const booking = vi.hoisted(() => ({
+  managed: false,
   assignedId: "B",
   assigned: { id: "B", studio_id: "studio", active: true, display_name: "Assigned B", email: "b@example.test" },
   lookupError: false,
@@ -29,7 +30,7 @@ const booking = vi.hoisted(() => ({
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/supabase/queries", () => ({ getCurrentPractitionerWithStudio: async () => ({
   practitioner: { id: "A", role: "owner", active: true, display_name: "Owner A", email: "a@example.test" },
-  studio: { id: "studio", timezone: "America/Toronto", practitioner_capacity_enabled: booking.capacityEnabled,
+  studio: { studio_managed_appointments: booking.managed, id: "studio", timezone: "America/Toronto", practitioner_capacity_enabled: booking.capacityEnabled,
     default_appointment_duration_minutes: 60, buffer_minutes: 0, send_confirmation_emails: true },
 }) }));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({ rpc: booking.rpc }) }));
@@ -73,6 +74,7 @@ function bookFor(target = "B") {
 }
 
 beforeEach(() => {
+  booking.managed = false;
   booking.onSlotsRead = null;
   booking.capacityEnabled = true;
   booking.slotError = null; booking.emptySlots = false; booking.rpcResult = "created"; booking.rpcError = null;
@@ -230,5 +232,15 @@ describe("SCH-002 internal client discovery uses its typed retryable refusal", (
   it("retains a successful slot read without any booking command", async () => {
     expect(await discover()).toEqual({ ok: true, slots: [{ start: "2099-01-01T15:00:00.000Z", end: "2099-01-01T16:00:00.000Z" }] });
     expect(booking.rpc).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("staff booking remains available while studio-managed mode is on",()=>{
+  it("the authenticated owner still books through the internal command and sends confirmation",async()=>{
+    booking.managed=true;
+    expect(await bookFor()).toEqual({ok:true,appointmentId:"appointment"});
+    expect(booking.rpc).toHaveBeenCalledWith("create_internal_appointment_v2",expect.objectContaining({p_actor_practitioner_id:"A"}));
+    expect(booking.clientEmail).toHaveBeenCalledOnce();
   });
 });

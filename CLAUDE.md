@@ -2,6 +2,10 @@
 
 Working agreements for anyone (human or agent) changing this repository.
 
+## Default development workflow
+
+@docs/engineering/pstack.md
+
 ---
 
 ## Engineering standards — read this first

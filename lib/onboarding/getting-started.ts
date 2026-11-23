@@ -99,6 +99,26 @@ export type GettingStartedSignals = {
   nextStepSignalsAvailable: boolean;
 };
 
+/**
+ * The words for the link on a checklist row: it names where the link goes, not
+ * the status sentence beside it ("Open Studio profile exists" reads wrongly).
+ * Keyed on the destination path, so a row cannot drift from its own href.
+ */
+export function checklistLinkDestination(href: string): string {
+  const path = href.split("?")[0];
+  if (path === "/calendar") return "calendar";
+  if (path === "/clients") return "clients";
+  if (path === "/dashboard") return "dashboard";
+  if (path === "/records" || path.startsWith("/records/")) return "records";
+  if (path === "/settings/profile") return "profile settings";
+  if (path === "/settings/services") return "services";
+  if (path === "/settings/booking") return "booking settings";
+  if (path === "/settings/payments") return "payment settings";
+  if (path === "/settings/consent") return "consent settings";
+  if (path === "/settings/studio/email") return "email settings";
+  return "this step";
+}
+
 function auto(
   key: string,
   label: string,

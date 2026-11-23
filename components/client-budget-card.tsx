@@ -60,8 +60,8 @@ export function ClientBudgetCardUnavailable() {
         Budget information could not be loaded. Try again.
       </p>
       <p className="text-xs text-neutral-500">
-        Nothing has been changed. Reload the page to try again — any budget
-        already saved for this client is still there.
+        Nothing has been changed. Any budget already saved for this client is
+        still there. Reload the page to try again.
       </p>
     </section>
   );
@@ -118,7 +118,7 @@ export function ClientBudgetCard({
         </h2>
         <p className="text-xs text-neutral-500">
           Record financial preferences or limits that can affect how you plan
-          treatment. Practitioner-only — never shown to the client.
+          treatment. Practitioner-only. Never shown to the client.
         </p>
       </header>
 

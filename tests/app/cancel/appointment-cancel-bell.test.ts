@@ -70,6 +70,9 @@ function makeQuery(table: string) {
           (scenario.ownersError ? { data: null, error: { code: "XX000", message: "PRIVATE owner read" } } : { data: scenario.owners.map((id) => ({ id })), error: null }) as never,
         );
       }
+      if (table === "practitioners" && columns === "display_name, email") {
+        return resolve({ data: [{ display_name: "Synthetic owner", email: "owner@example.invalid" }], error: null } as never);
+      }
       if (table !== "practitioner_notifications" || !pending) return resolve({ error: null });
       if (scenario.insertDelayMs > 0) {
         const row = pending;

@@ -77,7 +77,7 @@ const ALL_OFF: Flags = {
   client_portal_enabled: false,
 };
 
-function confirmation(s: Studio) {
+function confirmation(s: Studio, intakeUrl: string | null = null) {
   return sendBookingConfirmationToClient({
     appointment: APPOINTMENT,
     service: { name: "Synthetic Service", default_duration_minutes: 45, pre_care_instructions: null },
@@ -87,7 +87,7 @@ function confirmation(s: Studio) {
     clientEmail: "client@example.invalid",
     cancellationUrl: CANCEL,
     rescheduleUrl: RESCHEDULE,
-    intakeUrl: null,
+    intakeUrl,
     treatmentTimeLine: null,
     appBaseUrl: ORIGIN,
   });
@@ -269,5 +269,21 @@ describe("the selected initial policy (all three off): reminders still deliver, 
     expect(last().both).toContain(BOOK);
     expect((await send(studio({ client_portal_enabled: false }))).ok).toBe(true);
     expect(last().both).not.toContain("/book/");
+  });
+});
+
+
+describe("studio-managed appointment messages",()=>{
+  it("still sends confirmation without portal, cancel or reschedule links",async()=>{
+    const r=await confirmation(studio({studio_managed_appointments:true}),`${ORIGIN}/intake/standalone`);
+    expect(r.ok).toBe(true); expect(sent).toHaveLength(1);
+    for(const url of [CANCEL,RESCHEDULE,PORTAL]) expect(sent[0].html).not.toContain(url);
+    expect(sent[0].text).toContain("Synthetic Service");
+    expect(sent[0].html).toContain(`${ORIGIN}/intake/standalone`);
+  });
+  it.each(["24h","2h"] as const)("still sends the %s reminder without self-service links",async kind=>{
+    const r=await reminder(kind,studio({studio_managed_appointments:true}));
+    expect(r.ok).toBe(true); expect(sent).toHaveLength(1);
+    for(const url of [CANCEL,RESCHEDULE,PORTAL]) expect(sent[0].html).not.toContain(url);
   });
 });

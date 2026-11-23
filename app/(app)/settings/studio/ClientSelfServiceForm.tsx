@@ -29,10 +29,12 @@ const ROWS: ReadonlyArray<{
 export function ClientSelfServiceForm({
   initial,
   portalEnabled = true,
+  studioManaged = false,
 }: {
   initial: Initial;
   // HON-47. Read-only status; the portal switch itself is not on this page.
   portalEnabled?: boolean;
+  studioManaged?: boolean;
 }) {
   const [state, setState] = useState(initial);
   const [pending, startTransition] = useTransition();
@@ -68,6 +70,7 @@ export function ClientSelfServiceForm({
           aftercare emails keep sending either way; only the cancel and reschedule options change. The client portal and online rebooking are not affected by these switches.
         </p>
       </div>
+      {studioManaged && <p className="text-sm text-neutral-500">Studio-managed appointments is on. These saved preferences apply again when you turn it off.</p>}
       {!portalEnabled && (
         <p
           data-testid="client-portal-off-status"
@@ -86,7 +89,7 @@ export function ClientSelfServiceForm({
             <button
               type="button"
               onClick={() => toggle(r.key)}
-              disabled={pending}
+              disabled={pending || studioManaged}
               aria-pressed={state[r.key]}
               aria-label={r.label}
               className={`relative h-6 w-11 shrink-0 rounded-full transition disabled:opacity-50 ${

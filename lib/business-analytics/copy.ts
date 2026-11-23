@@ -59,9 +59,8 @@ export const EVIDENCE_NOT_READABLE_NOTE = "This kind of price evidence cannot be
 // ---------------------------------------------------------------------------
 // The page's own words (the header, the tabs and the follow-through cards).
 // ---------------------------------------------------------------------------
-export const ANALYTICS_TITLE = "Your practice, in perspective.";
-export const ANALYTICS_SUBTITLE = "Clients, capacity, treatments and the health of your practice.";
-export const ANALYTICS_TABS = ["Overview", "Clients", "Capacity", "Treatments", "Team"] as const;
+export const ANALYTICS_TITLE = "Analytics";
+export const ANALYTICS_TABS = ["Overview", "Clients", "Waitlist", "Capacity", "Treatments", "Team"] as const;
 export const TABS_NOT_AVAILABLE_NOTE = "Capacity, Treatments and Team are not available yet.";
 /** Charts with unfinished sections come from clinical records, which need their own permissions design before this page can count them. */
 export const UNFINISHED_CHARTS_UNAVAILABLE = "Not available yet. This comes from clinical records, which need their own permissions design before Analytics can show it.";
@@ -72,7 +71,7 @@ export const BEYOND_USUAL_FILTER_NOTE = "With a team-member filter, this counts 
 // ---------------------------------------------------------------------------
 // Named clients (owner-only). Display names only; the lists are never in the spreadsheet and never on the printed page.
 // ---------------------------------------------------------------------------
-export const NAMED_CLIENTS_TITLE = "Your client relationships";
+export const NAMED_CLIENTS_TITLE = "Client rankings";
 export const NAMED_CLIENTS_PRINT_NOTE = "Client names are left off the printed page.";
 /** Said once under the lists, so a cut-off is never silent. `seen` is every client with a completed visit in the period. */
 export const namedClientsCap = (seen: number, size: number): string =>
@@ -99,3 +98,4 @@ export const clientsRowsLine = (from: number, to: number, shown: number, seen: n
 export const CLIENTS_NOT_LISTED = (n: number): string => `${n} ${n === 1 ? "client seen in this period is" : "clients seen in this period are"} not listed because they are archived or have no name on record. They are counted in every total.`;
 export const CLIENTS_SORT_NOTE = "Sort, filters and pages change only the order and which rows show. No figure above changes.";
 export const CLIENTS_RECON_INTRO = "How the clients' money adds up to the Overview's collected on completed visits. A difference is shown, never hidden.";
+

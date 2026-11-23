@@ -365,8 +365,8 @@ export async function SecondaryStack({
           <span className="text-sm font-medium">Getting started</span>
           <span className="text-xs text-neutral-500">
             {gettingStartedSignals.nextStepSignalsAvailable
-              ? `${gettingStarted.autoDone} of ${gettingStarted.autoTotal} steps complete →`
-              : "Some steps could not be checked just now →"}
+              ? `${gettingStarted.autoDone} of ${gettingStarted.autoTotal} steps complete`
+              : "Some steps could not be checked just now"}
           </span>
         </Link>
       )}
