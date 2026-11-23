@@ -463,14 +463,20 @@ describe("0375: cancelling an in-flight upload keeps its queue entry until the r
       // (2) An ack before the window ends is refused and the row survives (the object may still be about to land).
       expect((await serviceAck(mine)).rows[0].a, `${name}: ack before expiry`).toBe(false);
       expect(await row(mine), `${name}: the row survives the early ack`).toBeDefined();
-      // (3) A set after the cancel is refused. For remove and archive consent can still be current, so only the cancelled flag refuses it.
-      expect((await refusal(setPhoto(A.userId, c, mine))).code, `${name}: set after the cancel`).toBe(P0375);
+      // (3) A set after the cancel is refused. For withdraw the consent is gone; for remove consent is still current, so only the cleared
+      // reservation flag refuses it. An archived client is refused earlier still, at the client gate (check_violation), like every command.
+      expect((await refusal(setPhoto(A.userId, c, mine))).code, `${name}: set after the cancel`).toBe(name === "archive" ? CHECK_VIOLATION : P0375);
       expect(await row(mine), `${name}: a refused set leaves the row`).toBeDefined();
       // After the window ends, the worker is offered it and may delete whatever landed, then acknowledge.
       await makeDue(mine);
       expect(await offered(), `${name}: offered after the window`).toContain(mine);
-      expect((await serviceAck(mine)).rows[0].a, `${name}: ack after expiry`).toBe(true);
-      expect(await row(mine)).toBeUndefined();
+      // The ack must COMMIT to prove the row is really gone (asRole rolls back, so it only shows the return value).
+      const acked = await adminTx(async (q) => {
+        await q("set local role service_role");
+        return (await q(`select public.ack_client_id_photo_object_deletion($1) a`, [mine])).rows[0].a as boolean;
+      });
+      expect(acked, `${name}: ack after expiry`).toBe(true);
+      expect(await row(mine), `${name}: the acknowledged row is gone`).toBeUndefined();
       expect(await row(mine2), "the other cancelled row is still waiting for its own window").toBeDefined();
     });
   }
