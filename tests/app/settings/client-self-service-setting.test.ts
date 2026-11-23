@@ -9,6 +9,9 @@ import { clientSelfServicePolicyFromStudio } from "@/lib/booking/client-self-ser
 vi.mock("server-only", () => ({}));
 
 const st = vi.hoisted(() => ({
+  managed: false as unknown,
+  rpcResult: true as unknown,
+  rpcCalls: [] as Array<{ name: string; args: unknown }>,
   role: "owner" as string,
   studioId: "studio-A",
   updates: [] as Array<{ patch: Record<string, unknown>; id: unknown }>,
@@ -20,11 +23,12 @@ vi.mock("next/cache", () => ({ revalidatePath: (p: string) => st.revalidated.pus
 vi.mock("@/lib/supabase/queries", () => ({
   getCurrentPractitionerWithStudio: async () => ({
     practitioner: { role: st.role },
-    studio: { id: st.studioId },
+    studio: { id: st.studioId, studio_managed_appointments: st.managed },
   }),
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
+    rpc: async (name: string, args: unknown) => { st.rpcCalls.push({name, args}); return { data: st.rpcResult, error: st.error }; },
     from: (table: string) => {
       expect(table).toBe("studios");
       return {
@@ -47,6 +51,9 @@ function form(c: string | null, r: string | null): FormData {
 }
 
 beforeEach(() => {
+  st.managed = false;
+  st.rpcResult = true;
+  st.rpcCalls.length = 0;
   st.role = "owner";
   st.studioId = "studio-A";
   st.updates.length = 0;
@@ -159,6 +166,53 @@ describe("reminders and postcare are independent of the setting", () => {
     const src = read("app/(app)/settings/studio/client-self-service/page.tsx");
     expect(src).toContain('practitioner.role !== "owner"');
     expect(src).toContain("ClientSelfServiceForm");
-    expect(src).toContain("clientSelfServicePolicyFromStudio(studio)");
+    expect(src).toContain("clientSelfServicePolicyFromStudio({ ...studio, studio_managed_appointments: false })");
+  });
+});
+
+
+describe("studio-managed appointments owner command", () => {
+  function managedForm(value: string) { const f = new FormData(); f.set("studio_managed_appointments", value); f.set("studio_id", "other-studio"); return f; }
+  it("saves only the mode for the session-selected studio, ignoring a forged browser studio ID", async () => {
+    const { setStudioManagedAppointmentsAction } = await import("@/app/(app)/settings/studio/actions");
+    expect(await setStudioManagedAppointmentsAction(managedForm("true"))).toEqual({ok:true});
+    expect(st.rpcCalls).toEqual([{name:"set_studio_managed_appointments",args:{p_studio_id:"studio-A",p_enabled:true}}]);
+    expect(st.updates).toEqual([]);
+  });
+  it("an owner with another selected studio passes that selected studio rather than the posted ID", async () => {
+    st.studioId="studio-selected-B";
+    const { setStudioManagedAppointmentsAction } = await import("@/app/(app)/settings/studio/actions");
+    expect(await setStudioManagedAppointmentsAction(managedForm("true"))).toEqual({ok:true});
+    expect(st.rpcCalls).toEqual([{name:"set_studio_managed_appointments",args:{p_studio_id:"studio-selected-B",p_enabled:true}}]);
+    expect(st.updates).toEqual([]);
+  });
+  it("accepts the confirmed false result when restoring saved preferences", async () => {
+    st.managed=true; st.rpcResult=false;
+    const { setStudioManagedAppointmentsAction } = await import("@/app/(app)/settings/studio/actions");
+    expect(await setStudioManagedAppointmentsAction(managedForm("false"))).toEqual({ok:true});
+    expect(st.updates).toEqual([]);
+  });
+  it.each(["practitioner","receptionist"])("refuses %s without database writes",async role=>{
+    st.role=role;
+    const { setStudioManagedAppointmentsAction } = await import("@/app/(app)/settings/studio/actions");
+    expect((await setStudioManagedAppointmentsAction(managedForm("true"))).ok).toBe(false);
+    expect(st.rpcCalls).toEqual([]);
+  });
+  it.each(["on","TRUE",""])("rejects malformed %s before writes",async value=>{
+    const { setStudioManagedAppointmentsAction } = await import("@/app/(app)/settings/studio/actions");
+    expect((await setStudioManagedAppointmentsAction(managedForm(value))).ok).toBe(false);
+    expect(st.rpcCalls).toEqual([]);
+  });
+  it("does not offer activation before the schema exists",async()=>{
+    st.managed=undefined;
+    const { setStudioManagedAppointmentsAction } = await import("@/app/(app)/settings/studio/actions");
+    expect((await setStudioManagedAppointmentsAction(managedForm("true"))).ok).toBe(false);
+    expect(st.rpcCalls).toEqual([]);
+  });
+  it.each([null,false])("a missing or mismatched RPC response %s is not saved",async value=>{
+    st.rpcResult=value;
+    const { setStudioManagedAppointmentsAction } = await import("@/app/(app)/settings/studio/actions");
+    expect((await setStudioManagedAppointmentsAction(managedForm("true"))).ok).toBe(false);
+    expect(st.revalidated).toEqual([]);
   });
 });
