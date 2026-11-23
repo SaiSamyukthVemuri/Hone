@@ -82,15 +82,15 @@ const studio = { id: STUDIO, timezone: "America/Toronto" };
 const NOW = new Date("2026-11-19T18:00:00Z");
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 
-/** About 1,100 appointments over a year each side of now: several 500-row pages, tied start times (the keyset's tie-break), every status, two practitioners. */
+/** About 1,100 appointments straddling now (May 2026 to Jan 2027): several 500-row pages, tied start times (the keyset's tie-break), every status, two practitioners. */
 function synthetic(total = 1100) {
   const appointments: Row[] = [];
   const settlements: Row[] = [];
   const statuses = ["completed", "completed", "completed", "confirmed", "cancelled", "no_show"];
-  const base = Date.parse("2025-11-19T14:00:00Z");
+  const base = Date.parse("2026-05-01T14:00:00Z");
   for (let i = 0; i < total; i++) {
     // two appointments share every start (different practitioners), so the (starts_at, id) cursor is exercised on ties
-    const startsAt = new Date(base + Math.floor(i / 2) * 6 * 3600_000).toISOString().replace(".000Z", "+00:00");
+    const startsAt = new Date(base + Math.floor(i / 2) * 12 * 3600_000).toISOString().replace(".000Z", "+00:00");
     const status = statuses[i % statuses.length];
     appointments.push({ id: id(i + 1), studio_id: STUDIO, client_id: id(100000 + (i % 180)), starts_at: startsAt, status, practitioner_id: i % 2 ? "pr-2" : "pr-1", service_id: null, duration_minutes: 30 + (i % 3) * 15 });
     if (status === "completed") settlements.push({ appointment_id: id(i + 1), studio_id: STUDIO, superseded_at: null, method: i % 4 ? "paid_cash" : "paid_e_transfer", amount_cents: 6000 + (i % 7) * 500, currency: "cad", quoted_amount_cents: 6000 + (i % 7) * 500 });
@@ -110,10 +110,48 @@ const PERIODS: Array<[string, Record<string, string>]> = [
   ["month to date (default)", {}],
   ["previous month", { period: "previous_month" }],
   ["year to date", { period: "year_to_date" }],
-  ["custom range, preceding comparison", { period: "custom", from: "2026-03-01", to: "2026-04-30" }],
-  ["custom range, same dates last year", { period: "custom", from: "2026-03-01", to: "2026-04-30", compare: "same_dates_last_year" }],
+  ["custom range, preceding comparison", { period: "custom", from: "2026-06-01", to: "2026-07-31" }],
+  ["custom range, same dates last year", { period: "custom", from: "2026-06-01", to: "2026-07-31", compare: "same_dates_last_year" }],
   ["one practitioner", { practitioner: "pr-2" }],
 ];
+
+describe("the five appointment sets: the shared read cuts exactly the rows the separate reads returned, in the same order", () => {
+  const data = synthetic();
+  const instants = ["2026-11-19T18:00:00Z", "2026-05-01T14:00:00Z", "2026-08-15T03:30:00Z", "2027-02-01T00:00:00Z"];
+  for (const [label, raw] of PERIODS) {
+    for (const nowIso of instants) {
+      it(`${label}, now ${nowIso}: current, comparison, history, past and future are row-for-row identical`, async () => {
+        const { readSetsShared, readSetsSeparately } = await import("@/lib/business-analytics/server/overview-read");
+        const { resolvePeriod } = await import("@/lib/business-analytics/period");
+        const { parseOverviewParams } = await import("@/lib/business-analytics/overview-params");
+        const { localDateString } = await import("@/lib/booking/tz");
+        const now = new Date(nowIso);
+        const parsed = parseOverviewParams(raw, { strict: false, practitionerIds: new Set(["pr-1", "pr-2"]) });
+        if (!parsed.ok) throw new Error("params");
+        const resolved = resolvePeriod({ kind: parsed.params.periodKind, today: localDateString(now, studio.timezone), from: parsed.params.from, to: parsed.params.to, customComparison: parsed.params.compare });
+        if (!resolved.ok) return; // an invalid period never reads
+        const separate = await readSetsSeparately(studioClient(data).client, STUDIO, studio.timezone, resolved.period, now);
+        const shared = await readSetsShared(studioClient(data).client, STUDIO, studio.timezone, resolved.period, now);
+        expect(shared).not.toBeNull();
+        expect(shared).toEqual(separate);
+        // anti-vacuity: the ranges are different, populated sets, so equality is not two empty lists
+        expect((shared as NonNullable<typeof shared>).history.ok && (shared as NonNullable<typeof shared>).past.ok).toBe(true);
+      });
+    }
+  }
+  it("anti-vacuity: across these periods the sets are populated and differ from one another", async () => {
+    const { readSetsShared } = await import("@/lib/business-analytics/server/overview-read");
+    const { resolvePeriod } = await import("@/lib/business-analytics/period");
+    const r = resolvePeriod({ kind: "previous_month", today: "2026-11-19", from: undefined, to: undefined, customComparison: "preceding" });
+    if (!r.ok) throw new Error("period");
+    const sets = await readSetsShared(studioClient(data).client, STUDIO, studio.timezone, r.period, NOW);
+    const n = (x: unknown) => ((x as { ok: true; rows: unknown[] }).rows.length);
+    const s = sets as NonNullable<typeof sets>;
+    const counts = [n(s.current), n(s.comparison), n(s.history), n(s.past), n(s.future)];
+    expect(counts.every((c) => c > 0), JSON.stringify(counts)).toBe(true);
+    expect(new Set(counts).size).toBe(5);
+  });
+});
 
 describe("the Overview read: the shared appointment read returns exactly what the separate reads did", () => {
   const data = synthetic();

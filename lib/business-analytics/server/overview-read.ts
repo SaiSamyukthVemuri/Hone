@@ -90,7 +90,8 @@ const readFailure = (reason: "read_failed" | "too_many_appointments"): { ok: fal
 export type AppointmentReadStrategy = "shared" | "separate";
 type ApptSets = { current: ApptRead; comparison: ApptRead; history: ApptRead; past: ApptRead; future: ApptRead };
 
-async function readSetsSeparately(supabase: SupabaseClient, studioId: string, timezone: string, period: ResolvedPeriod, now: Date): Promise<ApptSets> {
+/** Exported for the equivalence test only: the two ways of reading the five sets. */
+export async function readSetsSeparately(supabase: SupabaseClient, studioId: string, timezone: string, period: ResolvedPeriod, now: Date): Promise<ApptSets> {
   const cw = windowInstants(period.current, timezone);
   const pw = windowInstants(period.comparison, timezone);
   const current = await readAppointmentsKeyset(supabase, studioId, { startUtc: cw.startUtc, endUtc: cw.endUtc });
@@ -105,7 +106,7 @@ async function readSetsSeparately(supabase: SupabaseClient, studioId: string, ti
 
 const SUB_MILLISECOND = /\.\d{3}\d*[1-9]/;
 
-async function readSetsShared(supabase: SupabaseClient, studioId: string, timezone: string, period: ResolvedPeriod, now: Date): Promise<ApptSets | null> {
+export async function readSetsShared(supabase: SupabaseClient, studioId: string, timezone: string, period: ResolvedPeriod, now: Date): Promise<ApptSets | null> {
   const all = await readAppointmentsKeyset(supabase, studioId, {});
   if (!all.ok) return null;
   const at = new Map<string, number>();
