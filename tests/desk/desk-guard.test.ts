@@ -70,9 +70,9 @@ describe("requireReceptionistWithStudio", () => {
 
   it("two studios and no valid selection goes to the chooser, never auto-picked", async () => {
     state.rows = [{ id: "r1", studio_id: "s1", display_name: "A" }, { id: "r2", studio_id: "s2", display_name: "B" }];
-    expect(await where()).toBe("/no-access?reason=multiple-studios");
+    expect(await where()).toBe("/desk/choose");
     state.selected = "s3-held-only-as-practitioner";
-    expect(await where()).toBe("/no-access?reason=multiple-studios");
+    expect(await where()).toBe("/desk/choose");
   });
 
   it("two studios and a selection naming one of them resolves to it", async () => {

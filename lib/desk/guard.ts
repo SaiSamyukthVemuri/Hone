@@ -33,7 +33,7 @@ const loadDeskRows = cache(async (): Promise<DeskRows> => {
 
 /**
  * For pages, layouts and server components. Flag off: 404 (the desk does not exist). Then: anonymous -> /login; no
- * active receptionist row -> /no-access; two or more studios with no valid selection -> /no-access?reason=multiple-studios.
+ * active receptionist row -> /no-access; two or more studios with no valid selection -> /desk/choose (the receptionist chooser).
  *
  * A layout's redirect does not stop its page from running, so EVERY desk page and layout calls this itself
  * (tests/desk/desk-source-contract.test.ts pins it).
@@ -44,6 +44,20 @@ export async function requireReceptionistWithStudio(): Promise<DeskIdentity> {
   if (identity.kind === "anonymous") redirect("/login");
   const membership = resolveDeskMembership(identity.rows, await readSelectedStudioId());
   if (membership.kind === "none") redirect("/no-access");
-  if (membership.kind === "choose") redirect("/no-access?reason=multiple-studios");
+  if (membership.kind === "choose") redirect("/desk/choose");
   return membership.value;
+}
+
+/**
+ * For the studio chooser page and its action only. Flag off: 404. Anonymous -> /login. No active receptionist row ->
+ * /no-access. Exactly one studio -> /desk (a single studio never sees the chooser). Otherwise the user's ACTIVE
+ * receptionist rows, read through the signed-in client, which is the only list the chooser may show.
+ */
+export async function requireReceptionistChoice(): Promise<ReceptionistRow[]> {
+  if (!isDeskEnabled()) notFound();
+  const identity = await loadDeskRows();
+  if (identity.kind === "anonymous") redirect("/login");
+  if (identity.rows.length === 0) redirect("/no-access");
+  if (identity.rows.length === 1) redirect("/desk");
+  return identity.rows;
 }

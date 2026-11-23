@@ -2,10 +2,10 @@
 // under /desk is carved out of the practitioner gate unless this environment variable is exactly "true". Absent,
 // empty or any other value is OFF. It is read at request time, never cached, never derived from the database.
 //
-// BEFORE THE FLAG IS TURNED ON (checklist): a receptionist who holds a receptionist row in TWO OR MORE studios and has no
-// valid studio selection is sent to /no-access?reason=multiple-studios, which lists practitioner memberships only, and
-// that page links back to /desk, so the person loops. Multi-studio receptionists are UNSUPPORTED until a receptionist
-// studio chooser exists. Do not give a receptionist rows in more than one studio while the desk is in use.
+// BEFORE THE FLAG IS TURNED ON (checklist): a receptionist on the books of TWO OR MORE studios with no valid studio
+// selection is sent to /desk/choose (the receptionist chooser). It lists only that user's active receptionist studios,
+// by position and the display name each studio gave them, because a receptionist cannot read a studio's name. Showing
+// real studio names needs a database change and is not done here.
 //
 // OPERATIONS: the value is read from the process environment, which a hosted deployment fixes when it is built and
 // started. Changing the variable there takes effect only after a redeploy, so an emergency OFF is a redeploy.

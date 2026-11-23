@@ -11,7 +11,7 @@ const walk = (dir: string): string[] =>
     const rel = join(dir, n);
     return statSync(join(ROOT, rel)).isDirectory() ? walk(rel) : [rel];
   });
-const files = [...walk("app/(desk)"), ...walk("lib/desk")].filter((f) => /\.tsx?$/.test(f));
+const files = [...walk("app/(desk)"), ...walk("app/(desk-choose)"), ...walk("lib/desk")].filter((f) => /\.tsx?$/.test(f));
 const src = (f: string) => readFileSync(join(ROOT, f), "utf8");
 const pages = files.filter((f) => /\/page\.tsx$/.test(f));
 const stripComments = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
@@ -34,10 +34,18 @@ describe("the desk surface", () => {
     for (const f of files) expect(/^\s*["']use client["']/m.test(src(f)), f).toBe(false);
   });
 
-  it("writes nothing and has no server action", () => {
+  it("writes nothing; its one server action only sets the selected-studio cookie", () => {
+    const ACTION = "lib/desk/choose-actions.ts";
+    expect(files.filter((f) => /^\s*["']use server["']/m.test(stripComments(src(f))))).toEqual([ACTION]);
+    const a = stripComments(src(ACTION));
+    expect((a.match(/export async function/g) ?? []).length).toBe(1);
+    expect(a).toMatch(/setSelectedStudioId\(/);
+    expect(/createClient|\.from\(|\.rpc\(|@\/lib\/supabase\/(server|client)/.test(a), "the action reads through the guard only and writes nothing else").toBe(false);
+    // The action re-reads the user's active rows before it sets the cookie.
+    expect(a.indexOf("await requireReceptionistChoice()")).toBeGreaterThan(-1);
+    expect(a.indexOf("await requireReceptionistChoice()")).toBeLessThan(a.indexOf("setSelectedStudioId("));
     for (const f of files) {
       const s = stripComments(src(f));
-      expect(/["']use server["']/.test(s), f).toBe(false);
       expect(/\.(insert|update|upsert|delete)\s*\(/.test(s), f).toBe(false);
     }
   });
@@ -52,8 +60,10 @@ describe("the desk surface", () => {
   it("calls the guard in the layout and in every page (a layout's redirect does not stop its page)", () => {
     // On the code with comments removed, and as an awaited call: a commented-out call or a bare reference must not pass.
     const awaited = /await\s+requireReceptionistWithStudio\(\)/;
+    const awaitedChoice = /await\s+requireReceptionistChoice\(\)/;
     expect(stripComments(src("app/(desk)/layout.tsx"))).toMatch(awaited);
-    for (const p of pages) expect(stripComments(src(p)), p).toMatch(awaited);
+    for (const p of pages) expect(stripComments(src(p)), p).toMatch(p === "app/(desk-choose)/desk/choose/page.tsx" ? awaitedChoice : awaited);
+    expect(pages).toContain("app/(desk-choose)/desk/choose/page.tsx");
   });
 
   it("is dynamic and never statically generated or revalidated", () => {
@@ -82,6 +92,8 @@ describe("the desk surface", () => {
       "app/(desk)/desk/ClockFallbackNotice.tsx",
       "app/(desk)/desk/page.tsx",
       "app/(desk)/layout.tsx",
+      "app/(desk-choose)/desk/choose/page.tsx",
+      "lib/desk/choose-actions.ts",
       "lib/desk/entry.ts",
       "lib/desk/flag.ts",
       "lib/desk/guard.ts",
