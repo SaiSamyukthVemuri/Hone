@@ -164,9 +164,14 @@ test("everyone selected: the Week and Month totals are the sum of the five", asy
 
 async function phone(browser: import("@playwright/test").Browser): Promise<Page> {
   const ctx = await browser.newContext({ ...IPHONE });
-  const page = await ctx.newPage();
-  await loginByMagicLink(page, t.seed.ownerEmail);
-  return page;
+  try {
+    const page = await ctx.newPage();
+    await loginByMagicLink(page, t.seed.ownerEmail);
+    return page;
+  } catch (e) {
+    await ctx.close(); // a failed sign-in must not leak the context
+    throw e;
+  }
 }
 
 async function noSideScroll(page: Page, what: string) {
@@ -176,31 +181,37 @@ async function noSideScroll(page: Page, what: string) {
 
 test("phone: Month for one practitioner shows their own day total and fits the screen", async ({ browser }) => {
   const page = await phone(browser);
-  for (const key of ["bo", "ed"]) {
-    const u = t.users.find((x) => x.key === key)!;
-    await page.goto(monthUrl(t.day, [u.practitionerId]));
-    expect(await monthCellTotal(page, t.day), `${key}: phone Month day cell`).toBe(COUNTS[key]);
-    await noSideScroll(page, `${key} Month`);
-    const box = (await page.locator(`a[href*="day=${t.day}"]`).first().boundingBox())!;
-    expect(box.width, "the day cell is a usable tap target").toBeGreaterThanOrEqual(43.5);
-    expect(box.height, "the day cell is a usable tap target").toBeGreaterThanOrEqual(43.5);
+  try {
+    for (const key of ["bo", "ed"]) {
+      const u = t.users.find((x) => x.key === key)!;
+      await page.goto(monthUrl(t.day, [u.practitionerId]));
+      expect(await monthCellTotal(page, t.day), `${key}: phone Month day cell`).toBe(COUNTS[key]);
+      await noSideScroll(page, `${key} Month`);
+      const box = (await page.locator(`a[href*="day=${t.day}"]`).first().boundingBox())!;
+      expect(box.width, "the day cell is a usable tap target").toBeGreaterThanOrEqual(43.5);
+      expect(box.height, "the day cell is a usable tap target").toBeGreaterThanOrEqual(43.5);
+    }
+  } finally {
+    await page.context().close();
   }
-  await page.context().close();
 });
 
 test("phone: Week for one practitioner opens on the day and names their own clients, not anyone else's", async ({ browser }) => {
   const page = await phone(browser);
-  for (const key of ["bo", "ed"]) {
-    const u = t.users.find((x) => x.key === key)!;
-    await page.goto(weekUrl(t.day, [u.practitionerId]));
-    const main = page.getByRole("main");
-    await expect(main).toBeVisible();
-    await noSideScroll(page, `${key} Week`);
-    const text = await main.innerText();
-    for (const mine of clientsOf[key]) expect(text, `${key}: phone Week reaches their client ${mine}`).toContain(mine);
-    for (const other of Object.keys(COUNTS).filter((k) => k !== key)) {
-      for (const theirs of clientsOf[other]) expect(text, `${key}: phone Week must not show ${other}'s client`).not.toContain(theirs);
+  try {
+    for (const key of ["bo", "ed"]) {
+      const u = t.users.find((x) => x.key === key)!;
+      await page.goto(weekUrl(t.day, [u.practitionerId]));
+      const main = page.getByRole("main");
+      await expect(main).toBeVisible();
+      await noSideScroll(page, `${key} Week`);
+      const text = await main.innerText();
+      for (const mine of clientsOf[key]) expect(text, `${key}: phone Week reaches their client ${mine}`).toContain(mine);
+      for (const other of Object.keys(COUNTS).filter((k) => k !== key)) {
+        for (const theirs of clientsOf[other]) expect(text, `${key}: phone Week must not show ${other}'s client`).not.toContain(theirs);
+      }
     }
+  } finally {
+    await page.context().close();
   }
-  await page.context().close();
 });
