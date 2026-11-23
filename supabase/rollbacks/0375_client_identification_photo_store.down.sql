@@ -24,6 +24,9 @@
 --     a rollback gains nothing from reopening it.
 --   * the pointer guard trigger on clients (portrait_image_id) is dropped, because the up
 --     creates it and a re-apply must be able to.
+--     After the down, the pointer column is writable through the clients table as it was
+--     before this migration; the old setter stays revoked and the portrait stays off in the
+--     application.
 --   * the client-archive trigger on clients is dropped.
 -- Dropping the triggers takes a brief ACCESS EXCLUSIVE lock on clients, bounded by the lock
 -- timeout below; if clients is busy the file fails and changes nothing.

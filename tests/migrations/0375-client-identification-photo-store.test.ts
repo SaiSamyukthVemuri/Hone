@@ -271,6 +271,11 @@ describe("0375 rollback", () => {
     expect(head).toMatch(/EXPORT THOSE TABLES FIRST/);
     expect(head).toMatch(/set hone\.confirm_destroy_consent_evidence = 'yes';/);
     expect(head).toMatch(/STAYS REVOKED from public, anon, authenticated and\s+--\s+service_role/);
+    // The accepted consequence of dropping the pointer guard, in plain words (line breaks and comment markers ignored).
+    const flat = head.replace(/\n--\s*/g, " ");
+    expect(flat).toContain(
+      "After the down, the pointer column is writable through the clients table as it was before this migration; the old setter stays revoked and the portrait stays off in the application.",
+    );
   });
 
   it("opens its own transaction with a lock timeout, locks BEFORE it checks, refuses, then drops", () => {
