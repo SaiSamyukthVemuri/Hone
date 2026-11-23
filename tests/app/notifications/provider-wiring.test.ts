@@ -202,19 +202,24 @@ describe("the request the provider sends", () => {
     expect(fetchCalls[0].init.signal).toBeInstanceOf(AbortSignal);
   });
 
-  it("an opaque redirect is a signed-out answer: three of them stop the poller, with no extra request after", async () => {
+  it("an opaque redirect is a signed-out answer: exactly three requests, then NO focus event or timer sends another", async () => {
     mount(START);
     await vi.advanceTimersByTimeAsync(0);
     for (let i = 0; i < 3; i++) {
+      expect(fetchCalls, `request ${i + 1} is the only one in flight`).toHaveLength(i + 1);
       await respond({ status: 0, type: "opaqueredirect", json: async () => ({}) });
-      fire("focus");
-      await vi.advanceTimersByTimeAsync(0);
+      if (i < 2) {
+        fire("focus"); // a signed-out answer is confirmed by asking again, so focus starts the next request
+        await vi.advanceTimersByTimeAsync(0);
+      }
     }
-    const sent = fetchCalls.length;
-    await respond({ status: 0, type: "opaqueredirect", json: async () => ({}) }).catch(() => {});
-    fire("focus");
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(fetchCalls.length).toBeLessThanOrEqual(sent + 1);
+    expect(fetchCalls, "exactly three requests were sent").toHaveLength(3);
+    for (let k = 0; k < 3; k++) {
+      fire("focus");
+      fire("visibilitychange");
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+    }
+    expect(fetchCalls, "the stopped poller sends none").toHaveLength(3);
     expect(latest?.unread).toBe(0);
   });
 });
