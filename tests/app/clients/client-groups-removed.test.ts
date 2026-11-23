@@ -15,9 +15,9 @@ const read = (p: string) => readFileSync(p, "utf8");
 describe("removed client groups", () => {
   beforeEach(() => mocks.redirect.mockClear());
 
-  it("/clients/groups redirects to /clients and reads nothing", async () => {
+  it("/clients/groups resolves identity, then redirects to /clients and reads nothing else", async () => {
     const { default: Page } = await import("@/app/(app)/clients/groups/page");
-    expect(() => Page()).toThrow("REDIRECT:/clients");
+    await expect(Page()).rejects.toThrow("REDIRECT:/clients");
   });
 
   it("an old ?group= link redirects to /clients keeping only the standard view, search, filters and sort", async () => {
