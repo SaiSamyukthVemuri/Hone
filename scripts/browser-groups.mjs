@@ -288,6 +288,9 @@ export const BROWSER_GROUPS = {
       "hon48-five-user-denial.spec.ts",
       "hon48-returning-client-lookup.spec.ts",
       "hon48-tablet-phone-selection.spec.ts",
+      // HON-48 Week and Month per practitioner (five synthetic practitioners with different booking counts, a moved booking, a lunch block,
+      // a crowded day) at desktop width and at iPhone width. REQUIRED, like the five above.
+      "hon48-week-month-per-user.spec.ts",
       // HON-48 commit-visibility measurement rig (opt-in: self-skips unless HON48_TIMING_E2E=1).
       "hon48-commit-visibility-timing.spec.ts",
     ],
