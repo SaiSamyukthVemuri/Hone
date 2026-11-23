@@ -827,7 +827,9 @@ describe("PR CI — path-aware lane selection", () => {
     // nightly run 44344780024 shard 2 was CANCELLED at 25.2 min (212 of 243 passed, zero failures, 8.7 min setup), projected about 28 min
     // to finish; nightly shards otherwise took 13.3-22.8 min. The rule used above (measured + install ceiling + 1) gives 35.
     // Pinned exactly so shaving it back to a value just above one observation fails.
-    const MEASURED_NIGHTLY_SHARD = 28;
+    // A PROJECTION, not an observed finish: that shard was cancelled with 31 of 243 tests still to run (about 3 min), so the 28 is
+    // 25.2 min plus that estimate. The slowest shard that actually FINISHED took 22.8 min.
+    const PROJECTED_NIGHTLY_SHARD = 28;
     const doc = yaml.load(NIGHTLY) as { jobs: Record<string, { strategy?: { matrix?: { include?: { lane: string; timeout: number }[] } } }> };
     const lanes = Object.values(doc.jobs).flatMap((j) => j.strategy?.matrix?.include ?? []);
     const shards = lanes.filter((l) => /^core browser e2e \(shard \d\/4\)$/.test(l.lane));
@@ -835,9 +837,12 @@ describe("PR CI — path-aware lane selection", () => {
     const job = Object.values(doc.jobs).find((j) => (j as { steps?: PwStep[] }).steps?.some((s) => s.id === "pw-cache")) as { steps: PwStep[] };
     const ceiling = job.steps.find((s) => (s.run ?? "").includes(DEPS_SCRIPT))!["timeout-minutes"]!;
     for (const l of shards) {
-      expect(l.timeout, l.lane).toBeGreaterThanOrEqual(MEASURED_NIGHTLY_SHARD + ceiling + 1);
+      expect(l.timeout, l.lane).toBeGreaterThanOrEqual(PROJECTED_NIGHTLY_SHARD + ceiling + 1);
       expect(l.timeout, l.lane).toBe(35);
     }
+    // Mobile and google were deliberately NOT raised (6.5-9.4 and 6.9-9.4 min measured): pinned exactly so they cannot be shaved silently.
+    expect(lanes.find((l) => /^mobile completion e2e/.test(l.lane))!.timeout, "nightly mobile").toBe(15);
+    expect(lanes.find((l) => /^google e2e/.test(l.lane))!.timeout, "nightly google").toBe(18);
     expect(NIGHTLY).toMatch(/CORE SHARDS 25 -> 35 and PAYMENT 18 -> 23/);
     expect(NIGHTLY).toMatch(/44344780024/);
     expect(NIGHTLY).toMatch(/44565261584/);
