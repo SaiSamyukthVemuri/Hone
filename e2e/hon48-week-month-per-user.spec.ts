@@ -124,13 +124,14 @@ for (const key of Object.keys(COUNTS)) {
     }
     // MEASURED on the first run: the filter narrows which APPOINTMENTS are drawn, not the blocks, so cy's lunch block is drawn in every
     // practitioner's Week. What must hold is that it names the person it belongs to ("Lunch · Only <cy>") and that its private note
-    // never reaches any view.
+    // is not in the VISIBLE TEXT of the page. That is all this proves: it does not read element `title` attributes (hover tooltips) or the
+    // page payload, so it says nothing about whether the note is sent to the browser.
     const cy = t.users.find((x) => x.key === "cy")!;
     await expect(main).toContainText(`Lunch · Only ${cy.name}`);
     expect(weekText, `${key}: a lunch block names its owner (cy), never another practitioner`).not.toMatch(
       new RegExp(`Lunch · Only (?!${cy.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`),
     );
-    expect(weekText, `${key}: a block's private note is never shown`).not.toContain(lunchNote);
+    expect(weekText, `${key}: a block's private note is not in the visible text of the Week`).not.toContain(lunchNote);
 
     await page.goto(monthUrl(t.day, [u.practitionerId]));
     expect(await monthCellTotal(page, t.day), `${key}: the Month day cell accounts for every one of their bookings that day`).toBe(db.day);
