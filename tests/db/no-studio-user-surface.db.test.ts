@@ -814,6 +814,12 @@ const PINNED: string[] = [
   "fn public.audit_actor_is_caller(target_actor_id uuid, target_studio_id uuid)",
   "fn public.can_read_client_legal_identity(target_studio_id uuid)",
   "fn public.can_use_client_legal_identity(target_studio_id uuid)",
+  // 0375 (client identification photo store). Reviewed: each returns nothing for a no-studio user, because each is gated on
+  // client_id_photo_actor(studio), an ACTIVE owner or practitioner of THAT studio: can_read (the RLS predicate) is false,
+  // enabled is false, wording_current returns no rows. The five commands that write all refuse a no-studio user and are not listed.
+  "fn public.client_id_photo_can_read(p_studio_id uuid, p_client_id uuid)",
+  "fn public.client_id_photo_enabled(p_studio_id uuid)",
+  "fn public.client_id_photo_wording_current(p_studio_id uuid)",
   "fn public.dismiss_attention_item(p_studio uuid, p_item_key text, p_instance_token text)",
   "fn public.edit_client_pinned_note(p_studio_id uuid, p_client_id uuid, p_note_id uuid, p_original_text text, p_text text)",
   "fn public.is_studio_member(target_studio_id uuid)",

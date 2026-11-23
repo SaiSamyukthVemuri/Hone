@@ -59,9 +59,12 @@ async function seedConsentAndPhoto(): Promise<{ clientId: string; path: string }
 
 beforeAll(async () => {
   A = await seedStudio("idphoto-rt");
-  const w = await q(`select version, wording_sha256 from public.client_id_photo_wording_versions where version = 'v1.1'`);
-  wording = { version: w[0].version, sha: w[0].wording_sha256 };
+  // The seeded wording is UNAPPROVED; approve it (idempotent), then use whatever wording is CURRENT. In the shared database another suite may
+  // already have approved a LATER version, which supersedes v1.1, and a consent is only accepted against the current one.
   await q(`select public.approve_client_id_photo_wording('v1.1')`);
+  const cur = await userQuery(A.userId, `select version, wording_sha256 from public.client_id_photo_wording_current($1)`, [A.studioId]);
+  expect(cur.rows, "an approved wording is current for the owner").toHaveLength(1);
+  wording = { version: cur.rows[0].version, sha: cur.rows[0].wording_sha256 };
 });
 
 afterAll(async () => {
