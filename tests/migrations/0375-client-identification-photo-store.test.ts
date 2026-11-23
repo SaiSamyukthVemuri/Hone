@@ -268,19 +268,26 @@ describe("0375 rollback", () => {
     expect(head).toMatch(/seven tables/);
     expect(head).toMatch(/STORAGE OBJECTS MUST BE DRAINED FIRST/);
     expect(head).toMatch(/never touches storage/);
+    expect(head).toMatch(/EXPORT THOSE TABLES FIRST/);
+    expect(head).toMatch(/set hone\.confirm_destroy_consent_evidence = 'yes';/);
+    expect(head).toMatch(/STAYS REVOKED from public, anon, authenticated and\s+--\s+service_role/);
   });
 
   it("opens its own transaction with a lock timeout, locks BEFORE it checks, refuses, then drops", () => {
     expect(down).toMatch(/^begin;\nset local lock_timeout = '5s';/m);
     expect(down.trimEnd().endsWith("commit;")).toBe(true);
-    const lock = down.indexOf("lock table public.client_id_photos, public.client_id_photo_pending_object_deletions in access exclusive mode;");
+    const lock = down.search(
+      /lock table public\.client_id_photos, public\.client_id_photo_pending_object_deletions,\s+public\.client_id_photo_consents, public\.client_id_photo_audit, public\.studio_client_id_photo_switch_log\s+in access exclusive mode;/,
+    );
+    const refuseEvidence = down.indexOf("down refused: consent, withdrawal, switch-log or audit rows exist");
     const refusePhotos = down.indexOf("down refused: stored identification photos still exist");
     const refuseQueue = down.indexOf("down refused: storage objects are still queued for deletion");
     const firstDrop = down.indexOf("drop trigger if exists");
     expect(lock).toBeGreaterThan(0);
     expect(lock).toBeLessThan(refusePhotos);
     expect(refusePhotos).toBeLessThan(refuseQueue);
-    expect(refuseQueue).toBeLessThan(firstDrop);
+    expect(refuseQueue).toBeLessThan(refuseEvidence);
+    expect(refuseEvidence).toBeLessThan(firstDrop);
   });
 
   it("never reaches into storage: no SQL deletes or inserts storage objects or buckets", () => {
@@ -304,10 +311,17 @@ describe("0375 rollback", () => {
     expect(DOWN_EXECUTABLE).toMatch(/drop trigger if exists clients_portrait_pointer_frozen on public\.clients;/);
   });
 
-  it("restores the old setter's grant (authenticated only) and grants nothing else", () => {
-    expect(DOWN_EXECUTABLE).toMatch(/grant execute on function public\.set_client_portrait\(uuid, uuid, uuid\) to authenticated;/);
-    expect([...DOWN_EXECUTABLE.matchAll(/\bgrant\b/gi)]).toHaveLength(1);
-    const grantees = [...DOWN_EXECUTABLE.matchAll(/\bgrant\b[^;]*?\bto\s+([^;]+);/gi)].map((m) => m[1].trim());
-    expect(grantees, "the only grantee is authenticated").toEqual(["authenticated"]);
+  it("grants NOTHING and keeps the old setter revoked from public, anon, authenticated and service_role", () => {
+    expect(DOWN_EXECUTABLE, "no grant statement of any kind").not.toMatch(/\bgrant\b/i);
+    for (const role of ["public", "anon", "authenticated", "service_role"]) {
+      expect(DOWN_EXECUTABLE).toContain(`revoke execute on function public.set_client_portrait(uuid, uuid, uuid) from ${role};`);
+    }
+  });
+
+  it("refuses while consent, withdrawal, switch-log or audit rows exist, unless the session confirms with the exact setting", () => {
+    expect(DOWN_EXECUTABLE).toMatch(
+      /exists \(select 1 from public\.client_id_photo_consents\)[\s\S]*exists \(select 1 from public\.client_id_photo_audit\)[\s\S]*exists \(select 1 from public\.studio_client_id_photo_switch_log\)/,
+    );
+    expect(DOWN_EXECUTABLE).toMatch(/current_setting\('hone\.confirm_destroy_consent_evidence', true\) is distinct from 'yes'/);
   });
 });

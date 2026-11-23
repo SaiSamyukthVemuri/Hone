@@ -5,6 +5,12 @@
 -- audit trail. They are immutable by design and cannot be recreated from anything else.
 -- Use it only to back out an apply before any real use, or on an explicit owner decision.
 --
+-- DELIBERATE USE. It refuses while any consent, withdrawal, switch-log or audit row exists,
+-- unless this session has said it knows what it is destroying. EXPORT THOSE TABLES FIRST, then,
+-- in the same session and before running this file:
+--     set hone.confirm_destroy_consent_evidence = 'yes';
+-- and reset it afterwards (reset hone.confirm_destroy_consent_evidence;).
+--
 -- STORAGE OBJECTS MUST BE DRAINED FIRST. This file never touches storage. It refuses while
 -- any stored photo row or any pending object deletion exists, because dropping those rows
 -- would leave face images in the private bucket that nothing could find or delete. Drain
@@ -12,11 +18,12 @@
 -- confirm both tables are empty, then run this. The private bucket itself is NOT removed
 -- here: SQL cannot delete storage objects. Remove it through the Storage API once it is empty.
 --
--- It restores what 0375 changed outside its own tables:
---   * set_client_portrait(uuid, uuid, uuid) gets back the grants it had before 0375:
---     EXECUTE for authenticated only, nothing for public, anon or service_role. The
---     treatment-photo portrait stays off in the application either way.
---   * the pointer guard trigger on clients (portrait_image_id) is dropped.
+-- What it does outside its own tables:
+--   * set_client_portrait(uuid, uuid, uuid) STAYS REVOKED from public, anon, authenticated and
+--     service_role. This file never grants it back: the old setter is retired for good, and
+--     a rollback gains nothing from reopening it.
+--   * the pointer guard trigger on clients (portrait_image_id) is dropped, because the up
+--     creates it and a re-apply must be able to.
 --   * the client-archive trigger on clients is dropped.
 -- Dropping the triggers takes a brief ACCESS EXCLUSIVE lock on clients, bounded by the lock
 -- timeout below; if clients is busy the file fails and changes nothing.
@@ -24,7 +31,9 @@ begin;
 set local lock_timeout = '5s';
 
 -- Locks BEFORE the checks, so nothing can be added between the check and the drop.
-lock table public.client_id_photos, public.client_id_photo_pending_object_deletions in access exclusive mode;
+lock table public.client_id_photos, public.client_id_photo_pending_object_deletions,
+  public.client_id_photo_consents, public.client_id_photo_audit, public.studio_client_id_photo_switch_log
+  in access exclusive mode;
 
 do $$
 begin
@@ -33,6 +42,12 @@ begin
   end if;
   if exists (select 1 from public.client_id_photo_pending_object_deletions) then
     raise exception 'down refused: storage objects are still queued for deletion; drain and acknowledge them first' using errcode = 'P0375';
+  end if;
+  if (exists (select 1 from public.client_id_photo_consents)
+      or exists (select 1 from public.client_id_photo_audit)
+      or exists (select 1 from public.studio_client_id_photo_switch_log))
+     and current_setting('hone.confirm_destroy_consent_evidence', true) is distinct from 'yes' then
+    raise exception 'down refused: consent, withdrawal, switch-log or audit rows exist; export them, then set hone.confirm_destroy_consent_evidence = ''yes'' for this session and run again' using errcode = 'P0375';
   end if;
 end;
 $$;
@@ -70,7 +85,10 @@ drop function if exists public.client_id_photo_wording_guard();
 drop function if exists public.client_id_photo_immutable();
 drop function if exists public.clients_portrait_pointer_frozen();
 
--- Back to the grants 0231 left: authenticated only.
-grant execute on function public.set_client_portrait(uuid, uuid, uuid) to authenticated;
+-- The old setter stays revoked from every role (a no-op after the up; it makes the posture explicit and safe to re-run).
+revoke execute on function public.set_client_portrait(uuid, uuid, uuid) from public;
+revoke execute on function public.set_client_portrait(uuid, uuid, uuid) from anon;
+revoke execute on function public.set_client_portrait(uuid, uuid, uuid) from authenticated;
+revoke execute on function public.set_client_portrait(uuid, uuid, uuid) from service_role;
 
 commit;
