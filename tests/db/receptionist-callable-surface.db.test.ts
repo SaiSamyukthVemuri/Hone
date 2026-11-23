@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { adminQuery, asRole, asUser, closePool, seedMember, seedSession, seedStudio, type SeededStudio } from "./helpers/harness";
 import { refused, shapeOf } from "./receptionist-callable-surface.classify";
-import { CLASSIFICATION, GLOBAL_REFERENCE, PINS, UNPROVEN, INSERT_UNPROVEN } from "./receptionist-callable-surface.map";
+import { ANON_INSERT_BY_DESIGN, CLASSIFICATION, GLOBAL_REFERENCE, NO_ROW, PINS, UNPROVEN, INSERT_UNPROVEN } from "./receptionist-callable-surface.map";
 
 // D9 (Privacy): the database surface a receptionist session can reach, built from the CATALOG, not from the app's call list.
 // A receptionist is a signed-in user with no practitioners row in the studio. This proves, on a real migrated database and by DIRECT calls
@@ -377,6 +377,24 @@ describe("F3: every public table: read, update and delete on all; insert on all 
       const row = (await adminQuery(`select to_jsonb(x) as j from public."${t}" x ${hasStudio ? "where studio_id = $1" : ""} limit 1`, hasStudio ? [A.studioId] : [])).rows[0] as { j: unknown } | undefined;
       tpls.set(t, row ? { cols: insertCols.get(t) ?? [], row: row.j } : null);
     }
+    // VACUITY GUARD: a zero-read, update or delete on an EMPTY table proves nothing. Every non-global table must have a template row, or be pinned in NO_ROW with a reason.
+    const noRow = tables.filter((t) => !(t in GLOBAL_REFERENCE) && !tpls.get(t)).sort();
+    expect(noRow, "tables with no row on a fresh stack (their read, update and delete checks are vacuous; seed a row or pin with a reason)").toEqual(Object.keys(NO_ROW).sort());
+    // For the pinned empty tables the dynamic checks above prove nothing, so show the closure from the catalog instead: row-level security is on, and no policy
+    // lets authenticated, anon or public through unconditionally.
+    const staticOpen: string[] = [];
+    for (const t of noRow) {
+      const rls = (await adminQuery(`select relrowsecurity as on from pg_class where oid = ('public."' || $1 || '"')::regclass`, [t])).rows[0] as { on: boolean };
+      const open = Number((await adminQuery(`select count(*)::int as n from pg_policies where schemaname = 'public' and tablename = $1 and permissive = 'PERMISSIVE' and (case when cmd = 'INSERT' then with_check else qual end is null or btrim(case when cmd = 'INSERT' then with_check else qual end) in ('true','(true)')) and (roles && array['authenticated','anon','public']::name[])`, [t])).rows[0].n);
+      if (t in ANON_INSERT_BY_DESIGN) {
+        // Public form: an unconditional INSERT policy is intended; nothing may let anyone read, update or delete.
+        const readable = Number((await adminQuery(`select count(*)::int as n from pg_policies where schemaname = 'public' and tablename = $1 and cmd <> 'INSERT'`, [t])).rows[0].n);
+        if (!rls.on || readable > 0) staticOpen.push(t);
+        continue;
+      }
+      if (!rls.on || open > 0) staticOpen.push(t);
+    }
+    expect(staticOpen, "empty tables where row-level security is off or a policy is unconditional").toEqual([]);
     const weakInserts = new Set<string>();
     for (const k of ["recA", "stranger", "anon"] as const) {
       for (const t of tables) {
