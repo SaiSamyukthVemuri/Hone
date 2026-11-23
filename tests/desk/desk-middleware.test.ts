@@ -49,6 +49,15 @@ describe("the desk flag", () => {
     for (const p of ["/desk", "/desk/", "/desk/clients"]) expect(isDeskPath(p), p).toBe(true);
     for (const p of ["/deskx", "/desks/clients", "/dashboard", "/", "/api/desk", "/desk.json"]) expect(isDeskPath(p), p).toBe(false);
   });
+  it("is case sensitive: /DESK and /Desk/clients are not desk paths", () => {
+    for (const p of ["/DESK", "/Desk", "/DESK/clients", "/desK/x"]) expect(isDeskPath(p), p).toBe(false);
+  });
+  it("is false for a path with an encoded slash or backslash (any case) or a dot-dot segment", () => {
+    for (const p of ["/desk/..%2Fdashboard", "/desk/..%2fdashboard", "/desk%2Fclients", "/desk/%5Cdashboard", "/desk/%5cx", "/desk/../dashboard", "/desk/a/../b", "/desk/.."]) expect(isDeskPath(p), p).toBe(false);
+  });
+  it("still accepts ordinary nested desk paths, including dots that are not a dot-dot segment", () => {
+    for (const p of ["/desk/a.b", "/desk/..a", "/desk/a..", "/desk/a/b"]) expect(isDeskPath(p), p).toBe(true);
+  });
 });
 
 describe("middleware: /desk exemption from the practitioner gate", () => {
@@ -69,6 +78,20 @@ describe("middleware: /desk exemption from the practitioner gate", () => {
     for (const path of ["/dashboard", "/clients", "/calendar", "/settings", "/deskx", "/desks/clients", "/api/desk"]) {
       expect((await go(path)).location, path).toContain("/no-access");
     }
+  });
+
+  it("flag on: /DESK and traversal or encoded-slash forms are still gated", async () => {
+    vi.stubEnv("HONE_RECEPTIONIST_DESK_ENABLED", "true");
+    for (const path of ["/DESK", "/Desk/clients", "/desk/..%2Fdashboard", "/desk/..%2fdashboard", "/desk/%5Cdashboard", "/desk%2Fclients"]) {
+      expect((await go(path)).location, path).toContain("/no-access");
+    }
+  });
+
+  it("flag on: /desk/../dashboard is parsed to /dashboard and hits the gate", async () => {
+    vi.stubEnv("HONE_RECEPTIONIST_DESK_ENABLED", "true");
+    const req = new NextRequest("http://localhost/desk/../dashboard");
+    expect(req.nextUrl.pathname).toBe("/dashboard");
+    expect(new URL((await updateSession(req)).headers.get("location") ?? "http://x/").pathname).toBe("/no-access");
   });
 
   it("flag on: a user with a practitioner row is unchanged on ordinary paths", async () => {
