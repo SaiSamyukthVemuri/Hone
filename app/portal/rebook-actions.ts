@@ -36,6 +36,7 @@ import {
   sendBookingNotificationToPractitioner,
 } from "@/lib/email/send-appointment";
 import { recordPractitionerNotification } from "@/lib/notifications/practitioner-notifications";
+import { buildBookedText } from "@/lib/notifications/notification-text";
 import {
   buildTreatmentTimeLine,
   getTreatmentTimeContextForEmail,
@@ -745,13 +746,19 @@ export async function bookAnotherAppointmentAction(
 
   // The notification names the client by their DISPLAY name (the calendar's field: preferred where set), never the legal identity.
   const notificationName = notificationClientName({ name: clientName, preferred_name: clientPreferredName });
+  const bookedText = buildBookedText({
+    clientName: notificationName,
+    serviceName: service.service.name,
+    dayLabel: formatDayLabel(start, studio.timezone),
+    timeLabel: localTimeString12h(start, studio.timezone),
+  });
   await postCommit("portal_rebook_practitioner_notification_threw", undefined, () =>
     recordPractitionerNotification({
       studioId: studio.id,
       practitionerId: assignedPractitionerId,
       eventType: "new_booking",
-      title: "New booking",
-      body: `${notificationName} booked ${service.service.name} for ${formatDayLabel(start, studio.timezone)} at ${localTimeString12h(start, studio.timezone)}.`,
+      title: bookedText.title,
+      body: bookedText.body,
       appointmentId: createdId,
       clientId,
       href: `/calendar/${createdId}`,

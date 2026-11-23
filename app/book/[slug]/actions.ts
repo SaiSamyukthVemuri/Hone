@@ -36,6 +36,7 @@ import {
 } from "@/lib/booking/referral-source";
 import { localTimeString12h } from "@/lib/booking/tz";
 import { recordPractitionerNotification } from "@/lib/notifications/practitioner-notifications";
+import { buildBookedText } from "@/lib/notifications/notification-text";
 import { addDays, localDateString, todayInTz } from "@/lib/booking/tz";
 import {
   horizonRangeInStudioTz,
@@ -1874,13 +1875,19 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     clientPreferredName === undefined
       ? await loadCommunicationName(admin, studio.id, clientId, clientName)
       : notificationClientName({ name: clientName, preferred_name: clientPreferredName });
+  const bookedText = buildBookedText({
+    clientName: notificationName,
+    serviceName: service.name,
+    dayLabel: formatDayLabel(start, studio.timezone),
+    timeLabel: localTimeString12h(start, studio.timezone),
+  });
   await postCommit("public_booking_practitioner_notification_threw", undefined, () =>
     recordPractitionerNotification({
       studioId: studio.id,
       practitionerId: assignedPractitionerId,
       eventType: "new_booking",
-      title: "New booking",
-      body: `${notificationName} booked ${service.name} for ${formatDayLabel(start, studio.timezone)} at ${localTimeString12h(start, studio.timezone)}.`,
+      title: bookedText.title,
+      body: bookedText.body,
       appointmentId: createdId,
       clientId: clientId,
       href: `/calendar/${createdId}`,
