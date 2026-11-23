@@ -30,6 +30,7 @@ import { dbErrorCode } from "@/lib/logging/error-class";
 import { readClientNameFields } from "@/lib/notifications/client-name";
 import { clientDisplayName } from "@/lib/clients/identity";
 import { localTimeString12h } from "@/lib/booking/tz";
+import { buildCancelledText } from "@/lib/notifications/notification-text";
 
 import { CANCEL_RECIPIENT_KEY_PREFIX } from "@/lib/notifications/owner-only-events";
 
@@ -116,25 +117,29 @@ export async function recordAppointmentCancelNotifications(
     const what = str(service?.name) ?? "an appointment";
     const tz = str(studio?.timezone);
     const startsAt = str(appt?.starts_at) ? new Date(str(appt?.starts_at) as string) : null;
-    let when = "";
+    let when: { dayLabel: string; timeLabel: string } | null = null;
     if (tz && startsAt && !Number.isNaN(startsAt.getTime())) {
       try {
-        when = ` on ${dayLabel(startsAt, tz)} at ${localTimeString12h(startsAt, tz)}`;
+        when = { dayLabel: dayLabel(startsAt, tz), timeLabel: localTimeString12h(startsAt, tz) };
       } catch {
-        when = "";
+        when = null;
       }
     }
     const occurrence = occurrenceOf(appt?.cancelled_at);
-    const reason = input.reasonLabel ? ` Reason: ${input.reasonLabel}.` : "";
-    // A staff cancel names the staff member, the client and the service. A client's own cancel names the client.
-    const body = input.actorPractitionerId
-      ? `${str(actor?.display_name) ?? "A team member"} cancelled ${clientName ? `${clientName}'s ` : "a client's "}${what}${when}.${reason}`
-      : `${clientName ?? "A client"} cancelled ${what}${when}.${reason}`;
+    // A staff cancel names the staff member, the client and the service. A client's own cancel names the client. The wording lives in one pure builder.
+    const { title, body } = buildCancelledText({
+      byStaff: Boolean(input.actorPractitionerId),
+      staffName: str(actor?.display_name),
+      clientName,
+      serviceName: what,
+      when,
+      reasonLabel: input.reasonLabel,
+    });
 
     const base = {
       studioId,
       eventType: "appointment_cancelled" as const,
-      title: "Appointment cancelled",
+      title,
       body,
       appointmentId: input.appointmentId,
       clientId,

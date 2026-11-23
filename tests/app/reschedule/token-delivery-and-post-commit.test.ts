@@ -38,6 +38,7 @@ const scenario = {
   practitionerThrows: false,
   serviceThrows: false,
   notificationThrows: false,
+  formatThrows: false,
   originThrows: false,
   intakeThrows: false,
   treatmentTimeThrows: false,
@@ -155,6 +156,17 @@ vi.mock("@/lib/booking/appointment-token", () => ({
 vi.mock("@/lib/booking/tokens", () => ({
   verifyCancellationToken: () => ({ ok: false }),
 }));
+// Injects a formatting failure into the clock formatter the notification text uses, and ONLY when the case asks for it.
+vi.mock("@/lib/booking/tz", async (orig) => {
+  const actual = await orig<typeof import("@/lib/booking/tz")>();
+  return {
+    ...actual,
+    localTimeString12h: (...args: Parameters<typeof actual.localTimeString12h>) => {
+      if (scenario.formatThrows) throw new Error("format exploded");
+      return actual.localTimeString12h(...args);
+    },
+  };
+});
 vi.mock("@/lib/notifications/practitioner-notifications", () => ({
   recordPractitionerNotification: (p: Record<string, unknown>) => {
     if (scenario.notificationThrows) throw new Error("notification exploded");
@@ -241,6 +253,7 @@ beforeEach(() => {
     practitionerThrows: false,
     serviceThrows: false,
     notificationThrows: false,
+    formatThrows: false,
     originThrows: false,
     intakeThrows: false,
     treatmentTimeThrows: false,
@@ -327,6 +340,7 @@ describe("0171 — once committed, no post-commit failure may report failure", (
     ["practitioner metadata lookup throws", "practitionerThrows"],
     ["service metadata lookup throws", "serviceThrows"],
     ["practitioner notification throws synchronously", "notificationThrows"],
+    ["a date/timezone formatting failure while the notification text is made", "formatThrows"],
     ["intake helper throws", "intakeThrows"],
     ["treatment-time helper throws", "treatmentTimeThrows"],
     ["confirmation email helper throws", "emailThrows"],

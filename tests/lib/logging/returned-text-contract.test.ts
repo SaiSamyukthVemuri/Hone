@@ -25,6 +25,10 @@ import { describe, expect, it } from "vitest";
 // domain result (`result.message`, `decision.message`) whose text this codebase
 // wrote; and the `message` key (alerts, which redact).
 //
+// RESIDUAL LIMITS (known, text only; do not widen the scan to chase them): an error's text is missed when it reaches the value through an
+// uncast nested literal (`{ error: { text: err.message } }`), through a literal bound to a local and returned later, or through a spread
+// (`return { ...error }`). The same textual-scan family as the notification content guard: it catches the common spellings, not every one.
+//
 // LAUNDERING (a local that holds the text) IS followed, name-based and file-wide,
 // as in the throw guard. NOT COVERED: the `message` and `reason` keys (see the
 // PR's inventory) and text that crosses a function boundary.
