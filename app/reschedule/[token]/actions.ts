@@ -20,6 +20,7 @@ import {
 } from "@/lib/booking/slots";
 import { addDays, localTimeString12h, todayInTz } from "@/lib/booking/tz";
 import { recordPractitionerNotification } from "@/lib/notifications/practitioner-notifications";
+import { buildRescheduledText } from "@/lib/notifications/notification-text";
 // 0171: `isWithinPublicBookingHorizon` and `localDateString` are deliberately
 // NOT imported any more. The submit path used them to pre-check the horizon and
 // to build a date string for its own getAvailableSlots re-verification, both of
@@ -1262,18 +1263,24 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   // Last, because it is the only effect the CLIENT never sees.
   // The notification names the client by their DISPLAY name (the calendar's field: preferred where set), never the legal identity.
   const notificationName = notificationClientName(clientRow);
-  await attempt("public_reschedule_notification_failed", undefined, () =>
-    recordPractitionerNotification({
+  await attempt("public_reschedule_notification_failed", undefined, () => {
+    // Built INSIDE the closure: a date or timezone formatting failure is contained here, after the reschedule committed, and loses only the notification.
+    const rescheduledText = buildRescheduledText({
+      clientName: notificationName,
+      fromLabel: formatDayTime(new Date(parsed.originalStartsAt), studioRow.timezone),
+      toLabel: formatDayTime(new Date(created.starts_at), studioRow.timezone),
+    });
+    return recordPractitionerNotification({
       studioId: asserted.original.studio_id,
       practitionerId: assignedPractitionerId,
       eventType: "appointment_rescheduled",
-      title: "Appointment rescheduled",
-      body: `${notificationName} rescheduled from ${formatDayTime(new Date(parsed.originalStartsAt), studioRow.timezone)} to ${formatDayTime(new Date(created.starts_at), studioRow.timezone)}.`,
+      title: rescheduledText.title,
+      body: rescheduledText.body,
       appointmentId: created.id,
       clientId: asserted.original.client_id,
       href: `/calendar/${created.id}`,
-    }),
-  );
+    });
+  });
 
   // THE RESCHEDULE SUCCEEDED, and the client leaves with a usable path to the
   // successor whatever the email did. `manageUrl` goes ONLY to this authorised

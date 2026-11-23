@@ -427,6 +427,17 @@ vi.mock("@/lib/email/send-appointment", () => ({
   },
   logEmailFailure: () => {},
 }));
+// Injects a formatting failure into the clock formatter the notification text uses, and ONLY when the case asks for it.
+vi.mock("@/lib/booking/tz", async (orig) => {
+  const actual = await orig<typeof import("@/lib/booking/tz")>();
+  return {
+    ...actual,
+    localTimeString12h: (...args: Parameters<typeof actual.localTimeString12h>) => {
+      if (throwIn.has("format")) throw new TypeError("format blew up");
+      return actual.localTimeString12h(...args);
+    },
+  };
+});
 vi.mock("@/lib/notifications/practitioner-notifications", () => ({
   recordPractitionerNotification: (p: { clientId: string; appointmentId: string }) => {
     if (throwIn.has("practitioner_notification")) throw new TypeError("notify blew up");
@@ -1277,6 +1288,16 @@ describe("P2-1. only slots the public contract would accept are offered", () => 
 // ---------------------------------------------------------------------------
 // N + O. The established post-commit workflow, and its containment.
 // ---------------------------------------------------------------------------
+
+describe("N0. a date/timezone formatting failure while the notification text is made", () => {
+  it("the committed rebook survives and only the notification is lost", async () => {
+    throwIn.add("format");
+    const out = await bookAnotherAppointmentAction(form());
+    expect(out.ok).toBe(true);
+    expect(rpcs.length).toBeGreaterThan(0); // the booking command ran and committed
+    expect(notifications).toHaveLength(0); // the notification is the only thing lost
+  });
+});
 
 describe("N. a successful booking runs the normal booking side effects", () => {
   it("confirms to the client, notifies the practitioner, and revalidates", async () => {
