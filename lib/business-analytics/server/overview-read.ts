@@ -156,7 +156,7 @@ export async function loadOverview(
   const supabase = supabaseClient ?? (await createClient());
 
   // Names are labels, but a missing one would put a figure under the wrong heading, so a failed read fails the whole page.
-  const people = await readStudioPractitioners(supabase, studio.id);
+  const people = await timed("analytics.people", () => readStudioPractitioners(supabase, studio.id));
   if (!people.ok) return { access: "granted", ok: false, reason: "read_failed", notices: [] };
 
   const parsed = parseOverviewParams(raw, { strict: opts.strict, practitionerIds: new Set(people.rows.map((p) => p.id)) });
@@ -199,10 +199,10 @@ export async function loadOverview(
     classesRead: CLASSES_READ,
   };
   // Names for the clients this period's visits name, read after the owner check and for no one else.
-  const names: NameLookup = opts.names === false ? { ok: false } : await readClientNames(supabase, studio.id, candidateClientIds(input));
+  const names: NameLookup = opts.names === false ? { ok: false } : await timed("analytics.names", () => readClientNames(supabase, studio.id, candidateClientIds(input)));
   // The Clients tab also needs the money on the earlier visits, for its lifetime column. A failure there affects only that column.
   const clients = opts.clients && lifetimeHistory ? { ...opts.clients, lifetimeHistory } : undefined;
-  const view = buildOverview({ ...input, names, clients });
+  const view = await timed("analytics.build", async () => buildOverview({ ...input, names, clients }));
   const practitionerOptions = optionsFor(people.rows, parsed.params);
   return { access: "granted", ok: true, view, params: parsed.params, notices: parsed.notices, practitionerOptions };
 }
