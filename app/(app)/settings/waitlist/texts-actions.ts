@@ -1,5 +1,6 @@
 "use server";
 
+import { WAITLIST_PATH } from "@/lib/waitlist/paths";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
@@ -48,6 +49,6 @@ export async function setWaitlistTextsAction(formData: FormData): Promise<Waitli
     return { ok: false, error: "Could not save settings. Please try again." };
   }
 
-  revalidatePath("/settings/waitlist");
+  revalidatePath(WAITLIST_PATH);
   return { ok: true };
 }

@@ -1,5 +1,6 @@
 "use server";
 
+import { WAITLIST_PATH } from "@/lib/waitlist/paths";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
@@ -17,7 +18,7 @@ import { noticeFor, type FollowUpNotice } from "@/lib/waitlist/follow-up-notice"
 // Every outcome is redirected back to the anchor with a short closed code, so a failure is SHOWN and the owner is never left thinking a
 // response was handled. No answer text, name or id is put in the redirect.
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const BACK = "/settings/waitlist";
+const BACK = WAITLIST_PATH;
 
 function field(formData: FormData, name: string): string | null {
   const v = formData.get(name);

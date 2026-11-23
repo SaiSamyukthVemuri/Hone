@@ -1,3 +1,4 @@
+import { WAITLIST_ARCHIVED_PATH, WAITLIST_PATH, WAITLIST_RELEASED_PATH, WAITLIST_REPLIES_PATH, WAITLIST_SEARCH_PATH } from "@/lib/waitlist/paths";
 import { InviteComposer } from "@/components/waitlist/invite-composer";
 import { allowanceHeadline } from "@/lib/waitlist/consultation-capacity";
 import { DEFAULT_BOOKING_WINDOW_DAYS } from "@/lib/waitlist/b4-invitation-draft";
@@ -194,7 +195,7 @@ const SECTION_PAGE_SIZE = 100;
 /** This route. Pagination links are plain hrefs to it: the read is decided
  *  entirely on the server, so a full navigation is the honest mechanism and
  *  costs the page no client JavaScript. */
-const QUEUE_PATH = "/settings/waitlist";
+const QUEUE_PATH = WAITLIST_PATH;
 
 /**
  * One person's stated availability, as the queue renders it.
@@ -946,7 +947,7 @@ export default async function WaitlistSettingsPage({
             </p>
             <p data-testid="allowance-as-of" className="mt-1 text-xs text-fg-muted">
               As of {allowanceAsOf}.{" "}
-              <Link href="/settings/waitlist" prefetch={false} className="underline">
+              <Link href={WAITLIST_PATH} prefetch={false} className="underline">
                 Re-check
               </Link>
             </p>
@@ -995,13 +996,13 @@ export default async function WaitlistSettingsPage({
       )}
       <InvitationBookingSummary summary={bookingSummary} timeZone={studio.timezone} />
       <p className="flex flex-wrap gap-x-4 text-sm" data-testid="waitlist-tools-nav">
-        <Link href="/settings/waitlist/search" className="underline">
+        <Link href={WAITLIST_SEARCH_PATH} className="underline">
           Search the waitlist by name
         </Link>
-        <Link href="/settings/waitlist/released" className="underline">
+        <Link href={WAITLIST_RELEASED_PATH} className="underline">
           Released and expired history
         </Link>
-        <Link href="/settings/waitlist/archived" className="underline">
+        <Link href={WAITLIST_ARCHIVED_PATH} className="underline">
           Archived entries
         </Link>
       </p>
@@ -1157,7 +1158,7 @@ export default async function WaitlistSettingsPage({
                 waiting list with their original join date when they replied.
               </p>
               <p className="mt-2">
-                <Link href="/settings/waitlist/replies" className="underline">
+                <Link href={WAITLIST_REPLIES_PATH} className="underline">
                   Open the replies
                 </Link>
               </p>
