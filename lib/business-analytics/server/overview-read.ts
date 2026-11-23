@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { localDateString, utcInstantFromLocal } from "@/lib/booking/tz";
 import { readAppointmentsKeyset, readMoneyForAppointments } from "@/lib/finance/statement-money-read";
+import { timed } from "@/lib/observability/perf-timing";
 import { createClient } from "@/lib/supabase/server";
 import type { Studio } from "@/lib/types/database";
 
@@ -37,11 +38,12 @@ export type OverviewRead =
 /** What the filter control lists: the current team, by display name. Needed by the filter's own form only; never put in a chart, table or export. */
 export type PractitionerOption = { id: string; label: string };
 
-async function readWindow(supabase: SupabaseClient, studioId: string, timezone: string, w: PeriodWindow): Promise<FigureRead<WindowData>> {
-  const { startUtc, endUtc } = windowInstants(w, timezone);
-  const appts = await readAppointmentsKeyset(supabase, studioId, { startUtc, endUtc });
+type ApptRead = Awaited<ReturnType<typeof readAppointmentsKeyset>>;
+
+/** A window's figures from its appointment read: the money for those visits is read here. A failed or capped money read makes only the MONEY unavailable. */
+async function windowFrom(supabase: SupabaseClient, studioId: string, appts: ApptRead): Promise<FigureRead<WindowData>> {
   if (!appts.ok) return { ok: false, reason: appts.reason === "too_many_appointments" ? "too_many_appointments" : "read_failed" };
-  const money = await readMoneyForAppointments(supabase, studioId, appts.rows.map((a) => a.id));
+  const money = await timed("analytics.money", () => readMoneyForAppointments(supabase, studioId, appts.rows.map((a) => a.id)));
   // A money read that failed or hit its row cap makes only the MONEY figures unavailable: the visit figures need none of it.
   return {
     ok: true,
@@ -52,32 +54,77 @@ async function readWindow(supabase: SupabaseClient, studioId: string, timezone: 
   };
 }
 
+/** Every appointment BEFORE the window began, any status. Over the 10,000 cap it says so; it never truncates. */
+function historyFrom(r: ApptRead): FigureRead<HistoryData> {
+  return r.ok ? { ok: true, value: { appointments: r.rows } } : readFailure(r.reason);
+}
+
+/** Everything up to now (any status; every client with a completed visit counts) and everything from now on, for "no next booking". As of now, so independent of the period chosen. */
+function followThroughFrom(past: ApptRead, future: ApptRead): FigureRead<FollowThroughData> {
+  if (!past.ok) return readFailure(past.reason);
+  if (!future.ok) return readFailure(future.reason);
+  return { ok: true, value: { past: past.rows, future: future.rows } };
+}
+
 /** The earlier appointments with their money, for the lifetime column. Over the money read's cap it says so; it never truncates. */
 async function readLifetimeHistory(supabase: SupabaseClient, studioId: string, history: FigureRead<HistoryData>): Promise<FigureRead<WindowData>> {
   if (!history.ok) return { ok: false, reason: history.reason };
-  const money = await readMoneyForAppointments(supabase, studioId, history.value.appointments.map((a) => a.id));
+  const money = await timed("analytics.money", () => readMoneyForAppointments(supabase, studioId, history.value.appointments.map((a) => a.id)));
   if (!money.ok) return readFailure("read_failed");
   return { ok: true, value: { appointments: history.value.appointments, money: { ok: true, value: { cardRows: money.cardRows, settlementRows: money.settlementRows, legacyFeeRows: money.legacyFeeRows } } } };
 }
 
 const readFailure = (reason: "read_failed" | "too_many_appointments"): { ok: false; reason: "read_failed" | "too_many_appointments" } => ({ ok: false, reason });
 
-/** Every appointment BEFORE the window began, any status. Over the 10,000 cap it says so; it never truncates. */
-async function readHistory(supabase: SupabaseClient, studioId: string, timezone: string, w: PeriodWindow): Promise<FigureRead<HistoryData>> {
-  const { startUtc } = windowInstants(w, timezone);
-  const r = await readAppointmentsKeyset(supabase, studioId, { endUtc: startUtc });
-  return r.ok ? { ok: true, value: { appointments: r.rows } } : readFailure(r.reason);
-}
+// ---------------------------------------------------------------------------
+// THE FIVE APPOINTMENT SETS. Each is "this studio's appointments in a half-open UTC range": the current window, the comparison window, everything before the
+// current window (history), everything before now, everything from now. There are two ways to get them and they MUST return identical rows:
+//   * "separate": one keyset read per set, one after another (the original loader, kept as the reference and as the fallback);
+//   * "shared":   ONE keyset read of the studio's appointments, cut into the five ranges in memory. History, past and the windows overlap, so the separate
+//                 reads scanned the table about three times.
+// The shared read gives up (returns null) and the caller falls back to "separate" whenever it cannot be certain of the same answer: any failed or capped
+// read (so a failure stays exactly as narrow as before, never wider), an unparseable instant, or a start with sub-millisecond digits (the cut compares
+// milliseconds). A failed read stays "unavailable"; it is never turned into zero.
+// ---------------------------------------------------------------------------
 
-/** Everything up to now (any status; every client with a completed visit counts) and everything from now on, for "no next booking". As of now, so independent of the period chosen. */
-async function readFollowThrough(supabase: SupabaseClient, studioId: string, now: Date): Promise<FigureRead<FollowThroughData>> {
+export type AppointmentReadStrategy = "shared" | "separate";
+type ApptSets = { current: ApptRead; comparison: ApptRead; history: ApptRead; past: ApptRead; future: ApptRead };
+
+/** Exported for the equivalence test only: the two ways of reading the five sets. */
+export async function readSetsSeparately(supabase: SupabaseClient, studioId: string, timezone: string, period: ResolvedPeriod, now: Date): Promise<ApptSets> {
+  const cw = windowInstants(period.current, timezone);
+  const pw = windowInstants(period.comparison, timezone);
+  const current = await readAppointmentsKeyset(supabase, studioId, { startUtc: cw.startUtc, endUtc: cw.endUtc });
+  const comparison = await readAppointmentsKeyset(supabase, studioId, { startUtc: pw.startUtc, endUtc: pw.endUtc });
+  const history = await readAppointmentsKeyset(supabase, studioId, { endUtc: cw.startUtc });
   const [past, future] = await Promise.all([
     readAppointmentsKeyset(supabase, studioId, { endUtc: now.toISOString() }),
     readAppointmentsKeyset(supabase, studioId, { startUtc: now.toISOString() }),
   ]);
-  if (!past.ok) return readFailure(past.reason);
-  if (!future.ok) return readFailure(future.reason);
-  return { ok: true, value: { past: past.rows, future: future.rows } };
+  return { current, comparison, history, past, future };
+}
+
+const SUB_MILLISECOND = /\.\d{3}\d*[1-9]/;
+
+export async function readSetsShared(supabase: SupabaseClient, studioId: string, timezone: string, period: ResolvedPeriod, now: Date): Promise<ApptSets | null> {
+  const all = await readAppointmentsKeyset(supabase, studioId, {});
+  if (!all.ok) return null;
+  const at = new Map<string, number>();
+  for (const a of all.rows) {
+    const t = Date.parse(a.startsAt);
+    if (!Number.isFinite(t) || SUB_MILLISECOND.test(a.startsAt)) return null;
+    at.set(a.id, t);
+  }
+  const cw = windowInstants(period.current, timezone);
+  const pw = windowInstants(period.comparison, timezone);
+  const nowIso = now.toISOString();
+  if ([cw.startUtc, cw.endUtc, pw.startUtc, pw.endUtc].some((i) => !Number.isFinite(Date.parse(i)))) return null;
+  const cut = (startUtc?: string, endUtc?: string): ApptRead => {
+    const lo = startUtc === undefined ? -Infinity : Date.parse(startUtc);
+    const hi = endUtc === undefined ? Infinity : Date.parse(endUtc);
+    return { ok: true, rows: all.rows.filter((a) => (at.get(a.id) as number) >= lo && (at.get(a.id) as number) < hi) };
+  };
+  return { current: cut(cw.startUtc, cw.endUtc), comparison: cut(pw.startUtc, pw.endUtc), history: cut(undefined, cw.startUtc), past: cut(undefined, nowIso), future: cut(nowIso, undefined) };
 }
 
 /**
@@ -101,7 +148,7 @@ export async function loadOverview(
   studioCurrency: string | null,
   raw: RawParams,
   /** `names: false` skips the client-name read entirely: the printed page never shows names, so it never reads them. */
-  opts: { strict: boolean; names?: boolean; clients?: { sort: ClientSort; chip: ClientChip; page: number } },
+  opts: { strict: boolean; names?: boolean; clients?: { sort: ClientSort; chip: ClientChip; page: number }; appointmentReads?: AppointmentReadStrategy },
   now: Date,
   supabaseClient: SupabaseClient | undefined = undefined,
 ): Promise<OverviewRead> {
@@ -109,7 +156,7 @@ export async function loadOverview(
   const supabase = supabaseClient ?? (await createClient());
 
   // Names are labels, but a missing one would put a figure under the wrong heading, so a failed read fails the whole page.
-  const people = await readStudioPractitioners(supabase, studio.id);
+  const people = await timed("analytics.people", () => readStudioPractitioners(supabase, studio.id));
   if (!people.ok) return { access: "granted", ok: false, reason: "read_failed", notices: [] };
 
   const parsed = parseOverviewParams(raw, { strict: opts.strict, practitionerIds: new Set(people.rows.map((p) => p.id)) });
@@ -128,10 +175,16 @@ export async function loadOverview(
   }
   const period: ResolvedPeriod = resolved.period;
 
-  const current = await readWindow(supabase, studio.id, studio.timezone, period.current);
-  const comparison = await readWindow(supabase, studio.id, studio.timezone, period.comparison);
-  const history = await readHistory(supabase, studio.id, studio.timezone, period.current);
-  const followThrough = await readFollowThrough(supabase, studio.id, now);
+  const strategy = opts.appointmentReads ?? "shared";
+  const sets = await timed("analytics.appointments", async () => (strategy === "shared" ? await readSetsShared(supabase, studio.id, studio.timezone, period, now) : null) ?? (await readSetsSeparately(supabase, studio.id, studio.timezone, period, now)));
+  // Nothing below depends on another: the two windows' money, and (Clients tab only) the lifetime money, are read at once.
+  const history = historyFrom(sets.history);
+  const followThrough = followThroughFrom(sets.past, sets.future);
+  const [current, comparison, lifetimeHistory] = await Promise.all([
+    windowFrom(supabase, studio.id, sets.current),
+    windowFrom(supabase, studio.id, sets.comparison),
+    opts.clients ? readLifetimeHistory(supabase, studio.id, history) : Promise.resolve(undefined),
+  ]);
   const input = {
     timezone: studio.timezone,
     currency: studioCurrency,
@@ -146,10 +199,10 @@ export async function loadOverview(
     classesRead: CLASSES_READ,
   };
   // Names for the clients this period's visits name, read after the owner check and for no one else.
-  const names: NameLookup = opts.names === false ? { ok: false } : await readClientNames(supabase, studio.id, candidateClientIds(input));
+  const names: NameLookup = opts.names === false ? { ok: false } : await timed("analytics.names", () => readClientNames(supabase, studio.id, candidateClientIds(input)));
   // The Clients tab also needs the money on the earlier visits, for its lifetime column. A failure there affects only that column.
-  const clients = opts.clients ? { ...opts.clients, lifetimeHistory: await readLifetimeHistory(supabase, studio.id, history) } : undefined;
-  const view = buildOverview({ ...input, names, clients });
+  const clients = opts.clients && lifetimeHistory ? { ...opts.clients, lifetimeHistory } : undefined;
+  const view = await timed("analytics.build", async () => buildOverview({ ...input, names, clients }));
   const practitionerOptions = optionsFor(people.rows, parsed.params);
   return { access: "granted", ok: true, view, params: parsed.params, notices: parsed.notices, practitionerOptions };
 }
