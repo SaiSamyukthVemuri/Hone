@@ -111,7 +111,8 @@ test("Week and Month show the committed bookings: the week total and the month d
 
   // MONTH: the day's cell shows its chips plus "+N more", together equal to the database count for that day.
   await owner.goto(monthUrl(t.day, everyone));
-  const cell = owner.locator(`a[href*="day=${t.day}"]`).first();
+  // By accessible name, not href: on the 1st the toolbar's Day tab also links to day=<that date> and comes first in the page.
+  const cell = owner.getByRole("link", { name: `Open ${t.day}`, exact: true });
   await expect(cell).toBeVisible({ timeout: 20_000 });
   const chips = await cell.locator("span[title]").count();
   const moreText = (await cell.innerText()).match(/\+(\d+)\s+more/i);
