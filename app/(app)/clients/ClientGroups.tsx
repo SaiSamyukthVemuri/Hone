@@ -81,7 +81,7 @@ function GroupNameForm({ group }: { group?: ClientGroup }) {
     startTransition(async () => {
       const result = await safelyChange(group ? { kind: "rename", groupId: group.id, name, expectedName: baseline!.name, expectedUpdatedAt: baseline!.updated_at } : { kind: "create", name });
       setFeedback({ error: !result.ok, text: result.ok ? result.message : result.error });
-      if (result.ok) { if (!group) setName(""); else setSavedName(name.trim()); router.refresh(); }
+      if (result.ok) { if (!group) setName(""); else setSavedName(name); router.refresh(); }
     });
   }}>
     <label className="min-w-0 flex-1 break-words text-sm">{group ? `Group name: ${group.name}` : "New group name"}

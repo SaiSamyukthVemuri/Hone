@@ -38,4 +38,17 @@ describe("group controls", () => {
     expect(mocks.action).toHaveBeenCalledWith(expect.objectContaining({ name: "My draft", expectedName: "Active", expectedUpdatedAt: group.updated_at }));
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("Reload"); expect(inputs[1].value).toBe("My draft");
   });
+  it("adopts the new baseline after a rename saved with surrounding spaces, so the next rename is not stale", async () => {
+    mocks.action.mockResolvedValue({ ok: true, message: "Group renamed." });
+    act(() => root.render(createElement(GroupCatalogue, { groups: [group] })));
+    const input = host.querySelectorAll("input")[1]; setInput(input, "  Spaced  ");
+    await act(async () => { host.querySelectorAll("form")[1].dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    // The server saved the trimmed name; the refresh delivers it with a new version.
+    const saved = { ...group, name: "Spaced", updated_at: "2030-01-02T00:00:00Z" };
+    act(() => root.render(createElement(GroupCatalogue, { groups: [saved] })));
+    expect(input.value).toBe("Spaced");
+    setInput(input, "Spaced again");
+    await act(async () => { host.querySelectorAll("form")[1].dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    expect(mocks.action).toHaveBeenLastCalledWith(expect.objectContaining({ name: "Spaced again", expectedName: "Spaced", expectedUpdatedAt: saved.updated_at }));
+  });
 });
