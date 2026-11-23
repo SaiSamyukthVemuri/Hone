@@ -6,10 +6,15 @@
 -- Use it only to back out an apply before any real use, or on an explicit owner decision.
 --
 -- DELIBERATE USE. It refuses while any consent, withdrawal, switch-log or audit row exists,
--- unless this session has said it knows what it is destroying. EXPORT THOSE TABLES FIRST, then,
--- in the same session and before running this file:
---     set hone.confirm_destroy_consent_evidence = 'yes';
--- and reset it afterwards (reset hone.confirm_destroy_consent_evidence;).
+-- unless the same transaction has said it knows what it is destroying. EXPORT THOSE TABLES
+-- FIRST, then run the file inside one transaction that sets the confirmation locally:
+--     begin;
+--     set local hone.confirm_destroy_consent_evidence = 'yes';
+--     \i 0375_client_identification_photo_store.down.sql
+-- (the file's own begin is then a no-op and its commit ends the transaction, and the setting
+-- with it). Use set local, never a session-level set: a session setting persists on a pooled
+-- connection and would let the next caller through. NEVER put this setting in alter database
+-- ... set or alter role ... set: that would make the guard pass every time.
 --
 -- STORAGE OBJECTS MUST BE DRAINED FIRST. This file never touches storage. It refuses while
 -- any stored photo row or any pending object deletion exists, because dropping those rows

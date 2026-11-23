@@ -268,8 +268,10 @@ describe("0375 rollback", () => {
     expect(head).toMatch(/seven tables/);
     expect(head).toMatch(/STORAGE OBJECTS MUST BE DRAINED FIRST/);
     expect(head).toMatch(/never touches storage/);
-    expect(head).toMatch(/EXPORT THOSE TABLES FIRST/);
-    expect(head).toMatch(/set hone\.confirm_destroy_consent_evidence = 'yes';/);
+    expect(head.replace(/\n--\s*/g, " ")).toMatch(/EXPORT THOSE TABLES FIRST/);
+    expect(head).toMatch(/set local hone\.confirm_destroy_consent_evidence = 'yes';/);
+    expect(head, "no session-level set is recommended").not.toMatch(/^--\s+set hone\./m);
+    expect(head.replace(/\n--\s*/g, " ")).toMatch(/NEVER put this setting in alter database \.\.\. set or alter role \.\.\. set/);
     expect(head).toMatch(/STAYS REVOKED from public, anon, authenticated and\s+--\s+service_role/);
     // The accepted consequence of dropping the pointer guard, in plain words (line breaks and comment markers ignored).
     const flat = head.replace(/\n--\s*/g, " ");
