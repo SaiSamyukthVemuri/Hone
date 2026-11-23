@@ -17,6 +17,13 @@ import { WAITLIST_OFFER_DECLINED_BODY, WAITLIST_OFFER_DECLINED_TITLE } from "@/l
 //   4. Every migration that inserts into the table is discovered and the full list is pinned.
 // NOTE: discovery reads `git ls-files`, so an UNCOMMITTED new file is invisible to a local run (CI runs on the committed tree). This is a TRIPWIRE, not proof.
 // The functions are pure over a {path: source} map so the negative controls at the bottom run the SAME scan over forged sources.
+//
+// RESIDUAL LIMITS OF THE ARGUMENT SCAN (known, deliberately unfixed: a scanner that chases every spelling only invites the next miss). The scan
+// follows `await name(...)` and `await a.b.name(...)`, so a private field handed to a name loader is seen. It does NOT see: an optional-chained
+// call (`names?.load(row.legal_given_name)`), a call on an awaited expression (`(await getLoader()).load(...)`), a `.then` chain, or a name
+// assigned in two steps (`let x; x = await load(...)`). The durable fix is structural, not a better regex: the notification wording is now made
+// by pure builders (lib/notifications/notification-text.ts) whose parameters are the only content, and which tests/lib/notifications/
+// notification-text.test.ts pins by behaviour. Prefer extending those builders over extending this scan.
 
 export type Sources = Record<string, string>;
 

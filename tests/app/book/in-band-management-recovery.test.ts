@@ -73,6 +73,8 @@ const scenario = {
   emailThrows: false,
   attemptWriteThrows: false,
   practitionerNotificationThrows: false,
+  // A date/timezone FORMATTING failure while the practitioner notification text is made (after the commit).
+  formatThrows: false,
   practitionerEmailThrows: false,
   revalidateThrows: false,
   showTreatmentTime: false,
@@ -201,6 +203,17 @@ vi.mock("@/lib/booking/new-client-admission", async (orig) => ({
   ...(await orig<typeof import("@/lib/booking/new-client-admission")>()),
   getNewClientAdmissionMode: vi.fn(async () => ({ ok: true, mode: "open", source: "persisted" })),
 }));
+// Injects a formatting failure into the clock formatter the notification text uses, and ONLY when the case asks for it.
+vi.mock("@/lib/booking/tz", async (orig) => {
+  const actual = await orig<typeof import("@/lib/booking/tz")>();
+  return {
+    ...actual,
+    localTimeString12h: (...args: Parameters<typeof actual.localTimeString12h>) => {
+      if (scenario.formatThrows) throw boom("format");
+      return actual.localTimeString12h(...args);
+    },
+  };
+});
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => admin }));
 vi.mock("next/cache", () => ({
   revalidatePath: () => {
@@ -371,6 +384,7 @@ beforeEach(() => {
   scenario.emailThrows = false;
   scenario.attemptWriteThrows = false;
   scenario.practitionerNotificationThrows = false;
+  scenario.formatThrows = false;
   scenario.practitionerEmailThrows = false;
   scenario.revalidateThrows = false;
   scenario.showTreatmentTime = false;
@@ -719,6 +733,15 @@ describe("BOOK-01 P2-A — a committed booking survives every post-commit failur
     const r = await expectSettledSuccess();
     expectCommitted();
     expect(r.confirmationEmailStatus).toBe("sent");
+    expectSafeEvidence("public_booking_practitioner_notification_threw");
+  });
+
+  it("CASE H1: a date/timezone FORMATTING failure while the notification text is made — the committed booking survives and only the notification is lost", async () => {
+    scenario.formatThrows = true;
+    const r = await expectSettledSuccess();
+    expectCommitted();
+    expect(r.appointmentId).toBe(APPT_ID);
+    expect(practitionerNotifications).toHaveLength(0); // the notification is the only thing lost
     expectSafeEvidence("public_booking_practitioner_notification_threw");
   });
 

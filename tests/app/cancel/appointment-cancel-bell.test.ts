@@ -257,7 +257,9 @@ describe("the booking notification is unchanged", () => {
   it("the public booking action still records new_booking with its existing arguments", () => {
     const src = readFileSync(join(process.cwd(), "app/book/[slug]/actions.ts"), "utf8");
     expect(src).toContain('eventType: "new_booking"');
-    expect(src).toContain('title: "New booking"');
+    // The wording (title "New booking") now comes from the pure builder, pinned by behaviour in tests/lib/notifications/notification-text.test.ts.
+    expect(src).toContain("title: bookedText.title");
+    expect(src).toContain("buildBookedText(");
     expect(src).not.toContain("dedupeKey");
   });
 
