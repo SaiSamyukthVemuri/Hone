@@ -70,6 +70,7 @@ import {
 } from "@/app/(app)/clients/[id]/images/actions";
 
 import { captureStageRefocusTarget } from "@/app/(app)/clients/[id]/images/CaptureStageControl";
+import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 
 function uploadForm(extra: Record<string, string>): FormData {
   const fd = new FormData();
@@ -110,6 +111,21 @@ describe("0232 action: setTreatmentImageCaptureStageAction", () => {
       ok: false,
       error: "Treatment photo not found.",
     });
+  });
+
+  it("asks who is signed in BEFORE anything else: no practitioner, no command call", async () => {
+    // Defence in depth: the database command checks the actor too, but this action must not reach it without one.
+    vi.mocked(getCurrentPractitionerWithStudio).mockRejectedValueOnce(new Error("NEXT_REDIRECT"));
+    await expect(setTreatmentImageCaptureStageAction({ imageId: "x", clientId: "c-1", stage: "after" })).rejects.toThrow("NEXT_REDIRECT");
+    expect(rpcCalls).toEqual([]);
+  });
+
+  it("SOURCE PIN: the action's first statement is the practitioner lookup", () => {
+    const src = readFileSync(join(ROOT, DIR, "actions.ts"), "utf8");
+    const at = src.indexOf("export async function setTreatmentImageCaptureStageAction(");
+    expect(at, "the action exists").toBeGreaterThan(-1);
+    const body = src.slice(src.indexOf("{", src.indexOf("Promise<ImageActionResult>", at)) + 1);
+    expect(body.trimStart().startsWith("await getCurrentPractitionerWithStudio();")).toBe(true);
   });
 
   it("a database error never forwards its message", async () => {
