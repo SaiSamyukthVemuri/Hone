@@ -308,8 +308,14 @@ export function GlobalSearch({ variant }: { variant: "desktop" | "mobile" }) {
   );
 
   if (variant === "desktop") {
+    // The search yields width before anything else in the header cluster does. Three parts make that so:
+    // `min-w-[7rem]` here (a floor, so the flex item may shrink at all), `min-w-0` on the cluster in
+    // layout.tsx (a flex container's automatic minimum is the sum of its items' content, so without it the
+    // cluster itself never shrinks), and `shrink-0` on the account menu (so the name is never what gives).
+    // An owner with the Waitlist link and a long first name had the account button 30 px off-screen at
+    // 1024 and the page scrolled sideways. 192 px stays the ceiling.
     return (
-      <div ref={rootRef} className="relative w-36 lg:w-48">
+      <div ref={rootRef} className="relative w-36 min-w-[7rem] lg:w-48">
         <input
           type="search"
           value={query}

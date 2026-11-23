@@ -94,8 +94,11 @@ describe("intake submit → notification is privacy-safe", () => {
 
   it("only the client name is looked up for the body (no health columns)", () => {
     const body = submitBody();
-    // The client lookup selects the display name only.
-    expect(body).toMatch(/\.from\("clients"\)\s*\n?\s*\.select\("name"\)/);
-    expect(body).toMatch(/\.eq\("studio_id", existing\.studio_id\)/);
+    // The client lookup is ONE studio-scoped read of the name fields (stored + preferred) through the shared helper...
+    expect(body).toContain("readClientNameFields(admin, existing.studio_id, existing.client_id)");
+    // ...and the helper selects the name columns only (never a health column), scoped by studio.
+    const helper = readFileSync("lib/notifications/client-name.ts", "utf8");
+    expect(helper).toMatch(/\.select\(`\$\{preferredNameColumn\(includePreferred\)\}name`\)/);
+    expect(helper).toMatch(/\.eq\("studio_id", studioId\)/);
   });
 });
