@@ -1,3 +1,4 @@
+import { WAITLIST_PATH } from "@/lib/waitlist/paths";
 import { cookies } from "next/headers";
 import { LIFECYCLE_NOTICE_COOKIE } from "./lifecycle-notice";
 
@@ -10,7 +11,7 @@ import { LIFECYCLE_NOTICE_COOKIE } from "./lifecycle-notice";
 export async function clearLifecycleNotice(): Promise<void> {
   try {
     const jar = await cookies();
-    jar.delete({ name: LIFECYCLE_NOTICE_COOKIE, path: "/settings/waitlist" });
+    jar.delete({ name: LIFECYCLE_NOTICE_COOKIE, path: WAITLIST_PATH });
   } catch {
     // no request scope: nothing to clear
   }

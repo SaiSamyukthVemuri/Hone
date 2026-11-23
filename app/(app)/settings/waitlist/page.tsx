@@ -1,3 +1,4 @@
+import { WAITLIST_ARCHIVED_PATH, WAITLIST_PATH, WAITLIST_RELEASED_PATH, WAITLIST_REPLIES_PATH, WAITLIST_SEARCH_PATH } from "@/lib/waitlist/paths";
 import { InviteComposer } from "@/components/waitlist/invite-composer";
 import { allowanceHeadline } from "@/lib/waitlist/consultation-capacity";
 import { DEFAULT_BOOKING_WINDOW_DAYS } from "@/lib/waitlist/b4-invitation-draft";
@@ -61,6 +62,7 @@ import {
   importLegacyWaitlistEntryFormAction,
 } from "./profile-actions";
 import { recordProspectSmsConsentFormAction } from "./consent-actions";
+import { timed } from "@/lib/observability/perf-timing";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { expirySummary, rowExpiry, summaryText } from "@/lib/waitlist/invitation-expiry-display";
 import { declinedCount, declinedPageWindow, declinedPeople, declinedSummaryText, DECLINED_PAGE_PARAM, DECLINED_VIEW, latestDeclinePerPerson } from "@/lib/waitlist/decline-visibility";
@@ -193,7 +195,7 @@ const SECTION_PAGE_SIZE = 100;
 /** This route. Pagination links are plain hrefs to it: the read is decided
  *  entirely on the server, so a full navigation is the honest mechanism and
  *  costs the page no client JavaScript. */
-const QUEUE_PATH = "/settings/waitlist";
+const QUEUE_PATH = WAITLIST_PATH;
 
 /**
  * One person's stated availability, as the queue renders it.
@@ -369,7 +371,7 @@ export default async function WaitlistSettingsPage({
   // validation immediately below.
   searchParams?: Promise<{ section?: string | string[]; page?: string | string[]; fu?: string | string[]; view?: string | string[]; dpage?: string | string[] }>;
 }) {
-  const { practitioner, studio } = await requirePractitionerWithStudio();
+  const { practitioner, studio } = await timed("waitlist.identity", () => requirePractitionerWithStudio());
 
   if (practitioner.role !== "owner") {
     return <OwnerOnlyNotice>Only studio owners can see the new-client waitlist.</OwnerOnlyNotice>;
@@ -413,7 +415,7 @@ export default async function WaitlistSettingsPage({
   const supabase = await createClient();
 
   const rangeFrom = (pageNumber - 1) * SECTION_PAGE_SIZE;
-  const sectionReads = await Promise.all(
+  const sectionReads = await timed("waitlist.domain", () => Promise.all(
     SECTIONS.map(async ({ status }) => {
       // IN A FOCUSED VIEW THE OTHER FOUR SECTIONS ARE STILL COUNTED — head-only,
       // so no rows come back but their exact counts do. Without that, the
@@ -437,7 +439,7 @@ export default async function WaitlistSettingsPage({
         : query);
       return { status, res, from };
     }),
-  );
+  ));
 
   const failed = sectionReads.find(({ res }) => res.error);
   if (failed) {
@@ -945,7 +947,7 @@ export default async function WaitlistSettingsPage({
             </p>
             <p data-testid="allowance-as-of" className="mt-1 text-xs text-fg-muted">
               As of {allowanceAsOf}.{" "}
-              <Link href="/settings/waitlist" prefetch={false} className="underline">
+              <Link href={WAITLIST_PATH} prefetch={false} className="underline">
                 Re-check
               </Link>
             </p>
@@ -994,13 +996,13 @@ export default async function WaitlistSettingsPage({
       )}
       <InvitationBookingSummary summary={bookingSummary} timeZone={studio.timezone} />
       <p className="flex flex-wrap gap-x-4 text-sm" data-testid="waitlist-tools-nav">
-        <Link href="/settings/waitlist/search" className="underline">
+        <Link href={WAITLIST_SEARCH_PATH} className="underline">
           Search the waitlist by name
         </Link>
-        <Link href="/settings/waitlist/released" className="underline">
+        <Link href={WAITLIST_RELEASED_PATH} className="underline">
           Released and expired history
         </Link>
-        <Link href="/settings/waitlist/archived" className="underline">
+        <Link href={WAITLIST_ARCHIVED_PATH} className="underline">
           Archived entries
         </Link>
       </p>
@@ -1156,7 +1158,7 @@ export default async function WaitlistSettingsPage({
                 waiting list with their original join date when they replied.
               </p>
               <p className="mt-2">
-                <Link href="/settings/waitlist/replies" className="underline">
+                <Link href={WAITLIST_REPLIES_PATH} className="underline">
                   Open the replies
                 </Link>
               </p>

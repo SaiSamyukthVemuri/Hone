@@ -1,5 +1,6 @@
 "use server";
 
+import { WAITLIST_PATH } from "@/lib/waitlist/paths";
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { clearLifecycleNotice } from "@/lib/waitlist/lifecycle-notice-cookie";
@@ -123,7 +124,7 @@ export async function removeWaitlistEntryAction(formData: FormData): Promise<voi
   });
 
   if (!error && data === "removed") {
-    revalidatePath("/settings/waitlist");
+    revalidatePath(WAITLIST_PATH);
     await redirectWithNotice("remove.removed");
   }
 
@@ -140,7 +141,7 @@ export async function removeWaitlistEntryAction(formData: FormData): Promise<voi
         timestamp: new Date().toISOString(),
       }),
     );
-    revalidatePath("/settings/waitlist");
+    revalidatePath(WAITLIST_PATH);
     await redirectWithNotice(staleKey);
   }
 
@@ -164,12 +165,12 @@ export async function removeWaitlistEntryAction(formData: FormData): Promise<voi
   // Cannot read -> do not offer a retry at all.
   const back = await readEntryStatus(studio.id, entryId);
   if (back.known && back.status === "removed") {
-    revalidatePath("/settings/waitlist");
+    revalidatePath(WAITLIST_PATH);
     await redirectWithNotice("remove.removed");
   }
   // A read that returns no status (the row is not visible to this session) is not a confirmation either.
   if (!back.known || back.status === null) {
-    revalidatePath("/settings/waitlist");
+    revalidatePath(WAITLIST_PATH);
     await redirectWithNotice("remove.unconfirmed");
   }
   throw new Error("Could not remove that entry. Please try again.");
@@ -229,10 +230,10 @@ async function redirectWithNotice(key: string): Promise<never> {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
-    path: "/settings/waitlist",
+    path: WAITLIST_PATH,
     maxAge: LIFECYCLE_NOTICE_MAX_AGE_SECONDS,
   });
-  redirect("/settings/waitlist");
+  redirect(WAITLIST_PATH);
 }
 
 /**
@@ -318,7 +319,7 @@ async function runEntryLifecycleCommand(options: {
       );
     }
     if (staleKey) {
-      revalidatePath("/settings/waitlist");
+      revalidatePath(WAITLIST_PATH);
       // The KEY goes in the URL, never the sentence; the page resolves it against a fixed table.
       await redirectWithNotice(staleKey);
     }
@@ -349,7 +350,7 @@ async function runEntryLifecycleCommand(options: {
     }
   }
 
-  revalidatePath("/settings/waitlist");
+  revalidatePath(WAITLIST_PATH);
 }
 
 /** One entry id from the browser, and nothing else. */
@@ -646,5 +647,5 @@ export async function claimNextWaitlistEntriesAction(formData: FormData): Promis
     throw new Error(known ?? "Could not claim the next entries. Please try again.");
   }
 
-  revalidatePath("/settings/waitlist");
+  revalidatePath(WAITLIST_PATH);
 }

@@ -10,6 +10,13 @@ describe("safeInAppHref", () => {
     ["backslash variant", "/\\evil.example/phish"],
     ["backslash after slash-slash", "\\\\evil.example"],
     ["tab inside", "/\t/evil.example"],
+    ["uppercase javascript scheme", "JAVASCRIPT:alert(1)"],
+    ["data scheme", "data:text/html,<script>1</script>"],
+    ["leading space", " /calendar"],
+    ["newline then slash", "/\n/evil.example"],
+    ["NUL byte", "/\u0000calendar"],
+    ["DEL byte", "/\u007fcalendar"],
+    ["slash backslash slash", "/\\/evil.example"],
     ["empty", ""],
     ["relative without slash", "clients/1"],
   ])("rejects %s", (_n, href) => {
