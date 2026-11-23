@@ -135,6 +135,30 @@ describe("a receptionist cannot pass the staff helper (what 'staff' rests on)", 
   });
 });
 
+describe("the `desk` not-staff class names ONE file, so a new desk action is undecided until someone decides it", () => {
+  it("matches the reviewed desk action and nothing else under lib/desk", () => {
+    expect(notStaffClass("lib/desk/choose-actions.ts")).toBe("desk");
+    for (const f of ["lib/desk/other-actions.ts", "lib/desk/guard.ts", "lib/desk/choose-actions.ts.bak", "lib/desk/sub/choose-actions.ts", "lib/deskx/choose-actions.ts"]) {
+      expect(notStaffClass(f), f).toBeNull();
+    }
+  });
+
+  it("NEGATIVE CONTROL: a new server action under lib/desk is reported as unresolved, never as a decided desk path", () => {
+    const dir = mkdtempSync(join(tmpdir(), "permission-census-desk-"));
+    try {
+      for (const f of ["choose-actions.ts", "new-actions.ts"]) {
+        mkdirSync(join(dir, "lib/desk"), { recursive: true });
+        writeFileSync(join(dir, "lib/desk", f), `"use server";\nexport async function act() { return 1; }\n`);
+      }
+      const found = new Map(censusPaths(dir).map((e) => [e.id, decisionOf(e)]));
+      expect(found.get("lib/desk/choose-actions.ts#act")).toBe("not_staff(desk)");
+      expect(found.get("lib/desk/new-actions.ts#act")).toMatch(/^unresolved/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 // --------------------------------------------------------------------------------------------------------------
 // The census itself, on fixtures: it must claim a gate only where there is one.
 // --------------------------------------------------------------------------------------------------------------
