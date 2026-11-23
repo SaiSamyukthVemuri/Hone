@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 
 // The provider's WIRING, run for real without a DOM: React's hooks are replaced by a tiny runtime that honours dependency arrays
 // (effects run on mount and when a dependency changes, cleanups run first, state updates re-render), and the few browser globals the
@@ -337,6 +338,35 @@ describe("the provider drops an answer whose request was superseded, even when t
     expect(latest?.unread).toBe(0);
     await respond(answer(1, [ID(2)]), 0); // B's answer
     expect(latest?.unread).toBe(1);
+  });
+});
+
+describe("arrivals", () => {
+  it("ids that arrive after the first answer are exposed once each, newest last, and the first answer only primes", async () => {
+    mount(START);
+    await vi.advanceTimersByTimeAsync(0);
+    await respond(answer(2, [ID(1), ID(2)])); // the first answer primes: nothing "arrived"
+    expect(latest?.arrivals).toEqual([]);
+    fire("focus");
+    await vi.advanceTimersByTimeAsync(0);
+    await respond(answer(3, [ID(3), ID(1), ID(2)]));
+    expect(latest?.arrivals).toEqual([ID(3)]);
+    fire("focus");
+    await vi.advanceTimersByTimeAsync(0);
+    await respond(answer(3, [ID(3), ID(1), ID(2)])); // the same row again
+    expect(latest?.arrivals).toEqual([ID(3)]);
+  });
+});
+
+describe("one wiring spelling that no behaviour can tell apart (a tripwire, not proof)", () => {
+  // The provider drops a late answer by TWO layers: the controller it started (`controller !== c`) and the generation the probe started
+  // under. While the first layer exists, reading the CURRENT generation at answer time behaves the same, so no scenario separates the two.
+  // The second layer is the one that still holds if the first is ever removed, so its spelling is pinned here.
+  it("the probed event carries the generation the probe STARTED under, passed in from the effect, never read from state at answer time", () => {
+    const src = readFileSync("app/(app)/NotificationsProvider.tsx", "utf8");
+    expect(src).toMatch(/async function startProbe\(generation: number\)/);
+    expect(src).toMatch(/void startProbe\(effect\.generation\)/);
+    expect(src).toMatch(/jitter: Math\.random\(\), generation \}\)/);
   });
 });
 
