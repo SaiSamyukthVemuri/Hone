@@ -214,15 +214,45 @@ describe("0375 reservation, drain, consent and bucket rules", () => {
   });
 });
 
-describe("0375: in-flight reservations are made due when the photo goes away", () => {
-  it("withdraw, remove and the archive trigger each expire that client's open reservations and clear the reservation flag (I3: no timestamp race)", () => {
+describe("0375: cancelling an in-flight upload keeps its queue entry until the reservation window ends", () => {
+  const CANCEL_FUNCTIONS = ["withdraw_client_id_photo_consent", "remove_client_id_photo", "client_id_photo_on_client_archive"];
+
+  it("withdraw, remove and the archive trigger each cancel that client's open reservations by clearing the flag ONLY, and never touch delete_after", () => {
     const fns = createdFunctions();
-    for (const name of ["withdraw_client_id_photo_consent", "remove_client_id_photo", "client_id_photo_on_client_archive"]) {
+    for (const name of CANCEL_FUNCTIONS) {
       const body = fns.find((f) => f.name === name)!.body;
       expect(body, name).toMatch(
-        /update public\.client_id_photo_pending_object_deletions\s+set delete_after = now\(\), reservation = false, reserved_client_id = null\s+where reserved_client_id = (p_client_id|new\.id) and reservation;/,
+        /update public\.client_id_photo_pending_object_deletions\s+set reservation = false, reserved_client_id = null\s+where reserved_client_id = (p_client_id|new\.id) and reservation;/,
       );
+      // The race: a cancelled row made due at once can be drained and acknowledged while the upload is still running, and the object
+      // that then lands has no queue entry. Nothing in a cancel path may set the due time.
+      expect(body, `${name} must not set delete_after`).not.toMatch(/delete_after\s*=/);
     }
+  });
+
+  it("no statement in the migration sets delete_after to now(), and the only place that sets a window end is the reservation", () => {
+    expect(EXECUTABLE).not.toMatch(/delete_after\s*=\s*now\(\)/);
+    const setters = [...EXECUTABLE.matchAll(/delete_after\s*=/g)];
+    // The drain and the ack READ delete_after with <=; no assignment exists at all (the column default makes ordinary deletions due at once).
+    expect(setters).toHaveLength(0);
+  });
+
+  it("the drain offers, and the ack accepts, a row only once its delete_after has passed", () => {
+    const drain = createdFunctions().find((f) => f.name === "pending_client_id_photo_object_deletions")!.body;
+    const ack = createdFunctions().find((f) => f.name === "ack_client_id_photo_object_deletion")!.body;
+    expect(drain).toMatch(/q\.delete_after <= now\(\)/);
+    expect(ack).toMatch(/q\.delete_after <= now\(\)/);
+  });
+
+  it("the reservation window is fifteen minutes, so a change to it is deliberate", () => {
+    const reserve = createdFunctions().find((f) => f.name === "reserve_client_id_photo_path")!.body;
+    const windows = [...reserve.matchAll(/now\(\) \+ interval '([^']+)'/g)].map((m) => m[1]);
+    expect(windows).toEqual(["15 minutes"]);
+    // The invariant that bounds the window is stated in the header (the migration cannot enforce it; there is no upload path here).
+    const header = sql.split("\nbegin;")[0].replace(/\n--\s*/g, " ");
+    expect(header).toMatch(/THE UPLOAD-LIFETIME INVARIANT/);
+    expect(header).toMatch(/unable to create the object after the reservation's delete_after/);
+    expect(header).toMatch(/15-minute window/);
   });
 });
 

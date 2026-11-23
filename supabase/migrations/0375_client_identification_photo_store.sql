@@ -22,6 +22,15 @@
 -- object through the Storage API and acknowledges it. Nothing is deleted from
 -- storage before a command has authorized the caller. An image-free audit event
 -- is appended for each.
+--
+-- THE UPLOAD-LIFETIME INVARIANT (an activation precondition: this migration has no upload path
+-- and cannot enforce it). The application's upload must be unable to create the object after
+-- the reservation's delete_after, the end of its 15-minute window. Either upload from the
+-- server, or give any upload credential a lifetime shorter than the window with a margin,
+-- verified against the storage provider's documentation at design time. A cancelled
+-- reservation (withdrawal, removal, archive) keeps its queue row until the window ends, so
+-- an upload still running when it was cancelled is deleted after it, never before.
+--
 -- RESIDUAL (documented): a failed object delete leaves the object in
 -- the private bucket, unreachable (no row, no policy, no signing), until the
 -- queued deletion is retried; archived clients are cleaned up on the next drain.
@@ -533,9 +542,11 @@ begin
 
   delete from public.client_id_photos where client_id = p_client_id and studio_id = v_studio;
   get diagnostics v_deleted = row_count;
-  -- Any upload in flight for this client is due for deletion NOW, so it is drained promptly.
+  -- Any upload in flight for this client is CANCELLED: it can no longer be recorded. Its queue entry keeps its OWN window end,
+  -- because the upload may still be running and can create the object at any time before then; it is not offered or acknowledged
+  -- early, and after the window the worker deletes whatever landed. (A stored photo, by contrast, is queued for deletion at once.)
   update public.client_id_photo_pending_object_deletions
-     set delete_after = now(), reservation = false, reserved_client_id = null
+     set reservation = false, reserved_client_id = null
    where reserved_client_id = p_client_id and reservation;
 
   if v_last.event = 'granted' then
@@ -593,6 +604,7 @@ begin
   v_path := v_studio::text || '/' || p_client_id::text || '/' || gen_random_uuid()::text || '.webp';
   insert into public.client_id_photo_pending_object_deletions
     (studio_id, storage_path, delete_after, reservation, reserved_client_id)
+  -- The reservation window: 15 minutes. Pinned in the source test, so a change is deliberate; see the upload-lifetime invariant in the header.
   values (v_studio, v_path, now() + interval '15 minutes', true, p_client_id);
   return v_path;
 end;
@@ -699,9 +711,11 @@ begin
   end if;
   delete from public.client_id_photos where client_id = p_client_id and studio_id = v_studio;
   get diagnostics v_deleted = row_count;
-  -- Any upload in flight for this client is due for deletion NOW, so it is drained promptly.
+  -- Any upload in flight for this client is CANCELLED: it can no longer be recorded. Its queue entry keeps its OWN window end,
+  -- because the upload may still be running and can create the object at any time before then; it is not offered or acknowledged
+  -- early, and after the window the worker deletes whatever landed. (A stored photo, by contrast, is queued for deletion at once.)
   update public.client_id_photo_pending_object_deletions
-     set delete_after = now(), reservation = false, reserved_client_id = null
+     set reservation = false, reserved_client_id = null
    where reserved_client_id = p_client_id and reservation;
   if v_deleted > 0 then
     insert into public.client_id_photo_audit (studio_id, client_id, event, actor_practitioner_id)
@@ -811,9 +825,11 @@ begin
 
   delete from public.client_id_photos where client_id = new.id and studio_id = new.studio_id;
   get diagnostics v_deleted = row_count;
-  -- Any upload in flight for this client is due for deletion NOW, so it is drained promptly.
+  -- Any upload in flight for this client is CANCELLED: it can no longer be recorded. Its queue entry keeps its OWN window end,
+  -- because the upload may still be running and can create the object at any time before then; it is not offered or acknowledged
+  -- early, and after the window the worker deletes whatever landed. (A stored photo, by contrast, is queued for deletion at once.)
   update public.client_id_photo_pending_object_deletions
-     set delete_after = now(), reservation = false, reserved_client_id = null
+     set reservation = false, reserved_client_id = null
    where reserved_client_id = new.id and reservation;
 
   if v_last.event = 'granted' then

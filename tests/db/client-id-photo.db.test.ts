@@ -17,6 +17,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
   adminQuery,
+  adminTx,
   asRole,
   closePool,
   seedMember,
@@ -419,41 +420,71 @@ describe("0375: the object path is reserved in the database BEFORE any upload", 
   });
 });
 
-describe("0375: withdraw, remove and archive make an in-flight reservation due at once", () => {
-  const due = async (path: string) =>
-    (await adminQuery(`select delete_after <= now() d from public.client_id_photo_pending_object_deletions where storage_path = $1`, [path])).rows[0].d as boolean;
+describe("0375: cancelling an in-flight upload keeps its queue entry until the reservation window ends", () => {
+  // The race this closes: a cancelled reservation made due at once can be drained and acknowledged while the upload is still running; the
+  // object that then lands has no queue entry. A cancelled reservation is not offered and cannot be acknowledged until its OWN window ends.
+  // "The window ends" is simulated with makeDue (delete_after moved into the past), the same thing the clock does.
+  const row = async (path: string) =>
+    (await adminQuery(`select reservation, reserved_client_id, delete_after > now() live from public.client_id_photo_pending_object_deletions where storage_path = $1`, [path])).rows[0] as
+      | { reservation: boolean; reserved_client_id: string | null; live: boolean }
+      | undefined;
+  const offered = async () => (await serviceDrain(100)).rows.map((r) => r.storage_path as string);
 
-  it("withdraw expires the client's open reservations; another client's stay open", async () => {
-    await enable(A.studioId, true);
-    const c = await newClient(A);
-    const other = await newClient(A);
-    await consent(A.userId, c);
-    await consent(A.userId, other);
-    const mine = await reserve(A.userId, c);
-    const mine2 = await reserve(A.userId, c);
-    const theirs = await reserve(A.userId, other);
-    expect(await due(mine)).toBe(false);
-    await userQuery(A.userId, `select public.withdraw_client_id_photo_consent($1)`, [c]);
-    expect(await due(mine)).toBe(true);
-    expect(await due(mine2)).toBe(true);
-    expect(await due(theirs), "another client's reservation is untouched").toBe(false);
-    expect((await serviceDrain()).rows.map((r) => r.storage_path)).toEqual(expect.arrayContaining([mine, mine2]));
-    expect((await refusal(setPhoto(A.userId, c, mine))).code).toBe(P0375);
-  });
+  type Cancel = (clientId: string) => Promise<unknown>;
+  const CANCELS: Array<[string, Cancel]> = [
+    ["withdraw", (c) => userQuery(A.userId, `select public.withdraw_client_id_photo_consent($1)`, [c])],
+    ["remove", (c) => userQuery(A.userId, `select public.remove_client_id_photo($1)`, [c])],
+    ["archive", (c) => adminQuery(`update public.clients set archived_at = now() where id = $1`, [c])],
+  ];
 
-  it("remove expires them too", async () => {
-    await enable(A.studioId, true);
-    const c = await newClient(A);
-    await consent(A.userId, c);
-    const path = await reserve(A.userId, c);
-    await userQuery(A.userId, `select public.remove_client_id_photo($1)`, [c]);
-    expect(await due(path)).toBe(true);
-    expect((await serviceDrain()).rows.map((r) => r.storage_path)).toContain(path);
-    // I3: the reservation is no longer one, so a set that waited on the client lock cannot consume it,
-    // and consent is still current after a remove.
-    const q = await adminQuery(`select reservation, reserved_client_id from public.client_id_photo_pending_object_deletions where storage_path = $1`, [path]);
-    expect(q.rows[0]).toMatchObject({ reservation: false, reserved_client_id: null });
-    expect((await refusal(setPhoto(A.userId, c, path))).code).toBe(P0375);
+  for (const [name, cancel] of CANCELS) {
+    it(`${name}: the cancelled reservation is NOT offered and CANNOT be acknowledged before its window ends, is offered after, and a set after the cancel is refused`, async () => {
+      await enable(A.studioId, true);
+      const c = await newClient(A);
+      const other = await newClient(A);
+      await consent(A.userId, c);
+      await consent(A.userId, other);
+      const mine = await reserve(A.userId, c);
+      const mine2 = await reserve(A.userId, c);
+      const theirs = await reserve(A.userId, other);
+
+      await cancel(c);
+
+      // Cancelled: no longer a reservation, so a set cannot consume it; it keeps its own, still-future window end.
+      for (const p of [mine, mine2]) {
+        expect(await row(p), `${name}: the row survives`).toMatchObject({ reservation: false, reserved_client_id: null, live: true });
+      }
+      // Another client's reservation is untouched.
+      expect(await row(theirs)).toMatchObject({ reservation: true, live: true });
+      // (1) Not offered before the window ends.
+      const before = await offered();
+      expect(before).not.toContain(mine);
+      expect(before).not.toContain(mine2);
+      // (2) An ack before the window ends is refused and the row survives (the object may still be about to land).
+      expect((await serviceAck(mine)).rows[0].a, `${name}: ack before expiry`).toBe(false);
+      expect(await row(mine), `${name}: the row survives the early ack`).toBeDefined();
+      // (3) A set after the cancel is refused. For remove and archive consent can still be current, so only the cancelled flag refuses it.
+      expect((await refusal(setPhoto(A.userId, c, mine))).code, `${name}: set after the cancel`).toBe(P0375);
+      expect(await row(mine), `${name}: a refused set leaves the row`).toBeDefined();
+      // After the window ends, the worker is offered it and may delete whatever landed, then acknowledge.
+      await makeDue(mine);
+      expect(await offered(), `${name}: offered after the window`).toContain(mine);
+      expect((await serviceAck(mine)).rows[0].a, `${name}: ack after expiry`).toBe(true);
+      expect(await row(mine)).toBeUndefined();
+      expect(await row(mine2), "the other cancelled row is still waiting for its own window").toBeDefined();
+    });
+  }
+
+  it("a STORED photo is still queued for deletion at once when it is removed, withdrawn or archived", async () => {
+    for (const [name, cancel] of CANCELS) {
+      await enable(A.studioId, true);
+      const c = await newClient(A);
+      await consent(A.userId, c);
+      const path = await reserve(A.userId, c);
+      await setPhoto(A.userId, c, path);
+      await cancel(c);
+      expect(await offered(), `${name}: the stored object is offered immediately`).toContain(path);
+    }
   });
 
   it("I2: the owner can plant a legacy pointer for a restore by disabling the guard trigger; the guard stays enforced after", async () => {
@@ -474,17 +505,6 @@ describe("0375: withdraw, remove and archive make an in-flight reservation due a
       other, c, "treatment-images", `${A.studioId}/${c}/${other}.jpg`, "synthetic.jpg", "image/jpeg", 1024,
     ]);
     expect((await refusal(adminQuery(`update public.clients set portrait_image_id = $2 where id = $1`, [c, other]))).code).toBe(P0375);
-  });
-
-  it("the client-archive trigger expires them", async () => {
-    await enable(A.studioId, true);
-    const c = await newClient(A);
-    await consent(A.userId, c);
-    const path = await reserve(A.userId, c);
-    expect(await due(path)).toBe(false);
-    await adminQuery(`update public.clients set archived_at = now() where id = $1`, [c]);
-    expect(await due(path)).toBe(true);
-    expect((await serviceDrain()).rows.map((r) => r.storage_path)).toContain(path);
   });
 });
 
@@ -511,20 +531,62 @@ describe("0375: drain and acknowledge are service-role only", () => {
 });
 
 describe("0375: consent only against the latest approved wording", () => {
-  it("approving v1.2 makes v1.1 refused, and v1.2 accepted", async () => {
+  // The wording tables are append-only and shared by every suite on this database, so a committed v1.2 would make v1.1 superseded for the
+  // rest of the run AND fail a second run on the same database (duplicate primary key). The whole transition therefore runs inside ONE
+  // transaction that is rolled back: nothing about it is committed. The role switches use the same settings as the harness's asUser.
+  const ROLLBACK = "roll back the wording transition";
+
+  it("approving v1.2 makes v1.1 refused, and v1.2 accepted, without committing anything", async () => {
     await enable(A.studioId, true);
-    await adminQuery(
-      `insert into public.client_id_photo_wording_versions (version, wording, wording_sha256)
-       select 'v1.2', w, encode(sha256(convert_to(w,'UTF8')),'hex') from (select repeat('a successor wording for the test. ', 4) w) s`,
-    );
-    await adminQuery(`select public.approve_client_id_photo_wording('v1.2')`);
-    const v12 = (await adminQuery(`select wording_sha256 s from public.client_id_photo_wording_versions where version='v1.2'`)).rows[0].s as string;
     const c = await newClient(A);
-    expect((await refusal(consent(A.userId, c))).code, "v1.1 is superseded").toBe(P0375);
-    await userQuery(A.userId, `select public.record_client_id_photo_consent($1,'v1.2',$2,'in_person','client')`, [c, v12]);
-    expect(await rowCount(`select count(*) n from public.client_id_photo_consents where client_id = $1 and wording_version = 'v1.2'`, [c])).toBe(1);
-    const cur = await userQuery(A.userId, `select version from public.client_id_photo_wording_current($1)`, [A.studioId]);
-    expect(cur.rows[0].version).toBe("v1.2");
+    const before = (await userQuery(A.userId, `select version from public.client_id_photo_wording_current($1)`, [A.studioId])).rows[0].version as string;
+    const versionsBefore = await rowCount(`select count(*) n from public.client_id_photo_wording_versions`, []);
+    const consentsBefore = await rowCount(`select count(*) n from public.client_id_photo_consents where client_id = $1`, [c]);
+
+    let seen: { refusedCode?: string; accepted?: number; current?: string } = {};
+    await expect(
+      adminTx(async (q) => {
+        const asOwner = async () => {
+          await q("set local role authenticated");
+          await q("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: A.userId, role: "authenticated" })]);
+        };
+        await q(
+          `insert into public.client_id_photo_wording_versions (version, wording, wording_sha256)
+           select 'v1.2', w, encode(sha256(convert_to(w,'UTF8')),'hex') from (select repeat('a successor wording for the test. ', 4) w) s`,
+        );
+        await q(`select public.approve_client_id_photo_wording('v1.2')`);
+        const v12 = (await q(`select wording_sha256 s from public.client_id_photo_wording_versions where version='v1.2'`)).rows[0].s as string;
+
+        // v1.1 is superseded: refused. The failed call runs in a savepoint so the transaction stays usable (and the role switch is undone).
+        await q("savepoint refusal");
+        await asOwner();
+        try {
+          await q(`select public.record_client_id_photo_consent($1,$2,$3,'in_person','client')`, [c, WORDING.version, WORDING.sha]);
+        } catch (e) {
+          seen.refusedCode = (e as { code?: string }).code;
+        }
+        await q("rollback to savepoint refusal");
+
+        await asOwner();
+        await q(`select public.record_client_id_photo_consent($1,'v1.2',$2,'in_person','client')`, [c, v12]);
+        const cur = await q(`select version from public.client_id_photo_wording_current($1)`, [A.studioId]);
+        seen.current = cur.rows[0].version as string;
+        await q("reset role");
+        seen.accepted = Number((await q(`select count(*) n from public.client_id_photo_consents where client_id = $1 and wording_version = 'v1.2'`, [c])).rows[0].n);
+        throw new Error(ROLLBACK);
+      }),
+    ).rejects.toThrow(ROLLBACK);
+
+    expect(seen.refusedCode, "v1.1 is superseded").toBe(P0375);
+    expect(seen.accepted, "v1.2 accepted").toBe(1);
+    expect(seen.current).toBe("v1.2");
+
+    // Nothing was committed: the suite is repeatable on this database, and every other case still sees the wording it saw before.
+    expect(await rowCount(`select count(*) n from public.client_id_photo_wording_versions`, [])).toBe(versionsBefore);
+    expect(await rowCount(`select count(*) n from public.client_id_photo_wording_versions where version = 'v1.2'`, [])).toBe(0);
+    expect(await rowCount(`select count(*) n from public.client_id_photo_consents where client_id = $1`, [c])).toBe(consentsBefore);
+    const after = (await userQuery(A.userId, `select version from public.client_id_photo_wording_current($1)`, [A.studioId])).rows[0].version as string;
+    expect(after, "the current wording is unchanged").toBe(before);
   });
 });
 
