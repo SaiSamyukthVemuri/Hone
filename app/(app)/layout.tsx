@@ -226,7 +226,7 @@ export default async function AppLayout({
               neither does — 1023px is wholly compact, 1024px wholly
               desktop. The `md:px-8` on the row and on <main> is padding,
               not mode, and deliberately stays at md. */}
-          <div className="hidden items-center gap-3 lg:flex">
+          <div className="hidden min-w-0 items-center gap-3 lg:flex">
             {/* PR #232: global search (clients, appointments, treatment
                 memory, records, page shortcuts). Studio-scoped,
                 authenticated-only; see global-search-actions.ts. */}
