@@ -330,6 +330,8 @@ export const BROWSER_GROUPS = {
       // 0339 (owner-only writes on services and consent wording): the owner still edits services and consent wording
       // through the shipped actions; a practitioner is shown no edit control.
       "owner-only-catalog-edit.spec.ts",
+      // HON-100: the owner's Statements month controls (arrow, picker, Back/Forward, reload) all name the same month. Owner-only read surface.
+      "statements-month-navigation.spec.ts",
       // REL-001: the authenticated app-shell error boundary, including the
       // auth-gate invariants (anonymous still bounces to /login, redirect() and
       // notFound() are not converted into a generic retry screen). It sits with
@@ -619,7 +621,7 @@ const PATH_TO_GROUP = [
   // "everything". These two patterns are deliberately anchored//specific rather
   // than a bare /capacity/i, which would also catch the unrelated studio
   // capacity-toggle helpers.
-  { group: "owner_admin", patterns: [/^app\/\(app\)\/dashboard\/capacity\//, /owner-capacity/i, /owner-practice-capacity/i, /onboarding/i, /invitation/i, /invite/i, /\badmin\b/i, /practitioner/i, /studio/i, /import/i] },
+  { group: "owner_admin", patterns: [/^app\/\(app\)\/dashboard\/capacity\//, /owner-capacity/i, /owner-practice-capacity/i, /statements-month-navigation/i, /onboarding/i, /invitation/i, /invite/i, /\badmin\b/i, /practitioner/i, /studio/i, /import/i] },
   { group: "marketing", patterns: [/^app\/\(marketing\)/, /marketing/i] },
   { group: "google", patterns: [/google[-_]?calendar/i] },
   { group: "responsive", patterns: [/mobile/i, /responsive/i] },
