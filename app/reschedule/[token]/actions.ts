@@ -1,6 +1,7 @@
 "use server";
 
 import { loadTreatmentTimeNameFields } from "@/lib/treatment-time/client-first-name";
+import { loadCommunicationName } from "@/lib/clients/communication-name-loader";
 import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { loadPublicSlotsByDate } from "@/lib/booking/public-slot-range";
@@ -1244,13 +1245,15 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
 
   // --- INDEPENDENT EFFECT C: the practitioner notification ----------------
   // Last, because it is the only effect the CLIENT never sees.
+  // The notification names the client by their DISPLAY name (the calendar's field: preferred where set), never the legal identity.
+  const notificationClientName = await loadCommunicationName(admin, asserted.original.studio_id, asserted.original.client_id, clientRow.name);
   await attempt("public_reschedule_notification_failed", undefined, () =>
     recordPractitionerNotification({
       studioId: asserted.original.studio_id,
       practitionerId: assignedPractitionerId,
       eventType: "appointment_rescheduled",
       title: "Appointment rescheduled",
-      body: `${clientRow.name} rescheduled from ${formatDayTime(new Date(parsed.originalStartsAt), studioRow.timezone)} to ${formatDayTime(new Date(created.starts_at), studioRow.timezone)}.`,
+      body: `${notificationClientName} rescheduled from ${formatDayTime(new Date(parsed.originalStartsAt), studioRow.timezone)} to ${formatDayTime(new Date(created.starts_at), studioRow.timezone)}.`,
       appointmentId: created.id,
       clientId: asserted.original.client_id,
       href: `/calendar/${created.id}`,
