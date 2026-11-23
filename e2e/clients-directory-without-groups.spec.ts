@@ -35,9 +35,11 @@ async function standardDirectory(page: Page, who: string) {
   await noGroupUi(page, who);
 
   // Standard filter and sort, then clear
-  await page.getByRole("checkbox", { name: "No upcoming appointment" }).check();
+  // The checkbox and radio are visually hidden: the label chip is what a person taps.
+  await page.locator("label", { has: page.getByRole("checkbox", { name: "No upcoming appointment" }) }).click();
+  await expect(page.getByRole("checkbox", { name: "No upcoming appointment" })).toBeChecked();
   await expect(page).toHaveURL(/filter=no_upcoming/);
-  await page.getByRole("radio", { name: /next appointment/i }).check();
+  await page.locator("label", { has: page.getByRole("radio", { name: /next appointment/i }) }).click();
   await expect(page).toHaveURL(/sort=next/);
   await page.getByRole("button", { name: "Clear search and filters" }).click();
   await expect(page).not.toHaveURL(/[?&](q|filter|sort)=/);
