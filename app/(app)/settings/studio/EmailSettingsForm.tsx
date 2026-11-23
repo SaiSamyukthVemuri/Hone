@@ -8,6 +8,8 @@ type Toggle = {
   key: keyof Pick<
     Studio,
     | "send_confirmation_emails"
+    | "send_moved_appointment_emails"
+    | "send_client_cancellation_emails"
     | "notify_practitioner_on_new_booking"
     | "send_24h_reminders"
     | "send_2h_reminders"
@@ -29,10 +31,26 @@ type Toggle = {
   forceOffReason?: string;
 };
 
+// The two client-notice switches exist only once migration 0373 is applied. Until the studio row carries them, they are not shown at
+// all: a control that saves but changes nothing would be dishonest. Saving omits them too (see the save action).
+const NOTICE_SWITCH_KEYS: ReadonlyArray<Toggle["key"]> = ["send_moved_appointment_emails", "send_client_cancellation_emails"];
+
 const TOGGLES: ReadonlyArray<Toggle> = [
   {
     key: "send_confirmation_emails",
     label: "Send confirmation emails when appointments are booked",
+  },
+  {
+    key: "send_moved_appointment_emails",
+    label: "Tell the client when I move their appointment",
+    helper:
+      "Emails the client the new time when you move an appointment or change its practitioner. Separate from booking confirmations: turning confirmations off does not turn this off.",
+  },
+  {
+    key: "send_client_cancellation_emails",
+    label: "Tell the client when I cancel their appointment",
+    helper:
+      "Emails the client when you cancel their appointment. Separate from booking confirmations: turning confirmations off does not turn this off. It does not change the email you get when a client cancels.",
   },
   {
     key: "notify_practitioner_on_new_booking",
@@ -78,6 +96,8 @@ type Props = {
   initial: Pick<
     Studio,
     | "send_confirmation_emails"
+    | "send_moved_appointment_emails"
+    | "send_client_cancellation_emails"
     | "notify_practitioner_on_new_booking"
     | "send_24h_reminders"
     | "send_2h_reminders"
@@ -110,6 +130,8 @@ export function EmailSettingsForm({ initial }: Props) {
     setHint(null);
     const fd = new FormData();
     for (const [k, v] of Object.entries(next)) {
+      // A switch the studio row does not carry yet (the database has not had 0373 applied) is not part of this save.
+      if (typeof v !== "boolean") continue;
       // Force-off toggles are always submitted as false so the
       // backing studios row cannot drift back to true via this form.
       const matchingToggle = TOGGLES.find((tt) => tt.key === k);
@@ -141,12 +163,12 @@ export function EmailSettingsForm({ initial }: Props) {
         </p>
       </div>
       <ul className="flex flex-col divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
-        {TOGGLES.map((t) => {
+        {TOGGLES.filter((t) => !NOTICE_SWITCH_KEYS.includes(t.key) || typeof initial[t.key] === "boolean").map((t) => {
           const isForceOff = t.forceOff === true;
           // Force-off toggles always render in the OFF position
           // regardless of the underlying studios row (which is also
           // re-written to false by the form action).
-          const displayOn = isForceOff ? false : state[t.key];
+          const displayOn = isForceOff ? false : state[t.key] === true;
           return (
             <li key={t.key} className="flex items-start justify-between gap-4 p-4">
               <div className="min-w-0 flex-1">

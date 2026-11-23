@@ -140,9 +140,21 @@ export async function setStudioEmailSettingsAction(
   // only after the safe lifecycle redesign (ends_at + grace,
   // claim-token, duplicate-send protection) ships and is approved.
   const supabase = await createClient();
+  // 0373: the two client-notice switches are written ONLY when the studio row carries the columns (the database has 0373) AND the form carries them as the literal "true" or "false". A form
+  // that predates them (a page left open across a release, or a crafted POST) leaves both exactly as the owner saved them: the
+  // omission-means-false rule above does not apply to a switch whose default is ON.
+  const noticeSwitches: { send_moved_appointment_emails?: boolean; send_client_cancellation_emails?: boolean } = {};
+  for (const key of ["send_moved_appointment_emails", "send_client_cancellation_emails"] as const) {
+    const raw = formData.get(key);
+    // Also omitted when the studio row we read does not carry the column (the application deployed before 0373 is applied): an update
+    // naming a column the database does not have is rejected, and that would stop the owner saving ANY email setting.
+    if (typeof studio[key] !== "boolean") continue;
+    if (raw === "true" || raw === "false") noticeSwitches[key] = raw === "true";
+  }
   const { error } = await supabase
     .from("studios")
     .update({
+      ...noticeSwitches,
       send_confirmation_emails: readBool(formData, "send_confirmation_emails"),
       // Migration 0047: practitioner new-booking notification toggle.
       // Default at the DB level is true; this form always writes the
