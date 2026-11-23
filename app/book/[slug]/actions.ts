@@ -52,7 +52,9 @@ import {
 } from "@/lib/email/send-appointment";
 import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
 import { stampPublicBookingConsent } from "@/lib/booking/public-consent-stamp";
-import { normalizePhoneForMatch } from "@/lib/sms/twilio";
+import { APPOINTMENT_SMS_CONSENT_VERSION } from "@/lib/sms/appointment-sms-copy";
+import { normalizePhoneForMatch, normalizePhoneForSms } from "@/lib/sms/twilio";
+import { readClientConsentPhone } from "@/lib/sms/consent-phone-read";
 import { isBookableByNewClient } from "@/lib/booking/consultation";
 import {
   getNewClientAdmissionMode,
@@ -565,6 +567,11 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   if (!phone) {
     return { ok: false, error: "Please enter a phone number." };
   }
+  // Text-message consent is for a NUMBER. Ticking the box with a number that cannot receive texts would record consent that covers
+  // nothing, so it is refused here, before anything is written (the database refuses it too, as the backstop).
+  if (smsConsent && normalizePhoneForSms(phone) === null) {
+    return { ok: false, error: "Enter a valid mobile number to receive text messages, or untick the text-message box." };
+  }
 
   // Rate limit (v1) BEFORE any DB read/write or email send. Stricter than
   // slot fetch: 5/10min per (IP, slug) + 3/hour per (email, slug). Fails
@@ -877,7 +884,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // "winner is archived" and return a non-revealing error.
   const { data: existingClient, error: lookupErr } = await admin
     .from("clients")
-    .select("id, name, email, phone, sms_consent_at, sms_opted_out_at")
+    .select("id, name, email, phone, sms_consent_at, sms_consent_phone, sms_opted_out_at")
     .eq("studio_id", studio.id)
     .eq("normalized_email", normalizedEmail)
     .is("archived_at", null)
@@ -1145,10 +1152,16 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       //      different phone number on the public form.
       // We also do not overwrite an already-set sms_consent_at; the
       // earlier source-of-truth wins.
+      //   3. A consent that was given for a DIFFERENT number than the one
+      //      on file (the number was changed after it) is replaced by this fresh
+      //      one, again only when the submitted phone matches the number on file.
+      const boundPhone = existingClient.sms_consent_phone ?? null;
+      const consentIsForOtherNumber =
+        clientSmsConsentAt != null && boundPhone != null && boundPhone !== normalizePhoneForSms(existingClient.phone);
       if (
         smsConsent &&
         clientSmsOptedOutAt == null &&
-        clientSmsConsentAt == null
+        (clientSmsConsentAt == null || consentIsForOtherNumber)
       ) {
         const submittedDigits = normalizePhoneForMatch(phone);
         const storedDigits = normalizePhoneForMatch(existingClient.phone);
@@ -1160,7 +1173,12 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
           // FIRST write; an overlapping booking that got there first, or a STOP
           // that landed meanwhile, is adopted from the row rather than lost
           // (lib/booking/public-consent-stamp.ts).
-          const stamp = await stampPublicBookingConsent(admin, existingClient.id, new Date().toISOString());
+          // existingClient is the row looked up above under THIS studio (.eq("studio_id", studio.id)), so the replacement can only act on
+          // a client of the studio the booking is for; the function matches by that client id and the number its consent is bound to.
+          const replacing = consentIsForOtherNumber && boundPhone != null ? boundPhone : undefined;
+          // The wording the booking form shows is recorded for a replacement consent only. W1 (the new-client command) takes no version, so a brand-new
+          // client's first consent is stored without one: a stated limit, not a defect.
+          const stamp = await stampPublicBookingConsent(admin, existingClient.id, new Date().toISOString(), replacing, APPOINTMENT_SMS_CONSENT_VERSION);
           if (stamp.result === "error") {
             // Soft fail. The booking and the email path must not break
             // because of a consent-stamp error; future bookings can
@@ -2049,6 +2067,8 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // itself. It is NOT total: the consent/toggle gate and the `claim_sms_send`
   // race guard run BEFORE that try. Contained at the boundary rather than by
   // editing the helper, so SMS product behaviour is unchanged by this PR.
+  // The number the consent was given for is read fresh (the commands do not return it), failing closed.
+  const clientSmsConsentPhone = await readClientConsentPhone(admin, clientId, clientSmsConsentAt);
   await postCommit("public_booking_confirmation_sms_threw", undefined, () =>
     sendBookingConfirmationSmsToClient({
       admin,
@@ -2059,6 +2079,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       client: {
         phone: clientPhone,
         sms_consent_at: clientSmsConsentAt,
+        sms_consent_phone: clientSmsConsentPhone,
         sms_opted_out_at: clientSmsOptedOutAt,
       },
       intakeUrl: intake?.url ?? null,

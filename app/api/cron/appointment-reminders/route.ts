@@ -44,7 +44,7 @@ type Joined = Appointment & {
   // the existing email name/email. Selected in loadAppointmentsForWindow.
   client: Pick<
     Client,
-    "name" | "email" | "phone" | "sms_consent_at" | "sms_opted_out_at" | "archived_at"
+    "name" | "email" | "phone" | "sms_consent_at" | "sms_consent_phone" | "sms_opted_out_at" | "archived_at"
   > | null;
   practitioner: { display_name: string | null; email: string | null } | null;
 };
@@ -615,14 +615,14 @@ async function sendSmsReminderPass(opts: {
   // while the row was queued reach the real sender's consent gate.
   const { data: recipient, error: recipientError } = await admin
     .from("appointments")
-    .select("status, client_id, client:clients(phone, sms_consent_at, sms_opted_out_at, archived_at), studio:studios(send_24h_sms_reminders, send_2h_sms_reminders)")
+    .select("status, client_id, client:clients(phone, sms_consent_at, sms_consent_phone, sms_opted_out_at, archived_at), studio:studios(send_24h_sms_reminders, send_2h_sms_reminders)")
     .eq("id", appt.id)
     .eq("studio_id", appt.studio.id)
     .maybeSingle();
   const current = recipient as unknown as {
     status: string;
     client_id: string;
-    client: Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at" | "archived_at"> | Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at" | "archived_at">[] | null;
+    client: Pick<Client, "phone" | "sms_consent_at" | "sms_consent_phone" | "sms_opted_out_at" | "archived_at"> | Pick<Client, "phone" | "sms_consent_at" | "sms_consent_phone" | "sms_opted_out_at" | "archived_at">[] | null;
     studio: Pick<Studio, "send_24h_sms_reminders" | "send_2h_sms_reminders"> | Pick<Studio, "send_24h_sms_reminders" | "send_2h_sms_reminders">[] | null;
   } | null;
   const currentClient = pickRel(current?.client ?? null);

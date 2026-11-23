@@ -33,15 +33,37 @@ export async function stampPublicBookingConsent(
   admin: SupabaseClient,
   clientId: string,
   nowIso: string,
+  /**
+   * FRESH CONSENT. Set when the client already has a consent that was given for a DIFFERENT number (the stored number changed after it):
+   * the value is the number that consent is bound to. The write then goes through replace_client_sms_consent, one statement in one transaction,
+   * a compare-and-set on that bound number (an overlapping booking that already replaced it matches no row and is adopted below). The database
+   * accepts it only for a later consent, a different number and no STOP. Omit it for a first consent.
+   */
+  replacingBoundPhone?: string,
+  /** The wording version the client saw, for a fresh consent only; null when the form carries none. */
+  textVersion: string | null = null,
 ): Promise<ConsentStampResult> {
   try {
-    const { data, error } = await admin
-      .from("clients")
-      .update({ sms_consent_at: nowIso, sms_consent_source: "public_booking" })
-      .eq("id", clientId)
-      .is("sms_consent_at", null)
-      .is("sms_opted_out_at", null)
-      .select("sms_consent_at");
+    if (replacingBoundPhone !== undefined) {
+      const { data: replaced, error: rpcErr } = await admin.rpc("replace_client_sms_consent", {
+        p_client_id: clientId,
+        p_bound_phone: replacingBoundPhone,
+        p_consent_at: nowIso,
+        p_text_version: textVersion,
+      });
+      if (rpcErr) return { result: "error", code: rpcErr.code ?? null };
+      if (replaced === true) return { result: "stamped", smsConsentAt: nowIso, smsOptedOutAt: null };
+    }
+    const { data, error } =
+      replacingBoundPhone === undefined
+        ? await admin
+            .from("clients")
+            .update({ sms_consent_at: nowIso, sms_consent_source: "public_booking" })
+            .eq("id", clientId)
+            .is("sms_consent_at", null)
+            .is("sms_opted_out_at", null)
+            .select("sms_consent_at")
+        : { data: null, error: null };
     if (error) return { result: "error", code: error.code ?? null };
     if (Array.isArray(data) && data.length === 1) {
       return { result: "stamped", smsConsentAt: nowIso, smsOptedOutAt: null };

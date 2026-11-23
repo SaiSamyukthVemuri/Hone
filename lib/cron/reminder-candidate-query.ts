@@ -37,7 +37,7 @@ export function buildReminderCandidateQuery(
   let query = admin
     .from("appointments")
     .select(
-      "*, service:services(name, default_duration_minutes, pre_care_instructions), studio:studios(*), client:clients!inner(name, email, phone, sms_consent_at, sms_opted_out_at, archived_at), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name, email)",
+      "*, service:services(name, default_duration_minutes, pre_care_instructions), studio:studios(*), client:clients!inner(name, email, phone, sms_consent_at, sms_consent_phone, sms_opted_out_at, archived_at), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name, email)",
     )
     .eq("status", "confirmed")
     // MSG-ARCH-01: archived clients are filtered in the query (inner join), so

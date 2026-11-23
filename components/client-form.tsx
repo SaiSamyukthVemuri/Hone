@@ -91,6 +91,8 @@ type Props = {
   // HON-58: the probable-duplicate "save anyway" button. Create saves a new
   // record; the edit page saves the existing one and says so.
   saveAnywayLabel?: string;
+  /** Shown under the phone field (the edit screen warns when changing the number would stop this client's texts). */
+  phoneHelperText?: string;
   action: (formData: FormData) => Promise<ClientFormActionResult | void>;
 };
 
@@ -208,6 +210,7 @@ export function ClientForm({
   hiddenFields,
   baseline: initialBaseline,
   saveAnywayLabel = "Save as a new client anyway",
+  phoneHelperText,
   action,
 }: Props) {
   const [values, setValues] = useState<ClientFormValues>(initialValues);
@@ -392,6 +395,7 @@ export function ClientForm({
           value={values.phone}
           onChange={(v) => update("phone", v)}
           onKeyDown={blockEnterSubmit}
+          helperText={phoneHelperText}
         />
         <Field
           label="Email"

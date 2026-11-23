@@ -29,6 +29,7 @@ const h = vi.hoisted(() => {
     email: string | null;
     phone: string | null;
     sms_consent_at: string | null;
+    sms_consent_phone: string | null;
     sms_opted_out_at: string | null;
     archived_at: string | null;
   };
@@ -36,7 +37,7 @@ const h = vi.hoisted(() => {
     name: "Client",
     email: "client@example.test",
     phone: "604-555-0199",
-    sms_consent_at: "2026-09-01T00:00:00Z",
+    sms_consent_at: "2026-09-01T00:00:00Z", sms_consent_phone: null,
     sms_opted_out_at: null,
     archived_at: null,
   });

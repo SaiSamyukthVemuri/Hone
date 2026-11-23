@@ -131,7 +131,7 @@ function input(over: Partial<SendReminderInput> = {}): SendReminderInput {
       send_24h_sms_reminders: true,
       send_2h_sms_reminders: true,
     },
-    client: { phone: "604-555-0199", sms_consent_at: "2026-09-01T00:00:00Z", sms_opted_out_at: null },
+    client: { phone: "604-555-0199", sms_consent_at: "2026-09-01T00:00:00Z", sms_consent_phone: null, sms_opted_out_at: null },
     manageUrlFor: (d) => {
       manageFor.push(d);
       return `https://hone.care/manage/token-${d.toISOString()}`;
@@ -263,8 +263,8 @@ describe("duplicates", () => {
 describe("missing consent, opt-out and the studio switch: no claim at all", () => {
   for (const [label, over, reason] of [
     ["no consent", { client: { phone: "604-555-0199", sms_consent_at: null, sms_opted_out_at: null } }, "client_no_consent"],
-    ["opted out", { client: { phone: "604-555-0199", sms_consent_at: "2026-09-01T00:00:00Z", sms_opted_out_at: "2026-09-02T00:00:00Z" } }, "client_opted_out"],
-    ["no usable phone", { client: { phone: "12", sms_consent_at: "2026-09-01T00:00:00Z", sms_opted_out_at: null } }, "invalid_phone"],
+    ["opted out", { client: { phone: "604-555-0199", sms_consent_at: "2026-09-01T00:00:00Z", sms_consent_phone: null, sms_opted_out_at: "2026-09-02T00:00:00Z" } }, "client_opted_out"],
+    ["no usable phone", { client: { phone: "12", sms_consent_at: "2026-09-01T00:00:00Z", sms_consent_phone: null, sms_opted_out_at: null } }, "invalid_phone"],
   ] as const) {
     it(`${label} -> skipped (${reason})`, async () => {
       expect(await send24hReminderSmsToClient(input(over as Partial<SendReminderInput>))).toEqual({
@@ -444,7 +444,7 @@ describe("the slot is recorded before the ledger is settled", () => {
         send_24h_sms_reminders: true,
         send_2h_sms_reminders: true,
       },
-      client: { phone: "604-555-0199", sms_consent_at: "2026-09-01T00:00:00Z", sms_opted_out_at: null },
+      client: { phone: "604-555-0199", sms_consent_at: "2026-09-01T00:00:00Z", sms_consent_phone: null, sms_opted_out_at: null },
       intakeUrl: null,
       manageUrl: null,
     });
@@ -514,7 +514,7 @@ describe("each ledger step is bounded inside the claim lease", () => {
         send_24h_sms_reminders: true,
         send_2h_sms_reminders: true,
       },
-      client: { phone: "604-555-0199", sms_consent_at: "2026-09-01T00:00:00Z", sms_opted_out_at: null },
+      client: { phone: "604-555-0199", sms_consent_at: "2026-09-01T00:00:00Z", sms_consent_phone: null, sms_opted_out_at: null },
       intakeUrl: null,
       manageUrl: null,
     });
@@ -867,7 +867,7 @@ describe("MSG-007 success-path log privacy", () => {
         send_24h_sms_reminders: true,
         send_2h_sms_reminders: true,
       },
-      client: { phone: PHONE, sms_consent_at: "2026-09-01T00:00:00Z", sms_opted_out_at: null },
+      client: { phone: PHONE, sms_consent_at: "2026-09-01T00:00:00Z", sms_consent_phone: null, sms_opted_out_at: null },
       intakeUrl: INTAKE_URL,
       manageUrl: MANAGE_URL,
     });

@@ -23,7 +23,7 @@ const h = vi.hoisted(() => {
   const state = {
     claim: "claimed" as "claimed" | "not_claimed" | "error",
     intakeStatus: "in_progress",
-    liveClient: { phone: "604-555-0199", sms_consent_at: "2026-09-01T00:00:00Z", sms_opted_out_at: null } as { phone: string | null; sms_consent_at: string | null; sms_opted_out_at: string | null },
+    liveClient: { phone: "604-555-0199", sms_consent_at: "2026-09-01T00:00:00Z", sms_consent_phone: null, sms_opted_out_at: null } as { phone: string | null; sms_consent_at: string | null; sms_consent_phone: string | null; sms_opted_out_at: string | null },
     liveClientId: "client-1",
     liveSwitch: true,
     liveReadError: false,
@@ -52,7 +52,7 @@ const h = vi.hoisted(() => {
       name: "Client",
       email: null,
       phone: "604-555-0199",
-      sms_consent_at: "2026-09-01T00:00:00Z",
+      sms_consent_at: "2026-09-01T00:00:00Z", sms_consent_phone: null,
       sms_opted_out_at: null,
     },
     practitioner: null,
@@ -173,7 +173,7 @@ beforeEach(() => {
   process.env.INTAKE_SIGNING_SECRET = "reminder-sms-intake-stamp-fixture".padEnd(48, "x");
   h.state.claim = "claimed";
   h.state.intakeStatus = "in_progress";
-  h.state.liveClient = { phone: "604-555-0199", sms_consent_at: "2026-09-01T00:00:00Z", sms_opted_out_at: null };
+  h.state.liveClient = { phone: "604-555-0199", sms_consent_at: "2026-09-01T00:00:00Z", sms_consent_phone: null, sms_opted_out_at: null };
   h.state.liveClientId = "client-1"; h.state.liveSwitch = true; h.state.liveReadError = false;
   h.state.liveReads = [];
   h.state.rpcs = [];

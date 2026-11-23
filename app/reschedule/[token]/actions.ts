@@ -842,7 +842,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   // appointment, so a cross-tenant id cannot satisfy the gate.
   const { data: clientRow, error: clientErr } = await admin
     .from("clients")
-    .select("name, email, phone, sms_consent_at, sms_opted_out_at")
+    .select("name, email, phone, sms_consent_at, sms_consent_phone, sms_opted_out_at")
     .eq("id", asserted.original.client_id)
     .eq("studio_id", asserted.original.studio_id)
     .maybeSingle();
@@ -1235,6 +1235,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
       client: {
         phone: clientRow.phone,
         sms_consent_at: clientRow.sms_consent_at ?? null,
+        sms_consent_phone: clientRow.sms_consent_phone ?? null,
         sms_opted_out_at: clientRow.sms_opted_out_at ?? null,
       },
       intakeUrl: intake?.url ?? null,

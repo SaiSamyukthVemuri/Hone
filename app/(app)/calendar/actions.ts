@@ -223,7 +223,7 @@ export async function bookAppointmentForClientAction(
   // by a practitioner action that is out of scope for this PR.
   const { data: client, error: clientErr } = await supabase
     .from("clients")
-    .select("id, name, email, phone, sms_consent_at, sms_opted_out_at")
+    .select("id, name, email, phone, sms_consent_at, sms_consent_phone, sms_opted_out_at")
     .eq("id", clientId)
     .eq("studio_id", studio.id)
     .maybeSingle();
@@ -419,6 +419,7 @@ export async function bookAppointmentForClientAction(
       clientEmail: client.email,
       clientPhone: client.phone,
       clientSmsConsentAt: client.sms_consent_at,
+      clientSmsConsentPhone: client.sms_consent_phone,
       clientSmsOptedOutAt: client.sms_opted_out_at,
       notes,
     });
@@ -938,6 +939,8 @@ type DispatchParams = {
   // older callers; the SMS attempt fails the consent gate cleanly
   // when missing or null.
   clientSmsConsentAt?: string | null;
+  /** REQUIRED: the number the consent was given for. Omitting it would read as a legacy consent. */
+  clientSmsConsentPhone: string | null;
   clientSmsOptedOutAt?: string | null;
   notes: string | null;
 };
@@ -979,6 +982,7 @@ async function dispatchBookingEmails(p: DispatchParams) {
   const smsCanCarry = confirmationSmsWillPass(p.studio, {
     phone: p.clientPhone,
     sms_consent_at: p.clientSmsConsentAt ?? null,
+    sms_consent_phone: p.clientSmsConsentPhone,
     sms_opted_out_at: p.clientSmsOptedOutAt ?? null,
   });
   const intake =
@@ -1047,6 +1051,7 @@ async function dispatchBookingEmails(p: DispatchParams) {
     client: {
       phone: p.clientPhone,
       sms_consent_at: p.clientSmsConsentAt ?? null,
+      sms_consent_phone: p.clientSmsConsentPhone,
       sms_opted_out_at: p.clientSmsOptedOutAt ?? null,
     },
     intakeUrl: intake?.url ?? null,

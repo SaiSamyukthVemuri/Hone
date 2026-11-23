@@ -147,7 +147,7 @@ function sendOnce(f: Fixture) {
       send_24h_sms_reminders: true,
       send_2h_sms_reminders: false,
     },
-    client: { phone: f.phone, sms_consent_at: new Date().toISOString(), sms_opted_out_at: null },
+    client: { phone: f.phone, sms_consent_at: new Date().toISOString(), sms_consent_phone: null, sms_opted_out_at: null },
     manageUrlFor: () => null,
     intakeUrl: null,
   });

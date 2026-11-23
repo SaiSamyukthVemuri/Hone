@@ -195,6 +195,7 @@ type PortalBookingContext = {
    * which owns every gate. Nothing on this surface can set, widen or infer it.
    */
   clientSmsConsentAt: string | null;
+  clientSmsConsentPhone: string | null;
   clientSmsOptedOutAt: string | null;
 };
 
@@ -233,7 +234,7 @@ async function resolvePortalBookingContext(): Promise<
   // than something a later branch has to remember to check.
   const { data: clientRow, error: clientErr } = await admin
     .from("clients")
-    .select("id, name, email, phone, sms_consent_at, sms_opted_out_at, archived_at")
+    .select("id, name, email, phone, sms_consent_at, sms_consent_phone, sms_opted_out_at, archived_at")
     .eq("id", clientId)
     .eq("studio_id", studioId)
     .maybeSingle();
@@ -294,6 +295,7 @@ async function resolvePortalBookingContext(): Promise<
       clientEmail: (clientRow.email as string | null) ?? null,
       clientPhone: (clientRow.phone as string | null) ?? null,
       clientSmsConsentAt: (clientRow.sms_consent_at as string | null) ?? null,
+      clientSmsConsentPhone: (clientRow.sms_consent_phone as string | null) ?? null,
       clientSmsOptedOutAt: (clientRow.sms_opted_out_at as string | null) ?? null,
     },
   };
@@ -502,6 +504,7 @@ export async function bookAnotherAppointmentAction(
     clientEmail,
     clientPhone,
     clientSmsConsentAt,
+    clientSmsConsentPhone,
     clientSmsOptedOutAt,
   } = resolved.ctx;
 
@@ -849,6 +852,7 @@ export async function bookAnotherAppointmentAction(
       client: {
         phone: clientPhone,
         sms_consent_at: clientSmsConsentAt,
+        sms_consent_phone: clientSmsConsentPhone,
         sms_opted_out_at: clientSmsOptedOutAt,
       },
       intakeUrl: intake?.url ?? null,
