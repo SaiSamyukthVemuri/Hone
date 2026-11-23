@@ -11,6 +11,7 @@ const tables: Record<string, Row[]> = {};
 const inserted: Row[] = [];
 let clientReads = 0; // how many times `clients` was read
 let failClientRead = false;
+let failClientCode: string | null = "XX000"; // the code on the failed read's error; null = a codeless error object
 
 function from(table: string) {
   const filters: Array<[string, unknown]> = [];
@@ -21,7 +22,7 @@ function from(table: string) {
   q.maybeSingle = () => {
     if (table === "clients") {
       clientReads++;
-      if (failClientRead) return Promise.resolve({ data: null, error: { code: "XX000", message: "boom" } });
+      if (failClientRead) return Promise.resolve({ data: null, error: { code: failClientCode, message: "boom" } });
     }
     return Promise.resolve({ data: rows()[0] ?? null, error: null });
   };
@@ -47,6 +48,7 @@ function seed(client: Row) {
   inserted.length = 0;
   clientReads = 0;
   failClientRead = false;
+  failClientCode = "XX000";
   tables.appointments = [{ id: APPT, studio_id: STUDIO, client_id: CLIENT, practitioner_id: OWNER, starts_at: "2026-12-01T17:00:00Z", service_id: "s1", cancelled_at: "2026-11-30T10:00:00Z" }];
   tables.clients = [{ id: CLIENT, studio_id: STUDIO, ...client }];
   tables.services = [{ id: "s1", name: "Consultation" }];
@@ -116,6 +118,14 @@ describe("the card-change writer names the client by display name", () => {
     seed({ name: "Katherine Example", preferred_name: "Kit" });
     failClientRead = true;
     await expect(ensureCardChangeNotification(fake as never, params)).rejects.toThrow(/card_change_client_lookup_failed/);
+    expect(inserted).toHaveLength(0);
+  });
+
+  it("a failed read whose error carries NO code still throws, so Stripe retries (the failure is the error's presence, not its code)", async () => {
+    seed({ name: "Katherine Example", preferred_name: "Kit" });
+    failClientRead = true;
+    failClientCode = null;
+    await expect(ensureCardChangeNotification(fake as never, params)).rejects.toThrow(/^card_change_client_lookup_failed:/);
     expect(inserted).toHaveLength(0);
   });
 
