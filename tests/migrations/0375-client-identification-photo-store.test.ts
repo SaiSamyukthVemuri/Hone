@@ -290,6 +290,18 @@ describe("0375 rollback", () => {
     expect(refuseEvidence).toBeLessThan(firstDrop);
   });
 
+  it("refuses on a stored photo row and on a queued storage deletion, each as a real condition that raises (not a constant)", () => {
+    // The behaviour is proved in tests/db/client-id-photo-roundtrip.db.test.ts; these pin the conditions offline, so replacing either one
+    // with `if false` (or dropping its raise) goes red here and not only on a stack.
+    expect(DOWN_EXECUTABLE).toMatch(
+      /if exists \(select 1 from public\.client_id_photos\) then\s+raise exception 'down refused: stored identification photos still exist[^']*' using errcode = 'P0375';\s+end if;/,
+    );
+    expect(DOWN_EXECUTABLE).toMatch(
+      /if exists \(select 1 from public\.client_id_photo_pending_object_deletions\) then\s+raise exception 'down refused: storage objects are still queued for deletion[^']*' using errcode = 'P0375';\s+end if;/,
+    );
+    expect(DOWN_EXECUTABLE).not.toMatch(/if (false|0 = 1|1 = 0)\b/i);
+  });
+
   it("never reaches into storage: no SQL deletes or inserts storage objects or buckets", () => {
     expect(DOWN_EXECUTABLE).not.toMatch(/\bstorage\.(objects|buckets)\b/i);
   });
