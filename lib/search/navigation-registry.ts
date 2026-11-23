@@ -170,6 +170,20 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     priority: 70,
   },
   {
+    id: "client-groups",
+    title: "Client groups",
+    category: "Navigation",
+    href: "/clients/groups",
+    description: "Create and rename the groups you use to organise clients",
+    // Owner-only, matching the page itself (it 404s for anyone else), so the
+    // entry is filtered out for non-owners before matching and is never
+    // advertised to them. Keywords name the organising job, never a reason for
+    // treatment: group names are for organising, not for health details.
+    keywords: ["groups", "client group", "organise clients", "organize clients", "segments", "lists", "tags", "labels"],
+    visibility: "owner",
+    priority: 75,
+  },
+  {
     id: "calendar-upcoming",
     title: "Upcoming appointments",
     category: "Navigation",

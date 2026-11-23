@@ -298,6 +298,10 @@ const CLOSED_COPY: Record<InvitationClosedReason, { title: string; body: string 
     // honest next step is for the studio to look.
     body: "Your invitation was used, but we couldn’t confirm whether the appointment went through. Please don’t try to book again. Contact the studio and they can check whether your appointment exists.",
   },
+  studio_managed: {
+    title: "Contact the studio to book",
+    body: "Appointments are managed directly by the studio. Please contact the studio to arrange an appointment or change an existing booking. Your invitation and waitlist entry have not been changed.",
+  },
   unsupported_offer: {
     title: "This invitation can’t be booked online",
     // Says what is true and nothing more. It does NOT claim the studio

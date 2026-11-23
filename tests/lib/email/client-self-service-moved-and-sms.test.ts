@@ -141,6 +141,7 @@ describe("SMS manage line", () => {
     expect(smsManageUrlFor({}, URL)).toBe(URL);
   });
   it.each([
+    [{ studio_managed_appointments: true }, null],
     [{ client_cancellation_enabled: false }, URL],
     [{ client_reschedule_enabled: false }, URL],
     [{ client_portal_enabled: false }, URL],

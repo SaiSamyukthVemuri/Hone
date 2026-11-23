@@ -168,3 +168,13 @@ describe("the server loader", () => {
     silence.mockRestore();
   });
 });
+
+
+describe("studio-managed override",()=>{
+  it("withdraws every self-service permission without overwriting saved choices",()=>{
+    const row={client_cancellation_enabled:true,client_reschedule_enabled:false,client_portal_enabled:true,studio_managed_appointments:true};
+    expect(clientSelfServicePolicyFromStudio(row)).toEqual({cancellation:false,reschedule:false,portal:false});
+    row.studio_managed_appointments=false;
+    expect(clientSelfServicePolicyFromStudio(row)).toEqual({cancellation:true,reschedule:false,portal:true});
+  });
+});

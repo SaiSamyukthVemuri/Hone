@@ -58,6 +58,7 @@ export async function getCurrentPortalSessionState(): Promise<PortalSessionState
   if (!policy.policy.portal) {
     return { kind: "disabled", studioName: policy.studioName };
   }
+  touchPortalSessionSeen({ id: session.id }, new Date().toISOString());
   return { kind: "active", session };
 }
 
@@ -91,44 +92,11 @@ export async function requirePortalSessionForAction(
   return { ok: false, code: "session_expired", error: expiredMessage };
 }
 
-// Read the cookie, hash its value, look the row up, and return the
-// resolved session. Returns null when:
-//   * no cookie is present (anonymous visitor)
-//   * the hash doesn't match any row (forged or stale cookie)
-//   * the row is expired or revoked
-//
-// Refreshes last_seen_at as a best-effort metric; failure to write it
-// never blocks the session.
-async function readCurrentPortalSession(): Promise<PortalSession | null> {
-  const jar = await cookies();
-  const raw = jar.get(COOKIE_NAME)?.value;
-  if (!raw || raw.length === 0) return null;
-
-  const tokenHash = hashToken(raw);
+// The last_seen_at touch runs only for a session that is going to be USED: a
+// session the studio has refused (client portal off, or appointments managed by
+// the studio) is not stamped as seen, so a refused visit leaves no trace.
+function touchPortalSessionSeen(data: { id: string }, nowIso: string): void {
   const admin = createAdminClient();
-
-  const nowIso = new Date().toISOString();
-  const { data, error } = await admin
-    .from("client_portal_sessions")
-    .select("id, studio_id, client_id, expires_at, revoked_at")
-    .eq("session_token_hash", tokenHash)
-    .maybeSingle();
-  if (error) {
-    // Omit provider text: it can quote identifiers, cookies or hashes. A DB
-    // outage should not 500 the page render; treat as anonymous.
-    console.error(
-      JSON.stringify({
-        event: "portal_session_lookup_failed",
-        code: dbErrorCode(error),
-        timestamp: new Date().toISOString(),
-      }),
-    );
-    return null;
-  }
-  if (!data) return null;
-  if (data.revoked_at) return null;
-  if (data.expires_at <= nowIso) return null;
-
   // Fire-and-forget last_seen_at touch. We deliberately do NOT await
   // this so a slow update never blocks the render; an outdated
   // last_seen is acceptable. Supabase builders are lazy thenables:
@@ -165,6 +133,46 @@ async function readCurrentPortalSession(): Promise<PortalSession | null> {
         );
       },
     );
+
+}
+
+// Read the cookie, hash its value, look the row up, and return the
+// resolved session. Returns null when:
+//   * no cookie is present (anonymous visitor)
+//   * the hash doesn't match any row (forged or stale cookie)
+//   * the row is expired or revoked
+//
+// Does not touch last_seen_at: see touchPortalSessionSeen, called only once the
+// studio allows the session.
+async function readCurrentPortalSession(): Promise<PortalSession | null> {
+  const jar = await cookies();
+  const raw = jar.get(COOKIE_NAME)?.value;
+  if (!raw || raw.length === 0) return null;
+
+  const tokenHash = hashToken(raw);
+  const admin = createAdminClient();
+
+  const nowIso = new Date().toISOString();
+  const { data, error } = await admin
+    .from("client_portal_sessions")
+    .select("id, studio_id, client_id, expires_at, revoked_at")
+    .eq("session_token_hash", tokenHash)
+    .maybeSingle();
+  if (error) {
+    // Omit provider text: it can quote identifiers, cookies or hashes. A DB
+    // outage should not 500 the page render; treat as anonymous.
+    console.error(
+      JSON.stringify({
+        event: "portal_session_lookup_failed",
+        code: dbErrorCode(error),
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return null;
+  }
+  if (!data) return null;
+  if (data.revoked_at) return null;
+  if (data.expires_at <= nowIso) return null;
 
   return {
     id: data.id as string,
