@@ -81,6 +81,10 @@ describe("capacity filters", () => {
   });
   it("accepts only the supported horizons", () => {
     for (const days of ["7", "14", "28"]) expect(parseWaitlistParams({ days }, services).days).toBe(Number(days));
-    for (const days of ["900", "-1", ["7", "28"], "junk"]) expect(parseWaitlistParams({ days }, services).notices.length).toBeGreaterThan(0);
+    for (const days of ["900", "-1", ["7", "28"], "junk"]) {
+      const parsed = parseWaitlistParams({ days }, services);
+      expect(parsed.notices.length).toBeGreaterThan(0);
+      expect(parsed.days).toBe(7);
+    }
   });
 });
