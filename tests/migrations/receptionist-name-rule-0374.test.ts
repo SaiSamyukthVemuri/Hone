@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { isRepoMax } from "./helpers/migration-state";
 
 // 0374: the database no longer returns a client's stored name to a receptionist. SOURCE contract for the migration and its
 // down file. Behaviour is the authority and is proved by tests/db/receptionist-name-rule.db.test.ts on a real database;
@@ -39,9 +38,11 @@ const OLD: Record<string, string> = {
 };
 const NEW: Record<string, string> = Object.fromEntries(NAMES.map((n) => [n, fnText(UP, n, "create or replace")]));
 
-describe("0374 is the current maximum and is shaped like a sealed migration", () => {
-  it("is the repository maximum", () => {
-    expect(isRepoMax("0374")).toBe(true);
+describe("0374 is shaped like a sealed migration", () => {
+  // It was the repository maximum when written; a later migration now holds that place, so the central max tripwire (not this file) owns it.
+  it("exists as a migration file and as its own rollback", () => {
+    expect(UP.length).toBeGreaterThan(0);
+    expect(DOWN.length).toBeGreaterThan(0);
   });
 
   it("opens its own transaction and arms lock_timeout inside it", () => {
