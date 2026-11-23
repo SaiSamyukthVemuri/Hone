@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { ensurePractitionerNotification } from "@/lib/notifications/practitioner-notifications";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { loadCommunicationName } from "@/lib/clients/communication-name-loader";
 
 // Card-on-file change notification (Chloe's ask): when a client adds or
 // replaces a card through the portal, the studio should see a practitioner-
@@ -139,10 +140,14 @@ export async function ensureCardChangeNotification(
       `card_change_client_lookup_failed:${dbErrorCode(clientErr)}`,
     );
   }
-  const clientName =
+  const storedClientName =
     typeof client?.name === "string" && client.name.trim().length > 0
       ? client.name.trim()
-      : "A client";
+      : null;
+  // DISPLAY name (the calendar's field: preferred where set), never the legal identity. Fail-soft: any read problem keeps the stored name.
+  const clientName = storedClientName
+    ? await loadCommunicationName(admin, studioId, clientId, storedClientName)
+    : "A client";
 
   const { eventType, title, body, href } = buildCardChangeNotification({
     clientName,

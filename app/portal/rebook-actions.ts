@@ -1,6 +1,7 @@
 "use server";
 
 import { loadTreatmentTimeNameFields } from "@/lib/treatment-time/client-first-name";
+import { loadCommunicationName } from "@/lib/clients/communication-name-loader";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { requirePortalSessionForAction } from "@/lib/portal/session";
@@ -724,13 +725,15 @@ export async function bookAnotherAppointmentAction(
     assignedPractitioner?.email ||
     studio.name;
 
+  // The notification names the client by their DISPLAY name (the calendar's field: preferred where set), never the legal identity.
+  const notificationClientName = await loadCommunicationName(admin, studio.id, clientId, clientName);
   await postCommit("portal_rebook_practitioner_notification_threw", undefined, () =>
     recordPractitionerNotification({
       studioId: studio.id,
       practitionerId: assignedPractitionerId,
       eventType: "new_booking",
       title: "New booking",
-      body: `${clientName} booked ${service.service.name} for ${formatDayLabel(start, studio.timezone)} at ${localTimeString12h(start, studio.timezone)}.`,
+      body: `${notificationClientName} booked ${service.service.name} for ${formatDayLabel(start, studio.timezone)} at ${localTimeString12h(start, studio.timezone)}.`,
       appointmentId: createdId,
       clientId,
       href: `/calendar/${createdId}`,

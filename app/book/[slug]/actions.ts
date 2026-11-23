@@ -1,6 +1,7 @@
 "use server";
 
 import { loadTreatmentTimeNameFields } from "@/lib/treatment-time/client-first-name";
+import { loadCommunicationName } from "@/lib/clients/communication-name-loader";
 import { CLIENT_NAME_MAX, CLIENT_NAME_TOO_LONG } from "@/lib/clients/identity";
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
@@ -1848,13 +1849,15 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // BOOK-01 P2-A: the helper itself is synchronous and documented never to
   // throw, but the `body` template is evaluated EAGERLY at this call site, so a
   // date/timezone formatting failure would propagate from here. Contained.
+  // The notification names the client by their DISPLAY name (the calendar's field: preferred where set), never the legal identity.
+  const notificationClientName = await loadCommunicationName(admin, studio.id, clientId, clientName);
   await postCommit("public_booking_practitioner_notification_threw", undefined, () =>
     recordPractitionerNotification({
       studioId: studio.id,
       practitionerId: assignedPractitionerId,
       eventType: "new_booking",
       title: "New booking",
-      body: `${clientName} booked ${service.name} for ${formatDayLabel(start, studio.timezone)} at ${localTimeString12h(start, studio.timezone)}.`,
+      body: `${notificationClientName} booked ${service.name} for ${formatDayLabel(start, studio.timezone)} at ${localTimeString12h(start, studio.timezone)}.`,
       appointmentId: createdId,
       clientId: clientId,
       href: `/calendar/${createdId}`,
