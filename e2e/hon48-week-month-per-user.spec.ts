@@ -166,13 +166,15 @@ test("everyone selected: the Week and Month totals are the sum of the five", asy
 });
 
 test("a date that is the 1st of a month: the Month grid cell is read, not the toolbar's Day tab", async () => {
-  // The fixture day is today+3, so it only falls on the 1st a few days a year and this would otherwise be proved by chance. Book one
-  // appointment on the 1st of NEXT month and read that cell. If the selector landed on the Day tab (which links to the month's first day
-  // and comes first in the page) it would read 0, not 1.
+  // The fixture day is today+3, so it only falls on the 1st a few days a year. Book one appointment on the 1st of the month AFTER the
+  // fixture day's month and read that cell: it can never be the fixture day itself (when the fixture day is a 1st, that day already holds
+  // ana's other booking and the cell would total 2). If the selector landed on the Day tab (which links to the month's first day and comes
+  // first in the page) it would read 0, not 1.
   const [m] = await sql<{ first: string }>(
-    "select (date_trunc('month', now() at time zone $1) + interval '1 month')::date::text as first",
-    [TZ],
+    "select (date_trunc('month', $1::date) + interval '1 month')::date::text as first",
+    [t.day],
   );
+  expect(m.first, "the 1st under test is never the fixture day").not.toBe(t.day);
   const ana = t.users.find((u) => u.key === "ana")!;
   await book(ana, "10:00", t.serviceId, m.first);
   const owner = t.contexts[0].page;
