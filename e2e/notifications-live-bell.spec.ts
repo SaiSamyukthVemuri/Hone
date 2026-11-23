@@ -25,21 +25,11 @@ import { E2E_APP_ORIGIN } from "./helpers/local-env";
 // NOT COVERED HERE: a receptionist session. A receptionist has no practitioner row, so the middleware refuses it exactly as it refuses the
 // signed-in user with no studio used below; the receptionist role itself is not seeded by this lane.
 
-test.describe.configure({ mode: "serial" });
-
 const SUMMARY = "/api/notifications/summary";
 const SEEN_KEY = "hone:notifications-seen";
 const label = (n: number) => (n > 0 ? `Notifications, ${n} unread` : "Notifications");
 
-let seed: E2eSeed;
-let seedB: E2eSeed;
-let ownerId = "";
-let memberId = "";
-let memberEmail = "";
 const ctxs: BrowserContext[] = [];
-let owner: Tracked;
-let member: Tracked;
-let ownerB: Tracked;
 
 type Tracked = { page: Page; requests: () => number; responses: () => number; errors: string[] };
 
@@ -101,23 +91,27 @@ const storedSeen = (page: Page) =>
     return raw ? (JSON.parse(raw) as { viewer: string | null; seen: string[] }) : null;
   }, SEEN_KEY);
 
-test.beforeAll(async ({ browser }) => {
-  seed = await seedE2eStudio();
-  seedB = await seedE2eStudio();
-  ownerId = await getOwnerPractitionerId(seed.studioId);
+// Each case sets up its OWN state (studio, members, rows, sessions) and the cases are independent (no serial mode), so one failure can never
+// hide another.
+
+test.afterEach(async () => {
+  for (const c of ctxs.splice(0)) await c.close();
+});
+
+type World = { seed: E2eSeed; ownerId: string; memberId: string; memberEmail: string };
+
+async function world(): Promise<World> {
+  const seed = await seedE2eStudio();
   const m = await seedE2eMember(seed);
-  memberId = m.practitionerId;
-  memberEmail = m.email;
-  owner = await signedIn(browser, seed.ownerEmail);
-  member = await signedIn(browser, memberEmail);
-  ownerB = await signedIn(browser, seedB.ownerEmail);
-});
+  return { seed, ownerId: await getOwnerPractitionerId(seed.studioId), memberId: m.practitionerId, memberEmail: m.email };
+}
 
-test.afterAll(async () => {
-  for (const c of ctxs) await c.close();
-});
+const studioWide = (w: World, title?: string) => insertRow({ studioId: w.seed.studioId, practitionerId: null, type: "new_booking", title });
 
-test("ONE poll per tab at 1440: both bell instances are in the DOM, one request on load, none more without a trigger", async () => {
+test("1. ONE poll per tab at 1440: both bell instances are in the DOM, one request on load, none more without a trigger", async ({ browser }) => {
+  const w = await world();
+  const owner = await signedIn(browser, w.seed.ownerEmail);
+  const member = await signedIn(browser, w.memberEmail);
   for (const t of [owner, member]) {
     await expect(bells(t.page)).toHaveCount(2);
     await expectBoth(t.page, 0);
@@ -126,7 +120,9 @@ test("ONE poll per tab at 1440: both bell instances are in the DOM, one request 
   }
 });
 
-test("exactly ONE poll in flight per tab: six focus events during a slow request leave one request", async () => {
+test("2. exactly ONE poll in flight per tab: six focus events during a slow request leave one request", async ({ browser }) => {
+  const w = await world();
+  const owner = await signedIn(browser, w.seed.ownerEmail);
   const page = owner.page;
   let inFlight = 0;
   let maxInFlight = 0;
@@ -146,24 +142,27 @@ test("exactly ONE poll in flight per tab: six focus events during a slow request
   expect(owner.requests() - before).toBe(1);
 });
 
-test("the count changes ONCE per event id on BOTH bell instances, with no intermediate value, and the seen set holds each id once", async () => {
+test("3. the count changes ONCE per event id on BOTH bell instances, with no intermediate value, and the seen set holds each id once", async ({ browser }) => {
+  const w = await world();
+  const owner = await signedIn(browser, w.seed.ownerEmail);
+  const member = await signedIn(browser, w.memberEmail);
   for (const t of [owner, member]) {
     await t.page.evaluate(() => {
-      const w = window as unknown as { __log: string[][] };
-      w.__log = [[], []];
+      const win = window as unknown as { __log: string[][] };
+      win.__log = [[], []];
       document.querySelectorAll('[data-testid="nav-notifications"]').forEach((el, i) => {
-        new MutationObserver(() => w.__log[i].push(el.getAttribute("aria-label") ?? "")).observe(el, { attributes: true, attributeFilter: ["aria-label"] });
+        new MutationObserver(() => win.__log[i].push(el.getAttribute("aria-label") ?? "")).observe(el, { attributes: true, attributeFilter: ["aria-label"] });
       });
     });
   }
-  const first = await insertRow({ studioId: seed.studioId, practitionerId: null, type: "new_booking", title: "Synthetic booking one" });
+  const first = await studioWide(w, "Synthetic booking one");
   for (const t of [owner, member]) {
     await pollNow(t);
     await expectBoth(t.page, 1);
     for (let i = 0; i < 3; i++) await pollNow(t); // the same row returned again and again
     await expectBoth(t.page, 1);
   }
-  const second = await insertRow({ studioId: seed.studioId, practitionerId: null, type: "new_booking", title: "Synthetic booking two" });
+  const second = await studioWide(w, "Synthetic booking two");
   for (const t of [owner, member]) {
     await pollNow(t);
     await pollNow(t);
@@ -177,55 +176,56 @@ test("the count changes ONCE per event id on BOTH bell instances, with no interm
   }
 });
 
-test("role isolation at the data: owner-only and per-recipient rows, and another studio's rows", async () => {
-  // state so far: both see 2 studio-wide rows
+test("4. role isolation at the data: owner-only and per-recipient rows, and another studio's rows", async ({ browser }) => {
+  const w = await world();
+  const b = await seedE2eStudio();
+  await studioWide(w); await studioWide(w);
+  const owner = await signedIn(browser, w.seed.ownerEmail);
+  const member = await signedIn(browser, w.memberEmail);
+  const ownerB = await signedIn(browser, b.ownerEmail);
+  await expectBoth(owner.page, 2); await expectBoth(member.page, 2);
+
   // (a) another studio's studio-wide row counts for nobody in studio A, and does count for studio B's own owner
-  await insertRow({ studioId: seedB.studioId, practitionerId: null, type: "new_booking" });
+  await insertRow({ studioId: b.studioId, practitionerId: null, type: "new_booking" });
   await pollNow(owner); await pollNow(member); await pollNow(ownerB);
   await expectBoth(owner.page, 2);
   await expectBoth(member.page, 2);
   await expectBoth(ownerB.page, 1);
 
   // (b) an OWNER-ONLY event (card on file, targeted at the owner) counts for the owner and not for a non-owner practitioner
-  await insertRow({ studioId: seed.studioId, practitionerId: ownerId, type: "card_added", title: "Synthetic card event" });
+  await insertRow({ studioId: w.seed.studioId, practitionerId: w.ownerId, type: "card_added", title: "Synthetic card event" });
   await pollNow(owner); await pollNow(member);
   await expectBoth(owner.page, 3);
   await expectBoth(member.page, 2);
 
   // (c) a per-recipient cancellation counts only for its recipient
-  await insertRow({ studioId: seed.studioId, practitionerId: memberId, type: "appointment_cancelled", dedupe: `appointment_cancelled:${randomUUID()}` });
+  await insertRow({ studioId: w.seed.studioId, practitionerId: w.memberId, type: "appointment_cancelled", dedupe: `appointment_cancelled:${randomUUID()}` });
   await pollNow(owner); await pollNow(member);
   await expectBoth(owner.page, 3); // another practitioner's recipient row never counts for the owner
   await expectBoth(member.page, 3);
-  await insertRow({ studioId: seed.studioId, practitionerId: ownerId, type: "appointment_cancelled", dedupe: `appointment_cancelled:${randomUUID()}` });
+  await insertRow({ studioId: w.seed.studioId, practitionerId: w.ownerId, type: "appointment_cancelled", dedupe: `appointment_cancelled:${randomUUID()}` });
   await pollNow(owner); await pollNow(member);
   await expectBoth(owner.page, 4);
   await expectBoth(member.page, 3);
-
-  // the answer for each viewer agrees with the database truth for that viewer
-  const [{ n: ownerSees }] = await sql<{ n: string }>(
-    `select count(*)::text as n from public.practitioner_notifications where studio_id=$1 and read_at is null
-       and (event_type <> 'appointment_cancelled' or dedupe_key is null or dedupe_key not like 'appointment_cancelled:%' or practitioner_id = $2 or practitioner_id is null)`,
-    [seed.studioId, ownerId],
-  );
-  expect(Number(ownerSees)).toBe(4);
 });
 
-test("503 keeps the last count and backs off; 403 stops polling; a repeated 401 stops it", async ({ browser }) => {
-  const t = await signedIn(browser, seed.ownerEmail);
-  await expectBoth(t.page, 4);
+test("5. 503 keeps the last count and backs off; 403 stops polling", async ({ browser }) => {
+  const w = await world();
+  await studioWide(w);
+  const t = await signedIn(browser, w.seed.ownerEmail);
+  await expectBoth(t.page, 1);
 
   // 503: the last count stays; the machine waits (no request without a trigger inside 3 s), and a good answer later recovers
   await t.page.route(`**${SUMMARY}`, (route) => route.fulfill({ status: 503, contentType: "application/json", body: '{"error":"unavailable"}' }));
   await pollNow(t);
-  await expectBoth(t.page, 4);
+  await expectBoth(t.page, 1);
   const after503 = t.requests();
   await t.page.waitForTimeout(3_000);
   expect(t.requests(), "back-off: no further request without a trigger").toBe(after503);
   await t.page.unroute(`**${SUMMARY}`);
-  await insertRow({ studioId: seed.studioId, practitionerId: null, type: "new_booking", title: "Synthetic after outage" });
+  await studioWide(w, "Synthetic after outage");
   await pollNow(t);
-  await expectBoth(t.page, 5);
+  await expectBoth(t.page, 2);
 
   // 403: stops for good
   await t.page.route(`**${SUMMARY}`, (route) => route.fulfill({ status: 403, contentType: "application/json", body: '{"error":"forbidden"}' }));
@@ -234,12 +234,13 @@ test("503 keeps the last count and backs off; 403 stops polling; a repeated 401 
   for (let i = 0; i < 3; i++) await t.page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await t.page.waitForTimeout(1_000);
   expect(t.requests(), "stopped: a focus sends nothing").toBe(after403);
-  await expectBoth(t.page, 5); // the last count is kept, nothing is blanked
+  await expectBoth(t.page, 2); // the last count is kept, nothing is blanked
   expect(t.errors).toEqual([]);
 });
 
-test("a repeated 401 stops polling only after three; a fourth focus sends nothing", async ({ browser }) => {
-  const t = await signedIn(browser, seed.ownerEmail);
+test("6. a repeated 401 stops polling only after three; a fourth focus sends nothing", async ({ browser }) => {
+  const w = await world();
+  const t = await signedIn(browser, w.seed.ownerEmail);
   await t.page.route(`**${SUMMARY}`, (route) => route.fulfill({ status: 401, contentType: "application/json", body: '{"error":"unauthenticated"}' }));
   await pollNow(t); await pollNow(t);
   const two = t.requests();
@@ -252,7 +253,9 @@ test("a repeated 401 stops polling only after three; a fourth focus sends nothin
   expect(t.errors).toEqual([]);
 });
 
-test("a REAL signed-out request is the middleware redirect: no count is served and the poller stops cleanly instead of parsing it", async ({ browser, request }) => {
+test("7. a REAL signed-out request is the middleware redirect: no count is served and the poller stops cleanly instead of parsing it", async ({ browser, request }) => {
+  const w = await world();
+  await studioWide(w); await studioWide(w);
   // signed out, no cookies: the route is refused before it runs
   const anon = await request.get(SUMMARY, { maxRedirects: 0 });
   expect([307, 401]).toContain(anon.status());
@@ -274,8 +277,8 @@ test("a REAL signed-out request is the middleware redirect: no count is served a
   expect(await res.text()).not.toContain("unread");
 
   // the session vanishes under an open page (cookies cleared): the poller meets the real middleware redirect three times and stops
-  const t = await signedIn(browser, seed.ownerEmail);
-  await expectBoth(t.page, 5);
+  const t = await signedIn(browser, w.seed.ownerEmail);
+  await expectBoth(t.page, 2);
   await t.page.context().clearCookies();
   // WHY the poller asks with redirect:"manual": signed out, the middleware answers with a redirect. A manual fetch sees an opaque
   // redirect (a definite "not signed in" answer). A default fetch would FOLLOW it: it either fails at the network layer (a redirect to
@@ -306,12 +309,13 @@ test("a REAL signed-out request is the middleware redirect: no count is served a
   await t.page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await t.page.waitForTimeout(1_000);
   expect(t.requests(), "stopped after the third repeated refusal").toBe(stopped);
-  await expectBoth(t.page, 5); // the last count stays; nothing was parsed from a redirect
+  await expectBoth(t.page, 2); // the last count stays; nothing was parsed from a redirect
   expect(t.errors).toEqual([]);
 });
 
-test("a hidden tab sends nothing, and returning to it checks at once", async ({ browser }) => {
-  const t = await signedIn(browser, seed.ownerEmail);
+test("8. a hidden tab sends nothing, and returning to it checks at once", async ({ browser }) => {
+  const w = await world();
+  const t = await signedIn(browser, w.seed.ownerEmail);
   await t.page.evaluate(() => {
     Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
     document.dispatchEvent(new Event("visibilitychange"));
@@ -327,32 +331,38 @@ test("a hidden tab sends nothing, and returning to it checks at once", async ({ 
   await expect.poll(t.requests, { timeout: 10_000 }).toBe(before + 1);
 });
 
-test("sign out, then sign in as someone ELSE in the same tab: the first person's remembered ids are not inherited", async ({ browser }) => {
-  const t = await signedIn(browser, seed.ownerEmail);
+test("9. sign out, then sign in as someone ELSE in the same tab: the first person's remembered ids are not inherited", async ({ browser }) => {
+  const w = await world();
+  await studioWide(w); await studioWide(w);
+  await insertRow({ studioId: w.seed.studioId, practitionerId: w.ownerId, type: "card_added" });
+  await insertRow({ studioId: w.seed.studioId, practitionerId: w.ownerId, type: "appointment_cancelled", dedupe: `appointment_cancelled:${randomUUID()}` });
+  await insertRow({ studioId: w.seed.studioId, practitionerId: w.memberId, type: "appointment_cancelled", dedupe: `appointment_cancelled:${randomUUID()}` });
+  const t = await signedIn(browser, w.seed.ownerEmail);
+  await expectBoth(t.page, 4); // two studio-wide, the card event, the owner's own cancellation
   const ownerSeen = await storedSeen(t.page);
-  expect(ownerSeen?.seen.length).toBeGreaterThan(0);
-  const ownerOnly = ownerSeen!.seen;
+  expect(ownerSeen?.seen.length).toBe(4);
   await t.page.getByRole("button", { name: "Open account menu" }).first().click();
   await t.page.getByRole("button", { name: "Sign out" }).first().click();
   await t.page.waitForURL(/\/login/, { timeout: 20_000 });
   // the same tab still holds the first person's set
   expect((await storedSeen(t.page))?.seen).toEqual(ownerSeen!.seen);
 
-  await loginByMagicLink(t.page, memberEmail);
+  await loginByMagicLink(t.page, w.memberEmail);
   await expect.poll(t.responses, { timeout: 20_000 }).toBeGreaterThan(1);
-  await expectBoth(t.page, 4); // the member's own count: two studio-wide, their recipient cancellation, and the one after the outage
+  await expectBoth(t.page, 3); // two studio-wide and their own recipient cancellation
   const memberSeen = await storedSeen(t.page);
+  expect(memberSeen?.viewer).toMatch(/^[0-9a-f]{16}$/);
   expect(memberSeen?.viewer).not.toBe(ownerSeen?.viewer);
+  expect(memberSeen?.seen).toHaveLength(3);
   // rows only the owner can see are not in the new person's set
   const ownerOnlyRows = await sql<{ id: string }>(
     `select id from public.practitioner_notifications where studio_id=$1 and (event_type='card_added' or practitioner_id=$2)`,
-    [seed.studioId, ownerId],
+    [w.seed.studioId, w.ownerId],
   );
   for (const r of ownerOnlyRows) expect(memberSeen?.seen).not.toContain(r.id);
-  expect(ownerOnly.length).toBeGreaterThan(memberSeen!.seen.length - 1);
 });
 
-test("the SERVER number wins: a mark-all-read that LOWERS the count after a poll had raised it shows the lower number at once", async ({ browser }) => {
+test("10. the SERVER number wins: a mark-all-read that LOWERS the count after a poll had raised it shows the lower number at once", async ({ browser }) => {
   const own = await seedE2eStudio();
   const ownOwner = await getOwnerPractitionerId(own.studioId);
   await insertRow({ studioId: own.studioId, practitionerId: null, type: "new_booking" });
@@ -376,18 +386,20 @@ test("the SERVER number wins: a mark-all-read that LOWERS the count after a poll
   expect(left[0].n).toBe("0");
 });
 
-test("at 390 px both bell instances are in the DOM, one request on load, and the count updates once on both", async ({ browser }) => {
-  const t = await signedIn(browser, seed.ownerEmail, { width: 390, height: 844 });
+test("11. at 390 px both bell instances are in the DOM, one request on load, and the count updates once on both", async ({ browser }) => {
+  const w = await world();
+  await studioWide(w);
+  const t = await signedIn(browser, w.seed.ownerEmail, { width: 390, height: 844 });
   await expect(bells(t.page)).toHaveCount(2);
   await t.page.waitForTimeout(2_000);
   expect(t.requests()).toBe(1);
   const before = (await labels(t.page))[0];
   expect((await labels(t.page))[1]).toBe(before);
-  await insertRow({ studioId: seed.studioId, practitionerId: null, type: "new_booking", title: "Synthetic phone booking" });
+  await studioWide(w, "Synthetic phone booking");
   await pollNow(t);
   const after = await labels(t.page);
-  expect(after[0]).toBe(after[1]);
-  expect(after[0]).not.toBe(before);
+  expect(before).toBe(label(1));
+  expect(after).toEqual([label(2), label(2)]);
   // exactly one of the two is the visible one
   await expect(t.page.locator('[data-testid="nav-notifications"]:visible')).toHaveCount(1);
 });
