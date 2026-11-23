@@ -107,6 +107,18 @@ function makeQuery(table: string) {
       writes.push({ table, op: "delete" });
       return chain;
     },
+    // The owner-email read is a LIST (every active owner is told), awaited without a terminator.
+    then(resolve: (v: { data: unknown; error: null }) => void, reject: (e: unknown) => void) {
+      try {
+        if (table === "practitioners" && columns === "display_name, email") {
+          if (scenario.ownerLookupThrows) throw new Error("PRIVATE owner lookup");
+          return resolve({ data: scenario.ownerMissing ? [] : [{ display_name: "Synthetic owner", email: "owner@example.invalid" }], error: null });
+        }
+        return resolve({ data: null, error: null });
+      } catch (e) {
+        return reject(e);
+      }
+    },
     async maybeSingle() {
       if (table === "appointments") {
         if (columns.startsWith("id, status, starts_at") && scenario.fetchError) return { data: null, error: scenario.fetchError };

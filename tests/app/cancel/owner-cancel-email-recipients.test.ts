@@ -43,6 +43,7 @@ const scenario = {
   owners: [OWNER_A] as string[],
   // emails of the studio's active owners, as the owner-email read sees them
   ownerEmails: ["owner-a@example.invalid"] as string[],
+  ownerEmailReadError: false,
   ownersError: false,
   // the staff member has no display name, only an email
   actorNoName: false,
@@ -68,6 +69,14 @@ function makeQuery(table: string) {
       if (table === "practitioners" && columns === "id") {
         return resolve(
           (scenario.ownersError ? { data: null, error: { code: "XX000", message: "PRIVATE owner read" } } : { data: scenario.owners.map((id) => ({ id })), error: null }) as never,
+        );
+      }
+      if (table === "practitioners" && columns === "display_name, email") {
+        // The plural read: every active owner's row, or a read error when the scenario says so.
+        return resolve(
+          (scenario.ownerEmailReadError
+            ? { data: null, error: { code: "XX000", message: "PRIVATE owner read" } }
+            : { data: scenario.ownerEmails.map((email) => ({ display_name: "Synthetic owner", email })), error: null }) as never,
         );
       }
       if (table !== "practitioner_notifications" || !pending) return resolve({ error: null });
@@ -103,12 +112,6 @@ function makeQuery(table: string) {
       // Only the bell's own timezone read is emptied; the self-service gate reads the full studio row.
       if (table === "studios") return { data: scenario.studioReadNull && columns === "timezone" ? null : studioRow(), error: null };
       if (table === "practitioners" && columns === "display_name") return { data: { display_name: scenario.actorNoName ? null : "Syn Staff" }, error: null };
-      if (table === "practitioners") {
-        // PostgREST: .maybeSingle() with two or more matching rows is an ERROR (PGRST116), not the first row.
-        if (scenario.ownerEmails.length > 1) return { data: null, error: { code: "PGRST116" } };
-        const email = scenario.ownerEmails[0];
-        return { data: email ? { display_name: "Synthetic owner", email } : null, error: null };
-      }
       return { data: null, error: null };
     },
     async single() { return chain.maybeSingle(); },
@@ -130,7 +133,8 @@ vi.mock("@/lib/rate-limit/public", () => ({ limitTokenRoute: async () => ({ allo
 vi.mock("@/lib/booking/appointment-token", () => ({ hashAppointmentToken: () => "a".repeat(64) }));
 vi.mock("@/lib/booking/tokens", () => ({ verifyCancellationToken: () => ({ ok: false, error: "invalid" }) }));
 const emails: Array<{ to: string }> = [];
-vi.mock("@/lib/email/send-appointment", () => ({ sendCancellationEmail: async (p: { to: string }) => { emails.push({ to: p.to }); return { ok: true }; } }));
+const failFor = new Set<string>();
+vi.mock("@/lib/email/send-appointment", () => ({ sendCancellationEmail: async (p: { to: string }) => { emails.push({ to: p.to }); return failFor.has(p.to) ? { ok: false, error: "x", retryable: true } : { ok: true }; } }));
 vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: async (a: unknown) => { alerts.push(a); } }));
 
 const { publicCancelAppointmentAction } = await import("@/app/cancel/[token]/actions");
@@ -151,7 +155,8 @@ beforeEach(() => {
   rpcCalls.length = 0;
   alerts.length = 0;
   emails.length = 0;
-  Object.assign(scenario, { cancelResult: "cancelled", owners: [OWNER_A], ownerEmails: ["owner-a@example.invalid"], seenKeys: new Set<string>() });
+  failFor.clear();
+  Object.assign(scenario, { cancelResult: "cancelled", owners: [OWNER_A], ownerEmails: ["owner-a@example.invalid"], ownerEmailReadError: false, seenKeys: new Set<string>() });
 });
 
 // HON-13: a client's cancel through the link emails the studio owner. The in-app bell already notifies EVERY
@@ -172,5 +177,30 @@ describe("owner cancellation email: who receives it", () => {
     expect(r.ok).toBe(true);
     expect(inserts).toHaveLength(2);
     expect(emails.map((e) => e.to).sort()).toEqual(["owner-a@example.invalid", "owner-b@example.invalid"]);
+  });
+
+  it("an unreadable owner list is 'unconfirmed' (fail closed), sends nothing, and the cancel still succeeds", async () => {
+    scenario.ownerEmailReadError = true;
+    const r = await publicCancelAppointmentAction(cancelForm());
+    await flush();
+    expect(r).toEqual({ ok: true, notification: "unconfirmed" });
+    expect(emails).toEqual([]);
+    expect(JSON.stringify(alerts)).not.toMatch(/PRIVATE|@example/);
+  });
+
+  it("one owner's email failing marks the notification unconfirmed but still tells the other owner, once", async () => {
+    scenario.ownerEmails = ["owner-a@example.invalid", "owner-b@example.invalid"];
+    failFor.add("owner-a@example.invalid");
+    const r = await publicCancelAppointmentAction(cancelForm());
+    await flush();
+    expect(r).toEqual({ ok: true, notification: "unconfirmed" });
+    expect(emails.map((e) => e.to).sort()).toEqual(["owner-a@example.invalid", "owner-b@example.invalid"]);
+  });
+
+  it("two owners sharing one address receive one email, not two", async () => {
+    scenario.ownerEmails = ["Shared@Example.invalid", "shared@example.invalid"];
+    await publicCancelAppointmentAction(cancelForm());
+    await flush();
+    expect(emails).toHaveLength(1);
   });
 });
