@@ -165,6 +165,7 @@ const entryFixture = { phone: "555 0100" as string | null };
 // default. P2-B sets it explicitly, because a horizon the runtime is supposed
 // to READ must not be the same number it would have FALLEN BACK to.
 const studioFixture = {
+  managed: false,
   timezone: "America/Toronto",
   horizonMonths: null as number | null,
   /** The stored admission mode; undefined models a row that carries no admission columns. */
@@ -304,6 +305,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
           table === "studios"
             ? {
                 data: {
+                  studio_managed_appointments: studioFixture.managed,
                   slug: "studio-a",
                   name: "Studio A",
                   timezone: studioFixture.timezone,
@@ -402,6 +404,7 @@ beforeEach(() => {
   entryFixture.phone = "555 0100";
   studioFixture.timezone = "America/Toronto";
   studioFixture.horizonMonths = null;
+  studioFixture.managed = false;
   studioFixture.admissionMode = undefined;
   studioFixture.closedInvitedRule = "absent";
   serviceFixture.name = "Consultation";
@@ -1885,5 +1888,19 @@ describe("HON-7: reopening a spent invitation", () => {
     expect(await requestInvitationProofAction(TOKEN)).toMatchObject(asBefore);
     expect(beginRecipientProof).not.toHaveBeenCalled();
     expect(await bookInvitationSlotAction(TOKEN, "2026-10-15T14:00:00.000Z")).toMatchObject(asBefore);
+  });
+});
+
+
+describe("studio-managed appointments override invitation authority",()=>{
+  it("an old invitation neither lists times, sends proof nor commits a booking while managed",async()=>{
+    studioFixture.managed=true;
+    const actions=await import("@/app/invitation/[token]/actions");
+    for(const run of [()=>actions.loadInvitationAction(TOKEN),()=>actions.requestInvitationProofAction(TOKEN),()=>actions.bookInvitationSlotAction(TOKEN,"2031-01-01T10:00:00Z")]) {
+      const result=await run(); expect(result).toMatchObject({kind:"closed",reason:"studio_managed"});
+    }
+    expect(fetchPublicSlotsForDates).not.toHaveBeenCalled();
+    expect(beginRecipientProof).not.toHaveBeenCalled();
+    expect(publicBookAppointmentAction).not.toHaveBeenCalled();
   });
 });

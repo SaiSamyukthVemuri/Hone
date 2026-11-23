@@ -357,7 +357,9 @@ export async function SecondaryStack({
           auto-detected steps remain; the full checklist always lives on
           /getting-started. Demoted out of the operational flow: setup is not
           daily work. */}
-      {!onboardingV2On && !setupComplete && (
+      {/* Owner setup guidance only: `onboardingV2On` is owner-gated, so without this a staff member on a
+          studio with the flag on fell into the legacy branch and was shown the owner's checklist. */}
+      {isOwner && !onboardingV2On && !setupComplete && (
         <Link
           href="/getting-started"
           className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-neutral-200 px-4 py-3 hover:border-neutral-400 dark:border-neutral-800 dark:hover:border-neutral-600"
@@ -365,8 +367,8 @@ export async function SecondaryStack({
           <span className="text-sm font-medium">Getting started</span>
           <span className="text-xs text-neutral-500">
             {gettingStartedSignals.nextStepSignalsAvailable
-              ? `${gettingStarted.autoDone} of ${gettingStarted.autoTotal} steps complete →`
-              : "Some steps could not be checked just now →"}
+              ? `${gettingStarted.autoDone} of ${gettingStarted.autoTotal} steps complete`
+              : "Some steps could not be checked just now"}
           </span>
         </Link>
       )}

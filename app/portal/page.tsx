@@ -369,9 +369,6 @@ export default async function PortalHomePage() {
               >
                 Hello, {client.firstName}.
               </h1>
-              <p className="mt-4 text-[16px] leading-relaxed text-[#0A0A0A]">
-                Anything you need to handle is at the top. Your appointments and records live below.
-              </p>
             </div>
             {/* PR #159 introduced this top-right cluster so the
                 client can see Email + Sign out without scrolling.

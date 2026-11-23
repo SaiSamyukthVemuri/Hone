@@ -90,17 +90,25 @@ afterAll(async () => {
 });
 
 // ---------------------------------------------------------------------------
-// The 0274 desk directory's source hash, read from the migration file (frozen once applied) so the
-// reviewed-delegate pin follows the reviewed text. Absent file = no second delegate is allowed.
+// The desk directory's source hash, read from the migration file that defines its CURRENT body (frozen once applied), so
+// the reviewed-delegate pin follows the reviewed text. 0374 replaced the body 0274 created (it changed only the display,
+// search and order expressions: the intake-status and consent facts are byte for byte the same, which
+// tests/migrations/receptionist-name-rule-0374.test.ts pins). Absent file = no second delegate is allowed.
 function deskDirectorySha(): string | null {
-  const path = "supabase/migrations/0274_receptionist_desk_projection.sql";
-  if (!existsSync(path)) return null;
-  const src = readFileSync(path, "utf8");
-  const start = src.indexOf("create function public.receptionist_client_directory(");
-  if (start < 0) return null;
-  const open = src.indexOf("as $$", start) + "as $$".length;
-  const close = src.indexOf("$$;", open);
-  return createHash("sha256").update(src.slice(open, close), "utf8").digest("hex");
+  const candidates: Array<[string, string]> = [
+    ["supabase/migrations/0374_receptionist_name_rule.sql", "create or replace function public.receptionist_client_directory("],
+    ["supabase/migrations/0274_receptionist_desk_projection.sql", "create function public.receptionist_client_directory("],
+  ];
+  for (const [path, marker] of candidates) {
+    if (!existsSync(path)) continue;
+    const src = readFileSync(path, "utf8");
+    const start = src.indexOf(marker);
+    if (start < 0) continue;
+    const open = src.indexOf("as $$", start) + "as $$".length;
+    const close = src.indexOf("$$;", open);
+    return createHash("sha256").update(src.slice(open, close), "utf8").digest("hex");
+  }
+  return null;
 }
 const DESK_DIRECTORY_SHA_VALUE = deskDirectorySha() ?? "absent";
 const DESK_DIRECTORY_SHA = `'${DESK_DIRECTORY_SHA_VALUE}'`;

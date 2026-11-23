@@ -128,6 +128,7 @@ describe("owner-only pages and surfaces refuse before any read", () => {
       "app/(app)/layout.tsx",
       "app/(app)/notifications/page.tsx",
       "app/(app)/notifications/actions.ts",
+      "app/api/notifications/summary/route.ts",
       "lib/export/resource-registry.ts",
       "lib/notifications/practitioner-notifications.ts",
       "lib/notifications/owner-only-events.ts",

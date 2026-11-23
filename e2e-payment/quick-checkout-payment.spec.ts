@@ -189,6 +189,13 @@ test("iPad success journey: dashboard → prepare → confirm → execute → pe
   await runCharge.click(); // arms the confirm step
   const confirmCharge = modal.getByRole("button", { name: /confirm: run charge/i });
   await expect(confirmCharge).toBeVisible();
+  // HON-45 (prepare is not charge): ARMING the two-click confirm is not a charge either. Between the first click and the confirm there is still exactly
+  // one prepared attempt and the processor was never called. Only the explicit confirm below creates the effect.
+  const armedRows = await getSessionPaymentAttemptRows(seed.sessionId);
+  expect(armedRows).toHaveLength(1);
+  expect(armedRows[0].status).toBe("ready");
+  expect(readFakeStripeCalls()).toHaveLength(0);
+  expect(countEffectsForAccount(seed.connectedAccountId)).toBe(0);
   await confirmCharge.click();
 
   // --- Persisted Paid (steps 24-25).

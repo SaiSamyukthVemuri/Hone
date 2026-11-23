@@ -1116,7 +1116,7 @@ async function ClientProcedureRecordsSection({
                     href={`/clients/${r.clientId}/sessions/${r.sessionId}`}
                     className="text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
                   >
-                    Open session →
+                    Open session
                   </Link>
                 )}
               </div>
@@ -1229,7 +1229,7 @@ function LotTraceabilityPanel({
                       href={`/clients/${u.clientId}/sessions/${u.sessionId}`}
                       className="font-medium text-neutral-700 hover:underline dark:text-neutral-300"
                     >
-                      Open session →
+                      Open session
                     </Link>
                   )}
                 </li>

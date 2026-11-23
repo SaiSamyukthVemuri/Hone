@@ -428,41 +428,56 @@ export async function publicCancelAppointmentAction(
       // status flip and the audit row, from the policy the command locked and
       // proved equal to what was displayed. Nothing is written here.
 
-      const { data: owner } = await admin
+      // EVERY active owner is told, one email each, as the in-app bell already does: the schema does not guarantee a single
+      // owner (the team invite form can add a second). A single-row read errored on two owners and dropped the email silently.
+      // A failed read is "unconfirmed", never "nobody to tell". An address two owners share is written to once.
+      const { data: owners, error: ownersError } = await admin
         .from("practitioners")
         .select("display_name, email")
         .eq("studio_id", apptRow.studio_id)
         .eq("active", true)
-        .eq("role", "owner")
-        .maybeSingle();
-      if (owner?.email && apptStudio) {
-        const sent = await sendCancellationEmail({
-      nameReader: admin,
-          appointmentId: resolved.appointment_id,
-          to: owner.email,
-          recipientName: owner.display_name?.trim() || owner.email,
-          // Actor + client are one and the same here: a public token
-          // cancellation is ALWAYS performed by the appointment's own
-          // client. Both names are the server-resolved client record
-          // (apptClient.name), never anything from the request body.
-          clientName: apptClient?.name ?? null,
-          actorName: apptClient?.name ?? null,
-          actorRole: "client",
-          studio: apptStudio,
-          serviceName: apptService?.name ?? "Appointment",
-          durationMinutes: apptRow.duration_minutes,
-          startsAt: new Date(apptRow.starts_at),
-          // The owner notification continues to receive the same
-          // free-form reason string it always has. PR #144 sends the
-          // human label (e.g. "Schedule changed") when the client
-          // picked one; null when they cancelled without selecting
-          // anything. The richer note + follow-up flag live in the
-          // audit row and the practitioner-facing appointment detail
-          // page rather than the email body.
-          reason: reasonLabel,
-          isClient: false,
-        });
-        notificationUnconfirmed = !sent.ok;
+        .eq("role", "owner");
+      if (ownersError || !Array.isArray(owners)) {
+        notificationUnconfirmed = true;
+      } else if (apptStudio) {
+        // Unconfirmed (the initial value) until at least one owner was emailed, and again if any send is refused.
+        const seen = new Set<string>();
+        let anyRefused = false;
+        let anyAccepted = false;
+        for (const owner of owners) {
+          const to = typeof owner.email === "string" ? owner.email.trim() : "";
+          if (!to || seen.has(to.toLowerCase())) continue;
+          seen.add(to.toLowerCase());
+          const sent = await sendCancellationEmail({
+            nameReader: admin,
+            appointmentId: resolved.appointment_id,
+            to,
+            recipientName: owner.display_name?.trim() || to,
+            // Actor + client are one and the same here: a public token
+            // cancellation is ALWAYS performed by the appointment's own
+            // client. Both names are the server-resolved client record
+            // (apptClient.name), never anything from the request body.
+            clientName: apptClient?.name ?? null,
+            actorName: apptClient?.name ?? null,
+            actorRole: "client",
+            studio: apptStudio,
+            serviceName: apptService?.name ?? "Appointment",
+            durationMinutes: apptRow.duration_minutes,
+            startsAt: new Date(apptRow.starts_at),
+            // The owner notification continues to receive the same
+            // free-form reason string it always has. PR #144 sends the
+            // human label (e.g. "Schedule changed") when the client
+            // picked one; null when they cancelled without selecting
+            // anything. The richer note + follow-up flag live in the
+            // audit row and the practitioner-facing appointment detail
+            // page rather than the email body.
+            reason: reasonLabel,
+            isClient: false,
+          });
+          if (sent.ok) anyAccepted = true;
+          else anyRefused = true;
+        }
+        notificationUnconfirmed = anyRefused || !anyAccepted;
       }
     }
   } catch {

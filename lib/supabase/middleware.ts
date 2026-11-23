@@ -1,6 +1,7 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { isAdmin } from "@/lib/admin";
+import { isDeskEnabled, isDeskPath } from "@/lib/desk/flag";
 import { RETURN_TO_COOKIE, RETURN_TO_COOKIE_MAX_AGE_SECONDS, returnToKeyFor } from "@/lib/auth/return-to";
 
 export async function updateSession(request: NextRequest) {
@@ -42,6 +43,9 @@ export async function updateSession(request: NextRequest) {
     pathname === "/demo" ||
     pathname === "/privacy" ||
     pathname === "/terms" ||
+    // Public evidence of the appointment-SMS opt-in flow (carrier / reviewer link). No login, no data.
+    pathname === "/sms-consent" ||
+    pathname === "/sms-terms" ||
     // Public marketing category / feature / resource pages (the flagship
     // marketing site). Anonymous visitors and search-engine crawlers must reach
     // these without a /login bounce. Feature routes are listed by exact match
@@ -174,6 +178,13 @@ export async function updateSession(request: NextRequest) {
     return redirect;
   }
 
+  // The receptionist desk. Only while the desk flag is ON, /desk is exempt from the practitioner gate below: a
+  // receptionist-only user has no practitioners row, so the gate would send them to /no-access before any desk page
+  // could resolve them. Authentication above still applies, and the exemption grants NOTHING by itself: every desk
+  // page and action must resolve an active receptionist itself and the database refuses everyone else. Flag off
+  // (the default), /desk follows the ordinary gate exactly as every other path does.
+  const isDeskRoute = isDeskEnabled() && isDeskPath(pathname);
+
   // PR #253 invite-only gate: an AUTHENTICATED user with no active
   // practitioner row (an uninvited sign-in, auth.users exists but the
   // 0081 handle_new_user trigger created no studio/practitioner) is sent
@@ -192,6 +203,7 @@ export async function updateSession(request: NextRequest) {
   if (
     user &&
     !isPublicRoute &&
+    !isDeskRoute &&
     pathname !== "/no-access" &&
     pathname !== "/accept-invitation"
   ) {

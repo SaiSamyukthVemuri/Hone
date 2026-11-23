@@ -1,3 +1,6 @@
+import { createClient } from "@/lib/supabase/server";
+import { ClientGroupsCard } from "../ClientGroups";
+import { readProfileGroups } from "@/lib/client-groups/profile";
 import Link from "next/link";
 import { orderByRecency } from "@/lib/sessions/charted-session";
 // RESP-CLIENT-INTAKE-01. The four outbound controls measured as dead clicks on
@@ -7,7 +10,6 @@ import { orderByRecency } from "@/lib/sessions/charted-session";
 import { PendingLink } from "@/components/pending-link";
 import { publishableKeyOk } from "@/lib/payments/payment-status-presenter";
 import { notFound, redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
 import {
   buildLastSessionSummary,
   pickLastTreatment,
@@ -357,6 +359,7 @@ export default async function ClientCheatSheetPage({
   // One instant for the read and the selectors, so a visit exactly on the boundary is never in both.
   const visitNowMs = Date.now();
   const [
+    profileGroups,
     appointmentTimeline,
     services,
     intake,
@@ -377,6 +380,7 @@ export default async function ClientCheatSheetPage({
     portalAccessEvents,
     overviewVisitAppointments,
   ] = await Promise.all([
+    readProfileGroups(studio.id, client.id, practitioner.role === "owner" && isOverview),
     // PR #157: full appointment history joined to the linked session via the
     // PR #156 appointment_id FK. Rendered only by <ClientAppointmentTimeline>
     // on the Sessions tab.
@@ -1253,6 +1257,10 @@ export default async function ClientCheatSheetPage({
               pinned notes); see the block above the Messages
               collapsible. */}
 
+          {practitioner.role === "owner" && <ClientGroupsCard clientId={client.id}
+            catalogue={profileGroups.catalogue}
+            assigned={profileGroups.assigned} />}
+
           {/* PR #198 (Chloe iPad retest): one "Client info" card holding
               birthday, emergency contact, and address, with an Edit
               link to the existing edit page. */}
@@ -1610,7 +1618,7 @@ export default async function ClientCheatSheetPage({
                   pendingLabel="Opening intake…"
                   className="inline-flex items-center min-h-[44px] min-w-[44px] text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
                 >
-                  View intake →
+                  View intake
                 </PendingLink>
               </div>
               {/* PR #293 follow-up: surface the Resend intake link CTA on the
@@ -1640,7 +1648,7 @@ export default async function ClientCheatSheetPage({
                 pendingLabel="Opening intake…"
                 className="inline-flex items-center min-h-[44px] min-w-[44px] text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
               >
-                View intake →
+                View intake
               </PendingLink>
             </div>
           )}
@@ -1655,7 +1663,7 @@ export default async function ClientCheatSheetPage({
                 pendingLabel="Opening intake…"
                 className="inline-flex items-center min-h-[44px] min-w-[44px] text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
               >
-                View intake →
+                View intake
               </PendingLink>
             </div>
           )}
@@ -1732,7 +1740,7 @@ export default async function ClientCheatSheetPage({
                         pendingLabel="Opening session…"
                         className="inline-flex items-center min-h-[44px] min-w-[44px] text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
                       >
-                        Open →
+                        Open session
                       </PendingLink>
                     </div>
                     {/* The same per-area summary the charting screen

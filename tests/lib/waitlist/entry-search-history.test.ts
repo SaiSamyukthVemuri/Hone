@@ -112,7 +112,7 @@ describe("invitation facts: recorded, never inferred", () => {
   it("separates the deadline from the expiry-recorded time", () => {
     const f = { ...base, expiredAt: "2026-11-13T09:30:00Z" };
     const d = describeInvitation(f, "America/Toronto", NOW);
-    expect(d.outcome).toBe("Expired (not booked within the window)");
+    expect(d.outcome).toBe("Expired");
     const labels = d.facts.map((x) => x.label);
     expect(labels).toEqual(["Invited", "Deadline", "Expiry recorded at"]);
     const deadline = d.facts.find((x) => x.label === "Deadline")!.value;
@@ -127,10 +127,13 @@ describe("invitation facts: recorded, never inferred", () => {
     expect(outcomeOf({ ...base, declinedAt: "2026-11-11T00:00:00Z" }, NOW)).toBe("declined");
     expect(outcomeOf({ ...base, redeemedAt: "2026-11-11T00:00:00Z" }, NOW)).toBe("booked_link_used");
     expect(outcomeOf({ ...base, releasedAt: "2026-11-11T00:00:00Z" }, NOW)).toBe("released");
-    expect(describeInvitation({ ...base, releasedAt: "2026-11-11T00:00:00Z" }, "UTC", NOW).outcome).toBe("Released (reason not recorded)");
+    expect(describeInvitation({ ...base, releasedAt: "2026-11-11T00:00:00Z" }, "UTC", NOW).outcome).toBe("Released — reason not recorded");
+    // The em dash (U+2014) exactly, and never a claim about who released.
+    expect(describeInvitation({ ...base, releasedAt: "2026-11-11T00:00:00Z" }, "UTC", NOW).outcome).toBe("Released \u2014 reason not recorded");
+    expect(describeInvitation({ ...base, releasedAt: "2026-11-11T00:00:00Z" }, "UTC", NOW).outcome).not.toMatch(/cancel|owner|withdr/i);
   });
   it("a passed deadline with nothing recorded is stated as exactly that, and an open one as open", () => {
-    expect(describeInvitation(base, "UTC", NOW).outcome).toBe("Deadline passed (expiry not yet recorded)");
+    expect(describeInvitation(base, "UTC", NOW).outcome).toBe("Expired");
     expect(outcomeOf({ ...base, expiresAt: "2026-11-20T00:00:00Z" }, NOW)).toBe("open");
   });
   it("history groups by entry id, newest first, and drops malformed rows", () => {

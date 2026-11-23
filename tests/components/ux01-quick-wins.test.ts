@@ -147,7 +147,9 @@ describe("UX-01 QW1 · the current day is not painted as disabled", () => {
 
 describe("UX-01 QW2 · bounded, and provably not UX-03", () => {
   const nav = codeOnly(read(NAVLINK));
-  const layout = codeOnly(read(LAYOUT));
+  const layout = codeOnly(read(LAYOUT) + "\n" + read("app/(app)/HeaderCluster.tsx") + "\n" + read("app/(app)/NotificationsBell.tsx"));
+  // HON-106: the bell is a client leaf (it reads the live count); the shell proper is the layout and the header cluster.
+  const shell = codeOnly(read(LAYOUT) + "\n" + read("app/(app)/HeaderCluster.tsx"));
 
   it("adds no provider, context or global route-progress", () => {
     expect(nav).not.toContain("createContext");
@@ -161,7 +163,7 @@ describe("UX-01 QW2 · bounded, and provably not UX-03", () => {
   it("the shell stays a SERVER component", () => {
     // The whole reason the state lives in a leaf: a `"use client"` shell would
     // start hydrating every authenticated page.
-    expect(layout).not.toContain('"use client"');
+    expect(shell).not.toContain('"use client"');
   });
 
   it("introduces no tab primitive", () => {

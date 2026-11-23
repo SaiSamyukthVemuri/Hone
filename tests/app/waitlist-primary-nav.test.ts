@@ -156,12 +156,14 @@ describe("placement and target (read from the real shell source)", () => {
     expect(cal).toBeGreaterThan(-1);
     expect(wl).toBeGreaterThan(cal);
     expect(rec).toBeGreaterThan(wl);
-    expect(layout).toMatch(/\{showWaitlist && \(\s*<PrimaryNavLink\s+href="\/settings\/waitlist"/);
+    expect(layout).toMatch(/\{showWaitlist && \(\s*<PrimaryNavLink\s+href=\{WAITLIST_PATH\}/);
   });
   it("mobile: Waitlist sits between Calendar and Records, only when shown, and defaults to hidden", () => {
-    expect(mobile).toMatch(/\{ href: "\/calendar", label: "Calendar" \},\s*\.\.\.\(showWaitlist \? \[\{ href: "\/settings\/waitlist", label: "Waitlist" \}\] : \[\]\),\s*\{ href: "\/records", label: "Records" \}/);
+    expect(mobile).toMatch(/\{ href: "\/calendar", label: "Calendar" \},\s*\.\.\.\(showWaitlist \? \[\{ href: WAITLIST_PATH, label: "Waitlist" \}\] : \[\]\),\s*\{ href: "\/records", label: "Records" \}/);
     expect(mobile).toMatch(/showWaitlist = false/);
-    expect(layout).toMatch(/<MobileMenu[\s\S]*?showWaitlist=\{showWaitlist\}/);
+    // The layout hands the one decision to the header cluster, which hands it to the compact menu.
+    expect(layout).toMatch(/<HeaderCluster[\s\S]*?showWaitlist=\{showWaitlist\}/);
+    expect(readFileSync("app/(app)/HeaderCluster.tsx", "utf8")).toMatch(/<MobileMenu[\s\S]*?showWaitlist=\{showWaitlist\}/);
   });
   it("one decision feeds both menus, from the Settings tab's own function, with no second rule", () => {
     expect(layout.match(/showWaitlistInPrimaryNav\(/g) ?? []).toHaveLength(1);

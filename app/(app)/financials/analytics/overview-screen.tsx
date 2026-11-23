@@ -3,7 +3,6 @@ import type { ReactNode } from "react";
 import { CONTROL_MIN_TOUCH, FOCUS_RING, cx } from "@/components/ui/control-base";
 import {
   ANALYTICS_ACCESS_NOTE,
-  ANALYTICS_SUBTITLE,
   ANALYTICS_TABS,
   ANALYTICS_TITLE,
   COLLECTED_DEFINITION,
@@ -56,6 +55,7 @@ import { Donut, HBars, LineChart } from "./charts";
 // The other four tabs are drawn as plain, disabled text: no link, no route.
 
 export const OVERVIEW_PATH = "/financials/analytics";
+export const CLIENTS_PATH = "/financials/analytics/clients";
 const PERIOD_LABELS: Record<string, string> = { month_to_date: "Month to date", previous_month: "Previous month", year_to_date: "Year to date", custom: "Custom range" };
 
 export type OverviewScreenProps = {
@@ -126,19 +126,19 @@ function NamedList({ rows, show, format }: { rows: readonly NamedRow[]; show: "s
 
 const BIG = "text-3xl font-semibold tabular-nums tracking-tight text-fg";
 const INPUT = cx("rounded-lg border border-line bg-surface px-2 text-fg", CONTROL_MIN_TOUCH, FOCUS_RING);
-const BUTTON = cx("inline-flex items-center rounded-lg border border-line bg-surface px-4 text-sm font-medium text-fg hover:bg-surface-sunken", CONTROL_MIN_TOUCH, FOCUS_RING);
+export const BUTTON = cx("inline-flex items-center rounded-lg border border-line bg-surface px-4 text-sm font-medium text-fg hover:bg-surface-sunken", CONTROL_MIN_TOUCH, FOCUS_RING);
 
 /** A submitted date is put back in the form only when it is a plain YYYY-MM-DD; anything else (junk, a long string, a non-date) leaves the field empty rather than echoing the query. */
 const PLAIN_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const shownDate = (v: string | undefined): string => (v !== undefined && PLAIN_DATE.test(v) ? v : "");
 
-function Controls({ params, options }: { params: OverviewParams; options: OverviewScreenProps["practitionerOptions"] }) {
+export function Controls({ params, options, action = OVERVIEW_PATH, hidden = [] }: { params: OverviewParams; options: OverviewScreenProps["practitionerOptions"]; action?: string; hidden?: ReadonlyArray<readonly [string, string]> }) {
   const selected = params.practitioner.kind === "one" ? params.practitioner.practitionerId : params.practitioner.kind === "unattributed" ? "unattributed" : "all";
   // Compact controls: a period list and a team-member list. Choosing "Custom range" reveals the dates and the comparison, with no script: the form's own
   // :has() rule shows that group while the Custom option is selected. The submit button is always there, so every choice works without script, and the
   // submitted names and values are exactly the ones the loader's strict parser reads.
   return (
-    <form method="get" action={OVERVIEW_PATH} className="group flex flex-wrap items-end justify-end gap-2" aria-label="Period and team member">
+    <form method="get" action={action} className="group flex flex-wrap items-end justify-end gap-2" aria-label="Period and team member">
       <label className="flex flex-col gap-1 text-xs text-fg-muted">
         <span className="sr-only">Period</span>
         <select name="period" defaultValue={params.periodKind} aria-label="Period" className={INPUT}>
@@ -158,6 +158,9 @@ function Controls({ params, options }: { params: OverviewParams; options: Overvi
         </select>
       </label>
       {params.series !== "money" ? <input type="hidden" name="series" value={params.series} /> : null}
+      {hidden.map(([name, value]) => (
+        <input key={name} type="hidden" name={name} value={value} />
+      ))}
       <button type="submit" className={BUTTON}>Show</button>
       <div className="hidden basis-full flex-wrap items-end justify-end gap-2 group-has-[option[value=custom]:checked]:flex" data-custom-range="">
         <label className="flex flex-col gap-1 text-xs text-fg-muted">
@@ -180,30 +183,35 @@ function Controls({ params, options }: { params: OverviewParams; options: Overvi
   );
 }
 
-/** The tab bar: Overview is this page; the other four are plain disabled text, not links, until they exist. */
-function Tabs() {
+/** The current tab is plain text. Overview and Clients carry their period/team query; Waitlist starts with its own capacity controls. Unbuilt tabs stay disabled. */
+export function Tabs({ current = "Overview", query = "" }: { current?: "Overview" | "Clients" | "Waitlist"; query?: string }) {
+  const href = (t: string): string | null => (t === "Overview" ? `${OVERVIEW_PATH}${query}` : t === "Clients" ? `${CLIENTS_PATH}${query}` : t === "Waitlist" ? "/financials/analytics/waitlist" : null);
   return (
     <div className="space-y-1">
       <ul className="inline-flex flex-wrap gap-1 rounded-xl bg-surface-sunken p-1 text-sm" aria-label="Analytics sections">
-        {ANALYTICS_TABS.map((t, i) =>
-          i === 0 ? (
-            <li key={t}><span aria-current="page" className="inline-flex items-center rounded-lg bg-surface px-4 py-2 font-semibold text-fg shadow-[0_1px_3px_#0002]">{t}</span></li>
-          ) : (
-            <li key={t}><span aria-disabled="true" className="inline-flex items-center rounded-lg px-4 py-2 text-fg-muted">{t}<span className="sr-only"> (not available yet)</span></span></li>
-          ),
-        )}
+        {ANALYTICS_TABS.map((t) => {
+          const link = href(t);
+          return (
+            <li key={t}>
+              {t === current ? (
+                <span aria-current="page" className={cx("inline-flex items-center rounded-lg bg-surface px-4 py-2 font-semibold text-fg shadow-[0_1px_3px_#0002]", CONTROL_MIN_TOUCH)}>{t}</span>
+              ) : link ? (
+                <a href={link} className={cx("inline-flex items-center rounded-lg px-4 py-2 text-fg-muted hover:text-fg", CONTROL_MIN_TOUCH, FOCUS_RING)}>{t}</a>
+              ) : (
+                <span aria-disabled="true" className={cx("inline-flex items-center rounded-lg px-4 py-2 text-fg-muted", CONTROL_MIN_TOUCH)}>{t}<span className="sr-only"> (not available yet)</span></span>
+              )}
+            </li>
+          );
+        })}
       </ul>
       <p className="text-xs text-fg-muted">{TABS_NOT_AVAILABLE_NOTE}</p>
     </div>
   );
 }
 
-function PageTitle() {
+export function PageTitle() {
   return (
-    <div className="space-y-1">
-      <h1 className="text-4xl font-semibold tracking-tight text-fg">{ANALYTICS_TITLE}</h1>
-      <p className="text-sm text-fg-muted">{ANALYTICS_SUBTITLE}</p>
-    </div>
+    <h1 className="text-4xl font-semibold tracking-tight text-fg">{ANALYTICS_TITLE}</h1>
   );
 }
 
@@ -281,7 +289,7 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
         </div>
         {print ? null : (
           <div className="flex flex-wrap items-end justify-between gap-4 border-b border-line pb-5">
-            <Tabs />
+            <Tabs query={overviewQuery(params)} />
             <Controls params={params} options={practitionerOptions} />
           </div>
         )}
@@ -395,7 +403,7 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
         </div>
 
         <div className="space-y-3">
-          <h2 className="text-xl font-semibold tracking-tight text-fg">Clients keep coming back</h2>
+          <h2 className="text-xl font-semibold tracking-tight text-fg">Returning clients</h2>
           <Card id="ov-returning" title="Returning and first-time clients" figure={view.returning} note={FIRST_TIME_NOTE}>
             {(r) =>
               r.returningPercent.known ? (
@@ -472,7 +480,7 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
               )
             }
           </Card>
-          <Card id="ov-month-new" title="New relationships" figure={view.returning}>
+          <Card id="ov-month-new" title="First-time clients" figure={view.returning}>
             {(r) => (
               <>
                 <p className="text-xl font-semibold text-fg">{plural(r.firstTime, "first-time client", "first-time clients")}</p>
@@ -516,11 +524,11 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
 
       <section aria-labelledby="ov-follow" className="space-y-3">
         <div>
-          <h2 id="ov-follow" className="text-xl font-semibold tracking-tight text-fg">Follow-through</h2>
-          <p className="text-sm text-fg-muted">Current as of {asOfText(view.asOfLocal)} &middot; a starting point for your review.</p>
+          <h2 id="ov-follow" className="text-xl font-semibold tracking-tight text-fg">Booking follow-up</h2>
+          <p className="text-sm text-fg-muted">Current as of {asOfText(view.asOfLocal)}.</p>
         </div>
         <div className="grid gap-3 sm:grid-cols-3">
-          <Card id="ov-nonext" title="Clients without a next booking" figure={view.noNextBooking} note={noNextBookingNote()}>
+          <Card id="ov-nonext" title="No next booking" figure={view.noNextBooking} note={noNextBookingNote()}>
             {(n) => <p className={BIG}>{n.count}</p>}
           </Card>
           <Card id="ov-beyond" title="Beyond their usual visit interval" figure={view.beyondUsual} note={<>{beyondUsualNote(DEFAULT_BEYOND_USUAL_FACTOR)}{view.filterKind !== "all" ? ` ${BEYOND_USUAL_FILTER_NOTE}` : ""}</>}>
@@ -540,10 +548,10 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
 
       <section aria-labelledby="ov-value" className="space-y-2">
         <details open={print} className="rounded-xl border border-line bg-surface p-4" data-reconciliation="">
-          <summary id="ov-value" className={cx("cursor-pointer text-sm font-medium text-fg", FOCUS_RING)}>Service value and collected: how the figures reconcile</summary>
+          <summary id="ov-value" className={cx("cursor-pointer text-sm font-medium text-fg", FOCUS_RING)}>Service value and collected</summary>
           <div className="mt-4 space-y-4">
             <p className="text-sm text-fg-muted">{NEVER_SUMMED_NOTE}</p>
-            <Card id="ov-split" title="What the collected total is made of" figure={view.collected}>
+            <Card id="ov-split" title="Collected breakdown" figure={view.collected}>
               {(c) => (
                 <div className="space-y-2">
                   <table className="w-full text-left text-sm">
@@ -620,3 +628,4 @@ function SplitRow({ label, value, strong = false }: { label: string; value: stri
     </tr>
   );
 }
+

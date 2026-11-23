@@ -99,8 +99,7 @@ export default function GlobalError({
               color: "#6B6B6B",
             }}
           >
-            Hone could not finish loading this page. This is a problem on our
-            side, not something you did.
+            Hone could not finish loading this page.
           </p>
           <p
             style={{

@@ -259,6 +259,62 @@ describe("0324 the residual race, proved as it stands", () => {
   });
 });
 
+describe("the owner's Invite anyway: the largest accepted number lifts the estimate and nothing else", () => {
+  const MAX_FIT = 2_147_483_647;
+
+  it("fit 0 refuses, and the same person is admitted exactly once with the largest number", async () => {
+    const f = await fixture("anyway");
+    const e = await entry(f, "anyway");
+    expect((await admit(f, e, 0)).result).toBe("no_capacity");
+    expect(await allInvitations(f.studioId)).toBe(0);
+    expect((await admit(f, e, MAX_FIT)).result).toBe("admitted");
+    expect(await liveCount(f.studioId)).toBe(1);
+  });
+
+  it("a person who already has a live invitation is refused again (no longer admissible), so one invitation exists", async () => {
+    const f = await fixture("dupe");
+    const e = await entry(f, "dupe");
+    expect((await admit(f, e, MAX_FIT)).result).toBe("admitted");
+    expect((await admit(f, e, MAX_FIT)).result).toBe("not_admissible");
+    expect(await allInvitations(f.studioId)).toBe(1);
+  });
+
+  it("two simultaneous presses create one invitation", async () => {
+    const f = await fixture("press");
+    const e = await entry(f, "press");
+    const [x, y] = await Promise.all([admit(f, e, MAX_FIT), admit(f, e, MAX_FIT)]);
+    expect([x.result, y.result].sort()).toEqual(["admitted", "not_admissible"]);
+    expect(await allInvitations(f.studioId)).toBe(1);
+  });
+
+  it("someone who is not an owner of this studio is refused whatever number is given", async () => {
+    const f = await fixture("owner");
+    const other = await fixture("owner-other");
+    const e = await entry(f, "owner");
+    const r = await q<Row>(ADMIT, [f.studioId, other.userId, e, f.serviceId, day(1), day(14), null, MAX_FIT]);
+    expect(r[0].result).not.toBe("admitted");
+    expect(await allInvitations(f.studioId)).toBe(0);
+  });
+
+  it("a service that is not this studio's is refused whatever number is given", async () => {
+    const f = await fixture("svc");
+    const other = await fixture("svc-other");
+    const e = await entry(f, "svc");
+    const r = await q<Row>(ADMIT, [f.studioId, f.userId, e, other.serviceId, day(1), day(14), null, MAX_FIT]);
+    expect(r[0].result).not.toBe("admitted");
+    expect(await allInvitations(f.studioId)).toBe(0);
+  });
+
+  it("an entry that belongs to another studio is refused whatever number is given", async () => {
+    const f = await fixture("foreign");
+    const other = await fixture("foreign-other");
+    const e = await entry(other, "foreign");
+    expect((await admit(f, e, MAX_FIT)).result).not.toBe("admitted");
+    expect(await allInvitations(f.studioId)).toBe(0);
+    expect(await allInvitations(other.studioId)).toBe(0);
+  });
+});
+
 describe("0324 privileges", () => {
   const INTERNAL = "public.count_waitlist_competing_invitations_internal(uuid,date,date,smallint[])";
   const ADMIT_SIG = "public.admit_new_client_waitlist_entry(uuid,uuid,uuid,uuid,date,date,smallint[],integer,integer,uuid)";

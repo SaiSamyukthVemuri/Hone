@@ -8,7 +8,7 @@ import {
 
 // HON-48 five-user proof, part 1: FIVE INDEPENDENT SESSIONS BOOKING AT ONCE.
 //
-// Opt-in (a multi-session browser run, so no lane carries it by default): HON48_FIVE_USER_E2E=1.
+// Runs in the required calendar lane (a multi-session browser run, about 30 s).
 //
 //   1  five users each book a client in their OWN column at the same moment:
 //      five winners, one appointment row per practitioner, one reservation each
@@ -18,7 +18,6 @@ import {
 //
 // Evidence is the DATABASE rows, not only the toast. Synthetic names and addresses only.
 
-test.skip(process.env.HON48_FIVE_USER_E2E !== "1", "opt-in HON-48 five-user proof; set HON48_FIVE_USER_E2E=1");
 test.describe.configure({ mode: "serial" });
 
 let t: Team;
@@ -112,7 +111,8 @@ test("Week and Month show the committed bookings: the week total and the month d
 
   // MONTH: the day's cell shows its chips plus "+N more", together equal to the database count for that day.
   await owner.goto(monthUrl(t.day, everyone));
-  const cell = owner.locator(`a[href*="day=${t.day}"]`).first();
+  // By accessible name, not href: on the 1st the toolbar's Day tab also links to day=<that date> and comes first in the page.
+  const cell = owner.getByRole("link", { name: `Open ${t.day}`, exact: true });
   await expect(cell).toBeVisible({ timeout: 20_000 });
   const chips = await cell.locator("span[title]").count();
   const moreText = (await cell.innerText()).match(/\+(\d+)\s+more/i);

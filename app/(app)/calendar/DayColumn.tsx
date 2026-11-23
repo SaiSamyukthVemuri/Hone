@@ -41,7 +41,7 @@ import { blockPurpose, type BlockPurpose } from "@/lib/calendar/block-purpose";
 import { reconcileEditingBlock } from "@/lib/calendar/reconcile-editing-block";
 import { QuickBlockDrawer } from "./QuickBlockDrawer";
 import { AppointmentPreviewDrawer } from "./AppointmentPreviewDrawer";
-import { AppointmentOverlapChooser, OverlapAppointmentSummary } from "./AppointmentOverlapChooser";
+import { AppointmentOverlapChooser, OverlapAppointmentSummary, OverlapSummaryRows } from "./AppointmentOverlapChooser";
 import { PractitionerTag } from "./PractitionerTag";
 import {
   CARD_LINE_PX,
@@ -958,17 +958,14 @@ export function DayColumn({
         const a = members[0];
         return <button key={group.ids.join(":")} type="button"
           style={{ top: group.top, height: group.height }}
-          className={`absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 px-2 py-1 text-left text-xs ${members.length === 1 ? appointmentCardClasses(a.service) : "border-neutral-500 bg-neutral-100 text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100"} ${members.length === 1 && appointmentDisplayStatus(a.status, a.ends_at) !== "upcoming" ? "opacity-60" : ""} ${members.length === 1 && appointmentDisplayStatus(a.status, a.ends_at) === "no_show" ? NO_SHOW_CARD_CLASS : ""}`}
+          className={`@container absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 px-2 py-1 text-left text-xs ${members.length === 1 ? appointmentCardClasses(a.service) : "border-neutral-500 bg-neutral-100 text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100"} ${members.length === 1 && appointmentDisplayStatus(a.status, a.ends_at) !== "upcoming" ? "opacity-60" : ""} ${members.length === 1 && appointmentDisplayStatus(a.status, a.ends_at) === "no_show" ? NO_SHOW_CARD_CLASS : ""}`}
           aria-label={members.length > 1 ? `Choose from ${members.length} appointments` : undefined}
           onClick={(event) => {
             event.stopPropagation();
             if (members.length === 1) setPreview(a);
             else setOverlapIds(group.ids);
           }}>
-          {members.length === 1 ? <OverlapAppointmentSummary appointment={a} tz={tz} timeFormat={timeFormat} /> : <>
-            <span className="block font-semibold">{members.length} appointments</span>
-            <span className="block tabular-nums">{formatTimeForStudio(new Date(a.starts_at), tz, timeFormat)}</span>
-          </>}
+          {members.length === 1 ? <OverlapAppointmentSummary appointment={a} tz={tz} timeFormat={timeFormat} /> : <OverlapSummaryRows members={members} height={group.height} tz={tz} timeFormat={timeFormat} />}
         </button>;
       })}
       <AppointmentOverlapChooser blockScopeNames={blockScopeNames} timedBlocks={selectedBlocks} onSelectBlock={(block) => setEditingBlock(block)} appointments={selectedOverlaps} tz={tz} timeFormat={timeFormat} returnTo={returnTo}

@@ -93,3 +93,19 @@ describe("portal lookup/logout diagnostics omit free-form provider text", () => 
     expectMarker(log, "portal_session_revoke_failed");
   });
 });
+
+
+describe("an existing portal session after studio-managed mode is enabled", () => {
+  it("does not return client access even though the cookie and session remain valid, and leaves no last-seen trace", async () => {
+    const update = vi.fn(() => ({ eq: () => ({ then: (done: (x: unknown) => void) => done({ error: null }) }) }));
+    mocks.admin.mockReturnValue({
+      from: (table: string) => ({
+        select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: table === "studios" ? { id: row.studio_id, name: "Synthetic Studio", studio_managed_appointments: true } : row, error: null }) }) }),
+        update,
+      }),
+    });
+    expect(await getCurrentPortalSession()).toBeNull();
+    // A refused session is not stamped as seen (the touch runs only for a session that is used).
+    expect(update).not.toHaveBeenCalled();
+  });
+});

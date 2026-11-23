@@ -36,6 +36,10 @@ import {
 // asks the right questions and renders the right answers.
 
 const STUDIO_ID = "44444444-4444-4444-8444-444444444444";
+/** The decline-visibility count read (every declined invitation of the studio): a constant-cost read of its own, counted separately from the per-row reads. */
+const DECLINE_COUNT_READ = "id,entry_id,declined_at";
+// The invitation-to-booking summary's own reads: exact HEAD-ONLY counts under the period filter (constant cost, seven per page), counted separately below.
+const isSummaryRead = (q: QueryShape) => q.table === "new_client_waitlist_invitations" && q.filters.some((f) => f[0] === "gte" && f[1] === "issued_at");
 /**
  * The one entries projection. 0208 added the four SMS-standing columns; the
  * evidence reference and the recorder are deliberately absent, because the
@@ -119,6 +123,9 @@ function capacityQuery(): QueryShape {
   return q;
 }
 const rpcCalls: RpcCall[] = [];
+const userRpcCalls: RpcCall[] = [];
+const summaryRpc: { error: null | { code: string } } = { error: null };
+const SUMMARY_ROW = { invitations_total: 20, people_invited: 17, booked_linked_live: 5, booked_then_cancelled: 1, converted_unlinked: 1 };
 const revalidated: string[] = [];
 const consoleErrors: string[] = [];
 const consoleWarns: string[] = [];
@@ -134,6 +141,21 @@ const scenario = {
   // The LIVE invitation read — the rows whose three terminal stamps are all
   // null. At most one per entry, by the 0189 unique index.
   liveInvitations: [] as Array<Record<string, unknown>>,
+  // The studio-wide expiry read (no entry-id filter): null serves the same rows as the live read; a test seeds it to put an expiry OFF the page.
+  studioExpiries: null as Array<Record<string, unknown>> | null,
+  // The exact count PostgREST would report for that read (Content-Range). Absent means "the rows seeded". A test sets it above 1000 to model the API's row ceiling.
+  studioExpiryCount: null as number | null,
+  // A failure of the summary read alone (the page's own invitation reads still succeed).
+  studioExpiriesError: null as { code: string } | null,
+  // DECLINE VISIBILITY. The declined-invitation read (id,entry_id,declined_at), its exact count, a failure of that read alone, the names/states read
+  // for the people listed, and the contact read (id,email,phone) the existing contact view uses.
+  declinedInvitations: [] as Array<Record<string, unknown>>,
+  declinedCount: null as number | null,
+  declinedError: null as { code: string } | null,
+  declineEntries: [] as Array<Record<string, unknown>>,
+  aheadOf: {} as Record<string, number>,
+  positionError: null as { code: string } | null,
+  contactRows: [] as Array<Record<string, unknown>>,
   // The REDEEMED invitation read, asked separately.
   redeemedInvitations: [] as Array<Record<string, unknown>>,
   invitationsError: null as { code: string } | null,
@@ -174,6 +196,8 @@ function reset() {
   queries.length = 0;
   clientInstances.length = 0;
   rpcCalls.length = 0;
+  userRpcCalls.length = 0;
+  summaryRpc.error = null;
   revalidated.length = 0;
   consoleErrors.length = 0;
   consoleWarns.length = 0;
@@ -189,6 +213,16 @@ function reset() {
     removeResult: "removed",
     removeError: null,
     liveInvitations: [],
+    studioExpiries: null,
+    studioExpiryCount: null,
+    studioExpiriesError: null,
+    declinedInvitations: [],
+    declinedCount: null,
+    declinedError: null,
+    declineEntries: [],
+    aheadOf: {},
+    positionError: null,
+    contactRows: [],
     redeemedInvitations: [],
     invitationsError: null,
     services: [],
@@ -215,7 +249,23 @@ const followUp = vi.hoisted(() => ({
   attention: null as unknown,
   declined: null as unknown,
   replies: null as unknown,
+  // The owner follow-up read. Null serves the real read, which the harness has no command for; a test seeds a list.
+  followUps: null as unknown,
+  // Per-invitation answers to the invitation-scoped form of the read, keyed by invitation id. A test seeds these; absent means the page list is served.
+  scoped: {} as Record<string, unknown>,
+  scopedCalls: [] as string[],
 }));
+vi.mock("@/lib/waitlist/followups-owner", async (orig) => {
+  const a = await orig<typeof import("@/lib/waitlist/followups-owner")>();
+  return { ...a, readFollowUps: vi.fn(async (...args: Parameters<typeof a.readFollowUps>) => {
+    const inv = args[2];
+    if (inv) {
+      followUp.scopedCalls.push(inv);
+      return (followUp.scoped[inv] as Awaited<ReturnType<typeof a.readFollowUps>> | undefined) ?? { kind: "ok" as const, rows: [] };
+    }
+    return (followUp.followUps as Awaited<ReturnType<typeof a.readFollowUps>> | null) ?? a.readFollowUps(...args);
+  }) };
+});
 vi.mock("@/lib/waitlist/needs-attention", async (orig) => {
   const a = await orig<typeof import("@/lib/waitlist/needs-attention")>();
   return { ...a, loadNeedsAttention: vi.fn(async (...args: Parameters<typeof a.loadNeedsAttention>) =>
@@ -377,6 +427,29 @@ vi.mock("@/lib/supabase/server", () => ({
             : { data: scenario.preferences, error: null };
         }
 
+        // The decline-visibility reads, answered from their own seeds. The fake honours the studio scope, and returns the exact count only when asked.
+        if (table === "new_client_waitlist_invitations" && shape.columns === DECLINE_COUNT_READ) {
+          if (scenario.declinedError) return { data: null, count: null, error: scenario.declinedError };
+          const scoped =
+            shape.filters.some((f) => f[0] === "eq" && f[1] === "studio_id" && f[2] === STUDIO_ID) &&
+            shape.filters.some((f) => f[0] === "not" && f[1] === "declined_at");
+          const src = scoped ? scenario.declinedInvitations : [];
+          const rows = src.slice(0, Math.min(shape.limit ?? 1000, 1000));
+          return { data: rows, count: shape.options.count === "exact" ? (scenario.declinedCount ?? src.length) : null, error: null };
+        }
+        // The position read: a head-only exact count of the entries AHEAD of one entry in its section, answered from a per-entry seed.
+        if (table === "new_client_waitlist_entries" && shape.options.head === true && shape.filters.some((f) => f[0] === "or")) {
+          const orFilter = String(shape.filters.find((f) => f[0] === "or")?.[2] ?? "");
+          const entryId = orFilter.match(/id\.lt\.([^)]+)\)/)?.[1] ?? "";
+          if (scenario.positionError) return { data: null, count: null, error: scenario.positionError };
+          return { data: null, count: scenario.aheadOf[entryId] ?? 0, error: null };
+        }
+        if (table === "new_client_waitlist_entries" && (shape.columns === "id,name,status,joined_at" || shape.columns === "id,email,phone")) {
+          const ids = (shape.filters.find((f) => f[0] === "in" && f[1] === "id")?.[2] ?? []) as string[];
+          const src = shape.columns === "id,name,status,joined_at" ? scenario.declineEntries : scenario.contactRows;
+          return { data: src.filter((r) => ids.includes(r.id as string)), error: null };
+        }
+
         if (table === "new_client_waitlist_invitations") {
           if (scenario.invitationsError) {
             return { data: null, error: scenario.invitationsError };
@@ -385,6 +458,21 @@ vi.mock("@/lib/supabase/server", () => ({
           // one asks `is null` on all three terminal stamps; the REDEEMED one
           // asks `not redeemed_at is null`.
           const asksRedeemed = shape.filters.some((f) => f[0] === "not");
+          // The studio-wide expiry summary read: the live predicate with NO entry-id list.
+          if (!asksRedeemed && !shape.filters.some((f) => f[0] === "in")) {
+            if (scenario.studioExpiriesError) return { data: null, count: null, error: scenario.studioExpiriesError };
+            // THE FAKE HONOURS THE FILTERS AND THE API ROW CEILING. It answers only a read scoped to this studio with all four terminal stamps null,
+            // so a read that dropped one of those terms gets nothing back; and it returns at most min(limit, max_rows = 1000) rows with the EXACT
+            // count beside them only when the read asked for one, as the real Data API does.
+            const isNull = (c: string) => shape.filters.some((f) => f[0] === "is" && f[1] === c && f[2] === null);
+            const scoped =
+              shape.filters.some((f) => f[0] === "eq" && f[1] === "studio_id" && f[2] === STUDIO_ID) &&
+              ["redeemed_at", "expired_at", "released_at", "declined_at"].every(isNull);
+            const src = scoped ? (scenario.studioExpiries ?? scenario.liveInvitations) : [];
+            const rows = src.slice(0, Math.min(shape.limit ?? 1000, 1000)).map((r) => ({ expires_at: r.expires_at }));
+            const count = shape.options.count === "exact" ? (scoped ? (scenario.studioExpiryCount ?? src.length) : 0) : null;
+            return { data: rows, count, error: null };
+          }
           return {
             data: asksRedeemed ? scenario.redeemedInvitations : scenario.liveInvitations,
             error: null,
@@ -457,6 +545,22 @@ vi.mock("@/lib/supabase/server", () => ({
           shape.filters.push(["is", column, value]);
           return builder;
         },
+        gte(column: string, value: unknown) {
+          shape.filters.push(["gte", column, value]);
+          return builder;
+        },
+        gt(column: string, value: unknown) {
+          shape.filters.push(["gt", column, value]);
+          return builder;
+        },
+        lte(column: string, value: unknown) {
+          shape.filters.push(["lte", column, value]);
+          return builder;
+        },
+        or(expression: string) {
+          shape.filters.push(["or", "", expression]);
+          return builder;
+        },
         not(column: string, op: string, value: unknown) {
           shape.filters.push(["not", column, `${op}:${String(value)}`]);
           return builder;
@@ -478,6 +582,11 @@ vi.mock("@/lib/supabase/server", () => ({
         },
       };
       return builder;
+    },
+    // The owner's own session may call the summary command (the only rpc it makes); recorded apart from the admin client's.
+    async rpc(fn: string, args: Record<string, unknown>) {
+      userRpcCalls.push({ fn, args });
+      return summaryRpc.error ? { data: null, error: summaryRpc.error } : { data: [SUMMARY_ROW], error: null };
     },
     };
   },
@@ -527,7 +636,7 @@ const { removeWaitlistEntryAction } = await import(
  * opens /settings/waitlist.
  */
 const render = async (
-  searchParams: { section?: string | string[]; page?: string | string[] } = {},
+  searchParams: { section?: string | string[]; page?: string | string[]; view?: string | string[]; dpage?: string | string[] } = {},
 ) =>
   renderToStaticMarkup(
     await WaitlistSettingsPage({ searchParams: Promise.resolve(searchParams) }),
@@ -1577,7 +1686,7 @@ describe("the Settings tab is server-gated", () => {
     expect(LAYOUT).toMatch(
       /return \(\s*\n\s*waitlistLive \|\|\s*\n\s*\(await hasActiveWaitlistEntries\(await createClient\(\), ctx\.studio\.id\)\)\s*\n\s*\);/,
     );
-    expect(LAYOUT).toMatch(/label: "Waitlist",\s*\n\s*href: "\/settings\/waitlist"/);
+    expect(LAYOUT).toMatch(/label: "Waitlist",\s*\n\s*href: WAITLIST_PATH,/);
   });
 
   it("derives the mode from the SERVER-RESOLVED studio, never a browser value", () => {
@@ -1602,7 +1711,7 @@ describe("the Settings tab is server-gated", () => {
   });
 
   it("is an owner-only entry", () => {
-    expect(LAYOUT).toMatch(/href: "\/settings\/waitlist",\s*\n\s*roles: OWNER,\s*\n\s*visibleWhen: waitlistVisible/);
+    expect(LAYOUT).toMatch(/href: WAITLIST_PATH,\s*\n\s*roles: OWNER,\s*\n\s*visibleWhen: waitlistVisible/);
     expect(LAYOUT).toMatch(/if \(ctx\.role !== "owner"\) return false;/);
   });
 
@@ -1858,6 +1967,45 @@ describe("action visibility follows the row's lifecycle state", () => {
     expect(html).not.toContain("either way");
   });
 
+  it("the invitation-to-booking summary costs a constant number of reads, whatever the rows: seven head-only counts and one command call", async () => {
+    for (const rows of [[entry({ status: "waiting" })], [entry({ id: "e-a", status: "invited" }), entry({ id: "e-b", status: "released" })]]) {
+      queries.length = 0;
+      rpcCalls.length = 0;
+      userRpcCalls.length = 0;
+      scenario.rows = rows;
+      scenario.count = rows.length;
+      await render();
+      const reads = queries.filter(isSummaryRead);
+      expect(reads).toHaveLength(7);
+      for (const q of reads) {
+        expect(q.options).toEqual({ count: "exact", head: true });
+        expect(q.columns).toBe("id");
+        expect(q.filters.some((f) => f[0] === "eq" && f[1] === "studio_id")).toBe(true);
+      }
+      expect(userRpcCalls.map((c) => c.fn)).toEqual(["waitlist_invitation_booking_counts"]);
+      expect(userRpcCalls[0]!.args).toMatchObject({ p_studio_id: STUDIO_ID });
+      expect(Object.keys(userRpcCalls[0]!.args).sort()).toEqual(["p_from", "p_studio_id"]);
+      // and nothing the summary does reaches the service-role client
+      expect(rpcCalls.filter((c) => c.fn === "waitlist_invitation_booking_counts")).toHaveLength(0);
+    }
+  });
+
+  it("the page shows the summary with the command's counts, and Not available for the booked figures when the command fails", async () => {
+    scenario.rows = [entry({ status: "waiting" })];
+    scenario.count = 1;
+    const html = await render();
+    expect(html).toContain('data-testid="invitation-booking-summary"');
+    expect(html).toMatch(/data-testid="invitation-people">17</);
+    expect(html).toMatch(/data-row="booked"[\s\S]*?data-value="5"/);
+    expect(html).toContain("Not tracked");
+    summaryRpc.error = { code: "PGRST202" };
+    consoleErrors.length = 0;
+    const failed = await render();
+    expect(failed).toContain('data-testid="invitation-booking-unavailable"');
+    expect(failed).toMatch(/data-row="booked"[\s\S]*?data-value="unavailable"/);
+    expect(failed).toMatch(/data-testid="invitation-people">Not available</);
+  });
+
   it("the invitation window is read ONLY for rows whose controls depend on it", async () => {
     // WIDENED BY 0200, AND STILL BOUNDED. `released` rows joined `invited` ones
     // because requeue's availability now depends on whether this entry's
@@ -1867,7 +2015,9 @@ describe("action visibility follows the row's lifecycle state", () => {
     scenario.rows = [entry({ status: "waiting" })];
     scenario.count = 1;
     await render();
-    expect(queries.filter((q) => q.table === "new_client_waitlist_invitations")).toHaveLength(0);
+    // The studio-wide expiry summary (expires_at only) is a constant-cost read of its own, not a per-row one; it is counted separately.
+    expect(queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns !== "expires_at" && q.columns !== DECLINE_COUNT_READ && !isSummaryRead(q))).toHaveLength(0);
+    expect(queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns === "expires_at")).toHaveLength(1);
     // Five section reads, plus the needs-attention card's own read (id,name).
     expect(queries.filter((q) => q.table === "new_client_waitlist_entries" && q.columns !== "id,name" && q.columns !== "id,name,released_at")).toHaveLength(5);
     expect(queries.filter((q) => q.table === "new_client_waitlist_entries" && q.columns === "id,name")).toHaveLength(1);
@@ -1883,7 +2033,7 @@ describe("action visibility follows the row's lifecycle state", () => {
     // (0313), which exists only because an invited entry does. Identity comes
     // from the 0189 unique index, never from ordering — so none of them
     // carries an `order`.
-    const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations");
+    const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns !== "expires_at" && q.columns !== DECLINE_COUNT_READ && !isSummaryRead(q));
     expect(inv).toHaveLength(3);
     for (const q of inv) expect(q.orders).toEqual([]);
   });
@@ -1895,7 +2045,7 @@ describe("action visibility follows the row's lifecycle state", () => {
     scenario.count = 1;
     await render();
     // The declined-times card's own read (entry_id,declined_at) is a separate, card-level read.
-    const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns !== "entry_id,declined_at");
+    const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns !== "entry_id,declined_at" && q.columns !== "expires_at" && q.columns !== DECLINE_COUNT_READ && !isSummaryRead(q));
     expect(inv).toHaveLength(2);
     for (const q of inv) expect(q.orders).toEqual([]);
   });
@@ -3096,6 +3246,8 @@ describe("closed admission blocks the owner's invite until 0323 is applied (0204
 describe("owner follow-up cards render with ZERO active entries (Codex P2)", () => {
   afterEach(() => {
     followUp.attention = followUp.declined = followUp.replies = null;
+    followUp.scoped = {};
+    followUp.scopedCalls = [];
     vi.unstubAllEnvs();
   });
   const empty = () => {
@@ -3132,12 +3284,512 @@ describe("owner follow-up cards render with ZERO active entries (Codex P2)", () 
     const src = readFileSync(path.join(process.cwd(), "app/(app)/settings/waitlist/page.tsx"), "utf8")
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/^\s*\/\/.*$/gm, "");
-    const branch = src.indexOf("{active === 0 ? (");
+    // The declined view (`?view=declined`) now wraps the active-entries branch: it is the FIRST conditional, and the active branch is its else.
+    const branch = src.indexOf("{viewDeclined ? (");
     expect(branch).toBeGreaterThan(-1);
+    expect(src.indexOf(": active === 0 ? (")).toBeGreaterThan(branch);
     for (const marker of ['id="needs-attention-heading"', 'data-testid="declined-card"', 'id="replies-heading"']) {
       const at = src.indexOf(marker);
       expect(at, marker).toBeGreaterThan(-1);
       expect(at, `${marker} must precede the active branch`).toBeLessThan(branch);
+    }
+  });
+});
+
+// ===========================================================================
+// EXPIRY VISIBILITY — display only. The text comes ONLY from the live row's `expires_at`.
+// Time is fixed at 2026-08-23T09:00:00Z; the studio is America/Toronto (EDT).
+// ===========================================================================
+describe("each active invitation shows its exact expiry and the time left", () => {
+  const at = (iso: string) => new Date(iso).toISOString();
+
+  it("shows the deadline in the studio's zone, the time left, and a summary of the next expiry", async () => {
+    scenario.rows = [
+      entry({ id: "e-a", status: "invited" }),
+      entry({ id: "e-b", status: "invited" }),
+      entry({ id: "e-c", status: "invited" }),
+    ];
+    scenario.count = 3;
+    scenario.liveInvitations = [
+      { entry_id: "e-a", expires_at: at("2026-08-23T13:30:00Z") }, // 4 h 30 min
+      { entry_id: "e-b", expires_at: at("2026-08-24T08:59:00Z") }, // inside 24 h
+      { entry_id: "e-c", expires_at: at("2026-08-26T09:00:00Z") }, // 3 days
+    ];
+    const html = await render();
+    expect(html).toContain("9:30 AM EDT");
+    expect(html).toContain("in 4 h 30 min");
+    expect(html).toContain("in 3 days");
+    const summary = html.match(/data-testid="invitation-expiry-summary"[^>]*>(.*?)<\/p>/s)?.[1] ?? "";
+    expect(summary).toContain("9:30 AM EDT");
+    expect(summary).toContain("in 4 h 30 min");
+    expect(summary).toContain("2 expire within 24 hours");
+    expect(summary).toContain("As of");
+    expect((html.match(/data-testid="row-invitation-expiry"/g) ?? []).length).toBe(3);
+  });
+
+  it("THE SUMMARY IS STUDIO-WIDE: an earlier expiry OFF this page is the next one, and is counted", async () => {
+    // This page holds one invited row expiring in 5 days. Another invitation, on a page not shown, expires in 2 hours.
+    scenario.rows = [entry({ id: "e-on-page", status: "invited" })];
+    scenario.count = 150;
+    scenario.liveInvitations = [{ entry_id: "e-on-page", expires_at: at("2026-08-28T09:00:00Z") }];
+    scenario.studioExpiries = [
+      { expires_at: at("2026-08-28T09:00:00Z") },
+      { expires_at: at("2026-08-23T11:00:00Z") }, // off the page, 2 h
+      { expires_at: at("2026-08-23T20:00:00Z") }, // off the page, 11 h
+    ];
+    const html = await render();
+    const summary = html.match(/data-testid="invitation-expiry-summary"[^>]*>(.*?)<\/p>/s)?.[1] ?? "";
+    expect(summary).toContain("in 2 h.");
+    expect(summary).toContain("2 expire within 24 hours");
+    // …and the read is one small one: expires_at only, scoped to the studio, no entry id and no name.
+    const reads = queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns === "expires_at");
+    expect(reads).toHaveLength(1);
+    expect(reads[0]!.options).toEqual({ count: "exact" });
+    expect(reads[0]!.limit).toBe(1000);
+    expect(reads[0]!.filters.some((f) => f[0] === "in")).toBe(false);
+    expect(reads[0]!.filters.find((f) => f[0] === "eq" && f[1] === "studio_id")?.[2]).toBe(STUDIO_ID);
+    for (const col of ["redeemed_at", "expired_at", "released_at", "declined_at"]) {
+      expect(reads[0]!.filters.some((f) => f[0] === "is" && f[1] === col), col).toBe(true);
+    }
+  });
+
+  it("THE API ROW CEILING: 1000 rows back but an exact count of 1500 shows NO summary, never a partial one", async () => {
+    // The real Data API returns at most max_rows = 1000 rows whatever limit was asked for, so a length-only check can never see the cut.
+    scenario.rows = [entry({ id: "e-on-page", status: "invited" })];
+    scenario.count = 1;
+    scenario.liveInvitations = [{ entry_id: "e-on-page", expires_at: at("2026-08-28T09:00:00Z") }];
+    scenario.studioExpiries = Array.from({ length: 1000 }, () => ({ expires_at: at("2026-08-28T09:00:00Z") }));
+    scenario.studioExpiryCount = 1500;
+    const html = await render();
+    expect(html).not.toContain("invitation-expiry-summary");
+    expect(html).toContain("row-invitation-expiry"); // the per-row line is unaffected
+  });
+
+  it("exactly 1000 live invitations with an exact count of 1000 IS complete and shows the summary", async () => {
+    scenario.rows = [entry({ id: "e-on-page", status: "invited" })];
+    scenario.count = 1;
+    scenario.liveInvitations = [{ entry_id: "e-on-page", expires_at: at("2026-08-28T09:00:00Z") }];
+    scenario.studioExpiries = Array.from({ length: 1000 }, () => ({ expires_at: at("2026-08-28T09:00:00Z") }));
+    const html = await render();
+    expect(html).toContain("invitation-expiry-summary");
+  });
+
+  it("an unreadable exact count shows no summary", async () => {
+    scenario.rows = [entry({ id: "e-on-page", status: "invited" })];
+    scenario.count = 1;
+    scenario.liveInvitations = [{ entry_id: "e-on-page", expires_at: at("2026-08-28T09:00:00Z") }];
+    scenario.studioExpiryCount = Number.NaN;
+    const html = await render();
+    expect(html).not.toContain("invitation-expiry-summary");
+  });
+
+  it("a FAILED summary read shows no summary, logs once, and leaves the per-row lines", async () => {
+    scenario.rows = [entry({ id: "e-on-page", status: "invited" })];
+    scenario.count = 1;
+    scenario.liveInvitations = [{ entry_id: "e-on-page", expires_at: at("2026-08-28T09:00:00Z") }];
+    scenario.studioExpiries = [{ expires_at: at("2026-08-23T11:00:00Z") }];
+    scenario.studioExpiriesError = { code: "57014" };
+    const html = await render();
+    expect(html).not.toContain("invitation-expiry-summary");
+    expect(html).toContain("row-invitation-expiry");
+    expect(consoleErrors.filter((l) => l.includes("waitlist_invitation_expiry_summary_read_failed"))).toHaveLength(1);
+  });
+
+  it("a deadline that has passed says so, and is not counted as about to expire", async () => {
+    scenario.rows = [entry({ id: "e-old", status: "invited" }), entry({ id: "e-new", status: "invited" })];
+    scenario.count = 2;
+    scenario.liveInvitations = [
+      { entry_id: "e-old", expires_at: at("2026-08-23T08:00:00Z") },
+      { entry_id: "e-new", expires_at: at("2026-08-23T10:00:00Z") },
+    ];
+    const html = await render();
+    expect(html).toContain('data-state="deadline_passed"');
+    expect(html).toContain("It has passed.");
+    expect(html).not.toMatch(/in -|-\d+ min/);
+    expect(html).toContain("1 expires within 24 hours");
+  });
+
+  it("with no open invitation there is no summary line", async () => {
+    scenario.rows = [entry({ id: "e-old", status: "invited" })];
+    scenario.count = 1;
+    scenario.liveInvitations = [{ entry_id: "e-old", expires_at: at("2026-08-23T08:00:00Z") }];
+    const html = await render();
+    expect(html).not.toContain("invitation-expiry-summary");
+  });
+
+  it("an UNREADABLE invitation read shows no expiry text at all (never a guess)", async () => {
+    scenario.rows = [entry({ id: "e-x", status: "invited" })];
+    scenario.count = 1;
+    scenario.invitationsError = { code: "57014" };
+    const html = await render();
+    expect(html).not.toContain("row-invitation-expiry");
+    expect(html).not.toContain("invitation-expiry-summary");
+    expect(html).toContain("could not be checked");
+  });
+
+  it("a redeemed entry (no live row) shows no expiry", async () => {
+    scenario.rows = [entry({ id: "e-used", status: "invited" })];
+    scenario.count = 1;
+    scenario.liveInvitations = [];
+    scenario.redeemedInvitations = [{ entry_id: "e-used" }];
+    const html = await render();
+    expect(html).not.toContain("row-invitation-expiry");
+  });
+
+  it("RULE, not spelling: the expiry text is built only from the live read's expires_at", () => {
+    const src = readFileSync(
+      path.join(process.cwd(), "app/(app)/settings/waitlist/page.tsx"),
+      "utf8",
+    );
+    // The only writer of the per-row expiry map is the live-row loop, and it copies the row's own column.
+    const writes = [...src.matchAll(/expiryByEntry\.set\(([^)]*)\)/g)].map((m) => m[1]!.replace(/\s+/g, ""));
+    expect(writes).toEqual(["inv.entry_id,inv.expires_at"]);
+    // The per-row line reads that map.
+    expect(src).toMatch(/rowExpiry\(\s*raw,/);
+    // The summary is NOT built from the page's rows: it reads its own studio-wide set.
+    expect(src).toMatch(/expirySummary\(\s*studioExpiries,/);
+    expect(src).not.toMatch(/expirySummary\(\s*\[\.\.\.expiryByEntry/);
+    // The expiry is never derived from an issue time, a fixed TTL or a client clock.
+    const helper = readFileSync(
+      path.join(process.cwd(), "lib/waitlist/invitation-expiry-display.ts"),
+      "utf8",
+    );
+    expect(helper).not.toMatch(/issued_at|issuedAt|TTL|setHours|setDate/);
+  });
+});
+
+// ===========================================================================
+// DECLINE VISIBILITY — display only. A decline is the invitation's own `declined_at`; nothing is sent, written or logged beyond a code.
+// Time is fixed at 2026-08-23T09:00:00Z; the studio is America/Toronto (EDT).
+// ===========================================================================
+describe("people who declined: the summary count and the declined view", () => {
+  beforeEach(() => {
+    followUp.scoped = {};
+    followUp.scopedCalls = [];
+    followUp.followUps = null;
+  });
+  const dec = (id: string, entryId: string, at: string) => ({ id, entry_id: entryId, declined_at: new Date(at).toISOString() });
+  const seed = () => {
+    scenario.rows = [entry({ id: "w1", status: "waiting" })];
+    scenario.count = 1;
+    scenario.declinedInvitations = [
+      dec("i3", "e-b", "2026-08-22T10:00:00Z"),
+      dec("i2", "e-a", "2026-08-21T10:00:00Z"),
+      dec("i1", "e-a", "2026-08-10T10:00:00Z"), // the same person's earlier decline: counted once
+    ];
+    scenario.declineEntries = [
+      { id: "e-a", name: "Alex Rivers", status: "waiting", joined_at: "2026-07-01T12:00:00+00:00" },
+      { id: "e-b", name: "Bo Tanaka", status: "removed", joined_at: "2026-07-02T12:00:00+00:00" },
+    ];
+    scenario.contactRows = [
+      { id: "e-a", email: "alex@example.invalid", phone: "+14165550100" },
+      { id: "e-b", email: "bo@example.invalid", phone: null },
+    ];
+  };
+
+  it("the summary counts PEOPLE (not invitations), links to the view, and carries no name or contact", async () => {
+    seed();
+    const html = await render();
+    const line = html.match(/data-testid="declined-summary"[^>]*>(.*?)<\/p>/s)?.[1] ?? "";
+    expect(line).toContain("2 people have declined.");
+    expect(line).toContain('href="/settings/waitlist?view=declined"');
+    for (const secret of ["Alex", "Bo Tanaka", "alex@example.invalid", "+14165550100", "bo@example.invalid"]) expect(html, secret).not.toContain(secret);
+    expect(html).not.toContain('data-testid="declined-people"');
+  });
+
+  it("nobody declined: the count says 0 and offers no link", async () => {
+    scenario.rows = [entry({ id: "w1", status: "waiting" })];
+    scenario.count = 1;
+    const html = await render();
+    expect(html).toContain("0 people have declined.");
+    expect(html).not.toContain("declined-view-link");
+  });
+
+  it("an UNREADABLE decline read says it could not count, never 0", async () => {
+    seed();
+    scenario.declinedError = { code: "57014" };
+    const html = await render();
+    expect(html).toContain("we couldn");
+    expect(html).not.toContain("0 people have declined");
+    expect(html).not.toContain("declined-view-link");
+  });
+
+  it("a response cut at the API's 1000-row ceiling (exact count 1500) shows no count, never a partial one", async () => {
+    scenario.rows = [entry({ id: "w1", status: "waiting" })];
+    scenario.count = 1;
+    scenario.declinedInvitations = Array.from({ length: 1000 }, (_, i) => dec(`i${i}`, `e${i}`, "2026-08-20T10:00:00Z"));
+    scenario.declinedCount = 1500;
+    const html = await render();
+    expect(html).toContain("we couldn");
+    expect(html).not.toMatch(/\d+ people have declined/);
+  });
+
+  it("the declined view lists each person once: name, when they declined in the studio's zone, and an entry link only where it can land", async () => {
+    seed();
+    const html = await render({ view: "declined" });
+    expect(html).toContain('data-testid="declined-people"');
+    expect((html.match(/data-testid="declined-row"/g) ?? []).length).toBe(2);
+    expect(html).toContain("Alex Rivers");
+    expect(html).toContain("Declined Aug 21, 2026, 6:00 AM EDT");
+    // The waiting entry links to its own section; the removed one has no section to land in.
+    expect(html).toContain('href="/settings/waitlist?section=waiting#entry-e-a"'); // nobody ahead of them: page 1
+    expect(html).not.toContain("#entry-e-b");
+    expect(html).toContain("Their entry is no longer on the waitlist.");
+    // Newest decline first.
+    expect(html.indexOf("Bo Tanaka")).toBeLessThan(html.indexOf("Alex Rivers"));
+  });
+
+  it("the three outcomes stay separate: the note names all three, and 'declined' is never said of a passed deadline or a release", async () => {
+    seed();
+    scenario.rows = [entry({ id: "w1", status: "invited" })];
+    scenario.liveInvitations = [{ entry_id: "w1", expires_at: new Date("2026-08-23T08:00:00Z").toISOString() }]; // deadline passed, nothing stamped
+    const html = await render({ view: "declined" });
+    expect(html).toContain("“Expired”");
+    expect(html).toContain("“Released — reason not recorded”");
+    expect((html.match(/data-testid="declined-row"/g) ?? []).length).toBe(2); // the expired invitation's entry is NOT a row
+    expect(html).not.toContain("Jo Smith");
+  });
+
+  it("contact details are only inside each person's closed 'Contact details' disclosure, and never in the address", async () => {
+    seed();
+    const html = await render({ view: "declined" });
+    const blocks = [...html.matchAll(/<details[^>]*data-testid="declined-contact"[^>]*>([\s\S]*?)<\/details>/g)].map((m) => m[1]!);
+    expect(blocks.length).toBe(2);
+    expect(blocks.join("")).toContain("alex@example.invalid");
+    const outside = html.replace(/<details[^>]*data-testid="declined-contact"[^>]*>[\s\S]*?<\/details>/g, "");
+    for (const secret of ["alex@example.invalid", "bo@example.invalid", "+14165550100", "(416) 555-0100"]) expect(outside, secret).not.toContain(secret);
+    expect(html).not.toMatch(/<details[^>]*data-testid="declined-contact"[^>]*\sopen/);
+    // Every link outside the disclosure is free of names and contact details (the Email and Call links live inside it, by design).
+    for (const m of outside.matchAll(/href="([^"]*)"/g)) expect(m[1]!, m[1]).not.toMatch(/Alex|Bo%20|alex@|bo@|%40|5550100/);
+  });
+
+  describe("with the answers gate ON: the page list is not the whole truth", () => {
+    const fuRow = (invitationId: string, entryId: string, over: Record<string, unknown> = {}) => ({
+      followupId: `f-${invitationId}`, kind: "decline", invitationId, entryId, clientName: "X", openedAt: "2026-08-21T10:00:00.000Z", status: "open",
+      whyNotWork: "Mornings are hard", betterTimes: "Weekday evenings", answersErasedAt: null, submittedAt: "2026-08-21T10:00:00.000Z", closedAt: null, eraseBy: null, ...over,
+    });
+    const withGate = async (list: unknown) => {
+      process.env.WAITLIST_DECLINE_ANSWERS = "1";
+      followUp.followUps = list;
+      try {
+        return await render({ view: "declined" });
+      } finally {
+        delete process.env.WAITLIST_DECLINE_ANSWERS;
+        followUp.followUps = null;
+      }
+    };
+    const rowOf = (html: string, id: string) => html.match(new RegExp(`<li[^>]*data-entry-id="${id}"[^>]*data-testid="declined-row"[\\s\\S]*?</li>`))?.[0] ?? "";
+
+    it("a CLOSED follow-up whose answers were erased (which the page list leaves out) reads as removed, never 'No answers on record'", async () => {
+      seed();
+      followUp.scoped = { i3: { kind: "ok", rows: [fuRow("i3", "e-b", { status: "handled", whyNotWork: null, betterTimes: null, answersErasedAt: "2026-09-01T00:00:00.000Z", closedAt: "2026-08-25T00:00:00.000Z" })] } };
+      const html = await withGate({ kind: "ok", rows: [fuRow("i2", "e-a")] }); // the page list has Alex only
+      const bo = rowOf(html, "e-b");
+      expect(bo).toContain("Answer erased");
+      expect(bo).not.toContain("Answer not collected");
+      expect(followUp.scopedCalls).toEqual(["i3"]); // only the person the page list does not cover is asked about
+      expect(rowOf(html, "e-a")).toContain("Mornings are hard");
+    });
+    it("a person the scoped read finds NO decline follow-up for reads 'Answer not collected'", async () => {
+      seed();
+      const html = await withGate({ kind: "ok", rows: [fuRow("i2", "e-a")] });
+      expect(rowOf(html, "e-b")).toContain("Answer not collected");
+      expect(rowOf(html, "e-b")).not.toContain("Answer erased");
+    });
+    it("a failed scoped read says the answers could not be loaded, never 'none'", async () => {
+      seed();
+      followUp.scoped = { i3: { kind: "unknown" } };
+      const html = await withGate({ kind: "ok", rows: [fuRow("i2", "e-a")] });
+      const bo = rowOf(html, "e-b");
+      expect(bo).toContain("We couldn’t load their answers just now.");
+      expect(bo).not.toContain("Answer not collected");
+    });
+    it("an unreadable page list does not stop the scoped reads from answering", async () => {
+      seed();
+      followUp.scoped = { i3: { kind: "ok", rows: [fuRow("i3", "e-b", { whyNotWork: "Too far" })] } };
+      const html = await withGate({ kind: "unknown" });
+      expect(rowOf(html, "e-b")).toContain("Too far");
+      expect(followUp.scopedCalls.sort()).toEqual(["i2", "i3"]);
+    });
+    it("with the gate OFF no scoped read is made at all", async () => {
+      seed();
+      await render({ view: "declined" });
+      expect(followUp.scopedCalls).toEqual([]);
+    });
+  });
+
+  describe("ALL recorded declines are reachable by paging, and every per-person read is bounded to ONE page", () => {
+    const ids = Array.from({ length: 120 }, (_, i) => `e${String(i).padStart(3, "0")}`);
+    const seed120 = () => {
+      scenario.rows = [entry({ id: "w1", status: "waiting" })];
+      scenario.count = 1;
+      // Newest first by decline time: e000 is the most recent.
+      scenario.declinedInvitations = ids.map((id, i) => ({ id: `i-${id}`, entry_id: id, declined_at: new Date(Date.UTC(2026, 7, 22, 10, 0, 0) - i * 60_000).toISOString() }));
+      scenario.declineEntries = ids.map((id) => ({ id, name: `P ${id}`, status: "waiting", joined_at: "2026-07-01T12:00:00+00:00" }));
+    };
+    const renderGated = async (searchParams: Parameters<typeof render>[0]) => {
+      process.env.WAITLIST_DECLINE_ANSWERS = "1";
+      followUp.followUps = { kind: "ok", rows: [] };
+      try {
+        return await render(searchParams);
+      } finally {
+        delete process.env.WAITLIST_DECLINE_ANSWERS;
+        followUp.followUps = null;
+      }
+    };
+    const rowsIn = (html: string) => [...html.matchAll(/data-entry-id="(e\d+)" data-testid="declined-row"/g)].map((m) => m[1]!);
+    const factIds = () => ((queries.find((q) => q.columns === "id,name,status,joined_at")!.filters.find((f) => f[0] === "in" && f[1] === "id")?.[2] ?? []) as string[]);
+
+    it("page 1 of 120 people: the 50 newest, with a Next link; reads are 50 scoped, 50 positions, 50 facts, 50 contacts", async () => {
+      seed120();
+      const html = await renderGated({ view: "declined" });
+      expect(rowsIn(html)).toEqual(ids.slice(0, 50));
+      expect(html).toContain("Showing 1–50 of 120, newest first. Page 1 of 3.");
+      expect(html).toContain('href="/settings/waitlist?view=declined&amp;dpage=2"');
+      expect(html).not.toContain("declined-prev");
+      expect(followUp.scopedCalls.length).toBe(50);
+      expect(queries.filter((q) => q.table === "new_client_waitlist_entries" && q.filters.some((f) => f[0] === "or")).length).toBe(50);
+      expect(factIds()).toEqual(ids.slice(0, 50));
+      const contactIds = (queries.find((q) => q.columns === "id,email,phone")?.filters.find((f) => f[0] === "in" && f[1] === "id")?.[2] ?? []) as string[];
+      expect(contactIds).toEqual(ids.slice(0, 50)); // contact details are read for this page's people only
+    });
+    it("page 2 shows people 51-100 and page 3 the last 20: every recorded decline is reachable, with each one's date", async () => {
+      seed120();
+      const p2 = await renderGated({ view: "declined", dpage: "2" });
+      expect(rowsIn(p2)).toEqual(ids.slice(50, 100));
+      expect(p2).toContain("Showing 51–100 of 120");
+      expect(p2).toContain('href="/settings/waitlist?view=declined"'); // Previous
+      expect(p2).toContain('href="/settings/waitlist?view=declined&amp;dpage=3"');
+      expect(followUp.scopedCalls.length).toBe(50);
+      expect(new Set(followUp.scopedCalls)).toEqual(new Set(ids.slice(50, 100).map((id) => `i-${id}`))); // THIS page's people only
+      expect(factIds()).toEqual(ids.slice(50, 100));
+      expect(p2).toContain("Declined Aug 22, 2026"); // each row carries its date
+      followUp.scopedCalls = [];
+      const p3 = await renderGated({ view: "declined", dpage: "3" });
+      expect(rowsIn(p3)).toEqual(ids.slice(100));
+      expect(p3).toContain("Showing 101–120 of 120");
+      expect(p3).not.toContain("declined-next");
+      expect(followUp.scopedCalls.length).toBe(20);
+    });
+    it("a page past the end shows the last page, and an unreadable page number shows page 1", async () => {
+      seed120();
+      expect(rowsIn(await renderGated({ view: "declined", dpage: "99" }))).toEqual(ids.slice(100));
+      expect(rowsIn(await renderGated({ view: "declined", dpage: "0" }))).toEqual(ids.slice(0, 50));
+      expect(rowsIn(await renderGated({ view: "declined", dpage: "abc" }))).toEqual(ids.slice(0, 50));
+    });
+    it("no name or contact detail is in any paging address", async () => {
+      seed120();
+      const html = await renderGated({ view: "declined", dpage: "2" });
+      const nav = html.match(/data-testid="declined-pages"[\s\S]*?<\/nav>/)?.[0] ?? "";
+      expect(nav).not.toBe("");
+      for (const m of nav.matchAll(/href="([^"]*)"/g)) expect(m[1]!).toMatch(/^\/settings\/waitlist\?view=declined(&amp;dpage=\d+)?$/);
+    });
+    it("50 or fewer people: no paging controls", async () => {
+      seed();
+      const html = await render({ view: "declined" });
+      expect(html).not.toContain("declined-pages");
+    });
+  });
+
+  describe("the entry link opens the page that CONTAINS the entry", () => {
+    const seedLinks = (ahead: Record<string, number>) => {
+      seed();
+      scenario.declineEntries = [
+        { id: "e-a", name: "Alex Rivers", status: "waiting", joined_at: "2026-07-01T12:00:00+00:00" },
+        { id: "e-b", name: "Bo Tanaka", status: "invited", joined_at: "2026-07-02T12:00:00+00:00" },
+      ];
+      scenario.aheadOf = ahead;
+    };
+    it("page = floor(entries ahead / 100) + 1, on the entry's own section, with the page only past the first", async () => {
+      seedLinks({ "e-a": 250, "e-b": 99 });
+      const html = await render({ view: "declined" });
+      expect(html).toContain('href="/settings/waitlist?section=waiting&amp;page=3#entry-e-a"');
+      expect(html).toContain('href="/settings/waitlist?section=invited#entry-e-b"'); // 99 ahead is still page 1
+      expect(html).not.toContain("first page of its section");
+    });
+    it("exactly 100 ahead is page 2", async () => {
+      seedLinks({ "e-a": 100, "e-b": 0 });
+      expect(await render({ view: "declined" })).toContain("section=waiting&amp;page=2#entry-e-a");
+    });
+    it("the position read is the queue's own order: this studio, this status, strictly before by (joined_at, id), head-only and exact", async () => {
+      seedLinks({});
+      await render({ view: "declined" });
+      const q = queries.filter((x) => x.table === "new_client_waitlist_entries" && x.options.head === true && x.filters.some((f) => f[0] === "or"));
+      expect(q.length).toBe(2);
+      const a = q.find((x) => x.filters.some((f) => f[0] === "eq" && f[1] === "status" && f[2] === "waiting"))!;
+      expect(a.options).toEqual({ count: "exact", head: true });
+      expect(a.filters.find((f) => f[0] === "eq" && f[1] === "studio_id")?.[2]).toBe(STUDIO_ID);
+      expect(a.filters.find((f) => f[0] === "or")?.[2]).toBe("joined_at.lt.2026-07-01T12:00:00+00:00,and(joined_at.eq.2026-07-01T12:00:00+00:00,id.lt.e-a)");
+    });
+    it("a position that cannot be read gives plain text, never a link that might open the wrong page", async () => {
+      seedLinks({});
+      scenario.positionError = { code: "57014" };
+      const html = await render({ view: "declined" });
+      expect(html).not.toContain("declined-entry-link");
+      expect(html).not.toContain("#entry-e-a");
+      expect(html).toContain("its page could not be worked out just now");
+    });
+    it("a person whose entry has no section (removed) is not position-read at all", async () => {
+      seed();
+      await render({ view: "declined" });
+      const heads = queries.filter((x) => x.filters.some((f) => f[0] === "or"));
+      expect(heads.every((x) => x.filters.some((f) => f[0] === "eq" && f[1] === "status" && f[2] !== "removed"))).toBe(true);
+      expect(heads.length).toBe(1);
+    });
+  });
+
+  it("the unreadable-names state says so and still shows the declines", async () => {
+    seed();
+    scenario.declineEntries = [];
+    const html = await render({ view: "declined" });
+    expect(html).toContain("A person on the waitlist");
+    expect(html).toContain("Their entry could not be read.");
+  });
+
+  it("with the answers gate off the rows say answers are not collected (not 'none on record')", async () => {
+    seed();
+    const html = await render({ view: "declined" });
+    expect(html).toContain("Answer not collected");
+  });
+
+  it("an unreadable decline read in the view says so, and never 'nobody declined'", async () => {
+    seed();
+    scenario.declinedError = { code: "57014" };
+    const html = await render({ view: "declined" });
+    expect(html).toContain('data-testid="declined-unknown"');
+    expect(html).not.toContain("Nobody has declined");
+  });
+
+  it("a non-owner never reaches the view", async () => {
+    seed();
+    scenario.role = "practitioner";
+    const html = await render({ view: "declined" });
+    expect(html).not.toContain("declined-people");
+    expect(html).not.toContain("Alex Rivers");
+  });
+
+  it("reads: owner session only, the studio's scope, and the view is not pulled by any other value", async () => {
+    seed();
+    await render({ view: "something-else" });
+    expect(queries.some((q) => q.columns === "id,name,status,joined_at")).toBe(false);
+    expect(followUp.scopedCalls).toEqual([]);
+    expect(queries.some((q) => q.columns === "id,email,phone")).toBe(false);
+    const read = queries.find((q) => q.table === "new_client_waitlist_invitations" && q.columns === DECLINE_COUNT_READ)!;
+    expect(read.options).toEqual({ count: "exact" });
+    expect(read.filters.find((f) => f[0] === "eq" && f[1] === "studio_id")?.[2]).toBe(STUDIO_ID);
+    expect(read.filters.some((f) => f[0] === "not" && f[1] === "declined_at")).toBe(true);
+  });
+
+  it("RULE: a decline comes only from declined_at; the feature sends nothing and writes nothing", () => {
+    const read = readFileSync(path.join(process.cwd(), "lib/waitlist/decline-visibility-read.ts"), "utf8");
+    const pure = readFileSync(path.join(process.cwd(), "lib/waitlist/decline-visibility.ts"), "utf8");
+    const comp = readFileSync(path.join(process.cwd(), "components/waitlist/declined-section.tsx"), "utf8");
+    expect(read).toMatch(/\.not\("declined_at", "is", null\)/);
+    const code = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    for (const t of [code(read), code(pure), code(comp)]) {
+      expect(t).not.toMatch(/expired_at|released_at|expires_at/);
+      expect(t).not.toMatch(/\.(insert|update|upsert|delete|rpc)\(/);
+      expect(t).not.toMatch(/sendEmail|sendSms|resend|twilio|createAdminClient|console\./i);
     }
   });
 });

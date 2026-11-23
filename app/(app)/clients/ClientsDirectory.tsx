@@ -1,3 +1,4 @@
+import type { ClientGroup, GroupRead } from "@/lib/client-groups/model";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { FormattedDateTime } from "@/components/formatted-date-time";
@@ -38,6 +39,7 @@ export type DirectoryState = {
   lastVisit: LastVisitFilter;
   /** The results page being shown, so a link that opens the overview keeps it (Codex P2 on 4a7e9e8f). */
   page: number;
+  group?: string;
 };
 
 /** `label` is the date in the studio timezone, formatted on the server (K3). */
@@ -68,7 +70,11 @@ export function DirectoryResults({
   selectedId,
   overview,
   timeZone,
+  groups,
+  groupBlocked,
 }: {
+  groups?: GroupRead<Map<string, ClientGroup[]>>;
+  groupBlocked?: boolean;
   state: DirectoryState;
   data: DirectoryPage;
   lastVisits: ReadonlyMap<string, string> | null;
@@ -79,8 +85,13 @@ export function DirectoryResults({
   timeZone?: string;
 }) {
   const archived = state.view === "archived";
-  const filtered = state.q.length > 0 || state.filters.length > 0 || state.lastVisit !== "any";
+  const filtered = state.q.length > 0 || state.filters.length > 0 || state.lastVisit !== "any" || Boolean(state.group);
 
+  if (groupBlocked) {
+    return <div role="alert" className="rounded-lg border border-neutral-200 p-5 text-sm">
+      We couldn&apos;t apply that client group. Reload to retry, or <PendingLink href={directoryHref({ ...state, group: undefined, page: 1 })} className="underline">remove the group filter</PendingLink>.
+    </div>;
+  }
   if (data.lastVisitBlocked) {
     return (
       <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-5 py-8 text-center text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
@@ -147,6 +158,8 @@ export function DirectoryResults({
             selected={row.id === selectedId}
             overview={row.id === selectedId ? overview : null}
             timeZone={timeZone}
+            groups={groups?.available ? groups.value.get(row.id) ?? [] : undefined}
+            groupsUnavailable={groups !== undefined && !groups.available}
           />
         ))}
       </ul>
@@ -203,7 +216,11 @@ function DirectoryRowView({
   selected,
   overview,
   timeZone,
+  groups,
+  groupsUnavailable,
 }: {
+  groups?: ClientGroup[];
+  groupsUnavailable?: boolean;
   row: DirectoryRow;
   state: DirectoryState;
   lastVisits: ReadonlyMap<string, string> | null;
@@ -238,6 +255,8 @@ function DirectoryRowView({
             )}
           </div>
           {row.nameOnFile && <div className="text-[11px] text-neutral-500">{NAME_ON_FILE_LABEL}</div>}
+          {groups && groups.length > 0 && <ul aria-label="Client groups" className="mt-1 flex flex-wrap gap-1">{groups.map((group) => <li key={group.id} className="max-w-full break-words rounded-full bg-neutral-100 px-2 py-1 text-xs text-neutral-600">{group.name}</li>)}</ul>}
+          {groupsUnavailable && <p className="text-xs text-neutral-500">Groups unavailable</p>}
         </div>
         <div className="min-w-0 truncate text-xs text-neutral-600 dark:text-neutral-400">{contact.length > 0 ? contact.join(" · ") : "No contact on file"}</div>
         {archived ? (
@@ -269,7 +288,7 @@ function DirectoryRowView({
             pendingLabel="Opening client…"
             className="inline-flex min-h-11 items-center rounded-md border border-neutral-300 px-3 text-xs font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
           >
-            Open
+            Open client
           </PendingLink>
           {archived && (
             <UnarchiveRowControl client={{ id: row.id }} />

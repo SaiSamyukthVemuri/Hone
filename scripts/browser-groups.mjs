@@ -236,6 +236,8 @@ export const BROWSER_GROUPS = {
       "waitlist-invitation-delivery-status.spec.ts",
       // The owner reaches invite-beyond-the-estimate through normal navigation, confirms once, and every chosen client is sent exactly once.
       "waitlist-over-invite.spec.ts",
+      // At an estimate of zero, Send asks first; Cancel sends nothing and Invite anyway sends one invitation (desktop and phone).
+      "waitlist-invite-anyway.spec.ts",
       // SENTRY-BOOKING-ERR-01: the /book/[slug] error boundary contains a failed
       // or stale Server Action and recovers. A diff to app/book/** selects this
       // group, which is the diff that can break it.
@@ -279,12 +281,18 @@ export const BROWSER_GROUPS = {
       // practitioner layout, Los Angeles date boundaries, same-practitioner
       // conflict refusal, member create scope and the phone scroll box.
       "team-day-view.spec.ts",
-      // HON-48 five-user proof (opt-in: self-skips unless HON48_FIVE_USER_E2E=1, so a targeted lane lists it but runs nothing).
+      // HON-48 five-user proof: five synthetic practitioners, simultaneous bookings with one winner, studio isolation, moves, blocks, returning-client lookup,
+      // and iPad/iPhone selection. REQUIRED: these run whenever the calendar group is selected (about 3 minutes of serial browser time).
+      // HON-106: the live bell count, two sessions and the role/studio isolation, 1440 and 390.
+      "notifications-live-bell.spec.ts",
       "hon48-five-user-booking.spec.ts",
       "hon48-five-user-moves-blocks.spec.ts",
       "hon48-five-user-denial.spec.ts",
       "hon48-returning-client-lookup.spec.ts",
       "hon48-tablet-phone-selection.spec.ts",
+      // HON-48 Week and Month per practitioner (five synthetic practitioners with different booking counts, a moved booking, a lunch block,
+      // a crowded day) at desktop width and at iPhone width. REQUIRED, like the five above.
+      "hon48-week-month-per-user.spec.ts",
       // HON-48 commit-visibility measurement rig (opt-in: self-skips unless HON48_TIMING_E2E=1).
       "hon48-commit-visibility-timing.spec.ts",
     ],
@@ -412,6 +420,7 @@ export const BROWSER_GROUPS = {
       // overview, book, back, close, Escape, clear) at desktop and phone width. Same group
       // and reasoning as UI-04: /clients/** has no PATH_TO_GROUP pattern.
       "clients-directory-journey.spec.ts",
+      "client-groups.spec.ts",
       // #1328 + 0281: the three client-save paths (profile edit with its name revision and audit row, the
       // stale-conflict refusal, the legal-name save and its conflict) at 1280 and 390. Same group and reasoning:
       // /clients/** has no PATH_TO_GROUP pattern.
@@ -459,6 +468,9 @@ export const BROWSER_GROUPS = {
     description: "cross-cutting responsive behaviour",
     specs: [
       "mobile-ux.spec.ts",
+      // The desktop header cluster fits at every width from 1024 up for the widest case (owner, Waitlist link,
+      // a name that fills the 12ch cap): no sideways page scroll, account button never clipped.
+      "header-cluster-fit.spec.ts",
       // SIGNOUT-01: the authenticated Sign out path on BOTH shells, proved by
       // real session destruction in auth.sessions rather than by a pathname.
       //

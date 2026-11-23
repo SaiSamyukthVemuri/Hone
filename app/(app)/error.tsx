@@ -90,8 +90,7 @@ export default function AuthenticatedAreaError({
         Something went wrong
       </h1>
       <p className="mt-3 text-sm text-neutral-600 dark:text-neutral-400">
-        Hone could not finish loading this page. This is a problem on our side,
-        not something you did.
+        Hone could not finish loading this page.
       </p>
       <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
         Nothing was intentionally changed by this screen. If you were part-way
