@@ -278,18 +278,29 @@ test("a REAL signed-out request is the middleware redirect: no count is served a
   await expectBoth(t.page, 5);
   await t.page.context().clearCookies();
   // WHY the poller asks with redirect:"manual": signed out, the middleware answers with a redirect. A manual fetch sees an opaque
-  // redirect (a definite "not signed in" answer); a default fetch would FOLLOW it to the login page and hand back HTML with status 200,
-  // which a poller could only ever call a transient failure, forever.
+  // redirect (a definite "not signed in" answer). A default fetch would FOLLOW it: it either fails at the network layer (a redirect to
+  // another origin) or lands on the login page's HTML with status 200. Neither is a summary a poller could parse, so without "manual"
+  // it could only ever call the answer a transient failure, and retry forever instead of stopping.
   const seen = await t.page.evaluate(async (url) => {
     const manual = await fetch(url, { cache: "no-store", credentials: "same-origin", redirect: "manual" });
-    const followed = await fetch(url, { cache: "no-store", credentials: "same-origin" });
-    return { manualType: manual.type, followedStatus: followed.status, followedType: followed.headers.get("content-type") ?? "" };
+    let followed: { failed: boolean; status: number; contentType: string } = { failed: false, status: 0, contentType: "" };
+    try {
+      const res = await fetch(url, { cache: "no-store", credentials: "same-origin" });
+      followed = { failed: false, status: res.status, contentType: res.headers.get("content-type") ?? "" };
+    } catch {
+      followed = { failed: true, status: 0, contentType: "" };
+    }
+    return { manualType: manual.type, followed };
   }, SUMMARY);
   expect(seen.manualType).toBe("opaqueredirect");
-  expect(seen.followedStatus).toBe(200);
-  expect(seen.followedType).toMatch(/text\/html/);
+  expect(seen.followed.failed || /text\/html/.test(seen.followed.contentType), "a followed redirect is never JSON").toBe(true);
   const baseline = t.requests();
-  await pollNow(t); await pollNow(t); await pollNow(t);
+  // an opaque redirect may not surface as a `response` event, so wait on the REQUEST each strike sends
+  for (let i = 1; i <= 3; i++) {
+    await t.page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await expect.poll(t.requests, { timeout: 15_000 }).toBe(baseline + i);
+    await t.page.waitForTimeout(300);
+  }
   expect(t.requests() - baseline, "three strikes, one request each").toBe(3);
   const stopped = t.requests();
   await t.page.evaluate(() => window.dispatchEvent(new Event("focus")));
