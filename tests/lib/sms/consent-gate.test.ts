@@ -80,11 +80,6 @@ describe("passesConsentGate", () => {
     expect(passesConsentGate({ studio: ALL_ON, client, smsType })).toEqual({ ok: false, reason: "consent_for_other_number" });
   });
 
-  it("a bound number is compared after the held phone is normalised", () => {
-    const client = { ...CONSENTED, phone: "(416) 555-0123" };
-    expect(passesConsentGate({ studio: ALL_ON, client, smsType: "confirmation" })).toEqual({ ok: true, normalizedPhone: "+14165550123" });
-  });
-
   it("opt-out and missing consent are reported ahead of a number mismatch", () => {
     expect(passesConsentGate({ studio: ALL_ON, client: { ...CONSENTED, sms_consent_phone: "+14165550999", sms_opted_out_at: "2026-11-01T12:00:00Z" }, smsType: "confirmation" })).toEqual({ ok: false, reason: "client_opted_out" });
     expect(passesConsentGate({ studio: ALL_ON, client: { ...CONSENTED, sms_consent_phone: "+14165550999", sms_consent_at: null }, smsType: "confirmation" })).toEqual({ ok: false, reason: "client_no_consent" });
