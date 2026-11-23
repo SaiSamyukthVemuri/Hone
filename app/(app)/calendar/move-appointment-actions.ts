@@ -290,9 +290,9 @@ export async function moveAppointmentAction(input: {
   // Roles engine (0287), OBSERVE ONLY: records what the engine would answer and never changes the outcome. The
   // legacy rules below stay the only authority. A reassignment is asked separately, and only when one was requested.
   const observeDb = await createClient();
-  await observePermission(observeDb, studio.id, practitioner.role, { key: "appt.move", appointmentId });
+  observePermission(observeDb, studio.id, practitioner.role, { key: "appt.move", appointmentId });
   if (requestedTarget && requestedTarget !== appt.practitioner_id) {
-    await observePermission(observeDb, studio.id, practitioner.role, { key: "appt.reassign" });
+    observePermission(observeDb, studio.id, practitioner.role, { key: "appt.reassign" });
   }
 
   // §9: custom-time mode is an OWNER-ONLY override, authorized on the LIVE

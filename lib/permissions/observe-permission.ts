@@ -1,3 +1,4 @@
+import { after } from "next/server";
 import { safeLog } from "@/lib/logging/safe-log";
 
 // OBSERVE-ONLY enforcement point for the Roles permission engine (migration 0287, hosted, no repository file).
@@ -20,6 +21,13 @@ import { safeLog } from "@/lib/logging/safe-log";
 // A wrong shape would log would-deny for every correctly assigned practitioner and make the evidence noise.
 // tests/db/permission-observe.db.test.ts reads those scopes from the installed engine and fails when this table
 // drifts from it.
+//
+// It is OFF the user's path. observePermission starts the read at once and hands the promise to Next's `after()`,
+// which keeps the invocation alive until it settles, so a booking or a move never waits on the engine. The promise
+// goes to after() as a PROMISE, never as a callback (SENTRY-AFTER-01, lib/analytics/server.ts): a callback would
+// enrol the request's own work-unit store and break a later cookies() read. Out of request scope, after() throws and
+// the read simply runs unawaited. Cost: one extra PostgREST read per booking or move, and a second when a
+// reassignment is requested; the function is a handful of indexed lookups.
 //
 // Logs carry the key, the outcome and the actor's ROLE only. No studio, appointment, client or user id: server
 // logs go to a third party and must stay free of record ids (safe-log.ts).
@@ -90,7 +98,19 @@ function contextArgs(ask: ObservedPermission): { p_appointment: string | null; p
   }
 }
 
-export async function observePermission(db: ObserveDb, studioId: string, actorRole: string, ask: ObservedPermission): Promise<void> {
+/** Fire and forget. Returns nothing, so no caller can branch on it, and never throws. */
+export function observePermission(db: ObserveDb, studioId: string, actorRole: string, ask: ObservedPermission): void {
+  // observePermissionNow never rejects; the catch keeps that a guarantee. The read starts now, on this tick.
+  const task = observePermissionNow(db, studioId, actorRole, ask).catch(() => {});
+  try {
+    after(task);
+  } catch {
+    // Out of request scope (or after() unavailable): the read is already running, unawaited.
+  }
+}
+
+/** The awaitable form, for tests and the database proof. Request handlers use observePermission. */
+export async function observePermissionNow(db: ObserveDb, studioId: string, actorRole: string, ask: ObservedPermission): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const call = Promise.resolve(

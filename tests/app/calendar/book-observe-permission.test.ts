@@ -8,7 +8,7 @@ const state: { role: string; engine: { data: unknown; error: unknown } | "throws
   role: "practitioner",
   engine: { data: true, error: null },
 };
-const rpc = vi.fn(async (_fn: string, _args: Record<string, unknown>) => {
+const rpc = vi.fn<(fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: unknown }>>(async () => {
   if (state.engine === "throws") throw new Error("engine down");
   return state.engine;
 });
