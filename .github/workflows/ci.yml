@@ -944,7 +944,7 @@ jobs:
     # its own result instead of being cut mid-run and misread as a test failure.
     #
     #   targeted  : target <10 min per shard, hard timeout 19 min  (3 shards)
-    #   extended  : target <10 min per shard, hard timeout 25 min  (4 shards)
+    #   extended  : target <10 min per shard, hard timeout 35 min  (4 shards; they also run the native 3G proof, see AUGMENTED 35 below)
     #
     # NEITHER CEILING MOVED WHEN TARGETED WAS SPLIT. The targeted lane was the
     # one breaching its budget, and the repair was to give it the sharding
@@ -1559,7 +1559,10 @@ jobs:
     permissions:
       contents: read
       packages: read
-    # TARGET ~10 min · HARD TIMEOUT 18 min. Separate numbers, deliberately.
+    # TARGET ~10 min · HARD TIMEOUT 23 min (was 18, raised 2026-11-23). Separate numbers, deliberately.
+    # 18 -> 23: nightly run 44565261584 took 15.8 min (10.1 min of setup before the first test, then 66 passed in 9.2 min, zero
+    # failures) and a cold local run measured 6.1 min of build plus 10.3 min of tests, so 18 left about 2 min. 15.8 + the 6 min
+    # install-step ceiling + 1 = 22.8. PR-CI runs of this lane took 9.3-9.4 min; the ceiling is for a slow runner, not a target.
     #
     # This lane sat at a single 10, which is a target being used as a ceiling —
     # the exact shape that produced runs 30767725631, 30814919019 and
@@ -1571,7 +1574,7 @@ jobs:
     # Playwright's webServer have been measured ~4 minutes apart across runners
     # before the first test executes. 18 clears a slow-runner setup plus the
     # full suite; ~10 is the number to watch for real slowdown.
-    timeout-minutes: 18
+    timeout-minutes: 23
 
     steps:
       - name: Checkout repository
