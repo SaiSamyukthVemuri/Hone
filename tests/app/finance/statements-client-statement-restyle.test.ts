@@ -197,7 +197,11 @@ describe("the display order is a COPY, and the page loads the finder only after 
     const call = src.indexOf("await loadFinderState(");
     expect(gate).toBeGreaterThan(-1);
     expect(call).toBeGreaterThan(gate);
-    expect(src.indexOf("await loadOwnerClientStatement(")).toBeGreaterThan(gate);
+    // The statement itself is read only after the gate too. The page times the read, so the call is `await loadOwnerClientStatement(` or the same inside `timed("...", () => ...)`; either form is accepted, and the call must be awaited.
+    const load = /await (?:timed\("[a-z.-]+", \(\) => )?loadOwnerClientStatement\(/.exec(src);
+    expect(load, "the statement read is awaited, directly or inside timed()").not.toBeNull();
+    expect((load as RegExpExecArray).index).toBeGreaterThan(gate);
+    expect(src.match(/loadOwnerClientStatement\(/g), "exactly one call of the statement read").toHaveLength(1);
   });
 });
 
