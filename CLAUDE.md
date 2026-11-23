@@ -246,18 +246,30 @@ Confirm `has_table_privilege(...)` before trusting a failing lane.
 - **Standing routine-merge authorization** (operator, 2026-11-23). The OPS
   coordinator merges a routine PR for approved work without asking again
   when every one of these holds on the PR's **current head commit**:
-  all required CI lanes have passed, the required reviews have passed,
-  every review finding is fixed or does not apply (threads handled as in
-  *Resolving a thread* below), the release records are current, and there
-  is no outstanding hold. If the head changes, recheck the new commit and
+  all required CI lanes have passed (a draft whose required coverage was
+  deferred never qualifies), the reviews these delivery rules require for
+  that change have passed (the exact-head Codex review and the assigned
+  privacy and quality reviews), every review finding is fixed or does not
+  apply (threads handled as in *Resolving a thread* below), the release
+  records are current, and there is no outstanding hold. "Approved work"
+  means work the operator assigned or approved, directly or through a
+  recorded plan or task. If the head changes, recheck the new commit and
   proceed only when it qualifies again. After merging, verify the
   deployment where one applies, and report the result to the operator
   with anything they should test.
-  This authorization does **not** cover: production database migration
-  applies, feature or flag activation, payment or provider changes, live
-  sends, infrastructure changes, force-pushes, direct pushes to the
-  production branch, release exceptions, or a finding that needs a
-  product decision. Those still go to the operator for explicit approval.
+  This authorization does **not** cover, and these still go to the
+  operator for explicit approval:
+  - a change that adds or edits a migration file, and any production
+    database migration apply;
+  - a change to authentication, accounts, access control (row-level
+    security, grants, roles), consent, or client-data handling;
+  - feature or flag activation, payment or provider changes, live sends,
+    and infrastructure changes;
+  - force-pushes and direct pushes to the production branch;
+  - release exceptions, and any finding that needs a product decision;
+  - a change to the rules that bound the merger: these delivery rules,
+    this authorization, `ENGINEERING_STANDARDS.md`, `DESIGN.md`, or the
+    pstack adaptation in `docs/engineering/pstack.md`.
 
 ### DRAFT-DEFERRED
 
