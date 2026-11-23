@@ -582,3 +582,71 @@ describe("0375: closing the 0231 bypass", () => {
     expect(r.rowCount).toBe(1);
   });
 });
+
+describe("0375: the three RLS and UI helpers answer a constant refusal to everyone but an active owner or practitioner of THAT studio", () => {
+  // can_read is the RLS predicate, enabled drives the UI, wording_current serves the one global approved consent text. A no-studio user can
+  // call all three without error (the census lists them), so what matters is that they answer the SAME refusal for every non-actor and in
+  // every studio state: no oracle for whether a studio, a client or the feature exists, and never a draft wording.
+  async function ask(userId: string, studioId: string, clientId: string) {
+    const canRead = (await userQuery(userId, `select public.client_id_photo_can_read($1,$2) v`, [studioId, clientId])).rows[0].v;
+    const enabledNow = (await userQuery(userId, `select public.client_id_photo_enabled($1) v`, [studioId])).rows[0].v;
+    const wording = (await userQuery(userId, `select * from public.client_id_photo_wording_current($1)`, [studioId])).rows;
+    return { canRead, enabledNow, wordingRows: wording.length };
+  }
+
+  it("false, false and no rows for a stranger, another studio's practitioner, a receptionist and an inactive practitioner, whatever the studio's state", async () => {
+    // The actors.
+    const stranger = randomUUID();
+    await adminQuery(`insert into auth.users (id, email) values ($1,$2)`, [stranger, `stranger-${stranger.slice(0, 8)}@harness.local`]);
+    const receptionist = randomUUID();
+    await adminQuery(`insert into auth.users (id, email) values ($1,$2)`, [receptionist, `desk-${receptionist.slice(0, 8)}@harness.local`]);
+    await adminQuery(`insert into public.studio_receptionists (studio_id, user_id, display_name, active) values ($1,$2,'Synthetic Desk',true)`, [A.studioId, receptionist]);
+    const inactive = await seedMember(A, "idphoto-inactive");
+    await adminQuery(`update public.practitioners set active = false where id = $1`, [inactive.practitionerId]);
+
+    // A studio with the feature ON and a client whose consent is current, so the owner's answers are positive: the control that makes
+    // the refusals below meaningful. The consent uses the CURRENT wording (an earlier case approves a later version).
+    await enable(A.studioId, true);
+    const c = await newClient(A);
+    const cur = (await userQuery(A.userId, `select version, wording_sha256 from public.client_id_photo_wording_current($1)`, [A.studioId])).rows[0];
+    await userQuery(A.userId, `select public.record_client_id_photo_consent($1,$2,$3,'in_person','client')`, [c, cur.version, cur.wording_sha256]);
+
+    const owner = await ask(A.userId, A.studioId, c);
+    expect(owner, "an active owner gets the real answers").toEqual({ canRead: true, enabledNow: true, wordingRows: 1 });
+    expect(await ask(memberA.userId, A.studioId, c), "an active practitioner of the studio does too").toEqual(owner);
+
+    const refusal3 = { canRead: false, enabledNow: false, wordingRows: 0 };
+    const actors: Array<[string, string]> = [
+      ["stranger with no studio", stranger],
+      ["another studio's practitioner", B.userId],
+      ["a receptionist of this studio", receptionist],
+      ["an inactive practitioner of this studio", inactive.userId],
+    ];
+    const noClient = randomUUID();
+    const noStudio = randomUUID();
+    for (const on of [true, false]) {
+      await enable(A.studioId, on);
+      for (const [label, userId] of actors) {
+        // A real studio and client, the same studio with another client id, and a random studio: one answer for all.
+        expect(await ask(userId, A.studioId, c), `${label}, feature ${on ? "on" : "off"}, real client`).toEqual(refusal3);
+        expect(await ask(userId, A.studioId, noClient), `${label}, feature ${on ? "on" : "off"}, unknown client`).toEqual(refusal3);
+        expect(await ask(userId, noStudio, noClient), `${label}, unknown studio`).toEqual(refusal3);
+      }
+    }
+    // With the feature OFF even the owner is refused, and still gets no wording from a studio they do not belong to.
+    expect(await ask(A.userId, A.studioId, c)).toEqual({ canRead: false, enabledNow: false, wordingRows: 1 });
+    expect(await ask(A.userId, noStudio, noClient), "an owner asking about a studio that is not theirs").toEqual(refusal3);
+    await enable(A.studioId, true);
+  });
+
+  it("anon is refused by privilege on all three, and none of them raises for an authenticated non-actor", async () => {
+    for (const sql of [
+      `select public.client_id_photo_can_read($1,$2)`,
+      `select public.client_id_photo_enabled($1)`,
+      `select * from public.client_id_photo_wording_current($1)`,
+    ]) {
+      const params = sql.includes("can_read") ? [A.studioId, A.clientId] : [A.studioId];
+      expect((await refusal(asRole("anon", (q) => q(sql, params)))).code, sql).toBe(INSUFFICIENT_PRIVILEGE);
+    }
+  });
+});
