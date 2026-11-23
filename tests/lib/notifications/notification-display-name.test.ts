@@ -9,6 +9,8 @@ import { describe, expect, it, vi } from "vitest";
 type Row = Record<string, unknown>;
 const tables: Record<string, Row[]> = {};
 const inserted: Row[] = [];
+let clientReads = 0;
+let hangFromClientRead = 0; // 0 = never hang; N = the Nth and later reads of `clients` never resolve
 
 function from(table: string) {
   const filters: Array<[string, unknown]> = [];
@@ -16,7 +18,10 @@ function from(table: string) {
   const rows = () => (tables[table] ?? []).filter((r) => filters.every(([c, v]) => r[c] === v));
   for (const m of ["select", "order", "limit"]) q[m] = () => q;
   q.eq = (c: string, v: unknown) => (filters.push([c, v]), q);
-  q.maybeSingle = async () => ({ data: rows()[0] ?? null, error: null });
+  q.maybeSingle = () => {
+    if (table === "clients" && hangFromClientRead > 0 && ++clientReads >= hangFromClientRead) return new Promise(() => {});
+    return Promise.resolve({ data: rows()[0] ?? null, error: null });
+  };
   q.insert = async (row: Row) => (table === "practitioner_notifications" ? inserted.push(row) : null, { error: null });
   q.then = (resolve: (v: unknown) => unknown) => resolve({ data: rows(), error: null });
   return q;
@@ -37,6 +42,8 @@ const OWNER = "44444444-4444-4444-8444-444444444444";
 function seed(client: Row) {
   for (const k of Object.keys(tables)) delete tables[k];
   inserted.length = 0;
+  clientReads = 0;
+  hangFromClientRead = 0;
   tables.appointments = [{ id: APPT, studio_id: STUDIO, client_id: CLIENT, practitioner_id: OWNER, starts_at: "2026-12-01T17:00:00Z", service_id: "s1", cancelled_at: "2026-11-30T10:00:00Z" }];
   tables.clients = [{ id: CLIENT, studio_id: STUDIO, ...client }];
   tables.services = [{ id: "s1", name: "Consultation" }];
@@ -61,6 +68,23 @@ describe("the cancel writer names the client by display name", () => {
     seed({ name: "Katherine Example", preferred_name: null });
     await recordAppointmentCancelNotifications(fake as never, { appointmentId: APPT, studioId: STUDIO, reasonLabel: null, actorPractitionerId: null });
     expect(String(inserted[0].body)).toContain("Katherine Example cancelled");
+  });
+
+  it("a HANGING display-name read still writes the notification with the stored name after about 2.5 s", async () => {
+    seed({ name: "Katherine Example", preferred_name: "Kit" });
+    hangFromClientRead = 2; // the writer's own stored-name read (1st) resolves; the display-name read (2nd) never does
+    vi.useFakeTimers();
+    try {
+      const done = recordAppointmentCancelNotifications(fake as never, { appointmentId: APPT, studioId: STUDIO, reasonLabel: null, actorPractitionerId: null });
+      await vi.advanceTimersByTimeAsync(2400);
+      expect(inserted).toHaveLength(0); // still waiting inside the bound
+      await vi.advanceTimersByTimeAsync(200);
+      await done;
+      expect(inserted.length).toBeGreaterThan(0);
+      for (const r of inserted) expect(String(r.body)).toContain("Katherine Example cancelled");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("a staff cancel names the staff member and the client's display name", async () => {
@@ -97,7 +121,7 @@ describe("the public-flow writers build the text from the display-name loader", 
   const cases: Array<[string, RegExp]> = [
     ["app/book/[slug]/actions.ts", /notificationClientName = await loadCommunicationName\(admin, studio\.id, clientId, clientName\)[\s\S]*?body: `\$\{notificationClientName\} booked/],
     ["app/portal/rebook-actions.ts", /notificationClientName = await loadCommunicationName\(admin, studio\.id, clientId, clientName\)[\s\S]*?body: `\$\{notificationClientName\} booked/],
-    ["app/reschedule/[token]/actions.ts", /notificationClientName = await loadCommunicationName\([^)]*clientRow\.name\)[\s\S]*?body: `\$\{notificationClientName\} rescheduled/],
+    ["app/reschedule/[token]/actions.ts", /notificationClientName = await loadCommunicationName\(admin, asserted\.original\.studio_id, asserted\.original\.client_id, clientRow\.name\)[\s\S]*?body: `\$\{notificationClientName\} rescheduled/],
     ["app/intake/[token]/actions.ts", /await loadCommunicationName\(admin, existing\.studio_id, existing\.client_id, storedClientName\)[\s\S]*?\$\{clientName\} submitted an intake form/],
   ];
   it.each(cases)("%s", (file, re) => {
