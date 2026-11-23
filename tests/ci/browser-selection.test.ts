@@ -261,13 +261,13 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // second-tab edit still does) joined `sessions`. RECORDED AS A DECISION per the note above. Cost: FOUR executed cases (two models x two), each a
     // seeded studio, a magic-link login and a few page loads: about 2 minutes.
     // Now 62 after merging production (production alone: 56): HON-48's six five-user proof specs (hon48-five-user-booking, -moves-blocks, -denial, hon48-tablet-phone-selection,
-    // hon48-returning-client-lookup, hon48-commit-visibility-timing) joined `calendar`. RECORDED AS A DECISION per the note above. All six are
-    // OPT-IN (HON48_FIVE_USER_E2E=1, or HON48_TIMING_E2E=1 for the timing rig) and self-skip in every CI lane, so the cost is listing six
-    // skipped files: no added run time. The set (about 11 minutes with a reused build) is run on demand on an owned stack.
+    // hon48-returning-client-lookup, hon48-commit-visibility-timing) joined `calendar`. RECORDED AS A DECISION per the note above. Five of the six
+    // are REQUIRED in the calendar lane and no longer self-skip (the self-skip was removed from those five). Only hon48-commit-visibility-timing
+    // stays OPT-IN (HON48_TIMING_E2E=1, the timing rig) and self-skips in every CI lane, so it costs one listed skipped file and no added run time.
     // 63 with the charting New view spec joining `sessions`. It is OPT-IN (needs the rollout setting set to "all" on the app server) and self-skips in every
     // CI lane, so, like the HON-48 specs above, the cost is one listed skipped file and no added run time.
-    // The five HON-48 five-user specs above are NO LONGER opt-in: they run in the required calendar lane (23 cases, about 3 minutes measured on an
-    // owned stack). RECORDED AS A DECISION per the note above. The count is unchanged because the files were already listed; only the self-skip went.
+    // The five HON-48 five-user specs above are NO LONGER opt-in: they run in the required calendar lane (18 declarations, 23 cases after the device and size loops
+    // in the tablet and phone spec; about 3 minutes measured on an owned stack). RECORDED AS A DECISION per the note above. The count is unchanged because the files were already listed; only the self-skip went.
     // hon48-commit-visibility-timing stays opt-in (HON48_TIMING_E2E=1), as do the two day-layout matrices and calendar-own-first.
     expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(63);
   });
