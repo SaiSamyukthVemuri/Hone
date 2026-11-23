@@ -126,6 +126,7 @@ let fetchCalls: Array<{ url: string; init: RequestInit }> = [];
 let listeners: Record<string, Array<() => void>> = {};
 let visibility: "visible" | "hidden" = "visible";
 let store: Record<string, string> = {};
+let ignoreAbort = false; // a response that arrives even though its request was aborted (the abort lost the race)
 
 const answer = (unread: number, ids: string[] = []) => ({ status: 200, type: "basic", json: async () => ({ unread, ids, viewer: VIEWER }) });
 /** Resolve the nth outstanding request (default: the oldest). */
@@ -133,6 +134,7 @@ async function respond(res: unknown, which = 0) {
   const p = pending.splice(which, 1)[0];
   p.resolve(res);
   await vi.advanceTimersByTimeAsync(0);
+  flush(); // what React does after a state update
 }
 const fire = (type: string) => (listeners[type] ?? []).slice().forEach((f) => f());
 
@@ -149,6 +151,7 @@ beforeEach(() => {
   listeners = {};
   visibility = "visible";
   store = {};
+  ignoreAbort = false;
   const add = (type: string, fn: () => void) => void (listeners[type] = [...(listeners[type] ?? []), fn]);
   const remove = (type: string, fn: () => void) => void (listeners[type] = (listeners[type] ?? []).filter((f) => f !== fn));
   vi.stubGlobal("window", {
@@ -172,7 +175,9 @@ beforeEach(() => {
       new Promise((resolve, reject) => {
         fetchCalls.push({ url, init });
         pending.push({ init, resolve, reject });
-        init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+        init.signal?.addEventListener("abort", () => {
+          if (!ignoreAbort) reject(new DOMException("aborted", "AbortError"));
+        });
       }),
   );
   vi.stubGlobal("AbortController", AbortController);
@@ -311,6 +316,27 @@ describe("a superseded or hidden-tab answer is dropped by the provider itself", 
     await vi.advanceTimersByTimeAsync(8_001);
     expect(signal.aborted).toBe(true);
     expect(latest?.unread).toBe(0);
+  });
+});
+
+describe("the provider drops an answer whose request was superseded, even when the abort loses the race", () => {
+  it("hide then return starts a NEW request; the OLD request's late answer must not be taken as the new one's", async () => {
+    ignoreAbort = true;
+    mount(START);
+    await vi.advanceTimersByTimeAsync(0);
+    await respond(answer(0));
+    fire("focus");
+    await vi.advanceTimersByTimeAsync(0); // request A in flight
+    visibility = "hidden";
+    fire("visibilitychange"); // A aborted (but its response still arrives below)
+    visibility = "visible";
+    fire("visibilitychange");
+    await vi.advanceTimersByTimeAsync(0); // request B in flight
+    expect(pending).toHaveLength(2);
+    await respond(answer(7, [ID(1)]), 0); // A's late answer
+    expect(latest?.unread).toBe(0);
+    await respond(answer(1, [ID(2)]), 0); // B's answer
+    expect(latest?.unread).toBe(1);
   });
 });
 
