@@ -929,8 +929,11 @@ export const FINDINGS: ReadonlyArray<{ id: string; entries: readonly string[]; f
     ],
     found:
       "The settings a non-owner can reach act on the signed-in practitioner. Name and colour go through the governed own-preference command with no practitioner id " +
-      "in the request, and the feed-token and Google connect and disconnect actions take no practitioner id. selectWriteCalendarAction takes a calendar id from the form; " +
-      "whether it is checked against the actor's own connection was NOT verified. Every availability action is owner-only, so a non-owner has no control over " +
+      "in the request, and the feed-token and Google connect and disconnect actions take no practitioner id. selectWriteCalendarAction takes a calendar id from the form and was VERIFIED not to be a cross-user write (23 Nov): " +
+      "the actor comes from the session, the id must appear in Google's calendar list fetched with a token minted for the actor's own connection, " +
+      "and the update is filtered by the session's studio and practitioner, so it can only touch the caller's own row. Residuals, neither an access hole: " +
+      "the check against Google happens at call time (a later change of Google access is not re-checked, harmless because the row is the caller's own), " +
+      "and the update uses the service-role client, so the action itself is the guard, not row security. Every availability action is owner-only, so a non-owner has no control over " +
       "their own availability at all: the engine's own-availability key has no app surface. That is a product gap, not an access hole.",
   },
 ];
