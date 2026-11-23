@@ -35,7 +35,8 @@ const read = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
 
 const LAYOUT = "app/(app)/layout.tsx";
 const NAVLINK = "app/(app)/PrimaryNavLink.tsx";
-const raw = read(LAYOUT);
+// Step 0 of the HON-40 shell contract moved the bell and the header cluster out of layout.tsx verbatim: the shell is the three files.
+const raw = read(LAYOUT) + "\n" + read("app/(app)/HeaderCluster.tsx") + "\n" + read("app/(app)/NotificationsBell.tsx");
 
 // The shell DISCUSSES `PendingLink`, `relative` and the rejected label form by
 // name when explaining why the bell differs. Prose must not satisfy or trip a
@@ -83,8 +84,11 @@ describe("NAV-ACK-02 · the comment stripper itself", () => {
 
 describe("NAV-ACK-02 · the primary navigation acknowledges", () => {
   it("imports the shipped primitive and no longer imports next/link", () => {
-    expect(code).toMatch(
-      /import\s*\{[\s\S]*?PendingContainerLink[\s\S]*?PendingLink[\s\S]*?\}\s*from\s*"@\/components\/pending-link"/,
+    // Step 0 of the HON-40 shell contract moved the bell, the only container form, into its own file: the
+    // two primitives are now imported by the two files that use them, from the same module.
+    expect(codeOnly(read(LAYOUT))).toMatch(/import\s*\{[\s\S]*?PendingLink[\s\S]*?\}\s*from\s*"@\/components\/pending-link"/);
+    expect(codeOnly(read("app/(app)/NotificationsBell.tsx"))).toMatch(
+      /import\s*\{[\s\S]*?PendingContainerLink[\s\S]*?\}\s*from\s*"@\/components\/pending-link"/,
     );
     // The whole point of the slice: no un-acknowledged anchor remains.
     expect(code).not.toMatch(/from\s*"next\/link"/);

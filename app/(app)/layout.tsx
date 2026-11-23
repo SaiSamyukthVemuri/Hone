@@ -1,15 +1,12 @@
 import { WAITLIST_PATH } from "@/lib/waitlist/paths";
-import {
-  PendingContainerLink,
-  PendingLink,
-} from "@/components/pending-link";
+import { PendingLink } from "@/components/pending-link";
 import { PrimaryNavLink } from "./PrimaryNavLink";
 import { AppMain } from "./AppMain";
-import { MobileMenu } from "./MobileMenu";
-import { AccountMenu } from "./AccountMenu";
+import { HeaderCluster } from "./HeaderCluster";
+import { NotificationsProvider } from "./NotificationsProvider";
+import { SearchProvider } from "./SearchProvider";
 import { BusinessMenu } from "./BusinessMenu";
 import { SignOutFlightProvider } from "./signout-flight";
-import { GlobalSearch } from "./GlobalSearch";
 import { createClient } from "@/lib/supabase/server";
 import {
   listActiveStudioMemberships,
@@ -85,7 +82,6 @@ export default async function AppLayout({
         ),
       ]),
   );
-  const unreadNotifications = unreadPersisted + overdueDisinfectantCount;
 
   return (
     <div className="min-h-screen bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
@@ -103,6 +99,8 @@ export default async function AppLayout({
           menus, so an authority outliving them could never be cleared.
           See ./signout-flight. */}
       <SignOutFlightProvider>
+      <NotificationsProvider initialPersistedUnread={unreadPersisted} computedUnread={overdueDisinfectantCount}>
+      <SearchProvider>
       <header className="sticky top-0 z-30 border-b border-neutral-200 bg-white print:hidden dark:border-neutral-800 dark:bg-neutral-950">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-3 md:px-8">
           <div className="flex items-center gap-6">
@@ -219,51 +217,20 @@ export default async function AppLayout({
                   dropdown; the primary nav is the working surfaces. */}
             </nav>
           </div>
-          {/* HEADER MODE, in one place. Exactly four classes choose
-              between the full desktop shell and the compact one: this
-              container, the primary nav above, the compact container
-              below, and MobileMenu's own root. All four switch at `lg`
-              so there is no width where both appear and none where
-              neither does — 1023px is wholly compact, 1024px wholly
-              desktop. The `md:px-8` on the row and on <main> is padding,
-              not mode, and deliberately stays at md. */}
-          <div className="hidden min-w-0 items-center gap-3 lg:flex">
-            {/* PR #232: global search (clients, appointments, treatment
-                memory, records, page shortcuts). Studio-scoped,
-                authenticated-only; see global-search-actions.ts. */}
-            <GlobalSearch variant="desktop" />
-            <NotificationsBell unread={unreadNotifications} />
-            {/* PR #231: account dropdown (Settings / Getting Started /
-                Admin / Sign out + profile block) replaces the always-
-                visible Sign out button and profile link. */}
-            <AccountMenu
-              displayName={practitioner.display_name}
-              studioName={studio.name}
-              role={practitioner.role}
-              admin={admin}
-              canSwitchStudio={canSwitchStudio}
-            />
-          </div>
-
-          {/* PR #229: mobile right side is bell + Menu. The menu is
-              a small client component that closes itself on link
-              taps (the no-JS details element from PR #228 stayed
-              open across client-side navigations because this
-              layout persists). */}
-          <div className="flex items-center gap-1.5 lg:hidden">
-            <GlobalSearch variant="mobile" />
-            <NotificationsBell unread={unreadNotifications} />
-            <MobileMenu
-              admin={admin}
-              displayName={practitioner.display_name}
-              studioName={studio.name}
-              role={practitioner.role}
-              canSwitchStudio={canSwitchStudio}
-              showWaitlist={showWaitlist}
-            />
-          </div>
+          <HeaderCluster
+            unreadPersisted={unreadPersisted}
+            computedUnread={overdueDisinfectantCount}
+            displayName={practitioner.display_name}
+            studioName={studio.name}
+            role={practitioner.role}
+            admin={admin}
+            canSwitchStudio={canSwitchStudio}
+            showWaitlist={showWaitlist}
+          />
         </div>
       </header>
+      </SearchProvider>
+      </NotificationsProvider>
       </SignOutFlightProvider>
       <AppMain>{children}</AppMain>
       <AppFooter />
@@ -320,58 +287,4 @@ async function loadOverdueDisinfectantCount(
   } catch {
     return 0;
   }
-}
-
-// PR #229: Notifications bell. A plain server-rendered link (no
-// client JS): inline SVG bell + the same server-computed unread
-// badge the old nav tab carried. The accessible name communicates
-// the count ("Notifications, 3 unread").
-function NotificationsBell({ unread }: { unread: number }) {
-  const label =
-    unread > 0 ? `Notifications, ${unread} unread` : "Notifications";
-  return (
-    // THE CONTAINER FORM, and the only one of the seven that needs it.
-    //
-    // The other six anchors are LABELS — a word, which may fade to `opacity-0`
-    // because its accessible name survives the fade. This one's content is a
-    // LAYOUT: an icon plus a count badge positioned against the anchor itself.
-    // `PendingLink` would wrap both in a single in-flow span (collapsing the
-    // flex arrangement) and fade them, so the bell AND its unread count would
-    // blank on press — a control going empty reads as a bug, not as an
-    // acknowledgement. `PendingContainerLink` leaves both children exactly
-    // where they were and dims them under an out-of-flow scrim instead.
-    //
-    // `relative` is NOT repeated here: the primitive owns that class precisely
-    // so the scrim cannot escape to a distant positioned ancestor. The badge
-    // below still resolves against this same anchor, unchanged.
-    <PendingContainerLink
-      href="/notifications"
-      aria-label={label}
-      data-testid="nav-notifications"
-      pendingLabel="Opening Notifications…"
-      className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md hover:bg-neutral-100 dark:hover:bg-neutral-900"
-    >
-      <svg
-        aria-hidden="true"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        className="h-5 w-5"
-      >
-        <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
-        <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
-      </svg>
-      {unread > 0 && (
-        <span
-          aria-hidden="true"
-          className="absolute -right-0.5 -top-0.5 inline-flex min-w-[18px] items-center justify-center rounded-full bg-rose-600 px-1 text-[11px] font-semibold leading-[18px] text-white"
-        >
-          {unread > 99 ? "99+" : unread}
-        </span>
-      )}
-    </PendingContainerLink>
-  );
 }

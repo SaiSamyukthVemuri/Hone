@@ -147,7 +147,7 @@ describe("UX-01 QW1 · the current day is not painted as disabled", () => {
 
 describe("UX-01 QW2 · bounded, and provably not UX-03", () => {
   const nav = codeOnly(read(NAVLINK));
-  const layout = codeOnly(read(LAYOUT));
+  const layout = codeOnly(read(LAYOUT) + "\n" + read("app/(app)/HeaderCluster.tsx") + "\n" + read("app/(app)/NotificationsBell.tsx"));
 
   it("adds no provider, context or global route-progress", () => {
     expect(nav).not.toContain("createContext");

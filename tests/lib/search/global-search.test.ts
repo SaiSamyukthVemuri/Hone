@@ -31,7 +31,8 @@ function read(rel: string): string {
 
 const ACTION = read("app/(app)/global-search-actions.ts");
 const COMPONENT = read("app/(app)/GlobalSearch.tsx");
-const LAYOUT = read("app/(app)/layout.tsx");
+// Both header variants are rendered by HeaderCluster.tsx (moved out of layout.tsx, HON-40 shell step 0).
+const LAYOUT = read("app/(app)/layout.tsx") + "\n" + read("app/(app)/HeaderCluster.tsx");
 
 function result(type: SearchResult["type"], n: number): SearchResult {
   return { id: `${type}:${n}`, type, title: `t${n}`, href: "/x" };

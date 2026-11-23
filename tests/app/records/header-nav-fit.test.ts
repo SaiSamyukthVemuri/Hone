@@ -10,7 +10,9 @@ function read(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf8");
 }
 
-const LAYOUT = read("app/(app)/layout.tsx");
+// The header's right-hand controls moved out of layout.tsx into HeaderCluster.tsx (HON-40 shell step 0): the shell
+// is the two files together.
+const LAYOUT = read("app/(app)/layout.tsx") + "\n" + read("app/(app)/HeaderCluster.tsx");
 const RECORDS_PAGE = read("app/(app)/records/page.tsx");
 
 // THE BREAKPOINT CONTRACT — compact shell below 1024px, full desktop from
