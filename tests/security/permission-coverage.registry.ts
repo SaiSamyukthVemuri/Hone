@@ -860,7 +860,11 @@ export const RPC_PRIVILEGES: Readonly<Record<string, string>> = {
   save_weekly_availability: "--sD",
   set_appointment_notes: "--sD",
   set_client_group_membership: "ABSENT",
-  set_client_portrait: "-u-D",
+  // Retired by 0375: EXECUTE is revoked from every API role (public, anon, authenticated, service_role), so nobody can call it through the
+  // Data API any more ("---D": security definer, no role may run it). It stays in this census because the app still NAMES it in
+  // setClientPortraitAction, which is gated off (clientPortraitEnabled) and refuses before any RPC; if that action is ever enabled it would
+  // fail at the privilege layer, not reach the function. Removing the name from the app is a separate, product-owned change.
+  set_client_portrait: "---D",
   set_new_client_admission_mode: "-u-D",
   set_next_session_note: "-u-D",
   set_own_calendar_feed_token_hash: "-u-D",
