@@ -69,13 +69,20 @@ export function utcInstantFromLocal(
 
 // Renders a UTC Date as the local YYYY-MM-DD in `tz`.
 export function localDateString(d: Date, tz: string): string {
-  const f = new Intl.DateTimeFormat("en-CA", {
-    timeZone: tz,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-  return f.format(d);
+  return dateFormatterFor(tz).format(d);
+}
+
+// Building an Intl.DateTimeFormat costs far more than formatting with one, and the Analytics build formats thousands of appointment starts in one zone per
+// request (HON-109), so one formatter per zone is kept. A formatter is immutable and `format` is pure, so the output is identical to building a new one each
+// time; an invalid zone still throws at construction and is not stored.
+const DATE_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
+function dateFormatterFor(tz: string): Intl.DateTimeFormat {
+  let f = DATE_FORMATTERS.get(tz);
+  if (!f) {
+    f = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" });
+    DATE_FORMATTERS.set(tz, f);
+  }
+  return f;
 }
 
 // Some ICU builds resolve `hour12: false` to the h24 hour cycle and
@@ -91,13 +98,19 @@ function normalizeHour24(time: string): string {
 
 // Renders a UTC Date as the local HH:MM in `tz` (24h, HH always 00-23).
 export function localTimeString(d: Date, tz: string): string {
-  const f = new Intl.DateTimeFormat("en-CA", {
-    timeZone: tz,
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
+  const f = timeFormatterFor(tz);
   return normalizeHour24(f.format(d));
+}
+
+// One formatter per zone, for the same reason and with the same guarantees as the date formatter above.
+const TIME_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
+function timeFormatterFor(tz: string): Intl.DateTimeFormat {
+  let f = TIME_FORMATTERS.get(tz);
+  if (!f) {
+    f = new Intl.DateTimeFormat("en-CA", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false });
+    TIME_FORMATTERS.set(tz, f);
+  }
+  return f;
 }
 
 // 12-hour public-facing time formatter (e.g. "9:00 AM" / "1:30 PM").
