@@ -40,7 +40,8 @@ export function passesConsentGate(input: ConsentGateInput): ConsentGateResult {
       : smsType === "reminder_24h"
         ? studio.send_24h_sms_reminders
         : studio.send_2h_sms_reminders;
-  if (!toggleOn) return { ok: false, reason: "studio_toggle_off" };
+  // Only a real boolean true sends. A string, number or object in a switch column (a bad write, a malformed row) fails closed.
+  if (toggleOn !== true) return { ok: false, reason: "studio_toggle_off" };
 
   if (client.sms_opted_out_at) {
     return { ok: false, reason: "client_opted_out" };
