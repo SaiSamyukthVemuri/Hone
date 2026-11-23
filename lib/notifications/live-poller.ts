@@ -63,6 +63,10 @@ export type LivePollerState = {
   consecutiveErrors: number;
   unauthStrikes: number;
   stopped: boolean;
+  /** The server render this machine last took its count from. A render with a DIFFERENT revision is authoritative even when its number is unchanged. */
+  revision: number;
+  /** Bumped by every authoritative baseline. An answer to a probe started under an older generation is stale and decides nothing. */
+  generation: number;
   /** The persisted unread count for this viewer (the computed disinfectant part is added by the provider, never here). */
   persistedUnread: number;
   /** True once one answer has been received: the first answer only primes `seen`. */
@@ -80,16 +84,18 @@ export type LivePollerEvent =
   | { type: "returned"; nowMs: number; env: PollerEnv }
   | { type: "hidden" }
   /** A new server render carried its own count (navigation, a mark-read): the server's number wins. */
-  | { type: "baseline"; persistedUnread: number }
-  | { type: "probed"; nowMs: number; env: PollerEnv; result: ProbeResult; jitter: number };
+  | { type: "baseline"; persistedUnread: number; revision: number }
+  /** `generation` is the one the probe STARTED under (carried by the `probe` effect that began it). */
+  | { type: "probed"; nowMs: number; env: PollerEnv; result: ProbeResult; jitter: number; generation: number };
 
-export type LivePollerEffect = { type: "probe" } | { type: "abort" };
+export type LivePollerEffect = { type: "probe"; generation: number } | { type: "abort" };
 
 export function initialLivePollerState(
   persistedUnread: number,
   nowMs: number,
   initialSeen: readonly string[] = [],
   initialViewer: string | null = null,
+  revision = 0,
 ): LivePollerState {
   return {
     inFlight: false,
@@ -97,6 +103,8 @@ export function initialLivePollerState(
     consecutiveErrors: 0,
     unauthStrikes: 0,
     stopped: false,
+    revision,
+    generation: 0,
     persistedUnread,
     primed: false,
     viewer: initialViewer,
@@ -116,7 +124,7 @@ type Step = { state: LivePollerState; effects: LivePollerEffect[] };
 function settle(input: LivePollerState, nowMs: number, env: PollerEnv): Step {
   if (input.stopped) return { state: input, effects: [] };
   if (!input.inFlight && env.visible && env.online && nowMs >= input.nextProbeAtMs) {
-    return { state: { ...input, inFlight: true }, effects: [{ type: "probe" }] };
+    return { state: { ...input, inFlight: true }, effects: [{ type: "probe", generation: input.generation }] };
   }
   return { state: input, effects: [] };
 }
@@ -139,11 +147,21 @@ export function stepLivePoller(state: LivePollerState, event: LivePollerEvent): 
       return settle({ ...state, nextProbeAtMs: Math.min(state.nextProbeAtMs, event.nowMs) }, event.nowMs, event.env);
     case "hidden":
       return state.inFlight ? { state: { ...state, inFlight: false }, effects: [{ type: "abort" }] } : { state, effects: [] };
-    case "baseline":
-      return { state: { ...state, persistedUnread: event.persistedUnread }, effects: [] };
+    case "baseline": {
+      // The same render again (this machine's own start-up, a re-render of the provider): nothing new.
+      if (event.revision === state.revision) return { state, effects: [] };
+      // A NEW server render is authoritative for the persisted count, whatever its number: a render that says 0 after a poll said 5 must
+      // show 0, so the revision (not the number) is what marks it fresh. A request that read before this render and resolves after it
+      // would restore the stale number, so the generation moves on and that request is aborted; its late answer is also ignored by
+      // generation, in case the abort loses the race.
+      return {
+        state: { ...state, persistedUnread: event.persistedUnread, revision: event.revision, generation: state.generation + 1, inFlight: false },
+        effects: state.inFlight ? [{ type: "abort" }] : [],
+      };
+    }
     case "probed": {
       // A late answer to a request that was aborted or superseded decides nothing.
-      if (!state.inFlight) return { state, effects: [] };
+      if (!state.inFlight || event.generation !== state.generation) return { state, effects: [] };
       const next: LivePollerState = { ...state, inFlight: false };
       const r = event.result;
       if (r.kind === "refused") return { state: { ...next, stopped: true }, effects: [] };

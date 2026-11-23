@@ -38,6 +38,7 @@ describe("the live count the provider hands both bell instances", () => {
       createElement(NotificationsProvider, {
         initialPersistedUnread: persisted,
         computedUnread: computed,
+        renderRevision: 1,
         children: [createElement(NotificationsBell, { key: "a", unread: 0 }), createElement(NotificationsBell, { key: "b", unread: 0 })],
       }),
     );
@@ -61,7 +62,10 @@ describe("the layout feeds the shell the server counts", () => {
   const layout = readFileSync("app/(app)/layout.tsx", "utf8");
   it("mounts the provider ONCE with the persisted and the computed count", () => {
     expect(layout.match(/<NotificationsProvider\b/g)).toHaveLength(1);
-    expect(layout).toMatch(/<NotificationsProvider\s+initialPersistedUnread=\{unreadPersisted\}\s+computedUnread=\{overdueDisinfectantCount\}>/);
+    expect(layout).toMatch(/<NotificationsProvider\s+initialPersistedUnread=\{unreadPersisted\}\s+computedUnread=\{overdueDisinfectantCount\}\s+renderRevision=\{Date\.now\(\)\}>/);
+  });
+  it("stamps every server render with a fresh revision, so a repeated number is still seen as a new render", () => {
+    expect(layout).toContain("renderRevision={Date.now()}");
   });
   it("hands the header the computed overdue-disinfectant count, never a constant", () => {
     expect(layout).toMatch(/<HeaderCluster[\s\S]*?unreadPersisted=\{unreadPersisted\}[\s\S]*?computedUnread=\{overdueDisinfectantCount\}/);

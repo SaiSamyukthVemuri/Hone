@@ -99,7 +99,7 @@ export default async function AppLayout({
           menus, so an authority outliving them could never be cleared.
           See ./signout-flight. */}
       <SignOutFlightProvider>
-      <NotificationsProvider initialPersistedUnread={unreadPersisted} computedUnread={overdueDisinfectantCount}>
+      <NotificationsProvider initialPersistedUnread={unreadPersisted} computedUnread={overdueDisinfectantCount} renderRevision={Date.now()}>
       <SearchProvider>
       <header className="sticky top-0 z-30 border-b border-neutral-200 bg-white print:hidden dark:border-neutral-800 dark:bg-neutral-950">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-3 md:px-8">

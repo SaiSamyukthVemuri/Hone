@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   SUMMARY_TIMEOUT_MS,
   classifyProbeStatus,
@@ -20,6 +20,10 @@ import {
 //   initialPersistedUnread  the server-read count of unread persisted notifications for this viewer
 //   computedUnread          the computed overdue-disinfectant count (no row, no event); the live count ADDS it and never drops it,
 //                           only the persisted part is live
+//   renderRevision          a value the layout sets on EVERY server render (the render time). A render with a new revision is
+//                           authoritative for the persisted count even when its number equals the previous render's: a mark-all-read
+//                           that brings the server number back to 0 after a poll said 5 must show 0, and the dependency on the number
+//                           alone would never see it
 //
 // WHAT IT DOES: one poll of /api/notifications/summary per tab (see lib/notifications/live-poller for the rules), keeps the last known
 // persisted count on any failure, and records the ids of notifications that ARRIVED after the page loaded, each once. A server render
@@ -88,25 +92,22 @@ async function classify(res: Response): Promise<ProbeResult> {
 export function NotificationsProvider({
   initialPersistedUnread,
   computedUnread,
+  renderRevision,
   children,
 }: {
   initialPersistedUnread: number;
   computedUnread: number;
+  renderRevision: number;
   children: ReactNode;
 }) {
   const [persisted, setPersisted] = useState(initialPersistedUnread);
   const [arrivals, setArrivals] = useState<readonly string[]>([]);
 
-  // The server's number wins whenever a new render carries one.
-  const [feedBaseline, setFeedBaseline] = useState<((n: number) => void) | null>(null);
-  useEffect(() => {
-    setPersisted(initialPersistedUnread);
-    feedBaseline?.(initialPersistedUnread);
-  }, [initialPersistedUnread, feedBaseline]);
+  const feedBaseline = useRef<((n: number, revision: number) => void) | null>(null);
 
   useEffect(() => {
     const remembered = readSeen();
-    let state: LivePollerState = initialLivePollerState(initialPersistedUnread, Date.now(), remembered.seen, remembered.viewer);
+    let state: LivePollerState = initialLivePollerState(initialPersistedUnread, Date.now(), remembered.seen, remembered.viewer, renderRevision);
     let wake: number | undefined;
     let controller: AbortController | null = null;
     let timeout: number | undefined;
@@ -135,7 +136,7 @@ export function NotificationsProvider({
     }
 
     function apply(effect: LivePollerEffect) {
-      if (effect.type === "probe") void startProbe();
+      if (effect.type === "probe") void startProbe(effect.generation);
       else {
         const c = controller;
         controller = null; // its late answer is dropped
@@ -144,7 +145,7 @@ export function NotificationsProvider({
       }
     }
 
-    async function startProbe() {
+    async function startProbe(generation: number) {
       const c = new AbortController();
       controller = c;
       timeout = window.setTimeout(() => c.abort(), SUMMARY_TIMEOUT_MS);
@@ -158,7 +159,7 @@ export function NotificationsProvider({
       window.clearTimeout(timeout);
       if (controller !== c) return; // aborted because the tab was hidden, or superseded
       controller = null;
-      run({ type: "probed", nowMs: Date.now(), env: readEnv(), result, jitter: Math.random() });
+      run({ type: "probed", nowMs: Date.now(), env: readEnv(), result, jitter: Math.random(), generation });
     }
 
     const onVisibility = () => {
@@ -169,12 +170,12 @@ export function NotificationsProvider({
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("focus", onReturn);
     window.addEventListener("online", onReturn);
-    setFeedBaseline(() => (n: number) => run({ type: "baseline", persistedUnread: n }));
+    feedBaseline.current = (n, revision) => run({ type: "baseline", persistedUnread: n, revision });
     schedule();
 
     return () => {
       disposed = true;
-      setFeedBaseline(null);
+      feedBaseline.current = null;
       window.clearTimeout(wake);
       window.clearTimeout(timeout);
       controller?.abort();
@@ -182,9 +183,16 @@ export function NotificationsProvider({
       window.removeEventListener("focus", onReturn);
       window.removeEventListener("online", onReturn);
     };
-    // One machine for the life of the shell; a new server count reaches it through `feedBaseline`, never by restarting it.
+    // One machine for the life of the shell; a new server render reaches it through `feedBaseline`, never by restarting it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // A new server render (its revision differs) is authoritative for the persisted count: show it and tell the machine. The first run
+  // carries the revision the machine started with, which the machine ignores.
+  useEffect(() => {
+    setPersisted(initialPersistedUnread);
+    feedBaseline.current?.(initialPersistedUnread, renderRevision);
+  }, [initialPersistedUnread, renderRevision]);
 
   const value = useMemo<NotificationsLive>(() => ({ unread: persisted + computedUnread, arrivals }), [persisted, computedUnread, arrivals]);
   return <NotificationsContext.Provider value={value}>{children}</NotificationsContext.Provider>;

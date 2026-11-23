@@ -26,10 +26,10 @@ const ok = (unread: number, ids: string[] = [], viewer = ME): ProbeResult => ({ 
 function inFlight(persisted = 0, seen: string[] = [], viewer: string | null = seen.length ? ME : null) {
   const s = initialLivePollerState(persisted, 0, seen, viewer);
   const out = stepLivePoller(s, { type: "tick", nowMs: 0, env: VISIBLE });
-  expect(out.effects).toEqual([{ type: "probe" }]);
+  expect(out.effects).toEqual([{ type: "probe", generation: 0 }]);
   return out.state;
 }
-const answer = (s: LivePollerState, result: ProbeResult, nowMs = 1_000, env = VISIBLE) => stepLivePoller(s, { type: "probed", nowMs, env, result, jitter: 0.5 });
+const answer = (s: LivePollerState, result: ProbeResult, nowMs = 1_000, env = VISIBLE) => stepLivePoller(s, { type: "probed", nowMs, env, result, jitter: 0.5, generation: s.generation });
 
 describe("when the machine probes", () => {
   it("probes at once on a visible online tab, and never two at a time", () => {
@@ -57,12 +57,12 @@ describe("when the machine probes", () => {
   it("returning to the tab checks immediately, even inside the wait", () => {
     const settled = answer(inFlight(), ok(0)).state;
     expect(stepLivePoller(settled, { type: "tick", nowMs: 2_000, env: VISIBLE }).effects).toEqual([]);
-    expect(stepLivePoller(settled, { type: "returned", nowMs: 2_000, env: VISIBLE }).effects).toEqual([{ type: "probe" }]);
+    expect(stepLivePoller(settled, { type: "returned", nowMs: 2_000, env: VISIBLE }).effects).toEqual([{ type: "probe", generation: 0 }]);
   });
 
   it("waits about one interval after a good answer, spread by jitter", () => {
-    const lo = stepLivePoller(inFlight(), { type: "probed", nowMs: 0, env: VISIBLE, result: ok(0), jitter: 0 }).state.nextProbeAtMs;
-    const hi = stepLivePoller(inFlight(), { type: "probed", nowMs: 0, env: VISIBLE, result: ok(0), jitter: 0.999 }).state.nextProbeAtMs;
+    const lo = stepLivePoller(inFlight(), { type: "probed", nowMs: 0, env: VISIBLE, result: ok(0), jitter: 0, generation: 0 }).state.nextProbeAtMs;
+    const hi = stepLivePoller(inFlight(), { type: "probed", nowMs: 0, env: VISIBLE, result: ok(0), jitter: 0.999, generation: 0 }).state.nextProbeAtMs;
     expect(lo).toBe(Math.round(SUMMARY_INTERVAL_MS * 0.9));
     expect(hi).toBeGreaterThan(lo);
     expect(hi).toBeLessThanOrEqual(Math.round(SUMMARY_INTERVAL_MS * 1.1));
@@ -123,11 +123,59 @@ describe("failures", () => {
   });
 });
 
+describe("a fresh server render is authoritative (revision), and a stale answer cannot restore the count (generation)", () => {
+  it("tick -> baseline(0) -> a probe that started before it answers 5: the count stays 0 and the stale answer is ignored", () => {
+    const started = stepLivePoller(initialLivePollerState(0, 0, [], null, 7), { type: "tick", nowMs: 0, env: VISIBLE });
+    expect(started.effects).toEqual([{ type: "probe", generation: 0 }]);
+    const rendered = stepLivePoller(started.state, { type: "baseline", persistedUnread: 0, revision: 8 });
+    expect(rendered.state.persistedUnread).toBe(0);
+    expect(rendered.state.generation).toBe(1);
+    expect(rendered.effects).toEqual([{ type: "abort" }]); // the request that read before the render is dropped
+    const late = stepLivePoller(rendered.state, { type: "probed", nowMs: 1_000, env: VISIBLE, result: ok(5, [id(1)]), jitter: 0.5, generation: 0 });
+    expect(late.state.persistedUnread).toBe(0);
+    expect(late.state.seen).toEqual([]);
+  });
+
+  it("even when the abort loses the race and a NEW probe is in flight, the OLD generation's answer is ignored", () => {
+    let s = stepLivePoller(initialLivePollerState(0, 0), { type: "tick", nowMs: 0, env: VISIBLE }).state;
+    s = stepLivePoller(s, { type: "baseline", persistedUnread: 0, revision: 1 }).state; // aborts + generation 1
+    s = stepLivePoller(s, { type: "returned", nowMs: 10, env: VISIBLE }).state; // a new probe starts under generation 1
+    expect(s.inFlight).toBe(true);
+    const stale = stepLivePoller(s, { type: "probed", nowMs: 20, env: VISIBLE, result: ok(5, [id(1)]), jitter: 0.5, generation: 0 });
+    expect(stale.state.persistedUnread).toBe(0);
+    expect(stale.state.inFlight).toBe(true); // still waiting for the current generation's answer
+    const fresh = stepLivePoller(s, { type: "probed", nowMs: 30, env: VISIBLE, result: ok(2, [id(2)]), jitter: 0.5, generation: 1 });
+    expect(fresh.state.persistedUnread).toBe(2);
+  });
+
+  it("0 -> a poll says 5 -> mark-all-read renders 0 AGAIN: the new revision applies even though the number did not change", () => {
+    let s = initialLivePollerState(0, 0, [], null, 1);
+    s = stepLivePoller(s, { type: "tick", nowMs: 0, env: VISIBLE }).state;
+    s = stepLivePoller(s, { type: "probed", nowMs: 100, env: VISIBLE, result: ok(5, [id(1)]), jitter: 0.5, generation: 0 }).state;
+    expect(s.persistedUnread).toBe(5);
+    const afterMarkRead = stepLivePoller(s, { type: "baseline", persistedUnread: 0, revision: 2 }).state;
+    expect(afterMarkRead.persistedUnread).toBe(0);
+  });
+
+  it("the SAME revision again (a re-render of the provider, the machine's own start-up) changes nothing and aborts nothing", () => {
+    const started = stepLivePoller(initialLivePollerState(3, 0, [], null, 4), { type: "tick", nowMs: 0, env: VISIBLE }).state;
+    const again = stepLivePoller(started, { type: "baseline", persistedUnread: 3, revision: 4 });
+    expect(again.state).toBe(started);
+    expect(again.effects).toEqual([]);
+  });
+
+  it("a baseline with no request in flight bumps the generation without an abort", () => {
+    const out = stepLivePoller(initialLivePollerState(1, 0, [], null, 1), { type: "baseline", persistedUnread: 0, revision: 2 });
+    expect(out.effects).toEqual([]);
+    expect(out.state.generation).toBe(1);
+  });
+});
+
 describe("the count and dedupe by event id", () => {
   it("the answer sets the persisted count; a server render's number replaces it", () => {
     const s = answer(inFlight(2), ok(5, [id(1)])).state;
     expect(s.persistedUnread).toBe(5);
-    expect(stepLivePoller(s, { type: "baseline", persistedUnread: 0 }).state.persistedUnread).toBe(0);
+    expect(stepLivePoller(s, { type: "baseline", persistedUnread: 0, revision: 1 }).state.persistedUnread).toBe(0);
   });
 
   it("the FIRST answer only primes: rows that existed at page load are never arrivals", () => {
