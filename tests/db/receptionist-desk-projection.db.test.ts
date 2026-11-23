@@ -91,7 +91,9 @@ describe("the payload", () => {
     const r = await dir(aDesk, a.studioId);
     const byId = new Map(r.rows.map((x) => [x.client_id, x]));
     expect(byId.get(ids.maggie)).toMatchObject({ display_name: "Maggie", name_on_file: false });
-    expect(byId.get(ids.plain)).toMatchObject({ display_name: "Plain Person", name_on_file: true });
+    // 0374: a client with no preferred name reads as the fixed words, never the stored name.
+    expect(byId.get(ids.plain)).toMatchObject({ display_name: "Name on file", name_on_file: true });
+    expect(JSON.stringify(r.rows)).not.toContain("Plain Person");
     expect(JSON.stringify(r.rows)).not.toContain("Margaret");
     expect(JSON.stringify(r.rows)).not.toContain(LEGAL);
     expect(byId.has(ids.archived)).toBe(false);
@@ -103,6 +105,9 @@ describe("the payload", () => {
     expect(await hit("harness.local")).toHaveLength(2);
     expect(await hit("555 0102")).toEqual([ids.plain]);
     expect(await hit("Margaret")).toEqual([]);
+    // 0374: the stored name of a client with NO preferred name is not searchable either, and neither are the fixed words.
+    expect(await hit("Plain Person")).toEqual([]);
+    expect(await hit("Name on file")).toEqual([]);
     expect(await hit(LEGAL)).toEqual([]);
     expect(await hit("100%")).toEqual([]);
   });
