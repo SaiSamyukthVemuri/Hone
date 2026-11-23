@@ -1,4 +1,4 @@
-// CLIENT IDENTIFICATION PHOTO STORE — 0375 (FETT photos, HON-43, P2). HELD.
+// CLIENT IDENTIFICATION PHOTO STORE — 0375. HELD.
 //
 // Proved against a real database with synthetic rows only:
 //   * OFF by default IN THE DATABASE: no command writes while the switch is off;
@@ -336,7 +336,7 @@ describe("0375: withdrawal and archive", () => {
   });
 });
 
-describe("0375 C1: the object path is reserved in the database BEFORE any upload", () => {
+describe("0375: the object path is reserved in the database BEFORE any upload", () => {
   it("a reserved path is a queue row, due only after its window, and is consumed by set", async () => {
     await enable(A.studioId, true);
     const c = await newClient(A);
@@ -419,7 +419,7 @@ describe("0375 C1: the object path is reserved in the database BEFORE any upload
   });
 });
 
-describe("0375 D1: withdraw, remove and archive make an in-flight reservation due at once", () => {
+describe("0375: withdraw, remove and archive make an in-flight reservation due at once", () => {
   const due = async (path: string) =>
     (await adminQuery(`select delete_after <= now() d from public.client_id_photo_pending_object_deletions where storage_path = $1`, [path])).rows[0].d as boolean;
 
@@ -488,7 +488,7 @@ describe("0375 D1: withdraw, remove and archive make an in-flight reservation du
   });
 });
 
-describe("0375 C2: drain and acknowledge are service-role only", () => {
+describe("0375: drain and acknowledge are service-role only", () => {
   it("authenticated and anon cannot call drain or ack; service_role can", async () => {
     for (const role of ["anon", "authenticated"] as const) {
       expect((await refusal(asRole(role, (q) => q(`select * from public.pending_client_id_photo_object_deletions(5)`)))).code).toBe(INSUFFICIENT_PRIVILEGE);
@@ -510,7 +510,7 @@ describe("0375 C2: drain and acknowledge are service-role only", () => {
   });
 });
 
-describe("0375 C3: consent only against the latest approved wording", () => {
+describe("0375: consent only against the latest approved wording", () => {
   it("approving v1.2 makes v1.1 refused, and v1.2 accepted", async () => {
     await enable(A.studioId, true);
     await adminQuery(
@@ -528,7 +528,7 @@ describe("0375 C3: consent only against the latest approved wording", () => {
   });
 });
 
-describe("0375 C4: the bucket is hardened and a public bucket fails the migration", () => {
+describe("0375: the bucket is hardened and a public bucket fails the migration", () => {
   it("exists private, capped at the column limit, WebP only (when the storage schema is present)", async () => {
     const b = await adminQuery(`select public, file_size_limit, allowed_mime_types from storage.buckets where id = 'client-identification-photos'`);
     expect(b.rows).toHaveLength(1);
@@ -550,7 +550,7 @@ describe("0375 C4: the bucket is hardened and a public bucket fails the migratio
   });
 });
 
-describe("0375: closing the 0231 bypass (decision 10)", () => {
+describe("0375: closing the 0231 bypass", () => {
   it("set_client_portrait is uncallable by every API role", async () => {
     for (const role of ["anon", "authenticated", "service_role"] as const) {
       const r = await refusal(

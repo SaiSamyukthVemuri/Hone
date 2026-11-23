@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { countVersion, migrationVersions } from "./helpers/migration-state";
 import { grantedRoles, revokedRoles, REQUIRED_REVOKES, BLANKET_FUNCTION_GRANT } from "./helpers/grant-posture";
 
-// 0375 · FETT photos (HON-43, P2): a separate private client IDENTIFICATION-PHOTO
+// 0375 · a separate private client IDENTIFICATION-PHOTO
 // store. Source contract only; behaviour (default OFF, consent, access, deletion,
 // the closed 0231 bypass) is proved against a real database in
 // tests/db/client-id-photo.db.test.ts.
@@ -27,7 +27,7 @@ const AUTHENTICATED: Array<[string, string]> = [
   ["remove_client_id_photo", "uuid"],
   ["reserve_client_id_photo_path", "uuid"],
 ];
-/** C2: the deletion queue is drained by the SERVER only: revoked from all four, granted to service_role only. */
+/** The deletion queue is drained by the SERVER only: revoked from all four, granted to service_role only. */
 const SERVICE_ROLE_ONLY: Array<[string, string]> = [
   ["pending_client_id_photo_object_deletions", "integer"],
   ["ack_client_id_photo_object_deletion", "text"],
@@ -45,7 +45,7 @@ const NOBODY: Array<[string, string]> = [
   ["client_id_photo_queue_object", ""],
   ["client_id_photo_on_client_archive", ""],
   ["clients_portrait_pointer_frozen", ""],
-  // decision 10: the 0231 setter is retired
+  // the 0231 setter is retired
   ["set_client_portrait", "uuid, uuid, uuid"],
 ];
 
@@ -149,7 +149,7 @@ describe("0375's function privileges", () => {
     }
   });
 
-  it("C2: drain and ack are granted to service_role ONLY (no actor can acknowledge a deletion)", () => {
+  it("drain and ack are granted to service_role ONLY (no actor can acknowledge a deletion)", () => {
     for (const [fn, args] of SERVICE_ROLE_ONLY) {
       expect(revokedRoles(EXECUTABLE, fn, args), fn).toEqual(REQUIRED_REVOKES);
       expect(grantedRoles(EXECUTABLE, fn, args), fn).toEqual(["service_role"]);
@@ -174,8 +174,8 @@ describe("0375's function privileges", () => {
   });
 });
 
-describe("0375 revision conditions (Privacy C1-C4)", () => {
-  it("C1: set accepts only a database-reserved path for this client, inside its window, and consumes it", () => {
+describe("0375 reservation, drain, consent and bucket rules", () => {
+  it("set accepts only a database-reserved path for this client, inside its window, and consumes it", () => {
     const set = createdFunctions().find((f) => f.name === "set_client_id_photo")!.body;
     expect(set).toMatch(/q\.reservation[\s\S]*q\.reserved_client_id = p_client_id[\s\S]*q\.delete_after > now\(\)/);
     expect(set).toMatch(/That upload was not reserved for this client/);
@@ -185,26 +185,26 @@ describe("0375 revision conditions (Privacy C1-C4)", () => {
     expect(reserve).toMatch(/insert into public\.client_id_photo_pending_object_deletions/);
   });
 
-  it("C2: the drain never offers a live photo's path and never an undue reservation", () => {
+  it("the drain never offers a live photo's path and never an undue reservation", () => {
     const drain = createdFunctions().find((f) => f.name === "pending_client_id_photo_object_deletions")!.body;
     expect(drain).toMatch(/q\.delete_after <= now\(\)/);
     expect(drain).toMatch(/not exists \(select 1 from public\.client_id_photos p where p\.storage_path = q\.storage_path\)/);
     expect(drain).not.toMatch(/auth\.uid|client_id_photo_actor/);
   });
 
-  it("C3: consent is accepted only against the latest approved wording", () => {
+  it("consent is accepted only against the latest approved wording", () => {
     const rec = createdFunctions().find((f) => f.name === "record_client_id_photo_consent")!.body;
     expect(rec).toMatch(/order by w\.approved_at desc, w\.created_at desc\s+limit 1\) latest/);
   });
 
-  it("C4: the bucket is hardened on insert and a PUBLIC bucket fails the migration", () => {
+  it("the bucket is hardened on insert and a PUBLIC bucket fails the migration", () => {
     expect(sql).toMatch(/file_size_limit, allowed_mime_types\)\s+values \('client-identification-photos', 'client-identification-photos', false, 524288, array\['image\/webp'\]\)/);
     expect(sql).toMatch(/where id = 'client-identification-photos' and public\) then\s+raise exception/);
     expect(sql).not.toMatch(/set public\s*=\s*true/i);
   });
 });
 
-describe("0375 D1 (Privacy delta): in-flight reservations are made due when the photo goes away", () => {
+describe("0375: in-flight reservations are made due when the photo goes away", () => {
   it("withdraw, remove and the archive trigger each expire that client's open reservations and clear the reservation flag (I3: no timestamp race)", () => {
     const fns = createdFunctions();
     for (const name of ["withdraw_client_id_photo_consent", "remove_client_id_photo", "client_id_photo_on_client_archive"]) {

@@ -1,43 +1,40 @@
--- 0375 · FETT photos (HON-43): a separate, private client IDENTIFICATION-PHOTO store (P2).
+-- 0375 · a separate, private client IDENTIFICATION-PHOTO store.
 --
--- DRAFT · HELD · PREPARE-ONLY. Never applied without Sam's per-change approval.
--- Product basis: 01-ops/SAM-DECISIONS-P2-IDPHOTO-20261031.md (ten decisions) and
--- privacy/PROFILE-PHOTO-ADVICE-END.json + privacy/P2-WORDING-END.json (A1-A4, B1-B4,
--- D1-D6, W1-W6). The consent WORDING below is Privacy's v1.1 working text; Sam
--- decides the final text before ANY activation, and it is seeded UNAPPROVED
--- (approved_at is null), so no consent can be recorded until an operator approves it.
+-- HELD · PREPARE-ONLY. Never applied without an explicit, per-change approval.
+-- The consent WORDING below is a working text: the owner decides the final wording
+-- before ANY use, and it is seeded UNAPPROVED (approved_at is null), so no consent
+-- can be recorded until an operator approves it.
 --
 -- What this is: ONE face photo per client, a server re-encoded square WebP
 -- derivative, in its OWN private bucket, apart from treatment photography. It is
 -- not a clinical record. It never reads or writes treatment_images.
 --
--- Defaults and gates (decision 9): OFF per studio, evaluated IN THE DATABASE.
+-- Defaults and gates: OFF per studio, evaluated IN THE DATABASE.
 -- A studio with no row in studio_client_id_photo_settings is OFF. Writes need the
 -- switch ON, an active OWNER or PRACTITIONER of the studio, the client in that
 -- studio, and a current non-withdrawn consent. Reads (RLS) need the same.
 -- Receptionists: no access, by construction (the role list is explicit, so a later
 -- receptionist role stays excluded).
 --
--- Deletion (decision 5/6, Privacy D1-D3): removal, withdrawal and client archive
+-- Deletion: removal, withdrawal and client archive
 -- delete the database row FIRST (the photo stops being served in the same
 -- transaction) and queue the storage object for deletion; the app deletes the
 -- object through the Storage API and acknowledges it. Nothing is deleted from
 -- storage before a command has authorized the caller. An image-free audit event
 -- is appended for each.
--- RESIDUAL (documented, for Privacy): a failed object delete leaves the object in
+-- RESIDUAL (documented): a failed object delete leaves the object in
 -- the private bucket, unreachable (no row, no policy, no signing), until the
 -- queued deletion is retried; archived clients are cleaned up on the next drain.
 -- BACKUP LIMITATION: the platform's backups / point-in-time recovery may retain a
 -- deleted object (and the database rows) until they age out. Restores must re-run
--- the pending deletions and must not resurrect a withdrawn photo (Privacy D6).
+-- the pending deletions and must not resurrect a withdrawn photo.
 --
--- Decision 10 (the 0231 bypass) is closed HERE, two ways, and the choice is
--- stated: (1) set_client_portrait(uuid,uuid,uuid) is REVOKED from public, anon,
+-- The 0231 bypass is closed HERE, two ways, and the choice is stated: (1) set_client_portrait(uuid,uuid,uuid) is REVOKED from public, anon,
 -- authenticated and service_role by name and granted to nobody (retired, not
--- gated: the feature is dead under decision 7 and a second switch would only keep
+-- gated: the old feature is retired and a second switch would only keep
 -- an unused path alive); (2) a BEFORE trigger refuses to SET clients.portrait_image_id
 -- to any non-null value for every role, because the Data API's table UPDATE on
--- clients would otherwise be a second door (Privacy B2). Clearing the pointer to
+-- clients would otherwise be a second door. Clearing the pointer to
 -- null stays possible (0231's archive path and data minimisation). Existing
 -- pointers are NOT carried over and are not cleared here (a data write needing its
 -- own authorization); the app does not render them (the flag stays off).
@@ -53,7 +50,7 @@ set local lock_timeout = '5s';
 -- ---------------------------------------------------------------------------
 do $$
 begin
-  -- Hardened on insert (C4): private, capped at the column's byte limit, WebP only.
+  -- Hardened on insert: private, capped at the column's byte limit, WebP only.
   -- An existing NON-public bucket is brought to the same limits; its `public` flag
   -- is never altered here, and an existing PUBLIC bucket fails the assertion below.
   insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
@@ -75,7 +72,7 @@ exception when undefined_table then
 end $$;
 
 -- ---------------------------------------------------------------------------
--- 2. Consent wording, versioned and immutable (Privacy W1, W5).
+-- 2. Consent wording, versioned and immutable.
 --    The hash is of the exact text and is checked by the table itself.
 -- ---------------------------------------------------------------------------
 create table public.client_id_photo_wording_versions (
@@ -116,7 +113,7 @@ create table public.studio_client_id_photo_switch_log (
 
 -- ---------------------------------------------------------------------------
 -- 4. Consent evidence (append-only). Who PROVIDED it, who RECORDED it, channel,
---    time, wording version AND the hash of the text shown (W1, W2). Withdrawal is a
+--    time, wording version AND the hash of the text shown. Withdrawal is a
 --    new row, never an edit. No FK to clients: the evidence outlives the client row.
 -- ---------------------------------------------------------------------------
 create table public.client_id_photo_consents (
@@ -191,7 +188,7 @@ create table public.client_id_photo_pending_object_deletions (
     check (storage_bucket = 'client-identification-photos'),
   storage_path text not null unique,
   queued_at timestamptz not null default now(),
-  -- Ordinary deletions are due at once. A RESERVATION (C1) is the path handed out
+  -- Ordinary deletions are due at once. A RESERVATION is the path handed out
   -- for an upload that has not been recorded yet: it is due only after its window,
   -- is consumed by set_client_id_photo, and otherwise is drained like any deletion.
   delete_after timestamptz not null default now(),
@@ -411,7 +408,7 @@ grant select on table public.client_id_photos to authenticated;
 --     in every command (the same order as 0231), so commands serialize per client.
 -- ---------------------------------------------------------------------------
 
--- The text the UI must show, exactly as stored (W5). Latest APPROVED version only.
+-- The text the UI must show, exactly as stored. Latest APPROVED version only.
 create or replace function public.client_id_photo_wording_current(p_studio_id uuid)
 returns table (version text, wording text, wording_sha256 text)
 language sql
@@ -439,7 +436,7 @@ as $$
 $$;
 
 -- Record a GRANT of consent, in person (the authenticated client form is not built in
--- this migration and is refused; representatives are refused in v1 (W4): staff cannot
+-- this migration and is refused; representatives are refused in v1: staff cannot
 -- record someone else's consent as the client's own).
 create or replace function public.record_client_id_photo_consent(
   p_client_id uuid,
@@ -476,7 +473,7 @@ begin
   if p_provided_by is distinct from 'client' then
     raise exception 'Consent must be given by the client.' using errcode = 'P0375';
   end if;
-  -- C3: only the LATEST approved wording (the one wording_current serves) can be
+  -- Only the LATEST approved wording (the one wording_current serves) can be
   -- consented to; a superseded version is refused even though it was once approved.
   if not exists (
     select 1
@@ -536,7 +533,7 @@ begin
 
   delete from public.client_id_photos where client_id = p_client_id and studio_id = v_studio;
   get diagnostics v_deleted = row_count;
-  -- D1: any upload in flight for this client is due for deletion NOW, so it is drained promptly.
+  -- Any upload in flight for this client is due for deletion NOW, so it is drained promptly.
   update public.client_id_photo_pending_object_deletions
      set delete_after = now(), reservation = false, reserved_client_id = null
    where reserved_client_id = p_client_id and reservation;
@@ -557,7 +554,7 @@ begin
 end;
 $$;
 
--- C1: reserve the object path IN THE DATABASE before any upload. The reservation is
+-- Reserve the object path IN THE DATABASE before any upload. The reservation is
 -- a queue row, so a face image that is uploaded and then never recorded (consent
 -- withdrawn, client archived, switch turned off, command failed, process died)
 -- is drained and deleted like any other. Same checks as set_client_id_photo, and
@@ -646,7 +643,7 @@ begin
     raise exception 'The client''s consent is needed first.' using errcode = 'P0375';
   end if;
 
-  -- C1: only a path the database handed out for THIS client, still inside its window.
+  -- Only a path the database handed out for THIS client, still inside its window.
   delete from public.client_id_photo_pending_object_deletions q
    where q.storage_path = p_storage_path
      and q.reservation
@@ -702,7 +699,7 @@ begin
   end if;
   delete from public.client_id_photos where client_id = p_client_id and studio_id = v_studio;
   get diagnostics v_deleted = row_count;
-  -- D1: any upload in flight for this client is due for deletion NOW, so it is drained promptly.
+  -- Any upload in flight for this client is due for deletion NOW, so it is drained promptly.
   update public.client_id_photo_pending_object_deletions
      set delete_after = now(), reservation = false, reserved_client_id = null
    where reserved_client_id = p_client_id and reservation;
@@ -715,7 +712,7 @@ end;
 $$;
 
 -- The deletion queue, drained by the app through the Storage API.
--- C2: the deletion queue is drained by the SERVER with the service role (the Storage
+-- The deletion queue is drained by the SERVER with the service role (the Storage
 -- delete is a service-role action anyway). No actor can acknowledge a deletion, so
 -- the database never records "done" for an object it cannot see. A path that a live
 -- photo row still points at is never offered. Names/counts only; no image bytes.
@@ -791,7 +788,7 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
--- 13. CLIENT ARCHIVE removes the photo (decision 6). A NEW trigger on clients: no
+-- 13. CLIENT ARCHIVE removes the photo. A NEW trigger on clients: no
 --     other lane's function is redefined. The photo row goes (the queue trigger
 --     schedules the object), a system withdrawal is appended if consent was current,
 --     and an image-free audit event is written. treatment_images is never touched.
@@ -814,7 +811,7 @@ begin
 
   delete from public.client_id_photos where client_id = new.id and studio_id = new.studio_id;
   get diagnostics v_deleted = row_count;
-  -- D1: any upload in flight for this client is due for deletion NOW, so it is drained promptly.
+  -- Any upload in flight for this client is due for deletion NOW, so it is drained promptly.
   update public.client_id_photo_pending_object_deletions
      set delete_after = now(), reservation = false, reserved_client_id = null
    where reserved_client_id = new.id and reservation;
@@ -841,7 +838,7 @@ create trigger client_id_photo_on_client_archive
   execute function public.client_id_photo_on_client_archive();
 
 -- ---------------------------------------------------------------------------
--- 14. DECISION 10 / Privacy B1, B2: close the 0231 bypass.
+-- 14. Close the 0231 bypass.
 -- ---------------------------------------------------------------------------
 revoke execute on function public.set_client_portrait(uuid, uuid, uuid) from public;
 revoke execute on function public.set_client_portrait(uuid, uuid, uuid) from anon;

@@ -1882,7 +1882,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       "The private bucket holding every treatment photo a studio has taken. It is the single largest studio-owned asset the export does not carry, and it CANNOT ship on the current path: the exporter returns one base64 string from a server action, which is not a mechanism for an image corpus. A later export slice is the asynchronous, object-storage-backed export that makes binaries possible; deferring it here is a capability statement, not a decision that photos do not matter. Terms section 6 defines Your Data to include photos, so the settings page must say plainly that this export does not contain them.",
   },
 
-  // 0375 client identification photo (P2). Held, OFF by default; no export surface ships with it.
+  // 0375 client identification photo. Held, OFF by default; no export surface ships with it.
   client_id_photos: {
     kind: "pending",
     ticket: "TRUTH-01C",

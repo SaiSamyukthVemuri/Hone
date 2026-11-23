@@ -1,8 +1,8 @@
-// CLIENT IDENTIFICATION PORTRAIT — 0231 (FETT photos, HON-43), RETIRED by 0375.
+// CLIENT IDENTIFICATION PORTRAIT — 0231, RETIRED by 0375.
 //
 // 0231 let a practitioner mark one of a client's treatment photos as the
-// client's identification portrait. Sam chose a separate ID-photo store (P2,
-// 0375) and ruled out reusing treatment photos (decision 7), so the setter is
+// client's identification portrait. The product now uses a separate ID-photo store
+// (0375) and does not reuse treatment photos, so the setter is
 // retired: 0375 revokes EXECUTE on set_client_portrait from every API role and
 // freezes the pointer column against any non-null write.
 //
