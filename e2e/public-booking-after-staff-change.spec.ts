@@ -2,7 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { seedE2eStudio, sql } from "./helpers/seed";
 
-// HON-114 — a staff change must not hide openings that are genuinely free, SEEN in a real browser on the public booking page.
+// a staff change must not hide openings that are genuinely free, SEEN in a real browser on the public booking page.
 //
 // rematerialize_studio_reservations (0137) stored each appointment's reservation end as the real end PLUS the buffer, and every reader adds the buffer again, so after a
 // practitioner was added the first opening after each existing visit disappeared from the public page until the visit was touched. 0384 stores the real end.
@@ -25,7 +25,7 @@ async function openBookingForm(page: Page, slug: string) {
   await expect(page.locator("select").first()).toBeVisible({ timeout: T });
 }
 
-test.describe("HON-114: the public booking page after a staff change", () => {
+test.describe("the public booking page after a staff change", () => {
   test.setTimeout(T * 3);
 
   test("the opening one buffer after an existing visit is listed, and the gap is not", async ({ page }) => {
@@ -47,7 +47,7 @@ test.describe("HON-114: the public booking page after a staff change", () => {
 
     // THE STAFF CHANGE: add a practitioner. The appointment is not touched afterwards.
     const userId = randomUUID();
-    const email = `hon114-${userId.slice(0, 8)}@harness.local`;
+    const email = `staffchg-${userId.slice(0, 8)}@harness.local`;
     await sql(`insert into auth.users (id, email) values ($1,$2)`, [userId, email]);
     await sql(`insert into public.practitioners (id, studio_id, user_id, display_name, email, role, active) values ($1,$2,$3,'Second',$4,'practitioner',true)`, [
       randomUUID(),

@@ -2,12 +2,14 @@ import { afterAll, describe, expect, it } from "vitest";
 import { PostgrestClient } from "@supabase/postgrest-js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { adminQuery, closePool } from "./helpers/harness";
 import { getAvailableSlots } from "@/lib/booking/slots";
 import { E2E_SUPABASE_URL, E2E_SERVICE_ROLE_KEY } from "../../e2e/helpers/local-env";
 
 // ===========================================================================
-// HON-114 — a staff change must not hide openings that are genuinely free.
+// a staff change must not hide openings that are genuinely free.
 // ===========================================================================
 //
 // rematerialize_studio_reservations (0137) wrote each appointment reservation's end from blocked_ends_at (the real end PLUS the studio buffer). Every reader
@@ -62,7 +64,7 @@ async function seed(label: string, opts: { secondPractitionerFirst?: boolean } =
   await adminQuery(
     `insert into public.studios (id,name,owner_email,timezone,buffer_minutes,slug,public_booking_horizon_months)
      values ($1,$2,$3,$4,$5,$6,3)`,
-    [studioId, `HON114 ${label}`, email, TZ, BUFFER, `hon114-${label}-${studioId.slice(0, 8)}`],
+    [studioId, `Staff change ${label}`, email, TZ, BUFFER, `staffchg-${label}-${studioId.slice(0, 8)}`],
   );
   await adminQuery(
     `insert into public.practitioners (id,studio_id,user_id,display_name,email,role,active)
@@ -190,7 +192,7 @@ afterAll(async () => {
   await closePool();
 });
 
-describe("HON-114: a staff change leaves the openings after existing visits intact", () => {
+describe("a staff change leaves the openings after existing visits intact", () => {
   it("control: a fresh studio already offers the opening (the checks are not vacuous)", async () => {
     const f = await seed("fresh");
     await assertOpeningsIntact(f);
@@ -235,5 +237,46 @@ describe("HON-114: a staff change leaves the openings after existing visits inta
     const def = String(r.rows[0].def);
     expect(def).toContain("'appointment', a.id, a.starts_at, a.ends_at");
     expect(def).not.toMatch(/a\.starts_at,\s*a\.blocked_ends_at/);
+  });
+});
+
+// The migration and its rollback each refuse to replace a function body they do not recognise, so hosted drift cannot be overwritten silently.
+describe("0384 preamble: the function being replaced must be the expected body", () => {
+  const up = readFileSync(join(process.cwd(), "supabase/migrations/0384_rematerialize_reservations_actual_end.sql"), "utf8");
+  const down = readFileSync(join(process.cwd(), "supabase/rollbacks/0384_rematerialize_reservations_actual_end.down.sql"), "utf8");
+  const md5 = async () =>
+    String((await adminQuery(`select md5(prosrc) as m from pg_proc where oid = 'public.rematerialize_studio_reservations(uuid)'::regprocedure`)).rows[0].m);
+
+  it("rolls back to the 0137 body, refuses a second rollback, re-applies, and refuses a second apply", async () => {
+    expect(await md5()).toBe("11b009af1cd228c32fe64578081e6ae9"); // the live body is 0384's
+    // the up file refuses over its own body: it expects 0137
+    await expect(adminQuery(up)).rejects.toThrow(/not the expected 0137 body/);
+    await adminQuery(down);
+    try {
+      expect(await md5()).toBe("c7781f3d2a0d698072b42ee050b429d9"); // 0137
+      // the down file refuses over the 0137 body: it expects 0384
+      await expect(adminQuery(down)).rejects.toThrow(/not the expected 0384 body/);
+    } finally {
+      await adminQuery(up);
+    }
+    expect(await md5()).toBe("11b009af1cd228c32fe64578081e6ae9");
+  });
+
+  it("refuses over a drifted body, in both directions, and leaves that body untouched", async () => {
+    const orig = String((await adminQuery(`select pg_get_functiondef('public.rematerialize_studio_reservations(uuid)'::regprocedure) as d`)).rows[0].d);
+    const drifted = orig.replace("'appointment', a.id,", "-- drift\n         'appointment', a.id,");
+    expect(drifted).not.toBe(orig);
+    await adminQuery(drifted);
+    try {
+      const m = await md5();
+      expect(m).not.toBe("c7781f3d2a0d698072b42ee050b429d9");
+      expect(m).not.toBe("11b009af1cd228c32fe64578081e6ae9");
+      await expect(adminQuery(up)).rejects.toThrow(/not the expected 0137 body/);
+      await expect(adminQuery(down)).rejects.toThrow(/not the expected 0384 body/);
+      expect(await md5()).toBe(m); // neither attempt changed it
+    } finally {
+      await adminQuery(orig);
+    }
+    expect(await md5()).toBe("11b009af1cd228c32fe64578081e6ae9");
   });
 });

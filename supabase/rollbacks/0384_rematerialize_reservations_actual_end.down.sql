@@ -1,6 +1,23 @@
--- Restores the 0137 body of rematerialize_studio_reservations (the HON-114 defect). Function only.
+-- Restores the 0137 body of rematerialize_studio_reservations. Function only.
+-- ROLLBACK ORDER: roll back 0384 BEFORE 0152. 0152's rollback comment relies on a rematerialize that writes ACTUAL ends, which is what 0384 restores;
+-- rolling 0152 back first would leave the 0137 body, which writes real end plus buffer.
 begin;
 set local lock_timeout = '5s';
+
+-- PREAMBLE: refuse unless the function in this database is exactly the 0384 body (0384). A hosted body that drifted would otherwise be overwritten silently.
+do $$
+declare
+  v_md5 text;
+begin
+  select md5(p.prosrc) into v_md5
+    from pg_catalog.pg_proc p
+   where p.oid = 'public.rematerialize_studio_reservations(uuid)'::regprocedure;
+  if v_md5 is distinct from '11b009af1cd228c32fe64578081e6ae9' then
+    raise exception 'rematerialize_studio_reservations is not the expected 0384 body (md5 %); refusing to replace it', v_md5
+      using errcode = 'P0001';
+  end if;
+end
+$$;
 
 create or replace function public.rematerialize_studio_reservations(p_studio_id uuid)
 returns void

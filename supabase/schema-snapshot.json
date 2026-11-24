@@ -3,7 +3,7 @@
   "migrations": {
     "count": 282,
     "last": "0384_rematerialize_reservations_actual_end.sql",
-    "sha256": "dd9444bdd3f4ac1f425d7391353efcaaa1f605ed55c5ecbb05fd708238981c4e"
+    "sha256": "4b8c1652cb4bf014bc268b5463830f0df99448c67721f11fd33653d4122ddfc4"
   },
   "public": {
     "tables": [

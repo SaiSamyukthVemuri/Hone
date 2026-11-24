@@ -1,4 +1,4 @@
--- 0384 · rematerialize_studio_reservations stores an appointment's ACTUAL end (HON-114).
+-- 0384 · rematerialize_studio_reservations stores an appointment's ACTUAL end.
 --
 -- THE DEFECT. 0152 made an appointment's reservation (studio_calendar_reservations) hold the ACTUAL treatment interval: its per-appointment sync trigger
 -- function stores ends_at, and its backfill narrowed existing rows. The buffer is re-applied by every reader (lib/booking/slots.ts protectedIntervals,
@@ -15,6 +15,21 @@
 -- next rematerialize (which now repairs them for that studio). Correcting live rows is a separate, reviewed script that needs the owner's approval.
 begin;
 set local lock_timeout = '5s';
+
+-- PREAMBLE: refuse unless the function in this database is exactly the 0137 body (0137). A hosted body that drifted would otherwise be overwritten silently.
+do $$
+declare
+  v_md5 text;
+begin
+  select md5(p.prosrc) into v_md5
+    from pg_catalog.pg_proc p
+   where p.oid = 'public.rematerialize_studio_reservations(uuid)'::regprocedure;
+  if v_md5 is distinct from 'c7781f3d2a0d698072b42ee050b429d9' then
+    raise exception 'rematerialize_studio_reservations is not the expected 0137 body (md5 %); refusing to replace it', v_md5
+      using errcode = 'P0001';
+  end if;
+end
+$$;
 
 create or replace function public.rematerialize_studio_reservations(p_studio_id uuid)
 returns void
