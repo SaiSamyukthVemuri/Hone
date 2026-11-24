@@ -2,6 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import { type TimeFormat } from "@/lib/booking/tz";
+import type { CalendarRebookSource } from "@/lib/calendar/rebook-source";
+import { CalendarFindTime, type FindTimeService, type CalendarOpening } from "./CalendarFindTime";
+import { OpeningContext } from "./CalendarOpeningPreview";
 import { CalendarMiniMonth } from "./CalendarMiniMonth";
 import { INSIGHTS_RULE, type TimeInsightsModel } from "@/lib/calendar/time-insights";
 import {
@@ -14,16 +19,8 @@ import {
   writeStoredSelection,
 } from "@/lib/calendar/practitioner-selection";
 
-// HON-48: the calendar's left sidebar (Google Calendar's shape): a mini month and the list of
-// practitioners the viewer may see, each with a checkbox and their configured colour.
-//
-// VIEW-ONLY. A checkbox writes the `people` URL param (and a per-viewer local preference) and the
-// server page redraws the same rows it already loaded, narrowed. Nothing here calls an action, an
-// RPC or a booking path, and the practitioner list is whatever the page passes in (the page's own
-// studio-scoped read); this component cannot add anyone to it.
-//
-// Collapsing hands the space back to the schedule. Below md the sidebar is a drawer.
-
+// Browse controls the calendar's display filter. Find time independently searches the
+// services and practitioners the signed-in viewer may book. Picking a result previews it.
 export type SidebarPractitioner = {
   id: string;
   name: string;
@@ -45,6 +42,7 @@ export function CalendarSidebar({
   selectionParam,
   ownFirstId,
   insights,
+  findTime,
   children,
 }: {
   studioId: string;
@@ -64,6 +62,15 @@ export function CalendarSidebar({
   ownFirstId?: string | null;
   /** Booked hours and count for the displayed period and selection (lib/calendar/time-insights.ts). */
   insights: TimeInsightsModel;
+  findTime: {
+    services: ReadonlyArray<FindTimeService>;
+    isOwner: boolean;
+    hasDayView: boolean;
+    timeFormat: TimeFormat;
+    rebookId?: string;
+    clientName?: string;
+    rebook?: CalendarRebookSource | null;
+  };
   children: ReactNode;
 }) {
   const router = useRouter();
@@ -73,6 +80,11 @@ export function CalendarSidebar({
   const [open, setOpen] = useState(true); // desktop: sidebar column shown
   const [drawerOpen, setDrawerOpen] = useState(false); // mobile: drawer shown
   const [isDesktop, setIsDesktop] = useState(true);
+  const startInFinder = Boolean(findTime.rebookId) || search.get("find") === "1";
+  const [mode, setMode] = useState<"browse" | "find">(startInFinder ? "find" : "browse");
+  const [opening, setOpening] = useState<CalendarOpening | null>(null);
+  const [booking, setBooking] = useState(false);
+  const [searchVersion, setSearchVersion] = useState(0);
   const asideRef = useRef<HTMLElement | null>(null);
   const toggleRef = useRef<HTMLButtonElement | null>(null);
   const drawerWasOpen = useRef(false);
@@ -90,18 +102,19 @@ export function CalendarSidebar({
   // The collapsed state is a per-viewer preference.
   useEffect(() => {
     try {
-      if (window.localStorage.getItem(SIDEBAR_STORAGE_KEY) === "closed") setOpen(false);
+      if (!startInFinder && window.localStorage.getItem(SIDEBAR_STORAGE_KEY) === "closed") setOpen(false);
     } catch {
       /* default open */
     }
-  }, []);
+  }, [startInFinder]);
   useEffect(() => {
     const mq = window.matchMedia(DESKTOP_QUERY);
     const apply = () => setIsDesktop(mq.matches);
     apply();
+    if (startInFinder && !mq.matches) setDrawerOpen(true);
     mq.addEventListener("change", apply);
     return () => mq.removeEventListener("change", apply);
-  }, []);
+  }, [startInFinder]);
 
   const replaceWith = useCallback(
     (param: string | undefined) => {
@@ -152,6 +165,39 @@ export function CalendarSidebar({
     replaceWith(param);
   }
 
+  function clearOpening() {
+    setOpening(null);
+    setBooking(false);
+  }
+
+  function leaveRebook(find: boolean) {
+    if (!findTime.rebookId && !search.has("find")) return;
+    const params = new URLSearchParams(search.toString());
+    params.delete("rebook");
+    if (find) params.set("find", "1");
+    else params.delete("find");
+    startTransition(() => router.replace(`${pathname}?${params.toString()}`, { scroll: false }));
+  }
+
+  function findTimeMode() {
+    setMode("find");
+    if (isDesktop) setOpen(true);
+    else setDrawerOpen(true);
+  }
+
+  function selectOpening(result: CalendarOpening) {
+    setOpening(result);
+    setBooking(false);
+    setDrawerOpen(false);
+    const next = new URLSearchParams({ view: findTime.hasDayView ? "day" : "week", day: result.date });
+    // Preserve visible colleagues. If this search found someone outside the display filter,
+    // include their column so the result can be previewed in context.
+    const people = serializeSelection([...checked, result.practitionerId], listedIds);
+    if (people !== undefined) next.set(SELECTION_PARAM, people);
+    if (findTime.rebookId) next.set("rebook", findTime.rebookId);
+    startTransition(() => router.push(`${pathname}?${next.toString()}`, { scroll: false }));
+  }
+
   function toggleSidebar() {
     if (isDesktop) {
       const next = !open;
@@ -193,6 +239,17 @@ export function CalendarSidebar({
   ].join(" ");
 
   return (
+    <OpeningContext.Provider value={{
+      opening: findTime.rebookId && !findTime.rebook ? null : opening,
+      booking,
+      openBooking: () => setBooking(true),
+      dismiss: clearOpening,
+      booked: () => {
+        clearOpening();
+        setSearchVersion((n) => n + 1);
+        leaveRebook(true);
+      },
+    }}>
     <div className="flex items-start gap-4">
       {drawerOpen && (
         <button
@@ -214,14 +271,49 @@ export function CalendarSidebar({
         aria-modal={drawerOpen && !isDesktop ? true : undefined}
         className={asideClass}
       >
-        <div className="flex flex-col gap-5 md:sticky md:top-4">
+        <div className="flex flex-col gap-4 md:sticky md:top-4 md:max-h-[calc(100dvh-8rem)] md:overflow-y-auto md:px-1">
+          <div className="grid grid-cols-2 gap-1 rounded-lg bg-surface-sunken p-1" role="group" aria-label="Calendar sidebar mode">
+            <Button size="sm" variant={mode === "browse" ? "secondary" : "quiet"} aria-pressed={mode === "browse"}
+              onClick={() => { setMode("browse"); clearOpening(); leaveRebook(false); }}>Browse</Button>
+            <Button size="sm" variant={mode === "find" ? "secondary" : "quiet"} aria-pressed={mode === "find"}
+              onClick={findTimeMode}>Find time</Button>
+          </div>
+          {mode === "find" ? (
+            findTime.rebookId && !findTime.rebook
+              ? <p role="status" className="text-sm">This previous appointment is unavailable. Open the calendar to start a new booking.</p>
+              : <>{findTime.clientName && <p className="text-sm font-medium">Rebook for {findTime.clientName}</p>}
+                <CalendarFindTime key={view === "month" ? `${searchVersion}:${selectedDate}` : searchVersion} {...findTime} practitioners={practitioners} viewerId={viewerId} today={today}
+                  anchorDate={selectedDate ?? anchorDate} selected={opening} onSelect={selectOpening} onClear={clearOpening} /></>
+          ) : <>
           <CalendarMiniMonth
+            timeGrid={view === "week" && search.get("layout") === "grid"}
             anchorDate={anchorDate}
             selectedDate={selectedDate}
             today={today}
             view={view}
             selectionParam={selectionParam}
           />
+          <section aria-label="Practitioners" data-testid="calendar-sidebar-practitioners">
+            <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">Practitioners</h2>
+            <ul className="flex flex-col gap-1">
+              {practitioners.map((p) => (
+                <li key={p.id} data-testid="calendar-sidebar-practitioner" data-practitioner-id={p.id}>
+                  <label className="flex min-h-9 cursor-pointer items-center gap-2 rounded-md px-1 py-1 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-900">
+                    <input
+                      type="checkbox"
+                      data-testid="calendar-sidebar-checkbox"
+                      data-practitioner-id={p.id}
+                      checked={checked.includes(p.id)}
+                      onChange={() => toggle(p.id)}
+                      className="h-4 w-4 shrink-0"
+                    />
+                    <span aria-hidden="true" data-color={p.colorLabel} className={`h-3 w-3 shrink-0 rounded-sm ${p.swatchClass}`} />
+                    <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          </section>
           <details open data-testid="calendar-time-insights" className="group rounded-md border border-neutral-200 dark:border-neutral-800">
             <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
               Time insights
@@ -245,31 +337,11 @@ export function CalendarSidebar({
               <span className="sr-only">{INSIGHTS_RULE}</span>
             </div>
           </details>
-          <section aria-label="Practitioners" data-testid="calendar-sidebar-practitioners">
-            <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">Practitioners</h2>
-            <ul className="flex flex-col gap-1">
-              {practitioners.map((p) => (
-                <li key={p.id} data-testid="calendar-sidebar-practitioner" data-practitioner-id={p.id}>
-                  <label className="flex min-h-9 cursor-pointer items-center gap-2 rounded-md px-1 py-1 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-900">
-                    <input
-                      type="checkbox"
-                      data-testid="calendar-sidebar-checkbox"
-                      data-practitioner-id={p.id}
-                      checked={checked.includes(p.id)}
-                      onChange={() => toggle(p.id)}
-                      className="h-4 w-4 shrink-0"
-                    />
-                    <span aria-hidden="true" data-color={p.colorLabel} className={`h-3 w-3 shrink-0 rounded-sm ${p.swatchClass}`} />
-                    <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                  </label>
-                </li>
-              ))}
-            </ul>
-          </section>
+          </>}
         </div>
       </aside>
       <div className="flex min-w-0 flex-1 flex-col gap-3">
-        <div>
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <button
             type="button"
             data-testid="calendar-sidebar-toggle"
@@ -282,9 +354,11 @@ export function CalendarSidebar({
             <span aria-hidden="true">☰</span>
             {expanded ? "Hide calendars" : "Calendars"}
           </button>
+          <Button size="sm" onClick={() => { clearOpening(); leaveRebook(true); findTimeMode(); }}>+ Appointment</Button>
         </div>
         {children}
       </div>
     </div>
+    </OpeningContext.Provider>
   );
 }
