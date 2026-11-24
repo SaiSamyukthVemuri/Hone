@@ -4,6 +4,7 @@ import { computeTimeInsights, formatInsightHours, insightPeriod } from "@/lib/ca
 import { getBoundaryCrossingAppointments } from "@/lib/calendar/boundary-appointments";
 import Link from "next/link";
 import { buttonClasses } from "@/components/ui/button";
+import { SectionLabel } from "@/components/ui/section-label";
 import {
   PendingContainerLink,
   PendingLink,
@@ -815,9 +816,9 @@ export default async function DashboardPage({
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1.8fr)_minmax(0,1fr)] lg:items-start">
       <header className="flex flex-wrap items-center justify-between gap-3 [--color-accent:#4d405b] [--color-accent-hover:#41354e] [--color-accent-active:#372d43] lg:order-first lg:col-span-2">
         <div className="flex min-w-0 flex-col gap-1">
-          <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+          <SectionLabel as="p">
             <FormattedToday format="weekday-date" />
-          </p>
+          </SectionLabel>
           <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Dashboard</h1>
           <DashboardGreeting displayName={practitioner.display_name} />
         </div>
