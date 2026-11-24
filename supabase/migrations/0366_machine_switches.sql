@@ -133,17 +133,19 @@ create trigger studios_seed_machine_settings after insert on public.studios
 
 select public.seed_studio_machine_settings(s.id) from public.studios s;
 
--- A STUDIO'S FIRST UNIT OF A SENIOR OR JUNIOR MODEL TURNS THAT MODEL ON (what an owner expects of registering a machine). Only the FIRST unit ever
--- registered for the model (a retired one counts), so an owner who later switched the model off is never overridden by a second unit. xCell Pur is
--- not touched here: its registration has its own gate and its switch is the owner's. One event row, by the registering practitioner.
+-- REGISTERING A SENIOR OR JUNIOR UNIT TURNS THAT MODEL ON when nobody has ever decided otherwise (what an owner expects of registering a machine). "Decided"
+-- is the change log: any model_set event for the studio and model (the owner's switch, in either direction, or an earlier registration) means the
+-- switch is a recorded choice and a unit never overrides it. No event means the model is off only because the seed found no live unit (a studio whose
+-- only unit was retired before this migration seeds off), so a replacement unit turns it on. xCell Pur is not touched here: its registration has its
+-- own gate and its switch is the owner's. One event row, by the registering practitioner.
 create or replace function public.studio_machines_enable_model_trigger()
 returns trigger language plpgsql security definer set search_path = pg_catalog, pg_temp as $$
 declare
   v_changed integer;
 begin
   if new.machine_profile_id in ('dectro-apilus:senior-3g', 'dectro-apilus:junior-3g')
-     and not exists (select 1 from public.studio_machines o
-                      where o.studio_id = new.studio_id and o.machine_profile_id = new.machine_profile_id and o.id <> new.id) then
+     and not exists (select 1 from public.studio_machine_setting_events e
+                      where e.studio_id = new.studio_id and e.profile_id = new.machine_profile_id and e.kind = 'model_set') then
     update public.studio_machine_models m
        set enabled = true, updated_by = auth.uid(), updated_at = now()
      where m.studio_id = new.studio_id and m.profile_id = new.machine_profile_id and not m.enabled;
