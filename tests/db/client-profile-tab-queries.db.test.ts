@@ -157,10 +157,6 @@ const EXPECTED: Record<string, Record<string, number>> = {
     // intelligence read's, and getSessionBlockAreasByBlockIds de-duplicates ids,
     // so the second call only ever re-fetched rows the first already had.
     session_block_areas: 1,
-    // Owner-only client groups read (the groups card): one read of the group
-    // catalogue, made only for an owner on Overview. Deliberately pinned. Without
-    // the groups schema it reads as unavailable instead of failing the tab.
-    client_groups: 1,
   },
   sessions: {
     ...ALWAYS,

@@ -420,7 +420,9 @@ export const BROWSER_GROUPS = {
       // overview, book, back, close, Escape, clear) at desktop and phone width. Same group
       // and reasoning as UI-04: /clients/** has no PATH_TO_GROUP pattern.
       "clients-directory-journey.spec.ts",
-      "client-groups.spec.ts",
+      // Custom client groups were removed and their tables never applied: the standard directory for an owner and a
+      // practitioner at desktop and phone width, with no group control, warning or route. Same group and reasoning.
+      "clients-directory-without-groups.spec.ts",
       // #1328 + 0281: the three client-save paths (profile edit with its name revision and audit row, the
       // stale-conflict refusal, the legal-name save and its conflict) at 1280 and 390. Same group and reasoning:
       // /clients/** has no PATH_TO_GROUP pattern.
