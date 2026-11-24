@@ -10,7 +10,7 @@ column names the exact commit each row was verified at (`32b6eef` for the analyt
 baseline for the rest).
 **Hosted migration parity:** repo max = hosted max = **0133** (verified via linked CLI)
 **Hosted flags at reconciliation:** `calendar_sync_control.worker_enabled=false`; 1 calendar
-connection (`my-studio-9d37c5` only — **Willow excluded**); 3 studios total; Vercel prod deploy
+connection (the controlled test studio only — **Willow excluded**); 3 studios total; Vercel prod deploy
 of head successful; all CI lanes green on head.
 
 ## Method
@@ -153,7 +153,7 @@ gating SDK init by surface would remove even that config fetch.
 - **Enabled:** enabled — not flag-gated; the hardening is an unconditional DB policy/grant removal, active in the hosted database since 0115 was applied. The soft-delete-only app path (PR #391/#393) is live for all 
 - **Rationale:** The finding was real and was independently confirmed, then closed by dedicated hardening migration 0115 + PR #393 (the 0115 header explicitly cites this audit finding). Acceptance ('no interactive tenant role can physically delete a treatment-pass row') is met in merged, prod-applied code: RLS DELETE policies dropped AND table-level DELETE/TRUNCATE grants revoked from anon+authenticated, with no later re-grant, no hard-delete RPC, and the app converted to an audited soft-delete with server-side actor derivation. Classified DEPLOYED rather than PRODUCTION VERIFIED because no explicit validation
 - **Key evidence:** supabase/migrations/0115_entry_hard_delete_hardening.sql:34-35 — drops 'electrolysis_entries: members delete' and 'laser · supabase/migrations/0115_entry_hard_delete_hardening.sql:40-41 — revoke truncate, delete on both tables from anon, authe · supabase/migrations/0087_clinical_rls_delete_hardening.sql:238-240,261-263 — the original explicit authenticated DELETE  · supabase/migrations/0114_entry_soft_delete.sql:33-51 — audited triad columns + active partial indexes on both entry tabl
-- **Remaining:** Optional (to reach PRODUCTION VERIFIED): record a controlled production negative test — e.g., in Sam's test studio (my-studio-9d37c5), attem
+- **Remaining:** Optional (to reach PRODUCTION VERIFIED): record a controlled production negative test — e.g., in the controlled test studio, attem
 - **Proposed PR:** None — fix already merged and deployed (PR #393 + migration 0115). Only an optional ops task remains: a documented controlled negative-test in the test studio to upgrade the record to PRODUCTION VERIFIED (no code change).
 
 ### HNE-SEC-002

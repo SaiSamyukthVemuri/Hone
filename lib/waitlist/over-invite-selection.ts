@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 //  - `shownFit` / `shownActive` / `shownExtra` are only the numbers the owner SAW. They feed the "did it change" re-ask and nothing else: they
 //    never set what is sent, how many are sent, or any allowance.
 //  - `batchKey` is random per render. It carries no authority and is not derived from any id.
-//  - `confirmed` must be exactly "on" (the checkbox). Anything else is not a confirmation.
+//  - `confirmed` and `ackNoTimes` must be exactly "on" (the checkboxes). Anything else is not a confirmation.
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const COUNT = /^\d{1,9}$/;
@@ -17,6 +17,8 @@ export type ShownNumbers = { fit: number; active: number; extra: number };
 export type OverInviteSubmission = {
   batchKey: string;
   confirmed: boolean;
+  /** `ackNoTimes` is exactly "on": the owner agreed that, with no estimated appointments, the invited may find no times to book. */
+  noTimesAcknowledged: boolean;
   entryIds: string[];
   shown: ShownNumbers | null;
   /** True when at least one posted id was not a well-formed id (dropped, never sent). */
@@ -57,6 +59,6 @@ export function parseOverInviteForm(formData: FormData): ParsedOverInvite {
 
   return {
     ok: true,
-    submission: { batchKey, confirmed: text(formData.get("confirmed")) === "on", entryIds, shown, droppedMalformed },
+    submission: { batchKey, confirmed: text(formData.get("confirmed")) === "on", noTimesAcknowledged: text(formData.get("ackNoTimes")) === "on", entryIds, shown, droppedMalformed },
   };
 }

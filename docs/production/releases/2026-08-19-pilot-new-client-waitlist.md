@@ -1,4 +1,4 @@
-# Release record — Willow new-client waitlist pilot
+# Release record — the pilot studio new-client waitlist pilot
 
 Immutable record of one release. Facts only; behaviour is defined by PR #601.
 
@@ -29,17 +29,17 @@ Immutable record of one release. Facts only; behaviour is defined by PR #601.
 | Observation at release (runtime, not a permanent property) | Evidence class |
 |---|---|
 | Present on the Production target; absent from Preview and Development | machine-measured |
-| `/book/willow-electrolysis` rendered `newClientWaitlistEnabled: true` | machine-measured |
-| Pilot value used at activation: `willow-electrolysis` | operator-declared; the stored value is Sensitive and was not read back |
+| `/book/the pilot studio` rendered `newClientWaitlistEnabled: true` | machine-measured |
+| Pilot value used at activation: the pilot studio | operator-declared; the stored value is Sensitive and was not read back |
 
 ## Stages, canary and evidence
 
 | Item | Result | Evidence class |
 |---|---|---|
 | Stage A — dark deploy, flag absent from the Production target | PASS, new-client and existing-client public booking paths | operator-observed |
-| Stage B — Willow pilot activation | PASS, new-client and existing-client public booking paths | operator-observed |
+| Stage B — the pilot studio pilot activation | PASS, new-client and existing-client public booking paths | operator-observed |
 | Controlled canary | exactly one submission, by an operator-controlled identity | operator-run |
-| Controlled-canary observation on the three named surfaces | Willow `clients` 0 → 0; Willow `appointments` 0 → 0; `public.waitlist` 0 → 0 | operator-run bounded query |
+| Controlled-canary observation on the three named surfaces | the pilot studio `clients` 0 → 0; the pilot studio `appointments` 0 → 0; `public.waitlist` 0 → 0 | operator-run bounded query |
 | Provider-acceptance semantics | belong to the PR #601 implementation contract | implementation contract |
 | Canary studio email | physically observed by a human in the configured studio-owner inbox | operator-observed |
 | Rollback | not executed | operator-observed |

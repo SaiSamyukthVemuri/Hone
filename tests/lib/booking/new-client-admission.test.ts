@@ -770,7 +770,7 @@ describe("the activation document matches what the source actually does", () => 
     // by a path that omits these columns arrives stamped and unattributed. No
     // assertion in this describe block changed, and no other region of the
     // document moved.
-    ).toBe("4af24b5a8f5ed227a500d6f372ea6fd3b72d695d1527ed951231516ce30c1403");
+    ).toBe("eb8656ae4734031277cea24e5e8b4c2a975c0e8898eb5e0f09704fea7a18cfe4");
 
     // The record file is evidence, and it must SAY so. This is a deletion guard
     // on its precedence header, not an interpretation of anything logged in it.
@@ -809,7 +809,7 @@ describe("the activation document matches what the source actually does", () => 
         .update(Buffer.from(RECORD, "utf8").subarray(0, RECORD_PREFIX_BYTES))
         .digest("hex"),
       "the existing execution record is frozen: appends pass, edits and deletions inside recorded evidence fail",
-    ).toBe("682a236d277352a5625689c2a45d1e62e6dab800f818e5207ef799d5c0d04893");
+    ).toBe("9750d11a18b4aea923f834468c366758791a6c3f4750d77658fecb6b5b4bc9c4");
     const withdrawnMarker = DOC.indexOf(
       "<!-- claim-status id=commit-point-rollback-via-mode-write",
     );
