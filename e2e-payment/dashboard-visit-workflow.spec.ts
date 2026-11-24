@@ -35,9 +35,12 @@ const PLAN = "Drop one energy step and re-check tolerance";
 const CAUTION = "Reactive erythema on the upper lip";
 const PINNED = "Prefers the window chair";
 
+// Video is recorded for every run; it must be set at the top level of the file.
+test.use({ video: "on" });
+
 for (const screen of SCREENS) {
   test.describe(`dashboard visit workflow — ${screen.name}`, () => {
-    test.use({ viewport: screen.viewport, hasTouch: screen.touch, isMobile: screen.touch, video: "on" });
+    test.use({ viewport: screen.viewport, hasTouch: screen.touch, isMobile: screen.touch });
     test.setTimeout(240_000);
 
     test(`from last visit to checkout, rebook and chart (${screen.name})`, async ({ page }) => {
