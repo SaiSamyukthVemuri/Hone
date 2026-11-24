@@ -24,6 +24,7 @@ export function WorkspaceQueue({ initialView, waiting, invited, responses, respo
   searchMax: number;
   children?: ReactNode;
 }) {
+  const counts = { waiting, invited, responses, history: null };
   const pending = useInviteOutcomePending();
   const [view, setView] = useState(initialView);
 
@@ -55,11 +56,21 @@ export function WorkspaceQueue({ initialView, waiting, invited, responses, respo
     <div className={styles.workspace + " flex min-w-0 flex-col gap-4"} data-view={view}>
       <nav aria-label="Waitlist views" className="grid grid-cols-2 gap-1 rounded-xl border border-line bg-neutral-50 p-1 sm:grid-cols-4 dark:bg-neutral-900">
         {tabs.map(({ id, label, href }) => {
-          const count = { waiting, invited, responses, history: null }[id];
+          const count = counts[id];
           return (
-            <WaitlistNavLink key={id} href={href} aria-current={view === id ? "page" : undefined}
-              className={"flex min-h-11 items-center justify-center gap-2 rounded-lg px-2 text-sm font-medium " + (view === id ? "bg-surface text-fg shadow-sm ring-1 ring-line" : "text-fg-muted hover:text-fg")}>
-              {label}{count !== null && <span title={id === "responses" ? responseLabel : undefined} className="rounded-md bg-neutral-100 px-1.5 text-xs tabular-nums dark:bg-neutral-800">{count}{id === "responses" && <span className="sr-only"> {responseLabel}</span>}</span>}
+            <WaitlistNavLink
+              key={id}
+              href={href}
+              aria-current={view === id ? "page" : undefined}
+              className={"flex min-h-11 items-center justify-center gap-2 rounded-lg px-2 text-sm font-medium " +
+                (view === id ? "bg-surface text-fg shadow-sm ring-1 ring-line" : "text-fg-muted hover:text-fg")}
+            >
+              {label}
+              {count !== null && (
+                <span title={id === "responses" ? responseLabel : undefined} className="rounded-md bg-neutral-100 px-1.5 text-xs tabular-nums dark:bg-neutral-800">
+                  {count}{id === "responses" && <span className="sr-only"> {responseLabel}</span>}
+                </span>
+              )}
             </WaitlistNavLink>
           );
         })}
