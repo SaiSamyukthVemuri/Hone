@@ -201,7 +201,7 @@ describe("selection and date stay in step on mobile and across navigation (Codex
   it("every URL the mobile day view pushes carries the practitioner selection", () => {
     const pushes = [...MOBILE_VIEW.matchAll(/router\.push\(([^;]*)\);/g)].map((m) => m[1]);
     expect(pushes.length).toBe(3); // prev past the week, next past the week, Today outside the week
-    for (const p of pushes) expect(p, p).toMatch(/^withSelection\(.*selectionParam\)$/);
+    for (const p of pushes) expect(p, p).toMatch(/^withDashboardRebook\(withSelection\(.*selectionParam\), rebook\)$/);
   });
   it("the page hands the mobile view the selection", () => {
     expect(PAGE).toMatch(/<CalendarMobileDayView[\s\S]*?selectionParam=\{sidebar\.param\}/);

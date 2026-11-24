@@ -75,7 +75,7 @@ describe("the page applies the rule to the initial entry only", () => {
   it("a week-view 'Today' names the week, or a team studio would be sent to the Day view", () => {
     expect(PAGE).toContain('todayHref={withSelection("/calendar?view=week", sidebar.param)}');
     expect(PAGE).not.toMatch(/todayHref="\/calendar"/);
-    expect(MOBILE).toContain('router.push(withSelection("/calendar?view=week", selectionParam))');
+    expect(MOBILE).toContain('router.push(withDashboardRebook(withSelection("/calendar?view=week", selectionParam), rebook))');
     expect(MOBILE).not.toContain('router.push("/calendar")');
   });
 
@@ -86,7 +86,7 @@ describe("the page applies the rule to the initial entry only", () => {
   });
 
   it("the Day view's non-team redirect and Week tab keep a parameter, so there is no redirect loop", () => {
-    expect(PAGE).toContain("redirect(`/calendar?day=${date}`)");
+    expect(PAGE).toContain("redirect(withDashboardRebook(`/calendar?day=${date}`, rebook))");
     expect(PAGE).toContain("weekHref={withSelection(`/calendar?day=${date}`, sidebar.param)}");
   });
 

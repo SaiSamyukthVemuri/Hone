@@ -259,7 +259,7 @@ test.describe("custom client pricing precedence", () => {
       "11000",
     );
     await expect(
-      page.getByRole("button", { name: /prepare session payment/i }),
+      page.getByRole("button", { name: /checkout with stripe/i }),
     ).toBeVisible();
   });
 });
@@ -298,7 +298,7 @@ test.describe("no resolvable price", () => {
         page.locator('input[name="expected_amount_cents"]'),
       ).toHaveCount(0);
       await expect(
-        page.getByRole("button", { name: /prepare session payment/i }),
+        page.getByRole("button", { name: /checkout with stripe/i }),
       ).toHaveCount(0);
       await expect(page.getByText(/Defaulted from/)).toHaveCount(0);
       const rows = await adminQuery(
@@ -328,7 +328,7 @@ test.describe("no resolvable price", () => {
         /no booked service/i,
       );
       await expect(
-        page.getByRole("button", { name: /prepare session payment/i }),
+        page.getByRole("button", { name: /checkout with stripe/i }),
       ).toHaveCount(0);
       const rows = await adminQuery(
         `select id from public.payment_charge_attempts where session_id = $1`,
@@ -419,7 +419,7 @@ test.describe("internal note is optional everywhere", () => {
     await loginAsOwner(page, seed);
     await openSessionDetail(page, seed);
     await expect(noteField(page)).toHaveValue("");
-    await page.getByRole("button", { name: /prepare session payment/i }).click();
+    await page.getByRole("button", { name: /checkout with stripe/i }).click();
     // Synchronize on the DURABLE prepared state. The transient
     // "Session payment prepared." banner is replaced the instant
     // router.refresh() lands the persisted row, so waiting on it is a race that
@@ -444,7 +444,7 @@ test.describe("internal note is optional everywhere", () => {
     // ...and the durable UI agrees with the row.
     await expect(region.getByRole("button", { name: /^run charge$/i })).toBeVisible();
     await expect(
-      region.getByRole("button", { name: /prepare session payment/i }),
+      region.getByRole("button", { name: /checkout with stripe/i }),
     ).toHaveCount(0);
   });
 });
@@ -485,7 +485,7 @@ test.describe("an operator-authored final charge", () => {
     await openSessionDetail(page, seed);
     const region = sessionPaymentRegion(page);
     const finalCharge = finalChargeField(page);
-    const prepare = page.getByRole("button", { name: /prepare session payment/i });
+    const prepare = page.getByRole("button", { name: /checkout with stripe/i });
 
     // --- $0.00: calm, and nothing is prepared. -----------------------------
     await finalCharge.fill("0.00");
@@ -582,7 +582,7 @@ test.describe("a non-owner practitioner (card charges are owner-only)", () => {
 
     await expect(sessionPaymentRegion(page)).toHaveCount(0);
     await expect(page.getByLabel("Session payment")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: /prepare session payment/i })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /checkout with stripe/i })).toHaveCount(0);
     await expect(finalChargeField(page)).toHaveCount(0);
     await expect(referenceField(page)).toHaveCount(0);
     await expect(page.getByTestId("owner-only-amount-hint")).toHaveCount(0);
@@ -601,7 +601,7 @@ test.describe("a non-owner practitioner (card charges are owner-only)", () => {
       await loginAsOwner(ownerPage, seed);
       await openSessionDetail(ownerPage, seed);
       const captured = captureActionPosts(ownerPage);
-      await ownerPage.getByRole("button", { name: /prepare session payment/i }).click();
+      await ownerPage.getByRole("button", { name: /checkout with stripe/i }).click();
       await expectPreparedDurable(sessionPaymentRegion(ownerPage));
       const prepare = captured.find((c) => c.body.toString("utf8").includes(seed.sessionId));
       expect(prepare, "the owner's prepare POST was not captured").toBeDefined();

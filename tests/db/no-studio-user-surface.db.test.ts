@@ -834,6 +834,7 @@ const PINNED: string[] = [
   "fn public.receptionist_create_appointment(p_studio_id uuid, p_target_practitioner_id uuid, p_client_id uuid, p_service_id uuid, p_starts_at tim",
   "fn public.receptionist_move_appointment(p_studio_id uuid, p_appointment_id uuid, p_target_practitioner_id uuid, p_expected_starts_at timestamp ",
   "fn public.reconcile_my_pending_invitation()",
+  "fn public.record_adjusted_appointment_settlement(p_studio_id uuid, p_appointment_id uuid, p_method text, p_amount_cents integer, p_note text, p_livemode",
   "fn public.record_appointment_settlement(p_studio_id uuid, p_appointment_id uuid, p_method text, p_amount_cents integer, p_note text, p_livemode",
   "fn public.restore_attention_item(p_studio uuid, p_item_key text)",
   "fn public.restore_attention_item_if_latest(p_studio uuid, p_item_key text, p_observed_seq bigint)",
@@ -917,6 +918,8 @@ const PINNED: string[] = [
 describe("S4: the settlement and admission-mode commands refuse a no-studio user at the membership/role check", () => {
   type Call = { name: string; args: string; ownerCode: string; layers: Array<{ label: string; re: RegExp }>; scalar?: boolean; noControl?: boolean; coreAlsoRefuses?: boolean };
   const CALLS: Call[] = [
+    { name: "record_adjusted_appointment_settlement", args: `'%S'::uuid, '${randomUUID()}'::uuid, 'paid_cash', 1000, null, false, 1100, 1000, 'Agreed fee'`, ownerCode: "not_owner",
+      layers: [{ label: "membership", re: /actor := public\.session_actor_practitioner\(p_studio_id\);/ }, { label: "owner", re: /if not public\.is_studio_owner\(p_studio_id\) then/ }] },
     { name: "record_appointment_settlement", args: `'%S'::uuid, '${randomUUID()}'::uuid, 'paid_cash', 1000, null, false`, ownerCode: "owner_only",
       layers: [{ label: "membership", re: /v_practitioner := public\.session_actor_practitioner\(p_studio_id\);/ }, { label: "owner", re: /if not public\.is_studio_owner\(p_studio_id\) then/ }] },
     { name: "supersede_appointment_settlement", args: `'%S'::uuid, '${randomUUID()}'::uuid, 'paid_cash', 1000, 'valid reason', null, false`, ownerCode: "not_owner",

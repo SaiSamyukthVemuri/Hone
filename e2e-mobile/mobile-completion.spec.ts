@@ -213,7 +213,7 @@ test("iPhone: Mark completed via accessible dialog → in-place checkout → one
   await finalCharge.fill("225.00");
   await expect(reason).toHaveCount(0);
 
-  const prepareCta = modal.getByRole("button", { name: /prepare session payment/i });
+  const prepareCta = modal.getByRole("button", { name: /checkout with stripe/i });
   await expect(prepareCta).toBeVisible();
   const ctaBox = await prepareCta.boundingBox();
   expect(ctaBox!.height).toBeGreaterThanOrEqual(44);
@@ -221,7 +221,7 @@ test("iPhone: Mark completed via accessible dialog → in-place checkout → one
   const note = modal.getByPlaceholder(/note explaining the session payment/i);
   await expect(note).toBeVisible();
   expect(await note.getAttribute("required")).toBeNull(); // optional, not required
-  await modal.getByRole("button", { name: /prepare session payment/i }).click();
+  await modal.getByRole("button", { name: /checkout with stripe/i }).click();
 
   // --- Phase 4: "Run charge" surfaces IN PLACE right after Prepare (no
   //     close/reopen). Waiting for it also confirms the 'ready' row committed.
@@ -247,7 +247,7 @@ test("iPhone: Mark completed via accessible dialog → in-place checkout → one
 
   // --- Execute with the explicit two-click confirmation.
   await runCharge.click(); // arms the confirm step
-  await modal.getByRole("button", { name: /confirm: run charge/i }).click();
+  await modal.getByRole("button", { name: "Confirm Stripe charge · $225.00 CAD", exact: true }).click();
 
   // --- Charge succeeded: the calendar/[id] page auto-refreshes (server action)
   //     and the checkout cell becomes the persisted "Paid" badge. (The modal is

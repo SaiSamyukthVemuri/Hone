@@ -13,14 +13,6 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: () => undefined }),
 }));
 
-vi.mock("next/link", async () => {
-  const react = await import("react");
-  return {
-    default: (props: { href: string; children?: ReactNode }) =>
-      react.createElement("a", { href: props.href }, props.children),
-  };
-});
-
 vi.mock("@/app/(app)/appointment-settlement-actions", () => ({
   recordAppointmentSettlementAction: async () => ({ ok: true }),
   waiveAppointmentFeeAction: async () => ({ ok: true }),
@@ -68,6 +60,7 @@ function ineligible(blockingReasons: string[]) {
 function render(opts: {
   reasons: string[];
   canRecordSettlement?: boolean;
+  isOwner?: boolean;
   appointmentId?: string | null;
   settledMethod?: string | null;
   settledAmountCents?: number | null;
@@ -91,7 +84,7 @@ function render(opts: {
       settlementQuotedAmountCents:
         "quotedAmountCents" in opts ? opts.quotedAmountCents : 12_000,
       canRecordSettlement: opts.canRecordSettlement ?? true,
-      isOwner: false,
+      isOwner: opts.isOwner ?? false,
       prepareAction: noop as never,
       executeAction: noop as never,
       sendReceiptAction: noop as never,
@@ -131,22 +124,33 @@ describe("HON-45: a completed visit for a client with no card on file", () => {
   it("offers no charge path at all", () => {
     const html = render({ reasons: [NO_CARD_ON_FILE_REASON] });
     expect(html).not.toMatch(/name="final_amount_dollars"/);
-    expect(text(html)).not.toMatch(/Run charge|Prepare session payment/);
+    expect(text(html)).not.toMatch(/Run charge|Checkout with Stripe/);
     expect(text(html)).not.toMatch(/saved card will be charged/);
   });
 
   it("claims no payment anywhere on the card", () => {
     const visible = text(render({ reasons: [NO_CARD_ON_FILE_REASON] }));
-    // The only "paid" words allowed are the settlement BUTTON labels, which
-    // are choices, not claims, plus the existing header and the new notice,
-    // which are negations. Strip those and nothing may say paid/charged.
-    const withoutChoices = visible
-      .replace(/Paid cash|Paid by e-transfer|Paid another way/g, "")
-      .replace(/The client is not charged until you run the charge\./g, "")
-      .replace(/Choose a paid method only once[^.]*\./g, "")
-      .replace(/Nothing has been charged\./g, "")
-      .replace(/until it is paid\./g, "");
-    expect(withoutChoices).not.toMatch(/\b(paid|charged)\b/i);
+    const claims = visible
+      .replace("The client is not charged until you run the charge.", "")
+      .replace("Nothing has been charged.", "");
+    expect(claims).not.toMatch(/\b(paid|charged)\b/i);
+  });
+
+  it("keeps external methods available while disabling Stripe for a cardless owner", () => {
+    const options = { reasons: [NO_CARD_ON_FILE_REASON], isOwner: true };
+    const html = render(options);
+    const buttons = html.match(/<button\b[^>]*>/g) ?? [];
+    const stripe = buttons.find(button => button.includes('data-testid="settlement-open-stripe"'));
+    expect(stripe).toMatch(/\sdisabled(?:=""|\s|>)/);
+    expect(text(html)).toContain("Stripe needs an authorized saved card.");
+    for (const method of ["paid_e_transfer", "paid_cash", "paid_other_external", "still_owes", "waived"]) {
+      const button = buttons.find(button => button.includes(`data-testid="settlement-open-${method}"`));
+      expect(button).toBeDefined();
+      expect(button).not.toMatch(/\sdisabled(?:=""|\s|>)/);
+    }
+    expect(html).not.toContain('href="/clients/client-1?tab=messages"');
+    expect(render({ ...options, isOwner: false })).not.toContain('data-testid="settlement-open-waived"');
+    expect(render({ ...options, settledMethod: "paid_cash" })).not.toContain('data-testid="settlement-open-');
   });
 
   it("keeps the visit OUTSTANDING with its balance, without recording anything", () => {
@@ -156,7 +160,7 @@ describe("HON-45: a completed visit for a client with no card on file", () => {
       "Balance outstanding: $120.00. No payment has been received.",
     );
     expect(text(html)).toContain(
-      "It stays outstanding until payment is actually received. Record it below only then.",
+      "It stays outstanding until payment is actually received.",
     );
     // The settlement controls are still a choice, not a pre-made record.
     expect(html).toContain("appointment-settlement-controls");
@@ -166,10 +170,10 @@ describe("HON-45: a completed visit for a client with no card on file", () => {
   it("never steers an insurance claim to a paid or client-debt record", () => {
     const visible = text(render({ reasons: [NO_CARD_ON_FILE_REASON] }));
     expect(visible).toContain(
-      "Choose a paid method only once the money has actually been received. An insurance claim that has been sent is not a payment: leave the visit outstanding until it is paid.",
+      "Record an external payment once the money arrives. An insurance claim stays outstanding until payment is received.",
     );
     expect(visible).not.toMatch(
-      /insurance[^.]*(Paid another way|Client still owes)/,
+      /insurance[^.]*(other external|still owes)/i,
     );
   });
 
@@ -221,7 +225,7 @@ describe("HON-45: a completed visit for a client with no card on file", () => {
     expect(text(html)).toContain(
       "It stays outstanding until payment is actually received.",
     );
-    expect(text(html)).not.toContain("Record it below only then.");
+    expect(html).not.toContain('data-testid="settlement-open-');
   });
 
   it("keeps the amber list when anything else is also wrong", () => {
@@ -258,8 +262,7 @@ describe("HON-45: the outstanding notice names the right balance, or none", () =
     const html = render({ reasons: [NO_CARD_ON_FILE_REASON], amountResult: FREE, quotedAmountCents: 0 });
     expect(html).toContain("session-payment-no-card");
     expect(html).not.toContain("session-payment-outstanding");
-    // The settlement controls' general rule ("leave the visit outstanding
-    // until it is paid") may still render; no BALANCE claim may.
+    expect(html).not.toContain('data-testid="settlement-open-');
     expect(text(html)).not.toMatch(/Balance outstanding|It stays outstanding/);
     expect(text(html)).toContain("Free consultation is free · No payment required.");
     expect(text(html)).toContain("Nothing has been charged.");

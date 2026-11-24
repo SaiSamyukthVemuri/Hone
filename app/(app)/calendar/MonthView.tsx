@@ -1,3 +1,4 @@
+import { withDashboardRebook, type RebookOrigin } from "@/lib/calendar/dashboard-rebook";
 import Link from "next/link";
 import { localDateString, startOfWeek } from "@/lib/booking/tz";
 import {
@@ -56,6 +57,7 @@ const NO_SHOW_CHIP_CLASS = "border-dashed";
 const TERMINAL_TAG = { done: "Done", completed: "Completed", no_show: "No-show" } as const;
 
 export function MonthView({
+  rebook,
   monthAnchor,
   appointmentsByDate,
   blockedByDate,
@@ -63,6 +65,7 @@ export function MonthView({
   isClosedDate,
   selectionParam,
 }: {
+  rebook?: RebookOrigin | null;
   monthAnchor: string;
   appointmentsByDate: Map<string, MonthDayAppt[]>;
   blockedByDate: Map<string, MonthDayBlocked>;
@@ -135,7 +138,7 @@ export function MonthView({
           return (
             <Link
               key={cellDate}
-              href={dayHref}
+              href={withDashboardRebook(dayHref, rebook)}
               aria-label={`Open ${cellDate}`}
               className={[
                 // Border + min height to keep the grid even across

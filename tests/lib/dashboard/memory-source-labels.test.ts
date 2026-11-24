@@ -118,12 +118,13 @@ describe("Codex P2: the off-Today plan label names what is actually missing", ()
   });
 });
 
-describe("Codex P2: the dashboard page asks for the plan wording off Today", () => {
-  it("planSourceLabel is built with notesKind \"plan\" (the page, not only the helper, says what is missing)", async () => {
+describe("the dashboard dates the caution and scopes its one-visit plan separately", () => {
+  it("uses the studio-local source label only on a verified clinical caution", async () => {
     const { readFileSync } = await import("node:fs");
-    const src = readFileSync("app/(app)/dashboard/page.tsx", "utf8");
-    const at = src.indexOf("planSourceLabel: memorySourceLabels(");
-    expect(at).toBeGreaterThan(-1);
-    expect(src.slice(at, at + 900)).toMatch(/notesKind:\s*"plan"/);
+    const page = readFileSync("app/(app)/dashboard/page.tsx", "utf8");
+    expect(page).toMatch(/memorySourceLabels\(preview\?\.sources, nowIsoForLabels, studio\.timezone\)/);
+    expect(page).toMatch(/cautionSource=\{workflow && !workflow\.unavailable && workflow\.hasHistory \? workflow\.notesSourceLabel : null\}/);
+    expect(page).toMatch(/planNote: plansForVisit\.get\(appt\.id\) \?\? null/);
+    expect(page).not.toMatch(/planNote: load\.narrative\.plan|planSourceLabel: memorySourceLabels/);
   });
 });

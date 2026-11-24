@@ -61,7 +61,7 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     ]);
   });
 
-  it("the manifest still maps every spec, and the targeted lane still selects 30", () => {
+  it("maps every spec and preserves the expected targeted selection", () => {
     const mapped = Object.values(BROWSER_GROUPS as Record<string, { specs: string[] }>).flatMap(
       (g) => g.specs,
     );
@@ -274,7 +274,9 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // Now 65 after merging production (production alone: 64): hon48-week-month-per-user.spec.ts joined `calendar` (HON-48: per-practitioner Week and Month, desktop and iPhone width). RECORDED AS A
     // DECISION per the note above. It is REQUIRED, not opt-in: it runs whenever the calendar group is selected. Its added run time is measured on an
     // owned stack and recorded in the pull request, not assumed here.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(65);
+    // Three required dashboard journeys exercise checkout, rebooking and charting whenever the sessions group runs.
+    expect(specsForGroups(["sessions"])).toContain("dashboard-rebook-chart.spec.ts");
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(66);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {

@@ -76,7 +76,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       await expect(region.getByTestId("final-charge-input")).toHaveValue("145.00");
       await expect(page.locator('input[name="amount_dollars"]')).toHaveCount(0);
 
-      await region.getByRole("button", { name: /prepare session payment/i }).click();
+      await region.getByRole("button", { name: /checkout with stripe/i }).click();
       await expectPreparedDurable(region);
 
       const rows = await attempts(s.sessionId);
@@ -101,7 +101,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
         inj.value = "1.00";
         form?.appendChild(inj);
       });
-      await region.getByRole("button", { name: /prepare session payment/i }).click();
+      await region.getByRole("button", { name: /checkout with stripe/i }).click();
       await expectPreparedDurable(region);
 
       const rows = await attempts(s.sessionId);
@@ -139,7 +139,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
         inj.value = "1.00";
         form?.appendChild(inj);
       });
-      await region.getByRole("button", { name: /prepare session payment/i }).click();
+      await region.getByRole("button", { name: /checkout with stripe/i }).click();
       await expectPreparedDurable(region);
 
       const rows = await attempts(s.sessionId);
@@ -160,7 +160,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
           const f = el.querySelector<HTMLInputElement>('input[name="expected_amount_cents"]');
           if (f) f.value = value;
         }, tampered);
-        await region.getByRole("button", { name: /prepare session payment/i }).click();
+        await region.getByRole("button", { name: /checkout with stripe/i }).click();
 
         await expect(region.getByText(/booked service price changed/i)).toBeVisible({ timeout: 20_000 });
         expect(await attempts(s.sessionId)).toHaveLength(0);
@@ -182,7 +182,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
         [s.studioId, "AUTH stale"],
       );
 
-      await region.getByRole("button", { name: /prepare session payment/i }).click();
+      await region.getByRole("button", { name: /checkout with stripe/i }).click();
       await expect(region.getByText(/booked service price changed/i)).toBeVisible({ timeout: 20_000 });
       // Nothing was prepared at either price.
       expect(await attempts(s.sessionId)).toHaveLength(0);
@@ -193,7 +193,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       await expect(fresh.getByTestId("authoritative-amount")).toHaveText("$150.00", {
         timeout: 20_000,
       });
-      await fresh.getByRole("button", { name: /prepare session payment/i }).click();
+      await fresh.getByRole("button", { name: /checkout with stripe/i }).click();
       await expectPreparedDurable(fresh);
       const rows = await attempts(s.sessionId);
       expect(rows).toHaveLength(1);
@@ -215,7 +215,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       await expect(region.getByTestId("amount-source")).toHaveText(
         "Client-specific price for this service.",
       );
-      await region.getByRole("button", { name: /prepare session payment/i }).click();
+      await region.getByRole("button", { name: /checkout with stripe/i }).click();
       await expectPreparedDurable(region);
       expect(Number((await attempts(s.sessionId))[0].amount_cents)).toBe(12000);
       await cleanupPaymentScenario(s.studioId);
@@ -237,7 +237,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
         /conflicting|more than one current/i,
       );
       await expect(
-        region.getByRole("button", { name: /prepare session payment/i }),
+        region.getByRole("button", { name: /checkout with stripe/i }),
       ).toHaveCount(0);
       await expect(region.getByTestId("authoritative-amount")).toHaveCount(0);
       expect(await attempts(s.sessionId)).toHaveLength(0);
@@ -255,7 +255,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
 
       await expect(region.getByTestId("pricing-blocked")).toContainText(/No price is configured/i);
       await expect(
-        region.getByRole("button", { name: /prepare session payment/i }),
+        region.getByRole("button", { name: /checkout with stripe/i }),
       ).toHaveCount(0);
       expect(await attempts(s.sessionId)).toHaveLength(0);
       await cleanupPaymentScenario(s.studioId);
@@ -265,7 +265,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       const s = await seed("note");
       await loginAsOwner(page, s);
       const region = await openSession(page, s);
-      await region.getByRole("button", { name: /prepare session payment/i }).click();
+      await region.getByRole("button", { name: /checkout with stripe/i }).click();
       await expectPreparedDurable(region);
       const r = await adminQuery(
         `select internal_note from public.payment_charge_attempts where session_id = $1`,
@@ -287,7 +287,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
           const f = el.querySelector<HTMLInputElement>('input[name="expected_amount_cents"]');
           if (f) f.value = v;
         }, value);
-        await region.getByRole("button", { name: /prepare session payment/i }).click();
+        await region.getByRole("button", { name: /checkout with stripe/i }).click();
         await expect(region.getByText(/booked service price changed/i)).toBeVisible({ timeout: 20_000 });
         expect(await attempts(s.sessionId), `value=${value}`).toHaveLength(0);
         await cleanupPaymentScenario(s.studioId);
@@ -309,7 +309,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
         `update public.client_pricing set price_cents = 13000 where studio_id = $1 and client_id = $2`,
         [s.studioId, s.clientId],
       );
-      await region.getByRole("button", { name: /prepare session payment/i }).click();
+      await region.getByRole("button", { name: /checkout with stripe/i }).click();
       await expect(region.getByText(/booked service price changed/i)).toBeVisible({ timeout: 20_000 });
       expect(await attempts(s.sessionId)).toHaveLength(0);
       await cleanupPaymentScenario(s.studioId);
@@ -329,7 +329,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       await loginAsOwner(page, s);
       const region = await openSession(page, s);
       await expect(region.getByTestId("authoritative-amount")).toHaveText("$125.00");
-      await region.getByRole("button", { name: /prepare session payment/i }).click();
+      await region.getByRole("button", { name: /checkout with stripe/i }).click();
       await expectPreparedDurable(region);
       expect(Number((await attempts(s.sessionId))[0].amount_cents)).toBe(12500);
       await cleanupPaymentScenario(s.studioId);
@@ -345,7 +345,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       );
       await loginAsOwner(page, s);
       const region = await openSession(page, s);
-      await region.getByRole("button", { name: /prepare session payment/i }).click();
+      await region.getByRole("button", { name: /checkout with stripe/i }).click();
       // Blocked with the ceiling error; nothing prepared, and NOT reduced.
       await expect(region.getByText(/above the supported session-payment limit/i).first()).toBeVisible({
         timeout: 20_000,
@@ -361,7 +361,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       await region
         .getByPlaceholder(/note explaining the session payment/i)
         .fill("Package session 3 of 6");
-      await region.getByRole("button", { name: /prepare session payment/i }).click();
+      await region.getByRole("button", { name: /checkout with stripe/i }).click();
       await expectPreparedDurable(region);
       const r = await adminQuery(
         `select internal_note from public.payment_charge_attempts where session_id = $1`,
@@ -395,7 +395,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       const dispatched = await region.evaluate((el) => {
         const buttons = Array.from(el.querySelectorAll("button"));
         const btn = buttons.find((b) =>
-          /prepare session payment/i.test(b.textContent ?? ""),
+          /checkout with stripe/i.test(b.textContent ?? ""),
         ) as HTMLButtonElement | undefined;
         if (!btn) return 0;
         // Two real activations, back to back, with no await between them.
@@ -439,11 +439,11 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       const s = await seed("dupe");
       await loginAsOwner(page, s);
       const region = await openSession(page, s);
-      await region.getByRole("button", { name: /prepare session payment/i }).click();
+      await region.getByRole("button", { name: /checkout with stripe/i }).click();
       await expectPreparedDurable(region);
       // The form is gone; the ready panel owns the surface.
       await expect(
-        region.getByRole("button", { name: /prepare session payment/i }),
+        region.getByRole("button", { name: /checkout with stripe/i }),
       ).toHaveCount(0);
       expect(await attempts(s.sessionId)).toHaveLength(1);
       await cleanupPaymentScenario(s.studioId);
@@ -460,7 +460,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       // re-derive from the menu anyway.
       await region.getByTestId("final-charge-input").fill("130.00");
       await region.getByTestId("adjustment-reason-input").fill("Package adjustment");
-      await region.getByRole("button", { name: /prepare session payment/i }).click();
+      await region.getByRole("button", { name: /checkout with stripe/i }).click();
       await expectPreparedDurable(region);
       expect(Number((await attempts(s.sessionId))[0].amount_cents)).toBe(13000);
 
@@ -492,7 +492,7 @@ function suite(label: string, viewport: { width: number; height: number }, isMob
       const finalBox = await region.getByTestId("final-charge-input").boundingBox();
       expect(finalBox!.height).toBeGreaterThanOrEqual(44);
       const box = await region
-        .getByRole("button", { name: /prepare session payment/i })
+        .getByRole("button", { name: /checkout with stripe/i })
         .boundingBox();
       expect(box!.height).toBeGreaterThanOrEqual(44);
       const d = await page.evaluate(() => ({
@@ -571,7 +571,7 @@ function workflowSuite(
           "Booked service price.",
         );
         await expect(region.getByTestId("final-charge-input")).toHaveValue("145.00");
-        const cta = region.getByRole("button", { name: /prepare session payment/i });
+        const cta = region.getByRole("button", { name: /checkout with stripe/i });
         const box = await cta.boundingBox();
         expect(box!.height).toBeGreaterThanOrEqual(44);
         await cta.click();

@@ -57,7 +57,7 @@ describe("mobile navigation: today / prev day / next day / week strip", () => {
   it("switches day within the loaded week with no fetch, and crosses weeks via ?day=", () => {
     expect(MOBILE).toMatch(/setSelectedDate\(days\[idx - 1\]\.date\)/);
     expect(MOBILE).toMatch(/setSelectedDate\(days\[idx \+ 1\]\.date\)/);
-    expect(MOBILE).toMatch(/router\.push\(withSelection\(`\/calendar\?day=\$\{addDays/);
+    expect(MOBILE).toMatch(/router\.push\(withDashboardRebook\(withSelection\(`\/calendar\?day=\$\{addDays/);
   });
   it("page anchors the week to ?day= and computes the initial selected day (tz-safe strings)", () => {
     expect(PAGE).toMatch(/params\.day \?\? params\.week \?\? startOfWeek\(today\)/);
@@ -120,7 +120,7 @@ describe("month view tapping a date preserves the EXACT date (not the week start
     // href must carry the exact cellDate via ?day= (the mobile selected-day param).
     expect(MONTHVIEW).toMatch(/const dayHref = withSelection\(\s*`\/calendar\?view=week&week=\$\{startOfWeek\(cellDate\)\}&day=\$\{cellDate\}`,\s*selectionParam,?\s*\)/);
     expect(MONTHVIEW).not.toMatch(/href=\{weekHref\}/); // old week-only href is gone
-    expect(MONTHVIEW).toMatch(/href=\{dayHref\}/);
+    expect(MONTHVIEW).toMatch(/href=\{withDashboardRebook\(dayHref, rebook\)\}/);
   });
   it("page consumes ?day= as the selected day (already wired), anchoring the containing week", () => {
     expect(PAGE).toMatch(/params\.day \?\? params\.week \?\? startOfWeek\(today\)/);

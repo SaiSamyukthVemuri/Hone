@@ -122,19 +122,10 @@ describe("OFF TODAY THE PAGE ASKS NO HISTORY QUESTION — the load-bearing rule"
     );
   });
 
-  it("every RELATIONSHIP claim is still behind the workflow null", () => {
-    // The rule that survives: nothing may say new-vs-returning off Today.
-    // These all live inside `{workflow && (`, which is null off Today.
-    expect(CODE).toMatch(/\{workflow && \(/);
-    const block = CODE.slice(CODE.indexOf("{workflow && ("));
-    for (const claim of [
-      "New client · No charted history yet",
-      "Remember: {workflow.remember}",
-      "Latest setup:",
-      "workflow.missingRecords.length > 0",
-    ]) {
-      expect(block, claim).toContain(claim);
-    }
+  it("limits relationship claims, caution and record reminders to an actual Today workflow", () => {
+    expect(CODE).toMatch(/\{workflow && !workflow\.unavailable && !workflow\.hasHistory && !prepSummary\.hasTreatment && !prepSummary\.unavailable && \(\s*<p[^>]*>New client · No charted history yet/);
+    expect(CODE).toMatch(/caution=\{workflow && !workflow\.unavailable && workflow\.hasHistory \? workflow\.caution : null\}/);
+    expect(CODE).toMatch(/\{workflow && workflow\.missingRecords\.length > 0 && \(/);
   });
 
   it("the treatment memory is NOT behind it — it has its own authority", () => {
@@ -147,23 +138,19 @@ describe("OFF TODAY THE PAGE ASKS NO HISTORY QUESTION — the load-bearing rule"
     );
   });
 
-  it("the plan note is CARRIED from the loader, not dropped", () => {
-    // `narrative.plan` is already loaded and was being thrown away here. It is
-    // the newest recorded "for next visit" note, it survives both "nothing
-    // charted" and a failed block read, and on a future day it is the single
-    // most useful thing the practitioner can read.
-    expect(CODE).toMatch(
-      /planNote: load\.narrative\.plan\?\.text\?\.trim\(\) \|\| null/,
-    );
-    // …and the no-load fallback must not invent one.
+  it("uses the verified immediate target for the selected appointment, independent of the Today workflow", () => {
+    expect(CODE).toMatch(/immediateVisitPlans\(supabase, studio\.id, visibleAppointments, prepLoads\)\.catch\(/);
+    expect(CODE).toMatch(/planNote: plansForVisit\.get\(appt\.id\) \?\? null/);
     expect(CODE).toMatch(/memory: null,\s*unavailable: false,\s*planNote: null,/);
+    expect(CODE).not.toMatch(/planNote: load\.narrative\.plan/);
   });
 
-  it("the plan note renders off Today, and ONLY off Today", () => {
-    // On Today the row already prints this same field as its "Remember" line
-    // from the Before-Today model; printing it twice under two labels is a bug
-    // this row has had once already.
-    expect(CODE).toMatch(/\{!workflow && prepSummary\.remember && \(/);
+  it("renders the same one-use plan on its target row on any day, with no older workflow fallback", () => {
+    expect(CODE).toMatch(/\{prepSummary\.remember && \(\s*<p[^>]*data-testid="dashboard-prep-remember"/);
+    expect(CODE.match(/\{prepSummary\.remember && \(/g) ?? []).toHaveLength(1);
+    // A title may repeat the full text for accessibility. Only JSX children add a second visible reminder.
+    expect(CODE.match(/(?<!=)\{prepSummary\.remember\}/g) ?? []).toHaveLength(1);
+    expect(CODE).not.toMatch(/\{workflow\.remember\}/);
   });
 
   it("the page states NOTHING about history in the unasked direction either", () => {
@@ -295,24 +282,14 @@ describe("the two day controls do not fight each other", () => {
 
 describe("#598 survives on every day", () => {
   it("card status and the consultation action are outside the history block", () => {
-    // They describe the client NOW, so they are true on any day. If either
-    // moved inside the `{workflow && …}` block it would vanish on tomorrow.
-    // Bounded by the row-body link's own closing tag, whatever that element is
-    // called: UI-01C swapped it to PendingContainerLink, and a hard-coded
-    // `</Link>` then ran past it to the next ordinary link on the page and
-    // swept the whole actions column into "the history block".
-    const fromWorkflow = CODE.slice(CODE.indexOf("{workflow && ("));
-    // FIDELITY C: the history block now lives in the row's <details>; it ends where the off-Today prep note begins.
-    const rowBodyEnd = fromWorkflow.indexOf("{!workflow && prepSummary.remember");
-    expect(
-      rowBodyEnd,
-      "the row-body link must close after the history block",
-    ).toBeGreaterThan(-1);
-    const historyBlock = fromWorkflow.slice(0, rowBodyEnd);
-    expect(historyBlock).not.toMatch(/CardOnFilePill|resolveCardOnFileStatus/);
-    expect(historyBlock).not.toMatch(/tab=treatment/);
-    expect(CODE).toMatch(/<CardOnFilePill status=\{cardOnFile\}/);
-    expect(CODE).toMatch(/\?tab=treatment/);
+    const row = CODE.slice(CODE.indexOf("function AppointmentRow("));
+    // The indicator is role-gated; the consultation link goes directly to the client's treatment tab.
+    expect(row).toMatch(/\{isOwner && <CardOnFilePill status=\{cardOnFile\} \/>\}/);
+    expect(row).toMatch(/<PendingLink\s+href=\{\x60\/clients\/\$\{appt\.client_id\}\?tab=treatment\x60\}\s+data-testid="today-consultation-notes"/);
+    const historyStart = row.indexOf("{workflow && !workflow.unavailable && !workflow.hasHistory");
+    const historyEnd = row.indexOf("</p>", historyStart);
+    expect(row.indexOf("<CardOnFilePill")).toBeLessThan(historyStart);
+    expect(row.indexOf('data-testid="today-consultation-notes"')).toBeGreaterThan(historyEnd);
   });
 
   it("the card load is still ONE bounded, studio-scoped batch for the day's clients", () => {

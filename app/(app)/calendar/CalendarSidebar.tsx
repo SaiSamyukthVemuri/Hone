@@ -1,5 +1,8 @@
 "use client";
 
+import type { DashboardRebook } from "@/lib/calendar/dashboard-rebook";
+import { DashboardRebookContext, DashboardRebookSummary } from "./dashboard-rebook-context";
+
 import { useCallback, useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { CalendarMiniMonth } from "./CalendarMiniMonth";
@@ -34,6 +37,7 @@ export type SidebarPractitioner = {
 const DESKTOP_QUERY = "(min-width: 768px)";
 
 export function CalendarSidebar({
+  rebook = null,
   studioId,
   viewerId,
   view,
@@ -47,6 +51,7 @@ export function CalendarSidebar({
   insights,
   children,
 }: {
+  rebook?: DashboardRebook | null;
   studioId: string;
   /** The viewer's practitioner id: the stored selection is per studio AND per viewer (shared browsers). */
   viewerId: string;
@@ -193,6 +198,7 @@ export function CalendarSidebar({
   ].join(" ");
 
   return (
+    <DashboardRebookContext.Provider key={rebook?.appointmentId} value={rebook}>
     <div className="flex items-start gap-4">
       {drawerOpen && (
         <button
@@ -283,8 +289,10 @@ export function CalendarSidebar({
             {expanded ? "Hide calendars" : "Calendars"}
           </button>
         </div>
+        {rebook && <DashboardRebookSummary rebook={rebook} />}
         {children}
       </div>
     </div>
+    </DashboardRebookContext.Provider>
   );
 }

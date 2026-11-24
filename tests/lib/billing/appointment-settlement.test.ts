@@ -153,7 +153,7 @@ describe("no attested outcome may present itself as verified money", () => {
   });
 
   it("the controls say out loud that Hone did not verify this", () => {
-    expect(CONTROLS).toMatch(/does not take a payment and Hone/);
+    expect(CONTROLS).toContain("Hone does not collect or verify them.");
     expect(CONTROLS).toMatch(/not verified by Hone/);
   });
 });

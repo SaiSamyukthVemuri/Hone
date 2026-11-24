@@ -20,7 +20,10 @@ export const PINNED_CALLERS: Record<string, string[]> = {
     "app/(app)/clients/[id]/sessions/[sessionId]/payment-actions.ts",
     "lib/billing/quick-checkout.ts",
   ],
-  resolveAppointmentQuotedAmountCents: ["lib/billing/quick-checkout.ts"],
+  resolveAppointmentQuotedAmountCents: [
+    "app/(app)/quick-checkout-actions.ts",
+    "lib/billing/quick-checkout.ts",
+  ],
   getAppointmentPaymentStates: ["app/(app)/calendar/[id]/page.tsx", "app/(app)/dashboard/page.tsx"],
 };
 

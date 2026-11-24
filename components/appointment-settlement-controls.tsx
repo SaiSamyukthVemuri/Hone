@@ -1,6 +1,11 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, type ReactNode } from "react";
+import { CheckoutMethodPicker, type CheckoutMethod } from "@/components/checkout-method-picker";
+import {
+  CheckoutFeeFields, checkoutDraftAmount, isReceivedMethod, useCheckoutFeeDraft,
+  writeFeeAdjustment, type CheckoutFeeDraft,
+} from "@/components/checkout-fee-fields";
 import { useRouter } from "next/navigation";
 import {
   recordAppointmentSettlementAction,
@@ -9,11 +14,11 @@ import {
   type SettlementActionResult,
 } from "@/app/(app)/appointment-settlement-actions";
 import {
-  PRACTITIONER_METHODS,
   SETTLEMENT_ACTION_LABEL,
   SETTLEMENT_BADGE_LABEL,
   type SettlementMethod,
 } from "@/lib/billing/settlement-types";
+import { formatMoney, type PaymentCurrency } from "@/lib/billing/payment-jurisdiction";
 import { formatCadFromCents } from "@/lib/billing/cad-amount";
 import { settlementCoverage } from "@/lib/billing/settlement-coverage";
 
@@ -34,6 +39,14 @@ import { settlementCoverage } from "@/lib/billing/settlement-coverage";
 // receipts anything, and no Stripe call is reachable from this component.
 
 type Props = {
+  initialMethod?: CheckoutMethod;
+  initialFeeDraft?: CheckoutFeeDraft;
+  feeDraft?: CheckoutFeeDraft;
+  onFeeChange?: (draft: CheckoutFeeDraft) => void;
+  stripeForm?: ReactNode;
+  stripeUnavailable?: string;
+  currency?: PaymentCurrency | null;
+  preparingCard?: boolean;
   appointmentId: string;
   isOwner: boolean;
   /** The live disposition, when one already exists. */
@@ -66,6 +79,14 @@ type Props = {
 export function AppointmentSettlementControls({
   appointmentId,
   isOwner,
+  initialMethod,
+  initialFeeDraft,
+  feeDraft,
+  onFeeChange,
+  stripeForm,
+  stripeUnavailable,
+  currency = null,
+  preparingCard = false,
   settledMethod = null,
   settledId = null,
   settledAmountCents = null,
@@ -75,7 +96,9 @@ export function AppointmentSettlementControls({
 }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
-  const [open, setOpen] = useState<SettlementMethod | null>(null);
+  const [open, setOpen] = useState<SettlementMethod | null>(
+    initialMethod && initialMethod !== "stripe" && (initialMethod !== "waived" || isOwner) ? initialMethod : null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [amount, setAmount] = useState<string>(
     defaultAmountCents !== null && defaultAmountCents >= 0
@@ -83,6 +106,12 @@ export function AppointmentSettlementControls({
       : "",
   );
   const [note, setNote] = useState("");
+  const [localDraft, setLocalDraft] = useCheckoutFeeDraft(isOwner ? defaultAmountCents : null, initialFeeDraft);
+  const draft = feeDraft ?? localDraft;
+  const changeDraft = onFeeChange ?? setLocalDraft;
+  const finalCents = draft ? checkoutDraftAmount(draft.finalFee) : null;
+  const zeroWaiver = Boolean(draft && finalCents === 0);
+  const receivedCents = draft ? checkoutDraftAmount(draft.received ?? draft.finalFee) : parseAmountToCents(amount);
 
   // ALREADY SETTLED. The record is shown as a fact, and there is no edit
   // control here for anyone: a correction is owner-only and append-only, and it
@@ -133,7 +162,17 @@ export function AppointmentSettlementControls({
 
   const submit = (method: SettlementMethod) => {
     setError(null);
-    const cents = parseAmountToCents(amount);
+    if (draft && (finalCents === null || (finalCents !== draft.referenceCents && !draft.reason.trim()))) {
+      setError(finalCents === null ? "Enter a valid final fee." : "Enter a reason for the adjusted fee.");
+      return;
+    }
+    const operation = zeroWaiver ? "waived" : method;
+    const cents = zeroWaiver ? draft!.referenceCents
+      : draft && !isReceivedMethod(operation) ? finalCents : receivedCents;
+    if (isReceivedMethod(operation) && (cents === 0 || (cents !== null && finalCents !== null && cents > finalCents))) {
+      setError("Enter a positive amount received up to the final fee. Choose Still owes if nothing was received.");
+      return;
+    }
     if (cents === null) {
       setError("Enter an amount like 45 or 45.00.");
       return;
@@ -141,13 +180,14 @@ export function AppointmentSettlementControls({
     const fd = new FormData();
     fd.set("appointment_id", appointmentId);
     fd.set("amount_cents", String(cents));
+    if (draft && finalCents !== null) writeFeeAdjustment(fd, draft, finalCents);
     if (note.trim()) fd.set("note", note.trim());
     startTransition(async () => {
       let r: SettlementActionResult;
-      if (method === "waived") {
+      if (operation === "waived") {
         r = await waiveAppointmentFeeAction(fd);
       } else {
-        fd.set("method", method);
+        fd.set("method", operation);
         r = await recordAppointmentSettlementAction(fd);
       }
       if (r.ok) {
@@ -174,57 +214,32 @@ export function AppointmentSettlementControls({
     });
   };
 
-  const methods: SettlementMethod[] = isOwner
-    ? [...PRACTITIONER_METHODS, "waived"]
-    : [...PRACTITIONER_METHODS];
+  const enteredCents = receivedCents;
+  const confirmPaymentLabel = enteredCents === null ? "Confirm payment" : `Confirm payment · ${formatMoney(enteredCents, currency)}`;
 
   return (
     <div
       data-testid="appointment-settlement-controls"
       className="border-t border-neutral-200 pt-3 dark:border-neutral-800"
     >
-      <p className="text-xs font-medium text-neutral-700 dark:text-neutral-200">
-        Or record how this was settled
-      </p>
-      <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-        {/* The sentence that carries the whole product decision. */}
-        This records what you say happened. It does not take a payment and Hone
-        does not verify it.
-      </p>
-      {/* HON-45. When a paid method is TRUE. A claim sent to an insurer is not
-          money received, so it is never "paid another way", and it is not the
-          client's debt either. Until money arrives the visit simply stays
-          outstanding; nothing needs recording. */}
-      <p
-        data-testid="settlement-received-rule"
-        className="mt-1 text-xs text-neutral-500 dark:text-neutral-400"
-      >
-        Choose a paid method only once the money has actually been received. An
-        insurance claim that has been sent is not a payment: leave the visit
-        outstanding until it is paid.
-      </p>
-
-      <div className="mt-2 flex flex-wrap gap-2">
-        {methods.map((m) => (
-          <button
-            key={m}
-            type="button"
-            disabled={pending}
-            data-testid={`settlement-open-${m}`}
-            onClick={() => {
-              setError(null);
-              setOpen((current) => (current === m ? null : m));
-            }}
-            className={`inline-flex min-h-[44px] items-center rounded-md border px-3 text-xs font-medium disabled:opacity-50 ${
-              open === m
-                ? "border-neutral-800 bg-neutral-100 dark:border-neutral-300 dark:bg-neutral-800"
-                : "border-neutral-300 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-            }`}
-          >
-            {SETTLEMENT_ACTION_LABEL[m]}
-          </button>
-        ))}
-      </div>
+      <CheckoutMethodPicker
+        method={open ?? (stripeForm ? "stripe" : null)}
+        onSelect={method => {
+          setError(null);
+          setOpen(method === "stripe" ? null : method);
+        }}
+        isOwner={isOwner}
+        showStripe={Boolean(stripeForm || stripeUnavailable)}
+        stripeUnavailable={stripeUnavailable}
+        disabled={pending || preparingCard}
+      />
+      {stripeForm && <div hidden={pending || open !== null} className="mt-3">{stripeForm}</div>}
+      {(!stripeForm || open !== null) && (
+        <p data-testid="settlement-received-rule" className="mt-2 text-xs text-neutral-600 dark:text-neutral-400">
+          External payments are recorded by the studio. Hone does not collect or verify them.
+          Record an external payment once the money arrives. An insurance claim stays outstanding until payment is received.
+        </p>
+      )}
 
       {/* Owner-only, and said out loud rather than left as a missing button. */}
       {!isOwner && (
@@ -235,7 +250,10 @@ export function AppointmentSettlementControls({
 
       {open && (
         <div className="mt-3 flex flex-col gap-2">
-          <label className="text-xs text-neutral-700 dark:text-neutral-300">
+          {draft ? (
+            <CheckoutFeeFields draft={draft} onChange={changeDraft} currency={currency}
+              showReceived={isReceivedMethod(open)} disabled={pending} />
+          ) : <label className="text-xs text-neutral-700 dark:text-neutral-300">
             {open === "waived"
               ? "Amount waived"
               : open === "still_owes"
@@ -249,7 +267,7 @@ export function AppointmentSettlementControls({
               onChange={(e) => setAmount(e.target.value)}
               className="mt-1 block w-40 rounded-md border border-neutral-300 px-2 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-950"
             />
-          </label>
+          </label>}
           <label className="text-xs text-neutral-700 dark:text-neutral-300">
             Note (optional, kept internal)
             <input
@@ -269,7 +287,7 @@ export function AppointmentSettlementControls({
               onClick={() => submit(open)}
               className="inline-flex min-h-[44px] items-center rounded-md bg-neutral-900 px-4 text-sm font-medium text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
             >
-              {pending ? "Recording..." : `Record ${SETTLEMENT_ACTION_LABEL[open].toLowerCase()}`}
+              {pending ? "Recording..." : open === "waived" || zeroWaiver ? "Confirm fee waiver" : open === "still_owes" ? "Record amount owed" : confirmPaymentLabel}
             </button>
           </div>
         </div>

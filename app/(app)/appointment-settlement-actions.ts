@@ -14,8 +14,8 @@ import {
   type SettlementResultCode,
 } from "@/lib/billing/settlement-types";
 
-// PAY-SETTLE — the WRITE side. Three server actions over the three 0187
-// commands, and nothing else.
+// PAY-SETTLE — trusted wrappers for recording, waiving and correcting settlements.
+// Adjusted initial fees go through the 0381 command.
 //
 // NOTHING HERE IS THE AUTHORITY. Every rule these actions appear to enforce is
 // re-enforced inside the SECURITY DEFINER command: membership, ownership,
@@ -28,12 +28,8 @@ import {
 // table has no Stripe column to write. That is the structural half of "a
 // practitioner attestation can never manufacture a receipt".
 //
-// NOR DOES THIS FILE DECIDE THE SERVICE VALUE. quoted_amount_cents used to be
-// computed here and passed in. It is now derived inside the command, because
-// these commands are granted to `authenticated`: anything this file passes can
-// be passed by a hand-built PostgREST call instead, and a number a caller may
-// choose has no business in the column FIN-01A divides by. The UI still resolves
-// a SUGGESTED amount to pre-fill the form; that is display, not authority.
+// A changed fee is an owner decision. SQL independently rederives the reference
+// price and records it with the adjusted fee, reason, actor and receipt.
 
 const NOT_AUTHORIZED = "You are not authorized to do that.";
 
@@ -122,6 +118,26 @@ function parseNote(raw: FormDataEntryValue | null): string | null {
   return text.length <= 500 ? text : null;
 }
 
+type AdjustedFee = {
+  p_reference_fee_cents: number;
+  p_final_fee_cents: number;
+  p_fee_adjustment_reason: string;
+};
+
+function readFeeAdjustment(form: FormData): AdjustedFee | null | "invalid" {
+  const keys = ["reference_fee_cents", "final_fee_cents", "fee_adjustment_reason"];
+  if (!keys.some((key) => form.has(key))) return null;
+  const reference = parseAmountCents(form.get("reference_fee_cents"));
+  const final = parseAmountCents(form.get("final_fee_cents"));
+  const raw = form.get("fee_adjustment_reason");
+  const reason = typeof raw === "string" ? raw.trim() : "";
+  if (reference === null || reference <= 0 || final === null || final === reference
+    || !reason || reason.length > 200) {
+    return "invalid";
+  }
+  return { p_reference_fee_cents: reference, p_final_fee_cents: final, p_fee_adjustment_reason: reason };
+}
+
 async function refresh(): Promise<void> {
   revalidatePath("/dashboard");
   revalidatePath("/calendar", "layout");
@@ -166,19 +182,20 @@ export async function recordAppointmentSettlementAction(
   const note = formData.get("note") ? parseNote(formData.get("note")) : null;
   if (formData.get("note") && note === null) return failure("invalid_input");
 
-
+  const adjustment = readFeeAdjustment(formData);
+  if (adjustment === "invalid") return failure("invalid_input");
   const supabase = await createClient();
-  const { data, error } = await supabase.rpc("record_appointment_settlement", {
+  const args = {
     p_studio_id: studioId,
     p_appointment_id: appointmentId,
     p_method: method,
     p_amount_cents: amountCents,
     p_note: note,
-    // A DEPLOYMENT fact, from the Stripe key prefix — never from the form. The
-    // command trusts it asymmetrically: livemode card money always blocks
-    // whatever this says.
     p_livemode: inferStripeLivemode(),
-  });
+  };
+  const { data, error } = adjustment
+    ? await supabase.rpc("record_adjusted_appointment_settlement", { ...args, ...adjustment })
+    : await supabase.rpc("record_appointment_settlement", args);
   if (error) return rpcFailure("record", classifyRpcError(error));
 
   const code = readCode(data);
@@ -225,15 +242,19 @@ export async function waiveAppointmentFeeAction(
   const note = formData.get("note") ? parseNote(formData.get("note")) : null;
   if (formData.get("note") && note === null) return failure("invalid_input");
 
-
+  const adjustment = readFeeAdjustment(formData);
+  if (adjustment === "invalid") return failure("invalid_input");
   const supabase = await createClient();
-  const { data, error } = await supabase.rpc("waive_appointment_fee", {
+  const args = {
     p_studio_id: studioId,
     p_appointment_id: appointmentId,
     p_amount_cents: amountCents,
     p_note: note,
     p_livemode: inferStripeLivemode(),
-  });
+  };
+  const { data, error } = adjustment
+    ? await supabase.rpc("record_adjusted_appointment_settlement", { ...args, p_method: "waived", ...adjustment })
+    : await supabase.rpc("waive_appointment_fee", args);
   if (error) return rpcFailure("waive", classifyRpcError(error));
 
   const code = readCode(data);
@@ -296,6 +317,9 @@ export async function supersedeAppointmentSettlementAction(
     p_note: note,
     p_livemode: inferStripeLivemode(),
   });
+  if (error?.code === "23514" && error.message === "settlement_adjusted_amount_invalid") {
+    return failure("invalid_input");
+  }
   if (error) return rpcFailure("supersede", classifyRpcError(error));
 
   const code = readCode(data);

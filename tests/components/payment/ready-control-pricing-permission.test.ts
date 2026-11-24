@@ -213,11 +213,27 @@ describe("a persisted attempt stays visible; only the control is withdrawn", () 
   });
 });
 
+describe("free notice for external checkout", () => {
+  it("uses a verified zero quote when card pricing is unavailable", () => {
+    const input = { attemptStatus: null, amountResult: null, settlementQuotedAmountCents: 0, showPrepareForm: true };
+    const free = decideSessionPaymentPresentation(input);
+    expect(free.freeNoticeServiceName).toBe("This visit");
+    expect(free.prepareFormAmount).toBeNull();
+    expect(free.unavailableExplanationVisible).toBe(false);
+    for (const attemptStatus of ["pending_stripe", "succeeded"]) {
+      expect(decideSessionPaymentPresentation({ ...input, attemptStatus }).freeNoticeServiceName).toBeNull();
+    }
+    expect(decideSessionPaymentPresentation({ ...input, hasSettlement: true }).freeNoticeServiceName).toBeNull();
+    expect(decideSessionPaymentPresentation({ ...input, amountResult: amount("free"), hasSettlement: true }).freeNoticeServiceName).toBeNull();
+    expect(decideSessionPaymentPresentation({ ...input, amountResult: amount("ambiguous_custom_pricing") }).freeNoticeServiceName).toBeNull();
+  });
+});
+
 describe("source wiring", () => {
   it("the card reads the decision and holds no branch of its own", () => {
     expect(CARD).toMatch(/decideSessionPaymentPresentation\(/);
     expect(CARD).toMatch(/\{activeAttempt && \(/);
-    expect(CARD).toMatch(/\{presentation\.freeNoticeServiceName !== null && \(/);
+    expect(CARD).toContain("{presentation.freeNoticeServiceName !== null && (");
     expect(CARD).toMatch(/\{presentation\.unavailableExplanationVisible && \(/);
     expect(CARD).toMatch(/\{presentation\.unresolvedExplanation !== null && \(/);
     // the old reconstructed locals are gone
@@ -230,7 +246,7 @@ describe("source wiring", () => {
   });
 
   it("the READY charge section is the only thing pricing withdraws", () => {
-    expect(CARD).toMatch(/runChargeVisible=\{presentation\.runChargeVisible\}/);
+    expect(CARD).toMatch(/runChargeVisible=\{presentation\.runChargeVisible && mayCollectPayment\}/);
     expect(CARD).toMatch(/runChargeVisible=\{runChargeVisible\}/);
     expect(CARD).toMatch(/\{runChargeVisible && \(/);
     expect(CARD).toMatch(/data-testid="ready-charge-section"/);
@@ -281,7 +297,7 @@ describe("exactly ONE ready-control authority", () => {
     expect(PERM).toMatch(/freeNoticeServiceName:\s*\n?\s*amountResult\?\.kind === "free" && !settledOrInFlight/);
     expect(CARD).toMatch(/presentation\.freeNoticeServiceName !== null/);
     // the SAME value supplies the rendered name
-    expect(CARD).toMatch(/\{presentation\.freeNoticeServiceName\} is free/);
+    expect(CARD).toContain("${presentation.freeNoticeServiceName} is free");
   });
 
   it("every presentation field is consumed by the card", () => {
@@ -334,7 +350,7 @@ describe("exactly ONE ready-control authority", () => {
     expect(PERM).toMatch(
       /const prepareFormAmount =\s*\n?\s*showPrepareForm && amountResult\?\.kind === "resolved" \? amountResult : null/,
     );
-    expect(CARD).toMatch(/\{presentation\.prepareFormAmount !== null && eligibleDetails && \(/);
+    expect(CARD).toMatch(/const stripeForm = presentation\.prepareFormAmount !== null && eligibleDetails \? \(\s*<PrepareForm/);
     expect(CARD).toMatch(/amount=\{presentation\.prepareFormAmount\}/);
   });
 
@@ -350,18 +366,18 @@ describe("exactly ONE ready-control authority", () => {
     );
   });
 
-  it("the card reads that one field and never a second decision path", () => {
+  it("the card uses the pricing decision and also requires an unsettled balance", () => {
     const code = codeOnly(CARD);
     expect(code).not.toMatch(/readyControl/);
     expect(code).not.toMatch(/decideReadyControlPermission/);
     expect(code).not.toMatch(/canRun/);
-    expect(code).toMatch(/runChargeVisible=\{presentation\.runChargeVisible\}/);
+    expect(code).toMatch(/runChargeVisible=\{presentation\.runChargeVisible && mayCollectPayment\}/);
   });
 
   it("the SAME name travels from the decision to the render gate", () => {
     // presentation -> AttemptStatusPanel -> ReadyPanel -> {runChargeVisible && (
     const card = codeOnly(CARD);
-    const fromPresentation = card.indexOf("runChargeVisible={presentation.runChargeVisible}");
+    const fromPresentation = card.indexOf("runChargeVisible={presentation.runChargeVisible && mayCollectPayment}");
     const forwarded = card.indexOf("runChargeVisible={runChargeVisible}");
     const gate = card.indexOf("{runChargeVisible && (");
     expect(fromPresentation).toBeGreaterThan(-1);

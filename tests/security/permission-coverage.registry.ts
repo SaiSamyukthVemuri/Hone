@@ -219,6 +219,7 @@ export const PATH_DECISIONS: Readonly<Record<string, Readonly<Record<string, str
     markAllReadFormAction: "staff",
   },
   "app/(app)/quick-checkout-actions.ts": {
+    getDashboardCheckoutQuoteAction: "owner(self)",
     getQuickCheckoutContextAction: "owner(self)",
   },
   "app/(app)/records/actions.ts": {
@@ -631,6 +632,7 @@ export const RPC_NAMES: readonly string[] = [
   "read_waitlist_followups",
   "reconcile_bound_payment_event",
   "reconcile_my_pending_invitation",
+  "record_adjusted_appointment_settlement",
   "record_appointment_settlement",
   "record_block_machine_identity",
   "record_calendar_sync_result",
@@ -818,6 +820,7 @@ export const RPC_PRIVILEGES: Readonly<Record<string, string>> = {
   read_waitlist_followups: "--sD",
   reconcile_bound_payment_event: "--sD",
   reconcile_my_pending_invitation: "-usD",
+  record_adjusted_appointment_settlement: "-u-D",
   record_appointment_settlement: "-u-D",
   record_block_machine_identity: "-u-D",
   record_calendar_sync_result: "--sD",
