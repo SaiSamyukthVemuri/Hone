@@ -1,7 +1,8 @@
+import { CLIENT_NAME_MAX } from "@/lib/clients/identity";
 import { describe, expect, it, vi } from "vitest";
 import { DESK_FIELD_MAX, DESK_NAME_ON_FILE, DESK_SCHEDULE_ROW_CAP, DeskScheduleIncompleteError, mapDeskScheduleRow, readDeskSchedule, type DeskRpc } from "@/lib/desk/read";
 
-// The desk's read is a closed projection: it copies named fields only, and no client name of any kind survives it.
+// The desk's read is a closed projection: it copies named fields only, including just the display name resolved by the versioned scheduling RPC.
 // Fixtures are synthetic.
 
 const STORED = "Zeta Stored-Surname";
@@ -13,12 +14,11 @@ const row = (over: Record<string, unknown> = {}) => ({
   status: "confirmed",
   practitioner_id: "22222222-2222-4222-8222-222222222222",
   practitioner_display_name: "Practitioner One",
-  practitioner_color: "#aabbcc",
+  practitioner_color: "teal",
   service_id: "33333333-3333-4333-8333-333333333333",
   service_name: "Consultation",
   client_id: "44444444-4444-4444-8444-444444444444",
   display_name: STORED,
-  name_on_file: true,
   duration_minutes: 60,
   studio_timezone: "America/Toronto",
   ...over,
@@ -28,6 +28,9 @@ const dbOf = (data: unknown, error: unknown = null): DeskRpc => ({ rpc: vi.fn(as
 describe("the closed projection", () => {
   it("keeps the booking facts and nothing else", () => {
     expect(mapDeskScheduleRow(row())).toEqual({
+      appointmentId: row().appointment_id,
+      practitionerId: row().practitioner_id,
+      practitionerColor: "teal",
       startsAt: "2099-01-01T15:00:00.000Z",
       endsAt: "2099-01-01T16:00:00.000Z",
       status: "confirmed",
@@ -35,23 +38,24 @@ describe("the closed projection", () => {
       studioTimezone: "America/Toronto",
       practitionerName: "Practitioner One",
       serviceName: "Consultation",
-      clientName: DESK_NAME_ON_FILE,
+      clientName: STORED,
     });
   });
 
-  it("never carries a stored or preferred name, an identifier or a colour, whatever the database sent", () => {
-    for (const flag of [true, false, null, "false", undefined, 0]) {
-      for (const shown of [STORED, PREFERRED]) {
-        const out = JSON.stringify(mapDeskScheduleRow(row({ display_name: shown, name_on_file: flag, preferred_name: PREFERRED, name: STORED, legal_name: STORED })));
-        expect(out.includes("Stored-Surname") || out.includes("Preferred-Zeta") || out.includes("legal"), `${String(flag)}`).toBe(false);
-        for (const id of ["11111111", "22222222", "33333333", "44444444", "#aabbcc"]) expect(out.includes(id), id).toBe(false);
-      }
+  it("shows the scheduling name without projecting other identity or contact fields", () => {
+    for (const displayName of [PREFERRED, STORED, "N".repeat(CLIENT_NAME_MAX)]) {
+      const sample = row({ display_name: displayName, legal_name: "Private identity", phone: "555-0123" });
+      const allowed = mapDeskScheduleRow(sample);
+      expect(allowed?.clientName).toBe(displayName);
+      for (const value of ["Private identity", sample.client_id, sample.service_id, "555-0123"]) expect(JSON.stringify(allowed)).not.toContain(value);
     }
+    expect(mapDeskScheduleRow(row({ display_name: "  " }))?.clientName).toBe(DESK_NAME_ON_FILE);
   });
 
-  it("shows exactly the fixed words for every client, preferred name or not", () => {
-    expect(mapDeskScheduleRow(row({ name_on_file: false, display_name: PREFERRED }))?.clientName).toBe("Name on file");
-    expect(mapDeskScheduleRow(row({ name_on_file: true }))?.clientName).toBe("Name on file");
+  it("keeps historical unassigned visits and validates appointment IDs and practitioner colors", () => {
+    expect(mapDeskScheduleRow(row({ practitioner_id: null, practitioner_display_name: null }))).toMatchObject({ practitionerId: null, practitionerName: "Unassigned" });
+    expect(mapDeskScheduleRow(row({ appointment_id: "invalid" }))).toBeNull();
+    expect(mapDeskScheduleRow(row({ practitioner_color: "unrecognized" }))?.practitionerColor).toBeNull();
   });
 
   it("drops a row with no readable times, and reads an unknown status as unknown", () => {
@@ -84,7 +88,7 @@ describe("readDeskSchedule", () => {
     const out = await readDeskSchedule(db, "studio-1", "2099-01-01T00:00:00.000Z", "2099-01-08T00:00:00.000Z");
     expect(out).toHaveLength(2);
     expect(db.rpc).toHaveBeenCalledTimes(1);
-    expect(db.rpc).toHaveBeenCalledWith("receptionist_calendar_v2", { p_studio_id: "studio-1", p_from: "2099-01-01T00:00:00.000Z", p_to: "2099-01-08T00:00:00.000Z" });
+    expect(db.rpc).toHaveBeenCalledWith("receptionist_calendar_v3", { p_studio_id: "studio-1", p_from: "2099-01-01T00:00:00.000Z", p_to: "2099-01-08T00:00:00.000Z" });
   });
 
   it("fails with a fixed message that carries nothing from the database", async () => {
@@ -102,6 +106,17 @@ describe("readDeskSchedule", () => {
       const err = await readDeskSchedule(dbOf(Array.from({ length: n }, () => row())), "s", "a", "b").then(() => null, (e: Error) => e);
       expect(err).toBeInstanceOf(DeskScheduleIncompleteError);
     }
+  });
+
+  it("recovers a busy month in shorter windows and counts a visit spanning both windows once", async () => {
+    const early = row();
+    const crossing = row({ appointment_id: "11111111-1111-4111-8111-111111111112", starts_at: "2099-01-16T23:30:00Z", ends_at: "2099-01-17T00:30:00Z" });
+    const late = row({ appointment_id: "11111111-1111-4111-8111-111111111113", starts_at: "2099-01-20T15:00:00Z", ends_at: "2099-01-20T16:00:00Z" });
+    const rpc = vi.fn().mockResolvedValueOnce({data:Array(DESK_SCHEDULE_ROW_CAP).fill(early),error:null})
+      .mockResolvedValueOnce({data:[early,crossing],error:null}).mockResolvedValueOnce({data:[crossing,late],error:null});
+    const visits = await readDeskSchedule({ rpc }, "studio", "2099-01-01T00:00:00Z", "2099-02-02T00:00:00Z");
+    expect(visits.map(v => v.appointmentId)).toEqual([early.appointment_id,crossing.appointment_id,late.appointment_id]);
+    expect(rpc.mock.calls[1][1].p_to).toBe(rpc.mock.calls[2][1].p_from);
   });
 
   it("counts the rows the database returned, before any unreadable row is dropped", async () => {

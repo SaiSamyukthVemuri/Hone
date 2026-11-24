@@ -62,6 +62,8 @@ export type QuickBookDraft = {
   // duration input. A bare click (no drag) leaves this undefined and
   // the drawer keeps the standard slot-picker flow.
   durationMinutes?: number;
+  // A verified search result seeds the standard slot picker. Its UTC instant distinguishes repeated local times.
+  opening?: { start: string; end: string; serviceId: string; clientId?: string };
 };
 
 // Trimmed shape sent from the calendar server component. Avoids
@@ -103,6 +105,7 @@ type Props = {
   // (the same preserve-if-eligible rule below); otherwise it is ignored.
   preferredPractitionerId?: string;
   onClose: () => void;
+  onBooked?: () => void;
 };
 
 const MAX_CLIENT_RESULTS = 12;
@@ -140,6 +143,7 @@ export function QuickBookDrawer({
   currentPractitionerId,
   currentPractitionerName,
   preferredPractitionerId,
+  onBooked,
   onClose,
 }: Props) {
   const router = useRouter();
@@ -170,7 +174,7 @@ export function QuickBookDrawer({
   const [clientMode, setClientMode] = useState<"search" | "new">("search");
   const [clientQuery, setClientQuery] = useState("");
   const [selectedClient, setSelectedClient] =
-    useState<QuickBookClient | null>(null);
+    useState<QuickBookClient | null>(() => clients.find((c) => c.id === draft?.opening?.clientId) ?? null);
   // Clients created during this drawer session. The server-passed
   // `clients` prop only updates after a full router.refresh(), which
   // happens after booking. We merge `clients + extraClients` so a
@@ -183,7 +187,7 @@ export function QuickBookDrawer({
   const [newClientPronouns, setNewClientPronouns] = useState("");
   const [newClientError, setNewClientError] = useState<string | null>(null);
   const [creatingClient, startCreatingClient] = useTransition();
-  const [serviceId, setServiceId] = useState(firstServiceId);
+  const [serviceId, setServiceId] = useState(draft?.opening?.serviceId ?? firstServiceId);
   const [lastService, setLastService] = useState<LastService | null>(null);
   const [loadingLastService, startLoadingLastService] = useTransition();
   const [slots, setSlots] = useState<Slot[]>([]);
@@ -345,7 +349,10 @@ export function QuickBookDrawer({
         return;
       }
       setEligible(r.practitioners);
-      setTarget((prev) => resolveDefaultTarget(r.practitioners, prev));
+      setTarget((prev) => {
+        if (draft?.opening && prev === preferredPractitionerId && !r.practitioners.some((p) => p.id === prev)) return "";
+        return resolveDefaultTarget(r.practitioners, prev);
+      });
     });
     // resolveDefaultTarget + startLoadingPractitioners are stable; excluded to
     // avoid re-fetching the eligible list on every render.
@@ -430,7 +437,15 @@ export function QuickBookDrawer({
         (s) => new Date(s.start).getTime() > nowMs,
       );
       setSlots(futureSlots);
-      const exact = futureSlots.find((s) => s.startLabel === targetHint);
+      const opening = draft.opening;
+      const sameBooking = opening && serviceId === opening.serviceId && (!showSelector || target === preferredPractitionerId);
+      const exact = opening
+        ? futureSlots.find((s) => sameBooking && Date.parse(s.start) === Date.parse(opening.start)
+          && Date.parse(s.end) === Date.parse(opening.end))
+        : futureSlots.find((s) => s.startLabel === targetHint);
+      if (sameBooking && !exact) {
+        setError("That opening is no longer available. Choose another time.");
+      }
       // PR #128 Part 1. If the picked service has an exact-match
       // standard slot at the drag's start time AND the override path
       // was only soft-enabled by the drag (not explicitly chosen by
@@ -528,7 +543,7 @@ export function QuickBookDrawer({
   const canBook = !booking && !!selectedClient && !!serviceId && targetValid && (
     overrideEnabled
       ? overrideTimeValid && overrideConfirmed && overrideDurationValid
-      : !!pickedSlot
+      : !!pickedSlot && !loadingSlots && !loadingPractitioners
   );
 
   function handleCreateClient() {
@@ -636,6 +651,7 @@ export function QuickBookDrawer({
       }
       router.refresh();
       onClose();
+      onBooked?.();
     });
   }
 
@@ -958,6 +974,7 @@ export function QuickBookDrawer({
                 aria-label="Practitioner"
                 className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
               >
+                {!target && <option value="">Choose a practitioner</option>}
                 {eligible.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.displayName}
