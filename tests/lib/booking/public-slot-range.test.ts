@@ -42,6 +42,7 @@ const scenario = {
   personalDefaults: [] as Array<Record<string, unknown>>,
   personalOverrides: [] as Array<Record<string, unknown>>,
   personalError: false,
+  availabilityError: null as { code: string } | null,
 };
 
 vi.mock("@/lib/booking/queries", () => ({
@@ -87,6 +88,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
           return { data: rows.filter((row) => filters.every(([key, value]) => row[key] === value)), error: null };
         }
         if (table === "studio_availability_default") {
+          if (scenario.availabilityError) return { data: null, error: scenario.availabilityError };
           return { data: scenario.defaults, error: null };
         }
         if (table === "studio_blockouts") {
@@ -164,6 +166,7 @@ beforeEach(() => {
   scenario.blockoutError = null;
   scenario.reservationError = null;
   scenario.servicesError = null;
+  scenario.availabilityError = null;
   scenario.defaultsThrow = false;
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-10-01T12:00:00.000Z"));
@@ -474,6 +477,18 @@ describe("a studio with no open weekday is an ANSWER, a failed read is not", () 
     const r = await fetchPublicSlotsForDates({ slug: "studio-a", serviceId: "svc", dates });
     expect(r.ok).toBe(false);
     expect((r as { reason?: string }).reason).toBeUndefined();
+  });
+  it("a failed read of the availability, with services OK, is a failure with NO reason (never a zero)", async () => {
+    scenario.availabilityError = { code: "XX000" };
+    const r = await fetchPublicSlotsForDates({ slug: "studio-a", serviceId: "svc", dates });
+    expect(r).toMatchObject({ ok: false });
+    expect((r as { reason?: string }).reason).toBeUndefined();
+  });
+  it("and the fit for that studio is a FAILURE, not zero appointments", async () => {
+    scenario.availabilityError = { code: "XX000" };
+    const admin = { from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { slug: "studio-a", timezone: "America/Toronto", buffer_minutes: 0 }, error: null }) }) }) }) } as never;
+    const { computeConsultationFit } = await import("@/lib/waitlist/send-time-fit");
+    expect(await computeConsultationFit({ admin, studioId: "studio-1", serviceId: "svc", windowDays: 7, allowedWeekdays: null })).toEqual({ ok: false });
   });
   it("no active service is a failure with NO reason, whatever the week", async () => {
     scenario.defaults = [];

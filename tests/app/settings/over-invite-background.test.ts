@@ -19,7 +19,13 @@ const h = vi.hoisted(() => ({
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
-vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({}) }));
+vi.mock("@/lib/supabase/admin-server", () => ({
+  createAdminClient: () => {
+    const chain: Record<string, unknown> = {};
+    Object.assign(chain, { select: () => chain, eq: () => chain, maybeSingle: async () => ({ data: { id: "svc" }, error: null }) });
+    return { from: () => chain };
+  },
+}));
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
     from: (name: string) => {

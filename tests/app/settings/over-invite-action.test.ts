@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({
   role: "owner" as string,
   fit: { ok: true as boolean, fit: 5 },
+  service: { data: { id: "svc" }, error: null } as { data: unknown; error: unknown },
+  serviceFilters: [] as Array<[string, unknown]>,
   preview: { ok: true, result: "ok", liveCount: 8, expiringWithin24h: 1, selected: 3, admissible: 3 } as Record<string, unknown>,
   create: { ok: true, result: "created", batchId: "b", quantity: 3, extraRequested: 3, liveCount: 8 } as Record<string, unknown>,
   calls: [] as string[],
@@ -11,7 +13,17 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
-vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({}) }));
+vi.mock("@/lib/supabase/admin-server", () => ({
+  createAdminClient: () => {
+    const chain: Record<string, unknown> = {};
+    Object.assign(chain, {
+      select: () => chain,
+      eq: (k: string, v: unknown) => (h.serviceFilters.push([k, v]), chain),
+      maybeSingle: async () => (h.calls.push("service"), h.service),
+    });
+    return { from: () => chain };
+  },
+}));
 vi.mock("@/lib/supabase/queries", () => ({
   getCurrentPractitionerWithStudio: async () => ({
     practitioner: { role: h.role, user_id: "11111111-1111-4111-8111-111111111111" },
@@ -47,6 +59,7 @@ const run = (f: FormData) => sendOverInviteAction({ state: "idle" }, f);
 beforeEach(() => {
   h.role = "owner";
   h.fit = { ok: true, fit: 5 };
+  h.service = { data: { id: "svc" }, error: null }; h.serviceFilters = [];
   h.preview = { ok: true, result: "ok", liveCount: 8, expiringWithin24h: 1, selected: 3, admissible: 3 };
   h.create = { ok: true, result: "created", batchId: "b", quantity: 3, extraRequested: 3, liveCount: 8 };
   h.calls = []; h.createArgs = null; h.logs = [];
@@ -100,6 +113,25 @@ describe("over-invite action", () => {
     expect(h.calls).toContain("create");
     expect(r).toMatchObject({ state: "progress" });
   });
+  describe("the posted service must be this studio's own active service", () => {
+    it("a service that is not found saves no batch, even at a zero estimate that never looks at it", async () => {
+      h.fit = { ok: true, fit: 0 };
+      h.service = { data: null, error: null };
+      const r = await run(form({ shownFit: "0", ackNoTimes: "on" }));
+      expect(r).toMatchObject({ state: "notice", notice: expect.stringContaining("Nothing was sent") });
+      expect(h.calls).not.toContain("preview");
+      expect(h.calls).not.toContain("create");
+    });
+    it("a failed service read saves no batch", async () => {
+      h.service = { data: null, error: { code: "XX000" } };
+      expect(await run(form())).toMatchObject({ state: "notice" });
+      expect(h.calls).not.toContain("create");
+    });
+    it("the lookup is scoped to the studio from the session and to active services", async () => {
+      await run(form());
+      expect(h.serviceFilters).toEqual([["id", U(900)], ["studio_id", "22222222-2222-4222-8222-222222222222"], ["active", true]]);
+    });
+  });
   describe("at a zero estimate the SERVER requires the no-times acknowledgement", () => {
     const NEED = "Tick the box to confirm: These clients may open the invitation and find no times to book. Nothing was sent.";
     it("refuses a send that omits it, creates nothing, and says what to tick", async () => {
@@ -150,7 +182,7 @@ describe("over-invite action", () => {
   it("the fit being unreadable sends nothing", async () => {
     h.fit = { ok: false, fit: 0 };
     expect(await run(form())).toMatchObject({ state: "notice" });
-    expect(h.calls).toEqual([]);
+    expect(h.calls).toEqual(["service"]);
   });
   it("a thrown command yields a fixed sentence and logs nothing", async () => {
     h.create = null as never;
