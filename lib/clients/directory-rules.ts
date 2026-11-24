@@ -7,14 +7,15 @@
 // A result a viewer cannot explain from what the row shows would be an oracle.
 //
 // WHAT A VIEWER SEES AND SEARCHES (first release, OPS ruling):
-//   display identity  the preferred name, else the stored name (a receptionist: else the
-//                     literal "Name on file", never the stored name). The stored name is
-//                     NOT matched, sorted on or counted when a preferred name is
-//                     displayed, for any role.
+//   display identity  the preferred name, else the regular client name (for every role; the
+//                     staff rows label a regular name "Name on file", a receptionist's row does
+//                     not). A receptionist sees the literal "Name on file" only when BOTH are
+//                     blank. The regular name is NOT matched, sorted on or counted when a
+//                     preferred name is displayed, for any role.
 //   contact           the email and phone the row shows.
 //   pronouns          owners and practitioners only (shown, never searched). The
 //                     receptionist list is contact, booking and form status (R-1).
-// Legal identity is never read, projected, searched or sorted here.
+// Legal identity (a separate record) is never read, projected, searched or sorted here.
 //
 // ROLES (Privacy S7, R1). The rules are a pure function of the role. An unknown or
 // missing role gets the receptionist (most restrictive) rules. The receptionist
@@ -85,17 +86,19 @@ export function projectStaffRow(c: DirectorySourceClient): DirectoryIdentityRow 
 }
 
 /**
- * The receptionist rows: the same display identity ("Name on file" when no
- * preferred name), the permitted contact, and nothing else: no pronouns (Privacy R-1,
+ * The receptionist rows: the same display identity (preferred name, else the regular
+ * name, else "Name on file" when both are blank), the permitted contact, and nothing else: no pronouns (Privacy R-1,
  * OPS ruling). Specified and tested; deliberately unwired, and it must stay unwired from
  * this module (R-2): the receptionist reads through the held desk RPC (0274), not rows
  * the app selects from clients.
  */
 export function projectReceptionistRow(c: DirectorySourceClient): DirectoryIdentityRow {
   const row = project(c);
-  // Sam's rule (2 Nov): a receptionist sees the preferred name, otherwise the literal "Name on file". The stored
-  // name is never shown to them: it may hold the legal name, and a search matches only what the row shows.
-  return { ...row, displayName: row.nameOnFile ? NAME_ON_FILE_LABEL : row.displayName, pronouns: null };
+  // Sam's rule (24 Nov, replacing the 2 Nov rule): a receptionist sees the preferred name, otherwise the regular client name,
+  // and the literal "Name on file" ONLY when both are blank. This is the same rule as the database (0380) and the calendar.
+  // The regular name may equal the legal name; Sam accepted that. The separate legal identity is never read here.
+  const blank = row.displayName.length === 0;
+  return { ...row, displayName: blank ? NAME_ON_FILE_LABEL : row.displayName, nameOnFile: blank, pronouns: null };
 }
 
 /** Role in, rows out; unknown role = receptionist rules. Tested; unwired. */

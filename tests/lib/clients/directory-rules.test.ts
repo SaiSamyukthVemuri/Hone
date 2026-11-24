@@ -65,23 +65,38 @@ describe("directory rules: roles default-deny (S7)", () => {
     expect(projectRowForRole("receptionist", c)).toEqual(projectReceptionistRow(c));
     expect(projectRowForRole("who-knows", c)).toEqual(projectReceptionistRow(c));
     expect(projectRowForRole(undefined, c)).toEqual(projectReceptionistRow(c));
-    // The receptionist fallback is the literal label, never the stored name (Sam, 2 Nov).
-    expect(projectRowForRole(undefined, base())).toMatchObject({ displayName: "Name on file", nameOnFile: true });
-    expect(JSON.stringify(projectRowForRole(undefined, base()))).not.toContain("Stored Name");
+    // The receptionist fallback is the regular client name (Sam, 24 Nov, replacing the 2 Nov rule).
+    expect(projectRowForRole(undefined, base())).toMatchObject({ displayName: "Stored Name", nameOnFile: false });
   });
 });
 
-describe("directory rules: the receptionist never sees the stored name (identity readiness, R3)", () => {
-  it("shows the preferred name, else the literal Name on file; the stored name appears nowhere in the row", () => {
-    const withPreferred = projectReceptionistRow(base({ name: "Legal Looking Name", preferred_name: "Janie" }));
-    expect(withPreferred).toMatchObject({ displayName: "Janie", nameOnFile: false });
-    const without = projectReceptionistRow(base({ name: "Legal Looking Name", preferred_name: null }));
-    expect(without).toMatchObject({ displayName: "Name on file", nameOnFile: true });
-    for (const row of [withPreferred, without]) expect(JSON.stringify(row)).not.toContain("Legal Looking");
+describe("directory rules: the receptionist name rule (preferred, else regular, else Name on file only when both are blank)", () => {
+  const LEGAL = "Zzlegal Identity Marker";
+  const legalSource = (o: Partial<DirectorySourceClient>) => ({ ...base(o), legal_name: LEGAL, legal_identity: { given: LEGAL }, client_legal_identities: [{ legal_name: LEGAL }] }) as DirectorySourceClient;
+  it("a preferred-name client whose regular name differs: the preferred name wins and the regular name is not in the row", () => {
+    const row = projectReceptionistRow(base({ name: "Regular Name", preferred_name: "Janie" }));
+    expect(row).toMatchObject({ displayName: "Janie", nameOnFile: false });
+    expect(JSON.stringify(row)).not.toContain("Regular Name");
   });
-  it("staff still see the stored name captioned Name on file", () => {
-    expect(projectStaffRow(base({ name: "Legal Looking Name", preferred_name: null }))).toMatchObject({
-      displayName: "Legal Looking Name", nameOnFile: true,
-    });
+  it("a regular-name-only client: the regular name is shown, and it is not labelled Name on file", () => {
+    expect(projectReceptionistRow(base({ name: "Regular Name", preferred_name: null }))).toMatchObject({ displayName: "Regular Name", nameOnFile: false });
+    expect(projectReceptionistRow(base({ name: "Regular Name" }))).toMatchObject({ displayName: "Regular Name", nameOnFile: false });
+  });
+  it("both blank (empty, null or whitespace): the literal Name on file", () => {
+    for (const [name, preferred_name] of [["", null], ["   ", "  "], ["", ""], ["\t\n", "   "]] as const) {
+      expect(projectReceptionistRow(base({ name, preferred_name }))).toMatchObject({ displayName: "Name on file", nameOnFile: true });
+    }
+  });
+  it("a whitespace-only preferred name is blank: the regular name is shown", () => {
+    expect(projectReceptionistRow(base({ name: "Regular Name", preferred_name: "   " }))).toMatchObject({ displayName: "Regular Name", nameOnFile: false });
+  });
+  it("the legal identity never appears in the row, whatever the source row carries", () => {
+    for (const o of [{ preferred_name: "Janie" }, { preferred_name: null }, { name: "", preferred_name: null }]) {
+      expect(JSON.stringify(projectReceptionistRow(legalSource(o)))).not.toContain(LEGAL);
+      expect(JSON.stringify(projectRowForRole("receptionist", legalSource(o)))).not.toContain(LEGAL);
+    }
+  });
+  it("staff rows are unchanged: the regular name is captioned Name on file", () => {
+    expect(projectStaffRow(base({ name: "Regular Name", preferred_name: null }))).toMatchObject({ displayName: "Regular Name", nameOnFile: true });
   });
 });
