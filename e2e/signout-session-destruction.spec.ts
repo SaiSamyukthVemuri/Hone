@@ -900,7 +900,7 @@ test.describe("SIGNOUT-01 · desktop AccountMenu", () => {
     const panel = await openAccountMenu(page);
     await expect(panel).toBeVisible();
     await panel.getByRole("link", { name: "Settings" }).click();
-    await page.waitForURL(/\/settings\/profile/, { timeout: 20_000 });
+    await page.waitForURL(/\/settings\/?(?:[?#].*)?$/, { timeout: 20_000 });
     await expect(panel, "the menu closed on an ordinary link").toHaveCount(0);
 
     // Escape and outside-click dismissal are untouched.

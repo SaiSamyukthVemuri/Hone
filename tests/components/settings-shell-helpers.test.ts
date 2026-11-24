@@ -484,34 +484,34 @@ describe("Studio details shows location and time zone (artifact), without a seco
 describe("Photos finding (1 Nov, d5a27f03): the desktop rail fits the viewport, so no rail item needs a window scroll", () => {
   const src = readFileSync(path.resolve(__dirname, "../..", "components/settings/settings-shell.tsx"), "utf8");
   it("the rail starts in the first grid row, beside the title (not below it)", () => {
-    expect(src).toMatch(/min-\[700px\]:grid min-\[700px\]:grid-cols-\[245px_minmax\(0,1fr\)\]/);
-    expect(src).toMatch(/min-\[700px\]:col-start-1 min-\[700px\]:row-span-2 min-\[700px\]:row-start-1/);
-    expect(src).toMatch(/min-\[700px\]:col-start-2 min-\[700px\]:row-start-1/); // title row
-    expect(src).toMatch(/min-\[700px\]:col-start-2 min-\[700px\]:row-start-2/); // view
+    expect(src).toMatch(/settings-wide:grid settings-wide:grid-cols-\[clamp\(185px,15\.4vw,222px\)_minmax\(0,1fr\)\]/);
+    expect(src).toMatch(/settings-wide:col-start-1 settings-wide:row-span-2 settings-wide:row-start-1/);
+    expect(src).toMatch(/settings-wide:col-start-2 settings-wide:row-start-1/); // title row
+    expect(src).toMatch(/settings-wide:col-start-2 settings-wide:row-start-2/); // view
   });
   it("it is sticky below the app header and scrolls inside itself", () => {
     // The offset is the MEASURED app-header height (--settings-top), so a taller
     // header can never clip the rail or the title bar.
-    expect(src).toMatch(/min-\[700px\]:sticky min-\[700px\]:top-\[calc\(var\(--settings-top,4\.5rem\)\+0\.75rem\)\]/);
+    expect(src).toMatch(/settings-wide:sticky settings-wide:top-\[calc\(var\(--settings-top,4\.5rem\)\+0\.75rem\)\]/);
     // Operators in calc() need spaces (underscores in a Tailwind arbitrary value);
     // without them the cap is invalid CSS and the rail grew to the full viewport
     // (Photos, 0ab9ce743: 799px tall). The 4rem allowance (the rail's 0.75rem
     // top offset plus the page's bottom padding) keeps the rail inside its grid
     // area at the end of the page, so sticky never pushes it above the header.
     expect(src).toMatch(
-      /min-\[700px\]:max-h-\[calc\(100vh_-_var\(--settings-top,4\.5rem\)_-_var\(--settings-tail,4\.5rem\)_-_1rem\)\]/,
+      /settings-wide:max-h-\[calc\(100vh_-_var\(--settings-top,4\.5rem\)_-_var\(--settings-tail,4\.5rem\)_-_1rem\)\]/,
     );
     // --settings-tail is the MEASURED space below the grid (main padding + app
     // footer), so the rail never outgrows its containing block at the page end.
     expect(src).toMatch(/document\.documentElement\.scrollHeight - \(g\.getBoundingClientRect\(\)\.bottom \+ window\.scrollY\)/);
     expect(src).toMatch(/sticky top-\[var\(--settings-top,4\.5rem\)\]/);
     expect(src).toMatch(/new ResizeObserver\(measure\)/);
-    expect(src).toMatch(/min-\[700px\]:overflow-y-auto/);
+    expect(src).toMatch(/settings-wide:overflow-y-auto/);
   });
   it("the view row takes the spare height, so no blank gap opens under the title", () => {
     // The rail spans both rows; without a flexible second row its extra height is
     // shared into the title row and pushes the content down.
-    expect(src).toMatch(/min-\[700px\]:grid-rows-\[auto_minmax\(0,1fr\)\]/);
+    expect(src).toMatch(/settings-wide:grid-rows-\[auto_minmax\(0,1fr\)\]/);
   });
   it("ordinary items share one colour and weight; only the current page is selected", () => {
     // A group button uses ITEM_BASE + ITEM_IDLE collapsed, and the quieter ITEM_PARENT_OPEN
@@ -640,12 +640,12 @@ describe("phone: the scope chip shares the title's row; the drawer starts below 
   });
   it("the backdrop starts below the header too, and the drawer has its own Close control", () => {
     const shell = read("components/settings/settings-shell.tsx");
-    expect(shell).toMatch(/fixed inset-x-0 bottom-0 top-\[var\(--settings-top,4\.5rem\)\] z-30 bg-black\/40 min-\[700px\]:hidden/);
+    expect(shell).toMatch(/fixed inset-x-0 bottom-0 top-\[var\(--settings-top,4\.5rem\)\] z-30 bg-black\/40 settings-wide:hidden/);
     expect(shell).toContain("Close menu");
   });
-  it("the closed state is display:none below 700px, and in-page from 700px up the rail is sticky BELOW the header", () => {
+  it("the rail is hidden in compact mode and sticky below the header in wide mode", () => {
     const shell = read("components/settings/settings-shell.tsx");
-    expect(shell).toMatch(/: "hidden"\s*\} min-\[700px\]:sticky min-\[700px\]:top-\[calc\(var\(--settings-top,4\.5rem\)\+0\.75rem\)\]/);
+    expect(shell).toMatch(/: "hidden"\s*\} settings-wide:sticky settings-wide:top-\[calc\(var\(--settings-top,4\.5rem\)\+0\.75rem\)\]/);
   });
   it("the flat entries Photos listed have no children, so a parent can never share a child's selected look", () => {
     const flat = ["team", "waitlist", "availability", "services", "machines", "consent", "import", "data"];
