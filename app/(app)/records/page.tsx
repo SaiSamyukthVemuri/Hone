@@ -586,7 +586,7 @@ async function SterileItemsSection({
                         </span>
                         <span className="flex flex-col items-start gap-1 text-xs font-medium">
                           {r.lot_number && (
-                            <Link href={`/records?section=sterile&lot=${encodeURIComponent(r.lot_number)}${stockQuery}`} className="inline-flex min-h-8 items-center underline underline-offset-4">Trace usage</Link>
+                            <Link href={`/records?section=sterile&lot=${encodeURIComponent(r.lot_number)}${stockQuery}`} className="inline-flex min-h-11 items-center underline underline-offset-4 pointer-fine:min-h-8">Trace usage</Link>
                           )}
                           <span className="inline-flex min-h-7 items-center text-fg-muted">Details <span aria-hidden="true" className="ml-1 group-open:rotate-90">›</span></span>
                         </span>

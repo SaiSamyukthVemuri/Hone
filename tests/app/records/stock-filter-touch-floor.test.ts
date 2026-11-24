@@ -8,9 +8,13 @@ import { describe, expect, it } from "vitest";
 const src = readFileSync("app/(app)/records/page.tsx", "utf8");
 const body = /function StockFilters[\s\S]*?\n}\n/.exec(src)?.[0] ?? "";
 const linkClass = /<PendingLink[\s\S]*?className=\{`([^`]*)`\}/.exec(body)?.[1] ?? "";
-const classes = linkClass.replace(/\$\{[^}]*\}/g, " ").split(/\s+/).filter(Boolean);
+const classesOf = (c: string) => c.replace(/\$\{[^}]*\}/g, " ").split(/\s+/).filter(Boolean);
+const classes = classesOf(linkClass);
+// The sterile row's "Trace usage" link is the same family: a thumb press inside a logbook row.
+const traceClass = /<Link href=\{`\/records\?section=sterile&lot=[^`]*`\} className="([^"]*)">Trace usage<\/Link>/.exec(src)?.[1] ?? "";
+const traceClasses = classesOf(traceClass);
 
-describe("the shared stock filter keeps the 44px floor on a coarse pointer", () => {
+describe("the logbook filter and row controls keep the 44px floor on a coarse pointer", () => {
   it("found the filter link's class list", () => {
     expect(body).toContain('aria-label="Stock status"');
     expect(classes).toContain("inline-flex"); // min-height is inert on an inline box
@@ -28,6 +32,17 @@ describe("the shared stock filter keeps the 44px floor on a coarse pointer", () 
 
   it("relaxes only for a fine pointer", () => {
     const compact = classes.filter((c) => /min-h-/.test(c) && c !== "min-h-11");
+    expect(compact.length).toBeGreaterThan(0);
+    for (const c of compact) expect(c.startsWith("pointer-fine:")).toBe(true);
+  });
+
+  it("the sterile row's Trace usage link follows the same rule", () => {
+    expect(traceClasses, "found the Trace usage link").toContain("underline");
+    expect(traceClasses).toContain("inline-flex");
+    expect(traceClasses).toContain("min-h-11");
+    expect(traceClasses.filter((c) => /^min-h-/.test(c) && c !== "min-h-11")).toEqual([]);
+    expect(traceClasses.filter((c) => /^(sm|md|lg|xl):min-h-/.test(c))).toEqual([]);
+    const compact = traceClasses.filter((c) => /min-h-/.test(c) && c !== "min-h-11");
     expect(compact.length).toBeGreaterThan(0);
     for (const c of compact) expect(c.startsWith("pointer-fine:")).toBe(true);
   });
