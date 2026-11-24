@@ -94,7 +94,7 @@ for (const screen of SCREENS) {
         await expect(full).toBeVisible();
         await expect(full.getByTestId("prep-area-label").first()).toBeVisible();
         await expect(full).toContainText("Synchro");
-        await expect(full.getByTestId("prep-notes")).toContainText(CAUTION);
+        await expect(full.getByTestId("prep-note-item").first()).toContainText(CAUTION);
         await expect(row(page).getByRole("button", { name: /^Hide last visit details for / })).toHaveAttribute("aria-expanded", "true");
         await shot(page, "1-last-visit-details");
       });

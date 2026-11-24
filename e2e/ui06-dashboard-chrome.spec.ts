@@ -382,10 +382,9 @@ for (const vp of WIDTHS) {
         expect(text.length, `"${headings[i]}" must show its settings or outcome under the heading`).toBeGreaterThan(0);
       }
 
-      // The notes the practitioner left are visible in the same card.
-      const notes = card.getByTestId("prep-notes");
-      await expect(notes).toContainText("watch the upper lip for reactive erythema");
-      await expect(notes).toContainText("drop to 3.5s dwell if reaction persists");
+      // The caution the practitioner left sits under its area, in the same card. (The plan for the NEXT visit is
+      // deliberately not in this card; it is the "For this visit" line on the row.)
+      await expect(card.getByTestId("prep-note-item").first()).toContainText("watch the upper lip for reactive erythema");
 
       // The one-line summary is not a heading and must not be counted as one.
       expect(report.map((r) => r.text.toLowerCase())).not.toContain("last treatment");
