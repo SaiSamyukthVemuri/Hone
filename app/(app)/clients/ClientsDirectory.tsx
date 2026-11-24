@@ -228,9 +228,10 @@ function DirectoryRowView({
     <li id={`client-${row.id}`}>
       <div className={`relative grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 px-3 py-3 text-sm hover:bg-neutral-50 lg:gap-4 dark:hover:bg-neutral-900 ${archived ? ARCHIVE_COLUMNS : ACTIVE_COLUMNS} ${selected ? "bg-neutral-50 dark:bg-neutral-900" : ""}`}>
         <div className="min-w-0">
-          <Link href={`/clients/${row.id}`} className="break-words font-semibold after:absolute after:inset-0 focus-visible:after:outline-2 focus-visible:after:outline-inset hover:underline">
+          {/* PendingLink adds `relative`, which would confine the whole-row ::after overlay to this name; `static!` keeps the row (the nearest positioned ancestor) as the overlay's frame, and the pending mark then centres on the row. */}
+          <PendingLink href={`/clients/${row.id}`} pendingLabel="Opening client…" className="static! break-words font-semibold after:absolute after:inset-0 focus-visible:after:outline-2 focus-visible:after:outline-inset hover:underline">
             {row.displayName}
-          </Link>
+          </PendingLink>
           {row.pronouns && <div className="text-xs text-neutral-600 dark:text-neutral-400">{row.pronouns}</div>}
           {row.nameOnFile && <div className="text-xs text-neutral-500">{NAME_ON_FILE_LABEL}</div>}
         </div>
