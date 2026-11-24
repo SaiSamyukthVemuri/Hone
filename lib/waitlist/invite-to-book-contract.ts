@@ -1067,6 +1067,17 @@ export const RESEND_MINTS_A_NEW_LINK =
   "Replacing the invitation creates a new booking link and starts the expiry window again. The earlier link stops working.";
 
 /**
+ * What "Return to waitlist" does, from requeue_new_client_waitlist_entry (0188): the entry goes back to waiting and keeps the date it first joined
+ * (joined_at is not in the update), while the stamps of the earlier hold and invitation on the entry are cleared. No retention period is stated: that
+ * is not decided, so this sentence promises none.
+ */
+export const RETURN_TO_WAITLIST_NOTE =
+  "Puts them back in the waiting queue with the date they first joined.";
+
+/** The "you can undo this" sentence appended to cancelling an invitation: a set-aside entry can be returned (requeue accepts released and expired). */
+export const CANCEL_CAN_BE_RETURNED = "You can return them to the waitlist; they keep the date they first joined.";
+
+/**
  * Why a send control is off when no adapter is bound.
  *
  * Names THIS action, not "sending" in the abstract — a control that is disabled
