@@ -272,7 +272,6 @@ export function directoryHref(state: {
   lastVisit?: LastVisitFilter;
   page?: number;
   client?: string;
-  group?: string;
 }): string {
   const p = new URLSearchParams();
   if (state.view === "archived") p.set("view", "archived");
@@ -284,7 +283,6 @@ export function directoryHref(state: {
   if (state.sort === "name" && state.view === "archived") p.set("sort", "name");
   if (state.page && state.page > 1) p.set("page", String(state.page));
   if (state.client) p.set("client", state.client);
-  if (state.group) p.set("group", state.group);
   const qs = p.toString();
   return qs ? `/clients?${qs}` : "/clients";
 }

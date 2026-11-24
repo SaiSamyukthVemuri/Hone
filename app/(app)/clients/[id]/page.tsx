@@ -1,6 +1,4 @@
 import { createClient } from "@/lib/supabase/server";
-import { ClientGroupsCard } from "../ClientGroups";
-import { readProfileGroups } from "@/lib/client-groups/profile";
 import Link from "next/link";
 import { orderByRecency } from "@/lib/sessions/charted-session";
 // RESP-CLIENT-INTAKE-01. The four outbound controls measured as dead clicks on
@@ -359,7 +357,6 @@ export default async function ClientCheatSheetPage({
   // One instant for the read and the selectors, so a visit exactly on the boundary is never in both.
   const visitNowMs = Date.now();
   const [
-    profileGroups,
     appointmentTimeline,
     services,
     intake,
@@ -380,7 +377,6 @@ export default async function ClientCheatSheetPage({
     portalAccessEvents,
     overviewVisitAppointments,
   ] = await Promise.all([
-    readProfileGroups(studio.id, client.id, practitioner.role === "owner" && isOverview),
     // PR #157: full appointment history joined to the linked session via the
     // PR #156 appointment_id FK. Rendered only by <ClientAppointmentTimeline>
     // on the Sessions tab.
@@ -1256,10 +1252,6 @@ export default async function ClientCheatSheetPage({
           {/* PR #194: allergies moved to the top of Overview (under
               pinned notes); see the block above the Messages
               collapsible. */}
-
-          {practitioner.role === "owner" && <ClientGroupsCard clientId={client.id}
-            catalogue={profileGroups.catalogue}
-            assigned={profileGroups.assigned} />}
 
           {/* PR #198 (Chloe iPad retest): one "Client info" card holding
               birthday, emergency contact, and address, with an Edit
