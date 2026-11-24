@@ -3172,7 +3172,7 @@ change with its own blast radius.
 | **Repo migration max** | **0178** — **hosted == repo.** Nothing pending. Next free number is **0179**. |
 | **Total migrations in repo** | **177** (`0001` … `0157`, `0159` … `0178` — **no `0158`**) — derived by `npm run migration:state` |
 | **Total applied in production** | **177**, each applied **exactly once**. Applied count moved 176 → 177. |
-| **`0178` checksum (frozen)** | `6fc6a85038244933a7091b20b082aba4dcc5987c36c604c1cde52ec01bef234f` |
+| **`0178` checksum (frozen)** | `6fc6a85038144933a7091b20b082aba4dcc5987c36c604c1cde52ec01bef234f` |
 | **Applied from** | production merge commit `463198e21560f172e45aca32d5043d61ecc540fb` (PR #558) — **MERGED before the apply**, deliberately app-first |
 | **Production application source** | `463198e21560f172e45aca32d5043d61ecc540fb` — Vercel Production `dpl_5M2wCnoh9XUzVV3ZugypDuQESLwN`, Ready |
 
@@ -4293,7 +4293,7 @@ a terminal state**.
 
 ## 0178 — PRACTITIONER IDENTITY + MUTATION BOUNDARY (applied 2026-08-11T21:39:05Z–21:39:15Z)
 
-`sha256 6fc6a85038244933a7091b20b082aba4dcc5987c36c604c1cde52ec01bef234f` (executable
+`sha256 6fc6a85038144933a7091b20b082aba4dcc5987c36c604c1cde52ec01bef234f` (executable
 `311a685a41c8ac3e…`), applied from the production merge commit
 `463198e21560f172e45aca32d5043d61ecc540fb` (PR #558, reviewed head `48c5db72d779e5b6157704d07d4ce5c17e3537df`,
 **MERGED before the apply**; normal two-parent merge). 10 seconds, dry run listed only 0178,
