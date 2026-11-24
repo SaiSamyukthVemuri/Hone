@@ -44,6 +44,8 @@ import type { GroupSubmission } from "@/lib/machines/setting-groups";
 // the record must not be able to acquire one by her failing to notice a filled
 // box.
 
+export type ParkedSettingDraft = { groups: SettingGroupDraft[]; groupOrdinal: number; confirmed: string[] };
+
 export type MachineSettingDraftProps = {
   /**
    * The host's save is unresolved, so this draft is part of a frozen payload.
@@ -56,6 +58,13 @@ export type MachineSettingDraftProps = {
   frozen?: boolean;
   profile: MachineProfile;
   mode: MachineMode;
+  /**
+   * MEMORY-ONLY PARKING (switch away and back). When the host chose another machine or mode and then came back to THIS identity, it hands the
+   * typed values back here so nothing she typed is lost. Never stored anywhere: the host holds them in memory for this open area only.
+   */
+  restore?: ParkedSettingDraft | null;
+  /** Called after every change with what to park for this identity. */
+  onPark?: (parked: ParkedSettingDraft) => void;
   /**
    * Reports the draft after every change.
    *
@@ -100,9 +109,11 @@ export function MachineSettingDraft({
   mode,
   onDraftChange,
   frozen = false,
+  restore = null,
+  onPark,
 }: MachineSettingDraftProps) {
   const fieldGroups = nativeFieldGroups(profile, mode);
-  const [groups, setGroups] = useState<SettingGroupDraft[]>(firstGroup);
+  const [groups, setGroups] = useState<SettingGroupDraft[]>(restore ? () => restore.groups : firstGroup);
 
   // REPORT THE EMPTY DRAFT ON MOUNT, which is what makes a machine or mode
   // SWITCH safe.
@@ -123,13 +134,16 @@ export function MachineSettingDraft({
   // effect keyed on the identity instead would fire on a re-render and clear
   // a draft she was still typing into.
   useEffect(() => {
-    onDraftChange({ groups: [], blocking: null });
+    // A RESTORED DRAFT IS REPORTED IN FULL, under THIS identity (the panel adds it), so the host never holds another identity's values; a fresh
+    // mount reports the empty draft, as before.
+    if (restore) report(restore.groups, new Set(restore.confirmed));
+    else onDraftChange({ groups: [], blocking: null });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   // MONOTONIC, never derived from the list: a removed group's identity is
   // retired for the life of the mount, because reuse would corrupt a group's
   // revision history. Same rule as the entry form, same reason.
-  const [groupOrdinal, setGroupOrdinal] = useState(1);
+  const [groupOrdinal, setGroupOrdinal] = useState(() => (restore ? Math.max(restore.groupOrdinal, restore.groups.length + 1) : 1));
 
   /**
    * What the host must know, recomputed from a candidate draft.
@@ -145,8 +159,10 @@ export function MachineSettingDraft({
   // is applied and wired.
   // Whether anything has been typed: reported as a LEVEL to the host's registry, and removed when this draft unmounts (draft-registry.tsx).
   const [hasEntries, setHasEntries] = useState(false);
+  const ordinalRef = useRef(1);
+  ordinalRef.current = groupOrdinal;
   useReportDraft({ draft: hasEntries, unresolved: false });
-  const [confirmed, setConfirmed] = useState<ReadonlySet<string>>(new Set());
+  const [confirmed, setConfirmed] = useState<ReadonlySet<string>>(() => new Set(restore?.confirmed ?? []));
   const confirmedRef = useRef(confirmed);
   confirmedRef.current = confirmed;
   const warnings = rangeWarningsForDraft(profile, mode, groups);
@@ -169,6 +185,7 @@ export function MachineSettingDraft({
         rangeConfirmationBlocking(nextWarnings, live),
     };
     setHasEntries(machineDraftHasEntries(payload));
+    onPark?.({ groups: next, groupOrdinal: ordinalRef.current, confirmed: [...live] });
     onDraftChange(payload);
   };
 

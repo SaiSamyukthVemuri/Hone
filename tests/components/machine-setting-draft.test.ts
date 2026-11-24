@@ -333,7 +333,7 @@ describe("switching machine or mode clears the collected draft", () => {
   it("the collector reports an EMPTY draft on mount", () => {
     const src = read(DRAFT_SRC);
     expect(src).toMatch(
-      /useEffect\(\(\) => \{\s*onDraftChange\(\{ groups: \[\], blocking: null \}\);/,
+      /useEffect\(\(\) => \{[^]*?else onDraftChange\(\{ groups: \[\], blocking: null \}\);/,
     );
   });
 

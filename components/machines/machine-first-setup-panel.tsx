@@ -34,6 +34,7 @@ import { MachinePriorSetup } from "./machine-prior-setup";
 import { MachineRecordedSetups } from "./machine-recorded-setups";
 import {
   MachineSettingDraft,
+  type ParkedSettingDraft,
   MachineSettingDraftReset,
 } from "./machine-setting-draft";
 import type { GroupSubmission } from "@/lib/machines/setting-groups";
@@ -667,6 +668,12 @@ function MachineFirstSetupPanelImpl({
     : (chosen && mode) || savedUnavailable || modeUnresolved
       ? "native"
       : "none";
+  // WHAT SHE TYPED FOR EACH NATIVE IDENTITY, kept in memory while this NEW area is open, so choosing another machine or mode and coming back
+  // restores exactly her entries. Never stored. Cleared when the area is saved (a block exists) and dies with the panel.
+  const parkedNative = useRef(new Map<string, ParkedSettingDraft>());
+  useEffect(() => {
+    if (blockId) parkedNative.current.clear();
+  }, [blockId]);
   const lastMultiplexSeq = useRef(multiplexRequest?.seq ?? 0);
   useEffect(() => {
     if (!multiplexRequest || multiplexRequest.seq === lastMultiplexSeq.current) return;
@@ -1092,6 +1099,8 @@ function MachineFirstSetupPanelImpl({
               key={`${chosen.device.deviceId}::${chosen.profile.profileId}::${chosen.profile.version}::${mode.key}`}
               profile={chosen.profile}
               mode={mode}
+              restore={parkedNative.current.get(`${chosen.device.deviceId}::${chosen.profile.profileId}::${chosen.profile.version}::${mode.key}`) ?? null}
+              onPark={(p) => parkedNative.current.set(`${chosen.device.deviceId}::${chosen.profile.profileId}::${chosen.profile.version}::${mode.key}`, p)}
               // THE IDENTITY IS ADDED HERE, where the chosen unit is known.
               onDraftChange={(d) =>
                 onSettingDraft({

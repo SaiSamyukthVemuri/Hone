@@ -1704,6 +1704,7 @@ export function BlockSetupForm({
       // Create: one save → treatment area + first entry. block_name omitted
       // (null), the section title falls back to the area, then a muted
       // placeholder.
+      const nativeCreate = machineKind === "native";
       const bareKey = attachedSetup ? null : (bareCreateKeyRef.current ??= crypto.randomUUID());
       createAttemptRef.current ??= { identity: identityDraftRef.current, unresolved: false };
       const attemptIdentity = createAttemptRef.current.identity;
@@ -1711,9 +1712,12 @@ export function BlockSetupForm({
         clientId,
         sessionId,
         createKey: bareKey,
-        mode: (draft.mode || null) as ElectrolysisMode | null,
-        apilusModality: (draft.apilusModality || null) as ApilusModality | null,
-        energyLevel: elNum,
+        // A NEW AREA ON A NATIVE MACHINE (MultiPlex) carries NO legacy mode or legacy readings: whatever she typed under Thermolysis, Blend or
+        // Galvanic before switching is parked in memory (and comes back if she switches back), never saved under the native machine. The shared
+        // entries (areas, minutes, probe, lot, hairs, notes, observations, tolerance, numbing) are not mode readings and are always sent.
+        mode: nativeCreate ? null : ((draft.mode || null) as ElectrolysisMode | null),
+        apilusModality: nativeCreate ? null : ((draft.apilusModality || null) as ApilusModality | null),
+        energyLevel: nativeCreate ? null : elNum,
         minutesPerformed: minutesNum,
         probeOptionKey: draft.probeKey || null,
         probeLotNumber: draft.probeLotNumber.trim() || null,
@@ -1728,7 +1732,9 @@ export function BlockSetupForm({
         areaIsCustom,
         // Multi-area (0128): authoritative when non-empty.
         areas: draft.areas,
-        readings,
+        readings: nativeCreate
+          ? { ...readings, thermolysisIntensityPercent: null, thermolysisDurationSeconds: null, galvanicMa: null, galvanicDurationSeconds: null, unitsOfLye: null, pulseCount: null, pulseDelaySeconds: null }
+          : readings,
         ...clinicalResponse,
         // THE SETTINGS, WHEN THERE ARE ANY. `prepareHandoff` mints the retry
         // key ONCE and copies the groups, so a keystroke after the save began
