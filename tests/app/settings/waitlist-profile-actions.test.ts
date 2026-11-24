@@ -116,7 +116,7 @@ describe("stated availability", () => {
       },
     ]);
     expect(tableTouches).toEqual([]);
-    expect(revalidatePath).toHaveBeenCalledWith("/settings/waitlist");
+    expect(revalidatePath).toHaveBeenCalledWith("/waitlist");
   });
 
   it("IGNORES a browser-supplied studio or actor", async () => {

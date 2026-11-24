@@ -68,7 +68,7 @@ const ANCHORS = [
   { testId: "nav-clients", href: "/clients", form: "label", attr: "testId" },
   { testId: "nav-calendar", href: "/calendar", form: "label", attr: "testId" },
   // Rendered only where the Settings Waitlist tab's own rule allows it; still one acknowledging anchor in the source.
-  { testId: "nav-waitlist", href: "/settings/waitlist", form: "label", attr: "testId" },
+  { testId: "nav-waitlist", href: "/waitlist", form: "label", attr: "testId" },
   { testId: "nav-records", href: "/records", form: "label", attr: "testId" },
   { testId: "nav-notifications", href: "/notifications", form: "container", attr: "data-testid" },
 ] as const;

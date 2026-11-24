@@ -46,13 +46,13 @@ test.describe("invite beyond the estimate", () => {
 
     // 1. NORMAL NAVIGATION: the main navigation's Waitlist entry, then the link on that page. No page.goto to the override.
     await page.locator('[data-testid="nav-waitlist"]').first().click();
-    await expect(page).toHaveURL(/\/settings\/waitlist$/, { timeout: T });
+    await expect(page).toHaveURL((url) => url.pathname === "/waitlist", { timeout: T });
     const link = page.locator('[data-testid="over-invite-link"] a');
     await expect(link).toBeVisible({ timeout: T });
     await expect(link).toHaveText("Invite beyond the estimate");
     await expect(page.locator('[data-testid="over-invite-link"]')).toContainText("You confirm once; sending continues in the background.");
     await link.click();
-    await expect(page).toHaveURL(/\/settings\/waitlist\/over-invite/, { timeout: T });
+    await expect(page).toHaveURL((url) => url.pathname === "/waitlist/over-invite", { timeout: T });
 
     // 2. Choose the service and see the numbers, then choose every waiting client.
     await page.getByLabel("Service").selectOption({ label: seed.serviceName });
@@ -110,7 +110,7 @@ test.describe("invite beyond the estimate", () => {
     await loginAsOwner(page, seed);
     await page.locator('[data-testid="nav-waitlist"]').first().click();
     await page.locator('[data-testid="over-invite-link"] a').click();
-    await expect(page).toHaveURL(/\/settings\/waitlist\/over-invite/, { timeout: T });
+    await expect(page).toHaveURL((url) => url.pathname === "/waitlist/over-invite", { timeout: T });
     await page.getByLabel("Service").selectOption({ label: seed.serviceName });
     await page.getByRole("button", { name: "Show numbers" }).click();
     const form = page.locator('[data-testid="over-invite-confirm"]');

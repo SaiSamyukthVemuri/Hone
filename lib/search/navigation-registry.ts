@@ -1,4 +1,4 @@
-import { WAITLIST_ARCHIVED_PATH, WAITLIST_OVER_INVITE_PATH, WAITLIST_PATH, WAITLIST_RELEASED_PATH, WAITLIST_REPLIES_PATH, WAITLIST_SEARCH_PATH } from "@/lib/waitlist/paths";
+import { LEGACY_WAITLIST_ROUTES, WAITLIST_ARCHIVED_PATH, WAITLIST_OVER_INVITE_PATH, WAITLIST_PATH, WAITLIST_RELEASED_PATH, WAITLIST_REPLIES_PATH, WAITLIST_SEARCH_PATH } from "@/lib/waitlist/paths";
 import "server-only";
 
 // Global Search V2-A, the canonical searchable navigation/settings registry.
@@ -955,7 +955,7 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
   {
     route: WAITLIST_OVER_INVITE_PATH,
     reason:
-      "Owner-only invite-beyond-the-estimate page, reached from a link on the waitlist page. It follows its parent: the waitlist Settings tab appears only for a studio whose durable waitlist is switched on, so listing this page in Global Search would offer a page its studio cannot otherwise reach. Search does not advertise it separately.",
+      "Owner-only invite-beyond-the-estimate page, reached from a link on the waitlist page. It follows its parent: the waitlist navigation entry is visible only to eligible owners, so listing this page in Global Search would offer a page its studio cannot otherwise reach. Search does not advertise it separately.",
   },
   {
     route: "/calendar/check-practitioner",
@@ -1012,10 +1012,14 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
     reason:
       "Doorway or legacy URL that only redirects to a focused settings view. Each view is registered individually.",
   },
+  ...LEGACY_WAITLIST_ROUTES.map(({ source }) => ({
+    route: source,
+    reason: "Former settings URL that permanently redirects to the owner waitlist workspace.",
+  })),
   {
     route: WAITLIST_PATH,
     reason:
-      "WAIT-02 operator queue for the new-client waitlist. Its Settings tab appears only for a studio whose durable waitlist is switched on, so advertising it in search would resolve to an empty surface for every studio that has not been enabled. Revisit when the capability is generally available rather than pilot-gated.",
+      "WAIT-02 operator queue for the new-client waitlist. Its navigation entry appears only for owners of studios with a live waitlist or existing entries, so advertising it in search would resolve to an empty surface for every studio that has not been enabled. Revisit when the capability is generally available rather than pilot-gated.",
   },
   {
     route: WAITLIST_REPLIES_PATH,
@@ -1025,7 +1029,7 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
   {
     route: WAITLIST_SEARCH_PATH,
     reason:
-      "Owner-only name search over the waitlist, reached from a link on the waitlist page. It follows its parent: the waitlist Settings tab appears only for a studio whose durable waitlist is switched on, so listing it in Global Search would offer an empty or refused page to everyone else.",
+      "Owner-only name search over the waitlist, reached from a link on the waitlist page. It follows its parent: the waitlist navigation entry is visible only to eligible owners, so listing it in Global Search would offer an empty or refused page to everyone else.",
   },
   {
     route: WAITLIST_ARCHIVED_PATH,

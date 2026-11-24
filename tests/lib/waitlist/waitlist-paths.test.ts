@@ -13,29 +13,28 @@ import {
   WAITLIST_SEARCH_PATH,
 } from "@/lib/waitlist/paths";
 
-// The constant was introduced without changing a single URL. These are the strings the code spelled out BEFORE it, written literally here on purpose: if a
-// value in lib/waitlist/paths.ts ever changes, this test says so, and that change is then a deliberate move (with redirects), not an accident.
+// Pin public URLs used by the owner workspace and the existing stored bell links.
 
-describe("the waitlist path constants are the pre-existing strings, byte for byte", () => {
+describe("the owner waitlist uses its canonical workspace URLs", () => {
   it("the six paths", () => {
-    expect(WAITLIST_PATH).toBe("/settings/waitlist");
-    expect(WAITLIST_SEARCH_PATH).toBe("/settings/waitlist/search");
-    expect(WAITLIST_REPLIES_PATH).toBe("/settings/waitlist/replies");
-    expect(WAITLIST_ARCHIVED_PATH).toBe("/settings/waitlist/archived");
-    expect(WAITLIST_RELEASED_PATH).toBe("/settings/waitlist/released");
-    expect(WAITLIST_OVER_INVITE_PATH).toBe("/settings/waitlist/over-invite");
+    expect(WAITLIST_PATH).toBe("/waitlist");
+    expect(WAITLIST_SEARCH_PATH).toBe("/waitlist/search");
+    expect(WAITLIST_REPLIES_PATH).toBe("/waitlist/replies");
+    expect(WAITLIST_ARCHIVED_PATH).toBe("/waitlist/archived");
+    expect(WAITLIST_RELEASED_PATH).toBe("/waitlist/released");
+    expect(WAITLIST_OVER_INVITE_PATH).toBe("/waitlist/over-invite");
   });
-  it("the persisted and emailed links built from them are unchanged", () => {
-    expect(WAITLIST_DECLINE_OWNER_PATH).toBe("/settings/waitlist?followup=1#follow-up");
+  it("emails and new links target the workspace, and the database bell still targets its forwarded URL", () => {
+    expect(WAITLIST_DECLINE_OWNER_PATH).toBe("/waitlist?followup=1#follow-up");
     expect(WAITLIST_OFFER_DECLINED_HREF).toBe("/settings/waitlist#follow-up");
-    expect(OVER_INVITE_LINK_PATH).toBe("/settings/waitlist/over-invite");
+    expect(OVER_INVITE_LINK_PATH).toBe("/waitlist/over-invite");
   });
-  it("the sign-in return table is unchanged", () => {
+  it("the two allowed sign-in keys now land at the workspace", () => {
     expect(RETURN_TARGETS).toEqual([
-      { key: "waitlist_followup", pathname: "/settings/waitlist", query: "?followup=1", destination: "/settings/waitlist#follow-up" },
-      { key: "waitlist", pathname: "/settings/waitlist", query: "", destination: "/settings/waitlist" },
+      { key: "waitlist_followup", pathname: "/waitlist", query: "?followup=1", destination: "/waitlist#follow-up" },
+      { key: "waitlist", pathname: "/waitlist", query: "", destination: "/waitlist" },
     ]);
-    expect(returnToDestination("waitlist_followup")).toBe("/settings/waitlist#follow-up");
-    expect(returnToDestination("waitlist")).toBe("/settings/waitlist");
+    expect(returnToDestination("waitlist_followup")).toBe("/waitlist#follow-up");
+    expect(returnToDestination("waitlist")).toBe("/waitlist");
   });
 });

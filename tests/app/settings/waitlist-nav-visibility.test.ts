@@ -164,7 +164,7 @@ async function waitlistTabShown(): Promise<boolean> {
   const tree = await SettingsLayout({ children: null });
   const items = findItems(tree);
   expect(items, "layout must hand the Settings shell its items").not.toBeNull();
-  return items!.some((i) => i.href === "/settings/waitlist" && i.label === "Waitlist");
+  return items!.some((i) => i.href === "/waitlist" && i.label === "Waitlist");
 }
 
 beforeEach(() => {

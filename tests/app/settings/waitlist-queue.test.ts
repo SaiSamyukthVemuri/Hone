@@ -334,7 +334,7 @@ vi.mock("next/headers", () => ({
 }));
 /** The action redirected to the plain page and left exactly this notice key in the flash cookie. */
 async function expectNoticeRedirect(run: Promise<unknown>, key: string) {
-  await expect(run).rejects.toThrow(/^NEXT_REDIRECT:\/settings\/waitlist$/);
+  await expect(run).rejects.toThrow(/^NEXT_REDIRECT:\/waitlist$/);
   expect(flash.sets).toEqual([{ name: "hone_waitlist_notice", value: key }]);
 }
 // The real `redirect` throws a NEXT_REDIRECT control-flow error; this one does too, carrying the target.
@@ -628,15 +628,9 @@ const { removeWaitlistEntryAction } = await import(
   "@/app/(app)/settings/waitlist/actions"
 );
 
-/**
- * Render the page for a given query string.
- *
- * DEFAULTS TO NO PARAMS, so every existing call site keeps asserting on the
- * default all-sections view unchanged — the view a studio sees when it simply
- * opens /settings/waitlist.
- */
+/** Render the owner's Waitlist with the same parameters as a directory link. */
 const render = async (
-  searchParams: { section?: string | string[]; page?: string | string[]; view?: string | string[]; dpage?: string | string[] } = {},
+  searchParams: { tab?: string | string[]; section?: string | string[]; page?: string | string[]; view?: string | string[]; dpage?: string | string[] } = {},
 ) =>
   renderToStaticMarkup(
     await WaitlistSettingsPage({ searchParams: Promise.resolve(searchParams) }),
@@ -805,7 +799,7 @@ describe("the count is authoritative", () => {
     // and offered nothing; the other 40 people were unreachable, and so were
     // their actions.
     expect(html).toContain('data-testid="waitlist-section-all-waiting"');
-    expect(html).toContain('href="/settings/waitlist?section=waiting"');
+    expect(html).toContain('href="/waitlist?section=waiting"');
   });
 
   it("says nothing about truncation when the page holds everyone", async () => {
@@ -897,97 +891,32 @@ describe("rendered rows", () => {
     expect(html).toContain('<input type="hidden" name="entry_id" value="entry-1"/>');
   });
 
-  it("offers EXACTLY ONE action per row, and no navigation at all", async () => {
-    // Sharper than grepping for forbidden words: enumerate what a person can
-    // actually press. WAIT-03's invitation and ADMIT's release would each have
-    // to add a control here, and this list would change.
+  it("offers only the permitted waiting-row controls and no link to a client record", async () => {
     scenario.rows = [entry()];
     scenario.count = 1;
     const html = await render();
+    const row = rowMarkup(html, "entry-1");
+    expect(row).not.toBeNull();
 
-    const controls = [
-      // A page-level switch (aria-pressed) has no text of its own, so it is
-      // enumerated by its accessible name: the owner's waitlist-texts switch.
-      ...[...html.matchAll(/<button([^>]*)>(.*?)<\/button>/g)].map((m) => {
-        const label = /aria-pressed/.test(m[1]) ? /aria-label="([^"]*)"/.exec(m[1])?.[1] : undefined;
-        return label ? `switch: ${label}` : m[2];
-      }),
-      ...[...html.matchAll(/<summary[^>]*>(.*?)<\/summary>/g)].map((m) => m[1]),
-    ];
-    // CLAIMING IS INTERNAL AND IS NOT OFFERED. A waiting row's only control is
-    // removal, behind its confirmation step. What is NOT here is the point: no
-    // Claim, no "Claim next", no Release, no Record expired, no Send invitation
-    // — none of those is either permitted on a waiting entry or a job a
-    // practitioner is being asked to do.
-    // WAIT INTEGRATION-01 — THE LIST CHANGED, EXACTLY AS THIS GUARD PREDICTED.
-    //
-    // The note above says "WAIT-03's invitation and ADMIT's release would each
-    // have to add a control here, and this list would change". The assembly
-    // binds #683's composer to #685's `admit_`, so a waiting row now also
-    // offers Invite to book, and the composer it opens carries its own send and
-    // dismiss controls.
-    //
-    // CLAIMING IS STILL INTERNAL AND STILL NOT OFFERED — the part that was never
-    // about invitation. The equality keeps a further control from arriving
-    // unannounced, and the `claim` assertion below is untouched.
-    // WAIT-CAPACITY-01 — AND IT CHANGED AGAIN, ON PURPOSE. The owner's
-    // invitation-capacity panel adds exactly one control: "Start inviting"
-    // when no capacity is open (or "Close invitations" when one is). It is an
-    // OWNER control on the page, not a per-row action -- every row still offers
-    // only Remove and Invite to book. Enumerated rather than excluded, so the
-    // next unannounced control still fails here.
-    // WAIT-04A — AND AGAIN, AND ONE OF THESE IS GENUINELY PER-ROW.
-    //
-    // Two owner controls and two tabs arrive with the add/import panel, which
-    // is a page-level control like the capacity panel above it. "Record" is
-    // different and is called out deliberately: it IS a per-row control, the
-    // first added since Invite to book, and it writes the person's stated
-    // availability. It reads "Update" once something has been recorded, so
-    // both spellings are asserted below rather than only the one this fixture
-    // happens to produce.
-    //
-    // Enumerated, not excluded, exactly as before: the next unannounced
-    // control still fails here.
-    //
-    // 0208 — AND AGAIN, PER-ROW. The owner's SMS-consent record: a disclosure
-    // naming the person, and its one submit. Offered only on a row with a
-    // mobile, no consent and no STOP, which this fixture is; the cases where
-    // it is withheld are proved in the 0208 block below.
-    expect(controls.sort()).toEqual([
-      "Add to waitlist",
+    // The summary opens the row in place. Include every nested control, even
+    // those hidden until the row opens, so an extra lifecycle action fails here.
+    const labels = [...row!.matchAll(/<(button|summary)\b[^>]*>([\s\S]*?)<\/\1>/g)].map(
+      ([, , content]) => content.replace(/<[^>]+>/g, "").trim(),
+    );
+    const detailSummary = labels.filter((label) => label.includes("View details for Jo Smith"));
+    expect(detailSummary).toHaveLength(1);
+    expect(labels.filter((label) => label !== detailSummary[0]).sort()).toEqual([
       "Cancel",
       "Confirm removal",
-      "Invite to book",
+      "Invite to book Jo Smith",
       "Record",
       "Record SMS consent for Jo Smith",
       "Record consent",
       "Remove",
       "Send invitation",
-      "They asked today",
-      "They were already waiting",
-      "switch: Waitlist texts",
     ]);
-    // Stated as its own claim so a future control named something else cannot
-    // reintroduce claiming past the equality above.
-    expect(html).not.toMatch(/\bclaim/i);
-
-    // No links: a waiting person has no client record to navigate to, and
-    // offering one would imply they are already a client.
-    // The ONLY links on the page are the two owner-only tools in the page header (search, released history, archived), which are not about any
-    // person; they are removed here and pinned exactly, so a link on a ROW is still refused.
-    const nav = /<p[^>]*data-testid="waitlist-tools-nav"[\s\S]*?<\/p>/.exec(html);
-    expect(nav).not.toBeNull();
-    expect([...nav![0].matchAll(/href="([^"]+)"/g)].map((m) => m[1])).toEqual([
-      "/settings/waitlist/search",
-      "/settings/waitlist/released",
-      "/settings/waitlist/archived",
-    ]);
-    // The owner-only "Invite beyond the estimate" section is the one other link, also not about any person: pinned exactly, removed, and a link on a
-    // ROW is still refused.
-    const beyond = /<section[^>]*data-testid="over-invite-link"[\s\S]*?<\/section>/.exec(html);
-    expect(beyond).not.toBeNull();
-    expect([...beyond![0].matchAll(/href="([^"]+)"/g)].map((m) => m[1])).toEqual(["/settings/waitlist/over-invite"]);
-    expect(html.replace(nav![0], "").replace(beyond![0], "")).not.toMatch(/<a\s/);
+    expect(row).not.toMatch(/\bclaim/i);
+    expect(row).not.toMatch(/<a\s/);
   });
 
   // =========================================================================
@@ -1119,6 +1048,33 @@ describe("rendered rows", () => {
     const LONG_NAME = "Alexandria-Bartholomew Montgomery-Featherstonehaugh the Third";
     const LONG_EMAIL = "alexandria.bartholomew.montgomery.featherstonehaugh.the.third@a-very-long-subdomain.example.invalid";
 
+    it("shows the joined date and availability at a glance and keeps contact details inside the disclosure", async () => {
+      scenario.rows = [entry(), entry({ id: "imported", source: "legacy_import", joined_at_provenance: "unknown" })];
+      scenario.count = 2;
+      const html = await render();
+      const summaryFor = (id: string) =>
+        rowMarkup(html, id)?.match(/<details[^>]*data-testid="waitlist-entry-details"[^>]*><summary[^>]*>([\s\S]*?)<\/summary>/)?.[1];
+      expect(summaryFor("entry-1")).toContain("Aug 20, 2026");
+      expect(summaryFor("entry-1")).toContain("Not stated");
+      expect(summaryFor("entry-1")).not.toContain("jo@example.com");
+      expect(summaryFor("imported")).toContain("Join date unknown");
+      expect(summaryFor("imported")).not.toContain("Aug 20");
+    });
+
+    it.each([
+      { open: 3, direct: true },
+      { open: 0, direct: false },
+    ])("keeps the composer reachable when the studio has $open invitations available", async ({ open, direct }) => {
+      scenario.services = [service()];
+      scenario.rows = [entry()];
+      scenario.count = 1;
+      scenario.allowance = { ok: true, fit: open, outstanding: 0, open, outstandingScope: "window" };
+      const row = rowMarkup(await render(), "entry-1");
+      expect(row).toContain('data-testid="row-invite"');
+      expect(row?.includes('aria-hidden="true">Invite</span>')).toBe(direct);
+      expect(row?.includes("hidden peer-open/entry:block")).toBe(!direct);
+    });
+
     it("the composer is outside the controls column, and the controls column cannot grow with it", async () => {
       scenario.rows = [entry({ name: LONG_NAME, email: LONG_EMAIL })];
       scenario.count = 1;
@@ -1158,15 +1114,14 @@ describe("rendered rows", () => {
       scenario.count = 1;
       const html = await render();
       const name = html.indexOf(LONG_NAME);
-      const nameTag = html.slice(html.lastIndexOf("<p", name), name);
+      const nameTag = html.slice(html.lastIndexOf("<span", name), name);
       expect(nameTag).toContain("break-words");
       const email = html.indexOf(LONG_EMAIL);
       const emailTag = html.slice(html.lastIndexOf("<p", email), email);
       expect(emailTag).toContain("break-all");
-      // The info column may shrink below its content (min-w-0) and takes the remaining width.
-      const infoOpen = html.slice(html.lastIndexOf("<div", name), name);
-      expect(infoOpen).toContain("min-w-0");
-      expect(infoOpen).toContain("flex-1");
+      // A long token can shrink inside its grid track and break even without spaces.
+      expect(nameTag).toContain("min-w-0");
+      expect(nameTag).toContain("overflow-wrap:anywhere");
     });
 
     it("a row with no composer (not an invitable state) has the same two-band shape", async () => {
@@ -1305,8 +1260,9 @@ describe("rendered rows", () => {
     expect(panel).not.toMatch(/<input/);
     expect(html).not.toContain("Start inviting");
     expect(html).not.toContain('data-testid="capacity-allowance"');
-    // ABOVE the waitlist heading.
-    expect(html.indexOf('data-testid="invitation-allowance"')).toBeLessThan(html.indexOf(">Waitlist</h2>"));
+    // The page title introduces the workspace; capacity precedes the queue.
+    expect(html.indexOf(">Waitlist</h1>")).toBeLessThan(html.indexOf('data-testid="invitation-allowance"'));
+    expect(html.indexOf('data-testid="invitation-allowance"')).toBeLessThan(html.indexOf('data-testid="waitlist-section-waiting"'));
   });
 
   it("repeats the allowance beside each Invite to book", async () => {
@@ -1412,7 +1368,7 @@ describe("removal", () => {
         },
       },
     ]);
-    expect(revalidated).toEqual(["/settings/waitlist"]);
+    expect(revalidated).toEqual(["/waitlist"]);
   });
 
   it("refuses a NON-OWNER before the command is called", async () => {
@@ -1465,7 +1421,7 @@ describe("removal", () => {
     const fd = new FormData();
     fd.set("entry_id", "entry-1");
     await expectNoticeRedirect(removeWaitlistEntryAction(fd), `remove.${code}`);
-    expect(revalidated).toEqual(["/settings/waitlist"]);
+    expect(revalidated).toEqual(["/waitlist"]);
     // A clean refusal is a warning, not a fault, and nothing was read back.
     expect(consoleErrors).toHaveLength(0);
     expect(consoleWarns.some((l) => l.includes("waitlist_remove_failed"))).toBe(true);
@@ -1556,7 +1512,7 @@ describe("removal", () => {
       if (DELIBERATELY_GENERIC.has(code)) {
         expect(error!.message, `${code} should be deliberately generic`).toBe(GENERIC);
       } else if (NOTICED.has(code)) {
-        expect(error!.message, `${code} should redirect with a notice`).toBe("NEXT_REDIRECT:/settings/waitlist");
+        expect(error!.message, `${code} should redirect with a notice`).toBe("NEXT_REDIRECT:/waitlist");
         expect(flash.sets.at(-1)?.value, `${code} notice key`).toBe(`remove.${code}`);
       } else {
         expect(error!.message, `${code} falls through to the generic error`).not.toBe(GENERIC);
@@ -1800,7 +1756,8 @@ describe("action visibility follows the row's lifecycle state", () => {
               },
             ]
           : [];
-      const html = await render();
+      const html = await render({ section: status });
+      expect(rowMarkup(html, `e-${status}`)).not.toBeNull();
       expect(actionsFor(html)).toEqual(expected);
     });
   }
@@ -1811,7 +1768,7 @@ describe("action visibility follows the row's lifecycle state", () => {
     scenario.liveInvitations = [
       { entry_id: "e-live", expires_at: new Date(Date.now() + 3_600_000).toISOString() },
     ];
-    const html = await render();
+    const html = await render({ section: "invited" });
     expect(actionsFor(html)).not.toContain("expire");
     expect(html).not.toContain("Record expired");
     // Release is the operator's way to end it early, and it IS offered.
@@ -1824,7 +1781,7 @@ describe("action visibility follows the row's lifecycle state", () => {
     scenario.liveInvitations = [
       { entry_id: "e-done", expires_at: new Date(Date.now() - 3_600_000).toISOString() },
     ];
-    const html = await render();
+    const html = await render({ section: "invited" });
     expect(actionsFor(html)).toContain("expire");
     expect(html).toContain("Record expired");
   });
@@ -1839,7 +1796,7 @@ describe("action visibility follows the row's lifecycle state", () => {
     // redeemed read.
     scenario.liveInvitations = [];
     scenario.redeemedInvitations = [{ entry_id: "e-used" }];
-    const html = await render();
+    const html = await render({ section: "invited" });
     expect(actionsFor(html)).not.toContain("expire");
     // …and Release is withheld too: the command could only answer
     // `already_redeemed`.
@@ -1859,7 +1816,7 @@ describe("action visibility follows the row's lifecycle state", () => {
     scenario.count = 1;
     scenario.liveInvitations = [];
     scenario.redeemedInvitations = [{ entry_id: "e-stuck" }];
-    const html = await render();
+    const html = await render({ section: "invited" });
     expect(actionsFor(html)).toEqual(["close"]);
     expect(html).toContain("Close without booking");
     // The sentence beside it must not contradict the control next to it.
@@ -1880,7 +1837,7 @@ describe("action visibility follows the row's lifecycle state", () => {
     scenario.count = 1;
     scenario.liveInvitations = [];
     scenario.redeemedInvitations = [{ entry_id: "e-closed" }];
-    const html = await render();
+    const html = await render({ section: "released" });
     expect(actionsFor(html)).toEqual([]);
     // AND THE ROW SAYS SO, rather than leaving the missing control to imply it.
     // The default `released` sentence promises "Return them to it to put them
@@ -1910,7 +1867,7 @@ describe("action visibility follows the row's lifecycle state", () => {
     scenario.count = 1;
     scenario.liveInvitations = [];
     scenario.redeemedInvitations = [];
-    const html = await render();
+    const html = await render({ section: "released" });
     expect(actionsFor(html)).toEqual(["requeue"]);
     expect(html).not.toContain("used their invitation without booking");
     // The instruction is what it keeps, and the control backs it up.
@@ -1931,7 +1888,7 @@ describe("action visibility follows the row's lifecycle state", () => {
     scenario.count = 2;
     scenario.liveInvitations = [];
     scenario.redeemedInvitations = [{ entry_id: "e-shut" }];
-    const html = await render();
+    const html = await render({ section: "released" });
 
     // The section heading and its description carry no instruction at all.
     const head = html.slice(
@@ -1956,7 +1913,7 @@ describe("action visibility follows the row's lifecycle state", () => {
     scenario.rows = [entry({ id: "e-unknown", status: "invited" })];
     scenario.count = 1;
     scenario.invitationsError = { code: "57014" };
-    const html = await render();
+    const html = await render({ section: "invited" });
     // FAILS CLOSED, both ways. Release used to render here on the assumption
     // that unknown meant "not redeemed" — but a redeemed invitation can only
     // answer `already_redeemed`, so the control could not succeed. Neither is
@@ -2027,7 +1984,7 @@ describe("action visibility follows the row's lifecycle state", () => {
     // Non-vacuity for the assertion above.
     scenario.rows = [entry({ id: "e-inv", status: "invited" })];
     scenario.count = 1;
-    await render();
+    await render({ section: "invited" });
     // THREE invitation reads: the live-cycle predicate and the redeemed one the
     // page makes, plus the needs-attention card's own redeemed-invitation read
     // (0313), which exists only because an invited entry does. Identity comes
@@ -2043,7 +2000,7 @@ describe("action visibility follows the row's lifecycle state", () => {
     // round trip, no new policy, and still no ordering of any kind.
     scenario.rows = [entry({ id: "e-rel", status: "released" })];
     scenario.count = 1;
-    await render();
+    await render({ section: "released" });
     // The declined-times card's own read (entry_id,declined_at) is a separate, card-level read.
     const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations" && q.columns !== "entry_id,declined_at" && q.columns !== "expires_at" && q.columns !== DECLINE_COUNT_READ && !isSummaryRead(q));
     expect(inv).toHaveLength(2);
@@ -2124,7 +2081,7 @@ describe("action visibility follows the row's lifecycle state", () => {
     expect(html).toContain(">(250)<");
     expect(html).not.toContain(">(1)<");
     expect(html).toContain("Showing the first 1 of 250, in queue order.");
-    expect(html).toContain('href="/settings/waitlist?section=waiting"');
+    expect(html).toContain('href="/waitlist?section=waiting"');
   });
 });
 
@@ -2173,18 +2130,20 @@ function seedSection(status: string, n: number) {
  * second one is true under the pre-fix read. Scoping to the row is what
  * separates them.
  *
- * The row list has no nested `<li>`, so a row ends where the next one begins,
- * or where its `</ul>` does. Returns null when the row is not on the page at
- * all, which is the case the negative control drives.
+ * Composer choices can contain nested lists. Match the outer row's closing
+ * tag so the result includes its final buttons, even when its composer opens.
  */
 function rowMarkup(html: string, entryId: string): string | null {
   const attr = html.indexOf(`data-entry-id="${entryId}"`);
   if (attr === -1) return null;
   const start = html.lastIndexOf("<li", attr);
-  const nextLi = html.indexOf("<li", attr);
-  const listEnd = html.indexOf("</ul>", attr);
-  const ends = [nextLi, listEnd].filter((i) => i !== -1);
-  return html.slice(start, ends.length > 0 ? Math.min(...ends) : html.length);
+  const rowAndRest = html.slice(start);
+  let depth = 0;
+  for (const tag of rowAndRest.matchAll(/<\/?li\b[^>]*>/g)) {
+    depth += tag[0].startsWith("</") ? -1 : 1;
+    if (depth === 0) return rowAndRest.slice(0, tag.index + tag[0].length);
+  }
+  throw new Error("Unclosed waitlist row");
 }
 
 /** The lifecycle actions offered ON one entry's own row — never the page's. */
@@ -2215,7 +2174,7 @@ describe("a section past one page is navigable, not truncated", () => {
     // …and the page says so, with a link rather than an apology.
     expect(html).toContain("Showing the first 100 of 150, in queue order.");
     expect(html).toContain('data-testid="waitlist-section-all-claimed"');
-    expect(html).toContain('href="/settings/waitlist?section=claimed"');
+    expect(html).toContain('href="/waitlist?section=claimed"');
   });
 
   it("REQ 1-4 — entry 150 is reached, and RELEASE IS ON ITS OWN ROW", async () => {
@@ -2382,18 +2341,19 @@ describe("the focused view keeps the headline honest", () => {
     expect(html).not.toContain('data-entry-status="waiting"');
   });
 
-  it("offers the way back to all groups", async () => {
+  it("returns from a focused section to the complete waiting list through its view link", async () => {
     scenario.rows = seedSection("claimed", 150);
-    const html = await render({ section: "claimed" });
-    expect(html).toContain('href="/settings/waitlist"');
-    expect(html).toContain("Back to all groups");
+    const html = await render({ section: "claimed", page: "2" });
+    const nav = /<nav[^>]*aria-label="Waitlist views"[^>]*>([\s\S]*?)<\/nav>/.exec(html)?.[1];
+    expect(nav).toBeTruthy();
+    expect(nav).toMatch(/<a\b[^>]*href="\/waitlist"[^>]*>Waiting</);
   });
 
   it("renders prev/next only where there is somewhere to go", async () => {
     scenario.rows = seedSection("claimed", 150);
     const first = await render({ section: "claimed", page: "1" });
     expect(first).not.toContain('data-testid="waitlist-page-prev"');
-    expect(first).toContain('href="/settings/waitlist?section=claimed&amp;page=2"');
+    expect(first).toContain('href="/waitlist?section=claimed&amp;page=2"');
 
     reset();
     scenario.rows = seedSection("claimed", 150);
@@ -2410,11 +2370,11 @@ describe("the focused view keeps the headline honest", () => {
 });
 
 describe("a browser-supplied section or page can never mislead", () => {
-  it("an unknown section falls back to ALL groups, and never reaches a filter", async () => {
+  it("an unknown section falls back to Waiting and never reaches a filter", async () => {
     scenario.rows = [...seedSection("claimed", 2), ...seedSection("waiting", 2)];
     const html = await render({ section: "converted' or 1=1--" });
 
-    // Both groups render: this is the default view, not an empty page.
+    expect(html).toContain('data-view="waiting"');
     expect(html).toContain('data-entry-status="claimed"');
     expect(html).toContain('data-entry-status="waiting"');
     // The injected value reached no query. Status filters are the five the page
@@ -2431,7 +2391,8 @@ describe("a browser-supplied section or page can never mislead", () => {
     // produce a focused view of a group this surface does not show.
     scenario.rows = seedSection("waiting", 2);
     const html = await render({ section: "removed" });
-    expect(html).not.toContain("Back to all groups");
+    expect(html).toContain('data-view="waiting"');
+    expect(html).not.toContain('data-entry-status="removed"');
     expect(html).toContain('data-entry-status="waiting"');
   });
 
@@ -2516,8 +2477,7 @@ describe("claiming is internal and never reaches the screen", () => {
   });
 
   it("NO section, in any state, renders the word", async () => {
-    // Every state at once: if any heading, meaning line or control still says
-    // it, this catches it regardless of which section it came from.
+    // Scan the copy on every status page where an owner can reach a row.
     scenario.rows = [
       entry({ id: "w1", status: "waiting" }),
       entry({ id: "c1", status: "claimed" }),
@@ -2526,13 +2486,14 @@ describe("claiming is internal and never reaches the screen", () => {
       entry({ id: "r1", status: "released" }),
     ];
     scenario.liveInvitations = liveInvitationFor("i1");
-    const html = await render();
+    let text = "";
 
     // NON-VACUITY: all five sections really did render.
     for (const s of ["waiting", "claimed", "invited", "expired", "released"]) {
+      const html = await render({ section: s });
+      text += visibleText(html);
       expect(html, s).toContain(`data-testid="waitlist-section-${s}"`);
     }
-    const text = visibleText(html);
     expect(text).not.toMatch(/\bclaim/i);
     expect(text).not.toMatch(/\bheld\b/i);
     // NON-VACUITY for the stripper: it kept the copy it was meant to scan.
@@ -2582,7 +2543,7 @@ describe("what each state and control is CALLED", () => {
     // Labelling both "Release" made the more consequential one look like filing.
     scenario.rows = [entry({ id: "i1", status: "invited" })];
     scenario.liveInvitations = liveInvitationFor("i1");
-    const html = await render();
+    const html = await render({ section: "invited" });
 
     expect(rowActions(html, "i1")).toContain("release");
     const row = rowMarkup(html, "i1")!;
@@ -2591,7 +2552,7 @@ describe("what each state and control is CALLED", () => {
     expect(row).not.toMatch(/>Release</);
   });
 
-  it("ALL THREE READ DIFFERENTLY ON THE SAME PAGE", async () => {
+  it("the three lifecycle actions keep distinct labels across views", async () => {
     // Non-vacuity for the trio: rendered together, so no assertion is passing
     // on an absent row. And the whole point of the P1 — the two controls that
     // perform DIFFERENT transitions must not read alike, while the one that
@@ -2602,21 +2563,23 @@ describe("what each state and control is CALLED", () => {
       entry({ id: "r1", status: "released" }),
     ];
     scenario.liveInvitations = liveInvitationFor("i1");
-    const html = await render();
+    const claimed = rowMarkup(await render(), "c1");
+    const invited = rowMarkup(await render({ section: "invited" }), "i1");
+    const released = rowMarkup(await render({ section: "released" }), "r1");
 
-    expect(rowMarkup(html, "c1")).toContain("Set aside");
-    expect(rowMarkup(html, "i1")).toContain("Cancel invitation");
-    expect(rowMarkup(html, "r1")).toContain("Return to waitlist");
+    expect(claimed).toContain("Set aside");
+    expect(invited).toContain("Cancel invitation");
+    expect(released).toContain("Return to waitlist");
 
     // THE BUTTON LABEL "Return to waitlist" BELONGS TO REQUEUE ALONE — this is
     // the assertion that would have caught the defect. Matched case-sensitively
     // against the label itself: the help sentence beside Set aside says
     // "return THEM to the waitlist later", which is a different string and a
     // true one, so it is not what is being excluded here.
-    expect(rowMarkup(html, "c1")).not.toContain("Return to waitlist");
-    expect(rowMarkup(html, "i1")).not.toContain("Return to waitlist");
-    expect(rowMarkup(html, "c1")).not.toContain("Cancel invitation");
-    expect(rowMarkup(html, "r1")).not.toContain("Set aside");
+    expect(claimed).not.toContain("Return to waitlist");
+    expect(invited).not.toContain("Return to waitlist");
+    expect(claimed).not.toContain("Cancel invitation");
+    expect(released).not.toContain("Set aside");
   });
 
   it("requeue reads RETURN TO WAITLIST on expired and released rows", async () => {
@@ -2624,7 +2587,7 @@ describe("what each state and control is CALLED", () => {
       entry({ id: "x1", status: "expired" }),
       entry({ id: "r1", status: "released" }),
     ];
-    const html = await render();
+    const html = await render({ tab: "history" });
 
     for (const id of ["x1", "r1"]) {
       expect(rowActions(html, id), id).toContain("requeue");
@@ -3074,7 +3037,7 @@ describe("WAIT-04A — truncation copy is provenance-neutral", () => {
 // consent it is and when, then "none". The owner's recording form appears only
 // where the command would accept it. The command's own refusals are proved in
 // tests/db/waitlist-sms-consent-practitioner-and-signup.db.test.ts; the action
-// in tests/app/settings/waitlist-sms-consent-action.test.ts.
+// in tests/app/waitlist-sms-consent-action.test.ts.
 describe("0208 — each row states its SMS standing, as recorded", () => {
   const standing = (row: string) =>
     row.match(/data-testid="sms-consent-status"[^>]*>([^<]*)</)?.[1] ?? null;
@@ -3093,7 +3056,7 @@ describe("0208 — each row states its SMS standing, as recorded", () => {
     expect(row).toMatch(/<input type="hidden" name="entry_id" value="e-sms"\/>/);
     // NO DEFAULTS: the attestation is unticked and neither date answer is
     // chosen, so a hurried press records nothing nobody stated.
-    const form = row.slice(row.indexOf('data-testid="sms-consent-form"'));
+    const form = row.match(/<form\b[^>]*data-testid="sms-consent-form"[\s\S]*?<\/form>/)?.[0] ?? "";
     expect(form).toContain('name="sms_consent_attest"');
     expect(form).toContain('name="sms_consent_date_known"');
     expect(form).not.toMatch(/\bchecked\b/);
@@ -3255,44 +3218,40 @@ describe("owner follow-up cards render with ZERO active entries (Codex P2)", () 
     scenario.count = 0;
   };
 
-  it("Replies to review (n) shows, beside the empty-queue message", async () => {
+  it("Replies to review (n) is accessible from Responses with an empty waitlist", async () => {
     vi.stubEnv("WAITLIST_TIMES_FEEDBACK", "1");
     followUp.replies = { kind: "ok", n: 2 };
     empty();
-    const html = await render();
-    expect(html).toContain("Nobody is waiting right now");
+    const html = await render({ tab: "responses" });
+    expect(html).toContain('data-view="responses"');
     expect(html).toContain("Replies to review (2)");
   });
 
-  it("Needs your attention (n) shows, beside the empty-queue message", async () => {
+  it("Needs your attention (n) is accessible from Responses with an empty waitlist", async () => {
     followUp.attention = { kind: "ok", total: 3, shown: [{ id: "a", name: "A" }] };
     empty();
-    const html = await render();
-    expect(html).toContain("Nobody is waiting right now");
+    const html = await render({ tab: "responses" });
+    expect(html).toContain('data-view="responses"');
     expect(html).toContain("Needs your attention (3)");
   });
 
-  it("Declined the offered times (n) shows, beside the empty-queue message", async () => {
+  it("Declined the offered times (n) is accessible from Responses with an empty waitlist", async () => {
     followUp.declined = { kind: "ok", total: 1, shown: [{ id: "d", name: "D" }], ids: new Set(["d"]) };
     empty();
-    const html = await render();
-    expect(html).toContain("Nobody is waiting right now");
+    const html = await render({ tab: "responses" });
+    expect(html).toContain('data-view="responses"');
     expect(html).toContain("Declined the offered times (1)");
   });
 
-  it("none of the three is rendered inside the active-entries branch", () => {
-    const src = readFileSync(path.join(process.cwd(), "app/(app)/settings/waitlist/page.tsx"), "utf8")
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/^\s*\/\/.*$/gm, "");
-    // The declined view (`?view=declined`) now wraps the active-entries branch: it is the FIRST conditional, and the active branch is its else.
-    const branch = src.indexOf("{viewDeclined ? (");
-    expect(branch).toBeGreaterThan(-1);
-    expect(src.indexOf(": active === 0 ? (")).toBeGreaterThan(branch);
-    for (const marker of ['id="needs-attention-heading"', 'data-testid="declined-card"', 'id="replies-heading"']) {
-      const at = src.indexOf(marker);
-      expect(at, marker).toBeGreaterThan(-1);
-      expect(at, `${marker} must precede the active branch`).toBeLessThan(branch);
-    }
+  it("keeps a direct link to follow-ups when the waiting list is empty", async () => {
+    followUp.attention = { kind: "ok", total: 1, shown: [{ id: "a", name: "A" }] };
+    empty();
+    const html = await render();
+    expect(html).toContain("Nobody is waiting right now");
+    expect(html).toMatch(/href="\/waitlist\?tab=responses"/);
+    const followUps = await render({ tab: "responses" });
+    expect(followUps).toMatch(/data-workspace-section="responses"[\s\S]*?id="follow-up"/);
+    expect(followUps).toContain("Needs your attention (1)");
   });
 });
 
@@ -3315,7 +3274,7 @@ describe("each active invitation shows its exact expiry and the time left", () =
       { entry_id: "e-b", expires_at: at("2026-08-24T08:59:00Z") }, // inside 24 h
       { entry_id: "e-c", expires_at: at("2026-08-26T09:00:00Z") }, // 3 days
     ];
-    const html = await render();
+    const html = await render({ section: "invited" });
     expect(html).toContain("9:30 AM EDT");
     expect(html).toContain("in 4 h 30 min");
     expect(html).toContain("in 3 days");
@@ -3337,7 +3296,7 @@ describe("each active invitation shows its exact expiry and the time left", () =
       { expires_at: at("2026-08-23T11:00:00Z") }, // off the page, 2 h
       { expires_at: at("2026-08-23T20:00:00Z") }, // off the page, 11 h
     ];
-    const html = await render();
+    const html = await render({ section: "invited" });
     const summary = html.match(/data-testid="invitation-expiry-summary"[^>]*>(.*?)<\/p>/s)?.[1] ?? "";
     expect(summary).toContain("in 2 h.");
     expect(summary).toContain("2 expire within 24 hours");
@@ -3360,7 +3319,7 @@ describe("each active invitation shows its exact expiry and the time left", () =
     scenario.liveInvitations = [{ entry_id: "e-on-page", expires_at: at("2026-08-28T09:00:00Z") }];
     scenario.studioExpiries = Array.from({ length: 1000 }, () => ({ expires_at: at("2026-08-28T09:00:00Z") }));
     scenario.studioExpiryCount = 1500;
-    const html = await render();
+    const html = await render({ section: "invited" });
     expect(html).not.toContain("invitation-expiry-summary");
     expect(html).toContain("row-invitation-expiry"); // the per-row line is unaffected
   });
@@ -3370,7 +3329,7 @@ describe("each active invitation shows its exact expiry and the time left", () =
     scenario.count = 1;
     scenario.liveInvitations = [{ entry_id: "e-on-page", expires_at: at("2026-08-28T09:00:00Z") }];
     scenario.studioExpiries = Array.from({ length: 1000 }, () => ({ expires_at: at("2026-08-28T09:00:00Z") }));
-    const html = await render();
+    const html = await render({ section: "invited" });
     expect(html).toContain("invitation-expiry-summary");
   });
 
@@ -3379,7 +3338,7 @@ describe("each active invitation shows its exact expiry and the time left", () =
     scenario.count = 1;
     scenario.liveInvitations = [{ entry_id: "e-on-page", expires_at: at("2026-08-28T09:00:00Z") }];
     scenario.studioExpiryCount = Number.NaN;
-    const html = await render();
+    const html = await render({ section: "invited" });
     expect(html).not.toContain("invitation-expiry-summary");
   });
 
@@ -3389,7 +3348,7 @@ describe("each active invitation shows its exact expiry and the time left", () =
     scenario.liveInvitations = [{ entry_id: "e-on-page", expires_at: at("2026-08-28T09:00:00Z") }];
     scenario.studioExpiries = [{ expires_at: at("2026-08-23T11:00:00Z") }];
     scenario.studioExpiriesError = { code: "57014" };
-    const html = await render();
+    const html = await render({ section: "invited" });
     expect(html).not.toContain("invitation-expiry-summary");
     expect(html).toContain("row-invitation-expiry");
     expect(consoleErrors.filter((l) => l.includes("waitlist_invitation_expiry_summary_read_failed"))).toHaveLength(1);
@@ -3402,10 +3361,10 @@ describe("each active invitation shows its exact expiry and the time left", () =
       { entry_id: "e-old", expires_at: at("2026-08-23T08:00:00Z") },
       { entry_id: "e-new", expires_at: at("2026-08-23T10:00:00Z") },
     ];
-    const html = await render();
+    const html = await render({ section: "invited" });
     expect(html).toContain('data-state="deadline_passed"');
     expect(html).toContain("It has passed.");
-    expect(html).not.toMatch(/in -|-\d+ min/);
+    expect(visibleText(html)).not.toMatch(/in -|-\d+ min/);
     expect(html).toContain("1 expires within 24 hours");
   });
 
@@ -3413,7 +3372,7 @@ describe("each active invitation shows its exact expiry and the time left", () =
     scenario.rows = [entry({ id: "e-old", status: "invited" })];
     scenario.count = 1;
     scenario.liveInvitations = [{ entry_id: "e-old", expires_at: at("2026-08-23T08:00:00Z") }];
-    const html = await render();
+    const html = await render({ section: "invited" });
     expect(html).not.toContain("invitation-expiry-summary");
   });
 
@@ -3421,7 +3380,7 @@ describe("each active invitation shows its exact expiry and the time left", () =
     scenario.rows = [entry({ id: "e-x", status: "invited" })];
     scenario.count = 1;
     scenario.invitationsError = { code: "57014" };
-    const html = await render();
+    const html = await render({ section: "invited" });
     expect(html).not.toContain("row-invitation-expiry");
     expect(html).not.toContain("invitation-expiry-summary");
     expect(html).toContain("could not be checked");
@@ -3432,7 +3391,7 @@ describe("each active invitation shows its exact expiry and the time left", () =
     scenario.count = 1;
     scenario.liveInvitations = [];
     scenario.redeemedInvitations = [{ entry_id: "e-used" }];
-    const html = await render();
+    const html = await render({ section: "invited" });
     expect(html).not.toContain("row-invitation-expiry");
   });
 
@@ -3492,7 +3451,7 @@ describe("people who declined: the summary count and the declined view", () => {
     const html = await render();
     const line = html.match(/data-testid="declined-summary"[^>]*>(.*?)<\/p>/s)?.[1] ?? "";
     expect(line).toContain("2 people have declined.");
-    expect(line).toContain('href="/settings/waitlist?view=declined"');
+    expect(line).toContain('href="/waitlist?view=declined"');
     for (const secret of ["Alex", "Bo Tanaka", "alex@example.invalid", "+14165550100", "bo@example.invalid"]) expect(html, secret).not.toContain(secret);
     expect(html).not.toContain('data-testid="declined-people"');
   });
@@ -3532,7 +3491,7 @@ describe("people who declined: the summary count and the declined view", () => {
     expect(html).toContain("Alex Rivers");
     expect(html).toContain("Declined Aug 21, 2026, 6:00 AM EDT");
     // The waiting entry links to its own section; the removed one has no section to land in.
-    expect(html).toContain('href="/settings/waitlist?section=waiting#entry-e-a"'); // nobody ahead of them: page 1
+    expect(html).toContain('href="/waitlist?section=waiting#entry-e-a"'); // nobody ahead of them: page 1
     expect(html).not.toContain("#entry-e-b");
     expect(html).toContain("Their entry is no longer on the waitlist.");
     // Newest decline first.
@@ -3645,7 +3604,7 @@ describe("people who declined: the summary count and the declined view", () => {
       const html = await renderGated({ view: "declined" });
       expect(rowsIn(html)).toEqual(ids.slice(0, 50));
       expect(html).toContain("Showing 1–50 of 120, newest first. Page 1 of 3.");
-      expect(html).toContain('href="/settings/waitlist?view=declined&amp;dpage=2"');
+      expect(html).toContain('href="/waitlist?view=declined&amp;dpage=2"');
       expect(html).not.toContain("declined-prev");
       expect(followUp.scopedCalls.length).toBe(50);
       expect(queries.filter((q) => q.table === "new_client_waitlist_entries" && q.filters.some((f) => f[0] === "or")).length).toBe(50);
@@ -3658,8 +3617,8 @@ describe("people who declined: the summary count and the declined view", () => {
       const p2 = await renderGated({ view: "declined", dpage: "2" });
       expect(rowsIn(p2)).toEqual(ids.slice(50, 100));
       expect(p2).toContain("Showing 51–100 of 120");
-      expect(p2).toContain('href="/settings/waitlist?view=declined"'); // Previous
-      expect(p2).toContain('href="/settings/waitlist?view=declined&amp;dpage=3"');
+      expect(p2).toContain('href="/waitlist?view=declined"'); // Previous
+      expect(p2).toContain('href="/waitlist?view=declined&amp;dpage=3"');
       expect(followUp.scopedCalls.length).toBe(50);
       expect(new Set(followUp.scopedCalls)).toEqual(new Set(ids.slice(50, 100).map((id) => `i-${id}`))); // THIS page's people only
       expect(factIds()).toEqual(ids.slice(50, 100));
@@ -3682,7 +3641,7 @@ describe("people who declined: the summary count and the declined view", () => {
       const html = await renderGated({ view: "declined", dpage: "2" });
       const nav = html.match(/data-testid="declined-pages"[\s\S]*?<\/nav>/)?.[0] ?? "";
       expect(nav).not.toBe("");
-      for (const m of nav.matchAll(/href="([^"]*)"/g)) expect(m[1]!).toMatch(/^\/settings\/waitlist\?view=declined(&amp;dpage=\d+)?$/);
+      for (const m of nav.matchAll(/href="([^"]*)"/g)) expect(m[1]!).toMatch(/^\/waitlist\?view=declined(&amp;dpage=\d+)?$/);
     });
     it("50 or fewer people: no paging controls", async () => {
       seed();
@@ -3703,8 +3662,8 @@ describe("people who declined: the summary count and the declined view", () => {
     it("page = floor(entries ahead / 100) + 1, on the entry's own section, with the page only past the first", async () => {
       seedLinks({ "e-a": 250, "e-b": 99 });
       const html = await render({ view: "declined" });
-      expect(html).toContain('href="/settings/waitlist?section=waiting&amp;page=3#entry-e-a"');
-      expect(html).toContain('href="/settings/waitlist?section=invited#entry-e-b"'); // 99 ahead is still page 1
+      expect(html).toContain('href="/waitlist?section=waiting&amp;page=3#entry-e-a"');
+      expect(html).toContain('href="/waitlist?section=invited#entry-e-b"'); // 99 ahead is still page 1
       expect(html).not.toContain("first page of its section");
     });
     it("exactly 100 ahead is page 2", async () => {

@@ -645,12 +645,16 @@ test.describe("the studio's waitlist queue", () => {
     // carries the waiting-only count.
     await expect(page.getByText(/^Waitlist entries:\s*1$/)).toBeVisible();
     await expect(page.getByText("Queue Person", { exact: true })).toBeVisible();
+    const personDetails = page.getByTestId("waitlist-entry-details").filter({ has: page.getByText("Queue Person", { exact: true }) });
+    await expect(personDetails).not.toHaveAttribute("open", "");
+    await personDetails.locator("> summary").click();
     await expect(page.getByText(email, { exact: true })).toBeVisible();
     await expect(page.getByText("416 555 0142")).toBeVisible();
 
     // The owner's invitation-to-booking summary: counts only, with its period stated, and what is not tracked said plainly. No invitation has
     // been sent in this studio, so the invitations are zero, whichever way the booked figures read (the database command may not be applied).
     const summary = page.getByTestId("invitation-booking-summary");
+    await page.locator("summary").filter({ hasText: "Invitation results" }).click();
     await expect(summary).toBeVisible();
     await expect(summary.getByTestId("invitation-booking-period")).toContainText("Invitations sent in the last 30 days");
     await expect(summary.locator('[data-row="email-opens"] td')).toHaveText("Not tracked");
@@ -733,6 +737,7 @@ test.describe("the studio's waitlist queue", () => {
 
     const recorded = page.locator(`li[data-entry-id="${recordedId}"]`);
     await expect(recorded.getByTestId("sms-consent-status")).toHaveText("Texts: no consent on record");
+    await recorded.getByTestId("waitlist-entry-details").locator("> summary").click();
     await recorded.getByText("Record SMS consent for Recorded Person").click();
 
     // Nothing answered: refused inline, and nothing recorded.
@@ -772,6 +777,7 @@ test.describe("the studio's waitlist queue", () => {
 
     // STOP WINS, PHONE-WIDE: a fully answered recording is refused.
     const stopped = page.locator(`li[data-entry-id="${stoppedId}"]`);
+    await stopped.getByTestId("waitlist-entry-details").locator("> summary").click();
     await stopped.getByText("Record SMS consent for Stopped Person").click();
     await stopped.getByRole("checkbox", { name: /agreed to texts about this waitlist/i }).check();
     await stopped.getByLabel(/where is the evidence/i).fill(EVIDENCE);

@@ -50,9 +50,13 @@ const liveInvitations = async (entryId: string) =>
   (await sql<{ n: number }>(`select count(*)::int n from public.new_client_waitlist_invitations where entry_id = $1 and redeemed_at is null and expired_at is null and released_at is null and declined_at is null`, [entryId]))[0]!.n;
 
 async function openComposer(page: Page, name: string) {
-  const details = page.locator('details:has([data-testid="invite-composer"])').filter({ hasText: name }).first();
-  await details.locator("> summary").click();
-  const row = page.locator('[data-testid="invite-composer"]', { hasText: name });
+  const entry = page.locator("li[data-entry-id]").filter({ has: page.getByText(name, { exact: true }) });
+  const invite = entry.getByTestId("row-invite").locator("> summary");
+  if (!await invite.isVisible()) {
+    await entry.getByTestId("waitlist-entry-details").locator("> summary").click();
+  }
+  await invite.click();
+  const row = entry.getByTestId("invite-composer");
   await expect(row).toBeVisible({ timeout: T });
   await row.locator('[data-testid="composer-service"]').selectOption({ index: 1 });
   return row;

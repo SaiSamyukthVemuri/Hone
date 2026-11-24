@@ -2,8 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import { redirectForLegacyWaitlistPath } from "@/lib/waitlist/path-redirects";
 
-// The redirect map is pure and NOT wired anywhere. It is proven here so the move can wire it without redesigning it.
-
 const NEW = "/waitlist";
 
 describe("redirectForLegacyWaitlistPath", () => {
