@@ -33,17 +33,31 @@ type CalendarProps = {
 export function DeskCalendar(props: CalendarProps) {
   // Hidden IDs persist across date and view navigation within this studio. A newly added practitioner starts visible.
   const [hidden, setHidden] = useState<string[]>([]);
-  return <CalendarPeriod key={props.date + props.view} {...props} hidden={hidden} setHidden={setHidden} />;
+  // NOT keyed by period. A view or date change can commit LATE (a slow response lands after the receptionist has already opened "Find an opening" and
+  // started typing); a key on the period would remount the subtree at that moment and wipe the open panel and everything typed into it. Per-period
+  // state is derived from the period below instead, so only the calendar content changes when the new period arrives.
+  return <CalendarPeriod {...props} hidden={hidden} setHidden={setHidden} />;
 }
 
 function CalendarPeriod({ studioId, today, date, view, timezone, rows, booking, hidden, setHidden }: CalendarProps & {
   hidden: string[]; setHidden: (ids: string[]) => void;
 }) {
   const router = useRouter();
-  const [selectedDate, setDate] = useState(date);
+  // The selected day and the "Booked for" notice belong to ONE period: they read as the period's own date (and nothing) when the period changes,
+  // without remounting, so the booking panel and its input outlive the change.
+  const period = date + view;
+  const [dayChoice, setDayChoice] = useState({ period, date });
+  const [booked, setBooked] = useState({ period, date: "" });
+  const selectedDate = dayChoice.period === period ? dayChoice.date : date;
+  const bookedDate = booked.period === period ? booked.date : "";
+  // Bumped only when the receptionist picks a different day: that resets the booking panel (as before), a navigation must not.
+  const [dayEpoch, setDayEpoch] = useState(0);
+  function setDate(day: string) {
+    if (day !== selectedDate) setDayEpoch(n => n + 1);
+    setDayChoice({ period, date: day });
+  }
   const [visitId, setVisit] = useState<string | null>(null);
   const [bookingStart, setBookingStart] = useState<{ p: string; time: string; sequence: number } | null>(null);
-  const [bookedDate, setBookedDate] = useState("");
   const agenda = useRef<HTMLElement>(null);
   const selectedCell = useRef<HTMLButtonElement>(null);
   const finder = useRef<HTMLDivElement>(null);
@@ -79,7 +93,7 @@ function CalendarPeriod({ studioId, today, date, view, timezone, rows, booking, 
   function onBooked(day: string) {
     if (days.includes(day) && selectedDate !== day) {
       setBookingStart(null);
-      setBookedDate(day);
+      setBooked({ period, date: day });
       setDate(day);
     }
     if (!days.includes(day) || (view === "month" && day.slice(0, 7) !== date.slice(0, 7))) router.push(deskHref(day, view));
@@ -131,7 +145,7 @@ function CalendarPeriod({ studioId, today, date, view, timezone, rows, booking, 
     </fieldset>
     {bookedDate && <p role="status" className="text-sm">Booked for {fullDate(bookedDate)}.</p>}
     <div ref={finder}>
-      {(bookableIds.length > 0 || !booking) && <DeskBooking key={[selectedDate, ...bookableIds, bookingStart?.sequence].join(",")} studioId={studioId}
+      {(bookableIds.length > 0 || !booking) && <DeskBooking key={[dayEpoch, ...bookableIds, bookingStart?.sequence].join(",")} studioId={studioId}
         initialDate={selectedDate} visiblePractitionerIds={booking ? bookableIds : undefined}
         initialPractitionerId={bookingStart?.p || undefined} initialStartTime={bookingStart?.time || undefined} initiallyOpen={Boolean(bookingStart)}
         options={booking ?? undefined} onBooked={onBooked} />}
