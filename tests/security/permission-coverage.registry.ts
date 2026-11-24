@@ -760,7 +760,6 @@ export const RPC_PRIVILEGES: Readonly<Record<string, string>> = {
   create_block_with_entry: "-u-D",
   create_block_with_initial_setup: "-u-D",
   create_block_with_initial_setup_and_identity: "-u-D",
-  create_client_group: "ABSENT",
   create_internal_appointment_v2: "--sD",
   create_laser_entry: "-u-D",
   create_or_claim_stripe_account_provisioning: "--sD",
@@ -840,7 +839,6 @@ export const RPC_PRIVILEGES: Readonly<Record<string, string>> = {
   release_new_client_waitlist_entry: "--sD",
   release_stripe_event_claim_with_error: "--sD",
   remove_new_client_waitlist_entry: "--sD",
-  rename_client_group: "ABSENT",
   renew_studio_sms_lease: "--sD",
   reorder_studio_service: "-usD",
   repair_bump_appointment_sync_version: "--sD",
@@ -860,7 +858,6 @@ export const RPC_PRIVILEGES: Readonly<Record<string, string>> = {
   save_client_card_on_file_ordered: "--sD",
   save_weekly_availability: "--sD",
   set_appointment_notes: "--sD",
-  set_client_group_membership: "ABSENT",
   // Retired by 0375: EXECUTE is revoked from every API role (public, anon, authenticated, service_role), so nobody can call it through the
   // Data API any more ("---D": security definer, no role may run it). It stays in this census because the app still NAMES it in
   // setClientPortraitAction, which is gated off (clientPortraitEnabled) and refuses before any RPC; if that action is ever enabled it would
