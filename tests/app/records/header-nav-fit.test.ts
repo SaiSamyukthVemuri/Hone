@@ -78,7 +78,7 @@ describe("header fit", () => {
     expect(LAYOUT).toMatch(/>\s*Dashboard\s*</);
     expect(LAYOUT).toMatch(/<AccountMenu/);
     for (const menu of [ACCOUNT, MOBILE]) {
-      expect(menu).toContain('"/settings/profile"');
+      expect(menu).toContain('"/settings"');
       expect(menu).toMatch(/Admin/);
       expect(menu).toMatch(/Sign out/);
     }

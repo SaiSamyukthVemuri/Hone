@@ -140,7 +140,7 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     id: "settings",
     title: "Settings",
     category: "Settings",
-    href: "/settings/profile",
+    href: "/settings",
     description: "Everything you can configure in Hone",
     keywords: ["preferences", "configuration", "options", "setup", "config"],
     visibility: "practitioner",
@@ -437,7 +437,7 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     category: "Settings",
     href: "/settings/services",
     description: "Treatments you offer, with duration, price, and colour",
-    keywords: ["services", "service", "treatments", "price", "prices", "pricing", "cost", "duration", "consultation", "menu", "offerings"],
+    keywords: ["services", "service", "treatments", "price", "prices", "pricing", "cost", "duration", "consultation", "menu", "offerings", "service colour", "service color", "calendar colour", "calendar color", "palette", "colour picker", "color picker"],
     visibility: "owner",
     priority: 360,
   },
@@ -973,11 +973,6 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
       "Print/export view of whichever Records section you are already in. Not a destination on its own; reached from /records.",
   },
   {
-    route: "/settings",
-    reason:
-      "Index route with no content of its own: it only redirects to /settings/profile. Each settings page is registered individually.",
-  },
-  {
     route: "/settings/booking",
     reason:
       "Doorway or legacy URL that only redirects to a focused settings view. Each view is registered individually.",
@@ -1117,7 +1112,7 @@ export function normalizeNavText(value: string): string {
     .trim();
 }
 
-function isVisible(entry: NavEntry, ctx: NavSearchContext): boolean {
+export function isNavEntryVisible(entry: NavEntry, ctx: NavSearchContext): boolean {
   if (entry.visibility === "owner" && !ctx.isOwner) return false;
   if (entry.requiresFlag === "googleCalendar" && !ctx.googleCalendarEnabled) {
     return false;
@@ -1179,7 +1174,7 @@ export function matchNavEntries(
   ctx: NavSearchContext,
 ): NavMatch[] {
   const query = normalizeNavText(rawQuery);
-  const visible = NAV_ENTRIES.filter((e) => isVisible(e, ctx));
+  const visible = NAV_ENTRIES.filter((e) => isNavEntryVisible(e, ctx));
 
   if (query.length === 0) {
     return visible

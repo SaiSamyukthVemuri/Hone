@@ -30,6 +30,15 @@ describe("AppMain: which pages get the wider contained column", () => {
     expect(layoutAt("/calendar")).toEqual({ width: "full", wideColumn: false });
   });
 
+  it.each(["/settings", "/settings/", "/settings/services", "/settings/payments/fees"])(
+    "%s uses the full viewport",
+    (path) => expect(layoutAt(path)).toEqual({ width: "full", wideColumn: false }),
+  );
+
+  it("a similarly named path keeps the normal width", () => {
+    expect(layoutAt("/settings-help")).toEqual({ width: "contained", wideColumn: false });
+  });
+
   it("a detail page keeps the default column", () => {
     expect(layoutAt("/clients/some-client-id")).toEqual({ width: "contained", wideColumn: false });
     expect(layoutAt("/records/print")).toEqual({ width: "contained", wideColumn: false });

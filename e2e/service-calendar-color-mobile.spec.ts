@@ -6,10 +6,7 @@ import {
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
-// Explicit per-service calendar color at iPhone width (390px): the genuinely
-// browser-only parts — Settings loads, the six swatches don't overflow, and
-// choosing violet + saving PERSISTS the key. The persisted-key -> violet CSS
-// mapping (and week/month/mobile parity) is proven by the unit/source tests.
+import { SERVICE_COLOR_KEYS } from "../lib/calendar/service-colors";
 
 async function expectNoHorizontalOverflow(page: Page, label: string) {
   const w = await page.evaluate(() => ({
@@ -39,19 +36,25 @@ test("owner sets a service's calendar color to violet on iPhone; it persists + r
     await expect(page.getByRole("heading", { name: "Services" })).toBeVisible({ timeout: 20_000 });
     await expectNoHorizontalOverflow(page, "settings/services @390 (loaded)");
 
-    // Expand the first service row to reveal its edit form.
-    await page.getByRole("button", { name: /Edit|Expand|▾|▸/ }).first().click().catch(() => {});
-    // The six named swatches are present and don't overflow.
-    const violet = page.getByRole("button", { name: "Calendar color: violet" }).first();
-    await expect(violet).toBeVisible({ timeout: 20_000 });
-    for (const key of ["amber", "emerald", "teal", "sky", "indigo", "violet"]) {
-      await expect(page.getByRole("button", { name: `Calendar color: ${key}` }).first()).toBeVisible();
+    const row = page.getByTestId(`service-row-${serviceId}`);
+    await row.getByRole("button", { name: `Edit ${seed.serviceName}`, exact: true }).click();
+    const editor = page.getByRole("form", { name: `Edit ${seed.serviceName}`, exact: true });
+    const preview = editor.getByTestId("service-calendar-preview");
+    await expect(preview).toContainText(seed.serviceName);
+    for (const key of SERVICE_COLOR_KEYS) {
+      const swatch = editor.getByRole("button", { name: `Calendar color: ${key}`, exact: true });
+      await expect(swatch).toBeVisible();
+      const bounds = await swatch.boundingBox();
+      expect(bounds!.height).toBeGreaterThanOrEqual(44);
+      expect(bounds!.width).toBeGreaterThanOrEqual(44);
     }
     await expectNoHorizontalOverflow(page, "settings/services @390 (swatches)");
 
-    // 2) Choose violet and save.
-    await violet.click();
-    await page.getByRole("button", { name: /^Save changes$|^Save$/ }).first().click();
+    const violet = editor.getByRole("button", { name: "Calendar color: violet" });
+    await violet.tap();
+    await expect(violet).toHaveAttribute("aria-pressed", "true");
+    await expect(preview).toHaveClass(/bg-violet-100/);
+    await editor.getByRole("button", { name: /^Save( changes| service)?$/i }).tap();
 
     // 3) Persisted as the violet KEY (the canonical map turns it into violet CSS —
     //    unit-proven in tests/lib/calendar/service-colors.test.ts).
@@ -61,4 +64,44 @@ test("owner sets a service's calendar color to violet on iPhone; it persists + r
   } finally {
     await ctx.close();
   }
+});
+
+test("service edits and navigation survive an expanded screen and device rotation", async ({ page }) => {
+  const seed = await seedE2eStudio();
+  const serviceId = await getE2eServiceId(seed.studioId);
+  // Embedded browsers and some phones cannot enter native fullscreen.
+  await page.addInitScript(() => {
+    Object.defineProperty(document, "fullscreenEnabled", { configurable: true, value: false });
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await loginAsOwner(page, seed);
+  await page.goto("/settings/services");
+  await page.getByTestId(`service-row-${serviceId}`).getByRole("button", {
+    name: `Edit ${seed.serviceName}`, exact: true,
+  }).click();
+
+  const editor = page.getByRole("form", { name: `Edit ${seed.serviceName}`, exact: true });
+  const value = "Unsaved service name";
+  const name = editor.getByRole("textbox", { name: "Service name" });
+  await name.fill(value);
+  await page.getByRole("button", { name: "Full screen", exact: true }).click();
+
+  const shell = page.locator("[data-settings-screen]");
+  const menu = page.getByRole("button", { name: "Settings menu" });
+  const save = editor.getByRole("button", { name: /^Save( changes| service)?$/i });
+  for (const [width, height] of [[1440, 900], [1024, 768], [390, 844], [844, 390], [320, 568]]) {
+    await page.setViewportSize({ width, height });
+    await expect(shell).toHaveAttribute("data-settings-expanded", "true");
+    await expectNoHorizontalOverflow(page, `expanded editor at ${width} × ${height}`);
+    await expect(name).toHaveValue(value);
+    await save.scrollIntoViewIfNeeded();
+    await expect(save).toBeInViewport();
+    await menu.click();
+    await expect(page.getByRole("link", { name: "Overview", exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveAttribute("aria-expanded", "false");
+  }
+  await page.getByRole("button", { name: "Exit expanded view" }).click();
+  await expect(shell).toHaveAttribute("data-settings-expanded", "false");
+  await expect(name).toHaveValue(value);
 });
