@@ -15,6 +15,7 @@ import {
   assembleGroupSubmissions,
   draftBlocking,
   firstGroup,
+  highestOrdinal,
   toggleChannel,
   type SettingGroupDraft,
 } from "@/lib/machines/setting-groups";
@@ -143,7 +144,7 @@ export function MachineSettingDraft({
   // MONOTONIC, never derived from the list: a removed group's identity is
   // retired for the life of the mount, because reuse would corrupt a group's
   // revision history. Same rule as the entry form, same reason.
-  const [groupOrdinal, setGroupOrdinal] = useState(() => (restore ? Math.max(restore.groupOrdinal, restore.groups.length + 1) : 1));
+  const [groupOrdinal, setGroupOrdinal] = useState(() => (restore ? Math.max(restore.groupOrdinal, restore.groups.length + 1, highestOrdinal(restore.groups)) : 1));
 
   /**
    * What the host must know, recomputed from a candidate draft.
@@ -185,7 +186,9 @@ export function MachineSettingDraft({
         rangeConfirmationBlocking(nextWarnings, live),
     };
     setHasEntries(machineDraftHasEntries(payload));
-    onPark?.({ groups: next, groupOrdinal: ordinalRef.current, confirmed: [...live] });
+    // THE LARGER OF THE COUNTER AND THE HIGHEST ID IN THIS DRAFT: an add reports before its ordinal advance has applied, so the counter alone is one
+    // behind the group just added, and restoring from it issued the same id twice after an add, remove and switch back.
+    onPark?.({ groups: next, groupOrdinal: Math.max(ordinalRef.current, highestOrdinal(next)), confirmed: [...live] });
     onDraftChange(payload);
   };
 

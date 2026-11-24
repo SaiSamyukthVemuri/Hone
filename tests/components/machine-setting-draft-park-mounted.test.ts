@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
 import { XCELL_PUR_PROFILES } from "@/lib/machines/xcell-pur";
+import { SYNTHETIC_DEMO_PROFILE } from "@/lib/machines/synthetic-profile";
 
 const { createElement } = await import("react");
 const { createRoot } = await import("react-dom/client");
@@ -57,5 +58,25 @@ describe("a MultiPlex draft parked while she looks at another machine or mode co
     mount({ onDraftChange: (d: { groups: unknown[] }) => reports.push(d) });
     expect(inputs().every((i) => i.value === "")).toBe(true);
     expect(reports[0].groups).toEqual([]);
+  });
+  it("group ids stay UNIQUE across add, remove, park and restore: the counter comes back as the larger of the parked value and the highest id", () => {
+    let parked: Parked | null = null;
+    const ids = () => (parked?.groups ?? []).map((g) => g.id);
+    // A profile that OFFERS several groups (xCell Pur has one): the synthetic demo unit.
+    const demo = { profile: SYNTHETIC_DEMO_PROFILE, mode: SYNTHETIC_DEMO_PROFILE.modes[0] };
+    mount({ ...demo, onDraftChange: () => undefined, onPark: (p: Parked) => { parked = p; } });
+    const add = () => act(() => { host!.querySelector<HTMLButtonElement>('[data-testid="setting-group-add"]')!.click(); });
+    type(inputs()[0], "5"); // something is typed, so there is a draft to park
+    add();
+    add();
+    const beforePark = ids();
+    expect(new Set(beforePark).size, "control: unique before parking").toBe(beforePark.length);
+    expect(beforePark.length).toBeGreaterThanOrEqual(3);
+    unmount();
+    mount({ ...demo, restore: parked, onDraftChange: () => undefined, onPark: (p: Parked) => { parked = p; } });
+    add();
+    const after = ids();
+    expect(after.length).toBe(beforePark.length + 1);
+    expect(new Set(after).size, "after restoring and adding, no id is issued twice").toBe(after.length);
   });
 });

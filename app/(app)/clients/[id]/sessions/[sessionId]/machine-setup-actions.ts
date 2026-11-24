@@ -623,6 +623,7 @@ export async function loadMachineSetupContext(input: {
   } catch {
     choices = null;
   }
+  const selectableIds = new Set(selectableDevices(scope, offered.devices, catalogue).map((x) => x.device.deviceId));
   const enabledOnly = applyEnabledMachines({
     choices,
     creating: !input.blockId,
@@ -631,6 +632,8 @@ export async function loadMachineSetupContext(input: {
     remembered: offered.remembered,
     suggestedMachine: offered.suggestedMachine,
     clientLastMachine: offered.clientLastMachine,
+    // The default unit is chosen among the units the picker will offer, never an outdated-version one that would be hidden.
+    isSelectable: (d) => selectableIds.has(d.deviceId),
   });
   if (!enabledOnly.legacyOffered) {
     legacyMachine = null;

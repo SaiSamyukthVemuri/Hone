@@ -22,6 +22,14 @@ describe("the owner's switches applied to a new area's picker", () => {
     expect(r.devices.map((d) => d.deviceId)).toEqual(["u-sen", "u-other"]);
     expect(r.legacyOffered).toBe(false);
   });
+  it("THE DEFAULT UNIT is chosen among the SELECTABLE units: a lowest-id unit the picker would hide (outdated version) is skipped, and with none selectable there is no default", () => {
+    const devices = [dev("a-old", SEN), dev("b-ok", SEN), dev("u-pur", PUR)];
+    const only = (ids: string[]) => (d: { deviceId: string }) => ids.includes(d.deviceId);
+    const r = applyEnabledMachines({ ...base, devices, choices: ch([PUR, SEN], SEN), creating: true, isSelectable: only(["b-ok", "u-pur"]) });
+    expect(r.defaultMachine).toEqual({ kind: "native", deviceId: "b-ok" });
+    expect(applyEnabledMachines({ ...base, devices, choices: ch([PUR, SEN], SEN), creating: true }).defaultMachine, "without the predicate every unit counts").toEqual({ kind: "native", deviceId: "a-old" });
+    expect(applyEnabledMachines({ ...base, devices, choices: ch([PUR, SEN], SEN), creating: true, isSelectable: only([]) }).defaultMachine).toBeNull();
+  });
   it("EVERY model off (an empty set): no switchable unit and no existing xCell entry is offered, there is no default, and an unlisted profile is untouched", () => {
     const r = applyEnabledMachines({ ...base, choices: ch([], null), creating: true });
     expect(r.devices.map((d) => d.deviceId)).toEqual(["u-other"]);
@@ -46,5 +54,14 @@ describe("the owner's switches applied to a new area's picker", () => {
     expect(applyEnabledMachines({ ...base, choices: ch([PUR], JUN), creating: true }).defaultMachine).toBeNull();
     expect(applyEnabledMachines({ ...base, devices: [dev("u-sen", SEN, { retiredAt: "2026-01-01" })], choices: ch([SEN], SEN), creating: true }).defaultMachine).toBeNull();
     expect(applyEnabledMachines({ ...base, legacyOffered: false, choices: ch([PUR], PUR), creating: true }).defaultMachine).toBeNull();
+  });
+});
+
+import { readFileSync } from "node:fs";
+describe("the loader resolves the default among the units the picker offers", () => {
+  it("passes the selectable-unit predicate (selectableDevices) into applyEnabledMachines", () => {
+    const src = readFileSync("app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts", "utf8");
+    expect(src).toContain("const selectableIds = new Set(selectableDevices(scope, offered.devices, catalogue)");
+    expect(src).toContain("isSelectable: (d) => selectableIds.has(d.deviceId),");
   });
 });

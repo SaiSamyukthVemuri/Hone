@@ -26,6 +26,8 @@ export function applyEnabledMachines<R extends Pointer, S extends Pointer, C ext
   remembered: R;
   suggestedMachine: S;
   clientLastMachine: C;
+  /** The units the picker will actually offer (`selectableDevices`: in service, an active profile at the matching version). The default is resolved from these only. Absent = every unit. */
+  isSelectable?: (d: StudioDevice) => boolean;
 }): { devices: StudioDevice[]; legacyOffered: boolean; remembered: R | null; suggestedMachine: S | null; clientLastMachine: C | null; defaultMachine: DefaultMachine } {
   const { choices } = input;
   if (!choices || !input.creating) {
@@ -44,7 +46,7 @@ export function applyEnabledMachines<R extends Pointer, S extends Pointer, C ext
     if (def === XCELL_PUR_PROFILE_ID) {
       if (legacyOffered) defaultMachine = { kind: "legacy" };
     } else {
-      const unit = devices.filter((d) => d.profileId === def && d.retiredAt === null).sort((a, b) => a.deviceId.localeCompare(b.deviceId))[0];
+      const unit = devices.filter((d) => d.profileId === def && d.retiredAt === null && (input.isSelectable ? input.isSelectable(d) : true)).sort((a, b) => a.deviceId.localeCompare(b.deviceId))[0];
       if (unit) defaultMachine = { kind: "native", deviceId: unit.deviceId };
     }
   }
