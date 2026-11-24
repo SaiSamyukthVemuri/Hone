@@ -1,14 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { adminQuery, asRole, asUser, closePool, seedMember, seedStudio, type SeededStudio } from "./helpers/harness";
+import { closeOlderContactCommands, reopenOlderContactCommands } from "./helpers/older-contact-commands";
 
 // The receptionist desk's database boundary, by DIRECT calls to the three read functions as each kind of caller: this
 // is what a signed-in person can do outside the app. Synthetic fixtures only. Names are never printed: assertions on
 // them are booleans.
 //
 // Part 1 is the refusal matrix. Part 2 pins the name rule as it behaves on a database built from the repository's
-// migrations, which include it: the database returns no stored client name to a receptionist, shows the fixed words
-// 'Name on file' instead, and never orders by the stored name. This file runs only against repository-chain stacks. What
+// migrations, which include it (0380): a receptionist sees the preferred name, else the regular client name, and the fixed
+// words 'Name on file' only when both are blank; the order is the displayed name, then id. This file runs only against repository-chain stacks. What
 // the hosted database does is recorded in the production record (docs/production), not here. If the rule is ever removed
 // from the chain, this test fails, loudly, on purpose.
 
@@ -54,6 +55,7 @@ const callAs = async (userId: string | "anon", name: string): Promise<Outcome> =
 };
 
 beforeAll(async () => {
+  await reopenOlderContactCommands(); // closed by 0382; reopened for this file only to prove the reviewed body
   studio = await seedStudio("desk-a");
   other = await seedStudio("desk-b");
   who.owner = studio.userId;
@@ -84,7 +86,10 @@ beforeAll(async () => {
     [randomUUID(), studio.studioId, studio.practitionerId, studio.clientId],
   );
 });
-afterAll(closePool);
+afterAll(async () => {
+  await closeOlderContactCommands();
+  await closePool();
+});
 
 describe("part 1: who may call the three desk functions directly", () => {
   it("this studio's active receptionist is answered by all three", async () => {
@@ -113,33 +118,30 @@ describe("part 1: who may call the three desk functions directly", () => {
   });
 });
 
-describe("part 2: the name rule (0374): the database returns no stored name to a receptionist", () => {
-  it("the directory carries no stored name; every client without a preferred name reads as the fixed words", async () => {
+describe("part 2: the name rule (0380): the database shows a receptionist the preferred name, else the regular name", () => {
+  it("the directory shows each client's regular name (none has a preferred name here), never the fixed words", async () => {
     const r = await callAs(who.receptionist, "directory");
     expect("rows" in r).toBe(true);
     const rows = ("rows" in r ? r.rows : []) as Array<{ display_name: string; name_on_file?: boolean }>;
     const text = JSON.stringify(rows);
-    expect(text.includes(STORED_Z), "directory returns no stored name").toBe(false);
-    expect(text.includes(STORED_A), "directory returns no second stored name").toBe(false);
-    expect(text.includes(STORED_M), "directory returns no third stored name").toBe(false);
+    for (const n of [STORED_Z, STORED_A, STORED_M]) expect(text.includes(n), "directory shows the regular name").toBe(true);
     expect(rows.length).toBeGreaterThanOrEqual(3);
-    expect(rows.every((x) => x.display_name === "Name on file")).toBe(true);
+    expect(rows.every((x) => x.display_name !== "Name on file" && x.name_on_file === false)).toBe(true);
   });
 
-  it("the schedule returns the fixed words, flagged as no name on file, and no stored name", async () => {
+  it("the schedule shows the client's regular name, flagged as having a name", async () => {
     const r = await callAs(who.receptionist, "schedule");
     const rows = ("rows" in r ? r.rows : []) as Array<{ display_name?: string; name_on_file?: boolean }>;
     expect(rows.length).toBe(1);
-    expect(JSON.stringify(rows).includes(STORED_Z), "schedule returns no stored name").toBe(false);
-    expect(rows[0].display_name).toBe("Name on file");
-    expect(rows[0].name_on_file).toBe(true);
+    expect(rows[0].display_name).toBe(STORED_Z);
+    expect(rows[0].name_on_file).toBe(false);
   });
 
-  it("the directory's default order is by id when no client has a preferred name: not the stored name, and not the insert order (non-vacuity)", async () => {
+  it("the directory's default order is by the displayed name, then id: not the insert order and not the id order (non-vacuity)", async () => {
     const r = await callAs(who.receptionist, "directory");
     const rows = ("rows" in r ? r.rows : []) as Array<{ client_id: string }>;
     const mine = rows.map((x) => String(x.client_id)).filter((id) => id === studio.clientId || id === third || id === second);
-    // [third, first, second] by id; insert order is [first, second, third]; stored-name order is [second, third, first]
-    expect(mine).toEqual([third, studio.clientId, second]);
+    // by name: [second (Aardvark), third (Mango), first (Zebra)]; insert order is [first, second, third]; id order is [third, first, second]
+    expect(mine).toEqual([second, third, studio.clientId]);
   });
 });

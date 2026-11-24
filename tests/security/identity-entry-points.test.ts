@@ -79,6 +79,9 @@ describe("legal identity has exactly one writer and no receptionist reader (R4, 
       match => `${file}:${match[1]}`,
     ));
     expect(calls.sort()).toEqual([
+      // Not a desk RPC: the OWNER's Team page deactivates or reactivates a receptionist. The owner check runs first and the command is scoped to the
+      // owner's own studio. It reads and writes no client data and no legal field.
+      "app/(app)/settings/team/receptionist-actions.ts:set_studio_receptionist_active",
       "app/(desk)/desk/booking-actions.ts:receptionist_book_opening",
       "app/(desk)/desk/booking-actions.ts:receptionist_booking_clients_v3",
       "app/(desk)/desk/booking-actions.ts:receptionist_booking_options",
@@ -89,10 +92,11 @@ describe("legal identity has exactly one writer and no receptionist reader (R4, 
     ]);
   });
 
-  it("the receptionist projection reads no legal field and returns the literal Name on file", () => {
+  it("the receptionist projection reads no legal field and returns the literal Name on file only when both names are blank", () => {
     const rules = code(read("lib/clients/directory-rules.ts"));
     expect(rules).not.toMatch(/legal_/);
-    expect(rules).toMatch(/row\.nameOnFile \? NAME_ON_FILE_LABEL/);
+    expect(rules).toMatch(/const blank = row\.displayName\.length === 0/);
+    expect(rules).toMatch(/blank \? NAME_ON_FILE_LABEL/);
   });
 });
 

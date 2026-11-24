@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { adminQuery, asRole, asUser, closePool, seedMember, seedStudio, type SeededStudio } from "./helpers/harness";
+import { closeOlderContactCommands, reopenOlderContactCommands } from "./helpers/older-contact-commands";
 
 // 0274 receptionist desk projection (held, stacked on 0258/0266). Proved on the
 // real migrated database. Synthetic values only.
@@ -41,6 +42,7 @@ const dir = (uid: string, studio: string, q: string | null = null, filters: stri
   asUser(uid, (x) => x(`select * from public.receptionist_client_directory($1,$2,$3,$4,$5,$6)`, [studio, q, filters, sort, offset, limit]));
 
 beforeAll(async () => {
+  await reopenOlderContactCommands(); // closed by 0382; reopened for this file only to prove the reviewed body
   a = await seedStudio("desk-proj-a");
   b = await seedStudio("desk-proj-b");
   aPrac = await seedMember(a, "desk-proj-prac");
@@ -60,6 +62,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await closeOlderContactCommands();
   await closePool();
 });
 
@@ -91,22 +94,23 @@ describe("the payload", () => {
     const r = await dir(aDesk, a.studioId);
     const byId = new Map(r.rows.map((x) => [x.client_id, x]));
     expect(byId.get(ids.maggie)).toMatchObject({ display_name: "Maggie", name_on_file: false });
-    // 0374: these fixtures carry a preferred name because search no longer reaches the stored name. A client with no preferred name reads as the fixed words, never the stored name.
-    expect(byId.get(ids.plain)).toMatchObject({ display_name: "Name on file", name_on_file: true });
-    expect(JSON.stringify(r.rows)).not.toContain("Plain Person");
+    // 0380: a client with no preferred name shows the regular client name; the fixed words are only for both blank.
+    expect(byId.get(ids.plain)).toMatchObject({ display_name: "Plain Person", name_on_file: false });
+    // The regular name behind a preferred name is not returned.
     expect(JSON.stringify(r.rows)).not.toContain("Margaret");
     expect(JSON.stringify(r.rows)).not.toContain(LEGAL);
     expect(byId.has(ids.archived)).toBe(false);
     expect(byId.has(ids.other)).toBe(false);
   });
-  it("search matches the shown name, email and phone, never the stored name behind a preferred one; a legal-only term finds nothing (positive control)", async () => {
+  it("search matches the shown name, email and phone, never the regular name behind a preferred one; a legal-only term finds nothing (positive control)", async () => {
     const hit = async (q: string) => (await dir(aDesk, a.studioId, q)).rows.map((x) => x.client_id);
     expect(await hit("maggie")).toEqual([ids.maggie]);
     expect(await hit("harness.local")).toHaveLength(2);
     expect(await hit("555 0102")).toEqual([ids.plain]);
     expect(await hit("Margaret")).toEqual([]);
-    // 0374: the stored name of a client with NO preferred name is not searchable either, and neither are the fixed words.
-    expect(await hit("Plain Person")).toEqual([]);
+    // 0380: the regular name of a client with NO preferred name is what is shown, so it is searchable; the fixed words are not.
+    expect(await hit("Plain Person")).toEqual([ids.plain]);
+    expect(await hit("plain pers")).toEqual([ids.plain]);
     expect(await hit("Name on file")).toEqual([]);
     expect(await hit(LEGAL)).toEqual([]);
     expect(await hit("100%")).toEqual([]);
