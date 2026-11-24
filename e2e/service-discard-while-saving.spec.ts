@@ -1,4 +1,4 @@
-import { test, expect, type Page, type Route } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { seedE2eStudio, getE2eServiceId, getServiceCalendarColor } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 import { SERVICE_COLOR_KEYS } from "../lib/calendar/service-colors";
@@ -12,7 +12,6 @@ type Held = { release: () => void; fail: () => void; count: () => number };
 // Holds every server-action POST (the Save) until the test lets it go or fails it, and counts them.
 async function holdSaves(page: Page): Promise<Held> {
   let posts = 0;
-  const waiting: Array<{ route: Route; mode: () => "go" | "fail" | null }> = [];
   let decision: "go" | "fail" | null = null;
   await page.route(/\/settings\/services/, async (route) => {
     const req = route.request();
@@ -25,7 +24,6 @@ async function holdSaves(page: Page): Promise<Held> {
     if (d === "fail") return route.abort("failed");
     return route.continue();
   });
-  void waiting;
   return { release: () => { decision = "go"; }, fail: () => { decision = "fail"; }, count: () => posts };
 }
 
