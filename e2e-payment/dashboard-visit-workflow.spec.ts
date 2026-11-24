@@ -79,6 +79,7 @@ for (const screen of SCREENS) {
           [randomUUID(), studio.studioId, sessionId],
         );
       };
+      const bookedDay = async (id: string) => (await sql<{ d: string }>("select (a.starts_at at time zone s.timezone)::date::text as d from public.appointments a join public.studios s on s.id = a.studio_id where a.id = $1", [id]))[0].d;
       const row = (p: Page) => p.locator(`#appointment-${appointmentId}`);
       const shot = (p: Page, n: string) => p.screenshot({ path: test.info().outputPath(`${screen.name}-${n}.png`), fullPage: true });
 
@@ -153,13 +154,28 @@ for (const screen of SCREENS) {
         await row(page).getByRole("link", { name: "Rebook", exact: true }).click();
         await expect(page).toHaveURL((u) => u.pathname === "/calendar" && u.searchParams.get("rebook") === appointmentId);
         const nextWeek = addDays(todayInTz(tz), 7);
-        await page.getByTestId("calendar-next").click();
-        await page.getByRole("button", { name: `Open quick-book draft for ${nextWeek}`, exact: true }).press("Enter");
-        const drawer = page.getByRole("dialog", { name: "New appointment" });
-        await expect(drawer.getByText(clientName, { exact: true })).toBeVisible();
-        await shot(page, "5a-rebook-drawer");
-        await drawer.getByRole("button", { name: /^\d{1,2}:\d{2}\s?(AM|PM)$/i }).last().click();
-        await drawer.getByRole("button", { name: "Book appointment", exact: true }).click();
+        if (screen.touch) {
+          // On a phone the rebook opens the Find time panel for this client: search, choose an opening, book it.
+          await expect(page.getByText(`Rebook for ${clientName}`)).toBeVisible();
+          await page.getByRole("button", { name: "Search availability", exact: true }).click();
+          const times = page.getByRole("region", { name: "Available times" });
+          await expect(times).toBeVisible();
+          await times.getByRole("button", { name: /\d{1,2}:\d{2}/ }).first().click();
+          await shot(page, "5a-rebook-opening");
+          await page.getByRole("button", { name: "Book this time", exact: true }).click();
+          const drawer = page.getByRole("dialog", { name: "New appointment" });
+          await expect(drawer.getByText(clientName, { exact: true })).toBeVisible();
+          await shot(page, "5a-rebook-drawer");
+          await drawer.getByRole("button", { name: "Book appointment", exact: true }).click();
+        } else {
+          await page.getByTestId("calendar-next").click();
+          await page.getByRole("button", { name: `Open quick-book draft for ${nextWeek}`, exact: true }).press("Enter");
+          const drawer = page.getByRole("dialog", { name: "New appointment" });
+          await expect(drawer.getByText(clientName, { exact: true })).toBeVisible();
+          await shot(page, "5a-rebook-drawer");
+          await drawer.getByRole("button", { name: /^\d{1,2}:\d{2}\s?(AM|PM)$/i }).last().click();
+          await drawer.getByRole("button", { name: "Book appointment", exact: true }).click();
+        }
         await expect(page).toHaveURL((u) => u.pathname === "/dashboard" && u.hash === `#appointment-${appointmentId}`);
         const visits = await getClientAppointmentsWithPractitioner(studio.studioId, clientId);
         const next = visits.find((v) => v.id !== appointmentId)!;
@@ -167,7 +183,7 @@ for (const screen of SCREENS) {
         await shot(page, "5b-back-on-the-row");
 
         await test.step("3. The one-visit reminder is not carried onto the next appointment", async () => {
-          await page.goto(`/dashboard?day=${nextWeek}`);
+          await page.goto(`/dashboard?day=${await bookedDay(next.id)}`);
           const later = page.locator(`#appointment-${next.id}`);
           await expect(later).toBeVisible();
           await expect(later).not.toContainText(PLAN);
