@@ -2790,6 +2790,21 @@ describe("loadMachineSetupContext and the platform rollout", () => {
     expect(unavailable.legacyMachine, "an unavailable switch changes nothing").not.toBeNull();
   });
 
+  it("THE SWITCH OFF also withholds the LIVE xCell Pur UNIT from a NEW area's picker (it must not appear as an ordinary native machine), and an existing area keeps its unit", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    HISTORY.value = true; ROLLOUT.value = "on";
+    DB.rowsFor.machine_profile_mode_contract = [{ mode_key: "multiplex", machine_profile_version: 1 }];
+    DB.rowsFor.studio_machines = [purRow()];
+    SWITCH.value = { available: true, enabled: true };
+    expect((await actions.loadMachineSetupContext(NEW_SETUP)).devices.map((d) => d.deviceId)).toContain(PUR_UNIT_ID);
+    SWITCH.value = { available: true, enabled: false };
+    const off = await actions.loadMachineSetupContext(NEW_SETUP);
+    expect(off.legacyMachine).toBeNull();
+    expect(off.devices.map((d) => d.deviceId)).not.toContain(PUR_UNIT_ID);
+    const existing = await actions.loadMachineSetupContext(EXISTING);
+    expect(existing.devices.map((d) => d.deviceId)).toContain(PUR_UNIT_ID);
+  });
+
   it("with ONLY a RETIRED xCell unit the offer is REFUSED as retired (never 'create one at the first save'), and a studio with no unit at all still creates at the first save", async () => {
     signIn("studio-fett", "pract-owner-a");
     HISTORY.value = true; ROLLOUT.value = "on";
