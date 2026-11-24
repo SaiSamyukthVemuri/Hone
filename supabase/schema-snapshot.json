@@ -3,7 +3,7 @@
   "migrations": {
     "count": 286,
     "last": "0379_receptionist_calendar_client_names.sql",
-    "sha256": "2ba0bcb32513879fd8b27e79d5596f728b5ab4d73dced0cc78fb55d10ec4d82b"
+    "sha256": "f007c74cafe9d637c896bc30093d40d732c73598a7178ff21d104b9fc39abfa9"
   },
   "public": {
     "tables": [
@@ -638,6 +638,7 @@
       "studio_client_id_photo_switch_log_write",
       "studio_machine_setting_events_guard",
       "studio_machine_setting_events_truncate_guard",
+      "studio_machines_enable_model_trigger",
       "studio_membership_kind_lock",
       "studio_named_stripe_accounts",
       "studio_price_write_jurisdiction_lock",
