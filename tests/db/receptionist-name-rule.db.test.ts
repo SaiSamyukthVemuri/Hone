@@ -278,6 +278,25 @@ describe.each([["OFF", false], ["ON", true]] as const)("legal-name switch %s", (
   });
 });
 
+describe("a whitespace-only PREFERRED name (a legacy row the shape check now refuses) reads as blank, so the regular name is shown", () => {
+  it("shows and finds the regular name, and says it has a name; the shape check is put back as it was", async () => {
+    const id = randomUUID();
+    const DROP = "alter table public.clients drop constraint clients_preferred_name_shape;";
+    const RESTORE = "alter table public.clients add constraint clients_preferred_name_shape check (preferred_name is null or (length(preferred_name) >= 1 and length(preferred_name) <= 200 and preferred_name = btrim(preferred_name)));";
+    // One implicit transaction: drop the check, insert the legacy row. The check is restored (validated) after the row is deleted.
+    await adminQuery(`${DROP} insert into public.clients (id, studio_id, name, preferred_name, phone, email) values ('${id}', '${A.studioId}', 'Whitepref Regular', '   ', '+1 555 0118', 'c8@harness.local');`);
+    try {
+      const row = rowsOf(await dir("whitepref")).find((r) => r.client_id === id);
+      expect(row, "directory finds the client by the regular name").toMatchObject({ display_name: "Whitepref Regular", name_on_file: false });
+      expect(rowsOf(await con("whitepref")).map((r) => r.client_id)).toEqual([id]);
+    } finally {
+      await adminQuery("delete from public.clients where id = $1", [id]);
+      await adminQuery(RESTORE);
+    }
+    await expect(adminQuery("insert into public.clients (id, studio_id, name, preferred_name) values (gen_random_uuid(), $1, 'Shape Check', '   ')", [A.studioId])).rejects.toMatchObject({ code: "23514" });
+  });
+});
+
 describe("the tables behind the functions stay closed to a receptionist", () => {
   async function openTables(): Promise<string[]> {
     const { rows } = await adminQuery(
