@@ -1,6 +1,5 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { isRepoMax } from "./helpers/migration-state";
 
 // 0382 closes receptionist_client_directory and receptionist_client_contacts_v2 by privilege only. SOURCE contract; the behaviour is proved by
 // tests/db/receptionist-older-commands-closed.db.test.ts on a real database.
@@ -16,9 +15,6 @@ const MD5 = ["9356d1ca1f30005b09b5f6ba1765d59f", "2c398e896eede58c9a09a11213b122
 const code = (s: string) => s.replace(/--[^\n]*/g, "");
 
 describe("0382 is shaped like a sealed migration", () => {
-  it("is the current maximum migration", () => {
-    expect(isRepoMax("0382")).toBe(true);
-  });
   it("opens its own transaction, arms lock_timeout inside it, and changes no function body", () => {
     expect(UP).toMatch(/^begin;$/m);
     expect(UP).toMatch(/^commit;$/m);
