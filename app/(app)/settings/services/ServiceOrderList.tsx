@@ -24,7 +24,9 @@ export type OrderRow = {
 
 type MenuGroup = { label: string; ids: string[] };
 const CREATE = "new";
-const SavedServiceContext = createContext<(id: string) => void>(() => {});
+// onSaved: the server accepted a save. setSaving: a save is in flight for that service, so its "Discard edits" must stay disabled until the request settles
+// (a discard would remount the form while the original save is still running; that save's onSaved would then erase a newer draft and close the mobile editor).
+const SavedServiceContext = createContext<{ onSaved: (id: string) => void; setSaving: (id: string, saving: boolean) => void }>({ onSaved: () => {}, setSaving: () => {} });
 
 export function ServiceSaveForm({ serviceId = CREATE, title, saveAction, children }: {
   serviceId?: string;
@@ -32,7 +34,7 @@ export function ServiceSaveForm({ serviceId = CREATE, title, saveAction, childre
   saveAction: (data: FormData) => Promise<void>;
   children: React.ReactNode;
 }) {
-  const onSaved = useContext(SavedServiceContext);
+  const { onSaved, setSaving } = useContext(SavedServiceContext);
   const submitting = useRef(false);
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -51,6 +53,7 @@ export function ServiceSaveForm({ serviceId = CREATE, title, saveAction, childre
         const data = new FormData(event.currentTarget);
         submitting.current = true;
         setPending(true);
+        setSaving(serviceId, true);
         setFailed(false);
         try {
           await saveAction(data);
@@ -60,6 +63,7 @@ export function ServiceSaveForm({ serviceId = CREATE, title, saveAction, childre
         } finally {
           submitting.current = false;
           setPending(false);
+          setSaving(serviceId, false);
         }
       }}
     >
@@ -101,6 +105,7 @@ export function ServiceOrderList({ rows, groups, createEditor }: {
   // survives both the mobile Back control and the desktop master list.
   const [visited, setVisited] = useState(() => new Set([first]));
   const [formKeys, setFormKeys] = useState<Record<string, number>>({});
+  const [savingIds, setSavingIds] = useState<Record<string, boolean>>({});
   const [notice, setNotice] = useState("");
   useEffect(() => {
     function followOrderLink() {
@@ -279,7 +284,7 @@ export function ServiceOrderList({ rows, groups, createEditor }: {
             </div>
           ))}
         </section>
-        <SavedServiceContext.Provider value={(id) => {
+        <SavedServiceContext.Provider value={{ setSaving: (id, on) => setSavingIds((ids) => (ids[id] === on || (!on && !ids[id]) ? ids : { ...ids, [id]: on })), onSaved: (id) => {
           const panel = document.getElementById(`service-editor-${id}`);
           const listHidden = !document.getElementById("service-order")?.getClientRects().length;
           const returnFocus = panel && !panel.hidden && listHidden;
@@ -287,7 +292,7 @@ export function ServiceOrderList({ rows, groups, createEditor }: {
           setNotice(id === CREATE ? "Service added to your booking menu." : "Service changes saved.");
           setMobileEditor((open) => open === id ? null : open);
           if (returnFocus) focusMenu(id);
-        }}>
+        } }}>
         <section
           aria-label="Service editor"
           className={`min-w-0 rounded-lg border border-line bg-surface ${mobileEditor ? "" : "hidden @[670px]/services:block"}`}
@@ -308,7 +313,8 @@ export function ServiceOrderList({ rows, groups, createEditor }: {
                         <span className="text-xs text-fg-muted">{row.active ? "Visible in booking" : "Hidden from booking"}</span>
                         {row.visibility}
                       </div>}
-                      <Button size="sm" variant="quiet" type="button" onClick={() => {
+                      <Button size="sm" variant="quiet" type="button" disabled={savingIds[id] === true} aria-disabled={savingIds[id] === true} data-testid={`discard-edits-${id}`} title={savingIds[id] ? "Saving… wait for the save to finish" : undefined} onClick={() => {
+                        if (savingIds[id]) return;
                         setFormKeys((keys) => ({ ...keys, [id]: (keys[id] ?? 0) + 1 }));
                         setMobileEditor(null);
                         setNotice("Edits discarded.");

@@ -90,3 +90,40 @@ it("keeps the draft and navigation guard on refusal, then restores the accepted 
   expect(host.querySelector('[role="status"]')?.textContent).toMatch(/saved/i);
   expect(isDirty()).toBe(false);
 });
+
+it("keeps Discard edits disabled while a save is in flight, so a newer draft is never erased, and re-enables it after a refused save", async () => {
+  let release!: (value: string) => void; let refuse!: (error: Error) => void;
+  const pending = new Promise<string>((resolve, reject) => { release = resolve; refuse = reject; });
+  const save = vi.fn<(name: string) => Promise<string>>()
+    .mockReturnValueOnce(pending)
+    .mockResolvedValueOnce("Second save");
+  await act(async () => root.render(createElement(ServiceMenu, { save })));
+  await select(0);
+  const discard = () => document.querySelector<HTMLButtonElement>('[data-testid="discard-edits-0"]')!;
+  expect(discard().disabled).toBe(false);
+  await act(async () => { nameInput(0).value = "First edit"; nameInput(0).dispatchEvent(new Event("input", { bubbles: true })); });
+  await act(async () => editForm(0).requestSubmit());
+  // in flight: the form is busy and discard cannot be used; a click does nothing
+  expect(editForm(0).getAttribute("aria-busy")).toBe("true");
+  expect(discard().disabled).toBe(true);
+  expect(discard().getAttribute("aria-disabled")).toBe("true");
+  await act(async () => discard().click());
+  expect(host.querySelector('[role="status"]')?.textContent ?? "").not.toMatch(/discarded/i);
+  expect(nameInput(0).value).toBe("First edit");
+  // a second submit while pending is ignored, not queued
+  await act(async () => editForm(0).requestSubmit());
+  expect(save).toHaveBeenCalledTimes(1);
+  // the save is REFUSED: the draft stays, Discard works again, retry works
+  await act(async () => { refuse(new Error("temporarily refused")); await pending.catch(() => {}); });
+  expect(host.querySelector('[role="alert"]')?.textContent).toMatch(/try again/i);
+  expect(nameInput(0).value).toBe("First edit");
+  expect(discard().disabled).toBe(false);
+  await act(async () => { nameInput(0).value = "Newer edit"; nameInput(0).dispatchEvent(new Event("input", { bubbles: true })); });
+  await act(async () => editForm(0).requestSubmit());
+  expect(save).toHaveBeenCalledTimes(2);
+  expect(discard().disabled).toBe(false);
+  // discarding once idle still discards
+  await act(async () => { nameInput(0).value = "Unsaved"; nameInput(0).dispatchEvent(new Event("input", { bubbles: true })); });
+  await act(async () => discard().click());
+  expect(host.querySelector('[role="status"]')?.textContent).toMatch(/discarded/i);
+});
