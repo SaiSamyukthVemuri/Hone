@@ -572,13 +572,13 @@ test.describe("Block time follows the phone time grid's selected day", () => {
     else await expect(drawer.getByLabel("Applies to")).toHaveCount(0);
     await drawer.getByRole("button", { name: "Save block" }).tap();
     await expect(drawer).toHaveCount(0);
-    const rows = () => sql<{ d: string; practitioner_id: string | null; studio_id: string; reason: string | null }>(
-      "select to_char(starts_at at time zone $2,'YYYY-MM-DD HH24:MI') as d, practitioner_id, studio_id, reason from public.studio_timed_blocks where studio_id=$1 and reason=$3",
+    const rows = () => sql<{ d: string; practitioner_id: string | null; studio_id: string }>(
+      "select to_char(starts_at at time zone $2,'YYYY-MM-DD HH24:MI') as d, practitioner_id, studio_id from public.studio_timed_blocks where studio_id=$1 and private_note=$3",
       [seed.studioId, TZ, reason],
     );
     await expect.poll(async () => (await rows()).map((r) => [r.d, r.practitioner_id, r.studio_id])).toEqual([[`${wednesday} 15:00`, who.id, seed.studioId]]);
     await page.goto(`/calendar?view=week&day=${wednesday}&layout=grid`);
-    await expect(page.getByText(reason).first()).toBeVisible();
+    await expect(page.locator(`button[title*="${reason}"]`).first()).toBeVisible();
     await page.screenshot({ path: `${process.env.EV_DIR ?? "test-results"}/phone-monday-to-wednesday-${owner ? "owner" : "practitioner"}.png` });
     return { monday, wednesday };
   }
