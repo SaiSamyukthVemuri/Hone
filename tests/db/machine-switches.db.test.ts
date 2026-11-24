@@ -43,9 +43,9 @@ const blockIdentity = async (block: string) =>
 const setLegacyMode = (block: string) => adminTx(async (q) => { await q(`set local session_replication_role = replica`); await q(`update public.session_blocks set mode = 'thermolysis' where id = $1`, [block]); });
 // A unit registered directly (as a studio that already had one) has its Senior/Junior model ON, the same rule the seed applies ("on where a live unit
 // exists"); xCell Pur is left as the seed set it, because seedOff flips it on purpose. A test that needs the model off turns it off explicitly.
-const unitOf = async (studio: string, profile: string, version = 1) => {
+const unitOf = async (studio: string, profile: string, version = 1, modelOn = true) => {
   const id = (await adminQuery(`insert into public.studio_machines (studio_id, machine_profile_id, machine_profile_version, display_name) values ($1,$2,$3,$4) returning id`, [studio, profile, version, `Unit ${randomUUID().slice(0, 8)}`])).rows[0].id as string;
-  if (profile !== PUR) await adminQuery(`update public.studio_machine_models set enabled = true where studio_id = $1 and profile_id = $2`, [studio, profile]);
+  if (profile !== PUR && modelOn) await adminQuery(`update public.studio_machine_models set enabled = true where studio_id = $1 and profile_id = $2`, [studio, profile]);
   return id;
 };
 
@@ -136,7 +136,7 @@ describe("the seed: once, by a trigger on studios, never re-run", () => {
   });
 
   it("registering a Senior unit LATER does not switch the model on", async () => {
-    await unitOf(A.studioId, SEN, 3);
+    await unitOf(A.studioId, SEN, 3, false);
     expect((await models(A.studioId))[SEN]).toBe(false);
   });
 });
