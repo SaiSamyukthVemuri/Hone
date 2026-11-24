@@ -208,21 +208,22 @@ begin
   return 'changed';
 end $$;
 
--- The caller's own studios only (an active practitioner row; a receptionist has none), no argument, the minimum: enabled models, the
--- default (or ask), and each enabled model's LIVE unit id if one exists. Nothing is returned while the rollout is off for the studio.
+-- The caller's own studios only (an active practitioner row; a receptionist has none), no argument, the minimum: EVERY model's switch (so
+-- 'nothing is switched on' is a set of rows that are all off, never an empty answer that reads as 'unavailable'), the default (or ask), and each
+-- model's LIVE unit id if one exists. Nothing is returned while the rollout is off for the studio.
 create or replace function public.get_studio_machine_choices()
-returns table (studio_id uuid, profile_id text, is_default boolean, ask_each_visit boolean, live_unit_id uuid)
+returns table (studio_id uuid, profile_id text, is_default boolean, ask_each_visit boolean, live_unit_id uuid, enabled boolean)
 language sql stable security definer set search_path = pg_catalog, pg_temp as $$
   select m.studio_id, m.profile_id,
          (d.default_profile_id = m.profile_id) as is_default,
          d.ask_each_visit,
          (select u.id from public.studio_machines u
            where u.studio_id = m.studio_id and u.machine_profile_id = m.profile_id and u.retired_at is null
-           order by u.id limit 1) as live_unit_id
+           order by u.id limit 1) as live_unit_id,
+         m.enabled
     from public.studio_machine_models m
     join public.studio_machine_default d on d.studio_id = m.studio_id
-   where m.enabled
-     and exists (select 1 from public.practitioners pr where pr.studio_id = m.studio_id and pr.user_id = auth.uid() and pr.active and pr.role in ('owner', 'practitioner'))
+   where exists (select 1 from public.practitioners pr where pr.studio_id = m.studio_id and pr.user_id = auth.uid() and pr.active and pr.role in ('owner', 'practitioner'))
      and public.platform_rollout_enabled_for('charting_new_view_xcell', m.studio_id)
 $$;
 

@@ -28,7 +28,7 @@ const setModel = (user: string, studio: string, profile: string, on: boolean) =>
 const setDefault = (user: string, studio: string, profile: string | null, ask: boolean) =>
   asUser(user, async (q) => (await q(`select public.set_studio_machine_default($1,$2,$3) as r`, [studio, profile, ask])).rows[0].r as string);
 const choices = (user: string) =>
-  asUser(user, async (q) => (await q(`select * from public.get_studio_machine_choices()`)).rows as { studio_id: string; profile_id: string; is_default: boolean; ask_each_visit: boolean; live_unit_id: string | null }[]);
+  asUser(user, async (q) => (await q(`select * from public.get_studio_machine_choices()`)).rows as { studio_id: string; profile_id: string; is_default: boolean; ask_each_visit: boolean; live_unit_id: string | null; enabled: boolean }[]);
 const ensure = (user: string, block: string, profile: string) =>
   asUser(user, async (q) => (await q(`select public.ensure_studio_machine_for_save($1,$2) as r`, [block, profile])).rows[0].r as string);
 const models = async (studio: string) =>
@@ -203,13 +203,31 @@ describe("get_studio_machine_choices: no argument, the caller's own studios, the
     const own = await choices(memA.userId);
     expect(own.every((r) => r.studio_id === A.studioId)).toBe(true);
     expect(own.find((r) => r.profile_id === PUR)).toMatchObject({ is_default: true, ask_each_visit: false });
-    expect(own.find((r) => r.profile_id === JUN)).toBeUndefined();
+    // EVERY model is returned with its switch, so an off model is a row that says off (never a missing row)
+    expect(own.find((r) => r.profile_id === JUN)).toMatchObject({ enabled: false });
+    expect(own.find((r) => r.profile_id === PUR)).toMatchObject({ enabled: true });
     expect(await choices(recept)).toEqual([]);
     expect((await choices(B.userId)).every((r) => r.studio_id === B.studioId)).toBe(true);
     const cols = Object.keys(own[0]);
-    expect(cols.sort()).toEqual(["ask_each_visit", "is_default", "live_unit_id", "profile_id", "studio_id"]);
+    expect(cols.sort()).toEqual(["ask_each_visit", "enabled", "is_default", "live_unit_id", "profile_id", "studio_id"]);
     const fnArgs = (await adminQuery(`select pronargs from pg_proc where proname='get_studio_machine_choices'`)).rows[0].pronargs;
     expect(Number(fnArgs)).toBe(0);
+  });
+});
+
+describe("switching every model off: 'nothing enabled' is not 'unavailable'", () => {
+  it("the read still returns a row per model, all off and none the default, so the app can show 'No machines enabled' instead of the unfiltered picker; turning one back on returns to normal", async () => {
+    const S = await seedOn("sw-alloff");
+    for (const p of [PUR, SEN, JUN]) await setModel(S.userId, S.studioId, p, false);
+    const rows = (await choices(S.userId)).filter((r) => r.studio_id === S.studioId);
+    expect(rows.map((r) => r.profile_id).sort()).toEqual([JUN, PUR, SEN].sort());
+    expect(rows.every((r) => r.enabled === false)).toBe(true);
+    expect(rows.every((r) => r.is_default === false)).toBe(true);
+    expect(rows.every((r) => r.ask_each_visit === true)).toBe(true);
+    expect(await setModel(S.userId, S.studioId, PUR, true)).toBe("changed");
+    const back = (await choices(S.userId)).filter((r) => r.studio_id === S.studioId);
+    expect(back.find((r) => r.profile_id === PUR)).toMatchObject({ enabled: true });
+    expect(back.filter((r) => r.enabled).length).toBe(1);
   });
 });
 
