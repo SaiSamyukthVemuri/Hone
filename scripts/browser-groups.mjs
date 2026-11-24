@@ -207,6 +207,8 @@ export const BROWSER_GROUPS = {
       // the /book/[slug] surface, so it belongs with the other public booking
       // specs rather than with the shell interaction family.
       "book-next-available-fast.spec.ts",
+      // HON-114: the public page after a staff change still lists the opening one buffer after an existing visit.
+      "public-booking-after-staff-change.spec.ts",
       // 0171: the public reschedule v2 contract (policy hash, exclusion,
       // duration authority, same-time, duplicate submit, post-commit success).
       "public-reschedule-v2.spec.ts",
@@ -574,6 +576,7 @@ export const PUBLIC_BOOKING_SPECS = [
   "new-studio-wizard.spec.ts",
   "onboarding.spec.ts",
   "perceived-speed.spec.ts",
+  "public-booking-after-staff-change.spec.ts",
   "public-booking-error-containment.spec.ts",
   "public-booking-slot-read-failure.spec.ts",
   "public-cancel-policy-change.spec.ts",
