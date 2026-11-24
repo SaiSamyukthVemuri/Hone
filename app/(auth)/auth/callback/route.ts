@@ -6,6 +6,7 @@ import {
 } from "@/lib/analytics/server";
 import { isAnalyticsUuid } from "@/lib/analytics/ids";
 import { RETURN_TO_COOKIE, returnToDestination, returnToKeyFromCookieHeader } from "@/lib/auth/return-to";
+import { isDeskEnabled } from "@/lib/desk/flag";
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
@@ -47,7 +48,7 @@ export async function GET(request: Request) {
         );
         const status =
           rec && typeof rec === "object"
-            ? (rec as { status?: string; choose_studio?: boolean })
+            ? (rec as { status?: string; choose_studio?: boolean; role?: string })
             : null;
         if (status?.status === "acceptance_required") {
           dest = "/accept-invitation";
@@ -55,6 +56,15 @@ export async function GET(request: Request) {
           dest = "/no-access?reason=invite-conflict";
         } else if (status?.status === "ambiguous") {
           dest = "/no-access?reason=invite-ambiguous";
+        } else if (
+          (status?.status === "linked" || status?.status === "already_linked") &&
+          status?.role === "receptionist" &&
+          isDeskEnabled()
+        ) {
+          // A front-desk membership lands on the desk; two or more desk studios go through the receptionist chooser. With the desk flag OFF this
+          // branch is skipped and the ordinary path decides.
+          dest = status.choose_studio === true ? "/desk/choose" : "/desk";
+          clearSelection = status.choose_studio === true;
         } else if (
           (status?.status === "linked" ||
             status?.status === "already_linked") &&

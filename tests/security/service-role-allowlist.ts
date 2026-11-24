@@ -322,6 +322,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
+    path: "app/(app)/settings/team/receptionist-actions.ts",
+    purpose: "Owner team management: deactivate or reactivate a front-desk receptionist through the set_studio_receptionist_active command.",
+    why: "setReceptionistActiveAction resolves the signed-in practitioner and studio on the server (getCurrentPractitionerWithStudio), refuses anyone who is not the owner BEFORE any database call, then calls the service-role-only command with the server-derived studio id and owner id (only the receptionist id and the wanted state come from the form). The command re-verifies the active owner in the database and answers not_found for a receptionist of another studio, so a forged id cannot reach across studios. It writes the one row's active flag; it reads no client data.",
+    scopeGuard: "getCurrentPractitionerWithStudio",
+  },
+  {
     path: "app/(app)/settings/payments/actions.ts",
     purpose: "Authenticated practitioner server action/query.",
     why: "Service-role write/read-through after the caller's studio is resolved via getCurrentPractitionerWithStudio(); every query is scoped to that studio.id.",
