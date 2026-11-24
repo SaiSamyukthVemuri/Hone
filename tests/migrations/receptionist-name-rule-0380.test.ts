@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { isRepoMax } from "./helpers/migration-state";
 
 // 0380: a receptionist sees the preferred name, else the regular client name, else the words 'Name on file' only when both are
 // blank. SOURCE contract for the migration and its down file. Behaviour is the authority and is proved by
@@ -38,9 +37,6 @@ const OLD: Record<string, string> = Object.fromEntries(NAMES.map((n) => [n, fnTe
 const SHOWN = "coalesce(nullif(pg_catalog.btrim(c.preferred_name), ''), nullif(pg_catalog.btrim(c.name), ''))";
 
 describe("0380 is shaped like a sealed migration", () => {
-  it("is the current maximum migration", () => {
-    expect(isRepoMax("0380")).toBe(true);
-  });
   it("opens its own transaction and arms lock_timeout inside it", () => {
     expect(UP).toMatch(/^begin;$/m);
     expect(UP).toMatch(/^commit;$/m);

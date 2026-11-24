@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { adminQuery, asRole, asUser, closePool, seedMember, seedStudio, type SeededStudio } from "./helpers/harness";
+import { closeOlderContactCommands, reopenOlderContactCommands } from "./helpers/older-contact-commands";
 
 // The receptionist desk's database boundary, by DIRECT calls to the three read functions as each kind of caller: this
 // is what a signed-in person can do outside the app. Synthetic fixtures only. Names are never printed: assertions on
@@ -54,6 +55,7 @@ const callAs = async (userId: string | "anon", name: string): Promise<Outcome> =
 };
 
 beforeAll(async () => {
+  await reopenOlderContactCommands(); // closed by 0381; reopened for this file only to prove the reviewed body
   studio = await seedStudio("desk-a");
   other = await seedStudio("desk-b");
   who.owner = studio.userId;
@@ -84,7 +86,10 @@ beforeAll(async () => {
     [randomUUID(), studio.studioId, studio.practitionerId, studio.clientId],
   );
 });
-afterAll(closePool);
+afterAll(async () => {
+  await closeOlderContactCommands();
+  await closePool();
+});
 
 describe("part 1: who may call the three desk functions directly", () => {
   it("this studio's active receptionist is answered by all three", async () => {
