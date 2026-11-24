@@ -35,13 +35,13 @@ async function standardDirectory(page: Page, who: string) {
   await noGroupUi(page, who);
 
   // Standard filter and sort, then clear
-  // The checkbox and radio are visually hidden: the label chip is what a person taps.
+  // The quick-filter checkbox is visually hidden inside its label.
   await page.locator("label", { has: page.getByRole("checkbox", { name: "No upcoming appointment" }) }).click();
   await expect(page.getByRole("checkbox", { name: "No upcoming appointment" })).toBeChecked();
   await expect(page).toHaveURL(/filter=no_upcoming/);
-  await page.locator("label", { has: page.getByRole("radio", { name: /next appointment/i }) }).click();
+  await page.getByRole("combobox", { name: "Sort by" }).selectOption("next");
   await expect(page).toHaveURL(/sort=next/);
-  await page.getByRole("button", { name: "Clear search and filters" }).click();
+  await page.getByRole("search").getByRole("link", { name: "Clear search and filters" }).click();
   await expect(page).not.toHaveURL(/[?&](q|filter|sort)=/);
   await expect(page.getByText("Gx 01").first()).toBeVisible();
 
@@ -50,6 +50,8 @@ async function standardDirectory(page: Page, who: string) {
   await expect(page).toHaveURL(/view=archived/);
   await expect(page.getByRole("link", { name: "Archived clients" })).toHaveAttribute("aria-current", "page");
   await expect(page.getByText("Gx Archived").first()).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Sort by" }).getByRole("option")).toHaveText(["Recently archived", "Name A–Z"]);
+  await expect(page.getByRole("combobox", { name: "Last visit" })).toHaveCount(0);
   await noGroupUi(page, who);
 
   // Old links land on the standard directory (a group parameter keeps only the standard ones)

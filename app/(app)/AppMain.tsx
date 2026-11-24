@@ -3,12 +3,12 @@
 import { usePathname } from "next/navigation";
 import { APP_MAIN_FULL, APP_MAIN_NORMAL, calendarUsesFullWidth } from "@/lib/calendar/page-width";
 
-// The dashboard panels and the Records logbooks use a wider desktop layout.
+// The dashboard, the client directory and the Records logbooks use wider columns than detail pages.
 export function AppMain({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const wide = calendarUsesFullWidth(pathname);
-  const section = pathname?.replace(/\/$/, "");
-  const contained = section === "/dashboard" || section === "/records"
+  const path = pathname?.replace(/\/$/, "");
+  const contained = path === "/dashboard" || path === "/clients" || path === "/records"
     ? "mx-auto max-w-[86rem] px-4 py-6 md:px-8 md:py-8"
     : APP_MAIN_NORMAL;
   return (
