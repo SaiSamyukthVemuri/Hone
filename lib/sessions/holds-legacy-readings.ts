@@ -6,6 +6,9 @@
 export const LEGACY_BLOCK_READING_TEXT_COLUMNS = ["apilus_modality"] as const;
 export const LEGACY_BLOCK_READING_NUMBER_COLUMNS = ["energy_level"] as const;
 export const LEGACY_ENTRY_READING_COLUMNS = [
+  "intensity",
+  "duration_seconds",
+  "galvanic_intensity_percent",
   "thermolysis_intensity_percent",
   "thermolysis_duration_seconds",
   "galvanic_ma",
