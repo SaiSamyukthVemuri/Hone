@@ -289,10 +289,13 @@ test("core memory loop: booking to next-appointment memory", async ({
     ).toBeVisible();
     await expect(page.getByLabel("Choose a client")).toHaveValue(clientId);
     const row = page.locator("details").filter({ has: page.getByText("View record", { exact: true }) }).first();
-    await expect(row.getByText(`E2E-LOT-${seed.runId}`)).toBeHidden();
+    // The lot appears in TWO places inside the opened row, on purpose: "Items used" (the lot itself) and the History line that records the change
+    // ("(none -> <lot>)"). Match the lot's own element by exact text; a substring match would also catch the history line.
+    const lotInItemsUsed = row.getByText(`E2E-LOT-${seed.runId}`, { exact: true });
+    await expect(lotInItemsUsed).toBeHidden();
     await row.locator("summary").first().click();
     await expect(row.getByRole("heading", { name: "Client details" })).toBeVisible();
-    await expect(page.getByText(`E2E-LOT-${seed.runId}`).first()).toBeVisible();
+    await expect(lotInItemsUsed).toBeVisible();
 
     // Mark risks/aftercare explained from the procedure record row.
     await page
