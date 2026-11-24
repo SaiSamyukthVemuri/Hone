@@ -436,6 +436,27 @@ describe("apply_block_machine_identity: the xCell Pur model with a legacy-column
     expect(await blockIdentity(s.blockId)).toEqual({ machine_profile_id: null, studio_machine_id: null, machine_mode_key: null });
   });
 
+  it("a NEW binding to a model that is switched off is refused, native or the legacy xCell choice, whatever unit is named; an unchanged existing identity still saves; the rollout off makes the switch dormant", async () => {
+    const S = await seedOn("sw-id-native-off");
+    const senior = await unitOf(S.studioId, SEN, 3);
+    const kept = await seedSession(S);
+    await identity(kept.blockId, S.studioId, SEN, senior, "flash");
+    await setModel(S.userId, S.studioId, SEN, false);
+    const fresh = await seedSession(S);
+    expect((await failure(identity(fresh.blockId, S.studioId, SEN, senior, "flash")))?.message).toMatch(/switched off for this studio/);
+    expect(await blockIdentity(fresh.blockId)).toEqual({ machine_profile_id: null, studio_machine_id: null, machine_mode_key: null });
+    await identity(kept.blockId, S.studioId, SEN, senior, "flash"); // unchanged: not a new binding
+    await setRollout("off");
+    try { await identity(fresh.blockId, S.studioId, SEN, senior, "flash"); } finally { await setRollout("all"); }
+    expect((await blockIdentity(fresh.blockId)).machine_profile_id).toBe(SEN);
+    // the legacy xCell choice is the xCell model: off refuses a new area on it too
+    const legacy = await seedSession(S);
+    await setModel(S.userId, S.studioId, PUR, false);
+    expect((await failure(identity(legacy.blockId, S.studioId, "dectro-apilus:xcell", null, null)))?.message).toMatch(/switched off for this studio/);
+    await setModel(S.userId, S.studioId, PUR, true);
+    await identity(legacy.blockId, S.studioId, "dectro-apilus:xcell", null, null);
+  });
+
   it("an EXISTING block with an UNCHANGED identity still saves with the model off and the rollout Off; a CHANGED one does not", async () => {
     const S = await seedOn("sw-id-keep");
     const s = await seedSession(S);

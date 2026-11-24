@@ -500,7 +500,10 @@ export async function loadMachineSetupContext(input: {
   if (xcellSwitch.available && xcellSwitch.enabled && !legacyMachine) legacyMachine = legacyMachineOffer(catalogue);
   // THE SWITCH OFF APPLIES TO A NEW AREA: history alone must not keep offering the existing xCell choice (and with it MultiPlex) once the owner
   // switched the xCell off. An EXISTING area keeps the machine it was charted with, so this is for a new area only.
-  if (xcellSwitch.available && !xcellSwitch.enabled && !input.blockId) legacyMachine = null;
+  // The same OFF applies to the xCell Pur UNIT: without the legacy wrapper the picker would list a live unit as an ordinary native machine, and a new
+  // MultiPlex area could be saved from it. It is withheld from a NEW area with its remembered and suggested selections (an existing area keeps its own).
+  const xcellOffForNewArea = xcellSwitch.available && !xcellSwitch.enabled && !input.blockId;
+  if (xcellOffForNewArea) legacyMachine = null;
   // PLATFORM ROLLOUT. Only a studio that is OFFERED the legacy xCell choice has anything to gate, so the rollout and
   // the existing-block read happen ONLY then: a studio with no xCell history makes no rollout read and keeps its own reason, so a rollout
   // outage (or a deploy ahead of the migration) cannot degrade machine setup for every studio. An EXISTING MultiPlex block keeps its route
@@ -601,7 +604,7 @@ export async function loadMachineSetupContext(input: {
   // WHEN THE ROLLOUT COULD NOT BE READ, THE xCELL UNIT IS WITHHELD WHOLE, not only its legacy-choice wrapper: with the wrapper gone the picker
   // would list a registered xCell Pur unit as an ordinary machine, and a new setup saved from it would be recorded under the native identity
   // while it is unknown whether this studio may use it. Every selection that could point at such a unit is withheld with it.
-  const offered = withholdXcellUnits({ rollout: rolloutUnavailable ? "unavailable" : rolloutOff ? "off" : "available", devices: inventory.devices, remembered, suggestedMachine, restoredSelection, clientLastMachine });
+  const offered = withholdXcellUnits({ rollout: rolloutUnavailable ? "unavailable" : rolloutOff || xcellOffForNewArea ? "off" : "available", devices: inventory.devices, remembered, suggestedMachine, restoredSelection, clientLastMachine });
 
   return {
     scope,
