@@ -483,6 +483,54 @@ test.describe("F1: quick block scope", () => {
   });
 });
 
+// The Block time button (by-practitioner week, day, month) must hand the drawer the SAME server-resolved acting
+// practitioner and studio as the time-grid paths: a member can only block their own time, an owner must choose.
+async function blockFromButton(page: Page, url: string, local: string, tap: boolean) {
+  const press = (l: Locator) => (tap ? l.tap() : l.click());
+  await page.goto(url);
+  await press(page.getByRole("button", { name: "Block time", exact: true }));
+  const drawer = page.getByRole("dialog", { name: "Block time" });
+  await expect(drawer).toBeVisible();
+  await drawer.getByLabel("Start", { exact: true }).fill(local);
+  const [h, m] = local.split(":").map(Number);
+  const end = h * 60 + m + 30;
+  await drawer.getByLabel("End", { exact: true }).fill(`${String(Math.floor(end / 60)).padStart(2, "0")}:${String(end % 60).padStart(2, "0")}`);
+  return { drawer, press };
+}
+const rowsAt = (local: string) => sql<{ id: string; practitioner_id: string | null; studio_id: string }>(
+  "select id, practitioner_id, studio_id from public.studio_timed_blocks where studio_id=$1 and starts_at = ($2::date + $3::time) at time zone $4",
+  [seed.studioId, day, local, TZ],
+);
+function blockButtonTests(tap: boolean, times: { member: string; owner: string; day: string }) {
+  test("Block time button: a member's block lands on their own column in this studio, with no studio-wide choice", async ({ page }) => {
+    const cy = byKey("cy");
+    await loginByMagicLink(page, cy.email!);
+    const { drawer, press } = await blockFromButton(page, `/calendar?view=week&day=${day}`, times.member, tap);
+    await expect(drawer.getByLabel("Applies to")).toHaveCount(0);
+    await press(drawer.getByRole("button", { name: "Save block" }));
+    await expect(drawer).toHaveCount(0);
+    await expect.poll(async () => (await rowsAt(times.member)).map((r) => [r.practitioner_id, r.studio_id])).toEqual([[cy.id, seed.studioId]]);
+  });
+  test("Block time button on the day: the owner chooses Only Ed and it lands on Ed in this studio", async ({ page }) => {
+    const ed = byKey("ed");
+    await loginAsOwner(page, seed);
+    const { drawer, press } = await blockFromButton(page, `/calendar?view=day&day=${day}`, times.owner, tap);
+    await drawer.getByLabel("Applies to").selectOption({ label: `Only ${ed.name}` });
+    await press(drawer.getByRole("button", { name: "Save block" }));
+    await expect(drawer).toHaveCount(0);
+    await expect.poll(async () => (await rowsAt(times.owner)).map((r) => [r.practitioner_id, r.studio_id])).toEqual([[ed.id, seed.studioId]]);
+  });
+}
+
+test.describe("Block time button on desktop", () => {
+  test.use({ viewport: { width: 1280, height: 1000 } });
+  blockButtonTests(false, { member: "19:00", owner: "19:30", day });
+});
+test.describe("Block time button on a phone", () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  blockButtonTests(true, { member: "20:00", owner: "20:30", day });
+});
+
 test("finds a colleague's opening on another day and books the exact previewed slot", async ({ page }) => {
   const target = byKey("bo");
   const { clientId } = await seedE2eClient(seed);
@@ -538,7 +586,8 @@ test("finds a colleague's opening on another day and books the exact previewed s
   }]);
 
   // Another staff member had previewed this same opening before confirmation.
-  await stalePreview.click();
+  // The stale tab may already have refreshed and drawn the booked visit over its marker; the marker's own handler is what is under test.
+  await stalePreview.dispatchEvent("click");
   const staleDrawer = otherPage.getByRole("dialog", { name: "New appointment" });
   await expect(staleDrawer.getByText(/opening is no longer available/i)).toBeVisible();
   await staleDrawer.getByPlaceholder("Find existing client").fill(bookingClient);

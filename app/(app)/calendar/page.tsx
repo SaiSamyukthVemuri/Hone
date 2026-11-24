@@ -408,7 +408,7 @@ export default async function CalendarPage({
       <CalendarOpeningBooking date={initialSelectedDate} clientId={rebookSource?.clientId} clients={drawerClients}
         services={services} studioTimezone={studio.timezone} timeFormat={timeFormat} isOwner={isOwner}
         capacityEnabled={studio.practitioner_capacity_enabled === true} viewer={{id: practitioner.id, name: practitioner.display_name}} />
-      {byPractitioner && <CalendarBlockTime date={initialSelectedDate} studioTimezone={studio.timezone} blockScopeNames={blockScopeNames} isOwner={isOwner} currentPractitionerId={practitioner.id} currentPractitionerName={practitioner.display_name} />}
+      <CalendarBlockTime date={initialSelectedDate} studioTimezone={studio.timezone} blockScopeNames={blockScopeNames} isOwner={isOwner} currentPractitionerId={practitioner.id} currentPractitionerName={practitioner.display_name} />
       {multiPersonWeek && <nav aria-label="Week layout" className="flex w-fit gap-1 rounded-lg bg-neutral-100 p-1 text-sm">
         {[{ label: "By practitioner", grid: false }, { label: "Time grid", grid: true }].map(({ label, grid }) => {
           const query = new URLSearchParams({ view: "week", day: initialSelectedDate });
@@ -975,6 +975,8 @@ async function renderTeamDayView(opts: {
       <CalendarOpeningBooking date={date} clientId={rebookSource?.clientId} clients={drawerClients}
         services={services} studioTimezone={studio.timezone} timeFormat={timeFormat} isOwner={isOwner}
         capacityEnabled={capacityEnabled} viewer={{id: practitioner.id, name: practitioner.display_name}} />
+      <CalendarBlockTime date={date} studioTimezone={studio.timezone} blockScopeNames={blockScopeNames} isOwner={isOwner}
+        currentPractitionerId={practitioner.id} currentPractitionerName={practitioner.display_name} />
       {notWorking.length > 0 && (
         <p data-testid="team-day-not-working" className="text-sm text-neutral-600 dark:text-neutral-400">
           Not working today: {notWorking.map((p) => p.name).join(", ")}
