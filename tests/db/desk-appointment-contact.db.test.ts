@@ -84,9 +84,9 @@ describe("receptionist scheduling names", () => {
       const matches = await asUser(desk, q => q(findClient, [studio.studioId, term]));
       expect(matches.rows).toEqual([]);
     }
-    // Independent clients of the older directory retain their original projection.
+    // The older v2 schedule follows the same rule since 0380: the preferred name, else the regular client name (never the legal identity).
     const old = await asUser(desk, q => q("select display_name from public.receptionist_calendar_v2($1, now(), now()+interval '31 days')", [studio.studioId]));
-    expect(old.rows).toEqual([{ display_name: "Name on file" }]);
+    expect(old.rows).toEqual([{ display_name: "Casey Rowan" }]);
   });
 
   it("tells apart two clients with the same displayed name by email, and never searches the legal name", async () => {

@@ -86,6 +86,20 @@ describe("the displayed name rule, in each of the three bodies", () => {
   });
 });
 
+describe("the intake and consent facts of the directory are 0374's, byte for byte", () => {
+  it("the facts CTE (appointments, newest intake status, current treatment consent) and the shaped CTE are unchanged", () => {
+    const cut = (s: string) => s.slice(s.indexOf("    facts as ("), s.indexOf("    filtered as ("));
+    const o = cut(body(OLD.receptionist_client_directory));
+    const n = cut(body(NEW.receptionist_client_directory));
+    expect(o.length).toBeGreaterThan(1500);
+    expect(n).toBe(o);
+  });
+  it("the directory body hash recorded for review is this file's body", () => {
+    expect(createHash("sha256").update(body(NEW.receptionist_client_directory)).digest("hex")).toBe("d1258e9d819de7c9152bd339b9f7ce808e1ff0ea2cbac2f1664291c7a083e42b");
+    expect(createHash("sha256").update(body(OLD.receptionist_client_directory)).digest("hex")).toBe("21d94010d93741ad0c0722c892177de66b08907348621e5ccc27ce9d11aef848");
+  });
+});
+
 describe("the legal identity is never referenced", () => {
   it("no body names the legal identity table, a legal column or the legal-name switch (comments excluded)", () => {
     for (const n of NAMES) {
