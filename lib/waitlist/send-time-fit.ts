@@ -55,7 +55,9 @@ export async function computeConsultationFit(input: FitInput): Promise<FitResult
       serviceId: input.serviceId,
       dates,
     });
-    if (!range.ok) return { ok: false };
+    // A studio with no open weekday has NO appointments to offer: that is a real zero, and the owner may still choose to invite (the invitation
+    // page asks for an acknowledgement at zero). Any other failure to read availability stays a failure, with the honest "could not check" copy.
+    if (!range.ok) return range.reason === "no_open_days" ? { ok: true, fit: 0, firstDate: first } : { ok: false };
     return { ok: true, fit: consultationsThatFit(range.slots, Number(row.buffer_minutes ?? 0)), firstDate: first };
   } catch {
     return { ok: false };

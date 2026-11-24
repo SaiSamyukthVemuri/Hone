@@ -94,11 +94,45 @@ describe("over-invite action", () => {
     await run(form({ entryId: [U(1), U(1), U(2), U(3)] }));
     expect(h.createArgs?.entryIds).toEqual([U(1), U(2), U(3)]);
   });
-  it("a zero or exhausted capacity still sends a confirmed batch", async () => {
+  it("a zero estimate still sends a confirmed batch once the owner has acknowledged that the invited may find no times", async () => {
     h.fit = { ok: true, fit: 0 };
-    const r = await run(form({ shownFit: "0" }));
+    const r = await run(form({ shownFit: "0", ackNoTimes: "on" }));
     expect(h.calls).toContain("create");
     expect(r).toMatchObject({ state: "progress" });
+  });
+  describe("at a zero estimate the SERVER requires the no-times acknowledgement", () => {
+    const NEED = "Tick the box to confirm: These clients may open the invitation and find no times to book. Nothing was sent.";
+    it("refuses a send that omits it, creates nothing, and says what to tick", async () => {
+      h.fit = { ok: true, fit: 0 };
+      const r = await run(form({ shownFit: "0" }));
+      expect(r).toEqual({ state: "notice", notice: NEED });
+      expect(h.calls).not.toContain("create");
+      expect(h.calls).not.toContain("claim");
+    });
+    it("accepts only the exact value on: anything else is not an acknowledgement", async () => {
+      h.fit = { ok: true, fit: 0 };
+      for (const v of ["", "true", "yes", "ON", "1", " on"]) {
+        h.calls = [];
+        expect(await run(form({ shownFit: "0", ackNoTimes: v }))).toEqual({ state: "notice", notice: NEED });
+        expect(h.calls).not.toContain("create");
+      }
+    });
+    it("the confirmed box alone does not stand in for it", async () => {
+      h.fit = { ok: true, fit: 0 };
+      expect(await run(form({ shownFit: "0", confirmed: "on" }))).toEqual({ state: "notice", notice: NEED });
+    });
+    it("is decided from the SERVER's fit: a form that claims a nonzero estimate cannot skip it (it is asked again on the new numbers first)", async () => {
+      h.fit = { ok: true, fit: 0 };
+      const r = await run(form({ shownFit: "5" }));
+      expect(r).toMatchObject({ state: "reconfirm", fit: 0 });
+      expect(h.calls).not.toContain("create");
+    });
+    it("is not demanded when appointments are estimated", async () => {
+      h.fit = { ok: true, fit: 5 };
+      const r = await run(form());
+      expect(h.calls).toContain("create");
+      expect(r).toMatchObject({ state: "progress" });
+    });
   });
   it("material_change from the database re-asks and queues nothing", async () => {
     h.create = { ok: true, result: "material_change", batchId: null, quantity: 3, extraRequested: null, liveCount: 9 };

@@ -3,7 +3,7 @@
 import { useActionState, useCallback, useState } from "react";
 import { OverInviteConfirm } from "@/components/waitlist/over-invite-confirm";
 import { RecipientChooser } from "@/components/waitlist/recipient-chooser";
-import { buildOverInvitePreview } from "@/lib/waitlist/over-invite-preview";
+import { buildOverInvitePreview, buildScopeSummary } from "@/lib/waitlist/over-invite-preview";
 import type { Candidate } from "@/lib/waitlist/recipient-chooser";
 import type { OverInviteResult } from "@/lib/waitlist/over-invite-result";
 
@@ -19,6 +19,7 @@ export function OverInviteForm({
   expiringSoon,
   batchKey,
   scope,
+  serviceName,
 }: {
   action: (prev: OverInviteResult, formData: FormData) => Promise<OverInviteResult>;
   candidates: readonly Candidate[];
@@ -27,6 +28,7 @@ export function OverInviteForm({
   expiringSoon: number;
   batchKey: string;
   scope: { serviceId: string; windowDays: number; allowedWeekdays: readonly number[] | null };
+  serviceName: string;
 }) {
   const [result, formAction] = useActionState(action, { state: "idle" } as OverInviteResult);
   const [chosen, setChosen] = useState(0);
@@ -47,6 +49,7 @@ export function OverInviteForm({
         preview={preview}
         batchKey={batchKey}
         notice={notice}
+        scopeSummary={buildScopeSummary({ serviceName, windowDays: scope.windowDays, allowedWeekdays: scope.allowedWeekdays, selected: chosen })}
         recipientChooser={
           <>
             <input type="hidden" name="serviceId" value={scope.serviceId} />

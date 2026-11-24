@@ -93,7 +93,7 @@ function sendForm(count: number, from = 1) {
   f.append("batchKey", "33333333-3333-4333-8333-333333333333");
   f.append("serviceId", U(900)); f.append("windowDays", "7"); f.append("allowedWeekdays", "");
   f.append("shownFit", "0"); f.append("shownActive", "0"); f.append("shownExtra", String(count));
-  f.append("confirmed", "on");
+  f.append("confirmed", "on"); f.append("ackNoTimes", "on"); // the estimate is zero here, so the server also requires the no-times acknowledgement
   for (let i = from; i < from + count; i++) f.append("entryId", U(i));
   return f;
 }

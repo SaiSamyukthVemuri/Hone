@@ -150,6 +150,7 @@ export default async function OverInvitePage({
         expiringSoon={live.expiringWithin24h}
         batchKey={newBatchKey()}
         scope={{ serviceId: chosenService.id, windowDays: days, allowedWeekdays: weekdays }}
+        serviceName={chosenService.name}
       />
     </main>
   );

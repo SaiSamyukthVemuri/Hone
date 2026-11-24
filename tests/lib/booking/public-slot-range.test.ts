@@ -453,3 +453,43 @@ describe("SCH-003 reschedule range preserves the original appointment timeline",
     expect(await load()).toEqual({ ok: false, error: "Availability could not be read." });
   });
 });
+
+describe("a studio with no open weekday is an ANSWER, a failed read is not", () => {
+  const dates = range("2026-10-05", "2026-10-07");
+  it("every weekday closed, with an active service: not ok, and named as no open days", async () => {
+    scenario.defaults = [0, 1, 2, 3, 4, 5, 6].map((d) => ({ day_of_week: d, is_open: false, open_time: null, close_time: null }));
+    expect(await fetchPublicSlotsForDates({ slug: "studio-a", serviceId: "svc", dates })).toMatchObject({ ok: false, reason: "no_open_days" });
+  });
+  it("no availability rows at all, with an active service: the same answer", async () => {
+    scenario.defaults = [];
+    expect(await fetchPublicSlotsForDates({ slug: "studio-a", serviceId: "svc", dates })).toMatchObject({ ok: false, reason: "no_open_days" });
+  });
+  it("a day marked open with no hours does not count as open", async () => {
+    scenario.defaults = [{ day_of_week: 1, is_open: true, open_time: null, close_time: null }];
+    expect(await fetchPublicSlotsForDates({ slug: "studio-a", serviceId: "svc", dates })).toMatchObject({ ok: false, reason: "no_open_days" });
+  });
+  it("a failed read of the services is a failure with NO reason", async () => {
+    scenario.defaults = [];
+    scenario.servicesError = { code: "XX000" };
+    const r = await fetchPublicSlotsForDates({ slug: "studio-a", serviceId: "svc", dates });
+    expect(r.ok).toBe(false);
+    expect((r as { reason?: string }).reason).toBeUndefined();
+  });
+  it("no active service is a failure with NO reason, whatever the week", async () => {
+    scenario.defaults = [];
+    scenario.activeServices = 0;
+    const r = await fetchPublicSlotsForDates({ slug: "studio-a", serviceId: "svc", dates });
+    expect(r.ok).toBe(false);
+    expect((r as { reason?: string }).reason).toBeUndefined();
+  });
+  it("an unknown studio is a failure with NO reason", async () => {
+    scenario.studio = null;
+    const r = await fetchPublicSlotsForDates({ slug: "studio-a", serviceId: "svc", dates });
+    expect(r.ok).toBe(false);
+    expect((r as { reason?: string }).reason).toBeUndefined();
+  });
+  it("an open week is unaffected", async () => {
+    const r = await fetchPublicSlotsForDates({ slug: "studio-a", serviceId: "svc", dates });
+    expect(r.ok).toBe(true);
+  });
+});

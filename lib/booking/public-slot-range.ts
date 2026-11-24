@@ -75,7 +75,15 @@ export type PublicSlotRangeResult =
       /** Dates the caller asked for that the horizon excluded. */
       skippedOutsideHorizon: string[];
     }
-  | { ok: false; error: string };
+  | {
+      ok: false;
+      error: string;
+      /**
+       * Set ONLY when the studio has at least one active service and NO open weekday at all: a real answer ("nothing is open"), not a failed read.
+       * A caller that counts appointments may treat it as zero; every other failure stays an error. Absent for any read failure.
+       */
+      reason?: "no_open_days";
+    };
 
 /**
  * The weekday of a STUDIO-LOCAL calendar date.
@@ -144,7 +152,13 @@ export async function fetchPublicSlotsForDates(params: {
       openAvailabilityDaysCount,
     })
   ) {
-    return { ok: false, error: "This studio is not accepting bookings online." };
+    // A closed week is an ANSWER, not a failed read: both queries above succeeded. It is named only when a bookable service exists, so a studio
+    // with no active service stays an error for every caller.
+    return {
+      ok: false,
+      error: "This studio is not accepting bookings online.",
+      ...((servicesRes.count ?? 0) >= 1 && openAvailabilityDaysCount === 0 ? { reason: "no_open_days" as const } : {}),
+    };
   }
 
   const { data: service, error: serviceError } = await admin

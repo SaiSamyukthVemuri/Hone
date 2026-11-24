@@ -95,6 +95,10 @@ export async function sendOverInviteAction(_prev: OverInviteResult, formData: Fo
       return { state: "reconfirm", notice: N.changed, ...fresh, expiringSoon: preview.expiringWithin24h };
     }
 
+    // AT ZERO THE OWNER MUST ALSO ACKNOWLEDGE THAT THE INVITED MAY FIND NO TIMES. The server decides this from ITS fit, never from the posted
+    // `shownFit`, the same way `confirmed` is required above: a form that omits or forges the box sends nothing.
+    if (fit.fit === 0 && !sub.noTimesAcknowledged) return { state: "notice", notice: N.needNoTimesAck };
+
     const created = await createBatch(db, {
       studioId: studio.id,
       actorUserId,
