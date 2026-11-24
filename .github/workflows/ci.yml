@@ -1255,7 +1255,7 @@ jobs:
           else
             SHARD_TOTAL="${{ needs.changes.outputs.browser_shard_total }}"
           fi
-          npx playwright test e2e/machine-create-mode-journey.spec.ts --project=chromium --grep='native 3G (durability|text durability|uncommitted recovery)' --fully-parallel --workers=1 --shard=${{ matrix.shard }}/${SHARD_TOTAL} --retries=0 --max-failures=1 --reporter=list,json --output=test-results/native-3g-shard-${{ matrix.shard }}
+          npx playwright test e2e/machine-create-mode-journey.spec.ts --project=chromium --grep='native 3G (durability|text durability|uncommitted recovery)' --fully-parallel --workers=1 --shard=${{ matrix.shard }}/${SHARD_TOTAL} --retries=0 --max-failures=1 --reporter=list,json,junit --output=test-results/native-3g-shard-${{ matrix.shard }}
           node --input-type=module <<'NODE'
           import { readFileSync } from 'node:fs';
           const report = JSON.parse(readFileSync(process.env.PLAYWRIGHT_JSON_OUTPUT_FILE, 'utf8'));
@@ -1277,6 +1277,8 @@ jobs:
           # flag is read at request time, so start that build, not a second one.
           HONE_E2E_REUSE_BUILD: "1"
           PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/native-3g-shard-${{ matrix.shard }}/results.json
+          # A CLI --reporter REPLACES the configured reporters, so this invocation names junit itself (HON-73 step 1) and writes it where the upload reads.
+          PLAYWRIGHT_JUNIT_OUTPUT_FILE: junit-results/playwright-native-3g-shard-${{ matrix.shard }}.xml
 
       - name: Upload Playwright traces on failure
         if: ${{ !cancelled() }}

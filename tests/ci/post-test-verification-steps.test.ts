@@ -812,6 +812,37 @@ describe("the JUnit timing reports", () => {
     expect(readFileSync(path.join(ROOT, ".gitignore"), "utf8")).toContain("/junit-results/");
   });
 
+  // A command-line --reporter REPLACES the configured reporters, so an invocation that names one silently loses the JUnit report the config adds.
+  // Returns the steps whose command line names a reporter list that lacks junit, or names junit without an output file in the step's env.
+  function reporterOverridesWithoutJunit(body: string): string[] {
+    const bad: string[] = [];
+    for (const [jobId, job] of jobs(body)) {
+      for (const st of job.steps ?? []) {
+        const run = String(st.run ?? "");
+        for (const m of run.matchAll(/--reporter[= ]([A-Za-z0-9,_-]+)/g)) {
+          const list = m[1].split(",");
+          const env = (st as { env?: Record<string, string> }).env ?? {};
+          if (!list.includes("junit")) bad.push(`${jobId}: ${st.name}: --reporter=${m[1]} has no junit`);
+          else if (!/^junit-results\//.test(String(env.PLAYWRIGHT_JUNIT_OUTPUT_FILE ?? ""))) bad.push(`${jobId}: ${st.name}: junit has no PLAYWRIGHT_JUNIT_OUTPUT_FILE under junit-results/`);
+        }
+      }
+    }
+    return bad;
+  }
+
+  it("every --reporter override in ci.yml includes junit and writes it under junit-results/", () => {
+    expect(reporterOverridesWithoutJunit(CI_BODY)).toEqual([]);
+    expect(CI_BODY, "non-vacuity: the 3G invocation still names a reporter").toMatch(/--reporter=list,json,junit/);
+  });
+
+  it("CONTROL: an override without junit, or junit without an output file, is rejected", () => {
+    const wf = (run: string, env = "") => `jobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n      - name: s\n        run: ${run}\n${env}`;
+    expect(reporterOverridesWithoutJunit(wf("npx playwright test --reporter=list,json"))).toHaveLength(1);
+    expect(reporterOverridesWithoutJunit(wf("npx playwright test --reporter=list,junit"))).toHaveLength(1);
+    expect(reporterOverridesWithoutJunit(wf("npx playwright test --reporter=list,junit", "        env:\n          PLAYWRIGHT_JUNIT_OUTPUT_FILE: junit-results/x.xml\n"))).toEqual([]);
+    expect(reporterOverridesWithoutJunit(wf("npx playwright test --reporter=list,junit", "        env:\n          PLAYWRIGHT_JUNIT_OUTPUT_FILE: elsewhere/x.xml\n"))).toHaveLength(1);
+  });
+
   it("every ci.yml job that runs Playwright is covered by a timing upload", () => {
     const missing: string[] = [];
     for (const [jobId, job] of jobs(CI_BODY)) {
