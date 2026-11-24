@@ -58,3 +58,20 @@ describe("the list of places is pinned (a new place cannot be added silently)", 
     expect(src).toMatch(/readingFieldOrder\(mode, \{ keepGalvanicEnergy: true \}\)/);
   });
 });
+
+import { entryEnergyLevel } from "@/lib/sessions/entry-energy-level";
+describe("a fractional Galvanic EL never reaches the entry's integer column, and is never lost", () => {
+  it("whole values pass, a fraction becomes null for the entry only, off is today's null, other modes are untouched", () => {
+    expect(entryEnergyLevel({ mode: "galv", energyLevel: 14, keepGalvanicEnergy: true })).toBe(14);
+    expect(entryEnergyLevel({ mode: "galv", energyLevel: 2.5, keepGalvanicEnergy: true })).toBeNull();
+    expect(entryEnergyLevel({ mode: "galv", energyLevel: null, keepGalvanicEnergy: true })).toBeNull();
+    expect(entryEnergyLevel({ mode: "galv", energyLevel: 14 })).toBeNull();
+    expect(entryEnergyLevel({ mode: "thermo", energyLevel: 3 })).toBe(3);
+    expect(entryEnergyLevel({ mode: null, energyLevel: null })).toBeNull();
+  });
+  it("block-actions routes the entry snapshot through it, and the BLOCK column still takes the exact value", () => {
+    const src = readFileSync("app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts", "utf8");
+    expect(src).toMatch(/energy_level: entryEnergyLevel\(\{ mode: input\.mode, energyLevel: input\.energyLevel, keepGalvanicEnergy: input\.keepGalvanicEnergy \}\)/);
+    expect(src).toMatch(/energy_level: input\.energyLevel \?\? null,/);
+  });
+});
