@@ -87,7 +87,8 @@ describe("directory interaction contract (HON-58)", () => {
     expect(src).toContain("scroll: false");
     // Existing sort/intake/last-visit controls stay exposed; custom client groups were removed, so no group control exists.
     expect(src).not.toMatch(/name="group"|Client group/);
-    expect(src).toContain('<legend className="sr-only">Sort by</legend>');
+    expect(src).toContain('aria-label="Sort by"');
+    expect(src).toContain('aria-label="Last visit"');
     expect(src).not.toMatch(/\$\{state\.q\}|\$\{q\}/);
     expect(src).toContain("min-h-11");
     // Sort and filters apply on change; the typed search text is local state and survives them.
