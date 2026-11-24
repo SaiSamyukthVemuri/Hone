@@ -286,6 +286,7 @@ export function CalendarSidebar({
                   anchorDate={anchorDate} selected={opening} onSelect={selectOpening} onClear={clearOpening} /></>
           ) : <>
           <CalendarMiniMonth
+            timeGrid={view === "week" && search.get("layout") === "grid"}
             anchorDate={anchorDate}
             selectedDate={selectedDate}
             today={today}

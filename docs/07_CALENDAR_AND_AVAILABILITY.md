@@ -161,3 +161,5 @@ Read-only iCal subscription per practitioner.
 - No intake responses, allergies, EpiPen flags, prices, session notes ever appear.
 - Cache headers: short max-age + must-revalidate so token rotations propagate fast. No CDN caching.
 - Token route privacy headers (`X-Robots-Tag`, `Referrer-Policy`) apply per `next.config.ts`.
+
+In a practitioner-capacity studio with multiple active practitioners, an owner opening Week sees **By practitioner**. Each row follows one practitioner across seven dates. Every appointment has its own selectable card with the practitioner's assigned colour dot, the client, service and time. On phones the weekday strip selects the date while retaining the practitioner rows. **Time grid** opens the time-based layout for dragging a booking or editing a block. Both layouts use the same studio-scoped weekly reads and sidebar selection.

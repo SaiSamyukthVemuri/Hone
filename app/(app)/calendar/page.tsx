@@ -23,8 +23,10 @@ import type {
   RecurringBreakOccurrenceWithRule,
 } from "@/lib/booking/queries";
 import type { Service, StudioTimedBlock } from "@/lib/types/database";
+import { PendingLink } from "@/components/pending-link";
+import { PractitionerWeek } from "./PractitionerWeek";
 import { DayColumn } from "./DayColumn";
-import { resolveCalendarDayAvailability } from "@/lib/calendar/day-availability";
+import { resolveCalendarDayAvailability, resolvePractitionerDayAvailability } from "@/lib/calendar/day-availability";
 import { buildCalendarReturnParams } from "./calendar-return";
 // Grid constants + formatters MUST come from plain (non-"use client")
 // modules. Importing them from the "use client" DayColumn turned them
@@ -83,6 +85,8 @@ import {
 } from "@/lib/calendar/practitioner-selection";
 
 type Search = Promise<{
+  layout?: string;
+  find?: string;
   week?: string;
   view?: string;
   month?: string;
@@ -351,6 +355,13 @@ export default async function CalendarPage({
 
   const rebookSource = await getCalendarRebookSource(studio.id, params.rebook);
   const hasDayViewForStudio = hasDayView(studio.practitioner_capacity_enabled === true, activePractitioners);
+  const teamWeek = isOwner && isTeamCalendar(studio.practitioner_capacity_enabled === true, activePractitioners);
+  const byPractitioner = teamWeek && params.layout !== "grid";
+  const gridParam = teamWeek && !byPractitioner ? "&layout=grid" : "";
+  const shownPeople = selectedPractitioners(sidebar.practitioners, sidebar.selection);
+  const hours = byPractitioner ? Object.fromEntries(shownPeople.map(p => [p.id, days.map((date, dayOfWeek) =>
+    resolvePractitionerDayAvailability({ date, dayOfWeek, defaults: availabilityDefaults, overrides: availabilityOverrides,
+      practitionerId: p.id, capacityEnabled: true }).availability)])) : {};
   return (
     <CalendarSidebar
       key={`${studio.id}:${practitioner.id}:${params.rebook ?? "calendar"}`}
@@ -377,23 +388,33 @@ export default async function CalendarPage({
         changeProbe={changeProbe}
         rangeLabel={weekRangeLabel(weekStart, weekEnd)}
         timezone={studio.timezone}
-        weekHref={withSelection(`/calendar?view=week&week=${weekStart}`, sidebar.param)}
+        weekHref={withSelection(`/calendar?view=week&week=${weekStart}${gridParam}`, sidebar.param)}
         monthHref={withSelection(`/calendar?view=month&month=${firstOfMonthString(weekStart)}&week=${weekStart}`, sidebar.param)}
         dayHref={
           hasDayViewForStudio
             ? withSelection(`/calendar?view=day&day=${initialSelectedDate}`, sidebar.param)
             : undefined
         }
-        prevHref={withSelection(`/calendar?week=${prevWeek}`, sidebar.param)}
-        todayHref={withSelection("/calendar?view=week", sidebar.param)}
-        nextHref={withSelection(`/calendar?week=${nextWeek}`, sidebar.param)}
+        prevHref={withSelection(`/calendar?week=${prevWeek}${gridParam}`, sidebar.param)}
+        todayHref={withSelection(`/calendar?view=week${gridParam}`, sidebar.param)}
+        nextHref={withSelection(`/calendar?week=${nextWeek}${gridParam}`, sidebar.param)}
         upcomingHref="/calendar/upcoming"
         reviewAssignmentsHref={await reviewAssignmentsHref}
-        hideStepNavOnMobile
+        hideStepNavOnMobile={!byPractitioner}
       />
       <CalendarOpeningBooking date={initialSelectedDate} clientId={rebookSource?.clientId} clients={drawerClients}
         services={services} studioTimezone={studio.timezone} timeFormat={timeFormat} isOwner={isOwner}
         capacityEnabled={studio.practitioner_capacity_enabled === true} viewer={{id: practitioner.id, name: practitioner.display_name}} />
+      {teamWeek && <nav aria-label="Week layout" className="flex w-fit gap-1 rounded-lg bg-neutral-100 p-1 text-sm">
+        {[{ label: "By practitioner", grid: false }, { label: "Time grid", grid: true }].map(({ label, grid }) => {
+          const query = new URLSearchParams({ view: "week", day: initialSelectedDate });
+          if (grid) query.set("layout", "grid");
+          if (params.rebook) query.set("rebook", params.rebook);
+          if (params.find) query.set("find", params.find);
+          return <PendingLink key={label} href={withSelection(`/calendar?${query}`, sidebar.param)} aria-current={grid !== byPractitioner ? "page" : undefined}
+            pendingLabel={`Opening ${label}…`} className="rounded-md px-3 py-1.5 aria-[current=page]:bg-white aria-[current=page]:font-semibold aria-[current=page]:shadow-sm">{label}</PendingLink>;
+        })}
+      </nav>}
       {days.some((date, dow) => availabilityForDate(date, dow).hoursVary) && (
         <p className="text-sm text-neutral-600">
           Hours vary by practitioner. Check availability for the practitioner you select when booking.
@@ -413,6 +434,9 @@ export default async function CalendarPage({
           drawers. Self-gates with md:hidden. */}
       {sidebar.selection.mode === "none" ? (
         <EmptySelection />
+      ) : byPractitioner ? (
+        <PractitionerWeek key={initialSelectedDate} days={mobileDays} initialDate={initialSelectedDate} practitioners={shownPeople}
+          hours={hours} tz={studio.timezone} timeFormat={timeFormat} returnTo={returnTo} />
       ) : (
       <>
       <CalendarMobileDayView
@@ -430,6 +454,7 @@ export default async function CalendarPage({
         returnTo={returnTo}
         blockScopeNames={blockScopeNames}
         selectionParam={sidebar.param}
+        timeGrid={teamWeek}
       />
 
       {/* Desktop/tablet keep the existing week grid, untouched, at md+. */}

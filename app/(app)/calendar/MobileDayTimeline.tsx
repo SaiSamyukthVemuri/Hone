@@ -346,7 +346,7 @@ export function MobileDayTimeline({
               aria-label={`Choose from ${members.length} appointments`}
               className="@container absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 border-neutral-500 bg-neutral-100 px-2 py-1 text-left text-sm text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100"
               onClick={(event) => { event.stopPropagation(); setOverlapIds(group.ids); }}>
-              <OverlapSummaryRows members={members} height={height} tz={tz} timeFormat={timeFormat} />
+              <OverlapSummaryRows showPractitioner={showPractitioner} members={members} height={height} tz={tz} timeFormat={timeFormat} />
             </button>
           );
           const clientName = a.client?.name?.trim() || "Client";
