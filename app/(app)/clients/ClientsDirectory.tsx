@@ -53,13 +53,17 @@ const INTAKE_LABEL: Record<IntakeState, string> = {
 const INTAKE_TONE: Record<IntakeState, string> = {
   not_submitted: "bg-neutral-100 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300",
   awaiting_review: "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200",
-  reviewed: "bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200",
+  reviewed: "bg-stone-100 text-stone-700 dark:bg-stone-800 dark:text-stone-200",
   unavailable: "bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400",
 };
 
 function href(state: DirectoryState, over: { page?: number; client?: string } = {}): string {
   return directoryHref({ ...state, ...over });
 }
+
+// Share tracks between the visible headings and every row, including sparse rows.
+const ACTIVE_COLUMNS = "lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1.25fr)_minmax(0,.9fr)_5rem]";
+const ARCHIVE_COLUMNS = "lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1.5fr)_minmax(0,1fr)_12rem]";
 
 export function DirectoryResults({
   state,
@@ -133,11 +137,19 @@ export function DirectoryResults({
           Next appointments are unavailable, so the list is sorted by name.
         </p>
       )}
-      <p className="text-sm text-neutral-600 dark:text-neutral-400" aria-live="polite">
-        {filtered ? `${data.total} ${data.total === 1 ? "match" : "matches"}` : `${data.total} ${data.total === 1 ? "client" : "clients"}`}
-        {` · showing ${data.firstIndex}–${data.lastIndex}`}
+      <p className="flex items-baseline justify-between gap-3 text-sm" aria-live="polite">
+        <strong className="font-semibold">
+          {filtered ? `${data.total} ${data.total === 1 ? "match" : "matches"}` : `${data.total} ${data.total === 1 ? "client" : "clients"}`}
+        </strong>
+        <span className="text-neutral-600 dark:text-neutral-400"><span className="sr-only"> · </span>showing {data.firstIndex}–{data.lastIndex}</span>
       </p>
-      <ul className="divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
+      <div className={`hidden gap-4 border-b border-neutral-300 px-3 pb-2 text-xs font-semibold text-neutral-600 lg:grid dark:border-neutral-700 dark:text-neutral-400 ${archived ? ARCHIVE_COLUMNS : ACTIVE_COLUMNS}`} aria-hidden="true">
+        <span>Client</span>
+        <span>Contact</span>
+        {archived ? <span>Archived on</span> : <><span>Last visit</span><span>Next appointment</span><span>Intake</span></>}
+        <span />
+      </div>
+      <ul className="-mt-3 divide-y divide-neutral-200 border-y border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
         {data.rows.map((row) => (
           <DirectoryRowView
             key={row.id}
@@ -212,68 +224,55 @@ function DirectoryRowView({
   timeZone?: string;
 }) {
   const archived = state.view === "archived";
-  const contact = [row.email, row.phone].filter((v): v is string => Boolean(v));
   return (
-    <li
-      id={`client-${row.id}`}
-      className={`px-4 py-3 ${selected ? "border-l-4 border-neutral-900 bg-neutral-50 pl-3 dark:border-white dark:bg-neutral-900" : ""}`}
-    >
-      <div className="flex flex-col gap-2 md:grid md:grid-cols-[minmax(0,2fr)_minmax(0,2fr)_minmax(0,1.2fr)_minmax(0,1.5fr)_auto] md:items-center md:gap-4">
+    <li id={`client-${row.id}`}>
+      <div className={`relative grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 px-3 py-3 text-sm hover:bg-neutral-50 lg:gap-4 dark:hover:bg-neutral-900 ${archived ? ARCHIVE_COLUMNS : ACTIVE_COLUMNS} ${selected ? "bg-neutral-50 dark:bg-neutral-900" : ""}`}>
         <div className="min-w-0">
-          <div className="flex flex-wrap items-baseline gap-x-2">
-            <Link
-              id={overviewRowLinkId(row.id)}
-              href={href(state, { client: row.id })}
-              scroll={false}
-              className="inline-flex min-h-11 min-w-0 items-center break-words font-medium hover:underline"
-              aria-current={selected ? "true" : undefined}
-            >
-              {row.displayName}
-            </Link>
-            {row.pronouns && <span className="text-xs text-neutral-500">{row.pronouns}</span>}
-            {archived && (
-              <span className="rounded-full bg-neutral-200 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
-                Archived
-              </span>
-            )}
-          </div>
-          {row.nameOnFile && <div className="text-[11px] text-neutral-500">{NAME_ON_FILE_LABEL}</div>}
+          <Link href={`/clients/${row.id}`} className="break-words font-semibold after:absolute after:inset-0 focus-visible:after:outline-2 focus-visible:after:outline-inset hover:underline">
+            {row.displayName}
+          </Link>
+          {row.pronouns && <div className="text-xs text-neutral-600 dark:text-neutral-400">{row.pronouns}</div>}
+          {row.nameOnFile && <div className="text-xs text-neutral-500">{NAME_ON_FILE_LABEL}</div>}
         </div>
-        <div className="min-w-0 truncate text-xs text-neutral-600 dark:text-neutral-400">{contact.length > 0 ? contact.join(" · ") : "No contact on file"}</div>
+        <div className="hidden min-w-0 break-words text-neutral-600 lg:block dark:text-neutral-400">
+          <span className="sr-only">Contact: </span>
+          {row.email && <div className="[overflow-wrap:anywhere]">{row.email}</div>}
+          {row.phone && <div>{row.phone}</div>}
+          {!row.email && !row.phone && "No contact on file"}
+        </div>
         {archived ? (
-          <div className="text-xs text-neutral-500 md:col-span-2">
-            {row.archivedAt ? (
-              <>
-                Archived <FormattedDateTime iso={row.archivedAt} />
-              </>
-            ) : null}
+          <div className="col-start-1 text-xs text-neutral-600 lg:col-start-auto dark:text-neutral-400">
+            <span className="lg:sr-only">Archived </span>
+            {row.archivedAt && <FormattedDateTime iso={row.archivedAt} />}
           </div>
         ) : (
           <>
-            <div className="text-xs text-neutral-600 dark:text-neutral-400">
-              <span className="text-neutral-500 md:hidden">Last visit: </span>
+            <div className="hidden text-neutral-600 lg:block dark:text-neutral-400">
+              <span className="sr-only">Last visit: </span>
               <LastVisitText cell={lastVisitCell(lastVisits, row.id, timeZone)} />
             </div>
-            <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-600 dark:text-neutral-400">
-              <span>
-                <span className="text-neutral-500 md:hidden">Next: </span>
-                <NextCell row={row} timeZone={timeZone} />
-              </span>
-              <IntakePill state={row.intake} />
+            <div className="col-start-1 text-neutral-700 lg:col-start-auto dark:text-neutral-300">
+              <span className="text-xs text-neutral-500 lg:sr-only">Next appointment: </span>
+              <NextCell row={row} timeZone={timeZone} />
+            </div>
+            <div className="col-start-1 lg:col-start-auto">
+              <span className="sr-only">Intake: </span><IntakePill state={row.intake} />
             </div>
           </>
         )}
-        <div className="flex items-center gap-2 md:justify-end">
-          <PendingLink
-            href={`/clients/${row.id}`}
-            pendingLabel="Opening client…"
-            className="inline-flex min-h-11 items-center rounded-md border border-neutral-300 px-3 text-xs font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+        <div className="relative col-start-2 row-start-1 row-span-3 flex flex-col items-end lg:col-auto lg:row-auto lg:flex-row lg:items-center lg:justify-end">
+          <Link
+            id={overviewRowLinkId(row.id)}
+            href={selected ? href(state) : href(state, { client: row.id })}
+            scroll={false}
+            aria-label={`Details for ${row.displayName}`}
+            aria-expanded={selected}
+            aria-current={selected ? "true" : undefined}
+            className="inline-flex min-h-11 items-center gap-1 rounded px-2 text-xs font-medium text-neutral-600 hover:underline dark:text-neutral-300"
           >
-            Open client
-          </PendingLink>
-          {archived && (
-            <UnarchiveRowControl client={{ id: row.id }} />
-          )}
+            Details <span aria-hidden="true">{selected ? "▾" : "›"}</span>
+          </Link>
+          {archived && <UnarchiveRowControl client={{ id: row.id }} />}
         </div>
       </div>
       {overview}
@@ -340,7 +339,7 @@ export function ClientOverview({
       <dl className="mt-3 grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
         <div>
           <dt className="text-xs text-neutral-500">Email</dt>
-          <dd>{row.email ? <a className="underline" href={`mailto:${row.email}`}>{row.email}</a> : "None on file"}</dd>
+          <dd className="[overflow-wrap:anywhere]">{row.email ? <a className="underline" href={`mailto:${row.email}`}>{row.email}</a> : "None on file"}</dd>
         </div>
         <div>
           <dt className="text-xs text-neutral-500">Phone</dt>
