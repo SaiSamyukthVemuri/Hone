@@ -717,6 +717,7 @@ describe("ci.yml: no verification step is hidden behind an earlier failure", () 
     const conds: string[] = [];
     let matrixUploads = 0;
     let egressUploads = 0;
+    const timingUploads: Record<string, string> = {};
     let diagnostics = 0;
     let cleanups = 0;
     for (const [jobId, job] of jobs(CI_BODY)) {
@@ -738,6 +739,16 @@ describe("ci.yml: no verification step is hidden behind an earlier failure", () 
               name: "sentry-egress-shard-${{ matrix.shard }}", path: "/tmp/hone-e2e-sentry-egress/*.jsonl",
               "if-no-files-found": "ignore", "retention-days": 7,
             });
+          } else if (n === "upload test timing report (junit)") {
+            // HON-73 step 1: the third retention exception. A failed run's timings are exactly the ones worth keeping, so this one is
+            // always() (a cancelled run has nothing to say, and always() keeps the report anyway). It is a report only: the exact
+            // pinned action, the one JUnit directory, no token or secret, a short retention, and a missing file is not an error.
+            expect(s.if, `${jobId}: ${s.name}`).toBe("always()");
+            expect(s.uses).toBe("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a");
+            expect(Object.keys(s.with ?? {}).sort()).toEqual(["if-no-files-found", "name", "path", "retention-days"]);
+            expect(s.with).toMatchObject({ path: "junit-results/", "if-no-files-found": "ignore", "retention-days": 14 });
+            expect((s as { env?: unknown }).env, `${jobId}: the timing upload takes no env`).toBeUndefined();
+            timingUploads[jobId] = String(s.with!.name);
           } else {
             conds.push(s.if!.replace(/\s+/g, ""));
           }
@@ -751,6 +762,17 @@ describe("ci.yml: no verification step is hidden behind an earlier failure", () 
     }
     expect(matrixUploads).toBe(1);
     expect(egressUploads).toBe(1);
+    // Exactly one timing upload in every job that runs Vitest for the unit and db lanes or Playwright, each under its own artifact name.
+    expect(timingUploads).toEqual({
+      validate: "junit-vitest-unit",
+      "db-integration": "junit-vitest-db",
+      "browser-e2e-shard": "junit-playwright-shard-${{ matrix.shard }}",
+      "payment-browser-e2e": "junit-playwright-payment",
+      "mobile-completion-e2e": "junit-playwright-mobile",
+      "google-browser-e2e": "junit-playwright-google",
+      "storage-photos": "junit-playwright-storage-photos",
+      "webkit-hon-62": "junit-playwright-webkit",
+    });
     expect(conds.length).toBeGreaterThan(0);
     for (const c of conds) expect(c).toContain("failure()");
     expect(diagnostics).toBeGreaterThan(0);
@@ -773,3 +795,30 @@ describe("ci.yml: no verification step is hidden behind an earlier failure", () 
 // 3. Whether a guarded check's own assertions are any good. That is the
 //    check's own tests' business; this only establishes that it RUNS.
 // ---------------------------------------------------------------------------
+
+// HON-73 step 1 (CI records per-test timings): every Playwright config that CI uses, and both Vitest configs, write a JUnit report in
+// CI; and NOTHING about which tests run changed with it. A job that runs Playwright must have a timing upload (the test above pins them).
+describe("the JUnit timing reports", () => {
+  it("every CI Playwright config writes JUnit beside list and html, and Vitest writes JUnit only when CI is set", () => {
+    for (const f of ["playwright.config.ts", "playwright.google.config.ts", "playwright.mobile.config.ts", "playwright.payment.config.ts"]) {
+      const src = readFileSync(path.join(ROOT, f), "utf8");
+      expect(src, f).toMatch(/process\.env\.CI \? \[\["list"\], \["html", \{ open: "never" \}\], \["junit", \{ outputFile: `junit-results\/playwright-\$\{process\.pid\}\.xml`, includeProjectInTestName: true \}\]\] : "list"/);
+    }
+    for (const f of ["vitest.config.ts", "vitest.db.config.ts"]) {
+      const src = readFileSync(path.join(ROOT, f), "utf8");
+      expect(src, f).toMatch(/reporters: process\.env\.CI \? \["default", "junit"\] : "default"/);
+      expect(src, f).toMatch(/outputFile: \{ junit: "junit-results\/vitest-(unit|db)\.xml" \}/);
+    }
+    expect(readFileSync(path.join(ROOT, ".gitignore"), "utf8")).toContain("/junit-results/");
+  });
+
+  it("every ci.yml job that runs Playwright is covered by a timing upload", () => {
+    const missing: string[] = [];
+    for (const [jobId, job] of jobs(CI_BODY)) {
+      const runsPlaywright = (job.steps ?? []).some((s) => /playwright test|test:e2e:(payment|mobile|google)/.test(String(s.run ?? "")));
+      const hasTiming = (job.steps ?? []).some((s) => (s.name ?? "").toLowerCase() === "upload test timing report (junit)");
+      if (runsPlaywright && !hasTiming) missing.push(jobId);
+    }
+    expect(missing, "a Playwright job without a timing upload").toEqual([]);
+  });
+});

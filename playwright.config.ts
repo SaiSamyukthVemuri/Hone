@@ -33,7 +33,7 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: process.env.CI ? 1 : 0,
-  reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
+  reporter: process.env.CI ? [["list"], ["html", { open: "never" }], ["junit", { outputFile: `junit-results/playwright-${process.pid}.xml`, includeProjectInTestName: true }]] : "list",
   use: {
     baseURL: E2E_APP_ORIGIN,
     trace: "retain-on-failure",
