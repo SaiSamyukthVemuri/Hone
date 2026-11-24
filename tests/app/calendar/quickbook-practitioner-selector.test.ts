@@ -98,6 +98,15 @@ describe("desktop + mobile thread identical targeting context", () => {
     expect(block).toMatch(server.id); expect(block).toMatch(server.name);
     expect(block).toMatch(/studioTimezone=\{studio\.timezone\}/); expect(block).toMatch(/isOwner=\{isOwner\}/);
   });
+  it("the week's Block time button exists only on the By practitioner layout, never beside a time grid whose day can change on a phone", () => {
+    const week = scopes.CalendarPage;
+    // The button's date is the day the page loaded on. The phone time grid changes its own day without a reload, so a button
+    // beside it would block the wrong day; that grid has its own date-aware "+" (CalendarMobileDayView).
+    expect(week).toMatch(/\{byPractitioner && <CalendarBlockTime\b/);
+    expect(week.match(/<CalendarBlockTime\b/g)).toHaveLength(1);
+    expect(MOBILE).toMatch(/localDate: chooserDraft\.localDate/);
+    expect(MOBILE).toMatch(/setChooserDraft\(\{\s*localDate: day\.date/);
+  });
   it("the month hands the Block time button the signed-in viewer, resolved on the server from the same practitioner", () => {
     expect(names(scopes.renderMonthView)).toEqual(["CalendarBlockTime"]);
     const [block] = elements(scopes.renderMonthView, "CalendarBlockTime");
