@@ -27,13 +27,13 @@ as $$
 $$;
 
 create or replace function public.receptionist_booking_clients_v3(p_studio_id uuid, p_query text, p_limit integer)
-returns table (client_id uuid, display_name text, phone text, email text)
+returns table (client_id uuid, display_name text, contact_hint text)
 language plpgsql stable security definer
 set search_path = pg_catalog, pg_temp
 as $$
 declare
   term text := lower(btrim(coalesce(p_query, '')));
-  -- Phone search compares digits only, so "0188" finds "(416) 555-0188". A single stray digit never searches phones.
+  -- Phone search compares digits only, so "5550188" finds "(416) 555-0188". A lone digit never searches phones.
   term_digits text := regexp_replace(term, '[^0-9]', '', 'g');
 begin
   if auth.uid() is null or public.receptionist_actor_id(p_studio_id) is null then
@@ -42,14 +42,22 @@ begin
   if length(term) not between 2 and 80 then
     raise exception 'invalid_query' using errcode = '22023';
   end if;
+  -- Matches the displayed name (preferred, else regular), the email (any case) or the phone's digits.
+  -- The legal identity lives in its own table and is never read here. Full contact values never leave this
+  -- function: each row carries a masked hint, and the full phone and email come from the visit itself.
   return query
-    select c.id, coalesce(c.label, 'Name on file'), c.phone, c.email
+    select c.id, coalesce(c.label, 'Name on file'),
+           nullif(concat_ws(' · ',
+             case when c.email like '%@%' then '•••@' || lower(left(split_part(c.email, '@', 2), 2)) || '…' || lower(right(split_part(c.email, '@', 2), 3)) end,
+             case when length(c.phone_digits) >= 4 then '•••' || right(c.phone_digits, 4) end), '')
       from (
-        select c.id, coalesce(nullif(btrim(c.preferred_name), ''), nullif(btrim(c.name), '')) as label, c.phone, c.email
+        select c.id, coalesce(nullif(btrim(c.preferred_name), ''), nullif(btrim(c.name), '')) as label,
+               btrim(c.email) as email, regexp_replace(coalesce(c.phone, ''), '[^0-9]', '', 'g') as phone_digits
           from public.clients c
          where c.studio_id = p_studio_id and c.archived_at is null
       ) c
-     where strpos(lower(c.label), term) > 0 or strpos(lower(c.email), term) > 0 or (length(term_digits) >= 2 and strpos(regexp_replace(coalesce(c.phone, ''), '[^0-9]', '', 'g'), term_digits) > 0)
+     where strpos(lower(c.label), term) > 0 or strpos(lower(c.email), term) > 0
+        or (length(term_digits) >= 2 and strpos(c.phone_digits, term_digits) > 0)
      order by c.label nulls last, c.id
      limit least(greatest(coalesce(p_limit, 11), 1), 11);
 end;

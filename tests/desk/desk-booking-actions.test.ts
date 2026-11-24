@@ -37,16 +37,23 @@ describe("receptionist booking", () => {
 
   it("returns the scoped operational name and a masked contact hint from the versioned booking lookup", async () => {
     const rows = [
-      { client_id: clientId, display_name: "Avery Rowan", phone: "555-222-1111", email: "avery@example.test" },
-      { client_id: id(5), display_name: "Avery Walker", phone: null, email: "avery2@example.test" },
+      { client_id: clientId, display_name: "Avery Rowan", contact_hint: "•••@ex…est · •••1111", phone: "555-222-1111", email: "avery@example.test" },
+      { client_id: id(5), display_name: "Avery Walker", contact_hint: "•••@ex…est", phone: null, email: "avery2@example.test" },
     ];
     rpc.mockResolvedValue({ data: rows, error: null });
     const result = await searchDeskBookingClientsAction({ studioId, query: "avery" });
     expect(result).toEqual({ ok: true, clients: [
-      { id: clientId, displayName: "Avery Rowan", contactHint: "Phone ending in 1111" },
-      { id: id(5), displayName: "Avery Walker", contactHint: "Email starts with a…" },
+      { id: clientId, displayName: "Avery Rowan", contactHint: "•••@ex…est · •••1111" },
+      { id: id(5), displayName: "Avery Walker", contactHint: "•••@ex…est" },
     ] });
     expect(rpc).toHaveBeenCalledWith("receptionist_booking_clients_v3", { p_studio_id: studioId, p_limit: 11, p_query: "avery" });
+    // A full phone or email in a row is never carried into the browser, only the database's masked hint.
+    expect(JSON.stringify(result)).not.toMatch(/555-222-1111|avery@example\.test/);
+  });
+
+  it("shows no hint rather than reading a raw contact value when the database sends none", async () => {
+    rpc.mockResolvedValue({ data: [{ client_id: clientId, display_name: "Name on file", phone: "555-222-1111", email: "avery@example.test" }], error: null });
+    expect(await searchDeskBookingClientsAction({ studioId, query: "avery" })).toEqual({ ok: true, clients: [{ id: clientId, displayName: "Name on file", contactHint: "" }] });
   });
 
   it("requires a narrower client search when the matching set cannot be fully disambiguated", async () => {
