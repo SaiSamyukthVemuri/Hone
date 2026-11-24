@@ -215,7 +215,7 @@ create or replace function public.get_studio_machine_choices()
 returns table (studio_id uuid, profile_id text, is_default boolean, ask_each_visit boolean, live_unit_id uuid, enabled boolean)
 language sql stable security definer set search_path = pg_catalog, pg_temp as $$
   select m.studio_id, m.profile_id,
-         (d.default_profile_id = m.profile_id) as is_default,
+         coalesce(d.default_profile_id = m.profile_id, false) as is_default,
          d.ask_each_visit,
          (select u.id from public.studio_machines u
            where u.studio_id = m.studio_id and u.machine_profile_id = m.profile_id and u.retired_at is null
