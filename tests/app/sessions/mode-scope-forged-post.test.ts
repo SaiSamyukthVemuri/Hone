@@ -10,7 +10,7 @@ const h = vi.hoisted(() => ({
   stored: { block: { probe_key: null, probe_inventory_item_id: null, probe_lot_number: null, mode: "thermo" } as Record<string, unknown>, entry: null as Record<string, unknown> | null, entries: undefined as Array<Record<string, unknown>> | undefined },
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
-vi.mock("@/lib/rollouts/charting-rollout", () => ({ chartingRolloutFor: vi.fn(async () => h.rollout) }));
+vi.mock("@/lib/rollouts/charting-rollout", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/rollouts/charting-rollout")>()), chartingRolloutFor: vi.fn(async () => h.rollout) }));
 vi.mock("@/lib/sessions/session-lineage", () => ({
   assertSessionForClient: vi.fn(async () => undefined),
   SessionLineageError: class extends Error {},
