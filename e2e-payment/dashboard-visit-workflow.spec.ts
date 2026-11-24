@@ -10,7 +10,6 @@ import {
   seedE2eCardOnFileCapability,
   seedE2eDashboardMemoryClient,
   seedE2eStudio,
-  seedE2eTodayAppointment,
   sql,
 } from "../e2e/helpers/seed";
 
@@ -46,7 +45,7 @@ for (const screen of SCREENS) {
     test(`from last visit to checkout, rebook and chart (${screen.name})`, async ({ page }) => {
       const studio = await seedE2eStudio();
       await seedE2eCardOnFileCapability(studio);
-      const { clientId, } = await seedE2eDashboardMemoryClient(studio, { cautionNote: CAUTION, nextVisitNote: PLAN });
+      const { clientId, appointmentId } = await seedE2eDashboardMemoryClient(studio, { cautionNote: CAUTION, nextVisitNote: PLAN });
       const clientName = (await sql<{ name: string }>("select name from public.clients where id = $1", [clientId]))[0].name;
       const serviceId = await getE2eServiceId(studio.studioId);
       await sql("update public.services set price_cents = 9000 where id = $1 and studio_id = $2", [serviceId, studio.studioId]);
@@ -57,9 +56,8 @@ for (const screen of SCREENS) {
       );
       await seedE2eActiveCardOnFile(studio, clientId);
       const tz = await getStudioTimezone(studio.studioId);
-      const { appointmentId } = await seedE2eTodayAppointment(studio, {
-        clientId, startsMinutesFromNow: 60, endsMinutesFromNow: 105, withService: true,
-      });
+      // The memory client's own appointment today is the visit: it is the immediate next one after the charted prior visit.
+      await sql("update public.appointments set service_id = $2 where id = $1", [appointmentId, serviceId]);
       const sessionId = randomUUID();
       const practitionerId = (await sql<{ id: string }>("select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1", [studio.studioId]))[0].id;
       // The visit is still ahead at first, which is when its one-visit reminder is meant to show. Later the visit happens:
