@@ -1520,7 +1520,15 @@ export function BlockSetupForm({
     const acked = discardAck.current;
     discardAck.current = false;
     if (rollout && !acked) {
-      const orphan = draft.mode === "" && bagHoldsValue({ readings: readingsOf(draft as unknown as Record<string, unknown>), pulseTouched });
+      // A pulse control is "touched" when it came FROM THE RECORD (so an edit writes it back), and the database defaults a saved entry's count to 1, so a
+      // block saved with no mode carries a touched count it never typed. That is not a reading typed with no mode: only a pulse value the practitioner
+      // changed from the record counts here. Otherwise editing the note of a mode-less block was held behind "Save without them?" and nothing was sent.
+      const recorded = pulseTouchedFromRecord(firstEntry);
+      const typedPulse: PulseTouched = {
+        count: pulseTouched.count && !(recorded.count && draft.pulseCount.trim() === String(firstEntry?.pulse_count)),
+        delay: pulseTouched.delay && !(recorded.delay && Number(draft.pulseDelay) === Number(firstEntry?.pulse_delay_seconds)),
+      };
+      const orphan = draft.mode === "" && bagHoldsValue({ readings: readingsOf(draft as unknown as Record<string, unknown>), pulseTouched: typedPulse });
       const notice = hiddenBagsNotice([...hiddenModes, ...(orphan ? [""] : [])]);
       if (notice) {
         setDiscardPrompt(notice);

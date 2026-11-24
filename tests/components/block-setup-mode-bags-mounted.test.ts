@@ -52,7 +52,7 @@ afterEach(() => {
 });
 
 const { ChartingStateProvider } = await import("@/components/charting-state-provider");
-async function mount(o: { rollout: boolean; create?: boolean; entry?: unknown; saved?: unknown[]; previous?: unknown; retainKey?: string; show?: boolean }) {
+async function mount(o: { rollout: boolean; block?: Record<string, unknown>; create?: boolean; entry?: unknown; saved?: unknown[]; previous?: unknown; retainKey?: string; show?: boolean }) {
   if (!root) {
     host = document.createElement("div");
     document.body.appendChild(host);
@@ -62,7 +62,7 @@ async function mount(o: { rollout: boolean; create?: boolean; entry?: unknown; s
     savedBlocks: o.saved as never,
     retainKey: o.retainKey,
     sessionId: "s1", clientId: "c1", previousBlock: (o.previous ?? null) as never,
-    block: o.create ? null : ({ ...BLOCK } as never),
+    block: o.create ? null : ({ ...BLOCK, ...(o.block ?? {}) } as never),
     firstEntry: (o.create ? null : (o.entry ?? ENTRY)) as never,
     initialAreas: [{ area: "Upper lip", side: "center" }] as never,
     onCancel: () => undefined,
@@ -320,5 +320,32 @@ describe("W1: Save asks before leaving readings behind, and says which mode (nev
     await save();
     expect(confirmEl()).toBeNull();
     expect(blockActions.createTreatmentAreaWithEntryAction).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe("EDIT OF A BLOCK SAVED WITH NO MODE: the pulse count the database defaulted is not a reading typed with no mode", () => {
+  // A block saved from the new view with only an area and a note has no mode, and its entry carries the database's default pulse count of 1. The pulse
+  // controls are marked touched FROM THE RECORD (so an edit writes them back), and that must not read as readings typed with no mode: Save was held
+  // behind "Save without them?" and nothing was sent (the charting-new-view edit-and-re-save browser spec).
+  const NOMODE = { rollout: true, block: { mode: null }, entry: { ...ENTRY, pulse_count: 1, pulse_delay_seconds: null, thermolysis_intensity_percent: null, thermolysis_duration_seconds: null, hairs_treated: null, comments: "chin note A" } };
+  const setNote = async (v: string) => {
+    const el = host!.querySelector('[data-testid="additional-notes"]') as HTMLTextAreaElement;
+    const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+    await act(async () => { set.call(el, v); el.dispatchEvent(new Event("input", { bubbles: true })); });
+  };
+  it("editing only the note and saving sends the update (no discard prompt)", async () => {
+    await mount(NOMODE);
+    await setNote("chin note A, edited");
+    await save();
+    expect(host!.querySelector('[data-testid="discard-readings-confirm"]'), "no prompt").toBeNull();
+    expect(blockActions.updateTreatmentAreaWithEntryAction).toHaveBeenCalledTimes(1);
+  });
+  it("CONTROL: a reading TYPED with no mode on a new block is still held behind the prompt", async () => {
+    await mount({ rollout: true, create: true });
+    await typeInto(labelInput("Energy level"), "14");
+    await save();
+    expect(host!.querySelector('[data-testid="discard-readings-confirm"]')).not.toBeNull();
+    expect(blockActions.createTreatmentAreaWithEntryAction).not.toHaveBeenCalled();
   });
 });

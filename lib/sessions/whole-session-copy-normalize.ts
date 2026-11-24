@@ -22,6 +22,7 @@
 // minutes_performed is DELIBERATELY NOT part of the input or the output (P1-5):
 // this bulk prefill must not write performed minutes into today's live chart.
 
+import { entryEnergyLevel } from "@/lib/sessions/entry-energy-level";
 import {
   ELECTROLYSIS_MODES,
   APILUS_MODALITIES_BY_MODE,
@@ -168,7 +169,10 @@ function normalizeDraft(d: WholeSessionCopyDraftInput, keepGalvanicEnergy = fals
 
   // energy_level: cleared for galvanic; otherwise a non-negative integer within
   // a sane bound (the destination entry column is int4).
-  const energyLevel = isGalv && !keepGalvanicEnergy ? null : intInRange(s.energyLevel, 0, ENERGY_LEVEL_MAX);
+  // A GALVANIC EL that is kept may be fractional (the block's column is numeric, so it is copied exactly to the block); the entry's column is an integer,
+  // so the entry takes it only when whole (entryEnergyLevel). Every other mode stays a strict integer, as before.
+  const energyLevel = isGalv ? (keepGalvanicEnergy ? numInRange(s.energyLevel, 0, ENERGY_LEVEL_MAX) : null) : intInRange(s.energyLevel, 0, ENERGY_LEVEL_MAX);
+  const entryEnergy = entryEnergyLevel({ mode, energyLevel, keepGalvanicEnergy });
 
   // Probe: derive the decomposition server-side from the validated key ONLY.
   const probeKey = (s.probeKey ?? "").trim();
@@ -229,7 +233,7 @@ function normalizeDraft(d: WholeSessionCopyDraftInput, keepGalvanicEnergy = fals
     areas: areas.map((a) => a.area),
     mode,
     apilus_modality: apilusModality,
-    energy_level: energyLevel,
+    energy_level: entryEnergy,
     machine_frequency: machineFrequency,
     thermolysis_intensity_percent: thermInt,
     thermolysis_duration_seconds: thermDur,

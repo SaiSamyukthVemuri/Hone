@@ -157,6 +157,17 @@ describe("EDIT with the rollout ON: the same rule, and the freeze", () => {
     expect(res.ok).toBe(false);
     expect(h.rpc).not.toHaveBeenCalled();
   });
+  it("BLOCK-LEVEL readings freeze too: a block whose ONLY reading is a fractional EL (its entry stores none) refuses a mode change; so does a block-level modality; null on both does not", async () => {
+    h.stored.entry = { thermolysis_intensity_percent: null, galvanic_ma: null, energy_level: null };
+    h.stored.block = { ...h.stored.block, mode: "galv", energy_level: 2.5 };
+    expect((await update({ mode: "thermo" })).ok, "fractional block EL, null entry").toBe(false);
+    expect(h.rpc).not.toHaveBeenCalled();
+    h.stored.block = { ...h.stored.block, mode: "thermo", energy_level: null, apilus_modality: "Picoflash" };
+    expect((await update({ mode: "galv" })).ok, "block modality").toBe(false);
+    expect(h.rpc).not.toHaveBeenCalled();
+    h.stored.block = { ...h.stored.block, mode: "thermo", energy_level: null, apilus_modality: null };
+    expect((await update({ mode: "galv" })).ok, "control: no block-level reading either").toBe(true);
+  });
   it("a block that holds ONLY pulse values is not frozen (stated rule)", async () => {
     h.stored.block = { ...h.stored.block, mode: "thermo" };
     h.stored.entry = { thermolysis_intensity_percent: null, galvanic_ma: null };

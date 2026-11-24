@@ -27,7 +27,8 @@ import { currentProfile } from "@/lib/machines/profile-contract";
 import { resolveWritingIdentity } from "@/lib/supabase/writing-identity";
 import { chartingRolloutFor } from "@/lib/rollouts/charting-rollout";
 import { PUR_LEGACY_MODES_UNAVAILABLE_MESSAGE, purLegacyModeRefused } from "@/lib/machines/identity-choice";
-import { entryHasReadings, isKnownMode, MODE_FROZEN_MESSAGE, modeChangeRefused, scopeToMode } from "@/lib/sessions/mode-scope";
+import { blockHoldsLegacyReadings, LEGACY_ENTRY_READING_COLUMNS } from "@/lib/sessions/holds-legacy-readings";
+import { isKnownMode, MODE_FROZEN_MESSAGE, modeChangeRefused, scopeToMode } from "@/lib/sessions/mode-scope";
 import { listStudioDevices } from "@/lib/machines/studio-devices";
 import type {
   MachineDb,
@@ -1936,7 +1937,7 @@ export async function updateTreatmentAreaWithEntryAction(
   // defeat snapshot immutability).
   const { data: storedBlock, error: storedErr } = await supabase
     .from("session_blocks")
-    .select("probe_key, probe_inventory_item_id, probe_lot_number, mode")
+    .select("probe_key, probe_inventory_item_id, probe_lot_number, mode, energy_level, apilus_modality")
     .eq("id", input.blockId)
     .eq("studio_id", studio.id)
     .eq("session_id", input.sessionId)
@@ -1951,7 +1952,7 @@ export async function updateTreatmentAreaWithEntryAction(
   if (redesignOn) {
     const { data: storedEntries, error: storedEntryErr } = await supabase
       .from("electrolysis_entries")
-      .select("thermolysis_intensity_percent, thermolysis_duration_seconds, galvanic_ma, galvanic_duration_seconds, units_of_lye, energy_level, apilus_modality")
+      .select(LEGACY_ENTRY_READING_COLUMNS.join(", "))
       .eq("block_id", input.blockId)
       .eq("studio_id", studio.id)
       .is("deleted_at", null);
@@ -1959,7 +1960,9 @@ export async function updateTreatmentAreaWithEntryAction(
     if (modeChangeRefused({
       storedMode: (storedBlock?.mode as string | null) ?? null,
       submittedMode: input.mode ?? null,
-      hasReadings: storedEntries.some((e) => entryHasReadings(e as Record<string, unknown>)),
+      // THE ONE DEFINITION of "holds readings" (the database function's twin): the BLOCK's own EL and modality count as well as the entries' columns, so a
+      // block whose only reading is a fractional block-level EL (its entry stores none) is frozen too.
+      hasReadings: blockHoldsLegacyReadings(storedBlock as Record<string, unknown> | null, storedEntries as unknown as Array<Record<string, unknown>>),
     })) return { ok: false, error: MODE_FROZEN_MESSAGE };
   }
 

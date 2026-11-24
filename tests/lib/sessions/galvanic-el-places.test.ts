@@ -44,7 +44,7 @@ describe("the list of places is pinned (a new place cannot be added silently)", 
     ["app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts", /keepGalvanicEnergy: redesignOn,/],
     ["app/(app)/clients/[id]/sessions/[sessionId]/actions.ts", /keepsEnergyLevel = redesignOn \? passGroups\.energy : mode !== "galv"/],
     ["lib/sessions/treatment-setup-snapshot.ts", /isGalv && !opts\.keepGalvanicEnergy/],
-    ["lib/sessions/whole-session-copy-normalize.ts", /isGalv && !keepGalvanicEnergy/],
+    ["lib/sessions/whole-session-copy-normalize.ts", /isGalv \? \(keepGalvanicEnergy \? numInRange/],
     ["app/(app)/clients/[id]/sessions/[sessionId]/whole-session-copy-actions.ts", /keepGalvanicEnergy: await chartingRolloutFor\(studio\.id\)/],
     ["app/(app)/clients/[id]/sessions/[sessionId]/CopyPreviousAreasPanel.tsx", /keepGalvanicEnergy: rollout/],
     ["app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx", /keepGalvanicEnergy: rollout/],
@@ -73,5 +73,23 @@ describe("a fractional Galvanic EL never reaches the entry's integer column, and
     const src = readFileSync("app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts", "utf8");
     expect(src).toMatch(/energy_level: entryEnergyLevel\(\{ mode: input\.mode, energyLevel: input\.energyLevel, keepGalvanicEnergy: input\.keepGalvanicEnergy \}\)/);
     expect(src).toMatch(/energy_level: input\.energyLevel \?\? null,/);
+  });
+});
+
+describe("copy-session with a FRACTIONAL Galvanic EL (the entry column is an integer)", () => {
+  const frac = [{ ...draft[0], setup: { ...setup, energyLevel: "2.5" } }];
+  it("on: the copy succeeds, the BLOCK keeps 2.5 exactly and the ENTRY stores none", () => {
+    const r = normalizeWholeSessionCopy(frac, { keepGalvanicEnergy: true });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect([(r.specs[0].block as Record<string, unknown>).energy_level, (r.specs[0].entry as Record<string, unknown>).energy_level]).toEqual([2.5, null]);
+  });
+  it("off (today): a Galvanic copy drops the EL on both, as before", () => {
+    const r = normalizeWholeSessionCopy(frac);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect([(r.specs[0].block as Record<string, unknown>).energy_level, (r.specs[0].entry as Record<string, unknown>).energy_level]).toEqual([null, null]);
+  });
+  it("a fractional EL on a THERMOLYSIS copy is still refused (the strict integer rule is unchanged)", () => {
+    const t = [{ ...draft[0], setup: { ...setup, mode: "thermo", apilusModality: "Picoflash", energyLevel: "2.5", thermolysisIntensityPercent: "40", thermolysisDurationSeconds: "0.5" } }];
+    expect(normalizeWholeSessionCopy(t, { keepGalvanicEnergy: true }).ok).toBe(false);
   });
 });
