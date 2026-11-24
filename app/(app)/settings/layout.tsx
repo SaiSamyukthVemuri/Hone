@@ -1,6 +1,5 @@
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
-import { resolveSettingsNavWithReachable } from "@/lib/settings/nav";
-import { SETTINGS_NAV } from "@/lib/settings/nav-registry";
+import { getSettingsNavigation } from "@/lib/settings/nav-registry";
 import { SettingsShell } from "@/components/settings/settings-shell";
 
 // Settings layout. The rail is evaluated on the SERVER from the nav registry
@@ -17,7 +16,7 @@ export default async function SettingsLayout({
 }) {
   const { practitioner, studio } = await requirePractitionerWithStudio();
   const role = practitioner.role === "owner" ? "owner" : "practitioner";
-  const { items, reachable } = await resolveSettingsNavWithReachable(SETTINGS_NAV, { role, studio });
+  const { items, reachable } = await getSettingsNavigation(role, studio);
 
   return (
     <SettingsShell

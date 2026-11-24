@@ -14,6 +14,7 @@ import {
 } from "@/lib/settings/nav";
 import { focusIsNowhere, focusSettingsHeading, stayFocusTarget } from "./focus-heading";
 import { HashRedirect } from "./hash-redirect";
+import { useSettingsScreen } from "./use-settings-screen";
 import { UnsavedChangesProvider } from "./unsaved-changes";
 
 // The Settings shell (settings redesign, WS-B): back-to-app header, a left rail
@@ -62,6 +63,9 @@ export function SettingsShell({ items: railItems, reachable = [], account, child
   const currentId = currentSettingsRailId(items, pathname);
   const activeChild = location?.child ?? null;
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const { screen, screenButton, mode, pending, toggle } = useSettingsScreen(drawerOpen);
+  const expanded = mode !== "normal";
+  const screenLabel = mode === "normal" ? "Full screen" : mode === "fullscreen" ? "Exit full screen" : "Exit expanded view";
   // The sticky title bar and rail sit directly under the app header. Its height
   // is not a constant (the nav row, a wrapped account name), so it is measured
   // and handed down as --settings-top; 4.5rem is the first-paint fallback.
@@ -72,7 +76,7 @@ export function SettingsShell({ items: railItems, reachable = [], account, child
   const [tailPx, setTailPx] = useState<number | null>(null);
   const grid = useRef<HTMLDivElement>(null);
   const topVar: CSSProperties | undefined =
-    headerPx === null && tailPx === null
+    expanded || (headerPx === null && tailPx === null)
       ? undefined
       : ({
           ...(headerPx === null ? {} : { "--settings-top": `${headerPx}px` }),
@@ -163,7 +167,8 @@ export function SettingsShell({ items: railItems, reachable = [], account, child
   useEffect(() => {
     if (!drawerOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
+      if (e.key === "Escape" && !document.querySelector('[aria-modal="true"], dialog[open]')) {
+        e.stopPropagation();
         setDrawerOpen(false);
         menuButton.current?.focus();
       }
@@ -187,7 +192,7 @@ export function SettingsShell({ items: railItems, reachable = [], account, child
   const stayOnPage = (anchor: HTMLAnchorElement | null) => {
     const target = stayFocusTarget({
       drawerWasOpen: drawerWasOpen.current,
-      isDesktop: window.matchMedia("(min-width: 700px)").matches,
+      isDesktop: !expanded && window.matchMedia("(min-width: 781px)").matches,
     });
     if (target === "menu") setDrawerOpen(false);
     // Two frames: the dialog restores focus to its trigger first.
@@ -205,25 +210,41 @@ export function SettingsShell({ items: railItems, reachable = [], account, child
   })).filter((g) => g.entries.length > 0);
 
   return (
-    <UnsavedChangesProvider onHold={rememberDrawer} onStay={stayOnPage}>
+    <div ref={screen} data-settings-screen="" data-settings-expanded={expanded}>
+      <UnsavedChangesProvider onHold={rememberDrawer} onStay={stayOnPage}>
       <HashRedirect />
       {/* Desktop: ONE grid. The rail takes the whole left column from the first row,
           so it starts directly under the app header (not under the Settings title
           row) and fits the viewport with no window scroll; the title row and the
           view sit in the right column. */}
-      <div ref={grid} className="flex flex-col gap-6 min-[700px]:grid min-[700px]:grid-cols-[245px_minmax(0,1fr)] min-[700px]:grid-rows-[auto_minmax(0,1fr)] min-[700px]:items-start min-[700px]:gap-x-10 min-[700px]:gap-y-4"
+      <div ref={grid} className="flex flex-col gap-6 settings-wide:grid settings-wide:grid-cols-[clamp(185px,15.4vw,222px)_minmax(0,1fr)] settings-wide:grid-rows-[auto_minmax(0,1fr)] settings-wide:items-start settings-wide:gap-x-[clamp(1rem,1.8vw,2rem)] settings-wide:gap-y-4"
         style={topVar}>
         {/* Sticky so the menu is reachable without scrolling back to the top. */}
-        <header className="sticky top-[var(--settings-top,4.5rem)] z-20 -mx-4 flex items-center gap-3 bg-white px-4 py-2 min-[700px]:static min-[700px]:col-start-2 min-[700px]:row-start-1 min-[700px]:mx-0 min-[700px]:bg-transparent min-[700px]:p-0 dark:bg-neutral-950">
+        <header className="sticky top-[var(--settings-top,4.5rem)] z-20 flex flex-wrap items-center gap-1 bg-white py-2 sm:gap-3 settings-wide:static settings-wide:col-start-2 settings-wide:row-start-1 settings-wide:mx-0 settings-wide:bg-transparent settings-wide:p-0 dark:bg-neutral-950">
           <PendingLink
             href="/dashboard"
             pendingLabel="Loading…"
             aria-label="Back to Hone"
-            className="rounded-md p-2 text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
+            className="inline-flex size-11 shrink-0 items-center justify-center rounded-md text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
           >
             <span aria-hidden>←</span>
           </PendingLink>
-          <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
+          <h1 className="mr-auto text-2xl font-semibold tracking-tight sm:text-3xl">Settings</h1>
+          <button
+            ref={screenButton}
+            type="button"
+            aria-pressed={expanded}
+            aria-label={screenLabel}
+            aria-disabled={pending || undefined}
+            title={screenLabel}
+            onClick={toggle}
+            className="inline-flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-md border border-neutral-300 px-2 text-sm font-medium hover:bg-neutral-50 sm:px-3 dark:border-neutral-700 dark:hover:bg-neutral-900"
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+              <path d={expanded ? "M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5" : "M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"} />
+            </svg>
+            <span className="sr-only min-[500px]:not-sr-only">{screenLabel}</span>
+          </button>
           <button
             ref={menuButton}
             type="button"
@@ -231,7 +252,7 @@ export function SettingsShell({ items: railItems, reachable = [], account, child
             aria-controls={railId}
             aria-label="Settings menu"
             onClick={() => setDrawerOpen((v) => !v)}
-            className="ml-auto rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium min-[700px]:hidden dark:border-neutral-700"
+            className="min-h-11 rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium settings-wide:hidden dark:border-neutral-700"
           >
             <span aria-hidden>☰</span> Menu
           </button>
@@ -242,8 +263,11 @@ export function SettingsShell({ items: railItems, reachable = [], account, child
               type="button"
               aria-label="Close settings menu"
               tabIndex={-1}
-              onClick={() => setDrawerOpen(false)}
-              className="fixed inset-x-0 bottom-0 top-[var(--settings-top,4.5rem)] z-30 bg-black/40 min-[700px]:hidden"
+              onClick={() => {
+                setDrawerOpen(false);
+                menuButton.current?.focus();
+              }}
+              className="fixed inset-x-0 bottom-0 top-[var(--settings-top,4.5rem)] z-30 bg-black/40 settings-wide:hidden"
             />
           )}
           <aside
@@ -252,9 +276,9 @@ export function SettingsShell({ items: railItems, reachable = [], account, child
             aria-label="Settings navigation"
             className={`${
               drawerOpen
-                ? "fixed bottom-0 left-0 top-[var(--settings-top,4.5rem)] z-40 w-72 overflow-y-auto overscroll-contain bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-xl dark:bg-neutral-950"
+                ? "fixed bottom-0 left-0 top-[var(--settings-top,4.5rem)] z-40 w-72 overflow-y-auto overscroll-contain bg-white p-4 max-w-full pl-[max(1rem,env(safe-area-inset-left))] pb-[max(1rem,env(safe-area-inset-bottom))] shadow-xl dark:bg-neutral-950"
                 : "hidden"
-            } min-[700px]:sticky min-[700px]:top-[calc(var(--settings-top,4.5rem)+0.75rem)] min-[700px]:z-auto min-[700px]:col-start-1 min-[700px]:row-span-2 min-[700px]:row-start-1 min-[700px]:block min-[700px]:max-h-[calc(100vh_-_var(--settings-top,4.5rem)_-_var(--settings-tail,4.5rem)_-_1rem)] min-[700px]:w-auto min-[700px]:overflow-y-auto min-[700px]:bg-transparent min-[700px]:p-0 min-[700px]:shadow-none`}
+            } settings-wide:sticky settings-wide:top-[calc(var(--settings-top,4.5rem)+0.75rem)] settings-wide:z-auto settings-wide:col-start-1 settings-wide:row-span-2 settings-wide:row-start-1 settings-wide:block settings-wide:max-h-[calc(100vh_-_var(--settings-top,4.5rem)_-_var(--settings-tail,4.5rem)_-_1rem)] settings-wide:w-auto settings-wide:overflow-y-auto settings-wide:bg-transparent settings-wide:p-0 settings-wide:shadow-none`}
           >
             <button
               type="button"
@@ -262,7 +286,7 @@ export function SettingsShell({ items: railItems, reachable = [], account, child
                 setDrawerOpen(false);
                 menuButton.current?.focus();
               }}
-              className="mb-2 rounded-md px-3 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900 min-[700px]:hidden dark:text-neutral-300 dark:hover:bg-neutral-900"
+              className="mb-2 min-h-11 rounded-md px-3 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900 settings-wide:hidden dark:text-neutral-300 dark:hover:bg-neutral-900"
             >
               <span aria-hidden>✕</span> Close menu
             </button>
@@ -282,6 +306,17 @@ export function SettingsShell({ items: railItems, reachable = [], account, child
                 }
               }}
             >
+              <PendingLink
+                href="/settings"
+                pendingLabel="Opening settings overview…"
+                aria-current={pathname === "/settings" ? "page" : undefined}
+                data-rail-item="overview"
+                data-rail-kind="flat"
+                data-rail-state={pathname === "/settings" ? "selected" : "idle"}
+                className={`${ITEM_BASE} ${pathname === "/settings" ? ITEM_ACTIVE : ITEM_IDLE}`}
+              >
+                Overview
+              </PendingLink>
               {groups.map(({ group, entries }, groupIndex) => (
                 <div
                   key={group}
@@ -402,7 +437,7 @@ export function SettingsShell({ items: railItems, reachable = [], account, child
               0.5rem between the heading block and its first content box. */}
           <div
             ref={content}
-            className="min-w-0 min-[700px]:col-start-2 min-[700px]:row-start-2 [&>*>header[data-view-head]:first-child+*]:-mt-6"
+            className="min-w-0 settings-wide:col-start-2 settings-wide:row-start-2 [&>*>header[data-view-head]:first-child+*]:-mt-6"
           >
             {!activeItem && (
               // A route that is not in this role's rail (an owner-only page opened
@@ -423,7 +458,7 @@ export function SettingsShell({ items: railItems, reachable = [], account, child
                 className="mb-4 text-xs text-neutral-500 dark:text-neutral-400"
               >
                 <ol className="flex flex-wrap items-center gap-1.5">
-                  <li>Settings</li>
+                  <li><PendingLink href="/settings" pendingLabel="Opening settings overview…" className="hover:underline">Settings</PendingLink></li>
                   <li aria-hidden>/</li>
                   <li aria-current={activeChild ? undefined : "page"}>
                     {activeItem.label}
@@ -440,6 +475,7 @@ export function SettingsShell({ items: railItems, reachable = [], account, child
             {children}
           </div>
       </div>
-    </UnsavedChangesProvider>
+      </UnsavedChangesProvider>
+    </div>
   );
 }
