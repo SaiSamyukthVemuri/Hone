@@ -6,7 +6,7 @@ import { WorkspaceQueue } from "@/components/waitlist/workspace-queue";
 import { workspaceView } from "@/lib/waitlist/workspace-view";
 
 const pending = vi.hoisted(() => ({ value: false }));
-vi.mock("@/components/waitlist/invite-outcome-boundary", () => ({
+vi.mock("@/components/waitlist/invite-pending-context", () => ({
   useInviteOutcomePending: () => pending.value,
 }));
 

@@ -4,10 +4,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { AddToWaitlistPanel } from "@/components/waitlist/add-to-waitlist-panel";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
-import { useInviteOutcomePending } from "@/components/waitlist/invite-outcome-boundary";
+import { useInviteOutcomePending } from "@/components/waitlist/invite-pending-context";
 import { OverInviteLink } from "@/components/waitlist/over-invite-link";
 
-vi.mock("@/components/waitlist/invite-outcome-boundary", () => ({ useInviteOutcomePending: vi.fn(() => false) }));
+vi.mock("@/components/waitlist/invite-pending-context", () => ({ useInviteOutcomePending: vi.fn(() => false) }));
 import { WaitlistWorkspaceHeader } from "@/components/waitlist/workspace-header";
 
 it("opens one header panel at a time and preserves an unfinished add form", async () => {

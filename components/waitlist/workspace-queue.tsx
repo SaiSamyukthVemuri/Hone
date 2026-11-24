@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { WaitlistNavLink } from "@/components/waitlist/waitlist-nav-link";
-import { useInviteOutcomePending } from "@/components/waitlist/invite-outcome-boundary";
+import { useInviteOutcomePending } from "@/components/waitlist/invite-pending-context";
 import { WAITLIST_PATH, WAITLIST_SEARCH_PATH } from "@/lib/waitlist/paths";
 import { workspaceView, type WorkspaceView } from "@/lib/waitlist/workspace-view";
 import styles from "./workspace-queue.module.css";

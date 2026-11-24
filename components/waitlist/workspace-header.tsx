@@ -2,7 +2,7 @@
 
 import { useId, useState, type ReactNode } from "react";
 
-import { useInviteOutcomePending } from "@/components/waitlist/invite-outcome-boundary";
+import { useInviteOutcomePending } from "@/components/waitlist/invite-pending-context";
 
 export function WaitlistWorkspaceHeader({ settings, addPerson }: { settings: ReactNode; addPerson: ReactNode }) {
   const [panel, setPanel] = useState<"settings" | "add" | null>(null);
