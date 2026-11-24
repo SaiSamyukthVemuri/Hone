@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { PoolClient } from "pg";
 import { afterAll, describe, expect, it } from "vitest";
@@ -246,7 +246,11 @@ describe("NEGATIVE CONTROL: the same calls, made as a signed-in member, are ACCE
     const src = (await adminQuery(
       `select p.prosrc from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname='public' and p.proname='apply_block_machine_identity'`,
     )).rows[0].prosrc as string;
-    const inner = BODY_0310.slice(BODY_0310.indexOf("$$") + 2, BODY_0310.lastIndexOf("$$"));
+    // THE NEWEST DEFINITION IN THE CHAIN is what the database runs: 0366 amends this function (the xCell Pur model recorded with a
+    // legacy-column mode), so once it is in the chain the live body is its body, and the control still swaps in the 0310 body to prove the
+    // pre-0310 behaviour against a function it has itself installed.
+    const live = existsSync(join(root, "supabase/migrations/0366_machine_switches.sql")) ? coreFunctionSql("0366_machine_switches.sql") : BODY_0310;
+    const inner = live.slice(live.indexOf("$$") + 2, live.lastIndexOf("$$"));
     expect(src).toBe(inner);
   });
 });
