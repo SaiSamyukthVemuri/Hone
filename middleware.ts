@@ -1,7 +1,19 @@
-import { type NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { updateSession } from "@/lib/supabase/middleware";
+import { LEGACY_WAITLIST_PATH, WAITLIST_PATH } from "@/lib/waitlist/paths";
+import { redirectForLegacyWaitlistPath } from "@/lib/waitlist/path-redirects";
 
 export async function middleware(request: NextRequest) {
+  if (request.nextUrl.pathname.startsWith(LEGACY_WAITLIST_PATH)) {
+    const target = redirectForLegacyWaitlistPath(request.nextUrl.pathname, request.nextUrl.search, WAITLIST_PATH);
+    if (target) {
+      // Search URLs can carry client names or phone numbers.
+      return NextResponse.redirect(new URL(target, request.url), {
+        status: 308,
+        headers: { "Cache-Control": "private, no-store" },
+      });
+    }
+  }
   return await updateSession(request);
 }
 

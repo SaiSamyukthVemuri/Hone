@@ -1,4 +1,4 @@
-import { WAITLIST_ARCHIVED_PATH, WAITLIST_PATH, WAITLIST_RELEASED_PATH, WAITLIST_REPLIES_PATH, WAITLIST_SEARCH_PATH } from "@/lib/waitlist/paths";
+import { WAITLIST_ARCHIVED_PATH, WAITLIST_PATH, WAITLIST_RELEASED_PATH, WAITLIST_REPLIES_PATH } from "@/lib/waitlist/paths";
 import { InviteComposer } from "@/components/waitlist/invite-composer";
 import { allowanceHeadline } from "@/lib/waitlist/consultation-capacity";
 import { DEFAULT_BOOKING_WINDOW_DAYS } from "@/lib/waitlist/b4-invitation-draft";
@@ -7,7 +7,9 @@ import {
   INVITATION_DELIVERY_COPY,
   type InvitationDeliveryState,
 } from "@/lib/waitlist/invite-to-book-contract";
-import Link from "next/link";
+import { WorkspaceQueue } from "@/components/waitlist/workspace-queue";
+import { workspaceView } from "@/lib/waitlist/workspace-view";
+import { SEARCH_MIN, SEARCH_MAX } from "@/lib/waitlist/entry-search";
 import { WaitlistNavLink } from "@/components/waitlist/waitlist-nav-link";
 import { isBookableByNewClient } from "@/lib/booking/consultation";
 import {
@@ -53,6 +55,7 @@ import {
 } from "@/lib/waitlist/entry-provenance";
 import { EntryAvailability } from "@/components/waitlist/entry-availability";
 import { OverInviteLink } from "@/components/waitlist/over-invite-link";
+import { WaitlistWorkspaceHeader } from "@/components/waitlist/workspace-header";
 import { WaitlistTextsSetting } from "@/components/waitlist/waitlist-texts-setting";
 import { EntrySmsConsent, type SmsConsentView } from "@/components/waitlist/entry-sms-consent";
 import { AddToWaitlistPanel } from "@/components/waitlist/add-to-waitlist-panel";
@@ -369,7 +372,7 @@ export default async function WaitlistSettingsPage({
   // an array. Both values are browser-controlled, so the type says so rather
   // than lying about it — and neither reaches a query except through the
   // validation immediately below.
-  searchParams?: Promise<{ section?: string | string[]; page?: string | string[]; fu?: string | string[]; view?: string | string[]; dpage?: string | string[] }>;
+  searchParams?: Promise<{ tab?: string | string[]; followup?: string | string[]; section?: string | string[]; page?: string | string[]; fu?: string | string[]; view?: string | string[]; dpage?: string | string[] }>;
 }) {
   const { practitioner, studio } = await timed("waitlist.identity", () => requirePractitionerWithStudio());
 
@@ -386,6 +389,20 @@ export default async function WaitlistSettingsPage({
   const requestedSection = firstParam(params.section);
   const focusedStatus =
     SECTIONS.find(({ status }) => status === requestedSection)?.status ?? null;
+  const currentView = workspaceView({
+    section: focusedStatus ?? undefined,
+    tab: firstParam(params.tab),
+    view: firstParam(params.view),
+    followup: firstParam(params.followup),
+    fu: firstParam(params.fu),
+  });
+  // Bare queue links also served #entry-… anchors in every group. Keep their first
+  // pages addressable. Explicit workspace tabs render only their own sections.
+  const visibleSections = focusedStatus
+    ? SECTIONS.filter(({ status }) => status === focusedStatus)
+    : currentView === "history"
+      ? SECTIONS.filter(({ status }) => status === "released" || status === "expired")
+      : currentView === "responses" ? [] : SECTIONS;
   // `page` is meaningless without a section, so it is only read alongside one.
   const pageNumber = focusedStatus ? parsePageNumber(firstParam(params.page)) : 1;
   // A LIFECYCLE NOTICE NAMES ONE FIXED SENTENCE OR NOTHING. It comes ONLY from the flash cookie the owner's
@@ -422,7 +439,8 @@ export default async function WaitlistSettingsPage({
       // headline "Waitlist entries: N" would quietly change meaning from "the
       // whole queue" to "this group", which is a different claim under the same
       // words. Five reads either way.
-      const listed = focusedStatus === null || focusedStatus === status;
+      // Responses also needs the first-page entry ids to build links back to the queue.
+      const listed = visibleSections.some((section) => section.status === status) || (!focusedStatus && currentView === "responses");
       const from = focusedStatus === status ? rangeFrom : 0;
       const query = supabase
         .from("new_client_waitlist_entries")
@@ -441,7 +459,7 @@ export default async function WaitlistSettingsPage({
     }),
   ));
 
-  const failed = sectionReads.find(({ res }) => res.error);
+  const failed = sectionReads.find(({ res }) => res.error || res.count === null);
   if (failed) {
     // Say so plainly instead of rendering an empty queue, which would read as
     // "nobody is waiting" — the one wrong answer this page can give. ANY
@@ -451,7 +469,7 @@ export default async function WaitlistSettingsPage({
       JSON.stringify({
         event: "waitlist_queue_load_failed",
         studioId: studio.id,
-        code: failed.res.error?.code ?? "unknown",
+        code: failed.res.error?.code ?? "missing_exact_count",
         timestamp: new Date().toISOString(),
       }),
     );
@@ -485,11 +503,6 @@ export default async function WaitlistSettingsPage({
   // The headline counts the WHOLE queue in both views, because every section is
   // counted in both views.
   const active = SECTIONS.reduce((n, { status }) => n + (bySection.get(status)?.total ?? 0), 0);
-  // The FOCUSED view renders one section; the default renders all five, first
-  // page each — the same read count, and the same rows a reader saw before.
-  const visibleSections = focusedStatus
-    ? SECTIONS.filter(({ status }) => status === focusedStatus)
-    : SECTIONS;
   const now = Date.now();
 
   // WAIT-04A — STATED AVAILABILITY, on the page's OWN owner-scoped client.
@@ -909,8 +922,18 @@ export default async function WaitlistSettingsPage({
     }
   }
 
+  const waitingCount = (bySection.get("waiting")?.total ?? 0) + (bySection.get("claimed")?.total ?? 0);
+  const historyCount = (bySection.get("released")?.total ?? 0) + (bySection.get("expired")?.total ?? 0);
+  const responseCount = declineAnswersOn
+    ? (followUps?.kind === "ok" ? String(followUps.rows.filter((row) => row.status === "open").length) + (followUps.capped ? "+" : "") : null)
+    : (replies.kind === "ok" ? String(replies.n) : null);
+
   return (
-    <div className="flex flex-col gap-6">
+    <InviteOutcomeBoundary
+      action={inviteToBookAction}
+      entryNames={Object.fromEntries(rows.map((r) => [r.id, r.name]))}
+    >
+      <div className="flex flex-col gap-6">
       {lifecycleNotice && (
         <p
           role="status"
@@ -926,87 +949,76 @@ export default async function WaitlistSettingsPage({
           {lifecycleNotice.tone === "refusal" && " Nothing was changed. The list below is up to date."}
         </p>
       )}
-      {/* Absent only on a row read before 0206; the column defaults FALSE, so
-          absent displays as OFF. */}
-      <WaitlistTextsSetting initial={studio.send_waitlist_invitation_sms === true} />
-      {/* Owner-only: the page above already refuses a non-owner, and the link states the check itself. */}
-      <OverInviteLink isOwner={practitioner.role === "owner"} />
-      {/* THE ALLOWANCE, ABOVE THE WAITLIST. Nothing to type: it is read from availability. */}
+      <WaitlistWorkspaceHeader
+        settings={<WaitlistTextsSetting initial={studio.send_waitlist_invitation_sms === true} />}
+        addPerson={<AddToWaitlistPanel addAction={addWaitlistEntryFormAction} importAction={importLegacyWaitlistEntryFormAction} />}
+      />
       <section
         data-testid="invitation-allowance"
         aria-label="Invitation allowance"
-        className="rounded-lg border border-line bg-surface px-4 py-3"
+        className="rounded-lg border border-line bg-neutral-50 px-4 pt-4 sm:px-6 sm:pt-5 dark:bg-neutral-900"
       >
-        {allowanceText ? (
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+          <h2 className="text-base font-semibold">Consultation availability</h2>
+          <span className="text-sm text-fg-muted">Next {DEFAULT_BOOKING_WINDOW_DAYS} days</span>
+        </div>
+        {allowance?.ok && allowanceText ? (
           <>
-            <p data-testid="allowance-headline" className="text-sm font-medium">
-              {allowanceText.headline}
-            </p>
-            <p data-testid="allowance-note" className="mt-1 text-sm text-fg-muted">
-              {allowanceText.note}
-            </p>
-            <p data-testid="allowance-as-of" className="mt-1 text-xs text-fg-muted">
-              As of {allowanceAsOf}.{" "}
-              <Link href={WAITLIST_PATH} prefetch={false} className="underline">
-                Re-check
-              </Link>
+            <div className="my-4 flex flex-wrap items-center gap-x-8 gap-y-2">
+              <div data-testid="allowance-headline" className="grid min-w-0 flex-1 grid-cols-2 gap-4">
+                <p className="sr-only">{allowanceText.headline}</p>
+                <div aria-hidden="true">
+                  <p className="text-3xl font-semibold tabular-nums sm:text-4xl">{allowance.fit}</p>
+                  <p className="mt-1 text-sm">Available appointments</p>
+                </div>
+                <div aria-hidden="true" className="border-l border-line pl-4">
+                  <p className="text-3xl font-semibold tabular-nums sm:text-4xl">{allowance.open}</p>
+                  <p className="mt-1 text-sm">More {allowance.open === 1 ? "person" : "people"} you can invite</p>
+                </div>
+              </div>
+              <WaitlistNavLink href="" className="inline-flex min-h-11 items-center rounded-md border border-line bg-surface px-3 text-sm font-medium underline-offset-4 hover:underline">Re-check</WaitlistNavLink>
+            </div>
+            <p data-testid="allowance-note" className="mb-3 text-xs leading-relaxed text-fg-muted">
+              {allowanceService.name}. {allowanceText.note}
             </p>
           </>
         ) : (
-          <p data-testid="allowance-unavailable" className="text-sm text-fg-muted">
-            We couldn&rsquo;t check availability just now. Reload the page to see how many people you can invite.
+          <p data-testid="allowance-unavailable" className="my-4 text-sm text-fg-muted">
+            We couldn&rsquo;t check availability just now. <WaitlistNavLink className="underline" href="">Reload the page</WaitlistNavLink> to see how many people you can invite.
             Availability can change; invitations don&rsquo;t reserve appointments.
           </p>
         )}
+        <div className="flex flex-wrap items-center justify-between gap-x-4 border-t border-line py-1">
+          <span data-testid="allowance-as-of" className="text-xs text-fg-muted">Checked at {allowanceAsOf}</span>
+          <div className="[&_a]:inline-flex [&_a]:items-center [&_p]:sr-only"><OverInviteLink isOwner={practitioner.role === "owner"} /></div>
+        </div>
       </section>
-      {/* WAIT-04A. ABOVE THE QUEUE: adding a person is the next thing an operator does and belongs
-          beside the list it changes rather than buried under five sections of it. */}
-      <AddToWaitlistPanel
-        addAction={addWaitlistEntryFormAction}
-        importAction={importLegacyWaitlistEntryFormAction}
-      />
-      <section>
-        <h2 tabIndex={-1} data-settings-heading className="text-xl font-medium outline-none">Waitlist</h2>
-        <p className="mt-1 text-sm text-neutral-500">
-          New clients who asked to be contacted while new-client booking is by
-          waitlist. They are not clients yet: nothing here has an appointment,
-          an intake form or a record.
-        </p>
-      </section>
-
-      <p className="text-sm font-medium" aria-live="polite">
+      <WorkspaceQueue
+        initialView={currentView}
+        waiting={waitingCount}
+        invited={bySection.get("invited")?.total ?? 0}
+        responses={responseCount}
+        responseLabel={declineAnswersOn ? "open follow-ups" : "replies to review"}
+        searchMin={SEARCH_MIN}
+        searchMax={SEARCH_MAX}
+      >
+      <p className="sr-only">
         Waitlist entries: <span className="tabular-nums">{active}</span>
       </p>
-      <p data-testid="declined-summary" className="text-sm text-fg-muted">
-        {declinedSummaryText(declinedTotal)}
-        {declinedTotal !== null && declinedTotal > 0 && !viewDeclined ? (
-          <>
-            {" "}
-            <Link href={`${QUEUE_PATH}?view=${DECLINED_VIEW}`} prefetch={false} className="underline" data-testid="declined-view-link">
-              View the people who declined
-            </Link>
-          </>
-        ) : null}
-      </p>
       {expirySummaryLine && (
-        <p data-testid="invitation-expiry-summary" className="text-sm text-fg-muted">
+        <p data-workspace-section="invited" data-testid="invitation-expiry-summary" className="flex-wrap gap-x-1 text-sm text-fg-muted">
           {expirySummaryLine}{" "}
           <span className="text-xs">As of {allowanceAsOf}.</span>
         </p>
       )}
-      <InvitationBookingSummary summary={bookingSummary} timeZone={studio.timezone} />
-      <p className="flex flex-wrap gap-x-4 text-sm" data-testid="waitlist-tools-nav">
-        <Link href={WAITLIST_SEARCH_PATH} className="underline">
-          Search the waitlist by name
-        </Link>
-        <Link href={WAITLIST_RELEASED_PATH} className="underline">
-          Released and expired history
-        </Link>
-        <Link href={WAITLIST_ARCHIVED_PATH} className="underline">
-          Archived entries
-        </Link>
-      </p>
-
+      <div data-workspace-section="history" className="flex-col gap-2">
+        <h2 className="text-lg font-semibold">History</h2>
+        <nav aria-label="Waitlist history" className="flex flex-wrap gap-x-5 text-sm" data-testid="waitlist-tools-nav">
+          <WaitlistNavLink href={WAITLIST_RELEASED_PATH} className="inline-flex min-h-11 items-center underline">Released and expired history</WaitlistNavLink>
+          <WaitlistNavLink href={WAITLIST_ARCHIVED_PATH} className="inline-flex min-h-11 items-center underline">Archived entries</WaitlistNavLink>
+        </nav>
+        {historyCount === 0 && !focusedStatus && <p className="text-sm text-fg-muted">No released or expired entries.</p>}
+      </div>
       {/* NO BULK CLAIM CONTROL. "Claim the next N" was removed with the rest of
           the claiming vocabulary — see the CLAIMING IS INTERNAL note at the top
           of this file. `claim_new_client_waitlist_entries` and its server action
@@ -1037,6 +1049,19 @@ export default async function WaitlistSettingsPage({
         </section>
       )}
 
+      <div data-workspace-section="responses" className="flex-col gap-3">
+        <h2 className="text-lg font-semibold">Responses</h2>
+        <p data-testid="declined-summary" className="text-sm text-fg-muted">
+        {declinedSummaryText(declinedTotal)}
+        {declinedTotal !== null && declinedTotal > 0 && !viewDeclined ? (
+          <>
+            {" "}
+            <WaitlistNavLink href={`${QUEUE_PATH}?view=${DECLINED_VIEW}`} className="underline" data-testid="declined-view-link">
+              View the people who declined
+            </WaitlistNavLink>
+          </>
+        ) : null}
+      </p>
       {/* THE OWNER FOLLOW-UP CARDS RENDER WHETHER OR NOT ANYONE IS ACTIVE. They describe
           things that outlive the queue: reply rows persist after the entry converts or is
           removed, and a used-but-unbooked invitation or a declined offer is exactly when
@@ -1158,9 +1183,9 @@ export default async function WaitlistSettingsPage({
                 waiting list with their original join date when they replied.
               </p>
               <p className="mt-2">
-                <Link href={WAITLIST_REPLIES_PATH} className="underline">
+                <WaitlistNavLink href={WAITLIST_REPLIES_PATH} className="underline">
                   Open the replies
-                </Link>
+                </WaitlistNavLink>
               </p>
             </section>
           )}
@@ -1180,33 +1205,14 @@ export default async function WaitlistSettingsPage({
           pageWindow={declinedWindow}
           backHref={QUEUE_PATH}
         />
-      ) : active === 0 ? (
-        <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
-          Nobody is waiting right now. New-client requests from your booking
-          page will appear here.
+      ) : null}
+      </div>
+      {!viewDeclined && !focusedStatus && waitingCount === 0 && (
+        <div data-workspace-section="waiting" className="flex-col rounded-lg border border-line p-6 text-sm text-fg-muted">
+          Nobody is waiting right now. New-client requests from your booking page will appear here.
         </div>
-      ) : (
-        <>
-          <InviteOutcomeBoundary
-            action={inviteToBookAction}
-            entryNames={Object.fromEntries(rows.map((r) => [r.id, r.name]))}
-          >
-          {focusedStatus && (
-            <p className="text-sm">
-              <WaitlistNavLink href={QUEUE_PATH} className="underline">
-                Back to all groups
-              </WaitlistNavLink>
-            </p>
-          )}
-
-          {/* THE SUBMISSION RESULT LIVES HERE, above every section.
-              `revalidatePath` on a committed admission moves the row to
-              `invited`, and a composer is mounted only for waiting/claimed — so
-              the composer unmounts on exactly the outcomes that carry a delivery
-              disposition. This boundary survives that, and survives the row
-              leaving the visible list altogether. */}
-
-          {visibleSections.map(({ status, heading }) => {
+      )}
+      {!viewDeclined && visibleSections.map(({ status, heading }) => {
             const group = bySection.get(status);
             if (!group) return null;
             const focused = focusedStatus === status;
@@ -1223,10 +1229,14 @@ export default async function WaitlistSettingsPage({
             // a group that is not empty, so it says what actually happened and
             // offers the way back.
             const pastEnd = focused && group.rows.length === 0 && group.total > 0;
+            const rowGrid = "md:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)_10.5rem]";
+            const joinedDate = new Intl.DateTimeFormat("en-US", {
+              month: "short", day: "numeric", year: "numeric", timeZone: studio.timezone,
+            });
             const hasPrev = focused && pageNumber > 1;
             const hasNext = focused && lastShown < group.total;
             return (
-              <section key={status} className="flex flex-col gap-3">
+              <section key={status} data-workspace-section={status} className="flex flex-col gap-3">
                 <h3 className="text-sm font-medium" data-testid={`waitlist-section-${status}`}>
                   {/* THE GROUP'S OWN EXACT COUNT, not the number on screen.
                       `rows.length` here would restate the page size and tell a
@@ -1291,11 +1301,12 @@ export default async function WaitlistSettingsPage({
                   )
                 )}
 
-                {/* One card per person, stacking naturally on a phone: no
-                    horizontal table to scroll at 390px, and every contact detail
-                    is selectable text so it can be copied straight into an email
-                    or a phone app. */}
-                <ul className="flex flex-col gap-3">
+                {group.rows.length > 0 && (
+                  <div aria-hidden="true" className={`-mb-3 hidden gap-4 rounded-t-lg border border-line bg-surface-sunken px-4 py-2 text-xs font-medium text-fg-muted md:grid ${rowGrid}`}>
+                    <span>Person</span><span>Joined</span><span>Availability</span><span>Action</span>
+                  </div>
+                )}
+                <ul className="divide-y divide-line overflow-clip rounded-lg border-line empty:hidden md:rounded-t-none [&:not(:empty)]:border">
                   {group.rows.map((row) => {
                     // WAIT-04A. THE CLAIM COMES FIRST, THEN THE NUMBER.
                     // `daysWaiting` is computed only where a wait may be
@@ -1317,6 +1328,10 @@ export default async function WaitlistSettingsPage({
                     const elapsed = cycleByEntry === null ? undefined : cycle?.elapsed === true;
                     const redeemed =
                       cycleByEntry === null ? undefined : cycle?.redeemed === true;
+                    // The 14-day studio estimate governs prominence only. The composer
+                    // still calculates its own selected service/window and checks admission.
+                    const directInvite = INVITE_TO_BOOK_STATUSES.includes(row.status)
+                      && !invitesBlockedByAdmission && allowance?.ok === true && allowance.open > 0;
                     return (
                       <li
                         key={row.id}
@@ -1340,15 +1355,32 @@ export default async function WaitlistSettingsPage({
                         // still has to be identifiable.
                         data-entry-id={row.id}
                         data-entry-status={row.status}
-                        className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800"
+                        className="relative flex min-w-0 flex-col scroll-mt-20"
                       >
-                        {/* THE ROW HAS TWO BANDS. The first holds the person and the row's own controls side by side;
-                            the second is the Invite-to-book composer, full width. The composer used to sit INSIDE the
-                            controls column, so opening it widened that column to the form's natural width and squeezed
-                            the name and email into a sliver with the controls drawn over the form. */}
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <details className="peer/entry group/entry" data-testid="waitlist-entry-details">
+                          <summary className={`grid min-h-12 cursor-pointer list-none grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 px-4 py-3 text-sm hover:bg-surface-sunken focus-visible:outline-2 focus-visible:outline-inset [&::-webkit-details-marker]:hidden ${rowGrid}`}>
+                            <span className="min-w-0 break-words font-medium [overflow-wrap:anywhere]">{row.name}</span>
+                            <span className="col-start-1 row-start-2 min-w-0 text-xs text-fg-muted md:col-auto md:row-auto md:text-sm">
+                              {days === null ? "Join date unknown" : (
+                                <>
+                                  <span className="md:sr-only">Joined </span>
+                                  <time dateTime={row.joined_at}>{joinedDate.format(new Date(row.joined_at))}</time>
+                                  {claimNote && <span className="block text-xs">{claimNote}</span>}
+                                </>
+                              )}
+                            </span>
+                            <span className="col-start-1 row-start-3 min-w-0 text-xs text-fg-muted md:col-auto md:row-auto md:text-sm">
+                              <span className="sr-only">Availability: </span>
+                              {preferenceByEntry === null ? "Unavailable" : availability ? AVAILABILITY_PREFERENCE_LABEL[availability.preference] : "Not stated"}
+                            </span>
+                            <span className={`col-start-2 row-start-1 text-sm md:col-auto md:row-auto ${directInvite ? "pr-16" : ""}`}>
+                              <span>View details</span>
+                              <span className="sr-only"> for {row.name}</span>
+                              <span aria-hidden="true" className="ml-1 inline-block text-lg leading-none group-open/entry:rotate-90">›</span>
+                            </span>
+                          </summary>
+                          <div className="flex flex-col gap-3 border-t border-line bg-surface-sunken px-4 py-4 sm:flex-row sm:items-start sm:justify-between">
                         <div className="flex min-w-0 flex-1 flex-col gap-1">
-                          <p className="font-medium break-words">{row.name}</p>
                           <p className="text-sm break-all text-neutral-600 dark:text-neutral-400">
                             {row.email}
                           </p>
@@ -1607,6 +1639,7 @@ export default async function WaitlistSettingsPage({
                           )}
                         </div>
                         </div>
+                        </details>
                           {/* WAIT INTEGRATION-01 — THE REAL INVITE-TO-BOOK PATH.
                               #683 ships the composer and #685 ships `admit_`;
                               they are siblings off production, so this binding
@@ -1623,11 +1656,21 @@ export default async function WaitlistSettingsPage({
                               disabled state is about the DRAFT, not about
                               whether this person can be invited. */}
                           {INVITE_TO_BOOK_STATUSES.includes(row.status) && (
-                            <details className="w-full min-w-0" data-testid="row-invite">
-                              <summary className="min-h-[44px] cursor-pointer list-none rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium dark:border-neutral-700">
-                                Invite to book
+                            <details
+                              // A composer the owner has OPENED stays on screen. The studio estimate only decides whether Invite sits beside the
+                              // name; a Send answered by the question "invite anyway?" refreshes the page with an estimate of zero, and without
+                              // `open:block` that refresh hid the question the owner had just been asked.
+                              className={`w-full min-w-0 ${directInvite ? "" : "hidden peer-open/entry:block open:block"}`}
+                              data-testid="row-invite"
+                            >
+                              <summary className={directInvite
+                                ? "absolute right-3 top-1 flex min-h-11 cursor-pointer list-none items-center rounded-md px-2 text-sm font-medium underline underline-offset-4 hover:bg-surface-sunken [&::-webkit-details-marker]:hidden"
+                                : "mx-4 mb-3 flex min-h-11 cursor-pointer list-none flex-wrap items-center gap-2 rounded-md border border-line px-3 py-2 text-sm font-medium [&::-webkit-details-marker]:hidden"}>
+                                <span className={directInvite ? "sr-only" : ""}>Invite to book</span>
+                                {directInvite && <span aria-hidden="true">Invite</span>}
+                                <span className="sr-only"> {row.name}</span>
                                 {allowanceText && (
-                                  <span data-testid="row-allowance" className="ml-2 font-normal text-fg-muted">
+                                  <span data-testid="row-allowance" className={directInvite ? "sr-only" : "font-normal text-fg-muted"}>
                                     {allowanceText.short}
                                   </span>
                                 )}
@@ -1690,9 +1733,12 @@ export default async function WaitlistSettingsPage({
               </section>
             );
           })}
-          </InviteOutcomeBoundary>
-        </>
-      )}
-    </div>
+      <details className="rounded-xl border border-line bg-surface px-4">
+        <summary className="cursor-pointer py-4 text-sm font-semibold">Invitation results <span className="ml-2 font-normal text-fg-muted">Last {SUMMARY_PERIOD_DAYS} days</span></summary>
+        <div className="pb-4"><InvitationBookingSummary summary={bookingSummary} timeZone={studio.timezone} /></div>
+      </details>
+      </WorkspaceQueue>
+      </div>
+    </InviteOutcomeBoundary>
   );
 }

@@ -1,8 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
 vi.mock("next/link", () => ({
-  default: (p: { href: string; children: unknown; className?: string }) => {
-    const { createElement } = require("react");
+  default: (p: { href: string; children: import("react").ReactNode; className?: string }) => {
     return createElement("a", { href: p.href, className: p.className }, p.children);
   },
 }));
@@ -27,7 +26,7 @@ it("email and phone present: shows both, with mailto, tel, copy and the entry li
   expect(h.textContent).toContain("+1 555 0100");
   expect(h.querySelector('a[href="mailto:a@example.test"]')).not.toBeNull();
   expect(h.querySelector('a[href="tel:+15550100"]')).not.toBeNull();
-  expect(h.querySelector(`a[href="/settings/waitlist#entry-${ID}"]`)).not.toBeNull();
+  expect(h.querySelector(`a[href="/waitlist#entry-${ID}"]`)).not.toBeNull();
   // Visible label is just "Copy"; the accessible name says which one.
   expect(h.querySelector('button[aria-label="Copy email"]')?.textContent).toBe("Copy");
   expect(h.querySelector('button[aria-label="Copy phone"]')?.textContent).toBe("Copy");

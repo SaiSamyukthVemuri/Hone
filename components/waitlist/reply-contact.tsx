@@ -1,7 +1,7 @@
 "use client";
 
 import { WAITLIST_PATH } from "@/lib/waitlist/paths";
-import Link from "next/link";
+import { WaitlistNavLink } from "@/components/waitlist/waitlist-nav-link";
 import { useState } from "react";
 import { buttonClasses } from "@/components/ui/button";
 import { formatPhoneForDisplay, mailtoHref, telHref, type ReplyContact } from "@/lib/waitlist/reply-contact-pure";
@@ -112,9 +112,9 @@ export function ReplyContactDetails({
         </Row>
       )}
       {showEntryLink && (
-        <Link className="inline-flex min-h-[44px] items-center self-start underline" href={entryHref}>
+        <WaitlistNavLink className="inline-flex min-h-[44px] items-center self-start underline" href={entryHref}>
           Open this waitlist entry
-        </Link>
+        </WaitlistNavLink>
       )}
     </div>
   );

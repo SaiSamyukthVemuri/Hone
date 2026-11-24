@@ -9,7 +9,7 @@ describe("the over-invite link on the Waitlist page", () => {
   it("an owner sees one link to the page, with the plain label and sentence", () => {
     const html = renderToStaticMarkup(createElement(OverInviteLink, { isOwner: true }));
     expect(html).toContain(`href="${OVER_INVITE_LINK_PATH}"`);
-    expect(OVER_INVITE_LINK_PATH).toBe("/settings/waitlist/over-invite");
+    expect(OVER_INVITE_LINK_PATH).toBe("/waitlist/over-invite");
     expect(html).toContain(OVER_INVITE_LINK_LABEL);
     expect(html).toContain(OVER_INVITE_LINK_HELP);
     expect(OVER_INVITE_LINK_LABEL).toBe("Invite beyond the estimate");

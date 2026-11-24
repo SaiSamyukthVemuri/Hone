@@ -16,7 +16,7 @@ const render = (over: Partial<Parameters<typeof DeclinedSection>[0]> = {}) =>
       people: [person()], total: 1, timeZone: "America/Toronto", answersOn: true,
       followUps: { kind: "ok", rows: [fu()] } as FollowUpList,
       entryPages: new Map([["e1", 1]]), pageWindow: { page: 1, pageCount: 1, from: 0, to: 1 }, contacts: new Map([["e1", { kind: "entry" as const, email: "alex@example.invalid", phone: "+14165550100" }]]),
-      entryFactsUnreadable: false, linkableStatuses: new Set(["waiting", "invited", "released"]), backHref: "/settings/waitlist", ...over,
+      entryFactsUnreadable: false, linkableStatuses: new Set(["waiting", "invited", "released"]), backHref: "/waitlist", ...over,
     }),
   );
 
@@ -27,7 +27,7 @@ describe("DeclinedSection", () => {
     expect(html).toContain("Declined Aug 21, 2026, 6:00 AM EDT");
     expect(html).toContain("Mornings are hard");
     expect(html).toContain("Weekday evenings");
-    expect(html).toContain('href="/settings/waitlist?section=waiting#entry-e1"');
+    expect(html).toContain('href="/waitlist?section=waiting#entry-e1"');
     expect(html).toMatch(/<details[^>]*data-testid="declined-contact"/);
     expect(html).not.toMatch(/<details[^>]*open/);
   });
@@ -54,8 +54,8 @@ describe("DeclinedSection", () => {
   });
   it("the entry link carries the page the entry is on (only past the first), and no page means no link", () => {
     const at = (n: number | undefined) => render({ entryPages: n === undefined ? new Map() : new Map([["e1", n]]) });
-    expect(at(1)).toContain('href="/settings/waitlist?section=waiting#entry-e1"');
-    expect(at(3)).toContain('href="/settings/waitlist?section=waiting&amp;page=3#entry-e1"');
+    expect(at(1)).toContain('href="/waitlist?section=waiting#entry-e1"');
+    expect(at(3)).toContain('href="/waitlist?section=waiting&amp;page=3#entry-e1"');
     const none = at(undefined);
     expect(none).not.toContain("declined-entry-link");
     expect(none).toContain("its page could not be worked out");
@@ -86,11 +86,11 @@ describe("DeclinedSection", () => {
     const first = at(1, 3, 0, 50);
     expect(first).toContain("Showing 1–50 of 110, newest first. Page 1 of 3.");
     expect(first).not.toContain("declined-prev");
-    expect(first).toContain('href="/settings/waitlist?view=declined&amp;dpage=2"');
+    expect(first).toContain('href="/waitlist?view=declined&amp;dpage=2"');
     const mid = at(2, 3, 50, 100);
     expect(mid).toContain("Showing 51–100 of 110");
-    expect(mid).toContain('href="/settings/waitlist?view=declined"'); // previous of page 2 is page 1, with no page number
-    expect(mid).toContain('href="/settings/waitlist?view=declined&amp;dpage=3"');
+    expect(mid).toContain('href="/waitlist?view=declined"'); // previous of page 2 is page 1, with no page number
+    expect(mid).toContain('href="/waitlist?view=declined&amp;dpage=3"');
     const last = at(3, 3, 100, 110);
     expect(last).toContain("Showing 101–110 of 110");
     expect(last).not.toContain("declined-next");
