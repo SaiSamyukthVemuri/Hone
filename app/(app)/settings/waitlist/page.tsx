@@ -1657,7 +1657,10 @@ export default async function WaitlistSettingsPage({
                               whether this person can be invited. */}
                           {INVITE_TO_BOOK_STATUSES.includes(row.status) && (
                             <details
-                              className={`w-full min-w-0 ${directInvite ? "" : "hidden peer-open/entry:block"}`}
+                              // A composer the owner has OPENED stays on screen. The studio estimate only decides whether Invite sits beside the
+                              // name; a Send answered by the question "invite anyway?" refreshes the page with an estimate of zero, and without
+                              // `open:block` that refresh hid the question the owner had just been asked.
+                              className={`w-full min-w-0 ${directInvite ? "" : "hidden peer-open/entry:block open:block"}`}
                               data-testid="row-invite"
                             >
                               <summary className={directInvite

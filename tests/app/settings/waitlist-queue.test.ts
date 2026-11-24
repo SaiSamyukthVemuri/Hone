@@ -1073,6 +1073,8 @@ describe("rendered rows", () => {
       expect(row).toContain('data-testid="row-invite"');
       expect(row?.includes('aria-hidden="true">Invite</span>')).toBe(direct);
       expect(row?.includes("hidden peer-open/entry:block")).toBe(!direct);
+      // A composer the owner opened never disappears when a refresh brings the estimate to zero: the question "invite anyway?" lives in it.
+      expect(row?.includes("open:block")).toBe(!direct);
     });
 
     it("the composer is outside the controls column, and the controls column cannot grow with it", async () => {

@@ -644,7 +644,7 @@ test.describe("the studio's waitlist queue", () => {
     // "Waiting: N" would be a false label. The per-section heading below still
     // carries the waiting-only count.
     await expect(page.getByText(/^Waitlist entries:\s*1$/)).toBeVisible();
-    await expect(page.getByText("Queue Person", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("waitlist-entry-details").getByText("Queue Person", { exact: true })).toBeVisible();
     const personDetails = page.getByTestId("waitlist-entry-details").filter({ has: page.getByText("Queue Person", { exact: true }) });
     await expect(personDetails).not.toHaveAttribute("open", "");
     await personDetails.locator("> summary").click();
@@ -836,7 +836,7 @@ test.describe("the studio's waitlist queue", () => {
     await loginAsOwner(page, other);
     await page.goto("/settings/waitlist");
 
-    await expect(page.getByText("Studio B Person", { exact: true })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("waitlist-entry-details").getByText("Studio B Person", { exact: true })).toBeVisible({ timeout: 20_000 });
     await expect(page.getByText("Studio A Person", { exact: true })).toHaveCount(0);
     // WAIT-EXPOSE-01 renamed this counter. It now spans every ACTIVE lifecycle
     // state the page surfaces (waiting, held, invited, expired, released), so
