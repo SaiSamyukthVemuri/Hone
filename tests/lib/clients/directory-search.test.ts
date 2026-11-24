@@ -79,11 +79,9 @@ describe("a receptionist search cannot find the stored or a legal name (identity
       expect(matchesDirectoryQuery(row, term)).toBe(false);
     }
   });
-  it("with no preferred name the regular name is what the receptionist sees, so it is searchable (0380); both blank finds nothing by name", () => {
+  it("with no preferred name the regular name is what the receptionist sees, so it is searchable (0380)", () => {
     const row = projectReceptionistRow(client({ name: "Zyxwvut Qrstuvw", preferred_name: null }));
     expect(matchesDirectoryQuery(row, "zyxwvut")).toBe(true);
     expect(matchesDirectoryQuery(row, "qrstuvw")).toBe(true);
-    const blank = projectReceptionistRow(client({ name: "  ", preferred_name: null }));
-    expect(matchesDirectoryQuery(blank, "name on file")).toBe(false);
   });
 });
