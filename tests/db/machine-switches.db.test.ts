@@ -41,8 +41,13 @@ const identity = (block: string, studio: string, profile: string | null, unit: s
 const blockIdentity = async (block: string) =>
   (await adminQuery(`select machine_profile_id, studio_machine_id, machine_mode_key from public.session_blocks where id=$1`, [block])).rows[0] as { machine_profile_id: string | null; studio_machine_id: string | null; machine_mode_key: string | null };
 const setLegacyMode = (block: string) => adminTx(async (q) => { await q(`set local session_replication_role = replica`); await q(`update public.session_blocks set mode = 'thermolysis' where id = $1`, [block]); });
-const unitOf = async (studio: string, profile: string, version = 1) =>
-  (await adminQuery(`insert into public.studio_machines (studio_id, machine_profile_id, machine_profile_version, display_name) values ($1,$2,$3,$4) returning id`, [studio, profile, version, `Unit ${randomUUID().slice(0, 8)}`])).rows[0].id as string;
+// A unit registered directly (as a studio that already had one) has its Senior/Junior model ON, the same rule the seed applies ("on where a live unit
+// exists"); xCell Pur is left as the seed set it, because seedOff flips it on purpose. A test that needs the model off turns it off explicitly.
+const unitOf = async (studio: string, profile: string, version = 1) => {
+  const id = (await adminQuery(`insert into public.studio_machines (studio_id, machine_profile_id, machine_profile_version, display_name) values ($1,$2,$3,$4) returning id`, [studio, profile, version, `Unit ${randomUUID().slice(0, 8)}`])).rows[0].id as string;
+  if (profile !== PUR) await adminQuery(`update public.studio_machine_models set enabled = true where studio_id = $1 and profile_id = $2`, [studio, profile]);
+  return id;
+};
 
 // The seed starts xCell Pur ON and the default (24 Nov 2026), so a new studio is already in the state these tests exercise. The helper only seeds.
 const seedOn = async (label: string): Promise<SeededStudio> => seedStudio(label);
