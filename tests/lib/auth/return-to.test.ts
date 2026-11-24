@@ -15,8 +15,8 @@ const HOSTILE = [
   "https://evil.com",
   "/%2F%2Fevil",
   "javascript:alert(1)",
-  "/settings/waitlist%0d%0aLocation:%20https://evil.com",
-  "/settings/waitlist\r\nLocation: https://evil.com",
+  "/waitlist%0d%0aLocation:%20https://evil.com",
+  "/waitlist\r\nLocation: https://evil.com",
   "/" + "a".repeat(5000),
   "/settings/team",
   "/dashboard",
@@ -25,9 +25,9 @@ const HOSTILE = [
 
 describe("returnToKeyFor (middleware side)", () => {
   it("maps exactly the allowlisted pages to a key", () => {
-    expect(returnToKeyFor("/settings/waitlist", "")).toBe("waitlist");
-    expect(returnToKeyFor("/settings/waitlist", "?followup=1")).toBe("waitlist_followup");
-    expect(returnToKeyFor("/settings/waitlist/", "?followup=1")).toBe("waitlist_followup");
+    expect(returnToKeyFor("/waitlist", "")).toBe("waitlist");
+    expect(returnToKeyFor("/waitlist", "?followup=1")).toBe("waitlist_followup");
+    expect(returnToKeyFor("/waitlist/", "?followup=1")).toBe("waitlist_followup");
   });
 
   it.each(HOSTILE)("a hostile or non-allowlisted path %j yields no key", (p) => {
@@ -37,27 +37,27 @@ describe("returnToKeyFor (middleware side)", () => {
 
   it("any other query, extra parameter, case change or sub-path yields no key", () => {
     for (const [p, q] of [
-      ["/settings/waitlist", "?followup=2"],
-      ["/settings/waitlist", "?followup=1&x=//evil.com"],
-      ["/settings/waitlist", "?next=https://evil.com"],
-      ["/settings/waitlist", "?section=entries"],
+      ["/waitlist", "?followup=2"],
+      ["/waitlist", "?followup=1&x=//evil.com"],
+      ["/waitlist", "?next=https://evil.com"],
+      ["/waitlist", "?section=entries"],
       ["/Settings/Waitlist", ""],
-      ["/settings/waitlist/replies", ""],
-      ["/settings/waitlist%2f..%2fteam", ""],
-      ["/settings/waitlistx", ""],
+      ["/waitlist/replies", ""],
+      ["/waitlist%2f..%2fteam", ""],
+      ["/waitlistx", ""],
     ] as const) expect(returnToKeyFor(p, q), `${p}${q}`).toBeNull();
   });
 
   it("refuses non-string input", () => {
     expect(returnToKeyFor(undefined as never, "")).toBeNull();
-    expect(returnToKeyFor("/settings/waitlist", null as never)).toBeNull();
+    expect(returnToKeyFor("/waitlist", null as never)).toBeNull();
   });
 });
 
 describe("returnToDestination (callback side)", () => {
   it("resolves a known key to its internal destination, with the fragment for the follow-up", () => {
-    expect(returnToDestination("waitlist_followup")).toBe("/settings/waitlist#follow-up");
-    expect(returnToDestination("waitlist")).toBe("/settings/waitlist");
+    expect(returnToDestination("waitlist_followup")).toBe("/waitlist#follow-up");
+    expect(returnToDestination("waitlist")).toBe("/waitlist");
   });
   it.each([...HOSTILE, "WAITLIST", "waitlist ", 7, null, undefined, ["waitlist"]])("anything that is not exactly a key (%j) resolves to nothing", (v) => {
     expect(returnToDestination(v)).toBeNull();

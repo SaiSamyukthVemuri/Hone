@@ -68,7 +68,7 @@ describe("settings nav registry", () => {
       "/settings/studio/details",
       "/settings/team",
       "/settings/booking/link",
-      "/settings/waitlist",
+      "/waitlist",
       "/settings/availability",
       "/settings/services",
       "/settings/machines",

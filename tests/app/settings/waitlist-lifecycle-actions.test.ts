@@ -90,12 +90,12 @@ function entryForm(entryId = ENTRY): FormData {
 
 /** The action redirected to the plain page and left exactly this notice key in the flash cookie. */
 async function expectNoticeRedirect(run: Promise<unknown>, key: string) {
-  await expect(run).rejects.toThrow(/^NEXT_REDIRECT:\/settings\/waitlist$/);
+  await expect(run).rejects.toThrow(/^NEXT_REDIRECT:\/waitlist$/);
   expect(flash.sets).toHaveLength(1);
   expect(flash.sets[0]).toMatchObject({
     name: "hone_waitlist_notice",
     value: key,
-    options: { httpOnly: true, sameSite: "lax", path: "/settings/waitlist", maxAge: 5 },
+    options: { httpOnly: true, sameSite: "lax", path: "/waitlist", maxAge: 5 },
   });
 }
 
@@ -237,7 +237,7 @@ describe("a refusal is never read as a success", () => {
     it(`${seam.name} revalidates ONLY on success`, async () => {
       arrangeRpc({ data: seam.success });
       await seam.run(entryForm());
-      expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/settings/waitlist");
+      expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/waitlist");
     });
   }
 });
@@ -260,7 +260,7 @@ describe("a stale-state refusal redirects with a notice; every other refusal sti
       arrangeRpc({ data: code });
       await expectNoticeRedirect(run(entryForm()), key);
       expect(vi.mocked(redirect)).toHaveBeenCalledTimes(1);
-      expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/settings/waitlist");
+      expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/waitlist");
       // One command, once: no retry, no second rpc.
       expect(calls).toHaveLength(1);
       // A warning with the outcome, not an error: this is not a fault.
@@ -349,7 +349,7 @@ describe("claim next N", () => {
     const fd = new FormData();
     fd.set("count", "5");
     await expect(claimNextWaitlistEntriesAction(fd)).resolves.toBeUndefined();
-    expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/settings/waitlist");
+    expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/waitlist");
   });
 
   it("any non-claimed row in the set is a refusal", async () => {

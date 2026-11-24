@@ -185,7 +185,7 @@ describe("recording", () => {
         },
       },
     ]);
-    expect(revalidatePath).toHaveBeenCalledWith("/settings/waitlist");
+    expect(revalidatePath).toHaveBeenCalledWith("/waitlist");
   });
 
   it("a known day is passed exactly as entered", async () => {

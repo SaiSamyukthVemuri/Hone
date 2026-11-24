@@ -26,10 +26,10 @@ beforeEach(() => {
 
 describe("return to the follow-up after sign-in", () => {
   it("the follow-up key lands on the page WITH the fragment (the round trip)", async () => {
-    expect(await loc(request({ cookie: "hone_return_to=waitlist_followup" }))).toBe(`${ORIGIN}/settings/waitlist#follow-up`);
+    expect(await loc(request({ cookie: "hone_return_to=waitlist_followup" }))).toBe(`${ORIGIN}/waitlist#follow-up`);
   });
   it("the plain key lands on the page", async () => {
-    expect(await loc(request({ cookie: "x=1; hone_return_to=waitlist" }))).toBe(`${ORIGIN}/settings/waitlist`);
+    expect(await loc(request({ cookie: "x=1; hone_return_to=waitlist" }))).toBe(`${ORIGIN}/waitlist`);
   });
   it("the key is single-use: the response clears the cookie", async () => {
     const res = await GET(request({ cookie: "hone_return_to=waitlist_followup" }));
@@ -41,7 +41,7 @@ describe("return to the follow-up after sign-in", () => {
     "https://evil.com",
     "/%2F%2Fevil",
     "javascript:alert(1)",
-    "/settings/waitlist%0d%0aLocation:%20https://evil.com",
+    "/waitlist%0d%0aLocation:%20https://evil.com",
     "/" + "a".repeat(5000),
     "/settings/team",
     "waitlist_followup/../../x",

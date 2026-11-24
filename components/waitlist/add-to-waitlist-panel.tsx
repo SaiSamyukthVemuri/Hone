@@ -184,6 +184,9 @@ export function AddToWaitlistPanel({
         </form>
       )}
 
+      {state?.ok && !(tab === "add" ? addPending : importPending) && (
+        <p role="status" className="text-sm font-medium">Added to the waitlist.</p>
+      )}
       {state && !state.ok && (
         <p className="text-sm text-red-600" role="alert" data-testid="add-error">
           {state.message}

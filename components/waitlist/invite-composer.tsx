@@ -836,6 +836,11 @@ export function InviteComposerView({
               <p>We couldn&rsquo;t check availability just now. Nothing is reserved.</p>
             )}
             {capacity.status === "ok" && capacity.lines.map((line) => <p key={line}>{line}</p>)}
+            {validation.ok && capacity.status === "ok" && capacity.open !== undefined && capacity.open > 0 && (
+              <p className="font-medium text-fg">
+                After inviting {entryName}, you could invite {capacity.open - 1} more {capacity.open === 2 ? "person" : "people"} at this estimate.
+              </p>
+            )}
             {onRecheck && capacity.status !== "loading" && (
               <button
                 type="button"
