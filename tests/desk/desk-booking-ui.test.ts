@@ -53,7 +53,7 @@ function enterQuery(query: string) {
   });
 }
 async function chooseTime() {
-  await click(/^Find time$/);
+  await click(/^Find an opening$/);
   await click(/^Search availability$/);
   await click(/1:30 PM · Maya/);
 }
@@ -78,6 +78,23 @@ describe("booking from the receptionist desk", () => {
     });
     expect(el.textContent).toContain("No booking confirmation was sent");
     expect(el.textContent).not.toContain("•••1234");
+  });
+
+  it("starts with the selected date, time and visible staff and compares each practitioner's earliest match", async () => {
+    const choices = { ...options, practitioners: [...options.practitioners, { id: "colleague", name: "Jo" }, { id: "hidden", name: "Kelly" }] };
+    const second = { ...slot, start: "2099-07-23T18:00:00Z", end: "2099-07-23T18:45:00Z" };
+    api.findDeskOpeningsAction.mockResolvedValue({ ok: true, openings: [slot, second, { ...second, practitionerId: "colleague", practitionerName: "Jo" }] });
+    act(() => root.render(createElement(DeskBooking, { key: "context", studioId: "studio", options: choices, initiallyOpen: true,
+      initialDate: slot.date, initialStartTime: "10:15", visiblePractitionerIds: ["pr", "colleague"] })));
+    expect(el.textContent).not.toContain("Kelly");
+    const period = [...el.querySelectorAll("select")].find(s => s.querySelector('option[value="pm"]'))!;
+    act(() => { period.value = "pm"; period.dispatchEvent(new Event("change", { bubbles: true })); });
+    await click(/^Search availability$/);
+    expect(api.findDeskOpeningsAction).toHaveBeenLastCalledWith({ studioId: "studio", serviceId: "svc",
+      practitionerIds: ["pr","colleague"], fromDate: slot.date, toDate: slot.date, earliest: "12:00", latestEnd: null });
+    expect(el.querySelectorAll("details button")).toHaveLength(1);
+    expect(el.querySelector("details")?.textContent).toContain("Maya");
+    expect(el.textContent).toContain("Jo");
   });
 
   it("invalidates a selected client when the user changes the lookup", async () => {
@@ -110,7 +127,7 @@ describe("booking from the receptionist desk", () => {
 
   it("rejects options from a studio selected in another tab", async () => {
     api.getDeskBookingOptionsAction.mockResolvedValue({ ...options, studioId: "other" });
-    await click(/^Find time$/);
+    await click(/^Find an opening$/);
     expect(el.textContent).toMatch(/selected studio changed/);
     expect(el.querySelector("form")).toBeNull();
   });

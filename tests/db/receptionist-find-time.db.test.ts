@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { adminQuery, asRole, asUser, closePool, seedMember, seedStudio, type SeededStudio } from "./helpers/harness";
 
 const findSql = "select * from public.receptionist_find_openings($1,$2,$3,$4,$4)";
+const filteredSql = "select * from public.receptionist_find_openings_v2($1,$2,$3,$4,$5,$6,$7)";
 const bookSql = "select * from public.receptionist_book_opening($1,$2,$3,$4,$5,$6)";
 const day = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
 const weekday = new Date(day + "T12:00:00Z").getUTCDay();
@@ -41,10 +42,12 @@ describe("desk opening authority", () => {
     const bookArgs = [studio.studioId, studio.clientId, serviceId, studio.practitionerId, new Date(), new Date()];
     for (const actor of [foreignDesk, inactive, studio.userId]) {
       await expect(asUser(actor, q => q(findSql, findArgs))).rejects.toMatchObject({ code: "42501" });
+      await expect(asUser(actor, q => q(filteredSql, [studio.studioId, serviceId, [studio.practitionerId], day, day, "00:00", null]))).rejects.toMatchObject({ code: "42501" });
       await expect(asUser(actor, q => q(bookSql, bookArgs))).rejects.toMatchObject({ code: "42501" });
     }
     for (const role of ["anon", "service_role"] as const) {
       await expect(asRole(role, q => q(findSql, findArgs))).rejects.toMatchObject({ code: "42501" });
+      await expect(asRole(role, q => q(filteredSql, [studio.studioId, serviceId, [studio.practitionerId], day, day, "00:00", null]))).rejects.toMatchObject({ code: "42501" });
       await expect(asRole(role, q => q(bookSql, bookArgs))).rejects.toMatchObject({ code: "42501" });
     }
     expect((await find(other.practitionerId)).rowCount).toBe(0);
@@ -59,8 +62,22 @@ describe("desk opening authority", () => {
     await expect(asUser(desk, q => q("select * from public.receptionist_find_openings($1,$2,null,$3::date,$3::date+7)", [studio.studioId, serviceId, day]))).rejects.toMatchObject({ code: "22023" });
   });
 
+  it("finds sessions that fit the complete studio-local window within the selected staff", async () => {
+    const search = (earliest: string, latest: string | null) => asUser(desk, q => q(filteredSql,
+      [studio.studioId, serviceId, [colleague, other.practitionerId], day, day, earliest, latest]));
+    const morning = await search("00:00", "12:00");
+    expect(morning.rows.length).toBeGreaterThan(0);
+    expect(morning.rows.every(row => row.practitioner_id === colleague && row.local_time <= "11:15")).toBe(true);
+    const afternoon = await search("12:00", null);
+    expect(afternoon.rows.length).toBeGreaterThan(0);
+    expect(afternoon.rows.every(row => row.practitioner_id === colleague && row.local_time >= "12:00")).toBe(true);
+    await expect(search("13:00", "12:00")).rejects.toMatchObject({ code: "22023" });
+  });
+
   it("caps a busy day and still revalidates an exact offer beyond the displayed list", async () => {
     const extra = await seedMember(studio, "extra");
+    const moreDays = await adminQuery(`insert into public.studio_availability_default(studio_id,day_of_week,is_open,open_time,close_time)
+      select $1, d, true, '00:00', '23:59' from generate_series(0,6) d where d <> $2 returning id`, [studio.studioId, weekday]);
     await adminQuery("update public.studio_availability_default set open_time='00:00', close_time='23:59' where studio_id=$1", [studio.studioId]);
     try {
       const { rows } = await find();
@@ -73,7 +90,17 @@ describe("desk opening authority", () => {
         "select * from public.receptionist_find_openings($1,$2,$3,$4,$4,$5)",
         [studio.studioId, serviceId, studio.practitionerId, day, later!.starts_at]));
       expect(exact.rows).toEqual([{ ...later, has_more: false }]);
+      const filtered = await asUser(desk, q => q(filteredSql, [studio.studioId, serviceId, [studio.practitionerId, colleague],
+        day, day, "19:00", null]));
+      expect(filtered.rows.filter(row => row.local_time === "19:00").map(row => row.practitioner_id).sort()).toEqual([studio.practitionerId, colleague].sort());
+      const staff = [studio.practitionerId, colleague, extra.practitionerId];
+      const endDay = new Date(Date.parse(day) + 6 * 86_400_000).toISOString().slice(0, 10);
+      const busyWeek = await asUser(desk, q => q(filteredSql, [studio.studioId, serviceId, staff, day, endDay, "00:00", null]));
+      expect(busyWeek.rows).toHaveLength(336);
+      expect(busyWeek.rows.every(row => row.has_more)).toBe(true);
+      expect([...new Set(busyWeek.rows.map(row => row.practitioner_id))].sort()).toEqual(staff.sort());
     } finally {
+      await adminQuery("delete from public.studio_availability_default where id = any($1::uuid[])", [moreDays.rows.map(row => row.id)]);
       await adminQuery("update public.studio_availability_default set open_time='11:00', close_time='15:00' where studio_id=$1", [studio.studioId]);
       await adminQuery("update public.practitioners set active=false where id=$1", [extra.practitionerId]);
     }

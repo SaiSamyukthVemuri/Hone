@@ -14,7 +14,7 @@ import {
 import { miniCalendarHref, withSelection } from "@/lib/calendar/practitioner-selection";
 
 // HON-48 sidebar mini month. Picking a date navigates the CURRENT view to it (day -> that day,
-// week -> the week containing it, month -> its month) and keeps the practitioner selection. The
+// week -> the week containing it, month -> its day agenda) and keeps the practitioner selection. The
 // month shown here is local state: paging it navigates nowhere. Dates are studio-local day keys
 // (`today` and `selectedDate` come from the server in the STUDIO timezone and this file never builds
 // a Date), so the browser's timezone cannot shift a cell or move a mark. Two marks, both may apply
@@ -33,7 +33,7 @@ export function CalendarMiniMonth({
 }: {
   /** Which month the mini calendar opens on. */
   anchorDate: string;
-  /** The date the current view is on; null when the view has no single date (Month). */
+  /** The date the current view is on; null when the view has no single date. */
   selectedDate: string | null;
   today: string;
   view: "day" | "week" | "month";

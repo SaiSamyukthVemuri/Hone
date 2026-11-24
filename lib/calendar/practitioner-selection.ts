@@ -228,6 +228,6 @@ export function decideFirstVisit(input: {
 /** Where picking `date` in the mini calendar takes the CURRENT view. Selection is carried on top. */
 export function miniCalendarHref(view: "day" | "week" | "month", date: string): string {
   if (view === "day") return `/calendar?view=day&day=${date}`;
-  if (view === "month") return `/calendar?view=month&month=${date.slice(0, 7)}-01`;
+  if (view === "month") return `/calendar?view=month&month=${date.slice(0, 7)}-01&day=${date}`;
   return `/calendar?view=week&day=${date}`;
 }

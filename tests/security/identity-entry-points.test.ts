@@ -80,11 +80,12 @@ describe("legal identity has exactly one writer and no receptionist reader (R4, 
     ));
     expect(calls.sort()).toEqual([
       "app/(desk)/desk/booking-actions.ts:receptionist_book_opening",
+      "app/(desk)/desk/booking-actions.ts:receptionist_booking_clients_v3",
       "app/(desk)/desk/booking-actions.ts:receptionist_booking_options",
-      "app/(desk)/desk/booking-actions.ts:receptionist_client_contacts_v2",
-      "app/(desk)/desk/booking-actions.ts:receptionist_find_openings",
+      "app/(desk)/desk/booking-actions.ts:receptionist_find_openings_v2",
       "app/(desk)/desk/booking-actions.ts:receptionist_studio_timezone",
-      "lib/desk/read.ts:receptionist_calendar_v2",
+      "app/(desk)/desk/contact-actions.ts:receptionist_appointment_contact",
+      "lib/desk/read.ts:receptionist_calendar_v3",
     ]);
   });
 

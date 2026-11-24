@@ -26,6 +26,7 @@ export function PractitionerWeek({ days, initialDate, practitioners, hours, tz, 
   returnTo: string;
 }) {
   const search = useSearchParams();
+  const [showServiceDetails, setShowServiceDetails] = useState(false);
   const [previewId, setPreviewId] = useState<string | null>(null);
   const preview = previewId && days.flatMap(day => day.appts).find(a => a.id === previewId);
   const people = new Map(practitioners.map(p => [p.id, p]));
@@ -43,8 +44,14 @@ export function PractitionerWeek({ days, initialDate, practitioners, hours, tz, 
     }
     return groups;
   });
+  const compact = people.size >= 3;
+  const countLabel = (count: number) => count === 1 ? "1 visit" : `${count} visits`;
   const formatTime = (iso: string) => formatTimeForStudio(new Date(iso), tz, timeFormat);
   return <>
+    {compact && <label className="flex min-h-11 w-fit items-center gap-2 text-sm">
+      <input type="checkbox" checked={showServiceDetails} onChange={e => setShowServiceDetails(e.target.checked)} />
+      Show service details
+    </label>}
     <div aria-label="Day to show" role="group" className="grid grid-cols-7 gap-1 md:hidden">
       {days.map(d => {
         const query = new URLSearchParams(search.toString());
@@ -63,12 +70,14 @@ export function PractitionerWeek({ days, initialDate, practitioners, hours, tz, 
             <th scope="col" className="sticky left-0 w-24 border-b border-r border-neutral-200 bg-neutral-50 px-2 py-3 text-neutral-700 md:w-28">Practitioner</th>
             {days.map(d => <th key={d.date} scope="col" className={`border-b border-neutral-200 px-2 py-2 ${d.date === initialDate ? "" : "hidden md:table-cell"} ${d.isToday ? "bg-sky-100 text-sky-900" : ""}`}>
               <span className="block text-[10px] font-medium uppercase">{d.weekdayShort}</span>{d.monthDayLabel}
+              <span className="block text-[10px] font-normal text-neutral-600">{countLabel(d.appts.length)}</span>
             </th>)}
           </tr>
         </thead>
         <tbody>{Array.from(people.values()).map(person => <tr key={person.id ?? "unassigned"}>
           <th scope="row" className="sticky left-0 z-10 border-r border-b border-neutral-200 bg-white px-2 py-3 align-top">
             <span className="flex items-baseline gap-1.5 break-words"><span aria-hidden className={`h-2.5 w-2.5 shrink-0 rounded-full ${person.swatchClass}`} /><span className="min-w-0">{person.name}</span></span>
+            <span className="mt-1 block text-[10px] font-normal text-neutral-600">{countLabel(byDay.reduce((sum, groups) => sum + (groups.get(person.id)?.length ?? 0), 0))}</span>
           </th>
           {days.map((day, i) => {
             const visits = byDay[i].get(person.id) ?? [];
@@ -86,14 +95,16 @@ export function PractitionerWeek({ days, initialDate, practitioners, hours, tz, 
                 {blocks.map(b => <div key={b.key} className="rounded border border-dashed border-neutral-300 bg-neutral-50 px-1.5 py-1 text-neutral-700">{b.label} · {timeRangeLabel(formatTime(b.start), formatTime(b.end))}</div>)}
                 {visits.map(a => {
                   const name = clientDisplayName(a.client ?? {}) || "Client";
-                  const range = timeRangeLabel(formatTime(a.starts_at), a.ends_at ? formatTime(a.ends_at) : null);
+                  const start = formatTime(a.starts_at);
+                  const range = timeRangeLabel(start, a.ends_at ? formatTime(a.ends_at) : null);
                   const status = appointmentStatusTag(appointmentDisplayStatus(a.status, a.ends_at));
                   const label = [person.name, name, range, a.service?.name, status].filter(Boolean).join(" · ");
+                  const detail = [(!compact || showServiceDetails) && a.service?.name, a.status !== "no_show" && status].filter(Boolean).join(" · ");
                   return <button key={a.id} type="button" data-week-appointment={a.id} aria-label={label} title={label} onClick={() => setPreviewId(a.id)}
                     className={`block w-full min-h-11 rounded-md border-l-2 px-1.5 py-1 text-left leading-tight hover:brightness-95 focus-visible:outline-2 ${appointmentCardClasses(a.service)} ${a.status === "no_show" ? NO_SHOW_CARD_CLASS : ""}`}>
-                    <span className="flex items-center gap-1 text-[10px] font-medium tabular-nums"><span aria-hidden data-week-practitioner-dot="" className={`h-2 w-2 shrink-0 rounded-full ${person.swatchClass}`}/>{range}</span>
+                    <span className="flex items-center gap-1 text-[10px] font-medium tabular-nums"><span aria-hidden data-week-practitioner-dot="" className={`h-2 w-2 shrink-0 rounded-full ${person.swatchClass}`}/>{compact ? start : range}</span>
                     <span className="block break-words font-semibold">{a.status === "no_show" && "No-show · "}{name}</span>
-                    <span className="block break-words text-[10px]">{[a.service?.name, a.status !== "no_show" && status].filter(Boolean).join(" · ")}</span>
+                    {detail && <span className="block break-words text-[10px]">{detail}</span>}
                   </button>;
                 })}
                 {!visits.length && !blocks.length && !day.blocked && !off && <span className="text-neutral-500" aria-label="No appointments">—</span>}

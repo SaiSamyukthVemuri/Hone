@@ -282,8 +282,8 @@ export function CalendarSidebar({
             findTime.rebookId && !findTime.rebook
               ? <p role="status" className="text-sm">This previous appointment is unavailable. Open the calendar to start a new booking.</p>
               : <>{findTime.clientName && <p className="text-sm font-medium">Rebook for {findTime.clientName}</p>}
-                <CalendarFindTime key={searchVersion} {...findTime} practitioners={practitioners} viewerId={viewerId} today={today}
-                  anchorDate={anchorDate} selected={opening} onSelect={selectOpening} onClear={clearOpening} /></>
+                <CalendarFindTime key={view === "month" ? `${searchVersion}:${selectedDate}` : searchVersion} {...findTime} practitioners={practitioners} viewerId={viewerId} today={today}
+                  anchorDate={selectedDate ?? anchorDate} selected={opening} onSelect={selectOpening} onClear={clearOpening} /></>
           ) : <>
           <CalendarMiniMonth
             timeGrid={view === "week" && search.get("layout") === "grid"}

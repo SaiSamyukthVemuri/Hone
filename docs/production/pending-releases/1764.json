@@ -1,1 +1,1 @@
-{"pr":1764,"runtime":true,"migrations":["supabase/migrations/0376_receptionist_find_and_book_openings.sql"],"release_receipt":"01-ops/1764-release-receipt.json"}
+{"pr":1764,"runtime":true,"migrations":["supabase/migrations/0376_receptionist_find_and_book_openings.sql","supabase/migrations/0377_receptionist_appointment_contact.sql","supabase/migrations/0378_receptionist_filtered_openings.sql","supabase/migrations/0379_receptionist_calendar_client_names.sql"],"release_receipt":"01-ops/1764-release-receipt.json"}

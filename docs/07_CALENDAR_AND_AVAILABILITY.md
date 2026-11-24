@@ -27,7 +27,9 @@ Rebook this client on an appointment starts a search from its client, service an
 
 ### Receptionist booking (`/desk`)
 
-An active receptionist in an enabled studio can open **Find time**, choose a service, search across eligible practitioners, and book for an existing client. The picker shows the preferred name or **Name on file** and a masked contact hint. A booking is attributed to the receptionist. Confirmation checks the selected studio, active client, service, practitioner and exact opening again before writing. If another booking takes the time, search for a new opening. If the outcome is uncertain, check the schedule before retrying.
+An active receptionist in an enabled studio opens **Month** at the studio’s local date. Each date shows appointment counts for the selected practitioners. Select a date for its agenda, open Day for individual schedules, or switch to Week to compare practitioners. Opening a visit shows its service, times, status, and the name reception uses for the client. The calendar and booking search use the preferred name when present and the regular client name otherwise. The separate legal identity stays private. Phone and email are requested for that appointment when it is opened.
+
+To book, select a service, date range of up to seven days, and the practitioners to include. Time preferences let reception compare the first matching opening per practitioner or browse additional starts. The existing-client picker shows the desk display name and a masked contact hint. Confirmation checks the studio, active client, service, practitioner and exact opening again. If another booking takes the slot, search for a new opening. If the result is uncertain, check the schedule before retrying.
 
 The success message confirms the booking was saved. This desk action sends no immediate booking confirmation email or SMS. Existing reminder workflows still follow studio settings. Search covers practitioner or studio-wide availability according to the studio’s capacity settings. Shared rooms and machines are outside the reservation model.
 
@@ -162,4 +164,6 @@ Read-only iCal subscription per practitioner.
 - Cache headers: short max-age + must-revalidate so token rotations propagate fast. No CDN caching.
 - Token route privacy headers (`X-Robots-Tag`, `Referrer-Policy`) apply per `next.config.ts`.
 
-In a practitioner-capacity studio with multiple active practitioners, an owner opening Week sees **By practitioner**. Each row follows one practitioner across seven dates. Every appointment has its own selectable card with the practitioner's assigned colour dot, the client, service and time. On phones the weekday strip selects the date while retaining the practitioner rows. **Time grid** opens the time-based layout for dragging a booking or editing a block. Both layouts use the same studio-scoped weekly reads and sidebar selection.
+In a practitioner-capacity studio, an owner viewing multiple practitioners in Week starts in **By practitioner**. Team members can also choose this layout. Staff rows show individually selectable visits with a practitioner colour and client name. Show service details for compact cards. With one practitioner visible, Week defaults to the time grid. On phones, the weekday strip selects the date. Both layouts follow the same practitioner filters.
+
+Month shows the number of visits and practitioner indicators for each date. Select a date to open its chronological agenda. Select a visit for its details, or open the day schedule with the current practitioner filters.

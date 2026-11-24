@@ -1,88 +1,68 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
-// What the page actually produces: no client name of any kind in the HTML, and no schedule identity in the initial booking
-// controls. Synthetic fixtures.
-
-const STORED = "Zeta Stored-Surname";
+const OTHER = "Other studios client";
 const PREFERRED = "Preferred-Zeta";
-const state: { rows: unknown; error: unknown } = { rows: [], error: null };
-
+const id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const state: { rows: unknown[]; error: unknown; optionsOk: boolean } = { rows: [], error: null, optionsOk: true };
+const options = {
+  studioId: "studio-1", timezone: "America/Toronto", services: [],
+  practitioners: [{ id, name: "Practitioner One" }, { id: "pr2", name: "Practitioner Two" }],
+};
 vi.mock("server-only", () => ({}));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }) }));
 vi.mock("@/lib/desk/guard", () => ({ requireReceptionistWithStudio: async () => ({ studioId: "studio-1", receptionistId: "r1", displayName: "Desk" }) }));
-vi.mock("@/lib/supabase/server", () => ({
-  createClient: async () => ({ rpc: async () => ({ data: state.rows, error: state.error }) }),
-}));
+vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ rpc: async () => ({ data: state.rows, error: state.error }) }) }));
+vi.mock("@/app/(desk)/desk/booking-actions", () => ({ getDeskBookingOptionsAction: async () => state.optionsOk ? { ...options, ok: true } : { ok: false } }));
 
 import DeskSchedulePage from "@/app/(desk)/desk/page";
-
 const base = {
-  appointment_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-  starts_at: "2099-01-01T15:00:00.000Z",
-  ends_at: "2099-01-01T16:00:00.000Z",
-  status: "confirmed",
-  practitioner_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-  practitioner_display_name: "Practitioner One",
-  service_name: "Consultation",
-  client_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-  duration_minutes: 60,
-  studio_timezone: "America/Toronto",
+  appointment_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", starts_at: "2099-01-01T15:00:00Z", ends_at: "2099-01-01T16:00:00Z",
+  status: "confirmed", practitioner_id: id, practitioner_display_name: "Practitioner One", service_name: "Consultation",
+  client_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", duration_minutes: 60, studio_timezone: "America/Toronto",
+  display_name: PREFERRED, email: "private@example.com", phone: "123456789",
 };
-const html = async () => renderToStaticMarkup(await DeskSchedulePage());
+const html = async (view = "month") => renderToStaticMarkup(await DeskSchedulePage({ searchParams: Promise.resolve({ date: "2099-01-01", view }) }));
+beforeEach(() => { state.rows = []; state.error = null; state.optionsOk = true; });
 
-beforeEach(() => {
-  state.rows = [];
-  state.error = null;
-});
-
-describe("the desk schedule page", () => {
-  it("shows the booking facts and the fixed words, and no client name of any kind", async () => {
-    state.rows = [
-      { ...base, display_name: STORED, name_on_file: true },
-      { ...base, client_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", display_name: PREFERRED, name_on_file: false },
-    ];
-    const out = await html();
+describe("receptionist schedule", () => {
+  it.each(["day","week","month"])("shows returned client names and withholds contact details in %s", async view => {
+    state.rows = [base,
+      { ...base, display_name: "Robin Vale", appointment_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab" },
+      { ...base, display_name: "", appointment_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaac" }];
+    const out = await html(view);
+    expect(out).toContain(PREFERRED);
+    expect(out).toContain("Name on file");
     expect(out).toContain("Consultation");
-    expect(out).toContain("Practitioner One");
-    expect(out).toContain("(60 min)");
-    expect(out.match(/Name on file/g)?.length).toBeGreaterThanOrEqual(2);
-    expect(out.includes("Stored-Surname")).toBe(false);
-    expect(out.includes("Preferred-Zeta")).toBe(false);
-    for (const id of ["aaaaaaaa", "bbbbbbbb", "cccccccc", "dddddddd"]) expect(out.includes(id), id).toBe(false);
+    expect(out).toContain("Robin Vale");
+    expect(out).not.toContain(base.email);
+    expect(out).not.toContain(base.phone);
+    expect(out).not.toContain(base.client_id);
   });
-
-  it("renders the studio clock, and says so when it cannot be read", async () => {
-    state.rows = [{ ...base, display_name: STORED, name_on_file: true, studio_timezone: "Not/AZone" }];
+  it("counts visits for each practitioner, including zero, and omits cancellations", async () => {
+    state.rows = [base,{ ...base, appointment_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab", status:"cancelled" }];
+    expect(await html()).toContain("January 1, 2099, 1 visit, Practitioner One 1, Practitioner Two 0");
+  });
+  it("uses the studio-local date for appointments near UTC midnight", async () => {
+    state.rows = [{ ...base, starts_at:"2099-01-02T01:00:00Z", ends_at:"2099-01-02T02:00:00Z" }];
+    expect(await html()).toContain("January 1, 2099, 1 visit");
+  });
+  it("identifies the fallback UTC clock when booking settings could not load", async () => {
+    state.optionsOk = false; state.rows = [base];
     expect(await html()).toMatch(/clock could not be read/);
   });
-
-  it("says plainly when the schedule cannot be read, with nothing from the database", async () => {
-    state.error = { message: `denied for ${STORED}` };
+  it("offers booking with an empty calendar without preloading client contacts", async () => {
     const out = await html();
-    expect(out).toMatch(/schedule is unavailable/i);
-    expect(out.includes("Stored-Surname")).toBe(false);
+    expect(out).toContain("No appointments on this day");
+    expect(out).toContain("Find an opening");
+    expect(out).not.toContain("Find an existing client");
   });
-
-  it("says plainly when there is nothing in the window", async () => {
-    expect(await html()).toMatch(/No appointments in this window/);
+  it("shows a fixed error without leaking underlying database details", async () => {
+    state.error = { message: OTHER }; const out = await html();
+    expect(out).toMatch(/schedule is unavailable/i); expect(out).not.toContain(OTHER);
   });
-
-  it("offers an on-demand booking entry without preloading a client search", async () => {
-    state.rows = [{ ...base, display_name: STORED, name_on_file: true }];
-    const out = await html();
-    expect(out).toMatch(/>Find time<\/button>/);
-    expect(out).not.toMatch(/<(a|form|input|select|textarea)\b/);
-  });
-
-  it("a saturated response shows an explicit incomplete state and no partial list; just below the cap renders normally", async () => {
-    state.rows = Array.from({ length: 1000 }, () => ({ ...base, display_name: STORED, name_on_file: true }));
-    const full = await html();
-    expect(full).toMatch(/Schedule incomplete/);
-    expect(full).not.toMatch(/Consultation|Practitioner One/);
-    expect(full.includes("Stored-Surname")).toBe(false);
-    state.rows = Array.from({ length: 999 }, () => ({ ...base, display_name: STORED, name_on_file: true }));
-    const below = await html();
-    expect(below).not.toMatch(/Schedule incomplete/);
-    expect(below.match(/Consultation/g)).toHaveLength(999);
+  it("shows no partial schedule when a single day saturates the database cap", async () => {
+    state.rows=Array.from({length:1000},()=>base);const out=await html("day");
+    expect(out).toContain("Schedule incomplete");expect(out).not.toContain(PREFERRED);
   });
 });

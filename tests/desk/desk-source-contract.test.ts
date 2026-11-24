@@ -30,17 +30,18 @@ describe("the desk surface", () => {
     }
   });
 
-  it("keeps interactive state inside desk booking and passes it only the current studio id", () => {
-    expect(files.filter(f => /^\s*["']use client["']/m.test(src(f)))).toEqual(["app/(desk)/desk/DeskBooking.tsx"]);
-    const page = stripComments(src("app/(desk)/desk/page.tsx"));
-    expect(page.match(/<DeskBooking\b[^>]*\/>/g)).toEqual([
-      "<DeskBooking key={identity.receptionistId + identity.studioId} studioId={identity.studioId} />",
+  it("keeps contacts out of the calendar payload and loads them only in the visit dialog", () => {
+    expect(files.filter(f => /^\s*["']use client["']/m.test(src(f))).sort()).toEqual([
+      "app/(desk)/desk/DeskBooking.tsx", "app/(desk)/desk/DeskCalendar.tsx", "app/(desk)/desk/DeskVisitDetails.tsx",
     ]);
+    const pagesWithContactRead = files.filter(f => f.endsWith(".tsx") && src(f).includes("getDeskAppointmentContactAction"));
+    expect(pagesWithContactRead).toEqual(["app/(desk)/desk/DeskVisitDetails.tsx"]);
+    expect(src("app/(desk)/desk/page.tsx")).toContain("key={identity.receptionistId + identity.studioId}");
   });
 
   it("limits server actions to the chooser and the receptionist booking workflow", () => {
     const ACTION = "lib/desk/choose-actions.ts";
-    expect(files.filter((f) => /^\s*["']use server["']/m.test(stripComments(src(f)))).sort()).toEqual(["app/(desk)/desk/booking-actions.ts", ACTION]);
+    expect(files.filter((f) => /^\s*["']use server["']/m.test(stripComments(src(f)))).sort()).toEqual(["app/(desk)/desk/booking-actions.ts", "app/(desk)/desk/contact-actions.ts", ACTION]);
     const a = stripComments(src(ACTION));
     expect((a.match(/export async function/g) ?? []).length).toBe(1);
     expect(a).toMatch(/setSelectedStudioId\(/);
@@ -59,8 +60,8 @@ describe("the desk surface", () => {
     expect(fromCalls.sort()).toEqual(["lib/desk/entry.ts:studio_receptionists", "lib/desk/guard.ts:studio_receptionists"]);
     const rpcs = files.flatMap((f) => [...stripComments(src(f)).matchAll(/rpc(?:<[^>]*>)?\(\s*["']([^"']+)["']/g)].map((m) => m[1]));
     expect(rpcs.sort()).toEqual([
-      "receptionist_book_opening", "receptionist_booking_options", "receptionist_calendar_v2",
-      "receptionist_client_contacts_v2", "receptionist_find_openings", "receptionist_studio_timezone",
+      "receptionist_appointment_contact", "receptionist_book_opening", "receptionist_booking_options", "receptionist_calendar_v3",
+      "receptionist_booking_clients_v3", "receptionist_find_openings_v2", "receptionist_studio_timezone",
     ].sort());
     for (const f of files) {
       expect(stripComments(src(f)), f).not.toMatch(/createAdminClient|@\/lib\/supabase\/admin/);
@@ -87,8 +88,15 @@ describe("the desk surface", () => {
     for (const f of files.filter((x) => x.endsWith(".tsx"))) {
       const s = stripComments(src(f));
       for (const m of s.matchAll(/<Link\b[^>]*>/g)) expect(m[0], `${f}: ${m[0]}`).toContain("prefetch={false}");
-      expect(/searchParams|type="search"|name="q"/.test(s), f).toBe(false);
+      expect(/type="search"|name="q"/.test(s), f).toBe(false);
+      if (f !== "app/(desk)/desk/page.tsx") expect(s.includes("searchParams"), f).toBe(false);
     }
+  });
+
+  it("accepts only date and view for calendar navigation", () => {
+    const page = stripComments(src("app/(desk)/desk/page.tsx"));
+    expect([...new Set([...page.matchAll(/params\.(\w+)/g)].map(m => m[1]))].sort()).toEqual(["date", "view"]);
+    expect(src("app/(desk)/desk/desk-period.ts")).toContain('return `/desk?date=${date}&view=${view}`;');
   });
 
   it("keeps every desk path under /desk", () => {
@@ -101,7 +109,12 @@ describe("the desk surface", () => {
     expect(files.map((f) => relative(ROOT, join(ROOT, f))).sort()).toEqual([
       "app/(desk)/desk/ClockFallbackNotice.tsx",
       "app/(desk)/desk/DeskBooking.tsx",
+      "app/(desk)/desk/DeskCalendar.tsx",
+      "app/(desk)/desk/DeskTimeGrid.tsx",
+      "app/(desk)/desk/DeskVisitDetails.tsx",
       "app/(desk)/desk/booking-actions.ts",
+      "app/(desk)/desk/contact-actions.ts",
+      "app/(desk)/desk/desk-period.ts",
       "app/(desk)/desk/page.tsx",
       "app/(desk)/layout.tsx",
       "app/(desk-choose)/desk/choose/page.tsx",

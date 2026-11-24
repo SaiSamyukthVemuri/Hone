@@ -136,6 +136,10 @@ function callSql(f: FnRow): string | null {
   return `select to_jsonb(t) as j from ${fn} as t`;
 }
 function paramsFor(f: FnRow, studio: SeededStudio): unknown[] {
+  if (f.name === "receptionist_find_openings_v2") {
+    const date = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+    return [studio.studioId, serviceId, [studio.practitionerId], date, date, "00:00", null];
+  }
   if (f.name === "receptionist_find_openings") {
     const date = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
     return [studio.studioId, serviceId, studio.practitionerId, date, date, null];

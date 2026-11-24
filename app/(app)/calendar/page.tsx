@@ -164,6 +164,7 @@ export default async function CalendarPage({
       timeFormat,
       today,
       monthParam: params.month,
+      dayParam: params.day,
       // Pass the same week anchor through so the Week tab in the
       // header carries the practitioner's last week context (or
       // defaults to today when missing).
@@ -355,10 +356,11 @@ export default async function CalendarPage({
 
   const rebookSource = await getCalendarRebookSource(studio.id, params.rebook);
   const hasDayViewForStudio = hasDayView(studio.practitioner_capacity_enabled === true, activePractitioners);
-  const teamWeek = isOwner && isTeamCalendar(studio.practitioner_capacity_enabled === true, activePractitioners);
-  const byPractitioner = teamWeek && params.layout !== "grid";
-  const gridParam = teamWeek && !byPractitioner ? "&layout=grid" : "";
   const shownPeople = selectedPractitioners(sidebar.practitioners, sidebar.selection);
+  const multiPersonWeek = isTeamCalendar(studio.practitioner_capacity_enabled === true, activePractitioners) && shownPeople.length > 1;
+  const explicitTimeGrid = params.layout === "grid";
+  const byPractitioner = multiPersonWeek && !explicitTimeGrid;
+  const gridParam = explicitTimeGrid ? "&layout=grid" : "";
   const hours = byPractitioner ? Object.fromEntries(shownPeople.map(p => [p.id, days.map((date, dayOfWeek) =>
     resolvePractitionerDayAvailability({ date, dayOfWeek, defaults: availabilityDefaults, overrides: availabilityOverrides,
       practitionerId: p.id, capacityEnabled: true }).availability)])) : {};
@@ -389,7 +391,7 @@ export default async function CalendarPage({
         rangeLabel={weekRangeLabel(weekStart, weekEnd)}
         timezone={studio.timezone}
         weekHref={withSelection(`/calendar?view=week&week=${weekStart}${gridParam}`, sidebar.param)}
-        monthHref={withSelection(`/calendar?view=month&month=${firstOfMonthString(weekStart)}&week=${weekStart}`, sidebar.param)}
+        monthHref={withSelection(`/calendar?view=month&month=${firstOfMonthString(initialSelectedDate)}&week=${weekStart}&day=${initialSelectedDate}`, sidebar.param)}
         dayHref={
           hasDayViewForStudio
             ? withSelection(`/calendar?view=day&day=${initialSelectedDate}`, sidebar.param)
@@ -405,7 +407,7 @@ export default async function CalendarPage({
       <CalendarOpeningBooking date={initialSelectedDate} clientId={rebookSource?.clientId} clients={drawerClients}
         services={services} studioTimezone={studio.timezone} timeFormat={timeFormat} isOwner={isOwner}
         capacityEnabled={studio.practitioner_capacity_enabled === true} viewer={{id: practitioner.id, name: practitioner.display_name}} />
-      {teamWeek && <nav aria-label="Week layout" className="flex w-fit gap-1 rounded-lg bg-neutral-100 p-1 text-sm">
+      {multiPersonWeek && <nav aria-label="Week layout" className="flex w-fit gap-1 rounded-lg bg-neutral-100 p-1 text-sm">
         {[{ label: "By practitioner", grid: false }, { label: "Time grid", grid: true }].map(({ label, grid }) => {
           const query = new URLSearchParams({ view: "week", day: initialSelectedDate });
           if (grid) query.set("layout", "grid");
@@ -435,7 +437,7 @@ export default async function CalendarPage({
       {sidebar.selection.mode === "none" ? (
         <EmptySelection />
       ) : byPractitioner ? (
-        <PractitionerWeek key={initialSelectedDate} days={mobileDays} initialDate={initialSelectedDate} practitioners={shownPeople}
+        <PractitionerWeek days={mobileDays} initialDate={initialSelectedDate} practitioners={shownPeople}
           hours={hours} tz={studio.timezone} timeFormat={timeFormat} returnTo={returnTo} />
       ) : (
       <>
@@ -454,7 +456,7 @@ export default async function CalendarPage({
         returnTo={returnTo}
         blockScopeNames={blockScopeNames}
         selectionParam={sidebar.param}
-        timeGrid={teamWeek}
+        timeGrid={explicitTimeGrid}
       />
 
       {/* Desktop/tablet keep the existing week grid, untouched, at md+. */}
@@ -614,6 +616,7 @@ async function renderMonthView(opts: {
   timeFormat: TimeFormat;
   today: string;
   monthParam: string | undefined;
+  dayParam: string | undefined;
   lastWeekParam: string | undefined;
   peopleParam: string | undefined;
   rebookId?: string;
@@ -627,6 +630,10 @@ async function renderMonthView(opts: {
   const { studio, timeFormat, today, monthParam, lastWeekParam, peopleParam, isOwner, ownFirstId, viewerId, reviewAssignmentsHref } = opts;
   const monthAnchor = firstOfMonthString(monthParam ?? today);
   const monthEnd = firstOfNextMonthString(monthAnchor);
+  const requestedDay = opts.dayParam;
+  const initialDay = today >= monthAnchor && today < monthEnd ? today : monthAnchor;
+  const selectedDate = requestedDay && DATE_PARAM_RE.test(requestedDay) &&
+    requestedDay >= monthAnchor && requestedDay <= addDays(monthEnd, -1) ? requestedDay : initialDay;
   const prevMonth = firstOfPreviousMonthString(monthAnchor);
   const nextMonth = firstOfNextMonthString(monthAnchor);
 
@@ -734,7 +741,7 @@ async function renderMonthView(opts: {
     blockScopeNamesFor(studio.practitioner_capacity_enabled === true, activePractitioners),
   );
 
-  const lastWeekHref = `/calendar?view=week${
+  const lastWeekHref = opts.dayParam ? `/calendar?view=week&day=${selectedDate}` : `/calendar?view=week${
     lastWeekParam ? `&week=${lastWeekParam}` : ""
   }`;
 
@@ -746,7 +753,7 @@ async function renderMonthView(opts: {
       viewerId={viewerId}
       view="month"
       anchorDate={monthAnchor}
-      selectedDate={null}
+      selectedDate={selectedDate}
       today={today}
       practitioners={sidebar.practitioners}
       selectedIds={sidebar.selectedIds}
@@ -766,10 +773,10 @@ async function renderMonthView(opts: {
         rangeLabel={monthYearLabel(monthAnchor)}
         timezone={studio.timezone}
         weekHref={withSelection(lastWeekHref, sidebar.param)}
-        monthHref={withSelection(`/calendar?view=month&month=${monthAnchor}`, sidebar.param)}
+        monthHref={withSelection(`/calendar?view=month&month=${monthAnchor}&day=${selectedDate}`, sidebar.param)}
         dayHref={
           hasDayViewForStudio
-            ? withSelection(`/calendar?view=day&day=${today >= monthAnchor && today < monthEnd ? today : monthAnchor}`, sidebar.param)
+            ? withSelection(`/calendar?view=day&day=${selectedDate}`, sidebar.param)
             : undefined
         }
         prevHref={withSelection(`/calendar?view=month&month=${prevMonth}`, sidebar.param)}
@@ -791,6 +798,8 @@ async function renderMonthView(opts: {
       ) : (
         <MonthView
           monthAnchor={monthAnchor}
+          selectedDate={selectedDate}
+          hasDayView={hasDayViewForStudio}
           appointmentsByDate={appointmentsByDate}
           blockedByDate={blockedByDate}
           today={today}
@@ -799,10 +808,6 @@ async function renderMonthView(opts: {
         />
       )}
 
-      <p className="text-xs text-neutral-500">
-        Click any day to open the week view for that date. The month
-        view is for orientation; bookings are made from the week view.
-      </p>
     </div>
     </CalendarSidebar>
   );
@@ -954,7 +959,7 @@ async function renderTeamDayView(opts: {
         timezone={studio.timezone}
         dayHref={withSelection(`/calendar?view=day&day=${date}`, sidebar.param)}
         weekHref={withSelection(`/calendar?day=${date}`, sidebar.param)}
-        monthHref={withSelection(`/calendar?view=month&month=${firstOfMonthString(date)}`, sidebar.param)}
+        monthHref={withSelection(`/calendar?view=month&month=${firstOfMonthString(date)}&day=${date}`, sidebar.param)}
         prevHref={withSelection(`/calendar?view=day&day=${addDays(date, -1)}`, sidebar.param)}
         todayHref={withSelection("/calendar?view=day", sidebar.param)}
         nextHref={withSelection(`/calendar?view=day&day=${addDays(date, 1)}`, sidebar.param)}

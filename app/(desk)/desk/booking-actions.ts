@@ -41,36 +41,42 @@ export async function searchDeskBookingClientsAction(input: { studioId: string; 
   const query = typeof input.query === "string" ? input.query.trim() : "";
   if (query.length < 2 || query.length > 80) return { ok: false, error: "Enter 2 to 80 characters to find a client." };
   const db = await createClient();
-  const search = await db.rpc("receptionist_client_contacts_v2", { p_studio_id: studioId, p_query: query, p_limit: 11 });
+  const search = await db.rpc("receptionist_booking_clients_v3", { p_studio_id: studioId, p_query: query, p_limit: 11 });
   if (search.error || !Array.isArray(search.data)) return { ok: false, error: "Could not search for clients. Try again." };
-  const clients = search.data.flatMap(row => {
-    const match = row && bookingClient(row, query);
-    return match ? [match] : [];
-  });
-  // Never expose a count of undisplayable stored-name matches from older databases.
-  if (!clients.length) return { ok: true, clients: [] };
-  // The picker disambiguates by the displayed name and masked contact hint. An
-  // omitted eleventh match could make the last identical pair appear unique.
+  // An omitted eleventh match could make two indistinguishable clients look unique.
   if (search.data.length > 10) return { ok: false, error: "Many clients match. Enter more of the name, phone number, or email." };
+  const clients: DeskBookingClient[] = [];
+  for (const row of search.data) {
+    const match = row && bookingClient(row);
+    if (!match) return { ok: false, error: "Could not read the matching clients. Try again." };
+    clients.push(match);
+  }
   return { ok: true, clients };
 }
 
 export async function findDeskOpeningsAction(input: {
-  studioId: string; serviceId: string; practitionerId?: string | null; fromDate: string; toDate: string;
+  studioId: string; serviceId: string; practitionerIds: string[]; fromDate: string; toDate: string;
+  earliest: string; latestEnd: "12:00" | null;
 }): Promise<DeskResult<{ openings: DeskOpening[]; limited?: true }>> {
   const { studioId } = await requireReceptionistWithStudio();
   if (input?.studioId !== studioId) return studioChanged;
-  if (!validDeskId(input.serviceId) || (input.practitionerId != null && !validDeskId(input.practitionerId))) {
+  if (!validDeskId(input.serviceId) || !Array.isArray(input.practitionerIds) || !input.practitionerIds.length
+    || !input.practitionerIds.every(validDeskId)) {
     return { ok: false, error: "Choose a service and practitioner." };
+  }
+  if (input.practitionerIds.length > 100) return { ok: false, error: "Select up to 100 practitioners to compare openings." };
+  if (typeof input.earliest !== "string" || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(input.earliest)
+    || (input.latestEnd !== null && (input.latestEnd !== "12:00" || input.latestEnd <= input.earliest))) {
+    return { ok: false, error: "Choose an earliest start within your time window." };
   }
   if (!isRealLocalDate(input.fromDate) || !isRealLocalDate(input.toDate) || input.fromDate > input.toDate
     || daysBetween(input.fromDate, input.toDate) > 6) {
     return { ok: false, error: "Choose a date range of up to seven days." };
   }
   const db = await createClient();
-  const result = await db.rpc("receptionist_find_openings", {
-    p_studio_id: studioId, p_service_id: input.serviceId, p_practitioner_id: input.practitionerId ?? null,
-    p_from_date: input.fromDate, p_to_date: input.toDate, p_start: null,
+  const result = await db.rpc("receptionist_find_openings_v2", {
+    p_studio_id: studioId, p_service_id: input.serviceId, p_practitioner_ids: input.practitionerIds,
+    p_from_date: input.fromDate, p_to_date: input.toDate, p_earliest: input.earliest, p_latest_end: input.latestEnd,
   });
   const failed = { ok: false, error: "Could not load available times. Try again." } as const;
   if (result.error || !Array.isArray(result.data) || result.data.length > 336) return failed;
@@ -81,7 +87,7 @@ export async function findDeskOpeningsAction(input: {
       || Date.parse(row.starts_at) >= Date.parse(row.ends_at) || !isRealLocalDate(row.local_date)
       || row.local_date < input.fromDate || row.local_date > input.toDate
       || typeof row.local_time !== "string" || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(row.local_time)
-      || typeof row.has_more !== "boolean" || (input.practitionerId && row.practitioner_id !== input.practitionerId)) return failed;
+      || typeof row.has_more !== "boolean" || !input.practitionerIds.includes(row.practitioner_id) || row.local_time < input.earliest) return failed;
     limited ||= row.has_more;
     openings.push({
       start: row.starts_at, end: row.ends_at, date: row.local_date, localTime: row.local_time,

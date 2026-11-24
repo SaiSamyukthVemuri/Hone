@@ -182,7 +182,7 @@ describe("the mini calendar navigates the CURRENT view to the picked date", () =
   it("day, week and month", () => {
     expect(miniCalendarHref("day", "2026-11-18")).toBe("/calendar?view=day&day=2026-11-18");
     expect(miniCalendarHref("week", "2026-11-18")).toBe("/calendar?view=week&day=2026-11-18");
-    expect(miniCalendarHref("month", "2026-11-18")).toBe("/calendar?view=month&month=2026-11-01");
+    expect(miniCalendarHref("month", "2026-11-18")).toBe("/calendar?view=month&month=2026-11-01&day=2026-11-18");
   });
 });
 

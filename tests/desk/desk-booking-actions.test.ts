@@ -16,7 +16,7 @@ const clientId = id(4);
 const start = "2099-01-05T18:00:00.000Z";
 const end = "2099-01-05T18:45:00.000Z";
 const request = { studioId, serviceId, practitionerId, clientId, start, end };
-const dates = { studioId, serviceId, practitionerId, fromDate: "2099-01-05", toDate: "2099-01-06" };
+const dates = { studioId, serviceId, practitionerIds: [practitionerId], earliest: "00:00", latestEnd: null, fromDate: "2099-01-05", toDate: "2099-01-06" };
 beforeEach(() => {
   vi.resetAllMocks();
   guard.mockResolvedValue({ studioId, receptionistId: id(6) });
@@ -35,19 +35,18 @@ describe("receptionist booking", () => {
     expect(rpc).toHaveBeenCalledWith("receptionist_studio_timezone", { p_studio_id: studioId });
   });
 
-  it("search returns a preferred name or Name on file and a masked contact hint only", async () => {
+  it("returns the scoped operational name and a masked contact hint from the versioned booking lookup", async () => {
     const rows = [
-      { client_id: clientId, display_name: "Avery", name_on_file: false, phone: "555-222-1111", email: "avery@example.test" },
-      { client_id: id(5), display_name: "LEGACY STORED NAME", name_on_file: true, phone: null, email: "avery2@example.test" },
+      { client_id: clientId, display_name: "Avery Rowan", phone: "555-222-1111", email: "avery@example.test" },
+      { client_id: id(5), display_name: "Avery Walker", phone: null, email: "avery2@example.test" },
     ];
     rpc.mockResolvedValue({ data: rows, error: null });
     const result = await searchDeskBookingClientsAction({ studioId, query: "avery" });
     expect(result).toEqual({ ok: true, clients: [
-      { id: clientId, displayName: "Avery", contactHint: "Phone ending in 1111" },
-      { id: id(5), displayName: "Name on file", contactHint: "Email starts with a…" },
+      { id: clientId, displayName: "Avery Rowan", contactHint: "Phone ending in 1111" },
+      { id: id(5), displayName: "Avery Walker", contactHint: "Email starts with a…" },
     ] });
-    expect(await searchDeskBookingClientsAction({ studioId, query: "LEGACY" })).toEqual({ ok: true, clients: [] });
-    expect(rpc).toHaveBeenCalledWith("receptionist_client_contacts_v2", { p_studio_id: studioId, p_limit: 11, p_query: "avery" });
+    expect(rpc).toHaveBeenCalledWith("receptionist_booking_clients_v3", { p_studio_id: studioId, p_limit: 11, p_query: "avery" });
   });
 
   it("requires a narrower client search when the matching set cannot be fully disambiguated", async () => {
@@ -61,8 +60,8 @@ describe("receptionist booking", () => {
     expect(await findDeskOpeningsAction(dates)).toEqual({ ok: true, limited: true, openings: [{
       date: dates.fromDate, localTime: "13:00", practitionerName: "Maya", practitionerId, serviceId, start, end,
     }] });
-    expect(rpc).toHaveBeenCalledExactlyOnceWith("receptionist_find_openings", {
-      p_studio_id: studioId, p_service_id: serviceId, p_practitioner_id: practitionerId, p_from_date: dates.fromDate, p_to_date: dates.toDate, p_start: null,
+    expect(rpc).toHaveBeenCalledExactlyOnceWith("receptionist_find_openings_v2", {
+      p_studio_id: studioId, p_service_id: serviceId, p_practitioner_ids: [practitionerId], p_from_date: dates.fromDate, p_to_date: dates.toDate, p_earliest: "00:00", p_latest_end: null,
     });
     expect(refresh).not.toHaveBeenCalled();
   });
@@ -81,6 +80,8 @@ describe("receptionist booking", () => {
     expect((await bookDeskOpeningAction({ ...request, studioId: id(8) })).ok).toBe(false);
     expect((await findDeskOpeningsAction({ ...dates, toDate: "2099-01-13" })).ok).toBe(false);
     expect((await searchDeskBookingClientsAction({ studioId: id(8), query: "Avery" })).ok).toBe(false);
+    expect((await findDeskOpeningsAction({ ...dates, earliest: "12:00", latestEnd: "12:00" })).ok).toBe(false);
+    expect((await findDeskOpeningsAction({ ...dates, practitionerIds: [] })).ok).toBe(false);
     expect((await bookDeskOpeningAction({ ...request, start: "2099-01-05T13:00:00" })).ok).toBe(false);
     expect((await searchDeskBookingClientsAction({ studioId, query: "" })).ok).toBe(false);
     expect(rpc).not.toHaveBeenCalled();
