@@ -26,6 +26,16 @@ async function expectLineOnClosedRow(page: Page, shot: string) {
   await expect(line).toBeVisible({ timeout: T });
   await expect(line).toContainText("Last treatment:");
   await expect(line).toContainText(/upper lip/i);
+  // The visit uses the full line. Side-by-side actions used to squeeze long
+  // notes and treatment history into a narrow column even on desktop.
+  const row = line.locator("xpath=ancestor::li[1]");
+  const body = row.getByTestId("today-row-body");
+  const action = row.getByTestId("today-next-action");
+  const bodyBox = await body.boundingBox();
+  const actionBox = await action.boundingBox();
+  expect(bodyBox).not.toBeNull();
+  expect(actionBox).not.toBeNull();
+  expect(actionBox!.y).toBeGreaterThanOrEqual(bodyBox!.y + bodyBox!.height - 1);
   // The full chart is still behind the disclosure.
   await expect(page.getByTestId("dashboard-memory-full")).toHaveCount(0);
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
