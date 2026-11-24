@@ -244,7 +244,7 @@ describe("one email to each current verified owner", () => {
     expect(m.subject).toBe("A waitlist response needs your attention");
     expect(m.text).toContain(WAITLIST_DECLINE_OWNER_BODY);
     expect(m.html).toContain("Review response");
-    expect(m.text).toContain("https://hone.example.test/settings/waitlist?followup=1#follow-up");
+    expect(m.text).toContain("https://hone.example.test/waitlist?followup=1#follow-up");
     const b = buildWaitlistDeclineOwnerEmail({ appOrigin: "https://hone.example.test/" });
     expect(b.subject).toBe(WAITLIST_DECLINE_OWNER_SUBJECT);
     expect(b.text).toBe(buildWaitlistDeclineOwnerEmail({ appOrigin: "https://hone.example.test" }).text);

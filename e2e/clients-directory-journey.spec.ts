@@ -15,7 +15,7 @@ import { loginAsOwner } from "./helpers/flows";
 // What it pins (not screenshots, not types): no anchor or field jump (scroll offset
 // and the opened row's own position are unchanged), the overview opens FOCUSED and
 // inside its row, closing restores focus to that row and the search, filters, sort
-// and page exactly, every control is visible without a dropdown and is a 44px
+// and page exactly, the sort, last-visit and quick-filter controls are visible with a 44px
 // target at phone width, and an active filter reads as active (checked, in the URL
 // and in words). Synthetic data on the owned local stack.
 
@@ -55,7 +55,8 @@ async function seedDirectory(): Promise<E2eSeed> {
 
 const search = (page: Page) => page.getByRole("searchbox", { name: "Search clients" });
 const filter = (page: Page, name: string) => page.getByRole("checkbox", { name });
-const sortOption = (page: Page, name: string) => page.getByRole("radio", { name });
+const sort = (page: Page) => page.getByRole("combobox", { name: "Sort by" });
+const lastVisit = (page: Page) => page.getByRole("combobox", { name: "Last visit" });
 const rowLinks = (page: Page) => page.locator('a[id^="client-open-"]');
 const pageOf = (page: Page) => page.getByText(/^Page \d+ of \d+$/);
 
@@ -69,7 +70,7 @@ async function top(locator: Locator): Promise<number> {
   return box!.y;
 }
 
-/** The label that wraps a visually-hidden radio or checkbox: this is the control a person taps. */
+/** The label that wraps a visually-hidden checkbox: this is the control a person taps. */
 function chip(page: Page, control: Locator): Locator {
   return page.locator("label", { has: control });
 }
@@ -109,12 +110,12 @@ test.describe("clients directory: one real click journey (HON-58)", () => {
     await expect(filter(page, "No upcoming appointment")).toBeFocused();
     await expect(search(page)).toHaveValue("journey");
     await expect(page.getByText("Showing:")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Clear search and filters" })).toBeVisible();
+    await expect(page.getByRole("search").getByRole("link", { name: "Clear search and filters" })).toBeVisible();
 
     // SORT: applies on change, the chosen option reads as selected, filters and search persist.
-    await chip(page, sortOption(page, "Next appointment")).click();
+    await sort(page).selectOption("next");
     await expect(page).toHaveURL(/sort=next/, { timeout: T });
-    await expect(sortOption(page, "Next appointment")).toBeChecked();
+    await expect(sort(page)).toHaveValue("next");
     await expect(filter(page, "No upcoming appointment")).toBeChecked();
     await expect(search(page)).toHaveValue("journey");
 
@@ -161,7 +162,7 @@ test.describe("clients directory: one real click journey (HON-58)", () => {
     await expect(overview).toBeVisible({ timeout: T });
     await expect(search(page)).toHaveValue("journey");
     await expect(filter(page, "No upcoming appointment")).toBeChecked();
-    await expect(sortOption(page, "Next appointment")).toBeChecked();
+    await expect(sort(page)).toHaveValue("next");
     await expect(pageOf(page)).toHaveText("Page 2 of 3");
 
     // CLOSE: same list, focus back on the row that opened it, row and scroll where they were.
@@ -183,8 +184,23 @@ test.describe("clients directory: one real click journey (HON-58)", () => {
     ]);
     await expect(search(page)).toHaveValue("journey");
     await expect(filter(page, "No upcoming appointment")).toBeChecked();
-    await expect(sortOption(page, "Next appointment")).toBeChecked();
+    await expect(sort(page)).toHaveValue("next");
     await expect(pageOf(page)).toHaveText("Page 2 of 3");
+
+    // The row also opens the full profile directly. Browser Back restores the list and scroll.
+    const listUrl = page.url();
+    const profile = page.locator(`li#client-${clientId} a[href="/clients/${clientId}"]`);
+    await profile.evaluate(el => el.scrollIntoView({ block: "center" }));
+    const profileTop = await top(profile);
+    await profile.click();
+    await expect(page).toHaveURL(new RegExp(`/clients/${clientId}$`), { timeout: T });
+    await page.goBack();
+    await expect(page).toHaveURL(listUrl, { timeout: T });
+    await expect(search(page)).toHaveValue("journey");
+    await expect(sort(page)).toHaveValue("next");
+    await expect(filter(page, "No upcoming appointment")).toBeChecked();
+    await expect(pageOf(page)).toHaveText("Page 2 of 3");
+    await expect.poll(() => top(profile)).toBeCloseTo(profileTop, 0);
 
     // ESCAPE: closes from the keyboard and returns focus to the same row.
     await row.click();
@@ -195,11 +211,11 @@ test.describe("clients directory: one real click journey (HON-58)", () => {
     await expect(row).toBeFocused();
 
     // CLEAR: one control resets the text, the filter and the sort together.
-    await page.getByRole("button", { name: "Clear search and filters" }).click();
+    await page.getByRole("search").getByRole("link", { name: "Clear search and filters" }).click();
     await expect(page).toHaveURL(/\/clients$/, { timeout: T });
     await expect(search(page)).toHaveValue("");
     await expect(filter(page, "No upcoming appointment")).not.toBeChecked();
-    await expect(sortOption(page, "Name")).toBeChecked();
+    await expect(sort(page)).toHaveValue("name");
     await expect(page.getByText("60 clients · showing 1–25")).toBeVisible({ timeout: T });
     expect(PAGE_SIZE).toBe(25);
   });
@@ -214,19 +230,29 @@ test.describe("clients directory: one real click journey (HON-58)", () => {
       await page.goto("/clients");
       await expect(page.getByText("60 clients · showing 1–25")).toBeVisible({ timeout: T });
 
-      // Reachable without a menu: search, both sort options and both filters are all there.
+      // The search, sort menu, visit-history menu, and both quick filters have touch-sized targets.
       for (const control of [
         search(page),
         page.getByRole("button", { name: "Search", exact: true }),
-        chip(page, sortOption(page, "Name")),
-        chip(page, sortOption(page, "Next appointment")),
+        sort(page),
+        lastVisit(page),
         chip(page, filter(page, "Intake needs review")),
         chip(page, filter(page, "No upcoming appointment")),
       ]) {
         await expect(control).toBeVisible();
         expect((await control.boundingBox())!.height).toBeGreaterThanOrEqual(43.5);
       }
-      expect(await page.locator("select").count()).toBe(0);
+      await expect(sort(page).getByRole("option")).toHaveText(["Name A–Z", "Next appointment", "Last visit (longest ago first)"]);
+      await expect(lastVisit(page).getByRole("option")).toHaveText([
+        "Last visit: Any", "Not seen in 3+ months", "Not seen in 6+ months", "Not seen in 12+ months", "No recorded visit",
+      ]);
+      await lastVisit(page).selectOption("none");
+      await expect(page).toHaveURL(/lastvisit=none/);
+      await expect(page.getByText("60 matches", { exact: false }).first()).toBeVisible();
+      await lastVisit(page).selectOption("3");
+      await expect(page.getByText(/No clients match/)).toBeVisible();
+      await lastVisit(page).selectOption("any");
+      await expect(page).not.toHaveURL(/lastvisit=/);
       const overflow = await page.evaluate(
         () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
       );

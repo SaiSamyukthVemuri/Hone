@@ -338,7 +338,7 @@ describe("href integrity — every registered destination is real", () => {
   it("every Records section parameter is a section the Records page renders", () => {
     const src = readFileSync(ROUTE_FILES.get("/records")!, "utf8");
     const declared = new Set(
-      [...src.matchAll(/\{ key: "(\w+)", label:/g)].map((m) => m[1]),
+      [...src.matchAll(/\{\s*key:\s*"(\w+)",\s*label:/g)].map((m) => m[1]),
     );
     expect(declared.size).toBeGreaterThanOrEqual(4);
 

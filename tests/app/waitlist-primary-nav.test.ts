@@ -70,7 +70,7 @@ function findItems(node: ReactNode): Array<{ href: string; label: string }> | nu
 }
 async function settingsTabShown() {
   const { default: SettingsLayout } = await import("@/app/(app)/settings/layout");
-  return (findItems(await SettingsLayout({ children: null })) ?? []).some((i) => i.href === "/settings/waitlist" && i.label === "Waitlist");
+  return (findItems(await SettingsLayout({ children: null })) ?? []).some((i) => i.href === "/waitlist" && i.label === "Waitlist");
 }
 async function navShown() {
   const { showWaitlistInPrimaryNav } = await import("@/lib/settings/nav-registry");
@@ -172,17 +172,18 @@ describe("placement and target (read from the real shell source)", () => {
     expect(registry).toMatch(/visibleWhen: waitlistVisible/);
     expect(registry).toMatch(/showWaitlistInPrimaryNav[\s\S]*?waitlistVisible\(ctx\)/);
   });
-  it("no new page and no migration: the target route is the existing one", () => {
+  it("the standalone route uses the owner-gated queue", () => {
+    expect(readFileSync("app/(app)/waitlist/page.tsx", "utf8")).toContain("@/app/(app)/settings/waitlist/page");
     expect(readFileSync("app/(app)/settings/waitlist/page.tsx", "utf8")).toContain("requirePractitionerWithStudio");
   });
 });
 
 describe("active styling: the section stays lit on every waitlist subpage", () => {
-  const href = "/settings/waitlist";
-  it.each(["/settings/waitlist", "/settings/waitlist/", "/settings/waitlist/search", "/settings/waitlist/released", "/settings/waitlist/replies"])(
+  const href = "/waitlist";
+  it.each(["/waitlist", "/waitlist/", "/waitlist/search", "/waitlist/released", "/waitlist/replies"])(
     "%s is current", (p) => expect(isCurrentSection(p, href, "section")).toBe(true),
   );
-  it.each(["/settings/booking", "/settings/waitlisted", "/settings", "/calendar", "/records", null])(
+  it.each(["/settings/booking", "/waitlisted", "/settings", "/calendar", "/records", null])(
     "%s is not current", (p) => expect(isCurrentSection(p as string | null, href, "section")).toBe(false),
   );
 });

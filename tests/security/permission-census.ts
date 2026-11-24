@@ -397,7 +397,9 @@ export const NOT_STAFF_CLASSES: Record<string, RegExp> = {
   oauth: /^app\/api\/google-calendar\//,
   // The front desk (lib/desk): a signed-in RECEPTIONIST by design, so it never reaches the practitioner-and-studio helper. Its one server action
   // re-reads the caller's active receptionist rows in the same request before it writes anything (a selected-studio cookie, nothing else).
-  desk: /^lib\/desk\//,
+  // NARROW on purpose: only that one file. A new server action anywhere else under lib/desk resolves as `unresolved(no gate found)` until someone
+  // reads it and decides, instead of inheriting this class by directory.
+  desk: /^lib\/desk\/choose-actions\.ts$/,
   telemetry: /^app\/(ingest|monitoring)\//,
 };
 

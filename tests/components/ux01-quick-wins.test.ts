@@ -90,9 +90,8 @@ describe("UX-01 QW3 · the flagship actions use the canonical Button", () => {
   });
 
   it("the records control keeps its layout role", () => {
-    // `ml-auto` is what pushes Print / Export to the trailing edge of the nav
-    // row. It is layout, not geometry, and must survive the primitive swap.
-    expect(codeOnly(read(RECORDS))).toContain('className: "ml-auto"');
+    // The logbook actions align to the trailing edge on wider screens and wrap on phones.
+    expect(codeOnly(read(RECORDS))).toMatch(/sm:ml-auto[^>]*>[\s\S]*?Print \/ Export/);
   });
 });
 

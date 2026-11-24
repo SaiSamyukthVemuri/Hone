@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { returnToDestination } from "@/lib/auth/return-to";
 
-// HON-7. The sign-in return and the owner email both end on /settings/waitlist#follow-up. The browser only scrolls if the RENDERED page has
+// HON-7. The sign-in return and the owner email both end on /waitlist#follow-up. The browser only scrolls if the RENDERED page has
 // an element with that id, so the target is checked as rendered (not only as a Location header), and only on the owner path.
 
 const h = vi.hoisted(() => ({ practitioner: vi.fn(), attention: vi.fn() }));
@@ -49,7 +49,7 @@ beforeEach(() => {
 
 describe("the follow-up anchor", () => {
   it("the allowlisted destination names the id", () => {
-    expect(returnToDestination("waitlist_followup")).toBe("/settings/waitlist#follow-up");
+    expect(returnToDestination("waitlist_followup")).toBe("/waitlist#follow-up");
   });
   it("the owner page renders exactly one element with id follow-up", async () => {
     const html = await render("owner");

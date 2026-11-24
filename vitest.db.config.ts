@@ -30,7 +30,9 @@ export default defineConfig({
     fileParallelism: false,
     testTimeout: 20_000,
     hookTimeout: 30_000,
-    reporters: "default",
+    // CI also writes a JUnit report (per-test names and durations) for the timing record; which tests run is unchanged.
+    reporters: process.env.CI ? ["default", "junit"] : "default",
+    outputFile: { junit: "junit-results/vitest-db.xml" },
   },
   // The repo tsconfig sets `jsx: "preserve"` because the Next compiler owns the
   // transform in the app. This lane invokes a real SERVER COMPONENT (the Client

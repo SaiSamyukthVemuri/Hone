@@ -210,8 +210,8 @@ describe("the owner email, as rendered", () => {
       expect(body).toContain("Review response");
     }
     // The link is an attribute in the html and a line in the text.
-    expect(mail.text).toContain("https://app.example.test/settings/waitlist?followup=1#follow-up");
-    expect(mail.html).toContain('href="https://app.example.test/settings/waitlist?followup=1#follow-up"');
+    expect(mail.text).toContain("https://app.example.test/waitlist?followup=1#follow-up");
+    expect(mail.html).toContain('href="https://app.example.test/waitlist?followup=1#follow-up"');
     expect(readable(mail.html)).not.toMatch(/Synthetic|@|\d{3}[-. ]?\d{4}/);
     // No answer text and no test-fixture wording in either body, raw or rendered (the template takes no answer input at all).
     for (const body of [mail.text, mail.html, readable(mail.html)]) expect(body).not.toMatch(/Synthetic|mornings/);
@@ -254,5 +254,11 @@ describe("the invite composer's capacity note, in each state", () => {
     const page = composer({ status: "idle" });
     expect(page).not.toContain("Checking availability");
     expect(page).not.toContain("Nothing is reserved");
+  });
+  it("shows the allowance remaining after this person only for a positive, known estimate", () => {
+    expect(composer({ status: "ok", lines: [], open: 2 })).toContain("After inviting Synthetic, you could invite 1 more person");
+    expect(composer({ status: "ok", lines: [], open: 1 })).toContain("After inviting Synthetic, you could invite 0 more people");
+    expect(composer({ status: "ok", lines: [], open: 0 })).not.toContain("After inviting");
+    expect(composer({ status: "unavailable" })).not.toContain("After inviting");
   });
 });

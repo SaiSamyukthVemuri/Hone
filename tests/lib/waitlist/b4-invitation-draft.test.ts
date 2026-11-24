@@ -846,10 +846,12 @@ describe("this module is UNREACHABLE from the application", () => {
   const SANCTIONED_INTEGRATION_ENTRY = [
     "app/(app)/settings/waitlist/invite-actions.ts",
     "app/(app)/settings/waitlist/page.tsx",
-    // The owner's over-invite surface: its delivery reuses today's `deliverInvitation` from the same adapter, so it reaches the contract through
-    // it. Three files only (the page, its server action and the cron route that sends confirmed batches); a fourth root still fails here.
+    // The standalone owner route re-exports the same guarded queue page.
+    "app/(app)/waitlist/page.tsx",
+    // The owner's over-invite page, its action and confirmed-batch cron reach the same delivery adapter.
     "app/(app)/settings/waitlist/over-invite/actions.ts",
     "app/(app)/settings/waitlist/over-invite/page.tsx",
+    "app/(app)/waitlist/over-invite/page.tsx", // same owner page, at the standalone route
     // The background route that sends the owner's CONFIRMED batches (cron pattern): the same delivery function, reached through the run module.
     "app/api/cron/waitlist-invitation-batches/route.ts",
   ];

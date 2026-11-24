@@ -17,7 +17,7 @@ describe("Waitlist Analytics uses the existing tabs and factual presentation", (
     const html = render(); const plain = text(html);
     expect(plain).toContain("Analytics");
     expect(html).toContain('aria-current="page"'); expect(html).toContain('href="/financials/analytics"'); expect(html).toContain('href="/financials/analytics/clients"');
-    expect(html).toContain('href="/settings/waitlist"'); expect(html).toContain("bg-surface"); expect(html).toContain("border-line");
+    expect(html).toContain('href="/waitlist"'); expect(html).toContain("bg-surface"); expect(html).toContain("border-line");
     expect(plain).toContain("Capacity for up to 3 more invitations."); expect(plain).toContain("minimums");
     expect(html).not.toMatch(/bg-emerald|bg-green|style=/i);
   });

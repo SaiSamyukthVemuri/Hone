@@ -1,7 +1,7 @@
 "use client";
 
 import { cx } from "@/components/ui/control-base";
-import { useInviteOutcomePending } from "@/components/waitlist/invite-outcome-boundary";
+import { useInviteOutcomePending } from "@/components/waitlist/invite-pending-context";
 
 /**
  * A queue-navigation control that cannot strand an in-flight invitation.

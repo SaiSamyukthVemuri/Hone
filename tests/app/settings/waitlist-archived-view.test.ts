@@ -98,7 +98,7 @@ describe("the Archived view", () => {
   it("renders no 'Open this waitlist entry' link: a removed entry has no queue anchor", async () => {
     const out = await html();
     expect(out).not.toContain("Open this waitlist entry");
-    expect(out).not.toContain("/settings/waitlist#entry-");
+    expect(out).not.toContain("/waitlist#entry-");
   });
   it("a failed read says so", async () => {
     h.archived.mockResolvedValue({ kind: "unknown" });

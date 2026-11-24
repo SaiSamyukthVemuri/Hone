@@ -1,3 +1,4 @@
+import { WAITLIST_PATH } from "@/lib/waitlist/paths";
 import { test, expect, type Page } from "@playwright/test";
 import { seedE2eStudio, sql, type E2eSeed } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
@@ -55,13 +56,14 @@ async function seedWaitingEntry(seed: E2eSeed, name: string, email: string) {
 async function invite(page: Page, name: string) {
   // The composer lives inside a per-row <details>, closed by default. Scope to
   // the details that actually CONTAINS a composer, so an ancestor cannot match.
-  const details = page
-    .locator('details:has([data-testid="invite-composer"])')
-    .filter({ hasText: name })
-    .first();
-  await details.locator("> summary").click();
-  const row = page.locator('[data-testid="invite-composer"]', { hasText: name });
-  await expect(row, "composer for this prospect").toBeVisible({ timeout: T });
+  const entry = page.locator("li[data-entry-id]").filter({ has: page.getByText(name, { exact: true }) });
+  const invite = entry.getByTestId("row-invite").locator("> summary");
+  if (!await invite.isVisible()) {
+    await entry.getByTestId("waitlist-entry-details").locator("> summary").click();
+  }
+  await invite.click();
+  const row = entry.getByTestId("invite-composer");
+  await expect(row).toBeVisible({ timeout: T });
   // The service select is the one required answer.
   const service = row.locator('[data-testid="composer-service"]');
   await service.selectOption({ index: 1 });
@@ -254,10 +256,12 @@ test.describe("a redeemed invitation that never became a booking has an exit", (
     );
     expect(stamped.length, "no live invitation to redeem — the fixture is wrong").toBe(1);
 
-    await page.reload();
+    await page.goto(`${WAITLIST_PATH}?section=invited`);
     const row = page.locator(`li[data-entry-id="${entryId}"]`);
     await expect(row, "the entry left the queue").toBeVisible({ timeout: T });
     await expect(row).toHaveAttribute("data-entry-status", "invited");
+
+    await row.getByTestId("waitlist-entry-details").locator("> summary").click();
 
     // THE DEAD END, AS THE SURFACE SEES IT: the two controls an invited row
     // normally carries are both withheld, because both commands could only
@@ -274,6 +278,8 @@ test.describe("a redeemed invitation that never became a booking has an exit", (
     );
 
     await close.click();
+    await expect(row).toHaveCount(0, { timeout: T });
+    await page.goto(`${WAITLIST_PATH}?section=released`);
 
     // THE ENTRY MOVED, through the command, in one transaction.
     const moved = page.locator(`li[data-entry-id="${entryId}"]`);
@@ -292,7 +298,8 @@ test.describe("a redeemed invitation that never became a booking has an exit", (
 
     // AND THE LIFECYCLE STILL TERMINATES — removal is reachable, which it was
     // not while the entry was stuck at `invited`.
-    await expect(moved.locator("details > summary")).toContainText(/Remove/i);
+    await moved.getByTestId("waitlist-entry-details").locator("> summary").click();
+    await expect(moved.getByText("Remove", { exact: true })).toBeVisible();
 
     // THE DATABASE AGREES WITH THE SCREEN, which is the half a rendering
     // assertion cannot reach: the cycle is closed, the redemption is preserved,
