@@ -581,40 +581,38 @@ test.describe("what $0 means is decided by the agreed price", () => {
       bookedService: { name: `${SERVICE_NAME_PREFIX} Waive`, priceCents: SERVICE_PRICE_CENTS },
     });
     await adminQuery(`update public.sessions set price_paid_cents = null where id = $1`, [seed.sessionId]);
-    try {
-      await loginAsOwner(page, seed);
-      await openSessionDetail(page, seed);
-      const region = sessionPaymentRegion(page);
-      await expect(referenceField(page)).toContainText("$145.00");
-      await finalChargeField(page).fill("0.00");
-      await expect(page.getByTestId("zero-charge-hint")).toContainText(/Confirm the fee waiver/i);
-      await expect(referenceField(page)).toContainText("$145.00");
-      await expect(reasonField(page)).toBeVisible();
-      const confirm = region.getByRole("button", { name: "Confirm fee waiver", exact: true });
-      // No reason: refused, nothing recorded.
-      await reasonField(page).evaluate((el) => el.removeAttribute("required"));
-      await confirm.click();
-      await expect(region.getByRole("alert")).toContainText(/reason for the fee waiver/i);
-      expect(await settlementsFor(seed.scenario.appointmentId!)).toEqual([]);
-      // With a reason: recorded.
-      await reasonField(page).fill("Complimentary touch-up");
-      await confirm.click();
-      await expect(region.getByText(/Fee waiver recorded/i)).toBeVisible();
-      const rows = await settlementsFor(seed.scenario.appointmentId!);
-      expect(rows).toHaveLength(1);
-      expect(rows[0]).toMatchObject({
-        method: "waived", reference_fee_cents: SERVICE_PRICE_CENTS, quoted_amount_cents: 0,
-        amount_cents: SERVICE_PRICE_CENTS, fee_adjustment_reason: "Complimentary touch-up",
-      });
-      expect(rows[0].recorded_by_practitioner_id).toBeTruthy(); // WHO waived it
-      expect(await chargeAttemptsFor(seed.sessionId)).toEqual([]); // no money was collected
-      await page.reload();
-      await expect(sessionPaymentRegion(page)).toContainText(/fee waived/i);
-      await expect(page.getByRole("button", { name: /checkout with stripe/i })).toHaveCount(0);
-      expect(await settlementsFor(seed.scenario.appointmentId!)).toHaveLength(1);
-    } finally {
-      await cleanupPaymentScenario(seed.studioId);
-    }
+    // Recording a settlement is permanent financial history (appointment_settlements is never deleted), so this
+    // synthetic studio is not torn down here; the owned test stack is discarded after the run.
+    await loginAsOwner(page, seed);
+    await openSessionDetail(page, seed);
+    const region = sessionPaymentRegion(page);
+    await expect(referenceField(page)).toContainText("$145.00");
+    await finalChargeField(page).fill("0.00");
+    await expect(page.getByTestId("zero-charge-hint")).toContainText(/Confirm the fee waiver/i);
+    await expect(referenceField(page)).toContainText("$145.00");
+    await expect(reasonField(page)).toBeVisible();
+    const confirm = region.getByRole("button", { name: "Confirm fee waiver", exact: true });
+    // No reason: refused, nothing recorded.
+    await reasonField(page).evaluate((el) => el.removeAttribute("required"));
+    await confirm.click();
+    await expect(region.getByRole("alert")).toContainText(/reason for the fee waiver/i);
+    expect(await settlementsFor(seed.scenario.appointmentId!)).toEqual([]);
+    // With a reason: recorded.
+    await reasonField(page).fill("Complimentary touch-up");
+    await confirm.click();
+    await expect(region.getByText(/Fee waiver recorded/i)).toBeVisible();
+    const rows = await settlementsFor(seed.scenario.appointmentId!);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      method: "waived", reference_fee_cents: SERVICE_PRICE_CENTS, quoted_amount_cents: 0,
+      amount_cents: SERVICE_PRICE_CENTS, fee_adjustment_reason: "Complimentary touch-up",
+    });
+    expect(rows[0].recorded_by_practitioner_id).toBeTruthy(); // WHO waived it
+    expect(await chargeAttemptsFor(seed.sessionId)).toEqual([]); // no money was collected
+    await page.reload();
+    await expect(sessionPaymentRegion(page)).toContainText(/fee waived/i);
+    await expect(page.getByRole("button", { name: /checkout with stripe/i })).toHaveCount(0);
+    expect(await settlementsFor(seed.scenario.appointmentId!)).toHaveLength(1);
   });
 
   test("STILL OWES: a $145 fee with $0 paid today keeps the full $145 outstanding", async ({ page }) => {
@@ -623,22 +621,20 @@ test.describe("what $0 means is decided by the agreed price", () => {
       bookedService: { name: `${SERVICE_NAME_PREFIX} Owes`, priceCents: SERVICE_PRICE_CENTS },
     });
     await adminQuery(`update public.sessions set price_paid_cents = null where id = $1`, [seed.sessionId]);
-    try {
-      await loginAsOwner(page, seed);
-      await openSessionDetail(page, seed);
-      await page.getByTestId("settlement-open-still_owes").click();
-      await page.getByRole("button", { name: /record amount owed/i }).click();
-      await expect.poll(() => settlementsFor(seed.scenario.appointmentId!).then((r) => r.length)).toBe(1);
-      const rows = await settlementsFor(seed.scenario.appointmentId!);
-      expect(rows[0]).toMatchObject({ method: "still_owes", amount_cents: SERVICE_PRICE_CENTS, quoted_amount_cents: SERVICE_PRICE_CENTS });
-      expect(await chargeAttemptsFor(seed.sessionId)).toEqual([]);
-      await page.reload();
-      await expect(sessionPaymentRegion(page)).toContainText(/still owes|owing|outstanding/i);
-      await expect(sessionPaymentRegion(page)).toContainText("$145.00");
-      expect(await settlementsFor(seed.scenario.appointmentId!)).toHaveLength(1);
-    } finally {
-      await cleanupPaymentScenario(seed.studioId);
-    }
+    // Recording a settlement is permanent financial history (appointment_settlements is never deleted), so this
+    // synthetic studio is not torn down here; the owned test stack is discarded after the run.
+    await loginAsOwner(page, seed);
+    await openSessionDetail(page, seed);
+    await page.getByTestId("settlement-open-still_owes").click();
+    await page.getByRole("button", { name: /record amount owed/i }).click();
+    await expect.poll(() => settlementsFor(seed.scenario.appointmentId!).then((r) => r.length)).toBe(1);
+    const rows = await settlementsFor(seed.scenario.appointmentId!);
+    expect(rows[0]).toMatchObject({ method: "still_owes", amount_cents: SERVICE_PRICE_CENTS, quoted_amount_cents: SERVICE_PRICE_CENTS });
+    expect(await chargeAttemptsFor(seed.sessionId)).toEqual([]);
+    await page.reload();
+    await expect(sessionPaymentRegion(page)).toContainText(/still owes|owing|outstanding/i);
+    await expect(sessionPaymentRegion(page)).toContainText("$145.00");
+    expect(await settlementsFor(seed.scenario.appointmentId!)).toHaveLength(1);
   });
 });
 
