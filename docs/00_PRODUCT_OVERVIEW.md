@@ -79,13 +79,3 @@ Soon: legal review of the consent + cancellation wording (the live receipt/card-
 *(Superseded: this line previously listed "real live-mode payment" as future work. It happened — Willow has 6 succeeded live-mode charges, most recent 2026-07-26.)*
 
 Far: self-serve onboarding, multi-studio team accounts, mobile app, **Google Calendar inbound-busy import and true two-way synchronization** (the outbound connection, queue, worker and event-operation layers are already built, deployed and exercised once under control — only inbound/two-way remain unbuilt), intake builder, billing dashboard.
-
-## Prepared: custom client groups
-
-Owner-managed reusable groups add multiple labels per client, a combined directory
-filter, and assignments on Overview without changing Active / Archived behavior,
-booking eligibility, clinical status, payments or consent. No messages are sent.
-The [workflow](client-groups.md) is implemented behind truthful database availability;
-the [SQL proposal](proposals/client-groups/README.md) has no migration number yet and still
-needs database and browser checks on a local test stack, and separate approval, before it
-can be turned on.
