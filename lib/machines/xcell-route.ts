@@ -89,8 +89,6 @@ export type XcellMultiplexOffer = {
   createAtFirstSave: boolean;
   /** Set when every unit is retired: shown to the practitioner. */
   refusal: string | null;
-  /** The owner's switch, not old history, is what offers the xCell choice. */
-  legacyOfferedBySwitch: boolean;
 };
 
 /**
@@ -107,9 +105,9 @@ export function resolveXcellMultiplexOffer(input: {
 }): XcellMultiplexOffer {
   if (!input.switchState.available) {
     const route = xcellMultiplexRoute({ legacyOffered: input.legacyOffered, catalogue: input.catalogue, devices: input.devices, publishedModes: input.publishedModes });
-    return { route, createAtFirstSave: false, refusal: null, legacyOfferedBySwitch: false };
+    return { route, createAtFirstSave: false, refusal: null };
   }
-  if (!input.switchState.enabled) return { route: null, createAtFirstSave: false, refusal: null, legacyOfferedBySwitch: false };
+  if (!input.switchState.enabled) return { route: null, createAtFirstSave: false, refusal: null };
   const r = xcellMultiplexSwitchRoute({
     modelEnabled: true,
     catalogue: input.catalogue,
@@ -117,8 +115,8 @@ export function resolveXcellMultiplexOffer(input: {
     publishedModes: input.publishedModes,
     clientLastUnitId: input.clientLastUnitId,
   });
-  if (r === null) return { route: null, createAtFirstSave: false, refusal: null, legacyOfferedBySwitch: true };
-  if (r.kind === "use-unit") return { route: { deviceId: r.deviceId, modeKey: r.modeKey }, createAtFirstSave: false, refusal: null, legacyOfferedBySwitch: true };
-  if (r.kind === "refused") return { route: null, createAtFirstSave: false, refusal: XCELL_MULTIPLEX_RETIRED_MESSAGE, legacyOfferedBySwitch: true };
-  return { route: null, createAtFirstSave: true, refusal: null, legacyOfferedBySwitch: true };
+  if (r === null) return { route: null, createAtFirstSave: false, refusal: null };
+  if (r.kind === "use-unit") return { route: { deviceId: r.deviceId, modeKey: r.modeKey }, createAtFirstSave: false, refusal: null };
+  if (r.kind === "refused") return { route: null, createAtFirstSave: false, refusal: XCELL_MULTIPLEX_RETIRED_MESSAGE };
+  return { route: null, createAtFirstSave: true, refusal: null };
 }
