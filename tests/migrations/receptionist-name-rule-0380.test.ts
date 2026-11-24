@@ -87,7 +87,7 @@ describe("the displayed name rule, in each of the three bodies", () => {
 });
 
 describe("the intake and consent facts of the directory are 0374's, byte for byte", () => {
-  it("the facts CTE (appointments, newest intake status, current treatment consent) and the shaped CTE are unchanged", () => {
+  it("the facts CTE (appointments, newest intake status, current treatment consent) and the shaped CTE up to the filtered CTE are unchanged", () => {
     const cut = (s: string) => s.slice(s.indexOf("    facts as ("), s.indexOf("    filtered as ("));
     const o = cut(body(OLD.receptionist_client_directory));
     const n = cut(body(NEW.receptionist_client_directory));
