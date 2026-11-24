@@ -259,6 +259,7 @@ export const BROWSER_GROUPS = {
     description: "calendar surfaces, services and colours",
     specs: [
       "service-calendar-color-mobile.spec.ts",
+      "service-discard-while-saving.spec.ts",
       "service-order-and-colors.spec.ts",
       "disinfectant-notification.spec.ts",
       // Appointment preparation memory on the calendar detail screen: the
