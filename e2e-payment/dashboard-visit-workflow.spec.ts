@@ -48,7 +48,7 @@ for (const screen of SCREENS) {
       const { clientId, appointmentId } = await seedE2eDashboardMemoryClient(studio, { cautionNote: CAUTION, nextVisitNote: PLAN });
       const clientName = (await sql<{ name: string }>("select name from public.clients where id = $1", [clientId]))[0].name;
       const serviceId = await getE2eServiceId(studio.studioId);
-      await sql("update public.services set price_cents = 9000 where id = $1 and studio_id = $2", [serviceId, studio.studioId]);
+      await sql("update public.services set price_cents = 9000, modality = 'electrolysis' where id = $1 and studio_id = $2", [serviceId, studio.studioId]);
       await sql(
         `insert into public.studio_payment_jurisdictions (studio_id, payment_country, payment_currency, source, verification_reference)
          values ($1, 'CA', 'cad', 'operator', 'synthetic dashboard workflow')`,
