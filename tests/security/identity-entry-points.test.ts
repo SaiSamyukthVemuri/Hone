@@ -92,10 +92,11 @@ describe("legal identity has exactly one writer and no receptionist reader (R4, 
     ]);
   });
 
-  it("the receptionist projection reads no legal field and returns the literal Name on file", () => {
+  it("the receptionist projection reads no legal field and returns the literal Name on file only when both names are blank", () => {
     const rules = code(read("lib/clients/directory-rules.ts"));
     expect(rules).not.toMatch(/legal_/);
-    expect(rules).toMatch(/row\.nameOnFile \? NAME_ON_FILE_LABEL/);
+    expect(rules).toMatch(/const blank = row\.displayName\.length === 0/);
+    expect(rules).toMatch(/blank \? NAME_ON_FILE_LABEL/);
   });
 });
 
