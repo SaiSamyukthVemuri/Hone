@@ -6,12 +6,11 @@ import { adminQuery, asRole, asUser, closePool, seedMember, seedStudio, type See
 // is what a signed-in person can do outside the app. Synthetic fixtures only. Names are never printed: assertions on
 // them are booleans.
 //
-// Part 1 is the refusal matrix. Part 2 pins the NAME RULE (migration 0374) as it behaves on a database built from the
-// repository's migrations: the database returns no stored client name to a receptionist, shows the fixed words 'Name on
-// file' instead, and never orders by the stored name. HOSTED PRODUCTION does not have 0374 applied (applying it is a
-// separate decision that is not made here), so production still returns the stored name until it is; this file runs only
-// against repository-chain stacks, which is why it asserts the new behaviour. Before 0374 landed in the chain, part 2
-// asserted the opposite (the known limit); if 0374 is ever reverted in the chain this test fails, loudly, on purpose.
+// Part 1 is the refusal matrix. Part 2 pins the name rule as it behaves on a database built from the repository's
+// migrations, which include it: the database returns no stored client name to a receptionist, shows the fixed words
+// 'Name on file' instead, and never orders by the stored name. This file runs only against repository-chain stacks. What
+// the hosted database does is recorded in the production record (docs/production), not here. If the rule is ever removed
+// from the chain, this test fails, loudly, on purpose.
 
 const STORED_A = `Aardvark Fixture ${randomUUID().slice(0, 8)}`;
 const STORED_Z = `Zebra Fixture ${randomUUID().slice(0, 8)}`;
