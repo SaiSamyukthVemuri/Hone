@@ -141,6 +141,14 @@ describe("a receptionist cannot pass the staff helper (what 'staff' rests on)", 
       "lib/desk/guard.ts",
       "lib/export/resource-registry.ts",
     ]);
+    // Both Team files read the table on the user-session client, never the admin client: the page file has no admin client at all, and in the action
+    // file every read of the table hangs off `supabase` (the user-session client), none off an admin client.
+    const team = (f: string) => readFileSync(join(ROOT, f), "utf8");
+    expect(team("app/(app)/settings/team/page.tsx")).not.toContain("createAdminClient");
+    const actions = team("app/(app)/settings/team/actions.ts");
+    expect(actions.match(/\.from\("studio_receptionists"\)/g)?.length ?? 0).toBeGreaterThan(0);
+    expect(actions).not.toMatch(/\badmin\w*\s*\.from\("studio_receptionists"\)/);
+    expect(actions).toMatch(/await supabase\s*\.from\("studio_receptionists"\)/);
   });
 });
 
