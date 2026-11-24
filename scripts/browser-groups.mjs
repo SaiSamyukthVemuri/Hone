@@ -247,6 +247,11 @@ export const BROWSER_GROUPS = {
       // the query's own text. Here because settings/booking/actions.ts selects
       // this group.
       "settings-booking-error-param.spec.ts",
+      // Team settings: invite a receptionist, see it pending, cancel it; the front desk list and Deactivate.
+      "team-invite-receptionist.spec.ts",
+      // Receptionist onboarding across Team settings, acceptance and the desk (desktop and iPhone, about 6 minutes with the build). Kept out of the always-run
+      // calendar lane on purpose: the targeted lane is already near its measured budget.
+      "receptionist-onboarding-flow.spec.ts",
       "public-booking-error-containment.spec.ts",
       "public-booking-slot-read-failure.spec.ts",
       // TWILIO-EGRESS-FAKE (MSG-006): a public booking with SMS consent reaches
