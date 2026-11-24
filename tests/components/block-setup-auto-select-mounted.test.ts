@@ -123,7 +123,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-async function mount(o: { existing: boolean; persistedFrequency?: string | null; defaultFrequency?: string | null }) {
+async function mount(o: { existing: boolean; persistedFrequency?: string | null; defaultFrequency?: string | null; persistedMode?: string | null }) {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -133,7 +133,7 @@ async function mount(o: { existing: boolean; persistedFrequency?: string | null;
         sessionId: "s1",
         clientId: "c1",
         previousBlock: null,
-        block: o.existing ? ({ ...BLOCK, machine_frequency: o.persistedFrequency ?? null } as never) : null,
+        block: o.existing ? ({ ...BLOCK, machine_frequency: o.persistedFrequency ?? null, mode: o.persistedMode ?? null } as never) : null,
         firstEntry: null,
         initialAreas: [{ area: "Upper lip", side: "center" }] as never,
         defaultMachineFrequency: o.defaultFrequency ?? null,
@@ -156,6 +156,22 @@ const freqSelected = (f: string) =>
   Array.from(host!.querySelectorAll<HTMLButtonElement>("button")).find((b) => b.textContent?.trim() === f)!.className.includes("bg-neutral-900");
 
 ctxBox.ctx = { ...CTX };
+
+describe("an OLD area whose only machine content is a mode or frequency: saving it WITHOUT touching the machine never writes an identity", () => {
+  it("opening the area makes no machine request, and Save sends the update with no machine identity and records none (so a switched-off xCell cannot make the old workflow error)", async () => {
+    const blockActions = await import("@/app/(app)/clients/[id]/sessions/[sessionId]/block-actions");
+    (blockActions.updateTreatmentAreaWithEntryAction as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true });
+    await mount({ existing: true, persistedMode: "thermolysis", persistedFrequency: "13.56 MHz" });
+    expect(actions.loadMachineSetupContext, "no machine request on open").not.toHaveBeenCalled();
+    await clickText("Blend"); // an edit to the area's own mode, never to the machine
+    await act(async () => { host!.querySelector<HTMLButtonElement>('[data-testid="save-treatment-area"]')!.click(); });
+    const update = blockActions.updateTreatmentAreaWithEntryAction as unknown as ReturnType<typeof vi.fn>;
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(Object.keys(update.mock.calls[0][0]), "the update has no machine identity field").not.toContain("machineIdentity");
+    expect(actions.recordBlockMachineIdentityAction).not.toHaveBeenCalled();
+    expect(actions.loadMachineSetupContext).not.toHaveBeenCalled();
+  });
+});
 
 describe("an EXISTING area with no saved unit: automatic selection yields to entered legacy settings", () => {
   it("entered frequency + remembered native machine: NOTHING is selected, the entered value stays, the legacy fields stay", async () => {
