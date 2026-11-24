@@ -36,8 +36,12 @@ export function OverInviteForm({
   const [reconfirmAt, setReconfirmAt] = useState<{ result: OverInviteResult; chosen: number } | null>(null);
   if (result.state === "reconfirm" && reconfirmAt?.result !== result) setReconfirmAt({ result, chosen });
   const onSelectionChange = useCallback((n: number) => setChosen(n), []);
-  // After a re-ask the server's fresh numbers replace the ones the owner saw.
-  const shown = result.state === "reconfirm" ? { fit: result.fit, active: result.active, expiringSoon: result.expiringSoon } : { fit, active, expiringSoon };
+  // After a re-ask the server's fresh numbers replace the ones the owner saw, and they STAY until the server asks again with newer ones: a later
+  // notice (for example "tick the box") must not fall back to the page's original numbers, or the very checkbox it asks for would disappear.
+  const [latest, setLatest] = useState<{ result: OverInviteResult; fit: number; active: number; expiringSoon: number } | null>(null);
+  if (result.state === "reconfirm" && latest?.result !== result) setLatest({ result, fit: result.fit, active: result.active, expiringSoon: result.expiringSoon });
+  const fresh = result.state === "reconfirm" ? result : latest;
+  const shown = fresh ? { fit: fresh.fit, active: fresh.active, expiringSoon: fresh.expiringSoon } : { fit, active, expiringSoon };
   const serverExtra = result.state === "reconfirm" && reconfirmAt?.result === result && reconfirmAt.chosen === chosen ? result.extra : null;
   const preview = buildOverInvitePreview({ ...shown, extra: serverExtra ?? chosen });
   const notice = result.state === "notice" || result.state === "reconfirm" ? result.notice : null;
