@@ -522,6 +522,29 @@ function blockButtonTests(tap: boolean, times: { member: string; owner: string; 
   });
 }
 
+test.describe("Block time follows the phone time grid's selected day", () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  test("changing the weekday on the phone grid, then Block time, opens on THAT day (no stale-date button beside the grid)", async ({ page }) => {
+    await loginAsOwner(page, seed);
+    await page.goto(`/calendar?view=week&day=${day}&layout=grid`);
+    // The page-level Block time button keeps the day the page loaded on, so it must not sit beside this grid.
+    await expect(page.getByRole("button", { name: "Block time", exact: true })).toHaveCount(0);
+    const pills = page.locator("button[data-selected]");
+    const selectedIndex = await pills.evaluateAll((els) => els.findIndex((e) => e.getAttribute("data-selected") === "true"));
+    expect(selectedIndex).toBeGreaterThanOrEqual(0);
+    const delta = selectedIndex > 0 ? -1 : 1;
+    const other = new Date(Date.parse(`${day}T12:00:00Z`) + delta * 86400000).toISOString().slice(0, 10);
+    await pills.nth(selectedIndex + delta).tap();
+    await expect(pills.nth(selectedIndex + delta)).toHaveAttribute("data-selected", "true");
+    await page.getByRole("button", { name: "Add appointment or block time" }).tap();
+    await page.getByRole("dialog", { name: "Choose action for selected time" }).getByRole("button", { name: "Block time" }).tap();
+    const drawer = page.getByRole("dialog", { name: "Block time" });
+    await expect(drawer).toBeVisible();
+    await expect(drawer.getByText(other, { exact: true })).toBeVisible();
+    await expect(drawer.getByText(day, { exact: true })).toHaveCount(0);
+  });
+});
+
 test.describe("Block time button on desktop", () => {
   test.use({ viewport: { width: 1280, height: 1000 } });
   blockButtonTests(false, { member: "19:00", owner: "19:30", day });
