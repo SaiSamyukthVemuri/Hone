@@ -21,9 +21,8 @@ export async function readXcellModelSwitch(studioId: string, deps: SwitchDeps = 
   try {
     let rpc = deps.rpc;
     if (!rpc) {
-      const { createClient } = await import("@/lib/supabase/server");
-      const db = await createClient();
-      rpc = (fn) => db.rpc(fn as never) as unknown as ReturnType<Rpc>;
+      const { studioMachineRpc } = await import("@/lib/machines/studio-machine-rpc");
+      rpc = (fn) => studioMachineRpc(fn);
     }
     const { data, error } = await rpc("get_studio_machine_choices");
     if (error || !Array.isArray(data)) return { available: false };
