@@ -145,6 +145,10 @@ export const PATH_DECISIONS: Readonly<Record<string, Readonly<Record<string, str
     createTreatmentAreaWithEntryAction: "staff",
     updateTreatmentAreaWithEntryAction: "staff",
   },
+  "app/(app)/settings/machines/studio-machine-actions.ts": {
+    setStudioMachineModelAction: "owner(self)",
+    setStudioMachineDefaultAction: "owner(self)",
+  },
   "app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts": {
     loadMachineSetupContext: "staff",
     rememberMachineSelectionAction: "staff",

@@ -2369,12 +2369,21 @@ export function BlockSetupForm({
                 type="button"
                 disabled={multiplexSaved || draftFrozen || identityWritePending}
                 onClick={() => {
+                  // LEAVING MULTIPLEX BY CHOOSING A LEGACY MODE: the readings parked when she picked MultiPlex go back FIRST, under the mode they were typed
+                  // in, so the per-mode bags keep them there; then the mode she clicked is selected. Restoring them AFTER the click (the leave-MultiPlex request
+                  // does) would put the parked mode back over her choice and save the wrong mode.
+                  let base: Draft = draft;
+                  if (multiplexSelected && parkedLegacyRef.current) {
+                    base = { ...draft, ...parkedLegacyRef.current };
+                    parkedLegacyRef.current = null;
+                  }
                   if (rollout) {
-                    const next = switchMode({ draft, bags: modeBags, pulseTouched }, selected ? "" : m.value);
+                    const next = switchMode({ draft: base, bags: modeBags, pulseTouched }, selected ? "" : m.value);
                     setDraft(next.draft);
                     setModeBags(next.bags);
                     setPulseTouched(next.pulseTouched);
-                  } else update("mode", selected ? "" : m.value);
+                  } else if (base !== draft) setDraft({ ...base, mode: selected ? "" : m.value });
+                  else update("mode", selected ? "" : m.value);
                   // Leaving MultiPlex returns the area to the existing xCell workflow.
                   if (multiplexSelected) setMultiplexRequest((r) => ({ seq: (r?.seq ?? 0) + 1, want: false }));
                 }}

@@ -40,6 +40,7 @@ const { createElement } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { act } = await import("react");
 const { BlockSetupForm } = await import("@/app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form");
+const { ChartingViewContext } = await import("@/components/charting-view-context");
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const CTX = {
@@ -134,6 +135,40 @@ describe("MultiPlex in the ONE Mode control (new area)", () => {
     expect(legacyFieldsShown()).toBe(true);
     expect(multiplexPill()!.getAttribute("aria-pressed")).toBe("false");
   });
+
+  for (const rolloutOn of [false, true]) {
+    it(`Thermolysis typed, then MultiPlex, then Blend (per-mode bags ${rolloutOn ? "ON" : "off"}): BLEND is the mode, never the parked Thermolysis; Thermolysis keeps what was typed under it`, async () => {
+      if (rolloutOn) {
+        host = document.createElement("div");
+        document.body.appendChild(host);
+        root = createRoot(host);
+        await act(async () => {
+          root!.render(createElement(ChartingViewContext.Provider, { value: { view: "new", setView: () => undefined, notice: null, rolloutOn: true } },
+            createElement(BlockSetupForm, {
+              sessionId: "s1", clientId: "c1", previousBlock: null, block: null, firstEntry: null,
+              initialAreas: [{ area: "Upper lip", side: "center" }] as never, defaultMachineFrequency: null, onCancel: () => undefined,
+            })));
+        });
+      } else await mount(null);
+      await openPanel();
+      await pick("legacy:xcell");
+      await clickPill("Thermolysis");
+      const setValue = (el: HTMLInputElement, v: string) => act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(el, v);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      const intensity = () => Array.from(host!.querySelectorAll<HTMLLabelElement>("label")).find((l) => l.textContent?.includes("Thermolysis intensity"))!.querySelector("input") as HTMLInputElement;
+      await setValue(intensity(), "42");
+      await clickMultiplex();
+      await clickPill("Blend");
+      const selected = () => pills().filter((b) => b.className.includes("bg-neutral-900")).map((b) => b.textContent!.trim());
+      expect(selected(), "the clicked mode is the one selected").toEqual(["Blend"]);
+      if (rolloutOn) expect(intensity().value, "with per-mode bags Thermolysis's reading is not carried into Blend").toBe("");
+      await clickPill("Thermolysis");
+      expect(selected()).toEqual(["Thermolysis"]);
+      expect(intensity().value, "Thermolysis keeps what was typed under it").toBe("42");
+    });
+  }
 
   it("no route (contract not published, no unit): the xCell choice offers no MultiPlex", async () => {
     ctxBox.ctx = { ...CTX, multiplexRoute: null };
