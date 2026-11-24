@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// STUDIO-READY-02d (#824): the owner's deactivate/reactivate action. The owner
+// The owner's deactivate/reactivate action. The owner
 // is resolved on the server; the browser supplies only the receptionist id and
 // the desired state; the 0216 command is called only after the owner check.
 
 const ctx = vi.hoisted(() => ({
   role: "owner" as "owner" | "practitioner",
   rpc: vi.fn(),
+  adminCreated: vi.fn(),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -17,7 +18,10 @@ vi.mock("@/lib/supabase/queries", () => ({
   }),
 }));
 vi.mock("@/lib/supabase/admin-server", () => ({
-  createAdminClient: () => ({ rpc: ctx.rpc }),
+  createAdminClient: () => {
+    ctx.adminCreated();
+    return { rpc: ctx.rpc };
+  },
 }));
 
 const { setReceptionistActiveAction } = await import("@/app/(app)/settings/team/receptionist-actions");
@@ -31,6 +35,7 @@ const form = (fields: Record<string, string>) => {
 beforeEach(() => {
   ctx.role = "owner";
   ctx.rpc.mockReset();
+  ctx.adminCreated.mockReset();
   ctx.rpc.mockResolvedValue({ data: "updated", error: null });
 });
 
@@ -56,6 +61,36 @@ describe("setReceptionistActiveAction", () => {
     expect(ctx.rpc).not.toHaveBeenCalled();
   });
 
+  it("never even CONSTRUCTS the admin client for a non-owner, or for a malformed request; the owner path constructs it exactly once", async () => {
+    ctx.role = "practitioner";
+    await expect(setReceptionistActiveAction(form({ id: "rec-1", active: "true" }))).rejects.toThrow();
+    expect(ctx.adminCreated).not.toHaveBeenCalled();
+    ctx.role = "owner";
+    await expect(setReceptionistActiveAction(form({ id: "rec-1", active: "yes" }))).rejects.toThrow();
+    expect(ctx.adminCreated).not.toHaveBeenCalled();
+    // POSITIVE CONTROL: the owner's valid call does construct it, once, so the zero above is not a broken counter.
+    await setReceptionistActiveAction(form({ id: "rec-1", active: "false" }));
+    expect(ctx.adminCreated).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends the SESSION's studio and owner, whatever studio or owner the form carries under any name", async () => {
+    await setReceptionistActiveAction(
+      form({
+        id: "rec-1",
+        active: "true",
+        studio_id: "forged-studio",
+        p_studio_id: "forged-studio",
+        studioId: "forged-studio",
+        p_owner_practitioner_id: "forged-owner",
+        owner_practitioner_id: "forged-owner",
+      }),
+    );
+    const args = ctx.rpc.mock.calls[0]![1] as Record<string, unknown>;
+    expect(args.p_studio_id).toBe("studio-1");
+    expect(args.p_owner_practitioner_id).toBe("owner-practitioner");
+    expect(JSON.stringify(args)).not.toMatch(/forged/);
+  });
+
   it("refuses a malformed state or a missing id before any database call", async () => {
     await expect(setReceptionistActiveAction(form({ id: "rec-1", active: "yes" }))).rejects.toThrow();
     await expect(setReceptionistActiveAction(form({ active: "true" }))).rejects.toThrow();
@@ -69,7 +104,7 @@ describe("setReceptionistActiveAction", () => {
     );
   });
 
-  it("names the one-active-row-per-email refusal (0218, Codex P2 4244037190 on #850)", async () => {
+  it("names the one-active-row-per-email refusal (a database rule)", async () => {
     ctx.rpc.mockResolvedValue({ data: null, error: { code: "23505" } });
     await expect(setReceptionistActiveAction(form({ id: "rec-1", active: "true" }))).rejects.toThrow(
       /already uses this email/,
