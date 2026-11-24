@@ -58,21 +58,29 @@ for (const screen of SCREENS) {
       await seedE2eActiveCardOnFile(studio, clientId);
       const tz = await getStudioTimezone(studio.studioId);
       const { appointmentId } = await seedE2eTodayAppointment(studio, {
-        clientId, startsMinutesFromNow: -45, endsMinutesFromNow: -15, withService: true,
+        clientId, startsMinutesFromNow: 60, endsMinutesFromNow: 105, withService: true,
       });
-      // The visit's own session is already started and charted, so Chart has one to reopen and Stripe has one to charge.
       const sessionId = randomUUID();
       const practitionerId = (await sql<{ id: string }>("select id from public.practitioners where studio_id = $1 and role = 'owner' limit 1", [studio.studioId]))[0].id;
-      await sql(
-        `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality, appointment_id, started_at)
-         values ($1,$2,$3,$4,'electrolysis',$5, now() - interval '40 minutes')`,
-        [sessionId, studio.studioId, clientId, practitionerId, appointmentId],
-      );
-      await sql(
-        `insert into public.session_blocks (id, studio_id, session_id, sort_order, primary_area, mode, energy_level, minutes_performed, machine_frequency)
-         values ($1,$2,$3,1,'Chin','thermo',5,10,'13.56 MHz')`,
-        [randomUUID(), studio.studioId, sessionId],
-      );
+      // The visit is still ahead at first, which is when its one-visit reminder is meant to show. Later the visit happens:
+      // see theVisitHappens() below, which moves it into the past and gives it its charted session.
+      const theVisitHappens = async () => {
+        await sql(
+          `update public.appointments set starts_at = now() - interval '45 minutes', ends_at = now() - interval '15 minutes',
+                  blocked_ends_at = now() - interval '15 minutes' where id = $1`,
+          [appointmentId],
+        );
+        await sql(
+          `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality, appointment_id, started_at)
+           values ($1,$2,$3,$4,'electrolysis',$5, now() - interval '40 minutes')`,
+          [sessionId, studio.studioId, clientId, practitionerId, appointmentId],
+        );
+        await sql(
+          `insert into public.session_blocks (id, studio_id, session_id, sort_order, primary_area, mode, energy_level, minutes_performed, machine_frequency)
+           values ($1,$2,$3,1,'Chin','thermo',5,10,'13.56 MHz')`,
+          [randomUUID(), studio.studioId, sessionId],
+        );
+      };
       const row = (p: Page) => p.locator(`#appointment-${appointmentId}`);
       const shot = (p: Page, n: string) => p.screenshot({ path: test.info().outputPath(`${screen.name}-${n}.png`), fullPage: true });
 
@@ -102,6 +110,9 @@ for (const screen of SCREENS) {
         await expect(row(page).getByText(PINNED, { exact: true })).toBeVisible();
         await shot(page, "2-pinned-note");
       });
+
+      await theVisitHappens();
+      await page.reload();
 
       await test.step("4. Checkout offers all six choices and an editable fee; $90 becomes $75.50 with $50.25 by e-transfer", async () => {
         await row(page).getByRole("button", { name: "Checkout", exact: true }).click();
