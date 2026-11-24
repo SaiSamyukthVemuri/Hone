@@ -87,6 +87,9 @@ export default async function MachineSettingsPage() {
           <div className="mt-3">
             {switches ? (
               <StudioMachinesForm
+                // KEYED BY THE SERVER STATE: registering a first Senior or Junior unit turns that model on in the database, and the form keeps its own copy of the
+                // state, so without a new key the switches kept showing it off after the page re-rendered with the new state.
+                key={`${switches.enabled.slice().sort().join(",")}|${switches.defaultProfileId ?? ""}`}
                 models={STUDIO_MACHINE_MODELS.map((m) => ({ profileId: m.profileId, name: m.name, description: m.description }))}
                 initial={switches}
                 setModel={setStudioMachineModelAction}
