@@ -940,6 +940,17 @@ describe("the down", () => {
     expect((await adminQuery(`select md5(prosrc) m from pg_proc where proname='apply_block_machine_identity'`)).rows[0].m).not.toBe("218c39a20344d2effd4d934f702b0338");
   });
 
+  it("drops the registration trigger and its function BEFORE the tables they write (a left-behind trigger would fail the next Senior or Junior registration)", () => {
+    const d = readFileSync(DOWN_PATH, "utf8");
+    const t = d.indexOf("drop trigger if exists studio_machines_enable_model on public.studio_machines;");
+    const f = d.indexOf("drop function if exists public.studio_machines_enable_model_trigger();");
+    expect(t).toBeGreaterThan(-1);
+    expect(f).toBeGreaterThan(t);
+    for (const table of ["studio_machine_setting_events", "studio_machine_default", "studio_machine_models"]) {
+      expect(f, table).toBeLessThan(d.indexOf(`drop table if exists public.${table};`));
+    }
+  });
+
   it("restores the previous function body byte for byte (the down text carries it unchanged)", () => {
     const orig = readFileSync("supabase/migrations/0310_block_machine_identity_mode_contract.sql", "utf8");
     const a = orig.indexOf("create or replace function public.apply_block_machine_identity(");
