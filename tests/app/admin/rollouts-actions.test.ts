@@ -11,9 +11,9 @@ vi.mock("@/lib/rollouts/admin-commands", async (orig) => {
   const real = await orig<typeof import("@/lib/rollouts/admin-commands")>();
   return {
     ...real,
-    setRolloutMode: vi.fn(async (...a: unknown[]) => { S.calls.push(["set", ...a]); return "changed"; }),
-    addPilotStudio: vi.fn(async (...a: unknown[]) => { S.calls.push(["add", ...a]); return "added"; }),
-    removePilotStudio: vi.fn(async (...a: unknown[]) => { S.calls.push(["remove", ...a]); return "removed"; }),
+    setRolloutMode: vi.fn(async (...a: unknown[]) => { S.calls.push(["set", ...a]); return { kind: "ok", value: "changed" }; }),
+    addPilotStudio: vi.fn(async (...a: unknown[]) => { S.calls.push(["add", ...a]); return { kind: "ok", value: "added" }; }),
+    removePilotStudio: vi.fn(async (...a: unknown[]) => { S.calls.push(["remove", ...a]); return { kind: "ok", value: "removed" }; }),
     logBlockedAttempt: vi.fn(async (...a: unknown[]) => { S.calls.push(["blocked", ...a]); }),
   };
 });
