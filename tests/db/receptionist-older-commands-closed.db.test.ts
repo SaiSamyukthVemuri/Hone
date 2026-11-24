@@ -144,10 +144,10 @@ describe("the supported desk workflow still works with 0374, 0380, 0381 and 0376
   it("the schedule shows preferred, then regular, then Name on file only when both are blank; no phone or email column", async () => {
     const o = await call(who.receptionist, CAL3, [A.studioId]);
     expect("rows" in o).toBe(true);
-    const byClient = new Map(rowsOf(o).map((r) => [String(r.client_id), r]));
-    expect(byClient.get(c.pref)).toMatchObject({ display_name: "Bean" });
-    expect(byClient.get(c.reg)).toMatchObject({ display_name: "Regonly Cardwell" });
-    expect(byClient.get(c.blank)).toMatchObject({ display_name: MARK });
+    const byAppt = new Map(rowsOf(o).map((r) => [String(r.appointment_id), r]));
+    expect(byAppt.get(appt.pref)).toMatchObject({ display_name: "Bean" });
+    expect(byAppt.get(appt.reg)).toMatchObject({ display_name: "Regonly Cardwell" });
+    expect(byAppt.get(appt.blank)).toMatchObject({ display_name: MARK });
     const fields = "fields" in o ? o.fields : [];
     expect(fields.filter((f) => /phone|email/i.test(f))).toEqual([]);
     const text = JSON.stringify(o);

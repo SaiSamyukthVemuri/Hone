@@ -52,10 +52,10 @@ revoke execute on function public.receptionist_client_contacts_v2(uuid, text, in
 revoke execute on function public.receptionist_client_contacts_v2(uuid, text, integer) from service_role;
 
 comment on function public.receptionist_client_directory(uuid, text, text[], text, integer, integer) is
-  '0381 CLOSED. The desk client directory (a page of clients with full phone and email) is no longer callable by any role: it has no caller in the app, and the screens use the masked finder and the visit-contact command. The body is exactly 0380's and is kept so that reopening starts from the reviewed name rule. Callable by nobody but its owner.';
+  '0381 CLOSED. The desk client directory (a page of clients with full phone and email) is no longer callable by any role: it has no caller in the app, and the screens use the masked finder and the visit-contact command. The body is exactly the 0380 body and is kept so that reopening starts from the reviewed name rule. Callable by nobody but its owner.';
 
 comment on function public.receptionist_client_contacts_v2(uuid, text, integer) is
-  '0381 CLOSED. The receptionist client finder v2 (full phone and email) is no longer callable by any role: the screens use the masked finder and the visit-contact command. The body is exactly 0380's and is kept so that reopening starts from the reviewed name rule. Callable by nobody but its owner.';
+  '0381 CLOSED. The receptionist client finder v2 (full phone and email) is no longer callable by any role: the screens use the masked finder and the visit-contact command. The body is exactly the 0380 body and is kept so that reopening starts from the reviewed name rule. Callable by nobody but its owner.';
 
 -- 2) After-check.
 do $check$
