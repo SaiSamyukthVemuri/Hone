@@ -72,6 +72,7 @@ import { hasDayView, isInitialCalendarEntry, isTeamCalendar } from "./initial-vi
 import { teamDayGridTemplate } from "@/lib/calendar/team-day-layout";
 import { getCalendarRebookSource } from "@/lib/calendar/rebook-source";
 import { CalendarOpeningBooking } from "./CalendarOpeningPreview";
+import { CalendarBlockTime } from "./CalendarBlockTime";
 import { CalendarSidebar } from "./CalendarSidebar";
 import { buildTimeInsights, insightPeriod } from "@/lib/calendar/time-insights";
 import { getBoundaryCrossingAppointments } from "@/lib/calendar/boundary-appointments";
@@ -407,6 +408,7 @@ export default async function CalendarPage({
       <CalendarOpeningBooking date={initialSelectedDate} clientId={rebookSource?.clientId} clients={drawerClients}
         services={services} studioTimezone={studio.timezone} timeFormat={timeFormat} isOwner={isOwner}
         capacityEnabled={studio.practitioner_capacity_enabled === true} viewer={{id: practitioner.id, name: practitioner.display_name}} />
+      {byPractitioner && <CalendarBlockTime date={initialSelectedDate} studioTimezone={studio.timezone} blockScopeNames={blockScopeNames} isOwner={isOwner} currentPractitionerId={practitioner.id} currentPractitionerName={practitioner.display_name} />}
       {multiPersonWeek && <nav aria-label="Week layout" className="flex w-fit gap-1 rounded-lg bg-neutral-100 p-1 text-sm">
         {[{ label: "By practitioner", grid: false }, { label: "Time grid", grid: true }].map(({ label, grid }) => {
           const query = new URLSearchParams({ view: "week", day: initialSelectedDate });
@@ -793,6 +795,9 @@ async function renderMonthView(opts: {
         </p>
       )}
 
+      <CalendarBlockTime date={selectedDate} studioTimezone={studio.timezone} isOwner={isOwner} currentPractitionerId={viewerId}
+        blockScopeNames={blockScopeNamesFor(studio.practitioner_capacity_enabled === true, activePractitioners)}
+        currentPractitionerName={activePractitioners.find(p => p.id === viewerId)?.display_name?.trim() || "Practitioner"} />
       {sidebar.selection.mode === "none" ? (
         <EmptySelection />
       ) : (

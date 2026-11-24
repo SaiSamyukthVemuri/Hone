@@ -103,7 +103,8 @@ async function openDesktopQuickBook(page: Page, dateStr: string) {
   // bare /calendar opens the team Day view for a capacity-ON studio with several
   // practitioners (HON-48, #1131), whose columns are labelled "... for <name> on
   // <date>", so the week is named explicitly.
-  await page.goto("/calendar?view=week");
+  // A multi-practitioner week opens By practitioner (#1764); the time grid this spec proves is the Time grid layout.
+  await page.goto("/calendar?view=week&layout=grid");
   await page
     .getByRole("button", { name: `Open quick-book draft for ${dateStr}` })
     .click();
@@ -276,7 +277,7 @@ test.describe("mobile calendar Quick Book (capacity ON)", () => {
   async function openMobileQuickBook(page: Page) {
     // The week view's mobile shell renders CalendarMobileDayView (today); a bare
     // /calendar would open the team Day view here (HON-48), so name the week.
-    await page.goto("/calendar?view=week");
+    await page.goto("/calendar?view=week&layout=grid"); // the phone "+" belongs to the Time grid layout (#1764)
     const fab = page.getByRole("button", { name: "Add appointment or block time" });
     await expect(fab).toBeVisible({ timeout: 20_000 });
     // Real 56px FAB tap target (>= 44px).

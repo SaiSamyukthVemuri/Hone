@@ -411,7 +411,7 @@ test.describe("F1: quick block scope", () => {
       [seed.studioId, day, local, TZ],
     );
   async function openBlockDrawer(page: Page) {
-    await page.goto(`/calendar?day=${day}`);
+    await page.goto(`/calendar?day=${day}&layout=grid`); // the phone's "+" belongs to the time-grid layout (#1764)
     await page.getByRole("button", { name: "Add appointment or block time" }).tap();
     await page.getByRole("dialog", { name: "Choose action for selected time" }).getByRole("button", { name: "Block time" }).tap();
     const drawer = blockDrawer(page);
@@ -419,6 +419,21 @@ test.describe("F1: quick block scope", () => {
     await expect(drawer.getByText(day, { exact: true })).toBeVisible();
     return drawer;
   }
+
+  test("By practitioner week and Month: the owner can still block time, and must choose who it blocks", async ({ page }) => {
+    await loginAsOwner(page, seed);
+    for (const url of [`/calendar?view=week&day=${day}`, `/calendar?view=month&month=${day.slice(0, 8)}01&day=${day}`]) {
+      await page.goto(url);
+      await page.getByRole("button", { name: "Block time", exact: true }).tap();
+      const drawer = blockDrawer(page);
+      await expect(drawer).toBeVisible();
+      await expect(drawer.getByText(day, { exact: true })).toBeVisible();
+      await expect(drawer.getByLabel("Applies to").locator("option")).toHaveText(["Choose who this blocks", "All practitioners", ...roster.map((p) => `Only ${p.name}`)]);
+      await drawer.getByRole("button", { name: "Save block" }).tap();
+      await expect(drawer.getByRole("alert")).toHaveText("Choose who this block applies to.");
+      await page.keyboard.press("Escape");
+    }
+  });
 
   test("the owner must choose; Only Di closes Di's time alone", async ({ page }) => {
     const di = byKey("di");
@@ -494,7 +509,7 @@ test("finds a colleague's opening on another day and books the exact previewed s
     await sidebar.getByRole("button", { name: new RegExp(target.name) }).click();
 
     await expect(page).toHaveURL(url => url.searchParams.get("day") === nextDay);
-    const preview = column(page, target.id).getByRole("button", { name: new RegExp(`Book.*${target.name}`, "i") });
+    const preview = column(page, target.id).getByRole("button", { name: new RegExp(`^Book .* with ${target.name}`) });
     await expect(preview).toBeVisible();
     await expect(page.getByRole("dialog", { name: "New appointment" })).toHaveCount(0);
     return preview;
