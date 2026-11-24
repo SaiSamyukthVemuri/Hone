@@ -674,19 +674,31 @@ function MachineFirstSetupPanelImpl({
   useEffect(() => {
     if (blockId) parkedNative.current.clear();
   }, [blockId]);
-  const lastMultiplexSeq = useRef(multiplexRequest?.seq ?? 0);
+  // THE LAST REQUEST THIS PANEL HAS FINISHED WITH (applied, or dropped for a reason that will not change).
+  const handledMultiplexSeq = useRef(multiplexRequest?.seq ?? 0);
   useEffect(() => {
-    if (!multiplexRequest || multiplexRequest.seq === lastMultiplexSeq.current) return;
-    lastMultiplexSeq.current = multiplexRequest.seq;
+    if (!multiplexRequest || multiplexRequest.seq === handledMultiplexSeq.current) return;
     // A NEW area only: a saved area keeps the identity it was saved with.
-    if (!xcellRouted || !multiplexRoute || blockId) return;
+    if (!xcellRouted || !multiplexRoute || blockId) {
+      handledMultiplexSeq.current = multiplexRequest.seq;
+      return;
+    }
     // THE FREEZE WINS (Codex P1): a request that arrives while a create is pending or its response is unknown is dropped, never queued,
     // so no click can move the identity under an unresolved save.
-    if (identityFrozen || selectionPending) return;
+    if (identityFrozen) {
+      handledMultiplexSeq.current = multiplexRequest.seq;
+      return;
+    }
+    // A PICK STILL SETTLING (its preference write is in flight) HOLDS the request instead of losing it. Dropping it left the form showing
+    // two modes at once with the old machine still chosen, and her next click did nothing visible. The effect re-runs when the pick settles
+    // (`selectionPending` is a dependency) and applies the LATEST request; nothing is written for a new area here, so nothing can be
+    // moved under an unresolved save (that case is the freeze above).
+    if (selectionPending) return;
+    handledMultiplexSeq.current = multiplexRequest.seq;
     if (multiplexRequest.want) void chooseDevice(multiplexRoute.deviceId);
     else if (deviceId === multiplexRoute.deviceId) void chooseDevice(null, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [multiplexRequest]);
+  }, [multiplexRequest, selectionPending]);
   useEffect(() => {
     onKindChange?.(machineKind);
   }, [machineKind, onKindChange]);

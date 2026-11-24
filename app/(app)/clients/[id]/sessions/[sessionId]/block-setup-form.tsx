@@ -521,13 +521,21 @@ export function BlockSetupForm({
   // The FROZEN setter, reached through a ref because it is declared further
   // down and this callback has to keep one identity.
   const setDraftRef = useRef<(u: (d: Draft) => Draft) => void>(() => undefined);
+  const parkedLegacyRef = useRef<Pick<Draft, "mode" | "apilusModality" | "energyLevel" | "machineFrequency" | "thermolysisIntensityPercent" | "thermolysisDurationSeconds" | "galvanicMa" | "galvanicDurationSeconds" | "unitsOfLye" | "pulseCount" | "pulseDelay"> | null>(null);
   const onKindChange = useCallback(
     (kind: "none" | "legacy" | "native") => {
       if (kind === "native" && legacyDataLocked) return;
       setMachineKind(kind);
+      if (kind === "legacy" && parkedLegacyRef.current) {
+        const back = parkedLegacyRef.current;
+        parkedLegacyRef.current = null;
+        setDraftRef.current((d) => ({ ...d, ...back }));
+      }
       if (kind === "native") {
         // Switching never mixes settings: the overlapping legacy fields are
         // cleared with the switch, and the area saves them as NOT RECORDED.
+        // PARKED, NOT DESTROYED: what she had typed under the existing workflow (mode, frequency, readings) is kept in memory and
+        // comes back exactly if she returns to the existing workflow in this open area. Never stored, never saved under a native machine.
         const cleared = (d: Draft): Draft => ({
           ...d,
           mode: "",
@@ -542,7 +550,17 @@ export function BlockSetupForm({
           pulseCount: String(PULSE_COUNT_DEFAULT),
           pulseDelay: String(PULSE_DELAY_DEFAULT),
         });
-        setDraftRef.current(cleared);
+        setDraftRef.current((d) => {
+          if (d.mode !== "" || d.machineFrequency !== "" || d.energyLevel !== "" || d.thermolysisIntensityPercent !== "" || d.thermolysisDurationSeconds !== "" || d.galvanicMa !== "" || d.galvanicDurationSeconds !== "" || d.unitsOfLye !== "" || d.apilusModality !== "") {
+            parkedLegacyRef.current = {
+              mode: d.mode, apilusModality: d.apilusModality, energyLevel: d.energyLevel, machineFrequency: d.machineFrequency,
+              thermolysisIntensityPercent: d.thermolysisIntensityPercent, thermolysisDurationSeconds: d.thermolysisDurationSeconds,
+              galvanicMa: d.galvanicMa, galvanicDurationSeconds: d.galvanicDurationSeconds, unitsOfLye: d.unitsOfLye,
+              pulseCount: d.pulseCount, pulseDelay: d.pulseDelay,
+            };
+          }
+          return cleared(d);
+        });
         // REBASE THE DIRTY BASELINE: the switch is not the practitioner's edit. An automatically resolved
         // machine clears a prefilled studio-default frequency, and comparing against the pre-switch draft showed "Unsaved"
         // (and a leave prompt) on an untouched form.
@@ -2342,7 +2360,9 @@ export function BlockSetupForm({
         <span className="text-sm font-medium">Mode</span>
         <div className="flex flex-wrap gap-2">
           {ELECTROLYSIS_MODES.map((m) => {
-            const selected = draft.mode === m.value;
+            // WHILE MULTIPLEX IS CHOSEN no legacy pill is pressed (the legacy mode stays parked underneath), and pressing one SELECTS it, never toggles it
+            // off: otherwise a switch back from MultiPlex to the mode she had typed under cleared that mode and showed its readings empty.
+            const selected = draft.mode === m.value && !multiplexSelected;
             return (
               <button
                 key={m.value}
