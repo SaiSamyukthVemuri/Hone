@@ -84,7 +84,7 @@ import {
 } from "@/lib/machines/studio-devices";
 import { xcellRegistrationState } from "@/lib/machines/xcell-registration-gate";
 import { chartingRolloutFor, readChartingRollout, ROLLOUT_UNAVAILABLE_MESSAGE, xcellRouteDecision } from "@/lib/rollouts/charting-rollout";
-import { listStudioMachines, machinesByIds, recordBlockMachineIdentity } from "@/lib/machines/machine-queries";
+import { listRetiredUnitsOfProfile, listStudioMachines, machinesByIds, recordBlockMachineIdentity } from "@/lib/machines/machine-queries";
 import {
   assertSessionForClient,
   SessionLineageError,
@@ -282,6 +282,15 @@ const ANONYMOUS: MachineSetupContext = {
 };
 
 /** Everything the panel needs, derived entirely on the server. */
+async function retiredPurUnits(db: Parameters<typeof listRetiredUnitsOfProfile>[0], studioId: string) {
+  try {
+    const r = await listRetiredUnitsOfProfile(db, studioId, XCELL_PUR_PROFILE_ID);
+    return r.ok ? r.value : [];
+  } catch {
+    return [];
+  }
+}
+
 export async function loadMachineSetupContext(input: {
   /** Route values. Authorized below against the server-derived studio. */
   clientId: string;
@@ -498,6 +507,9 @@ export async function loadMachineSetupContext(input: {
     xcellSwitch = { available: false };
   }
   if (xcellSwitch.available && xcellSwitch.enabled && !legacyMachine) legacyMachine = legacyMachineOffer(catalogue);
+  // THE SWITCH OFF APPLIES TO A NEW AREA: history alone must not keep offering the existing xCell choice (and with it MultiPlex) once the owner
+  // switched the xCell off. An EXISTING area keeps the machine it was charted with, so this is for a new area only.
+  if (xcellSwitch.available && !xcellSwitch.enabled && !input.blockId) legacyMachine = null;
   // PLATFORM ROLLOUT. Only a studio that is OFFERED the legacy xCell choice has anything to gate, so the rollout and
   // the existing-block read happen ONLY then: a studio with no xCell history makes no rollout read and keeps its own reason, so a rollout
   // outage (or a deploy ahead of the migration) cannot degrade machine setup for every studio. An EXISTING MultiPlex block keeps its route
@@ -536,7 +548,9 @@ export async function loadMachineSetupContext(input: {
           switchState: xcellSwitch,
           legacyOffered: true,
           catalogue,
-          devices: inventory.devices,
+          // RETIRED xCell Pur UNITS ARE PASSED TOO (read apart, never offered): with only a retired unit the resolver must answer "retired", not
+          // "create one at the first save". A failed read of them adds nothing and is the same as before.
+          devices: [...inventory.devices, ...(await retiredPurUnits(db, scope.studioId))],
           publishedModes: published && published.ok ? published.value : null,
           clientLastUnitId,
         });
