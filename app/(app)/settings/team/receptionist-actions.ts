@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { failureCode } from "@/lib/logging/error-class";
 
 // An owner deactivates or reactivates a receptionist.
 //
@@ -33,7 +34,7 @@ export async function setReceptionistActiveAction(formData: FormData): Promise<v
   });
   if (error || (data !== "updated" && data !== "no_change")) {
     console.error(
-      `team_action_db_error:set_receptionist_active:${error?.code ?? (typeof data === "string" ? data : "unknown")}`,
+      `team_action_db_error:set_receptionist_active:${failureCode(error, data)}`,
     );
     if (data === "not_found") throw new Error("Receptionist not found in this studio.");
     if (data === "not_authorized") throw new Error("Only studio owners can manage the team.");
