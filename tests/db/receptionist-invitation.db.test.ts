@@ -266,3 +266,64 @@ describe("0218: everything else is unchanged", () => {
     expect(r.rows).toEqual([{ anon: false, auth: false, sr: true }]);
   });
 });
+
+describe("cancelling an invitation and removing a receptionist", () => {
+  it("a CANCELLED (revoked) receptionist invitation cannot be accepted, by either acceptance command, and creates nothing", async () => {
+    const u = await seedAuthUser("desk-revoked");
+    const inv = await invite(u.email, "receptionist");
+    // the Team page's cancel (revokeInvitationAction) sets exactly this status
+    await adminQuery(`update public.pending_invitations set status = 'revoked' where id = $1`, [inv]);
+    expect(await accept(u.id)).toMatchObject({ status: "no_invitation" });
+    const rec = await asUser(u.id, (q) => q(`select public.reconcile_my_pending_invitation() as r`));
+    expect(rec.rows[0].r).toMatchObject({ status: "no_invitation" });
+    expect(await inviteStatus(inv)).toBe("revoked");
+    expect(await memberships(u.id)).toEqual({ practitioners: 0, desk: 0 });
+  });
+
+  it("POSITIVE CONTROL: the same invitation, not cancelled, is accepted", async () => {
+    const u = await seedAuthUser("desk-notrevoked");
+    await invite(u.email, "receptionist");
+    expect(await accept(u.id)).toMatchObject({ status: "linked", role: "receptionist" });
+    expect(await memberships(u.id)).toEqual({ practitioners: 0, desk: 1 });
+  });
+
+  it("removal takes effect on the NEXT request of an already-open session: the membership read is empty and the desk projection refuses", async () => {
+    const u = await seedAuthUser("desk-removed");
+    await invite(u.email, "receptionist");
+    await accept(u.id);
+    const rowId = (await adminQuery(`select id from public.studio_receptionists where studio_id = $1 and user_id = $2`, [S.studioId, u.id])).rows[0].id as string;
+    const desk = (id: string) =>
+      asUser(id, async (q) => ({
+        rows: (await q(`select id from public.studio_receptionists where user_id = $1 and active`, [id])).rows.length,
+        cal: await q(`select count(*)::int as n from public.receptionist_calendar_v2($1, now(), now() + interval '7 days')`, [S.studioId]).then(
+          () => "ok",
+          (e: unknown) => `refused:${errCode(e)}`,
+        ),
+      }));
+    // BEFORE: the same identity (same JWT claims, as an open session carries) reads its row and the projection
+    expect(await desk(u.id)).toEqual({ rows: 1, cal: "ok" });
+    // the owner's Team page "Deactivate" (the 0216 command, run as the server action runs it)
+    const done = await adminQuery(`select public.set_studio_receptionist_active($1, $2, $3, false) as r`, [S.studioId, owner().practitionerId, rowId]);
+    expect(done.rows[0].r).toBe("updated");
+    // AFTER: no active row, and the desk projection is refused for the very next call
+    const after = await desk(u.id);
+    expect(after.rows).toBe(0);
+    expect(after.cal).toMatch(/^refused:/);
+  });
+
+  it("an owner of ANOTHER studio cannot remove this studio's receptionist", async () => {
+    const u = await seedAuthUser("desk-crossstudio");
+    await invite(u.email, "receptionist");
+    await accept(u.id);
+    const rowId = (await adminQuery(`select id from public.studio_receptionists where studio_id = $1 and user_id = $2`, [S.studioId, u.id])).rows[0].id as string;
+    const other = await seedSynthStudioB();
+    try {
+      const otherOwner = other.practitioners.find((p) => p.role === "owner")!;
+      const r = await adminQuery(`select public.set_studio_receptionist_active($1, $2, $3, false) as r`, [other.studioId, otherOwner.practitionerId, rowId]);
+      expect(r.rows[0].r).toBe("not_found");
+      expect(await memberships(u.id)).toEqual({ practitioners: 0, desk: 1 });
+    } finally {
+      await dropSynthStudio(other);
+    }
+  });
+});
