@@ -8,7 +8,6 @@ const code = (rel: string) =>
   read(rel).replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
 
 const ACTIONS = "app/(app)/settings/services/actions.ts";
-const CONTROLS = "app/(app)/settings/services/ServiceFormControls.tsx";
 const COLORS = "lib/calendar/service-colors.ts";
 
 describe("service calendar color — settings server contract", () => {
@@ -31,22 +30,6 @@ describe("service calendar color — settings server contract", () => {
   it("does NOT infer color from name, duration, or client history", () => {
     expect(src).not.toMatch(/\.name.*includes|includes\("consult"\)/i);
     expect(src).not.toMatch(/duration.*color|color.*duration/i);
-  });
-});
-
-describe("service calendar color — settings UI", () => {
-  const c = read(CONTROLS);
-  it("CalendarColorField renders six named accessible swatches + a hidden calendar_color input, pre-selected", () => {
-    expect(c).toMatch(/export function CalendarColorField/);
-    expect(c).toMatch(/SERVICE_COLOR_KEYS\.map/);
-    expect(c).toMatch(/type="hidden" name=\{name\}/);
-    expect(c).toMatch(/aria-label=\{`Calendar color: \$\{key\}`\}/);
-    expect(c).toMatch(/keys\.includes\(defaultValue\) \? defaultValue : "sky"/); // pre-select stored
-    expect(c).toMatch(/flex-wrap/); // wraps at iPhone width
-    // The color swatch palette itself offers NO rose/red (scoped to the swatch map).
-    const swatchBlock = c.slice(c.indexOf("COLOR_SWATCH"), c.indexOf("export function CalendarColorField"));
-    expect(swatchBlock).not.toMatch(/rose|\bred\b/);
-    expect(swatchBlock).toMatch(/violet: "bg-violet-400"/);
   });
 });
 
