@@ -22,7 +22,7 @@ import type {
   AppointmentWithPractitionerColor,
   RecurringBreakOccurrenceWithRule,
 } from "@/lib/booking/queries";
-import type { StudioTimedBlock } from "@/lib/types/database";
+import type { Service, StudioTimedBlock } from "@/lib/types/database";
 import { DayColumn } from "./DayColumn";
 import { resolveCalendarDayAvailability } from "@/lib/calendar/day-availability";
 import { buildCalendarReturnParams } from "./calendar-return";
@@ -43,6 +43,8 @@ import {
   weekdayLabel,
   weekRangeLabel,
 } from "./calendar-format";
+import { CalendarScrollArea } from "./CalendarScrollArea";
+import { firstVisibleHour } from "./first-visible-hour";
 import { CalendarToolbar } from "./CalendarToolbar";
 import { calendarLoadRange } from "@/lib/calendar/calendar-load-range";
 import { calendarFingerprint } from "@/lib/calendar/change-fingerprint";
@@ -66,6 +68,8 @@ import { buildTeamDay, teamColumnAllowsCreate, type TeamDayColumn } from "@/lib/
 import { blockScopeNamesFor, liveScopedRows } from "@/lib/calendar/block-scope";
 import { hasDayView, isInitialCalendarEntry, isTeamCalendar } from "./initial-view";
 import { teamDayGridTemplate } from "@/lib/calendar/team-day-layout";
+import { getCalendarRebookSource } from "@/lib/calendar/rebook-source";
+import { CalendarOpeningBooking } from "./CalendarOpeningPreview";
 import { CalendarSidebar } from "./CalendarSidebar";
 import { buildTimeInsights, insightPeriod } from "@/lib/calendar/time-insights";
 import { getBoundaryCrossingAppointments } from "@/lib/calendar/boundary-appointments";
@@ -87,7 +91,12 @@ type Search = Promise<{
   day?: string;
   // HON-48 sidebar: the practitioner selection (view-only; lib/calendar/practitioner-selection.ts).
   people?: string;
+  rebook?: string;
 }>;
+
+function findTimeServices(services: Service[]) {
+  return services.map(({ id, name, default_duration_minutes }) => ({ id, name, default_duration_minutes }));
+}
 
 function parseView(raw: string | undefined): "day" | "week" | "month" {
   return raw === "month" ? "month" : raw === "day" ? "day" : "week";
@@ -139,6 +148,7 @@ export default async function CalendarPage({
       isOwner,
       practitioner,
       dayParam: params.day,
+      rebookId: params.rebook,
       peopleParam: params.people,
       reviewAssignmentsHref,
     });
@@ -154,6 +164,7 @@ export default async function CalendarPage({
       // header carries the practitioner's last week context (or
       // defaults to today when missing).
       lastWeekParam: params.week,
+      rebookId: params.rebook,
       peopleParam: params.people,
       isOwner,
       ownFirstId: isOwner ? null : practitioner.id,
@@ -338,8 +349,11 @@ export default async function CalendarPage({
     isToday: date === today,
   }));
 
+  const rebookSource = await getCalendarRebookSource(studio.id, params.rebook);
+  const hasDayViewForStudio = hasDayView(studio.practitioner_capacity_enabled === true, activePractitioners);
   return (
     <CalendarSidebar
+      key={`${studio.id}:${practitioner.id}:${params.rebook ?? "calendar"}`}
       studioId={studio.id}
       viewerId={practitioner.id}
       view="week"
@@ -351,6 +365,8 @@ export default async function CalendarPage({
       selectionParam={sidebar.param}
       ownFirstId={isOwner ? null : practitioner.id}
       insights={insights}
+      findTime={{ services: findTimeServices(services), isOwner, timeFormat, hasDayView: hasDayViewForStudio,
+        rebookId: params.rebook, rebook: rebookSource, clientName: drawerClients.find((c) => c.id === rebookSource?.clientId)?.name }}
     >
     <div className="flex flex-col gap-6">
       {/* Google/Apple-style toolbar. Week-scoped step nav (Today/‹/›) is
@@ -364,7 +380,7 @@ export default async function CalendarPage({
         weekHref={withSelection(`/calendar?view=week&week=${weekStart}`, sidebar.param)}
         monthHref={withSelection(`/calendar?view=month&month=${firstOfMonthString(weekStart)}&week=${weekStart}`, sidebar.param)}
         dayHref={
-          hasDayView(studio.practitioner_capacity_enabled === true, activePractitioners)
+          hasDayViewForStudio
             ? withSelection(`/calendar?view=day&day=${initialSelectedDate}`, sidebar.param)
             : undefined
         }
@@ -375,6 +391,9 @@ export default async function CalendarPage({
         reviewAssignmentsHref={await reviewAssignmentsHref}
         hideStepNavOnMobile
       />
+      <CalendarOpeningBooking date={initialSelectedDate} clientId={rebookSource?.clientId} clients={drawerClients}
+        services={services} studioTimezone={studio.timezone} timeFormat={timeFormat} isOwner={isOwner}
+        capacityEnabled={studio.practitioner_capacity_enabled === true} viewer={{id: practitioner.id, name: practitioner.display_name}} />
       {days.some((date, dow) => availabilityForDate(date, dow).hoursVary) && (
         <p className="text-sm text-neutral-600">
           Hours vary by practitioner. Check availability for the practitioner you select when booking.
@@ -419,7 +438,7 @@ export default async function CalendarPage({
           horizontal scroll and no min-width forcing on desktop. Sticky day
           header + sticky time rail + the 1px=1min positioning math are
           unchanged. */}
-      <div className="hidden max-h-[calc(100dvh-13rem)] overflow-y-auto rounded-xl border border-neutral-200 bg-white shadow-sm md:block dark:border-neutral-800 dark:bg-neutral-950">
+      <CalendarScrollArea period={weekStart} firstHour={firstVisibleHour(mobileDays, studio.timezone)} className="hidden max-h-[calc(100dvh-13rem)] overflow-y-auto rounded-xl border border-neutral-200 bg-white shadow-sm md:block dark:border-neutral-800 dark:bg-neutral-950">
         <div>
           <div className="sticky top-0 z-20 grid grid-cols-[60px_repeat(7,_minmax(0,1fr))] border-b border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900">
             <div className="sticky left-0 z-30 border-r border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900" />
@@ -538,7 +557,7 @@ export default async function CalendarPage({
             ))}
           </div>
         </div>
-      </div>
+      </CalendarScrollArea>
 
       <p className="hidden text-xs text-neutral-500 md:block">
         Click an empty time slot to draft a new appointment, or drag to
@@ -572,6 +591,7 @@ async function renderMonthView(opts: {
   monthParam: string | undefined;
   lastWeekParam: string | undefined;
   peopleParam: string | undefined;
+  rebookId?: string;
   isOwner: boolean;
   /** The viewer's practitioner id when a first visit should open on their own column (null for an owner). */
   ownFirstId: string | null;
@@ -606,6 +626,7 @@ async function renderMonthView(opts: {
     timedBlocks,
     recurringOccurrences,
     activePractitioners,
+    services,
     boundaryCrossers,
   ] = await Promise.all([
     getAppointmentsForRange(
@@ -628,6 +649,7 @@ async function renderMonthView(opts: {
     ),
     // Loaded for every studio: the Day tab needs the active count even with capacity off.
     getPractitionersForStudio(studio.id),
+    getActiveServices(studio.id),
     // Time insights only: appointments that began before the period and run into it (same read,
     // same scope as the view; never drawn).
     getBoundaryCrossingAppointments(studio.id, startUtc),
@@ -691,8 +713,10 @@ async function renderMonthView(opts: {
     lastWeekParam ? `&week=${lastWeekParam}` : ""
   }`;
 
+  const hasDayViewForStudio = hasDayView(studio.practitioner_capacity_enabled === true, activePractitioners);
   return (
     <CalendarSidebar
+      key={`${studio.id}:${viewerId}:${opts.rebookId ?? "calendar"}`}
       studioId={studio.id}
       viewerId={viewerId}
       view="month"
@@ -704,6 +728,8 @@ async function renderMonthView(opts: {
       selectionParam={sidebar.param}
       ownFirstId={ownFirstId}
       insights={insights}
+      findTime={{ services: findTimeServices(services), isOwner, timeFormat, hasDayView: hasDayViewForStudio,
+        rebookId: opts.rebookId, rebook: await getCalendarRebookSource(studio.id, opts.rebookId) }}
     >
     <div className="flex flex-col gap-6">
       {/* Same Google/Apple-style toolbar as the week view, for coherent
@@ -717,7 +743,7 @@ async function renderMonthView(opts: {
         weekHref={withSelection(lastWeekHref, sidebar.param)}
         monthHref={withSelection(`/calendar?view=month&month=${monthAnchor}`, sidebar.param)}
         dayHref={
-          hasDayView(studio.practitioner_capacity_enabled === true, activePractitioners)
+          hasDayViewForStudio
             ? withSelection(`/calendar?view=day&day=${today >= monthAnchor && today < monthEnd ? today : monthAnchor}`, sidebar.param)
             : undefined
         }
@@ -778,6 +804,7 @@ async function renderTeamDayView(opts: {
   practitioner: { id: string; display_name: string };
   dayParam: string | undefined;
   peopleParam: string | undefined;
+  rebookId?: string;
   reviewAssignmentsHref: Promise<string | undefined>;
 }) {
   const { studio, timeFormat, today, isOwner, practitioner, peopleParam, reviewAssignmentsHref } = opts;
@@ -876,8 +903,10 @@ async function renderTeamDayView(opts: {
   const blockScopeNames = blockScopeNamesFor(capacityEnabled, activePractitioners);
   const gridColumns = teamDayGridTemplate(columns.length);
 
+  const rebookSource = await getCalendarRebookSource(studio.id, opts.rebookId);
   return (
     <CalendarSidebar
+      key={`${studio.id}:${practitioner.id}:${opts.rebookId ?? "calendar"}`}
       studioId={studio.id}
       viewerId={practitioner.id}
       view="day"
@@ -889,6 +918,8 @@ async function renderTeamDayView(opts: {
       selectionParam={sidebar.param}
       ownFirstId={isOwner ? null : practitioner.id}
       insights={insights}
+      findTime={{ services: findTimeServices(services), isOwner, timeFormat, hasDayView: true,
+        rebookId: opts.rebookId, rebook: rebookSource, clientName: drawerClients.find((c) => c.id === rebookSource?.clientId)?.name }}
     >
     <div className="flex flex-col gap-6">
       <CalendarToolbar
@@ -906,6 +937,9 @@ async function renderTeamDayView(opts: {
         reviewAssignmentsHref={await reviewAssignmentsHref}
         hideStepNavOnMobile={false}
       />
+      <CalendarOpeningBooking date={date} clientId={rebookSource?.clientId} clients={drawerClients}
+        services={services} studioTimezone={studio.timezone} timeFormat={timeFormat} isOwner={isOwner}
+        capacityEnabled={capacityEnabled} viewer={{id: practitioner.id, name: practitioner.display_name}} />
       {notWorking.length > 0 && (
         <p data-testid="team-day-not-working" className="text-sm text-neutral-600 dark:text-neutral-400">
           Not working today: {notWorking.map((p) => p.name).join(", ")}
@@ -916,7 +950,9 @@ async function renderTeamDayView(opts: {
           readable minimum width, so on a phone the columns scroll sideways
           inside the box (never the page) under a sticky header row and a
           sticky time rail. Positioning is the week grid's 1px = 1min. */}
-      <div
+      <CalendarScrollArea
+        period={date}
+        firstHour={firstVisibleHour(columns, studio.timezone)}
         data-testid="team-day-view"
         data-date={date}
         data-column-count={columns.length}
@@ -1005,7 +1041,7 @@ async function renderTeamDayView(opts: {
           </div>
         </div>
         )}
-      </div>
+      </CalendarScrollArea>
 
       <p className="hidden text-xs text-neutral-500 md:block">
         Click an empty time in a practitioner&apos;s column to book them, or drag
@@ -1029,8 +1065,7 @@ function EmptySelection() {
   );
 }
 
-// The practitioner's colour lives on the header bar, with the name always
-// printed on it, so colour is never the only way to tell columns apart.
+// Keep studio-assigned identity colours on the initials so the schedule stays readable across a full team.
 function TeamDayColumnHeader({
   column,
   timeFormat,
@@ -1054,19 +1089,19 @@ function TeamDayColumnHeader({
       data-testid="team-day-column-header"
       data-practitioner-id={column.practitionerId ?? ""}
       data-color={column.colorLabel}
-      className={`min-w-0 border-l border-neutral-300 px-3 py-2 dark:border-neutral-700 ${column.headerBgClass} ${column.headerTextClass}`}
+      className="min-w-0 border-l border-neutral-200 bg-white px-3 py-2.5 text-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
     >
       <div className="flex min-w-0 items-center gap-2">
         <span
           aria-hidden="true"
           data-testid="team-day-column-avatar"
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/25 text-[11px] font-semibold"
+          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ${column.headerBgClass} ${column.headerTextClass}`}
         >
           {practitionerInitials(column.name)}
         </span>
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold">{column.name}</div>
-          <div className="truncate text-[11px] font-medium opacity-90">{hours}</div>
+          <div className="truncate text-xs text-neutral-600 dark:text-neutral-400">{hours}</div>
         </div>
       </div>
     </div>

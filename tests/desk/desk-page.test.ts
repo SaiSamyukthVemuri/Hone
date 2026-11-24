@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
-// What the page actually produces: no client name of any kind in the HTML, and no client component at all that could
-// carry one in its props. Synthetic fixtures.
+// What the page actually produces: no client name of any kind in the HTML, and no schedule identity in the initial booking
+// controls. Synthetic fixtures.
 
 const STORED = "Zeta Stored-Surname";
 const PREFERRED = "Preferred-Zeta";
@@ -67,9 +67,11 @@ describe("the desk schedule page", () => {
     expect(await html()).toMatch(/No appointments in this window/);
   });
 
-  it("offers no link, form, input or search", async () => {
+  it("offers an on-demand booking entry without preloading a client search", async () => {
     state.rows = [{ ...base, display_name: STORED, name_on_file: true }];
-    expect(await html()).not.toMatch(/<(a|form|input|button|select|textarea)\b/);
+    const out = await html();
+    expect(out).toMatch(/>Find time<\/button>/);
+    expect(out).not.toMatch(/<(a|form|input|select|textarea)\b/);
   });
 
   it("a saturated response shows an explicit incomplete state and no partial list; just below the cap renders normally", async () => {

@@ -18,7 +18,8 @@ Hone collapses that into one practice surface where the calendar is informed by 
 |---|---|
 | `/financials/analytics/waitlist` | Owner-only invitation outcomes, provider acceptance, current wait times and consultation capacity. See [Waitlist Analytics](./features/waitlist-analytics.md) for metric definitions and unavailable forecasts. |
 | `/dashboard` | See today's appointments and a needs-attention block (intakes awaiting review, payments readiness). |
-| `/calendar` and `/calendar/[id]` | Day / week view; drag to book; drag to block; mark complete / no-show; record session blocks (treatment area + duration + settings + notes). |
+| `/calendar` and `/calendar/[id]` | Browse day, week and month schedules. Find a service opening by date and practitioner, or start a rebooking from appointment details. Drag to book; drag to block; mark complete / no-show; record session blocks (treatment area + duration + settings + notes). |
+| `/desk` (enabled receptionist desk) | Find a service opening, identify an existing client by preferred name or masked contact hint, and confirm the booking. |
 | `/clients` and `/clients/[id]` | Client list, pinned notes, tags, allergies, Fitzpatrick type, intake history, session history. |
 | Treatment plans (`/clients/[id]`) | Multi-area plans with timeline. Status: in-progress, paused. |
 | Postcare email send | One-click send from session detail. |

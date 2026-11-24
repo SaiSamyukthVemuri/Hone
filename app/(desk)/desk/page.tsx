@@ -2,11 +2,13 @@ import { createClient } from "@/lib/supabase/server";
 import { requireReceptionistWithStudio } from "@/lib/desk/guard";
 import { DESK_NAME_ON_FILE, DeskScheduleIncompleteError, readDeskSchedule, type DeskRpc, type DeskScheduleRow } from "@/lib/desk/read";
 import { formatStudioDateTime, formatStudioTime } from "@/lib/desk/time";
+import { DeskBooking } from "./DeskBooking";
 import { ClockFallbackNotice } from "./ClockFallbackNotice";
 
 // The desk schedule, read only: when, which service, which practitioner, and for every client the words "Name on
 // file". No client name of any kind is shown. No notes, prices, payment state, status reasons, intake, consent or contact.
-// Nothing links anywhere and nothing here writes. This shows less than the database could return; it is a display
+// The schedule list renders only the closed projection. DeskBooking separately handles explicit booking requests.
+// This shows less than the database could return; it is a display
 // rule, not a privacy control (see lib/desk/read.ts).
 //
 // The window is the next seven days from now and the last twelve hours, in the STUDIO's clock.
@@ -34,8 +36,9 @@ export default async function DeskSchedulePage() {
     <div className="flex flex-col gap-4">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Schedule</h1>
-        <p className="mt-1 text-sm text-neutral-500">The next seven days. Client names are not shown on this desk yet; every client reads &ldquo;{DESK_NAME_ON_FILE}&rdquo;.</p>
+        <p className="mt-1 text-sm text-neutral-500">The next seven days. Clients appear as &ldquo;{DESK_NAME_ON_FILE}&rdquo; in the schedule.</p>
       </div>
+      <DeskBooking key={identity.receptionistId + identity.studioId} studioId={identity.studioId} />
       {rows !== null && <ClockFallbackNotice timezones={rows.map((r) => r.studioTimezone)} />}
       {incomplete ? (
         <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-6 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">

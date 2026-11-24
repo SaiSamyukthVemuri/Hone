@@ -12,6 +12,7 @@
 // so clicks land on event cards first and only fall through to
 // the overlay on truly empty space.
 
+import { CalendarOpeningMarker } from "./CalendarOpeningPreview";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { appointmentLanes, calendarCollisionGroups, timedBlockCollisionId, calendarGroupNeedsChooser } from "@/lib/calendar/appointment-lanes";
 import type { Service, StudioTimedBlock } from "@/lib/types/database";
@@ -678,6 +679,8 @@ export function DayColumn({
       </button>
       </>)}
 
+      {(!teamColumn || teamColumn.allowCreate) && <CalendarOpeningMarker date={date} practitionerId={teamColumn?.practitionerId} timeFormat={timeFormat} />}
+
       {/* Live drag-selection overlay. Translucent block + time-range
           label that tracks the snapped start/end as the practitioner
           drags. Sits ABOVE the empty-cell button but BELOW the
@@ -888,14 +891,16 @@ export function DayColumn({
             // fallback; palette excludes rose to keep allergy/EpiPen
             // red unique. Practitioner color is a separate swatch
             // (PractitionerTag), never the card fill.
-            className={`hidden pointer-fine:block absolute left-1 right-1 pointer-fine:left-[var(--appointment-lane-left)] pointer-fine:right-[var(--appointment-lane-right)] z-10 overflow-hidden rounded-lg text-left border-l-4 ${appointmentCardClasses(a.service)} px-2 py-1 text-[11px] leading-tight shadow-sm transition hover:brightness-[0.97] dark:hover:brightness-110 ${terminal ? "opacity-60" : ""} ${noShow ? NO_SHOW_CARD_CLASS : ""}`}
+            className={`hidden pointer-fine:block absolute left-1 right-1 pointer-fine:left-[var(--appointment-lane-left)] pointer-fine:right-[var(--appointment-lane-right)] z-10 overflow-hidden rounded-lg text-left border-l-4 ${appointmentCardClasses(a.service)} px-2 py-1 text-[11px] leading-tight shadow-sm transition hover:brightness-[0.97] dark:hover:brightness-110 ${terminal ? "saturate-75" : ""} ${noShow ? NO_SHOW_CARD_CLASS : ""}`}
           >
             {twoLine ? (
-              // Hierarchy (Chloe / Fresha-readability): time range, then the
-              // bold client name, then service/modality on its own line.
+              // Client first, with the no-show cue retained even in narrow lanes.
               <>
-                <div className="flex min-w-0 items-center gap-1 text-[10px] font-semibold tabular-nums opacity-80">
+                <div className="flex min-w-0 gap-1 font-semibold">
                   {noShow && <span className="shrink-0">No-show ·</span>}
+                  <span className="truncate">{clientName}</span>
+                </div>
+                <div className="flex min-w-0 items-center gap-1 text-[10px] font-semibold tabular-nums opacity-80">
                   <span className="truncate">
                     {timeRange}
                     {trailingTag ? ` · ${trailingTag}` : ""}
@@ -908,7 +913,7 @@ export function DayColumn({
                     />
                   )}
                 </div>
-                <div className="truncate font-semibold">{clientName}</div>
+
                 {practitionerIdentity && practitionerRow && (
                   <PractitionerTag
                     identity={practitionerIdentity}
@@ -958,7 +963,7 @@ export function DayColumn({
         const a = members[0];
         return <button key={group.ids.join(":")} type="button"
           style={{ top: group.top, height: group.height }}
-          className={`@container absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 px-2 py-1 text-left text-xs ${members.length === 1 ? appointmentCardClasses(a.service) : "border-neutral-500 bg-neutral-100 text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100"} ${members.length === 1 && appointmentDisplayStatus(a.status, a.ends_at) !== "upcoming" ? "opacity-60" : ""} ${members.length === 1 && appointmentDisplayStatus(a.status, a.ends_at) === "no_show" ? NO_SHOW_CARD_CLASS : ""}`}
+          className={`@container absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 px-2 py-1 text-left text-xs ${members.length === 1 ? appointmentCardClasses(a.service) : "border-neutral-500 bg-neutral-100 text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100"} ${members.length === 1 && appointmentDisplayStatus(a.status, a.ends_at) !== "upcoming" ? "saturate-75" : ""} ${members.length === 1 && appointmentDisplayStatus(a.status, a.ends_at) === "no_show" ? NO_SHOW_CARD_CLASS : ""}`}
           aria-label={members.length > 1 ? `Choose from ${members.length} appointments` : undefined}
           onClick={(event) => {
             event.stopPropagation();

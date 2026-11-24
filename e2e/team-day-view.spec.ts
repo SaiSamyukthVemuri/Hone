@@ -467,3 +467,68 @@ test.describe("F1: quick block scope", () => {
     }
   });
 });
+
+test("finds a colleague's opening on another day and books the exact previewed slot", async ({ page }) => {
+  const target = byKey("bo");
+  const { clientId } = await seedE2eClient(seed);
+  const bookingClient = await clientName(clientId);
+  const [{ id: service }] = await sql<{ id: string }>(
+    `insert into public.services (studio_id, name, modality, default_duration_minutes, price_cents, active)
+     values ($1, 'Synthetic 45-minute session', 'electrolysis', 45, 0, true) returning id`,
+    [seed.studioId],
+  );
+  await seedServiceEligibility(seed.studioId, service, target.id);
+  const weekday = new Date(nextDay + "T12:00:00Z").getUTCDay();
+  await seedPractitionerDefault(seed.studioId, target.id, weekday, true, "13:00", "13:45");
+  await loginAsOwner(page, seed);
+  async function previewOpening(page: Page) {
+    await page.goto(`/calendar?view=day&day=${day}`);
+    await expect(page.getByTestId("team-day-column-header")).toHaveCount(5);
+    await page.getByRole("button", { name: "Find time", exact: true }).click();
+    const sidebar = page.getByTestId("calendar-sidebar");
+    await sidebar.getByRole("combobox", { name: "Service", exact: true }).selectOption(service);
+    await sidebar.getByRole("combobox", { name: "Practitioner", exact: true }).selectOption(target.id);
+    await sidebar.getByLabel("From", { exact: true }).fill(nextDay);
+    await sidebar.getByLabel("Through", { exact: true }).fill(nextDay);
+    await sidebar.getByRole("button", { name: "Search availability" }).click();
+    await sidebar.getByRole("button", { name: new RegExp(target.name) }).click();
+
+    await expect(page).toHaveURL(url => url.searchParams.get("day") === nextDay);
+    const preview = column(page, target.id).getByRole("button", { name: new RegExp(`Book.*${target.name}`, "i") });
+    await expect(preview).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "New appointment" })).toHaveCount(0);
+    return preview;
+  }
+
+  const otherPage = await page.context().newPage();
+  const [preview, stalePreview] = await Promise.all([previewOpening(page), previewOpening(otherPage)]);
+  const drawer = page.getByRole("dialog", { name: "New appointment" });
+  await preview.click();
+  await expect(drawer).toBeVisible();
+  await drawer.getByPlaceholder("Find existing client").fill(bookingClient);
+  await drawer.getByRole("button", { name: bookingClient }).click();
+  await expect(drawer.getByRole("combobox").first()).toHaveValue(service);
+  await expect(drawer.getByLabel("Practitioner")).toHaveValue(target.id);
+
+  const appointments = () => sql<{ practitioner_id: string; service_id: string; local_start: string; duration_minutes: number }>(
+    "select practitioner_id, service_id, to_char(starts_at at time zone $3, 'YYYY-MM-DD HH24:MI') as local_start, duration_minutes from public.appointments where studio_id = $1 and client_id = $2",
+    [seed.studioId, clientId, TZ],
+  );
+  expect(await appointments()).toEqual([]);
+  await drawer.getByRole("button", { name: "Book appointment", exact: true }).click();
+  await expect(drawer).toBeHidden();
+  await expect.poll(appointments).toEqual([{
+    practitioner_id: target.id, service_id: service,
+    local_start: nextDay + " 13:00", duration_minutes: 45,
+  }]);
+
+  // Another staff member had previewed this same opening before confirmation.
+  await stalePreview.click();
+  const staleDrawer = otherPage.getByRole("dialog", { name: "New appointment" });
+  await expect(staleDrawer.getByText(/opening is no longer available/i)).toBeVisible();
+  await staleDrawer.getByPlaceholder("Find existing client").fill(bookingClient);
+  await staleDrawer.getByRole("button", { name: bookingClient }).click();
+  await expect(staleDrawer.getByRole("button", { name: "Book appointment", exact: true })).toBeDisabled();
+  expect(await appointments()).toHaveLength(1);
+  await otherPage.close();
+});

@@ -33,6 +33,8 @@ export const CLASSIFICATION: Record<string, { cls: Cls; anon?: boolean; reason: 
   "public.my_pending_invitation/0": { cls: "invite", reason: "Identity-only by design (F1): acts on the caller's own verified email and pending invitation; ruled leave-as-is by Privacy." },
   "public.owner_delivery_concerns/1": { cls: "gated", reason: "Gated on an active practitioner row or ownership of the studio the data belongs to, before any data access; refuses a receptionist." },
   "public.owner_delivery_incidents/1": { cls: "gated", reason: "Gated on an active practitioner row or ownership of the studio the data belongs to, before any data access; refuses a receptionist." },
+  "public.receptionist_book_opening/6": { cls: "desk", reason: "An active desk member confirms a current offer in their studio through the governed create command." },
+  "public.receptionist_find_openings/6": { cls: "desk", reason: "An active desk member can read bounded, future service openings for their studio." },
   "public.receptionist_booking_options/1": { cls: "desk", reason: "Desk function: gated by receptionist_actor_id for the studio; answers only this studio's active receptionist." },
   "public.receptionist_calendar_closures/3": { cls: "desk", reason: "Desk function: gated by receptionist_actor_id for the studio; answers only this studio's active receptionist." },
   "public.receptionist_calendar_v2/3": { cls: "desk", reason: "Desk function: gated by receptionist_actor_id for the studio; answers only this studio's active receptionist." },

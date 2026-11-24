@@ -17,6 +17,20 @@ The composite "is this slot available?" answer is computed by `lib/booking/queri
 
 Day and week view. Click + drag opens the new chooser (PR #139) "Book appointment" or "Block time". Bare click opens Quick-Book (PR #128).
 
+### Browse and find time
+
+Browse keeps the month picker, practitioner selection and booked-time summary together. Day and Week open near the earliest configured working hour or earlier visible event. Scroll up to see earlier hours.
+
+In Find time, choose an active service and search dates in the studio’s timezone. The service supplies the standard bookable duration. Owners in practitioner-capacity studios can compare eligible practitioners. Members search their own schedule. Choosing an opening previews it in the calendar. Book this time opens the existing booking drawer, which checks availability again before confirmation.
+
+Rebook this client on an appointment starts a search from its client, service and practitioner. Current service settings and staff permissions still apply. Selecting an opening creates no appointment and sends no message.
+
+### Receptionist booking (`/desk`)
+
+An active receptionist in an enabled studio can open **Find time**, choose a service, search across eligible practitioners, and book for an existing client. The picker shows the preferred name or **Name on file** and a masked contact hint. A booking is attributed to the receptionist. Confirmation checks the selected studio, active client, service, practitioner and exact opening again before writing. If another booking takes the time, search for a new opening. If the outcome is uncertain, check the schedule before retrying.
+
+The success message confirms the booking was saved. This desk action sends no immediate booking confirmation email or SMS. Existing reminder workflows still follow studio settings. Search covers practitioner or studio-wide availability according to the studio’s capacity settings. Shared rooms and machines are outside the reservation model.
+
 ### Drag-to-book (PR #128)
 
 Calendar drag selects a time range, opens `QuickBookDrawer`, pre-fills the start time + duration. The `autoOverrideRef` pattern lets the practitioner soft-override an inferred service duration without the form resetting on every keystroke. Submit creates the appointment via `bookAppointmentForClientAction`.

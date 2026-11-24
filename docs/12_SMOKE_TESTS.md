@@ -532,6 +532,12 @@ Expected end state:
    - "Follow-up okay" badge.
    - "Cancelled N minutes after booking" if `cancelled_at - created_at <= 15 minutes`.
 
+## Find time in a team calendar
+
+In a test studio with practitioner capacity enabled, open Calendar as the owner. Search Find time for a service that two practitioners offer. Select an opening on another day and confirm that the calendar shows its practitioner and local start time. Open the booking drawer and compare its service, practitioner and time with the result. Close the drawer and confirm no appointment was created. From an existing appointment, choose Rebook this client and repeat, checking the client prefill. Repeat as a practitioner member and verify the available times belong to that member.
+
+On an enabled **test** receptionist desk, search the same date range and select a service, practitioner and existing test client. Verify the client picker shows the preferred name or Name on file with a masked contact hint. Previewing an opening must leave the schedule unchanged. Confirm once and check the appointment time and practitioner on the schedule. Use a second tab to check that a taken opening cannot be booked again.
+
 ## 7. Calendar block smoke (PR #139 + #140)
 
 1. As an active non-owner practitioner (if available; otherwise the owner), open `/calendar`.

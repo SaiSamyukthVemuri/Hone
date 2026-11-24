@@ -30,13 +30,17 @@ describe("the desk surface", () => {
     }
   });
 
-  it("has no client component, so no data is ever passed to client props", () => {
-    for (const f of files) expect(/^\s*["']use client["']/m.test(src(f)), f).toBe(false);
+  it("keeps interactive state inside desk booking and passes it only the current studio id", () => {
+    expect(files.filter(f => /^\s*["']use client["']/m.test(src(f)))).toEqual(["app/(desk)/desk/DeskBooking.tsx"]);
+    const page = stripComments(src("app/(desk)/desk/page.tsx"));
+    expect(page.match(/<DeskBooking\b[^>]*\/>/g)).toEqual([
+      "<DeskBooking key={identity.receptionistId + identity.studioId} studioId={identity.studioId} />",
+    ]);
   });
 
-  it("writes nothing; its one server action only sets the selected-studio cookie", () => {
+  it("limits server actions to the chooser and the receptionist booking workflow", () => {
     const ACTION = "lib/desk/choose-actions.ts";
-    expect(files.filter((f) => /^\s*["']use server["']/m.test(stripComments(src(f))))).toEqual([ACTION]);
+    expect(files.filter((f) => /^\s*["']use server["']/m.test(stripComments(src(f)))).sort()).toEqual(["app/(desk)/desk/booking-actions.ts", ACTION]);
     const a = stripComments(src(ACTION));
     expect((a.match(/export async function/g) ?? []).length).toBe(1);
     expect(a).toMatch(/setSelectedStudioId\(/);
@@ -50,11 +54,17 @@ describe("the desk surface", () => {
     }
   });
 
-  it("reads tables only to find the signed-in user's own receptionist row, and calls one database function", () => {
+  it("reads tables only to find the signed-in user's own receptionist row, with desk-specific RPCs for scheduling", () => {
     const fromCalls = files.flatMap((f) => [...stripComments(src(f)).matchAll(/\.from\(\s*["']([^"']+)["']/g)].map((m) => `${f}:${m[1]}`));
     expect(fromCalls.sort()).toEqual(["lib/desk/entry.ts:studio_receptionists", "lib/desk/guard.ts:studio_receptionists"]);
     const rpcs = files.flatMap((f) => [...stripComments(src(f)).matchAll(/rpc(?:<[^>]*>)?\(\s*["']([^"']+)["']/g)].map((m) => m[1]));
-    expect(rpcs).toEqual(["receptionist_calendar_v2"]);
+    expect(rpcs.sort()).toEqual([
+      "receptionist_book_opening", "receptionist_booking_options", "receptionist_calendar_v2",
+      "receptionist_client_contacts_v2", "receptionist_find_openings", "receptionist_studio_timezone",
+    ].sort());
+    for (const f of files) {
+      expect(stripComments(src(f)), f).not.toMatch(/createAdminClient|@\/lib\/supabase\/admin/);
+    }
   });
 
   it("calls the guard in the layout and in every page (a layout's redirect does not stop its page)", () => {
@@ -73,7 +83,7 @@ describe("the desk surface", () => {
     }
   });
 
-  it("prefetches no link and carries no search or sort of client data", () => {
+  it("keeps booking searches out of URLs, and prefetches no links", () => {
     for (const f of files.filter((x) => x.endsWith(".tsx"))) {
       const s = stripComments(src(f));
       for (const m of s.matchAll(/<Link\b[^>]*>/g)) expect(m[0], `${f}: ${m[0]}`).toContain("prefetch={false}");
@@ -90,9 +100,12 @@ describe("the desk surface", () => {
   it("lists exactly the files this slice ships, so an addition is a decision", () => {
     expect(files.map((f) => relative(ROOT, join(ROOT, f))).sort()).toEqual([
       "app/(desk)/desk/ClockFallbackNotice.tsx",
+      "app/(desk)/desk/DeskBooking.tsx",
+      "app/(desk)/desk/booking-actions.ts",
       "app/(desk)/desk/page.tsx",
       "app/(desk)/layout.tsx",
       "app/(desk-choose)/desk/choose/page.tsx",
+      "lib/desk/booking.ts",
       "lib/desk/choose-actions.ts",
       "lib/desk/entry.ts",
       "lib/desk/flag.ts",
