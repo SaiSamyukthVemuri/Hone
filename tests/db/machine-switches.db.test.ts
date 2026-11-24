@@ -149,6 +149,28 @@ describe("the seed: once, by a trigger on studios, never re-run", () => {
     await unitOf(S.studioId, PUR, 1, false);
     expect((await models(S.studioId))[PUR], "xCell Pur is the owner's switch alone").toBe(false);
   });
+
+  it("a studio whose ONLY Senior unit was retired before the migration seeded that model OFF with no decision on record: a replacement unit turns it on; an owner's recorded choice is still never overridden", async () => {
+    const S = await seedOn("sw-retired-only");
+    // The pre-migration shape: a retired Senior unit, the model seeded off, no event. The trigger is disabled only to build that state.
+    await adminQuery(`alter table public.studio_machines disable trigger studio_machines_enable_model`);
+    try {
+      const old = await unitOf(S.studioId, SEN, 3, false);
+      await adminQuery(`update public.studio_machines set retired_at = now() where id = $1`, [old]);
+    } finally {
+      await adminQuery(`alter table public.studio_machines enable trigger studio_machines_enable_model`);
+    }
+    expect((await models(S.studioId))[SEN]).toBe(false);
+    expect(await eventCount(S.studioId, "model_set")).toBe(0);
+    await unitOf(S.studioId, SEN, 3, false);
+    expect((await models(S.studioId))[SEN], "the replacement unit turns the model on").toBe(true);
+    expect(await eventCount(S.studioId, "model_set")).toBe(1);
+    // The owner then switches it off: that is a recorded choice, and a further unit never overrides it, retired predecessors or not.
+    expect(await setModel(S.userId, S.studioId, SEN, false)).toBe("changed");
+    await unitOf(S.studioId, SEN, 3, false);
+    expect((await models(S.studioId))[SEN]).toBe(false);
+    expect(await eventCount(S.studioId, "model_set")).toBe(2);
+  });
 });
 
 describe("owner commands", () => {
