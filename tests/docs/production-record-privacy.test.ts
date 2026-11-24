@@ -29,12 +29,13 @@ const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 /** The ways a record line can leak. Pure, so the controls below can drive it with invented fixtures. */
 export function privacyFindings(text: string, hashes: Record<string, string>, extraLiterals: string[] = []): string[] {
   const found: string[] = [];
-  for (const m of text.matchAll(/(?<![A-Za-z0-9_-])[a-z0-9][a-z0-9-]*[a-z0-9]|[a-z0-9]/gi)) {
+  for (const m of text.matchAll(/[a-z0-9_-]+/gi)) {
     const token = m[0].toLowerCase();
     const label = hashes[sha(token)];
     if (label) found.push(label);
     // A hyphenated token is also checked part by part, so a name inside a longer identifier is still found.
-    if (token.includes("-")) for (const part of token.split("-")) if (hashes[sha(part)]) found.push(hashes[sha(part)]);
+    // (also split on digits and underscores, so a name glued to a number or a constant is still found)
+    for (const part of token.split(/[-_0-9]+/)) if (part !== token && part && hashes[sha(part)]) found.push(hashes[sha(part)]);
   }
   for (const m of text.matchAll(/(?<![A-Za-z0-9])[a-z]{20}(?![A-Za-z0-9])/g)) {
     const vowels = [...m[0]].filter((c) => "aeiou".includes(c)).length;
@@ -86,6 +87,7 @@ describe("the tracked production record carries no tenant name, project referenc
     expect(privacyFindings("The fixturetenant studio", fixture)).toEqual(["tenant name (fixture)"]);
     expect(privacyFindings("slug fixture-tenant-slug here", fixture)).toContain("tenant slug (fixture)");
     expect(privacyFindings("FixtureTenant is a name", fixture)).toEqual(["tenant name (fixture)"]); // case-insensitive
+    expect(privacyFindings("slot Fixturetenant0247 and FIXTURETENANT_NOW", fixture)).toEqual(["tenant name (fixture)", "tenant name (fixture)"]); // glued to a number or constant
     expect(privacyFindings("ref `qwrtypsdfghjklzxcvbn` here", {})).toEqual(["a project-reference-shaped string"]);
     expect(privacyFindings("see /srv/anything/at/all", {})).toEqual(["a private host path"]);
     expect(privacyFindings("see `/home/someone/x`", {})).toEqual(["a private host path"]);

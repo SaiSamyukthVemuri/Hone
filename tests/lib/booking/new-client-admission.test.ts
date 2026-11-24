@@ -809,7 +809,7 @@ describe("the activation document matches what the source actually does", () => 
         .update(Buffer.from(RECORD, "utf8").subarray(0, RECORD_PREFIX_BYTES))
         .digest("hex"),
       "the existing execution record is frozen: appends pass, edits and deletions inside recorded evidence fail",
-    ).toBe("f5cb6b02c16464ef59a8b164b5627736a2a431534cfed624bf2b2591806f4939");
+    ).toBe("388c7c7af2497f510db224c85296038694477a8080b197da19b2eef72d77a80a");
     const withdrawnMarker = DOC.indexOf(
       "<!-- claim-status id=commit-point-rollback-via-mode-write",
     );

@@ -214,7 +214,7 @@ every studio. Read this table precisely — *deployed* is not *enabled*.
 | Google Calendar | B2.3-c3 — cron schedule registration (PR #430) | Merged | no migration | Deployed | **3 daily crons registered in `vercel.json`** — `materialize-recurring-breaks` 08:00 (not a calendar cron), plus the two calendar crons `calendar-reconcile` 09:00 and `calendar-sync` 09:30 | ⚠️ they run and find no work | — | `vercel.json` | Registration did **not** activate sync — the flags do that |
 | Google Calendar | **Real outbound event creation** | Merged | ✅ | Deployed | currently **off everywhere** | ✅ **exactly ONE**, on the controlled test studio, 2026-07-18 | — | outbox row `op_type='event.create'`, `status='done'`, `attempts=1`; `calendar_event_links` row `sync_status='synced'`, `last_sync_direction='hone_to_google'` | Exercised once under control, then returned to dormant. **The pilot studio has never had an event synced** |
 | Google Calendar | Inbound busy import / two-way edits | Designed | — | **not built** | — | ❌ | — | — | Needs a whole-studio-owner-block decision before Phase C |
-| Google Calendar | the pilot studio enablement | — | — | — | **not connected** | ❌ | — | `calendar_connections` holds no the pilot studio row | Needs separate authorization |
+| Google Calendar | the pilot studio enablement | — | — | — | **not connected** | ❌ | — | `calendar_connections` holds no row for the pilot studio | Needs separate authorization |
 
 **Overall Google Calendar posture: DB applied + deployed + production-exercised once +
 currently dormant.** Do not describe it as active, syncing, or enabled.
