@@ -462,20 +462,58 @@ describe("apply_block_machine_identity: the xCell Pur model with a legacy-column
     await identity(legacy.blockId, S.studioId, "dectro-apilus:xcell", null, null);
   });
 
-  it("an OLD block with no identity that already carries legacy xCell content is re-saved as the legacy xCell while xCell is OFF; an EMPTY area choosing it is still refused", async () => {
+  it("an OLD block (created before the xCell was switched off) holding legacy READINGS is re-saved as the legacy xCell while xCell is OFF, for each reading column, including the older intensity and duration columns", async () => {
     const S = await seedOn("sw-id-oldlegacy");
-    const old = await seedSession(S);
-    await adminTx(async (q) => { await q(`set local session_replication_role = replica`); await q(`update public.session_blocks set mode = 'thermolysis', machine_frequency = '13.56 MHz' where id = $1`, [old.blockId]); });
-    const empty = await seedSession(S);
+    const cols = ["thermolysis_intensity_percent", "intensity", "duration_seconds", "galvanic_intensity_percent"];
+    const blocks: string[] = [];
+    for (const c of cols) {
+      const s = await seedSession(S);
+      await adminQuery(`insert into public.electrolysis_entries (session_id, block_id, area, mode, ${c}) values ($1,$2,'Upper lip','thermo',10)`, [s.sessionId, s.blockId]);
+      blocks.push(s.blockId);
+    }
     await setModel(S.userId, S.studioId, PUR, false);
-    await identity(old.blockId, S.studioId, "dectro-apilus:xcell", null, null);
-    expect((await blockIdentity(old.blockId)).machine_profile_id).toBe("dectro-apilus:xcell");
-    expect((await failure(identity(empty.blockId, S.studioId, "dectro-apilus:xcell", null, null)))?.message).toMatch(/switched off for this studio/);
-    expect(await blockIdentity(empty.blockId)).toEqual({ machine_profile_id: null, studio_machine_id: null, machine_mode_key: null });
-    // the exemption is the legacy xCell identity only: the same old block cannot move to another switched-off model
-    const old2 = await seedSession(S);
-    await adminTx(async (q) => { await q(`set local session_replication_role = replica`); await q(`update public.session_blocks set mode = 'blend' where id = $1`, [old2.blockId]); });
-    expect((await failure(identity(old2.blockId, S.studioId, PUR, null, "blend")))?.message).toMatch(/not available for new settings/);
+    for (const b of blocks) {
+      await identity(b, S.studioId, "dectro-apilus:xcell", null, null);
+      expect((await blockIdentity(b)).machine_profile_id).toBe("dectro-apilus:xcell");
+    }
+  });
+
+  it("THE ABUSE PATHS are refused with xCell off: a block holding only the sticky frequency, only a mode selection, both, or nothing; and a block created AFTER the switch-off even with a reading; the refusal writes nothing", async () => {
+    const S = await seedOn("sw-id-abuse");
+    const freq = await seedSession(S);
+    const mode = await seedSession(S);
+    const both = await seedSession(S);
+    const empty = await seedSession(S);
+    await adminTx(async (q) => {
+      await q(`set local session_replication_role = replica`);
+      await q(`update public.session_blocks set machine_frequency = '13.56 MHz' where id = $1`, [freq.blockId]);
+      await q(`update public.session_blocks set mode = 'thermolysis' where id = $1`, [mode.blockId]);
+      await q(`update public.session_blocks set mode = 'thermolysis', machine_frequency = '13.56 MHz' where id = $1`, [both.blockId]);
+    });
+    await setModel(S.userId, S.studioId, PUR, false);
+    const late = await seedSession(S); // created after the switch-off
+    await adminQuery(`insert into public.electrolysis_entries (session_id, block_id, area, mode, thermolysis_intensity_percent) values ($1,$2,'Upper lip','thermo',10)`, [late.sessionId, late.blockId]);
+    for (const b of [freq, mode, both, empty, late]) {
+      expect((await failure(identity(b.blockId, S.studioId, "dectro-apilus:xcell", null, null)))?.message).toMatch(/switched off for this studio/);
+      expect(await blockIdentity(b.blockId)).toEqual({ machine_profile_id: null, studio_machine_id: null, machine_mode_key: null });
+    }
+    // the exemption is the legacy xCell identity only: an old block with readings cannot move to xCell Pur + a legacy mode
+    const old = await seedSession(S);
+    expect((await failure(identity(old.blockId, S.studioId, PUR, null, "blend")))?.message).toMatch(/not available for new settings/);
+  });
+
+  it("the freeze and the readings guard SEE the older columns: a block whose only reading is intensity, duration or galvanic intensity cannot change identity or take a native one", async () => {
+    const S = await seedOn("sw-id-oldcols");
+    for (const c of ["intensity", "duration_seconds", "galvanic_intensity_percent"]) {
+      const guard = await seedSession(S);
+      await adminQuery(`insert into public.electrolysis_entries (session_id, block_id, area, mode, ${c}) values ($1,$2,'Upper lip','thermo',10)`, [guard.sessionId, guard.blockId]);
+      const senior = await unitOf(S.studioId, SEN, 3);
+      expect((await failure(identity(guard.blockId, S.studioId, SEN, senior, "flash")))?.message, `${c}: readings guard`).toMatch(/already holds xCell Pur readings/);
+      const frozen = await seedSession(S);
+      await identity(frozen.blockId, S.studioId, PUR, null, "thermolysis");
+      await adminQuery(`insert into public.electrolysis_entries (session_id, block_id, area, mode, ${c}) values ($1,$2,'Upper lip','thermo',10)`, [frozen.sessionId, frozen.blockId]);
+      expect((await failure(adminQuery(`update public.session_blocks set machine_mode_key='blend' where id=$1`, [frozen.blockId])))?.message, `${c}: identity freeze`).toMatch(/already holds readings/);
+    }
   });
 
   it("an EXISTING block with an UNCHANGED identity still saves with the model off and the rollout Off; a CHANGED one does not", async () => {
@@ -752,6 +790,9 @@ describe("one live Pur unit, forced RLS, one readings definition, no deadlock, w
       { name: "block frequency alone (a sticky default, not a reading)", block: { machine_frequency: "27.12 MHz" }, reading: false },
       { name: "entry thermolysis intensity", entry: { thermolysis_intensity_percent: 30 }, reading: true },
       { name: "entry thermolysis duration", entry: { thermolysis_duration_seconds: 2 }, reading: true },
+      { name: "entry older intensity", entry: { intensity: 12 }, reading: true },
+      { name: "entry older duration", entry: { duration_seconds: 1.5 }, reading: true },
+      { name: "entry older galvanic intensity", entry: { galvanic_intensity_percent: 20 }, reading: true },
       { name: "entry galvanic ma", entry: { galvanic_ma: 1.5 }, reading: true },
       { name: "entry galvanic duration", entry: { galvanic_duration_seconds: 5 }, reading: true },
       { name: "entry units of lye", entry: { units_of_lye: 2 }, reading: true },

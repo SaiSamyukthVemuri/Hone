@@ -501,7 +501,10 @@ export function BlockSetupForm({
         firstEntry?.thermolysis_duration_seconds != null ||
         firstEntry?.galvanic_ma != null ||
         firstEntry?.galvanic_duration_seconds != null ||
-        firstEntry?.units_of_lye != null),
+        firstEntry?.units_of_lye != null ||
+        firstEntry?.intensity != null ||
+        firstEntry?.duration_seconds != null ||
+        firstEntry?.galvanic_intensity_percent != null),
   );
   // The dirty baseline (set on first render, below). Declared here so the native switch can rebase it.
   // RETAINED WITH THE DRAFT: the baseline the draft is compared against. Rebuilding it from a restored draft
