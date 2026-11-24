@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 
-// STUDIO-READY-02d (#824): an owner deactivates or reactivates a receptionist.
+// An owner deactivates or reactivates a receptionist.
 //
 // The owner is resolved on the SERVER (getCurrentPractitionerWithStudio, the
 // action backstop), never taken from the form. Only the receptionist id and the
@@ -37,7 +37,7 @@ export async function setReceptionistActiveAction(formData: FormData): Promise<v
     );
     if (data === "not_found") throw new Error("Receptionist not found in this studio.");
     if (data === "not_authorized") throw new Error("Only studio owners can manage the team.");
-    // 0218's one-active-row-per-email index (Codex P2 4244037190 on #850).
+    // The one-active-row-per-email index (a database rule) can refuse a reactivation.
     if (error?.code === "23505") {
       throw new Error("Another active front-desk member already uses this email.");
     }

@@ -166,7 +166,8 @@ export async function invitePractitionerAction(
       .from("studio_receptionists")
       .select("id")
       .eq("studio_id", studioId)
-      .ilike("email", email)
+      // The address is lowercased above, and a front-desk row stores the lowercased invited address, so an exact compare is enough here.
+      .eq("email", email)
       .eq("active", true)
       .maybeSingle();
     if (deskErr) {

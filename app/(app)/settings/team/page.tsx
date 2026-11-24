@@ -119,7 +119,7 @@ function FrontDesk({ receptionists }: { receptionists: ReceptionistRow[] }) {
           Front desk
         </h2>
         <p className="mt-1 text-sm text-neutral-500">
-          Receptionists see the schedule and client contact details, and whether intake and consent are complete.
+          Receptionists see the schedule and client contact details.
           They never see treatment records, clinical notes, images or payments, and they are never booked as a
           practitioner.
           {receptionists.length === 0 ? " No receptionists yet." : ` ${active} active.`}
