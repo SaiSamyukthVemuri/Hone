@@ -60,6 +60,7 @@ test.describe("what $0 means at the dashboard till", () => {
     await expect(row.getByText("No payment due", { exact: true })).toBeVisible();
     await expect(row.getByRole("button", { name: "Checkout", exact: true })).toHaveCount(0);
     await row.getByRole("button", { name: "Mark completed", exact: true }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Mark completed", exact: true }).click();
     await expect.poll(() => status(appointmentId)).toBe("completed");
     expect(await settlements(appointmentId)).toEqual([]);
     expect(await attempts(studio.studioId)).toEqual([]);
