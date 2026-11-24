@@ -317,6 +317,7 @@ returns boolean language sql stable security definer set search_path = pg_catalo
                   where e.block_id = p_block_id and e.deleted_at is null
                     and (e.thermolysis_intensity_percent is not null or e.thermolysis_duration_seconds is not null
                          or e.galvanic_ma is not null or e.galvanic_duration_seconds is not null or e.units_of_lye is not null
+                         or e.intensity is not null or e.duration_seconds is not null or e.galvanic_intensity_percent is not null
                          or e.energy_level is not null or nullif(btrim(e.apilus_modality::text), '') is not null))
 $$;
 
@@ -578,14 +579,15 @@ begin
      and exists (select 1 from public.studio_machine_models sm
                   where sm.studio_id = p_studio_id and not sm.enabled
                     and sm.profile_id = case v_profile when 'dectro-apilus:xcell' then 'dectro-apilus:xcell-pur' else v_profile end)
-     -- NOT A NEW BINDING: an OLD area with no identity yet that already carries legacy xCell content (a legacy mode, a frequency or legacy readings)
-     -- being recorded as the legacy xCell it already is. Refusing it would break existing legacy charting for a studio that switched the xCell off.
-     -- An empty area choosing the legacy xCell, or any other model, is still a new binding and is refused.
+     -- NOT A NEW BINDING: an area that holds legacy READINGS (block_holds_legacy_readings: the readings, never the mode selection or the sticky
+     -- frequency, which a save writes with nothing touched) and has no identity yet, created BEFORE the owner switched the xCell off, being recorded as
+     -- the legacy xCell it already is. Both halves are needed: readings alone could be forged into a new area after the switch, and the date alone
+     -- would exempt an empty area. Any other area choosing the legacy xCell, or any other model, is still a new binding and is refused.
      and not (v_profile = 'dectro-apilus:xcell' and v_cur_profile is null and v_cur_unit is null
-              and (exists (select 1 from public.session_blocks lb
-                            where lb.id = p_block_id
-                              and (nullif(btrim(lb.mode::text), '') is not null or nullif(btrim(lb.machine_frequency::text), '') is not null))
-                   or public.block_holds_legacy_readings(p_block_id)))
+              and public.block_holds_legacy_readings(p_block_id)
+              and exists (select 1 from public.session_blocks lb
+                            join public.studio_machine_models xm on xm.studio_id = lb.studio_id and xm.profile_id = 'dectro-apilus:xcell-pur' and not xm.enabled
+                           where lb.id = p_block_id and lb.created_at < xm.updated_at))
      and public.platform_rollout_enabled_for('charting_new_view_xcell', p_studio_id) then
     raise exception 'That machine is switched off for this studio.' using errcode = 'check_violation';
   end if;
