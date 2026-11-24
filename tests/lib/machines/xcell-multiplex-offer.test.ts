@@ -53,7 +53,21 @@ describe("switch available: the owner's switch decides", () => {
 });
 
 describe("the switch seam", () => {
-  it("reports UNAVAILABLE until the migration and its command exist, and reads nothing", async () => {
-    await expect(readXcellModelSwitch("11111111-1111-4111-8111-111111111111")).resolves.toEqual({ available: false });
+  const S = "11111111-1111-4111-8111-111111111111";
+  const OTHER = "22222222-2222-4222-8222-222222222222";
+  const PUR = "dectro-apilus:xcell-pur";
+  const rows = (data: unknown, error: unknown = null) => ({ rpc: async () => ({ data, error }) });
+  it("a failed read, a thrown read, a non-array and no row for the studio are all UNAVAILABLE (the old route)", async () => {
+    await expect(readXcellModelSwitch(S, rows(null, { message: "x" }))).resolves.toEqual({ available: false });
+    await expect(readXcellModelSwitch(S, { rpc: async () => { throw new Error("down"); } })).resolves.toEqual({ available: false });
+    await expect(readXcellModelSwitch(S, rows({ studio_id: S }))).resolves.toEqual({ available: false });
+    await expect(readXcellModelSwitch(S, rows([]))).resolves.toEqual({ available: false });
+    await expect(readXcellModelSwitch(S, rows([{ studio_id: OTHER, profile_id: PUR }]))).resolves.toEqual({ available: false });
+    await expect(readXcellModelSwitch("", rows([{ studio_id: S, profile_id: PUR }]))).resolves.toEqual({ available: false });
+  });
+  it("the xCell among this studio's enabled models is ON; other enabled models without it are OFF; another studio's rows never count", async () => {
+    await expect(readXcellModelSwitch(S, rows([{ studio_id: S, profile_id: PUR }, { studio_id: S, profile_id: "dectro-apilus:senior-3g" }]))).resolves.toEqual({ available: true, enabled: true });
+    await expect(readXcellModelSwitch(S, rows([{ studio_id: S, profile_id: "dectro-apilus:senior-3g" }]))).resolves.toEqual({ available: true, enabled: false });
+    await expect(readXcellModelSwitch(S, rows([{ studio_id: OTHER, profile_id: PUR }, { studio_id: S, profile_id: "dectro-apilus:junior-3g" }]))).resolves.toEqual({ available: true, enabled: false });
   });
 });

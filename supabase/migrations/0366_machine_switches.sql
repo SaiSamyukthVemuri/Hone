@@ -100,21 +100,24 @@ revoke all on public.studio_machine_default from public, anon, authenticated, se
 revoke all on public.studio_machine_setting_events from public, anon, authenticated, service_role;
 
 -- ---------------------------------------------------------------------------
--- THE SEED, applied once. Senior/Junior are ON exactly where the studio has a live unit of that model. xCell Pur is OFF for EVERY studio: the
--- owner turns it on (product decision, 21 Nov 2026). With no model chosen the default is Ask at each visit. ON CONFLICT DO NOTHING is the idempotence: a studio that later turns xCell off keeps its explicit row.
+-- THE SEED, applied once. xCell Pur is ON for every studio and is the DEFAULT for every studio that has no explicit default (product decision,
+-- 24 Nov 2026, superseding 21 Nov): that is every studio at the moment this runs, and every new studio. Senior/Junior are ON exactly where the
+-- studio has a live unit of that model, so a studio's configured machines are kept. Nothing here is a choice an owner made, so nothing an owner
+-- chose is overwritten: ON CONFLICT DO NOTHING is the idempotence, and a studio that later turns xCell off (or picks another default) keeps its
+-- explicit row. This changes only what NEW chart entries are offered; machines already recorded on historical visits are not touched.
 -- ---------------------------------------------------------------------------
 create or replace function public.seed_studio_machine_settings(p_studio_id uuid)
 returns void language plpgsql security definer set search_path = pg_catalog, pg_temp as $$
 begin
   insert into public.studio_machine_models (studio_id, profile_id, enabled)
   select p_studio_id, p.profile_id,
-         case when p.profile_id = 'dectro-apilus:xcell-pur' then false
+         case when p.profile_id = 'dectro-apilus:xcell-pur' then true
               else exists (select 1 from public.studio_machines m
                             where m.studio_id = p_studio_id and m.machine_profile_id = p.profile_id and m.retired_at is null) end
     from (values ('dectro-apilus:xcell-pur'), ('dectro-apilus:senior-3g'), ('dectro-apilus:junior-3g')) as p(profile_id)
   on conflict (studio_id, profile_id) do nothing;
   insert into public.studio_machine_default (studio_id, default_profile_id, ask_each_visit)
-  values (p_studio_id, null, true)
+  values (p_studio_id, 'dectro-apilus:xcell-pur', false)
   on conflict (studio_id) do nothing;
 end $$;
 

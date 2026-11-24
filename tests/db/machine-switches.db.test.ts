@@ -44,13 +44,8 @@ const setLegacyMode = (block: string) => adminTx(async (q) => { await q(`set loc
 const unitOf = async (studio: string, profile: string, version = 1) =>
   (await adminQuery(`insert into public.studio_machines (studio_id, machine_profile_id, machine_profile_version, display_name) values ($1,$2,$3,$4) returning id`, [studio, profile, version, `Unit ${randomUUID().slice(0, 8)}`])).rows[0].id as string;
 
-// The seed starts xCell Pur OFF. Most tests below exercise what an owner who HAS turned it on can do, so they start from that state.
-const seedOn = async (label: string): Promise<SeededStudio> => {
-  const s = await seedStudio(label);
-  await adminQuery(`update public.studio_machine_models set enabled = true where studio_id = $1 and profile_id = $2`, [s.studioId, PUR]);
-  await adminQuery(`update public.studio_machine_default set default_profile_id = $2, ask_each_visit = false where studio_id = $1`, [s.studioId, PUR]);
-  return s;
-};
+// The seed starts xCell Pur ON and the default (24 Nov 2026), so a new studio is already in the state these tests exercise. The helper only seeds.
+const seedOn = async (label: string): Promise<SeededStudio> => seedStudio(label);
 
 beforeAll(async () => {
   // The migration is part of the chain: this suite NEVER replays its SQL (a replay would change a catalog that may be measured or sealed).
@@ -72,10 +67,25 @@ afterAll(async () => {
 });
 
 describe("the seed: once, by a trigger on studios, never re-run", () => {
-  it("a studio created by ANY path is seeded with EVERY model off and the default Ask: no studio starts with xCell Pur on", async () => {
+  it("a studio created by ANY path is seeded with xCell Pur ON and as the default, and Senior and Junior off (no unit yet)", async () => {
     const R = await seedStudio("sw-rawseed");
-    expect(await models(R.studioId)).toEqual({ [PUR]: false, [SEN]: false, [JUN]: false });
-    expect(await dflt(R.studioId)).toEqual({ default_profile_id: null, ask_each_visit: true });
+    expect(await models(R.studioId)).toEqual({ [PUR]: true, [SEN]: false, [JUN]: false });
+    expect(await dflt(R.studioId)).toEqual({ default_profile_id: PUR, ask_each_visit: false });
+  });
+
+  it("an EXISTING studio is seeded by the same function: its Senior unit keeps Senior on, xCell is on and the default, and a re-run never overwrites an owner's choice", async () => {
+    const S = await seedStudio("sw-existing");
+    await unitOf(S.studioId, SEN, 3);
+    await adminQuery(`delete from public.studio_machine_models where studio_id=$1`, [S.studioId]);
+    await adminQuery(`delete from public.studio_machine_default where studio_id=$1`, [S.studioId]);
+    await adminQuery(`select public.seed_studio_machine_settings($1)`, [S.studioId]);
+    expect(await models(S.studioId)).toEqual({ [PUR]: true, [SEN]: true, [JUN]: false });
+    expect(await dflt(S.studioId)).toEqual({ default_profile_id: PUR, ask_each_visit: false });
+    expect(await setDefault(S.userId, S.studioId, SEN, false)).toBe("changed");
+    expect(await setModel(S.userId, S.studioId, PUR, false)).toBe("changed");
+    await adminQuery(`select public.seed_studio_machine_settings($1)`, [S.studioId]);
+    expect(await models(S.studioId)).toEqual({ [PUR]: false, [SEN]: true, [JUN]: false });
+    expect(await dflt(S.studioId)).toEqual({ default_profile_id: SEN, ask_each_visit: false });
   });
 
   it("re-running the seed changes nothing, and a model the owner turned off STAYS off", async () => {
@@ -94,7 +104,7 @@ describe("the seed: once, by a trigger on studios, never re-run", () => {
     await adminQuery(`delete from public.studio_machine_models where studio_id=$1`, [S.studioId]);
     await adminQuery(`delete from public.studio_machine_default where studio_id=$1`, [S.studioId]);
     await adminQuery(`select public.seed_studio_machine_settings($1)`, [S.studioId]);
-    expect(await models(S.studioId)).toEqual({ [PUR]: false, [SEN]: true, [JUN]: false });
+    expect(await models(S.studioId)).toEqual({ [PUR]: true, [SEN]: true, [JUN]: false });
   });
 
   it("registering a Senior unit LATER does not switch the model on", async () => {
