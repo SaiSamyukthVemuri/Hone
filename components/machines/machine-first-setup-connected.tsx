@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -635,6 +636,19 @@ export function MachineFirstSetupConnected({
     isNewView && !hold && !hasSaved && !blockId && !newAreaLast && !autoRemembered && ctx.scope
       ? (preselectOnlyChoice(selectableDevices(ctx.scope, ctx.devices, ctx.catalogue.length > 0 ? ctx.catalogue : undefined), ctx.legacyMachine !== null, ctx.multiplexRoute !== null && ctx.legacyMachine !== null) ?? ctx.defaultMachine)
       : null;
+
+  // THE OWNER SWITCHED EVERY MACHINE OFF: said plainly, with the way to change it, instead of an empty picker or the unfiltered one. A NEW area only.
+  if (ctx.noMachinesEnabled) {
+    return (
+      <div className="flex flex-col gap-2 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800" data-testid="no-machines-enabled">
+        <p className="text-sm font-medium">No machines enabled</p>
+        <p className="text-sm text-neutral-600 dark:text-neutral-400">This studio has switched every machine off, so none is offered for a new area.</p>
+        <Link href="/settings/machines" className="w-fit text-sm underline" data-testid="choose-machines-link">
+          Choose machines
+        </Link>
+      </div>
+    );
+  }
 
   if (refusedAfterSave) {
     return (

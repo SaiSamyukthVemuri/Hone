@@ -238,6 +238,8 @@ export type MachineSetupContext = {
   restoredSelection: RestoredSelection | null;
   /** The studio's default machine for a NEW area, when the owner's switches apply and the default is on. Lowest-priority preselect. */
   defaultMachine: DefaultMachine;
+  /** The owner switched every machine off and nothing else is offered for a NEW area: the chart says so instead of showing an empty or unfiltered picker. */
+  noMachinesEnabled: boolean;
   /**
    * The existing charting workflow as a choice in the one selector, offered
    * ONLY where this studio has that workflow's history (a treatment area with
@@ -272,6 +274,7 @@ const ANONYMOUS: MachineSetupContext = {
   clientLastMachine: null,
   restoredSelection: null,
   defaultMachine: null,
+  noMachinesEnabled: false,
   legacyMachine: null,
   multiplexRoute: null,
   multiplexRefusal: null,
@@ -641,6 +644,7 @@ export async function loadMachineSetupContext(input: {
     multiplexCreateAtFirstSave,
     clientLastMachine: enabledOnly.clientLastMachine,
     defaultMachine,
+    noMachinesEnabled: choices !== null && choices.enabled.size === 0 && !input.blockId && enabledOnly.devices.length === 0 && legacyMachine === null,
   };
 }
 

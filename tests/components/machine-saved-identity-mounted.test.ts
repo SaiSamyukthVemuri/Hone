@@ -1599,3 +1599,21 @@ describe("an in-session remount of the entry is seeded from the snapshot the pos
     expect(groupsShown()).toEqual([true, false]);
   });
 });
+
+describe("every machine switched off: the chart says so (a new area), and offers no picker", () => {
+  it("shows 'No machines enabled' with the way to choose machines, and no machine picker; an ordinary context still shows the picker", async () => {
+    await mount({ blockId: null, savedIdentity: null, ctx: { noMachinesEnabled: true, devices: [], legacyMachine: null } });
+    await act(async () => { host!.querySelector<HTMLButtonElement>('[data-testid="machine-first-open"]')?.click(); });
+    const box = host!.querySelector('[data-testid="no-machines-enabled"]');
+    expect(box, "the empty state is shown").not.toBeNull();
+    expect(box!.textContent).toContain("No machines enabled");
+    expect(host!.querySelector('[data-testid="choose-machines-link"]')?.getAttribute("href")).toBe("/settings/machines");
+    expect(host!.querySelector('[data-testid="machine-select"]')).toBeNull();
+    act(() => root!.unmount());
+    host!.remove();
+    await mount({ blockId: null, savedIdentity: null, ctx: { noMachinesEnabled: false } });
+    await act(async () => { host!.querySelector<HTMLButtonElement>('[data-testid="machine-first-open"]')?.click(); });
+    expect(host!.querySelector('[data-testid="no-machines-enabled"]')).toBeNull();
+    expect(host!.querySelector('[data-testid="machine-select"]')).not.toBeNull();
+  });
+});

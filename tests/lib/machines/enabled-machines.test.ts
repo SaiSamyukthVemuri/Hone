@@ -22,6 +22,12 @@ describe("the owner's switches applied to a new area's picker", () => {
     expect(r.devices.map((d) => d.deviceId)).toEqual(["u-sen", "u-other"]);
     expect(r.legacyOffered).toBe(false);
   });
+  it("EVERY model off (an empty set): no switchable unit and no existing xCell entry is offered, there is no default, and an unlisted profile is untouched", () => {
+    const r = applyEnabledMachines({ ...base, choices: ch([], null), creating: true });
+    expect(r.devices.map((d) => d.deviceId)).toEqual(["u-other"]);
+    expect(r.legacyOffered).toBe(false);
+    expect(r.defaultMachine).toBeNull();
+  });
   it("xCell on keeps the existing xCell entry and its units", () => {
     const r = applyEnabledMachines({ ...base, choices: ch([PUR, JUN], PUR), creating: true });
     expect(r.devices.map((d) => d.deviceId)).toEqual(["u-pur", "u-jun", "u-other"]);
