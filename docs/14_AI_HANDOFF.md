@@ -847,3 +847,7 @@ This documentation overhaul is itself a docs-only PR. I did NOT:
 The validation gates that DID run: `typecheck`, `lint`, `build`, `git diff --check`, em-dash count, and a grep for stale `hone.studio` references. Each doc was cross-referenced against the actual code, migrations, and PR template at the moment of writing (PR #147 just merged; the deployed SHA was `3ab714f`).
 
 Where a doc references a behavior, the citation is the PR number and the migration number so a future reviewer can spot-check by reading the migration or the action file directly.
+
+## 2026-11-24 · Receptionist appointment booking
+
+The desk can look up a service opening and confirm it through migration 0376. Apply the reviewed migration before enabling this workflow. The existing desk feature switch controls application access.

@@ -191,6 +191,8 @@ export function withSentryEgressGuard(existing: string | undefined): string {
 // CI lane's dummy/test-safe values, with Supabase pointed at the
 // LOCAL stack. Nothing here is a real secret.
 export const E2E_WEB_SERVER_ENV: Record<string, string> = {
+  // Exercise the receptionist route in the disposable local browser stack.
+  HONE_RECEPTIONIST_DESK_ENABLED: "true",
   // HELD portrait policy: OFF unless the outer process explicitly enables it
   // for a dedicated server run (e2e/fett-client-portrait.spec.ts).
   ...(process.env.HONE_CLIENT_PORTRAIT_ENABLED === "true" ? { HONE_CLIENT_PORTRAIT_ENABLED: "true" } : {}),

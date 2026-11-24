@@ -171,6 +171,14 @@ describe("the census claims only what is there (fixtures)", () => {
   let byName: Map<string, PathEntry>;
   beforeAll(() => {
     put("lib/supabase/queries.ts", `export async function getCurrentPractitionerWithStudio() { return { practitioner: { role: "x" }, studio: {} }; }\n`);
+    put("lib/desk/guard.ts", `export async function requireReceptionistWithStudio() { return {}; }`);
+    put("app/(desk)/desk/actions.ts", [
+      `"use server";`,
+      `import { requireReceptionistWithStudio } from "@/lib/desk/guard";`,
+      `export async function deskGuarded() { const actor = await requireReceptionistWithStudio(); return actor; }`,
+      `export async function deskNotAwaited() { requireReceptionistWithStudio(); return 1; }`,
+      `export async function deskConditional(flag: boolean) { if (flag) await requireReceptionistWithStudio(); return 1; }`,
+    ].join("\n"));
     put("lib/helpers.ts", [
       `import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";`,
       `export async function assertOwner() { const { practitioner } = await getCurrentPractitionerWithStudio(); if (practitioner.role !== "owner") { throw new Error("no"); } return practitioner; }`,
@@ -211,7 +219,7 @@ describe("the census claims only what is there (fixtures)", () => {
   const d = (n: string) => decisionOf(byName.get(n)!);
   it("finds exports of every form, and only server-action and route-method exports", () => {
     expect([...byName.keys()].sort()).toEqual(
-      ["actions.ts#arrowAction", "actions.ts#andNotOr", "actions.ts#nestedOnly", "actions.ts#noGate", "actions.ts#orGuard", "actions.ts#ownGuard", "actions.ts#ownerBranchOnly", "actions.ts#renamedAction", "actions.ts#viaReturningHelper", "actions.ts#viaThrowingHelper", "actions.ts#viaTryContinuing", "actions.ts#viaTryReturning", "api/y/route.ts#GET"].sort(),
+      ["(desk)/desk/actions.ts#deskGuarded", "(desk)/desk/actions.ts#deskNotAwaited", "(desk)/desk/actions.ts#deskConditional", "actions.ts#arrowAction", "actions.ts#andNotOr", "actions.ts#nestedOnly", "actions.ts#noGate", "actions.ts#orGuard", "actions.ts#ownGuard", "actions.ts#ownerBranchOnly", "actions.ts#renamedAction", "actions.ts#viaReturningHelper", "actions.ts#viaThrowingHelper", "actions.ts#viaTryContinuing", "actions.ts#viaTryReturning", "api/y/route.ts#GET"].sort(),
     );
   });
   it("claims an owner guard at the top of the body, or from a helper that throws", () => {
@@ -219,6 +227,11 @@ describe("the census claims only what is there (fixtures)", () => {
     expect(d("actions.ts#orGuard")).toBe("owner(self)");
     expect(d("actions.ts#viaThrowingHelper")).toBe("owner(assertOwner)");
     expect(d("actions.ts#viaTryReturning")).toBe("owner(assertOwner)");
+  });
+  it("recognises the selected-studio receptionist guard only when awaited before work", () => {
+    expect(d("(desk)/desk/actions.ts#deskGuarded")).toBe("receptionist(selected_studio)");
+    expect(d("(desk)/desk/actions.ts#deskNotAwaited")).toBe("unresolved(no gate found)");
+    expect(d("(desk)/desk/actions.ts#deskConditional")).toBe("unresolved(no gate found)");
   });
   it("marks a helper that only returns a refusal as unverified", () => {
     expect(d("actions.ts#viaReturningHelper")).toBe("owner?(ownerOrNull)");
