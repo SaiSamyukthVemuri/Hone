@@ -14,7 +14,7 @@ import {
 import { miniCalendarHref, withSelection } from "@/lib/calendar/practitioner-selection";
 
 // HON-48 sidebar mini month. Picking a date navigates the CURRENT view to it (day -> that day,
-// week -> the week containing it, month -> its month) and keeps the practitioner selection. The
+// week -> the week containing it, month -> its day agenda) and keeps the practitioner selection. The
 // month shown here is local state: paging it navigates nowhere. Dates are studio-local day keys
 // (`today` and `selectedDate` come from the server in the STUDIO timezone and this file never builds
 // a Date), so the browser's timezone cannot shift a cell or move a mark. Two marks, both may apply
@@ -29,14 +29,16 @@ export function CalendarMiniMonth({
   today,
   view,
   selectionParam,
+  timeGrid = false,
 }: {
   /** Which month the mini calendar opens on. */
   anchorDate: string;
-  /** The date the current view is on; null when the view has no single date (Month). */
+  /** The date the current view is on; null when the view has no single date. */
   selectedDate: string | null;
   today: string;
   view: "day" | "week" | "month";
   selectionParam: string | undefined;
+  timeGrid?: boolean;
 }) {
   const [shown, setShown] = useState(anchorDate);
   // The page's anchor moved (toolbar step, Today, a pick in another month) while this component stayed
@@ -48,6 +50,7 @@ export function CalendarMiniMonth({
     setShown(anchorDate);
   }
   const cells = monthGridDates(shown);
+  const gridParam = timeGrid ? "&layout=grid" : "";
   return (
     <section data-testid="calendar-mini-month" aria-label="Pick a date" className="select-none">
       <div className="mb-1 flex items-center justify-between">
@@ -65,7 +68,7 @@ export function CalendarMiniMonth({
             {monthYearLabel(shown)}
           </div>
           <Link
-            href={withSelection(miniCalendarHref(view, today), selectionParam)}
+            href={withSelection(miniCalendarHref(view, today) + gridParam, selectionParam)}
             scroll={false}
             data-testid="calendar-mini-today"
             onClick={() => {
@@ -100,7 +103,7 @@ export function CalendarMiniMonth({
           return (
             <Link
               key={date}
-              href={withSelection(miniCalendarHref(view, date), selectionParam)}
+              href={withSelection(miniCalendarHref(view, date) + gridParam, selectionParam)}
               scroll={false}
               data-testid="calendar-mini-day"
               onClick={() => announceMiniPick(date)}

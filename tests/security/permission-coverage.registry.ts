@@ -9,6 +9,7 @@
 //   observed(keys)      also asks the permission engine, observe only
 //   owner(helper|self)  a non-owner is refused at the top of its body
 //   owner?(helper)      the helper only returns a refusal value; read the entry before relying on it
+//   receptionist(selected_studio) first awaits the active receptionist guard for the selected studio.
 //   staff               reaches the practitioner-and-studio helper. A receptionist is not a practitioner, so none of
 //                       these is reachable by one. NO role distinction is found at the top of the body.
 //   not_staff(class)    no staff session by design; the class is checked against the path
@@ -57,6 +58,9 @@ export const PATH_DECISIONS: Readonly<Record<string, Readonly<Record<string, str
   },
   "app/(app)/calendar/check-practitioner/actions.ts": {
     reassignOpenAppointmentAction: "owner(self)+admin",
+  },
+  "app/(app)/calendar/find-time-actions.ts": {
+    findCalendarOpeningsAction: "staff",
   },
   "app/(app)/calendar/move-appointment-actions.ts": {
     loadMoveSlotsAction: "staff+admin",
@@ -456,6 +460,15 @@ export const PATH_DECISIONS: Readonly<Record<string, Readonly<Record<string, str
   "app/api/notifications/summary/route.ts": {
     GET: "staff",
   },
+  "app/(desk)/desk/booking-actions.ts": {
+    bookDeskOpeningAction: "receptionist(selected_studio)",
+    findDeskOpeningsAction: "receptionist(selected_studio)",
+    getDeskBookingOptionsAction: "receptionist(selected_studio)",
+    searchDeskBookingClientsAction: "receptionist(selected_studio)",
+  },
+  "app/(desk)/desk/contact-actions.ts": {
+    getDeskAppointmentContactAction: "receptionist(selected_studio)",
+  },
   "lib/desk/choose-actions.ts": {
     chooseDeskStudioAction: "not_staff(desk)",
   },
@@ -649,7 +662,13 @@ export const RPC_NAMES: readonly string[] = [
   "record_waitlist_invitation_followup",
   "record_waitlist_retention_failure",
   "record_waitlist_sms_consent_by_practitioner",
-  "receptionist_calendar_v2",
+  "receptionist_appointment_contact",
+  "receptionist_book_opening",
+  "receptionist_booking_options",
+  "receptionist_calendar_v3",
+  "receptionist_booking_clients_v3",
+  "receptionist_find_openings_v2",
+  "receptionist_studio_timezone",
   "record_welcome_email_result",
   "redeem_and_book_waitlist_invitation",
   "redeem_new_client_waitlist_invitation_verified",
@@ -822,9 +841,14 @@ export const RPC_PRIVILEGES: Readonly<Record<string, string>> = {
   record_block_machine_identity: "-u-D",
   record_calendar_sync_result: "--sD",
   record_client_archive_audit_governed: "--sD",
-  // The front desk's one read (0274, name rule 0374): executable by authenticated only, security definer; it refuses anyone who is not this studio's
-  // active receptionist (proved in tests/db/receptionist-desk-projection.db.test.ts and receptionist-callable-surface.db.test.ts).
-  receptionist_calendar_v2: "-u-D",
+  // These desk commands admit only an authenticated, active receptionist of the requested studio.
+  receptionist_appointment_contact: "-u-D",
+  receptionist_book_opening: "-u-D",
+  receptionist_booking_options: "-u-D",
+  receptionist_calendar_v3: "-u-D",
+  receptionist_booking_clients_v3: "-u-D",
+  receptionist_find_openings_v2: "-u-D",
+  receptionist_studio_timezone: "-u-D",
   record_email_attempt: "--sD",
   record_email_result: "--sD",
   record_new_client_waitlist_conversion: "--sD",

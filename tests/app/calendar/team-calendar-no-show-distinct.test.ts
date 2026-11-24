@@ -153,7 +153,7 @@ describe("desktop team week column: the same cues", () => {
   });
 
   it("fine-pointer cards (source): the dashed edge, a leading No-show on both layouts, and status in the title", () => {
-    expect(DAYCOL).toContain('${terminal ? "opacity-60" : ""} ${noShow ? NO_SHOW_CARD_CLASS : ""}');
+    expect(DAYCOL).toContain('${terminal ? "saturate-75" : ""} ${noShow ? NO_SHOW_CARD_CLASS : ""}');
     expect(DAYCOL).toContain('{noShow && <span className="shrink-0">No-show ·</span>}');
     expect(DAYCOL).toContain('{noShow && "No-show · "}');
     expect(DAYCOL).toContain("title={[...titleParts, statusTag].filter(Boolean).join(\" · \")}");
