@@ -129,7 +129,7 @@ export function DashboardTreatmentMemory({
            but the hit area matches every other control on the row. It was the
            height of its own text, which this PR made worse by putting it on
            the future-day path, where preparing on a phone is the whole point. */
-        className="inline-flex min-h-[44px] items-center self-start py-2 text-[11px] font-medium text-blue-700 underline underline-offset-2 hover:text-blue-900 dark:text-blue-300"
+        className="inline-flex min-h-[44px] min-w-0 max-w-full items-center self-start py-2 text-left text-[11px] font-medium text-blue-700 underline underline-offset-2 [overflow-wrap:anywhere] hover:text-blue-900 dark:text-blue-300"
       >
         {open
           ? `Hide full last treatment for ${clientName}`

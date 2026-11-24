@@ -38,10 +38,7 @@ export function DashboardGreeting({
   if (!greeting) return null;
 
   return (
-    <p
-      className="font-[var(--font-fraunces)] text-xl text-neutral-500 dark:text-neutral-400"
-      style={{ letterSpacing: "-0.01em" }}
-    >
+    <p className="text-sm text-neutral-600 dark:text-neutral-400">
       {greeting}
     </p>
   );

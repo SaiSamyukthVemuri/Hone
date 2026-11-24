@@ -140,7 +140,11 @@ function runSuite(label: string, viewport: { width: number; height: number }, is
 
       await test.step("8+9+10. actions survive: checkout cell, primary action, row link", async () => {
         const section = todaySection(page);
-        await expect(section.getByRole("link", { name: /Book appointment/ })).toHaveCount(1);
+        // #1757 moved the Book action into the page header, outside every <section>: look for it on the whole page (the <main> region), so a
+        // second Book link anywhere on the dashboard still fails this count, and it must carry the selected day (today: the plain /calendar link).
+        const book = page.getByRole("main").getByRole("link", { name: /Book appointment/ });
+        await expect(book).toHaveCount(1);
+        await expect(book).toHaveAttribute("href", "/calendar");
         // The primary action resolver still produces exactly one action link.
         const action = section.getByRole("link", {
           name: /Review Before Today|Open client|Chart appointment|Continue charting|View session/,
@@ -234,7 +238,6 @@ function runSuite(label: string, viewport: { width: number; height: number }, is
       await loginAsOwner(page, seed);
       await openDashboard(page);
 
-      const section = todaySection(page);
       // The counts live in the summary strip (DaySummary was folded into it): the Appointments
       // value, with the client count as its sub-label.
       const strip = page.getByTestId("dashboard-summary-strip");
@@ -243,9 +246,10 @@ function runSuite(label: string, viewport: { width: number; height: number }, is
       // ...and the empty state is absent on a day that has appointments.
       await expect(page.getByText("No appointments today.")).toHaveCount(0);
       // The Book appointment action is unchanged.
-      await expect(
-        section.getByRole("link", { name: "Book appointment" }),
-      ).toHaveCount(1);
+      // (It lives in the page header since #1757, so the lookup is page-wide, and it must still be exactly one link for today.)
+      const bookToday = page.getByRole("main").getByRole("link", { name: "Book appointment" });
+      await expect(bookToday).toHaveCount(1);
+      await expect(bookToday).toHaveAttribute("href", "/calendar");
     });
 
     // -----------------------------------------------------------------------
