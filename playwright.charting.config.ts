@@ -5,9 +5,9 @@ import base from "./playwright.config";
 // app server and its guards, the same ports and the paired stack check) and replaces only `projects`, so nothing about isolation changes: it never
 // touches the tracked ports, supabase/config.toml or e2e/helpers/local-env.ts, and it runs against the LOCAL stack with a synthetic studio only.
 //
-// Run it (after a heavy-slot grant) with the rollout setting started for the local server only:
-//   HONE_CHARTING_NEW_VIEW_STUDIO_IDS=all npx playwright test --config playwright.charting.config.ts
-// Without that setting the spec is skipped, so this config can never turn the switch on anywhere else.
+// Run it (after a heavy-slot grant):
+//   npx playwright test --config playwright.charting.config.ts
+// The spec sets the platform rollout row on the OWNED LOCAL stack itself (and restores it), so this config can never turn the switch on anywhere else.
 //
 // ENGINE NOTE, as in the mobile lane: the device profiles (viewport, touch, user agent) run on the Chromium engine that CI installs. Real WebKit is
 // the opt-in `webkit-charting` project below (HONE_E2E_WEBKIT=1), which proves WebKit layout and focus behaviour; it does NOT prove the on-screen

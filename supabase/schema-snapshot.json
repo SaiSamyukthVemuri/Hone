@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 280,
+    "count": 281,
     "last": "0375_client_identification_photo_store.sql",
-    "sha256": "2dcb7dd618ad6cebc212d1e73a205925ff7d6c658f0956089475a61be59adad8"
+    "sha256": "41744e42f341eae5a32c7edfcf3caea015b9209f9314c0c83a3c587414bd2f9c"
   },
   "public": {
     "tables": [
@@ -80,6 +80,8 @@
       "pending_invitations",
       "photos",
       "platform_lead_alerts",
+      "platform_rollout_studios",
+      "platform_rollouts",
       "practitioner_notifications",
       "practitioners",
       "probe_lots",
@@ -168,6 +170,7 @@
       "acknowledge_waitlist_times_feedback",
       "acquire_studio_capacity_lock",
       "add_electrolysis_pass",
+      "add_platform_rollout_studio",
       "add_studio_receptionist",
       "admin_accept_pending_invitation",
       "admin_complete_onboarding",
@@ -387,10 +390,12 @@
       "link_invited_membership",
       "link_waitlist_followup_appointment",
       "list_dismissed_attention",
+      "list_platform_rollout",
       "list_waitlist_times_feedback",
       "lock_appointment_for_command",
       "lock_structural_calendar_source_mutation",
       "lock_studio_and_assert_owner",
+      "log_refused_platform_rollout_attempt",
       "lookup_payment_recovery_token",
       "mark_appointment_complete",
       "mark_appointment_no_show",
@@ -431,6 +436,8 @@
       "payment_charge_attempts_touch_updated_at",
       "pending_client_id_photo_object_deletions",
       "platform_lead_alerts_guard",
+      "platform_rollout_check_actor",
+      "platform_rollout_enabled_for",
       "practitioner_cancel_appointment",
       "practitioner_capacity_retirement_blockers",
       "practitioners_receptionist_membership_guard",
@@ -522,6 +529,7 @@
       "reminder_sms_unroutable_studios",
       "remove_client_id_photo",
       "remove_new_client_waitlist_entry",
+      "remove_platform_rollout_studio",
       "renew_studio_sms_lease",
       "reorder_studio_service",
       "repair_bump_appointment_sync_version",
@@ -569,6 +577,7 @@
       "set_own_calendar_feed_token_hash",
       "set_own_default_machine",
       "set_own_default_machine_frequency",
+      "set_platform_rollout_mode",
       "set_practitioner_active_locked",
       "set_receptionist_legal_name_access",
       "set_reservation_resource_key_default",

@@ -1,8 +1,6 @@
-import { readGroups, readGroupMembers, readClientGroups } from "@/lib/client-groups/queries";
-import { groupFilter, scopeToGroup, unavailable } from "@/lib/client-groups/model";
 import { directoryHref } from "@/lib/clients/directory-query";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { PendingLink } from "@/components/pending-link";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { createClient } from "@/lib/supabase/server";
@@ -66,15 +64,13 @@ export default async function ClientsPage({
   // Default deny: only an owner or a practitioner may use this directory.
   if (!isStaffRole(practitioner.role)) notFound();
 
-  const owner = practitioner.role === "owner";
-  const selectedGroup = groupFilter(params.group);
+  // The custom groups feature was removed. An old link that still carries ?group= lands on the standard directory, keeping only
+  // the standard view, search, filters and sort (parseDirectoryParams already whitelists them); the group value is
+  // never echoed and no other parameter is passed through.
+  if (params.group !== undefined) {
+    redirect(directoryHref({ view, q: query.q, filters: query.filters, sort: query.sort, lastVisit: query.lastVisit }));
+  }
   const supabase = await createClient();
-  const catalogue = owner ? await readGroups(supabase, studio.id, true) : unavailable;
-  const groupExists = catalogue.available && catalogue.value.some((g) => g.id === selectedGroup);
-  const members = selectedGroup && owner && groupExists
-    ? await readGroupMembers(supabase, studio.id, true, selectedGroup)
-    : unavailable;
-  const groupBlocked = Boolean(selectedGroup) && (!owner || !groupExists || !members.available);
   const db = supabase as unknown as DirectorySupabase;
   const domain = startPerfSpan("clients.domain");
   const nowIso = new Date().toISOString();
@@ -103,8 +99,7 @@ export default async function ClientsPage({
   ]);
   // undefined: not needed this request; null: needed and unavailable; a map: the whole set.
   const wholeLastVisitMap = wholeLastVisits === null ? undefined : wholeLastVisits.ok ? wholeLastVisits.value : null;
-  const allIdentityRows = source.map(projectStaffRow);
-  const identityRows = scopeToGroup(allIdentityRows, selectedGroup, members);
+  const identityRows = source.map(projectStaffRow);
   let aggregates: DirectoryAggregates = {
     nextAppointments: wholeNext,
     intake: wholeIntake,
@@ -128,8 +123,7 @@ export default async function ClientsPage({
     data = queryDirectory(identityRows, aggregates, query, clock);
   }
 
-  // Group membership narrows matches, not the underlying directory-empty state.
-  data = { ...data, directoryEmpty: allIdentityRows.length === 0 };
+  data = { ...data, directoryEmpty: identityRows.length === 0 };
 
   // The overview's client comes from the same authorized set: an id that is not in
   // this view's set shows nothing and reveals nothing.
@@ -148,7 +142,6 @@ export default async function ClientsPage({
       ? wholeLastVisits
       : await readLastVisits(supabase as unknown as LastVisitSupabase, studio.id, ids, nowIso);
   const lastVisitMap = lastVisits && lastVisits.ok ? lastVisits.value : null;
-  const visibleGroups = owner ? await readClientGroups(supabase, studio.id, true, ids, catalogue) : undefined;
   domain.end();
 
   const state: DirectoryState = {
@@ -158,7 +151,6 @@ export default async function ClientsPage({
     sort: query.sort,
     lastVisit: query.lastVisit,
     page: data.page,
-    group: selectedGroup,
   };
 
   // The overview opens under its own row (nothing above it moves). A selected client
@@ -193,9 +185,9 @@ export default async function ClientsPage({
         </Link>
       </div>
 
-      <ViewTabs current={view} group={selectedGroup} />
+      <ViewTabs current={view} />
 
-      <DirectoryControls state={state} groups={owner ? catalogue : undefined} />
+      <DirectoryControls state={state} />
 
       {clientParam && !selected && (
         <p role="status" className="text-sm text-neutral-500">
@@ -211,8 +203,6 @@ export default async function ClientsPage({
         selectedId={selected?.id ?? null}
         overview={onThisPage ? overview : null}
         timeZone={studio.timezone}
-        groups={visibleGroups}
-        groupBlocked={groupBlocked}
       />
     </div>
   );
@@ -220,10 +210,10 @@ export default async function ClientsPage({
 
 // Two-link segmented control. Plain anchor links so the active state
 // survives a full page navigation; this control just toggles the ?view= param.
-function ViewTabs({ current, group }: { current: View; group?: string }) {
+function ViewTabs({ current }: { current: View }) {
   const tabs = CLIENT_LIST_VIEWS.map((v) => ({
     ...v,
-    href: group ? directoryHref({ view: v.value, group }) : clientListViewHref(v.value),
+    href: clientListViewHref(v.value),
   }));
   return (
     <nav

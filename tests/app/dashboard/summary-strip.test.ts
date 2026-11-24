@@ -48,11 +48,12 @@ describe("narrow phones (Codex P2 on #1308: 320px horizontal scroll)", () => {
     expect(strip).toMatch(/const VALUE =[\s\S]*?min-w-0[\s\S]*?\[overflow-wrap:anywhere\]/);
     expect(strip).toMatch(/const CELL =[\s\S]*?min-w-0/);
   });
-  it("only widths under 360px change: smaller value and padding there, the 390/1280 classes are untouched", () => {
-    expect(strip).toMatch(/max-\[359px\]:text-sm/);
-    expect(strip).toMatch(/px-2[^"]*min-\[360px\]:px-4/);
-    expect(strip).toMatch(/text-xl font-semibold/);
-    expect(strip).toContain('className="grid grid-cols-2 gap-3"');
+  it("wraps the day metrics onto separate lines when space runs out", () => {
+    const html = renderToStaticMarkup(createElement(SummaryStrip, {
+      appointmentCount: 1, clientCount: 1, bookedTime: "Unavailable",
+    }));
+    expect(html).toMatch(/<dl[^>]*class="flex flex-wrap/);
+    expect(html).toContain("1 client");
   });
   it("renders the Unavailable value through the same wrapping value class", () => {
     const out = renderToStaticMarkup(
@@ -61,11 +62,7 @@ describe("narrow phones (Codex P2 on #1308: 320px horizontal scroll)", () => {
     // two values and, since the 320px label fix, the two labels
     expect(out.match(/\[overflow-wrap:anywhere\]/g)).toHaveLength(4);
   });
-  it("the uppercase LABEL can wrap and shrinks under 360px, so 'APPOINTMENTS' stays inside its cell (Photos, fa5183e8d)", () => {
-    expect(strip).toMatch(/const LABEL =[\s\S]*?min-w-0[\s\S]*?\[overflow-wrap:anywhere\][\s\S]*?max-\[359px\]:text-\[10px\][\s\S]*?max-\[359px\]:tracking-normal/);
-    // from 360px up the label is exactly as before
-    expect(strip).toMatch(/text-\[11px\] font-medium uppercase tracking-wider/);
-  });
+
 });
 
 describe("long client names never widen the row (T-1: 22px horizontal scroll at 390)", () => {
@@ -73,7 +70,7 @@ describe("long client names never widen the row (T-1: 22px horizontal scroll at 
   it("the row, the row-body link and the name can shrink and are capped at their parent", () => {
     expect(page).toMatch(/className=\{`min-w-0 max-w-full flex flex-wrap items-start gap-x-3/);
     // The li is a block in the list and the link already carries min-w-0 as a flex item of the row.
-    expect(page).toMatch(/className="flex min-w-0 basis-full gap-3 lg:basis-0 lg:flex-1"/);
+    expect(page).toMatch(/className="flex min-w-0 basis-full gap-3"/);
     expect(page).toMatch(/className="min-w-0 max-w-full truncate text-sm font-medium leading-5"/);
   });
   it("the truncated name carries the full name in a title", () => {
@@ -195,18 +192,18 @@ describe("Practice snapshot is one integrated card (fidelity E)", () => {
   });
 });
 
-describe("Birthdays: compact block top-right on desktop (fidelity G)", () => {
+describe("Birthdays: full-width desktop strip (fidelity G)", () => {
   const page = readFileSync("app/(app)/dashboard/page.tsx", "utf8");
   const stack = readFileSync("app/(app)/dashboard/secondary-stack.tsx", "utf8");
-  it("the greeting and Birthdays share the top row of ONE grid; Birthdays is the last grid child so a phone shows it below the operational work", () => {
-    expect(page).toMatch(/lg:col-start-1 lg:row-start-1/);
-    expect(stack).toMatch(/lg:col-start-2 lg:row-start-1/);
-    const grid = page.indexOf("lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]");
+  it("the desktop strip follows the header and spans both columns; phones keep operational work first", () => {
+    expect(page).toMatch(/lg:order-first lg:col-span-2/);
+    expect(stack).toMatch(/lg:-order-1 lg:col-span-2/);
+    const grid = page.indexOf("lg:grid-cols-[minmax(0,1.8fr)_minmax(0,1fr)]");
     expect(grid).toBeGreaterThan(-1);
     const greeting = page.indexOf("<DashboardGreeting");
     const appts = page.indexOf('aria-label="Appointments"');
     const needs = page.indexOf('id="needs-attention-heading"');
-    const birthdays = page.indexOf("<BirthdaysTopRight");
+    const birthdays = page.indexOf("<DashboardBirthdays");
     expect(grid).toBeLessThan(greeting);
     expect(greeting).toBeLessThan(appts);
     expect(appts).toBeLessThan(needs);

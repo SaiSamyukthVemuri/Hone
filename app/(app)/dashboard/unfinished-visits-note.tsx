@@ -20,7 +20,7 @@ export async function UnfinishedVisitsNote({ studioId, nowIso }: { studioId: str
   }
   if (total === 0) return null;
   return (
-    <p data-testid="unfinished-total" className="text-sm text-neutral-700 dark:text-neutral-200">
+    <p data-testid="unfinished-total" className="rounded-md bg-neutral-50 px-3 py-2 text-sm text-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
       <span className="font-medium">{unfinishedTotalLabel(total)}</span>
       {" · "}
       <Link data-testid="unfinished-view-all" href={UNFINISHED_VIEW_ALL_HREF} className="underline underline-offset-2">

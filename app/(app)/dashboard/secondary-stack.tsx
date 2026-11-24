@@ -175,7 +175,7 @@ export function SecondaryStackSkeleton() {
   );
 }
 
-// Birthdays, top-right on desktop (the page places it; this is its own boundary). Same data as before:
+// Birthdays, in a strip on desktop (the page places it; this is its own boundary). Same data as before:
 // the birthdays bundle the page started before the roster, so no read is added or moved.
 async function BirthdaysFromBundle({
   attentionSources,
@@ -196,17 +196,15 @@ async function BirthdaysFromBundle({
   );
 }
 
-export function BirthdaysTopRight(props: {
+export function DashboardBirthdays(props: {
   attentionSources: Promise<AttentionSources>;
   today: string;
   accentColor: BirthdayReminderColor;
 }) {
   return (
-    <div className="min-w-0 lg:col-start-2 lg:row-start-1">
-      <Suspense fallback={null}>
-        <BirthdaysFromBundle {...props} />
-      </Suspense>
-    </div>
+    <Suspense fallback={null}>
+      <BirthdaysFromBundle {...props} />
+    </Suspense>
   );
 }
 
@@ -442,7 +440,7 @@ function BirthdaysThisMonth({
   // month with many birthdays no longer pushes the setup cards off the screen.
   // Same data, same links (`?tab=personal`), same studio accent; today's
   // birthdays still carry the "Today" badge.
-  // Compact, top-right: the first few are always visible (today's birthdays first); the rest stay one
+  // Compact strip: the first few are always visible (today's birthdays first); the rest stay one
   // click away inside a server-rendered <details>, so nobody is dropped. Nothing is sent to anyone.
   const ordered = [
     ...birthdays.filter((b) => b.day === todayDay),
@@ -456,11 +454,11 @@ function BirthdaysThisMonth({
     return (
       <li
         key={b.id}
-        className={`flex items-baseline gap-2 rounded-full border px-3 py-1.5 ${accent.card}`}
+        className={`flex min-w-0 max-w-full flex-wrap items-baseline gap-x-2 rounded-md border px-2.5 py-1 ${accent.card}`}
       >
         <Link
           href={`/clients/${b.id}?tab=personal`}
-          className="text-sm font-medium hover:underline"
+          className="min-w-0 text-sm font-medium [overflow-wrap:anywhere] hover:underline"
         >
           {b.name}
         </Link>
@@ -478,8 +476,8 @@ function BirthdaysThisMonth({
     );
   };
   return (
-    <section data-testid="dashboard-birthdays" className="flex min-w-0 flex-col gap-2 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
-      <h2 className="text-lg font-medium">Birthdays this month</h2>
+    <section data-testid="dashboard-birthdays" className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-neutral-200 px-4 py-2.5 lg:-order-1 lg:col-span-2 dark:border-neutral-800">
+      <h2 className="text-sm font-semibold">Birthdays this month</h2>
       <ul className="flex flex-wrap gap-2">{shown.map(chip)}</ul>
       {rest.length > 0 && (
         <details>

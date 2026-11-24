@@ -45,45 +45,14 @@ export function withChartingView(existing: unknown, view: ChartingView): Record<
   return out;
 }
 
-// ---- Who sees the toggle (the rollout and the kill switch) -------------------------------------------------
-export const CHARTING_VIEW_STUDIOS_ENV = "HONE_CHARTING_NEW_VIEW_STUDIO_IDS";
-
-export type ChartingViewGate = { kind: "off" } | { kind: "all" } | { kind: "list"; ids: ReadonlySet<string> };
-
-const STUDIO_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+// ---- Who sees the toggle -------------------------------------------------------------------------------------
+// The rollout (off, pilot or all studios) is decided on the SERVER by lib/rollouts/charting-rollout.ts and passed in as a plain boolean; this
+// module reads no environment variable and no database.
 
 /**
- * Empty, missing or unreadable = OFF (the kill switch: nobody sees the toggle). The single word "all" = every
- * studio. Otherwise a comma-separated list of studio ids; a token that is not a plain id is dropped, so a typo
- * can only shrink the list.
+ * What to render. When the toggle is hidden the view is ALWAYS Current, whatever the stored value says, so turning the rollout off really does
+ * take New view away from everyone.
  */
-export function parseChartingViewGate(raw: string | undefined | null): ChartingViewGate {
-  if (typeof raw !== "string") return { kind: "off" };
-  const text = raw.trim().toLowerCase();
-  if (text === "all") return { kind: "all" };
-  const ids = new Set<string>();
-  for (const token of text.split(",")) {
-    const id = token.trim();
-    if (STUDIO_ID_PATTERN.test(id)) ids.add(id);
-  }
-  return ids.size > 0 ? { kind: "list", ids } : { kind: "off" };
-}
-
-export function chartingViewToggleVisible(gate: ChartingViewGate, studioId: string | null | undefined): boolean {
-  if (gate.kind === "all") return true;
-  if (gate.kind === "off") return false;
-  return typeof studioId === "string" && gate.ids.has(studioId.trim().toLowerCase());
-}
-
-/**
- * What to render. When the toggle is hidden the view is ALWAYS Current, whatever the stored value says, so the
- * kill switch really does take New view away from everyone.
- */
-export function resolveChartingView(
-  metadata: unknown,
-  studioId: string | null | undefined,
-  rawGate: string | undefined | null,
-): { toggleVisible: boolean; view: ChartingView } {
-  const toggleVisible = chartingViewToggleVisible(parseChartingViewGate(rawGate), studioId);
+export function resolveChartingView(metadata: unknown, toggleVisible: boolean): { toggleVisible: boolean; view: ChartingView } {
   return { toggleVisible, view: toggleVisible ? chartingViewFromMetadata(metadata) : DEFAULT_CHARTING_VIEW };
 }
