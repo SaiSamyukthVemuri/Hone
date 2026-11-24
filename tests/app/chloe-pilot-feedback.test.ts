@@ -139,12 +139,9 @@ describe("3. charting: obvious finish, no new write path", () => {
 describe("4. procedure records filter copy", () => {
   it("friendlier labels and helper", () => {
     expect(RECORDS).toMatch(/label: "Procedure records"/);
-    expect(RECORDS).toMatch(/>Procedure records<\/h2>/);
+    expect(RECORDS).toMatch(/>Session register<\/h2>/);
     expect(RECORDS).toMatch(/Choose a client/);
-    expect(RECORDS).toMatch(
-      /Use this when you need a procedure record for one client/,
-    );
-    expect(RECORDS).toMatch(/this client&apos;s\s*\n?\s*procedure record/);
+    expect(RECORDS).toMatch(/Choose a client and dates to print a filtered procedure record/);
   });
 
   it("filter and print behavior untouched", () => {

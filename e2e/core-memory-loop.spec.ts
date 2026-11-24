@@ -281,14 +281,17 @@ test("core memory loop: booking to next-appointment memory", async ({
         new RegExp(`Showing 1 recorded session for\\s+${seed.clientName}`),
       ),
     ).toBeVisible({ timeout: 20_000 });
-    // PR #238: friendlier section copy around the per-client filter.
     await expect(
       page.getByRole("heading", { name: "Procedure records" }),
     ).toBeVisible();
     await expect(
-      page.getByText(/Use this when you need a procedure record for one client/),
+      page.getByRole("heading", { name: "Session register" }),
     ).toBeVisible();
-    await expect(page.getByText("Choose a client")).toBeVisible();
+    await expect(page.getByLabel("Choose a client")).toHaveValue(clientId);
+    const row = page.locator("details").filter({ has: page.getByText("View record", { exact: true }) }).first();
+    await expect(row.getByText(`E2E-LOT-${seed.runId}`)).toBeHidden();
+    await row.locator("summary").first().click();
+    await expect(row.getByRole("heading", { name: "Client details" })).toBeVisible();
     await expect(page.getByText(`E2E-LOT-${seed.runId}`).first()).toBeVisible();
 
     // Mark risks/aftercare explained from the procedure record row.
@@ -300,9 +303,8 @@ test("core memory loop: booking to next-appointment memory", async ({
       page.getByText(/✓ Risks explained and aftercare provided/).first(),
     ).toBeVisible({ timeout: 20_000 });
 
-    await page.goto(
-      `/records/print?section=procedures&clientId=${clientId}`,
-    );
+    await page.getByRole("link", { name: "Print / Export" }).click();
+    await expect(page).toHaveURL(new RegExp(`/records/print.*clientId=${clientId}`));
     await expect(page.getByText(seed.studioName).first()).toBeVisible();
     await expect(
       page.getByText(new RegExp(`Filtered: client\\s+${seed.clientName}`)),
@@ -314,6 +316,11 @@ test("core memory loop: booking to next-appointment memory", async ({
     await expect(
       page.getByText(/Risks explained and aftercare information provided/i),
     ).toBeVisible();
+    await page.getByRole("link", { name: "Include history" }).click();
+    await expect(page.getByRole("link", { name: "Hide history" })).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`history=1.*clientId=${clientId}`));
+    await page.getByRole("link", { name: /← Record Keeping/ }).click();
+    await expect(page.getByLabel("Choose a client")).toHaveValue(clientId);
   });
 
   await test.step("anonymous access to Records and print redirects to login", async () => {
