@@ -22,6 +22,10 @@ begin
   end if;
 end $$;
 
+-- The registration trigger writes the tables dropped below, so it goes FIRST: left behind, the first Senior or Junior registration after a rollback
+-- would fail with a missing relation.
+drop trigger if exists studio_machines_enable_model on public.studio_machines;
+drop function if exists public.studio_machines_enable_model_trigger();
 drop index if exists public.studio_machines_one_live_xcell_pur;
 drop trigger if exists treatment_setup_readings_share_lock_block on public.treatment_setup_readings;
 drop trigger if exists electrolysis_entries_share_lock_block on public.electrolysis_entries;
