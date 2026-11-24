@@ -32,8 +32,7 @@ export function appointmentDisplayStatus(
 
 // HON-48: a no-show must stay distinguishable from a done or completed
 // appointment on the team calendar, where overlapping practitioners split a
-// column into narrow lanes. All three terminal states share the same dimmed
-// opacity, and a trailing "No-show" is the first text a narrow lane truncates.
+// column into narrow lanes. On a narrow lane, a trailing "No-show" is the first text a narrow lane truncates.
 // So a no-show card carries a cue that is neither colour nor trailing text: a
 // dashed edge, plus its label LEADING the line, where truncation reaches it
 // last. Done/Completed keep their existing trailing tag.

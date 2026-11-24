@@ -137,7 +137,7 @@ describe("the mini calendar", () => {
   it("a date navigates the current view to it and keeps the selection", () => {
     expect(html("day", "p1,p2")).toContain('href="/calendar?view=day&amp;day=2026-11-18&amp;people=p1%2Cp2"');
     expect(html("week")).toContain('href="/calendar?view=week&amp;day=2026-11-18"');
-    expect(html("month", "none")).toContain('href="/calendar?view=month&amp;month=2026-11-01&amp;people=none"');
+    expect(html("month", "none")).toContain('href="/calendar?view=month&amp;month=2026-11-01&amp;day=2026-11-18&amp;people=none"');
   });
 });
 
@@ -166,7 +166,7 @@ describe("mini calendar: today vs selected, Today action", () => {
       mini({ view, selectionParam }).match(/<a[^>]*data-testid="calendar-mini-today"[^>]*>/)?.[0] ?? "";
     expect(today("day")).toContain('href="/calendar?view=day&amp;day=2026-10-31"');
     expect(today("week", "p1")).toContain('href="/calendar?view=week&amp;day=2026-10-31&amp;people=p1"');
-    expect(today("month")).toContain('href="/calendar?view=month&amp;month=2026-10-01"');
+    expect(today("month")).toContain('href="/calendar?view=month&amp;month=2026-10-01&amp;day=2026-10-31"');
   });
   it("marks come from the server's studio-timezone keys: the mini calendar never builds a Date", () => {
     const src = readFileSync("app/(app)/calendar/CalendarMiniMonth.tsx", "utf8").replace(/^\s*\/\/.*$/gm, "");

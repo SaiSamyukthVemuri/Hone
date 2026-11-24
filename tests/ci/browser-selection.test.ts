@@ -276,7 +276,8 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // owned stack and recorded in the pull request, not assumed here.
     // Three required dashboard journeys exercise checkout, rebooking and charting whenever the sessions group runs.
     expect(specsForGroups(["sessions"])).toContain("dashboard-rebook-chart.spec.ts");
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(66);
+    // The receptionist calendar journey runs in the calendar group using the local desk flag.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(67);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {

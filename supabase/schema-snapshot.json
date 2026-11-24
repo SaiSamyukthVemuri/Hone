@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 282,
+    "count": 286,
     "last": "0381_adjusted_external_checkout_fee.sql",
-    "sha256": "4cf5a47d35fc7f7988338778f8a0febb571352d73d00faab8822505c84720d9a"
+    "sha256": "31bb8647afe22566151e8c7e68d4be152ba582f39e873483c705b8b696eac546"
   },
   "public": {
     "tables": [
@@ -457,15 +457,21 @@
       "rebuild_blockout_reservations_for_studio_tz",
       "rebuild_recurring_break_occurrences_for_studio_tz",
       "receptionist_actor_id",
+      "receptionist_appointment_contact",
+      "receptionist_book_opening",
+      "receptionist_booking_clients_v3",
       "receptionist_booking_options",
       "receptionist_calendar",
       "receptionist_calendar_closures",
       "receptionist_calendar_v2",
+      "receptionist_calendar_v3",
       "receptionist_cancel_appointment",
       "receptionist_client_contacts",
       "receptionist_client_contacts_v2",
       "receptionist_client_directory",
       "receptionist_create_appointment",
+      "receptionist_find_openings",
+      "receptionist_find_openings_v2",
       "receptionist_move_appointment",
       "receptionist_studio_timezone",
       "reconcile_bound_payment_event",

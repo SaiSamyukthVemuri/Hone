@@ -51,6 +51,7 @@ describe("the real migrations", () => {
       "create_public_appointment_for_new_client/13",
       "create_public_appointment_for_new_client_v2/14",
       "create_waitlist_public_appointment/8",
+      "receptionist_book_opening/6",
       "receptionist_create_appointment/5",
       "redeem_and_book_waitlist_invitation/14",
       "reschedule_appointment_v2/6",

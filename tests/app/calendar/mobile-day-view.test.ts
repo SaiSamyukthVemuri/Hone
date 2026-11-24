@@ -116,18 +116,16 @@ describe("mobile cards + create flow reuse existing paths (no new server actions
 
 describe("month view tapping a date preserves the EXACT date (not the week start)", () => {
   it("day cell navigates with ?day=<exact date>, so the tapped day is not snapped to week start", () => {
-    // The bug: tapping Thu the 23rd opened the week start (Sun the 19th). The day
-    // href must carry the exact cellDate via ?day= (the mobile selected-day param).
-    expect(MONTHVIEW).toMatch(/const dayHref = withSelection\(\s*`\/calendar\?view=week&week=\$\{startOfWeek\(cellDate\)\}&day=\$\{cellDate\}`,\s*selectionParam,?\s*\)/);
-    expect(MONTHVIEW).not.toMatch(/href=\{weekHref\}/); // old week-only href is gone
-    expect(MONTHVIEW).toMatch(/href=\{withDashboardRebook\(dayHref, rebook\)\}/);
+    expect(MONTHVIEW).toContain("view=month&month=${firstOfMonthString(cellDate)}&day=${cellDate}");
+    expect(MONTHVIEW).toContain('href={withDashboardRebook(dayHref, rebook) + "#month-agenda"}');
+    expect(MONTHVIEW).toContain("view=week&week=${startOfWeek(selectedDate)}&day=${selectedDate}");
   });
   it("page consumes ?day= as the selected day (already wired), anchoring the containing week", () => {
     expect(PAGE).toMatch(/params\.day \?\? params\.week \?\? startOfWeek\(today\)/);
   });
   it("today is unmistakable in the month grid (filled badge + accent), distinct from other days", () => {
-    expect(MONTHVIEW).toMatch(/aria-label="Today"/);
-    expect(MONTHVIEW).toMatch(/rounded-full bg-sky-600/);
+    expect(MONTHVIEW).toContain('aria-label={cellDate === today ? "Today" : undefined}');
+    expect(MONTHVIEW).toMatch(/bg-sky-600 text-white/);
     expect(MONTHVIEW).toMatch(/border-t-2 border-t-sky-500/);
   });
 });

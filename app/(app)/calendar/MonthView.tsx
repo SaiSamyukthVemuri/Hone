@@ -1,268 +1,126 @@
 import { withDashboardRebook, type RebookOrigin } from "@/lib/calendar/dashboard-rebook";
-import Link from "next/link";
+import { PendingContainerLink, PendingLink } from "@/components/pending-link";
 import { localDateString, startOfWeek } from "@/lib/booking/tz";
-import {
-  dayOfMonth,
-  isInMonth,
-  monthGridDates,
-  monthYearLabel,
-} from "@/lib/booking/month-grid";
+import { dayOfMonth, firstOfMonthString, isInMonth, monthGridDates, monthYearLabel } from "@/lib/booking/month-grid";
 import type { AppointmentWithPractitionerColor } from "@/lib/booking/queries";
 import { appointmentCardClasses } from "@/lib/calendar/service-colors";
+import { clientDisplayName } from "@/lib/clients/identity";
 import { calendarPractitionerIdentity, type CalendarPractitionerIdentity } from "@/lib/calendar/practitioner-identity";
 import { withSelection } from "@/lib/calendar/practitioner-selection";
-import { appointmentDisplayStatus } from "./appointment-display-status";
+import { appointmentDisplayStatus, appointmentStatusTag } from "./appointment-display-status";
 import { displayBlockoutLabel } from "./calendar-format";
+import { buildCalendarReturnParams } from "./calendar-return";
 import type { MonthDayBlocked } from "./month-blocked";
 
-// Server component. Renders the 6-row Sunday-start month grid for
-// the given monthAnchor (YYYY-MM-DD, normalized to first-of-month by
-// the caller). Appointments are passed in already filtered to the
-// visible range and grouped by their local date in studio tz.
-//
-// Per-day cell shows:
-//   * day-of-month (top-right corner)
-//   * appointment chips, up to 3 visible + a "+N more" pill
-//   * today highlight (faint sky tint, same hue as the week view's
-//     today column)
-//   * spillover days (previous/next month) softened
-//   * closed-day muted background
-//
-// Clicking a day navigates to the week view centered on that date
-// (?view=week&week=startOfWeek(date)). Clicking is the ONLY action
-// in the month view; there is no booking, no drag, no edit. The
-// month view is a navigation/orientation surface only.
-
-type ClosedDayLookup = (date: string) => boolean;
-
-type MonthDayAppt = Pick<
-  AppointmentWithPractitionerColor,
-  "id" | "status" | "starts_at" | "ends_at" | "service"
-> & {
+type MonthDayAppt = Pick<AppointmentWithPractitionerColor, "id" | "status" | "starts_at" | "ends_at" | "service"> & {
+  clientName: string;
   localTime: string;
-  // HON-48 sidebar: who the chip belongs to. The name is always in the accessible text and the hover
-  // title; the swatch is the practitioner's configured colour, never the only identifier.
+  practitionerId: string | null;
   practitioner: CalendarPractitionerIdentity | null;
 };
 
-const MAX_CHIPS_PER_DAY = 3;
-
-// HON-48: the month chip shows a time and service only, and every terminal
-// state (done, completed, no-show) is dimmed the same way, so a no-show was
-// indistinguishable from a visit that happened. A no-show chip carries a cue
-// that is neither colour nor opacity: a dashed edge, and a "No-show" label
-// that LEADS the chip, where a narrow cell truncates last. Every terminal
-// status also reaches the hover title.
-const NO_SHOW_CHIP_CLASS = "border-dashed";
-const TERMINAL_TAG = { done: "Done", completed: "Completed", no_show: "No-show" } as const;
+function visitsLabel(count: number) {
+  return `${count} ${count === 1 ? "visit" : "visits"}`;
+}
 
 export function MonthView({
   rebook,
-  monthAnchor,
-  appointmentsByDate,
-  blockedByDate,
-  today,
-  isClosedDate,
-  selectionParam,
+  monthAnchor, appointmentsByDate, blockedByDate, today, selectedDate = today, hasDayView = false, isClosedDate, selectionParam,
 }: {
   rebook?: RebookOrigin | null;
   monthAnchor: string;
   appointmentsByDate: Map<string, MonthDayAppt[]>;
   blockedByDate: Map<string, MonthDayBlocked>;
   today: string;
-  isClosedDate: ClosedDayLookup;
-  /** The sidebar selection (undefined = everyone), carried onto the day links. */
+  selectedDate?: string;
+  hasDayView?: boolean;
+  isClosedDate: (date: string) => boolean;
   selectionParam?: string;
 }) {
-  const cells = monthGridDates(monthAnchor);
-  const monthLabel = monthYearLabel(monthAnchor);
-  const weekdayHeaders: ReadonlyArray<string> = [
-    "Sun",
-    "Mon",
-    "Tue",
-    "Wed",
-    "Thu",
-    "Fri",
-    "Sat",
-  ];
+  const picked = appointmentsByDate.get(selectedDate) ?? [];
+  const returnTo = buildCalendarReturnParams({ view: "month", month: monthAnchor, day: selectedDate });
+  const scheduleHref = hasDayView
+    ? withSelection(`/calendar?view=day&day=${selectedDate}`, selectionParam)
+    : withSelection(`/calendar?view=week&week=${startOfWeek(selectedDate)}&day=${selectedDate}`, selectionParam);
+  const selectedLabel = new Intl.DateTimeFormat("en", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" })
+    .format(new Date(selectedDate + "T12:00:00Z"));
 
-  return (
-    <div className="rounded-xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-950">
-      <div className="border-b border-neutral-200 bg-neutral-50/70 dark:border-neutral-800 dark:bg-neutral-900/50">
-        <div className="grid grid-cols-7">
-          {weekdayHeaders.map((label) => (
-            <div
-              key={label}
-              className="border-l border-neutral-100 px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-neutral-500 first:border-l-0 dark:border-neutral-800/60 dark:text-neutral-400"
-            >
-              {label}
-            </div>
-          ))}
-        </div>
+  return <div className="grid min-w-0 items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(16rem,26%)]">
+    <section aria-label={monthYearLabel(monthAnchor)} className="min-w-0 overflow-hidden rounded-xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950">
+      <div className="grid grid-cols-7 border-b border-neutral-200 bg-neutral-50 text-center text-[11px] font-semibold text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300">
+        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(d => <span key={d} className="py-2">{d}</span>)}
       </div>
-      <div className="sr-only" aria-live="polite">
-        {monthLabel}
-      </div>
-      {/* 6 rows of 7 cells = 42 cells, constant across months. */}
       <div className="grid grid-cols-7">
-        {cells.map((cellDate) => {
+        {monthGridDates(monthAnchor).map(cellDate => {
           const inMonth = isInMonth(cellDate, monthAnchor);
-          const isTodayCell = cellDate === today;
-          const closed = isClosedDate(cellDate);
-          const dayAppts = appointmentsByDate.get(cellDate) ?? [];
-          const blocked = blockedByDate.get(cellDate) ?? null;
-          // Compact blocked-time label for the cell: a full-day blockout shows
-          // its reason (fallback "Blocked"); otherwise the first timed-block /
-          // break label, with "+N" when several apply.
-          const blockedLabel = blocked
-            ? blocked.fullDay
-              ? displayBlockoutLabel(blocked.fullDayReason)
-              : blocked.labels.length > 0
-                ? blocked.labels[0] +
-                  (blocked.labels.length > 1
-                    ? ` +${blocked.labels.length - 1}`
-                    : "")
-                : null
-            : null;
-          // Navigate to the tapped date, preserving the EXACT day. `?day=` is
-          // the mobile day view's selected-day param (page.tsx): it loads the
-          // week CONTAINING this date, so on mobile the day view opens focused on
-          // the tapped date (not the week start) and on desktop the correct week
-          // renders. Fixes the bug where tapping e.g. Thu the 23rd opened the
-          // week start (Sun the 19th). Works across week/month boundaries; the
-          // date is a studio-tz day-key so no device-tz shift occurs.
-          const dayHref = withSelection(
-            `/calendar?view=week&week=${startOfWeek(cellDate)}&day=${cellDate}`,
-            selectionParam,
-          );
-          return (
-            <Link
-              key={cellDate}
-              href={withDashboardRebook(dayHref, rebook)}
-              aria-label={`Open ${cellDate}`}
-              className={[
-                // Border + min height to keep the grid even across
-                // months that need 5 or 6 visible weeks.
-                "relative flex min-h-[112px] flex-col gap-1 border-b border-l border-neutral-100 px-2 py-1.5 transition-colors first:border-l-0 dark:border-neutral-800/60",
-                "hover:bg-neutral-50 dark:hover:bg-neutral-900",
-                isTodayCell
-                  ? "bg-sky-50/70 dark:bg-sky-950/25 border-t-2 border-t-sky-500"
-                  : "",
-                !inMonth
-                  ? "bg-neutral-50/40 dark:bg-neutral-900/40 opacity-70"
-                  : "",
-                closed && inMonth
-                  ? "bg-neutral-100/60 dark:bg-neutral-900/50"
-                  : "",
-              ]
-                .filter(Boolean)
-                .join(" ")}
-            >
-              <div className="flex items-baseline justify-between">
-                {isTodayCell ? (
-                  // Today: a filled high-contrast circle so it is immediately
-                  // obvious at a glance (light + dark), distinct from any other
-                  // day's plain number.
-                  <span
-                    aria-label="Today"
-                    className="inline-flex min-h-[22px] min-w-[22px] items-center justify-center rounded-full bg-sky-600 px-1 text-[12px] font-semibold tabular-nums text-white dark:bg-sky-500"
-                  >
-                    {dayOfMonth(cellDate)}
-                  </span>
-                ) : (
-                  <span
-                    className={
-                      "text-[12px] " +
-                      (inMonth
-                        ? "font-medium text-neutral-700 dark:text-neutral-300"
-                        : "font-normal text-neutral-400 dark:text-neutral-600")
-                    }
-                  >
-                    {dayOfMonth(cellDate)}
-                  </span>
-                )}
-                {closed && inMonth && (
-                  <span className="text-[9px] uppercase tracking-wider text-neutral-400">
-                    Closed
-                  </span>
-                )}
-              </div>
-              <div className="flex flex-col gap-1">
-                {blockedLabel && inMonth && (
-                  <span
-                    title={blockedLabel}
-                    className="truncate rounded-md border border-[#C9C4B6] bg-[#F4F1EA] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[#3F3F3F] dark:border-stone-700 dark:bg-stone-800/80 dark:text-stone-200"
-                  >
-                    {blockedLabel}
-                  </span>
-                )}
-                {dayAppts.slice(0, MAX_CHIPS_PER_DAY).map((a) => {
-                  const ds = appointmentDisplayStatus(a.status, a.ends_at);
-                  const terminal = ds !== "upcoming";
-                  const noShow = ds === "no_show";
-                  const statusTag =
-                    ds === "done" || ds === "completed" || ds === "no_show"
-                      ? TERMINAL_TAG[ds]
-                      : null;
-                  const serviceName = a.service?.name?.trim() || null;
-                  // Pretty time label: drop the leading zero so "07:30"
-                  // becomes "7:30" (more compact on a tight month cell).
-                  const cleanTime = a.localTime.replace(/^0/, "");
-                  return (
-                    <span
-                      key={a.id}
-                      title={[cleanTime, serviceName, a.practitioner?.name, statusTag]
-                        .filter(Boolean)
-                        .join(" · ")}
-                      className={`truncate rounded-md border-l-[3px] px-1.5 py-0.5 text-[10px] leading-tight ${appointmentCardClasses(
-                        a.service,
-                      )} ${terminal ? "opacity-60" : ""} ${noShow ? NO_SHOW_CHIP_CLASS : ""}`}
-                    >
-                      {noShow ? (
-                        <span className="font-semibold">No-show · </span>
-                      ) : null}
-                      <span className="font-medium tabular-nums">
-                        {cleanTime}
-                      </span>
-                      {serviceName ? (
-                        <span className="opacity-80"> · {serviceName}</span>
-                      ) : null}
-                      {a.practitioner ? (
-                        <>
-                          <span
-                            aria-hidden="true"
-                            data-testid="month-chip-swatch"
-                            className={`ml-1 inline-block h-2 w-2 rounded-full align-middle ${a.practitioner.swatchClass}`}
-                          />
-                          <span className="sr-only"> with {a.practitioner.name}</span>
-                        </>
-                      ) : null}
-                    </span>
-                  );
-                })}
-                {dayAppts.length > MAX_CHIPS_PER_DAY && (
-                  <span className="text-[10px] text-neutral-500 dark:text-neutral-400">
-                    +{dayAppts.length - MAX_CHIPS_PER_DAY} more
-                  </span>
-                )}
-                {dayAppts.length === 0 && inMonth && !closed && !blockedLabel && (
-                  <span className="text-[10px] text-neutral-400 dark:text-neutral-600">
-                    No appointments
-                  </span>
-                )}
-              </div>
-            </Link>
-          );
+          const closed = inMonth && isClosedDate(cellDate);
+          const visits = appointmentsByDate.get(cellDate) ?? [];
+          const counts = new Map<string | null, { name: string; swatch: string; count: number }>();
+          for (const a of visits) {
+            const group = counts.get(a.practitionerId);
+            if (group) group.count++;
+            else counts.set(a.practitionerId, {
+              name: a.practitioner?.name || (a.practitionerId ? "Former practitioner" : "Unassigned"),
+              swatch: a.practitioner?.swatchClass || "bg-neutral-400", count: 1,
+            });
+          }
+          const blocked = blockedByDate.get(cellDate);
+          const blockedLabel = blocked?.fullDay ? displayBlockoutLabel(blocked.fullDayReason) : blocked?.labels.join(" · ");
+          const summaryId = `month-day-${cellDate}`;
+          const dayHref = withSelection(`/calendar?view=month&month=${firstOfMonthString(cellDate)}&day=${cellDate}`, selectionParam);
+          return <PendingContainerLink key={cellDate} href={withDashboardRebook(dayHref, rebook) + "#month-agenda"} prefetch={false}
+            aria-label={`Open ${cellDate}`} aria-describedby={inMonth ? summaryId : undefined}
+            aria-current={cellDate === selectedDate ? "date" : undefined}
+            className={`flex min-h-[64px] min-w-0 flex-col gap-1 border-b border-r border-neutral-100 p-1 hover:bg-neutral-100 sm:min-h-[84px] sm:p-2 dark:border-neutral-800 dark:hover:bg-neutral-800 ${cellDate === today ? "border-t-2 border-t-sky-500" : ""} ${closed || !inMonth ? "bg-neutral-50 dark:bg-neutral-900" : ""} aria-[current=date]:bg-neutral-100 aria-[current=date]:ring-1 aria-[current=date]:ring-inset aria-[current=date]:ring-neutral-700 dark:aria-[current=date]:bg-neutral-800`}>
+            <span aria-label={cellDate === today ? "Today" : undefined} className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium ${cellDate === today ? "bg-sky-600 text-white dark:bg-sky-500" : !inMonth ? "text-neutral-400" : ""}`}>
+              {dayOfMonth(cellDate)}
+            </span>
+            {inMonth && <>
+              <span id={summaryId} className="text-[10px] tabular-nums text-neutral-600 sm:text-xs dark:text-neutral-300">
+                <span data-month-count={visits.length}>{visits.length}</span><span className="sr-only sm:not-sr-only"> {visits.length === 1 ? "visit" : "visits"}</span>
+                <span className="sr-only">{Array.from(counts.values()).map(p => `, ${p.name} ${p.count}`).join("")}</span>
+              </span>
+              {counts.size > 0 && <span className="flex flex-wrap gap-[3px]">
+                {Array.from(counts, ([id, p]) => <span key={id ?? "unassigned"} title={`${p.name} · ${visitsLabel(p.count)}`}
+                  aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${p.swatch}`} />)}
+              </span>}
+              {closed && <span className="truncate text-[9px] text-neutral-500">Closed</span>}
+              {blockedLabel && <span title={blockedLabel} className="truncate rounded border border-stone-300 bg-stone-100 px-0.5 text-[9px] text-stone-700 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200">{blockedLabel}</span>}
+            </>}
+          </PendingContainerLink>;
         })}
       </div>
-    </div>
-  );
+    </section>
+    <section id="month-agenda" aria-label="Selected day appointments" className="min-w-0 scroll-mt-4 overflow-hidden rounded-xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950">
+      <div className="space-y-1 border-b border-neutral-200 p-3 dark:border-neutral-800">
+        <h2 className="font-semibold">{selectedLabel}</h2>
+        <p className="text-xs text-neutral-600 dark:text-neutral-400">{visitsLabel(picked.length)}</p>
+        <PendingLink href={scheduleHref} className="inline-flex min-h-11 items-center text-sm font-medium underline">{hasDayView ? "Open day calendar" : "Open week calendar"}</PendingLink>
+      </div>
+      {picked.length === 0 && <p className="p-3 text-sm text-neutral-600 dark:text-neutral-400">No appointments for the selected practitioners.</p>}
+      <ul className="max-h-[60dvh] divide-y divide-neutral-100 overflow-y-auto dark:divide-neutral-800">
+        {picked.map(a => {
+          const status = appointmentDisplayStatus(a.status, a.ends_at);
+          const statusTag = appointmentStatusTag(status);
+          const time = a.localTime.replace(/^0/, "");
+          return <li key={a.id}>
+            <PendingContainerLink href={`/calendar/${a.id}${returnTo}`} prefetch={false}
+              className="flex min-h-11 items-center gap-2 p-2 text-sm hover:bg-neutral-50 dark:hover:bg-neutral-900">
+              <span title={[time, a.service?.name, a.practitioner?.name, statusTag].filter(Boolean).join(" · ")}
+                className={`flex min-w-0 flex-1 flex-col gap-0.5 rounded border-l-[3px] px-2 py-1 ${appointmentCardClasses(a.service)} ${status === "upcoming" ? "" : "opacity-60"} ${status === "no_show" ? "border-dashed" : ""}`}>
+                <span className="text-xs tabular-nums">{statusTag && <span>{statusTag} · </span>}{time}</span>
+                <span className="break-words font-semibold">{a.clientName}</span>
+                <span className="break-words text-xs">{a.service?.name}</span>
+                <span className="text-xs">{a.practitioner && <span aria-hidden="true" data-testid="month-chip-swatch" className={`mr-1 inline-block h-2 w-2 rounded-full ${a.practitioner.swatchClass}`} />}{a.practitioner?.name || (a.practitionerId ? "Former practitioner" : "Unassigned")}</span>
+              </span>
+            </PendingContainerLink>
+          </li>;
+        })}
+      </ul>
+    </section>
+  </div>;
 }
 
-// Helper: pre-compute the month-day appointment list expected by
-// MonthView from the same getAppointmentsForRange shape the week view
-// already uses. Keeps the page component small and the localTime
-// formatter scoped to one place.
 export function groupMonthAppointmentsByDate(
   appointments: ReadonlyArray<AppointmentWithPractitionerColor>,
   tz: string,
@@ -274,19 +132,13 @@ export function groupMonthAppointmentsByDate(
     const localDate = localDateString(new Date(a.starts_at), tz);
     const arr = byDate.get(localDate) ?? [];
     arr.push({
-      id: a.id,
-      status: a.status,
-      starts_at: a.starts_at,
-      ends_at: a.ends_at,
-      service: a.service,
-      localTime: localTimeForLabel(a.starts_at, tz),
+      id: a.id, status: a.status, starts_at: a.starts_at, ends_at: a.ends_at, service: a.service,
+      clientName: clientDisplayName(a.client ?? {}) || "Client",
+      localTime: localTimeForLabel(a.starts_at, tz), practitionerId: a.practitioner_id,
       practitioner: calendarPractitionerIdentity(a.practitioner),
     });
     byDate.set(localDate, arr);
   }
-  // Sort each day's chips by start time so the earliest sits at top.
-  for (const list of byDate.values()) {
-    list.sort((x, y) => x.starts_at.localeCompare(y.starts_at));
-  }
+  for (const list of byDate.values()) list.sort((x, y) => x.starts_at.localeCompare(y.starts_at));
   return byDate;
 }
