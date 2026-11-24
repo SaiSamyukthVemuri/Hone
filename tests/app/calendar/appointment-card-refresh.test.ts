@@ -6,7 +6,7 @@ import { serviceCardClasses } from "@/lib/calendar/service-colors";
 
 // PR — calendar appointment card visual refresh (Fresha used only as a
 // readability benchmark, not copied). Stronger-but-calm fills, a visible time
-// range, and a clear time → name → service hierarchy. Render-only: no booking
+// range, and a clear name → time → service hierarchy. Render-only: no booking
 // logic, no query/data/migration, no positioning-math change.
 
 const root = path.resolve(__dirname, "../../../");
@@ -44,15 +44,17 @@ describe("appointment card renders a time range + hierarchy", () => {
   });
 
   it("keeps the client name prominent (bold, its own line in the tall card)", () => {
-    expect(DAYCOL).toMatch(/<div className="truncate font-semibold">\{clientName\}<\/div>/);
+    const tall = DAYCOL.slice(DAYCOL.indexOf("{twoLine ? ("), DAYCOL.indexOf("// Short block:"));
+    expect(tall).toContain('<span className="truncate">{clientName}</span>');
+    expect(tall.indexOf("{clientName}")).toBeLessThan(tall.indexOf("{timeRange}"));
   });
 
   it("shows service/modality on its OWN line (not mushed with time)", () => {
     expect(DAYCOL).toMatch(/serviceName && \(\s*\n?\s*<div className="truncate text-\[10px\] opacity-70">\s*\n?\s*\{serviceName\}/);
   });
 
-  it("keeps the terminal/cancelled dim; the card opens the in-context preview", () => {
-    expect(DAYCOL).toMatch(/terminal \? "opacity-60" : ""/);
+  it("mutes terminal card saturation while preserving text contrast; the card opens the in-context preview", () => {
+    expect(DAYCOL).toMatch(/terminal \? "saturate-75" : ""/);
     // PR C-lite: the appointment card is a button that opens the preview drawer
     // (no navigation); the /calendar/[id] deep link lives in the preview.
     expect(DAYCOL).toMatch(/onClick=\{\(\) => setPreview\(a\)\}/);

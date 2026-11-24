@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { PendingLink } from "@/components/pending-link";
+import { buttonClasses } from "@/components/ui/button";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { clientDisplayName } from "@/lib/clients/identity";
@@ -443,6 +445,19 @@ export default async function AppointmentDetailPage({
         practitioner={data.practitioner}
         displayStatus={displayStatus}
       />
+
+      {data.client && data.service && (
+        <div>
+          <PendingLink
+            href={`/calendar?view=week&rebook=${encodeURIComponent(id)}`}
+            prefetch={false}
+            className={buttonClasses({ size: "sm" })}
+            pendingLabel="Opening calendar…"
+          >
+            Rebook this client
+          </PendingLink>
+        </div>
+      )}
 
       <PinnedNotesReadonly notes={pinnedNotes} />
 

@@ -17,6 +17,22 @@ The composite "is this slot available?" answer is computed by `lib/booking/queri
 
 Day and week view. Click + drag opens the new chooser (PR #139) "Book appointment" or "Block time". Bare click opens Quick-Book (PR #128).
 
+### Browse and find time
+
+Browse keeps the month picker, practitioner selection and booked-time summary together. Day and Week open near the earliest configured working hour or earlier visible event. Scroll up to see earlier hours.
+
+In Find time, choose an active service and search dates in the studio’s timezone. The service supplies the standard bookable duration. Owners in practitioner-capacity studios can compare eligible practitioners. Members search their own schedule. Choosing an opening previews it in the calendar. Book this time opens the existing booking drawer, which checks availability again before confirmation.
+
+Rebook this client on an appointment starts a search from its client, service and practitioner. Current service settings and staff permissions still apply. Selecting an opening creates no appointment and sends no message.
+
+### Receptionist booking (`/desk`)
+
+An active receptionist in an enabled studio opens **Month** at the studio’s local date. Each date shows appointment counts for the selected practitioners. Select a date for its agenda, open Day for individual schedules, or switch to Week to compare practitioners. Opening a visit shows its service, times, status, and the name reception uses for the client. The calendar and booking search use the preferred name when present and the regular client name otherwise. The separate legal identity stays private. Phone and email are requested for that appointment when it is opened.
+
+To book, select a service, date range of up to seven days, and the practitioners to include. Time preferences let reception compare the first matching opening per practitioner or browse additional starts. The existing-client picker shows the desk display name and a masked contact hint. Confirmation checks the studio, active client, service, practitioner and exact opening again. If another booking takes the slot, search for a new opening. If the result is uncertain, check the schedule before retrying.
+
+The success message confirms the booking was saved. This desk action sends no immediate booking confirmation email or SMS. Existing reminder workflows still follow studio settings. Search covers practitioner or studio-wide availability according to the studio’s capacity settings. Shared rooms and machines are outside the reservation model.
+
 ### Drag-to-book (PR #128)
 
 Calendar drag selects a time range, opens `QuickBookDrawer`, pre-fills the start time + duration. The `autoOverrideRef` pattern lets the practitioner soft-override an inferred service duration without the form resetting on every keystroke. Submit creates the appointment via `bookAppointmentForClientAction`.
@@ -147,3 +163,7 @@ Read-only iCal subscription per practitioner.
 - No intake responses, allergies, EpiPen flags, prices, session notes ever appear.
 - Cache headers: short max-age + must-revalidate so token rotations propagate fast. No CDN caching.
 - Token route privacy headers (`X-Robots-Tag`, `Referrer-Policy`) apply per `next.config.ts`.
+
+In a practitioner-capacity studio, an owner viewing multiple practitioners in Week starts in **By practitioner**. Team members can also choose this layout. Staff rows show individually selectable visits with a practitioner colour and client name. Show service details for compact cards. With one practitioner visible, Week defaults to the time grid. On phones, the weekday strip selects the date. Both layouts follow the same practitioner filters.
+
+Month shows the number of visits and practitioner indicators for each date. Select a date to open its chronological agenda. Select a visit for its details, or open the day schedule with the current practitioner filters.
