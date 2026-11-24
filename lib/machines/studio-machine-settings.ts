@@ -55,3 +55,15 @@ export async function setStudioMachineDefault(studioId: string, profileId: strin
     return { ok: false, error: GENERIC };
   }
 }
+
+/**
+ * WHAT THE PICKER OFFERS A NEW AREA. From the same choices rows: the enabled models, the default model, and each enabled model's live unit.
+ * Null means "the switches do not apply here" (rollout off, nothing enabled, a failed read): the picker is exactly what it was.
+ */
+export type StudioMachineChoices = { enabled: ReadonlySet<string>; defaultProfileId: string | null };
+
+export async function readStudioMachineChoices(studioId: string, rpc: Rpc): Promise<StudioMachineChoices | null> {
+  const s = await readStudioMachineSettings(studioId, rpc);
+  if (!s || s.enabled.length === 0) return null;
+  return { enabled: new Set(s.enabled), defaultProfileId: s.defaultProfileId };
+}

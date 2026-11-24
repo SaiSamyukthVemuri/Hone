@@ -35,6 +35,9 @@ import { XCELL_PUR_PROFILE_ID } from "@/lib/machines/xcell-pur";
 import { withholdXcellUnits } from "@/lib/machines/xcell-withhold";
 import { resolveXcellMultiplexOffer, type XcellMultiplexRoute } from "@/lib/machines/xcell-route";
 import { readXcellModelSwitch, type XcellModelSwitch } from "@/lib/machines/xcell-switch-seam";
+import { applyEnabledMachines, type DefaultMachine } from "@/lib/machines/enabled-machines";
+import { readStudioMachineChoices } from "@/lib/machines/studio-machine-settings";
+import { studioMachineRpc } from "@/lib/machines/studio-machine-rpc";
 import {
   restoreSelectionFromRecordedSetup,
   type RestoredSelection,
@@ -233,6 +236,8 @@ export type MachineSetupContext = {
    * restore-recorded-selection restores nothing.
    */
   restoredSelection: RestoredSelection | null;
+  /** The studio's default machine for a NEW area, when the owner's switches apply and the default is on. Lowest-priority preselect. */
+  defaultMachine: DefaultMachine;
   /**
    * The existing charting workflow as a choice in the one selector, offered
    * ONLY where this studio has that workflow's history (a treatment area with
@@ -266,6 +271,7 @@ const ANONYMOUS: MachineSetupContext = {
   suggestedMachine: null,
   clientLastMachine: null,
   restoredSelection: null,
+  defaultMachine: null,
   legacyMachine: null,
   multiplexRoute: null,
   multiplexRefusal: null,
@@ -589,12 +595,35 @@ export async function loadMachineSetupContext(input: {
   // while it is unknown whether this studio may use it. Every selection that could point at such a unit is withheld with it.
   const offered = withholdXcellUnits({ rollout: rolloutUnavailable ? "unavailable" : rolloutOff ? "off" : "available", devices: inventory.devices, remembered, suggestedMachine, restoredSelection, clientLastMachine });
 
+  // THE OWNER'S SWITCHES, applied to a NEW area only (an existing block keeps every machine it was charted with). Unavailable (rollout off, a failed
+  // read, nothing enabled) changes nothing.
+  let choices: Awaited<ReturnType<typeof readStudioMachineChoices>> = null;
+  try {
+    choices = await readStudioMachineChoices(scope.studioId, studioMachineRpc);
+  } catch {
+    choices = null;
+  }
+  const enabledOnly = applyEnabledMachines({
+    choices,
+    creating: !input.blockId,
+    devices: offered.devices,
+    legacyOffered: legacyMachine !== null,
+    remembered: offered.remembered,
+    suggestedMachine: offered.suggestedMachine,
+    clientLastMachine: offered.clientLastMachine,
+  });
+  if (!enabledOnly.legacyOffered) {
+    legacyMachine = null;
+    multiplexRoute = null;
+  }
+  const defaultMachine: DefaultMachine = enabledOnly.defaultMachine;
+
   return {
     scope,
-    devices: offered.devices,
+    devices: enabledOnly.devices,
     inventoryReason: rolloutUnavailable ? ROLLOUT_UNAVAILABLE_MESSAGE : inventory.reason,
     rolloutNotice: rolloutUnavailable ? ROLLOUT_UNAVAILABLE_MESSAGE : null,
-    remembered: offered.remembered,
+    remembered: enabledOnly.remembered,
     rememberedUnavailable,
     persistence,
     catalogue,
@@ -604,13 +633,14 @@ export async function loadMachineSetupContext(input: {
     priorSetupUnavailable,
     recordedSetupUnavailable,
     unitNames,
-    suggestedMachine: offered.suggestedMachine,
+    suggestedMachine: enabledOnly.suggestedMachine,
     restoredSelection: offered.restoredSelection,
     legacyMachine,
     multiplexRoute,
     multiplexRefusal,
     multiplexCreateAtFirstSave,
-    clientLastMachine: offered.clientLastMachine,
+    clientLastMachine: enabledOnly.clientLastMachine,
+    defaultMachine,
   };
 }
 

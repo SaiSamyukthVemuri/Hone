@@ -16,6 +16,7 @@ import {
 import { OwnerOnlyNotice } from "@/components/settings/view-heading";
 import { StudioMachinesForm, type StudioMachinesResult, type StudioMachinesState } from "@/components/machines/studio-machines-form";
 import { readStudioMachineSettings, setStudioMachineDefault, setStudioMachineModel, STUDIO_MACHINE_MODELS } from "@/lib/machines/studio-machine-settings";
+import { studioMachineRpc } from "@/lib/machines/studio-machine-rpc";
 import { chartingRolloutFor } from "@/lib/rollouts/charting-rollout";
 
 export default async function MachineSettingsPage() {
@@ -51,7 +52,7 @@ export default async function MachineSettingsPage() {
   // THE OWNER'S SWITCHES. Shown only while the platform rollout is on for this studio (the commands refuse otherwise), and only when the
   // read worked: a failed read says so rather than showing every machine as off.
   const switchesAvailable = await chartingRolloutFor(studio.id);
-  const rpc = async (fn: string, args?: Record<string, unknown>) => (await createClient()).rpc(fn as never, args as never) as unknown as ReturnType<Parameters<typeof readStudioMachineSettings>[1]>;
+  const rpc = studioMachineRpc;
   const switches = switchesAvailable ? await readStudioMachineSettings(studio.id, rpc) : null;
   const studioId = studio.id;
   // NOT a server action itself (no directive): only the two actions below reach it, and they have checked the owner.
