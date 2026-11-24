@@ -54,18 +54,20 @@ test.describe("what $0 means at the dashboard till", () => {
   test("ALREADY FREE: an explicit $0 price says No payment due and finishes with no reason, receipt or Stripe attempt", async ({ page }) => {
     const { studio, appointmentId } = await visit(0);
     await loginAsOwner(page, studio);
-    const draft = await openCheckout(page, appointmentId);
-    await expect(draft.getByText("No payment due", { exact: true })).toBeVisible();
-    await expect(draft.getByLabel("Reason for price adjustment")).toHaveCount(0);
-    await draft.getByRole("button", { name: "Finish visit", exact: true }).click();
+    await page.goto("/dashboard");
+    const row = page.locator(`#appointment-${appointmentId}`);
+    // No Checkout, no reason and no receipt are offered: the row says No payment due and the visit is simply finished.
+    await expect(row.getByText("No payment due", { exact: true })).toBeVisible();
+    await expect(row.getByRole("button", { name: "Checkout", exact: true })).toHaveCount(0);
+    await row.getByRole("button", { name: "Mark completed", exact: true }).click();
     await expect.poll(() => status(appointmentId)).toBe("completed");
     expect(await settlements(appointmentId)).toEqual([]);
     expect(await attempts(studio.studioId)).toEqual([]);
     await page.goto("/dashboard");
-    const row = page.locator(`#appointment-${appointmentId}`);
-    await expect(row).toContainText(/Completed/i);
-    await expect(row.getByRole("button", { name: "Checkout", exact: true })).toHaveCount(0);
+    await expect(page.locator(`#appointment-${appointmentId}`)).toContainText(/Completed/i);
+    await expect(page.locator(`#appointment-${appointmentId}`).getByText("No payment due", { exact: true })).toBeVisible();
     expect(await settlements(appointmentId)).toEqual([]);
+    expect(await attempts(studio.studioId)).toEqual([]);
   });
 
   test("MISSING PRICE: asks to check the fee, is never read as free, and records nothing", async ({ page }) => {
