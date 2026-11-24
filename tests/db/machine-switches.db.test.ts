@@ -46,6 +46,13 @@ const unitOf = async (studio: string, profile: string, version = 1) =>
 
 // The seed starts xCell Pur ON and the default (24 Nov 2026), so a new studio is already in the state these tests exercise. The helper only seeds.
 const seedOn = async (label: string): Promise<SeededStudio> => seedStudio(label);
+// A studio whose owner has NOT opted into xCell: the seed's xCell-on state is flipped back, to exercise the off path.
+const seedOff = async (label: string): Promise<SeededStudio> => {
+  const s = await seedStudio(label);
+  await adminQuery(`update public.studio_machine_models set enabled = false where studio_id = $1 and profile_id = $2`, [s.studioId, PUR]);
+  await adminQuery(`update public.studio_machine_default set default_profile_id = null, ask_each_visit = true where studio_id = $1`, [s.studioId]);
+  return s;
+};
 
 beforeAll(async () => {
   // The migration is part of the chain: this suite NEVER replays its SQL (a replay would change a catalog that may be measured or sealed).
@@ -792,7 +799,7 @@ describe("the owner's switch decides, old history is not needed, and the unit co
     Number((await adminQuery(`select count(*)::int n from public.studio_machines where studio_id=$1 and machine_profile_id=$2`, [studio, PUR])).rows[0].n);
 
   it("NO HISTORY: a studio with no machine, no legacy xCell entry and no unit is refused until its owner turns the model on; turning it on creates nothing; the first save creates exactly one", async () => {
-    const S = await seedStudio("sw-nohist");
+    const S = await seedOff("sw-nohist");
     const sess = await seedSession(S);
     expect(await unitCount(S.studioId)).toBe(0);
     expect((await failure(ensure(S.userId, sess.blockId, PUR)))?.message).toMatch(/not switched on/);
@@ -807,7 +814,7 @@ describe("the owner's switch decides, old history is not needed, and the unit co
   });
 
   it("THE WRONG MODEL IS ON: only Senior is switched on, so the xCell first save is refused and creates nothing", async () => {
-    const S = await seedStudio("sw-wrongmodel");
+    const S = await seedOff("sw-wrongmodel");
     const sess = await seedSession(S);
     expect(await setModel(S.userId, S.studioId, SEN, true)).toBe("changed");
     expect((await failure(ensure(S.userId, sess.blockId, PUR)))?.message).toMatch(/not switched on/);
@@ -836,7 +843,7 @@ describe("the owner's switch decides, old history is not needed, and the unit co
   });
 
   it("another studio's owner cannot switch this studio's model on, and a receptionist (no practitioner row) cannot save into it", async () => {
-    const S = await seedStudio("sw-others");
+    const S = await seedOff("sw-others");
     const other = await seedStudio("sw-others-b");
     const sess = await seedSession(S);
     expect((await failure(setModel(other.userId, S.studioId, PUR, true)))?.message).toBe("Not available.");
