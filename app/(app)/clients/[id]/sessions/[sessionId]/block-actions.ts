@@ -20,6 +20,8 @@ import {
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import { checkIdentityChoice } from "@/lib/machines/identity-choice";
+import { isCanonicalRetryKey, NON_CANONICAL_KEY_MESSAGE } from "@/lib/machines/retry-key";
+import { createReceiptLookup, guardXcellRollout } from "@/lib/machines/xcell-rollout-guard";
 import { currentProfile } from "@/lib/machines/profile-contract";
 import { resolveWritingIdentity } from "@/lib/supabase/writing-identity";
 import { listStudioDevices } from "@/lib/machines/studio-devices";
@@ -1450,11 +1452,19 @@ export async function createTreatmentAreaWithEntryAction(
   // and nothing reaches here without settings.
   const withSetup =
     input.initialSetup != null && input.initialSetup.groups.length > 0;
+  // A RETRY KEY THAT IS NOT ALREADY CANONICAL IS REFUSED BEFORE ANYTHING IS READ OR SENT (lib/machines/retry-key.ts): the receipt lookup and the
+  // command must see the very same string. A bare-create key shorter than 8 characters has always meant "no key", and still does.
+  if (
+    (withSetup && !isCanonicalRetryKey(input.initialSetup!.idempotencyKey)) ||
+    (!withSetup && typeof input.createKey === "string" && input.createKey.length >= 8 && !isCanonicalRetryKey(input.createKey))
+  ) {
+    return { ok: false, error: NON_CANONICAL_KEY_MESSAGE };
+  }
   // A SETTINGS-FREE CREATE CARRIES A KEY TOO. 0223's command takes a key with no groups (its settings half is nullable
   // and it still writes the claim), so a retry of a bare save whose answer was lost is answered with the original area.
   const bareKey =
-    !withSetup && typeof input.createKey === "string" && input.createKey.trim().length >= 8
-      ? input.createKey.trim()
+    !withSetup && typeof input.createKey === "string" && input.createKey.length >= 8
+      ? input.createKey
       : null;
 
   // EVERY READING IS VALIDATED BEFORE ANY OF IT IS SENT, through the SAME
@@ -1483,6 +1493,14 @@ export async function createTreatmentAreaWithEntryAction(
         error: "That machine is not registered to this studio.",
       };
     }
+    // THE ROLLOUT, ASKED AGAIN AT WRITE TIME (a new area has no stored identity, so there is no existing-block exemption here).
+    const rolloutOk = await guardXcellRollout(db, {
+      studioId: studio.id,
+      unitProfileId: device.profileId,
+      deviceId: setup.machineId,
+      receipt: createReceiptLookup(db, input.sessionId, setup.idempotencyKey),
+    });
+    if (!rolloutOk.ok) return { ok: false, error: rolloutOk.error, unresolved: rolloutOk.reason === "receipt" };
     // THE CURRENT VERSION (Codex, #860 4308488012), and here it decides
     // whether a CLINICAL VALUE is accepted: `validateSubmittedReadings` below
     // checks each reading against this profile's field contract, so a
@@ -1535,6 +1553,16 @@ export async function createTreatmentAreaWithEntryAction(
     // answers a repeated key first and refuses a NEW write itself; an unreadable inventory keeps the key (unknown).
     if (!allowed.ok && allowed.reason === "unreadable") return { ok: false, error: allowed.error, unresolved: true };
     if (!allowed.ok && allowed.reason !== "availability") return { ok: false, error: allowed.error, unresolved: false };
+    // THE ROLLOUT, ASKED AGAIN AT WRITE TIME: a form opened while the xCell unit was offered can still submit after it was switched Off.
+    if (allowed.ok) {
+      const rolloutOk = await guardXcellRollout(supabase as unknown as MachineDb, {
+        studioId: studio.id,
+        unitProfileId: allowed.unitProfileId,
+        deviceId: identity.machineId,
+        receipt: createReceiptLookup(supabase as unknown as MachineDb, input.sessionId, bareKey),
+      });
+      if (!rolloutOk.ok) return { ok: false, error: rolloutOk.error, unresolved: rolloutOk.reason === "receipt" };
+    }
   }
   // Built once so the older command can be called with the same arguments when
   // 0301 is not applied yet (see the fallback below).

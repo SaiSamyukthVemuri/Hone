@@ -277,6 +277,7 @@ export const NO_ROW: Record<string, string> = {
   pending_invitations: "No row on a fresh stack; closure is shown from the catalog (row-level security on, no unconditional policy).",
   photos: "No row on a fresh stack; closure is shown from the catalog (row-level security on, no unconditional policy).",
   platform_lead_alerts: "No row on a fresh stack; closure is shown from the catalog (row-level security on, no unconditional policy).",
+  platform_rollout_studios: "No row on a fresh stack, by design: the pilot list is empty until an admin adds the first pilot studio (a separate owner action). Closure is shown from the catalog: row-level security on, no policy, and every table privilege revoked from public, anon, authenticated and service_role (the rows are reached only through the service-role-only commands), so no app role can read, change or remove a row whether or not one exists. platform_rollouts is not pinned here: the migration seeds its one Off row, so it is populated and probed like any other table.",
   practitioner_notifications: "No row on a fresh stack; closure is shown from the catalog (row-level security on, no unconditional policy).",
   probe_lots: "No row on a fresh stack; closure is shown from the catalog (row-level security on, no unconditional policy).",
   record_keeping_audit_events: "No row on a fresh stack; closure is shown from the catalog (row-level security on, no unconditional policy).",

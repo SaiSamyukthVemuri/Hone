@@ -1070,6 +1070,10 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
     reason: "Platform payment review surface, cross-studio.",
   },
   {
+    route: "/admin/rollouts",
+    reason: "Platform rollout control, cross-studio.",
+  },
+  {
     route: "/admin/studios/new",
     reason: "Platform studio provisioning, cross-studio.",
   },
