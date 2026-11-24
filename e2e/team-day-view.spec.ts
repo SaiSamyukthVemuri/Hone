@@ -578,7 +578,10 @@ test.describe("Block time follows the phone time grid's selected day", () => {
     );
     await expect.poll(async () => (await rows()).map((r) => [r.d, r.practitioner_id, r.studio_id])).toEqual([[`${wednesday} 15:00`, who.id, seed.studioId]]);
     await page.goto(`/calendar?view=week&day=${wednesday}&layout=grid`);
-    await expect(page.locator(`button[title*="${reason}"]`).first()).toBeVisible();
+    // A member's view does not carry the private note, so find the block by its time on the Wednesday timeline.
+    const saved = page.locator("button[title]").filter({ hasText: /3:00 PM|15:00/ }).first();
+    await saved.scrollIntoViewIfNeeded();
+    await expect(saved).toBeVisible();
     await page.screenshot({ path: `${process.env.EV_DIR ?? "test-results"}/phone-monday-to-wednesday-${owner ? "owner" : "practitioner"}.png` });
     return { monday, wednesday };
   }
