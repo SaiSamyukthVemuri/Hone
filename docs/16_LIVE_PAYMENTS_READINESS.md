@@ -102,7 +102,7 @@ studio_payment_settings
   default_charge_currency         cad
   stripe_application_fee_bps      null
 
-  studio_id                       38cb3a8b-f0f1-409e-9ea4-ffa4b95cb4c6 (second studio)
+  studio_id                       (id withheld; kept in the private operator records) (second studio)
   stripe_account_id               acct_1Tb9QtFFilRr6Xng
   stripe_account_status           enabled
   stripe_charges_enabled          true
