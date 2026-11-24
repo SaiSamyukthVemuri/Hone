@@ -799,6 +799,7 @@ export const RPC_PRIVILEGES: Readonly<Record<string, string>> = {
   join_new_client_waitlist_with_phone_and_sms_answer: "--sD",
   latest_setup_for_client: "-u-I",
   list_dismissed_attention: "-u-D",
+  list_platform_rollout: "--sD",
   list_waitlist_times_feedback: "--sD",
   mark_appointment_complete: "--sD",
   mark_appointment_no_show: "--sD",
