@@ -42,7 +42,7 @@ const dir = (uid: string, studio: string, q: string | null = null, filters: stri
   asUser(uid, (x) => x(`select * from public.receptionist_client_directory($1,$2,$3,$4,$5,$6)`, [studio, q, filters, sort, offset, limit]));
 
 beforeAll(async () => {
-  await reopenOlderContactCommands(); // closed by 0381; reopened for this file only to prove the reviewed body
+  await reopenOlderContactCommands(); // closed by 0382; reopened for this file only to prove the reviewed body
   a = await seedStudio("desk-proj-a");
   b = await seedStudio("desk-proj-b");
   aPrac = await seedMember(a, "desk-proj-prac");

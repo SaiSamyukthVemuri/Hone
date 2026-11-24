@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { adminQuery, asRole, asUser, closePool, seedMember, seedStudio, type SeededStudio } from "./helpers/harness";
 
-// 0381: the two older receptionist commands that return a client's FULL phone and email are closed to every role. The ACCEPTANCE test, on a
+// 0382: the two older receptionist commands that return a client's FULL phone and email are closed to every role. The ACCEPTANCE test, on a
 // real migrated database by DIRECT calls (what a signed-in person can do outside the app): (1) the ACL is closed and the bodies are untouched,
 // (2) every kind of caller is refused with 42501, (3) the SUPPORTED desk workflow still works: search the displayed name, phone digits or
 // email through the masked finder, a masked hint in the results, full contact only through the visit-contact command for a visit of the
@@ -110,7 +110,7 @@ describe("the two older commands are closed to every role, and nothing else abou
   it("the comment on each says CLOSED", async () => {
     for (const fn of [DIRECTORY, CONTACTS_V2]) {
       const { rows } = await adminQuery("select obj_description($1::regprocedure, 'pg_proc') as d", [fn]);
-      expect(String(rows[0].d)).toMatch(/^0381 CLOSED\./);
+      expect(String(rows[0].d)).toMatch(/^0382 CLOSED\./);
     }
   });
 
@@ -140,7 +140,7 @@ describe("every caller is refused with 42501, including an active receptionist o
   });
 });
 
-describe("the supported desk workflow still works with 0374, 0380, 0381 and 0376-0379", () => {
+describe("the supported desk workflow still works with 0374, 0380, 0382 and 0376-0379", () => {
   it("the schedule shows preferred, then regular, then Name on file only when both are blank; no phone or email column", async () => {
     const o = await call(who.receptionist, CAL3, [A.studioId]);
     expect("rows" in o).toBe(true);

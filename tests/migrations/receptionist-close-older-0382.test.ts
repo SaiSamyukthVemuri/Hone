@@ -2,11 +2,11 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { isRepoMax } from "./helpers/migration-state";
 
-// 0381 closes receptionist_client_directory and receptionist_client_contacts_v2 by privilege only. SOURCE contract; the behaviour is proved by
+// 0382 closes receptionist_client_directory and receptionist_client_contacts_v2 by privilege only. SOURCE contract; the behaviour is proved by
 // tests/db/receptionist-older-commands-closed.db.test.ts on a real database.
 
-const UP = readFileSync("supabase/migrations/0381_receptionist_close_older_contact_commands.sql", "utf8");
-const DOWN = readFileSync("supabase/rollbacks/0381_receptionist_close_older_contact_commands.down.sql", "utf8");
+const UP = readFileSync("supabase/migrations/0382_receptionist_close_older_contact_commands.sql", "utf8");
+const DOWN = readFileSync("supabase/rollbacks/0382_receptionist_close_older_contact_commands.down.sql", "utf8");
 const S0380 = readFileSync("supabase/migrations/0380_receptionist_name_rule.sql", "utf8");
 const FNS = [
   "public.receptionist_client_directory(uuid, text, text[], text, integer, integer)",
@@ -15,9 +15,9 @@ const FNS = [
 const MD5 = ["9356d1ca1f30005b09b5f6ba1765d59f", "2c398e896eede58c9a09a11213b122a0"];
 const code = (s: string) => s.replace(/--[^\n]*/g, "");
 
-describe("0381 is shaped like a sealed migration", () => {
+describe("0382 is shaped like a sealed migration", () => {
   it("is the current maximum migration", () => {
-    expect(isRepoMax("0381")).toBe(true);
+    expect(isRepoMax("0382")).toBe(true);
   });
   it("opens its own transaction, arms lock_timeout inside it, and changes no function body", () => {
     expect(UP).toMatch(/^begin;$/m);
@@ -53,7 +53,7 @@ describe("the privilege change", () => {
     expect([...names].sort()).toEqual(["receptionist_client_contacts_v2", "receptionist_client_directory"]);
   });
   it("the comments say CLOSED", () => {
-    expect(UP.match(/'0381 CLOSED\./g)?.length).toBe(2);
+    expect(UP.match(/'0382 CLOSED\./g)?.length).toBe(2);
   });
 });
 

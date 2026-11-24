@@ -55,7 +55,7 @@ const callAs = async (userId: string | "anon", name: string): Promise<Outcome> =
 };
 
 beforeAll(async () => {
-  await reopenOlderContactCommands(); // closed by 0381; reopened for this file only to prove the reviewed body
+  await reopenOlderContactCommands(); // closed by 0382; reopened for this file only to prove the reviewed body
   studio = await seedStudio("desk-a");
   other = await seedStudio("desk-b");
   who.owner = studio.userId;

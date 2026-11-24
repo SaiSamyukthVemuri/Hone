@@ -2,8 +2,8 @@
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
     "count": 287,
-    "last": "0381_receptionist_close_older_contact_commands.sql",
-    "sha256": "24a5f2608339ffe85962b38fc8d05684e78b151da511058fc94173a08d7dd4f0"
+    "last": "0382_receptionist_close_older_contact_commands.sql",
+    "sha256": "8f0a44e1c299ee08425a279baa6ece7e54f514416b00a4e2b508534e1a5a0270"
   },
   "public": {
     "tables": [

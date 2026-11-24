@@ -105,7 +105,7 @@ beforeAll(async () => {
   spareAppt = await appt(ids.c1, 20);
 });
 afterAll(async () => {
-  await closeOlderContactCommands(); // 0381 closed them; reopened in beforeAll only to prove the reviewed bodies
+  await closeOlderContactCommands(); // 0382 closed them; reopened in beforeAll only to prove the reviewed bodies
   await closePool();
 });
 
