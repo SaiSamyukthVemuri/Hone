@@ -8,6 +8,8 @@ import type {
   PendingInvitation,
   Practitioner,
 } from "@/lib/types/database";
+import { getOwnerTeamSeats } from "@/lib/subscriptions/owner-team-seats";
+import { PLANS } from "@/lib/subscriptions/plans";
 import { InviteForm } from "./InviteForm";
 import {
   removePractitionerAction,
@@ -56,9 +58,10 @@ export default async function TeamSettingsPage() {
     return <OwnerOnlyNotice>Only studio owners can manage the team.</OwnerOnlyNotice>;
   }
 
-  const [practitioners, invitations] = await Promise.all([
+  const [practitioners, invitations, seats] = await Promise.all([
     getPractitionersForStudio(studio.id),
     getPendingInvitations(studio.id),
+    getOwnerTeamSeats(studio.id),
   ]);
 
   const showReviewLink = await shouldShowReviewLink(studio.id);
@@ -74,15 +77,22 @@ export default async function TeamSettingsPage() {
       <section className="flex flex-col gap-4">
         <div>
           <h2 id="invite-practitioner" className="scroll-mt-24 text-xl font-medium">
-            Invite a practitioner
+            {seats ? "Invite a team member" : "Invite a practitioner"}
           </h2>
           <p className="mt-1 text-sm text-neutral-500">
-            We don&rsquo;t send the email automatically. Share the message we
-            give you with your teammate. They sign in with the same email and
-            join your studio.
+            Teammates sign in with the email on their invitation. You can also copy the invitation instructions to share with them.
           </p>
         </div>
-        <InviteForm />
+        {seats && (
+          <div className="space-y-1 text-sm" aria-label="Plan seats">
+            <p className="font-medium">{PLANS[seats.plan].label} plan</p>
+            <p>Practitioners: {seats.practitioner_used} of {seats.practitioner_limit} seats used</p>
+            <p>{seats.receptionist_limit === 0 ? "Receptionists are not included in Solo." :
+              `Receptionists: ${seats.receptionist_used} of ${seats.receptionist_limit} seats used`}</p>
+            <p className="text-neutral-500">The owner counts as a practitioner. Pending invites reserve seats until accepted or revoked.</p>
+          </div>
+        )}
+        <InviteForm seats={seats} deskEnabled={process.env.HONE_RECEPTIONIST_DESK_ENABLED === "true"} />
       </section>
 
       <PendingInvitations invitations={invitations} />
@@ -234,7 +244,7 @@ function PendingInvitations({
   );
 }
 
-function RoleBadge({ role }: { role: "owner" | "practitioner" }) {
+function RoleBadge({ role }: { role: PendingInvitation["role"] }) {
   return (
     <span
       className={`rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider ${

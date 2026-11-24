@@ -200,6 +200,10 @@ describe("#8 — the Terms do not describe automated Hone subscription billing a
       "app/(app)/layout.tsx",
       "app/(app)/settings/subscription/actions.ts",
       "app/(app)/settings/subscription/page.tsx",
+      // HON-88 owner seat usage and invitation feedback, with no payment writes.
+      "app/(app)/settings/team/InviteForm.tsx",
+      "app/(app)/settings/team/actions.ts",
+      "app/(app)/settings/team/page.tsx",
       "app/(auth)/no-access/checkout-action.ts",
       "app/(auth)/no-access/page.tsx",
       "app/api/billing/webhook/route.ts",

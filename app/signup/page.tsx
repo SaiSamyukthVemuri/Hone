@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { isSelfServeCheckoutEnabled } from "@/lib/subscriptions/plans";
 import { selectedPlanFromQuery } from "@/lib/subscriptions/plan-selection";
-import { PLANS } from "@/lib/subscriptions/plans";
+import { PLANS, teamAllowance } from "@/lib/subscriptions/plans";
 import { SignupForm } from "./SignupForm";
 
 export const dynamic = "force-dynamic";
@@ -23,7 +23,7 @@ export default async function SignupPage({
   const plan = selectedPlanFromQuery((await searchParams).plan);
   return (
     <SignupForm
-      planSummary={plan ? `${PLANS[plan].label}: US$${PLANS[plan].unitAmount / 100}/month` : null}
+      planSummary={plan ? `${PLANS[plan].label}: US$${PLANS[plan].unitAmount / 100}/month · ${teamAllowance(plan)}` : null}
     />
   );
 }

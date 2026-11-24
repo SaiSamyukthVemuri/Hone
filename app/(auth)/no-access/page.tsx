@@ -3,6 +3,7 @@ import {
   isSelfServeCheckoutEnabled,
   PLAN_KEYS,
   PLANS,
+  teamAllowance,
 } from "@/lib/subscriptions/plans";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
@@ -172,8 +173,7 @@ export default async function NoAccessPage({
                 {PLAN_KEYS.map((key) => (
                   <option key={key} value={key}>
                     {PLANS[key].label} · US${PLANS[key].unitAmount / 100}/month
-                    · {PLANS[key].practitionerLimit}{" "}
-                    {key === "solo" ? "practitioner" : "practitioners"}
+                    · {teamAllowance(key)}
                   </option>
                 ))}
               </select>

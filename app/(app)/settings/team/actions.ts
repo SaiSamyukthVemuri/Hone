@@ -4,7 +4,9 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
-import type { PractitionerRole } from "@/lib/types/database";
+import { getOwnerTeamSeats } from "@/lib/subscriptions/owner-team-seats";
+import { seatLimitMessage } from "@/lib/subscriptions/team-seats";
+import type { InvitationRole } from "@/lib/types/database";
 import { resend, FROM_ADDRESS } from "@/lib/email/client";
 import { buildInvitationEmail } from "@/lib/email/templates/invitation";
 import { safeLog } from "@/lib/logging/safe-log";
@@ -12,7 +14,7 @@ import { dbErrorCode, failureCode } from "@/lib/logging/error-class";
 import { userFacingDbFailure } from "@/lib/logging/user-facing-db-failure";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const VALID_ROLES: ReadonlyArray<PractitionerRole> = ["owner", "practitioner"];
+const VALID_ROLES: ReadonlyArray<InvitationRole> = ["owner", "practitioner", "receptionist"];
 const PG_UNIQUE_VIOLATION = "23505";
 
 export type InviteResult =
@@ -119,10 +121,10 @@ export async function invitePractitionerAction(
   const email = rawEmail.toLowerCase();
 
   const roleRaw = formData.get("role");
-  const role =
-    typeof roleRaw === "string" && VALID_ROLES.includes(roleRaw as PractitionerRole)
-      ? (roleRaw as PractitionerRole)
-      : "practitioner";
+  const role = roleRaw ?? "practitioner";
+  if (typeof role !== "string" || !VALID_ROLES.includes(role as InvitationRole)) {
+    return { ok: false, error: "Choose a valid team role." };
+  }
   const displayName = nullableString(formData.get("display_name"));
 
   let context: OwnerContext;
@@ -156,6 +158,22 @@ export async function invitePractitionerAction(
     };
   }
 
+  if (role === "receptionist") {
+    let seats;
+    try {
+      seats = await getOwnerTeamSeats(studioId);
+    } catch {
+      return { ok: false, error: "Could not check the studio’s team seats. Try again." };
+    }
+    if (!seats || seats.receptionist_limit === 0 || process.env.HONE_RECEPTIONIST_DESK_ENABLED !== "true") {
+      return { ok: false, error: "Receptionist invitations are unavailable for this studio." };
+    }
+    const { data: existingDesk, error: deskErr } = await supabase.from("studio_receptionists")
+      .select("id").eq("studio_id", studioId).eq("email", email).eq("active", true).maybeSingle();
+    if (deskErr) return { ok: false, error: "Could not check the front desk team." };
+    if (existingDesk) return { ok: false, error: "This receptionist is already active at your studio." };
+  }
+
   // Already invited at this studio (still pending)?
   const { data: existingInvite, error: inviteErr } = await supabase
     .from("pending_invitations")
@@ -184,6 +202,8 @@ export async function invitePractitionerAction(
   });
 
   if (error) {
+    const seatError = seatLimitMessage(error.code);
+    if (seatError) return { ok: false, error: seatError };
     if (error.code === PG_UNIQUE_VIOLATION) {
       return {
         ok: false,

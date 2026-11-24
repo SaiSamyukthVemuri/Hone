@@ -26,6 +26,7 @@ import {
   CONTACT_EMAIL,
   ANALYTICS_EVENTS,
 } from "@/lib/marketing/content";
+import { teamAllowance } from "@/lib/subscriptions/plans";
 import { marketingMetadata } from "@/lib/marketing/metadata";
 import {
   SELF_SERVE_PRICING_FOOTNOTE,
@@ -215,6 +216,7 @@ export default function PricingPage() {
                     >
                       {c.label}
                     </Link>
+                    <p className="text-sm text-muted">{teamAllowance(c.plan)}</p>
                   </li>
                 ))}
               </ul>

@@ -23,6 +23,7 @@ export interface PlanDefinition {
   readonly interval: "month";
   /** Active practitioners the plan includes; the practising owner counts. */
   readonly practitionerLimit: number;
+  readonly receptionistLimit: number;
   readonly priceEnvName: "HONE_STRIPE_PRICE_SOLO" | "HONE_STRIPE_PRICE_STUDIO";
 }
 
@@ -34,6 +35,7 @@ export const PLANS: Readonly<Record<PlanKey, PlanDefinition>> = {
     currency: "usd",
     interval: "month",
     practitionerLimit: 1,
+    receptionistLimit: 0,
     priceEnvName: "HONE_STRIPE_PRICE_SOLO",
   },
   studio: {
@@ -43,9 +45,23 @@ export const PLANS: Readonly<Record<PlanKey, PlanDefinition>> = {
     currency: "usd",
     interval: "month",
     practitionerLimit: 3,
+    receptionistLimit: 1,
     priceEnvName: "HONE_STRIPE_PRICE_STUDIO",
   },
 };
+
+export function teamAllowance(plan: PlanKey): string {
+  const { practitionerLimit, receptionistLimit } = PLANS[plan];
+  const practitioners =
+    practitionerLimit === 1
+      ? "1 practitioner"
+      : `Up to ${practitionerLimit} practitioners`;
+  const reception =
+    receptionistLimit === 0
+      ? "no receptionist"
+      : `${receptionistLimit} receptionist`;
+  return `${practitioners} · ${reception}`;
+}
 
 export const PLAN_KEYS: readonly PlanKey[] = ["solo", "studio"];
 

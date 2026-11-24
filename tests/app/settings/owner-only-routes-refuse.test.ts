@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { isValidElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Sam's decision, 2 Nov: a practitioner who opens ANY owner-only settings route
 // gets one clear access-denied state in place -- never a redirect, never a
@@ -52,6 +52,7 @@ const loaders: Record<string, () => Promise<PageModule>> = {
   "studio/client-self-service/page.tsx": () => import("@/app/(app)/settings/studio/client-self-service/page"),
   "forms/postcare/page.tsx": () => import("@/app/(app)/settings/forms/postcare/page"),
   "forms/cancellation-policy/page.tsx": () => import("@/app/(app)/settings/forms/cancellation-policy/page"),
+  "subscription/page.tsx": () => import("@/app/(app)/settings/subscription/page"),
   "team/page.tsx": () => import("@/app/(app)/settings/team/page"),
   "booking/page.tsx": () => import("@/app/(app)/settings/booking/page"),
   "booking/link/page.tsx": () => import("@/app/(app)/settings/booking/link/page"),
@@ -91,6 +92,7 @@ const OWNER_ONLY_ROUTES: Record<string, string> = {
   "/settings/forms/postcare": "forms/postcare/page.tsx",
   "/settings/forms/cancellation-policy": "forms/cancellation-policy/page.tsx",
   "/settings/team": "team/page.tsx",
+  "/settings/subscription": "subscription/page.tsx",
   "/settings/booking": "booking/page.tsx",
   "/settings/booking/link": "booking/link/page.tsx",
   "/settings/booking/window": "booking/window/page.tsx",
@@ -184,6 +186,8 @@ describe("owner-only settings routes refuse a practitioner in place", () => {
       });
     });
 
+    afterEach(() => vi.unstubAllEnvs());
+
     // Resolve a server component the way React would: call async function
     // components until plain markup is left.
     async function resolve(node: unknown, depth = 0): Promise<unknown> {
@@ -196,6 +200,7 @@ describe("owner-only settings routes refuse a practitioner in place", () => {
     }
 
     it.each(Object.entries(OWNER_ONLY_ROUTES))("%s shows the shared access-denied state", async (route, file) => {
+      if (route === "/settings/subscription") vi.stubEnv("HONE_SELF_SERVE_CHECKOUT_ENABLED", "true");
       const mod = await loaders[file]();
       const out = await resolve(
         await mod.default({ searchParams: Promise.resolve({}), params: Promise.resolve({}) }),

@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 257,
-    "last": "0385_sandbox_subscription_signup.sql",
-    "sha256": "074a1d979c05604fe054610ab62db4cf5f714b6a012d847bb902e0f3fbffc2f6"
+    "count": 258,
+    "last": "0386_subscription_team_seats.sql",
+    "sha256": "f11dc6f1c4cad3a70d24965a81ce28129690638e3bc1d29cc5efbc328cda14db"
   },
   "public": {
     "tables": [
@@ -278,6 +278,7 @@
       "email_provider_events_server_defaults",
       "enforce_appointment_buffer",
       "enforce_appointment_transition",
+      "enforce_hone_team_seats",
       "enforce_intake_terminal_immutability",
       "enforce_treatment_image_integrity",
       "enqueue_calendar_outbound",
@@ -321,6 +322,7 @@
       "guard_snapshot_append_only",
       "guard_treatment_reading_history_immutable",
       "handle_new_user",
+      "hone_team_seat_counts",
       "import_legacy_waitlist_entry",
       "imported_treatment_memory_audit_row",
       "initialize_studio_payment_jurisdiction_from_history",
@@ -358,6 +360,7 @@
       "move_appointment_core",
       "move_or_reassign_appointment",
       "my_hone_billing_status",
+      "my_hone_team_seats",
       "my_pending_invitation",
       "new_client_waitlist_entries_record_event",
       "new_client_waitlist_entries_server_timestamps",

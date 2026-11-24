@@ -1,5 +1,7 @@
 "use client";
 
+import type { InvitationRole } from "@/lib/types/database";
+import { hasTeamSeat, type TeamSeats } from "@/lib/subscriptions/team-seats";
 import { useState, useTransition } from "react";
 import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
 import { invitePractitionerAction } from "./actions";
@@ -15,17 +17,28 @@ function buildShareMessage(email: string): string {
   return `Tell ${email}: visit hone.care, click Sign in, use ${email}. They will be added to your team automatically.`;
 }
 
-export function InviteForm() {
+export function InviteForm({
+  seats = null,
+  deskEnabled = false,
+}: {
+  seats?: TeamSeats | null;
+  deskEnabled?: boolean;
+}) {
+  const canInvitePractitioner = !seats || hasTeamSeat(seats, "practitioner");
+  const showReceptionist = !!seats?.receptionist_limit && deskEnabled;
+  const canInviteReceptionist = !!seats && showReceptionist && hasTeamSeat(seats, "receptionist");
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
-  const [role, setRole] = useState<"practitioner" | "owner">("practitioner");
+  const defaultRole = canInvitePractitioner ? "practitioner" : "receptionist";
+  const [chosenRole, setRole] = useState<InvitationRole | null>(null);
+  const role = chosenRole ?? defaultRole;
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [, startTransition] = useTransition();
   // Typed-but-unsent invitation details count as unsaved edits.
   useUnsavedChangesGuard(
     "team-invite",
     status.kind !== "success" &&
-      (email !== "" || displayName !== "" || role !== "practitioner"),
+      (email !== "" || displayName !== "" || (chosenRole !== null && chosenRole !== defaultRole)),
   );
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -46,7 +59,7 @@ export function InviteForm() {
       setStatus({ kind: "success", email: result.email, copied: false });
       setEmail("");
       setDisplayName("");
-      setRole("practitioner");
+      setRole(null);
     });
   }
 
@@ -92,7 +105,11 @@ export function InviteForm() {
     );
   }
 
+  if (!canInvitePractitioner && !canInviteReceptionist) {
+    return <p className="text-sm">No team seats are available to invite. Review active members and pending invitations.</p>;
+  }
   const sending = status.kind === "sending";
+  const selectedRoleAvailable = role === "receptionist" ? canInviteReceptionist : canInvitePractitioner;
 
   return (
     <form onSubmit={handleSubmit} className="flex max-w-xl flex-col gap-4">
@@ -125,18 +142,19 @@ export function InviteForm() {
         <select
           value={role}
           onChange={(e) =>
-            setRole(e.target.value === "owner" ? "owner" : "practitioner")
+            setRole(e.target.value as InvitationRole)
           }
           className={fieldControlClass({ fullWidth: false, className: "max-w-xs" })}
         >
-          <option value="practitioner">Practitioner</option>
-          <option value="owner">Owner</option>
+          <option value="practitioner" disabled={!canInvitePractitioner}>Practitioner</option>
+          <option value="owner" disabled={!canInvitePractitioner}>Owner</option>
+          {showReceptionist && <option value="receptionist" disabled={!canInviteReceptionist}>Receptionist (front desk)</option>}
         </select>
       </label>
       <div className="flex items-center gap-3">
         <button
           type="submit"
-          disabled={sending}
+          disabled={sending || !selectedRoleAvailable}
           className="rounded-md bg-neutral-900 px-5 py-3 text-base font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
         >
           {sending ? "Sending" : "Create invite"}
