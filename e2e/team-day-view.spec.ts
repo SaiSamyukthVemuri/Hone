@@ -538,7 +538,8 @@ test("finds a colleague's opening on another day and books the exact previewed s
   }]);
 
   // Another staff member had previewed this same opening before confirmation.
-  await stalePreview.click();
+  // The stale tab may already have refreshed and drawn the booked visit over its marker; the marker's own handler is what is under test.
+  await stalePreview.dispatchEvent("click");
   const staleDrawer = otherPage.getByRole("dialog", { name: "New appointment" });
   await expect(staleDrawer.getByText(/opening is no longer available/i)).toBeVisible();
   await staleDrawer.getByPlaceholder("Find existing client").fill(bookingClient);

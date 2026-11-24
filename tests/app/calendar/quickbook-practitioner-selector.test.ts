@@ -78,8 +78,14 @@ describe("desktop + mobile thread identical targeting context", () => {
     expect((PAGE.match(/practitionerCapacityEnabled=\{studio\.practitioner_capacity_enabled === true\}/g) ?? []).length).toBe(2);
     // HON-48: the team day view is the third path, with the same server-resolved
     // acting practitioner.
-    expect((PAGE.match(/currentPractitionerId=\{practitioner\.id\}/g) ?? []).length).toBe(3);
-    expect((PAGE.match(/currentPractitionerName=\{practitioner\.display_name\}/g) ?? []).length).toBe(3);
+    // Three booking paths (week, mobile, team day) plus the Block time button on the week and the team day.
+    // The Month renders the same button from its own viewer id (asserted below).
+    const blockTimeButtons = PAGE.match(/<CalendarBlockTime[\s\S]*?\/>/g) ?? [];
+    expect(blockTimeButtons).toHaveLength(3);
+    expect(blockTimeButtons.filter(tag => /currentPractitionerId=\{practitioner\.id\}/.test(tag) && /currentPractitionerName=\{practitioner\.display_name\}/.test(tag))).toHaveLength(2);
+    expect(blockTimeButtons.filter(tag => /currentPractitionerId=\{viewerId\}/.test(tag))).toHaveLength(1);
+    expect((PAGE.match(/currentPractitionerId=\{practitioner\.id\}/g) ?? []).length).toBe(3 + 2);
+    expect((PAGE.match(/currentPractitionerName=\{practitioner\.display_name\}/g) ?? []).length).toBe(3 + 2);
     const dayPath = PAGE.slice(PAGE.indexOf("async function renderTeamDayView"));
     // The Day view now serves a lone practitioner with capacity off too, so the
     // flag is the studio's REAL value, never a literal true that would show the
