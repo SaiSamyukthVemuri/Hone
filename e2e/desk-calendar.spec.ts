@@ -69,6 +69,9 @@ test("reception sees client names, opens contact details, and books an afternoon
 
   for (const mode of ["Week", "Day", "Month"]) {
     await page.getByRole("link", { name: mode, exact: true }).click();
+    // Wait for the navigation to COMMIT before going on: a slow runner otherwise opens the booking panel while the
+    // last view change is still in flight, and the late commit replaces the panel mid-use.
+    await expect(page).toHaveURL(new RegExp(`view=${mode.toLowerCase()}`));
     await expect(visit.first()).toBeVisible();
   }
   await page.getByRole("button", { name: "Find an opening", exact: true }).first().click();
