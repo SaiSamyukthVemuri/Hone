@@ -578,6 +578,14 @@ begin
      and exists (select 1 from public.studio_machine_models sm
                   where sm.studio_id = p_studio_id and not sm.enabled
                     and sm.profile_id = case v_profile when 'dectro-apilus:xcell' then 'dectro-apilus:xcell-pur' else v_profile end)
+     -- NOT A NEW BINDING: an OLD area with no identity yet that already carries legacy xCell content (a legacy mode, a frequency or legacy readings)
+     -- being recorded as the legacy xCell it already is. Refusing it would break existing legacy charting for a studio that switched the xCell off.
+     -- An empty area choosing the legacy xCell, or any other model, is still a new binding and is refused.
+     and not (v_profile = 'dectro-apilus:xcell' and v_cur_profile is null and v_cur_unit is null
+              and (exists (select 1 from public.session_blocks lb
+                            where lb.id = p_block_id
+                              and (nullif(btrim(lb.mode::text), '') is not null or nullif(btrim(lb.machine_frequency::text), '') is not null))
+                   or public.block_holds_legacy_readings(p_block_id)))
      and public.platform_rollout_enabled_for('charting_new_view_xcell', p_studio_id) then
     raise exception 'That machine is switched off for this studio.' using errcode = 'check_violation';
   end if;
