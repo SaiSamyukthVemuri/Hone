@@ -73,6 +73,8 @@ test("reception sees client names, opens contact details, and books an afternoon
 
   for (const mode of ["Week", "Day", "Month"]) {
     await page.getByRole("link", { name: mode, exact: true }).click();
+    // Wait for the navigation itself: the visit is already visible on the old view, and a late commit would reset an open booking panel.
+    await expect(page).toHaveURL(new RegExp(`view=${mode.toLowerCase()}`));
     await expect(visit.first()).toBeVisible();
   }
   await page.getByRole("button", { name: "Find an opening", exact: true }).first().click();
