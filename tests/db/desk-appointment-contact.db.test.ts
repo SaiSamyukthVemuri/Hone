@@ -75,11 +75,12 @@ describe("receptionist scheduling names", () => {
       "appointment_id", "starts_at", "ends_at", "status", "practitioner_id", "practitioner_display_name",
       "practitioner_color", "service_name", "display_name", "duration_minutes", "studio_timezone",
     ]);
-    for (const term of ["roWaN", "0188", "sample-client@"]) {
+    for (const term of ["roWaN", "0188", "5550188", "sample-client@", "SAMPLE-Client@EXAMPLE"]) {
       const matches = await asUser(desk, q => q(findClient, [studio.studioId, term]));
-      expect(matches.rows).toEqual([{ client_id: studio.clientId, display_name: "Casey Rowan", phone, email }]);
+      // Rows carry a masked hint only: never the full phone or email.
+      expect(matches.rows, term).toEqual([{ client_id: studio.clientId, display_name: "Casey Rowan", contact_hint: "•••@ex…est · •••0188" }]);
     }
-    for (const term of ["Quillfeather", "Foreign Surname", "%%"]) {
+    for (const term of ["Quillfeather", "Private", "Private Quillfeather", "Foreign Surname", "%%"]) {
       const matches = await asUser(desk, q => q(findClient, [studio.studioId, term]));
       expect(matches.rows).toEqual([]);
     }
@@ -88,10 +89,27 @@ describe("receptionist scheduling names", () => {
     expect(old.rows).toEqual([{ display_name: "Name on file" }]);
   });
 
+  it("tells apart two clients with the same displayed name by email, and never searches the legal name", async () => {
+    const twin = randomUUID();
+    try {
+      await adminQuery("insert into public.clients (id,studio_id,name,preferred_name,email,phone) values ($1,$2,'Casey Rowan',null,'Casey.Twin@Other-Mail.test','(905) 555-0123')", [twin, studio.studioId]);
+      const both = await asUser(desk, q => q(findClient, [studio.studioId, "casey rowan"]));
+      expect(both.rows.map(r => [r.display_name, r.contact_hint]).sort()).toEqual([
+        ["Casey Rowan", "•••@ex…est · •••0188"], ["Casey Rowan", "•••@ot…est · •••0123"]].sort());
+      const one = await asUser(desk, q => q(findClient, [studio.studioId, "CASEY.TWIN@"]));
+      expect(one.rows.map(r => r.client_id)).toEqual([twin]);
+      expect((await asUser(desk, q => q(findClient, [studio.studioId, "Name on file"]))).rows).toEqual([]);
+      const calendar = await asUser(desk, q => q(schedule, [studio.studioId]));
+      expect(calendar.rows.map(row => row.display_name)).toEqual(["Casey Rowan"]);
+    } finally {
+      await adminQuery("delete from public.clients where id = any($1)", [[twin]]);
+    }
+  });
+
   it("searches a formatted stored phone by its digits only, never by a lone digit or by punctuation", async () => {
     await adminQuery("update public.clients set phone='(416) 555-0188' where id=$1", [studio.clientId]);
     try {
-      for (const term of ["0188", "555-01", "(416) 555", "416 555 0188", "(416) 5"]) {
+      for (const term of ["0188", "5550188", "555-01", "(416) 555", "416 555 0188", "(416) 5"]) {
         const matches = await asUser(desk, q => q(findClient, [studio.studioId, term]));
         expect(matches.rows.map(row => row.client_id), term).toEqual([studio.clientId]);
       }

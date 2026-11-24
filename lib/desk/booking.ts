@@ -29,11 +29,7 @@ export function deskText(value: unknown): string {
 export function bookingClient(row: Record<string, unknown>): DeskBookingClient | null {
   if (!validDeskId(row.client_id) || typeof row.display_name !== "string") return null;
   const displayName = deskDisplayName(row.display_name);
-  const phone = typeof row.phone === "string" ? row.phone : "";
-  const email = typeof row.email === "string" ? row.email : "";
-  const digits = phone.replace(/\D/g, "");
-  const emailMatch = /^([^@\s])[^@\s]*@[^@\s]+$/.exec(email);
-  const contactHint = digits.length >= 4 ? `Phone ending in ${digits.slice(-4)}`
-    : emailMatch ? `Email starts with ${emailMatch[1]}…` : "";
+  // The database already masked the hint (e.g. "•••@ex…com · •••0188"); a full phone or email is never read here.
+  const contactHint = typeof row.contact_hint === "string" ? row.contact_hint.replace(/\s+/g, " ").trim().slice(0, DESK_FIELD_MAX) : "";
   return { id: row.client_id, displayName, contactHint };
 }
