@@ -373,7 +373,7 @@ const LEGACY_BASELINE: ReadonlyArray<readonly [string, number]> = [
   ["app/(app)/clients/[id]/intake/page.tsx", 1],
   ["app/(app)/clients/[id]/page.tsx", 1],
   ["app/(app)/dashboard/practice-snapshot.tsx", 2],
-  ["app/(app)/records/page.tsx", 2],
+  ["app/(app)/records/page.tsx", 0],
   ["components/appointment/postcare-section.tsx", 1],
   ["components/clinical-notes-section.tsx", 3],
   ["components/consultation-notes-card.tsx", 2],

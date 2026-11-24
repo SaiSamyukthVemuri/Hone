@@ -261,8 +261,9 @@ describe("scope guards", () => {
 
   it("PR #222 exposure owner tier is untouched by this PR", () => {
     // RECORDS-SECTION-RECOVERY: the section is called directly (not as JSX).
-    expect(PAGE).toMatch(/ExposureIncidentsSection\(\{ studioId: studio\.id, isOwner \}\)/);
-    expect(PAGE).toMatch(/Exposure incident history is owner-only/);
+    expect(PAGE).toMatch(/ExposureIncidentsSection\(\{ studioId: studio\.id, isOwner, adding \}\)/);
+    expect(PAGE).toMatch(/practitioner\.role === "owner"/);
+    expect(PAGE).toMatch(/isOwner && !adding \? await getExposureIncidentRecords\(studioId\) : \[\]/);
     expect(PRINT).toMatch(/owner-only and is not included in\s+this export/);
   });
 });
