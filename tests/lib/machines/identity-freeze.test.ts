@@ -31,6 +31,26 @@ describe("blockHoldsReadings (the server's machine freeze input)", () => {
     expect(await blockHoldsReadings(fake({ block: [] }), "b", "s")).toBe(true);
     for (const fail of ["session_blocks", "treatment_setup_readings", "electrolysis_entries"]) expect(await blockHoldsReadings(fake({ fail }), "b", "s")).toBe(true);
   });
+  it("a read that THROWS (not an error result) HOLDS too: each of the three reads, synchronously or by rejection", async () => {
+    const throwing = (table: string, how: "sync" | "reject") =>
+      ({
+        from: (t: string) => {
+          const chain: Record<string, unknown> = {};
+          for (const k of ["select", "eq", "limit"]) chain[k] = () => chain;
+          chain.then = (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) => {
+            if (t === table) {
+              if (how === "sync") throw new Error("boom");
+              return rej ? rej(new Error("boom")) : Promise.reject(new Error("boom"));
+            }
+            return res({ data: t === "session_blocks" ? [{ id: "b" }] : [], error: null });
+          };
+          return chain;
+        },
+      }) as never;
+    for (const table of ["session_blocks", "treatment_setup_readings", "electrolysis_entries"])
+      for (const how of ["sync", "reject"] as const) expect(await blockHoldsReadings(throwing(table, how), "b", "s"), `${table} ${how}`).toBe(true);
+    expect(await blockHoldsReadings({ from: () => { throw new Error("no client"); } } as never, "b", "s")).toBe(true);
+  });
 });
 
 describe("purLegacyModeRefused", () => {
