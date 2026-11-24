@@ -167,6 +167,11 @@ export function AppointmentSettlementControls({
       return;
     }
     const operation = zeroWaiver ? "waived" : method;
+    // A fee waiver always carries a short reason: the adjustment reason when the fee was cut to zero, otherwise this note.
+    if (operation === "waived" && !(draft?.reason.trim() && zeroWaiver) && !note.trim()) {
+      setError("Enter a reason for the fee waiver.");
+      return;
+    }
     const cents = zeroWaiver ? draft!.referenceCents
       : draft && !isReceivedMethod(operation) ? finalCents : receivedCents;
     if (isReceivedMethod(operation) && (cents === 0 || (cents !== null && finalCents !== null && cents > finalCents))) {
@@ -269,9 +274,10 @@ export function AppointmentSettlementControls({
             />
           </label>}
           <label className="text-xs text-neutral-700 dark:text-neutral-300">
-            Note (optional, kept internal)
+            {open === "waived" && !zeroWaiver ? "Reason for fee waiver (kept internal)" : "Note (optional, kept internal)"}
             <input
               value={note}
+              required={open === "waived" && !zeroWaiver}
               maxLength={500}
               disabled={pending}
               data-testid="settlement-note"
