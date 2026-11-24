@@ -1065,7 +1065,8 @@ function EmptySelection() {
   );
 }
 
-// Keep studio-assigned identity colours on the initials so the schedule stays readable across a full team.
+// The practitioner's colour lives on the header bar, with the name always
+// printed on it, so colour is never the only way to tell columns apart.
 function TeamDayColumnHeader({
   column,
   timeFormat,
@@ -1089,19 +1090,19 @@ function TeamDayColumnHeader({
       data-testid="team-day-column-header"
       data-practitioner-id={column.practitionerId ?? ""}
       data-color={column.colorLabel}
-      className="min-w-0 border-l border-neutral-200 bg-white px-3 py-2.5 text-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
+      className={`min-w-0 border-l border-neutral-300 px-3 py-2 dark:border-neutral-700 ${column.headerBgClass} ${column.headerTextClass}`}
     >
       <div className="flex min-w-0 items-center gap-2">
         <span
           aria-hidden="true"
           data-testid="team-day-column-avatar"
-          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ${column.headerBgClass} ${column.headerTextClass}`}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/25 text-[11px] font-semibold"
         >
           {practitionerInitials(column.name)}
         </span>
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold">{column.name}</div>
-          <div className="truncate text-xs text-neutral-600 dark:text-neutral-400">{hours}</div>
+          <div className="truncate text-[11px] font-medium opacity-90">{hours}</div>
         </div>
       </div>
     </div>
