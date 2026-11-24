@@ -140,8 +140,13 @@ for (const screen of SCREENS) {
         await expect.poll(receipts).toEqual([{ method: "paid_e_transfer", reference_fee_cents: 9000, quoted_amount_cents: 7550, amount_cents: 5025 }]);
         expect(await sql("select id from public.payment_charge_attempts where studio_id = $1", [studio.studioId])).toEqual([]);
         await page.goto("/dashboard?period=month");
-        await expect(row(page)).toContainText("$25.25");
+        await expect(row(page)).toContainText("Part paid · e-transfer");
         await shot(page, "4c-after-checkout");
+        // The balance itself is read back on the visit's own page, reloaded fresh: $25.25 still owed of $75.50.
+        await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
+        await expect(page.getByText(/\$25\.25 still owed of \$75\.50/)).toBeVisible();
+        await shot(page, "4d-balance-on-the-visit");
+        await page.goto("/dashboard?period=month");
       });
 
       await test.step("5. Rebook goes to the full calendar and returns to the same row with the next appointment", async () => {
