@@ -565,6 +565,8 @@ describe("0243 public/assisted revision and atomic profile boundary", () => {
     const directory = rows.find((r) => bare(r.signature).startsWith("receptionist_client_directory("));
     if (directory) expect(directory.sha).toBe(DESK_DIRECTORY_SHA_VALUE);
     // On a chain that includes 0380 the installed directory body is exactly 0380's, by a hash written out in this file.
+    // The 0380 file must exist: the pin cannot pass by falling back to an older file.
+    expect(existsSync("supabase/migrations/0380_receptionist_name_rule.sql")).toBe(true);
     if (directory) expect(directory.sha).toBe(DIRECTORY_BODY_SHA_0380);
   });
 
