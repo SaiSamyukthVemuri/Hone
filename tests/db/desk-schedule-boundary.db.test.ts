@@ -12,9 +12,12 @@ import { adminQuery, asRole, asUser, closePool, seedMember, seedStudio, type See
 // the hosted database does is recorded in the production record (docs/production), not here. If the rule is ever removed
 // from the chain, this test fails, loudly, on purpose.
 
+const STORED_M = `Mango Fixture ${randomUUID().slice(0, 8)}`;
 const STORED_A = `Aardvark Fixture ${randomUUID().slice(0, 8)}`;
 const STORED_Z = `Zebra Fixture ${randomUUID().slice(0, 8)}`;
 
+let third = "";
+let second = "";
 let studio: SeededStudio;
 let other: SeededStudio;
 const who: Record<"receptionist" | "otherReceptionist" | "inactiveReceptionist" | "practitioner" | "owner" | "stranger", string> = {} as never;
@@ -66,9 +69,15 @@ beforeAll(async () => {
   await adminQuery(`update public.clients set name = $2 where id = $1`, [studio.clientId, STORED_Z]);
   // The second client's id sorts AFTER the first's, while its stored name (Aardvark) sorts BEFORE the first's (Zebra): an ordering by
   // stored name and an ordering by id then disagree, so the order assertion below can only pass for the rule's order (non-vacuity).
-  let second = randomUUID();
+  second = randomUUID();
   while (second <= studio.clientId) second = randomUUID();
   await adminQuery(`insert into public.clients (id, studio_id, name) values ($1, $2, $3)`, [second, studio.studioId, STORED_A]);
+  // A third client is inserted LAST but with the SMALLEST id, so insert (heap) order is [first, second, third] while id order is [third, first, second]
+  // and stored-name order is [second (Aardvark), third (Mango), first (Zebra)]. Three different orders: only an explicit id tie-break gives id order,
+  // so dropping it from the database function turns the order test red (equal keys otherwise come back in insert order).
+  third = randomUUID();
+  while (third >= studio.clientId) third = randomUUID();
+  await adminQuery(`insert into public.clients (id, studio_id, name) values ($1, $2, $3)`, [third, studio.studioId, STORED_M]);
   await adminQuery(
     `insert into public.appointments (id, studio_id, practitioner_id, client_id, starts_at, ends_at, duration_minutes, buffer_minutes_snapshot, blocked_ends_at)
      values ($1, $2, $3, $4, now() + interval '2 days', now() + interval '2 days 1 hour', 60, 0, now() + interval '2 days 1 hour')`,
@@ -112,7 +121,8 @@ describe("part 2: the name rule (0374): the database returns no stored name to a
     const text = JSON.stringify(rows);
     expect(text.includes(STORED_Z), "directory returns no stored name").toBe(false);
     expect(text.includes(STORED_A), "directory returns no second stored name").toBe(false);
-    expect(rows.length).toBeGreaterThanOrEqual(2);
+    expect(text.includes(STORED_M), "directory returns no third stored name").toBe(false);
+    expect(rows.length).toBeGreaterThanOrEqual(3);
     expect(rows.every((x) => x.display_name === "Name on file")).toBe(true);
   });
 
@@ -125,14 +135,11 @@ describe("part 2: the name rule (0374): the database returns no stored name to a
     expect(rows[0].name_on_file).toBe(true);
   });
 
-  it("the directory's default order never follows the stored name: ties go by id, although the stored names sort the other way (non-vacuity)", async () => {
+  it("the directory's default order is by id when no client has a preferred name: not the stored name, and not the insert order (non-vacuity)", async () => {
     const r = await callAs(who.receptionist, "directory");
-    const rows = ("rows" in r ? r.rows : []) as Array<{ id?: string; client_id?: string }>;
-    const ids = rows.map((x) => String(x.id ?? x.client_id));
-    const first = ids.indexOf(studio.clientId); // stored name Zebra, smaller id
-    const second = ids.findIndex((x) => x !== studio.clientId && x > studio.clientId);
-    expect(first, "the first client is listed").toBeGreaterThanOrEqual(0);
-    expect(second, "the second client is listed").toBeGreaterThanOrEqual(0);
-    expect(first, "Zebra (smaller id) comes before Aardvark (larger id): order is by id, not by stored name").toBeLessThan(second);
+    const rows = ("rows" in r ? r.rows : []) as Array<{ client_id: string }>;
+    const mine = rows.map((x) => String(x.client_id)).filter((id) => id === studio.clientId || id === third || id === second);
+    // [third, first, second] by id; insert order is [first, second, third]; stored-name order is [second, third, first]
+    expect(mine).toEqual([third, studio.clientId, second]);
   });
 });

@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { PendingLink } from "@/components/pending-link";
-import type { ClientGroup, GroupRead } from "@/lib/client-groups/model";
 import { FOCUS_RING } from "@/components/ui/control-base";
 import { useRouter } from "next/navigation";
 import {
@@ -38,7 +37,6 @@ export type DirectoryControlsState = {
   filters: DirectoryFilter[];
   sort: DirectorySort;
   lastVisit: LastVisitFilter;
-  group?: string;
 };
 
 const FILTER_LABEL: Record<DirectoryFilter, string> = {
@@ -60,7 +58,7 @@ const SORT_CHOICES: Record<View, DirectorySort[]> = {
 
 const TARGET = "min-h-11";
 
-export function DirectoryControls({ state, groups }: { state: DirectoryControlsState; groups?: GroupRead<ClientGroup[]> }) {
+export function DirectoryControls({ state }: { state: DirectoryControlsState }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const archived = state.view === "archived";
@@ -81,16 +79,15 @@ export function DirectoryControls({ state, groups }: { state: DirectoryControlsS
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.q, filtersKey, state.sort, state.lastVisit]);
 
-  const go = (next: { group?: string; q: string; filters: DirectoryFilter[]; sort: DirectorySort; lastVisit: LastVisitFilter }) => {
+  const go = (next: { q: string; filters: DirectoryFilter[]; sort: DirectorySort; lastVisit: LastVisitFilter }) => {
     startTransition(() => {
-      router.push(directoryHref({ view: state.view, group: state.group, ...next }), { scroll: false });
+      router.push(directoryHref({ view: state.view, ...next }), { scroll: false });
     });
   };
 
   const activeParts: string[] = [];
   // The term itself is never repeated in text (Privacy S8): the input shows it.
   if (state.q) activeParts.push("search");
-  if (state.group) activeParts.push("client group");
   for (const f of state.filters) activeParts.push(FILTER_LABEL[f]);
   if (state.lastVisit !== "any") activeParts.push(LAST_VISIT_FILTER_LABEL[state.lastVisit]);
   const hasActive = activeParts.length > 0;
@@ -110,21 +107,6 @@ export function DirectoryControls({ state, groups }: { state: DirectoryControlsS
       className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-3 dark:border-neutral-800"
     >
       {archived && <input type="hidden" name="view" value="archived" />}
-
-      {groups && <div className="flex flex-wrap items-end gap-3">
-        {groups.available ? <label className="flex min-w-0 flex-1 flex-col gap-1 text-xs font-medium text-neutral-600">
-          Client group
-          <select name="group" value={state.group ?? ""} disabled={pending}
-            onChange={(event) => go({ q, filters, sort, lastVisit, group: event.target.value })}
-            className={`${TARGET} ${FOCUS_RING} rounded-md border border-neutral-300 bg-white px-3 text-sm font-normal text-neutral-900`}>
-            <option value="">All groups</option>
-            {state.group && !groups.value.some((g) => g.id === state.group) && <option value={state.group}>Unavailable group</option>}
-            {groups.value.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-          </select>
-        </label> : <p role="status" className="text-sm text-neutral-500">Client groups are unavailable. Reload to try again.</p>}
-        <PendingLink href="/clients/groups" className="inline-flex min-h-11 items-center text-sm underline">Manage groups</PendingLink>
-      </div>}
-      {!groups?.available && state.group && <input type="hidden" name="group" value={state.group} />}
 
       <div className="flex gap-2">
         <label className="flex min-w-0 flex-1 flex-col gap-1 text-xs font-medium text-neutral-600 dark:text-neutral-400">
@@ -262,7 +244,7 @@ export function DirectoryControls({ state, groups }: { state: DirectoryControlsS
               setFilters([]);
               setSort(defaultSort);
               setLastVisit("any");
-              go({ q: "", filters: [], sort: defaultSort, lastVisit: "any", group: "" });
+              go({ q: "", filters: [], sort: defaultSort, lastVisit: "any" });
             }}
             className={`${TARGET} rounded-md px-3 text-sm text-neutral-700 underline dark:text-neutral-300`}
           >
