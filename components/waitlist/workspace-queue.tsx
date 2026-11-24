@@ -22,7 +22,7 @@ export function WorkspaceQueue({ initialView, waiting, invited, responses, respo
   responseLabel: string;
   searchMin: number;
   searchMax: number;
-  children: ReactNode;
+  children?: ReactNode;
 }) {
   const pending = useInviteOutcomePending();
   const [view, setView] = useState(initialView);

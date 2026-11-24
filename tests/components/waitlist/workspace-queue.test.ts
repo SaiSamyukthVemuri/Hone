@@ -47,11 +47,10 @@ function renderQueue() {
     root.render(createElement(WorkspaceQueue, {
       initialView: "waiting", waiting: 110, invited: 2, responses: null, responseLabel: "open follow-ups",
       searchMin: 2, searchMax: 60,
-      children: [
-        createElement("section", { "data-workspace-section": "expired", key: "history" }, createElement("span", { id: "entry-abc" })),
-        createElement("section", { "data-workspace-section": "responses", key: "responses" }, createElement("span", { id: "follow-up" })),
-      ],
-    }));
+    },
+      createElement("section", { "data-workspace-section": "expired", key: "history" }, createElement("span", { id: "entry-abc" })),
+      createElement("section", { "data-workspace-section": "responses", key: "responses" }, createElement("span", { id: "follow-up" })),
+    ));
   });
 }
 

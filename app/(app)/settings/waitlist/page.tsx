@@ -459,7 +459,7 @@ export default async function WaitlistSettingsPage({
     }),
   ));
 
-  const failed = sectionReads.find(({ res }) => res.error);
+  const failed = sectionReads.find(({ res }) => res.error || res.count === null);
   if (failed) {
     // Say so plainly instead of rendering an empty queue, which would read as
     // "nobody is waiting" — the one wrong answer this page can give. ANY
@@ -469,7 +469,7 @@ export default async function WaitlistSettingsPage({
       JSON.stringify({
         event: "waitlist_queue_load_failed",
         studioId: studio.id,
-        code: failed.res.error?.code ?? "unknown",
+        code: failed.res.error?.code ?? "missing_exact_count",
         timestamp: new Date().toISOString(),
       }),
     );
