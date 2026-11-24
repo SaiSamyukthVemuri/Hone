@@ -1,6 +1,8 @@
 -- Restores the 0137 body of rematerialize_studio_reservations. Function only.
--- ROLLBACK ORDER: roll back 0384 BEFORE 0152. 0152's rollback comment relies on a rematerialize that writes ACTUAL ends, which is what 0384 restores;
--- rolling 0152 back first would leave the 0137 body, which writes real end plus buffer.
+-- ROLLBACK ORDER: roll back 0384 BEFORE 0152. 0152's own rollback guidance (step 2) restores buffered reservation ends with a direct
+-- update (ends_at = blocked_ends_at) and restores the sync function; it does not call rematerialize. If 0152 were rolled back first, 0384's function
+-- would still be live and any staff change before this file ran would write ACTUAL ends into a database that is back on the buffered model, mixing
+-- the two. Rolling 0384 back first returns rematerialize to the 0137 body while the actual-end model is still in force.
 begin;
 set local lock_timeout = '5s';
 
