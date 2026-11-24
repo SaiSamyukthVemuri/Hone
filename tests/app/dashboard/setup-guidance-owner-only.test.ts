@@ -28,7 +28,8 @@ describe("setup guidance is owner-only", () => {
     });
 
     it(`${file}: Settings stays ungated, so an owner keeps the way to setup help and staff keep Settings`, () => {
-      expect(read(file)).toMatch(/\{\s*href:\s*"\/settings\/profile",\s*label:\s*"Settings"\s*\}/);
+      // The overview is the first unconditional menu item for both roles.
+      expect(read(file)).toMatch(/\{\s*\[\s*\{\s*href:\s*"\/settings",\s*label:\s*"Settings"\s*\}/);
     });
   }
 

@@ -215,7 +215,7 @@ export function AccountMenu({
             </p>
           </div>
           {[
-            { href: "/settings/profile", label: "Settings" },
+            { href: "/settings", label: "Settings" },
             // Owner setup guidance: staff are never shown it.
             ...(role === "owner" ? [{ href: "/getting-started", label: "Getting Started" }] : []),
             ...(canSwitchStudio
