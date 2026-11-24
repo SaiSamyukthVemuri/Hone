@@ -95,7 +95,7 @@ export function DashboardCheckoutEntry({
               setOpen(!freeVisit);
             },
             choices: newPayment ? busy => freeVisit ? (
-              <p role="status" className="mt-3 text-sm font-medium">No charge required · {formatMoney(0, currency)}</p>
+              <p role="status" className="mt-3 text-sm font-medium">No payment due</p>
             ) : (
               <div className="mt-4">
                 {feeDraft ? (
@@ -103,7 +103,7 @@ export function DashboardCheckoutEntry({
                     showReceived={isReceivedMethod(method) && finalCents !== 0} disabled={busy} />
                 ) : (
                   <p role="status" className="mb-3 text-xs text-neutral-600 dark:text-neutral-400">
-                    {loadingQuote ? "Loading visit fee…" : "Visit fee unavailable. You can still finish the visit."}
+                    {loadingQuote ? "Loading visit fee…" : "No fee could be confirmed for this visit, so nothing is treated as free. Check the fee before you finish the visit."}
                   </p>
                 )}
                 <CheckoutMethodPicker

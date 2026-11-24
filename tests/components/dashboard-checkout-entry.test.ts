@@ -107,7 +107,7 @@ describe("checkout for a confirmed dashboard visit", () => {
     complete.mockResolvedValue({ ok: true });
     await render("confirmed", past, "no_session", "no_card");
     await click("Checkout");
-    expect(host.textContent).toContain("No charge required · $0.00 CAD");
+    expect(host.textContent).toContain("No payment due");
     expect(host.querySelector("fieldset")).toBeNull();
     await click("Finish visit");
     expect(complete).toHaveBeenCalledTimes(1);

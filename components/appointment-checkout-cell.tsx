@@ -188,7 +188,7 @@ function AppointmentCheckoutOutcome({ appointmentId, status, paymentState }: App
         data-testid="appointment-payment-free"
         className="inline-flex items-center rounded-full bg-neutral-100 px-2.5 py-1 text-xs font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
       >
-        No payment required
+        No payment due
       </span>
     );
   }

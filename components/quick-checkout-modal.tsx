@@ -237,7 +237,7 @@ export function QuickCheckoutModal({
               />
             )}
             <p className="text-sm text-neutral-700 dark:text-neutral-300">
-              {ctx.settlement?.canRecord && ctx.settlement.quotedAmountCents === 0 && !ctx.settlement.settledMethod ? "No charge required for this visit." : ctx.reason}
+              {ctx.settlement?.canRecord && ctx.settlement.quotedAmountCents === 0 && !ctx.settlement.settledMethod ? "No payment due for this visit." : ctx.reason}
             </p>
             {ctx.clientId && (
               <Link

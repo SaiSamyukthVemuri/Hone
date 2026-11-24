@@ -264,7 +264,7 @@ describe("HON-45: the outstanding notice names the right balance, or none", () =
     expect(html).not.toContain("session-payment-outstanding");
     expect(html).not.toContain('data-testid="settlement-open-');
     expect(text(html)).not.toMatch(/Balance outstanding|It stays outstanding/);
-    expect(text(html)).toContain("Free consultation is free · No payment required.");
+    expect(text(html)).toContain("Free consultation is free · No payment due.");
     expect(text(html)).toContain("Nothing has been charged.");
   });
 

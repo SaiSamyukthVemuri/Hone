@@ -169,7 +169,7 @@ describe("checkout method selection in the actual session payment card", () => {
       settlementQuotedAmountCents: 0,
       amountResult: { kind: "free", serviceName: "Consultation", durationMinutes: 15 },
     });
-    expect(host.textContent).toContain("No payment required");
+    expect(host.textContent).toContain("No payment due");
     expect(host.querySelector("fieldset button")).toBeNull();
     expect(host.querySelector('[data-testid="settlement-confirm-paid_e_transfer"]')).toBeNull();
   });
