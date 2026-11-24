@@ -770,7 +770,7 @@ describe("the activation document matches what the source actually does", () => 
     // by a path that omits these columns arrives stamped and unattributed. No
     // assertion in this describe block changed, and no other region of the
     // document moved.
-    ).toBe("4af24b5a8f5ed227a500d6f372ea6fd3b72d695d1527ed951231516ce30c1403");
+    ).toBe("eb8656ae4734031277cea24e5e8b4c2a975c0e8898eb5e0f09704fea7a18cfe4");
 
     // The record file is evidence, and it must SAY so. This is a deletion guard
     // on its precedence header, not an interpretation of anything logged in it.
