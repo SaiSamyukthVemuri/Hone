@@ -49,6 +49,7 @@ export interface BillingSubscription {
 }
 
 export interface BillingEvent {
+  account?: string;
   id: string;
   type: string;
   created: number;
@@ -75,6 +76,7 @@ export interface CreateCheckoutSessionParams {
   cancelUrl: string;
   /** Unix seconds. Stripe requires at least 30 minutes from creation. */
   expiresAt: number;
+  attemptId?: string;
 }
 
 export interface BillingStripeClient {
@@ -141,7 +143,7 @@ function subscriptionRefOf(obj: Record<string, unknown>): string | null {
  */
 export function createBillingStripeClient(
   env: Readonly<Record<string, string | undefined>>,
-): BillingStripeClient {
+) {
   const secret = env.HONE_BILLING_STRIPE_SECRET_KEY;
   if (!secret) {
     throw new Error("HONE_BILLING_STRIPE_SECRET_KEY is not set.");
@@ -155,7 +157,65 @@ export function createBillingStripeClient(
   });
 
   return {
-    async retrievePrice(priceId) {
+    async readInvoice(id: string) {
+      const inv = await stripe.invoices.retrieve(id, { expand: ["payments"] });
+      return {
+        id: inv.id,
+        live: inv.livemode,
+        subscription: idOf(inv.parent?.subscription_details?.subscription),
+        customer: idOf(inv.customer),
+        reason: inv.billing_reason,
+        status: inv.status,
+        currency: inv.currency,
+        total: inv.total,
+        amountPaid: inv.amount_paid,
+        price:
+          inv.lines.data.length === 1 && !inv.lines.has_more
+            ? idOf(inv.lines.data[0].pricing?.price_details?.price)
+            : null,
+        collected: (inv.payments?.data ?? [])
+          .filter(
+            (p) =>
+              p.status === "paid" &&
+              p.currency === inv.currency &&
+              p.payment.type === "payment_intent",
+          )
+          .reduce((sum, p) => sum + (p.amount_paid ?? 0), 0),
+      };
+    },
+
+    async findAttemptSession(attempt: {
+      id: string;
+      created: number;
+      session: string | null;
+    }) {
+      if (attempt.session)
+        return stripe.checkout.sessions.retrieve(attempt.session);
+      // A crash can occur after Stripe creates the session but before its ID is stored.
+      for await (const session of stripe.checkout.sessions.list({
+        created: { gte: attempt.created - 60, lte: attempt.created + 1860 },
+        limit: 100,
+      })) {
+        if (session.metadata?.hone_attempt_id === attempt.id) return session;
+      }
+      return null;
+    },
+
+    async ownerPortal(
+      customer: string,
+      returnUrl: string,
+      configuration: string,
+    ) {
+      return (
+        await stripe.billingPortal.sessions.create({
+          customer,
+          configuration,
+          return_url: returnUrl,
+        })
+      ).url;
+    },
+
+    async retrievePrice(priceId: string) {
       const p = await stripe.prices.retrieve(priceId);
       return {
         id: p.id,
@@ -173,7 +233,7 @@ export function createBillingStripeClient(
       };
     },
 
-    async retrieveSubscription(subscriptionId) {
+    async retrieveSubscription(subscriptionId: string) {
       const s = await stripe.subscriptions.retrieve(subscriptionId);
       return {
         id: s.id,
@@ -201,30 +261,43 @@ export function createBillingStripeClient(
       };
     },
 
-    async createCheckoutSession(params) {
-      const session = await stripe.checkout.sessions.create({
-        mode: "subscription",
-        line_items: [{ price: params.priceId, quantity: 1 }],
-        client_reference_id: params.clientReferenceId,
-        ...(params.customerEmail ? { customer_email: params.customerEmail } : {}),
-        metadata: params.metadata,
-        subscription_data: { metadata: params.metadata },
-        success_url: params.successUrl,
-        cancel_url: params.cancelUrl,
-        expires_at: params.expiresAt,
-      });
+    async createCheckoutSession(params: CreateCheckoutSessionParams) {
+      const session = await stripe.checkout.sessions.create(
+        {
+          mode: "subscription",
+          line_items: [{ price: params.priceId, quantity: 1 }],
+          client_reference_id: params.clientReferenceId,
+          ...(params.customerEmail
+            ? { customer_email: params.customerEmail }
+            : {}),
+          metadata: params.metadata,
+          subscription_data: { metadata: params.metadata },
+          success_url: params.successUrl,
+          cancel_url: params.cancelUrl,
+          expires_at: params.expiresAt,
+          automatic_tax: { enabled: false },
+        },
+        params.attemptId
+          ? { idempotencyKey: "hone-signup-" + params.attemptId }
+          : undefined,
+      );
       return { id: session.id, url: session.url };
     },
 
-    constructEvent(rawBody, signature) {
+    constructEvent(rawBody: string, signature: string): BillingEvent {
       if (!webhookSecret) {
         throw new Error("HONE_BILLING_WEBHOOK_SECRET is not set.");
       }
-      const e = stripe.webhooks.constructEvent(rawBody, signature, webhookSecret);
+      const e = stripe.webhooks.constructEvent(
+        rawBody,
+        signature,
+        webhookSecret,
+      );
       const obj = e.data.object as unknown as Record<string, unknown>;
       return {
         id: e.id,
         type: e.type,
+        account: e.account ?? e.context?.toString(),
         created: e.created,
         livemode: e.livemode,
         object: {

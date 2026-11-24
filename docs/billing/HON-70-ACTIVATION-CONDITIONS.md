@@ -100,3 +100,7 @@ Where the flag is defined: `isSelfServeCheckoutEnabled` in `lib/subscriptions/pl
   unauthenticated API paths are redirected; the route's existence is fingerprintable (same pattern as
   the Stripe webhook).
 * G-5: a missing app-origin env now logs one bounded server line (a fixed code, no address).
+
+## Sandbox implementation update
+
+The milestone-one descriptions above record the original review. HON-87 adds a checkout action for verified users, durable purchase attempts, signed invoice processing, and database-side studio creation. See [Test a paid Hone signup](HON-87-SANDBOX.md) for environment setup, exact sandbox prices, and acceptance. The separate production approval conditions still apply.

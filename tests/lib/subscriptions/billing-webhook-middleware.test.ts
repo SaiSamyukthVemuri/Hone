@@ -4,7 +4,7 @@ import path from "node:path";
 import { NextRequest } from "next/server";
 
 // Codex P2 4500263864: the billing webhook must be reachable by Stripe, which
-// has no session. Calling POST() directly misses the middleware, so this drives
+// has no session. Calling POST(new Request("http://localhost/api/billing/webhook", {method:"POST"})) directly misses the middleware, so this drives
 // the REAL updateSession with no user and then the route.
 
 vi.mock("@supabase/ssr", () => ({
@@ -26,14 +26,15 @@ describe("/api/billing/webhook through the middleware, session-less", () => {
     vi.stubEnv("HONE_SELF_SERVE_CHECKOUT_ENABLED", "");
     const mw = await post("/api/billing/webhook");
     expect(isRedirect(mw), "Stripe must not be redirected").toBe(false);
-    const res = await POST();
+    const res = await POST(new Request("http://localhost/api/billing/webhook", {method:"POST"}));
     expect(res.status).toBe(404);
   });
 
   it("with the flag on it is still not redirected, and the route answers 503", async () => {
     vi.stubEnv("HONE_SELF_SERVE_CHECKOUT_ENABLED", "true");
+    vi.stubEnv("HONE_BILLING_WEBHOOK_SECRET", "");
     expect(isRedirect(await post("/api/billing/webhook"))).toBe(false);
-    expect((await POST()).status).toBe(503);
+    expect((await POST(new Request("http://localhost/api/billing/webhook", {method:"POST"}))).status).toBe(503);
   });
 
   it("control: the detector sees a redirect for a path that is NOT exempt", async () => {

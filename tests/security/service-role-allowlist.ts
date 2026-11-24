@@ -20,6 +20,16 @@ export type ServiceRoleAllowlistEntry = {
 
 export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
+    path: "app/api/billing/webhook/route.ts", purpose: "Apply a verified platform subscription invoice atomically.",
+    why: "Only the signed test-mode invoice handler can invoke the single transaction for its existing attempt.",
+    scopeGuard: "acceptBillingInvoice",
+  },
+  {
+    path: "app/(auth)/no-access/checkout-action.ts", purpose: "Reserve or resume one paid signup for the verified owner.",
+    why: "The service-only claim checks the authenticated user and membership. Browser input cannot select a user or price ID.",
+    scopeGuard: "auth.auth.getUser",
+  },
+  {
     path: "lib/audit/governed-writes.ts",
     purpose: "SEC-003: only the existing archive/unarchive and owner-export audit emissions after direct member INSERT closure.",
     why: "Internal server-only existing archive/unarchive and owner-export writers. Session getUser and exact active actor/user/studio checks precede service-client construction; archive additionally checks exact client via RLS and export requires owner plus bounded registry metadata. Final membership FOR UPDATE and hardcoded audit insertion are in two explicit narrow service-only 0242 commands under their same existing trusted non-runtime owner. Owner/context/ACL and runtime MEMBER/SET assumptions are checked fail-closed;0178 keeps service_role SELECT-only on practitioner identity, with no new UPDATE grant. There is no separate app-read/direct-INSERT authority decision. Missing/refused/malformed commands fail closed, no old API/table fallback. New command EXECUTE capability needs explicit source/ACL approval; no user/table grants. No generic caller-supplied action/entity/actor metadata. Export refuses bytes on failure; archive failures, including thrown audit reads/transport, return the curated best-effort refusal so committed state/revalidation/redirect survive.",

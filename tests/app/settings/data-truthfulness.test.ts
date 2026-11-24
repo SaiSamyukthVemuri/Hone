@@ -197,6 +197,11 @@ describe("#8 — the Terms do not describe automated Hone subscription billing a
     // prefix exemption removed that, so pin the importer set instead. Adding an
     // importer is a deliberate, reviewed edit of THIS list.
     const REVIEWED_IMPORTERS = [
+      "app/(app)/layout.tsx",
+      "app/(app)/settings/subscription/actions.ts",
+      "app/(app)/settings/subscription/page.tsx",
+      "app/(auth)/no-access/checkout-action.ts",
+      "app/(auth)/no-access/page.tsx",
       "app/api/billing/webhook/route.ts",
       // HON-70 UI head (PROPOSED, flag-gated): the plan links and the account step.
       "app/pricing/page.tsx",
@@ -241,7 +246,7 @@ describe("#8 — the Terms do not describe automated Hone subscription billing a
     const saved = process.env.HONE_SELF_SERVE_CHECKOUT_ENABLED;
     delete process.env.HONE_SELF_SERVE_CHECKOUT_ENABLED;
     try {
-      expect((await POST()).status).toBe(404);
+      expect((await POST(new Request("http://localhost/api/billing/webhook", {method:"POST"}))).status).toBe(404);
     } finally {
       if (saved !== undefined) process.env.HONE_SELF_SERVE_CHECKOUT_ENABLED = saved;
     }

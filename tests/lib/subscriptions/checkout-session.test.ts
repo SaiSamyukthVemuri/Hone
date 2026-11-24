@@ -49,7 +49,7 @@ describe("createSubscriptionCheckout", () => {
         clientReferenceId: "user-1",
         customerEmail: "owner@example.test",
         metadata: { hone_user_id: "user-1", hone_plan: "solo" },
-        successUrl: `${ORIGIN}/signup/success?session_id={CHECKOUT_SESSION_ID}`,
+        successUrl: `${ORIGIN}/no-access?reason=confirming-payment`,
         cancelUrl: `${ORIGIN}/pricing`,
         expiresAt: NOW + CHECKOUT_SESSION_TTL_SECONDS,
       },

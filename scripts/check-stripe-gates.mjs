@@ -152,12 +152,24 @@ const RULES = [
     exactly: 1,
   },
   {
+    name: "billingPortal.sessions.create",
+    pattern: /billingPortal\.sessions\.create\b/g,
+    allowlist: ["lib/subscriptions/billing-client.ts"],
+    exactly: 1,
+  },
+  {
+    name: "checkout.sessions reads",
+    pattern: /checkout\.sessions\.(?:list|retrieve)\s*\(/g,
+    allowlist: ["lib/subscriptions/billing-client.ts"],
+    exactly: 2,
+  },
+  {
     name: "checkout.sessions",
     // Match a real Stripe SDK access shape (`stripe.checkout.sessions`
     // or `checkout.sessions.create` etc.). The plain word "checkout"
     // appears in legitimate UI / booking copy; we only want to flag
     // the SDK namespace.
-    pattern: /checkout\.sessions/g,
+    pattern: /checkout\.sessions(?!\.(?:list|retrieve)\s*\()/g,
     allowlist: [
       // PROPOSED (HON-70, pending Sam's approval; see docs/13): Hone Care Inc
       // SOFTWARE-SUBSCRIPTION Checkout. A separate Stripe account and client
@@ -452,6 +464,7 @@ const CLASSIFIED_WRITE_PATTERNS = [
   /refunds\.create/,
   /charges\.create/,
   /checkout\.sessions\.create/,
+  /^stripe\.billingPortal\.sessions\.create$/,
   /customers\.create/,
   /setupIntents\.create/,
   /accounts\.createLoginLink/,

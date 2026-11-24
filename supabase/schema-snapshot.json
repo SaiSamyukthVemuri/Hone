@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 256,
-    "last": "0300_card_setup_legacy_event_order_bound.sql",
-    "sha256": "a5bb678fd56372114dd84ac5c8308eca83e6a04688f2e9427e1c8973e00938e4"
+    "count": 257,
+    "last": "0385_sandbox_subscription_signup.sql",
+    "sha256": "074a1d979c05604fe054610ab62db4cf5f714b6a012d847bb902e0f3fbffc2f6"
   },
   "public": {
     "tables": [
@@ -53,6 +53,9 @@
       "email_outbound_messages",
       "email_provider_events",
       "google_oauth_states",
+      "hone_billing_events",
+      "hone_renewal_invoices",
+      "hone_signup_attempts",
       "import_batches",
       "imported_treatment_memories",
       "imported_treatment_memory_audit_events",
@@ -153,6 +156,7 @@
       "amend_finalized_session",
       "amend_finalized_session_with_image",
       "apply_block_extra_fields",
+      "apply_hone_billing_invoice",
       "appointment_actor_role",
       "appointment_audit_derive_trusted_fields",
       "appointment_buffer_conflict",
@@ -180,6 +184,7 @@
       "begin_appointment_email_message",
       "begin_appointment_sms_message",
       "begin_waitlist_invitation_proof",
+      "bind_hone_checkout",
       "build_session_snapshot",
       "bump_appointment_sync_version",
       "calendar_connection_outbound_ready",
@@ -190,10 +195,12 @@
       "cancel_appointment_core",
       "capture_treatment_reading_change",
       "check_claimed_payment_method_cleanup_safety",
+      "check_hone_new_work_allowed",
       "claim_calendar_sync_op",
       "claim_conversion_delivery",
       "claim_email_provider_events",
       "claim_email_send",
+      "claim_hone_signup",
       "claim_manual_fee_charge_attempt",
       "claim_new_client_waitlist_entries",
       "claim_new_client_waitlist_entries_ordered",
@@ -275,6 +282,7 @@
       "enforce_treatment_image_integrity",
       "enqueue_calendar_outbound",
       "enqueue_calendar_outbound_on_delete",
+      "expire_hone_checkout",
       "expire_new_client_waitlist_invitation",
       "expire_pending_sessions",
       "expire_platform_lead_alerts",
@@ -349,6 +357,7 @@
       "mint_setup_group_keys",
       "move_appointment_core",
       "move_or_reassign_appointment",
+      "my_hone_billing_status",
       "my_pending_invitation",
       "new_client_waitlist_entries_record_event",
       "new_client_waitlist_entries_server_timestamps",

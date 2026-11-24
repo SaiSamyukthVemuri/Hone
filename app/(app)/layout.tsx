@@ -1,3 +1,4 @@
+import { OwnerBillingNotice } from "@/lib/subscriptions/OwnerBillingNotice";
 import {
   PendingContainerLink,
   PendingLink,
@@ -248,6 +249,7 @@ export default async function AppLayout({
         </div>
       </header>
       </SignOutFlightProvider>
+      {practitioner.role === "owner" && <OwnerBillingNotice studioId={studio.id} />}
       <AppMain>{children}</AppMain>
       <AppFooter />
       {/* PR #142. Analytics mounts here (and at the other safe-tree
