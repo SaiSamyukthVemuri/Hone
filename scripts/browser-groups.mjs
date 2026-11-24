@@ -247,6 +247,9 @@ export const BROWSER_GROUPS = {
       "settings-booking-error-param.spec.ts",
       // Team settings: invite a receptionist, see it pending, cancel it; the front desk list and Deactivate.
       "team-invite-receptionist.spec.ts",
+      // Receptionist onboarding across Team settings, acceptance and the desk (desktop and iPhone, about 6 minutes with the build). Kept out of the always-run
+      // calendar lane on purpose: the targeted lane is already near its measured budget.
+      "receptionist-onboarding-flow.spec.ts",
       "public-booking-error-containment.spec.ts",
       "public-booking-slot-read-failure.spec.ts",
       // TWILIO-EGRESS-FAKE (MSG-006): a public booking with SMS consent reaches
@@ -270,7 +273,6 @@ export const BROWSER_GROUPS = {
       // query starts Monday loses the Sunday appointment silently.
       "calendar-week-starts-sunday.spec.ts",
       "desk-calendar.spec.ts",
-      "receptionist-onboarding-flow.spec.ts",
       // Owner review of practitioner assignments (#1330): reached from the Calendar toolbar and Team settings, real status
       // (date passed vs treatment recorded), owner-only, and read-only unless the owner presses Change practitioner.
       "review-assignments-navigation.spec.ts",
