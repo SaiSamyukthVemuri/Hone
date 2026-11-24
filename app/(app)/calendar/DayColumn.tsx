@@ -970,7 +970,7 @@ export function DayColumn({
             if (members.length === 1) setPreview(a);
             else setOverlapIds(group.ids);
           }}>
-          {members.length === 1 ? <OverlapAppointmentSummary showPractitioner={practitionerCapacityEnabled && !teamColumn} appointment={a} tz={tz} timeFormat={timeFormat} /> : <OverlapSummaryRows showPractitioner={practitionerCapacityEnabled && !teamColumn} members={members} height={group.height} tz={tz} timeFormat={timeFormat} />}
+          {members.length === 1 ? <OverlapAppointmentSummary showPractitioner={practitionerCapacityEnabled && !teamColumn} appointment={a} tz={tz} timeFormat={timeFormat} /> : <OverlapSummaryRows members={members} height={group.height} showPractitioner={practitionerCapacityEnabled && !teamColumn} tz={tz} timeFormat={timeFormat} />}
         </button>;
       })}
       <AppointmentOverlapChooser blockScopeNames={blockScopeNames} timedBlocks={selectedBlocks} onSelectBlock={(block) => setEditingBlock(block)} appointments={selectedOverlaps} tz={tz} timeFormat={timeFormat} returnTo={returnTo}
