@@ -55,6 +55,7 @@ type Props = {
   // The sidebar's practitioner selection (`people` param value, undefined = everyone). Carried on
   // every URL this component pushes so stepping past the loaded week never resets the filter.
   selectionParam?: string;
+  timeGrid?: boolean;
 };
 
 // Current minute-of-day in the studio timezone (same technique as NowLine).
@@ -85,6 +86,7 @@ export function CalendarMobileDayView({
   returnTo,
   blockScopeNames,
   selectionParam,
+  timeGrid = false,
 }: Props) {
   const router = useRouter();
   const [selectedDate, setSelectedDate] = useState(initialDate);
@@ -142,18 +144,19 @@ export function CalendarMobileDayView({
   const day = days[idx];
   if (!day) return null;
 
+  const gridParam = timeGrid ? "&layout=grid" : "";
   function goPrev() {
     if (idx > 0) setSelectedDate(days[idx - 1].date);
-    else router.push(withSelection(`/calendar?day=${addDays(days[0].date, -1)}`, selectionParam));
+    else router.push(withSelection(`/calendar?day=${addDays(days[0].date, -1)}${gridParam}`, selectionParam));
   }
   function goNext() {
     if (idx < days.length - 1) setSelectedDate(days[idx + 1].date);
-    else router.push(withSelection(`/calendar?day=${addDays(days[days.length - 1].date, 1)}`, selectionParam));
+    else router.push(withSelection(`/calendar?day=${addDays(days[days.length - 1].date, 1)}${gridParam}`, selectionParam));
   }
   function goToday() {
     const ti = days.findIndex((d) => d.date === today);
     if (ti >= 0) setSelectedDate(today);
-    else router.push(withSelection("/calendar?view=week", selectionParam));
+    else router.push(withSelection(`/calendar?view=week${gridParam}`, selectionParam));
   }
 
   // Floating "+" default time: on today within working hours, the next rounded
