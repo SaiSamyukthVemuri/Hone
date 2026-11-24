@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 287,
+    "count": 288,
     "last": "0384_rematerialize_reservations_actual_end.sql",
-    "sha256": "048b0c0fa053763c87798466afabffbea3cfecd8a59ca51bdb0ec6994fa42636"
+    "sha256": "dd37fdd260ecc8221987f3f820f16350d5f96519f040751d76bad889fd1bf667"
   },
   "public": {
     "tables": [

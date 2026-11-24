@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { adminQuery, asRole, asUser, closePool, seedMember, seedStudio, type SeededStudio } from "./helpers/harness";
+import { closeOlderContactCommands, reopenOlderContactCommands } from "./helpers/older-contact-commands";
 
 // 0380 (replacing 0374's rule): a receptionist sees the PREFERRED name, otherwise the REGULAR client name, and the words
 // 'Name on file' ONLY when both are blank. The ACCEPTANCE test, on a real migrated database, by DIRECT calls to the three read
@@ -73,6 +74,7 @@ const con = (q: string | null = null, uid = who.receptionist) => call(uid, CON, 
 const cal = (uid = who.receptionist) => call(uid, CAL, [A.studioId]);
 
 beforeAll(async () => {
+  await reopenOlderContactCommands();
   A = await seedStudio("name-rule-a");
   B = await seedStudio("name-rule-b");
   who.practitioner = (await seedMember(A, "name-rule-prac")).userId;
@@ -102,7 +104,10 @@ beforeAll(async () => {
   for (const [i, c] of [ids.c0, ids.c1, ids.c2, ids.c3, ids.c4, ids.c5, ids.c6, ids.c7].entries()) await appt(c, 2 + i);
   spareAppt = await appt(ids.c1, 20);
 });
-afterAll(closePool);
+afterAll(async () => {
+  await closeOlderContactCommands(); // 0382 closed them; reopened in beforeAll only to prove the reviewed bodies
+  await closePool();
+});
 
 describe.each([["OFF", false], ["ON", true]] as const)("legal-name switch %s", (_label, switchOn) => {
   beforeAll(async () => {
