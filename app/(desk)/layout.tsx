@@ -21,7 +21,7 @@ export default async function DeskLayout({ children }: { children: ReactNode }) 
   return (
     <div className="min-h-screen bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
       <header className="border-b border-neutral-200 dark:border-neutral-800">
-        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 px-4 py-3">
+        <div className="mx-auto flex max-w-screen-2xl flex-wrap items-center justify-between gap-3 px-4 py-3">
           <div className="flex items-center gap-5">
             <span className="text-base font-semibold">Front desk</span>
             <nav aria-label="Desk" className="flex gap-4 text-sm">
@@ -40,7 +40,7 @@ export default async function DeskLayout({ children }: { children: ReactNode }) 
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-5xl px-4 py-6">{children}</main>
+      <main className="mx-auto max-w-screen-2xl px-4 py-6">{children}</main>
     </div>
   );
 }

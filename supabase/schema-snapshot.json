@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 282,
+    "count": 286,
     "last": "0384_rematerialize_reservations_actual_end.sql",
-    "sha256": "4b8c1652cb4bf014bc268b5463830f0df99448c67721f11fd33653d4122ddfc4"
+    "sha256": "8a7ea724c4cb22edf1a65d2fc04929b841b08630d4667e19714cbebbc0709cc7"
   },
   "public": {
     "tables": [
@@ -456,15 +456,21 @@
       "rebuild_blockout_reservations_for_studio_tz",
       "rebuild_recurring_break_occurrences_for_studio_tz",
       "receptionist_actor_id",
+      "receptionist_appointment_contact",
+      "receptionist_book_opening",
+      "receptionist_booking_clients_v3",
       "receptionist_booking_options",
       "receptionist_calendar",
       "receptionist_calendar_closures",
       "receptionist_calendar_v2",
+      "receptionist_calendar_v3",
       "receptionist_cancel_appointment",
       "receptionist_client_contacts",
       "receptionist_client_contacts_v2",
       "receptionist_client_directory",
       "receptionist_create_appointment",
+      "receptionist_find_openings",
+      "receptionist_find_openings_v2",
       "receptionist_move_appointment",
       "receptionist_studio_timezone",
       "reconcile_bound_payment_event",

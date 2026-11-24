@@ -14,17 +14,21 @@ import { isValidElement, type ReactElement, type ReactNode } from "react";
 const state = vi.hoisted(() => ({
   rows: [] as Array<Record<string, unknown>>,
   fail: false,
+  team: false,
+  role: "owner" as "owner" | "practitioner",
   calls: [] as Array<[string, string]>,
 }));
 
 vi.mock("@/lib/appointments/review-link", () => ({ shouldShowReviewLink: async () => false }));
 vi.mock("@/lib/supabase/queries", () => ({
   requirePractitionerWithStudio: async () => ({
-    practitioner: { id: "p-owner", role: "owner", display_name: "Owner" },
-    studio: { id: "studio-1", timezone: "America/Toronto", practitioner_capacity_enabled: false },
+    practitioner: { id: state.role === "owner" ? "p-owner" : "p-member", role: state.role, display_name: "Viewer" },
+    studio: { id: "studio-1", timezone: "America/Toronto", practitioner_capacity_enabled: state.team },
   }),
   getClientsForStudio: async () => [],
-  getPractitionersForStudio: async () => [],
+  getPractitionersForStudio: async () => state.team ? [
+    { id: "p-owner", display_name: "Owner" }, { id: "p-member", display_name: "Member" },
+  ] : [],
 }));
 
 vi.mock("@/lib/booking/queries", () => ({
@@ -44,6 +48,8 @@ vi.mock("@/lib/booking/queries", () => ({
 const { default: CalendarPage } = await import("@/app/(app)/calendar/page");
 const { DayColumn } = await import("@/app/(app)/calendar/DayColumn");
 const { MonthView } = await import("@/app/(app)/calendar/MonthView");
+
+const { PractitionerWeek } = await import("@/app/(app)/calendar/PractitionerWeek");
 
 type Props = Record<string, unknown>;
 
@@ -71,7 +77,9 @@ function appt(i: number, startsAt: string, status = "confirmed") {
 // local-date boundary.
 const at = (day: number) => `2026-10-${String(day).padStart(2, "0")}T16:00:00Z`;
 
-beforeEach(() => { state.rows = []; state.fail = false; state.calls = []; });
+beforeEach(() => {
+  state.rows = []; state.fail = false; state.calls = []; state.team = false; state.role = "owner";
+});
 
 describe("SCH-005 the real views receive every loaded appointment", () => {
   it("week view: 1,100 appointments in one week all reach the day columns (none re-capped at 1,000)", async () => {
@@ -102,6 +110,31 @@ describe("SCH-005 the real views receive every loaded appointment", () => {
     const shown = [...byDate.values()].flat();
     expect(shown).toHaveLength(1100);
     expect(new Set(shown.map((a) => a.id)).size).toBe(1100);
+  });
+});
+
+describe("team Week adapts to the selected practitioners", () => {
+  it.each(["owner", "practitioner"] as const)("%s sees both appointments separately in the team overview and only the selected person's visit in a single time grid", async role => {
+    state.role = role;
+    state.team = true;
+    state.rows = [appt(1, at(19)), { ...appt(2, at(19)), practitioner_id: "p-member" }];
+    const render = async (people: string, layout?: string) => elements(await CalendarPage({
+      searchParams: Promise.resolve({ view: "week", week: "2026-10-18", people, layout }),
+    }));
+    const team = await render("p-member,p-owner");
+    const board = team.find(el => el.type === PractitionerWeek);
+    const dayRows = board?.props.days as Array<{ appts: Array<{ id: string }> }>;
+    expect(dayRows.flatMap(day => day.appts.map(visit => visit.id))).toEqual(["a-00001", "a-00002"]);
+
+    const single = await render("p-member");
+    expect(single.some(el => el.type === PractitionerWeek)).toBe(false);
+    const ownGrid = single.filter(el => el.type === DayColumn);
+    expect(ownGrid).toHaveLength(7);
+    expect(ownGrid.flatMap(day => (day.props.appts as Array<{ id: string }>).map(visit => visit.id))).toEqual(["a-00002"]);
+
+    const explicitGrid = await render("p-member,p-owner", "grid");
+    expect(explicitGrid.filter(el => el.type === DayColumn)).toHaveLength(7);
+    expect(explicitGrid.some(el => el.type === PractitionerWeek)).toBe(false);
   });
 });
 

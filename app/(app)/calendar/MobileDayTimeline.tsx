@@ -346,7 +346,7 @@ export function MobileDayTimeline({
               aria-label={`Choose from ${members.length} appointments`}
               className="@container absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 border-neutral-500 bg-neutral-100 px-2 py-1 text-left text-sm text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100"
               onClick={(event) => { event.stopPropagation(); setOverlapIds(group.ids); }}>
-              <OverlapSummaryRows members={members} height={height} tz={tz} timeFormat={timeFormat} />
+              <OverlapSummaryRows showPractitioner={showPractitioner} members={members} height={height} tz={tz} timeFormat={timeFormat} />
             </button>
           );
           const clientName = a.client?.name?.trim() || "Client";
@@ -377,10 +377,13 @@ export function MobileDayTimeline({
               key={a.id}
               href={`/calendar/${a.id}${returnTo}`}
               style={{ top, height }}
-              className={`absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 ${appointmentCardClasses(a.service)} px-2 py-1 text-[12px] leading-tight shadow-sm transition active:brightness-95 ${terminal ? "opacity-60" : ""} ${noShow ? NO_SHOW_CARD_CLASS : ""}`}
+              className={`absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 ${appointmentCardClasses(a.service)} px-2 py-1 text-[12px] leading-tight shadow-sm transition active:brightness-95 ${terminal ? "saturate-75" : ""} ${noShow ? NO_SHOW_CARD_CLASS : ""}`}
             >
-              <div className="flex min-w-0 items-center gap-1 text-[10px] font-semibold tabular-nums opacity-80">
+              <div className="flex min-w-0 gap-1 font-semibold">
                 {noShow && <span className="shrink-0">No-show ·</span>}
+                <span className="truncate">{clientName}</span>
+              </div>
+              <div className="flex min-w-0 items-center gap-1 text-[10px] font-semibold tabular-nums opacity-80">
                 <span className="truncate">
                   {timeRange}
                   {trailingTag ? ` · ${trailingTag}` : ""}
@@ -393,7 +396,7 @@ export function MobileDayTimeline({
                   />
                 )}
               </div>
-              <div className="truncate font-semibold">{clientName}</div>
+
               {practitionerIdentity && practitionerRow && (
                 <PractitionerTag
                   identity={practitionerIdentity}

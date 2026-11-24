@@ -93,16 +93,10 @@ async function dbWeekAndDay(u: User): Promise<{ week: number; day: number }> {
   return r;
 }
 
-const APPT_CHIP = 'span[title]:has([data-testid="month-chip-swatch"])';
-
 async function monthCellTotal(page: Page, day: string): Promise<number> {
-  const cell = monthCell(page, day);
-  await expect(cell).toBeVisible({ timeout: 20_000 });
-  // An appointment chip carries its practitioner's swatch. A block is drawn as a titled chip too (MEASURED, first runs), so counting every
-  // titled chip would count cy's lunch block in everyone's cell.
-  const chips = await cell.locator(APPT_CHIP).count();
-  const more = (await cell.innerText()).match(/\+(\d+)\s+more/i);
-  return chips + Number(more?.[1] ?? 0);
+  const count = monthCell(page, day).locator("[data-month-count]");
+  await expect(count).toBeVisible({ timeout: 20_000 });
+  return Number(await count.innerText());
 }
 
 test("the seeded database holds what the spec claims (the control the views are judged against)", async () => {
@@ -148,14 +142,18 @@ for (const key of Object.keys(COUNTS)) {
   });
 }
 
-test("the crowded day (ed, five back to back) is readable in Month: three chips and an honest +2 more", async () => {
+test("the crowded day shows all five appointments in the selected Month agenda", async () => {
   const ed = t.users.find((u) => u.key === "ed")!;
   const page = t.contexts[t.users.indexOf(ed)].page;
   await page.goto(monthUrl(t.day, [ed.practitionerId]));
   const cell = monthCell(page, t.day);
   await expect(cell).toBeVisible({ timeout: 20_000 });
-  expect(await cell.locator(APPT_CHIP).count()).toBe(3);
-  await expect(cell).toContainText("+2 more");
+  expect(await monthCellTotal(page, t.day)).toBe(5);
+  await cell.click();
+  const agenda = page.getByRole("region", { name: "Selected day appointments" });
+  await expect(agenda.locator("li")).toHaveCount(5);
+  for (const name of clientsOf.ed) await expect(agenda).toContainText(name);
+  await expect(agenda.getByRole("link", { name: "Open day calendar" })).toHaveAttribute("href", new RegExp(`day=${t.day}`));
 });
 
 test("everyone selected: the Week and Month totals are the sum of the five", async () => {
