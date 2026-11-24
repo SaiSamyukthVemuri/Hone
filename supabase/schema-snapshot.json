@@ -3,7 +3,7 @@
   "migrations": {
     "count": 288,
     "last": "0382_receptionist_close_older_contact_commands.sql",
-    "sha256": "71dbf62945b58f6eceae53b38f9478d9c3f40ba996cab631b6b0906f567a46d5"
+    "sha256": "50abfffcce688c611623c32cc929ffbc42894ca46a308345c23b222cd0f0d1ed"
   },
   "public": {
     "tables": [
