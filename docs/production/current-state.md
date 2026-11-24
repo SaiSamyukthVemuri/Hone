@@ -1503,9 +1503,9 @@ standing property.
 | Studio | Class | Clients | Appointments | Practitioners | Sessions |
 |---|---|---|---|---|---|
 | the pilot studio | **Real customer** — the live pilot studio | **72** | **215** | 2 | 99 |
-| `my-studio-9d37c5` | **Controlled test** — validation only | 7 | 26 | 2 | 33 |
-| `hone-synthetic-twin` | **Synthetic** — sanctioned production test tenant, generated privacy-safe data | 50 | 141 | 1 | 68 |
-| `my-studio-6cdef7` | Empty | 0 | 0 | 1 | 0 |
+| the controlled test studio | **Controlled test** — validation only | 7 | 26 | 2 | 33 |
+| the synthetic twin | **Synthetic** — sanctioned production test tenant, generated privacy-safe data | 50 | 141 | 1 | 68 |
+| the generated empty studio | Empty | 0 | 0 | 1 | 0 |
 | `samhone` | Empty | 0 | 0 | 1 | 0 |
 | `samidc` | Empty | 0 | 0 | 0 | 0 |
 | **All tenants** *(includes synthetic — not a customer figure)* | — | **129** | **382** | **7** | **200** |
@@ -1517,13 +1517,14 @@ standing property.
   and 241 appointments**, and that remainder still contains the controlled test studio. Never
   present it as customer activity.
 - **All-tenant totals may be quoted only when labelled as including synthetic rows.**
-- `hone-synthetic-twin` is long-established and already load-bearing in
+- The synthetic twin is long-established and already load-bearing in
   [migration-ledger.md](./migration-ledger.md), which verifies *"Synthetic Twin preserved
   exactly"* at each apply. This register makes that classification canonical for every document.
-- `my-studio-9d37c5` is the controlled test studio. That is not inferred from its name: it is the
+- The controlled test studio is identified by its settings, not by its name: it is the
   only studio with `practitioner_capacity_enabled`, `onboarding_v2_enabled` **and**
   `google_calendar_connection_enabled` true, it holds the single Google Calendar connection, and
   it is named as the test studio in `docs/roadmap/P1_RECONCILIATION_REPORT_2026-07-18.md`.
+- The last two register rows (one word each, class Empty) are PENDING private identification. This record neither names nor relies on which of them is which, and they are not renamed here until the operator has identified them privately.
 
 ---
 

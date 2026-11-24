@@ -1400,7 +1400,7 @@ describe("canonical production docs: synthetic rows are never customer activity"
    */
   function forbiddenCustomerFigures(): number[] {
     const out = [totals.clients, totals.appointments];
-    const twin = tenantRow("hone-synthetic-twin");
+    const twin = tenantRow("the synthetic twin");
     if (twin && twin.length >= 2) {
       out.push(totals.clients - twin[0], totals.appointments - twin[1]);
     }
@@ -1412,8 +1412,8 @@ describe("canonical production docs: synthetic rows are never customer activity"
     expect(register, "the tenant register must exist").toMatch(/^##\s+0\.\s+Tenant register/m);
     expect(
       register,
-      "hone-synthetic-twin must be classified as synthetic, by name",
-    ).toMatch(/`hone-synthetic-twin`[^|]*\|[^|]*\*\*Synthetic\*\*/);
+      "the synthetic twin must be classified as synthetic, by name",
+    ).toMatch(/the synthetic twin[^|]*\|[^|]*\*\*Synthetic\*\*/);
     expect(
       register,
       "the pilot studio must be classified as the real-customer tenant",

@@ -21,7 +21,11 @@ const FORBIDDEN_HASHES: Record<string, string> = {
   "b5f9ba2e1fb29cd447c7ae37fd0fce5bb6206993c1d14e0da105b86060ddf2a8": "staging project ref",
   "da454b02b4700b1f5dc5f9de972a531934ccb666cd00ed832fe6a36ece8b9ec3": "tenant name (first word)",
   "566c623979151811ac74534c9d709fdacbc30f9963a44379691864a25c1e886a": "tenant slug",
-  "fc24980a4de16b17e922ea786574594a0ba67cc3c4b62c99c7179e92aac6a4dc": "private repository host"
+  "fc24980a4de16b17e922ea786574594a0ba67cc3c4b62c99c7179e92aac6a4dc": "private repository host",
+  "eabefed17c53b9a23eb9a42963739ce2ae9cf8a7f416aedd63f5baa7f9f9eaa2": "controlled test studio slug",
+  "09f2863eac01ba3e4f407ac525af108941132a622b9d3bb38b3abacf08bf9f68": "synthetic twin slug",
+  "f8ec55b224d0a08131b547c11bc84708cf3bd81484e6a46207b33af1bb1cfe58": "generated empty studio slug",
+  "992352f385ee32bfdede06d4f8987eb58625fb196af54477a77cd1b83f4ae734": "pilot studio id"
 };
 
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -65,7 +69,7 @@ describe("the tracked production record carries no tenant name, project referenc
   it("scans a real record (non-vacuity)", () => {
     expect(files.length).toBeGreaterThan(15);
     expect(files.some((f) => f.endsWith("migration-state.json"))).toBe(true);
-    expect(Object.keys(FORBIDDEN_HASHES).length).toBe(5);
+    expect(Object.keys(FORBIDDEN_HASHES).length).toBe(9);
   });
 
   it("no record file names a studio, a project, or a private host", () => {

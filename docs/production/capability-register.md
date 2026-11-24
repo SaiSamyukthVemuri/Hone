@@ -25,7 +25,7 @@ production; neither document is evidence for the other.
   [migration-ledger.md](./migration-ledger.md). This register previously carried its own copy
   of the number and drifted 25 migrations behind the ledger — that copy is gone deliberately.
 - **Tenant classification:** [current-state.md](./current-state.md) **§0** is canonical.
-  Real-customer activity is **the pilot studio only**; `hone-synthetic-twin` is a sanctioned
+  Real-customer activity is **the pilot studio only**; the synthetic twin is a sanctioned
   synthetic test tenant whose rows are **never** customer activity. Counts in this register are
   tenant-scoped and carry an as-of stamp.
 - **Amended 2026-07-29:** §3 rewritten from *dormant / parked* to **RETIRED** — signed and
