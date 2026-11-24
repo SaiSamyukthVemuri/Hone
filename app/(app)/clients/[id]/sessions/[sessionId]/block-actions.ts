@@ -20,6 +20,7 @@ import {
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import { checkIdentityChoice } from "@/lib/machines/identity-choice";
+import { entryEnergyLevel } from "@/lib/sessions/entry-energy-level";
 import { isCanonicalRetryKey, NON_CANONICAL_KEY_MESSAGE } from "@/lib/machines/retry-key";
 import { createReceiptLookup, guardXcellRollout } from "@/lib/machines/xcell-rollout-guard";
 import { currentProfile } from "@/lib/machines/profile-contract";
@@ -1106,7 +1107,8 @@ function entryMachineSnapshot(input: {
   return {
     mode: input.mode,
     apilus_modality: isGalv ? null : input.apilusModality,
-    energy_level: isGalv && !input.keepGalvanicEnergy ? null : input.energyLevel,
+    // The entry's column is an integer: see entryEnergyLevel (a fractional Galvanic EL stays on the block, never forwarded here).
+    energy_level: entryEnergyLevel({ mode: input.mode, energyLevel: input.energyLevel, keepGalvanicEnergy: input.keepGalvanicEnergy }),
     minutes_performed: input.minutesPerformed,
     machine_frequency: input.machineFrequency,
   };

@@ -2096,6 +2096,28 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Introduced by migration 0223 (MPX-03, #829) when a Save of machine settings became ONE atomic fact rather than several independent calls. One row per press of Save, recording the setup identity it was made under - which physical unit, which catalogue profile version, which mode - plus a caller-supplied retry key and a digest of the payload, so a repeat after a lost response returns the original instead of appending a second capture. It is CLINICAL and studio-owned: the captures in treatment_setup_captures carry its id, and a submission without them says only that a save happened, while captures without it lose which groups were entered together in one act. Its disposition must therefore follow whatever treatment_setup_captures and treatment_setup_readings are given, and this lane was not asked to make that product decision. PROVENANCE: it carries recorded_by_practitioner_id, so it names a practitioner but no client directly - the client is reachable only through session_blocks -> sessions. The retry key is caller-supplied and opaque, and payload_digest is an md5 over the settings payload, not the readings themselves, so neither carries clinical values of its own; both are nonetheless studio-scoped operational metadata rather than anything a client would recognise, which is a reason to think an exported archive wants the captures and readings and not these two columns.",
   },
+  studio_machine_models: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "Introduced by migration 0366 (machine switches). One row per studio and supported machine model: whether the OWNER has switched that model on for the studio's charting. It is studio-owned configuration, not a treatment record, and nothing in a client's record depends on it (a treatment keeps the machine it was charted with whatever this says). Not exported yet; a studio leaving would want its machine choices listed with the registered machines, which is a later field review.",
+  },
+  studio_machine_default: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "Introduced by migration 0366 (machine switches). One row per studio: which switched-on model a new treatment area starts on, or that the studio asks each visit. Studio-owned configuration, a starting point rather than a record of what was used (what was used is on the treatment). Not exported yet; it belongs with the machine choices in the same later field review.",
+  },
+  studio_machine_setting_events: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "Introduced by migration 0366 (machine switches). An append-only audit log of changes to a studio's machine choices: which model or default changed, the new value, the practitioner account that did it and when, and the first creation of a studio's xCell unit. It carries a user id and a free-form value object, so it must be reviewed field by field before it is dumped raw, which is why it is not exported yet.",
+  },
 };
 
 // ---------------------------------------------------------------------------

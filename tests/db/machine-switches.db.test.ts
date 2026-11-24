@@ -135,9 +135,19 @@ describe("the seed: once, by a trigger on studios, never re-run", () => {
     expect(await models(S.studioId)).toEqual({ [PUR]: true, [SEN]: true, [JUN]: false });
   });
 
-  it("registering a Senior unit LATER does not switch the model on", async () => {
-    await unitOf(A.studioId, SEN, 3, false);
-    expect((await models(A.studioId))[SEN]).toBe(false);
+  it("registering a studio's FIRST Senior or Junior unit LATER switches that model on (one event); a second unit never overrides an owner who switched it off; xCell Pur registration changes nothing", async () => {
+    const S = await seedOn("sw-register-on");
+    expect((await models(S.studioId))[SEN]).toBe(false);
+    await unitOf(S.studioId, SEN, 3, false);
+    expect((await models(S.studioId))[SEN]).toBe(true);
+    expect(await eventCount(S.studioId, "model_set")).toBe(1);
+    await setModel(S.userId, S.studioId, SEN, false);
+    await unitOf(S.studioId, SEN, 3, false);
+    expect((await models(S.studioId))[SEN], "a second unit does not override the owner").toBe(false);
+    expect((await models(S.studioId))[JUN]).toBe(false);
+    await setModel(S.userId, S.studioId, PUR, false);
+    await unitOf(S.studioId, PUR, 1, false);
+    expect((await models(S.studioId))[PUR], "xCell Pur is the owner's switch alone").toBe(false);
   });
 });
 
@@ -514,6 +524,49 @@ describe("apply_block_machine_identity: the xCell Pur model with a legacy-column
       await adminQuery(`insert into public.electrolysis_entries (session_id, block_id, area, mode, ${c}) values ($1,$2,'Upper lip','thermo',10)`, [frozen.sessionId, frozen.blockId]);
       expect((await failure(adminQuery(`update public.session_blocks set machine_mode_key='blend' where id=$1`, [frozen.blockId])))?.message, `${c}: identity freeze`).toMatch(/already holds readings/);
     }
+  });
+
+  const CREATE_LEGACY_SQL = `select public.create_block_with_initial_setup_and_identity(
+    $1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6,$7,$8::text[],$9,$10,$11,$12,$13,$14,
+    $15::jsonb,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,
+    $27,$28,$29,$30::jsonb,$31) as r`;
+  const createLegacyXcell = (S: SeededStudio, sessionId: string) => asUser(S.userId, async (q) => {
+    const args: unknown[] = new Array(31).fill(null);
+    args[0] = sessionId; args[1] = S.clientId;
+    args[2] = JSON.stringify({ block_name: "Mode", primary_area: "Upper lip" }); args[3] = JSON.stringify({}); args[4] = JSON.stringify([]);
+    args[5] = true; args[6] = "Upper lip"; args[7] = ["Upper lip"]; args[10] = "thermo"; args[23] = 30; // legacy content, written BEFORE the identity call
+    args[30] = "dectro-apilus:xcell";
+    return (await q(CREATE_LEGACY_SQL, args)).rows[0].r as { block_id: string };
+  });
+
+  it("a form opened BEFORE the switch-off and saved AFTER it is refused through the create wrapper, even when the off row's time is pushed past the block's (the block is new in this transaction, so never 'old'); nothing is left behind", async () => {
+    const S = await seedOn("sw-create-after-off");
+    const a = await seedSession(S);
+    const before = Number((await adminQuery(`select count(*)::int n from public.session_blocks where session_id=$1`, [a.sessionId])).rows[0].n);
+    await setModel(S.userId, S.studioId, PUR, false);
+    expect((await failure(createLegacyXcell(S, a.sessionId)))?.message).toMatch(/switched off for this studio/);
+    // the abuse the created_at comparison alone would allow: an off row stamped LATER than the block the wrapper is about to create
+    await adminQuery(`update public.studio_machine_models set updated_at = now() + interval '1 hour' where studio_id=$1 and profile_id=$2`, [S.studioId, PUR]);
+    expect((await failure(createLegacyXcell(S, a.sessionId)))?.message).toMatch(/switched off for this studio/);
+    expect(Number((await adminQuery(`select count(*)::int n from public.session_blocks where session_id=$1`, [a.sessionId])).rows[0].n)).toBe(before);
+    // control: with xCell on the same call succeeds, so the refusal above is the switch and not the arguments
+    await adminQuery(`update public.studio_machine_models set enabled = true where studio_id=$1 and profile_id=$2`, [S.studioId, PUR]);
+    expect((await createLegacyXcell(S, a.sessionId)).block_id).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("a caller with no studio, a practitioner of ANOTHER studio and a stranger get no choices rows, and every command refuses them with 42501", async () => {
+    const S = await seedOn("sw-nostudio-a");
+    const T = await seedOn("sw-nostudio-b");
+    const nobody = randomUUID();
+    expect(await choices(nobody)).toEqual([]);
+    expect((await choices(T.userId)).filter((r) => r.studio_id === S.studioId)).toEqual([]);
+    for (const who of [nobody, T.userId]) {
+      expect((await failure(setModel(who, S.studioId, PUR, false)))?.message).toMatch(/Not available/);
+      expect((await failure(asUser(who, async (q) => q(`select public.set_studio_machine_default($1,$2,false)`, [S.studioId, PUR]))))?.message).toMatch(/Not available/);
+      const blk = await seedSession(S);
+      expect((await failure(ensure(who, blk.blockId, PUR)))?.message).toMatch(/Not available/);
+    }
+    expect((await models(S.studioId))[PUR]).toBe(true);
   });
 
   it("an EXISTING block with an UNCHANGED identity still saves with the model off and the rollout Off; a CHANGED one does not", async () => {

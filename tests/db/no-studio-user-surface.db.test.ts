@@ -824,6 +824,11 @@ const PINNED: string[] = [
   "fn public.client_id_photo_wording_current(p_studio_id uuid)",
   "fn public.dismiss_attention_item(p_studio uuid, p_item_key text, p_instance_token text)",
   "fn public.edit_client_pinned_note(p_studio_id uuid, p_client_id uuid, p_note_id uuid, p_original_text text, p_text text)",
+  // 0366 (machine switches). get_studio_machine_choices(): GATED READ, CONSTANT EMPTY ANSWER. It selects only the models of studios where the
+  // caller is an ACTIVE owner or practitioner (a user with no studio, a receptionist and a stranger match none, so zero rows), and only while the
+  // platform rollout is on. Pinned per actor in tests/db/machine-switches.db.test.ts ("a caller with no studio ..."). The three commands
+  // (set_studio_machine_model, set_studio_machine_default, ensure_studio_machine_for_save) all refuse a no-studio user with 42501 and are not listed.
+  "fn public.get_studio_machine_choices()",
   "fn public.is_studio_member(target_studio_id uuid)",
   "fn public.is_studio_owner(target_studio_id uuid)",
   "fn public.latest_setup_for_client(p_studio_id uuid, p_client_id uuid, p_exclude_session_id uuid)",

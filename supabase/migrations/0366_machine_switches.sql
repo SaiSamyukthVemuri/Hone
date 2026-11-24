@@ -133,6 +133,32 @@ create trigger studios_seed_machine_settings after insert on public.studios
 
 select public.seed_studio_machine_settings(s.id) from public.studios s;
 
+-- A STUDIO'S FIRST UNIT OF A SENIOR OR JUNIOR MODEL TURNS THAT MODEL ON (what an owner expects of registering a machine). Only the FIRST unit ever
+-- registered for the model (a retired one counts), so an owner who later switched the model off is never overridden by a second unit. xCell Pur is
+-- not touched here: its registration has its own gate and its switch is the owner's. One event row, by the registering practitioner.
+create or replace function public.studio_machines_enable_model_trigger()
+returns trigger language plpgsql security definer set search_path = pg_catalog, pg_temp as $$
+declare
+  v_changed integer;
+begin
+  if new.machine_profile_id in ('dectro-apilus:senior-3g', 'dectro-apilus:junior-3g')
+     and not exists (select 1 from public.studio_machines o
+                      where o.studio_id = new.studio_id and o.machine_profile_id = new.machine_profile_id and o.id <> new.id) then
+    update public.studio_machine_models m
+       set enabled = true, updated_by = auth.uid(), updated_at = now()
+     where m.studio_id = new.studio_id and m.profile_id = new.machine_profile_id and not m.enabled;
+    get diagnostics v_changed = row_count;
+    if v_changed > 0 then
+      insert into public.studio_machine_setting_events (studio_id, kind, profile_id, value, actor_user_id)
+      values (new.studio_id, 'model_set', new.machine_profile_id, '{"enabled": true}'::jsonb, auth.uid());
+    end if;
+  end if;
+  return null;
+end $$;
+drop trigger if exists studio_machines_enable_model on public.studio_machines;
+create trigger studio_machines_enable_model after insert on public.studio_machines
+  for each row execute function public.studio_machines_enable_model_trigger();
+
 -- ---------------------------------------------------------------------------
 -- COMMANDS. Owner writes run as the signed-in user. A studio argument is NEVER trusted: the caller must be an active owner of THAT studio
 -- (a database fact), and another studio's id gets the same generic refusal as a nonexistent one (no existence oracle).
@@ -587,7 +613,9 @@ begin
               and public.block_holds_legacy_readings(p_block_id)
               and exists (select 1 from public.session_blocks lb
                             join public.studio_machine_models xm on xm.studio_id = lb.studio_id and xm.profile_id = 'dectro-apilus:xcell-pur' and not xm.enabled
-                           where lb.id = p_block_id and lb.created_at < xm.updated_at))
+                           where lb.id = p_block_id and lb.created_at < xm.updated_at
+                             -- a block created by THIS transaction (the create wrapper writes the legacy content first, then calls this) is never old
+                             and lb.created_at < pg_catalog.transaction_timestamp()))
      and public.platform_rollout_enabled_for('charting_new_view_xcell', p_studio_id) then
     raise exception 'That machine is switched off for this studio.' using errcode = 'check_violation';
   end if;
@@ -638,6 +666,7 @@ revoke all on function public.session_blocks_machine_identity_freeze() from publ
 revoke all on function public.block_holds_legacy_readings(uuid) from public, anon, authenticated, service_role;
 revoke all on function public.reading_write_share_lock_block() from public, anon, authenticated, service_role;
 revoke all on function public.seed_studio_machine_settings(uuid) from public, anon, authenticated, service_role;
+revoke all on function public.studio_machines_enable_model_trigger() from public, anon, authenticated, service_role;
 revoke all on function public.studios_seed_machine_settings_trigger() from public, anon, authenticated, service_role;
 revoke all on function public.studio_machine_setting_events_guard() from public, anon, authenticated, service_role;
 revoke all on function public.studio_machine_setting_events_truncate_guard() from public, anon, authenticated, service_role;
