@@ -387,7 +387,7 @@ function StockFilters({ section, currentLabel, stock }: {
           key={value}
           href={`/records?section=${section}${value ? `&stock=${value}` : ""}`}
           aria-current={selected === value ? "page" : undefined}
-          className={`inline-flex min-h-9 items-center rounded-md px-3 text-sm ${selected === value ? "bg-surface font-semibold text-fg shadow-sm" : "text-fg-muted hover:text-fg"}`}
+          className={`inline-flex min-h-11 items-center rounded-md px-3 text-sm pointer-fine:min-h-9 ${selected === value ? "bg-surface font-semibold text-fg shadow-sm" : "text-fg-muted hover:text-fg"}`}
         >
           {label}
         </PendingLink>
