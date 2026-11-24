@@ -462,6 +462,22 @@ describe("apply_block_machine_identity: the xCell Pur model with a legacy-column
     await identity(legacy.blockId, S.studioId, "dectro-apilus:xcell", null, null);
   });
 
+  it("an OLD block with no identity that already carries legacy xCell content is re-saved as the legacy xCell while xCell is OFF; an EMPTY area choosing it is still refused", async () => {
+    const S = await seedOn("sw-id-oldlegacy");
+    const old = await seedSession(S);
+    await adminTx(async (q) => { await q(`set local session_replication_role = replica`); await q(`update public.session_blocks set mode = 'thermolysis', machine_frequency = '13.56 MHz' where id = $1`, [old.blockId]); });
+    const empty = await seedSession(S);
+    await setModel(S.userId, S.studioId, PUR, false);
+    await identity(old.blockId, S.studioId, "dectro-apilus:xcell", null, null);
+    expect((await blockIdentity(old.blockId)).machine_profile_id).toBe("dectro-apilus:xcell");
+    expect((await failure(identity(empty.blockId, S.studioId, "dectro-apilus:xcell", null, null)))?.message).toMatch(/switched off for this studio/);
+    expect(await blockIdentity(empty.blockId)).toEqual({ machine_profile_id: null, studio_machine_id: null, machine_mode_key: null });
+    // the exemption is the legacy xCell identity only: the same old block cannot move to another switched-off model
+    const old2 = await seedSession(S);
+    await adminTx(async (q) => { await q(`set local session_replication_role = replica`); await q(`update public.session_blocks set mode = 'blend' where id = $1`, [old2.blockId]); });
+    expect((await failure(identity(old2.blockId, S.studioId, PUR, null, "blend")))?.message).toMatch(/not available for new settings/);
+  });
+
   it("an EXISTING block with an UNCHANGED identity still saves with the model off and the rollout Off; a CHANGED one does not", async () => {
     const S = await seedOn("sw-id-keep");
     const s = await seedSession(S);

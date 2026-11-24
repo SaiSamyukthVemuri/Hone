@@ -1,6 +1,6 @@
 // HON-48: the calendar grid uses the FULL viewport width (Google Calendar's shape): no centred
-// max-width page container, the sidebar on the left and the schedule filling the rest. Every other
-// page keeps the app shell's centred column. Only the grid page itself is wide: the appointment
+// max-width page container, the sidebar on the left and the schedule filling the rest. Among calendar
+// pages, only the grid itself is wide. The appointment
 // detail and Upcoming pages under /calendar/... are reading pages and keep the normal width.
 
 export function calendarUsesFullWidth(pathname: string | null | undefined): boolean {

@@ -311,23 +311,19 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
   {
     page: "/settings/services",
     label: "Service menu order",
-    helper: "The order visible services appear in",
+    helper: "The booking page groups services by modality and uses this order within each group.",
     role: "owner",
     decision: "searchable",
     entryId: "settings-service-order",
   },
-  // The per-service editor fields live inside a repeated, collapsed accordion
-  // row — one instance per service — so they have no stable anchor to land on
-  // and a row per field would collapse under href dedupe anyway. Their
-  // vocabulary is carried by the Services entry instead, which is the correct
-  // destination for all of them.
+  // Editing a field requires selecting its service. Link search to the menu.
   {
     page: "/settings/services",
     label: "Service name",
     role: "owner",
     decision: "excluded",
     reason:
-      "Per-service editor field inside a repeated accordion row; no stable anchor exists. Reached via the Services entry, whose keywords carry this vocabulary.",
+      "The field belongs to the selected service. Open Services and choose that service to edit it.",
   },
   {
     page: "/settings/services",
@@ -335,7 +331,7 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
     role: "owner",
     decision: "excluded",
     reason:
-      "Per-service editor field inside a repeated accordion row; no stable anchor exists. Reached via the Services entry, whose keywords carry this vocabulary.",
+      "The field belongs to the selected service. Open Services and choose that service to edit it.",
   },
   {
     page: "/settings/services",
@@ -343,33 +339,40 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
     role: "owner",
     decision: "excluded",
     reason:
-      "Per-service editor field inside a repeated accordion row; no stable anchor exists. Reached via the Services entry, whose keywords carry this vocabulary.",
+      "The field belongs to the selected service. Open Services and choose that service to edit it.",
   },
   {
     page: "/settings/services",
     label: "Price",
-    helper: "Shown to clients when booking",
     role: "owner",
     decision: "excluded",
     reason:
-      "Per-service editor field inside a repeated accordion row; no stable anchor exists. Reached via the Services entry, whose keywords carry this vocabulary.",
+      "The field belongs to the selected service. Open Services and choose that service to edit it.",
   },
   {
     page: "/settings/services",
-    label: "Description",
+    label: "Booking description",
     role: "owner",
     decision: "excluded",
     reason:
-      "Per-service editor field inside a repeated accordion row; no stable anchor exists. Reached via the Services entry, whose keywords carry this vocabulary.",
+      "The field belongs to the selected service. Open Services and choose that service to edit it.",
   },
   {
     page: "/settings/services",
     label: "Pre-appointment instructions",
-    helper: "Shown in client confirmation and reminder emails",
+    helper: "Shown in confirmation and reminder emails",
     role: "owner",
     decision: "excluded",
     reason:
-      "Per-service editor field inside a repeated accordion row; no stable anchor exists. Reached via the Services entry, whose keywords carry this vocabulary.",
+      "The field belongs to the selected service. Open Services and choose that service to edit it.",
+  },
+
+  {
+    page: "/settings/services",
+    label: "Calendar colour",
+    role: "owner",
+    decision: "searchable",
+    entryId: "settings-services",
   },
 
   // --------------------------------------------------------------- machines
