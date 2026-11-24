@@ -215,7 +215,9 @@ for (const [label, viewport] of [["desktop", { width: 1280, height: 900 }], ["ph
       expect(readResendLedger(mark)).toHaveLength(0);
       expect((await sql<{ n: number }>(`select count(*)::int n from public.waitlist_invitation_batch_items where studio_id=$1`, [seed.studioId]))[0]!.n).toBe(0);
 
-      // With the acknowledgement, each chosen person is sent exactly once.
+      // The form clears its boxes after a refused send, so the owner ticks both again. With the acknowledgement, each chosen person is sent exactly once.
+      await expect(ack).not.toBeChecked();
+      await form.getByRole("checkbox", { name: /I understand some clients may find no availability/ }).check();
       await ack.check();
       await form.getByRole("button", { name: "Send invitations" }).click();
       await expect(page.locator('[data-testid="over-invite-result"]')).toContainText("2 confirmed", { timeout: 90_000 });
