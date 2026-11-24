@@ -88,6 +88,22 @@ describe("receptionist scheduling names", () => {
     expect(old.rows).toEqual([{ display_name: "Name on file" }]);
   });
 
+  it("searches a formatted stored phone by its digits only, never by a lone digit or by punctuation", async () => {
+    await adminQuery("update public.clients set phone='(416) 555-0188' where id=$1", [studio.clientId]);
+    try {
+      for (const term of ["0188", "555-01", "(416) 555", "416 555 0188", "(416) 5"]) {
+        const matches = await asUser(desk, q => q(findClient, [studio.studioId, term]));
+        expect(matches.rows.map(row => row.client_id), term).toEqual([studio.clientId]);
+      }
+      for (const term of ["9", "x5", "--", "0199"]) {
+        const matches = await asUser(desk, q => q(findClient, [studio.studioId, term]).catch(() => ({ rows: [] })));
+        expect(matches.rows, term).toEqual([]);
+      }
+    } finally {
+      await adminQuery("update public.clients set phone=$2 where id=$1", [studio.clientId, phone]);
+    }
+  });
+
   it("honors the preferred name in calendar and booking and searches the label reception actually sees", async () => {
     await adminQuery("update public.clients set preferred_name='Kit' where id=$1", [studio.clientId]);
     try {

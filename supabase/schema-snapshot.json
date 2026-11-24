@@ -3,7 +3,7 @@
   "migrations": {
     "count": 285,
     "last": "0379_receptionist_calendar_client_names.sql",
-    "sha256": "ff683c25044685ae5e6dac1493cb227c1646932450adad6b45dc5572c2fbaad3"
+    "sha256": "6c81b849ac60270b72cfe2274c1731012d3990f3e41a1f3789ae9384f313991c"
   },
   "public": {
     "tables": [

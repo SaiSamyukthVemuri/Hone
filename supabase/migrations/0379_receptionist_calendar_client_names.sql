@@ -33,6 +33,8 @@ set search_path = pg_catalog, pg_temp
 as $$
 declare
   term text := lower(btrim(coalesce(p_query, '')));
+  -- Phone search compares digits only, so "0188" finds "(416) 555-0188". A single stray digit never searches phones.
+  term_digits text := regexp_replace(term, '[^0-9]', '', 'g');
 begin
   if auth.uid() is null or public.receptionist_actor_id(p_studio_id) is null then
     raise exception 'not_authorized' using errcode = '42501';
@@ -47,7 +49,7 @@ begin
           from public.clients c
          where c.studio_id = p_studio_id and c.archived_at is null
       ) c
-     where strpos(lower(c.label), term) > 0 or strpos(lower(c.email), term) > 0 or strpos(c.phone, term) > 0
+     where strpos(lower(c.label), term) > 0 or strpos(lower(c.email), term) > 0 or (length(term_digits) >= 2 and strpos(regexp_replace(coalesce(c.phone, ''), '[^0-9]', '', 'g'), term_digits) > 0)
      order by c.label nulls last, c.id
      limit least(greatest(coalesce(p_limit, 11), 1), 11);
 end;
