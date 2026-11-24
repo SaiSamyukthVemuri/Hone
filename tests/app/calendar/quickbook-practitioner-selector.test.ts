@@ -74,24 +74,48 @@ describe("desktop + mobile thread identical targeting context", () => {
       expect(src).toMatch(/isOwner=\{isOwner\}/);
     });
   }
-  it("the calendar page feeds both render paths from the server-resolved practitioner + studio", () => {
-    expect((PAGE.match(/practitionerCapacityEnabled=\{studio\.practitioner_capacity_enabled === true\}/g) ?? []).length).toBe(2);
-    // HON-48: the team day view is the third path, with the same server-resolved
-    // acting practitioner.
-    // Three booking paths (week, mobile, team day) plus the Block time button on the week and the team day.
-    // The Month renders the same button from its own viewer id (asserted below).
-    const blockTimeButtons = PAGE.match(/<CalendarBlockTime[\s\S]*?\/>/g) ?? [];
-    expect(blockTimeButtons).toHaveLength(3);
-    expect(blockTimeButtons.filter(tag => /currentPractitionerId=\{practitioner\.id\}/.test(tag) && /currentPractitionerName=\{practitioner\.display_name\}/.test(tag))).toHaveLength(2);
-    expect(blockTimeButtons.filter(tag => /currentPractitionerId=\{viewerId\}/.test(tag))).toHaveLength(1);
-    expect((PAGE.match(/currentPractitionerId=\{practitioner\.id\}/g) ?? []).length).toBe(3 + 2);
-    expect((PAGE.match(/currentPractitionerName=\{practitioner\.display_name\}/g) ?? []).length).toBe(3 + 2);
-    const dayPath = PAGE.slice(PAGE.indexOf("async function renderTeamDayView"));
-    // The Day view now serves a lone practitioner with capacity off too, so the
-    // flag is the studio's REAL value, never a literal true that would show the
-    // practitioner selector to a studio that has not turned capacity on.
-    expect(dayPath).toContain("practitionerCapacityEnabled={capacityEnabled}");
-    expect(dayPath).toContain("const capacityEnabled = studio.practitioner_capacity_enabled === true;");
-    expect(dayPath).not.toMatch(/practitionerCapacityEnabled\n/);
+  // Every component on the calendar page that is handed the acting practitioner, BY NAME and by the function that
+  // renders it. A new path has to be added here on purpose, with the same server-resolved values.
+  const scopes = {
+    CalendarPage: PAGE.slice(PAGE.indexOf("export default async function CalendarPage"), PAGE.indexOf("async function renderMonthView")),
+    renderMonthView: PAGE.slice(PAGE.indexOf("async function renderMonthView"), PAGE.indexOf("async function renderTeamDayView")),
+    renderTeamDayView: PAGE.slice(PAGE.indexOf("async function renderTeamDayView"), PAGE.indexOf("function EmptySelection")),
+  } as const;
+  const elements = (scope: string, component: string) => scope.match(new RegExp(`<${component}\\b[\\s\\S]*?/>|<${component}\\b[^>]*>`, "g")) ?? [];
+  const names = (scope: string) => [...scope.matchAll(/<(\w+)\b[^>]*?currentPractitionerId=/g)].map(m => m[1]);
+  const server = {
+    id: /currentPractitionerId=\{practitioner\.id\}/, name: /currentPractitionerName=\{practitioner\.display_name\}/,
+    capacity: /practitionerCapacityEnabled=\{studio\.practitioner_capacity_enabled === true\}/,
+  };
+  it("the week hands the acting practitioner and studio capacity to the mobile day view, the week grid and the Block time button", () => {
+    const week = scopes.CalendarPage;
+    expect(names(week).sort()).toEqual(["CalendarBlockTime", "CalendarMobileDayView", "DayColumn"]);
+    for (const component of ["CalendarMobileDayView", "DayColumn"]) {
+      const [tag] = elements(week, component);
+      expect(tag, component).toMatch(server.id); expect(tag, component).toMatch(server.name); expect(tag, component).toMatch(server.capacity);
+    }
+    const [block] = elements(week, "CalendarBlockTime");
+    expect(block).toMatch(server.id); expect(block).toMatch(server.name);
+    expect(block).toMatch(/studioTimezone=\{studio\.timezone\}/); expect(block).toMatch(/isOwner=\{isOwner\}/);
+  });
+  it("the month hands the Block time button the signed-in viewer, resolved on the server from the same practitioner", () => {
+    expect(names(scopes.renderMonthView)).toEqual(["CalendarBlockTime"]);
+    const [block] = elements(scopes.renderMonthView, "CalendarBlockTime");
+    expect(block).toMatch(/currentPractitionerId=\{viewerId\}/);
+    expect(block).toMatch(/studioTimezone=\{studio\.timezone\}/); expect(block).toMatch(/isOwner=\{isOwner\}/);
+    expect(scopes.CalendarPage).toMatch(/viewerId: practitioner\.id/);
+  });
+  it("the team day hands the acting practitioner to the day columns and to the Block time button, with the studio's real capacity flag", () => {
+    const day = scopes.renderTeamDayView;
+    expect(names(day).sort()).toEqual(["CalendarBlockTime", "DayColumn"]);
+    const [column] = elements(day, "DayColumn");
+    expect(column).toMatch(server.id); expect(column).toMatch(server.name);
+    // The Day view also serves a lone practitioner with capacity off, so the flag is the studio's REAL value, never a literal true.
+    expect(column).toContain("practitionerCapacityEnabled={capacityEnabled}");
+    expect(day).toContain("const capacityEnabled = studio.practitioner_capacity_enabled === true;");
+    expect(day).not.toMatch(/practitionerCapacityEnabled\n/);
+    const [block] = elements(day, "CalendarBlockTime");
+    expect(block).toMatch(server.id); expect(block).toMatch(server.name);
+    expect(block).toMatch(/studioTimezone=\{studio\.timezone\}/); expect(block).toMatch(/isOwner=\{isOwner\}/);
   });
 });
