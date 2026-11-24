@@ -570,6 +570,18 @@ begin
     end if;
   end if;
 
+  -- A NEW binding to ANY model the owner switched OFF is refused, native or legacy (the legacy xCell choice is the xCell model). A model with no
+  -- switch row is not switched off. While the rollout is off the switches are dormant, as everywhere else; a failed rollout read raises (fails closed).
+  -- An unchanged identity on an existing block is not a new binding and still saves.
+  if v_new_identity
+     and v_profile in ('dectro-apilus:xcell-pur', 'dectro-apilus:senior-3g', 'dectro-apilus:junior-3g', 'dectro-apilus:xcell')
+     and exists (select 1 from public.studio_machine_models sm
+                  where sm.studio_id = p_studio_id and not sm.enabled
+                    and sm.profile_id = case v_profile when 'dectro-apilus:xcell' then 'dectro-apilus:xcell-pur' else v_profile end)
+     and public.platform_rollout_enabled_for('charting_new_view_xcell', p_studio_id) then
+    raise exception 'That machine is switched off for this studio.' using errcode = 'check_violation';
+  end if;
+
   -- AN AREA THAT ALREADY HOLDS xCell Pur READINGS NEVER GETS A NATIVE IDENTITY (this protects
   -- the studio's existing records). Two machines' settings on one area, or the second overwriting the first, is the harm.
   -- The same list the app's lock uses: the legacy columns on the block and the legacy reading columns on its entries.
