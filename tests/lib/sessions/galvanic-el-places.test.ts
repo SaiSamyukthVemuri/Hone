@@ -53,6 +53,8 @@ describe("the list of places is pinned (a new place cannot be added silently)", 
   ];
   for (const [f, re] of places) it(`${f} carries the rollout-gated Galvanic EL rule`, () => expect(readFileSync(f, "utf8")).toMatch(re));
   it("READ-ONLY displays that still drop Galvanic EL are listed, not forgotten (point-of-care memory, history card)", () => {
-    expect(readFileSync("lib/sessions/point-of-care-memory.ts", "utf8")).toMatch(/energyLevel: mode === "galv" \? null/);
+    const src = readFileSync("lib/sessions/point-of-care-memory.ts", "utf8");
+    expect(src).not.toMatch(/energyLevel: mode === "galv" \? null/);
+    expect(src).toMatch(/readingFieldOrder\(mode, \{ keepGalvanicEnergy: true \}\)/);
   });
 });
