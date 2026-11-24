@@ -70,11 +70,22 @@ describe("legal identity has exactly one writer and no receptionist reader (R4, 
     expect(touching(/set_receptionist_legal_name_access|studio_legal_name_access|client_legal_name_access_audit/)).toEqual([]);
   });
 
-  it("no file that reads a legal name mentions a receptionist, and no receptionist RPC is called from the app", () => {
+  it("separates legal-name readers from the receptionist desk and pins every desk RPC to its caller", () => {
     for (const f of touching(/client_legal_identities|can_read_client_legal_identity/)) {
       expect(code(read(f)), f).not.toMatch(/receptionist/i);
     }
-    expect(touching(/\.rpc\(\s*["'][a-z_]*receptionist[a-z_]*["']/)).toEqual([]);
+    const calls = APP_FILES.flatMap(file => Array.from(
+      code(read(file)).matchAll(/\.rpc(?:<[^>]*>)?\(\s*["']([a-z_\d]*receptionist[a-z_\d]*)["']/g),
+      match => `${file}:${match[1]}`,
+    ));
+    expect(calls.sort()).toEqual([
+      "app/(desk)/desk/booking-actions.ts:receptionist_book_opening",
+      "app/(desk)/desk/booking-actions.ts:receptionist_booking_options",
+      "app/(desk)/desk/booking-actions.ts:receptionist_client_contacts_v2",
+      "app/(desk)/desk/booking-actions.ts:receptionist_find_openings",
+      "app/(desk)/desk/booking-actions.ts:receptionist_studio_timezone",
+      "lib/desk/read.ts:receptionist_calendar_v2",
+    ]);
   });
 
   it("the receptionist projection reads no legal field and returns the literal Name on file", () => {

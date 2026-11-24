@@ -28,7 +28,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   api.getDeskBookingOptionsAction.mockResolvedValue(options);
   api.findDeskOpeningsAction.mockResolvedValue({ ok: true, openings: [slot] });
-  api.searchDeskBookingClientsAction.mockResolvedValue({ ok: true, clients: [{ id: "c1", name: "Name on file", contactHint: "•••1234" }] });
+  api.searchDeskBookingClientsAction.mockResolvedValue({ ok: true, clients: [{ id: "c1", displayName: "Name on file", contactHint: "•••1234" }] });
   api.bookDeskOpeningAction.mockResolvedValue({ ok: true });
   el = document.createElement("div");
   document.body.appendChild(el);
@@ -89,7 +89,7 @@ describe("booking from the receptionist desk", () => {
   });
 
   it("withholds indistinguishable matches until the lookup is refined", async () => {
-    api.searchDeskBookingClientsAction.mockResolvedValue({ ok: true, clients: ["c1", "c2"].map(id => ({ id, name: "Name on file", contactHint: "" })) });
+    api.searchDeskBookingClientsAction.mockResolvedValue({ ok: true, clients: ["c1", "c2"].map(id => ({ id, displayName: "Name on file", contactHint: "" })) });
     await chooseTime();
     enterQuery("dupe");
     await click(/^Find client$/);

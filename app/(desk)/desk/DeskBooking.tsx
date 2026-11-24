@@ -203,15 +203,15 @@ function DeskBookingForm({ options, onClose }: { options: DeskBookingOptions; on
         {clients && <div className="space-y-1">
           {clients.length === 0 && <p role="status" className="text-sm">No matching clients.</p>}
           {clients.map(match => {
-            const ambiguous = clients.some(other => other.id !== match.id && other.name === match.name && other.contactHint === match.contactHint);
+            const ambiguous = clients.some(other => other.id !== match.id && other.displayName === match.displayName && other.contactHint === match.contactHint);
             return <Button key={match.id} type="button" disabled={ambiguous} aria-pressed={client?.id === match.id}
               className="mr-1 aria-pressed:bg-sky-100 aria-pressed:text-sky-900" onClick={() => setClient(match)}>
-              {match.name}{match.contactHint && ` · ${match.contactHint}`}{ambiguous && " · Refine search"}
+              {match.displayName}{match.contactHint && ` · ${match.contactHint}`}{ambiguous && " · Refine search"}
             </Button>;
           })}
         </div>}
         {client && <Button type="button" variant="primary" pending={pending} busyLabel="Booking…" onClick={confirm}>
-          Book appointment for {client.name}
+          Book appointment for {client.displayName}
         </Button>}
       </>}
       {pending && !submitting.current && <p role="status" className="text-sm text-fg-muted">Loading…</p>}

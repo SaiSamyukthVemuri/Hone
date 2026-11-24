@@ -6,7 +6,7 @@ export type DeskBookingOptions = {
   services: { id: string; name: string; durationMinutes: number }[];
   practitioners: { id: string; name: string }[];
 };
-export type DeskBookingClient = { id: string; name: string; contactHint: string };
+export type DeskBookingClient = { id: string; displayName: string; contactHint: string };
 export type DeskOpening = {
   date: string; localTime: string; start: string; end: string;
   practitionerId: string; practitionerName: string; serviceId: string;
@@ -40,5 +40,5 @@ export function bookingClient(row: Record<string, unknown>, query: string): Desk
   const emailMatch = /^([^@\s])[^@\s]*@[^@\s]+$/.exec(email);
   const contactHint = digits.length >= 4 ? `Phone ending in ${digits.slice(-4)}`
     : emailMatch ? `Email starts with ${emailMatch[1]}…` : "";
-  return { id: row.client_id, name: preferred || DESK_NAME_ON_FILE, contactHint };
+  return { id: row.client_id, displayName: preferred || DESK_NAME_ON_FILE, contactHint };
 }

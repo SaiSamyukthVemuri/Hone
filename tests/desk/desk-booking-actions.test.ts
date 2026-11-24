@@ -43,8 +43,8 @@ describe("receptionist booking", () => {
     rpc.mockResolvedValue({ data: rows, error: null });
     const result = await searchDeskBookingClientsAction({ studioId, query: "avery" });
     expect(result).toEqual({ ok: true, clients: [
-      { id: clientId, name: "Avery", contactHint: "Phone ending in 1111" },
-      { id: id(5), name: "Name on file", contactHint: "Email starts with a…" },
+      { id: clientId, displayName: "Avery", contactHint: "Phone ending in 1111" },
+      { id: id(5), displayName: "Name on file", contactHint: "Email starts with a…" },
     ] });
     expect(await searchDeskBookingClientsAction({ studioId, query: "LEGACY" })).toEqual({ ok: true, clients: [] });
     expect(rpc).toHaveBeenCalledWith("receptionist_client_contacts_v2", { p_studio_id: studioId, p_limit: 11, p_query: "avery" });

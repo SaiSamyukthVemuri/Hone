@@ -16,6 +16,8 @@ export const ADMIN_CLIENT_FACTORIES = new Set(["createAdminClient", "createServi
 export type Evidence = {
   /** Reaches a shared helper that resolves the signed-in practitioner and studio (a receptionist is not one). */
   staffHelper: string[];
+  /** The entry first awaits the active, selected-studio receptionist guard directly. */
+  receptionistGuard: boolean;
   /** The helper the entry calls directly that leads to the staff helper, or null when it calls it itself. */
   staffVia: string | null;
   /** A guard that refuses a non-owner before the rest of the entry runs: its own, or a helper it calls first. */
@@ -210,6 +212,19 @@ function topLevelCalls(body: ts.Node): string[] {
   return names;
 }
 
+function startsWithReceptionistGuard(root: string, file: string, body: ts.Node): boolean {
+  if (!ts.isBlock(body)) return false;
+  const first = body.statements[0];
+  if (!first) return false;
+  const expression = ts.isExpressionStatement(first) ? first.expression
+    : ts.isVariableStatement(first) ? first.declarationList.declarations[0]?.initializer : undefined;
+  if (!expression || !ts.isAwaitExpression(expression) || !ts.isCallExpression(expression.expression)) return false;
+  const call = expression.expression.expression;
+  if (!ts.isIdentifier(call)) return false;
+  const imported = importsOf(root, file).get(call.text);
+  return imported?.file === "lib/desk/guard.ts" && imported.name === "requireReceptionistWithStudio";
+}
+
 function evidenceOf(root: string, file: string, node: ts.Node, depth = 0, seen: Set<string> = new Set()): Evidence {
   const calls = new Set<string>();
   const observed: string[] = [];
@@ -252,6 +267,7 @@ function evidenceOf(root: string, file: string, node: ts.Node, depth = 0, seen: 
   }
   return {
     staffHelper: [...staff].sort(),
+    receptionistGuard: startsWithReceptionistGuard(root, file, body),
     staffVia: staff.size && [...calls].some((c) => STAFF_HELPERS.has(c)) ? null : staffVia,
     ownerGuard: guard,
     ownerVia,
@@ -402,6 +418,7 @@ export function decisionOf(entry: PathEntry): string {
     return ev.ownerKind === "throws" ? `owner(${ev.ownerVia})${admin}` : `owner?(${ev.ownerVia})${admin}`;
   }
   if (ev.staffHelper.length) return `staff${admin}`;
+  if (ev.receptionistGuard) return `receptionist(selected_studio)${admin}`;
   const cls = notStaffClass(entry.file);
   return cls ? `not_staff(${cls})${admin}` : `unresolved(no gate found)${admin}`;
 }
