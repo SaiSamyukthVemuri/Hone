@@ -96,6 +96,22 @@ describe("the seed: once, by a trigger on studios, never re-run", () => {
     expect(await setDefault(A.userId, A.studioId, PUR, false)).toBe("changed"); // turning the default model off had repaired the default to Ask
   });
 
+  it("a studio that ALREADY holds an explicit default keeps it: the seed sets xCell as default only where no default row exists", async () => {
+    const S = await seedStudio("sw-keepdefault");
+    await unitOf(S.studioId, JUN, 3);
+    await adminQuery(`delete from public.studio_machine_models where studio_id=$1`, [S.studioId]);
+    await adminQuery(`delete from public.studio_machine_default where studio_id=$1`, [S.studioId]);
+    await adminQuery(`insert into public.studio_machine_models (studio_id, profile_id, enabled) values ($1,$2,true),($1,$3,true),($1,$4,false)`, [S.studioId, JUN, SEN, PUR]);
+    await adminQuery(`insert into public.studio_machine_default (studio_id, default_profile_id, ask_each_visit) values ($1,$2,false)`, [S.studioId, JUN]);
+    await adminQuery(`select public.seed_studio_machine_settings($1)`, [S.studioId]);
+    expect(await dflt(S.studioId)).toEqual({ default_profile_id: JUN, ask_each_visit: false });
+    expect(await models(S.studioId)).toEqual({ [PUR]: false, [SEN]: true, [JUN]: true });
+    const ask = await seedStudio("sw-keepask");
+    await adminQuery(`update public.studio_machine_default set default_profile_id = null, ask_each_visit = true where studio_id=$1`, [ask.studioId]);
+    await adminQuery(`select public.seed_studio_machine_settings($1)`, [ask.studioId]);
+    expect(await dflt(ask.studioId)).toEqual({ default_profile_id: null, ask_each_visit: true });
+  });
+
   it("Senior and Junior are seeded ON exactly where the studio already has a live unit of that model", async () => {
     const S = await seedOn("sw-seedunits");
     await unitOf(S.studioId, SEN, 3);
