@@ -4,6 +4,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({}) }));
 
+// These tests script the appointments queries IN ORDER (current, comparison, history, past, future), which is the reference loader's order, so they run the
+// "separate" strategy: they pin what each separate read means. The default "shared" strategy (one read cut in memory, falling back to these reads whenever it
+// cannot be certain) is proved EQUAL to this reference, including under failure and at the caps, in overview-read-equivalence.test.ts.
+const READS = "separate" as const;
 const SERVER_MAX_ROWS = 1000;
 type Result = { data: unknown; error: unknown };
 type Call = { table: string; method: string; args: unknown[] };
@@ -47,7 +51,7 @@ const healthy = (): Record<string, Result | Result[]> => ({
 });
 const load = async (role: string, client: SupabaseClient, raw: Record<string, string | string[]> = {}, strict = false, currency: string | null = "cad") => {
   const { loadOverview } = await import("@/lib/business-analytics/server/overview-read");
-  return loadOverview({ role }, studio, currency, raw, { strict }, NOW, client);
+  return loadOverview({ role }, studio, currency, raw, { strict, appointmentReads: READS }, NOW, client);
 };
 
 describe("the Overview read: owner gate before any query", () => {
@@ -97,7 +101,7 @@ describe("the Overview read: whole or nothing, studio-scoped, never writing", ()
     res.clients = ok([{ id: "c1", name: "Rowan Client" }]);
     const { client, calls } = recording(res);
     const { loadOverview } = await import("@/lib/business-analytics/server/overview-read");
-    const r = await loadOverview({ role: "owner" }, studio, "cad", {}, { strict: true, names: false }, NOW, client);
+    const r = await loadOverview({ role: "owner" }, studio, "cad", {}, { strict: true, names: false, appointmentReads: READS }, NOW, client);
     expect(r).toMatchObject({ access: "granted", ok: true });
     expect(calls.filter((c) => c.table === "clients")).toEqual([]);
   });
@@ -362,5 +366,63 @@ describe("the Overview read: parameters", () => {
     const raw = { period: "custom", from: "2026-12-01", to: "2026-12-31" };
     expect(await load("owner", recording(healthy()).client, raw)).toMatchObject({ access: "granted", ok: false, reason: "period_invalid" });
     expect(await load("owner", recording(healthy()).client, raw, true)).toMatchObject({ access: "granted", ok: false, reason: "bad_request" });
+  });
+});
+
+describe("the Clients tab read", () => {
+  const clients = { sort: "spend" as const, chip: "all" as const, page: 1 };
+  const run = async (role: string, res: Record<string, Result | Result[]>) => {
+    const { client, calls } = recording(res);
+    const { loadOverview } = await import("@/lib/business-analytics/server/overview-read");
+    const r = await loadOverview({ role }, studio, "cad", {}, { strict: false, clients, appointmentReads: READS }, NOW, client);
+    return { r, calls };
+  };
+  const view = (r: unknown) => (r as { view: { clientsTable?: { available: boolean; value?: { rows: Array<{ name: string; lifetimePaidCents: number | null; firstVisitDate: string | null }>; lifetime: { available: boolean } } }; clientsReconciliation?: { available: boolean } } }).view;
+  const withHistory = (): Record<string, Result | Result[]> => {
+    const res = healthy();
+    res.clients = ok([{ id: "c1", name: "Rowan Client" }]);
+    return res;
+  };
+  it("a non-owner is refused and NO query is made, whatever the Clients options say", async () => {
+    for (const role of ["practitioner", "assistant", "", "OWNER"]) {
+      const { r, calls } = await run(role, withHistory());
+      expect(r).toMatchObject({ access: "refused" });
+      expect(calls, role).toEqual([]);
+    }
+  });
+  it("an owner gets the table with the client by display name and no id in the view", async () => {
+    const { r } = await run("owner", withHistory());
+    const v = view(r);
+    expect(v.clientsTable?.available).toBe(true);
+    expect(v.clientsTable?.value?.rows.map((x) => x.name)).toEqual(["Rowan Client"]);
+    expect(JSON.stringify(v)).not.toContain('"c1"');
+    expect(v.clientsReconciliation?.available).toBe(true);
+  });
+  it("every query it makes is studio-scoped and none writes", async () => {
+    const { calls } = await run("owner", withHistory());
+    expect(calls.filter((c) => ["insert", "update", "upsert", "delete", "rpc"].includes(c.method))).toEqual([]);
+    for (const c of calls.filter((x) => x.method === "eq" && x.args[0] === "studio_id")) expect(c.args[1]).toBe(studio.id);
+  });
+  const settlementReads = (cs: Call[]) => cs.filter((c) => c.table === "appointment_settlements" && c.method === "select").length;
+  it("the lifetime money is one extra read, made only for the Clients tab", async () => {
+    const plain = recording(withHistory());
+    const { loadOverview } = await import("@/lib/business-analytics/server/overview-read");
+    await loadOverview({ role: "owner" }, studio, "cad", {}, { strict: false, appointmentReads: READS }, NOW, plain.client);
+    const withClients = await run("owner", withHistory());
+    expect(settlementReads(withClients.calls)).toBe(settlementReads(plain.calls) + 1);
+  });
+  it("a failed lifetime money read affects only the lifetime column, never the period figures or the rows", async () => {
+    const base = recording(withHistory());
+    const { loadOverview } = await import("@/lib/business-analytics/server/overview-read");
+    await loadOverview({ role: "owner" }, studio, "cad", {}, { strict: false, appointmentReads: READS }, NOW, base.client);
+    const n = settlementReads(base.calls);
+    const res = withHistory();
+    res.appointment_settlements = [...Array.from({ length: n }, () => ok([])), { data: null, error: { message: "boom" } }];
+    const { r } = await run("owner", res);
+    const v = view(r);
+    expect(v.clientsTable?.available).toBe(true);
+    expect(v.clientsTable?.value?.lifetime.available).toBe(false);
+    expect(v.clientsTable?.value?.rows.map((x) => x.name)).toEqual(["Rowan Client"]);
+    expect(v.clientsTable?.value?.rows[0].lifetimePaidCents).toBeNull();
   });
 });

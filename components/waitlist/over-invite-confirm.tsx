@@ -15,6 +15,8 @@ import { expiringSoonLabel, type OverInvitePreview } from "@/lib/waitlist/over-i
 //  - A failed delivery that actually reached the provider can be sent twice if it is reopened; only the server's duplicate guard stops that.
 
 export const OVER_INVITE_CONFIRM_LABEL = "I understand some clients may find no availability";
+/** Required ONLY when no appointments are estimated: the server refuses the send without it. Pinned verbatim by a test. */
+export const OVER_INVITE_NO_TIMES_LABEL = "These clients may open the invitation and find no times to book.";
 export const OVER_INVITE_SUBMIT_LABEL = "Send invitations";
 
 /**
@@ -34,6 +36,7 @@ export function OverInviteConfirm({
   recipientChooser,
   batchKey,
   notice,
+  scopeSummary,
 }: {
   action: (formData: FormData) => void | Promise<void>;
   preview: OverInvitePreview;
@@ -45,6 +48,8 @@ export function OverInviteConfirm({
   /** Generated once per page render, so a double submit is one batch. */
   batchKey: string;
   notice?: string | null;
+  /** The service, booking window and number of people selected, shown before the send. */
+  scopeSummary?: { service: string; window: string; people: string };
 }) {
   return (
     <form action={action} onKeyDown={blockImplicitSubmit} data-testid="over-invite-confirm" className="flex flex-col gap-3 text-sm">
@@ -56,10 +61,23 @@ export function OverInviteConfirm({
       <p data-testid="over-invite-expiring" className="text-neutral-600 dark:text-neutral-400">{expiringSoonLabel(preview.expiringSoon)}</p>
       <p data-testid="over-invite-warning" role="note">{preview.ownerCopy}</p>
       {recipientChooser}
+      {scopeSummary ? (
+        <ul data-testid="over-invite-scope" className="flex flex-col gap-0.5">
+          <li>{scopeSummary.service}</li>
+          <li>{scopeSummary.window}</li>
+          <li data-testid="over-invite-people">{scopeSummary.people}</li>
+        </ul>
+      ) : null}
       <label className="flex min-h-11 items-start gap-2">
         <input type="checkbox" name="confirmed" className="mt-1" />
         <span>{OVER_INVITE_CONFIRM_LABEL}</span>
       </label>
+      {preview.fit === 0 ? (
+        <label className="flex min-h-11 items-start gap-2" data-testid="over-invite-no-times">
+          <input type="checkbox" name="ackNoTimes" className="mt-1" />
+          <span>{OVER_INVITE_NO_TIMES_LABEL}</span>
+        </label>
+      ) : null}
       {notice ? <p role="alert" data-testid="over-invite-notice">{notice}</p> : null}
       <button type="submit" className="min-h-11 self-start rounded-md border px-3">{OVER_INVITE_SUBMIT_LABEL}</button>
     </form>

@@ -70,6 +70,9 @@ function makeQuery(table: string) {
           (scenario.ownersError ? { data: null, error: { code: "XX000", message: "PRIVATE owner read" } } : { data: scenario.owners.map((id) => ({ id })), error: null }) as never,
         );
       }
+      if (table === "practitioners" && columns === "display_name, email") {
+        return resolve({ data: [{ display_name: "Synthetic owner", email: "owner@example.invalid" }], error: null } as never);
+      }
       if (table !== "practitioner_notifications" || !pending) return resolve({ error: null });
       if (scenario.insertDelayMs > 0) {
         const row = pending;
@@ -254,7 +257,9 @@ describe("the booking notification is unchanged", () => {
   it("the public booking action still records new_booking with its existing arguments", () => {
     const src = readFileSync(join(process.cwd(), "app/book/[slug]/actions.ts"), "utf8");
     expect(src).toContain('eventType: "new_booking"');
-    expect(src).toContain('title: "New booking"');
+    // The wording (title "New booking") now comes from the pure builder, pinned by behaviour in tests/lib/notifications/notification-text.test.ts.
+    expect(src).toContain("title: bookedText.title");
+    expect(src).toContain("buildBookedText(");
     expect(src).not.toContain("dedupeKey");
   });
 

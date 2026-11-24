@@ -2,6 +2,7 @@
 
 import { useId, useRef, useState, useTransition } from "react";
 import { submitNewClientBookingWaitlistAction } from "./waitlist-actions";
+import { WaitlistSmsConsentFieldset } from "@/components/sms/WaitlistSmsConsentFieldset";
 import {
   SMS_CONSENT_ANSWER_FIELD,
   SMS_CONSENT_ANSWER_NO,
@@ -352,51 +353,7 @@ export function NewClientWaitlistForm({
           )}
         </div>
 
-        <fieldset
-          className="flex w-full flex-col gap-2"
-          aria-describedby={smsQuestionId}
-          data-testid="waitlist-sms-question"
-        >
-          <legend className="text-[12px] uppercase tracking-[0.1em]" style={{ color: MUTED }}>
-            Text messages <span aria-hidden="true">*</span>
-          </legend>
-          <p id={smsQuestionId} className="text-[15px] leading-[1.6]" style={{ color: INK }}>
-            {SMS_JOIN_CONSENT_QUESTION}
-          </p>
-          <div className="flex flex-wrap gap-6">
-            <label className="flex min-h-[44px] items-center gap-2 text-[15px]" style={{ color: INK }}>
-              <input
-                type="radio"
-                name={SMS_CONSENT_ANSWER_FIELD}
-                value={SMS_CONSENT_ANSWER_YES}
-                checked={smsAnswer === SMS_CONSENT_ANSWER_YES}
-                onChange={() => setSmsAnswer(SMS_CONSENT_ANSWER_YES)}
-                className={`h-4 w-4 ${FOCUS_RING}`}
-              />
-              Yes
-            </label>
-            <label className="flex min-h-[44px] items-center gap-2 text-[15px]" style={{ color: INK }}>
-              <input
-                type="radio"
-                name={SMS_CONSENT_ANSWER_FIELD}
-                value={SMS_CONSENT_ANSWER_NO}
-                checked={smsAnswer === SMS_CONSENT_ANSWER_NO}
-                onChange={() => setSmsAnswer(SMS_CONSENT_ANSWER_NO)}
-                className={`h-4 w-4 ${FOCUS_RING}`}
-              />
-              No
-            </label>
-          </div>
-          {smsAnswer === SMS_CONSENT_ANSWER_NO && (
-            <p
-              className="text-[13px] leading-[1.6]"
-              style={{ color: MUTED }}
-              data-testid="waitlist-sms-declined-note"
-            >
-              {SMS_OPERATIONAL_CONSENT_DECLINED_NOTE}
-            </p>
-          )}
-        </fieldset>
+        <WaitlistSmsConsentFieldset questionId={smsQuestionId} answer={smsAnswer} onChange={setSmsAnswer} />
 
         <div className="flex flex-col gap-3">
           <button

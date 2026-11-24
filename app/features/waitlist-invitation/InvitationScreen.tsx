@@ -210,7 +210,7 @@ function DeclinedView({ keptOnList, answered }: { keptOnList: boolean; answered?
   if (answered === "answers") {
     return (
       <div className="flex flex-col gap-4" data-testid="declined-answers">
-        <h1 className="text-xl text-[#0A0A0A]">Thanks. Your reply is saved</h1>
+        <h1 className="text-xl text-[#0A0A0A]">Thanks. Your reply is saved for the studio</h1>
         <p className="text-sm text-[#6B6B6B]">{DECLINE_CONFIRMATION}</p>
       </div>
     );
@@ -226,7 +226,7 @@ function DeclinedView({ keptOnList, answered }: { keptOnList: boolean; answered?
   if (keptOnList) {
     return (
       <div className="flex flex-col gap-4">
-        <h1 className="text-xl text-[#0A0A0A]">Thanks — your reply is saved for the studio</h1>
+        <h1 className="text-xl text-[#0A0A0A]">Thanks. Your reply is saved for the studio</h1>
         <p className="text-sm text-[#6B6B6B]">
           You keep your original join date. This invitation is closed, so these times can’t be
           booked from this link. The studio decides who is invited next and may send you a new
@@ -296,7 +296,11 @@ const CLOSED_COPY: Record<InvitationClosedReason, { title: string; body: string 
     // (it may not), and must not send anyone to rebook — a second booking for
     // someone who already holds one is the expensive mistake here. The only
     // honest next step is for the studio to look.
-    body: "Your invitation was used, but we couldn’t confirm whether the appointment went through. Please don’t try to book again — contact the studio and they can check whether your appointment exists.",
+    body: "Your invitation was used, but we couldn’t confirm whether the appointment went through. Please don’t try to book again. Contact the studio and they can check whether your appointment exists.",
+  },
+  studio_managed: {
+    title: "Contact the studio to book",
+    body: "Appointments are managed directly by the studio. Please contact the studio to arrange an appointment or change an existing booking. Your invitation and waitlist entry have not been changed.",
   },
   unsupported_offer: {
     title: "This invitation can’t be booked online",
@@ -460,8 +464,8 @@ function OfferView({
       {empty ? (
         <section className="flex flex-col gap-3" aria-live="polite">
           <p className="text-sm text-[#6B6B6B]">
-            Nothing is open in these times right now. This can change — try again, or
-            let the studio know this doesn’t work.
+            Nothing is open in these times right now. Try again, or
+            let the studio know these times don’t work.
           </p>
           <button
             type="button"

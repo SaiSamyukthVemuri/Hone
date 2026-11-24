@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getStudioBySlug } from "@/lib/booking/queries";
-import { clientSelfServicePolicyFromStudio } from "@/lib/booking/client-self-service-policy";
+import { clientSelfServicePolicyFromStudio, studioManagesAppointments, clientOnlineBookingDisabledMessage } from "@/lib/booking/client-self-service-policy";
 import { todayInTz } from "@/lib/booking/tz";
 import { horizonRangeInStudioTz } from "@/lib/booking/horizon";
 import { MarketingFooter } from "@/app/_components/MarketingFooter";
@@ -165,7 +165,9 @@ export default async function PublicBookingPage({
             )}
           </div>
 
-          {showAdmissionAwareForm ? (
+          {studioManagesAppointments(studio) ? (
+            <p className="text-[15px] leading-[1.6]">{clientOnlineBookingDisabledMessage(studio.name)}</p>
+          ) : showAdmissionAwareForm ? (
             <PublicBookForm
               slug={studio.slug}
               studioName={studio.name}

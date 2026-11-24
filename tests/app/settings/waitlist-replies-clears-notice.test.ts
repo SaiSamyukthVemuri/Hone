@@ -46,6 +46,6 @@ describe("acknowledgeReplyAction clears the lifecycle notice", () => {
     fd.set("invitationId", "not-a-uuid");
     await expect(acknowledgeReplyAction(fd)).rejects.toThrow("NEXT_REDIRECT");
     expect(order[0]).toBe("clear");
-    expect(order).toContain("redirect:/settings/waitlist/replies?ack=failed");
+    expect(order).toContain("redirect:/waitlist/replies?ack=failed");
   });
 });

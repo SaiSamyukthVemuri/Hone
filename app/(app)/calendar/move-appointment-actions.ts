@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { createClient } from "@/lib/supabase/server";
+import { observePermission } from "@/lib/permissions/observe-permission";
 import {
   getAvailableSlots,
   filterFutureSlots,
@@ -283,6 +285,16 @@ export async function moveAppointmentAction(input: {
   if (!appt) return { ok: false, error: "Appointment not found." };
   if (appt.status !== "confirmed" || new Date(appt.starts_at).getTime() <= Date.now()) {
     return { ok: false, error: "This appointment can no longer be moved." };
+  }
+
+  // Permission engine, OBSERVE ONLY: records what the engine would answer and never changes the outcome. The
+  // legacy rules below stay the only authority. A reassignment is asked separately, and only when one was requested.
+  // The client is built inside the observer (a thunk), so even a failure to build it cannot change the outcome.
+  let observeClient: Promise<Awaited<ReturnType<typeof createClient>>> | undefined;
+  const observeDb = () => (observeClient ??= createClient());
+  observePermission(observeDb, studio.id, practitioner.role, { key: "appt.move", appointmentId });
+  if (requestedTarget && requestedTarget !== appt.practitioner_id) {
+    observePermission(observeDb, studio.id, practitioner.role, { key: "appt.reassign" });
   }
 
   // §9: custom-time mode is an OWNER-ONLY override, authorized on the LIVE

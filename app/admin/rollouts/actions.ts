@@ -10,6 +10,12 @@ import { addPilotStudio, ALL_CONFIRM_PHRASE, logBlockedAttempt, removePilotStudi
 // enforced HERE (not only in the page). Turning it on creates nothing in any studio: it only changes what the existing code offers.
 
 export type RolloutActionResult = { ok: boolean; message: string };
+
+// A command can fail in two different ways, and the message must never blur them. REFUSED: the database rejected it and rolled back, so "nothing
+// changed" is true. UNKNOWN: the call threw, timed out or its answer did not come back, and it may have COMMITTED, so the rollout may already be in
+// the new state (possibly On for every studio). The operator is told to reload and check, never that nothing changed.
+const REFUSED = "That was refused. Nothing changed.";
+const UNKNOWN = "The result is UNKNOWN: the change may or may not have been saved. Reload this page and check the current setting before trying again.";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type Actor = { userId: string; email: string };
@@ -38,9 +44,13 @@ export async function setRolloutModeAction(formData: FormData): Promise<RolloutA
     return { ok: false, message: `To turn this on for every studio, type ${ALL_CONFIRM_PHRASE} exactly.` };
   }
   const out = await setRolloutMode(mode as RolloutMode, auth.actor);
-  if (out === null) return { ok: false, message: "That did not save. Nothing changed. Try again." };
+  if (out.kind === "refused") return { ok: false, message: REFUSED };
+  if (out.kind === "unknown") {
+    revalidatePath("/admin/rollouts"); // so the reload the message asks for shows the real state
+    return { ok: false, message: UNKNOWN };
+  }
   revalidatePath("/admin/rollouts");
-  return { ok: true, message: out === "unchanged" ? "Already set." : "Saved." };
+  return { ok: true, message: out.value === "unchanged" ? "Already set." : "Saved." };
 }
 
 export async function addPilotStudioAction(formData: FormData): Promise<RolloutActionResult> {
@@ -49,10 +59,14 @@ export async function addPilotStudioAction(formData: FormData): Promise<RolloutA
   const studioId = formData.get("studioId");
   if (typeof studioId !== "string" || !UUID.test(studioId)) return { ok: false, message: "Choose a studio from the list." };
   const out = await addPilotStudio(studioId.toLowerCase(), auth.actor);
-  if (out === null) return { ok: false, message: "That did not save. Nothing changed. Try again." };
-  if (out === "not_found") return { ok: false, message: "That studio was not found." };
+  if (out.kind === "refused") return { ok: false, message: REFUSED };
+  if (out.kind === "unknown") {
+    revalidatePath("/admin/rollouts");
+    return { ok: false, message: UNKNOWN };
+  }
+  if (out.value === "not_found") return { ok: false, message: "That studio was not found." };
   revalidatePath("/admin/rollouts");
-  return { ok: true, message: out === "exists" ? "Already in the pilot." : "Added to the pilot." };
+  return { ok: true, message: out.value === "exists" ? "Already in the pilot." : "Added to the pilot." };
 }
 
 export async function removePilotStudioAction(formData: FormData): Promise<RolloutActionResult> {
@@ -61,7 +75,11 @@ export async function removePilotStudioAction(formData: FormData): Promise<Rollo
   const studioId = formData.get("studioId");
   if (typeof studioId !== "string" || !UUID.test(studioId)) return { ok: false, message: "Choose a studio from the list." };
   const out = await removePilotStudio(studioId.toLowerCase(), auth.actor);
-  if (out === null) return { ok: false, message: "That did not save. Nothing changed. Try again." };
+  if (out.kind === "refused") return { ok: false, message: REFUSED };
+  if (out.kind === "unknown") {
+    revalidatePath("/admin/rollouts");
+    return { ok: false, message: UNKNOWN };
+  }
   revalidatePath("/admin/rollouts");
-  return { ok: true, message: out === "absent" ? "It was not in the pilot." : "Removed from the pilot." };
+  return { ok: true, message: out.value === "absent" ? "It was not in the pilot." : "Removed from the pilot." };
 }

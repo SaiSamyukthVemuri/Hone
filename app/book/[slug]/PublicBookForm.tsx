@@ -17,6 +17,7 @@ import {
   popAvailabilityHistory,
 } from "@/lib/booking/availability-history";
 import { MARKETING_CONSENT_FIELD } from "@/lib/booking/marketing-consent";
+import { AppointmentSmsConsent } from "@/components/sms/AppointmentSmsConsent";
 import { REFERRAL_SOURCE_OPTIONS } from "@/lib/booking/referral-source";
 import {
   buildBookingConfirmationCopy,
@@ -1019,26 +1020,11 @@ export function PublicBookForm({
           AND (new client OR submitted phone normalizes to the stored
           phone for an existing client). Helper line names STOP so the
           client knows the exit before they consent. */}
-      <label className="flex items-start gap-3 text-[14px] leading-[1.5]">
-        <input
-          type="checkbox"
-          checked={smsConsent}
-          onChange={(e) => setSmsConsent(e.target.checked)}
-          className="mt-1 h-4 w-4 flex-none"
-        />
-        <span>
-          <span className="block">
-            Text me appointment confirmations and reminders.
-          </span>
-          <span
-            className="mt-1 block text-[12px]"
-            style={{ color: "#6B6B6B" }}
-          >
-            You can reply STOP at any time. Email will still be used
-            for appointment messages.
-          </span>
-        </span>
-      </label>
+      <AppointmentSmsConsent
+        studioName={studioName}
+        checked={smsConsent}
+        onChange={setSmsConsent}
+      />
 
       {/* Optional marketing/analytics consent. Opt-in only; never
           prechecked; separate from SMS + treatment + payment consents.

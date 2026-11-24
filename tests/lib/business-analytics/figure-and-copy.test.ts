@@ -43,12 +43,12 @@ describe("fixed copy that must stay true", () => {
   });
 });
 
-const MODULES = ["chart-geometry.ts", "copy.ts", "figure.ts", "money-format.ts", "money-metrics.ts", "named-clients.ts", "overview-csv.ts", "overview-model.ts", "overview-params.ts", "period.ts", "reconcile.ts", "reconciliation-line.ts", "service-value.ts", "visit-metrics.ts"];
+const MODULES = ["chart-geometry.ts", "clients-csv.ts", "clients-params.ts", "clients-table.ts", "copy.ts", "figure.ts", "money-format.ts", "money-metrics.ts", "named-clients.ts", "overview-csv.ts", "overview-model.ts", "overview-params.ts", "period.ts", "reconcile.ts", "reconciliation-line.ts", "service-value.ts", "visit-metrics.ts", "waitlist-model.ts"];
 
 describe("the analytics server folder is the only place that reads", () => {
   it("holds the one loader, which is owner-gated first and never writes or uses a service role", () => {
     const dir = path.resolve(__dirname, "../../../lib/business-analytics/server");
-    expect(readdirSync(dir).sort()).toEqual(["client-names-read.ts", "overview-read.ts"]);
+    expect(readdirSync(dir).sort()).toEqual(["client-names-read.ts", "overview-read.ts", "waitlist-read.ts"]);
     const code = readFileSync(path.join(dir, "overview-read.ts"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
     expect(code).toMatch(/if \(practitioner\.role !== "owner"\) return \{ access: "refused" \};\n  const supabase/);
     expect(code).not.toMatch(/service_role|createServiceClient|admin|\.(insert|update|upsert|delete|rpc)\(|appointment_payments|price_cents/);

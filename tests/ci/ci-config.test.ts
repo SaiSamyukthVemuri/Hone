@@ -559,7 +559,10 @@ describe("PR CI — path-aware lane selection", () => {
     expect(b.targeted, "targeted hard timeout").toBe(19);
     expect(b.extended, "augmented native proof hard timeout").toBe(35);
     expect(CI).toMatch(/hard timeout 19 min/i);
-    expect(CI).toMatch(/hard timeout 25 min/i);
+    // 25 -> 35 (2026-11-23): the extended shards also run the native 3G proof and their real ceiling is the 35 asserted above; the
+    // comment table still said 25. The text is corrected, and this line now pins the corrected text, not the stale one.
+    expect(CI).toMatch(/extended\s+: target <10 min per shard, hard timeout 35 min/i);
+    expect(CI).not.toMatch(/extended\s+: target <10 min per shard, hard timeout 25 min/i);
     expect(CI).toMatch(/target <10 min per shard/i);
     expect(CI).toMatch(/FAILURE CEILING, not a performance target/i);
   });
@@ -819,6 +822,35 @@ describe("PR CI — path-aware lane selection", () => {
     expect(jobBudget("google-browser-e2e")).toBeGreaterThanOrEqual(need(P90.google, "google-browser-e2e"));
   });
 
+  it("the four nightly core browser shards and the nightly payment lane clear measured non-test time + tests + the install step's ceiling + 1 min", () => {
+    // nightly.yml runs the same quarter of the suite as an extended shard but has no native proof step. Slowest measured shard:
+    // nightly run 44344780024 shard 2 was CANCELLED at 25.2 min (212 of 243 passed, zero failures, 8.7 min setup), projected about 28 min
+    // to finish; nightly shards otherwise took 13.3-22.8 min. The rule used above (measured + install ceiling + 1) gives 35.
+    // Pinned exactly so shaving it back to a value just above one observation fails.
+    // A PROJECTION, not an observed finish: that shard was cancelled with 31 of 243 tests still to run (about 3 min), so the 28 is
+    // 25.2 min plus that estimate. The slowest shard that actually FINISHED took 22.8 min.
+    const PROJECTED_NIGHTLY_SHARD = 28;
+    const doc = yaml.load(NIGHTLY) as { jobs: Record<string, { strategy?: { matrix?: { include?: { lane: string; timeout: number }[] } } }> };
+    const lanes = Object.values(doc.jobs).flatMap((j) => j.strategy?.matrix?.include ?? []);
+    const shards = lanes.filter((l) => /^core browser e2e \(shard \d\/4\)$/.test(l.lane));
+    expect(shards.map((l) => l.lane), "all four nightly core shards exist").toHaveLength(4);
+    const job = Object.values(doc.jobs).find((j) => (j as { steps?: PwStep[] }).steps?.some((s) => s.id === "pw-cache")) as { steps: PwStep[] };
+    const ceiling = job.steps.find((s) => (s.run ?? "").includes(DEPS_SCRIPT))!["timeout-minutes"]!;
+    for (const l of shards) {
+      expect(l.timeout, l.lane).toBeGreaterThanOrEqual(PROJECTED_NIGHTLY_SHARD + ceiling + 1);
+      expect(l.timeout, l.lane).toBe(35);
+    }
+    // Mobile and google were deliberately NOT raised (6.5-9.4 and 6.9-9.4 min measured): pinned exactly so they cannot be shaved silently.
+    expect(lanes.find((l) => /^mobile completion e2e/.test(l.lane))!.timeout, "nightly mobile").toBe(15);
+    expect(lanes.find((l) => /^google e2e/.test(l.lane))!.timeout, "nightly google").toBe(18);
+    expect(NIGHTLY).toMatch(/CORE SHARDS 25 -> 35 and PAYMENT 18 -> 23/);
+    expect(NIGHTLY).toMatch(/44344780024/);
+    expect(NIGHTLY).toMatch(/44565261584/);
+    const pay = lanes.find((l) => /^payment e2e/.test(l.lane))!;
+    expect(pay.timeout, "nightly payment").toBe(23);
+    expect(pay.timeout).toBeGreaterThanOrEqual(15.8 + ceiling + 1);
+  });
+
   // COMMENTS MAY NOT RESTATE THE BOUNDS WRONGLY (Codex P3 4362454294, #1059):
   // the four ci.yml blocks still said 180 s / 300 s after the script moved to
   // 90 / 150. A comment block about the install (workflows, and CLAUDE.md's
@@ -1058,7 +1090,7 @@ describe("PR CI — path-aware lane selection", () => {
     // this red rather than silently reinstating the cancellation.
     expect(budget("db-integration")).toBeGreaterThan(12);
     expect(budget("db-integration")).toBeLessThanOrEqual(20);
-    // payment-browser-e2e: TARGET ~10 min, HARD TIMEOUT 18. It carried a single
+    // payment-browser-e2e: TARGET ~10 min, HARD TIMEOUT 23 (was 18). It carried a single
     // 10 that served as both, which is precisely the shape the comment below
     // warns about. F-PAY-002 measured the lane at 9.6-10.4 min locally across
     // repeated runs of 57 serial specs — i.e. the ceiling and the observed run
@@ -1070,7 +1102,10 @@ describe("PR CI — path-aware lane selection", () => {
     // for the same work). A ceiling of 12 would sit inside that spread and the
     // lane would pass or be cancelled according to which runner it drew.
     expect(budget("payment-browser-e2e")).toBeGreaterThan(14);
-    expect(budget("payment-browser-e2e")).toBeLessThanOrEqual(18);
+    // 18 -> 23 (2026-11-23): nightly run 44565261584 took 15.8 min (10.1 min of setup + 9.2 min of tests); 15.8 + the 6 min install
+    // ceiling + 1 = 22.8. Pinned exactly so shaving it back to just above one observation fails.
+    expect(budget("payment-browser-e2e")).toBe(23);
+    expect(budget("payment-browser-e2e")).toBeGreaterThanOrEqual(15.8 + 6 + 1);
     // google-browser-e2e: TARGET unchanged, HARD TIMEOUT 15. On head 2a23e3e7
     // `npm ci` alone consumed ~5 min; the Supabase stack then started, the full
     // migration chain applied from scratch, and Playwright reported
@@ -1088,7 +1123,7 @@ describe("PR CI — path-aware lane selection", () => {
     // 12 -> 15 (2026-10-23): ~5.8 min measured p90 + the bounded install step
     // (6 min ceiling) + margin must fit. TARGET stays ~6 min (CLAUDE.md section 4).
     expect(budget("mobile-completion-e2e")).toBe(15);
-    // Targeted hard timeout 15, measured extended hard timeout 25 — both above
+    // Targeted hard timeout 19 (was 15), measured extended hard timeout 35 (was 25) — both above
     // their <10 min targets. Parsed, not line-matched, so reformatting the
     // workflow cannot silently break this guard.
     //

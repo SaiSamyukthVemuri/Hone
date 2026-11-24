@@ -34,6 +34,13 @@ describe("the owner reads", () => {
     expect(h.rpc).toHaveBeenCalledWith("read_waitlist_followups", { p_studio_id: S, p_actor_user_id: A });
     expect(out).toMatchObject({ kind: "ok", rows: [{ followupId: F, kind: "decline", whyNotWork: "WHYMARK", eraseBy: "2027-02-07T10:00:00Z" }] });
   });
+  it("the invitation-scoped form passes the command's own optional invitation id, and the page form does not", async () => {
+    h.rpc.mockResolvedValue({ data: [], error: null });
+    await readFollowUps(S, A, "11111111-1111-4111-8111-111111111111");
+    expect(h.rpc).toHaveBeenLastCalledWith("read_waitlist_followups", { p_studio_id: S, p_actor_user_id: A, p_invitation_id: "11111111-1111-4111-8111-111111111111" });
+    await readFollowUps(S, A);
+    expect(h.rpc).toHaveBeenLastCalledWith("read_waitlist_followups", { p_studio_id: S, p_actor_user_id: A });
+  });
   it("the row type does not carry the email address to the page", async () => {
     h.rpc.mockResolvedValue({ data: [row()], error: null });
     const out = await readFollowUps(S, A);

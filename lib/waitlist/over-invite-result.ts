@@ -6,6 +6,8 @@ export const OVER_INVITE_NOTICES = {
   malformed: "That submission could not be read. Reload the page and try again. Nothing was sent.",
   nobody: "Choose at least one person to invite. Nothing was sent.",
   needConfirm: "Tick the box to confirm that some clients may find no availability. Nothing was sent.",
+  badService: "That service is not available for this studio. Reload the page and choose again. Nothing was sent.",
+  needNoTimesAck: "Tick the box to confirm: These clients may open the invitation and find no times to book. Nothing was sent.",
   ownerOnly: "Only the studio owner can send these invitations. Nothing was sent.",
   unavailable: "We couldn't prepare these invitations just now. Nothing was sent. Please try again.",
   notYetAvailable: "Sending beyond the estimate is not available yet. Nothing was sent.",

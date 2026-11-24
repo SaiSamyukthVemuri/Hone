@@ -1,5 +1,6 @@
 "use server";
 
+import { WAITLIST_OVER_INVITE_PATH } from "@/lib/waitlist/paths";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
@@ -66,6 +67,10 @@ export async function sendOverInviteAction(_prev: OverInviteResult, formData: Fo
     const end = addDays(start, scope.windowDays - 1);
 
     const db = createAdminClient();
+    // THE POSTED SERVICE MUST BE THIS STUDIO'S OWN ACTIVE SERVICE. At an ordinary fit the slot lookup would refuse a forged id, but a closed week
+    // answers zero without looking at it, so the check is made here, before any batch can be saved.
+    const svc = await db.from("services").select("id").eq("id", scope.serviceId).eq("studio_id", studio.id).eq("active", true).maybeSingle();
+    if (svc.error || !svc.data) return { state: "notice", notice: N.badService };
     const fit = await computeConsultationFit({
       admin: db,
       studioId: studio.id,
@@ -93,6 +98,10 @@ export async function sendOverInviteAction(_prev: OverInviteResult, formData: Fo
     if (sub.shown === null || recheckBeforeSend(sub.shown, fresh) === "reconfirm") {
       return { state: "reconfirm", notice: N.changed, ...fresh, expiringSoon: preview.expiringWithin24h };
     }
+
+    // AT ZERO THE OWNER MUST ALSO ACKNOWLEDGE THAT THE INVITED MAY FIND NO TIMES. The server decides this from ITS fit, never from the posted
+    // `shownFit`, the same way `confirmed` is required above: a form that omits or forges the box sends nothing.
+    if (fit.fit === 0 && !sub.noTimesAcknowledged) return { state: "notice", notice: N.needNoTimesAck };
 
     const created = await createBatch(db, {
       studioId: studio.id,
@@ -141,7 +150,7 @@ export async function sendOverInviteAction(_prev: OverInviteResult, formData: Fo
     if (!created.batchId) return { state: "notice", notice: N.batchSaved };
     // The batch is persisted. Run the first round(s) now; whatever is left is finished by the background route with no page open and no click.
     const first = await runRounds({ budgetMs: FIRST_ROUNDS_BUDGET_MS, mode: { mode: "scoped", studioId: studio.id, batchId: created.batchId, actorUserId: practitioner.user_id } });
-    revalidatePath("/settings/waitlist/over-invite");
+    revalidatePath(WAITLIST_OVER_INVITE_PATH);
     const quantity = created.quantity ?? sub.entryIds.length;
     return {
       state: "progress",
@@ -166,7 +175,7 @@ export async function stopBatchAction(_prev: OverInviteResult, formData: FormDat
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
     if (practitioner.role !== "owner" || !practitioner.user_id) return { state: "notice", notice: N.ownerOnly };
     const r = await stopBatch(createAdminClient(), { studioId: studio.id, actorUserId: practitioner.user_id, batchId, leaseSeconds: DEFAULT_LIMITS.leaseSeconds });
-    revalidatePath("/settings/waitlist/over-invite");
+    revalidatePath(WAITLIST_OVER_INVITE_PATH);
     if (!r.ok) return { state: "notice", notice: N.unavailable };
     if (r.result === "stopped") return { state: "notice", notice: N.stopped(r.cancelled) };
     if (r.result === "nothing_pending") return { state: "notice", notice: N.nothingToStop };
@@ -187,7 +196,7 @@ async function retryAction(kind: "refused" | "unknown", formData: FormData): Pro
     if (targets.length === 0) return { state: "notice", notice: kind === "refused" ? N.nothingToRetry : N.nothingUnknownToRetry };
     const chosen = targets.slice(0, RETRY_CLICK_MAX);
     const out = await retryByKind(kind, studio.id, practitioner.user_id, chosen, supabase);
-    revalidatePath("/settings/waitlist/over-invite");
+    revalidatePath(WAITLIST_OVER_INVITE_PATH);
     return {
       state: "progress",
       quantity: chosen.length,

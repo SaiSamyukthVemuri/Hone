@@ -525,3 +525,30 @@ describe("source contract: the gate is NOT new-client admission", () => {
     expect(src).toContain("manageUrl: clientManagePageAllowed(clientSelfService) ? manageUrl : null,");
   });
 });
+
+
+describe("studio-managed appointments",()=>{
+  it.each(["new","existing"])("refuses %s booking before any command or side effect",async clientType=>{
+    scenario.flags={studio_managed_appointments:true};
+    expect(await book({client_type:clientType})).toEqual({ok:false,error:NEUTRAL});
+    expect(rpcCalls).toEqual([]); expect(clientUpdates).toEqual([]); expect(confirmationEmails).toEqual([]); expect(smsCalls).toEqual([]);
+  });
+  it("turning the override off restores the saved policy",async()=>{
+    scenario.flags={studio_managed_appointments:false};
+    const result=await book();
+    expect(result.ok).toBe(true);
+    expect(rpcCalls.length).toBeGreaterThan(0);
+  });
+});
+
+
+describe("studio-managed availability",()=>{
+ it("does not scan slots from either public date action",async()=>{
+   scenario.flags={studio_managed_appointments:true};
+   const {fetchPublicSlotsAction,fetchNextAvailableDateAction}=await import("@/app/book/[slug]/actions");
+   const input={slug:"test-studio",serviceId:SERVICE_ID,date:"2031-01-01",fromDate:"2031-01-01"};
+   expect(await fetchPublicSlotsAction(input)).toEqual({ok:false,error:NEUTRAL});
+   expect(await fetchNextAvailableDateAction(input)).toEqual({ok:false,error:NEUTRAL});
+   expect(rpcCalls).toEqual([]);
+ });
+});

@@ -174,7 +174,7 @@ describe("what the page may and may not carry", () => {
     expect(c).toMatch(/<p class="[^"]*">\d+<\/p>/);
     expect(c).not.toMatch(/<a |<li|href=/);
     expect(html).not.toMatch(/client-[a-z]/);
-    expect(html).not.toMatch(/href="[^"]*client/i);
+    expect(html).not.toMatch(/href="[^"]*client-/i); // no link carries a client (the Clients tab link carries none)
   });
   it("a bad value on the page shows its notice sentence", () => {
     expect(render(healthy(), { notices: ["The period in the address was not recognised, so the default is shown."] })).toContain("The period in the address was not recognised");
@@ -297,14 +297,17 @@ describe("a period with no visits at all draws no false zero (U3, through the re
 describe("the Overview layout", () => {
   const html = render(healthy());
   const text = (h: string) => h.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/\s+/g, " ");
-  it("has the new title, the Overview tab as current, and the other four as disabled text: no link, no route", () => {
+  it("has the new title, the Overview tab as current, Clients and Waitlist as links, and the other three as disabled text", () => {
     expect(html).toContain("<h1");
-    expect(text(html)).toContain("Your practice, in perspective.");
+    expect(html).toMatch(/<h1[^>]*>Analytics<\/h1>/);
     const tabs = html.match(/<ul[^>]*aria-label="Analytics sections"[^>]*>([\s\S]*?)<\/ul>/)?.[1] ?? "";
     expect(tabs).toContain('aria-current="page"');
-    expect((tabs.match(/aria-disabled="true"/g) ?? []).length).toBe(4);
-    expect(tabs).not.toMatch(/<a |href=/);
-    expect(text(tabs)).toMatch(/Clients.*not available yet.*Capacity.*not available yet.*Treatments.*not available yet.*Team.*not available yet/);
+    expect((tabs.match(/aria-disabled="true"/g) ?? []).length).toBe(3);
+    const links = [...tabs.matchAll(/<a [^>]*href="([^"]*)"/g)].map((m) => m[1].replace(/&amp;/g, "&"));
+    expect(links).toHaveLength(2);
+    expect(links).toContain("/financials/analytics/waitlist");
+    expect(links[0].startsWith("/financials/analytics/clients")).toBe(true); // the period and team member travel with it, nothing personal
+    expect(text(tabs)).toMatch(/Capacity.*not available yet.*Treatments.*not available yet.*Team.*not available yet/);
   });
   it("Export data and Print / Save PDF are the existing routes; no explore links to unbuilt pages", () => {
     expect(html).toMatch(/<a href="\/financials\/analytics\/export\.csv[^"]*"[^>]*>Export data<\/a>/);
@@ -496,7 +499,7 @@ describe("the named client lists on the page", () => {
   it("shows the three lists with display names, in order, and the cap sentence", () => {
     const html = render(named(NAMES));
     const s = section(html);
-    expect(s).toContain("Your client relationships");
+    expect(s).toContain("Client rankings");
     const spend = card(html, "ov-top-spenders") ?? "";
     expect(spend.indexOf("Olive Over")).toBeGreaterThan(-1);
     expect(spend.indexOf("Olive Over")).toBeLessThan(spend.indexOf("Quinn Quoted")); // $95.00 before $90.00
@@ -593,3 +596,4 @@ describe("the named client lists on the page", () => {
     expect(candidateClientIds(input({ current: { ok: false, reason: "read_failed" } }))).toEqual([]);
   });
 });
+

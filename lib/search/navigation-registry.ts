@@ -1,3 +1,4 @@
+import { LEGACY_WAITLIST_ROUTES, WAITLIST_ARCHIVED_PATH, WAITLIST_OVER_INVITE_PATH, WAITLIST_PATH, WAITLIST_RELEASED_PATH, WAITLIST_REPLIES_PATH, WAITLIST_SEARCH_PATH } from "@/lib/waitlist/paths";
 import "server-only";
 
 // Global Search V2-A, the canonical searchable navigation/settings registry.
@@ -928,8 +929,20 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
   reason: string;
 }> = [
   {
+    route: "/clients/groups",
+    reason: "A removed feature: the route only redirects to the Clients directory, so it is never offered as a destination.",
+  },
+  {
     route: "/financials/analytics",
-    reason: "Owner-only, no navigation link until the layout is accepted and the redaction tests land; it is registered with the navigation change that adds the menu entry.",
+    reason: "Owner-only Analytics is reached from the Business menu. Global Search discovery is outside this menu change.",
+  },
+  {
+    route: "/financials/analytics/clients",
+    reason: "The owner-only Clients tab of Analytics is reached from the Overview tab strip, never searched. It lists clients by name, so it must never become discoverable through Global Search.",
+  },
+  {
+    route: "/financials/analytics/waitlist",
+    reason: "The owner-only Waitlist tab of Analytics is reached from the Analytics tab strip, never searched. It reports invitation outcomes and the waiting list, so it must not become discoverable through Global Search.",
   },
   {
     route: "/financials/analytics/print",
@@ -940,9 +953,9 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
     reason: "The Clients statements screens are new and are not yet reachable from the menu or Global Search; the search entry ships with the menu entry in the navigation change, so a destination is never searchable before it is linkable.",
   },
   {
-    route: "/settings/waitlist/over-invite",
+    route: WAITLIST_OVER_INVITE_PATH,
     reason:
-      "Owner-only invite-beyond-the-estimate page, reached from a link on the waitlist page. It follows its parent: the waitlist Settings tab appears only for a studio whose durable waitlist is switched on, so listing this page in Global Search would offer a page its studio cannot otherwise reach. Search does not advertise it separately.",
+      "Owner-only invite-beyond-the-estimate page, reached from a link on the waitlist page. It follows its parent: the waitlist navigation entry is visible only to eligible owners, so listing this page in Global Search would offer a page its studio cannot otherwise reach. Search does not advertise it separately.",
   },
   {
     route: "/calendar/check-practitioner",
@@ -999,28 +1012,32 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
     reason:
       "Doorway or legacy URL that only redirects to a focused settings view. Each view is registered individually.",
   },
+  ...LEGACY_WAITLIST_ROUTES.map(({ source }) => ({
+    route: source,
+    reason: "Former settings URL that permanently redirects to the owner waitlist workspace.",
+  })),
   {
-    route: "/settings/waitlist",
+    route: WAITLIST_PATH,
     reason:
-      "WAIT-02 operator queue for the new-client waitlist. Its Settings tab appears only for a studio whose durable waitlist is switched on, so advertising it in search would resolve to an empty surface for every studio that has not been enabled. Revisit when the capability is generally available rather than pilot-gated.",
+      "WAIT-02 operator queue for the new-client waitlist. Its navigation entry appears only for owners of studios with a live waitlist or existing entries, so advertising it in search would resolve to an empty surface for every studio that has not been enabled. Revisit when the capability is generally available rather than pilot-gated.",
   },
   {
-    route: "/settings/waitlist/replies",
+    route: WAITLIST_REPLIES_PATH,
     reason:
       "Owner-only list of the replies people left when the offered times did not suit them (0319). It holds clients' own words, appears only when the reply feature is switched on, and is reached from the count on the waitlist page, so listing it in Global Search would offer an empty or refused page to everyone else.",
   },
   {
-    route: "/settings/waitlist/search",
+    route: WAITLIST_SEARCH_PATH,
     reason:
-      "Owner-only name search over the waitlist, reached from a link on the waitlist page. It follows its parent: the waitlist Settings tab appears only for a studio whose durable waitlist is switched on, so listing it in Global Search would offer an empty or refused page to everyone else.",
+      "Owner-only name search over the waitlist, reached from a link on the waitlist page. It follows its parent: the waitlist navigation entry is visible only to eligible owners, so listing it in Global Search would offer an empty or refused page to everyone else.",
   },
   {
-    route: "/settings/waitlist/archived",
+    route: WAITLIST_ARCHIVED_PATH,
     reason:
       "Owner-only read-only view of waitlist entries an owner removed, reached from a link on the waitlist page. It follows its parent: listing it in Global Search would offer an empty or refused page to every studio that has not enabled the waitlist and to non-owners.",
   },
   {
-    route: "/settings/waitlist/released",
+    route: WAITLIST_RELEASED_PATH,
     reason:
       "Owner-only read-only history of released and expired waitlist entries, reached from a link on the waitlist page. It follows its parent: listing it in Global Search would offer an empty or refused page to every studio that has not enabled the waitlist and to non-owners.",
   },

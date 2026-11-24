@@ -8,7 +8,7 @@ import { contestedWindowFailures } from "./hon48-support/contested-window";
 
 // HON-48 five-user proof, part 2: MOVE, REASSIGN, BLOCK and BUFFER with conflicts.
 //
-// Opt-in: HON48_FIVE_USER_E2E=1. Same synthetic five-user studio and five sessions as part 1.
+// Runs in the required calendar lane. Same synthetic five-user studio and five sessions as part 1.
 //
 //   M  two users move two DIFFERENT appointments onto the SAME practitioner and the SAME slot at the same moment:
 //      one appointment holds the slot, the other keeps its original time, no overlap, one reservation each
@@ -20,7 +20,6 @@ import { contestedWindowFailures } from "./hon48-support/contested-window";
 //
 // Evidence is the database rows, not only the toast.
 
-test.skip(process.env.HON48_FIVE_USER_E2E !== "1", "opt-in HON-48 five-user proof; set HON48_FIVE_USER_E2E=1");
 test.describe.configure({ mode: "serial" });
 
 let t: Team;

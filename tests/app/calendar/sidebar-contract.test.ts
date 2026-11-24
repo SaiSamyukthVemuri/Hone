@@ -115,7 +115,8 @@ describe("full width", () => {
   it("the app shell main uses AppMain, which is full width for the calendar grid only", () => {
     expect(LAYOUT).toContain("<AppMain>{children}</AppMain>");
     expect(LAYOUT).not.toContain('<main className="mx-auto max-w-5xl');
-    expect(APPMAIN).toContain("calendarUsesFullWidth(usePathname())");
+    expect(APPMAIN).toContain("const pathname = usePathname()");
+    expect(APPMAIN).toContain("calendarUsesFullWidth(pathname)");
     expect(APPMAIN).toContain("APP_MAIN_FULL");
     expect(APPMAIN).toContain("APP_MAIN_NORMAL");
   });

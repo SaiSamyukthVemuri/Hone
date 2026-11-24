@@ -1,0 +1,9 @@
+---
+description: Default workflow for all Hone development
+alwaysApply: true
+---
+
+Read `docs/engineering/pstack.md` at task start. Load pstack's `poteto-mode`
+entry point and the relevant playbook, then apply Hone's adaptations from that
+document. The operator does not need to attach a slash command on every turn.
+Do not restart another agent's active task or change its release authority.

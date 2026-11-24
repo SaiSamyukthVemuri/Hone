@@ -1,6 +1,8 @@
 "use server";
 
 import { loadTreatmentTimeNameFields } from "@/lib/treatment-time/client-first-name";
+import { notificationClientName } from "@/lib/notifications/client-name";
+import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
 import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { loadPublicSlotsByDate } from "@/lib/booking/public-slot-range";
@@ -18,6 +20,7 @@ import {
 } from "@/lib/booking/slots";
 import { addDays, localTimeString12h, todayInTz } from "@/lib/booking/tz";
 import { recordPractitionerNotification } from "@/lib/notifications/practitioner-notifications";
+import { buildRescheduledText } from "@/lib/notifications/notification-text";
 // 0171: `isWithinPublicBookingHorizon` and `localDateString` are deliberately
 // NOT imported any more. The submit path used them to pre-check the horizon and
 // to build a date string for its own getAvailableSlots re-verification, both of
@@ -92,6 +95,16 @@ import {
   getTreatmentTimeContextForEmail,
 } from "@/lib/treatment-time/queries";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+
+// The client row this action reads (name fields included, so the notification needs no second lookup).
+type RescheduleClientRow = {
+  name: string;
+  preferred_name?: string | null;
+  email: string;
+  phone: string | null;
+  sms_consent_at: string | null;
+  sms_opted_out_at: string | null;
+};
 
 // Public reschedule collapse string. Returned for every user-facing
 // outcome that depends on the appointment's existence or state,
@@ -840,12 +853,16 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   //
   // Scoped by (id, studio_id): the client must belong to the SAME studio as the
   // appointment, so a cross-tenant id cannot satisfy the gate.
-  const { data: clientRow, error: clientErr } = await admin
-    .from("clients")
-    .select("name, email, phone, sms_consent_at, sms_opted_out_at")
-    .eq("id", asserted.original.client_id)
-    .eq("studio_id", asserted.original.studio_id)
-    .maybeSingle();
+  // The preferred name rides on this existing read (missing-column-safe), so the bell names the client without a second lookup.
+  const { data: clientRowRaw, error: clientErr } = await readWithPreferredName((includePreferred) =>
+    admin
+      .from("clients")
+      .select(`${preferredNameColumn(includePreferred)}name, email, phone, sms_consent_at, sms_opted_out_at`)
+      .eq("id", asserted.original.client_id)
+      .eq("studio_id", asserted.original.studio_id)
+      .maybeSingle(),
+  );
+  const clientRow = clientRowRaw as RescheduleClientRow | null;
   if (clientErr || !clientRow || !clientRow.email || clientRow.email.trim() === "") {
     // Safe operator signal only: no name, no email, no phone, no token, no raw
     // Postgres message (which can echo row values on a public surface).
@@ -1244,18 +1261,26 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
 
   // --- INDEPENDENT EFFECT C: the practitioner notification ----------------
   // Last, because it is the only effect the CLIENT never sees.
-  await attempt("public_reschedule_notification_failed", undefined, () =>
-    recordPractitionerNotification({
+  // The notification names the client by their DISPLAY name (the calendar's field: preferred where set), never the legal identity.
+  const notificationName = notificationClientName(clientRow);
+  await attempt("public_reschedule_notification_failed", undefined, () => {
+    // Built INSIDE the closure: a date or timezone formatting failure is contained here, after the reschedule committed, and loses only the notification.
+    const rescheduledText = buildRescheduledText({
+      clientName: notificationName,
+      fromLabel: formatDayTime(new Date(parsed.originalStartsAt), studioRow.timezone),
+      toLabel: formatDayTime(new Date(created.starts_at), studioRow.timezone),
+    });
+    return recordPractitionerNotification({
       studioId: asserted.original.studio_id,
       practitionerId: assignedPractitionerId,
       eventType: "appointment_rescheduled",
-      title: "Appointment rescheduled",
-      body: `${clientRow.name} rescheduled from ${formatDayTime(new Date(parsed.originalStartsAt), studioRow.timezone)} to ${formatDayTime(new Date(created.starts_at), studioRow.timezone)}.`,
+      title: rescheduledText.title,
+      body: rescheduledText.body,
       appointmentId: created.id,
       clientId: asserted.original.client_id,
       href: `/calendar/${created.id}`,
-    }),
-  );
+    });
+  });
 
   // THE RESCHEDULE SUCCEEDED, and the client leaves with a usable path to the
   // successor whatever the email did. `manageUrl` goes ONLY to this authorised

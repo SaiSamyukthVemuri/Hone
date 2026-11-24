@@ -11,7 +11,9 @@ import {
   type PractitionerActionItem,
 } from "@/lib/waitlist/b4-invitation-draft";
 import {
+  CANCEL_CAN_BE_RETURNED,
   RESEND_MINTS_A_NEW_LINK,
+  RETURN_TO_WAITLIST_NOTE,
   type AdapterCapabilities,
 } from "@/lib/waitlist/invite-to-book-contract";
 
@@ -257,7 +259,7 @@ function DestructiveDisclosure({
         // Copy promising they "keep their place" read as reassurance and would
         // leave a practitioner stopping one step early with the person silently
         // inactive.
-        `The booking link stops working straight away. ${entryName} will be set aside and will not be active on the waitlist until you return them to it.`
+        `The booking link stops working straight away. ${entryName} will be set aside and will not be active on the waitlist until you return them to it. ${CANCEL_CAN_BE_RETURNED}`
       : `${entryName} is taken off the waitlist and loses their place in the queue. This cannot be undone.`;
 
   return (
@@ -322,6 +324,7 @@ export function AdmissionActions({
           item={surface.primary}
           capabilities={capabilities}
           variant="primary"
+          note={surface.primary.action === "return_to_waitlist" ? RETURN_TO_WAITLIST_NOTE : undefined}
         />
       )}
       {surface.secondary.length > 0 && (
@@ -348,7 +351,9 @@ export function AdmissionActions({
                   // to break, and the warning would be noise.
                   item.action === "resend_invitation" && liveLinkExists
                     ? RESEND_MINTS_A_NEW_LINK
-                    : undefined
+                    : item.action === "return_to_waitlist"
+                      ? RETURN_TO_WAITLIST_NOTE
+                      : undefined
                 }
               />
             ),

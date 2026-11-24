@@ -73,7 +73,7 @@ export function AddToWaitlistPanel({
       <div className="flex flex-col gap-1">
         <h2 className="font-medium">Add someone to the waitlist</h2>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          For enquiries that arrived by phone, email or in person — and for people
+          For enquiries that arrived by phone, email or in person, and for people
           who were already waiting before you started using Hone.
         </p>
       </div>
@@ -184,6 +184,9 @@ export function AddToWaitlistPanel({
         </form>
       )}
 
+      {state?.ok && !(tab === "add" ? addPending : importPending) && (
+        <p role="status" className="text-sm font-medium">Added to the waitlist.</p>
+      )}
       {state && !state.ok && (
         <p className="text-sm text-red-600" role="alert" data-testid="add-error">
           {state.message}

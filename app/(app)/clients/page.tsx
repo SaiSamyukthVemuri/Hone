@@ -1,5 +1,6 @@
+import { directoryHref } from "@/lib/clients/directory-query";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { PendingLink } from "@/components/pending-link";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { createClient } from "@/lib/supabase/server";
@@ -63,6 +64,12 @@ export default async function ClientsPage({
   // Default deny: only an owner or a practitioner may use this directory.
   if (!isStaffRole(practitioner.role)) notFound();
 
+  // The custom groups feature was removed. An old link that still carries ?group= lands on the standard directory, keeping only
+  // the standard view, search, filters and sort (parseDirectoryParams already whitelists them); the group value is
+  // never echoed and no other parameter is passed through.
+  if (params.group !== undefined) {
+    redirect(directoryHref({ view, q: query.q, filters: query.filters, sort: query.sort, lastVisit: query.lastVisit }));
+  }
   const supabase = await createClient();
   const db = supabase as unknown as DirectorySupabase;
   const domain = startPerfSpan("clients.domain");
@@ -116,6 +123,8 @@ export default async function ClientsPage({
     data = queryDirectory(identityRows, aggregates, query, clock);
   }
 
+  data = { ...data, directoryEmpty: identityRows.length === 0 };
+
   // The overview's client comes from the same authorized set: an id that is not in
   // this view's set shows nothing and reveals nothing.
   const clientParam = Array.isArray(params.client) ? params.client[0] : params.client;
@@ -158,19 +167,19 @@ export default async function ClientsPage({
   ) : null;
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <div className="flex min-w-0 flex-col gap-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">Clients</h1>
-          <p className="mt-1 text-sm text-neutral-500">
-            {archived
-              ? "Archived clients are hidden from active lists and booking pickers. Historical records are preserved."
-              : "Find, review and open your clients."}
-          </p>
+          {archived && (
+            <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
+              Archived clients are hidden from active lists and booking pickers. Historical records are preserved.
+            </p>
+          )}
         </div>
         <Link
           href="/clients/new"
-          className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+          className="inline-flex min-h-11 items-center rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
         >
           + Add client
         </Link>
@@ -199,7 +208,7 @@ export default async function ClientsPage({
   );
 }
 
-// Two-link segmented control. Plain anchor links so the active state
+// Two standard directory views. Plain anchor links so the active state
 // survives a full page navigation; this control just toggles the ?view= param.
 function ViewTabs({ current }: { current: View }) {
   const tabs = CLIENT_LIST_VIEWS.map((v) => ({
@@ -209,7 +218,7 @@ function ViewTabs({ current }: { current: View }) {
   return (
     <nav
       aria-label="Client list view"
-      className="flex w-fit gap-1 rounded-lg border border-neutral-200 bg-neutral-50 p-1 text-sm dark:border-neutral-800 dark:bg-neutral-900"
+      className="flex gap-5 border-b border-neutral-200 text-sm dark:border-neutral-800"
     >
       {tabs.map((tab) => {
         const active = tab.value === current;
@@ -221,8 +230,8 @@ function ViewTabs({ current }: { current: View }) {
             aria-current={active ? "page" : undefined}
             className={
               active
-                ? "rounded-md bg-white px-3 py-1.5 font-medium text-neutral-900 shadow-sm dark:bg-neutral-950 dark:text-neutral-100"
-                : "rounded-md px-3 py-1.5 text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+                ? "inline-flex min-h-11 items-center border-b-2 border-current font-semibold text-neutral-900 dark:text-neutral-100"
+                : "inline-flex min-h-11 items-center border-b-2 border-transparent text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
             }
           >
             {tab.label}

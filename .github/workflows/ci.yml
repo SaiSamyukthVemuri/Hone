@@ -220,10 +220,10 @@ jobs:
               // This job is gated on `browser_run || full_matrix_required`, so
               // reaching it with NO groups can only mean the second: the whole
               // suite, unselected. That is extended coverage by definition, and
-              // it must be treated as such -- 4 shards and the 18 min ceiling.
+              // it must be treated as such -- 4 shards and the 35 min ceiling.
               // Before this line it fell through the targeted branch and ran the
               // entire suite split across the TARGETED shard count under the
-              // TARGETED 15 min cap, which is strictly less time and fewer
+              // TARGETED 19 min cap, which is strictly less time and fewer
               // runners than the same workload gets when it is named extended.
               const fullSuite = !specs || specs.length === 0;
               const extended = r.extended || fullSuite;
@@ -435,6 +435,16 @@ jobs:
         # Deterministic, Docker-free static scan; gen_random_uuid() built-in is
         # intentionally allowed. Regression fence for the 0025 fresh-apply defect.
         run: npm run check:migration-extensions
+
+      # HON-73 step 1: keep the per-test names and durations. Report only: it changes no test, shard or condition.
+      - name: Upload test timing report (JUnit)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: junit-vitest-unit
+          path: junit-results/
+          if-no-files-found: ignore
+          retention-days: 14
 
   # CI-COST-02. The record suites, first, so a PR that cannot merge does not
   # start the heavy lanes.
@@ -875,6 +885,16 @@ jobs:
         # Local stack only; same safety posture as the steps above.
         run: npm run check:db-types
 
+      # HON-73 step 1: keep the per-test names and durations. Report only: it changes no test, shard or condition.
+      - name: Upload test timing report (JUnit)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: junit-vitest-db
+          path: junit-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
   # PR #227. Browser E2E lane: ONE browser (Chromium), ONE core flow
   # (the treatment-memory loop: public booking -> intake ->
   # practitioner magic-link login via the local Mailpit-captured
@@ -944,7 +964,7 @@ jobs:
     # its own result instead of being cut mid-run and misread as a test failure.
     #
     #   targeted  : target <10 min per shard, hard timeout 19 min  (3 shards)
-    #   extended  : target <10 min per shard, hard timeout 25 min  (4 shards)
+    #   extended  : target <10 min per shard, hard timeout 35 min  (4 shards; they also run the native 3G proof, see AUGMENTED 35 below)
     #
     # NEITHER CEILING MOVED WHEN TARGETED WAS SPLIT. The targeted lane was the
     # one breaching its budget, and the repair was to give it the sharding
@@ -1235,7 +1255,7 @@ jobs:
           else
             SHARD_TOTAL="${{ needs.changes.outputs.browser_shard_total }}"
           fi
-          npx playwright test e2e/machine-create-mode-journey.spec.ts --project=chromium --grep='native 3G (durability|text durability|uncommitted recovery)' --fully-parallel --workers=1 --shard=${{ matrix.shard }}/${SHARD_TOTAL} --retries=0 --max-failures=1 --reporter=list,json --output=test-results/native-3g-shard-${{ matrix.shard }}
+          npx playwright test e2e/machine-create-mode-journey.spec.ts --project=chromium --grep='native 3G (durability|text durability|uncommitted recovery)' --fully-parallel --workers=1 --shard=${{ matrix.shard }}/${SHARD_TOTAL} --retries=0 --max-failures=1 --reporter=list,json,junit --output=test-results/native-3g-shard-${{ matrix.shard }}
           node --input-type=module <<'NODE'
           import { readFileSync } from 'node:fs';
           const report = JSON.parse(readFileSync(process.env.PLAYWRIGHT_JSON_OUTPUT_FILE, 'utf8'));
@@ -1257,6 +1277,8 @@ jobs:
           # flag is read at request time, so start that build, not a second one.
           HONE_E2E_REUSE_BUILD: "1"
           PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/native-3g-shard-${{ matrix.shard }}/results.json
+          # A CLI --reporter REPLACES the configured reporters, so this invocation names junit itself (HON-73 step 1) and writes it where the upload reads.
+          PLAYWRIGHT_JUNIT_OUTPUT_FILE: junit-results/playwright-native-3g-shard-${{ matrix.shard }}.xml
 
       - name: Upload Playwright traces on failure
         if: ${{ !cancelled() }}
@@ -1304,6 +1326,16 @@ jobs:
           if [ "$E2E_OUTCOME" = "cancelled" ]; then
             echo "NOTE: cancelled. Most likely the job exceeded its timeout budget."
           fi
+
+      # HON-73 step 1: keep the per-test names and durations. Report only: it changes no test, shard or condition.
+      - name: Upload test timing report (JUnit)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: junit-playwright-shard-${{ matrix.shard }}
+          path: junit-results/
+          if-no-files-found: ignore
+          retention-days: 14
 
   # Stable required check. Branch protection points HERE, never at a dynamic
   # shard name. It succeeds only when every required shard succeeded or was
@@ -1559,7 +1591,10 @@ jobs:
     permissions:
       contents: read
       packages: read
-    # TARGET ~10 min · HARD TIMEOUT 18 min. Separate numbers, deliberately.
+    # TARGET ~10 min · HARD TIMEOUT 23 min (was 18, raised 2026-11-23). Separate numbers, deliberately.
+    # 18 -> 23: nightly run 44565261584 took 15.8 min (10.1 min of setup before the first test, then 66 passed in 9.2 min, zero
+    # failures) and a cold local run measured 6.1 min of build plus 10.3 min of tests, so 18 left about 2 min. 15.8 + the 6 min
+    # install-step ceiling + 1 = 22.8. PR-CI runs of this lane took 9.3-9.4 min; the ceiling is for a slow runner, not a target.
     #
     # This lane sat at a single 10, which is a target being used as a ceiling —
     # the exact shape that produced runs 30767725631, 30814919019 and
@@ -1571,7 +1606,7 @@ jobs:
     # Playwright's webServer have been measured ~4 minutes apart across runners
     # before the first test executes. 18 clears a slow-runner setup plus the
     # full suite; ~10 is the number to watch for real slowdown.
-    timeout-minutes: 18
+    timeout-minutes: 23
 
     steps:
       - name: Checkout repository
@@ -1805,6 +1840,16 @@ jobs:
           name: payment-playwright-traces
           path: test-results/
           retention-days: 7
+
+      # HON-73 step 1: keep the per-test names and durations. Report only: it changes no test, shard or condition.
+      - name: Upload test timing report (JUnit)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: junit-playwright-payment
+          path: junit-results/
+          if-no-files-found: ignore
+          retention-days: 14
 
   # Mobile-completion E2E (Chloe workflow fix). Runs the mobile-completion
   # journey (in-DOM ConfirmDialog that replaced native window.confirm, optional
@@ -2065,6 +2110,16 @@ jobs:
           name: mobile-completion-playwright-traces
           path: test-results/
           retention-days: 7
+
+      # HON-73 step 1: keep the per-test names and durations. Report only: it changes no test, shard or condition.
+      - name: Upload test timing report (JUnit)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: junit-playwright-mobile
+          path: junit-results/
+          if-no-files-found: ignore
+          retention-days: 14
 
   # Synthetic Google: sets the two server-only markers (HONE_E2E_FAKE_GOOGLE=1 +
   # a per-job HONE_E2E_RUN_ID) plus a FAKE Google OAuth client, so the fake-Google
@@ -2329,6 +2384,16 @@ jobs:
           path: test-results/
           retention-days: 7
 
+      # HON-73 step 1: keep the per-test names and durations. Report only: it changes no test, shard or condition.
+      - name: Upload test timing report (JUnit)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: junit-playwright-google
+          path: junit-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
   # Photo checks that need REAL storage (E-GAPS CLN-005 + ENG-002). Every other
   # Supabase-starting job excludes storage-api, so the photo specs self-skip
   # there (an upload 503s at Kong) and the signed-URL DB cases are skipped by
@@ -2580,6 +2645,16 @@ jobs:
           path: test-results/
           retention-days: 7
 
+      # HON-73 step 1: keep the per-test names and durations. Report only: it changes no test, shard or condition.
+      - name: Upload test timing report (JUnit)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: junit-playwright-storage-photos
+          path: junit-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
   # HON-62 and CLN-006: the weekly-hours editor's native <input type="time"> and
   # the mounted-keyboard/focus cases for the three modal dialogs (photo preview,
   # DoneCharting warning, quick checkout) in WebKit, the engine behind iPad
@@ -2817,3 +2892,13 @@ jobs:
             test-results/
             test-results-payment/
           retention-days: 7
+
+      # HON-73 step 1: keep the per-test names and durations. Report only: it changes no test, shard or condition.
+      - name: Upload test timing report (JUnit)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: junit-playwright-webkit
+          path: junit-results/
+          if-no-files-found: ignore
+          retention-days: 14

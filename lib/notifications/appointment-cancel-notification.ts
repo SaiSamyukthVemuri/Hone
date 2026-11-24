@@ -27,7 +27,10 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { recordPractitionerNotificationAndWait } from "@/lib/notifications/practitioner-notifications";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { readClientNameFields } from "@/lib/notifications/client-name";
+import { clientDisplayName } from "@/lib/clients/identity";
 import { localTimeString12h } from "@/lib/booking/tz";
+import { buildCancelledText } from "@/lib/notifications/notification-text";
 
 import { CANCEL_RECIPIENT_KEY_PREFIX } from "@/lib/notifications/owner-only-events";
 
@@ -103,35 +106,40 @@ export async function recordAppointmentCancelNotifications(
     const clientId = str(appt?.client_id);
     const serviceId = str(appt?.service_id);
     const [client, service, studio, actor, owners] = await Promise.all([
-      clientId ? readOne(admin, "clients", "name", clientId) : null,
+      clientId ? readClientNameFields(admin, studioId, clientId).then((r) => r.fields).catch(() => null) : null,
       serviceId ? readOne(admin, "services", "name", serviceId) : null,
       readOne(admin, "studios", "timezone", studioId),
       input.actorPractitionerId ? readOne(admin, "practitioners", "display_name", input.actorPractitionerId) : null,
       readOwners(admin, studioId),
     ]);
-    const clientName = str(client?.name);
+    // DISPLAY name (the calendar's field: preferred where set, else stored), from the one client read above. Empty (no name, or the read failed) keeps the generic wording.
+    const clientName = client ? clientDisplayName(client) || null : null;
     const what = str(service?.name) ?? "an appointment";
     const tz = str(studio?.timezone);
     const startsAt = str(appt?.starts_at) ? new Date(str(appt?.starts_at) as string) : null;
-    let when = "";
+    let when: { dayLabel: string; timeLabel: string } | null = null;
     if (tz && startsAt && !Number.isNaN(startsAt.getTime())) {
       try {
-        when = ` on ${dayLabel(startsAt, tz)} at ${localTimeString12h(startsAt, tz)}`;
+        when = { dayLabel: dayLabel(startsAt, tz), timeLabel: localTimeString12h(startsAt, tz) };
       } catch {
-        when = "";
+        when = null;
       }
     }
     const occurrence = occurrenceOf(appt?.cancelled_at);
-    const reason = input.reasonLabel ? ` Reason: ${input.reasonLabel}.` : "";
-    // A staff cancel names the staff member, the client and the service. A client's own cancel names the client.
-    const body = input.actorPractitionerId
-      ? `${str(actor?.display_name) ?? "A team member"} cancelled ${clientName ? `${clientName}'s ` : "a client's "}${what}${when}.${reason}`
-      : `${clientName ?? "A client"} cancelled ${what}${when}.${reason}`;
+    // A staff cancel names the staff member, the client and the service. A client's own cancel names the client. The wording lives in one pure builder.
+    const { title, body } = buildCancelledText({
+      byStaff: Boolean(input.actorPractitionerId),
+      staffName: str(actor?.display_name),
+      clientName,
+      serviceName: what,
+      when,
+      reasonLabel: input.reasonLabel,
+    });
 
     const base = {
       studioId,
       eventType: "appointment_cancelled" as const,
-      title: "Appointment cancelled",
+      title,
       body,
       appointmentId: input.appointmentId,
       clientId,

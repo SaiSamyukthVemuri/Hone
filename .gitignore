@@ -27,12 +27,14 @@ coverage
 
 # Local harness state (not relevant to repo)
 .claude/scheduled_tasks.lock
+.claude/settings.local.json
 # Per PR #160 closure: pilot tracker lives outside the repo
 Hone_Pilot_Control_Sheet.xlsx
 
 # Playwright (PR #227)
 /test-results/
 /playwright-report/
+/junit-results/
 .env.local
 
 # Sentry Config File

@@ -45,9 +45,8 @@ export default async function CancelAppointmentPage({
             // summary card + reassuring copy + the cancel form.
             <>
               <div>
-                <EyebrowCaption>Cancel appointment</EyebrowCaption>
                 <h1
-                  className="font-[var(--font-fraunces)] mt-8 text-[36px] font-bold leading-tight md:text-[48px]"
+                  className="font-[var(--font-fraunces)] text-[36px] font-bold leading-tight md:text-[48px]"
                   style={{ letterSpacing: "-0.025em" }}
                 >
                   Cancel appointment

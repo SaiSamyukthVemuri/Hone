@@ -31,11 +31,11 @@ export function RowSafetyLines({
            is its own row and wraps rather than truncating: a pinned note is something the practitioner
            chose to keep in front of themselves, so hiding its second half defeats the point. `break-words`
            + `min-w-0` keep long notes from forcing the roster to scroll sideways on a phone. */
-        <div className="mt-1 flex min-w-0 flex-col gap-0.5">
+        <div className="mt-2 flex min-w-0 flex-wrap items-baseline gap-x-2 rounded-md border-l-2 border-amber-300 bg-amber-50 px-2.5 py-1.5 dark:border-amber-700 dark:bg-amber-950/30">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400">
             Pinned
           </span>
-          <ul className="flex min-w-0 flex-col gap-0.5">
+          <ul className="flex min-w-0 flex-1 flex-col gap-1">
             {pinnedNotes.map((note) => (
               <li
                 key={note.id}
@@ -60,7 +60,7 @@ export function RowSafetyLines({
       {lastTreatment && (
         <span
           data-testid="dashboard-memory-compact"
-          className="mt-1 block whitespace-pre-wrap break-words text-xs text-neutral-600 dark:text-neutral-400"
+          className="mt-2 block whitespace-pre-wrap break-words text-sm text-neutral-600 dark:text-neutral-400"
         >
           <span className="font-medium text-neutral-500">Last treatment: </span>
           {lastTreatment}

@@ -115,6 +115,11 @@ describe("practitioner send link (issuePortalMagicLink)", () => {
     expect(state.inserts).toHaveLength(1);
     expect(sent).toHaveLength(1);
   });
+  it("studio-managed appointments refuses a portal link without insert or delivery", async () => {
+    state.studio={id:"s1",name:"Synthetic Studio",studio_managed_appointments:true};
+    expect((await issuePortalMagicLink(admin() as never,INPUT)).ok).toBe(false);
+    expect(state.inserts).toEqual([]); expect(sent).toEqual([]);
+  });
   it("client_portal_enabled = true sends the link", async () => {
     state.studio = { id: "s1", name: "Synthetic Studio", client_portal_enabled: true };
     expect((await issuePortalMagicLink(admin() as never, INPUT)).ok).toBe(true);
@@ -153,6 +158,11 @@ describe("verify action", () => {
     expect(await run()).toBe("REDIRECT:/portal");
     expect(state.consumed).toBe(1);
     expect(createSession).toHaveBeenCalledTimes(1);
+  });
+  it("studio-managed appointments does not consume an old magic link or create a session",async()=>{
+    state.studio={id:"s1",name:"Synthetic Studio",studio_managed_appointments:true};
+    expect(await run()).toBe("REDIRECT:/portal/verify/tok-synthetic");
+    expect(state.consumed).toBe(0); expect(createSession).not.toHaveBeenCalled();
   });
   it("portal off: the single-use link is NOT consumed, no session, back to the explanation page", async () => {
     state.studio = { id: "s1", name: "Synthetic Studio", client_portal_enabled: false };

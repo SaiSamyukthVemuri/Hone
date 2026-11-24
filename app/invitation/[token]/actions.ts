@@ -21,6 +21,7 @@ import { cookies, headers } from "next/headers";
 import { after } from "next/server";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
+import { studioManagesAppointments } from "@/lib/booking/client-self-service-policy";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { TIMES_FEEDBACK_NOTE_MAX, waitlistTimesFeedbackEnabled } from "@/lib/waitlist/times-feedback";
 import { waitlistDeclineAnswersEnabled } from "@/lib/waitlist/decline-answers-gate";
@@ -258,6 +259,7 @@ async function clearCapability(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 type StudioContext = {
+  managedAppointments: boolean;
   slug: string;
   /** The studio's configured public booking horizon, or null for the default.
    *  Carried because the offered-day scan is bounded by it. */
@@ -438,9 +440,7 @@ async function loadStudioContext(
       // would not fail — `studioEmailIdentity` tolerates nulls — it would
       // silently send a client-facing email with no studio reply path, which is
       // the exact defect the COMMS-01A family guard exists to prevent.
-      .select(
-        "slug, name, timezone, public_booking_horizon_months, postcare_contact_email, owner_email",
-      )
+      .select("*")
       .eq("id", studioId)
       .maybeSingle(),
     admin
@@ -463,6 +463,7 @@ async function loadStudioContext(
   if (!studio?.slug || !studio?.name || !studio?.timezone) return null;
   if (!service?.name) return null;
   return {
+    managedAppointments: studioManagesAppointments(studio),
     slug: studio.slug as string,
     horizonMonths: (studio.public_booking_horizon_months as number | null) ?? null,
     delivery: {
@@ -605,6 +606,10 @@ async function loadContext(
   if (!studio) {
     return { ok: false, state: { kind: "error", retryable: true } };
   }
+  if (studio.managedAppointments) {
+    return { ok: false, state: { kind: "closed", reason: "studio_managed", presentation: studio.presentation } };
+  }
+
   // =====================================================================
   // P2-A — AN OFFER THE BOOKING PATH CANNOT ACCEPT IS CLOSED HERE
   // =====================================================================

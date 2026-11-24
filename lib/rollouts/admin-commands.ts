@@ -11,16 +11,32 @@ export const ALL_CONFIRM_PHRASE = "ALL STUDIOS";
 export const ROLLOUT_MODES = ["off", "pilot", "all"] as const;
 export type RolloutMode = (typeof ROLLOUT_MODES)[number];
 export type Actor = { userId: string; email: string };
-export type RolloutRpc = (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message?: string } | null }>;
+export type RolloutRpc = (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message?: string; code?: string } | null }>;
+
+/**
+ * WHAT HAPPENED TO A COMMAND, in three kinds, because "it failed" is not one thing:
+ *   ok       the database ran the command and answered with its result string.
+ *   refused  the database ran the command and REFUSED it with an error it raises itself, so the statement rolled back: nothing changed.
+ *   unknown  anything else: a thrown call, a timeout, a gateway or connection error, or an answer that is not the expected string. The command may
+ *            have COMMITTED with its answer lost on the way back, so the rollout may now be in the new state. Callers must never say "nothing
+ *            changed" for this kind.
+ */
+export type RolloutOutcome = { kind: "ok"; value: string } | { kind: "refused" } | { kind: "unknown" };
+
+// SQLSTATE classes the commands themselves can raise before changing anything (22 data, 23 integrity/check, 42 privilege or syntax, P0 raised in PL/pgSQL).
+// A code from any other class (08 connection, 53 resources, 57 operator, 58 system, XX internal) or no code at all says nothing about whether the
+// statement committed, so it is UNKNOWN.
+const REFUSAL_CLASSES = /^(22|23|42|P0)[0-9A-Z]{3}$/;
 
 const defaultRpc: RolloutRpc = (fn, args) => createAdminClient().rpc(fn, args) as unknown as ReturnType<RolloutRpc>;
 
-async function call(rpc: RolloutRpc, fn: string, args: Record<string, unknown>): Promise<string | null> {
+async function call(rpc: RolloutRpc, fn: string, args: Record<string, unknown>): Promise<RolloutOutcome> {
   try {
     const { data, error } = await rpc(fn, args);
-    return !error && typeof data === "string" ? data : null;
+    if (error) return typeof error.code === "string" && REFUSAL_CLASSES.test(error.code) ? { kind: "refused" } : { kind: "unknown" };
+    return typeof data === "string" ? { kind: "ok", value: data } : { kind: "unknown" };
   } catch {
-    return null;
+    return { kind: "unknown" };
   }
 }
 

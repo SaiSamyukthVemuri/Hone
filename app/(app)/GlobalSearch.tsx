@@ -32,6 +32,7 @@ export function GlobalSearch({ variant }: { variant: "desktop" | "mobile" }) {
   // True when the client scan stopped at its bound: the client results are the
   // first matches, so the panel says so instead of presenting them as all.
   const [clientsTruncated, setClientsTruncated] = useState(false);
+  const [referenceTruncated, setReferenceTruncated] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -67,6 +68,7 @@ export function GlobalSearch({ variant }: { variant: "desktop" | "mobile" }) {
       setLoading(false);
       setFailed(!response?.ok);
       setClientsTruncated(response?.ok === true && response.clientsTruncated === true);
+      setReferenceTruncated(response?.ok === true && response.referenceTruncated === true);
       setResults(response?.ok ? response.results : []);
     }, 250);
     return () => {
@@ -243,16 +245,21 @@ export function GlobalSearch({ variant }: { variant: "desktop" | "mobile" }) {
           <p>Search could not be loaded.</p>
           <p className="mt-1 text-xs">Try again in a moment.</p>
         </div>
-      ) : groups.length === 0 && !clientsTruncated ? (
+      ) : groups.length === 0 && !clientsTruncated && !referenceTruncated ? (
         <div className="px-3 py-3 text-neutral-500">
           <p>No results found.</p>
           <p className="mt-1 text-xs">
-            Try a client name, phone, appointment, treatment area, lot number,
+            Try a client name, phone, appointment, an emailed appointment reference, treatment area, lot number,
             or a setting like &ldquo;reminders&rdquo; or &ldquo;hours&rdquo;.
           </p>
         </div>
       ) : (
         <>
+          {referenceTruncated && (
+            <p role="status" className="px-3 py-1.5 text-xs text-neutral-500">
+              This appointment reference was not searched in full. Try the client&apos;s name.
+            </p>
+          )}
           {clientsTruncated && (
             <p role="status" className="px-3 py-1.5 text-xs text-neutral-500">
               Showing the first client matches. Refine your search to find more.
@@ -301,8 +308,14 @@ export function GlobalSearch({ variant }: { variant: "desktop" | "mobile" }) {
   );
 
   if (variant === "desktop") {
+    // The search yields width before anything else in the header cluster does. Three parts make that so:
+    // `min-w-[7rem]` here (a floor, so the flex item may shrink at all), `min-w-0` on the cluster in
+    // layout.tsx (a flex container's automatic minimum is the sum of its items' content, so without it the
+    // cluster itself never shrinks), and `shrink-0` on the account menu (so the name is never what gives).
+    // An owner with the Waitlist link and a long first name had the account button 30 px off-screen at
+    // 1024 and the page scrolled sideways. 192 px stays the ceiling.
     return (
-      <div ref={rootRef} className="relative w-36 lg:w-48">
+      <div ref={rootRef} className="relative w-36 min-w-[7rem] lg:w-48">
         <input
           type="search"
           value={query}

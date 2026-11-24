@@ -1,6 +1,8 @@
 "use client";
 
 import { createContext, useActionState, useContext } from "react";
+import { InvitePendingContext } from "./invite-pending-context";
+export { useInviteOutcomePending } from "./invite-pending-context";
 import { cx } from "@/components/ui/control-base";
 import { COMPOSER_FIELD_NAMES } from "@/lib/waitlist/b4-invitation-draft";
 import {
@@ -64,16 +66,6 @@ export const OUTCOME_ENTRY_FIELD = COMPOSER_FIELD_NAMES.entryId;
 
 type InviteOutcomeBinding = {
   action: (formData: FormData) => void;
-  /**
-   * A submission is in flight.
-   *
-   * THIS IS THE ONLY OBSERVER OF THE RESULT. Nothing is persisted — no store, no
-   * cookie, no URL payload — so a full navigation during the round trip destroys
-   * the answer before anyone reads it, and the invitation may already have
-   * committed and consumed the round's allowance. Queue navigation is therefore
-   * withheld until the action settles, and returns immediately afterwards.
-   */
-  pending: boolean;
   /** The most recent answer, or null before any submission. Read by the composer that was pressed, so a refusal appears beside its Send button. */
   submitted: SubmittedInvitation | null;
 };
@@ -88,16 +80,6 @@ const InviteOutcomeContext = createContext<InviteOutcomeBinding | null>(null);
  */
 export function useInviteOutcomeAction(): ((formData: FormData) => void) | null {
   return useContext(InviteOutcomeContext)?.action ?? null;
-}
-
-/**
- * Is a submission in flight?
- *
- * `false` when no boundary is present, so a surface without one navigates
- * exactly as it always did.
- */
-export function useInviteOutcomePending(): boolean {
-  return useContext(InviteOutcomeContext)?.pending ?? false;
 }
 
 /**
@@ -129,6 +111,8 @@ export function InvitationOutcomeNotice({
 }) {
   if (!submitted) return null;
   const { notice, entryName, entryId } = submitted;
+  // "Needs confirmation" is a question for the owner, asked beside Send by the composer. It is not an outcome, so it is not announced here as one.
+  if (notice.needsConfirmation === true) return null;
   const tone =
     notice.tone === "success"
       ? "border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200"
@@ -191,11 +175,13 @@ export function InviteOutcomeBoundary({
   );
 
   return (
-    <InviteOutcomeContext.Provider value={{ action: boundAction, pending, submitted }}>
-      <div className="flex flex-col gap-3">
-        <InvitationOutcomeNotice submitted={submitted} />
-        {children}
-      </div>
+    <InviteOutcomeContext.Provider value={{ action: boundAction, submitted }}>
+      <InvitePendingContext.Provider value={pending}>
+        <div className="flex flex-col gap-3">
+          <InvitationOutcomeNotice submitted={submitted} />
+          {children}
+        </div>
+      </InvitePendingContext.Provider>
     </InviteOutcomeContext.Provider>
   );
 }

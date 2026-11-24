@@ -1527,7 +1527,7 @@ function TreatmentPlanCard({
               href={`/clients/${clientId}?tab=treatment`}
               className="text-neutral-700 hover:underline dark:text-neutral-300"
             >
-              Open Treatment Plans →
+              Open treatment plans
             </Link>
           </p>
         )}

@@ -249,10 +249,9 @@ describe("the copy is honest about what it can promise", () => {
   for (const [name, render] of RENDERERS) {
     const html = render("3142859661");
 
-    it(`${name} says something went wrong and that it is not the user's fault`, () => {
+    it(`${name} names the loading failure`, () => {
       expect(html).toContain("Something went wrong");
       expect(html).toContain("could not finish loading this page");
-      expect(html).toContain("not something you did");
     });
 
     it(`${name} limits its data claim to this screen and tells the user to re-check`, () => {

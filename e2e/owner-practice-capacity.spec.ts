@@ -284,7 +284,7 @@ async function assertShellAt(
   await expect(sheet, `${at}: the Menu opens`).toBeVisible();
   await expect(mobileWorkingSurfaces(page), `${at}: working surfaces`).toHaveText(
     opts.owner
-      ? ["Dashboard", "Clients", "Calendar", "Records", "Capacity", "Statements"]
+      ? ["Dashboard", "Clients", "Calendar", "Records", "Capacity", "Statements", "Analytics"]
       : ["Dashboard", "Clients", "Calendar", "Records"],
   );
   await expect(
@@ -295,6 +295,9 @@ async function assertShellAt(
     opts.owner ? 1 : 0,
   );
   await expect(sheet.locator('a[href="/financials/statement"]')).toHaveCount(
+    opts.owner ? 1 : 0,
+  );
+  await expect(sheet.locator('a[href="/financials/analytics"]'), `${at}: Analytics is owner-only`).toHaveCount(
     opts.owner ? 1 : 0,
   );
   // The account actions the desktop button would have offered.
@@ -453,7 +456,7 @@ test("an owner reaches the capacity briefing", async ({ page }) => {
     page.getByRole("heading", { name: "Future treatment booking depth" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Future treatment time for current clients" }),
+    page.getByRole("heading", { name: "Current clients’ upcoming treatment time" }),
   ).toBeVisible();
 });
 
@@ -478,7 +481,7 @@ test("an ordinary practitioner is refused the owner aggregate", async ({ page })
   for (const section of [
     "Clients",
     "Future treatment booking depth",
-    "Future treatment time for current clients",
+    "Current clients’ upcoming treatment time",
   ]) {
     await expect(
       page.getByRole("heading", { name: section, exact: true }),
@@ -813,17 +816,20 @@ test("an owner's desktop navigation carries the Business menu, once, and it reac
   // CLOSED, the menu offers no link to either owner surface: nothing is hidden-but-present.
   await expect(nav.locator('a[href="/dashboard/capacity"]')).toHaveCount(0);
   await expect(nav.locator('a[href="/financials/statement"]')).toHaveCount(0);
+  await expect(nav.locator('a[href="/financials/analytics"]')).toHaveCount(0);
 
   // THE WHOLE ROW, IN ORDER: the four working-surface links untouched, then the Business button.
   await expect(nav.getByRole("link")).toHaveText(["Dashboard", "Clients", "Calendar", "Records"]);
 
-  // Open it: exactly two items, once each BY DESTINATION as well.
+  // Open it: exactly three items, once each BY DESTINATION as well.
   await business.click();
   await expect(business).toHaveAttribute("aria-expanded", "true");
   const panel = nav.getByRole("group", { name: "Business" });
-  await expect(panel.getByRole("link")).toHaveText(["Capacity", "Statements"]);
+  await expect(panel.getByRole("link")).toHaveText(["Capacity", "Statements", "Analytics"]);
   await expect(nav.locator('a[href="/dashboard/capacity"]')).toHaveCount(1);
   await expect(nav.locator('a[href="/financials/statement"]')).toHaveCount(1);
+  await expect(nav.locator('a[href="/financials/analytics"]')).toHaveCount(1);
+  await expect(panel.getByRole("link", { name: "Analytics", exact: true })).toHaveAttribute("href", "/financials/analytics");
 
   // Escape closes it and puts focus back on the button.
   await page.keyboard.press("Escape");
@@ -1037,6 +1043,10 @@ test("an owner's mobile menu carries the Business group, and tapping an item clo
   await expect(statement).toHaveCount(1);
   await expect(statement).toHaveAttribute("href", "/financials/statement");
   expect((await statement.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  const analytics = nav.getByRole("link", { name: "Analytics", exact: true });
+  await expect(analytics).toHaveCount(1);
+  await expect(analytics).toHaveAttribute("href", "/financials/analytics");
+  expect((await analytics.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   // Bound to the SHEET'S OWN SUBTREE, so the hidden desktop link is not merely
   // out of the a11y tree — it is out of the search scope entirely.
   await expect(nav.locator('a[href="/dashboard/capacity"]')).toHaveCount(1);
@@ -1052,6 +1062,7 @@ test("an owner's mobile menu carries the Business group, and tapping an item clo
     "Records",
     "Capacity",
     "Statements",
+    "Analytics",
   ]);
   await expect(nav.getByRole("link", { name: "Settings" })).toBeVisible();
 
@@ -1146,4 +1157,44 @@ test("a practitioner gets no Business at any width, in either shell mode", async
     ).toHaveCount(0);
     await expect(page.locator('a[href="/dashboard/capacity"]')).toHaveCount(0);
   }
+});
+
+for (const viewport of [{ width: 1440, height: 900 }, PHONE]) {
+  test(`an owner reaches Waitlist analytics and changes capacity at ${viewport.width}px`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await loginAsOwner(page, seed);
+    await page.goto("/financials/analytics");
+    const tabs = page.getByRole("list", { name: "Analytics sections" });
+    const waitlist = tabs.getByRole("link", { name: "Waitlist", exact: true });
+    await expect(waitlist).toBeVisible();
+    expect((await waitlist.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await waitlist.click();
+    await page.waitForURL("**/financials/analytics/waitlist");
+    await expect(page.getByRole("heading", { name: "Waitlist", exact: true })).toBeVisible();
+    await expect(tabs.locator('[aria-current="page"]')).toHaveText("Waitlist");
+    await expect(page.getByRole("heading", { name: "From invitation to booking" })).toBeVisible();
+    const engagement = page.getByRole("heading", { name: "Delivery and engagement" }).locator("..");
+    await expect(engagement.getByText("Invitation-page views", { exact: true }).locator("..").getByText("Not tracked", { exact: true })).toBeVisible();
+    await expect(engagement.getByText("Email opens", { exact: true }).locator("..").getByText("Not tracked", { exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Review waitlist", exact: true })).toHaveAttribute("href", "/waitlist");
+    const planner = page.getByRole("form", { name: "Consultation capacity" });
+    await planner.getByLabel("Look ahead").selectOption("14");
+    await planner.getByRole("button", { name: "Show capacity", exact: true }).click();
+    await expect(page).toHaveURL(/\/financials\/analytics\/waitlist\?.*days=14/);
+    await expect(planner.getByLabel("Look ahead")).toHaveValue("14");
+    await expect(page.getByText("Invitations issued in the last 30 days", { exact: false })).toBeVisible();
+    const geometry = await page.locator("main").evaluate((main) => ({ width: main.clientWidth, scrollWidth: main.scrollWidth }));
+    expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.width + 1);
+    await tabs.getByRole("link", { name: "Clients", exact: true }).click();
+    await page.waitForURL("**/financials/analytics/clients");
+    await expect(tabs.locator('[aria-current="page"]')).toHaveText("Clients");
+  });
+}
+
+test("a practitioner cannot read Waitlist analytics by navigating directly", async ({ page }) => {
+  await loginByMagicLink(page, member.email);
+  await page.goto("/financials/analytics/waitlist");
+  await expect(page.getByText(/Only the studio owner can (see|open) [Aa]nalytics\./)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "From invitation to booking" })).toHaveCount(0);
+  await expect(page.getByRole("form", { name: "Consultation capacity" })).toHaveCount(0);
 });
