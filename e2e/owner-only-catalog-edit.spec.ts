@@ -29,7 +29,7 @@ test("the owner edits a service and consent wording, and both are stored", async
   await test.step("service", async () => {
     await page.goto("/settings/services");
     await expect(page.getByRole("heading", { name: "Services", exact: true })).toBeVisible({ timeout: T });
-    await page.getByTestId(`service-row-${serviceId}`).locator("button[aria-expanded]").first().click();
+    await page.getByTestId(`service-row-${serviceId}`).getByRole("button", { name: `Edit ${seed.serviceName}`, exact: true }).click();
     const form = page.getByRole("form", { name: `Edit ${seed.serviceName}` });
     await form.locator('input[name="name"]').fill("Owner Renamed Service");
     await form.getByRole("button", { name: "Save changes" }).click();
