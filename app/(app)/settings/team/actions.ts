@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
-import type { PractitionerRole } from "@/lib/types/database";
+import type { InvitationRole } from "@/lib/types/database";
 import { getResendTransport, FROM_ADDRESS } from "@/lib/email/client";
 import { buildInvitationEmail } from "@/lib/email/templates/invitation";
 import { safeLog } from "@/lib/logging/safe-log";
@@ -12,7 +12,7 @@ import { dbErrorCode, failureCode } from "@/lib/logging/error-class";
 import { userFacingDbFailure } from "@/lib/logging/user-facing-db-failure";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const VALID_ROLES: ReadonlyArray<PractitionerRole> = ["owner", "practitioner"];
+const VALID_ROLES: ReadonlyArray<InvitationRole> = ["owner", "practitioner", "receptionist"];
 const PG_UNIQUE_VIOLATION = "23505";
 
 export type InviteResult =
@@ -123,8 +123,8 @@ export async function invitePractitionerAction(
 
   const roleRaw = formData.get("role");
   const role =
-    typeof roleRaw === "string" && VALID_ROLES.includes(roleRaw as PractitionerRole)
-      ? (roleRaw as PractitionerRole)
+    typeof roleRaw === "string" && VALID_ROLES.includes(roleRaw as InvitationRole)
+      ? (roleRaw as InvitationRole)
       : "practitioner";
   const displayName = nullableString(formData.get("display_name"));
 
@@ -157,6 +157,25 @@ export async function invitePractitionerAction(
       ok: false,
       error: `${email} is already a practitioner at this studio.`,
     };
+  }
+
+  // Already on this studio's front desk? The owner reads the studio's receptionist rows under RLS (0216). Accepting a second receptionist invitation
+  // would reactivate in place, harmlessly, but it is a confusing no-op, so refuse it the way a duplicate practitioner is refused.
+  if (role === "receptionist") {
+    const { data: existingDesk, error: deskErr } = await supabase
+      .from("studio_receptionists")
+      .select("id")
+      .eq("studio_id", studioId)
+      // The address is lowercased above, and a front-desk row stores the lowercased invited address, so an exact compare is enough here.
+      .eq("email", email)
+      .eq("active", true)
+      .maybeSingle();
+    if (deskErr) {
+      return { ok: false, error: "Could not check the front desk team." };
+    }
+    if (existingDesk) {
+      return { ok: false, error: `${email} is already on this studio's front desk.` };
+    }
   }
 
   // Already invited at this studio (still pending)?

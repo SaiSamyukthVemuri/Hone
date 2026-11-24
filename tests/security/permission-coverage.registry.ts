@@ -331,6 +331,11 @@ export const PATH_DECISIONS: Readonly<Record<string, Readonly<Record<string, str
     revokeInvitationAction: "owner(assertOwner)",
     removePractitionerAction: "owner(assertOwner)+admin",
   },
+  // Deactivate or reactivate a front-desk receptionist. The inline owner check runs before any database call, then the service-role command is
+  // scoped to the server-derived studio and owner (see the allowlist entry).
+  "app/(app)/settings/team/receptionist-actions.ts": {
+    setReceptionistActiveAction: "owner(self)+admin",
+  },
   "app/(app)/settings/tracking/actions.ts": {
     saveTrackingProviderConfigAction: "owner?(requireOwner)+admin",
     clearTrackingTokenAction: "owner?(requireOwner)+admin",
@@ -707,6 +712,7 @@ export const RPC_NAMES: readonly string[] = [
   "set_session_price",
   "set_session_treatment_plan",
   "set_studio_managed_appointments",
+  "set_studio_receptionist_active",
   "set_treatment_image_note",
   "set_waitlist_entry_availability",
   "settle_postcare_send",
@@ -905,6 +911,7 @@ export const RPC_PRIVILEGES: Readonly<Record<string, string>> = {
   set_session_price: "-u-D",
   set_session_treatment_plan: "-u-D",
   set_studio_managed_appointments: "ABSENT",
+  set_studio_receptionist_active: "--sD",
   set_treatment_image_note: "-u-D",
   set_waitlist_entry_availability: "--sD",
   settle_postcare_send: "--sD",

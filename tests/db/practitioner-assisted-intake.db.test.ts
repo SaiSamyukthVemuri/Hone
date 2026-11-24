@@ -91,11 +91,14 @@ afterAll(async () => {
 
 // ---------------------------------------------------------------------------
 // The desk directory's source hash, read from the migration file that defines its CURRENT body (frozen once applied), so
-// the reviewed-delegate pin follows the reviewed text. 0374 replaced the body 0274 created (it changed only the display,
-// search and order expressions: the intake-status and consent facts are byte for byte the same, which
-// tests/migrations/receptionist-name-rule-0374.test.ts pins). Absent file = no second delegate is allowed.
+// the reviewed-delegate pin follows the reviewed text. 0374 replaced the body 0274 created, and 0380 replaced 0374's, each
+// changing only the display, search and order expressions: the intake-status and consent facts are byte for byte the same,
+// which tests/migrations/receptionist-name-rule-0374.test.ts and receptionist-name-rule-0380.test.ts pin. The CURRENT
+// body is 0380's, and its hash is also written out below, so a further edit to the body fails here until it is reviewed.
+// Absent file = no second delegate is allowed.
 function deskDirectorySha(): string | null {
   const candidates: Array<[string, string]> = [
+    ["supabase/migrations/0380_receptionist_name_rule.sql", "create or replace function public.receptionist_client_directory("],
     ["supabase/migrations/0374_receptionist_name_rule.sql", "create or replace function public.receptionist_client_directory("],
     ["supabase/migrations/0274_receptionist_desk_projection.sql", "create function public.receptionist_client_directory("],
   ];
@@ -112,6 +115,8 @@ function deskDirectorySha(): string | null {
 }
 const DESK_DIRECTORY_SHA_VALUE = deskDirectorySha() ?? "absent";
 const DESK_DIRECTORY_SHA = `'${DESK_DIRECTORY_SHA_VALUE}'`;
+// The reviewed hashes of the directory body, by the migration that installed it. 0374's was 21d94010...; 0380's replaces it.
+const DIRECTORY_BODY_SHA_0380 = "d1258e9d819de7c9152bd339b9f7ce808e1ff0ea2cbac2f1664291c7a083e42b";
 const DESK_DIRECTORY_SIGNATURE =
   "'public.receptionist_client_directory(pg_catalog.uuid,pg_catalog.text,pg_catalog.text[],pg_catalog.text,pg_catalog.int4,pg_catalog.int4)'";
 
@@ -559,6 +564,10 @@ describe("0243 public/assisted revision and atomic profile boundary", () => {
     expect(names.every((n) => n === "receptionist_client_contacts" || n === "receptionist_client_directory")).toBe(true);
     const directory = rows.find((r) => bare(r.signature).startsWith("receptionist_client_directory("));
     if (directory) expect(directory.sha).toBe(DESK_DIRECTORY_SHA_VALUE);
+    // On a chain that includes 0380 the installed directory body is exactly 0380's, by a hash written out in this file.
+    // The 0380 file must exist: the pin cannot pass by falling back to an older file.
+    expect(existsSync("supabase/migrations/0380_receptionist_name_rule.sql")).toBe(true);
+    if (directory) expect(directory.sha).toBe(DIRECTORY_BODY_SHA_0380);
   });
 
   it("additive0243 keeps legacy writes available and invalidates stale CAS before later0248 closure", async () => {
