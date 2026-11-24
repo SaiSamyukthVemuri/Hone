@@ -436,6 +436,16 @@ jobs:
         # intentionally allowed. Regression fence for the 0025 fresh-apply defect.
         run: npm run check:migration-extensions
 
+      # HON-73 step 1: keep the per-test names and durations. Report only: it changes no test, shard or condition.
+      - name: Upload test timing report (JUnit)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: junit-vitest-unit
+          path: junit-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
   # CI-COST-02. The record suites, first, so a PR that cannot merge does not
   # start the heavy lanes.
   #
@@ -875,6 +885,16 @@ jobs:
         # Local stack only; same safety posture as the steps above.
         run: npm run check:db-types
 
+      # HON-73 step 1: keep the per-test names and durations. Report only: it changes no test, shard or condition.
+      - name: Upload test timing report (JUnit)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: junit-vitest-db
+          path: junit-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
   # PR #227. Browser E2E lane: ONE browser (Chromium), ONE core flow
   # (the treatment-memory loop: public booking -> intake ->
   # practitioner magic-link login via the local Mailpit-captured
@@ -1235,7 +1255,7 @@ jobs:
           else
             SHARD_TOTAL="${{ needs.changes.outputs.browser_shard_total }}"
           fi
-          npx playwright test e2e/machine-create-mode-journey.spec.ts --project=chromium --grep='native 3G (durability|text durability|uncommitted recovery)' --fully-parallel --workers=1 --shard=${{ matrix.shard }}/${SHARD_TOTAL} --retries=0 --max-failures=1 --reporter=list,json --output=test-results/native-3g-shard-${{ matrix.shard }}
+          npx playwright test e2e/machine-create-mode-journey.spec.ts --project=chromium --grep='native 3G (durability|text durability|uncommitted recovery)' --fully-parallel --workers=1 --shard=${{ matrix.shard }}/${SHARD_TOTAL} --retries=0 --max-failures=1 --reporter=list,json,junit --output=test-results/native-3g-shard-${{ matrix.shard }}
           node --input-type=module <<'NODE'
           import { readFileSync } from 'node:fs';
           const report = JSON.parse(readFileSync(process.env.PLAYWRIGHT_JSON_OUTPUT_FILE, 'utf8'));
@@ -1257,6 +1277,8 @@ jobs:
           # flag is read at request time, so start that build, not a second one.
           HONE_E2E_REUSE_BUILD: "1"
           PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/native-3g-shard-${{ matrix.shard }}/results.json
+          # A CLI --reporter REPLACES the configured reporters, so this invocation names junit itself (HON-73 step 1) and writes it where the upload reads.
+          PLAYWRIGHT_JUNIT_OUTPUT_FILE: junit-results/playwright-native-3g-shard-${{ matrix.shard }}.xml
 
       - name: Upload Playwright traces on failure
         if: ${{ !cancelled() }}
@@ -1304,6 +1326,16 @@ jobs:
           if [ "$E2E_OUTCOME" = "cancelled" ]; then
             echo "NOTE: cancelled. Most likely the job exceeded its timeout budget."
           fi
+
+      # HON-73 step 1: keep the per-test names and durations. Report only: it changes no test, shard or condition.
+      - name: Upload test timing report (JUnit)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: junit-playwright-shard-${{ matrix.shard }}
+          path: junit-results/
+          if-no-files-found: ignore
+          retention-days: 14
 
   # Stable required check. Branch protection points HERE, never at a dynamic
   # shard name. It succeeds only when every required shard succeeded or was
@@ -1809,6 +1841,16 @@ jobs:
           path: test-results/
           retention-days: 7
 
+      # HON-73 step 1: keep the per-test names and durations. Report only: it changes no test, shard or condition.
+      - name: Upload test timing report (JUnit)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: junit-playwright-payment
+          path: junit-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
   # Mobile-completion E2E (Chloe workflow fix). Runs the mobile-completion
   # journey (in-DOM ConfirmDialog that replaced native window.confirm, optional
   # note, in-place charge) on the CHROMIUM engine at iPhone dimensions (iPhone 13
@@ -2068,6 +2110,16 @@ jobs:
           name: mobile-completion-playwright-traces
           path: test-results/
           retention-days: 7
+
+      # HON-73 step 1: keep the per-test names and durations. Report only: it changes no test, shard or condition.
+      - name: Upload test timing report (JUnit)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: junit-playwright-mobile
+          path: junit-results/
+          if-no-files-found: ignore
+          retention-days: 14
 
   # Synthetic Google: sets the two server-only markers (HONE_E2E_FAKE_GOOGLE=1 +
   # a per-job HONE_E2E_RUN_ID) plus a FAKE Google OAuth client, so the fake-Google
@@ -2332,6 +2384,16 @@ jobs:
           path: test-results/
           retention-days: 7
 
+      # HON-73 step 1: keep the per-test names and durations. Report only: it changes no test, shard or condition.
+      - name: Upload test timing report (JUnit)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: junit-playwright-google
+          path: junit-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
   # Photo checks that need REAL storage (E-GAPS CLN-005 + ENG-002). Every other
   # Supabase-starting job excludes storage-api, so the photo specs self-skip
   # there (an upload 503s at Kong) and the signed-URL DB cases are skipped by
@@ -2583,6 +2645,16 @@ jobs:
           path: test-results/
           retention-days: 7
 
+      # HON-73 step 1: keep the per-test names and durations. Report only: it changes no test, shard or condition.
+      - name: Upload test timing report (JUnit)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: junit-playwright-storage-photos
+          path: junit-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
   # HON-62 and CLN-006: the weekly-hours editor's native <input type="time"> and
   # the mounted-keyboard/focus cases for the three modal dialogs (photo preview,
   # DoneCharting warning, quick checkout) in WebKit, the engine behind iPad
@@ -2820,3 +2892,13 @@ jobs:
             test-results/
             test-results-payment/
           retention-days: 7
+
+      # HON-73 step 1: keep the per-test names and durations. Report only: it changes no test, shard or condition.
+      - name: Upload test timing report (JUnit)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: junit-playwright-webkit
+          path: junit-results/
+          if-no-files-found: ignore
+          retention-days: 14
