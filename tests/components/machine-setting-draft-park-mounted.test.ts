@@ -59,24 +59,34 @@ describe("a MultiPlex draft parked while she looks at another machine or mode co
     expect(inputs().every((i) => i.value === "")).toBe(true);
     expect(reports[0].groups).toEqual([]);
   });
-  it("group ids stay UNIQUE across add, remove, park and restore: the counter comes back as the larger of the parked value and the highest id", () => {
+  it("group ids are never REISSUED across add, remove, park and restore: a removed group's id stays retired (the parked counter is not one behind)", () => {
     let parked: Parked | null = null;
-    const ids = () => (parked?.groups ?? []).map((g) => g.id);
-    // A profile that OFFERS several groups (xCell Pur has one): the synthetic demo unit.
+    const issued = new Set<string>();
     const demo = { profile: SYNTHETIC_DEMO_PROFILE, mode: SYNTHETIC_DEMO_PROFILE.modes[0] };
-    mount({ ...demo, onDraftChange: () => undefined, onPark: (p: Parked) => { parked = p; } });
+    const track = (p: Parked) => { parked = p; for (const g of p.groups) issued.add(g.id); };
+    mount({ ...demo, onDraftChange: () => undefined, onPark: track });
     const add = () => act(() => { host!.querySelector<HTMLButtonElement>('[data-testid="setting-group-add"]')!.click(); });
-    type(inputs()[0], "5"); // something is typed, so there is a draft to park
+    const removeAllButFirst = () => {
+      const ids = (parked?.groups ?? []).map((g) => g.id).slice(1);
+      for (const id of ids) act(() => { host!.querySelector<HTMLButtonElement>(`[data-testid="setting-group-remove-${id}"]`)?.click(); });
+    };
+    type(inputs()[0], "5");
     add();
     add();
-    const beforePark = ids();
-    expect(new Set(beforePark).size, "control: unique before parking").toBe(beforePark.length);
-    expect(beforePark.length).toBeGreaterThanOrEqual(3);
+    const retired = new Set(issued);
+    expect(retired.size).toBeGreaterThanOrEqual(3);
+    removeAllButFirst();
+    expect(parked!.groups.length, "control: only the first group is left").toBe(1);
+    add(); // a new group after removals: its id must not be one that was issued and removed
+    const fresh = parked!.groups.map((g) => g.id).filter((id) => !retired.has(id) || id === parked!.groups[0].id);
+    expect(parked!.groups.length).toBe(2);
+    expect(parked!.groups.map((g) => g.id).filter((id) => retired.has(id)).length, "the added group's id is new, not a removed group's").toBe(1);
     unmount();
-    mount({ ...demo, restore: parked, onDraftChange: () => undefined, onPark: (p: Parked) => { parked = p; } });
+    mount({ ...demo, restore: parked, onDraftChange: () => undefined, onPark: track });
     add();
-    const after = ids();
-    expect(after.length).toBe(beforePark.length + 1);
-    expect(new Set(after).size, "after restoring and adding, no id is issued twice").toBe(after.length);
+    const ids = parked!.groups.map((g) => g.id);
+    expect(ids.length).toBe(3);
+    expect(new Set(ids).size, "after restoring and adding, no id is issued twice").toBe(3);
+    expect(fresh.length).toBeGreaterThan(0);
   });
 });
