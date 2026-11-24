@@ -6,9 +6,12 @@ import { adminQuery, asRole, asUser, closePool, seedMember, seedStudio, type See
 // is what a signed-in person can do outside the app. Synthetic fixtures only. Names are never printed: assertions on
 // them are booleans.
 //
-// Part 1 is the refusal matrix. Part 2 is a CHARACTERIZATION of a known limit: the database still returns a client's
-// stored name to a receptionist. The desk app never shows it, but this test must FAIL, loudly, the day the database's
-// name rule changes, so that whoever changes it also revisits the desk.
+// Part 1 is the refusal matrix. Part 2 pins the NAME RULE (migration 0374) as it behaves on a database built from the
+// repository's migrations: the database returns no stored client name to a receptionist, shows the fixed words 'Name on
+// file' instead, and never orders by the stored name. HOSTED PRODUCTION does not have 0374 applied (applying it is a
+// separate decision that is not made here), so production still returns the stored name until it is; this file runs only
+// against repository-chain stacks, which is why it asserts the new behaviour. Before 0374 landed in the chain, part 2
+// asserted the opposite (the known limit); if 0374 is ever reverted in the chain this test fails, loudly, on purpose.
 
 const STORED_A = `Aardvark Fixture ${randomUUID().slice(0, 8)}`;
 const STORED_Z = `Zebra Fixture ${randomUUID().slice(0, 8)}`;
@@ -62,7 +65,10 @@ beforeAll(async () => {
   await receptionist(studio.studioId, who.inactiveReceptionist, false);
   await receptionist(other.studioId, who.otherReceptionist, true);
   await adminQuery(`update public.clients set name = $2 where id = $1`, [studio.clientId, STORED_Z]);
-  const second = randomUUID();
+  // The second client's id sorts AFTER the first's, while its stored name (Aardvark) sorts BEFORE the first's (Zebra): an ordering by
+  // stored name and an ordering by id then disagree, so the order assertion below can only pass for the rule's order (non-vacuity).
+  let second = randomUUID();
+  while (second <= studio.clientId) second = randomUUID();
   await adminQuery(`insert into public.clients (id, studio_id, name) values ($1, $2, $3)`, [second, studio.studioId, STORED_A]);
   await adminQuery(
     `insert into public.appointments (id, studio_id, practitioner_id, client_id, starts_at, ends_at, duration_minutes, buffer_minutes_snapshot, blocked_ends_at)
@@ -99,27 +105,35 @@ describe("part 1: who may call the three desk functions directly", () => {
   });
 });
 
-describe("part 2: KNOWN LIMIT: database still returns the stored name to a receptionist; flips with the name-rule change", () => {
-  it("the directory returns a client's stored name to this studio's receptionist (booleans only)", async () => {
+describe("part 2: the name rule (0374): the database returns no stored name to a receptionist", () => {
+  it("the directory carries no stored name; every client without a preferred name reads as the fixed words", async () => {
     const r = await callAs(who.receptionist, "directory");
     expect("rows" in r).toBe(true);
-    const text = "rows" in r ? JSON.stringify(r.rows) : "";
-    expect(text.includes(STORED_Z), "directory returns the stored name, as it does today").toBe(true);
-    expect(text.includes(STORED_A), "directory returns the second stored name, as it does today").toBe(true);
+    const rows = ("rows" in r ? r.rows : []) as Array<{ display_name: string; name_on_file?: boolean }>;
+    const text = JSON.stringify(rows);
+    expect(text.includes(STORED_Z), "directory returns no stored name").toBe(false);
+    expect(text.includes(STORED_A), "directory returns no second stored name").toBe(false);
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+    expect(rows.every((x) => x.display_name === "Name on file")).toBe(true);
   });
 
-  it("the schedule returns the stored name too, flagged as the stored name", async () => {
+  it("the schedule returns the fixed words, flagged as no name on file, and no stored name", async () => {
     const r = await callAs(who.receptionist, "schedule");
     const rows = ("rows" in r ? r.rows : []) as Array<{ display_name?: string; name_on_file?: boolean }>;
     expect(rows.length).toBe(1);
-    expect(rows[0].display_name === STORED_Z, "schedule returns the stored name, as it does today").toBe(true);
+    expect(JSON.stringify(rows).includes(STORED_Z), "schedule returns no stored name").toBe(false);
+    expect(rows[0].display_name).toBe("Name on file");
     expect(rows[0].name_on_file).toBe(true);
   });
 
-  it("the directory's default order is by name today (so order alone can reveal name order)", async () => {
+  it("the directory's default order never follows the stored name: ties go by id, although the stored names sort the other way (non-vacuity)", async () => {
     const r = await callAs(who.receptionist, "directory");
-    const rows = ("rows" in r ? r.rows : []) as Array<{ display_name: string }>;
-    const names = rows.map((x) => x.display_name);
-    expect(names.indexOf(STORED_A) !== -1 && names.indexOf(STORED_A) < names.indexOf(STORED_Z)).toBe(true);
+    const rows = ("rows" in r ? r.rows : []) as Array<{ id?: string; client_id?: string }>;
+    const ids = rows.map((x) => String(x.id ?? x.client_id));
+    const first = ids.indexOf(studio.clientId); // stored name Zebra, smaller id
+    const second = ids.findIndex((x) => x !== studio.clientId && x > studio.clientId);
+    expect(first, "the first client is listed").toBeGreaterThanOrEqual(0);
+    expect(second, "the second client is listed").toBeGreaterThanOrEqual(0);
+    expect(first, "Zebra (smaller id) comes before Aardvark (larger id): order is by id, not by stored name").toBeLessThan(second);
   });
 });
