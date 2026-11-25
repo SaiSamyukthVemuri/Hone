@@ -8,7 +8,7 @@ import {
   sql,
 } from "../e2e/helpers/seed";
 
-// SAM'S $0 DECISION (24 Nov 2026), proved on the DASHBOARD checkout. The agreed price decides what $0 means:
+// THE $0 DECISION (24 Nov 2026), proved on the DASHBOARD checkout. The agreed price decides what $0 means:
 //   ALREADY FREE  an explicit $0 price shows "No payment due"; the visit finishes with no reason, receipt or Stripe attempt.
 //                 A MISSING price asks the practitioner to check the fee and is never read as free.
 //   FEE WAIVED    a positive fee reduced to $0 (or the Fee waived choice) shows the original fee, asks a short reason, says
@@ -147,5 +147,22 @@ test.describe("what $0 means at the dashboard till", () => {
     await page.goto("/dashboard");
     await expect(page.locator(`#appointment-${appointmentId}`)).toContainText(/owes|owing|outstanding/i);
     expect(await settlements(appointmentId)).toHaveLength(1);
+  });
+
+  test("PRICE MOVED while checkout is open: an UNCHANGED Final fee is refused with fee_changed and writes no settlement", async ({ page }) => {
+    const { studio, appointmentId } = await visit(9000);
+    await loginAsOwner(page, studio);
+    const draft = await openCheckout(page, appointmentId);
+    await draft.getByRole("button", { name: "Still owes", exact: true }).click();
+    await draft.getByRole("button", { name: "Finish visit", exact: true }).click();
+    const checkout = page.getByRole("dialog");
+    await expect(checkout.getByRole("button", { name: "Record amount owed", exact: true })).toBeVisible();
+    // The service price changes elsewhere while this checkout is open. The owner still sees $90 and leaves it unchanged.
+    const serviceId = await getE2eServiceId(studio.studioId);
+    await sql("update public.services set price_cents = 10000 where id = $1 and studio_id = $2", [serviceId, studio.studioId]);
+    await checkout.getByRole("button", { name: "Record amount owed", exact: true }).click();
+    await expect(checkout.getByRole("alert")).toContainText("The booked price has changed");
+    expect(await settlements(appointmentId)).toEqual([]);
+    expect(await attempts(studio.studioId)).toEqual([]);
   });
 });

@@ -290,7 +290,7 @@ test.describe("no resolvable price", () => {
       await expect(page.getByTestId("pricing-blocked")).toContainText(
         /No price is configured/i,
       );
-      // SAM'S $0 DECISION: a missing price prompts the practitioner to verify the fee and is NEVER read as free.
+      // The $0 decision (24 Nov 2026): a missing price prompts the practitioner to verify the fee and is NEVER read as free.
       await expect(page.getByTestId("pricing-blocked")).toContainText(/Check the fee/i);
       await expect(page.getByText(/No payment due/i)).toHaveCount(0);
       await expect(page.getByTestId("zero-charge-hint")).toHaveCount(0);
@@ -523,7 +523,7 @@ test.describe("an operator-authored final charge", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 5b. SAM'S $0 DECISION (24 Nov 2026). The AGREED price for the client and visit decides what $0 means:
+// 5b. The $0 decision (24 Nov 2026). The AGREED price for the client and visit decides what $0 means:
 //   - ALREADY FREE: an explicit $0 price (service or client-specific) shows "No payment due". The visit finishes with
 //     no waiver reason, no payment receipt and no Stripe attempt. A MISSING price is never $0 (see "no resolvable price").
 //   - FEE WAIVED: a POSITIVE fee reduced to $0 shows the original fee, asks for a short reason, says "Confirm fee
