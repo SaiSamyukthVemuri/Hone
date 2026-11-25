@@ -11,7 +11,7 @@ vi.mock("@/app/(app)/clients/[id]/pinned-notes-actions", () => ({
 }));
 
 const notes = [
-  { id: "mine", text: "Winter travel", created_by_practitioner_id: "chloe" },
+  { id: "mine", text: "Winter travel", created_by_practitioner_id: "practitioner" },
   { id: "theirs", text: "Morning visits", created_by_practitioner_id: "alex" },
   { id: "legacy", text: "Phone for openings", created_by_practitioner_id: null },
 ];
@@ -30,7 +30,7 @@ afterEach(() => {
 
 function render(isOwner: boolean, pinnedNotes = notes) {
   act(() => root.render(createElement(DashboardQuickPin, {
-    clientId: "client", clientName: "Morgan", viewer: { isOwner, practitionerId: "chloe" }, pinnedNotes,
+    clientId: "client", clientName: "Morgan", viewer: { isOwner, practitionerId: "practitioner" }, pinnedNotes,
   })));
 }
 

@@ -1443,7 +1443,7 @@ function AppointmentRow({
           </div>
         )}
         <div data-testid="today-row-actions" className="order-1 ml-[5.75rem] flex min-w-0 basis-full flex-wrap items-center gap-2">
-          {/* Quick checkout (Chloe): take payment from the roster without opening
+          {/* Quick checkout (owner): take payment from the roster without opening
               charting. Paid/Processing/Refunded show a status badge instead. */}
           {isOwner && (
             <AppointmentCheckoutCell
@@ -1525,7 +1525,7 @@ function AppointmentRow({
           )}
           {/* Secondary appointment tools stay reachable with the prior treatment closed. */}
           <div className="flex flex-wrap items-center justify-start gap-x-3 gap-y-1">
-            {/* Chloe: consultation notes in ONE TAP from the Dashboard. It
+            {/* A practitioner: consultation notes in ONE TAP from the Dashboard. It
                 NAVIGATES to the canonical practitioner writer
                 (/clients/<id>?tab=treatment, client_clinical_notes) exactly as
                 the appointment-side ConsultationNotesCard does. The

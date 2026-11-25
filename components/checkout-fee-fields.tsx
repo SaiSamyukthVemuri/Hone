@@ -27,7 +27,7 @@ export function isReceivedMethod(method: CheckoutMethod | null | undefined) {
 }
 
 /** A changed server quote invalidates the old draft; an opened payment must use
- * the amount Chloe can see. No draft is stored outside this checkout. */
+ * the amount the owner can see. No draft is stored outside this checkout. */
 export function useCheckoutFeeDraft(referenceCents: number | null, initial?: CheckoutFeeDraft) {
   const [edited, setDraft] = useState(initial);
   const draft = referenceCents === null || referenceCents <= 0 ? undefined

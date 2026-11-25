@@ -41,7 +41,7 @@ async function mount(context: DashboardRebook = origin) {
 beforeEach(() => {
   vi.resetAllMocks();
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
-  calls.target.mockResolvedValue({ok: true, practitioners: [{id: "owner", displayName: "Owner"}, {id: "practitioner", displayName: "Chloe"}]});
+  calls.target.mockResolvedValue({ok: true, practitioners: [{id: "owner", displayName: "Owner"}, {id: "practitioner", displayName: "Practitioner"}]});
   calls.slots.mockResolvedValue({ok: true, slots: [slot]});
   host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
 });
@@ -52,7 +52,7 @@ describe("booking another visit from the dashboard", () => {
     calls.book.mockResolvedValue({ok: true});
     await mount();
     expect(host.textContent).toContain("Mo");
-    expect(host.querySelector('[data-testid="assigned-practitioner"]')?.textContent).toContain("Chloe");
+    expect(host.querySelector('[data-testid="assigned-practitioner"]')?.textContent).toContain("Practitioner");
     expect(calls.slots).toHaveBeenCalledWith({serviceId: "treatment", date: "2040-02-05", practitionerId: "practitioner"});
     expect(button("Book appointment").disabled).toBe(false);
     await act(async () => button("Book appointment").click());
