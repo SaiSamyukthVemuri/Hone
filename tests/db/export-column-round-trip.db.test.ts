@@ -143,6 +143,7 @@ let sessionId = "";
 let blockId = "";
 let laserEntryId = "";
 let electEntryId = "";
+let nativeEntryId: string;
 let archive: JSZip;
 
 beforeAll(async () => {
@@ -218,6 +219,21 @@ beforeAll(async () => {
      values ($1,$2,'Chin', array['Chin','Jawline'], 'blend', 4, $3, $4, 7, 130,
              '["dry_skin"]'::jsonb)`,
     [electEntryId, sessionId, SEED.comments, blockId],
+  );
+
+  // A NATIVE (MultiPlex) area: its block carries a machine identity, and its legacy entry holds a pulse_count (the database default is 1; 3 here so a
+  // blanked cell cannot be mistaken for an absent value).
+  const nativeBlockId = randomUUID();
+  await adminQuery(
+    `insert into public.session_blocks (id, studio_id, session_id, sort_order, primary_area, side, machine_profile_id, machine_mode_key)
+     values ($1,$2,$3,2,'Lip','left','dectro-apilus:xcell-pur','multiplex')`,
+    [nativeBlockId, studioId, sessionId],
+  );
+  nativeEntryId = randomUUID();
+  await adminQuery(
+    `insert into public.electrolysis_entries (id, session_id, area, areas, pulse_count, block_id)
+     values ($1,$2,'Lip', array['Lip'], 3, $3)`,
+    [nativeEntryId, sessionId, nativeBlockId],
   );
 
   laserEntryId = randomUUID();
@@ -500,6 +516,14 @@ describe("RENAMED and FLATTENED columns land where the registry says they land",
 });
 
 describe("DERIVED headers are filled from the table the registry names", () => {
+  it("a NATIVE area's legacy pulse_count is blank in the export, and a legacy area keeps its own", async () => {
+    const native = await rowById("electrolysis_entries", nativeEntryId);
+    expect(native.block_areas, "the native row is in the CSV and joined to its block").toContain("Lip");
+    expect(native.pulse_count, "blank, never the database default 1 and never the stored 3").toBe("");
+    const legacy = await rowById("electrolysis_entries", electEntryId);
+    expect(legacy.pulse_count).toBe("4");
+  });
+
   it("the block fields reach the electrolysis row they belong to", async () => {
     const row = await rowById("electrolysis_entries", electEntryId);
     expect(row.block_primary_area).toBe(SEED.blockPrimaryArea);
