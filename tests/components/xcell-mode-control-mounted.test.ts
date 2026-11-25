@@ -40,6 +40,7 @@ const { createElement } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { act } = await import("react");
 const { BlockSetupForm } = await import("@/app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form");
+const { ChartingViewContext } = await import("@/components/charting-view-context");
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const CTX = {
@@ -133,6 +134,82 @@ describe("MultiPlex in the ONE Mode control (new area)", () => {
     await clickPill("Blend");
     expect(legacyFieldsShown()).toBe(true);
     expect(multiplexPill()!.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it(`Thermolysis typed, then MultiPlex, then Blend: BLEND is the mode, never the parked Thermolysis; Thermolysis keeps what was typed under it`, async () => {
+      await mount(null);
+      await openPanel();
+      await pick("legacy:xcell");
+      await clickPill("Thermolysis");
+      const setValue = (el: HTMLInputElement, v: string) => act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(el, v);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      const intensity = () => Array.from(host!.querySelectorAll<HTMLLabelElement>("label")).find((l) => l.textContent?.includes("Thermolysis intensity"))!.querySelector("input") as HTMLInputElement;
+      await setValue(intensity(), "42");
+      await clickMultiplex();
+      await clickPill("Blend");
+      const selected = () => pills().filter((b) => b.className.includes("bg-neutral-900")).map((b) => b.textContent!.trim());
+      expect(selected(), "the clicked mode is the one selected").toEqual(["Blend"]);
+      await clickPill("Thermolysis");
+      expect(selected()).toEqual(["Thermolysis"]);
+      expect(intensity().value, "Thermolysis keeps what was typed under it").toBe("42");
+  });
+
+  // ENABLING A STUDIO makes the Current/New toggle visible (the per-studio rollout, ChartingViewContext.rolloutOn): the chart's form code is the same, so
+  // the same round trip must hold there. It deliberately does NOT assert what Blend shows (it carries the typed value, as it does today for every studio).
+  it("the same round trip with the studio's rollout ON (New view available): Thermolysis 42, MultiPlex, Blend, back to Thermolysis shows 42 and Blend is the selected mode", async () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(createElement(ChartingViewContext.Provider, { value: { view: "new", setView: () => undefined, notice: null, rolloutOn: true } as never },
+        createElement(BlockSetupForm, {
+          sessionId: "s1", clientId: "c1", previousBlock: null, block: null, firstEntry: null,
+          initialAreas: [{ area: "Upper lip", side: "center" }] as never, defaultMachineFrequency: null, onCancel: () => undefined,
+        })));
+    });
+    await openPanel();
+    await pick("legacy:xcell");
+    await clickPill("Thermolysis");
+    const intensity = () => Array.from(host!.querySelectorAll<HTMLLabelElement>("label")).find((l) => l.textContent?.includes("Thermolysis intensity"))!.querySelector("input") as HTMLInputElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(intensity(), "42");
+      intensity().dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await clickMultiplex();
+    await clickPill("Blend");
+    const selected = () => pills().filter((b) => b.className.includes("bg-neutral-900")).map((b) => b.textContent!.trim());
+    expect(selected()).toEqual(["Blend"]);
+    await clickPill("Thermolysis");
+    expect(selected()).toEqual(["Thermolysis"]);
+    expect(intensity().value).toBe("42");
+  });
+
+  // CODEX #1790: the parked Thermolysis snapshot must never be restored OVER a value typed after it was parked. Clearing the machine ("Choose machine…")
+  // shows the legacy fields again; whatever she types there is newer than the parked 42, so a later return to the existing xCell keeps it.
+  it("parked 42, MultiPlex, machine cleared, 40 typed in the legacy fields, xCell chosen again: 40 stays (the parked 42 is never restored over it)", async () => {
+    await mount(null);
+    await openPanel();
+    await pick("legacy:xcell");
+    await clickPill("Thermolysis");
+    const setValue = (el: HTMLInputElement, v: string) => act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(el, v);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const intensity = () => Array.from(host!.querySelectorAll<HTMLLabelElement>("label")).find((l) => l.textContent?.includes("Thermolysis intensity"))!.querySelector("input") as HTMLInputElement;
+    await setValue(intensity(), "42");
+    await clickMultiplex();
+    await pick("");
+    // the legacy fields are editable again (no machine): make sure Thermolysis is the mode, then type the NEWER value
+    const selected = () => pills().filter((b) => b.className.includes("bg-neutral-900")).map((b) => b.textContent!.trim());
+    if (!selected().includes("Thermolysis")) await clickPill("Thermolysis");
+    await setValue(intensity(), "40");
+    await pick("legacy:xcell");
+    expect(intensity().value, "the newer value is not overwritten by the parked one").toBe("40");
+    await clickMultiplex();
+    await clickPill("Thermolysis");
+    expect(intensity().value, "and a MultiPlex round trip afterwards still returns what is typed now").toBe("40");
   });
 
   it("no route (contract not published, no unit): the xCell choice offers no MultiPlex", async () => {

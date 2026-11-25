@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 288,
-    "last": "0382_receptionist_close_older_contact_commands.sql",
-    "sha256": "34f002ad4d7e20dd9ca904bf696f8cc11f7655aff0d3fd7f27e2749d7a16b976"
+    "count": 289,
+    "last": "0384_rematerialize_reservations_actual_end.sql",
+    "sha256": "9cd6dc4522acf92088737dd551256377752d6c508681377f86d855c8f3a10706"
   },
   "public": {
     "tables": [

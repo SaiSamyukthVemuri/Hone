@@ -63,6 +63,9 @@ export const BROWSER_GROUPS = {
       // the only lane its subject can regress in.
       "machine-switch-discards-draft.spec.ts",
       "machine-one-selector.spec.ts",
+      // one complete xCell Pur MultiPlex visit (decimals, pulse count, blank optionals, switch away and back, save, reopen, next visit) on
+      // desktop, an iPhone-sized emulation and iPhone WebKit; and Save pressed while the MultiPlex pick is still settling. Same surface, same group.
+      "xcell-multiplex-visit.spec.ts",
       "machine-mode-then-save.spec.ts",
       // MPX-03: the LOST RESPONSE on the initial save, and pressing Save
       // again. Same surface once more, so the same group - and this one most
@@ -207,6 +210,8 @@ export const BROWSER_GROUPS = {
       // the /book/[slug] surface, so it belongs with the other public booking
       // specs rather than with the shell interaction family.
       "book-next-available-fast.spec.ts",
+      // The public page after a staff change still lists the opening one buffer after an existing visit.
+      "public-booking-after-staff-change.spec.ts",
       // 0171: the public reschedule v2 contract (policy hash, exclusion,
       // duration authority, same-time, duplicate submit, post-commit success).
       "public-reschedule-v2.spec.ts",
@@ -581,6 +586,7 @@ export const PUBLIC_BOOKING_SPECS = [
   "new-studio-wizard.spec.ts",
   "onboarding.spec.ts",
   "perceived-speed.spec.ts",
+  "public-booking-after-staff-change.spec.ts",
   "public-booking-error-containment.spec.ts",
   "public-booking-slot-read-failure.spec.ts",
   "public-cancel-policy-change.spec.ts",
