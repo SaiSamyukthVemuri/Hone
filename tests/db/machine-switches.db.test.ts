@@ -150,6 +150,31 @@ describe("the seed: once, by a trigger on studios, never re-run", () => {
     expect((await models(S.studioId))[PUR], "xCell Pur is the owner's switch alone").toBe(false);
   });
 
+  it("SEEDED OFF, the owner explicitly sets OFF (no change): that choice is recorded, so a later registration leaves the model off", async () => {
+    const S = await seedOn("sw-explicit-off");
+    expect((await models(S.studioId))[SEN]).toBe(false);
+    expect(await setModel(S.userId, S.studioId, SEN, false)).toBe("unchanged");
+    expect(await eventCount(S.studioId, "model_set"), "the no-op set left its event").toBe(1);
+    await unitOf(S.studioId, SEN, 3, false);
+    expect((await models(S.studioId))[SEN], "the registration does not switch it on against the owner").toBe(false);
+    expect(await eventCount(S.studioId, "model_set")).toBe(1);
+  });
+
+  it("RACE: a registration that overlaps the owner's switch-off waits for it and never switches the model on against it", async () => {
+    const S = await seedOn("sw-race");
+    let reg: Promise<unknown> | null = null;
+    await adminTx(async (q) => {
+      // the owner's command in miniature: lock the model row, then (while a registration is racing for it) record the choice and the value
+      await q(`select 1 from public.studio_machine_models where studio_id=$1 and profile_id=$2 for update`, [S.studioId, SEN]);
+      reg = adminQuery(`insert into public.studio_machines (studio_id, machine_profile_id, machine_profile_version, display_name) values ($1,$2,3,$3)`, [S.studioId, SEN, `Race ${randomUUID().slice(0, 8)}`]);
+      await new Promise((r) => setTimeout(r, 600));
+      await q(`insert into public.studio_machine_setting_events (studio_id, kind, profile_id, value, actor_user_id) values ($1,'model_set',$2,'{"enabled": false}'::jsonb,$3)`, [S.studioId, SEN, S.userId]);
+    });
+    await reg;
+    expect((await models(S.studioId))[SEN], "the registration saw the owner's committed choice").toBe(false);
+    expect(await eventCount(S.studioId, "model_set")).toBe(1);
+  });
+
   it("a studio whose ONLY Senior unit was retired before the migration seeded that model OFF with no decision on record: a replacement unit turns it on; an owner's recorded choice is still never overridden", async () => {
     const S = await seedOn("sw-retired-only");
     // The pre-migration shape: a retired Senior unit, the model seeded off, no event. The trigger is disabled only to build that state.
@@ -211,7 +236,7 @@ describe("owner commands", () => {
     for (const e of ev) expect(e.actor_user_id).toBe(S.userId);
     expect(JSON.stringify(ev)).not.toMatch(/@/);
     expect(await setModel(S.userId, S.studioId, SEN, false)).toBe("unchanged");
-    expect(await eventCount(S.studioId)).toBe(5);
+    expect(await eventCount(S.studioId), "Senior already has a recorded choice here: a repeated no-op set adds no event (the log does not grow per click)").toBe(5);
   });
 
   it("the default must be a model that is switched on; Ask and a model are exclusive; bad arguments are refused", async () => {

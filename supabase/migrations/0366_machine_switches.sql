@@ -143,6 +143,14 @@ returns trigger language plpgsql security definer set search_path = pg_catalog, 
 declare
   v_changed integer;
 begin
+  if new.machine_profile_id in ('dectro-apilus:senior-3g', 'dectro-apilus:junior-3g') then
+    -- THE SAME ROW LOCK THE OWNER COMMAND TAKES, BEFORE the recorded-choice check: a registration that races an owner's switch waits for that commit and
+    -- then sees its event (the check below is a new statement, so it reads what the owner committed), and never switches the model on against it.
+    -- LOCK ORDER IS THE OWNER COMMAND'S: the default row first, then the model row, never the reverse (no deadlock between the two).
+    perform 1 from public.studio_machine_default d where d.studio_id = new.studio_id for update;
+    perform 1 from public.studio_machine_models m
+     where m.studio_id = new.studio_id and m.profile_id = new.machine_profile_id for update;
+  end if;
   if new.machine_profile_id in ('dectro-apilus:senior-3g', 'dectro-apilus:junior-3g')
      and not exists (select 1 from public.studio_machine_setting_events e
                       where e.studio_id = new.studio_id and e.profile_id = new.machine_profile_id and e.kind = 'model_set') then
@@ -186,7 +194,17 @@ begin
   select d.default_profile_id into v_def from public.studio_machine_default d where d.studio_id = p_studio for update;
   select m.enabled into v_prev from public.studio_machine_models m where m.studio_id = p_studio and m.profile_id = p_profile for update;
   if not found then raise exception 'Not available.' using errcode = '42501'; end if;
-  if v_prev = p_enabled then return 'unchanged'; end if;
+  if v_prev = p_enabled then
+    -- AN EXPLICIT OWNER SET IS ALWAYS A RECORDED CHOICE, even when it changes nothing (a model seeded off that the owner switches off): the registration
+    -- trigger reads the change log to know whether anyone decided, so a no-op set must leave its event or a later registration would switch the model on.
+    -- Only when no choice is on record yet (an append-only table must not grow with every repeated click).
+    if not exists (select 1 from public.studio_machine_setting_events e
+                    where e.studio_id = p_studio and e.profile_id = p_profile and e.kind = 'model_set') then
+      insert into public.studio_machine_setting_events (studio_id, kind, profile_id, value, actor_user_id)
+      values (p_studio, 'model_set', p_profile, jsonb_build_object('enabled', p_enabled), v_uid);
+    end if;
+    return 'unchanged';
+  end if;
   update public.studio_machine_models set enabled = p_enabled, updated_by = v_uid, updated_at = now()
    where studio_id = p_studio and profile_id = p_profile;
   insert into public.studio_machine_setting_events (studio_id, kind, profile_id, value, actor_user_id)
