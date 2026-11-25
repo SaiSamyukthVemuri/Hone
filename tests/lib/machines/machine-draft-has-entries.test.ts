@@ -45,6 +45,15 @@ describe("the host form's dirty flag", () => {
   // same transform so an untouched form does not read "Unsaved". Source pin of the rebase.
   it("the dirty baseline is rebased through the same cleared() transform on the automatic kind switch", () => {
     expect(FORM).toMatch(/initialDraftJson\.current\s*=\s*JSON\.stringify\(cleared\(JSON\.parse\(initialDraftJson\.current\) as Draft\)\)/);
-    expect(FORM).toMatch(/setDraftRef\.current\(cleared\);/);
+    expect(FORM).toMatch(/setDraftRef\.current\(\(d\) => \{[^]*?return cleared\(d\);/);
+  });
+});
+
+describe("switching to a native machine parks the legacy entries and returning restores them", () => {
+  const FORM = readFileSync("app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx", "utf8");
+  it("parks before clearing, restores on any non-native kind (legacy xCell or no machine), and a legacy pill never toggles itself off while MultiPlex is chosen", () => {
+    expect(FORM).toMatch(/parkedLegacyRef\.current = \{[^}]*mode: d\.mode[^}]*machineFrequency: d\.machineFrequency/);
+    expect(FORM).toMatch(/kind !== "native" && parkedLegacyRef\.current/);
+    expect(FORM).toMatch(/const selected = draft\.mode === m\.value && !multiplexSelected;/);
   });
 });

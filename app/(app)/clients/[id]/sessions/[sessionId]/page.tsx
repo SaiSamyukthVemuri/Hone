@@ -52,6 +52,8 @@ import { NextVisitNoteForm } from "./NextVisitNoteForm";
 import { CopyPreviousAreasPanel } from "./CopyPreviousAreasPanel";
 import { RemovePassButton } from "@/components/remove-pass-button";
 import { SessionBlocksView } from "./session-blocks-view";
+import { isNativeMachineBlock } from "@/lib/machines/legacy-machine";
+import { readingsForBlock, machinesByIds, type MachineDb, type RecordedReading } from "@/lib/machines/machine-queries";
 import {
   addLaserEntryAction,
   deleteLaserEntryAction,
@@ -342,6 +344,28 @@ export default async function SessionDetailPage({
     session.modality === "electrolysis"
       ? await getSessionWithBlocks(sessionId)
       : null;
+
+  // WHAT A NATIVE (xCell Pur MultiPlex ...) AREA RECORDED, for the area card. The legacy entry under such a block carries only the database
+  // default (pulse_count 1), so the card must show the recorded readings instead of it. One read per native block, bound to this session.
+  const nativeReadings: Record<string, { readings: RecordedReading[]; unavailable: boolean }> = {};
+  const nativeUnitNames: Record<string, string> = {};
+  if (blockData) {
+    const nativeBlocks = blockData.blocks.filter((b) => b.deleted_at == null && isNativeMachineBlock(b));
+    if (nativeBlocks.length > 0) {
+      const db = (await createClient()) as unknown as MachineDb;
+      await Promise.all(
+        nativeBlocks.map(async (b) => {
+          const got = await readingsForBlock(db, b.id, session.id);
+          nativeReadings[b.id] = got.ok ? { readings: got.value, unavailable: false } : { readings: [], unavailable: true };
+        }),
+      );
+      const ids = [...new Set(Object.values(nativeReadings).flatMap((n) => n.readings.map((r) => r.deviceId)))];
+      if (ids.length > 0) {
+        const named = await machinesByIds(db, studio.id, ids);
+        if (named.ok) for (const m of named.value) nativeUnitNames[m.deviceId] = m.displayName;
+      }
+    }
+  }
 
 
   // FINISH APPOINTMENT workflow context, derived from what is already loaded:
@@ -807,6 +831,8 @@ export default async function SessionDetailPage({
           sessionId={session.id}
           clientId={id}
           blocks={blockData.blocks}
+          nativeReadings={nativeReadings}
+          nativeUnitNames={nativeUnitNames}
           orphanEntries={blockData.orphan_entries}
           clientTagLabels={clientTags.map((t) => t.label)}
           probeLotSuggestions={probeLotSuggestions}
