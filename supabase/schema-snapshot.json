@@ -2,8 +2,8 @@
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
     "count": 289,
-    "last": "0385_export_treatment_setup_readings.sql",
-    "sha256": "41c491114a87cade7cd166e2fc09c0b536c7f4cc7fb0fe429d650cd7ad75c4a0"
+    "last": "0386_export_treatment_setup_readings.sql",
+    "sha256": "7937c975f60498196e4c427d9952f4a82ddb845674dcb96b56893a585c7f010e"
   },
   "public": {
     "tables": [
