@@ -1953,8 +1953,9 @@ export async function updateTreatmentAreaWithEntryAction(
     const { data: storedEntries, error: storedEntryErr } = await supabase
       .from("electrolysis_entries")
       .select(LEGACY_ENTRY_READING_COLUMNS.join(", "))
+      // BY BLOCK ONLY: electrolysis_entries has NO studio_id column (filtering on it made this read fail, and every edit with the rollout on answered
+      // "Could not load the settings block to save"). The block read above is studio-scoped, and row security scopes the entries to the studio.
       .eq("block_id", input.blockId)
-      .eq("studio_id", studio.id)
       .is("deleted_at", null);
     if (storedEntryErr || !Array.isArray(storedEntries)) return { ok: false, error: "Could not load the settings block to save." };
     if (modeChangeRefused({
