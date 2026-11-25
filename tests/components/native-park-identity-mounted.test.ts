@@ -122,6 +122,28 @@ describe("a NEW area saved on MultiPlex after Thermolysis was typed (M1, M2)", (
   });
 });
 
+describe("Save pressed while the leave-MultiPlex request is HELD (M1, behavioural)", () => {
+  it("a legacy pill click sets the draft's mode while the preference write is still settling (the kind is still native): the create still carries NO mode", async () => {
+    await mount();
+    await openPanel();
+    await pick("legacy:xcell");
+    await click(pill("Thermolysis"));
+    await setValue(labelled("Thermolysis intensity"), "42");
+    // the MultiPlex pick's preference write never settles, so the panel holds the next request (machine-first-setup-panel.tsx: `if (selectionPending) return;`)
+    actions.rememberMachineSelectionAction.mockImplementationOnce(() => new Promise(() => undefined) as never);
+    await click(host!.querySelector('[data-testid="mode-multiplex"]'));
+    await click(pill("Blend"));
+    // the form's draft now says Blend while the panel is still native; Save is not disabled by a pending PREFERENCE write
+    await click(Array.from(host!.querySelectorAll<HTMLButtonElement>("button")).find((b) => b.textContent?.trim() === "Chin")!);
+    await click(host!.querySelector('[data-testid="save-treatment-area"]'));
+    expect(blockActions.createTreatmentAreaWithEntryAction).toHaveBeenCalledTimes(1);
+    const sent = (blockActions.createTreatmentAreaWithEntryAction.mock.calls[0] as unknown[])[0] as Record<string, unknown> & { readings: Record<string, unknown> };
+    expect(sent.mode, "M1: the held request cannot leak the legacy mode into a native create").toBeNull();
+    expect(sent.apilusModality).toBeNull();
+    expect(sent.readings.thermolysisIntensityPercent).toBeNull();
+  });
+});
+
 describe("what is parked belongs to ONE identity: unit, profile, version AND mode (M7, M9)", () => {
   it("two modes of one unit: values typed in each come back to their own mode, never the other's", async () => {
     ctxBox.ctx = { ...CTX };
