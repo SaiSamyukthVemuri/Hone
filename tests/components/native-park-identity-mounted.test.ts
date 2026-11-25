@@ -30,7 +30,7 @@ import { readFileSync } from "node:fs";
 import { MACHINE_CATALOGUE } from "@/lib/machines/catalogue";
 import type { StudioDevice } from "@/lib/machines/selection";
 
-// ONE MODE CONTROL (HON-71), on the REAL form: MultiPlex is a fourth pill in the existing Mode group, offered under the existing xCell
+// ONE MODE CONTROL, on the REAL form: MultiPlex is a fourth pill in the existing Mode group, offered under the existing xCell
 // choice on a NEW area. Choosing it binds the area to the registered unit and swaps the charting fields; choosing any other pill is
 // exactly today's form. Senior and Junior units, legacy-valued areas and saved areas are unaffected. Synthetic records.
 

@@ -63,7 +63,7 @@ export const BROWSER_GROUPS = {
       // the only lane its subject can regress in.
       "machine-switch-discards-draft.spec.ts",
       "machine-one-selector.spec.ts",
-      // HON-71: one complete xCell Pur MultiPlex visit (decimals, pulse count, blank optionals, switch away and back, save, reopen, next visit) on
+      // one complete xCell Pur MultiPlex visit (decimals, pulse count, blank optionals, switch away and back, save, reopen, next visit) on
       // desktop, an iPhone-sized emulation and iPhone WebKit; and Save pressed while the MultiPlex pick is still settling. Same surface, same group.
       "xcell-multiplex-visit.spec.ts",
       "machine-mode-then-save.spec.ts",

@@ -13,7 +13,7 @@ const REGISTRY = readFileSync(path.join(root, "lib/export/resource-registry.ts")
 const ACTIONS = readFileSync(path.join(root, "app/(app)/settings/data/actions.ts"), "utf8");
 
 describe("session_blocks machine identity and the studio export", () => {
-  // HON-71: the export now READS machine_profile_id from session_blocks, for one reason: a native (MultiPlex) area's legacy pulse_count is the database
+  // the export now READS machine_profile_id from session_blocks, for one reason: a native (MultiPlex) area's legacy pulse_count is the database
   // default, so the CSV leaves it blank. The guard's purpose is that the identity columns are never EMITTED, so it now pins that: no identity column
   // is a CSV header of any exported file, studio_machine_id and machine_mode_key are not read at all, and machine_profile_id appears only in the
   // block read and the pulse_count expression.

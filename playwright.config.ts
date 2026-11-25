@@ -59,9 +59,9 @@ export default defineConfig({
             // exercising it.
             use: { ...devices["Desktop Safari"], bypassCSP: true },
           },
-          // HON-71: one complete MultiPlex visit on an emulated iPhone in WebKit (the engine behind iPhone Safari; NOT real Safari, NOT a real device).
+          // one complete MultiPlex visit on an emulated iPhone in WebKit (the engine behind iPhone Safari; NOT real Safari, NOT a real device).
           {
-            name: "webkit-hon-71",
+            name: "webkit-iphone-visit",
             testMatch: /xcell-multiplex-visit\.spec\.ts$/,
             use: { ...devices["iPhone 13"], bypassCSP: true },
           },

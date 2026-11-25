@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// B-ii (HON-71): a MultiPlex (native) area is NOT offered in the copy-settings preview; a legacy area in the same earlier session still is.
+// B-ii: a MultiPlex (native) area is NOT offered in the copy-settings preview; a legacy area in the same earlier session still is.
 // Copying a native area needs a database change (copy_session_setup writes a legacy block and the default pulse_count 1) and is tracked separately.
 
 const state = vi.hoisted(() => ({ blocks: [] as Array<Record<string, unknown>>, selects: [] as string[] }));

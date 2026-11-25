@@ -5,7 +5,7 @@ import { seedE2eStudio, seedE2eMember, setPlatformRolloutMode, sql } from "./hel
 import { loginByMagicLink } from "./helpers/flows";
 import { planContractPublication } from "../lib/machines/contract-publication";
 
-// HON-71: ONE COMPLETE MULTIPLEX VISIT on the existing xCell chart, REAL browser, REAL local stack, synthetic studio/client/values.
+// ONE COMPLETE MULTIPLEX VISIT on the existing xCell chart, REAL browser, REAL local stack, synthetic studio/client/values.
 // Desktop Chromium, and an emulated iPhone (see the project note in the run report: engine and emulation are stated there, not assumed).
 const T = 20_000;
 
@@ -69,7 +69,7 @@ const draft = (page: Page) => page.getByTestId("machine-setting-draft").locator(
 // OPTIONAL fields left blank (UL and the flash interval) that must stay blank in the record, never 0.
 const V = { el: "12", slowDur: "1.85", slowInt: "30", flashDur: "0.033", flashInt: "60", pulses: "3" };
 
-// SAVE WHILE SWITCHING (HON-71, Sam's item 3): the MultiPlex pick's preference write is held in flight, then Blend is clicked, then Save is pressed.
+// SAVE WHILE SWITCHING (the owner's item 3): the MultiPlex pick's preference write is held in flight, then Blend is clicked, then Save is pressed.
 // The saved area must carry no legacy mode and no legacy readings, read back from the database. Desktop only: the guard is not viewport-specific.
 test.describe("press Save while the MultiPlex pick is still settling", () => {
   test.beforeEach(({}, info: TestInfo) => { test.skip(info.project.name !== "chromium", "chromium project only"); });
@@ -127,7 +127,7 @@ test.describe("press Save while the MultiPlex pick is still settling", () => {
 const DEVICES = [
   { name: "desktop 1280", viewport: { width: 1280, height: 800 }, isMobile: false, hasTouch: false, only: "chromium" },
   { name: "iPhone-size 390 (Chromium emulation)", viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, only: "chromium" },
-  { name: "iPhone 13 (WebKit emulation)", viewport: null, isMobile: false, hasTouch: false, only: "webkit-hon-71" },
+  { name: "iPhone 13 (WebKit emulation)", viewport: null, isMobile: false, hasTouch: false, only: "webkit-iphone-visit" },
 ] as const;
 
 for (const device of DEVICES) {

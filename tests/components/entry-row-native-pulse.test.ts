@@ -3,7 +3,7 @@ import { createElement } from "react";
 import { renderToString } from "react-dom/server";
 import { ElectrolysisEntryRow } from "@/components/entry-row";
 
-// HON-71: a native (MultiPlex) block's legacy entry holds only the database default pulse_count 1 (migration 0166). The row must never print it.
+// a native (MultiPlex) block's legacy entry holds only the database default pulse_count 1 (migration 0166). The row must never print it.
 const entry = { id: "e1", session_id: "s1", area: "Chin", areas: ["Chin"], mode: null, apilus_modality: null, probe_size: null, intensity: null, duration_seconds: null, pulse_count: 1, pulse_delay_seconds: null, energy_level: null, thermolysis_intensity_percent: null, thermolysis_duration_seconds: null, galvanic_ma: null, galvanic_duration_seconds: null, units_of_lye: null, comments: null, observation_chips: [], block_id: "b1", created_at: "2026-11-25T00:00:00Z" };
 const text = (block: unknown, variant: "full" | "readings") =>
   renderToString(createElement(ElectrolysisEntryRow as never, { entry, block, variant } as never)).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");

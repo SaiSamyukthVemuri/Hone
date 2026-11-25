@@ -277,10 +277,10 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // Now 67 after merging production (production alone: 66): service-discard-while-saving.spec.ts joined `calendar` (Discard edits is disabled while a service save is in flight; desktop and emulated phone). RECORDED AS A
     // DECISION per the note above. It is REQUIRED, not opt-in: two cases, each a seeded studio and a login, about 2 minutes on an owned stack.
     // The receptionist calendar journey runs in the calendar group using the local desk flag.
-    // Now 68: HON-71's xcell-multiplex-visit.spec.ts joined `sessions` (the machine panel inside the settings-block form). RECORDED AS A DECISION per the
+    // Now 68: The xcell-multiplex-visit.spec.ts joined `sessions` (the machine panel inside the settings-block form). RECORDED AS A DECISION per the
     // note above. It is REQUIRED, not opt-in. Cost, MEASURED on an owned stack: three cases in the chromium project (desktop, a 390px iPhone-sized
     // emulation, and Save pressed while the pick is pending), each a seeded studio, a magic-link login and one or two saves: about 15-20s each, a minute
-    // in all. The iPhone WebKit case runs only in the non-required `webkit-hon-71` project and skips everywhere else.
+    // in all. The iPhone WebKit case runs only in the non-required `webkit-iphone-visit` project and skips everywhere else.
     expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(68);
   });
 
