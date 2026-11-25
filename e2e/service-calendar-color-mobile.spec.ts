@@ -100,6 +100,25 @@ test.describe("Settings navigation on touch screens", () => {
       }
     }
   });
+
+  test("overview directory shortcuts and category headings have at least a 44px hit area", async ({ page }) => {
+    const seed = await seedE2eStudio();
+    await loginAsOwner(page, seed);
+    for (const [width, height] of [[390, 844], [820, 1180]]) {
+      await page.setViewportSize({ width, height });
+      await page.goto("/settings");
+      await expect(page.getByRole("heading", { name: "Settings directory" })).toBeVisible();
+      expect(await page.evaluate(() => matchMedia("(pointer: coarse)").matches)).toBe(true);
+      const links = page.locator("#settings-directory-title ~ div section").locator("h3 a, ul a");
+      const count = await links.count();
+      expect(count).toBeGreaterThan(8);
+      for (let i = 0; i < count; i++) {
+        const box = await links.nth(i).boundingBox();
+        const label = `${width}px: ${await links.nth(i).innerText()}`;
+        expect(box?.height, label).toBeGreaterThanOrEqual(44);
+      }
+    }
+  });
 });
 
 test("Settings uses the standard page width and opens the matching settings section directly", async ({ page }) => {

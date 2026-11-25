@@ -1,5 +1,6 @@
 import { PendingLink } from "@/components/pending-link";
 import { SettingIcon } from "@/components/settings/setting-icon";
+import { CONTROL_MIN_TOUCH, cx } from "@/components/ui/control-base";
 import { getNewClientAdmissionMode } from "@/lib/booking/new-client-admission";
 import { isOpenDay } from "@/lib/booking/new-client-readiness";
 import { getStudioWideDefaultsSafe } from "@/lib/booking/studio-wide-availability";
@@ -100,11 +101,11 @@ export default async function SettingsIndexPage() {
             <section key={section.name} className="min-w-0 rounded-xl border border-line bg-surface p-4">
               <h3 className="flex items-center gap-2.5 text-base font-semibold">
                 <span className="grid size-8 shrink-0 place-items-center rounded-md border border-line bg-surface-sunken"><SettingIcon name={section.name}/></span>
-                <PendingLink href={section.links[0].href} className="hover:underline">{section.name}</PendingLink>
+                <PendingLink href={section.links[0].href} className={cx(CONTROL_MIN_TOUCH, "pointer-fine:min-h-10 justify-start hover:underline")}>{section.name}</PendingLink>
               </h3>
               {descriptions[section.name] && <p className="mt-2 text-sm text-fg-muted">{descriptions[section.name]}</p>}
               <ul className="mt-2 flex flex-wrap gap-x-4">
-                {section.links.slice(0, 2).map(link => <li key={link.href}><PendingLink href={link.href} className="inline-flex min-h-10 items-center text-sm underline decoration-line-strong underline-offset-4 hover:decoration-current">{link.label}</PendingLink></li>)}
+                {section.links.slice(0, 2).map(link => <li key={link.href}><PendingLink href={link.href} className={cx(CONTROL_MIN_TOUCH, "pointer-fine:min-h-10 justify-start text-sm underline decoration-line-strong underline-offset-4 hover:decoration-current")}>{link.label}</PendingLink></li>)}
               </ul>
             </section>
           ))}
