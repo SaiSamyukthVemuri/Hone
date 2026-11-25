@@ -250,9 +250,8 @@ for (const device of DEVICES) {
       const next = await startSession(page, s.clientId);
       await page.getByTestId("add-settings-block-cta").click({ timeout: T });
       await page.getByTestId("machine-first-open").click({ timeout: T });
-      const chosenOrSuggested = page.getByTestId("machine-chosen").or(page.getByTestId("machine-suggestion"));
-      await expect(chosenOrSuggested).toBeVisible({ timeout: T });
-      if (await page.getByTestId("machine-suggestion").count()) await page.getByTestId("machine-suggestion-use").click();
+      // The visit also holds the existing-xCell area, which is the latest area, so the machine choice that comes back is the existing xCell; the
+      // previous MultiPlex setup is still shown beside it as reference.
       await expect(page.getByTestId("machine-prior-setup")).toContainText("1.85", { timeout: T });
       await expect(page.getByTestId("machine-prior-setup")).toContainText("0.033");
       await expect(page.locator("body")).not.toContainText(/\b1 pulse\b/);
