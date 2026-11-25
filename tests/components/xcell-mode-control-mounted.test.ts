@@ -135,6 +135,26 @@ describe("MultiPlex in the ONE Mode control (new area)", () => {
     expect(multiplexPill()!.getAttribute("aria-pressed")).toBe("false");
   });
 
+  it(`Thermolysis typed, then MultiPlex, then Blend: BLEND is the mode, never the parked Thermolysis; Thermolysis keeps what was typed under it`, async () => {
+      await mount(null);
+      await openPanel();
+      await pick("legacy:xcell");
+      await clickPill("Thermolysis");
+      const setValue = (el: HTMLInputElement, v: string) => act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(el, v);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      const intensity = () => Array.from(host!.querySelectorAll<HTMLLabelElement>("label")).find((l) => l.textContent?.includes("Thermolysis intensity"))!.querySelector("input") as HTMLInputElement;
+      await setValue(intensity(), "42");
+      await clickMultiplex();
+      await clickPill("Blend");
+      const selected = () => pills().filter((b) => b.className.includes("bg-neutral-900")).map((b) => b.textContent!.trim());
+      expect(selected(), "the clicked mode is the one selected").toEqual(["Blend"]);
+      await clickPill("Thermolysis");
+      expect(selected()).toEqual(["Thermolysis"]);
+      expect(intensity().value, "Thermolysis keeps what was typed under it").toBe("42");
+  });
+
   it("no route (contract not published, no unit): the xCell choice offers no MultiPlex", async () => {
     ctxBox.ctx = { ...CTX, multiplexRoute: null };
     await mount(null);

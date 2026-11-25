@@ -34,6 +34,7 @@ import { MachinePriorSetup } from "./machine-prior-setup";
 import { MachineRecordedSetups } from "./machine-recorded-setups";
 import {
   MachineSettingDraft,
+  type ParkedSettingDraft,
   MachineSettingDraftReset,
 } from "./machine-setting-draft";
 import type { GroupSubmission } from "@/lib/machines/setting-groups";
@@ -662,19 +663,37 @@ function MachineFirstSetupPanelImpl({
     : (chosen && mode) || savedUnavailable || modeUnresolved
       ? "native"
       : "none";
-  const lastMultiplexSeq = useRef(multiplexRequest?.seq ?? 0);
+  // WHAT SHE TYPED FOR EACH NATIVE IDENTITY, kept in memory while this NEW area is open, so choosing another machine or mode and coming back
+  // restores exactly her entries. Never stored. Cleared when the area is saved (a block exists) and dies with the panel.
+  const parkedNative = useRef(new Map<string, ParkedSettingDraft>());
   useEffect(() => {
-    if (!multiplexRequest || multiplexRequest.seq === lastMultiplexSeq.current) return;
-    lastMultiplexSeq.current = multiplexRequest.seq;
+    if (blockId) parkedNative.current.clear();
+  }, [blockId]);
+  // THE LAST REQUEST THIS PANEL HAS FINISHED WITH (applied, or dropped for a reason that will not change).
+  const handledMultiplexSeq = useRef(multiplexRequest?.seq ?? 0);
+  useEffect(() => {
+    if (!multiplexRequest || multiplexRequest.seq === handledMultiplexSeq.current) return;
     // A NEW area only: a saved area keeps the identity it was saved with.
-    if (!xcellRouted || !multiplexRoute || blockId) return;
+    if (!xcellRouted || !multiplexRoute || blockId) {
+      handledMultiplexSeq.current = multiplexRequest.seq;
+      return;
+    }
     // THE FREEZE WINS (Codex P1): a request that arrives while a create is pending or its response is unknown is dropped, never queued,
     // so no click can move the identity under an unresolved save.
-    if (identityFrozen || selectionPending) return;
+    if (identityFrozen) {
+      handledMultiplexSeq.current = multiplexRequest.seq;
+      return;
+    }
+    // A PICK STILL SETTLING (its preference write is in flight) HOLDS the request instead of losing it. Dropping it left the form showing
+    // two modes at once with the old machine still chosen, and her next click did nothing visible. The effect re-runs when the pick settles
+    // (`selectionPending` is a dependency) and applies the LATEST request; nothing is written for a new area here, so nothing can be
+    // moved under an unresolved save (that case is the freeze above).
+    if (selectionPending) return;
+    handledMultiplexSeq.current = multiplexRequest.seq;
     if (multiplexRequest.want) void chooseDevice(multiplexRoute.deviceId);
     else if (deviceId === multiplexRoute.deviceId) void chooseDevice(null, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [multiplexRequest]);
+  }, [multiplexRequest, selectionPending]);
   useEffect(() => {
     onKindChange?.(machineKind);
   }, [machineKind, onKindChange]);
@@ -1082,6 +1101,8 @@ function MachineFirstSetupPanelImpl({
               key={`${chosen.device.deviceId}::${chosen.profile.profileId}::${chosen.profile.version}::${mode.key}`}
               profile={chosen.profile}
               mode={mode}
+              restore={parkedNative.current.get(`${chosen.device.deviceId}::${chosen.profile.profileId}::${chosen.profile.version}::${mode.key}`) ?? null}
+              onPark={(p) => parkedNative.current.set(`${chosen.device.deviceId}::${chosen.profile.profileId}::${chosen.profile.version}::${mode.key}`, p)}
               // THE IDENTITY IS ADDED HERE, where the chosen unit is known.
               onDraftChange={(d) =>
                 onSettingDraft({
