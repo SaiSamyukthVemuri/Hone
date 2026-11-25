@@ -154,7 +154,7 @@ for (const device of DEVICES) {
       await page.getByTestId("mode-multiplex").click();
 
       // MultiPlex readings. Field order on the screen: EL, UL, slow duration, slow intensity, flash duration, flash intensity, pulse count, interval.
-      await expect(page.getByTestId("machine-setting-draft")).toBeVisible({ timeout: T });
+      await expect(page.getByRole("region", { name: "Treatment readings" }).getByTestId("machine-setting-draft")).toBeVisible({ timeout: T });
       const inputs = draft(page);
       await expect(inputs).toHaveCount(8);
       await inputs.nth(0).fill(V.el);

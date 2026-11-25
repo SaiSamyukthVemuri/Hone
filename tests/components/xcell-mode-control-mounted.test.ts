@@ -120,6 +120,10 @@ describe("MultiPlex in the ONE Mode control (new area)", () => {
     await clickMultiplex();
     expect(host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!.value).toBe("legacy:xcell");
     expect(multiplexPill()!.getAttribute("aria-pressed")).toBe("true");
+    const readings = host!.querySelector('section[aria-label="Treatment readings"]')!;
+    expect(readings.querySelector('[data-testid="machine-setting-draft"]')).toBeTruthy();
+    expect(readings.textContent).toContain("Pulse count");
+    expect(host!.querySelectorAll('[data-testid="machine-setting-draft"]')).toHaveLength(1);
     expect(pillLabels()).toEqual(["Thermolysis", "Blend", "Galvanic", "MultiPlex"]);
     expect(legacyFieldsShown(), "the old frequency/modality/readings are replaced").toBe(false);
     expect(host!.querySelector('[data-testid="machine-chosen"]')?.textContent).toContain("Dectro xCell");

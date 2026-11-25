@@ -59,6 +59,7 @@ export const LEGACY_AREA_NATIVE_MACHINE_REFUSED =
 
 export type MachineFirstSetupConnectedProps = {
   /** MultiPlex as a mode of the ONE xCell choice: the host form's Mode control asks here, and learns whether it may offer it. */
+  multiplexReadingsHost?: HTMLDivElement | null;
   multiplexRequest?: { seq: number; want: boolean } | null;
   onMultiplexRoute?: (route: { deviceId: string } | null) => void;
   /** The treatment block being charted, from the host form. */
@@ -229,6 +230,7 @@ export function MachineFirstSetupConnected({
   blockVersion,
   onBlockVersion,
   legacyReadingsLocked = false,
+  multiplexReadingsHost,
   multiplexRequest = null,
   onMultiplexRoute,
 }: MachineFirstSetupConnectedProps) {
@@ -687,6 +689,7 @@ export function MachineFirstSetupConnected({
       legacyMachine={ctx.legacyMachine}
       multiplexRoute={ctx.multiplexRoute}
       multiplexRequest={multiplexRequest}
+      multiplexReadingsHost={multiplexReadingsHost}
       nativeLocked={Boolean(blockId) && legacyReadingsLocked}
       // THE SAVED UNIT, from the area's own record: not from the panel's current pick, which can be a remembered
       // preference on an area that never saved an identity.
