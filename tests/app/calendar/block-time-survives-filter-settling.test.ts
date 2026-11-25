@@ -26,20 +26,20 @@ const saveButton = () => [...document.querySelectorAll("button")].find((b) => /^
 
 describe("Block time while the practitioner filter settles", () => {
   it("keeps the open panel and its Save button when the layout stops showing the page-level button", async () => {
-    await act(async () => root.render(createElement(CalendarBlockTime, { ...props, showButton: true })));
+    await act(async () => root.render(createElement(CalendarBlockTime, { ...props, showTrigger: true })));
     await act(async () => blockButton()!.click());
     expect(saveButton()).toBeTruthy();
 
     // The filter settles to one person: the by-practitioner layout (and its button) goes away.
-    await act(async () => root.render(createElement(CalendarBlockTime, { ...props, showButton: false })));
+    await act(async () => root.render(createElement(CalendarBlockTime, { ...props, showTrigger: false })));
     expect(blockButton()).toBeUndefined();
     expect(saveButton()).toBeTruthy();
   });
 
   it("with no panel open, the button follows the layout as before", async () => {
-    await act(async () => root.render(createElement(CalendarBlockTime, { ...props, showButton: false })));
+    await act(async () => root.render(createElement(CalendarBlockTime, { ...props, showTrigger: false })));
     expect(blockButton()).toBeUndefined();
-    await act(async () => root.render(createElement(CalendarBlockTime, { ...props, showButton: true })));
+    await act(async () => root.render(createElement(CalendarBlockTime, { ...props, showTrigger: true })));
     expect(blockButton()).toBeTruthy();
   });
 });
