@@ -253,6 +253,8 @@ export type MachineFirstSetupPanelProps = {
    * binds this NEW area to the routed unit, false returns it to the existing xCell workflow. Acted on only when the sequence changes.
    */
   multiplexRequest?: { seq: number; want: boolean } | null;
+  /** EXACTLY ONE per `want` request this panel handles: applied, or refused (not routable, a saved area, frozen, or the choice threw). Never silent. */
+  onMultiplexOutcome?: (seq: number, outcome: "applied" | "not_applied") => void;
   /** The area was saved as that workflow: open on it. */
   initialLegacyChosen?: boolean;
   /** A saved area that already holds xCell Pur readings: native machines are listed but cannot be chosen. */
@@ -377,6 +379,7 @@ function MachineFirstSetupPanelImpl({
   applyRequestOnMount = false,
   multiplexReadingsHost,
   multiplexRequest = null,
+  onMultiplexOutcome,
   initialLegacyChosen = false,
   nativeLocked = false,
   savedDeviceId = null,
@@ -694,12 +697,14 @@ function MachineFirstSetupPanelImpl({
     // A NEW area only: a saved area keeps the identity it was saved with.
     if (!xcellRouted || !multiplexRoute || blockId) {
       handledMultiplexSeq.current = multiplexRequest.seq;
+      if (multiplexRequest.want) onMultiplexOutcome?.(multiplexRequest.seq, "not_applied");
       return;
     }
     // THE FREEZE WINS (Codex P1): a request that arrives while a create is pending or its response is unknown is dropped, never queued,
-    // so no click can move the identity under an unresolved save.
+    // so no click can move the identity under an unresolved save. The host is told it was refused, so it never waits on it.
     if (identityFrozen) {
       handledMultiplexSeq.current = multiplexRequest.seq;
+      if (multiplexRequest.want) onMultiplexOutcome?.(multiplexRequest.seq, "not_applied");
       return;
     }
     // A PICK STILL SETTLING (its preference write is in flight) HOLDS the request instead of losing it. Dropping it left the form showing
@@ -708,8 +713,13 @@ function MachineFirstSetupPanelImpl({
     // moved under an unresolved save (that case is the freeze above).
     if (selectionPending) return;
     handledMultiplexSeq.current = multiplexRequest.seq;
-    if (multiplexRequest.want) void chooseDevice(multiplexRoute.deviceId);
-    else if (deviceId === multiplexRoute.deviceId) void chooseDevice(null, true);
+    if (multiplexRequest.want) {
+      const seq = multiplexRequest.seq;
+      chooseDevice(multiplexRoute.deviceId).then(
+        () => onMultiplexOutcome?.(seq, "applied"),
+        () => onMultiplexOutcome?.(seq, "not_applied"),
+      );
+    } else if (deviceId === multiplexRoute.deviceId) void chooseDevice(null, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [multiplexRequest, selectionPending]);
   useEffect(() => {

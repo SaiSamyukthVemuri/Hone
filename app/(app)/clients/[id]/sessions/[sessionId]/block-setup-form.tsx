@@ -20,7 +20,7 @@
 // actions already accept every field used here, no action behavior
 // change.
 
-import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, useTransition } from "react";
+import { Fragment, useCallback, useEffect, useId, useMemo, useReducer, useRef, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { SaveStatus } from "@/components/sessions/save-status";
@@ -131,6 +131,13 @@ import {
 } from "./machine-setup-actions";
 import type { GroupSubmission } from "@/lib/machines/setting-groups";
 import {
+  MULTIPLEX_LOAD_FAILED_MESSAGE,
+  MULTIPLEX_LOAD_INITIAL,
+  MULTIPLEX_LOADING_MESSAGE,
+  multiplexLoadStep,
+  multiplexSaveGate,
+} from "@/lib/machines/multiplex-load";
+import {
   createTreatmentAreaWithEntryAction,
   updateTreatmentAreaWithEntryAction,
 } from "./block-actions";
@@ -153,8 +160,6 @@ export function leaveGuardArmed(dirty: boolean, saveConfirmed: boolean): boolean
 const EDIT_SAVE_UNCONFIRMED =
   "The connection failed, so whether your changes were saved is not known. Your edits are still here: press Save to try again, or reload the page to see what is saved.";
 
-const MULTIPLEX_LOADING_MESSAGE = "Loading MultiPlex…";
-const MULTIPLEX_LOAD_FAILED_MESSAGE = "MultiPlex could not be loaded, so nothing was saved. Pick MultiPlex again, or choose another mode.";
 const PRIMARY_AREA_MAX = 60;
 const CUSTOM_AREA_DETAIL_MAX = 60;
 const MINUTES_MAX = 1440;
@@ -597,14 +602,40 @@ export function BlockSetupForm({
   // area. A saved area is recognised by its stored unit, never by a control.
   const [multiplexReadingsHost, setMultiplexReadingsHost] = useState<HTMLDivElement | null>(null);
   const [multiplexRoute, setMultiplexRoute] = useState<{ deviceId: string } | null>(multiplexOffer);
-  const [multiplexRequest, setMultiplexRequest] = useState<{ seq: number; want: boolean } | null>(null);
-  // THE LOAD A MULTIPLEX CLICK STARTS WHEN THE MACHINE PANEL WAS NEVER OPENED. While it runs, Save is held (a Save now would read the previous
-  // machine and save a legacy area); if it fails, Save refuses with a plain message and keeps the draft, until she picks MultiPlex again or a mode.
-  const [multiplexLoad, setMultiplexLoad] = useState<"loading" | "failed" | null>(null);
-  // THE LATEST REQUEST, read when a load's answer ARRIVES: an answer to a request she has since replaced (a legacy mode chosen, MultiPlex undone) is
-  // stale and must neither hold nor refuse a Save she is now entitled to make.
-  const multiplexRequestRef = useRef(multiplexRequest);
-  multiplexRequestRef.current = multiplexRequest;
+  // THE ONE OWNER of the MultiPlex load/apply state (lib/machines/multiplex-load.ts). The panel executes and reports back under a token; nothing
+  // else keeps a copy. Save and Save visit read the same derived `multiplexLoad`.
+  const [multiplexState, dispatchMultiplex] = useReducer(multiplexLoadStep, MULTIPLEX_LOAD_INITIAL);
+  const multiplexStateRef = useRef(multiplexState);
+  multiplexStateRef.current = multiplexState;
+  const multiplexRequest = useMemo(
+    () => (multiplexState.seq > 0 ? { seq: multiplexState.seq, want: multiplexState.want } : null),
+    [multiplexState.seq, multiplexState.want],
+  );
+  const multiplexLoad: "loading" | "failed" | null =
+    multiplexSaveGate(multiplexState) === "held" ? "loading" : multiplexSaveGate(multiplexState) === "refused" ? "failed" : null;
+  // The token a load answer must carry while loading, else null.
+  const multiplexLoadToken = multiplexState.phase === "loading" ? multiplexState.seq : null;
+  // A Save visit pressed while MultiPlex was loading or failed leaves its reason on the section for THAT token only (derived, never cleared by hand).
+  const [visitNoticeSeq, setVisitNoticeSeq] = useState<number | null>(null);
+  const multiplexNotice =
+    visitNoticeSeq !== null && visitNoticeSeq === multiplexState.seq
+      ? multiplexState.phase === "loading"
+        ? MULTIPLEX_LOADING_MESSAGE
+        : multiplexState.phase === "failed"
+          ? MULTIPLEX_LOAD_FAILED_MESSAGE
+          : null
+      : null;
+  // THE PANEL IS PRESENT, observed here so an unmount mid-load ends in `failed`, never in `loading` forever. React StrictMode runs an effect cleanup and its
+  // setup back to back in one commit, so absence is judged one microtask later: a remount in the same commit never reports it.
+  const multiplexPanelPresentRef = useRef(true);
+  const onMultiplexPanelPresence = useCallback((present: boolean) => {
+    multiplexPanelPresentRef.current = present;
+    if (present) return;
+    queueMicrotask(() => {
+      const st = multiplexStateRef.current;
+      if (!multiplexPanelPresentRef.current && st.phase === "loading") dispatchMultiplex({ t: "panelGone", token: st.seq });
+    });
+  }, []);
   // THE SAVED MACHINE FOLLOWS THE PANEL'S WRITES (Codex P2): once a machine change is written, the panel's own written identity is the
   // record, not the block prop this form first rendered with. `undefined` = nothing written yet, so the prop still stands.
   const [writtenDeviceId, setWrittenDeviceId] = useState<string | null | undefined>(undefined);
@@ -1824,13 +1855,13 @@ export function BlockSetupForm({
   const saveRootRef = useRef<HTMLDivElement>(null);
   useRegisterVisitSaver(`block:${block?.id ?? "new"}`, block ? "Treatment area" : "New treatment area", saveRootRef, () => {
     if (saveBlocked) {
-      // shown on this section, where the result line sends the practitioner
-      if (multiplexLoad === "loading") setError(MULTIPLEX_LOADING_MESSAGE);
+      // shown on this section (derived from the load state), where the result line sends the practitioner
+      if (multiplexLoad === "loading") setVisitNoticeSeq(multiplexState.seq);
       return Promise.resolve<SaveOutcome>({ status: "held", message: heldMessage });
     }
     // A FAILED MultiPlex load has nothing dirty to save, so the generic "nothing to save" answer below would let Save visit pass silently: refuse it.
     if (multiplexLoad === "failed") {
-      setError(MULTIPLEX_LOAD_FAILED_MESSAGE);
+      setVisitNoticeSeq(multiplexState.seq);
       return Promise.resolve<SaveOutcome>({ status: "held", message: MULTIPLEX_LOAD_FAILED_MESSAGE });
     }
     // AN EXISTING AREA WITH UNSAVED MACHINE SETTINGS IS HELD: saving the area closes its form, which would unmount the readings entry and
@@ -2092,17 +2123,16 @@ export function BlockSetupForm({
         }
         onKindChange={onKindChange}
         multiplexRequest={multiplexRequest}
+        multiplexLoadToken={multiplexLoadToken}
         onMultiplexRoute={setMultiplexRoute}
-        onMultiplexLoad={(st) => {
-          // Applied only while the latest request still wants MultiPlex; an answer after a different mode was chosen (or MultiPlex undone) is stale.
-          if (multiplexRequestRef.current?.want) {
-            setMultiplexLoad(st === "done" ? null : st);
-            // the "loading" line a held Save visit left on the section goes once the load is done
-            if (st === "done") setError((e) => (e === MULTIPLEX_LOADING_MESSAGE ? null : e));
-          }
-        }}
+        onMultiplexSettled={(token, result) => dispatchMultiplex({ t: "settled", token, result })}
+        onMultiplexOutcome={(token, outcome) => dispatchMultiplex({ t: outcome === "applied" ? "applied" : "notApplied", token })}
+        onPanelPresence={onMultiplexPanelPresence}
         multiplexReadingsHost={multiplexReadingsHost}
-        onSavedDeviceChange={setWrittenDeviceId}
+        onSavedDeviceChange={(id) => {
+          setWrittenDeviceId(id);
+          dispatchMultiplex({ t: "identityWritten" });
+        }}
         onIdentityDraft={block ? undefined : onIdentityDraft}
         onChosenModel={setChosenModel}
         blockVersion={blockVersion}
@@ -2368,10 +2398,9 @@ export function BlockSetupForm({
                   if (base !== draft) setDraft({ ...base, mode: selected ? "" : m.value });
                   else update("mode", selected ? "" : m.value);
                   // Leaving MultiPlex returns the area to the existing xCell workflow.
-                  // ALWAYS a new request, even before MultiPlex is selected: a MultiPlex click whose load is still pending is replaced here, so its
-                  // late answer cannot select MultiPlex over this mode or refuse the Save.
-                  setMultiplexRequest((r) => ({ seq: (r?.seq ?? 0) + 1, want: false }));
-                  setMultiplexLoad(null);
+                  // ALWAYS a new token, even before MultiPlex is selected: a MultiPlex click whose load is pending is replaced here, so its late answer
+                  // matches nothing and can neither select MultiPlex over this mode nor refuse the Save.
+                  dispatchMultiplex({ t: "legacy" });
                 }}
                 className={`rounded-full border px-4 py-2 text-sm transition ${
                   selected
@@ -2390,8 +2419,7 @@ export function BlockSetupForm({
               aria-pressed={multiplexSelected}
               disabled={multiplexSaved || draftFrozen || identityWritePending}
               onClick={() => {
-                if (multiplexSelected) setMultiplexLoad(null);
-                setMultiplexRequest((r) => ({ seq: (r?.seq ?? 0) + 1, want: !multiplexSelected }));
+                dispatchMultiplex({ t: multiplexSelected ? "undo" : "select" });
               }}
               className={`rounded-full border px-4 py-2 text-sm transition ${
                 multiplexSelected
@@ -2776,9 +2804,9 @@ export function BlockSetupForm({
         </p>
       )}
 
-      {error && (
+      {(error ?? multiplexNotice) && (
         <p className="text-sm text-red-600 dark:text-red-400" role="alert">
-          {error}
+          {error ?? multiplexNotice}
         </p>
       )}
 

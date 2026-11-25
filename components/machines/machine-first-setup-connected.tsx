@@ -63,8 +63,14 @@ export type MachineFirstSetupConnectedProps = {
   multiplexReadingsHost?: HTMLDivElement | null;
   multiplexRequest?: { seq: number; want: boolean } | null;
   onMultiplexRoute?: (route: { deviceId: string } | null) => void;
-  /** The load a MultiPlex click starts (the panel was never opened): the host holds Save while it runs and refuses it if it fails. */
-  onMultiplexLoad?: (state: "loading" | "done" | "failed") => void;
+  /** THE HOST'S LOADING TOKEN (lib/machines/multiplex-load.ts), or null. While it is set the panel makes sure a context WITH a MultiPlex route is loaded. */
+  multiplexLoadToken?: number | null;
+  /** The answer of the load that serves the host's CURRENT token (a joiner is answered under the token it joined with, read when the load settles). */
+  onMultiplexSettled?: (token: number, result: "ok" | "no_route" | "error") => void;
+  /** Exactly one of these per request the panel was asked to apply: the choice is applied, or it is refused (frozen, gated, not routable). */
+  onMultiplexOutcome?: (token: number, outcome: "applied" | "not_applied") => void;
+  /** Mounted / unmounted, so the host can end a load nobody is left to answer. */
+  onPanelPresence?: (present: boolean) => void;
   /** The treatment block being charted, from the host form. */
   blockId?: string | null;
   /**
@@ -236,7 +242,10 @@ export function MachineFirstSetupConnected({
   multiplexReadingsHost,
   multiplexRequest = null,
   onMultiplexRoute,
-  onMultiplexLoad,
+  multiplexLoadToken = null,
+  onMultiplexSettled,
+  onMultiplexOutcome,
+  onPanelPresence,
 }: MachineFirstSetupConnectedProps) {
   // WHAT THIS AREA HAS PERSISTED, tracked from this panel's own successful
   // identity writes. The prop is the identity the page
@@ -255,39 +264,66 @@ export function MachineFirstSetupConnected({
   // A hook: called here, before any early return, never conditionally. Read by the one-choice preselect below.
   const isNewView = useChartingView() === "new";
 
-  // EVERY LOAD REPORTS ITS OUTCOME, however it was started (a MultiPlex click, "Choose machine", a saved identity): a MultiPlex click that adopts a
-  // load already in flight is answered by THAT load, so the report cannot live only on the path a MultiPlex click starts. The host ignores a report
-  // unless its latest request still wants MultiPlex. Read through a ref so a changing callback never re-creates `open`.
-  const onMultiplexLoadRef = useRef(onMultiplexLoad);
-  onMultiplexLoadRef.current = onMultiplexLoad;
-  const open = useCallback(async (): Promise<boolean> => {
+  // ONE LOAD IN FLIGHT. "Choose machine", a saved identity and a MultiPlex request all join it, so there is never a second load racing the first.
+  // It reports nothing to the host by itself: the token effect below does, under the token current WHEN IT SETTLES.
+  type LoadResult = "ok" | "no_route" | "error";
+  const inflightRef = useRef<Promise<LoadResult> | null>(null);
+  const ensureContext = useCallback((): Promise<LoadResult> => {
+    if (inflightRef.current) return inflightRef.current;
     setState("loading");
-    try {
-      const loader =
-        load ??
-        (async () => {
-          const mod = await import(
-            "@/app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions"
-          );
-          return mod.loadMachineSetupContext({ clientId, sessionId, blockId });
-        });
-      const loaded = await loader();
-      setCtx(loaded);
-      // The host form's Mode control learns whether MultiPlex may be offered, and under which unit a saved area is recognised.
-      // Reported where the context ARRIVES, not from an effect: the wrapper keeps its single open-on-saved-identity effect.
-      onMultiplexRoute?.(loaded.multiplexRoute ? { deviceId: loaded.multiplexRoute.deviceId } : null);
-      setState("idle");
-      // A load that resolves WITHOUT a MultiPlex route (the contract could not be read) cannot apply MultiPlex: that is a failed MultiPlex load, never "done".
-      onMultiplexLoadRef.current?.(loaded.multiplexRoute ? "done" : "failed");
-      return true;
-    } catch {
-      // Charting below is unaffected by a failed identity read, so this is
-      // reported in place rather than escalated.
-      setState("failed");
-      onMultiplexLoadRef.current?.("failed");
-      return false;
-    }
+    const p = (async (): Promise<LoadResult> => {
+      try {
+        const loader =
+          load ??
+          (async () => {
+            const mod = await import(
+              "@/app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions"
+            );
+            return mod.loadMachineSetupContext({ clientId, sessionId, blockId });
+          });
+        const loaded = await loader();
+        setCtx(loaded);
+        // The host form's Mode control learns under which unit a saved area is recognised. A route-less answer is NEVER reported as "no route":
+        // the pill the server offered stays, so a load that comes back route-less can be retried.
+        if (loaded.multiplexRoute) onMultiplexRoute?.({ deviceId: loaded.multiplexRoute.deviceId });
+        setState("idle");
+        return loaded.multiplexRoute ? "ok" : "no_route";
+      } catch {
+        // Charting below is unaffected by a failed identity read, so this is
+        // reported in place rather than escalated.
+        setState("failed");
+        return "error";
+      } finally {
+        inflightRef.current = null;
+      }
+    })();
+    inflightRef.current = p;
+    return p;
   }, [load, clientId, sessionId, blockId]);
+  const open = useCallback(async (): Promise<boolean> => (await ensureContext()) !== "error", [ensureContext]);
+
+  // THE HOST'S TOKEN IS THE ONLY THING THAT STARTS A MULTIPLEX LOAD. A good cached context (one WITH a route) is reused: the panel below then applies
+  // the request and reports. Otherwise the load runs (or is joined) and its answer goes to the host under the token current at that moment, so a load
+  // started for one token answers the next when the first was replaced while it ran; the host ignores any answer that is not its current token.
+  const loadTokenRef = useRef(multiplexLoadToken);
+  loadTokenRef.current = multiplexLoadToken;
+  const settledRef = useRef(onMultiplexSettled);
+  settledRef.current = onMultiplexSettled;
+  useEffect(() => {
+    if (multiplexLoadToken === null) return;
+    if (ctx !== null && ctx.multiplexRoute) return;
+    void ensureContext().then((result) => {
+      const token = loadTokenRef.current;
+      if (token !== null) settledRef.current?.(token, result);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [multiplexLoadToken]);
+  const presenceRef = useRef(onPanelPresence);
+  presenceRef.current = onPanelPresence;
+  useEffect(() => {
+    presenceRef.current?.(true);
+    return () => presenceRef.current?.(false);
+  }, []);
 
   // A SAVED CHOICE OPENS THE PANEL AT ONCE. Only an area that already carries
   // an identity does this, so the on-mount server action stays out of every
@@ -303,29 +339,6 @@ export function MachineFirstSetupConnected({
     if (hasSavedIdentity && state === "idle" && ctx === null) void open();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasSavedIdentity]);
-  // the MultiPlex pill sits in the host's Mode control from the first visit, BEFORE this panel has loaded. A click on it opens the panel
-  // (the same load "Choose machine" does) and the panel then applies THAT request on mount, instead of treating it as already handled.
-  const requestBeforeOpenRef = useRef<number | null>(null);
-  // THE LAST REQUEST THAT STARTED A LOAD, so a failed load is retried by a NEW click only (never by the state change itself).
-  const loadedForSeqRef = useRef(0);
-  useEffect(() => {
-    if (!multiplexRequest || ctx !== null) return;
-    if (multiplexRequest.want && (state === "idle" || state === "failed") && multiplexRequest.seq !== loadedForSeqRef.current) {
-      loadedForSeqRef.current = multiplexRequest.seq;
-      requestBeforeOpenRef.current = multiplexRequest.seq;
-      // The host holds Save until this load settles: a Save pressed now would otherwise read the previous machine and save a legacy area.
-      onMultiplexLoad?.("loading");
-      void open();
-    } else if (multiplexRequest.want && state !== "idle" && state !== "failed" && multiplexRequest.seq !== loadedForSeqRef.current) {
-      // A NEWER click while the load it replaced is still in flight: that load answers for it too (the host drops answers to anything but the latest
-      // request), so adopt the new request and hold Save again.
-      loadedForSeqRef.current = multiplexRequest.seq;
-      requestBeforeOpenRef.current = multiplexRequest.seq;
-      onMultiplexLoad?.("loading");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [multiplexRequest, ctx, state]);
-
   if (!ctx) {
     return (
       <section
@@ -728,8 +741,11 @@ export function MachineFirstSetupConnected({
       // area was saved as it.
       legacyMachine={ctx.legacyMachine}
       multiplexRoute={ctx.multiplexRoute}
-      multiplexRequest={multiplexRequest}
-      applyRequestOnMount={requestBeforeOpenRef.current !== null && requestBeforeOpenRef.current === multiplexRequest?.seq}
+      // THE PANEL ACTS ON A REQUEST ONLY ONCE THE CONTEXT CARRIES A ROUTE. A route-less context (a failed read of the contract) is not a reason to refuse
+      // the request: the host retries the load and the request is applied when the context that has a route arrives, under the same token.
+      multiplexRequest={ctx.multiplexRoute ? multiplexRequest : null}
+      applyRequestOnMount={multiplexLoadToken !== null && multiplexLoadToken === multiplexRequest?.seq}
+      onMultiplexOutcome={onMultiplexOutcome}
       multiplexReadingsHost={multiplexReadingsHost}
       nativeLocked={Boolean(blockId) && legacyReadingsLocked}
       // THE SAVED UNIT, from the area's own record: not from the panel's current pick, which can be a remembered

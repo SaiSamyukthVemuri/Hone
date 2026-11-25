@@ -523,4 +523,64 @@ describe("MultiPlex in a studio with no registered machine", () => {
     await act(async () => { saveButton().click(); });
     expect(create, "another mode is a deliberate choice and saves").toHaveBeenCalledTimes(1);
   });
+
+  // CODEX (4th round): a route-less answer used to remove the pill and strand the retry. The pill the server offered stays, and clicking it reloads.
+  it("a ROUTE-LESS load keeps the MultiPlex pill: Save refuses, the pill is still there, and clicking it reloads and applies once the database recovers", async () => {
+    const create = await createAction();
+    create.mockClear();
+    create.mockResolvedValue({ ok: true, blockId: "new-b1" });
+    actions.loadMachineSetupContext.mockClear();
+    actions.loadMachineSetupContext.mockImplementationOnce((async () => ({ ...ZERO(), multiplexRoute: null })) as never);
+    await mount(null, { deviceId: PLACEHOLDER.deviceId });
+    await clickMultiplex();
+    expect(multiplexPill(), "the pill the server offered is still offered").not.toBeNull();
+    expect(multiplexPill()!.getAttribute("aria-pressed")).toBe("false");
+    await act(async () => { saveButton().click(); });
+    expect(create).not.toHaveBeenCalled();
+    expect(host!.textContent).toContain("Pick MultiPlex again, or choose another mode");
+    await clickMultiplex();
+    expect(actions.loadMachineSetupContext, "the retry loads again").toHaveBeenCalledTimes(2);
+    expect(multiplexPill()!.getAttribute("aria-pressed")).toBe("true");
+    expect(saveButton().disabled).toBe(false);
+    await act(async () => { saveButton().click(); });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(create.mock.calls[0])).toContain("multiplex");
+  });
+
+  it("a FAILED (rejected) load stays retryable the same way: the pill is there and the next click loads again", async () => {
+    actions.loadMachineSetupContext.mockClear();
+    actions.loadMachineSetupContext.mockImplementationOnce((() => Promise.reject(new Error("network"))) as never);
+    await mount(null, { deviceId: PLACEHOLDER.deviceId });
+    await clickMultiplex();
+    expect(multiplexPill()).not.toBeNull();
+    await clickMultiplex();
+    expect(actions.loadMachineSetupContext).toHaveBeenCalledTimes(2);
+    expect(multiplexPill()!.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  // CACHE: a good context is reused. off -> MultiPlex again does not load a second time and is still applied (and the hold lifts).
+  it("MultiPlex, a legacy mode, then MultiPlex again REUSES the loaded context: one load in total, and the second choice is applied", async () => {
+    actions.loadMachineSetupContext.mockClear();
+    await mount(null, { deviceId: PLACEHOLDER.deviceId });
+    await clickMultiplex();
+    expect(multiplexPill()!.getAttribute("aria-pressed")).toBe("true");
+    await clickPill("Blend");
+    expect(multiplexPill()!.getAttribute("aria-pressed")).toBe("false");
+    await clickMultiplex();
+    expect(actions.loadMachineSetupContext, "no second load").toHaveBeenCalledTimes(1);
+    expect(multiplexPill()!.getAttribute("aria-pressed")).toBe("true");
+    expect(saveButton().disabled).toBe(false);
+  });
+
+  // A SAVED MULTIPLEX AREA NEVER GATES SAVE ON A LOAD: its panel opens itself (a saved identity), but only a click mints the token that holds Save.
+  it("a SAVED MultiPlex area is never held by the panel's own load: Save stays enabled while it is still loading", async () => {
+    let release: (v: unknown) => void = () => undefined;
+    actions.loadMachineSetupContext.mockImplementationOnce(() => new Promise((r) => { release = r; }) as never);
+    await mount({ ...BLOCK, studio_machine_id: "unit-pur", machine_mode_key: "multiplex" });
+    await act(async () => { await Promise.resolve(); });
+    expect(saveButton().disabled, "not held by a load nobody clicked").toBe(false);
+    expect(saveButton().textContent).not.toContain("Loading MultiPlex");
+    await act(async () => { release(CTX); });
+    expect(saveButton().disabled).toBe(false);
+  });
 });

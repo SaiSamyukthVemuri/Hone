@@ -425,18 +425,21 @@ describe("the connected wrapper makes NO request until asked", () => {
     // only for an area that already carries a SAVED machine (migration 0301):
     // a reopened area opens on its machine instead of an empty "Choose
     // machine". Every other charting path still makes no request on mount.
-    // This adds ONE more, and it too makes no request on mount: it acts only on a MultiPlex CLICK (a request that arrives while the panel is
-    // closed opens it so the click is applied), and returns at once without one. It is pinned below.
-    expect((code.match(/useEffect\(/g) ?? []).length).toBe(2);
-    const requestEffect = code.slice(code.indexOf("requestBeforeOpenRef"), code.indexOf("}, [multiplexRequest, ctx, state]);"));
-    expect(requestEffect).toContain("if (!multiplexRequest || ctx !== null) return;");
-    expect(requestEffect).toContain("multiplexRequest.want");
+    // Two more, and neither makes a request on mount. The TOKEN effect acts only on a token the host minted for a MultiPlex CLICK and returns at once
+    // without one (a saved area and "Choose machine" never mint it); the PRESENCE effect only tells the host the panel is mounted or gone. Both pinned below.
+    expect((code.match(/useEffect\(/g) ?? []).length).toBe(3);
+    const tokenEffect = code.slice(code.indexOf("const loadTokenRef"), code.indexOf("}, [multiplexLoadToken]);"));
+    expect(tokenEffect).toContain("if (multiplexLoadToken === null) return;");
+    expect(tokenEffect).toContain("ctx.multiplexRoute");
+    const presenceEffect = code.slice(code.indexOf("const presenceRef"), code.indexOf("}, []);", code.indexOf("const presenceRef")));
+    expect(presenceEffect).toContain("presenceRef.current?.(true)");
+    expect(presenceEffect, "the presence effect makes no request").not.toMatch(/open\(|ensureContext|load\(/);
     expect(code).toMatch(/if \(hasSavedIdentity && state === "idle" && ctx === null\) void open\(\)/);
     expect(code).toContain("useCallback");
     // ...and that one effect has NO CLEANUP and reports nothing to the host: a cleanup keyed on
     // [hasSavedIdentity] runs when the identity is WRITTEN, while the reading entry is still mounted, and used to clear the host's
     // draft and hold. Unsaved state is the owners' registry entries (components/machines/draft-registry.tsx), never this wrapper's.
-    const effect = code.slice(code.indexOf("useEffect("), code.indexOf("}, [hasSavedIdentity]);"));
+    const effect = code.slice(code.lastIndexOf("useEffect(", code.indexOf("}, [hasSavedIdentity]);")), code.indexOf("}, [hasSavedIdentity]);"));
     expect(effect, "the open-on-identity effect was not found").toContain("void open()");
     expect(effect, "the open-on-identity effect returns a cleanup").not.toMatch(/return\s*(\(\)|\w+)?\s*(=>|;|\()/);
     expect(code, "the wrapper reports a draft or hold to the host").not.toMatch(/onRevision(Draft|Unresolved)/);
