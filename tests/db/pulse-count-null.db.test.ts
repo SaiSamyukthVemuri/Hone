@@ -23,12 +23,27 @@ const write = async (sess: { sessionId: string; blockId: string }, entry: string
     [entry, sess.sessionId, sess.blockId, pulse, delay])).rows[0].write_electrolysis_entry as string;
 const pulseOf = async (entry: string) => (await adminQuery(`select pulse_count from public.electrolysis_entries where id=$1`, [entry])).rows[0]?.pulse_count as number | null;
 
+// THE CATALOG IS LEFT AS IT WAS FOUND. This file replays the proposal SQL (and its down) against the database it runs on, which on a shared stack
+// is everyone's, so the column's starting state is recorded and put back afterwards: a stack that began NOT NULL ends NOT NULL (blank counts this
+// file stored are cleaned first, because the down refuses while any exist), and one that began nullable is left nullable.
+let startedNotNull = false;
+const pulseNullable = async () =>
+  (await adminQuery(`select is_nullable from information_schema.columns where table_name='electrolysis_entries' and column_name='pulse_count'`)).rows[0].is_nullable as string;
 beforeAll(async () => {
-  const nn = (await adminQuery(`select is_nullable from information_schema.columns where table_name='electrolysis_entries' and column_name='pulse_count'`)).rows[0].is_nullable;
-  if (nn === "NO") await adminQuery(readFileSync(UP, "utf8"));
+  startedNotNull = (await pulseNullable()) === "NO";
+  if (startedNotNull) await adminQuery(readFileSync(UP, "utf8"));
   S = await seedStudio("pulse-null");
 });
-afterAll(closePool);
+afterAll(async () => {
+  try {
+    if (startedNotNull && (await pulseNullable()) === "YES") {
+      await adminTx(async (q) => { await q(`set local session_replication_role = replica`); await q(`update public.electrolysis_entries set pulse_count = 1 where pulse_count is null`); });
+      await adminQuery(readFileSync(DOWN, "utf8"));
+    }
+  } finally {
+    await closePool();
+  }
+});
 
 describe("pulse count may be blank", () => {
   it("an untouched count stores NULL; a touched count stores as entered; the range check still refuses 0 and 11", async () => {

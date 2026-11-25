@@ -14,6 +14,11 @@ import {
   type RegisterResult,
 } from "@/components/machines/machine-register-form";
 import { OwnerOnlyNotice } from "@/components/settings/view-heading";
+import { StudioMachinesForm } from "@/components/machines/studio-machines-form";
+import { readStudioMachineSettings, STUDIO_MACHINE_MODELS } from "@/lib/machines/studio-machine-settings";
+import { setStudioMachineDefaultAction, setStudioMachineModelAction } from "./studio-machine-actions";
+import { studioMachineRpc } from "@/lib/machines/studio-machine-rpc";
+import { chartingRolloutFor } from "@/lib/rollouts/charting-rollout";
 
 export default async function MachineSettingsPage() {
   const { practitioner, studio } = await requirePractitionerWithStudio();
@@ -45,6 +50,12 @@ export default async function MachineSettingsPage() {
     label: machineModelLabel(p),
   }));
 
+  // THE OWNER'S SWITCHES. Shown only while the platform rollout is on for this studio (the commands refuse otherwise), and only when the
+  // read worked: a failed read says so rather than showing every machine as off.
+  const switchesAvailable = await chartingRolloutFor(studio.id);
+  const rpc = studioMachineRpc;
+  const switches = switchesAvailable ? await readStudioMachineSettings(studio.id, rpc) : null;
+
   async function register(input: {
     profileId: string;
     displayName: string;
@@ -69,6 +80,27 @@ export default async function MachineSettingsPage() {
           {OWNER_INPUT_REQUEST}
         </p>
       </section>
+
+      {switchesAvailable && (
+        <section aria-labelledby="studio-machines-heading">
+          <h3 id="studio-machines-heading" className="text-sm font-semibold">Studio machines</h3>
+          <div className="mt-3">
+            {switches ? (
+              <StudioMachinesForm
+                // KEYED BY THE SERVER STATE: registering a first Senior or Junior unit turns that model on in the database, and the form keeps its own copy of the
+                // state, so without a new key the switches kept showing it off after the page re-rendered with the new state.
+                key={`${switches.enabled.slice().sort().join(",")}|${switches.defaultProfileId ?? ""}`}
+                models={STUDIO_MACHINE_MODELS.map((m) => ({ profileId: m.profileId, name: m.name, description: m.description }))}
+                initial={switches}
+                setModel={setStudioMachineModelAction}
+                setDefault={setStudioMachineDefaultAction}
+              />
+            ) : (
+              <p className="text-sm text-red-700 dark:text-red-400" data-testid="studio-machines-unavailable">Your machine settings could not be loaded just now. Please reload the page.</p>
+            )}
+          </div>
+        </section>
+      )}
 
       <section aria-labelledby="register-heading">
         <h3 id="register-heading" className="text-sm font-semibold">
