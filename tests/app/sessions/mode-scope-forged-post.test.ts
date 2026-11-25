@@ -136,13 +136,14 @@ describe("EDIT with the rollout ON: the same rule, and the freeze", () => {
       expect(h.rpc).not.toHaveBeenCalled();
     }
   });
-  it("the freeze reads the entries BY BLOCK and STUDIO (not the client's entry id), and ANY live entry with readings freezes", async () => {
+  it("the freeze reads the entries BY BLOCK (not the client's entry id) and NEVER by studio_id (the entries table has no such column), and ANY live entry with readings freezes", async () => {
     h.stored.block = { ...h.stored.block, mode: "thermo" };
     h.stored.entry = { thermolysis_intensity_percent: 40 };
     await update({ mode: "galv", firstEntryId: "someone-elses-entry" });
     const f = h.filters.filter((x) => x[0] === "electrolysis_entries");
     expect(f).toContainEqual(["electrolysis_entries", "block_id", "b1"]);
-    expect(f).toContainEqual(["electrolysis_entries", "studio_id", "st1"]);
+    expect(f.some((x) => x[1] === "studio_id"), "electrolysis_entries has no studio_id column: filtering on it fails the real read").toBe(false);
+    expect(h.filters).toContainEqual(["session_blocks", "studio_id", "st1"]);
     expect(f.some((x) => x[1] === "id"), "never filtered by a client-supplied entry id").toBe(false);
   });
   it("a REMOVED entry that holds readings does not freeze the block when the live entries hold none", async () => {
