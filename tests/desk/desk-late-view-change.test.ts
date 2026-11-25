@@ -20,7 +20,7 @@ const WEEK = "2099-06-15";
 const NEXT_MONTH = "2099-07-01";
 const maya = { id: "maya", name: "Maya" };
 const booking = {
-  timezone: "America/Toronto", studioId: "studio", practitioners: [maya, { id: "chloe", name: "Chloe" }],
+  timezone: "America/Toronto", studioId: "studio", practitioners: [maya, { id: "priya", name: "Priya" }],
   services: [{ id: "svc-1", name: "Consultation", durationMinutes: 30 }],
 };
 const visit = (date: string): DeskScheduleRow => ({
