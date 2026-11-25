@@ -1,4 +1,4 @@
--- Seat entitlements for studios provisioned by platform billing (0385).
+-- Seat entitlements for studios provisioned by platform billing (0387).
 begin;
 set local lock_timeout = '5s';
 

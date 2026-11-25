@@ -1,6 +1,6 @@
 # Test a paid Hone signup
 
-Use an isolated Hone app and database with the draft signup branch and migrations 0385 and 0386. Keep the production rollout flag off. The sandbox billing account is Hone Care inc sandbox. Stripe’s invoice previews returned USD 49.00 for Solo and USD 99.00 for Studio at quantity one, with automatic tax off. These previews did not collect payment. The owner portal configuration supports invoices and payment-method updates.
+Use an isolated Hone app and database with the draft signup branch and apply migration 0387 (signup) followed by 0388 (team seats). Keep the production rollout flag off. The sandbox billing account is Hone Care inc sandbox. Stripe’s invoice previews returned USD 49.00 for Solo and USD 99.00 for Studio at quantity one, with automatic tax off. These previews did not collect payment. The owner portal configuration supports invoices and payment-method updates.
 
 | Sandbox setting | Value to use |
 | --- | --- |
@@ -20,4 +20,4 @@ Install the billing sandbox API key as `HONE_BILLING_STRIPE_SECRET_KEY` in the t
 5. Open Settings → Team as the paid owner. Solo starts at 1/1 practitioner seats with no receptionist. Studio starts at 1/3 practitioners with a separate 0/1 receptionist seat. Enable the existing desk rollout in the isolated test app to exercise receptionist invitations. Invite two practitioners and one receptionist. Pending invitations reserve seats, including an invitation for another owner. Accept an invitation, revoke another and refill it. Attempt two simultaneous invitations for the last seat and verify only one invitation is stored.
 6. Run `npm run test:db -- tests/db/subscription-team-seats.db.test.ts` for the checked limits, reactivation, concurrency and plan transitions. An over-capacity downgrade must be resolved by the owner before changing the stored plan. A customer-facing Stripe upgrade/downgrade flow is separate. Full receptionist desk onboarding and team management are being integrated in #1779.
 
-Keep the production activation conditions in HON-70. Existing pilot agreements and treatment charges have separate ownership. Before a production migration, reconcile its number with other open work. The down migration refuses to delete active or pending purchase history.
+Keep the production activation conditions in HON-70. Existing pilot agreements and treatment charges have separate ownership. For a sandbox rollback, undo 0388 before 0387. The signup rollback refuses to delete active or pending purchase history.

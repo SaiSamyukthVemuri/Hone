@@ -2,8 +2,8 @@
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
     "count": 258,
-    "last": "0386_subscription_team_seats.sql",
-    "sha256": "f11dc6f1c4cad3a70d24965a81ce28129690638e3bc1d29cc5efbc328cda14db"
+    "last": "0388_subscription_team_seats.sql",
+    "sha256": "b41fd7f8babe1490c0ce6f3d79131984747c2afbc508626a8480be0d19ab4c82"
   },
   "public": {
     "tables": [
