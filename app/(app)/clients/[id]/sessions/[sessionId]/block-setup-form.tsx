@@ -590,6 +590,7 @@ export function BlockSetupForm({
   // MULTIPLEX IN THE ONE MODE CONTROL. The panel reports the xCell Pur unit only when the contract row is published and a unit exists.
   // Picking MultiPlex under the existing xCell choice binds a NEW area to that unit when it is saved; the mode is then frozen with the
   // area. A saved area is recognised by its stored unit, never by a control.
+  const [multiplexReadingsHost, setMultiplexReadingsHost] = useState<HTMLDivElement | null>(null);
   const [multiplexRoute, setMultiplexRoute] = useState<{ deviceId: string } | null>(null);
   const [multiplexRequest, setMultiplexRequest] = useState<{ seq: number; want: boolean } | null>(null);
   // THE SAVED MACHINE FOLLOWS THE PANEL'S WRITES (Codex P2): once a machine change is written, the panel's own written identity is the
@@ -2065,6 +2066,7 @@ export function BlockSetupForm({
         onKindChange={onKindChange}
         multiplexRequest={multiplexRequest}
         onMultiplexRoute={setMultiplexRoute}
+        multiplexReadingsHost={multiplexReadingsHost}
         onSavedDeviceChange={setWrittenDeviceId}
         onIdentityDraft={block ? undefined : onIdentityDraft}
         onChosenModel={setChosenModel}
@@ -2401,8 +2403,9 @@ export function BlockSetupForm({
           fields for thermolysis/blend, galvanic fields for galvanic/blend.
           All optional (pulse defaults to 1). Saved as the treatment area's
           first entry, keyed to the chosen area. */}
-      <div className="flex flex-col gap-4 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+      <section aria-label="Treatment readings" className="flex flex-col gap-4 border-t border-neutral-200 pt-4 dark:border-neutral-800">
         <span className="text-sm font-medium">Treatment readings</span>
+        <div ref={setMultiplexReadingsHost} className="flex flex-col gap-3 empty:hidden" />
 
         {/* PR #279 (Chloe): energy level lives UNDER Treatment readings now (it
             used to sit near modality). Same energy_level column; UI move only. */}
@@ -2441,7 +2444,7 @@ export function BlockSetupForm({
             className={READING_INPUT_CLS}
           />
         </label>
-      </div>
+      </section>
 
       <label className="flex flex-col gap-1.5">
         <span className="text-sm font-medium">Minutes performed (optional)</span>

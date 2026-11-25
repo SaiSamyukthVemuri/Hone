@@ -120,6 +120,10 @@ describe("MultiPlex in the ONE Mode control (new area)", () => {
     await clickMultiplex();
     expect(host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!.value).toBe("legacy:xcell");
     expect(multiplexPill()!.getAttribute("aria-pressed")).toBe("true");
+    const readings = host!.querySelector('section[aria-label="Treatment readings"]')!;
+    expect(readings.querySelector('[data-testid="machine-setting-draft"]')).toBeTruthy();
+    expect(readings.textContent).toContain("Pulse count");
+    expect(host!.querySelectorAll('[data-testid="machine-setting-draft"]')).toHaveLength(1);
     expect(pillLabels()).toEqual(["Thermolysis", "Blend", "Galvanic", "MultiPlex"]);
     expect(legacyFieldsShown(), "the old frequency/modality/readings are replaced").toBe(false);
     expect(host!.querySelector('[data-testid="machine-chosen"]')?.textContent).toContain("Dectro xCell");
@@ -236,6 +240,48 @@ describe("Junior and Senior are exactly what they were", () => {
     await pick("unit-senior");
     expect(multiplexPill()).toBeNull();
     expect(pillLabels()).toEqual([]);
+  });
+});
+
+// PLACEMENT PIN: only the ROUTED unit in the ROUTED mode (MultiPlex) is moved under Mode > Treatment readings. Any other native choice keeps its settings in
+// the Machine panel. Dropping the deviceId or the modeKey condition in the panel's placeReadings moves these too, and these fail.
+describe("the readings placement is for MultiPlex only", () => {
+  const inReadings = () => host!.querySelector('section[aria-label="Treatment readings"] [data-testid="machine-setting-draft"]');
+  const inPanel = () => host!.querySelector('[data-testid="machine-first-panel"] [data-testid="machine-setting-draft"]');
+  it("a Senior 3G unit's structured settings stay in the Machine panel and nothing is placed under Treatment readings", async () => {
+    await mount(null);
+    await openPanel();
+    await pick("unit-senior");
+    expect(inReadings()).toBeNull();
+    expect(inPanel()).toBeTruthy();
+    expect(host!.querySelectorAll('[data-testid="machine-setting-draft"]')).toHaveLength(1);
+  });
+  // Each condition is pinned ALONE: the route is set so that exactly one of (unit, mode) matches the Senior unit's panel, so dropping either condition
+  // moves the Senior's settings under Treatment readings and one of these fails.
+  it("the SAME MODE KEY (a Senior flash mode) on another unit is not placed (the unit condition alone holds it back)", async () => {
+    ctxBox.ctx = { ...CTX, multiplexRoute: { deviceId: "unit-pur", modeKey: "flash" } };
+    await mount(null);
+    await openPanel();
+    await pick("unit-senior");
+    expect(inReadings()).toBeNull();
+    expect(inPanel()).toBeTruthy();
+  });
+  it("the SAME UNIT in another mode is not placed (the mode condition alone holds it back)", async () => {
+    ctxBox.ctx = { ...CTX, multiplexRoute: { deviceId: "unit-senior", modeKey: "multiplex" } };
+    await mount(null);
+    await openPanel();
+    await pick("unit-senior");
+    expect(inReadings()).toBeNull();
+    expect(inPanel()).toBeTruthy();
+  });
+  it("the MultiPlex pick places the editor under Treatment readings, once, and none in the Machine panel", async () => {
+    await mount(null);
+    await openPanel();
+    await pick("legacy:xcell");
+    await clickMultiplex();
+    expect(inReadings()).toBeTruthy();
+    expect(inPanel()).toBeNull();
+    expect(host!.querySelectorAll('[data-testid="machine-setting-draft"]')).toHaveLength(1);
   });
 });
 
