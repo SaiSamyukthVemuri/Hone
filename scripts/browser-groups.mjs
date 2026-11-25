@@ -63,6 +63,9 @@ export const BROWSER_GROUPS = {
       // the only lane its subject can regress in.
       "machine-switch-discards-draft.spec.ts",
       "machine-one-selector.spec.ts",
+      // one complete xCell Pur MultiPlex visit (decimals, pulse count, blank optionals, switch away and back, save, reopen, next visit) on
+      // desktop, an iPhone-sized emulation and iPhone WebKit; and Save pressed while the MultiPlex pick is still settling. Same surface, same group.
+      "xcell-multiplex-visit.spec.ts",
       "machine-mode-then-save.spec.ts",
       // MPX-03: the LOST RESPONSE on the initial save, and pressing Save
       // again. Same surface once more, so the same group - and this one most

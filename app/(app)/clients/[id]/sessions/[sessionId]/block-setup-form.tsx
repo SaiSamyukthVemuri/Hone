@@ -515,13 +515,23 @@ export function BlockSetupForm({
   // The FROZEN setter, reached through a ref because it is declared further
   // down and this callback has to keep one identity.
   const setDraftRef = useRef<(u: (d: Draft) => Draft) => void>(() => undefined);
+  const parkedLegacyRef = useRef<Pick<Draft, "mode" | "apilusModality" | "energyLevel" | "machineFrequency" | "thermolysisIntensityPercent" | "thermolysisDurationSeconds" | "galvanicMa" | "galvanicDurationSeconds" | "unitsOfLye" | "pulseCount" | "pulseDelay"> | null>(null);
   const onKindChange = useCallback(
     (kind: "none" | "legacy" | "native") => {
       if (kind === "native" && legacyDataLocked) return;
       setMachineKind(kind);
+      // WHENEVER THE LEGACY FIELDS BECOME EDITABLE AGAIN, by ANY route (the existing xCell, or no machine chosen), the parked snapshot is CONSUMED into
+      // the draft and dropped. Left parked it would be restored later OVER whatever she typed in between (Codex, #1790).
+      if (kind !== "native" && parkedLegacyRef.current) {
+        const back = parkedLegacyRef.current;
+        parkedLegacyRef.current = null;
+        setDraftRef.current((d) => ({ ...d, ...back }));
+      }
       if (kind === "native") {
         // Switching never mixes settings: the overlapping legacy fields are
         // cleared with the switch, and the area saves them as NOT RECORDED.
+        // PARKED, NOT DESTROYED: what she had typed under the existing workflow (mode, frequency, readings) is kept in memory and
+        // comes back exactly if she returns to the existing workflow in this open area. Never stored, never saved under a native machine.
         const cleared = (d: Draft): Draft => ({
           ...d,
           mode: "",
@@ -536,7 +546,17 @@ export function BlockSetupForm({
           pulseCount: String(PULSE_COUNT_DEFAULT),
           pulseDelay: String(PULSE_DELAY_DEFAULT),
         });
-        setDraftRef.current(cleared);
+        setDraftRef.current((d) => {
+          if (d.mode !== "" || d.machineFrequency !== "" || d.energyLevel !== "" || d.thermolysisIntensityPercent !== "" || d.thermolysisDurationSeconds !== "" || d.galvanicMa !== "" || d.galvanicDurationSeconds !== "" || d.unitsOfLye !== "" || d.apilusModality !== "") {
+            parkedLegacyRef.current = {
+              mode: d.mode, apilusModality: d.apilusModality, energyLevel: d.energyLevel, machineFrequency: d.machineFrequency,
+              thermolysisIntensityPercent: d.thermolysisIntensityPercent, thermolysisDurationSeconds: d.thermolysisDurationSeconds,
+              galvanicMa: d.galvanicMa, galvanicDurationSeconds: d.galvanicDurationSeconds, unitsOfLye: d.unitsOfLye,
+              pulseCount: d.pulseCount, pulseDelay: d.pulseDelay,
+            };
+          }
+          return cleared(d);
+        });
         // REBASE THE DIRTY BASELINE: the switch is not the practitioner's edit. An automatically resolved
         // machine clears a prefilled studio-default frequency, and comparing against the pre-switch draft showed "Unsaved"
         // (and a leave prompt) on an untouched form.
@@ -570,6 +590,7 @@ export function BlockSetupForm({
   // MULTIPLEX IN THE ONE MODE CONTROL. The panel reports the xCell Pur unit only when the contract row is published and a unit exists.
   // Picking MultiPlex under the existing xCell choice binds a NEW area to that unit when it is saved; the mode is then frozen with the
   // area. A saved area is recognised by its stored unit, never by a control.
+  const [multiplexReadingsHost, setMultiplexReadingsHost] = useState<HTMLDivElement | null>(null);
   const [multiplexRoute, setMultiplexRoute] = useState<{ deviceId: string } | null>(null);
   const [multiplexRequest, setMultiplexRequest] = useState<{ seq: number; want: boolean } | null>(null);
   // THE SAVED MACHINE FOLLOWS THE PANEL'S WRITES (Codex P2): once a machine change is written, the panel's own written identity is the
@@ -993,6 +1014,7 @@ export function BlockSetupForm({
         // destination from the address bar and preserve any newer operation.
         const settledHref = settledAreaOperationHref(resumedSaveKey);
         if (settledHref !== null) router.replace(settledHref, { scroll: false });
+        parkedLegacyRef.current = null; // the area is saved: nothing parked outlives it
         setResume({ state: "saved", blockId: res.blockId });
         return;
       }
@@ -1673,6 +1695,7 @@ export function BlockSetupForm({
       // Create: one save → treatment area + first entry. block_name omitted
       // (null), the section title falls back to the area, then a muted
       // placeholder.
+      const nativeCreate = machineKind === "native";
       const bareKey = attachedSetup ? null : (bareCreateKeyRef.current ??= crypto.randomUUID());
       createAttemptRef.current ??= { identity: identityDraftRef.current, unresolved: false };
       const attemptIdentity = createAttemptRef.current.identity;
@@ -1680,24 +1703,28 @@ export function BlockSetupForm({
         clientId,
         sessionId,
         createKey: bareKey,
-        mode: (draft.mode || null) as ElectrolysisMode | null,
-        apilusModality: (draft.apilusModality || null) as ApilusModality | null,
-        energyLevel: elNum,
+        // A NEW AREA ON A NATIVE MACHINE (MultiPlex) carries NO legacy mode or legacy readings: whatever she typed under Thermolysis, Blend or
+        // Galvanic before switching is parked in memory (and comes back if she switches back), never saved under the native machine. The shared
+        // entries (areas, minutes, probe, lot, hairs, notes, observations, tolerance, numbing) are not mode readings and are always sent.
+        mode: nativeCreate ? null : ((draft.mode || null) as ElectrolysisMode | null),
+        apilusModality: nativeCreate ? null : ((draft.apilusModality || null) as ApilusModality | null),
+        energyLevel: nativeCreate ? null : elNum,
         minutesPerformed: minutesNum,
         probeOptionKey: draft.probeKey || null,
         probeLotNumber: draft.probeLotNumber.trim() || null,
         probeLotConfirmed: draft.probeLotConfirmed,
           probeInventoryItemId: draft.probeInventoryItemId,
-        machineFrequency: (draft.machineFrequency || null) as
-          | MachineFrequency
-          | null,
+        // Frequency is a legacy-only field too (parked with the others): a native create never sends it.
+        machineFrequency: nativeCreate ? null : ((draft.machineFrequency || null) as MachineFrequency | null),
         primaryArea: trimmedArea || null,
         side: draft.side || null,
         customAreaDetail: trimmedDetail || null,
         areaIsCustom,
         // Multi-area (0128): authoritative when non-empty.
         areas: draft.areas,
-        readings,
+        readings: nativeCreate
+          ? { ...readings, thermolysisIntensityPercent: null, thermolysisDurationSeconds: null, galvanicMa: null, galvanicDurationSeconds: null, unitsOfLye: null, pulseCount: null, pulseDelaySeconds: null }
+          : readings,
         ...clinicalResponse,
         // THE SETTINGS, WHEN THERE ARE ANY. `prepareHandoff` mints the retry
         // key ONCE and copies the groups, so a keystroke after the save began
@@ -2039,6 +2066,7 @@ export function BlockSetupForm({
         onKindChange={onKindChange}
         multiplexRequest={multiplexRequest}
         onMultiplexRoute={setMultiplexRoute}
+        multiplexReadingsHost={multiplexReadingsHost}
         onSavedDeviceChange={setWrittenDeviceId}
         onIdentityDraft={block ? undefined : onIdentityDraft}
         onChosenModel={setChosenModel}
@@ -2285,14 +2313,25 @@ export function BlockSetupForm({
         <span className="text-sm font-medium">Mode</span>
         <div className="flex flex-wrap gap-2">
           {ELECTROLYSIS_MODES.map((m) => {
-            const selected = draft.mode === m.value;
+            // WHILE MULTIPLEX IS CHOSEN no legacy pill is pressed (the legacy mode stays parked underneath), and pressing one SELECTS it, never toggles it
+            // off: otherwise a switch back from MultiPlex to the mode she had typed under cleared that mode and showed its readings empty.
+            const selected = draft.mode === m.value && !multiplexSelected;
             return (
               <button
                 key={m.value}
                 type="button"
                 disabled={multiplexSaved || draftFrozen || identityWritePending}
                 onClick={() => {
-                  update("mode", selected ? "" : m.value);
+                  // LEAVING MULTIPLEX BY CHOOSING A LEGACY MODE: the readings parked when she picked MultiPlex go back FIRST, under the mode they were typed
+                  // in; then the mode she clicked is selected. Restoring them AFTER the click (the leave-MultiPlex request does) would put the parked mode
+                  // back over her choice and save the wrong mode.
+                  let base: Draft = draft;
+                  if (multiplexSelected && parkedLegacyRef.current) {
+                    base = { ...draft, ...parkedLegacyRef.current };
+                    parkedLegacyRef.current = null;
+                  }
+                  if (base !== draft) setDraft({ ...base, mode: selected ? "" : m.value });
+                  else update("mode", selected ? "" : m.value);
                   // Leaving MultiPlex returns the area to the existing xCell workflow.
                   if (multiplexSelected) setMultiplexRequest((r) => ({ seq: (r?.seq ?? 0) + 1, want: false }));
                 }}
@@ -2364,8 +2403,9 @@ export function BlockSetupForm({
           fields for thermolysis/blend, galvanic fields for galvanic/blend.
           All optional (pulse defaults to 1). Saved as the treatment area's
           first entry, keyed to the chosen area. */}
-      <div className="flex flex-col gap-4 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+      <section aria-label="Treatment readings" className="flex flex-col gap-4 border-t border-neutral-200 pt-4 dark:border-neutral-800">
         <span className="text-sm font-medium">Treatment readings</span>
+        <div ref={setMultiplexReadingsHost} className="flex flex-col gap-3 empty:hidden" />
 
         {/* PR #279 (Chloe): energy level lives UNDER Treatment readings now (it
             used to sit near modality). Same energy_level column; UI move only. */}
@@ -2404,7 +2444,7 @@ export function BlockSetupForm({
             className={READING_INPUT_CLS}
           />
         </label>
-      </div>
+      </section>
 
       <label className="flex flex-col gap-1.5">
         <span className="text-sm font-medium">Minutes performed (optional)</span>

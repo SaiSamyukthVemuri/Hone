@@ -59,6 +59,12 @@ export default defineConfig({
             // exercising it.
             use: { ...devices["Desktop Safari"], bypassCSP: true },
           },
+          // one complete MultiPlex visit on an emulated iPhone in WebKit (the engine behind iPhone Safari; NOT real Safari, NOT a real device).
+          {
+            name: "webkit-iphone-visit",
+            testMatch: /xcell-multiplex-visit\.spec\.ts$/,
+            use: { ...devices["iPhone 13"], bypassCSP: true },
+          },
           // CLN-006 mounted-keyboard and focus cases in WebKit (non-required
           // job only). Scoped by file AND by title so the rest of these two
           // specs, which Chromium already runs in full, is not repeated here.

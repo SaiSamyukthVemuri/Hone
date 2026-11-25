@@ -259,7 +259,7 @@ export function ServiceOrderList({ rows, groups, createEditor }: {
         >
           <div className="flex flex-wrap items-center justify-between gap-2 p-4">
             <div>
-              <h3 className="font-semibold tracking-tight">{reordering ? <span>Service menu order</span> : "Service menu"}</h3>
+              <h3 className="font-semibold tracking-tight">{reordering ? <span>Service menu order</span> : "Services"}</h3>
               <p className="text-xs text-fg-muted">{visibleIds.length} visible in booking</p>
             </div>
             <Button type="button" size="sm" id={`service-select-${CREATE}`} onClick={() => selectService(CREATE)}>+ Add service</Button>

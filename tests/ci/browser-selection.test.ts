@@ -279,7 +279,11 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // Now 68 after merging production (production alone: 67; dashboard-rebook-chart.spec.ts, above, adds one). The last addition to production was: service-discard-while-saving.spec.ts joined `calendar` (Discard edits is disabled while a service save is in flight; desktop and emulated phone). RECORDED AS A
     // DECISION per the note above. It is REQUIRED, not opt-in: two cases, each a seeded studio and a login, about 2 minutes on an owned stack.
     // The receptionist calendar journey runs in the calendar group using the local desk flag.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(68);
+    // Now 69 after merging production again (production alone: 68; dashboard-rebook-chart.spec.ts adds one). The last addition to production was: xcell-multiplex-visit.spec.ts, which joined `sessions` (the machine panel inside the settings-block form). RECORDED AS A DECISION per the
+    // note above. It is REQUIRED, not opt-in. Cost, MEASURED on an owned stack: three cases in the chromium project (desktop, a 390px iPhone-sized
+    // emulation, and Save pressed while the pick is pending), each a seeded studio, a magic-link login and one or two saves: about 15-20s each, a minute
+    // in all. The iPhone WebKit case runs only in the non-required `webkit-iphone-visit` project and skips everywhere else.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(69);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {
