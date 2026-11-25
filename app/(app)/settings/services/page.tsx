@@ -1,29 +1,17 @@
 import { FormDirtyGuard } from "@/components/settings/form-dirty-guard";
-import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
-import { getAllServices, servicesHaveCalendarColor } from "@/lib/booking/queries";
-import { sortServicesForSettings } from "@/lib/booking/service-order";
-import { KNOWN_MODALITIES, type Service } from "@/lib/types/database";
-import {
-  createServiceAction,
-  toggleServiceActiveAction,
-  updateServiceAction,
-} from "./actions";
-import {
-  CalendarColorField,
-  DurationField,
-  ServiceAccordionItem,
-  ServiceSubmitButton,
-  ToggleActiveSubmitButton,
-} from "./ServiceFormControls";
-import { ServiceOrderList } from "./ServiceOrderList";
-import { SectionLabel } from "@/components/ui/section-label";
-import { fieldControlClass } from "@/components/ui/field";
 import { OwnerOnlyNotice } from "@/components/settings/view-heading";
-
-function formatPrice(cents: number | null): string {
-  if (cents == null) return "Not set";
-  return `$${(cents / 100).toFixed(2)}`;
-}
+import { FieldLabel, fieldControlClass } from "@/components/ui/field";
+import { SectionLabel } from "@/components/ui/section-label";
+import { getAllServices, servicesHaveCalendarColor } from "@/lib/booking/queries";
+import { groupServicesByModality } from "@/lib/booking/format";
+import { sortServicesForSettings } from "@/lib/booking/service-order";
+import { resolveTimeFormat, type TimeFormat } from "@/lib/booking/tz";
+import { isServiceColorKey } from "@/lib/calendar/service-colors";
+import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
+import { KNOWN_MODALITIES, type Service } from "@/lib/types/database";
+import { createServiceAction, toggleServiceActiveAction, updateServiceAction } from "./actions";
+import { CalendarColorField, DurationField, ToggleActiveSubmitButton } from "./ServiceFormControls";
+import { ServiceOrderList, ServiceSaveForm } from "./ServiceOrderList";
 
 export default async function ServicesSettingsPage() {
   const { practitioner, studio } = await requirePractitionerWithStudio();
@@ -31,418 +19,133 @@ export default async function ServicesSettingsPage() {
     return <OwnerOnlyNotice>Only studio owners can manage services.</OwnerOnlyNotice>;
   }
 
-  const services = await getAllServices(studio.id);
-  const calendarColorAvailable = await servicesHaveCalendarColor(studio.id);
-  // One list, active services first (then hidden), each as a collapsed row.
-  // Keeping hidden services inline (rather than in a separate section) means
-  // the Hide/Show toggle flips the row's status pill in place instead of
-  // relocating the card: clearer feedback.
-  //
-  // THE ORDER IS NOW SHARED. sortServicesForSettings applies the same TOTAL
-  // ordering (sort_order, name, id) that migration 0161's reorder RPC and the
-  // public booking page use. The old local sort omitted the `id` term, so tied
-  // sort_order values were resolved differently here than on the server, which
-  // is why an arrow could point at one row and move another, or silently do
-  // nothing at all.
+  const [services, calendarColorAvailable] = await Promise.all([
+    getAllServices(studio.id), servicesHaveCalendarColor(studio.id),
+  ]);
+  const timeFormat = resolveTimeFormat(studio);
   const orderedServices = sortServicesForSettings(services);
-
   return (
-    <div className="flex flex-col gap-10">
-      <section>
-        <h2 tabIndex={-1} data-settings-heading className="text-xl font-medium outline-none">Services</h2>
-        <p className="mt-1 text-sm text-neutral-500">
-          The list clients pick from when booking. Services group by modality
-          on the booking page. Services you hide from booking stay in history
-          for past appointments but won&rsquo;t appear when clients book.
-        </p>
-        <p className="mt-2 text-xs text-neutral-500">
-          Names appear in confirmation emails and on your calendar. Including
-          the modality reads cleanly (e.g.{" "}
-          <span className="font-medium">Electrolysis 30 min</span>).
-        </p>
-      </section>
-
-      <section className="flex flex-col gap-3">
-        <div className="flex flex-col gap-1">
-          <h3
-            id="service-order"
-            className="scroll-mt-24 text-xs font-medium uppercase tracking-wider text-neutral-500"
-          >
-            Service menu order
-          </h3>
-          <p className="text-xs text-neutral-500">
-            The order visible services appear in. Use{" "}
-            <span className="font-medium">Move to top / up / down / to bottom</span>{" "}
-            on a service to change it. On the public booking page services are
-            grouped by modality first (consultations, then electrolysis, then
-            laser), and this order applies within each group. Hidden services
-            keep their place in history but are not in the booking order.
-          </p>
-        </div>
-        {orderedServices.length === 0 ? (
-          <p className="rounded-md border border-dashed border-neutral-300 bg-neutral-50 px-5 py-8 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900">
-            No services yet. Add one below.
-          </p>
-        ) : (
-          <div className="flex flex-col gap-3">
-            {(() => {
-              const visibleIds = orderedServices
-                .filter((s) => s.active)
-                .map((s) => s.id);
-              return (
-                <ServiceOrderList
-                  rows={orderedServices.map((s) => ({
-                    id: s.id,
-                    name: s.name,
-                    active: s.active,
-                    node: (
-                      <ServiceAccordionItem
-                        name={s.name}
-                        durationLabel={`${s.default_duration_minutes} min`}
-                        priceLabel={formatPrice(s.price_cents)}
-                        active={s.active}
-                        colorKey={
-                          calendarColorAvailable
-                            ? ((s as { calendar_color?: string | null }).calendar_color ?? null)
-                            : null
-                        }
-                        toggle={<ToggleActiveButton id={s.id} active={s.active} />}
-                      >
-                        <ServiceEditForm
-                          service={s}
-                          calendarColorAvailable={calendarColorAvailable}
-                        />
-                      </ServiceAccordionItem>
-                    ),
-                  }))}
-                />
-              );
-            })()}
-          </div>
-        )}
-      </section>
-
-      <AddServiceCard calendarColorAvailable={calendarColorAvailable} />
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Edit form for one service: rendered inside the (collapsed-by-default)
-// ServiceAccordionItem. The row chrome (name, duration, price, status pill,
-// Hide/Show toggle, Edit/Close) lives in the accordion header; this is just
-// the form body that appears when the row is expanded. All form field names
-// are byte-preserved so the unchanged updateServiceAction parses identically.
-// ---------------------------------------------------------------------------
-function ServiceEditForm({
-  service,
-  calendarColorAvailable,
-}: {
-  service: Service;
-  calendarColorAvailable: boolean;
-}) {
-  return (
-    <div className="flex flex-col gap-5">
-      <p className="text-xs text-neutral-500">
-        {service.active
-          ? "Changes apply to future bookings."
-          : "Clients won't see this service when booking."}
-      </p>
-
-      <form
-        action={updateServiceAction}
-        className="flex flex-col gap-5"
-        aria-label={`Edit ${service.name}`}
-      >
-        <FormDirtyGuard name={`service-edit-${service.id}`} token={Date.now().toString(36)} />
-        <input type="hidden" name="id" value={service.id} />
-
-        {/* Main fields */}
-        <div className="grid gap-4 md:grid-cols-2">
-          <FieldLabel label="Service name" required>
-            <input
-              name="name"
-              defaultValue={service.name}
-              required
-              className={fieldControlClass()}
-            />
-          </FieldLabel>
-          <FieldLabel label="Modality">
-            <ModalitySelect
-              name="modality"
-              defaultValue={service.modality ?? ""}
-            />
-          </FieldLabel>
-          <FieldLabel label="Duration">
-            <DurationField
-              name="default_duration_minutes"
-              defaultValue={service.default_duration_minutes}
-              required
-            />
-          </FieldLabel>
-          {calendarColorAvailable && (
-            <FieldLabel label="Calendar color">
-              <CalendarColorField
-                name="calendar_color"
-                defaultValue={service.calendar_color}
-              />
-            </FieldLabel>
-          )}
-          <FieldLabel
-            label="Price"
-            hint="Shown to clients when booking."
-          >
-            <PriceInput
-              defaultValue={
-                service.price_cents != null ? service.price_cents / 100 : ""
-              }
-            />
-          </FieldLabel>
-        </div>
-
-        {/* Full-width fields */}
-        <FieldLabel
-          label="Description"
-          hint="Optional. Short copy shown on the booking page."
-        >
-          <input
-            name="description"
-            defaultValue={service.description ?? ""}
-            placeholder="e.g. 30-minute upper lip session"
-            className={fieldControlClass()}
-          />
-        </FieldLabel>
-
-        <FieldLabel
-          label="Pre-appointment instructions"
-          hint="Optional. Shown in client confirmation and reminder emails AND in the client portal Care instructions section. Use this for arrival time, clothing, caffeine, shaving, medication reminders, or anything the client should know before this service. Plain text; line breaks are okay."
-        >
-          <textarea
-            name="pre_care_instructions"
-            defaultValue={service.pre_care_instructions ?? ""}
-            rows={4}
-            placeholder="e.g. Please arrive 5 minutes early. Skin should be free of lotion or makeup."
-            className={fieldControlClass()}
-          />
-        </FieldLabel>
-
-        {/* Advanced - rarely needed. The Move up / Move down buttons
-            on the row header are the primary way to change ordering.
-            The raw sort_order field is kept inside this collapsed
-            <details> for the rare case a practitioner wants to pin a
-            specific number; it stays under "Advanced" so it never
-            crowds the normal edit flow. updateServiceAction still
-            reads `sort_order` if present. */}
-        <details className="rounded-md border border-neutral-200 dark:border-neutral-800">
-          <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium uppercase tracking-wider text-neutral-500">
-            Advanced
-          </summary>
-          <div className="border-t border-neutral-200 px-3 py-3 dark:border-neutral-800">
-            <FieldLabel
-              label="Position number"
-              hint="Most people use the Move up and Move down arrows on the row instead. This is here only for fine-grained control."
-            >
-              {/* step={1}, not step={10}. Legacy rows hold values like 99, 101
-                  and 111 (the old tie-break wrote neighbour±1); with step={10}
-                  the browser reported a stepMismatch and silently blocked
-                  submission of the WHOLE edit form, so unrelated edits to name,
-                  price or care instructions appeared to do nothing. min={0}
-                  still holds: the 0161 RPC only ever writes 10, 20, 30 … */}
-              <input
-                name="sort_order"
-                type="number"
-                min={0}
-                max={100000}
-                step={1}
-                defaultValue={service.sort_order}
-                className={fieldControlClass({ fullWidth: false, className: "w-24 tabular-nums" })}
-              />
-            </FieldLabel>
-          </div>
-        </details>
-
-        {/* Footer actions: duration/price already shown in the row summary. */}
-        <div className="flex flex-wrap items-center justify-end gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
-          <ServiceSubmitButton
-            idleLabel="Save changes"
-            pendingLabel="Saving…"
-          />
-        </div>
-      </form>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Add-new-service card. Same shape as ServiceCard but without the
-// status pill and without the Hide/Show toggle. The "+ Add service"
-// button replaces "Save changes" in the footer.
-// ---------------------------------------------------------------------------
-function AddServiceCard({ calendarColorAvailable }: { calendarColorAvailable: boolean }) {
-  return (
-    <section className="flex flex-col gap-3">
+    <section className="min-w-0 space-y-4">
       <div>
-        <SectionLabel as="h3">Add a new service</SectionLabel>
-        <p className="mt-1 text-xs text-neutral-500">
-          New services appear on your public booking page right away.
-        </p>
+        <h2 tabIndex={-1} data-settings-heading className="text-2xl font-semibold tracking-tight outline-none">Services</h2>
+        <p className="mt-1 text-sm text-fg-muted">Manage your booking menu and how each service appears on the calendar.</p>
       </div>
-
-      <article className="flex flex-col gap-5 rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950">
-        <form action={createServiceAction} className="flex flex-col gap-5">
-          <FormDirtyGuard name="service-create" token={Date.now().toString(36)} />
-          <div className="grid gap-4 md:grid-cols-2">
-            <FieldLabel label="Service name" required>
-              <input
-                name="name"
-                required
-                placeholder="e.g. Electrolysis 30 min"
-                className={fieldControlClass()}
-              />
-            </FieldLabel>
-            <FieldLabel label="Modality">
-              <ModalitySelect name="modality" />
-            </FieldLabel>
-            <FieldLabel label="Duration">
-              <DurationField
-                name="default_duration_minutes"
-                defaultValue={60}
-                required
-              />
-            </FieldLabel>
-            {calendarColorAvailable && (
-              <FieldLabel label="Calendar color">
-                <CalendarColorField name="calendar_color" defaultValue="sky" />
-              </FieldLabel>
-            )}
-            <FieldLabel
-              label="Price"
-              hint="Shown to clients when booking."
-            >
-              <PriceInput />
-            </FieldLabel>
-          </div>
-
-          <FieldLabel
-            label="Description"
-            hint="Optional. Short copy shown on the booking page."
-          >
-            <input
-              name="description"
-              placeholder="e.g. 30-minute upper lip session"
-              className={fieldControlClass()}
-            />
-          </FieldLabel>
-
-          <div className="flex justify-end border-t border-neutral-200 pt-4 dark:border-neutral-800">
-            <ServiceSubmitButton
-              idleLabel="+ Add service"
-              pendingLabel="Adding…"
-              variant="primary"
-            />
-          </div>
-        </form>
-      </article>
+      <ServiceOrderList
+        groups={groupServicesByModality(orderedServices.filter((s) => s.active)).map((group) => ({
+          label: group.label, ids: group.services.map((s) => s.id),
+        }))}
+        rows={orderedServices.map((service) => ({
+          id: service.id,
+          name: service.name,
+          active: service.active,
+          duration: service.default_duration_minutes,
+          price: service.price_cents === null ? "Price not set" : `$${(service.price_cents / 100).toFixed(2)}`,
+          colorKey: calendarColorAvailable && isServiceColorKey(service.calendar_color) ? service.calendar_color : null,
+          editor: <ServiceForm service={service} calendarColorAvailable={calendarColorAvailable} timeFormat={timeFormat} />,
+          visibility: (
+            <form action={toggleServiceActiveAction}>
+              <input type="hidden" name="id" value={service.id} />
+              <input type="hidden" name="active" value={service.active ? "false" : "true"} />
+              <ToggleActiveSubmitButton active={service.active} />
+            </form>
+          ),
+        }))}
+        createEditor={<ServiceForm calendarColorAvailable={calendarColorAvailable} timeFormat={timeFormat} />}
+      />
     </section>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Small presentational pieces
-// ---------------------------------------------------------------------------
-
-// Standalone visibility-toggle form. Rendered in the accordion row header
-// (passed as the `toggle` slot), never nested inside the edit form: this
-// preserves the PR #35 fix (a nested <form> is invalid HTML and made the
-// toggle "do nothing"). Submits toggleServiceActiveAction with the flipped
-// `active` value; the action's revalidatePath re-renders the row with the
-// status pill flipped in place. The submit button shows in-flight feedback.
-function ToggleActiveButton({
-  id,
-  active,
-}: {
-  id: string;
-  active: boolean;
+function ServiceForm({ service, calendarColorAvailable, timeFormat }: {
+  service?: Service;
+  calendarColorAvailable: boolean;
+  timeFormat: TimeFormat;
 }) {
+  const name = service?.name ?? "";
+  const duration = service?.default_duration_minutes ?? 60;
   return (
-    <form action={toggleServiceActiveAction}>
-      <input type="hidden" name="id" value={id} />
-      <input type="hidden" name="active" value={active ? "false" : "true"} />
-      <ToggleActiveSubmitButton active={active} />
-    </form>
-  );
-}
-
-function PriceInput({
-  defaultValue,
-}: {
-  defaultValue?: number | string;
-}) {
-  return (
-    <div className="relative">
-      <span
-        aria-hidden
-        className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-neutral-400"
-      >
-        $
-      </span>
-      <input
-        name="price_dollars"
-        type="number"
-        min={0}
-        step={1}
-        defaultValue={defaultValue ?? ""}
-        placeholder="-"
-        className="w-full rounded-md border border-neutral-300 bg-white py-2 pl-7 pr-3 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
-      />
-    </div>
-  );
-}
-
-function ModalitySelect({
-  name,
-  defaultValue,
-}: {
-  name: string;
-  defaultValue?: string;
-}) {
-  return (
-    <select
-      name={name}
-      defaultValue={defaultValue ?? ""}
-      className={fieldControlClass()}
+    <ServiceSaveForm
+      serviceId={service?.id}
+      title={service?.name ?? "Add a service"}
+      saveAction={service ? updateServiceAction : createServiceAction}
     >
-      {KNOWN_MODALITIES.map((m) => (
-        <option key={m.value} value={m.value}>
-          {m.label}
-        </option>
-      ))}
-      <option value="">Other</option>
-    </select>
-  );
-}
-
-function FieldLabel({
-  label,
-  hint,
-  required,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  required?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="flex min-w-0 flex-col gap-1.5">
-      <SectionLabel size="caption">
-        {label}
-        {required && <span className="text-neutral-400"> *</span>}
-      </SectionLabel>
-      {children}
-      {hint && (
-        <span className="text-[11px] text-neutral-500">{hint}</span>
+      {service ? (
+        <FormDirtyGuard name={`service-edit-${service.id}`} token={Date.now().toString(36)} />
+      ) : (
+        <FormDirtyGuard name="service-create" token={Date.now().toString(36)} />
       )}
-    </label>
+      {service && <input type="hidden" name="id" value={service.id} />}
+      <div className={calendarColorAvailable ? "grid min-w-0 @[655px]/editor:grid-cols-[minmax(0,.95fr)_minmax(0,1.05fr)]" : ""}>
+        {calendarColorAvailable && (
+          <div className="min-w-0 border-b border-line p-4 @[655px]/editor:border-r @[655px]/editor:border-b-0">
+            <CalendarColorField
+              name="calendar_color"
+              defaultValue={service?.calendar_color ?? "sky"}
+              previewName={name}
+              previewDuration={duration}
+              timeFormat={timeFormat}
+            />
+          </div>
+        )}
+        <div className="min-w-0 space-y-4 p-4">
+          <SectionLabel as="h4">Service details</SectionLabel>
+          <FieldLabel label="Service name" required>
+            <input name="name" defaultValue={name} required placeholder="e.g. Electrolysis 30 min" className={fieldControlClass()} />
+          </FieldLabel>
+          <fieldset className="min-w-0 space-y-1.5">
+            <legend><SectionLabel size="caption">Duration</SectionLabel></legend>
+            <DurationField name="default_duration_minutes" defaultValue={duration} required />
+          </fieldset>
+          <div className="grid gap-4 @[810px]/editor:grid-cols-2">
+            <FieldLabel label="Price">
+              <div className="relative">
+                <span aria-hidden className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-fg-muted">$</span>
+                <input
+                  name="price_dollars" type="number" min={0} step="0.01" inputMode="decimal"
+                  defaultValue={service?.price_cents != null ? service.price_cents / 100 : ""}
+                  className={fieldControlClass({ className: "pl-7 tabular-nums" })}
+                />
+              </div>
+            </FieldLabel>
+            <FieldLabel label="Modality">
+              <select name="modality" defaultValue={service?.modality ?? ""} className={fieldControlClass()}>
+                {KNOWN_MODALITIES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+                {service?.modality && !KNOWN_MODALITIES.some((m) => m.value === service.modality) && (
+                  <option value={service.modality}>{service.modality}</option>
+                )}
+                <option value="">Other</option>
+              </select>
+            </FieldLabel>
+          </div>
+          <details className="group border-t border-line">
+            <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 text-sm font-medium [&::-webkit-details-marker]:hidden">
+              <span aria-hidden className="size-2 -rotate-45 border-r border-b border-current group-open:rotate-45" />
+              Booking description &amp; care instructions
+            </summary>
+            <div className="space-y-4 pb-2">
+              <FieldLabel label="Booking description">
+                <input name="description" defaultValue={service?.description ?? ""} className={fieldControlClass()} />
+              </FieldLabel>
+              <FieldLabel label="Pre-appointment instructions" hint="Shown in confirmation and reminder emails and under Care instructions in the client portal.">
+                <textarea name="pre_care_instructions" defaultValue={service?.pre_care_instructions ?? ""} rows={3} className={fieldControlClass()} />
+              </FieldLabel>
+            </div>
+          </details>
+          {service && (
+            <details className="group border-t border-line">
+              <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 text-sm font-medium [&::-webkit-details-marker]:hidden">
+                <span aria-hidden className="size-2 -rotate-45 border-r border-b border-current group-open:rotate-45" />
+                Advanced
+              </summary>
+              <FieldLabel label="Position number" hint="Use Reorder in the service menu to move a service by one position.">
+                <input name="sort_order" type="number" min={0} max={100000} step={1} defaultValue={service.sort_order}
+                  className={fieldControlClass({ fullWidth: false, className: "w-28 tabular-nums" })} />
+              </FieldLabel>
+            </details>
+          )}
+          {!service && <p className="text-sm text-fg-muted">Adding this service makes it available in your booking menu.</p>}
+        </div>
+      </div>
+    </ServiceSaveForm>
   );
 }

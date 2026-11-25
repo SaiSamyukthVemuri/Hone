@@ -32,7 +32,7 @@ async function openServices(page: Page) {
 // The visible order as the SCREEN shows it (service name per row, in DOM order).
 async function screenOrder(page: Page): Promise<string[]> {
   return page
-    .locator('[data-testid^="service-row-"] article button[aria-expanded] span.truncate')
+    .locator('[data-testid^="service-row-"] [data-service-name]')
     .allTextContents();
 }
 
@@ -56,6 +56,7 @@ test.describe("service reorder", () => {
     }
     await loginAsOwner(page, seed);
     await openServices(page);
+    await page.getByRole("button", { name: "Reorder services" }).click();
 
     // seedE2eStudio already creates the studio's booking service, so the list is
     // the four seeded here PLUS that one — deliberately not hardcoded.
@@ -142,6 +143,7 @@ test.describe("service reorder", () => {
     const ids = await seedE2eTiedServices(seed.studioId, ["Alpha", "Beta", "Gamma"]);
     await loginAsOwner(page, seed);
     await openServices(page);
+    await page.getByRole("button", { name: "Reorder services" }).click();
 
     await page.getByTestId(`move-top-${ids["Gamma"]}`).click();
     await expect
@@ -150,13 +152,15 @@ test.describe("service reorder", () => {
 
     // Hide Beta, then show it again.
     const betaRow = page.locator(`[data-testid="service-row-${ids["Beta"]}"]`);
-    await betaRow.getByRole("button", { name: /hide from booking/i }).click();
+    await betaRow.getByRole("button", { name: "Edit Beta" }).click();
+    const betaEditor = page.getByRole("region", { name: "Service editor" });
+    await betaEditor.getByRole("button", { name: /hide from booking/i }).click();
     await expect
       .poll(async () => (await getStudioServiceOrder(seed.studioId)).some((r) => r.name === "Beta"), {
         timeout: T,
       })
       .toBe(false);
-    await betaRow.getByRole("button", { name: /show in booking/i }).click();
+    await betaEditor.getByRole("button", { name: /show in booking/i }).click();
     await expect
       .poll(async () => (await getStudioServiceOrder(seed.studioId)).some((r) => r.name === "Beta"), {
         timeout: T,
@@ -184,6 +188,7 @@ test.describe("iPhone profile", () => {
     const ids = await seedE2eTiedServices(seed.studioId, ["Alpha", "Beta", "Gamma"]);
     await loginAsOwner(page, seed);
     await openServices(page);
+    await page.getByRole("button", { name: "Reorder services" }).click();
 
     const overflow = await page.evaluate(() => ({
       s: document.documentElement.scrollWidth,
@@ -191,14 +196,14 @@ test.describe("iPhone profile", () => {
     }));
     expect(overflow.s, "no horizontal overflow at 390px").toBeLessThanOrEqual(overflow.c);
 
-    // Every move control meets the 36px touch target and sits inside the viewport.
+    // Every move control meets the 44px touch target and sits inside the viewport.
     for (const move of ["top", "up", "down", "bottom"]) {
       const btn = page.getByTestId(`move-${move}-${ids["Beta"]}`);
       await expect(btn).toBeVisible();
       const box = await btn.boundingBox();
       expect(box).not.toBeNull();
-      expect(box!.height, `${move} touch target`).toBeGreaterThanOrEqual(36);
-      expect(box!.width, `${move} touch target`).toBeGreaterThanOrEqual(36);
+      expect(box!.height, `${move} touch target`).toBeGreaterThanOrEqual(44);
+      expect(box!.width, `${move} touch target`).toBeGreaterThanOrEqual(44);
       expect(box!.x).toBeGreaterThanOrEqual(0);
       expect(box!.x + box!.width).toBeLessThanOrEqual(390);
     }
@@ -222,21 +227,23 @@ test.describe("iPhone profile", () => {
 
     await test.step("colour is never the only identifier", async () => {
       const row = page.locator(`[data-testid="service-row-${ids["Gamma"]}"]`);
-      // A coloured left accent + swatch dot exist…
-      await expect(row.locator("article")).toHaveClass(/border-l-/);
-      // …and the colour is ALSO spelled out in words next to the name.
+      // Every dot is accompanied by the saved colour in words.
+      await expect(row.locator("[aria-hidden=true].rounded-full")).toBeVisible();
       const text = await row.innerText();
       expect(text.toLowerCase()).toMatch(/amber|emerald|teal|sky|indigo|violet|orange|lime|fuchsia|slate/);
     });
 
-    await test.step("cards are visually separated, not flush", async () => {
-      const boxes = await page
-        .locator('[data-testid^="service-row-"] article')
-        .evaluateAll((els) => els.map((e) => e.getBoundingClientRect()));
+    await test.step("each service has its own full-width touch target", async () => {
+      const boxes = await page.locator('[data-testid^="service-row-"] button[aria-controls]')
+        .evaluateAll((buttons) => buttons.map((button) => {
+          const {top, bottom, height, width} = button.getBoundingClientRect();
+          return {top, bottom, height, width};
+        }));
       expect(boxes.length).toBeGreaterThanOrEqual(2);
-      for (let i = 1; i < boxes.length; i += 1) {
-        const gap = boxes[i].top - boxes[i - 1].bottom;
-        expect(gap, `gap between card ${i - 1} and ${i}`).toBeGreaterThanOrEqual(16);
+      for (const [index, box] of boxes.entries()) {
+        expect(box.height).toBeGreaterThanOrEqual(44);
+        expect(box.width).toBeGreaterThanOrEqual(200);
+        if (index > 0) expect(box.top).toBeGreaterThanOrEqual(boxes[index - 1].bottom);
       }
     });
   });
@@ -248,7 +255,8 @@ test.describe("iPhone profile", () => {
     await openServices(page);
 
     const row = page.locator(`[data-testid="service-row-${ids["Alpha"]}"]`);
-    await row.getByRole("button", { name: "Edit" }).click();
+    await row.getByRole("button", { name: "Edit Alpha" }).click();
+    const editor = page.getByRole("region", { name: "Service editor" });
 
     for (const key of [
       "amber",
@@ -262,7 +270,7 @@ test.describe("iPhone profile", () => {
       "fuchsia",
       "slate",
     ]) {
-      await expect(row.getByRole("button", { name: `Calendar color: ${key}` })).toBeVisible();
+      await expect(editor.getByRole("button", { name: `Calendar color: ${key}` })).toBeVisible();
     }
     for (const banned of ["red", "rose", "pink", "blue", "cyan"]) {
       // Not offered anywhere on the page, including the add-new-service card.
@@ -270,8 +278,8 @@ test.describe("iPhone profile", () => {
     }
 
     // Picking a NEW 0161 colour saves and round-trips.
-    await row.getByRole("button", { name: "Calendar color: fuchsia" }).click();
-    await row.getByRole("button", { name: /save changes/i }).click();
+    await editor.getByRole("button", { name: "Calendar color: fuchsia" }).click();
+    await editor.getByRole("button", { name: /save changes/i }).click();
     await expect
       .poll(
         async () =>
@@ -280,5 +288,7 @@ test.describe("iPhone profile", () => {
         { timeout: T },
       )
       .toBe("fuchsia");
+    await expect(row).toBeVisible();
+    await expect(row).toContainText(/fuchsia/i);
   });
 });

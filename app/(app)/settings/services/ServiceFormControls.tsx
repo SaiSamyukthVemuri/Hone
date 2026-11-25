@@ -1,16 +1,16 @@
 "use client";
 
-// Small client components co-located with the Services settings page.
-// They exist only to provide UI affordances (preset duration pills +
-// in-flight save feedback) on top of the existing server forms. They
-// do NOT change the server actions, the FormData shape, or the
-// validation rules: every input still submits as
-// `default_duration_minutes`, `name`, etc., and is parsed by the
-// unchanged actions.ts handlers.
-
 import { useEffect, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
-import { SERVICE_COLOR_KEYS, isServiceColorKey } from "@/lib/calendar/service-colors";
+import { Button } from "@/components/ui/button";
+import { FOCUS_RING } from "@/components/ui/control-base";
+import {
+  SERVICE_COLOR_KEYS,
+  isServiceColorKey,
+  serviceColorClasses,
+  type ServiceColorKey,
+} from "@/lib/calendar/service-colors";
+import { formatClockLabel, minutesToHHMM, type TimeFormat } from "@/lib/booking/tz";
 
 const DURATION_PRESETS_MINUTES: ReadonlyArray<number> = [15, 30, 45, 60, 90];
 
@@ -18,7 +18,7 @@ const DURATION_PRESETS_MINUTES: ReadonlyArray<number> = [15, 30, 45, 60, 90];
 // lib/calendar/service-colors.ts). No rose/red/pink, reserved for allergy and
 // clinical-caution signals. Tones mirror the palette's light/deep alternation so
 // the swatch previews the separation the calendar card will actually show.
-const COLOR_SWATCH: Record<string, string> = {
+const COLOR_SWATCH: Record<ServiceColorKey, string> = {
   amber: "bg-amber-400",
   emerald: "bg-emerald-600",
   teal: "bg-teal-400",
@@ -31,194 +31,112 @@ const COLOR_SWATCH: Record<string, string> = {
   slate: "bg-slate-500",
 };
 
-// "Calendar color" selector: six named, accessible swatches that submit the
-// chosen KEY via a hidden `calendar_color` input. Pre-selects the stored value.
-// Wraps so it never overflows at iPhone width. The server action re-validates the
-// value against the same allowlist; the DB CHECK is the final backstop.
+export function ServiceColorDot({ colorKey }: { colorKey?: string | null }) {
+  const color = isServiceColorKey(colorKey) ? COLOR_SWATCH[colorKey] : "bg-neutral-400";
+  return <span aria-hidden="true" className={`inline-block size-3 shrink-0 rounded-full ${color}`} />;
+}
+
 export function CalendarColorField({
   name,
   defaultValue,
+  previewName = "",
+  previewDuration = 60,
+  timeFormat = "12h",
 }: {
   name: string;
   defaultValue?: string | null;
+  previewName?: string;
+  previewDuration?: number;
+  timeFormat?: TimeFormat;
 }) {
-  const keys = SERVICE_COLOR_KEYS as readonly string[];
-  const initial = defaultValue && keys.includes(defaultValue) ? defaultValue : "sky";
-  const [value, setValue] = useState<string>(initial);
+  const initial = isServiceColorKey(defaultValue) ? defaultValue : "sky";
+  const [value, setValue] = useState(initial);
+  const [serviceName, setServiceName] = useState(previewName);
+  const [duration, setDuration] = useState(String(previewDuration));
   const hidden = useRef<HTMLInputElement>(null);
-  const first = useRef(true);
-  // setValue changes a controlled hidden input, which emits no DOM event, so the
-  // form's unsaved-changes guard would never see a colour pick. Announce it.
+  const previous = useRef(value);
+
+  // Buttons update the hidden field without a native input event. Notify the
+  // form's dirty guard after React commits the new FormData value.
   useEffect(() => {
-    if (first.current) {
-      first.current = false;
-      return;
+    if (previous.current !== value) {
+      previous.current = value;
+      hidden.current?.dispatchEvent(new Event("input", { bubbles: true }));
     }
-    hidden.current?.dispatchEvent(new Event("input", { bubbles: true }));
   }, [value]);
+
+  // The service editor uses native inputs submitted directly to its server
+  // action. Observe the two fields used on a calendar card in this form only.
+  useEffect(() => {
+    const form = hidden.current?.form;
+    if (!form) return;
+    const update = (event: Event) => {
+      const field = event.target;
+      if (!(field instanceof HTMLInputElement)) return;
+      if (field.name === "name") setServiceName(field.value);
+      if (field.name === "default_duration_minutes") setDuration(field.value);
+    };
+    const reset = () => {
+      // Existing service forms remount with the saved server values.
+      if (form.elements.namedItem("id")) return;
+      setServiceName(previewName);
+      setDuration(String(previewDuration));
+      previous.current = initial;
+      setValue(initial);
+    };
+    form.addEventListener("input", update);
+    form.addEventListener("reset", reset);
+    return () => {
+      form.removeEventListener("input", update);
+      form.removeEventListener("reset", reset);
+    };
+  }, [initial, previewName, previewDuration]);
+
+  const minutes = Number(duration);
+  const start = formatClockLabel("09:00", timeFormat);
+  const end = Number.isInteger(minutes) && minutes >= 5 && minutes <= 480
+    ? formatClockLabel(minutesToHHMM(9 * 60 + minutes), timeFormat)
+    : null;
+
   return (
-    <div className="flex flex-col gap-1.5">
-      <input ref={hidden} type="hidden" name={name} value={value} />
-      <div className="flex flex-wrap gap-2">
-        {SERVICE_COLOR_KEYS.map((key) => {
-          const selected = value === key;
-          return (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setValue(key)}
-              aria-pressed={selected}
-              aria-label={`Calendar color: ${key}`}
-              className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-[12px] capitalize transition ${
-                selected
-                  ? "border-neutral-900 bg-neutral-100 dark:border-neutral-100 dark:bg-neutral-800"
-                  : "border-neutral-300 hover:border-neutral-500 dark:border-neutral-700"
-              }`}
-            >
-              <span
-                aria-hidden
-                className={`inline-block h-3 w-3 rounded-full ${COLOR_SWATCH[key]}`}
-              />
-              {key}
-            </button>
-          );
-        })}
-      </div>
+    <div className="@container min-w-0 space-y-4">
+      <fieldset className="min-w-0">
+        <legend className="text-sm font-semibold">Calendar colour</legend>
+        <input ref={hidden} type="hidden" name={name} value={value} />
+        <div className="mt-2 grid grid-cols-3 gap-1.5 @min-[16rem]:grid-cols-4 @min-[19.25rem]:grid-cols-5">
+          {SERVICE_COLOR_KEYS.map((key) => {
+            const selected = value === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setValue(key)}
+                aria-pressed={selected}
+                aria-label={`Calendar color: ${key}`}
+                className={`flex min-h-14 min-w-0 flex-col items-center justify-center gap-1.5 rounded-md border px-1 py-2 text-xs capitalize cursor-pointer ${FOCUS_RING} ${
+                  selected
+                    ? "border-fg bg-surface-sunken font-semibold shadow-[inset_0_0_0_1px_currentColor]"
+                    : "border-line-strong bg-surface hover:bg-surface-sunken"
+                }`}
+              >
+                <span aria-hidden="true" className={`size-4 rounded-full ${COLOR_SWATCH[key]}`} />
+                {key}
+              </button>
+            );
+          })}
+        </div>
+      </fieldset>
+      <figure aria-label="Calendar preview" className="min-w-0">
+        <figcaption className="mb-2 text-sm font-semibold">Calendar preview</figcaption>
+        <div className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 rounded-lg border border-line bg-surface-sunken p-3">
+          <span aria-hidden="true" className="pt-2 text-xs tabular-nums text-fg-muted">{start}</span>
+          <div data-testid="service-calendar-preview" className={`rounded-md border-l-4 px-3 py-2 ${serviceColorClasses(value)}`}>
+            <strong className="block wrap-anywhere text-sm font-semibold">{serviceName.trim() || "New service"}</strong>
+            <span className="mt-0.5 block text-xs tabular-nums">{start}{end && ` – ${end}`}</span>
+          </div>
+        </div>
+      </figure>
     </div>
-  );
-}
-
-// Left accent bar + swatch dot per colour key, for the collapsed settings row.
-// Separate from the calendar card bundle (which needs a background fill); this
-// only needs a border + dot, and Tailwind class names must be literal so they
-// survive the content scan.
-const ROW_ACCENT: Record<string, { border: string; dot: string }> = {
-  amber: { border: "border-l-amber-500", dot: "bg-amber-400" },
-  emerald: { border: "border-l-emerald-600", dot: "bg-emerald-600" },
-  teal: { border: "border-l-teal-500", dot: "bg-teal-400" },
-  sky: { border: "border-l-sky-500", dot: "bg-sky-400" },
-  indigo: { border: "border-l-indigo-600", dot: "bg-indigo-600" },
-  violet: { border: "border-l-violet-500", dot: "bg-violet-400" },
-  orange: { border: "border-l-orange-600", dot: "bg-orange-600" },
-  lime: { border: "border-l-lime-600", dot: "bg-lime-500" },
-  fuchsia: { border: "border-l-fuchsia-600", dot: "bg-fuchsia-600" },
-  slate: { border: "border-l-slate-600", dot: "bg-slate-500" },
-};
-const ROW_ACCENT_NEUTRAL = {
-  border: "border-l-neutral-300 dark:border-l-neutral-700",
-  dot: "bg-neutral-300 dark:bg-neutral-600",
-};
-
-// Status pill shown in the collapsed service row. Copy is booking-centric
-// ("Visible in booking" / "Hidden from booking") so the effect of the
-// Hide/Show toggle is unambiguous. Emerald = visible (positive), neutral =
-// hidden. Presentational only.
-function StatusPill({ active }: { active: boolean }) {
-  if (active) {
-    return (
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-medium text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-200">
-        <span
-          aria-hidden
-          className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500"
-        />
-        Visible in booking
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-neutral-200 px-2.5 py-0.5 text-[11px] font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
-      <span
-        aria-hidden
-        className="inline-block h-1.5 w-1.5 rounded-full bg-neutral-500"
-      />
-      Hidden from booking
-    </span>
-  );
-}
-
-// Collapsible service row. Collapsed by default: a compact summary
-// (name · duration · price · status pill) with the Hide/Show toggle and an
-// Edit control on the right. Expanding reveals the edit form (passed as
-// children). Each row owns its own open state, so multiple rows can be open
-// at once and toggling one never affects another. The `toggle` slot is the
-// standalone visibility form (its own <form>, never nested in the edit form
-// preserves the PR #35 fix). No server-action or FormData changes.
-export function ServiceAccordionItem({
-  name,
-  durationLabel,
-  priceLabel,
-  active,
-  colorKey,
-  toggle,
-  children,
-}: {
-  name: string;
-  durationLabel: string;
-  priceLabel: string;
-  active: boolean;
-  // The service's persisted calendar colour, rendered as a left accent bar +
-  // swatch so the row is identifiable at a glance and matches the calendar
-  // card. Null when the column is not available yet (pre-0153 deploy window).
-  colorKey?: string | null;
-  toggle: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  const [open, setOpen] = useState(false);
-  const accent = isServiceColorKey(colorKey) ? ROW_ACCENT[colorKey] : ROW_ACCENT_NEUTRAL;
-  return (
-    <article
-      className={`overflow-hidden rounded-lg border border-l-4 border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-950 ${accent.border} ${
-        active ? "" : "opacity-90"
-      }`}
-    >
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-3.5">
-        <button
-          type="button"
-          onClick={() => setOpen((o) => !o)}
-          aria-expanded={open}
-          className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-left"
-        >
-          <span aria-hidden className="text-neutral-400">
-            {open ? "▾" : "▸"}
-          </span>
-          <span
-            aria-hidden
-            className={`inline-block h-3 w-3 shrink-0 rounded-full ${accent.dot}`}
-          />
-          <span className="truncate font-medium text-neutral-900 dark:text-neutral-100">
-            {name}
-          </span>
-          {/* Colour is NEVER the only identifier: the calendar colour is also
-              spelled out in words next to the swatch. */}
-          {isServiceColorKey(colorKey) && (
-            <span className="text-[11px] capitalize text-neutral-500">{colorKey}</span>
-          )}
-          <span className="text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
-            {durationLabel}
-          </span>
-          <span className="text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
-            {priceLabel}
-          </span>
-          <StatusPill active={active} />
-        </button>
-        <div className="flex flex-shrink-0 items-center gap-2">
-          {toggle}
-          <button
-            type="button"
-            onClick={() => setOpen((o) => !o)}
-            aria-expanded={open}
-            className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
-          >
-            {open ? "Close" : "Edit"}
-          </button>
-        </div>
-      </div>
-      {open && (
-        <div className="border-t border-neutral-200 px-4 py-4 dark:border-neutral-800">
-          {children}
-        </div>
-      )}
-    </article>
   );
 }
 
@@ -242,6 +160,16 @@ export function DurationField({
     defaultValue != null ? String(defaultValue) : "",
   );
 
+  useEffect(() => {
+    const form = ref.current?.form;
+    if (!form) return;
+    const reset = () => {
+      if (!form.elements.namedItem("id")) setValue(defaultValue == null ? "" : String(defaultValue));
+    };
+    form.addEventListener("reset", reset);
+    return () => form.removeEventListener("reset", reset);
+  }, [defaultValue]);
+
   function applyPreset(minutes: number) {
     setValue(String(minutes));
     const el = ref.current;
@@ -253,7 +181,7 @@ export function DurationField({
 
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="flex flex-nowrap gap-1">
+      <div className="flex flex-wrap gap-1">
         {DURATION_PRESETS_MINUTES.map((m) => {
           const selected = value === String(m);
           return (
@@ -262,7 +190,7 @@ export function DurationField({
               type="button"
               onClick={() => applyPreset(m)}
               aria-pressed={selected}
-              className={`flex-1 rounded-md border px-2 py-1.5 text-[12px] tabular-nums transition ${
+              className={`min-h-11 min-w-11 flex-1 rounded-md border px-2 py-1.5 text-[12px] tabular-nums transition ${
                 selected
                   ? "border-neutral-900 bg-neutral-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900"
                   : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500 hover:text-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300 dark:hover:border-neutral-500 dark:hover:text-neutral-100"
@@ -277,6 +205,7 @@ export function DurationField({
         <input
           ref={ref}
           name={name}
+          aria-label="Duration in minutes"
           type="number"
           min={5}
           max={480}
@@ -285,7 +214,7 @@ export function DurationField({
           value={value}
           onChange={(e) => setValue(e.target.value)}
           placeholder="60"
-          className="w-20 rounded-md border border-neutral-300 bg-white px-2 py-2 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+          className="min-h-11 w-20 rounded-md border border-neutral-300 bg-white px-2 py-2 text-base tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
         />
         <span className="text-xs text-neutral-500">minutes</span>
       </div>
@@ -293,12 +222,6 @@ export function DurationField({
   );
 }
 
-// Submit button that shows in-flight feedback via useFormStatus().
-// Renders inside the parent <form action={...}>, same scope as the
-// existing button it replaces. While pending the button is disabled
-// and reads pendingLabel; otherwise it shows idleLabel. The page
-// re-render that Next.js triggers on revalidatePath() is the implicit
-// "saved" confirmation. No server-action change.
 export function ServiceSubmitButton({
   idleLabel,
   pendingLabel,
@@ -309,36 +232,20 @@ export function ServiceSubmitButton({
   variant?: "primary" | "secondary";
 }) {
   const { pending } = useFormStatus();
-  const base =
-    variant === "primary"
-      ? "rounded-md bg-neutral-900 px-5 py-2.5 text-sm font-medium text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
-      : "rounded-md bg-neutral-900 px-5 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200";
   return (
-    <button type="submit" disabled={pending} className={base}>
-      {pending ? pendingLabel ?? "Saving…" : idleLabel}
-    </button>
+    <Button type="submit" variant={variant} pending={pending} busyLabel={pendingLabel ?? "Saving…"}>
+      {idleLabel}
+    </Button>
   );
 }
 
-// Hide-from-booking / Show-in-booking toggle submit. Lives in its OWN
-// <form action={toggleServiceActiveAction}> in the card header, NOT
-// nested inside the edit form (a nested <form> is invalid HTML; the
-// browser drops the inner one, which is why this toggle previously
-// "did nothing": the click submitted the outer edit form instead of the
-// toggle action). useFormStatus gives clear in-flight feedback, and the
-// revalidatePath() in the action re-renders the card with the flipped
-// state. No server-action change.
 export function ToggleActiveSubmitButton({ active }: { active: boolean }) {
   const { pending } = useFormStatus();
   const idle = active ? "Hide from booking" : "Show in booking";
   const busy = active ? "Hiding…" : "Showing…";
   return (
-    <button
-      type="submit"
-      disabled={pending}
-      className="rounded-md border border-neutral-300 px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
-    >
-      {pending ? busy : idle}
-    </button>
+    <Button type="submit" pending={pending} busyLabel={busy}>
+      {idle}
+    </Button>
   );
 }

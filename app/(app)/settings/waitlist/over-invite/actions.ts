@@ -67,6 +67,10 @@ export async function sendOverInviteAction(_prev: OverInviteResult, formData: Fo
     const end = addDays(start, scope.windowDays - 1);
 
     const db = createAdminClient();
+    // THE POSTED SERVICE MUST BE THIS STUDIO'S OWN ACTIVE SERVICE. At an ordinary fit the slot lookup would refuse a forged id, but a closed week
+    // answers zero without looking at it, so the check is made here, before any batch can be saved.
+    const svc = await db.from("services").select("id").eq("id", scope.serviceId).eq("studio_id", studio.id).eq("active", true).maybeSingle();
+    if (svc.error || !svc.data) return { state: "notice", notice: N.badService };
     const fit = await computeConsultationFit({
       admin: db,
       studioId: studio.id,
@@ -94,6 +98,10 @@ export async function sendOverInviteAction(_prev: OverInviteResult, formData: Fo
     if (sub.shown === null || recheckBeforeSend(sub.shown, fresh) === "reconfirm") {
       return { state: "reconfirm", notice: N.changed, ...fresh, expiringSoon: preview.expiringWithin24h };
     }
+
+    // AT ZERO THE OWNER MUST ALSO ACKNOWLEDGE THAT THE INVITED MAY FIND NO TIMES. The server decides this from ITS fit, never from the posted
+    // `shownFit`, the same way `confirmed` is required above: a form that omits or forges the box sends nothing.
+    if (fit.fit === 0 && !sub.noTimesAcknowledged) return { state: "notice", notice: N.needNoTimesAck };
 
     const created = await createBatch(db, {
       studioId: studio.id,

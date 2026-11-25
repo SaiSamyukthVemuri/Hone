@@ -2459,7 +2459,7 @@ reordered. No frozen developer-platform tool was promoted.
 
 ### S37 · Current conversation + controlled production/canary evidence
 
-Source: Sam’s 15 September 2026 release session and screenshots in this conversation. OPERATOR_REPORTED observations: hosted migrations 0192–0196 applied/verified; Vercel Production deployment bound to source `a47eca0f8ec08718aa16b8a18e95e0416778418d` with `hone.care` / `www.hone.care` aliases and public smoke; test studio `my-studio-9d37c5` enabled for WAIT + durable WAIT; signed-in Waitlist tab and public intake rendered; one controlled entry joined and remains `Waiting`; Invite-to-book reached the composer but failed closed with `no_admission_round`; no provider activation or real message was part of the activation.
+Source: Sam’s 15 September 2026 release session and screenshots in this conversation. OPERATOR_REPORTED observations: hosted migrations 0192–0196 applied/verified; Vercel Production deployment bound to source `a47eca0f8ec08718aa16b8a18e95e0416778418d` with `hone.care` / `www.hone.care` aliases and public smoke; the controlled test studio enabled for WAIT + durable WAIT; signed-in Waitlist tab and public intake rendered; one controlled entry joined and remains `Waiting`; Invite-to-book reached the composer but failed closed with `no_admission_round`; no provider activation or real message was part of the activation.
 
 The same source records that Willow’s existing legacy waitlist remained enabled/preserved and Willow durable mode remained OFF, while Chloe observed that the Settings Waitlist navigation disappeared. Sam had to show her that the underlying list/data still existed. This is product/acceptance evidence for WAIT-CONTINUITY-01, not proof of data loss. Sam accepted the direction that normal studios need a self-service New client intake control rather than founder-managed per-studio Vercel slug edits.
 
@@ -2876,7 +2876,7 @@ Where this roadmap intentionally contains a time-stamped operational snapshot, i
 | **Field** | **Observed value** |
 | --- | --- |
 | Studio | Willow Electrolysis |
-| Studio id | 38cb3a8b-f0f1-409e-9ea4-ffa4b95cb4c6 |
+| Studio id | (id withheld; kept in the private operator records) |
 | Slug | willow-electrolysis |
 | Timezone | America/Toronto |
 | Active practitioners | 1 |

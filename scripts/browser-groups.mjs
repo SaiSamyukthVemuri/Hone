@@ -207,6 +207,8 @@ export const BROWSER_GROUPS = {
       // the /book/[slug] surface, so it belongs with the other public booking
       // specs rather than with the shell interaction family.
       "book-next-available-fast.spec.ts",
+      // The public page after a staff change still lists the opening one buffer after an existing visit.
+      "public-booking-after-staff-change.spec.ts",
       // 0171: the public reschedule v2 contract (policy hash, exclusion,
       // duration authority, same-time, duplicate submit, post-commit success).
       "public-reschedule-v2.spec.ts",
@@ -245,6 +247,11 @@ export const BROWSER_GROUPS = {
       // the query's own text. Here because settings/booking/actions.ts selects
       // this group.
       "settings-booking-error-param.spec.ts",
+      // Team settings: invite a receptionist, see it pending, cancel it; the front desk list and Deactivate.
+      "team-invite-receptionist.spec.ts",
+      // Receptionist onboarding across Team settings, acceptance and the desk (desktop and iPhone, about 6 minutes with the build). Kept out of the always-run
+      // calendar lane on purpose: the targeted lane is already near its measured budget.
+      "receptionist-onboarding-flow.spec.ts",
       "public-booking-error-containment.spec.ts",
       "public-booking-slot-read-failure.spec.ts",
       // TWILIO-EGRESS-FAKE (MSG-006): a public booking with SMS consent reaches
@@ -257,6 +264,7 @@ export const BROWSER_GROUPS = {
     description: "calendar surfaces, services and colours",
     specs: [
       "service-calendar-color-mobile.spec.ts",
+      "service-discard-while-saving.spec.ts",
       "service-order-and-colors.spec.ts",
       "disinfectant-notification.spec.ts",
       // Appointment preparation memory on the calendar detail screen: the
@@ -575,6 +583,7 @@ export const PUBLIC_BOOKING_SPECS = [
   "new-studio-wizard.spec.ts",
   "onboarding.spec.ts",
   "perceived-speed.spec.ts",
+  "public-booking-after-staff-change.spec.ts",
   "public-booking-error-containment.spec.ts",
   "public-booking-slot-read-failure.spec.ts",
   "public-cancel-policy-change.spec.ts",

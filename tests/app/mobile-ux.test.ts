@@ -93,7 +93,7 @@ describe("app shell: responsive navigation", () => {
       '"/clients"',
       '"/calendar"',
       '"/records"',
-      '"/settings/profile"',
+      '"/settings"',
     ]) {
       expect(MENU).toContain(dest);
     }
@@ -165,7 +165,7 @@ describe("desktop account dropdown (PR #231)", () => {
   });
 
   it("contains the account destinations, the profile block, and Sign out", () => {
-    expect(ACCOUNT).toContain('"/settings/profile"');
+    expect(ACCOUNT).toContain('"/settings"');
     expect(ACCOUNT).toContain('"/getting-started"');
     expect(ACCOUNT).toMatch(/<form\b[\s\S]{0,200}?action=\{signOut\}/);
     expect(ACCOUNT).toMatch(/Sign out/);
@@ -177,7 +177,7 @@ describe("desktop account dropdown (PR #231)", () => {
     for (const dest of ['"/dashboard"', '"/clients"', '"/calendar"', '"/records"']) {
       expect(navRow).toContain(dest);
     }
-    expect(navRow).not.toContain('"/settings/profile"');
+    expect(navRow).not.toContain('"/settings"');
     expect(navRow).not.toContain('"/admin"');
     expect(LAYOUT).toMatch(/<AccountMenu/);
   });

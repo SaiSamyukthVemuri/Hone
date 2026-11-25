@@ -522,6 +522,83 @@ function blockButtonTests(tap: boolean, times: { member: string; owner: string; 
   });
 }
 
+test.describe("Block time follows the phone time grid's selected day", () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  test("changing the weekday on the phone grid, then Block time, opens on THAT day (no stale-date button beside the grid)", async ({ page }) => {
+    await loginAsOwner(page, seed);
+    await page.goto(`/calendar?view=week&day=${day}&layout=grid`);
+    // The page-level Block time button keeps the day the page loaded on, so it must not sit beside this grid.
+    await expect(page.getByRole("button", { name: "Block time", exact: true })).toHaveCount(0);
+    const pills = page.locator("button[data-selected]");
+    const selectedIndex = await pills.evaluateAll((els) => els.findIndex((e) => e.getAttribute("data-selected") === "true"));
+    expect(selectedIndex).toBeGreaterThanOrEqual(0);
+    const delta = selectedIndex > 0 ? -1 : 1;
+    const other = new Date(Date.parse(`${day}T12:00:00Z`) + delta * 86400000).toISOString().slice(0, 10);
+    await pills.nth(selectedIndex + delta).tap();
+    await expect(pills.nth(selectedIndex + delta)).toHaveAttribute("data-selected", "true");
+    await page.getByRole("button", { name: "Add appointment or block time" }).tap();
+    await page.getByRole("dialog", { name: "Choose action for selected time" }).getByRole("button", { name: "Block time" }).tap();
+    const drawer = page.getByRole("dialog", { name: "Block time" });
+    await expect(drawer).toBeVisible();
+    await expect(drawer.getByText(other, { exact: true })).toBeVisible();
+    await expect(drawer.getByText(day, { exact: true })).toHaveCount(0);
+  });
+
+  // The phone's week view loads on a MONDAY; the person switches to WEDNESDAY and saves a block. It must land on Wednesday, for the
+  // chosen practitioner, in the row and on the screen after a refresh.
+  const mondayOnOrAfter = (from: string) => {
+    const d = new Date(`${from}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + ((8 - d.getUTCDay()) % 7));
+    return d.toISOString().slice(0, 10);
+  };
+  const plusDays = (date: string, n: number) => new Date(Date.parse(`${date}T12:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
+  async function mondayToWednesdayBlock(page: Page, who: { id: string; name: string }, owner: boolean, start: string) {
+    const [sh, sm] = start.split(":").map(Number);
+    const end = `${String(sh).padStart(2, "0")}:${String(sm + 30).padStart(2, "0")}`;
+    const monday = mondayOnOrAfter(day);
+    const wednesday = plusDays(monday, 2);
+    const reason = `Phone check ${who.name}`;
+    await page.goto(`/calendar?view=week&day=${monday}&layout=grid`);
+    await expect(page.getByRole("button", { name: "Block time", exact: true })).toHaveCount(0); // no stale-day button beside the grid
+    await page.locator("button[data-selected]").filter({ has: page.locator("span", { hasText: /^Wed$/i }) }).tap();
+    await expect(page.locator('button[data-selected="true"]').filter({ has: page.locator("span", { hasText: /^Wed$/i }) })).toHaveCount(1);
+    await page.getByRole("button", { name: "Add appointment or block time" }).tap();
+    await page.getByRole("dialog", { name: "Choose action for selected time" }).getByRole("button", { name: "Block time" }).tap();
+    const drawer = page.getByRole("dialog", { name: "Block time" });
+    await expect(drawer.getByText(wednesday, { exact: true })).toBeVisible();
+    await expect(drawer.getByText(monday, { exact: true })).toHaveCount(0);
+    await drawer.getByLabel("Start", { exact: true }).fill(start);
+    await drawer.getByLabel("End", { exact: true }).fill(end);
+    await drawer.locator("input").nth(2).fill(reason);
+    if (owner) await drawer.getByLabel("Applies to").selectOption({ label: `Only ${who.name}` });
+    else await expect(drawer.getByLabel("Applies to")).toHaveCount(0);
+    await drawer.getByRole("button", { name: "Save block" }).tap();
+    await expect(drawer).toHaveCount(0);
+    const rows = () => sql<{ d: string; practitioner_id: string | null; studio_id: string }>(
+      "select to_char(starts_at at time zone $2,'YYYY-MM-DD HH24:MI') as d, practitioner_id, studio_id from public.studio_timed_blocks where studio_id=$1 and private_note=$3",
+      [seed.studioId, TZ, reason],
+    );
+    await expect.poll(async () => (await rows()).map((r) => [r.d, r.practitioner_id, r.studio_id])).toEqual([[`${wednesday} ${start}`, who.id, seed.studioId]]);
+    await page.goto(`/calendar?view=week&day=${wednesday}&layout=grid`);
+    // A member's view does not carry the private note, so find the block by its time on the Wednesday timeline.
+    const saved = page.locator("button[title]").filter({ hasText: new RegExp(`${sh - 12}:00 PM|${start}`) }).first();
+    await saved.scrollIntoViewIfNeeded();
+    await expect(saved).toBeVisible();
+    await page.screenshot({ path: `${process.env.EV_DIR ?? "test-results"}/phone-monday-to-wednesday-${owner ? "owner" : "practitioner"}.png` });
+    return { monday, wednesday };
+  }
+  test("phone week: Monday to Wednesday, the owner picks one practitioner, and the block lands on Wednesday for them", async ({ page }) => {
+    const ed = byKey("ed");
+    await loginAsOwner(page, seed);
+    await mondayToWednesdayBlock(page, { id: ed.id, name: ed.name }, true, "15:00");
+  });
+  test("phone week: Monday to Wednesday, a practitioner's block lands on Wednesday on their own schedule", async ({ page }) => {
+    const cy = byKey("cy");
+    await loginByMagicLink(page, cy.email!);
+    await mondayToWednesdayBlock(page, { id: cy.id, name: cy.name }, false, "17:00"); // a different time from the owner's test, so the two blocks never overlap
+  });
+});
+
 test.describe("Block time button on desktop", () => {
   test.use({ viewport: { width: 1280, height: 1000 } });
   blockButtonTests(false, { member: "19:00", owner: "19:30", day });
