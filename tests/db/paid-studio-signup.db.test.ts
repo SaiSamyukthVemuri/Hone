@@ -121,7 +121,7 @@ async function fixture(plan: "solo" | "studio" = "solo") {
         [user],
       )
     ).rows;
-  return { user, invoice, receive, memberships, sub };
+  return { user, email, invoice, receive, memberships, sub };
 }
 
 describe("sandbox paid signup", () => {
@@ -330,4 +330,151 @@ describe("sandbox paid signup", () => {
       ).rejects.toThrow(/permission denied/);
     },
   );
+});
+
+describe("subscription notification outbox", () => {
+  const claim = async (email: string) =>
+    (
+      await adminQuery(
+        "select public.claim_hone_subscription_notice($1) as notice",
+        [email],
+      )
+    ).rows[0].notice;
+  type Claimed = {
+    id: string;
+    lease: string;
+    kind: string;
+    deadline: string | null;
+    recipient: string;
+  };
+  const authorize = async (n: Claimed, digest = "a".repeat(64)) =>
+    (
+      await adminQuery(
+        "select public.authorize_hone_subscription_notice($1,$2,$3,$4,$5) as ok",
+        [n.id, n.lease, n.recipient, digest, n.deadline],
+      )
+    ).rows[0].ok;
+  const finish = async (n: Claimed) =>
+    (
+      await adminQuery(
+        "select public.finish_hone_subscription_notice($1,$2) as ok",
+        [n.id, n.lease],
+      )
+    ).rows[0].ok;
+  async function initial() {
+    const f = await fixture();
+    await Promise.all([f.receive(randomUUID()), f.receive(randomUUID())]);
+    const receipts = (
+      await Promise.all([claim(f.email), claim(f.email)])
+    ).filter(Boolean);
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0].kind).toBe("receipt");
+    expect(await authorize(receipts[0])).toBe(true);
+    expect(await finish(receipts[0])).toBe(true);
+    expect(await claim(f.email)).toBeNull();
+    f.invoice.id = "in_" + randomUUID();
+    f.invoice.reason = "subscription_cycle";
+    f.invoice.status = "open";
+    f.invoice.amountPaid = 0;
+    f.invoice.collected = 0;
+    f.sub.status = "past_due";
+    return f;
+  }
+  async function recover(f: Awaited<ReturnType<typeof initial>>) {
+    f.invoice.status = "paid";
+    f.invoice.amountPaid = 4900;
+    f.invoice.collected = 4900;
+    f.sub.status = "active";
+    await Promise.all([f.receive(randomUUID()), f.receive(randomUUID())]);
+    const receipt = await claim(f.email);
+    expect(receipt.kind).toBe("receipt");
+    expect(await authorize(receipt)).toBe(true);
+    expect(await finish(receipt)).toBe(true);
+    expect(await claim(f.email)).toBeNull();
+  }
+  it("delivers the first warning once, then the pause without a new Stripe event, then a renewal receipt", async () => {
+    const f = await initial();
+    const first = Math.floor(Date.now() / 1000) - 86400;
+    await f.receive(randomUUID(), "invoice.payment_failed", first);
+    await f.receive(randomUUID(), "invoice.payment_failed", first + 600);
+    const warning = await claim(f.email);
+    expect(warning.kind).toBe("warning");
+    expect(Date.parse(warning.deadline)).toBe((first + 7 * 86400) * 1000);
+    expect(await authorize(warning)).toBe(true);
+    expect(await finish(warning)).toBe(true);
+    expect(await claim(f.email)).toBeNull();
+    // Move the fixture's deadline past the database clock without another webhook.
+    await adminQuery(
+      "update public.hone_renewal_invoices set failed_at=now()-interval '168 hours' where invoice_id=$1",
+      [f.invoice.id],
+    );
+    const pause = await claim(f.email);
+    expect(pause.kind).toBe("paused");
+    expect(await authorize(pause)).toBe(true);
+    expect(await finish(pause)).toBe(true);
+    expect(await claim(f.email)).toBeNull();
+    await recover(f);
+  });
+  it.each([1, 8])(
+    "payment during dispatch suppresses a pending warning or pause (day %i)",
+    async (days) => {
+      const f = await initial();
+      await f.receive(
+        randomUUID(),
+        "invoice.payment_failed",
+        Math.floor(Date.now() / 1000) - days * 86400,
+      );
+      const pending = await claim(f.email);
+      expect(pending.kind).toBe(days === 1 ? "warning" : "paused");
+      await recover(f);
+      expect(await authorize(pending)).toBe(false);
+    },
+  );
+  it("retries a lost acknowledgement with the same payload only inside the provider window", async () => {
+    const f = await fixture();
+    await f.receive(randomUUID());
+    const receipt = await claim(f.email);
+    expect(await authorize(receipt)).toBe(true);
+    const expire = () =>
+      adminQuery(
+        "update public.hone_subscription_notices set retry_at=now() where id=$1",
+        [receipt.id],
+      );
+    await expire();
+    const retry = await claim(f.email);
+    expect(retry.id).toBe(receipt.id);
+    expect(retry.lease).not.toBe(receipt.lease);
+    expect(await authorize(retry, "b".repeat(64))).toBe(false);
+    expect(await authorize(retry)).toBe(true);
+    expect(await finish(receipt)).toBe(false);
+    await expire();
+    await adminQuery(
+      "update public.hone_subscription_notices set first_send_at=now()-interval '24 hours' where id=$1",
+      [retry.id],
+    );
+    expect(await claim(f.email)).toEqual({ needs_review: true });
+  });
+  it("rechecks the owner's membership and denies ordinary roles access to dispatch", async () => {
+    const f = await fixture();
+    await f.receive(randomUUID());
+    expect(await claim("other@example.test")).toBeNull();
+    const notice = await claim(f.email);
+    await adminQuery(
+      "update public.practitioners set active=false where user_id=$1",
+      [f.user],
+    );
+    expect(await authorize(notice)).toBe(false);
+    for (const role of ["anon", "authenticated"] as const) {
+      await expect(
+        asRole(role, (q) =>
+          q("select public.claim_hone_subscription_notice($1)", [f.email]),
+        ),
+      ).rejects.toThrow(/permission denied/);
+      await expect(
+        asRole(role, (q) =>
+          q("select * from public.hone_due_subscription_notices"),
+        ),
+      ).rejects.toThrow(/permission denied/);
+    }
+  });
 });

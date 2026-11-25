@@ -7,6 +7,10 @@ do $$ begin
     raise exception 'billing_history_present: preserve purchase and entitlement records';
   end if;
 end $$;
+drop function public.finish_hone_subscription_notice(uuid,uuid),
+  public.authorize_hone_subscription_notice(uuid,uuid,text,text,timestamptz),public.claim_hone_subscription_notice(text);
+drop view public.hone_due_subscription_notices;
+drop table public.hone_subscription_notices;
 drop trigger subscription_allows_new_booking on public.appointments;
 drop trigger subscription_allows_new_chart on public.sessions;
 drop trigger subscription_allows_new_block on public.session_blocks;

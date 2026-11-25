@@ -21,3 +21,14 @@ Install the billing sandbox API key as `HONE_BILLING_STRIPE_SECRET_KEY` in the t
 6. Run `npm run test:db -- tests/db/subscription-team-seats.db.test.ts` for the checked limits, reactivation, concurrency and plan transitions. An over-capacity downgrade must be resolved by the owner before changing the stored plan. A customer-facing Stripe upgrade/downgrade flow is separate. Full receptionist desk onboarding and team management are being integrated in #1779.
 
 Keep the production activation conditions in HON-70. Existing pilot agreements and treatment charges have separate ownership. For a sandbox rollback, undo 0388 before 0387. The signup rollback refuses to delete active or pending purchase history.
+
+### Subscription emails
+
+The US subscription sandbox uses Hone as the sender for first-payment and monthly receipts, first missed-renewal notices, and overdue access pauses. Use one synthetic verified owner with a private test inbox. Set `HONE_BILLING_TEST_RECIPIENT` to that owner's address in the isolated app. An empty value disables dispatch. The signed invoice and its email intents commit together. An authenticated worker checks the current owner and invoice again before sending. For receipts it links to the Stripe-hosted invoice where both PDFs can be downloaded. Configure the sandbox for one receipt sender to avoid duplicates with Stripe's own customer emails.
+
+Point an isolated scheduler at `GET /api/cron/subscription-emails` on the **test app**, every five minutes with its own `Authorization: Bearer <CRON_SECRET>`. Use the existing VPS or external scheduler for this cadence. The database enforces the deadline even when nobody opens Hone. The first worker run after that deadline can send the pause email. Confirm scheduler success and inbox delivery as part of hosted acceptance.
+
+1. Pay the first invoice and one monthly renewal. Verify two receipts with the actual invoice numbers, periods, taxes, totals and PDF access. Replay both events. No extra receipt should arrive.
+2. Fail a renewal twice. Expect one warning with the original deadline in the studio's time zone. Pay before the deadline and confirm the paid receipt arrives and no pause email follows.
+3. Leave a separate renewal unpaid through its deadline. Confirm a new booking is refused, the owner can still open Billing, and the next worker run sends one pause notice. Pay the invoice and verify booking resumes in the same studio.
+4. The worker reports provider acceptance separately from inbox delivery. On a provider timeout it retries with the same message key. An eligible, unconfirmed send older than 23 hours makes the worker report a failure for reconciliation. If delivery is still ambiguous, or the original payload changed, reconcile the provider's send record before manual recovery. Read the outbox using a trusted operator connection. Do not paste recipient addresses or hosted invoice links into logs.

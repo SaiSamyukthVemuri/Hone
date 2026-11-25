@@ -26,6 +26,7 @@ create table public.hone_renewal_invoices (
   invoice_id text primary key,
   attempt_id uuid not null references public.hone_signup_attempts(id),
   failed_at timestamptz,
+  settled_at timestamptz,
   paid boolean not null default false
 );
 create index hone_overdue_invoices on public.hone_renewal_invoices(attempt_id,failed_at) where not paid;
@@ -33,6 +34,105 @@ alter table public.hone_signup_attempts enable row level security;
 alter table public.hone_billing_events enable row level security;
 alter table public.hone_renewal_invoices enable row level security;
 revoke all on public.hone_signup_attempts, public.hone_billing_events, public.hone_renewal_invoices from public, anon, authenticated, service_role;
+
+-- One intent per billing fact, committed with the invoice. The pause intent is
+-- scheduled by the same unpaid-invoice deadline that gates bookings and charts.
+create table public.hone_subscription_notices (
+  id uuid primary key default gen_random_uuid(),
+  attempt_id uuid not null references public.hone_signup_attempts(id),
+  invoice_id text not null,
+  kind text not null check (kind in ('receipt','warning','paused')),
+  retry_at timestamptz not null default now(),
+  lease uuid,
+  first_send_at timestamptz,
+  payload_hash text,
+  sent_at timestamptz,
+  unique (attempt_id, invoice_id, kind)
+);
+alter table public.hone_subscription_notices enable row level security;
+revoke all on public.hone_subscription_notices from public, anon, authenticated, service_role;
+create index hone_subscription_mail_due on public.hone_subscription_notices(retry_at) where sent_at is null;
+
+create view public.hone_due_subscription_notices with (security_invoker=true) as
+select n.id, n.kind, n.invoice_id, a.customer_id, a.subscription_id, a.plan,
+  u.email as recipient, s.timezone,
+  i.failed_at + interval '168 hours' as deadline
+from public.hone_subscription_notices n
+join public.hone_signup_attempts a on a.id=n.attempt_id and a.state='paid'
+join auth.users u on u.id=a.user_id and u.email_confirmed_at is not null
+join public.studios s on s.id=a.studio_id
+left join public.hone_renewal_invoices i on i.invoice_id=n.invoice_id and i.attempt_id=a.id
+where n.sent_at is null and exists (
+  select 1 from public.practitioners p where p.studio_id=a.studio_id
+    and p.user_id=u.id and p.active and p.role='owner'
+) and (n.kind='receipt' or (
+  not i.paid and i.failed_at is not null
+  and (n.kind='paused') = (now() >= i.failed_at + interval '168 hours')
+  and not exists (
+    select 1 from public.hone_renewal_invoices older where older.attempt_id=a.id and not older.paid
+    and (older.failed_at,older.invoice_id) < (i.failed_at,i.invoice_id)
+  )
+  and not exists (
+    select 1 from public.hone_subscription_notices prior
+    join public.hone_renewal_invoices prior_invoice on prior_invoice.invoice_id=prior.invoice_id
+    where prior.attempt_id=a.id and prior.kind='paused' and prior.sent_at is not null
+      and prior.invoice_id<>i.invoice_id and prior_invoice.failed_at<=i.failed_at
+      and (prior_invoice.settled_at is null or prior_invoice.settled_at >= i.failed_at + interval '168 hours')
+  )
+));
+revoke all on public.hone_due_subscription_notices from public, anon, authenticated, service_role;
+
+create function public.claim_hone_subscription_notice(p_recipient text) returns jsonb
+language plpgsql security definer set search_path = '' as $$
+declare
+  notice public.hone_due_subscription_notices;
+  token uuid := gen_random_uuid();
+begin
+  select d.* into notice from public.hone_due_subscription_notices d
+    join public.hone_subscription_notices n on n.id=d.id
+    where lower(d.recipient)=lower(p_recipient) and n.retry_at<=now()
+      and (n.first_send_at is null or n.first_send_at > now()-interval '23 hours')
+    order by n.retry_at,n.id limit 1 for update of n skip locked;
+  if not found then
+    if exists (
+      select 1 from public.hone_due_subscription_notices d join public.hone_subscription_notices n on n.id=d.id
+      where lower(d.recipient)=lower(p_recipient) and n.first_send_at<=now()-interval '23 hours'
+    ) then return jsonb_build_object('needs_review',true); end if;
+    return null;
+  end if;
+  update public.hone_subscription_notices set lease=token,retry_at=now()+interval '5 minutes' where id=notice.id;
+  return to_jsonb(notice) || jsonb_build_object('lease',token);
+end $$;
+
+-- Recheck current owner, account state and exact message immediately before mail
+-- handoff. A retry after an ambiguous send must use the original payload/key.
+create function public.authorize_hone_subscription_notice(p_id uuid,p_lease uuid,p_recipient text,p_hash text,p_deadline timestamptz)
+returns boolean language sql security definer set search_path = '' as $$
+  with granted as (
+    update public.hone_subscription_notices n
+    set first_send_at=coalesce(n.first_send_at,now()),payload_hash=p_hash
+    from public.hone_due_subscription_notices d
+    where n.id=p_id and n.id=d.id and n.lease=p_lease and n.retry_at>now()
+      and (d.kind='receipt' or d.deadline=p_deadline) and d.recipient=p_recipient and p_hash ~ '^[0-9a-f]{64}$'
+      and (n.payload_hash is null or n.payload_hash=p_hash)
+      and (n.first_send_at is null or n.first_send_at>now()-interval '23 hours')
+    returning n.id
+  ) select exists(select 1 from granted);
+$$;
+
+create function public.finish_hone_subscription_notice(p_id uuid,p_lease uuid)
+returns boolean language sql security definer set search_path = '' as $$
+  with finished as (
+    update public.hone_subscription_notices set sent_at=now(),lease=null
+    where id=p_id and lease=p_lease and first_send_at is not null and sent_at is null returning id
+  ) select exists(select 1 from finished);
+$$;
+revoke all on function public.claim_hone_subscription_notice(text),
+  public.authorize_hone_subscription_notice(uuid,uuid,text,text,timestamptz),public.finish_hone_subscription_notice(uuid,uuid)
+  from public, anon, authenticated, service_role;
+grant execute on function public.claim_hone_subscription_notice(text),
+  public.authorize_hone_subscription_notice(uuid,uuid,text,text,timestamptz),public.finish_hone_subscription_notice(uuid,uuid)
+  to service_role;
 
 create function public.claim_hone_signup(p_user uuid, p_plan text, p_studio text, p_owner text)
 returns jsonb language plpgsql security definer set search_path = '' as $$
@@ -97,13 +197,21 @@ begin
       values(new_studio,a.user_id,a.owner_name,verified_email,'owner',true);
     update public.hone_signup_attempts set state='paid',studio_id=new_studio,customer_id=p_customer,
       subscription_id=p_subscription,session_url=null where id=a.id;
+    insert into public.hone_subscription_notices(attempt_id,invoice_id,kind) values(a.id,p_invoice,'receipt');
     return 'provisioned';
   end if;
-  insert into public.hone_renewal_invoices as i(invoice_id,attempt_id,failed_at,paid)
-  values(p_invoice,a.id,case when p_kind='renewal_failed' then p_event_at end,p_kind='renewal_paid')
+  insert into public.hone_renewal_invoices as i(invoice_id,attempt_id,failed_at,paid,settled_at)
+  values(p_invoice,a.id,case when p_kind='renewal_failed' then p_event_at end,p_kind='renewal_paid',case when p_kind='renewal_paid' then now() end)
   on conflict(invoice_id) do update set paid=i.paid or excluded.paid,
-    failed_at=least(i.failed_at,excluded.failed_at) where i.attempt_id=excluded.attempt_id;
+    settled_at=coalesce(i.settled_at,excluded.settled_at),failed_at=least(i.failed_at,excluded.failed_at) where i.attempt_id=excluded.attempt_id;
   if not found then raise exception 'invoice_binding_mismatch'; end if;
+  if p_kind='renewal_paid' then
+    insert into public.hone_subscription_notices(attempt_id,invoice_id,kind)
+      values(a.id,p_invoice,'receipt') on conflict do nothing;
+  else
+    insert into public.hone_subscription_notices(attempt_id,invoice_id,kind)
+      values(a.id,p_invoice,'warning'),(a.id,p_invoice,'paused') on conflict do nothing;
+  end if;
   return 'recorded';
 end $$;
 

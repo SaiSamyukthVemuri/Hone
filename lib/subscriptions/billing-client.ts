@@ -184,6 +184,29 @@ export function createBillingStripeClient(
       };
     },
 
+    async readNoticeInvoice(id: string) {
+      const invoice = await stripe.invoices.retrieve(id);
+      const line = invoice.lines.data[0];
+      return {
+        id: invoice.id,
+        live: invoice.livemode,
+        customer: idOf(invoice.customer),
+        subscription: idOf(invoice.parent?.subscription_details?.subscription),
+        status: invoice.status,
+        number: invoice.number,
+        currency: invoice.currency,
+        amountPaid: invoice.amount_paid,
+        amountRemaining: invoice.amount_remaining,
+        total: invoice.total,
+        subtotal: invoice.subtotal,
+        tax: (invoice.total_taxes ?? []).reduce((sum, part) => sum + part.amount, 0),
+        paidAt: invoice.status_transitions.paid_at,
+        price: idOf(line?.pricing?.price_details?.price),
+        period: line?.period,
+        hostedUrl: invoice.hosted_invoice_url ?? null,
+      };
+    },
+
     async findAttemptSession(attempt: {
       id: string;
       created: number;
