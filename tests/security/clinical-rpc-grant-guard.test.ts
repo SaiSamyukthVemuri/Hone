@@ -196,13 +196,16 @@ describe("clinical RPC grant guard — authenticated-only commands", () => {
 
   it("every authenticated-only COMMAND grants EXECUTE to authenticated", () => {
     const missing: string[] = [];
+    // Each migration is read and normalised ONCE, not once per command (HON-116: the per-command re-read took 4.6-5.6 s and timed out under host load).
+    const normalised = migrationFiles().map((f) =>
+      readFileSync(join(MIG_DIR, f), "utf8")
+        .split("\n")
+        .map((l) => l.replace(/--.*$/, ""))
+        .join(" ")
+        .replace(/\s+/g, " "),
+    );
     for (const c of authOnly.filter((x) => !isInternalHelper(x.fn))) {
-      const granted = migrationFiles().some((f) => {
-        const sql = readFileSync(join(MIG_DIR, f), "utf8")
-          .split("\n")
-          .map((l) => l.replace(/--.*$/, ""))
-          .join(" ")
-          .replace(/\s+/g, " ");
+      const granted = normalised.some((sql) => {
         return new RegExp(
           `grant\\s+execute\\s+on\\s+function\\s+public\\.${c.fn}\\s*\\([^)]*\\)\\s*to\\s+authenticated\\b`,
           "i",
@@ -211,7 +214,7 @@ describe("clinical RPC grant guard — authenticated-only commands", () => {
       if (!granted) missing.push(c.fn);
     }
     expect(missing).toEqual([]);
-  });
+  }, 30_000);
 
   it("the service-role-callable exemption list is small, named and justified", () => {
     // Not a growable silencer: every entry must carry a reason mentioning the
