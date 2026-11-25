@@ -220,7 +220,7 @@ for (const device of [
 
       const blocks = await blocksOf(sessionId);
       for (const b of blocks) expect(b, "no machine of any kind is attached").toMatchObject({ studio_machine_id: null, machine_profile_id: null, machine_mode_key: null });
-      expect(blocks.map((b) => b.mode)).toEqual(["thermo", "blend", "galvanic"]);
+      expect(blocks.map((b) => b.mode)).toEqual(["thermo", "blend", "galv"]);
       expect((await sql<{ n: number }>(`select count(*)::int n from public.studio_machines where studio_id=$1`, [s.seed.studioId]))[0]!.n, "no placeholder or any machine row was created").toBe(0);
       expect((await sql<{ n: number }>(`select count(*)::int n from public.treatment_setup_readings where session_block_id = any($1)`, [blocks.map((b) => b.id)]))[0]!.n, "no native readings for legacy modes").toBe(0);
 

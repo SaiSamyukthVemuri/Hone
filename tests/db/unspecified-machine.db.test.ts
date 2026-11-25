@@ -266,10 +266,12 @@ describe("0385 command census: every function that takes a machine id is classif
 
   it("reads pg_proc and fails on any public function that takes a machine / studio_machine id and is not classified", async () => {
     const r = await adminQuery(
-      `select p.proname, pg_get_function_arguments(p.oid) as args
-         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-        where n.nspname = 'public'
-          and (pg_get_function_arguments(p.oid) ~* '\\m(p_studio_machine_id|p_machine_id|p_unit_id|p_device_id)\\M')
+      `select distinct p.proname
+         from pg_proc p
+         cross join lateral unnest(p.proargnames, coalesce(p.proallargtypes, string_to_array(p.proargtypes::text, ' ')::oid[])) as a(arg_name, arg_type)
+        where p.pronamespace = 'public'::regnamespace
+          and a.arg_type = 'uuid'::regtype
+          and a.arg_name ~* '(machine|unit|device)'
         order by 1`,
     );
     const names = [...new Set(r.rows.map((x) => x.proname as string))];
