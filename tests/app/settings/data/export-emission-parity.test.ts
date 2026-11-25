@@ -36,6 +36,8 @@ const BASE_CSV_HEADERS: Readonly<Record<string, readonly string[]>> = {
   "client_consent_signatures.csv": ["id", "client_id", "template_id", "template_title_snapshot", "template_body_snapshot", "template_version", "template_hash", "signature_name", "signed_at", "response", "response_label_snapshot", "created_at"],
   "probe_lots.csv": ["id", "probe_size", "lot_number", "expiry_date", "active", "notes", "created_at"],
   "service_practitioners.csv": ["id", "service_id", "practitioner_id", "created_at"],
+  // HON-118: a NEW file, pinned at its introduction (not a base-commit header).
+  "treatment_setup_readings.csv": ["id", "session_block_id", "studio_machine_id", "machine_profile_id", "machine_profile_version", "mode_key", "group_key", "channels", "stage_key", "field_key", "value_numeric", "value_text", "absence_reason", "native_unit", "decimals", "observation_source", "revision", "recorded_by_practitioner_id", "recorded_at", "capture_id"],
   "services.csv": ["id", "name", "description", "default_duration_minutes", "price_cents", "active", "modality", "sort_order", "pre_care_instructions", "calendar_color", "created_at", "updated_at"],
   "treatment_goals.csv": ["id", "client_id", "estimated_total_minutes", "notes", "status", "created_at", "updated_at"],
   "appointments.csv": ["id", "client_id", "client_name", "practitioner_id", "practitioner_name", "service_id", "service_name", "starts_at", "ends_at", "duration_minutes", "status", "notes", "cancellation_reason", "cancelled_at", "cancelled_by", "created_at", "updated_at", "referral_source", "rescheduled_from_appointment_id", "rescheduled_to_appointment_id", "cancellation_kind", "booked_outside_availability"],

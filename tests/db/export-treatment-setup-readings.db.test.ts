@@ -1,0 +1,238 @@
+import { randomUUID } from "node:crypto";
+import { createServerClient } from "@supabase/ssr";
+import JSZip from "jszip";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+
+import { E2E_SERVICE_ROLE_KEY, E2E_SUPABASE_URL, E2E_WEB_SERVER_ENV } from "@/e2e/helpers/local-env";
+import { exportSpec } from "@/lib/export/resource-registry";
+import { adminQuery, asUser, closePool, RECORD_GROUP_SQL, seedSession, seedStudio, type SeededStudio } from "@/tests/db/helpers/harness";
+
+// HON-118. The owner's data export carries machine-native (MultiPlex) readings, with real rows, real RLS, real GoTrue, and the real export action:
+//
+//   * the readings file holds the studio's own rows and no other studio's;
+//   * a native area's pulse count (3) and an intensity (1.85) come out as the machine showed them, and a recorded 1.8 at two decimals is "1.80";
+//   * a field left blank is a reasoned absence, never a 0;
+//   * the source-count check is real: one row lost on the way (here: from the wire, after the database answered) is reported as "mismatched" and the
+//     export is REFUSED, while an untouched run reports "matched" and writes the file.
+//
+// The negative control tampers with the REST response for exactly that table, so the production code path, count query and all, is what notices.
+
+if (typeof (globalThis as { WebSocket?: unknown }).WebSocket === "undefined") {
+  (globalThis as { WebSocket?: unknown }).WebSocket = class WebSocketStub {};
+}
+
+const ANON = E2E_WEB_SERVER_ENV.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const jar = vi.hoisted(() => new Map<string, string>());
+const tamper = vi.hoisted(() => ({ dropLastReadingRow: false }));
+
+vi.mock("next/headers", () => ({
+  cookies: async () => ({
+    getAll: () => [...jar.entries()].map(([name, value]) => ({ name, value })),
+    get: (name: string) => (jar.has(name) ? { name, value: jar.get(name)! } : undefined),
+    set: (name: string, value: string) => jar.set(name, value),
+  }),
+}));
+vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
+
+// The one client the export reads through, with a fetch that can lose the last row of the readings page (a GET on that table; the HEAD count is untouched).
+vi.mock("@/lib/supabase/server", async () => {
+  const { createServerClient: make } = await import("@supabase/ssr");
+  const tamperingFetch: typeof fetch = async (input, init) => {
+    const res = await fetch(input, init);
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const method = (init?.method ?? (typeof input === "object" && "method" in input ? input.method : "GET")).toUpperCase();
+    if (!tamper.dropLastReadingRow || method !== "GET" || !url.includes("/rest/v1/treatment_setup_readings")) return res;
+    const rows = (await res.json()) as unknown[];
+    const headers = new Headers(res.headers);
+    headers.delete("content-length");
+    headers.delete("content-encoding");
+    headers.delete("content-range");
+    return new Response(JSON.stringify(rows.slice(0, -1)), { status: res.status, headers });
+  };
+  return {
+    createClient: async () =>
+      make(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
+        cookies: {
+          getAll: () => [...jar.entries()].map(([name, value]) => ({ name, value })),
+          setAll: (list: Array<{ name: string; value: string }>) => list.forEach(({ name, value }) => jar.set(name, value)),
+        },
+        global: { fetch: tamperingFetch },
+      }),
+  };
+});
+
+const PROFILE = `synthetic:hon118-${randomUUID().slice(0, 8)}`;
+const MODE = "multiplex";
+
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { cell += '"'; i++; } else quoted = false;
+      } else cell += ch;
+      continue;
+    }
+    if (ch === '"') { quoted = true; continue; }
+    if (ch === ",") { row.push(cell); cell = ""; continue; }
+    if (ch === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; continue; }
+    if (ch === "\r") continue;
+    cell += ch;
+  }
+  if (cell.length > 0 || row.length > 0) { row.push(cell); rows.push(row); }
+  return rows;
+}
+function asTable(csv: string) {
+  const parsed = parseCsv(csv).filter((r) => r.length > 1 || r[0] !== "");
+  const headers = parsed[0] ?? [];
+  return { headers, rows: parsed.slice(1).map((cells) => Object.fromEntries(headers.map((h, i) => [h, cells[i] ?? ""]))) as Array<Record<string, string>> };
+}
+
+async function recordNativeArea(studio: SeededStudio, items: unknown[]): Promise<string> {
+  const { sessionId, blockId } = await seedSession(studio);
+  await asUser(studio.userId, async (q) => {
+    const machine = (await q(`select public.register_studio_machine($1,$2,1,'HON-118 fixture','{}') as id`, [studio.studioId, PROFILE])).rows[0].id as string;
+    const res = await q(RECORD_GROUP_SQL, [blockId, machine, MODE, "g1", [], JSON.stringify(items), sessionId, studio.clientId]);
+    if (Number(res.rows[0].n) < 1) throw new Error("recording the fixture group wrote nothing");
+  });
+  return blockId;
+}
+
+let studioA: SeededStudio;
+let blockA = "";
+let blockB = "";
+let loginEmail = "";
+let loginPassword = "";
+
+async function signInAsStudioAOwner() {
+  jar.clear();
+  const token = await fetch(`${E2E_SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+    method: "POST",
+    headers: { apikey: ANON, "Content-Type": "application/json" },
+    body: JSON.stringify({ email: loginEmail, password: loginPassword }),
+  });
+  if (!token.ok) throw new Error(`local sign-in failed: ${token.status}`);
+  const session = (await token.json()) as { access_token: string; refresh_token: string };
+  const writer = createServerClient(E2E_SUPABASE_URL, ANON, {
+    cookies: {
+      getAll: () => [...jar.entries()].map(([name, value]) => ({ name, value })),
+      setAll: (list: Array<{ name: string; value: string }>) => list.forEach(({ name, value }) => jar.set(name, value)),
+    },
+  });
+  await writer.auth.setSession({ access_token: session.access_token, refresh_token: session.refresh_token });
+  if (jar.size === 0) throw new Error("no auth cookie was written");
+}
+
+async function runExport() {
+  const { exportStudioDataAction } = await import("@/app/(app)/settings/data/actions");
+  return exportStudioDataAction();
+}
+
+beforeAll(async () => {
+  process.env.NEXT_PUBLIC_SUPABASE_URL = E2E_SUPABASE_URL;
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = ANON;
+  process.env.SUPABASE_SERVICE_ROLE_KEY = E2E_SERVICE_ROLE_KEY;
+
+  // One contract for a synthetic native profile: an integer count (0 decimals), an intensity at two decimals, a second two-decimal field, and an optional
+  // field that is left blank.
+  await adminQuery(`select public.sync_machine_profile_contract($1,$2,$3,$4,$5,$6::jsonb)`, [
+    PROFILE, 1, MODE, 4, null,
+    JSON.stringify([
+      { field_key: "snap_count", native_unit: "count", decimals: 0, quantity: "count", optional: true },
+      { field_key: "intensity", native_unit: "%", decimals: 2, quantity: "percentage", optional: true },
+      { field_key: "duration", native_unit: "s", decimals: 2, quantity: "duration", optional: true },
+      { field_key: "blank_field", native_unit: "s", decimals: 2, quantity: "duration", optional: true },
+    ]),
+  ]);
+
+  studioA = await seedStudio(`hon118-a-${randomUUID().slice(0, 6)}`);
+  const studioB = await seedStudio(`hon118-b-${randomUUID().slice(0, 6)}`);
+  blockA = await recordNativeArea(studioA, [
+    { field_key: "snap_count", value: "3", observation_source: "practitioner-entered" },
+    { field_key: "intensity", value: "1.85", observation_source: "practitioner-entered" },
+    { field_key: "duration", value: "1.8", observation_source: "practitioner-entered" },
+    { field_key: "blank_field", absence_reason: "not-recorded", observation_source: "practitioner-entered" },
+  ]);
+  // ANOTHER studio's native area, with values nobody in studio A may see.
+  blockB = await recordNativeArea(studioB, [
+    { field_key: "snap_count", value: "77", observation_source: "practitioner-entered" },
+    { field_key: "intensity", value: "99.99", observation_source: "practitioner-entered" },
+  ]);
+
+  // A real GoTrue login for studio A's owner (the harness practitioner is backed by a bare auth.users row with no password).
+  loginEmail = `hon118-${randomUUID().slice(0, 8)}@harness.local`;
+  loginPassword = `Pw-${randomUUID()}`;
+  const created = await fetch(`${E2E_SUPABASE_URL}/auth/v1/admin/users`, {
+    method: "POST",
+    headers: { apikey: E2E_SERVICE_ROLE_KEY, Authorization: `Bearer ${E2E_SERVICE_ROLE_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ email: loginEmail, password: loginPassword, email_confirm: true }),
+  });
+  if (!created.ok) throw new Error(`local GoTrue createUser failed: ${created.status}`);
+  const authUser = (await created.json()) as { id: string };
+  await adminQuery(
+    `insert into public.practitioners (id, studio_id, user_id, display_name, email, role, active) values ($1,$2,$3,'HON-118 Owner',$4,'owner',true)`,
+    [randomUUID(), studioA.studioId, authUser.id, loginEmail],
+  );
+}, 120_000);
+
+afterAll(async () => {
+  tamper.dropLastReadingRow = false;
+  await closePool();
+});
+
+describe("the readings file carries this studio's native readings, as the machine showed them", () => {
+  it("3 and 1.85 for the native area, 1.8 at two decimals is 1.80, a blank field is an absence not a 0, and no other studio's rows", async () => {
+    tamper.dropLastReadingRow = false;
+    await signInAsStudioAOwner();
+    const result = await runExport();
+    if (!result.ok) throw new Error(`export refused: ${result.error}`);
+    const archive = await JSZip.loadAsync(Buffer.from(result.base64, "base64"));
+    const entry = archive.files[exportSpec("treatment_setup_readings").file];
+    expect(entry, "the readings file is in the archive").toBeDefined();
+    const t = asTable(await entry.async("string"));
+
+    expect(t.headers).toEqual(exportSpec("treatment_setup_readings").csvHeaders);
+    expect(t.headers, "the tenant key is not a column").not.toContain("studio_id");
+
+    const own = t.rows.filter((r) => r.session_block_id === blockA);
+    expect(own).toHaveLength(4);
+    const by = (k: string) => own.find((r) => r.field_key === k)!;
+    expect(by("snap_count").value_numeric).toBe("3");
+    expect(by("intensity").value_numeric).toBe("1.85");
+    expect(by("duration").value_numeric, "a recorded 1.8 at two decimals keeps its trailing zero").toBe("1.80");
+    expect(by("blank_field").value_numeric, "a blank is never exported as 0").toBe("");
+    expect(by("blank_field").absence_reason).toBe("not-recorded");
+    expect(by("snap_count").native_unit).toBe("count");
+
+    // another studio's rows are absent: by block and by value
+    expect(t.rows.some((r) => r.session_block_id === blockB)).toBe(false);
+    expect(t.rows.map((r) => r.value_numeric)).not.toContain("77");
+    expect(t.rows.map((r) => r.value_numeric)).not.toContain("99.99");
+    expect(t.rows).toHaveLength(4);
+
+    // the source-count check ran and matched
+    const manifest = JSON.parse(await archive.files["manifest.json"].async("string")) as { source_count_checks: Array<Record<string, unknown>> };
+    const check = manifest.source_count_checks.find((c) => c.table === "treatment_setup_readings")!;
+    expect(check).toMatchObject({ status: "matched", exported_rows: 4, studio_row_count: 4 });
+  });
+});
+
+describe("the source-count check is real for this file (negative control)", () => {
+  it("one reading row lost on the way is caught: the export is REFUSED and names the table, with no archive", async () => {
+    tamper.dropLastReadingRow = true;
+    try {
+      await signInAsStudioAOwner();
+      const result = await runExport();
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain("treatment_setup_readings returned 3 rows but the studio holds 4");
+      expect(result.error).toContain("No partial export was produced");
+    } finally {
+      tamper.dropLastReadingRow = false;
+    }
+  });
+});
