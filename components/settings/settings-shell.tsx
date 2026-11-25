@@ -209,14 +209,34 @@ export function SettingsShell({ items: railItems, reachable = [], account, child
     entries: items.filter((i) => i.group === group),
   })).filter((g) => g.entries.length > 0);
 
+  const screenControl = (
+    <button
+      ref={screenButton}
+      type="button"
+      aria-pressed={expanded}
+      aria-label={screenLabel}
+      aria-disabled={pending || undefined}
+      title={screenLabel}
+      onClick={toggle}
+      className="inline-flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-md border border-neutral-300 px-2 text-sm font-medium hover:bg-neutral-50 sm:px-3 dark:border-neutral-700 dark:hover:bg-neutral-900"
+    >
+      <svg aria-hidden="true" viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+        <path d={expanded ? "M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5" : "M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"} />
+      </svg>
+      <span className="sr-only min-[500px]:not-sr-only">{screenLabel}</span>
+    </button>
+  );
+
   return (
     <div ref={screen} data-settings-screen="" data-settings-expanded={expanded}>
       <UnsavedChangesProvider onHold={rememberDrawer} onStay={stayOnPage}>
       <HashRedirect />
-      {/* Desktop: ONE grid. The rail takes the whole left column from the first row,
-          so it starts directly under the app header (not under the Settings title
-          row) and fits the viewport with no window scroll; the title row and the
-          view sit in the right column. */}
+      {pathname === "/settings" ? (
+        <div ref={content}>
+          {expanded && <div className="float-right ml-3">{screenControl}</div>}
+          {children}
+        </div>
+      ) : (
       <div ref={grid} className="flex flex-col gap-6 settings-wide:grid settings-wide:grid-cols-[clamp(185px,15.4vw,222px)_minmax(0,1fr)] settings-wide:grid-rows-[auto_minmax(0,1fr)] settings-wide:items-start settings-wide:gap-x-[clamp(1rem,1.8vw,2rem)] settings-wide:gap-y-4"
         style={topVar}>
         {/* Sticky so the menu is reachable without scrolling back to the top. */}
@@ -230,21 +250,7 @@ export function SettingsShell({ items: railItems, reachable = [], account, child
             <span aria-hidden>←</span>
           </PendingLink>
           <h1 className="mr-auto text-2xl font-semibold tracking-tight sm:text-3xl">Settings</h1>
-          <button
-            ref={screenButton}
-            type="button"
-            aria-pressed={expanded}
-            aria-label={screenLabel}
-            aria-disabled={pending || undefined}
-            title={screenLabel}
-            onClick={toggle}
-            className="inline-flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-md border border-neutral-300 px-2 text-sm font-medium hover:bg-neutral-50 sm:px-3 dark:border-neutral-700 dark:hover:bg-neutral-900"
-          >
-            <svg aria-hidden="true" viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-              <path d={expanded ? "M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5" : "M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"} />
-            </svg>
-            <span className="sr-only min-[500px]:not-sr-only">{screenLabel}</span>
-          </button>
+          {screenControl}
           <button
             ref={menuButton}
             type="button"
@@ -475,6 +481,7 @@ export function SettingsShell({ items: railItems, reachable = [], account, child
             {children}
           </div>
       </div>
+      )}
       </UnsavedChangesProvider>
     </div>
   );

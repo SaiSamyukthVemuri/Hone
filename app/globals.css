@@ -18,19 +18,9 @@
   }
 }
 
-main[data-settings-layout],
-header:has(~ main[data-settings-layout]) > div:first-child,
-[data-settings-screen]:fullscreen {
-  --settings-gutter: clamp(0.875rem, 1.5vw, 1.75rem);
-  padding-left: max(var(--settings-gutter), env(safe-area-inset-left));
-  padding-right: max(var(--settings-gutter), env(safe-area-inset-right));
-}
-
-main[data-settings-layout] {
-  padding-block: clamp(0.75rem, 1.5vw, 1.5rem) max(1.5rem, env(safe-area-inset-bottom));
-}
-
-header:has(~ main[data-settings-layout]) > div:first-child {
+/* Normal Settings shares the app column and header. Only an explicitly
+   expanded editor uses the extra space when native fullscreen is unavailable. */
+main:has([data-settings-expanded="true"]) {
   max-width: none;
 }
 
@@ -43,6 +33,7 @@ header:has(~ main [data-settings-expanded="true"]) {
   overflow: auto;
   overscroll-behavior: contain;
   background: var(--background);
+  padding-inline: max(1rem, env(safe-area-inset-left)) max(1rem, env(safe-area-inset-right));
   padding-top: env(safe-area-inset-top);
   padding-bottom: max(1rem, env(safe-area-inset-bottom));
 }

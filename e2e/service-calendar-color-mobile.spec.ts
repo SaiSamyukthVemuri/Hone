@@ -66,6 +66,33 @@ test("owner sets a service's calendar color to violet on iPhone; it persists + r
   }
 });
 
+test("Settings uses the standard page width and opens the matching settings section directly", async ({ page }) => {
+  const seed = await seedE2eStudio();
+  await loginAsOwner(page, seed);
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/notifications");
+    const main = page.getByTestId("app-main");
+    const normal = await main.boundingBox();
+    await page.goto("/settings");
+    await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
+    const settings = await main.boundingBox();
+    expect(settings!.width).toBeCloseTo(normal!.width, 0);
+    expect(settings!.x).toBeCloseTo(normal!.x, 0);
+    await expect(page.getByRole("navigation", { name: "Settings sections" })).toHaveCount(0);
+    await expectNoHorizontalOverflow(page, `Settings at ${width}px`);
+    const search = page.getByRole("searchbox", { name: "Find a setting" });
+    await search.fill("holiday hours");
+    await page.getByRole("link", { name: "Special hours", exact: true }).click();
+    await expect(page).toHaveURL(/settings\/availability#special-hours$/);
+    await expect(page.locator("#special-hours")).toBeInViewport();
+    await page.goto("/settings");
+    await page.getByRole("link", { name: "Edit new-client admission" }).click();
+    await expect(page).toHaveURL(/settings\/booking\/link#admission-options$/);
+    await expect(page.locator("#new-client-admission")).toBeInViewport();
+  }
+});
+
 test("service edits and navigation survive an expanded screen and device rotation", async ({ page }) => {
   const seed = await seedE2eStudio();
   const serviceId = await getE2eServiceId(seed.studioId);
