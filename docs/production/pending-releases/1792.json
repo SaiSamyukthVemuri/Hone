@@ -1,0 +1,1 @@
+{"pr":1792,"runtime":true,"migrations":["supabase/migrations/0385_export_treatment_setup_readings.sql"],"release_receipt":"01-ops/1792-release-receipt.json"}
