@@ -2094,11 +2094,12 @@ export function BlockSetupForm({
         multiplexRequest={multiplexRequest}
         onMultiplexRoute={setMultiplexRoute}
         onMultiplexLoad={(st) => {
-          const latest = multiplexRequestRef.current;
-          if (!latest || !latest.want) return; // superseded: a different mode was chosen (or MultiPlex undone) after this load started
-          setMultiplexLoad(st === "done" ? null : st);
-          // the "loading" line a held Save visit left on the section goes once the load is done
-          if (st === "done") setError((e) => (e === MULTIPLEX_LOADING_MESSAGE ? null : e));
+          // Applied only while the latest request still wants MultiPlex; an answer after a different mode was chosen (or MultiPlex undone) is stale.
+          if (multiplexRequestRef.current?.want) {
+            setMultiplexLoad(st === "done" ? null : st);
+            // the "loading" line a held Save visit left on the section goes once the load is done
+            if (st === "done") setError((e) => (e === MULTIPLEX_LOADING_MESSAGE ? null : e));
+          }
         }}
         multiplexReadingsHost={multiplexReadingsHost}
         onSavedDeviceChange={setWrittenDeviceId}
