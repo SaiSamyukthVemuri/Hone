@@ -7,7 +7,7 @@ import { E2E_SERVICE_ROLE_KEY, E2E_SUPABASE_URL, E2E_WEB_SERVER_ENV } from "@/e2
 import { exportSpec } from "@/lib/export/resource-registry";
 import { adminQuery, asUser, closePool, RECORD_GROUP_SQL, seedSession, seedStudio, type SeededStudio } from "@/tests/db/helpers/harness";
 
-// HON-118. The owner's data export carries machine-native (MultiPlex) readings, with real rows, real RLS, real GoTrue, and the real export action:
+// The owner's data export carries machine-native (MultiPlex) readings, with real rows, real RLS, real GoTrue, and the real export action:
 //
 //   * the readings file holds the studio's own rows and no other studio's;
 //   * a native area's pulse count (3) and an intensity (1.85) come out as the machine showed them, and a recorded 1.8 at two decimals is "1.80";
@@ -95,7 +95,7 @@ function asTable(csv: string) {
 async function recordNativeArea(studio: SeededStudio, items: unknown[]): Promise<string> {
   const { sessionId, blockId } = await seedSession(studio);
   await asUser(studio.userId, async (q) => {
-    const machine = (await q(`select public.register_studio_machine($1,$2,1,'HON-118 fixture','{}') as id`, [studio.studioId, PROFILE])).rows[0].id as string;
+    const machine = (await q(`select public.register_studio_machine($1,$2,1,'Fixture machine','{}') as id`, [studio.studioId, PROFILE])).rows[0].id as string;
     const res = await q(RECORD_GROUP_SQL, [blockId, machine, MODE, "g1", [], JSON.stringify(items), sessionId, studio.clientId]);
     if (Number(res.rows[0].n) < 1) throw new Error("recording the fixture group wrote nothing");
   });
@@ -174,7 +174,7 @@ beforeAll(async () => {
   if (!created.ok) throw new Error(`local GoTrue createUser failed: ${created.status}`);
   const authUser = (await created.json()) as { id: string };
   await adminQuery(
-    `insert into public.practitioners (id, studio_id, user_id, display_name, email, role, active) values ($1,$2,$3,'HON-118 Owner',$4,'owner',true)`,
+    `insert into public.practitioners (id, studio_id, user_id, display_name, email, role, active) values ($1,$2,$3,'Fixture Owner',$4,'owner',true)`,
     [randomUUID(), studioA.studioId, authUser.id, loginEmail],
   );
 }, 120_000);

@@ -442,7 +442,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         .order("id", { ascending: true })
         .range(from, to),
     ),
-    // HON-71 / TRUTH-01B: machine-native readings (xCell Pur MultiPlex ...). studio_id-scoped at the query, under the owner-only gate above and the
+    // TRUTH-01B: machine-native readings (xCell Pur MultiPlex ...). studio_id-scoped at the query, under the owner-only gate above and the
     // studio-member SELECT policy; no new grant. Readings of a removed area are kept, like every other clinical row.
     fetchExportRows("treatment_setup_readings", (from, to) =>
       supabase

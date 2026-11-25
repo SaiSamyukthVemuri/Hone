@@ -5,6 +5,8 @@
 -- plus exactly ONE map entry: "treatment_setup_readings":"treatment_setup_readings.csv". SECURITY DEFINER, search_path '' and lock_timeout 5s
 -- are unchanged. The grants are restated by name for all four roles and CHECKED: service_role only.
 --
+-- This is a new export file: the export's file map gains one entry, treatment_setup_readings.csv, so any older wording that no new export file is added does not describe this change.
+--
 -- GUARDS: a preamble refuses to run unless the function is exactly the 0325 body (md5 d92af63f4e985360cc8fed6143b79988); an after-check records the md5 of the new body
 -- (946486bece2e1f8a1ace09936f3a000f) and refuses if the entry is missing or the grants differ.
 -- ORDER: apply this BEFORE the application change that writes the file ships; an app that exports the file against the old map fails at the audit step.
