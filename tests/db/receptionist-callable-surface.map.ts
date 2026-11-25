@@ -43,8 +43,6 @@ export const CLASSIFICATION: Record<string, { cls: Cls; anon?: boolean; reason: 
   "public.receptionist_calendar_v3/3": { cls: "desk", reason: "Reads the membership-guarded studio calendar with the scheduling name from the matching studio profile." },
   "public.receptionist_calendar_v2/3": { cls: "desk", reason: "Desk function: gated by receptionist_actor_id for the studio; answers only this studio's active receptionist." },
   "public.receptionist_cancel_appointment/3": { cls: "desk", reason: "Desk function: gated by receptionist_actor_id for the studio; answers only this studio's active receptionist." },
-  "public.receptionist_client_contacts_v2/3": { cls: "desk", reason: "Desk function: gated by receptionist_actor_id for the studio; answers only this studio's active receptionist." },
-  "public.receptionist_client_directory/6": { cls: "desk", reason: "Desk function: gated by receptionist_actor_id for the studio; answers only this studio's active receptionist." },
   "public.receptionist_create_appointment/5": { cls: "desk", reason: "Desk function: gated by receptionist_actor_id for the studio; answers only this studio's active receptionist." },
   "public.receptionist_move_appointment/6": { cls: "desk", reason: "Desk function: gated by receptionist_actor_id for the studio; answers only this studio's active receptionist." },
   "public.receptionist_studio_timezone/1": { cls: "desk", reason: "Desk function: gated by receptionist_actor_id for the studio; answers only this studio's active receptionist." },

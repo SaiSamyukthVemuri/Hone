@@ -1,9 +1,38 @@
 -- DOWN for 0374. EMERGENCY ONLY: it RE-OPENS the leak. It restores the previous bodies of the three receptionist read
 -- functions, which return a client's stored name to a receptionist (the display name is the preferred name, else the
 -- stored name). Byte for byte the bodies that were on the hosted database before 0374 (their md5 is asserted again below).
+-- It refuses to run (55000) unless the three functions still have exactly the bodies 0374 installed, so it can never overwrite a
+-- later replacement of them (0380 must be rolled back first, by its own down file).
 begin;
 
 set local lock_timeout = '5s';
+
+-- 0) Preamble: the three bodies must be exactly the 0374 bodies. Without this check the file would overwrite
+-- ANY later body of these functions (0380 replaces them), silently, and re-open the stored-name leak.
+do $guard$
+declare
+  r record;
+begin
+  for r in
+    select * from (values
+      ('receptionist_client_directory', '602bca224cc6ce50cab70c5692ea0902'),
+      ('receptionist_calendar_v2', '911df019f695523168b39fd6e43afbc7'),
+      ('receptionist_client_contacts_v2', 'b157fca004345dddd4ad15586d92dc1d')
+    ) as t(fname, expected_md5)
+  loop
+    if not exists (
+      select 1 from pg_catalog.pg_proc p
+       where p.pronamespace = 'public'::regnamespace
+         and p.proname = r.fname
+         and pg_catalog.md5(p.prosrc) = r.expected_md5
+         and p.prosecdef
+         and p.proconfig = array['search_path=pg_catalog, pg_temp']
+    ) then
+      raise exception '0374 down refuses to run: % is not the 0374 body', r.fname using errcode = '55000';
+    end if;
+  end loop;
+end
+$guard$;
 
 -- receptionist_client_directory
 create or replace function public.receptionist_client_directory(

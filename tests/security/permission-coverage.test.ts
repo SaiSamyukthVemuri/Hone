@@ -131,7 +131,24 @@ describe("a receptionist cannot pass the staff helper (what 'staff' rests on)", 
     const out = execSync(`grep -rl "studio_receptionists" app lib components --include=*.ts --include=*.tsx || true`, { cwd: ROOT }).toString().trim().split("\n").filter(Boolean);
     // The front desk (lib/desk) reads the caller's OWN receptionist rows, on purpose and only there (its guard and its entry); it is the receptionist
     // surface, not a staff path, so it does not weaken what "staff" means. A new file naming the table must be added here deliberately.
-    expect([...out].sort()).toEqual(["lib/desk/entry.ts", "lib/desk/guard.ts", "lib/export/resource-registry.ts"]);
+    // The owner's Team settings also name the table, on purpose: the page LISTS the studio's own front-desk rows and the invite action checks for a
+    // duplicate, both under the OWNER's session and the owner-only read policy (a receptionist reads only their own row). Neither feeds the staff helper,
+    // so a receptionist still cannot pass it. This is a reviewed extension of the invariant, not a loosening of the helper checks above.
+    expect([...out].sort()).toEqual([
+      "app/(app)/settings/team/actions.ts",
+      "app/(app)/settings/team/page.tsx",
+      "lib/desk/entry.ts",
+      "lib/desk/guard.ts",
+      "lib/export/resource-registry.ts",
+    ]);
+    // Both Team files read the table on the user-session client, never the admin client: the page file has no admin client at all, and in the action
+    // file every read of the table hangs off `supabase` (the user-session client), none off an admin client.
+    const team = (f: string) => readFileSync(join(ROOT, f), "utf8");
+    expect(team("app/(app)/settings/team/page.tsx")).not.toContain("createAdminClient");
+    const actions = team("app/(app)/settings/team/actions.ts");
+    expect(actions.match(/\.from\("studio_receptionists"\)/g)?.length ?? 0).toBeGreaterThan(0);
+    expect(actions).not.toMatch(/\badmin\w*\s*\.from\("studio_receptionists"\)/);
+    expect(actions).toMatch(/await supabase\s*\.from\("studio_receptionists"\)/);
   });
 });
 

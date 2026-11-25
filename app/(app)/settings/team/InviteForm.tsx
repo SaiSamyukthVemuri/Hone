@@ -18,7 +18,7 @@ function buildShareMessage(email: string): string {
 export function InviteForm() {
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
-  const [role, setRole] = useState<"practitioner" | "owner">("practitioner");
+  const [role, setRole] = useState<"practitioner" | "owner" | "receptionist">("practitioner");
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [, startTransition] = useTransition();
   // Typed-but-unsent invitation details count as unsaved edits.
@@ -125,12 +125,19 @@ export function InviteForm() {
         <select
           value={role}
           onChange={(e) =>
-            setRole(e.target.value === "owner" ? "owner" : "practitioner")
+            setRole(
+              e.target.value === "owner"
+                ? "owner"
+                : e.target.value === "receptionist"
+                  ? "receptionist"
+                  : "practitioner",
+            )
           }
           className={fieldControlClass({ fullWidth: false, className: "max-w-xs" })}
         >
           <option value="practitioner">Practitioner</option>
           <option value="owner">Owner</option>
+          <option value="receptionist">Receptionist (front desk)</option>
         </select>
       </label>
       <div className="flex items-center gap-3">

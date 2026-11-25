@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 286,
-    "last": "0381_adjusted_external_checkout_fee.sql",
-    "sha256": "31bb8647afe22566151e8c7e68d4be152ba582f39e873483c705b8b696eac546"
+    "count": 289,
+    "last": "0384_rematerialize_reservations_actual_end.sql",
+    "sha256": "916d536682b7a99c7f034dc073215242a3aa5405e03911d522d0f3192736f7e3"
   },
   "public": {
     "tables": [

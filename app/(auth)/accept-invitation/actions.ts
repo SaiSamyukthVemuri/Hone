@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { clearSelectedStudioId } from "@/lib/supabase/selected-studio";
+import { isDeskEnabled } from "@/lib/desk/flag";
 
 export type AcceptState = { error: string } | null;
 
@@ -46,6 +47,7 @@ export async function acceptInvitationAction(
   const res = (rec && typeof rec === "object" ? rec : {}) as {
     status?: string;
     choose_studio?: boolean;
+    role?: string;
   };
 
   if (res.status === "conflict") redirect("/no-access?reason=invite-conflict");
@@ -56,6 +58,18 @@ export async function acceptInvitationAction(
   // Missing or unknown responses must not clear selection or imply a join.
   if (res.status !== "linked" && res.status !== "already_linked") {
     return { error: "Something went wrong. Please try again." };
+  }
+
+  // A front-desk acceptance lands on the desk, whatever other memberships the person holds: the practitioner gate only reroutes users with NO
+  // practitioner membership, so a practitioner elsewhere would otherwise stay in the practitioner app. Reached only after the success check above, so an
+  // unconfirmed acceptance never routes anywhere. With the desk flag OFF /desk does not exist, so the ordinary path below runs (and the gate decides).
+  // Two or more front-desk studios: clear the cookie and let the chooser ask, never auto-pick.
+  if (res.role === "receptionist" && isDeskEnabled()) {
+    if (res.choose_studio === true) {
+      await clearSelectedStudioId();
+      redirect("/desk/choose");
+    }
+    redirect("/desk");
   }
 
   // linked / already_linked. Force the chooser for a newly multi-studio user.

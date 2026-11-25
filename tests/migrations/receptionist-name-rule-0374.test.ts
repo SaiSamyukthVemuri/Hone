@@ -195,4 +195,23 @@ describe("the down file", () => {
       expect(DOWN, n).toContain(`('${n}', '${HOSTED_MD5[n]}')`);
     }
   });
+  // Without a pre-check the file overwrites ANY later body of these functions (0380 replaces them) and succeeds, which silently re-opens the
+  // stored-name leak. The preamble refuses unless each function still has exactly the body 0374 installed, as 0380's own down file does.
+  it("refuses to run (55000) unless each of the three current bodies is exactly the one 0374 installed, and checks before it changes anything", () => {
+    const first = DOWN.indexOf("create or replace function");
+    const pre = DOWN.slice(DOWN.indexOf("begin;"), first);
+    expect(pre).toMatch(/do \$guard\$/);
+    expect(pre).toMatch(/errcode = '55000'/);
+    expect(pre).toMatch(/0374 down refuses to run/);
+    expect(pre).toMatch(/p\.prosecdef/);
+    expect(pre).toMatch(/p\.proconfig = array\['search_path=pg_catalog, pg_temp'\]/);
+    for (const n of NAMES) {
+      const md5 = createHash("md5").update(body(NEW[n])).digest("hex");
+      expect(pre, `${n} is guarded by the md5 of the body 0374 installs`).toContain(`('${n}', '${md5}')`);
+      // and the hosted (pre-0374) md5 is NOT what the guard accepts: that would let the file run over the previous bodies only
+      expect(pre, n).not.toContain(HOSTED_MD5[n]);
+    }
+    expect(DOWN.indexOf("begin;")).toBeLessThan(DOWN.indexOf("do $guard$"));
+    expect(DOWN.indexOf("do $guard$")).toBeLessThan(first);
+  });
 });
