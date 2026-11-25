@@ -61,7 +61,7 @@ let root: ReturnType<typeof createRoot> | null = null;
 let host: HTMLElement | null = null;
 afterEach(() => { act(() => root?.unmount()); host?.remove(); root = host = null; ctxBox.ctx = { ...CTX }; vi.clearAllMocks(); });
 
-async function mount(block: Record<string, unknown> | null) {
+async function mount(block: Record<string, unknown> | null, offer?: { deviceId: string } | null) {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -69,6 +69,8 @@ async function mount(block: Record<string, unknown> | null) {
     root!.render(createElement(BlockSetupForm, {
       sessionId: "s1", clientId: "c1", previousBlock: null, block: block as never, firstEntry: null,
       initialAreas: [{ area: "Upper lip", side: "center" }] as never, defaultMachineFrequency: null, onCancel: () => undefined,
+      // HON-119: the page reads the offer on the server and hands it down, so the pill is there from the first visit.
+      ...(offer === undefined ? {} : { multiplexOffer: offer }),
     }));
   });
 }
@@ -79,26 +81,39 @@ const pick = (value: string) => act(async () => {
   sel.dispatchEvent(new Event("change", { bubbles: true }));
 });
 // THE form's Mode group only: the structured panel has its own mode buttons (data-testid machine-mode-*), which are not this control.
+// The MultiPlex pill carries a small "xCell Pur" model label (HON-119); its NAME is the text before it.
+const pillName = (b: HTMLButtonElement) => (b.getAttribute("data-testid") === "mode-multiplex" ? "MultiPlex" : (b.textContent?.trim() ?? ""));
 const pills = () =>
   Array.from(host!.querySelectorAll<HTMLButtonElement>("button")).filter(
-    (b) => ["Thermolysis", "Blend", "Galvanic", "MultiPlex"].includes(b.textContent?.trim() ?? "") && !(b.getAttribute("data-testid") ?? "").startsWith("machine-mode-"),
+    (b) => ["Thermolysis", "Blend", "Galvanic", "MultiPlex"].includes(pillName(b)) && !(b.getAttribute("data-testid") ?? "").startsWith("machine-mode-"),
   );
-const pillLabels = () => pills().map((b) => b.textContent!.trim());
+const pillLabels = () => pills().map(pillName);
 const multiplexPill = () => host!.querySelector<HTMLButtonElement>('[data-testid="mode-multiplex"]');
 const legacyFieldsShown = () => host!.textContent!.includes("Machine frequency");
 const clickMultiplex = () => act(async () => { multiplexPill()!.click(); });
-const clickPill = (label: string) => act(async () => { pills().find((b) => b.textContent?.trim() === label)!.click(); });
+const clickPill = (label: string) => act(async () => { pills().find((b) => pillName(b) === label)!.click(); });
 
 ctxBox.ctx = { ...CTX };
 
 describe("MultiPlex in the ONE Mode control (new area)", () => {
-  it("no machine chosen: the form is today's (three pills, legacy fields), no MultiPlex and no second selector", async () => {
+  it("no machine chosen and MultiPlex NOT offered to the studio: the form is today's (three pills, legacy fields), no MultiPlex and no second selector", async () => {
+    ctxBox.ctx = { ...CTX, multiplexRoute: null };
     await mount(null);
     await openPanel();
     expect(pillLabels()).toEqual(["Thermolysis", "Blend", "Galvanic"]);
     expect(legacyFieldsShown()).toBe(true);
     expect(multiplexPill()).toBeNull();
     expect(host!.querySelector('[data-testid="xcell-mode-select"]')).toBeNull();
+  });
+
+  it("HON-119: no machine chosen, MultiPlex offered: the pill sits beside the three modes from the first visit, labelled xCell Pur, with the panel still closed", async () => {
+    await mount(null, { deviceId: "unspecified:xcell-pur" });
+    expect(host!.querySelector('[data-testid="machine-first-open"]')).toBeTruthy();
+    expect(pillLabels()).toEqual(["Thermolysis", "Blend", "Galvanic", "MultiPlex"]);
+    expect(multiplexPill()!.textContent).toContain("xCell Pur");
+    expect(multiplexPill()!.getAttribute("aria-pressed")).toBe("false");
+    expect(legacyFieldsShown()).toBe(true);
+    expect(actions.loadMachineSetupContext).not.toHaveBeenCalled();
   });
 
   it("the xCell choice offers MultiPlex as a fourth pill; the other three are exactly today's form", async () => {
@@ -313,5 +328,53 @@ describe("saved areas", () => {
     expect(multiplexPill()!.disabled).toBe(true);
     expect(pills().every((b) => b.disabled)).toBe(true);
     expect(legacyFieldsShown()).toBe(false);
+  });
+});
+
+// HON-119: MultiPlex with NO registered machine. The route's unit is the inert "Machine not specified" placeholder (a real row, or the sentinel before
+// it exists); it is chosen by the pill, never listed in the picker, never remembered, and no legacy xCell choice stands in for it.
+describe("HON-119: MultiPlex in a studio with no registered machine", () => {
+  const PLACEHOLDER: StudioDevice = {
+    deviceId: "unspecified:xcell-pur", studioId: "studio-synthetic", profileId: "dectro-apilus:xcell-pur", profileVersion: 1,
+    displayName: "Machine not specified", installedOptions: [], retiredAt: null, isUnspecified: true,
+  };
+  const ZERO = () => ({ ...CTX, devices: [PLACEHOLDER], legacyMachine: null, multiplexRoute: { deviceId: PLACEHOLDER.deviceId, modeKey: "multiplex", unspecified: true } });
+
+  it("a click on the pill BEFORE the panel was ever opened opens it and applies that click: MultiPlex is selected, the eight inputs sit once under Treatment readings", async () => {
+    ctxBox.ctx = ZERO();
+    await mount(null, { deviceId: PLACEHOLDER.deviceId });
+    expect(actions.loadMachineSetupContext).not.toHaveBeenCalled();
+    await clickMultiplex();
+    expect(actions.loadMachineSetupContext).toHaveBeenCalledTimes(1);
+    expect(multiplexPill()!.getAttribute("aria-pressed")).toBe("true");
+    const readings = host!.querySelector('section[aria-label="Treatment readings"]')!;
+    expect(readings.querySelector('[data-testid="machine-setting-draft"]')).toBeTruthy();
+    expect(readings.textContent).toContain("Pulse count");
+    expect(host!.querySelectorAll('[data-testid="machine-setting-draft"]')).toHaveLength(1);
+    expect(legacyFieldsShown()).toBe(false);
+  });
+
+  it("no machine is named as chosen but the placeholder's own wording; no legacy choice is shown; the picker never lists it; nothing is remembered", async () => {
+    ctxBox.ctx = ZERO();
+    await mount(null, { deviceId: PLACEHOLDER.deviceId });
+    await clickMultiplex();
+    const sel = host!.querySelector<HTMLSelectElement>('[data-testid="machine-select"]')!;
+    expect(sel.value).toBe("");
+    expect(Array.from(sel.options).map((o) => o.textContent ?? "").join("|")).not.toContain("Machine not specified");
+    expect(Array.from(sel.options).some((o) => o.value === PLACEHOLDER.deviceId)).toBe(false);
+    expect(Array.from(sel.options).some((o) => o.value === "legacy:xcell")).toBe(false);
+    expect(host!.querySelector('[data-testid="machine-chosen"]')?.textContent).toContain("Machine not specified");
+    expect(actions.rememberMachineSelectionAction).not.toHaveBeenCalled();
+    expect(actions.clearMachineSelectionAction).not.toHaveBeenCalled();
+  });
+
+  it("leaving MultiPlex by choosing a legacy mode returns today's form and the placeholder is not chosen", async () => {
+    ctxBox.ctx = ZERO();
+    await mount(null, { deviceId: PLACEHOLDER.deviceId });
+    await clickMultiplex();
+    await clickPill("Blend");
+    expect(multiplexPill()!.getAttribute("aria-pressed")).toBe("false");
+    expect(legacyFieldsShown()).toBe(true);
+    expect(host!.querySelector('[data-testid="machine-chosen"]')).toBeNull();
   });
 });

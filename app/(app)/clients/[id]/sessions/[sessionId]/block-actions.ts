@@ -21,6 +21,7 @@ import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-rea
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import { checkIdentityChoice } from "@/lib/machines/identity-choice";
 import { isCanonicalRetryKey, NON_CANONICAL_KEY_MESSAGE } from "@/lib/machines/retry-key";
+import { ensureUnspecifiedMachine, isUnspecifiedDeviceId, listUnspecifiedMachines } from "@/lib/machines/unspecified-machine";
 import { createReceiptLookup, guardXcellRollout } from "@/lib/machines/xcell-rollout-guard";
 import { currentProfile } from "@/lib/machines/profile-contract";
 import { resolveWritingIdentity } from "@/lib/supabase/writing-identity";
@@ -1479,6 +1480,22 @@ export async function createTreatmentAreaWithEntryAction(
   // database constraint), unknown fields, channel bounds and the mode's
   // installed-option requirement.
   const setupGroups: SetupSubmissionGroup[] = [];
+  // HON-119: MultiPlex with no registered machine carries the placeholder's sentinel id; it becomes the real "Machine not specified" row
+  // here (created on first use), BEFORE anything else reads the unit. Any other id passes through untouched.
+  let resolvedSetupMachineId: string | null = withSetup ? input.initialSetup!.machineId : null;
+  let resolvedIdentityMachineId: string | null = input.machineIdentity?.machineId ?? null;
+  if (isUnspecifiedDeviceId(resolvedSetupMachineId) || isUnspecifiedDeviceId(resolvedIdentityMachineId)) {
+    const ensured = await ensureUnspecifiedMachine(supabase as unknown as MachineDb, studio.id);
+    if (!ensured.ok) return { ok: false, error: ensured.error, unresolved: false };
+    if (isUnspecifiedDeviceId(resolvedSetupMachineId)) resolvedSetupMachineId = ensured.value;
+    if (isUnspecifiedDeviceId(resolvedIdentityMachineId)) resolvedIdentityMachineId = ensured.value;
+  }
+  // The studio's placeholder rows, read once: the setup path finds its device among them, the identity path asks whether the unit is one.
+  const placeholderRead =
+    resolvedSetupMachineId !== null || resolvedIdentityMachineId !== null
+      ? await listUnspecifiedMachines(supabase as unknown as MachineDb, studio.id)
+      : null;
+  const placeholderIds = new Set(placeholderRead?.ok ? placeholderRead.value.map((d) => d.deviceId) : []);
   if (withSetup) {
     const setup = input.initialSetup!;
     // THE SAME AUTHENTICATED CLIENT this action already holds, narrowed to
@@ -1486,7 +1503,7 @@ export async function createTreatmentAreaWithEntryAction(
     // One cast, at the seam, exactly as machine-setup-actions does it.
     const db = supabase as unknown as MachineDb;
     const inventory = await listStudioDevices(db, studio.id);
-    const device = inventory.devices.find((d) => d.deviceId === setup.machineId);
+    const device = [...inventory.devices, ...(placeholderRead?.ok ? placeholderRead.value : [])].find((d) => d.deviceId === resolvedSetupMachineId);
     if (!device) {
       return {
         ok: false,
@@ -1496,8 +1513,9 @@ export async function createTreatmentAreaWithEntryAction(
     // THE ROLLOUT, ASKED AGAIN AT WRITE TIME (a new area has no stored identity, so there is no existing-block exemption here).
     const rolloutOk = await guardXcellRollout(db, {
       studioId: studio.id,
-      unitProfileId: device.profileId,
-      deviceId: setup.machineId,
+      // HON-119: the placeholder is MultiPlex with no registered machine; the platform rollout belongs to the registered xCell unit only.
+      unitProfileId: device.isUnspecified === true ? null : device.profileId,
+      deviceId: resolvedSetupMachineId,
       receipt: createReceiptLookup(db, input.sessionId, setup.idempotencyKey),
     });
     if (!rolloutOk.ok) return { ok: false, error: rolloutOk.error, unresolved: rolloutOk.reason === "receipt" };
@@ -1545,10 +1563,10 @@ export async function createTreatmentAreaWithEntryAction(
   // the unit is this studio's and not retired, so an impossible unit/mode pair would otherwise be stored with the new area.
   if (identityOnly) {
     const allowed = await checkIdentityChoice(supabase as unknown as MachineDb, { studioId: studio.id, practitionerId: practitioner.id }, {
-      deviceId: identity.machineId,
+      deviceId: resolvedIdentityMachineId,
       modeKey: identity.modeKey,
       profileId: identity.profileId,
-    });
+    }, { allowUnspecified: true });
     // A unit that is merely not available NOW (retired since) is left to the receipt-aware command, which
     // answers a repeated key first and refuses a NEW write itself; an unreadable inventory keeps the key (unknown).
     if (!allowed.ok && allowed.reason === "unreadable") return { ok: false, error: allowed.error, unresolved: true };
@@ -1557,8 +1575,9 @@ export async function createTreatmentAreaWithEntryAction(
     if (allowed.ok) {
       const rolloutOk = await guardXcellRollout(supabase as unknown as MachineDb, {
         studioId: studio.id,
-        unitProfileId: allowed.unitProfileId,
-        deviceId: identity.machineId,
+        // HON-119: the placeholder never meets the rollout (it is not the registered xCell unit).
+        unitProfileId: (resolvedIdentityMachineId !== null && placeholderIds.has(resolvedIdentityMachineId)) ? null : allowed.unitProfileId,
+        deviceId: resolvedIdentityMachineId,
         receipt: createReceiptLookup(supabase as unknown as MachineDb, input.sessionId, bareKey),
       });
       if (!rolloutOk.ok) return { ok: false, error: rolloutOk.error, unresolved: rolloutOk.reason === "receipt" };
@@ -1570,8 +1589,8 @@ export async function createTreatmentAreaWithEntryAction(
         ...blockArgs,
         p_machine_profile_id: withSetup ? null : (identity?.profileId ?? null),
         p_studio_machine_id: withSetup
-          ? input.initialSetup!.machineId
-          : (identity?.machineId ?? null),
+          ? resolvedSetupMachineId
+          : resolvedIdentityMachineId,
         p_setup_mode_key: withSetup
           ? input.initialSetup!.modeKey
           : (identity?.modeKey ?? null),

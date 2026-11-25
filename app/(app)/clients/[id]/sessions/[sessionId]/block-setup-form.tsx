@@ -213,6 +213,8 @@ type Props = {
   // frequency seeded from the practitioner's last-used value. UI
   // defaulting only; fully editable per treatment area.
   defaultMachineFrequency?: string | null;
+  /** HON-119: MultiPlex is offered to this studio, read with the page. Null = not offered. */
+  multiplexOffer?: { deviceId: string } | null;
   // Feature A (reliability): most recent lot/batch per probe in this studio,
   // keyed by probe_key AND by normalized probe_label (free-text fallback), each
   // carrying its confirmed flag. The form auto-populates the lot field for the
@@ -458,6 +460,7 @@ export function BlockSetupForm({
   firstEntry,
   defaultPrimaryArea,
   defaultMachineFrequency,
+  multiplexOffer = null,
   probeLotSuggestions = { byKey: {}, byLabel: {} },
   probeLotInventory = [],
   initialAreas,
@@ -591,7 +594,7 @@ export function BlockSetupForm({
   // Picking MultiPlex under the existing xCell choice binds a NEW area to that unit when it is saved; the mode is then frozen with the
   // area. A saved area is recognised by its stored unit, never by a control.
   const [multiplexReadingsHost, setMultiplexReadingsHost] = useState<HTMLDivElement | null>(null);
-  const [multiplexRoute, setMultiplexRoute] = useState<{ deviceId: string } | null>(null);
+  const [multiplexRoute, setMultiplexRoute] = useState<{ deviceId: string } | null>(multiplexOffer);
   const [multiplexRequest, setMultiplexRequest] = useState<{ seq: number; want: boolean } | null>(null);
   // THE SAVED MACHINE FOLLOWS THE PANEL'S WRITES (Codex P2): once a machine change is written, the panel's own written identity is the
   // record, not the block prop this form first rendered with. `undefined` = nothing written yet, so the prop still stands.
@@ -602,7 +605,7 @@ export function BlockSetupForm({
     multiplexSaved || (!block && machineKind === "native" && multiplexRoute !== null && draftDeviceId === multiplexRoute.deviceId);
   // Offered on a NEW area under the existing xCell choice. An area holding legacy values never switches (today's refusal stays).
   const multiplexOffered =
-    multiplexSaved || (multiplexRoute !== null && !legacyDataLocked && !block && (machineKind === "legacy" || multiplexSelected));
+    multiplexSaved || (multiplexRoute !== null && !legacyDataLocked && !block && (machineKind === "legacy" || machineKind === "none" || multiplexSelected));
   const showModeControl = machineKind !== "native" || multiplexSelected;
   // The Mode controls are held with every other identity control (Codex P1): while this form's save or the panel's identity write is
   // pending or unresolved, no click may start or undo a MultiPlex choice. `draftFrozen` and `identityWritePending` are declared below.
@@ -2359,6 +2362,8 @@ export function BlockSetupForm({
               }`}
             >
               MultiPlex
+              {/* Names the machine this mode belongs to, so nobody mistakes it for another machine's mode. */}
+              <span className="ml-1.5 text-xs opacity-70" data-testid="mode-multiplex-model">xCell Pur</span>
             </button>
           )}
         </div>

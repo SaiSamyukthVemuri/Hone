@@ -53,6 +53,7 @@ import { CopyPreviousAreasPanel } from "./CopyPreviousAreasPanel";
 import { RemovePassButton } from "@/components/remove-pass-button";
 import { SessionBlocksView } from "./session-blocks-view";
 import { isNativeMachineBlock } from "@/lib/machines/legacy-machine";
+import { loadMultiplexOffer } from "@/lib/machines/multiplex-offer";
 import { readingsForBlock, machinesByIds, type MachineDb, type RecordedReading } from "@/lib/machines/machine-queries";
 import {
   addLaserEntryAction,
@@ -367,6 +368,10 @@ export default async function SessionDetailPage({
     }
   }
 
+
+  // MULTIPLEX IS OFFERED TO EVERY STUDIO (HON-119): read here with the page, so the pill is present from the first visit with no extra request.
+  const multiplexOffer =
+    session.modality === "electrolysis" ? await loadMultiplexOffer((await createClient()) as unknown as MachineDb, studio.id) : null;
 
   // FINISH APPOINTMENT workflow context, derived from what is already loaded:
   // the widened appointment read above, the session, the client, and the studio
@@ -849,6 +854,7 @@ export default async function SessionDetailPage({
           // copy just created, so recording today's minutes/hairs/observations
           // needs no scroll-back-and-reopen.
           autoEditBlockId={autoEditBlockId}
+          multiplexOffer={multiplexOffer}
         />
       ) : (
         <>

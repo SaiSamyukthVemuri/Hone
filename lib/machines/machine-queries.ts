@@ -213,6 +213,7 @@ type MachineRow = {
   display_name: string;
   installed_options: string[] | null;
   retired_at: string | null;
+  is_unspecified?: boolean;
 };
 
 /**
@@ -287,7 +288,7 @@ export async function listStudioMachines(
   const { data, error } = await db
     .from("studio_machines")
     .select(
-      "id, studio_id, machine_profile_id, machine_profile_version, display_name, installed_options, retired_at",
+      "id, studio_id, machine_profile_id, machine_profile_version, display_name, installed_options, retired_at, is_unspecified",
     )
     .eq("studio_id", studioId)
     .is("retired_at", null)
@@ -295,7 +296,8 @@ export async function listStudioMachines(
 
   if (error) return { ok: false, error: fail(error, "Could not read machines.") };
 
-  const rows = (data ?? []) as MachineRow[];
+  // HON-119: the "Machine not specified" placeholder is never a registered unit: not in a picker, a Settings list, a count or a default.
+  const rows = ((data ?? []) as MachineRow[]).filter((r) => r.is_unspecified !== true);
   return {
     ok: true,
     value: rows.map((r) => ({

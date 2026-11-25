@@ -17,7 +17,7 @@ import {
   currentProfile,
   type MachineProfile,
 } from "@/lib/machines/profile-contract";
-import { blockUsesXcellPur, checkIdentityChoice, storedIdentityMatches } from "@/lib/machines/identity-choice";
+import { blockStoredUnitId, blockUsesXcellPur, checkIdentityChoice, storedIdentityMatches } from "@/lib/machines/identity-choice";
 import { isCanonicalRetryKey, NON_CANONICAL_KEY_MESSAGE } from "@/lib/machines/retry-key";
 import { guardXcellRollout, submissionReceiptLookup } from "@/lib/machines/xcell-rollout-guard";
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
@@ -34,6 +34,7 @@ import {
 import { XCELL_PUR_PROFILE_ID } from "@/lib/machines/xcell-pur";
 import { withholdXcellUnits } from "@/lib/machines/xcell-withhold";
 import { xcellMultiplexRoute, type XcellMultiplexRoute } from "@/lib/machines/xcell-route";
+import { listUnspecifiedMachines, unspecifiedDeviceFor } from "@/lib/machines/unspecified-machine";
 import {
   restoreSelectionFromRecordedSetup,
   type RestoredSelection,
@@ -478,6 +479,7 @@ export async function loadMachineSetupContext(input: {
   // under the legacy machine): the context refuses retryably.
   let rolloutUnavailable = false;
   let rolloutOff = false;
+  let registeredUnitAllowed = false;
   // THE ROLLOUT IS READ FOR A STUDIO THAT HAS THE xCELL IN ANY FORM: legacy xCell history OR a live registered xCell Pur unit. A studio with neither
   // makes no read (an outage cannot touch it). Only pilot studios register a unit, so the extra reads stay few. Without this, a studio that registered
   // a unit during the pilot kept starting new MultiPlex setups after the rollout was turned Off.
@@ -493,21 +495,36 @@ export async function loadMachineSetupContext(input: {
       rolloutUnavailable = true;
     } else if (routeDecision === "hide") {
       rolloutOff = true;
-    } else if (routeDecision === "offer" && legacyMachine) {
-      try {
-        const purProfile = currentProfile(catalogue, XCELL_PUR_PROFILE_ID);
-        const published = purProfile ? await publishedModesFor(db, purProfile.profileId, purProfile.version) : null;
-        multiplexRoute = xcellMultiplexRoute({
-          legacyOffered: true,
-          catalogue,
-          devices: inventory.devices,
-          publishedModes: published && published.ok ? published.value : null,
-        });
-      } catch {
-        multiplexRoute = null;
-      }
+    } else if (routeDecision === "offer") {
+      registeredUnitAllowed = true;
     }
   }
+
+  // THE ROUTE (HON-119): MultiPlex is offered to EVERY studio once the contract is published; it needs no registered machine, no xCell history
+  // and no rollout. The rollout above only decides whether a REGISTERED xCell unit may be the route's unit. A failed read means no route.
+  const purProfile = currentProfile(catalogue, XCELL_PUR_PROFILE_ID);
+  let unspecifiedUnits: StudioDevice[] = [];
+  try {
+    const published = purProfile ? await publishedModesFor(db, purProfile.profileId, purProfile.version) : null;
+    const placeholders = await listUnspecifiedMachines(db, scope.studioId);
+    unspecifiedUnits = placeholders.ok ? placeholders.value : [];
+    const savedUnitId = input.blockId ? await blockStoredUnitId(db, input.blockId, input.sessionId) : null;
+    multiplexRoute = xcellMultiplexRoute({
+      savedUnitId,
+      legacyOffered: legacyMachine !== null,
+      registeredUnitAllowed,
+      catalogue,
+      devices: inventory.devices,
+      unspecifiedUnits,
+      studioId: scope.studioId,
+      publishedModes: published && published.ok ? published.value : null,
+    });
+  } catch {
+    multiplexRoute = null;
+  }
+  // The placeholder travels as a DEVICE of this context only so the panel can resolve it by id; no list built from `devices` shows it.
+  const routeUnit =
+    multiplexRoute?.unspecified && purProfile ? unspecifiedDeviceFor(scope.studioId, purProfile.version, unspecifiedUnits) : null;
 
   // THE CLIENT'S OWN LAST MACHINE, validated like any other choice.
   let clientLastMachine: MachineSetupContext["clientLastMachine"] = null;
@@ -558,7 +575,7 @@ export async function loadMachineSetupContext(input: {
 
   return {
     scope,
-    devices: offered.devices,
+    devices: routeUnit ? [...offered.devices, routeUnit] : offered.devices,
     inventoryReason: rolloutUnavailable ? ROLLOUT_UNAVAILABLE_MESSAGE : inventory.reason,
     rolloutNotice: rolloutUnavailable ? ROLLOUT_UNAVAILABLE_MESSAGE : null,
     remembered: offered.remembered,
@@ -959,7 +976,9 @@ export async function recordReadingsAction(input: {
 
   const db = await machineDb();
   const inventory = await listStudioDevices(db, scope.studioId);
-  const device = inventory.devices.find((d) => d.deviceId === input.machineId);
+  // HON-119: a saved MultiPlex area may hold the studio's "Machine not specified" placeholder, which no inventory list carries.
+  const placeholders = await listUnspecifiedMachines(db, scope.studioId);
+  const device = [...inventory.devices, ...(placeholders.ok ? placeholders.value : [])].find((d) => d.deviceId === input.machineId);
   if (!device) {
     return {
       ok: false,
@@ -971,7 +990,8 @@ export async function recordReadingsAction(input: {
   // A block that already stores this unit is unaffected. Asked before the readings are validated: a refusal here sends nothing.
   const rolloutOk = await guardXcellRollout(db, {
     studioId: scope.studioId,
-    unitProfileId: device.profileId,
+    // HON-119: the placeholder never meets the platform rollout (that belongs to the registered xCell unit).
+    unitProfileId: device.isUnspecified === true ? null : device.profileId,
     deviceId: input.machineId,
     blockId: input.blockId,
     sessionId: input.sessionId,
@@ -1192,7 +1212,9 @@ export async function recordSetupSubmissionAction(input: {
 
   const db = await machineDb();
   const inventory = await listStudioDevices(db, scope.studioId);
-  const device = inventory.devices.find((d) => d.deviceId === input.machineId);
+  // HON-119: a saved MultiPlex area may hold the studio's "Machine not specified" placeholder, which no inventory list carries.
+  const placeholders = await listUnspecifiedMachines(db, scope.studioId);
+  const device = [...inventory.devices, ...(placeholders.ok ? placeholders.value : [])].find((d) => d.deviceId === input.machineId);
   if (!device) {
     return {
       ok: false,
@@ -1204,7 +1226,8 @@ export async function recordSetupSubmissionAction(input: {
   // A block that already stores this unit is unaffected. Asked before the readings are validated: a refusal here sends nothing.
   const rolloutOk = await guardXcellRollout(db, {
     studioId: scope.studioId,
-    unitProfileId: device.profileId,
+    // HON-119: the placeholder never meets the platform rollout (that belongs to the registered xCell unit).
+    unitProfileId: device.isUnspecified === true ? null : device.profileId,
     deviceId: input.machineId,
     blockId: input.blockId,
     sessionId: input.sessionId,

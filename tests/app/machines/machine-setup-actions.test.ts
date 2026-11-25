@@ -2794,7 +2794,7 @@ describe("loadMachineSetupContext and the platform rollout", () => {
     expect(ctx.inventoryReason).not.toBe(ROLLOUT_UNAVAILABLE_MESSAGE);
   });
 
-  it("a route that EXISTS with the rollout On is withheld with it Off or errored (the fixture offers a real route, so the decision is what is tested)", async () => {
+  it("a registered unit is the route's unit only with the rollout On; with it Off or errored the route is the placeholder, never the registered unit (HON-119)", async () => {
     signIn("studio-fett", "pract-owner-a");
     HISTORY.value = true;
     DB.rowsFor.machine_profile_mode_contract = [{ mode_key: "multiplex", machine_profile_version: 1 }];
@@ -2804,11 +2804,13 @@ describe("loadMachineSetupContext and the platform rollout", () => {
     }];
     ROLLOUT.value = "on";
     const on = await actions.loadMachineSetupContext(NEW_SETUP);
-    expect(on.multiplexRoute).toEqual({ deviceId: "22222222-2222-4222-8222-222222222222", modeKey: "multiplex" });
+    expect(on.multiplexRoute).toEqual({ deviceId: "22222222-2222-4222-8222-222222222222", modeKey: "multiplex", unspecified: false });
     for (const v of ["off", "error"] as const) {
       ROLLOUT.value = v;
       const ctx = await actions.loadMachineSetupContext(NEW_SETUP);
-      expect(ctx.multiplexRoute, v).toBeNull();
+      // MultiPlex does not depend on the rollout, so it is still offered; but the registered unit is not the machine, the placeholder is.
+      expect(ctx.multiplexRoute, v).toEqual({ deviceId: "unspecified:xcell-pur", modeKey: "multiplex", unspecified: true });
+      expect(ctx.multiplexRoute?.deviceId, v).not.toBe("22222222-2222-4222-8222-222222222222");
     }
   });
 
@@ -2941,7 +2943,7 @@ describe("loadMachineSetupContext and the platform rollout", () => {
       expect(ROLLOUT.reads).toBe(1);
       expect(on.devices.map((d) => d.deviceId)).toContain(PUR_UNIT);
       expect(on.remembered?.deviceId).toBe(PUR_UNIT);
-      expect(on.multiplexRoute, "the route needs the legacy xCell choice; a studio without it keeps today's behaviour").toBeNull();
+      expect(on.multiplexRoute, "a studio without the xCell choice gets MultiPlex on the placeholder, never on its registered unit (HON-119)").toMatchObject({ unspecified: true });
       ROLLOUT.value = "off";
       const off = await actions.loadMachineSetupContext(NEW_SETUP);
       expect(off.devices.map((d) => d.deviceId)).not.toContain(PUR_UNIT);

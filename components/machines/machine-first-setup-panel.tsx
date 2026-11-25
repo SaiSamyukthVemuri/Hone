@@ -41,6 +41,7 @@ import {
 import type { GroupSubmission } from "@/lib/machines/setting-groups";
 import type { PendingSetupIdentity } from "@/lib/machines/pending-setup";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
+import { profileById } from "@/lib/machines/catalogue";
 import { nativeFieldGroups } from "@/lib/machines/charting";
 import { OWNER_INPUT_REQUEST } from "@/lib/machines/owner-input-copy";
 import { profileProvenance } from "@/lib/machines/profile-provenance";
@@ -243,7 +244,9 @@ export type MachineFirstSetupPanelProps = {
    * contract published. The unit is never listed as a second xCell; picking MultiPlex under xCell selects it, picking the existing
    * settings returns to the existing workflow. Null means nothing about the xCell choice changes.
    */
-  multiplexRoute?: { deviceId: string; modeKey: string } | null;
+  multiplexRoute?: { deviceId: string; modeKey: string; unspecified?: boolean } | null;
+  /** HON-119: the pending MultiPlex request is the click that opened this panel, so it is applied on mount. */
+  applyRequestOnMount?: boolean;
   multiplexReadingsHost?: HTMLDivElement | null;
   /**
    * The host form's MULTIPLEX pick in its ONE Mode control (there is no second selector here). Each pick bumps `seq`: `want` true
@@ -371,6 +374,7 @@ function MachineFirstSetupPanelImpl({
   onSelectMachine,
   legacyMachine = null,
   multiplexRoute = null,
+  applyRequestOnMount = false,
   multiplexReadingsHost,
   multiplexRequest = null,
   initialLegacyChosen = false,
@@ -460,7 +464,9 @@ function MachineFirstSetupPanelImpl({
     (initialLegacyChosen || (onlyChoice?.kind === "legacy" && !restored && !unavailableSelection && initialDeviceId == null)) && legacyMachine !== null,
   );
   // The route applies only beside the existing xCell choice (never a second xCell on its own).
-  const xcellRouted = multiplexRoute !== null && legacyMachine !== null;
+  const xcellRouted = multiplexRoute !== null && (legacyMachine !== null || multiplexRoute.unspecified === true);
+  // The route's unit is the inert placeholder: no machine is shown as chosen, no legacy option stands in for it.
+  const routedUnspecified = multiplexRoute?.unspecified === true;
   /**
    * Choose (or clear) the machine.
    *
@@ -480,7 +486,7 @@ function MachineFirstSetupPanelImpl({
     // previous one over would persist a key from a different profile, which
     // means nothing - a mode exists only within the profile that declares it.
     const nextPick =
-      next === null ? undefined : selectable.find((s) => s.device.deviceId === next);
+      next === null ? undefined : choosable.find((s) => s.device.deviceId === next);
     const nextMode = nextPick
       ? (supportedModes(nextPick.device, nextPick.profile)[0]?.key ?? null)
       : null;
@@ -617,9 +623,18 @@ function MachineFirstSetupPanelImpl({
   // to a studio and the filter is studio-scoped. Without identity the panel
   // shows the catalogue status and nothing else, rather than guessing.
   const selectable = scope ? selectableDevices(scope, devices, catalogue) : [];
+  // HON-119: the MultiPlex route's "Machine not specified" placeholder can be CHOSEN (by the Mode control) but is never LISTED: the picker, its
+  // count and its hints read `selectable`, which excludes it.
+  const routeUnit = (() => {
+    if (!scope || !multiplexRoute?.unspecified) return null;
+    const d = devices.find((x) => x.deviceId === multiplexRoute.deviceId && x.isUnspecified === true && x.studioId === scope.studioId);
+    const profile = d ? profileById(d.profileId, catalogue) : null;
+    return d && profile && profile.availability === "active" && d.profileVersion === profile.version ? { device: d, profile } : null;
+  })();
+  const choosable = routeUnit ? [...selectable, routeUnit] : selectable;
   const chosen = legacyChosen
     ? null
-    : (selectable.find((s) => s.device.deviceId === deviceId) ?? null);
+    : (choosable.find((s) => s.device.deviceId === deviceId) ?? null);
   // A MODE KEY IS ONLY MEANINGFUL WITHIN ONE PROFILE, so an unrecognised one
   // falls back rather than blanking the panel: a remembered mode can outlive
   // the machine it was chosen on.
@@ -673,7 +688,7 @@ function MachineFirstSetupPanelImpl({
     if (blockId) parkedNative.current.clear();
   }, [blockId]);
   // THE LAST REQUEST THIS PANEL HAS FINISHED WITH (applied, or dropped for a reason that will not change).
-  const handledMultiplexSeq = useRef(multiplexRequest?.seq ?? 0);
+  const handledMultiplexSeq = useRef(applyRequestOnMount ? 0 : (multiplexRequest?.seq ?? 0));
   useEffect(() => {
     if (!multiplexRequest || multiplexRequest.seq === handledMultiplexSeq.current) return;
     // A NEW area only: a saved area keeps the identity it was saved with.
@@ -792,7 +807,7 @@ function MachineFirstSetupPanelImpl({
         <FieldLabel
           label="Machine"
           hint={
-            selectable.length === 0
+            selectable.length === 0 && !chosen
               ? (inventoryReason ??
                 "No verified machine is available for this studio yet.")
               : undefined
@@ -802,7 +817,7 @@ function MachineFirstSetupPanelImpl({
             className={fieldControlClass()}
             ref={selectRef}
             value={
-              legacyChosen || (xcellRouted && deviceId === multiplexRoute?.deviceId)
+              legacyChosen || (xcellRouted && !routedUnspecified && deviceId === multiplexRoute?.deviceId)
                 ? LEGACY_MACHINE_OPTION_VALUE
                 : (deviceId ?? (savedUnavailable ? savedDeviceId : "") ?? "")
             }
@@ -973,7 +988,7 @@ function MachineFirstSetupPanelImpl({
           {legacyMachine?.label}: use the treatment fields below.
         </p>
       )}
-      {selectable.length === 0 ? (
+      {selectable.length === 0 && !chosen ? (
         <p className="text-sm text-neutral-600 dark:text-neutral-400" hidden={legacyChosen}>
           No verified machine is available to select yet.{" "}
           {!scope
@@ -997,9 +1012,9 @@ function MachineFirstSetupPanelImpl({
       ) : (
         <div className="flex flex-col gap-3" data-testid="machine-chosen">
           <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-            {xcellRouted && chosen.device.deviceId === multiplexRoute?.deviceId ? legacyMachine?.label : chosen.device.displayName}
+            {xcellRouted && !routedUnspecified && chosen.device.deviceId === multiplexRoute?.deviceId ? legacyMachine?.label : chosen.device.displayName}
             <span className="ml-2 font-normal text-neutral-600 dark:text-neutral-400">
-              {xcellRouted && chosen.device.deviceId === multiplexRoute?.deviceId ? "" : machineModelLabel(chosen.profile)}
+              {xcellRouted && !routedUnspecified && chosen.device.deviceId === multiplexRoute?.deviceId ? "" : machineModelLabel(chosen.profile)}
               {mode ? ` - ${mode.nativeLabel}` : ""}
             </span>
             {/* AN EXPLICIT WAY TO CHANGE IT: takes the practitioner to the one
