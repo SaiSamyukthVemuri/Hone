@@ -102,7 +102,10 @@ describe("desktop + mobile thread identical targeting context", () => {
     const week = scopes.CalendarPage;
     // The button's date is the day the page loaded on. The phone time grid changes its own day without a reload, so a button
     // beside it would block the wrong day; that grid has its own date-aware "+" (CalendarMobileDayView).
-    expect(week).toMatch(/\{byPractitioner && <CalendarBlockTime\b/);
+    // The BUTTON follows the layout (showButton); the element itself stays mounted so an open panel survives the practitioner filter
+    // settling (block-time-survives-filter-settling.test.ts).
+    expect(week).toMatch(/<CalendarBlockTime showButton=\{byPractitioner\}/);
+    expect(week).not.toMatch(/\{byPractitioner && <CalendarBlockTime\b/);
     expect(week.match(/<CalendarBlockTime\b/g)).toHaveLength(1);
     expect(MOBILE).toMatch(/localDate: chooserDraft\.localDate/);
     expect(MOBILE).toMatch(/setChooserDraft\(\{\s*localDate: day\.date/);

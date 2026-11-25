@@ -410,7 +410,7 @@ export default async function CalendarPage({
         capacityEnabled={studio.practitioner_capacity_enabled === true} viewer={{id: practitioner.id, name: practitioner.display_name}} />
       {/* Only the By practitioner week, which has no time grid. The time grid has its own date-aware Block time (the drag on a
           desktop, the "+" on a phone, which follows the day chosen there); a button here would keep the day the page loaded on. */}
-      {byPractitioner && <CalendarBlockTime date={initialSelectedDate} studioTimezone={studio.timezone} blockScopeNames={blockScopeNames} isOwner={isOwner} currentPractitionerId={practitioner.id} currentPractitionerName={practitioner.display_name} />}
+      <CalendarBlockTime showButton={byPractitioner} date={initialSelectedDate} studioTimezone={studio.timezone} blockScopeNames={blockScopeNames} isOwner={isOwner} currentPractitionerId={practitioner.id} currentPractitionerName={practitioner.display_name} />
       {multiPersonWeek && <nav aria-label="Week layout" className="flex w-fit gap-1 rounded-lg bg-neutral-100 p-1 text-sm">
         {[{ label: "By practitioner", grid: false }, { label: "Time grid", grid: true }].map(({ label, grid }) => {
           const query = new URLSearchParams({ view: "week", day: initialSelectedDate });
