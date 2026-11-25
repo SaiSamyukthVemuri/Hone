@@ -38,7 +38,7 @@ async function seedWaiting(seed: E2eSeed, count: number, prefixes: string[] = []
 test.describe("invite beyond the estimate", () => {
   test("an owner reaches it from the Waitlist page, confirms once, and every chosen client is sent exactly once", async ({ page }) => {
     test.setTimeout(180_000);
-    const seed = await seedE2eStudio();
+    const seed = await seedE2eStudio({ enableWaitlist: true });
     const people = await seedWaiting(seed, RECIPIENTS);
     const mark = markResendLedger();
 
@@ -100,7 +100,7 @@ test.describe("invite beyond the estimate", () => {
 
   test("the owner retries a refused delivery through the page: only that person is attempted again, nobody else", async ({ page }) => {
     test.setTimeout(240_000);
-    const seed = await seedE2eStudio();
+    const seed = await seedE2eStudio({ enableWaitlist: true });
     // 0 and 1 are accepted. 2 is REFUSED by the provider on every attempt. (The fake cannot produce an unknown outcome cheaply: a `failonce` network error is
     // absorbed by the delivery adapter's own retry and ends accepted. The unknown-outcome retry is covered by the database and unit tests.)
     const people = await seedWaiting(seed, 3, ["success+", "success+", "reject+"]);

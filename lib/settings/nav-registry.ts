@@ -21,6 +21,11 @@ import type { SettingsNavContext, SettingsNavEntry } from "./nav";
 const BOTH = ["owner", "practitioner"] as const;
 const OWNER = ["owner"] as const;
 
+async function studioWaitlistEnabled(ctx: SettingsNavContext): Promise<boolean> {
+  const admission = await getNewClientAdmissionMode(ctx.studio);
+  return newClientWaitlistCommitIsDurable(admission, ctx.studio.slug);
+}
+
 /**
  * WAIT-02 / WAITLIST-NAV-VIS-01 (moved here unchanged from the layout).
  *
@@ -37,26 +42,18 @@ const OWNER = ["owner"] as const;
  */
 export const waitlistVisible: NonNullable<SettingsNavEntry["visibleWhen"]> = async (ctx) => {
   if (ctx.role !== "owner") return false;
-  const admission = await getNewClientAdmissionMode(ctx.studio);
-  const waitlistLive = newClientWaitlistCommitIsDurable(admission, ctx.studio.slug);
+  const waitlistLive = await studioWaitlistEnabled(ctx);
   return (
     waitlistLive ||
     (await hasActiveWaitlistEntries(await createClient(), ctx.studio.id))
   );
 };
 
-/**
- * Does the main navigation show "Waitlist" for this signed-in user in this studio?
- *
- * EXACTLY the Settings tab's rule, reused and not re-derived (`waitlistVisible` above): an owner, in a studio that is waitlisting
- * new clients and recording them durably, or that already holds an entry the operator can act on. Admission being Closed does not
- * hide it: that is a separate setting, and existing entries and invitations still need managing. It widens no access: the page
- * keeps its own owner check, and a practitioner never sees the link. A failed read hides it (the same fail-closed answer the tab
- * gives) and never breaks the shell.
- */
+// Primary navigation follows the current studio setting. Settings retains access to an existing queue.
 export async function showWaitlistInPrimaryNav(ctx: SettingsNavContext): Promise<boolean> {
   try {
-    return (await waitlistVisible(ctx)) === true;
+    if (ctx.role !== "owner") return false;
+    return await studioWaitlistEnabled(ctx);
   } catch {
     return false;
   }

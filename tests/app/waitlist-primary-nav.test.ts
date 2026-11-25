@@ -7,12 +7,6 @@ import {
 } from "@/lib/booking/new-client-waitlist";
 import { isCurrentSection } from "@/app/(app)/PrimaryNavLink";
 
-// "Waitlist" in the main navigation.
-//
-// The rule is the Settings tab's rule, REUSED: the same function decides both, so these tests compare the two decisions across the
-// whole matrix instead of restating the rule. Admission being Closed never hides it; a practitioner never sees it; another
-// studio's queue never lights it; a failed read hides it. Synthetic studios and ids only.
-
 const SLUG_A = "studio-a";
 const SLUG_B = "studio-b";
 const scenario = {
@@ -82,40 +76,30 @@ beforeEach(() => {
 });
 afterEach(() => { for (const [k, v] of saved) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } vi.restoreAllMocks(); });
 
-describe("the main navigation entry follows the Settings tab's rule, exactly", () => {
+describe("owner navigation across admission modes and queue states", () => {
   const modes = [
     { mode: "open" }, { mode: "waitlist" }, { mode: "closed" },
   ];
-  const rowSets: Array<[string, Array<{ studio_id: string; status: string }>]> = [
-    ["no entries", []],
-    ["an active entry in this studio", [{ studio_id: "studio-id-a", status: "waiting" }]],
-    ["only removed/converted history", [{ studio_id: "studio-id-a", status: "removed" }, { studio_id: "studio-id-a", status: "converted" }]],
-    ["an active entry in ANOTHER studio", [{ studio_id: "studio-id-b", status: "waiting" }]],
+  const rowSets: Array<[string, typeof scenario.rows, boolean]> = [
+    ["no entries", [], false],
+    ["an active entry in this studio", [{ studio_id: "studio-id-a", status: "waiting" }], true],
+    ["only removed/converted history", [{ studio_id: "studio-id-a", status: "removed" }, { studio_id: "studio-id-a", status: "converted" }], false],
+    ["an active entry in ANOTHER studio", [{ studio_id: "studio-id-b", status: "waiting" }], false],
   ];
-  for (const role of ["owner", "member"]) for (const flags of [true, false]) for (const m of modes) for (const [label, rows] of rowSets) {
-    it(`role ${role}, flags ${flags ? "on" : "off"}, admission ${m.mode}, ${label}: nav == settings tab`, async () => {
+  for (const role of ["owner", "member"]) for (const flags of [true, false]) for (const m of modes) for (const [label, rows, activeQueue] of rowSets) {
+    it(`role ${role}, flags ${flags ? "on" : "off"}, admission ${m.mode}, ${label}`, async () => {
       scenario.role = role; scenario.rows = rows; setFlags(flags);
       admission.value = { ok: true, mode: m.mode, source: "persisted" };
-      expect(await navShown()).toBe(await settingsTabShown());
+      const enabled = m.mode === "waitlist";
+      expect(await navShown()).toBe(role === "owner" && enabled);
+      expect(await settingsTabShown()).toBe(role === "owner" && (enabled || activeQueue));
     });
   }
-
-  it("anti-vacuity: the matrix includes both a shown and a hidden answer", async () => {
-    scenario.rows = [{ studio_id: "studio-id-a", status: "waiting" }];
-    expect(await navShown()).toBe(true);
-    scenario.rows = [];
-    expect(await navShown()).toBe(false);
-  });
 });
 
 describe("enabled, disabled, Closed, roles, studio switching, failure", () => {
   it("enabled (waitlist mode, durable): shown for an owner", async () => {
     admission.value = { ok: true, mode: "waitlist", source: "persisted" };
-    expect(await navShown()).toBe(true);
-  });
-  it("admission CLOSED does not hide it while the studio has a queue", async () => {
-    admission.value = { ok: true, mode: "closed", source: "persisted" };
-    scenario.rows = [{ studio_id: "studio-id-a", status: "invited" }];
     expect(await navShown()).toBe(true);
   });
   it("disabled and no queue: hidden", async () => {
@@ -127,13 +111,16 @@ describe("enabled, disabled, Closed, roles, studio switching, failure", () => {
     expect(await navShown()).toBe(false);
   });
   it("studio switching: the answer is for the CURRENT studio only", async () => {
-    scenario.rows = [{ studio_id: "studio-id-a", status: "waiting" }];
+    admission.value = { ok: true, mode: "waitlist", source: "legacy_bridge" };
+    process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = SLUG_A;
+    process.env[NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV] = SLUG_A;
     scenario.studio = "A"; expect(await navShown()).toBe(true);
     scenario.studio = "B"; expect(await navShown()).toBe(false);
     scenario.studio = "A"; expect(await navShown()).toBe(true);
   });
-  it("a failed read hides it and does not throw", async () => {
-    scenario.rows = [{ studio_id: "studio-id-a", status: "waiting" }]; scenario.error = { code: "42501" };
+  it("an unknown admission mode hides the link even with a queue", async () => {
+    admission.value = { ok: false };
+    scenario.rows = [{ studio_id: "studio-id-a", status: "waiting" }];
     await expect(navShown()).resolves.toBe(false);
   });
   it("an admission lookup that throws hides it and does not throw", async () => {
@@ -162,12 +149,11 @@ describe("placement and target (read from the real shell source)", () => {
     expect(layout).toMatch(/<HeaderCluster[\s\S]*?showWaitlist=\{showWaitlist\}/);
     expect(readFileSync("app/(app)/HeaderCluster.tsx", "utf8")).toMatch(/<MobileMenu[\s\S]*?showWaitlist=\{showWaitlist\}/);
   });
-  it("one decision feeds both menus, from the Settings tab's own function, with no second rule", () => {
+  it("one studio-level decision feeds both primary menus", () => {
     expect(layout.match(/showWaitlistInPrimaryNav\(/g) ?? []).toHaveLength(1);
     expect(layout).not.toMatch(/hasActiveWaitlistEntries|newClientWaitlistCommitIsDurable|getNewClientAdmissionMode/);
     const registry = readFileSync("lib/settings/nav-registry.ts", "utf8");
     expect(registry).toMatch(/visibleWhen: waitlistVisible/);
-    expect(registry).toMatch(/showWaitlistInPrimaryNav[\s\S]*?waitlistVisible\(ctx\)/);
   });
   it("the standalone route uses the owner-gated queue", () => {
     expect(readFileSync("app/(app)/waitlist/page.tsx", "utf8")).toContain("@/app/(app)/settings/waitlist/page");

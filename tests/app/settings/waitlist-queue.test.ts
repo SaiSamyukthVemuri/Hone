@@ -1639,7 +1639,7 @@ describe("the Settings tab is server-gated", () => {
     // bridge's own decision is what stops the nav and the commit point drifting
     // apart. Behavioural proof lives in waitlist-nav-visibility.test.ts.
     expect(LAYOUT).toMatch(
-      /const waitlistLive = newClientWaitlistCommitIsDurable\(admission, ctx\.studio\.slug\);/,
+      /return newClientWaitlistCommitIsDurable\(admission, ctx\.studio\.slug\);/,
     );
     expect(LAYOUT).toMatch(
       /return \(\s*\n\s*waitlistLive \|\|\s*\n\s*\(await hasActiveWaitlistEntries\(await createClient\(\), ctx\.studio\.id\)\)\s*\n\s*\);/,

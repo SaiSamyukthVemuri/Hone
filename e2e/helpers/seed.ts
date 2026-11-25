@@ -63,7 +63,7 @@ export async function sql<T = Record<string, unknown>>(
   }
 }
 
-export async function seedE2eStudio(): Promise<E2eSeed> {
+export async function seedE2eStudio(options: { enableWaitlist?: boolean } = {}): Promise<E2eSeed> {
   const runId = randomUUID().slice(0, 8);
   const studioId = randomUUID();
   const slug = `e2e-studio-${runId}`;
@@ -149,6 +149,15 @@ export async function seedE2eStudio(): Promise<E2eSeed> {
   );
   if (practitioner.length !== 1 || practitioner[0].role !== "owner") {
     throw new Error("seed failed: owner practitioner was not provisioned");
+  }
+
+  if (options.enableWaitlist) {
+    const [result] = await sql<{ outcome: string }>(
+      "select outcome from public.set_new_client_admission_mode($1, 'waitlist')",
+      [studioId],
+      created.id,
+    );
+    if (result?.outcome !== "ok") throw new Error("seed failed: could not enable waitlist");
   }
 
   return {
