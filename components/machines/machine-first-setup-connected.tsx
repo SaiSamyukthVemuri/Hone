@@ -308,6 +308,12 @@ export function MachineFirstSetupConnected({
       // The host holds Save until this load settles: a Save pressed now would otherwise read the previous machine and save a legacy area.
       onMultiplexLoad?.("loading");
       void open().then((ok) => onMultiplexLoad?.(ok ? "done" : "failed"));
+    } else if (multiplexRequest.want && state !== "idle" && state !== "failed" && multiplexRequest.seq !== loadedForSeqRef.current) {
+      // A NEWER click while the load it replaced is still in flight: that load answers for it too (the host drops answers to anything but the latest
+      // request), so adopt the new request and hold Save again.
+      loadedForSeqRef.current = multiplexRequest.seq;
+      requestBeforeOpenRef.current = multiplexRequest.seq;
+      onMultiplexLoad?.("loading");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [multiplexRequest, ctx, state]);

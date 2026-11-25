@@ -437,4 +437,51 @@ describe("MultiPlex in a studio with no registered machine", () => {
     expect(multiplexPill()!.getAttribute("aria-pressed")).toBe("true");
     expect(saveButton().disabled).toBe(false);
   });
+
+  // A STALE ANSWER: MultiPlex is clicked (its load is pending), THEN a legacy mode is chosen, THEN the load answers. The answer belongs to a request she
+  // has replaced, so it must neither refuse the Save she is now entitled to make nor select MultiPlex over the mode she chose.
+  it("a load that REJECTS after a legacy mode was chosen does not strand Save: no refusal message, and the legacy area saves", async () => {
+    const create = await createAction();
+    create.mockClear();
+    create.mockResolvedValue({ ok: true, blockId: "new-b1" });
+    let fail: (e: unknown) => void = () => undefined;
+    actions.loadMachineSetupContext.mockImplementationOnce(() => new Promise((_r, rej) => { fail = rej; }) as never);
+    await mount(null, { deviceId: PLACEHOLDER.deviceId });
+    await clickMultiplex();
+    expect(saveButton().disabled).toBe(true);
+    await clickPill("Thermolysis");
+    expect(saveButton().disabled, "choosing a legacy mode ends the hold").toBe(false);
+    await act(async () => { fail(new Error("network")); });
+    expect(host!.textContent).not.toContain("MultiPlex could not be loaded");
+    expect(multiplexPill()!.getAttribute("aria-pressed")).toBe("false");
+    await act(async () => { saveButton().click(); });
+    expect(create, "the legacy area saves").toHaveBeenCalledTimes(1);
+    expect(host!.textContent).not.toContain("MultiPlex could not be loaded");
+  });
+
+  it("a load that SUCCEEDS after a legacy mode was chosen does not select MultiPlex over it", async () => {
+    let release: (v: unknown) => void = () => undefined;
+    actions.loadMachineSetupContext.mockImplementationOnce(() => new Promise((r) => { release = r; }) as never);
+    await mount(null, { deviceId: PLACEHOLDER.deviceId });
+    await clickMultiplex();
+    await clickPill("Blend");
+    await act(async () => { release(ZERO()); });
+    expect(multiplexPill()!.getAttribute("aria-pressed")).toBe("false");
+    expect(legacyFieldsShown()).toBe(true);
+    expect(saveButton().disabled).toBe(false);
+  });
+
+  it("MultiPlex clicked again while the first load is pending still loads once and then selects MultiPlex", async () => {
+    actions.loadMachineSetupContext.mockClear();
+    let release: (v: unknown) => void = () => undefined;
+    actions.loadMachineSetupContext.mockImplementationOnce(() => new Promise((r) => { release = r; }) as never);
+    await mount(null, { deviceId: PLACEHOLDER.deviceId });
+    await clickMultiplex();
+    await clickPill("Blend");
+    await clickMultiplex();
+    await act(async () => { release(ZERO()); });
+    expect(actions.loadMachineSetupContext).toHaveBeenCalledTimes(1);
+    expect(multiplexPill()!.getAttribute("aria-pressed")).toBe("true");
+    expect(saveButton().disabled).toBe(false);
+  });
 });
