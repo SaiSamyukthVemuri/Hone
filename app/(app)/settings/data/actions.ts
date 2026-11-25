@@ -15,6 +15,7 @@ import {
   type ClinicalNoteExportSource,
 } from "@/lib/export/clinical-notes";
 import { fetchAllRows, EXPORT_PAGE_SIZE } from "@/lib/export/paginate";
+import { padDecimalText } from "@/lib/export/decimal-text";
 import { exportDeclineAnswersPage } from "@/lib/waitlist/followups-owner";
 import {
   emptyExportRpcRead,
@@ -448,7 +449,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
       supabase
         .from("treatment_setup_readings")
         .select(
-          "id, session_block_id, studio_machine_id, machine_profile_id, machine_profile_version, mode_key, group_key, channels, stage_key, field_key, value_numeric, value_text, absence_reason, native_unit, decimals, observation_source, revision, recorded_by_practitioner_id, recorded_at, capture_id",
+          "id, session_block_id, studio_machine_id, machine_profile_id, machine_profile_version, mode_key, group_key, channels, stage_key, field_key, value_numeric::text, value_text, absence_reason, native_unit, decimals, observation_source, revision, recorded_by_practitioner_id, recorded_at, capture_id",
         )
         .eq("studio_id", studio.id)
         .order("recorded_at", { ascending: true })
@@ -995,18 +996,14 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
 
   writeCsv("probe_lots", probeLotsRes);
 
-  // value_numeric is written at the contract's own decimals, so a recorded 1.80 stays "1.80" rather than the JSON number 1.8.
+  // value_numeric is read as TEXT (value_numeric::text) and padded to the contract's own decimals by string handling only, so a recorded
+  // 1.80 stays "1.80" and a 16-digit value stays exact: it never becomes a JavaScript number.
   writeCsv(
     "treatment_setup_readings",
     mapExportRows(treatmentSetupReadingsRes, (rows) =>
       (rows as unknown as Array<Record<string, unknown>>).map((r) => ({
         ...r,
-        value_numeric:
-          r.value_numeric == null
-            ? null
-            : Number(r.value_numeric).toFixed(
-                Math.max(Number(r.decimals ?? 0), String(r.value_numeric).split(".")[1]?.length ?? 0),
-              ),
+        value_numeric: padDecimalText(r.value_numeric as string | null, r.decimals as number | null),
       })),
     ),
   );

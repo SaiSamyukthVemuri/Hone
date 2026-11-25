@@ -146,6 +146,8 @@ beforeAll(async () => {
       { field_key: "intensity", native_unit: "%", decimals: 2, quantity: "percentage", optional: true },
       { field_key: "duration", native_unit: "s", decimals: 2, quantity: "duration", optional: true },
       { field_key: "blank_field", native_unit: "s", decimals: 2, quantity: "duration", optional: true },
+      { field_key: "fine", native_unit: "s", decimals: 3, quantity: "duration", optional: true },
+      { field_key: "big_count", native_unit: "count", decimals: 0, quantity: "count", optional: true },
     ]),
   ]);
 
@@ -156,6 +158,9 @@ beforeAll(async () => {
     { field_key: "intensity", value: "1.85", observation_source: "practitioner-entered" },
     { field_key: "duration", value: "1.8", observation_source: "practitioner-entered" },
     { field_key: "blank_field", absence_reason: "not-recorded", observation_source: "practitioner-entered" },
+    { field_key: "fine", value: "0.033", observation_source: "practitioner-entered" },
+    // above 2^53: a JavaScript number would export ...992. The column is an unrestricted numeric and must stay exact.
+    { field_key: "big_count", value: "9007199254740993", observation_source: "practitioner-entered" },
   ]);
   // ANOTHER studio's native area, with values nobody in studio A may see.
   blockB = await recordNativeArea(studioB, [
@@ -199,11 +204,13 @@ describe("the readings file carries this studio's native readings, as the machin
     expect(t.headers, "the tenant key is not a column").not.toContain("studio_id");
 
     const own = t.rows.filter((r) => r.session_block_id === blockA);
-    expect(own).toHaveLength(4);
+    expect(own).toHaveLength(6);
     const by = (k: string) => own.find((r) => r.field_key === k)!;
     expect(by("snap_count").value_numeric).toBe("3");
     expect(by("intensity").value_numeric).toBe("1.85");
     expect(by("duration").value_numeric, "a recorded 1.8 at two decimals keeps its trailing zero").toBe("1.80");
+    expect(by("fine").value_numeric).toBe("0.033");
+    expect(by("big_count").value_numeric, "a value above 2^53 stays exact").toBe("9007199254740993");
     expect(by("blank_field").value_numeric, "a blank is never exported as 0").toBe("");
     expect(by("blank_field").absence_reason).toBe("not-recorded");
     expect(by("snap_count").native_unit).toBe("count");
@@ -212,12 +219,12 @@ describe("the readings file carries this studio's native readings, as the machin
     expect(t.rows.some((r) => r.session_block_id === blockB)).toBe(false);
     expect(t.rows.map((r) => r.value_numeric)).not.toContain("77");
     expect(t.rows.map((r) => r.value_numeric)).not.toContain("99.99");
-    expect(t.rows).toHaveLength(4);
+    expect(t.rows).toHaveLength(6);
 
     // the source-count check ran and matched
     const manifest = JSON.parse(await archive.files["manifest.json"].async("string")) as { source_count_checks: Array<Record<string, unknown>> };
     const check = manifest.source_count_checks.find((c) => c.table === "treatment_setup_readings")!;
-    expect(check).toMatchObject({ status: "matched", exported_rows: 4, studio_row_count: 4 });
+    expect(check).toMatchObject({ status: "matched", exported_rows: 6, studio_row_count: 6 });
   });
 });
 
@@ -229,7 +236,7 @@ describe("the source-count check is real for this file (negative control)", () =
       const result = await runExport();
       expect(result.ok).toBe(false);
       if (result.ok) return;
-      expect(result.error).toContain("treatment_setup_readings returned 3 rows but the studio holds 4");
+      expect(result.error).toContain("treatment_setup_readings returned 5 rows but the studio holds 6");
       expect(result.error).toContain("No partial export was produced");
     } finally {
       tamper.dropLastReadingRow = false;
