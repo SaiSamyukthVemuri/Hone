@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { E2E_APP_ORIGIN } from "./helpers/local-env";
 import { listMessageIds, waitForMagicLink } from "./helpers/mail";
 import { markResendLedger, readResendLedger } from "./helpers/resend-ledger";
@@ -6,6 +6,20 @@ import {
   createLocalAuthUser, getE2eServiceId, getOwnerPractitionerId, seedE2eClient,
   seedE2eMember, seedE2eStudio, sql,
 } from "./helpers/seed";
+
+async function signInAsDesk(page: Page, studio: Awaited<ReturnType<typeof seedE2eStudio>>) {
+  const deskEmail = `desk-${studio.runId}@harness.local`;
+  const user = await createLocalAuthUser(deskEmail);
+  await sql("insert into public.studio_receptionists (studio_id,user_id,display_name,active) values ($1,$2,'Front desk',true)", [studio.studioId, user]);
+  await page.goto("/login");
+  await page.getByLabel("I am using my invited email address").check();
+  await page.locator("#login-email").fill(deskEmail);
+  const seen = await listMessageIds(deskEmail);
+  await page.getByRole("button", { name: /send magic link/i }).click();
+  await page.goto(await waitForMagicLink(deskEmail, E2E_APP_ORIGIN, { excludeIds: seen }));
+  await page.getByRole("link", { name: "Open the front desk" }).click();
+  await page.waitForURL(/\/desk(?:\?|$)/);
+}
 
 test("reception sees client names, opens contact details, and books an afternoon visit from the studio calendar", async ({ page }) => {
   const studio = await seedE2eStudio();
@@ -34,17 +48,7 @@ test("reception sees client names, opens contact details, and books an afternoon
     select to_char(booked.starts_at at time zone slot.timezone, 'YYYY-MM-DD') as local_day from booked, slot
   `, [studio.studioId, ownerId, clientId, serviceId]);
 
-  const deskEmail = `desk-${studio.runId}@harness.local`;
-  const user = await createLocalAuthUser(deskEmail);
-  await sql("insert into public.studio_receptionists (studio_id,user_id,display_name,active) values ($1,$2,'Front desk',true)", [studio.studioId, user]);
-  await page.goto("/login");
-  await page.getByLabel("I am using my invited email address").check();
-  await page.locator("#login-email").fill(deskEmail);
-  const seen = await listMessageIds(deskEmail);
-  await page.getByRole("button", { name: /send magic link/i }).click();
-  await page.goto(await waitForMagicLink(deskEmail, E2E_APP_ORIGIN, { excludeIds: seen }));
-  await page.getByRole("link", { name: "Open the front desk" }).click();
-  await page.waitForURL(/\/desk(?:\?|$)/);
+  await signInAsDesk(page, studio);
 
   await page.goto(`/desk?view=month&date=${date}`);
   const visit = page.getByRole("button", { name: /Ari Rowan/ });
@@ -100,4 +104,44 @@ test("reception sees client names, opens contact details, and books an afternoon
   await expect(details).toContainText(returningName);
   await expect(details).toContainText(returningEmail);
   expect(readResendLedger(mail).filter(message => message.to === returningEmail)).toEqual([]);
+});
+
+// A view change can commit LATE. The receptionist opens "Find an opening" and starts filling it in while the Month response is still in flight; when
+// it lands, the calendar changes to Month and the open panel and what was typed into it stay exactly as they were. The Month response is HELD
+// until the test releases it (not a timer), so the in-flight window is certain rather than raced.
+test("a late view change replaces the calendar, not an open booking panel or what was typed into it", async ({ page }) => {
+  const studio = await seedE2eStudio();
+  await signInAsDesk(page, studio);
+
+  let heldMonthResponses = 0;
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await page.route(/\/desk\?.*view=month/, async route => {
+    if (route.request().headers()["rsc"]) { heldMonthResponses += 1; await gate; }
+    await route.continue();
+  });
+
+  await page.goto("/desk?view=week");
+  const week = page.getByRole("link", { name: "Week", exact: true });
+  const month = page.getByRole("link", { name: "Month", exact: true });
+  await expect(week).toHaveAttribute("aria-current", "page");
+  await month.click();
+  await expect.poll(() => heldMonthResponses).toBe(1);
+  await expect(week, "the Month view has not committed yet").toHaveAttribute("aria-current", "page");
+
+  await page.getByRole("button", { name: "Find an opening", exact: true }).first().click();
+  const book = page.getByRole("region", { name: "Desk booking" });
+  const typedDate = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
+  await book.getByRole("combobox", { name: "Time of day", exact: true }).selectOption({ label: "Noon onward" });
+  await book.getByLabel("From", { exact: true }).fill(typedDate);
+  await expect(book.getByLabel("From", { exact: true })).toHaveValue(typedDate);
+
+  release(); // the slow Month response lands now
+  await expect(month).toHaveAttribute("aria-current", "page");
+  await expect(page).toHaveURL(/view=month/);
+  await expect(week).not.toHaveAttribute("aria-current", "page");
+
+  await expect(book.getByRole("heading", { name: "Find an opening" }), "the panel was closed by the late commit").toBeVisible();
+  await expect(book.getByRole("combobox", { name: "Time of day", exact: true })).toHaveValue("pm");
+  await expect(book.getByLabel("From", { exact: true })).toHaveValue(typedDate);
 });
