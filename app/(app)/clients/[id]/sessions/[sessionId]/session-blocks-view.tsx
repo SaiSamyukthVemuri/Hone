@@ -24,6 +24,9 @@ import {
 import { reactionLabelsFromChips } from "@/lib/sessions/reaction-unified";
 import { sessionBlockSideLabel } from "@/lib/sessions/side-labels";
 import { ElectrolysisEntryRow } from "@/components/entry-row";
+import { MachineRecordedSetups } from "@/components/machines/machine-recorded-setups";
+import { MACHINE_CATALOGUE } from "@/lib/machines/catalogue";
+import type { RecordedReading } from "@/lib/machines/machine-queries";
 import { BlockSetupForm } from "./block-setup-form";
 import { SimplifiedEntryForm } from "./simplified-entry-form";
 import { RemovePassButton } from "@/components/remove-pass-button";
@@ -89,6 +92,10 @@ type Props = {
   sessionId: string;
   clientId: string;
   blocks: SessionBlockWithEntries[];
+  // What each NATIVE block (machine_profile_id set) recorded, by block id, and the studio's own names for the units. The card renders these
+  // instead of the legacy entry's readings, which for a native block hold only the database default (pulse_count 1).
+  nativeReadings?: Record<string, { readings: RecordedReading[]; unavailable: boolean }>;
+  nativeUnitNames?: Record<string, string>;
   orphanEntries: ElectrolysisEntry[];
   clientTagLabels?: ReadonlyArray<string>;
   // UI defaulting only: when creating a NEW treatment area, seed the area
@@ -115,6 +122,8 @@ export function SessionBlocksView({
   sessionId,
   clientId,
   blocks,
+  nativeReadings = {},
+  nativeUnitNames = {},
   orphanEntries,
   clientTagLabels = [],
   defaultPrimaryArea = null,
@@ -160,6 +169,8 @@ export function SessionBlocksView({
           probeLotSuggestions={probeLotSuggestions}
           probeLotInventory={probeLotInventory}
           autoEdit={block.id === autoEditBlockId}
+          nativeReadings={nativeReadings}
+          nativeUnitNames={nativeUnitNames}
         />
       ))}
 
@@ -225,7 +236,11 @@ function BlockSection({
   probeLotSuggestions = { byKey: {}, byLabel: {} },
   probeLotInventory = [],
   autoEdit = false,
+  nativeReadings = {},
+  nativeUnitNames = {},
 }: {
+  nativeReadings?: Record<string, { readings: RecordedReading[]; unavailable: boolean }>;
+  nativeUnitNames?: Record<string, string>;
   block: SessionBlockWithEntries;
   sessionId: string;
   clientId: string;
@@ -471,6 +486,15 @@ function BlockSection({
           {entriesSorted.length === 0 ? (
             <p className="text-xs text-neutral-500">No entries yet.</p>
           ) : (
+            <>
+            {block.machine_profile_id != null && nativeReadings[block.id] ? (
+              <MachineRecordedSetups
+                readings={nativeReadings[block.id]!.readings}
+                unavailable={nativeReadings[block.id]!.unavailable}
+                catalogue={MACHINE_CATALOGUE}
+                unitNames={nativeUnitNames}
+              />
+            ) : null}
             <ul className="flex flex-col gap-2">
               {entriesSorted.map((e, idx) => {
                 // Flatten: for structured-area (new-flow) blocks, the card
@@ -523,6 +547,7 @@ function BlockSection({
                 );
               })}
             </ul>
+            </>
           )}
 
           {addingPass ? (

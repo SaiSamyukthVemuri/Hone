@@ -101,7 +101,7 @@ describe("pulse delay: saved only when pulse_count > 1 (single-pulse unaffected)
 describe("pulse delay: displays in previous-session / treatment memory", () => {
   it("entry-row shows the delay only when pulse_count > 1 + value present", () => {
     expect(ENTRY_ROW).toMatch(
-      /entry\.pulse_count > 1 &&\s*\n?\s*entry\.pulse_delay_seconds != null/,
+      /pulseCount > 1 &&\s*\n?\s*entry\.pulse_delay_seconds != null/,
     );
     expect(ENTRY_ROW).toMatch(/toFixed\(2\)\}s delay/);
     // Pushed alongside every pulse-count render path.

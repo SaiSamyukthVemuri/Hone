@@ -83,6 +83,9 @@ export function ElectrolysisEntryRow({
   // chips hydrated from comments) and the note (chip-stripped free-text) ONCE, so
   // pills + notes stay consistent and legacy chips reliably render. Display-only;
   // the stored row is never rewritten here.
+  // A NATIVE block (machine_profile_id set) records its pulse count with the machine's own readings; the legacy entry under it holds only the
+  // database default (pulse_count 1, migration 0166), which is not what was done and must never be shown as it.
+  const pulseCount = block?.machine_profile_id != null ? null : entry.pulse_count;
   const display = resolveDisplayChips(entry.observation_chips, entry.comments);
 
   // Migration 0042: structured blend/galvanic readings. When any are
@@ -124,14 +127,14 @@ export function ElectrolysisEntryRow({
   // a value was recorded. numeric may arrive as string via PostgREST, so
   // coerce before formatting to 2 decimals.
   const pulseDelayLabel =
-    entry.pulse_count != null &&
-    entry.pulse_count > 1 &&
+    pulseCount != null &&
+    pulseCount > 1 &&
     entry.pulse_delay_seconds != null
       ? `${Number(entry.pulse_delay_seconds).toFixed(2)}s delay`
       : null;
-  if (isThermoish && entry.pulse_count != null) {
+  if (isThermoish && pulseCount != null) {
     thermoParts.push(
-      `${entry.pulse_count} ${entry.pulse_count === 1 ? "pulse" : "pulses"}`,
+      `${pulseCount} ${pulseCount === 1 ? "pulse" : "pulses"}`,
     );
     if (pulseDelayLabel) thermoParts.push(pulseDelayLabel);
   }
@@ -145,9 +148,9 @@ export function ElectrolysisEntryRow({
   if (mLabel) meta.push(mLabel);
   if (params.apilus_modality) meta.push(apilusModalityLabel(params.apilus_modality));
   if (!hasStructured) {
-    if (entry.pulse_count != null) {
+    if (pulseCount != null) {
       meta.push(
-        `${entry.pulse_count} ${entry.pulse_count === 1 ? "pulse" : "pulses"}`,
+        `${pulseCount} ${pulseCount === 1 ? "pulse" : "pulses"}`,
       );
       if (pulseDelayLabel) meta.push(pulseDelayLabel);
     }
@@ -186,9 +189,9 @@ export function ElectrolysisEntryRow({
         : entry.area;
     const legacyReadings: string[] = [];
     if (!hasStructured) {
-      if (entry.pulse_count != null) {
+      if (pulseCount != null) {
         legacyReadings.push(
-          `${entry.pulse_count} ${entry.pulse_count === 1 ? "pulse" : "pulses"}`,
+          `${pulseCount} ${pulseCount === 1 ? "pulse" : "pulses"}`,
         );
         if (pulseDelayLabel) legacyReadings.push(pulseDelayLabel);
       }
@@ -265,6 +268,7 @@ export function ElectrolysisEntryRow({
             </div>
           )}
           {!showTop &&
+            block?.machine_profile_id == null &&
             !hasStructured &&
             legacyReadings.length === 0 &&
             entry.hairs_treated == null &&

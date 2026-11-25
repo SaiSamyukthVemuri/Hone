@@ -91,14 +91,18 @@ export async function getWholeSessionCopySourceAction(input: {
   const { data: blocks, error: blockErr } = await supabase
     .from("session_blocks")
     .select(
-      "id, sort_order, mode, apilus_modality, energy_level, minutes_performed, machine_frequency, probe_key, probe_brand, probe_material, probe_piece_type, probe_shank, probe_size_value, probe_length, probe_label, primary_area, side, custom_area_detail",
+      "id, sort_order, mode, apilus_modality, energy_level, minutes_performed, machine_frequency, probe_key, probe_brand, probe_material, probe_piece_type, probe_shank, probe_size_value, probe_length, probe_label, primary_area, side, custom_area_detail, machine_profile_id",
     )
     .eq("studio_id", studio.id)
     .eq("session_id", sourceSessionId)
     .is("deleted_at", null)
     .order("sort_order", { ascending: true });
   if (blockErr) return { ok: false, error: GENERIC_ERROR };
-  if (!blocks || blocks.length === 0) {
+  // A MultiPlex (native) area is NOT OFFERED for copying. The copy writes a legacy block through the copy RPC, which carries no machine identity
+  // or native readings and stores the database default pulse_count 1; offering it would create a machineless area that looks like a copy. Copying a
+  // native area needs a database change and is tracked separately. The source fingerprint is computed in SQL over the whole session and is unaffected.
+  const copyable = (blocks ?? []).filter((b) => (b as { machine_profile_id?: string | null }).machine_profile_id == null);
+  if (copyable.length === 0) {
     return {
       ok: true,
       eligible: false,
@@ -109,7 +113,7 @@ export async function getWholeSessionCopySourceAction(input: {
     };
   }
 
-  const blockIds = blocks.map((b) => b.id as string);
+  const blockIds = copyable.map((b) => b.id as string);
   const [{ data: areas }, { data: entries }] = await Promise.all([
     supabase
       .from("session_block_areas")
@@ -145,7 +149,7 @@ export async function getWholeSessionCopySourceAction(input: {
     if (!firstEntryByBlock.has(id)) firstEntryByBlock.set(id, e); // earliest wins
   }
 
-  const source: CopySourceBlock[] = blocks.map((b) => {
+  const source: CopySourceBlock[] = copyable.map((b) => {
     const fe = firstEntryByBlock.get(b.id as string) ?? null;
     return {
       blockId: b.id as string,
