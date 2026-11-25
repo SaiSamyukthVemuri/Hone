@@ -52,6 +52,7 @@ import {
   type BudgetExportReadResult,
 } from "@/lib/budget/export-read";
 import { mergeReactionIntoChips } from "@/lib/observation-chips";
+import { isNativeMachineBlock } from "@/lib/machines/legacy-machine";
 import {
   blockAreasLabel,
   type BlockArea,
@@ -257,7 +258,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
       supabase
         .from("session_blocks")
         .select(
-          "id, primary_area, side, custom_area_detail, probe_key, probe_brand, probe_material, probe_piece_type, probe_shank, probe_size_value, probe_length, probe_label, reaction_type, machine_profile_id",
+          "id, primary_area, side, custom_area_detail, probe_key, probe_brand, probe_material, probe_piece_type, probe_shank, probe_size_value, probe_length, probe_label, reaction_type, machine_profile_id, studio_machine_id, machine_mode_key",
         )
         .eq("studio_id", studio.id)
         .order("id", { ascending: true })
@@ -726,6 +727,8 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     probe_label: string | null;
     reaction_type: string | null;
     machine_profile_id: string | null;
+    studio_machine_id: string | null;
+    machine_mode_key: string | null;
   };
   const blocksById = new Map<string, BlockExportRow>();
   for (const b of (blocksRes.data ?? []) as BlockExportRow[]) {
@@ -809,7 +812,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         ...e,
         // A NATIVE area's legacy entry holds only the database default (pulse_count 1, migration 0166); the pulse count that was done is a native
         // reading, which this file does not carry yet. A 1 here would read as the pulse count actually done, so it is blank.
-        pulse_count: b?.machine_profile_id != null ? null : e.pulse_count,
+        pulse_count: isNativeMachineBlock(b) ? null : e.pulse_count,
         areas: Array.isArray(e.areas) ? e.areas.join("; ") : "",
         // Migration 0108 + charting unification: flatten the UNIFIED findings,
         // observation chips PLUS a folded legacy reaction_type from the entry's

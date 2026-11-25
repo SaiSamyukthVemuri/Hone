@@ -4,6 +4,7 @@ import type {
   SessionBlock,
 } from "@/lib/types/database";
 import type { TreatmentParams } from "@/lib/supabase/queries";
+import { isNativeMachineBlock } from "@/lib/machines/legacy-machine";
 import { ELECTROLYSIS_MODES, apilusModalityLabel } from "@/lib/constants";
 import { formatSeconds } from "@/lib/sessions/format-seconds";
 import { resolveDisplayChips } from "@/lib/observation-chips";
@@ -83,9 +84,9 @@ export function ElectrolysisEntryRow({
   // chips hydrated from comments) and the note (chip-stripped free-text) ONCE, so
   // pills + notes stay consistent and legacy chips reliably render. Display-only;
   // the stored row is never rewritten here.
-  // A NATIVE block (machine_profile_id set) records its pulse count with the machine's own readings; the legacy entry under it holds only the
+  // A NATIVE block (isNativeMachineBlock) records its pulse count with the machine's own readings; the legacy entry under it holds only the
   // database default (pulse_count 1, migration 0166), which is not what was done and must never be shown as it.
-  const pulseCount = block?.machine_profile_id != null ? null : entry.pulse_count;
+  const pulseCount = isNativeMachineBlock(block) ? null : entry.pulse_count;
   const display = resolveDisplayChips(entry.observation_chips, entry.comments);
 
   // Migration 0042: structured blend/galvanic readings. When any are
@@ -268,7 +269,7 @@ export function ElectrolysisEntryRow({
             </div>
           )}
           {!showTop &&
-            block?.machine_profile_id == null &&
+            !isNativeMachineBlock(block) &&
             !hasStructured &&
             legacyReadings.length === 0 &&
             entry.hairs_treated == null &&

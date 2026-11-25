@@ -144,6 +144,7 @@ let blockId = "";
 let laserEntryId = "";
 let electEntryId = "";
 let nativeEntryId: string;
+let xcellEntryId: string;
 let archive: JSZip;
 
 beforeAll(async () => {
@@ -234,6 +235,20 @@ beforeAll(async () => {
     `insert into public.electrolysis_entries (id, session_id, area, areas, pulse_count, block_id)
      values ($1,$2,'Lip', array['Lip'], 3, $3)`,
     [nativeEntryId, sessionId, nativeBlockId],
+  );
+
+  // THE EXISTING xCell WORKFLOW: its model is saved on the block, but its readings are in the legacy columns, so its pulse_count is a real reading.
+  const xcellBlockId = randomUUID();
+  await adminQuery(
+    `insert into public.session_blocks (id, studio_id, session_id, sort_order, primary_area, side, mode, machine_profile_id)
+     values ($1,$2,$3,3,'Cheek','left','thermo','dectro-apilus:xcell')`,
+    [xcellBlockId, studioId, sessionId],
+  );
+  xcellEntryId = randomUUID();
+  await adminQuery(
+    `insert into public.electrolysis_entries (id, session_id, area, areas, mode, pulse_count, block_id)
+     values ($1,$2,'Cheek', array['Cheek'], 'thermo', 4, $3)`,
+    [xcellEntryId, sessionId, xcellBlockId],
   );
 
   laserEntryId = randomUUID();
@@ -522,6 +537,9 @@ describe("DERIVED headers are filled from the table the registry names", () => {
     expect(native.pulse_count, "blank, never the database default 1 and never the stored 3").toBe("");
     const legacy = await rowById("electrolysis_entries", electEntryId);
     expect(legacy.pulse_count).toBe("4");
+    const xcell = await rowById("electrolysis_entries", xcellEntryId);
+    expect(xcell.block_areas, "the existing-xCell row is in the CSV and joined to its block").toContain("Cheek");
+    expect(xcell.pulse_count, "the existing xCell workflow keeps its pulse count").toBe("4");
   });
 
   it("the block fields reach the electrolysis row they belong to", async () => {

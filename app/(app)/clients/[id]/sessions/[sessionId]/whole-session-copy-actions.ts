@@ -8,6 +8,7 @@ import {
   assertSessionForClient,
   SessionLineageError,
 } from "@/lib/sessions/session-lineage";
+import { isNativeMachineBlock } from "@/lib/machines/legacy-machine";
 import type { CopySourceBlock } from "@/lib/sessions/whole-session-copy";
 import {
   normalizeWholeSessionCopy,
@@ -91,17 +92,17 @@ export async function getWholeSessionCopySourceAction(input: {
   const { data: blocks, error: blockErr } = await supabase
     .from("session_blocks")
     .select(
-      "id, sort_order, mode, apilus_modality, energy_level, minutes_performed, machine_frequency, probe_key, probe_brand, probe_material, probe_piece_type, probe_shank, probe_size_value, probe_length, probe_label, primary_area, side, custom_area_detail, machine_profile_id",
+      "id, sort_order, mode, apilus_modality, energy_level, minutes_performed, machine_frequency, probe_key, probe_brand, probe_material, probe_piece_type, probe_shank, probe_size_value, probe_length, probe_label, primary_area, side, custom_area_detail, machine_profile_id, studio_machine_id, machine_mode_key",
     )
     .eq("studio_id", studio.id)
     .eq("session_id", sourceSessionId)
     .is("deleted_at", null)
     .order("sort_order", { ascending: true });
   if (blockErr) return { ok: false, error: GENERIC_ERROR };
-  // A MultiPlex (native) area is NOT OFFERED for copying. The copy writes a legacy block through the copy RPC, which carries no machine identity
+  // A MultiPlex (native) area is NOT OFFERED (a legacy xCell area still is: see isNativeMachineBlock) for copying. The copy writes a legacy block through the copy RPC, which carries no machine identity
   // or native readings and stores the database default pulse_count 1; offering it would create a machineless area that looks like a copy. Copying a
   // native area needs a database change and is tracked separately. The source fingerprint is computed in SQL over the whole session and is unaffected.
-  const copyable = (blocks ?? []).filter((b) => (b as { machine_profile_id?: string | null }).machine_profile_id == null);
+  const copyable = (blocks ?? []).filter((b) => !isNativeMachineBlock(b as Parameters<typeof isNativeMachineBlock>[0]));
   if (copyable.length === 0) {
     return {
       ok: true,

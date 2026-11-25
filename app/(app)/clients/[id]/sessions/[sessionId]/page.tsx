@@ -52,6 +52,7 @@ import { NextVisitNoteForm } from "./NextVisitNoteForm";
 import { CopyPreviousAreasPanel } from "./CopyPreviousAreasPanel";
 import { RemovePassButton } from "@/components/remove-pass-button";
 import { SessionBlocksView } from "./session-blocks-view";
+import { isNativeMachineBlock } from "@/lib/machines/legacy-machine";
 import { readingsForBlock, machinesByIds, type MachineDb, type RecordedReading } from "@/lib/machines/machine-queries";
 import {
   addLaserEntryAction,
@@ -349,7 +350,7 @@ export default async function SessionDetailPage({
   const nativeReadings: Record<string, { readings: RecordedReading[]; unavailable: boolean }> = {};
   const nativeUnitNames: Record<string, string> = {};
   if (blockData) {
-    const nativeBlocks = blockData.blocks.filter((b) => b.deleted_at == null && b.machine_profile_id != null);
+    const nativeBlocks = blockData.blocks.filter((b) => b.deleted_at == null && isNativeMachineBlock(b));
     if (nativeBlocks.length > 0) {
       const db = (await createClient()) as unknown as MachineDb;
       await Promise.all(

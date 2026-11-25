@@ -199,6 +199,20 @@ for (const device of DEVICES) {
       for (const [k, v] of Object.entries(legacyReadings)) expect(v, `legacy column ${k} carries nothing typed under Thermolysis (the 42)`).toBeNull();
       expect(legacyPulseDefault, "the legacy pulse_count is the database default, not the MultiPlex count").toBe(1);
 
+      // THE EXISTING xCell WORKFLOW IN THE SAME VISIT: an area charted with the existing choice (its model saved on the block, readings in the legacy
+      // columns, pulse count 4). It must keep its pulse count on the card, whatever the native area beside it shows.
+      const legacyBlockId = randomUUID();
+      await sql(
+        `insert into public.session_blocks (id, studio_id, session_id, sort_order, primary_area, side, mode, machine_profile_id)
+         select $1, studio_id, session_id, 99, 'Cheek', 'left', 'thermo', 'dectro-apilus:xcell' from public.session_blocks where id = $2`,
+        [legacyBlockId, blockId],
+      );
+      await sql(
+        `insert into public.electrolysis_entries (session_id, block_id, area, areas, mode, thermolysis_intensity_percent, thermolysis_duration_seconds, pulse_count)
+         values ($1, $2, 'Cheek', array['Cheek'], 'thermo', 40, 2, 4)`,
+        [sessionId, legacyBlockId],
+      );
+
       // REOPEN after a reload: the machine and mode come back, and the recorded values are shown exactly.
       await page.reload();
       // THE CARD SHOWS WHAT WAS RECORDED. Non-vacuous: wait for the native readings to render, then require the recorded values and forbid the legacy "1 pulse".
@@ -209,6 +223,9 @@ for (const device of DEVICES) {
       await expect(card).toContainText(/Pulse count\s*3/);
       await expect(card).not.toContainText("No readings recorded");
       await expect(card).not.toContainText(/\b1 pulse\b/);
+      const legacyCard = page.getByTestId(`area-section-${legacyBlockId}`);
+      await expect(legacyCard).toContainText("4 pulses", { timeout: T });
+      await expect(legacyCard.getByTestId("machine-recorded-setups")).toHaveCount(0);
       await page.getByTestId(`edit-area-${blockId}`).click({ timeout: T });
       await expect(page.getByTestId("machine-recorded-setups")).toBeVisible({ timeout: T });
       const recorded = page.getByTestId("machine-recorded-setups");

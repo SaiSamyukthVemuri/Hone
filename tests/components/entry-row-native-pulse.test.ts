@@ -11,12 +11,17 @@ const text = (block: unknown, variant: "full" | "readings") =>
 describe("entry row under a native block", () => {
   for (const variant of ["full", "readings"] as const) {
     it(`${variant}: prints no legacy pulse and no 'No readings recorded'`, () => {
-      const t = text({ id: "b1", machine_profile_id: "dectro-apilus:xcell-pur" }, variant);
+      const t = text({ id: "b1", machine_profile_id: "dectro-apilus:xcell-pur", machine_mode_key: "multiplex", studio_machine_id: "u1" }, variant);
       expect(t).not.toMatch(/pulse/i);
       expect(t).not.toContain("No readings recorded");
     });
-    it(`${variant}: a legacy block still prints its pulse count (unchanged)`, () => {
+    it(`${variant}: a block with no machine still prints its pulse count (unchanged)`, () => {
       expect(text({ id: "b1", machine_profile_id: null }, variant)).toContain("1 pulse");
+    });
+    it(`${variant}: the existing xCell workflow (its model saved on the block, readings in the legacy columns) still prints its pulse count`, () => {
+      const legacy = { id: "b1", machine_profile_id: "dectro-apilus:xcell", machine_mode_key: null, studio_machine_id: null };
+      const t = renderToString(createElement(ElectrolysisEntryRow as never, { entry: { ...entry, mode: "thermo", pulse_count: 4 }, block: legacy, variant } as never)).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+      expect(t).toContain("4 pulses");
     });
   }
 });

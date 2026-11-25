@@ -49,16 +49,25 @@ beforeEach(() => {
 
 describe("copy-settings preview source", () => {
   it("omits a native area and still offers the legacy area of the same earlier visit", async () => {
-    state.blocks = [block("legacy-1"), block("native-1", { mode: null, machine_profile_id: "dectro-apilus:xcell-pur" })];
+    state.blocks = [block("legacy-1"), block("native-1", { mode: null, machine_profile_id: "dectro-apilus:xcell-pur", machine_mode_key: "multiplex", studio_machine_id: "u1" })];
     const res = await getWholeSessionCopySourceAction({ clientId: "c1", sessionId: "s1" });
     expect(res.ok).toBe(true);
     if (!res.ok || !res.eligible) throw new Error("expected an eligible preview");
     expect(res.source.map((b) => b.blockId)).toEqual(["legacy-1"]);
     expect(state.selects[0]).toContain("machine_profile_id");
+    expect(state.selects[0]).toContain("machine_mode_key");
+    expect(state.selects[0]).toContain("studio_machine_id");
+  });
+
+  it("the existing xCell workflow (its model on the block, readings in the legacy columns) is still offered", async () => {
+    state.blocks = [block("legacy-xcell", { machine_profile_id: "dectro-apilus:xcell", machine_mode_key: null, studio_machine_id: null }), block("native-1", { mode: null, machine_profile_id: "dectro-apilus:xcell-pur", machine_mode_key: "multiplex", studio_machine_id: "u1" })];
+    const res = await getWholeSessionCopySourceAction({ clientId: "c1", sessionId: "s1" });
+    if (!res.ok || !res.eligible) throw new Error("expected an eligible preview");
+    expect(res.source.map((b) => b.blockId)).toEqual(["legacy-xcell"]);
   });
 
   it("an earlier visit with ONLY a native area offers nothing to copy", async () => {
-    state.blocks = [block("native-1", { mode: null, machine_profile_id: "dectro-apilus:xcell-pur" })];
+    state.blocks = [block("native-1", { mode: null, machine_profile_id: "dectro-apilus:xcell-pur", machine_mode_key: "multiplex", studio_machine_id: "u1" })];
     const res = await getWholeSessionCopySourceAction({ clientId: "c1", sessionId: "s1" });
     expect(res.ok && res.eligible).toBe(false);
     expect(res.ok && res.source).toEqual([]);

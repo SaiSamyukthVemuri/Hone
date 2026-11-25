@@ -26,6 +26,7 @@ import { sessionBlockSideLabel } from "@/lib/sessions/side-labels";
 import { ElectrolysisEntryRow } from "@/components/entry-row";
 import { MachineRecordedSetups } from "@/components/machines/machine-recorded-setups";
 import { MACHINE_CATALOGUE } from "@/lib/machines/catalogue";
+import { isNativeMachineBlock } from "@/lib/machines/legacy-machine";
 import type { RecordedReading } from "@/lib/machines/machine-queries";
 import { BlockSetupForm } from "./block-setup-form";
 import { SimplifiedEntryForm } from "./simplified-entry-form";
@@ -483,18 +484,20 @@ function BlockSection({
             </p>
           )}
 
+          {/* WHAT A NATIVE AREA RECORDED belongs to the area, not to a pass: it stays on the card when the last pass is removed. */}
+          {isNativeMachineBlock(block) && nativeReadings[block.id] ? (
+            <MachineRecordedSetups
+              readings={nativeReadings[block.id]!.readings}
+              unavailable={nativeReadings[block.id]!.unavailable}
+              catalogue={MACHINE_CATALOGUE}
+              unitNames={nativeUnitNames}
+            />
+          ) : null}
+
           {entriesSorted.length === 0 ? (
             <p className="text-xs text-neutral-500">No entries yet.</p>
           ) : (
             <>
-            {block.machine_profile_id != null && nativeReadings[block.id] ? (
-              <MachineRecordedSetups
-                readings={nativeReadings[block.id]!.readings}
-                unavailable={nativeReadings[block.id]!.unavailable}
-                catalogue={MACHINE_CATALOGUE}
-                unitNames={nativeUnitNames}
-              />
-            ) : null}
             <ul className="flex flex-col gap-2">
               {entriesSorted.map((e, idx) => {
                 // Flatten: for structured-area (new-flow) blocks, the card
