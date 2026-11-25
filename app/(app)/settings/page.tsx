@@ -1,6 +1,6 @@
 import { PendingLink } from "@/components/pending-link";
-import { SettingsDirectory } from "@/components/settings/settings-directory";
-import { SettingsViewHeading } from "@/components/settings/view-heading";
+import { SettingIcon } from "@/components/settings/setting-icon";
+import { CONTROL_MIN_TOUCH, cx } from "@/components/ui/control-base";
 import { getNewClientAdmissionMode } from "@/lib/booking/new-client-admission";
 import { isOpenDay } from "@/lib/booking/new-client-readiness";
 import { getStudioWideDefaultsSafe } from "@/lib/booking/studio-wide-availability";
@@ -12,6 +12,16 @@ import { createClient } from "@/lib/supabase/server";
 import type { Studio } from "@/lib/types/database";
 
 const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const descriptions: Record<string, string> = {
+  "Booking & availability": "Set studio hours and choose what clients can book.",
+  "Messages": "Manage the messages your studio sends.",
+  "Payments & fees": "Set up payments, saved cards and cancellation fees.",
+  "Client forms & care": "Manage intake, consent and postcare.",
+  "Studio & team": "Manage studio details and how your team works.",
+  "Services & machines": "Manage your booking menu and treatment equipment.",
+  "Connections & data": "Manage connected tools and studio data.",
+  "My profile": "Update your personal details and calendar preferences.",
+};
 const admissionLabels = {
   closed: "Not accepting new clients",
   waitlist: "Taking waitlist requests",
@@ -24,43 +34,47 @@ async function BookingSummary({ studio }: { studio: Studio }) {
     createClient().then((client) => getStudioWideDefaultsSafe(client, studio.id)).catch(() => null),
   ]);
   const format = resolveTimeFormat(studio);
-  const sectionTitle = "text-sm font-medium text-neutral-600 dark:text-neutral-400";
-  const detailLink = "mt-3 inline-flex min-h-11 items-center text-sm font-medium underline underline-offset-4";
+  const openDays = dayNames.flatMap((day, index) => {
+    const row = defaults?.find((record) => record.day_of_week === index);
+    if (!row || !isOpenDay(row)) return [];
+    return [{ day, hours: `${formatClockLabel(row.open_time!.slice(0, 5), format)} – ${formatClockLabel(row.close_time!.slice(0, 5), format)}` }];
+  });
+  const accessibleDays = new Set(openDays.map(({ day }) => day));
+  const hoursLabel = !defaults ? "Weekly hours unavailable"
+    : !openDays.length ? "Closed all week"
+    : openDays.length === 7 ? "Open every day"
+    : openDays.map(({ day }) => day.slice(0, 3)).join(", ");
+  const sameHours = openDays.length > 0 && openDays.every(({ hours }) => hours === openDays[0].hours);
+  const editLink = "inline-flex min-h-11 items-center self-start text-sm font-medium text-fg underline decoration-line-strong underline-offset-4 hover:decoration-current focus-visible:outline-2 focus-visible:outline-offset-2";
 
   return (
-    <div className="grid min-w-0 gap-px overflow-hidden rounded-xl border border-neutral-200 bg-neutral-200 md:grid-cols-2 dark:border-neutral-800 dark:bg-neutral-800">
-      <section className="min-w-0 bg-neutral-50 p-5 dark:bg-neutral-900">
-        <h3 className={sectionTitle}>New-client admission</h3>
-        <p className="mt-2 text-xl font-semibold tracking-tight">
+    <section aria-label="Current booking settings" className="grid divide-y divide-line rounded-xl border border-line bg-surface-sunken px-5 sm:grid-cols-2 sm:divide-x sm:divide-y-0 sm:px-0">
+      <div className="py-3 sm:px-6 sm:py-4">
+        <h2 className="text-sm text-neutral-600">New clients</h2>
+        <p className="mt-1 text-lg font-semibold tracking-tight text-fg">
           {admission.ok ? admissionLabels[admission.mode] : "Admission status unavailable"}
         </p>
-        <PendingLink href="/settings/booking/link" className={detailLink}>Review booking page</PendingLink>
-      </section>
-      <section className="min-w-0 bg-neutral-50 p-5 dark:bg-neutral-900">
-        <h3 className={sectionTitle}>Studio weekly hours</h3>
-        {defaults ? (
-          <ul aria-label="Default weekly opening hours" className="mt-3 grid grid-cols-7 gap-1">
-            {dayNames.map((day, index) => {
-              const row = defaults.find((record) => record.day_of_week === index);
-              const open = row && isOpenDay(row);
-              const hours = open
-                ? `${formatClockLabel(row.open_time!.slice(0, 5), format)} – ${formatClockLabel(row.close_time!.slice(0, 5), format)}`
-                : "Closed";
-              return (
-                <li key={day} title={`${day} · ${hours}`} className="min-w-0">
-                  <span className="sr-only">{day} · {hours}</span>
-                  <span aria-hidden="true" className={`block rounded px-0.5 py-1 text-center text-xs ${open ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-950" : "text-neutral-500"}`}>
-                    {day.slice(0, 3)}
-                    <span className="mt-0.5 block text-[10px]">{open ? "Open" : "Closed"}</span>
-                  </span>
-                </li>
-              );
-            })}
+        <PendingLink href="/settings/booking/link#admission-options" className={editLink}>Edit new-client admission</PendingLink>
+      </div>
+      <div className="py-3 sm:px-6 sm:py-4">
+        <h2 className="text-sm text-neutral-600">Studio weekly hours</h2>
+        {defaults && <ul aria-label="Open days" className="my-2 flex justify-between gap-1">
+          {dayNames.map(day => <li key={day} title={day + (accessibleDays.has(day) ? " · Open" : " · Closed")} className="flex flex-col items-center gap-1 text-xs">
+            <span aria-hidden>{day.slice(0, 3)}</span><span className="sr-only">{day} {accessibleDays.has(day) ? "open" : "closed"}</span>
+            <span aria-hidden className={"size-1.5 rounded-full " + (accessibleDays.has(day) ? "bg-fg" : "bg-neutral-300")}/>
+          </li>)}
+        </ul>}
+        {(sameHours || !openDays.length) && <p className="mt-1 text-lg font-semibold tracking-tight text-fg">
+          {hoursLabel}{sameHours && <span className="font-normal"> · {openDays[0].hours}</span>}
+        </p>}
+        {!sameHours && openDays.length > 0 && (
+          <ul aria-label="Hours by day" className="mt-1 flex flex-wrap gap-x-3 text-sm font-medium text-fg">
+            {openDays.map(({ day, hours }) => <li key={day}>{day.slice(0, 3)} · {hours}</li>)}
           </ul>
-        ) : <p className="mt-2 text-sm">Weekly hours are unavailable.</p>}
-        <PendingLink href="/settings/availability" className={detailLink}>Edit weekly hours</PendingLink>
-      </section>
-    </div>
+        )}
+        <PendingLink href="/settings/availability#weekly-hours" className={editLink}>Edit weekly hours</PendingLink>
+      </div>
+    </section>
   );
 }
 
@@ -72,13 +86,31 @@ export default async function SettingsIndexPage() {
     isOwner: role === "owner",
     googleCalendarEnabled: studio.google_calendar_connection_enabled === true,
   });
+
   return (
-    <div className="flex min-w-0 flex-col gap-8">
-      <SettingsViewHeading title={role === "owner" ? "Studio settings" : "Your settings"}>
-        {studio.name}
-      </SettingsViewHeading>
+    <div className="space-y-6">
+      <header>
+        <h1 data-settings-heading tabIndex={-1} className="text-3xl font-semibold tracking-tight text-fg outline-none sm:text-4xl">Studio settings</h1>
+        <p className="mt-1 text-sm text-neutral-600">{studio.name}</p>
+      </header>
       {role === "owner" && <BookingSummary studio={studio} />}
-      <SettingsDirectory sections={sections} />
+      <section aria-labelledby="settings-directory-title">
+        <h2 id="settings-directory-title" className="mb-3 text-lg font-semibold tracking-tight">Settings directory</h2>
+        <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+          {sections.map(section => (
+            <section key={section.name} className="min-w-0 rounded-xl border border-line bg-surface p-4">
+              <h3 className="flex items-center gap-2.5 text-base font-semibold">
+                <span className="grid size-8 shrink-0 place-items-center rounded-md border border-line bg-surface-sunken"><SettingIcon name={section.name}/></span>
+                <PendingLink href={section.links[0].href} className={cx(CONTROL_MIN_TOUCH, "pointer-fine:min-h-10 justify-start hover:underline")}>{section.name}</PendingLink>
+              </h3>
+              {descriptions[section.name] && <p className="mt-2 text-sm text-fg-muted">{descriptions[section.name]}</p>}
+              <ul className="mt-2 flex flex-wrap gap-x-4">
+                {section.links.slice(0, 2).map(link => <li key={link.href}><PendingLink href={link.href} className={cx(CONTROL_MIN_TOUCH, "pointer-fine:min-h-10 justify-start text-sm underline decoration-line-strong underline-offset-4 hover:decoration-current")}>{link.label}</PendingLink></li>)}
+              </ul>
+            </section>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }

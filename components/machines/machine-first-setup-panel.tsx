@@ -2,7 +2,8 @@
 
 import { machineModelLabel } from "@/lib/machines/display-name";
 import { recordedSummary } from "@/lib/machines/recorded-count";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import type { Preselect } from "@/lib/machines/preselect";
 import { pickerUnits } from "@/lib/machines/picker-entries";
 import { LEGACY_MACHINE_OPTION_VALUE } from "@/lib/machines/legacy-machine";
@@ -243,6 +244,7 @@ export type MachineFirstSetupPanelProps = {
    * settings returns to the existing workflow. Null means nothing about the xCell choice changes.
    */
   multiplexRoute?: { deviceId: string; modeKey: string } | null;
+  multiplexReadingsHost?: HTMLDivElement | null;
   /**
    * The host form's MULTIPLEX pick in its ONE Mode control (there is no second selector here). Each pick bumps `seq`: `want` true
    * binds this NEW area to the routed unit, false returns it to the existing xCell workflow. Acted on only when the sequence changes.
@@ -369,6 +371,7 @@ function MachineFirstSetupPanelImpl({
   onSelectMachine,
   legacyMachine = null,
   multiplexRoute = null,
+  multiplexReadingsHost,
   multiplexRequest = null,
   initialLegacyChosen = false,
   nativeLocked = false,
@@ -738,6 +741,12 @@ function MachineFirstSetupPanelImpl({
       }
     : undefined;
 
+  // The visit form owns the layout. Keep the editor under its existing draft provider.
+  const placeReadings = (editor: ReactNode) =>
+    multiplexReadingsHost && chosen && chosen.device.deviceId === multiplexRoute?.deviceId && mode?.key === multiplexRoute.modeKey
+      ? createPortal(editor, multiplexReadingsHost)
+      : editor;
+
   return (
     <section
       className="flex flex-col gap-3 rounded-lg border border-neutral-200 bg-neutral-50 p-4 dark:border-neutral-800 dark:bg-neutral-900"
@@ -1089,7 +1098,7 @@ function MachineFirstSetupPanelImpl({
             THE DRAFT RESET USED TO SIT HERE, and it could not do its job from
             inside this branch. See the hoisted copy above the branch.
           */}
-          {!blockId && onSettingDraft && mode ? (
+          {placeReadings(!blockId && onSettingDraft && mode ? (
             <MachineSettingDraft
               // Same payload, same freeze — see block-setup-form.
               frozen={settingDraftFrozen}
@@ -1206,7 +1215,7 @@ function MachineFirstSetupPanelImpl({
               </ul>
             </div>
             ))
-          )}
+          ))}
         </div>
       )}
 
