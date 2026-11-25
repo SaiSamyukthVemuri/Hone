@@ -196,7 +196,7 @@ describe("clinical RPC grant guard — authenticated-only commands", () => {
 
   it("every authenticated-only COMMAND grants EXECUTE to authenticated", () => {
     const missing: string[] = [];
-    // Each migration is read and normalised ONCE, not once per command (HON-116: the per-command re-read took 4.6-5.6 s and timed out under host load).
+    // Each migration is read and normalised ONCE, not once per command (the per-command re-read timed out under host load).
     const normalised = migrationFiles().map((f) =>
       readFileSync(join(MIG_DIR, f), "utf8")
         .split("\n")
