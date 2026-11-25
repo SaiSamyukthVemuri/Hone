@@ -1786,3 +1786,25 @@ test.describe("NAV-ACK-02 reduced motion — desktop", () => {
     await expect(page.locator("[data-link-pending]")).toHaveCount(0);
   });
 });
+
+test("Settings search shows pending feedback until the selected editor opens", async ({ page }) => {
+  const seed = await seedE2eStudio();
+  await loginAsOwner(page, seed);
+  const gate = await holdNavigation(page, url => url.pathname === "/settings/availability", { holdPrefetch: true });
+  const dialog = page.getByRole("dialog", { name: "Find a setting" });
+  try {
+    await page.goto("/settings");
+    await page.getByRole("button", { name: "Find a setting" }).click();
+    await dialog.getByRole("searchbox").fill("holiday hours");
+    const result = dialog.locator('a[href="/settings/availability#special-hours"]');
+    await result.click();
+    await expect.poll(gate.held).toBeGreaterThan(0);
+    await expect(tapAcknowledgement(result)).toBeVisible();
+    await expect(result.getByRole("status")).toHaveText("Opening…");
+  } finally {
+    gate.release();
+  }
+  await expect(page).toHaveURL(/\/settings\/availability#special-hours$/);
+  await expect(dialog).toBeHidden();
+  await expect(page.locator("#special-hours")).toBeInViewport();
+});
