@@ -157,6 +157,18 @@ for (const device of DEVICES) {
       await expect(page.getByRole("region", { name: "Treatment readings" }).getByTestId("machine-setting-draft")).toBeVisible({ timeout: T });
       const inputs = draft(page);
       await expect(inputs).toHaveCount(8);
+      // PLACEMENT (the readings sit under Mode > MultiPlex > Treatment readings, exactly once, none left in the Machine panel). The eight inputs are
+      // in the Treatment readings region, which comes after the Mode buttons; the Machine panel holds none, and there is one editor on the page.
+      const region = page.getByRole("region", { name: "Treatment readings" });
+      await expect(region.getByTestId("machine-setting-draft")).toHaveCount(1);
+      await expect(page.getByTestId("machine-setting-draft")).toHaveCount(1);
+      await expect(region.getByTestId("machine-setting-draft").locator("input")).toHaveCount(8);
+      await expect(page.getByTestId("machine-first-panel").getByTestId("machine-setting-draft")).toHaveCount(0);
+      const modeY = (await page.getByTestId("mode-multiplex").boundingBox())!.y;
+      const regionY = (await region.boundingBox())!.y;
+      const firstInputY = (await inputs.nth(0).boundingBox())!.y;
+      expect(regionY, "the Treatment readings region is below the Mode buttons").toBeGreaterThan(modeY);
+      expect(firstInputY, "the first reading is inside and below the Treatment readings heading").toBeGreaterThan(regionY);
       await inputs.nth(0).fill(V.el);
       await inputs.nth(2).fill(V.slowDur);
       await inputs.nth(3).fill(V.slowInt);
@@ -226,7 +238,20 @@ for (const device of DEVICES) {
       const legacyCard = page.getByTestId(`area-section-${legacyBlockId}`);
       await expect(legacyCard).toContainText("4 pulses", { timeout: T });
       await expect(legacyCard.getByTestId("machine-recorded-setups")).toHaveCount(0);
+      // FIRST MOUNT WITH MULTIPLEX ALREADY CHOSEN (editing the saved area): the readings host is set by a ref callback, so the editor can render inline
+      // and then move into its place. Record the most editors ever on the page at once from before the click: it must never exceed one (no flash of a
+      // duplicate), and the editor ends up under Treatment readings, none in the Machine panel.
+      await page.evaluate(() => {
+        const w = window as unknown as { __maxEditors: number };
+        w.__maxEditors = 0;
+        const count = () => { w.__maxEditors = Math.max(w.__maxEditors, document.querySelectorAll('section[aria-label="Treatment readings"] [data-testid="machine-recorded-setups"], [data-testid="machine-first-panel"] [data-testid="machine-recorded-setups"], [data-testid="machine-setting-draft"]').length); };
+        new MutationObserver(count).observe(document.body, { childList: true, subtree: true });
+      });
       await page.getByTestId(`edit-area-${blockId}`).click({ timeout: T });
+      await expect(page.getByTestId("machine-first-panel")).toBeVisible({ timeout: T });
+      await page.waitForTimeout(500);
+      expect(await page.evaluate(() => (window as unknown as { __maxEditors: number }).__maxEditors), "never two editors at once, even while the host is being set").toBeLessThanOrEqual(1);
+      await expect(page.getByTestId("machine-first-panel").getByTestId("machine-setting-draft")).toHaveCount(0);
       await expect(page.getByTestId("machine-recorded-setups")).toBeVisible({ timeout: T });
       const recorded = page.getByTestId("machine-recorded-setups");
       await expect(recorded).toContainText("1.85");
