@@ -12,6 +12,11 @@ describe("isNativeMachineBlock", () => {
     expect(isNativeMachineBlock({ machine_profile_id: "dectro-apilus:xcell" })).toBe(false);
     expect(isNativeMachineBlock({ machine_profile_id: "dectro-apilus:xcell", machine_mode_key: null, studio_machine_id: null })).toBe(false);
   });
+  it("is false for the legacy xCell id even when it carries a mode or a unit", () => {
+    expect(isNativeMachineBlock({ machine_profile_id: "dectro-apilus:xcell", machine_mode_key: "multiplex" })).toBe(false);
+    expect(isNativeMachineBlock({ machine_profile_id: "dectro-apilus:xcell", studio_machine_id: "u1" })).toBe(false);
+    expect(isNativeMachineBlock({ machine_profile_id: "dectro-apilus:xcell", machine_mode_key: "multiplex", studio_machine_id: "u1" })).toBe(false);
+  });
   it("is true for a native profile saved with a mode or a registered unit", () => {
     expect(isNativeMachineBlock({ machine_profile_id: "dectro-apilus:xcell-pur", machine_mode_key: "multiplex" })).toBe(true);
     expect(isNativeMachineBlock({ machine_profile_id: "dectro-apilus:xcell-pur", studio_machine_id: "u1" })).toBe(true);

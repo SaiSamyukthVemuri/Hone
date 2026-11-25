@@ -129,6 +129,7 @@ describe("Save pressed while the leave-MultiPlex request is HELD (M1, behavioura
     await pick("legacy:xcell");
     await click(pill("Thermolysis"));
     await setValue(labelled("Thermolysis intensity"), "42");
+    await click(Array.from(host!.querySelectorAll<HTMLButtonElement>("button")).find((b) => b.textContent?.trim() === "27.12 MHz")!);
     // the MultiPlex pick's preference write never settles, so the panel holds the next request (machine-first-setup-panel.tsx: `if (selectionPending) return;`)
     actions.rememberMachineSelectionAction.mockImplementationOnce(() => new Promise(() => undefined) as never);
     await click(host!.querySelector('[data-testid="mode-multiplex"]'));
@@ -140,6 +141,10 @@ describe("Save pressed while the leave-MultiPlex request is HELD (M1, behavioura
     const sent = (blockActions.createTreatmentAreaWithEntryAction.mock.calls[0] as unknown[])[0] as Record<string, unknown> & { readings: Record<string, unknown> };
     expect(sent.mode, "M1: the held request cannot leak the legacy mode into a native create").toBeNull();
     expect(sent.apilusModality).toBeNull();
+    expect(sent.machineFrequency, "the parked frequency restored by the Blend click is not sent under a native machine").toBeNull();
+    expect(sent.energyLevel).toBeNull();
+    expect(sent.readings.pulseDelaySeconds).toBeNull();
+    expect(sent.readings.pulseCount).toBeNull();
     expect(sent.readings.thermolysisIntensityPercent).toBeNull();
   });
 });

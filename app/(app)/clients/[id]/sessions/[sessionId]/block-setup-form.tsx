@@ -1713,9 +1713,8 @@ export function BlockSetupForm({
         probeLotNumber: draft.probeLotNumber.trim() || null,
         probeLotConfirmed: draft.probeLotConfirmed,
           probeInventoryItemId: draft.probeInventoryItemId,
-        machineFrequency: (draft.machineFrequency || null) as
-          | MachineFrequency
-          | null,
+        // Frequency is a legacy-only field too (parked with the others): a native create never sends it.
+        machineFrequency: nativeCreate ? null : ((draft.machineFrequency || null) as MachineFrequency | null),
         primaryArea: trimmedArea || null,
         side: draft.side || null,
         customAreaDetail: trimmedDetail || null,
