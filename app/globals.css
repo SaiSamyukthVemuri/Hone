@@ -9,40 +9,6 @@
  */
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* Expanded Settings uses the same accessible drawer as a phone, even on a wide screen. */
-@custom-variant settings-wide {
-  @media (min-width: 781px) {
-    &:where([data-settings-expanded="false"] *) {
-      @slot;
-    }
-  }
-}
-
-/* Normal Settings shares the app column and header. Only an explicitly
-   expanded editor uses the extra space when native fullscreen is unavailable. */
-main:has([data-settings-expanded="true"]) {
-  max-width: none;
-}
-
-header:has(~ main [data-settings-expanded="true"]) {
-  display: none;
-}
-
-/* Keep the entire Settings subtree, including confirmation dialogs, in the native fullscreen element. */
-[data-settings-screen]:fullscreen {
-  overflow: auto;
-  overscroll-behavior: contain;
-  background: var(--background);
-  padding-inline: max(1rem, env(safe-area-inset-left)) max(1rem, env(safe-area-inset-right));
-  padding-top: env(safe-area-inset-top);
-  padding-bottom: max(1rem, env(safe-area-inset-bottom));
-}
-
-[data-settings-expanded="true"] {
-  --settings-top: env(safe-area-inset-top, 0px);
-}
-
-
 :root {
   --background: #ffffff;
   --foreground: #0a0a0a;

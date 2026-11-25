@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, useState } from "react";
 import { PendingLink } from "@/components/pending-link";
 import { FOCUS_RING } from "@/components/ui/control-base";
 import { fieldControlClass } from "@/components/ui/field";
@@ -10,7 +10,7 @@ function words(text: string) {
   return text.toLowerCase().replace(/\bcolou?rs?\b/g, "color").replace(/[^a-z0-9]+/g, " ").trim();
 }
 
-export function SettingsDirectory({ sections, children }: { sections: OverviewSection[]; children?: ReactNode }) {
+export function SettingsDirectory({ sections }: { sections: OverviewSection[] }) {
   const [query, setQuery] = useState("");
   const input = useRef<HTMLInputElement>(null);
   const terms = words(query).split(" ").filter(Boolean);
@@ -52,7 +52,6 @@ export function SettingsDirectory({ sections, children }: { sections: OverviewSe
           </button>
         )}
       </div>
-      {!searching && children}
       <p role="status" className={searching ? "text-sm text-fg-muted" : "sr-only"}>
         {searching && (count ? `${count} matching ${count === 1 ? "setting" : "settings"}` : "No settings match your search.")}
       </p>

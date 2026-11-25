@@ -10,7 +10,7 @@ vi.mock("@/components/pending-link", () => ({
     createElement("a", { href }, children),
 }));
 
-it("opens matching controls directly and restores the overview and focus when cleared", () => {
+it("opens matching controls directly and restores all categories and focus when cleared", () => {
   const host = document.createElement("div");
   const root = createRoot(host);
   document.body.append(host);
@@ -21,7 +21,7 @@ it("opens matching controls directly and restores the overview and focus when cl
         href: "/settings/availability", label: "Availability", keywords: "Holiday hours",
         controls: [{ href: "/settings/availability#special-hours", label: "Special hours", keywords: "Holiday hours" }],
       }] },
-    ] }, createElement("p", null, "Studio weekly hours"))));
+    ] })));
     const search = (value: string) => {
       const input = host.querySelector("input")!;
       act(() => {
@@ -29,11 +29,11 @@ it("opens matching controls directly and restores the overview and focus when cl
         input.dispatchEvent(new Event("input", { bubbles: true }));
       });
     };
-    expect(host.textContent).toContain("Studio weekly hours");
+    expect(host.textContent).toContain("Services & machines");
     expect(host.querySelector('a[href*="#"]')).toBeNull();
     search("holiday hours");
     expect(Array.from(host.querySelectorAll("a"), (a) => a.getAttribute("href"))).toEqual(["/settings/availability#special-hours"]);
-    expect(host.textContent).not.toContain("Studio weekly hours");
+    expect(host.textContent).not.toContain("Services & machines");
     search("availability");
     expect(Array.from(host.querySelectorAll("a"), (a) => a.getAttribute("href"))).toEqual(["/settings/availability"]);
     for (const term of ["service colors", "service colours", "colour picker"]) {
@@ -47,7 +47,7 @@ it("opens matching controls directly and restores the overview and focus when cl
     act(() => host.querySelector<HTMLButtonElement>('button[aria-label="Clear search"]')!.click());
     expect(document.activeElement).toBe(host.querySelector("input"));
     expect(host.querySelectorAll("a")).toHaveLength(2);
-    expect(host.textContent).toContain("Studio weekly hours");
+    expect(host.textContent).toContain("Services & machines");
   } finally {
     act(() => root.unmount());
     host.remove();

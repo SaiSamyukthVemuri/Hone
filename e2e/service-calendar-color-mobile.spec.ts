@@ -75,12 +75,13 @@ test("Settings uses the standard page width and opens the matching settings sect
     const main = page.getByTestId("app-main");
     const normal = await main.boundingBox();
     await page.goto("/settings");
-    await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Studio settings", exact: true })).toBeVisible();
     const settings = await main.boundingBox();
     expect(settings!.width).toBeCloseTo(normal!.width, 0);
     expect(settings!.x).toBeCloseTo(normal!.x, 0);
     await expect(page.getByRole("navigation", { name: "Settings sections" })).toHaveCount(0);
     await expectNoHorizontalOverflow(page, `Settings at ${width}px`);
+    await page.getByRole("button", { name: "Find a setting" }).click();
     const search = page.getByRole("searchbox", { name: "Find a setting" });
     await search.fill("holiday hours");
     await page.getByRole("link", { name: "Special hours", exact: true }).click();
@@ -93,13 +94,9 @@ test("Settings uses the standard page width and opens the matching settings sect
   }
 });
 
-test("service edits and navigation survive an expanded screen and device rotation", async ({ page }) => {
+test("service edits and navigation survive device rotation in the regular page column", async ({ page }) => {
   const seed = await seedE2eStudio();
   const serviceId = await getE2eServiceId(seed.studioId);
-  // Embedded browsers and some phones cannot enter native fullscreen.
-  await page.addInitScript(() => {
-    Object.defineProperty(document, "fullscreenEnabled", { configurable: true, value: false });
-  });
   await page.setViewportSize({ width: 1440, height: 900 });
   await loginAsOwner(page, seed);
   await page.goto("/settings/services");
@@ -111,24 +108,27 @@ test("service edits and navigation survive an expanded screen and device rotatio
   const value = "Unsaved service name";
   const name = editor.getByRole("textbox", { name: "Service name" });
   await name.fill(value);
-  await page.getByRole("button", { name: "Full screen", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Full screen", exact: true })).toHaveCount(0);
 
-  const shell = page.locator("[data-settings-screen]");
+  const main = page.getByTestId("app-main");
   const menu = page.getByRole("button", { name: "Settings menu" });
   const save = editor.getByRole("button", { name: /^Save( changes| service)?$/i });
   for (const [width, height] of [[1440, 900], [1024, 768], [390, 844], [844, 390], [320, 568]]) {
     await page.setViewportSize({ width, height });
-    await expect(shell).toHaveAttribute("data-settings-expanded", "true");
-    await expectNoHorizontalOverflow(page, `expanded editor at ${width} × ${height}`);
+    expect((await main.boundingBox())!.width).toBeLessThanOrEqual(1024);
+    await expectNoHorizontalOverflow(page, `service editor at ${width} × ${height}`);
     await expect(name).toHaveValue(value);
     await save.scrollIntoViewIfNeeded();
     await expect(save).toBeInViewport();
-    await menu.click();
-    await expect(page.getByRole("link", { name: "Overview", exact: true })).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(menu).toHaveAttribute("aria-expanded", "false");
+    if (width < 911) {
+      await menu.click();
+      const dialog = page.getByRole("dialog", { name: "Settings menu" });
+      await expect(dialog.getByRole("link", { name: "Settings overview", exact: true })).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(menu).toHaveAttribute("aria-expanded", "false");
+    } else {
+      await expect(page.getByRole("navigation", { name: "Settings categories" })).toBeVisible();
+    }
   }
-  await page.getByRole("button", { name: "Exit expanded view" }).click();
-  await expect(shell).toHaveAttribute("data-settings-expanded", "false");
   await expect(name).toHaveValue(value);
 });
