@@ -197,7 +197,10 @@ describe("the write path touches no Stripe surface", () => {
     // `authenticated` — so anything this file could pass, a hand-built
     // PostgREST call could pass instead.
     expect(ACTIONS).not.toMatch(/p_quoted_amount_cents/);
-    expect(ACTIONS).not.toMatch(/resolveAppointmentQuotedAmountCents/);
+    // The one permitted use is staleSeenFee: it COMPARES the fee the owner saw with the price now (an unchanged Final fee has
+    // no adjusted command to carry the check) and refuses with fee_changed. It never supplies a value to any command.
+    expect(ACTIONS.match(/resolveAppointmentQuotedAmountCents/g)).toHaveLength(2); // the import and staleSeenFee
+    expect(ACTIONS).toMatch(/\(await resolveAppointmentQuotedAmountCents\(studioId, appointmentId, timezone, isOwner\)\) !== seen/);
     expect(ACTIONS).not.toMatch(/resolveAuthoritativeSessionPaymentAmount/);
   });
 

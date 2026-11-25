@@ -148,8 +148,8 @@ function readFeeAdjustment(form: FormData): AdjustedFee | SeenFee | null | "inva
  * compared here, before the legacy command runs. An unresolvable price counts as changed: nothing is recorded
  * against a fee that cannot be confirmed.
  */
-async function staleSeenFee(seen: number, studioId: string, appointmentId: string, timezone: string): Promise<boolean> {
-  return (await resolveAppointmentQuotedAmountCents(studioId, appointmentId, timezone, true)) !== seen;
+async function staleSeenFee(seen: number, studioId: string, appointmentId: string, timezone: string, isOwner: boolean): Promise<boolean> {
+  return (await resolveAppointmentQuotedAmountCents(studioId, appointmentId, timezone, isOwner)) !== seen;
 }
 
 async function refresh(): Promise<void> {
@@ -200,7 +200,7 @@ export async function recordAppointmentSettlementAction(
 
   const adjusted = readFeeAdjustment(formData);
   if (adjusted === "invalid") return failure("invalid_input");
-  if (adjusted && "unchanged" in adjusted && await staleSeenFee(adjusted.unchanged, studioId, appointmentId, studioTimezone)) {
+  if (adjusted && "unchanged" in adjusted && await staleSeenFee(adjusted.unchanged, studioId, appointmentId, studioTimezone, isOwner)) {
     return failure("fee_changed");
   }
   const adjustment = adjusted && "p_final_fee_cents" in adjusted ? adjusted : null;
@@ -266,7 +266,7 @@ export async function waiveAppointmentFeeAction(
 
   const adjusted = readFeeAdjustment(formData);
   if (adjusted === "invalid") return failure("invalid_input");
-  if (adjusted && "unchanged" in adjusted && await staleSeenFee(adjusted.unchanged, studioId, appointmentId, studioTimezone)) {
+  if (adjusted && "unchanged" in adjusted && await staleSeenFee(adjusted.unchanged, studioId, appointmentId, studioTimezone, isOwner)) {
     return failure("fee_changed");
   }
   const adjustment = adjusted && "p_final_fee_cents" in adjusted ? adjusted : null;
