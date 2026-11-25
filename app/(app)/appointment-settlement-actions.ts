@@ -4,6 +4,7 @@ import { dbErrorCode } from "@/lib/logging/error-class";
 import { revalidatePath } from "next/cache";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { createClient } from "@/lib/supabase/server";
+import { resolveAppointmentQuotedAmountCents } from "@/lib/billing/appointment-settlement";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { safeLog } from "@/lib/logging/safe-log";
 import {
@@ -124,18 +125,31 @@ type AdjustedFee = {
   p_fee_adjustment_reason: string;
 };
 
-function readFeeAdjustment(form: FormData): AdjustedFee | null | "invalid" {
+// The fee the owner SAW is always sent, adjusted or not. An UNCHANGED fee (final equals reference) has no adjustment
+// to record, but it is still a claim about the current price: it is checked against the price now (see staleSeenFee).
+type SeenFee = { unchanged: number };
+
+function readFeeAdjustment(form: FormData): AdjustedFee | SeenFee | null | "invalid" {
   const keys = ["reference_fee_cents", "final_fee_cents", "fee_adjustment_reason"];
   if (!keys.some((key) => form.has(key))) return null;
   const reference = parseAmountCents(form.get("reference_fee_cents"));
   const final = parseAmountCents(form.get("final_fee_cents"));
   const raw = form.get("fee_adjustment_reason");
   const reason = typeof raw === "string" ? raw.trim() : "";
-  if (reference === null || reference <= 0 || final === null || final === reference
-    || !reason || reason.length > 200) {
-    return "invalid";
-  }
+  if (reference === null || reference <= 0 || final === null) return "invalid";
+  if (final === reference) return reason ? "invalid" : { unchanged: reference };
+  if (!reason || reason.length > 200) return "invalid";
   return { p_reference_fee_cents: reference, p_final_fee_cents: final, p_fee_adjustment_reason: reason };
+}
+
+/**
+ * True when the price on file is no longer the fee the owner saw. The adjusted command refuses this itself
+ * (fee_changed); the legacy command snapshots the LATEST price without comparing, so an unchanged Final fee is
+ * compared here, before the legacy command runs. An unresolvable price counts as changed: nothing is recorded
+ * against a fee that cannot be confirmed.
+ */
+async function staleSeenFee(seen: number, studioId: string, appointmentId: string, timezone: string): Promise<boolean> {
+  return (await resolveAppointmentQuotedAmountCents(studioId, appointmentId, timezone, true)) !== seen;
 }
 
 async function refresh(): Promise<void> {
@@ -156,10 +170,12 @@ export async function recordAppointmentSettlementAction(
   formData: FormData,
 ): Promise<SettlementActionResult> {
   let studioId: string;
+  let studioTimezone: string;
   let isOwner: boolean;
   try {
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
     studioId = studio.id;
+    studioTimezone = studio.timezone;
     isOwner = practitioner.role === "owner";
   } catch {
     return { ok: false, code: "unavailable", message: NOT_AUTHORIZED };
@@ -182,8 +198,12 @@ export async function recordAppointmentSettlementAction(
   const note = formData.get("note") ? parseNote(formData.get("note")) : null;
   if (formData.get("note") && note === null) return failure("invalid_input");
 
-  const adjustment = readFeeAdjustment(formData);
-  if (adjustment === "invalid") return failure("invalid_input");
+  const adjusted = readFeeAdjustment(formData);
+  if (adjusted === "invalid") return failure("invalid_input");
+  if (adjusted && "unchanged" in adjusted && await staleSeenFee(adjusted.unchanged, studioId, appointmentId, studioTimezone)) {
+    return failure("fee_changed");
+  }
+  const adjustment = adjusted && "p_final_fee_cents" in adjusted ? adjusted : null;
   const supabase = await createClient();
   const args = {
     p_studio_id: studioId,
@@ -225,10 +245,12 @@ export async function waiveAppointmentFeeAction(
   formData: FormData,
 ): Promise<SettlementActionResult> {
   let studioId: string;
+  let studioTimezone: string;
   let isOwner: boolean;
   try {
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
     studioId = studio.id;
+    studioTimezone = studio.timezone;
     isOwner = practitioner.role === "owner";
   } catch {
     return { ok: false, code: "unavailable", message: NOT_AUTHORIZED };
@@ -242,8 +264,12 @@ export async function waiveAppointmentFeeAction(
   const note = formData.get("note") ? parseNote(formData.get("note")) : null;
   if (formData.get("note") && note === null) return failure("invalid_input");
 
-  const adjustment = readFeeAdjustment(formData);
-  if (adjustment === "invalid") return failure("invalid_input");
+  const adjusted = readFeeAdjustment(formData);
+  if (adjusted === "invalid") return failure("invalid_input");
+  if (adjusted && "unchanged" in adjusted && await staleSeenFee(adjusted.unchanged, studioId, appointmentId, studioTimezone)) {
+    return failure("fee_changed");
+  }
+  const adjustment = adjusted && "p_final_fee_cents" in adjusted ? adjusted : null;
   const supabase = await createClient();
   const args = {
     p_studio_id: studioId,

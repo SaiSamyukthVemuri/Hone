@@ -36,11 +36,13 @@ export function useCheckoutFeeDraft(referenceCents: number | null, initial?: Che
   return [draft, setDraft] as const;
 }
 
+/** Always sends the fee the owner SAW (reference) and the final fee, even when they are equal: the server compares the
+ * reference with the current price, so a price that changed while checkout was open is refused, never recorded blind.
+ * The reason travels only with a real adjustment. */
 export function writeFeeAdjustment(fd: FormData, draft: CheckoutFeeDraft, finalCents: number) {
-  if (draft.referenceCents === finalCents) return;
   fd.set("reference_fee_cents", String(draft.referenceCents));
   fd.set("final_fee_cents", String(finalCents));
-  fd.set("fee_adjustment_reason", draft.reason.trim());
+  if (draft.referenceCents !== finalCents) fd.set("fee_adjustment_reason", draft.reason.trim());
 }
 
 export function waivedVisitData(appointmentId: string, draft: CheckoutFeeDraft, note?: FormDataEntryValue | null) {
