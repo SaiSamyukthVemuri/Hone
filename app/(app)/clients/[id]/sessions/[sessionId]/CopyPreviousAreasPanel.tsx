@@ -1,5 +1,6 @@
 "use client";
 
+import { useChartingRollout } from "@/components/charting-view-context";
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -127,6 +128,7 @@ export function CopyPreviousAreasPanel({
   sourceStartedAt?: string | null;
 }) {
   const router = useRouter();
+  const rollout = useChartingRollout();
   const [phase, setPhase] = useState<Phase>("idle");
   const [drafts, setDrafts] = useState<CopyAreaDraft[]>([]);
   const [idempotencyKey, setIdempotencyKey] = useState<string>("");
@@ -160,7 +162,7 @@ export function CopyPreviousAreasPanel({
     if (!res.eligible || !res.sourceSessionId || !res.sourceFingerprint) {
       return { ok: false, error: NOTHING_TO_COPY };
     }
-    const built = buildCopyDrafts(res.source);
+    const built = buildCopyDrafts(res.source, { keepGalvanicEnergy: rollout });
     if (built.length === 0) return { ok: false, error: NO_AREAS };
     return {
       ok: true,
@@ -446,6 +448,7 @@ export function CopyPreviousAreasPanel({
             draft={d}
             onChange={updateDraft}
             onRemove={() => removeDraft(d.key)}
+            keepGalvanicEnergy={rollout}
           />
         ))}
       </ul>

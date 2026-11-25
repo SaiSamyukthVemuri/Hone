@@ -231,7 +231,7 @@ describe("mode gating — the first read surface in the app to apply it", () => 
     expect(fields).toContain("thermolysisDurationSeconds");
   });
 
-  it("a GALVANIC block shows no thermolysis readings, no energy level and no modality", () => {
+  it("a GALVANIC block shows no thermolysis readings and no modality, and its RECORDED energy level (none recorded: none shown)", () => {
     const m = build([
       block({
         mode: "galv",
@@ -251,9 +251,12 @@ describe("mode gating — the first read surface in the app to apply it", () => 
     const fields = m.areas[0].readings.map((r) => r.field);
     expect(fields).not.toContain("thermolysisIntensityPercent");
     expect(fields).not.toContain("thermolysisDurationSeconds");
-    expect(fields).not.toContain("energyLevel");
-    expect(m.areas[0].energyLevel).toBeNull();
+    expect(fields).toContain("energyLevel");
+    expect(m.areas[0].energyLevel).toBe(12);
     expect(m.areas[0].modalityLabel).toBeNull();
+    const none = build([block({ mode: "galv", energy_level: null, entries: [entry({ mode: "galv", galvanic_ma: 1.2 })] })]);
+    expect(none.areas[0].readings.map((r) => r.field)).not.toContain("energyLevel");
+    expect(none.areas[0].energyLevel).toBeNull();
     expect(fields).toContain("unitsOfLye");
     expect(fields).toContain("galvanicMa");
   });

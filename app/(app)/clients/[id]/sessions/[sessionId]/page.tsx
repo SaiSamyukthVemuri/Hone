@@ -1173,6 +1173,7 @@ export default async function SessionDetailPage({
     <ChartingViewShell
       key={session.id}
       initialView={chartingInitialView}
+      rolloutOn={chartingToggleVisible}
       summary={
         <ChartingVisitSummary
           clientName={clientShownName}

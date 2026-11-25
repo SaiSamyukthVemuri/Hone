@@ -1,0 +1,95 @@
+import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { buildTreatmentSetupDraftPatch } from "@/lib/sessions/treatment-setup-snapshot";
+import { normalizeWholeSessionCopy } from "@/lib/sessions/whole-session-copy-normalize";
+import { readingFieldOrder } from "@/lib/sessions/reading-field-order";
+
+// W6: every place Galvanic EL used to be dropped changes TOGETHER, only with the redesign on. Off is today's behaviour.
+const block = { mode: "galv", apilus_modality: null, energy_level: 14, probe_key: null, machine_frequency: null, probe_lot_number: null, probe_inventory_item_id: null, probe_lot_confirmed: false } as never;
+const entry = { mode: "galv", galvanic_ma: 2, galvanic_duration_seconds: 30, units_of_lye: 3, pulse_count: 1, pulse_delay_seconds: null } as never;
+const setup = { mode: "galv", apilusModality: "", energyLevel: "14", probeKey: "", machineFrequency: "", thermolysisIntensityPercent: "", thermolysisDurationSeconds: "", galvanicMa: "2", galvanicDurationSeconds: "30", unitsOfLye: "3", pulseCount: "1", pulseDelay: "" };
+const draft = [{ areas: [{ area: "Upper lip", laterality: "midline" }], customAreaDetail: null, setup }];
+
+describe("copy-settings patch (the chart form)", () => {
+  it("on: the Galvanic EL is copied", () => expect(buildTreatmentSetupDraftPatch(block, entry, undefined, { keepGalvanicEnergy: true }).energyLevel).toBe("14"));
+  it("off (default): cleared exactly as before", () => {
+    expect(buildTreatmentSetupDraftPatch(block, entry).energyLevel).toBe("");
+    expect(buildTreatmentSetupDraftPatch(block, entry, undefined, {}).energyLevel).toBe("");
+  });
+});
+describe("whole-session copy normaliser (server)", () => {
+  const el = (opts?: { keepGalvanicEnergy?: boolean }) => {
+    const r = normalizeWholeSessionCopy(draft, opts);
+    if (!r.ok) throw new Error(r.error);
+    return { block: (r.specs[0].block as Record<string, unknown>).energy_level, entry: (r.specs[0].entry as Record<string, unknown> | null)?.energy_level };
+  };
+  it("on: EL survives on the block and the entry", () => expect(el({ keepGalvanicEnergy: true })).toEqual({ block: 14, entry: 14 }));
+  it("off (default): null, as before", () => expect(el()).toEqual({ block: null, entry: null }));
+  it("a non-galvanic copy is unaffected either way", () => {
+    const d = [{ ...draft[0], setup: { ...setup, mode: "thermo", apilusModality: "Picoflash", thermolysisIntensityPercent: "40", thermolysisDurationSeconds: "0.5" } }];
+    for (const keep of [true, false]) {
+      const r = normalizeWholeSessionCopy(d, { keepGalvanicEnergy: keep });
+      expect(r.ok && (r.specs[0].block as Record<string, unknown>).energy_level).toBe(14);
+    }
+  });
+});
+describe("reading order", () => {
+  it("on: Galvanic lists EL; off: it does not (today)", () => {
+    expect(readingFieldOrder("galv", { keepGalvanicEnergy: true })).toContain("energyLevel");
+    expect(readingFieldOrder("galv")).not.toContain("energyLevel");
+  });
+});
+describe("the list of places is pinned (a new place cannot be added silently)", () => {
+  const places: Array<[string, RegExp]> = [
+    ["app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts", /keepGalvanicEnergy: redesignOn,/],
+    ["app/(app)/clients/[id]/sessions/[sessionId]/actions.ts", /keepsEnergyLevel = redesignOn \? passGroups\.energy : mode !== "galv"/],
+    ["lib/sessions/treatment-setup-snapshot.ts", /isGalv && !opts\.keepGalvanicEnergy/],
+    ["lib/sessions/whole-session-copy-normalize.ts", /isGalv \? \(keepGalvanicEnergy \? numInRange/],
+    ["app/(app)/clients/[id]/sessions/[sessionId]/whole-session-copy-actions.ts", /keepGalvanicEnergy: await chartingRolloutFor\(studio\.id\)/],
+    ["app/(app)/clients/[id]/sessions/[sessionId]/CopyPreviousAreasPanel.tsx", /keepGalvanicEnergy: rollout/],
+    ["app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx", /keepGalvanicEnergy: rollout/],
+    ["components/copy-draft-card.tsx", /keepGalvanicEnergy && s\.mode === "galv"/],
+    ["lib/sessions/reading-field-order.ts", /opts\.keepGalvanicEnergy === true/],
+  ];
+  for (const [f, re] of places) it(`${f} carries the rollout-gated Galvanic EL rule`, () => expect(readFileSync(f, "utf8")).toMatch(re));
+  it("READ-ONLY displays that still drop Galvanic EL are listed, not forgotten (point-of-care memory, history card)", () => {
+    const src = readFileSync("lib/sessions/point-of-care-memory.ts", "utf8");
+    expect(src).not.toMatch(/energyLevel: mode === "galv" \? null/);
+    expect(src).toMatch(/readingFieldOrder\(mode, \{ keepGalvanicEnergy: true \}\)/);
+  });
+});
+
+import { entryEnergyLevel } from "@/lib/sessions/entry-energy-level";
+describe("a fractional Galvanic EL never reaches the entry's integer column, and is never lost", () => {
+  it("whole values pass, a fraction becomes null for the entry only, off is today's null, other modes are untouched", () => {
+    expect(entryEnergyLevel({ mode: "galv", energyLevel: 14, keepGalvanicEnergy: true })).toBe(14);
+    expect(entryEnergyLevel({ mode: "galv", energyLevel: 2.5, keepGalvanicEnergy: true })).toBeNull();
+    expect(entryEnergyLevel({ mode: "galv", energyLevel: null, keepGalvanicEnergy: true })).toBeNull();
+    expect(entryEnergyLevel({ mode: "galv", energyLevel: 14 })).toBeNull();
+    expect(entryEnergyLevel({ mode: "thermo", energyLevel: 3 })).toBe(3);
+    expect(entryEnergyLevel({ mode: null, energyLevel: null })).toBeNull();
+  });
+  it("block-actions routes the entry snapshot through it, and the BLOCK column still takes the exact value", () => {
+    const src = readFileSync("app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts", "utf8");
+    expect(src).toMatch(/energy_level: entryEnergyLevel\(\{ mode: input\.mode, energyLevel: input\.energyLevel, keepGalvanicEnergy: input\.keepGalvanicEnergy \}\)/);
+    expect(src).toMatch(/energy_level: input\.energyLevel \?\? null,/);
+  });
+});
+
+describe("copy-session with a FRACTIONAL Galvanic EL (the entry column is an integer)", () => {
+  const frac = [{ ...draft[0], setup: { ...setup, energyLevel: "2.5" } }];
+  it("on: the copy succeeds, the BLOCK keeps 2.5 exactly and the ENTRY stores none", () => {
+    const r = normalizeWholeSessionCopy(frac, { keepGalvanicEnergy: true });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect([(r.specs[0].block as Record<string, unknown>).energy_level, (r.specs[0].entry as Record<string, unknown>).energy_level]).toEqual([2.5, null]);
+  });
+  it("off (today): a Galvanic copy drops the EL on both, as before", () => {
+    const r = normalizeWholeSessionCopy(frac);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect([(r.specs[0].block as Record<string, unknown>).energy_level, (r.specs[0].entry as Record<string, unknown>).energy_level]).toEqual([null, null]);
+  });
+  it("a fractional EL on a THERMOLYSIS copy is still refused (the strict integer rule is unchanged)", () => {
+    const t = [{ ...draft[0], setup: { ...setup, mode: "thermo", apilusModality: "Picoflash", energyLevel: "2.5", thermolysisIntensityPercent: "40", thermolysisDurationSeconds: "0.5" } }];
+    expect(normalizeWholeSessionCopy(t, { keepGalvanicEnergy: true }).ok).toBe(false);
+  });
+});

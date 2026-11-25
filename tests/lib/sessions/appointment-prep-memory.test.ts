@@ -361,7 +361,8 @@ describe("settings and outcomes — complete, per area, mode-valid", () => {
     expect(galvFields).not.toContain("thermolysisIntensityPercent");
     expect(galvFields).not.toContain("thermolysisDurationSeconds");
     expect(galvFields).toContain("galvanicMa");
-    expect(galvFields).not.toContain("energyLevel");
+    // A RECORDED Galvanic energy level is shown (the default block here records 14); a block that recorded none shows none.
+    expect(galvFields).toContain("energyLevel");
 
     // Blend may show both.
     const blendFields = memoryOf().areas[0].setup.readings.map((r) => r.field);

@@ -190,6 +190,8 @@ export function buildTreatmentSetupDraftPatch(
   // Omit it to copy the lot NUMBER only (link dropped), the safe default for a
   // caller that cannot check inventory.
   linkableInventoryItemIds?: ReadonlySet<string>,
+  // Redesign on: a Galvanic block's EL is copied too (it is recorded now). Off: cleared exactly as before.
+  opts: { keepGalvanicEnergy?: boolean } = {},
 ): TreatmentSetupDraftPatch {
   const mode = ((block.mode ?? firstEntry?.mode) ?? "") as string;
   const isGalv = mode === "galv";
@@ -205,7 +207,7 @@ export function buildTreatmentSetupDraftPatch(
     mode,
     // Galvanic has no apilus modality or energy level.
     apilusModality: isGalv ? "" : (block.apilus_modality ?? ""),
-    energyLevel: isGalv ? "" : s(block.energy_level),
+    energyLevel: isGalv && !opts.keepGalvanicEnergy ? "" : s(block.energy_level),
     probeKey: block.probe_key ?? "",
     machineFrequency: block.machine_frequency ?? "",
     // minutes_performed is NEVER read here: an outcome is not reusable setup,

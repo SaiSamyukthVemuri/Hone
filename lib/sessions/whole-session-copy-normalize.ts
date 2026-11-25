@@ -22,6 +22,7 @@
 // minutes_performed is DELIBERATELY NOT part of the input or the output (P1-5):
 // this bulk prefill must not write performed minutes into today's live chart.
 
+import { entryEnergyLevel } from "@/lib/sessions/entry-energy-level";
 import {
   ELECTROLYSIS_MODES,
   APILUS_MODALITIES_BY_MODE,
@@ -143,7 +144,7 @@ function normalizeAreas(
   return out;
 }
 
-function normalizeDraft(d: WholeSessionCopyDraftInput): WholeSessionCopySpec {
+function normalizeDraft(d: WholeSessionCopyDraftInput, keepGalvanicEnergy = false): WholeSessionCopySpec {
   if (!d || typeof d !== "object" || !d.setup) throw new CopyValidationError(INVALID);
   const s = d.setup;
 
@@ -168,7 +169,10 @@ function normalizeDraft(d: WholeSessionCopyDraftInput): WholeSessionCopySpec {
 
   // energy_level: cleared for galvanic; otherwise a non-negative integer within
   // a sane bound (the destination entry column is int4).
-  const energyLevel = isGalv ? null : intInRange(s.energyLevel, 0, ENERGY_LEVEL_MAX);
+  // A GALVANIC EL that is kept may be fractional (the block's column is numeric, so it is copied exactly to the block); the entry's column is an integer,
+  // so the entry takes it only when whole (entryEnergyLevel). Every other mode stays a strict integer, as before.
+  const energyLevel = isGalv ? (keepGalvanicEnergy ? numInRange(s.energyLevel, 0, ENERGY_LEVEL_MAX) : null) : intInRange(s.energyLevel, 0, ENERGY_LEVEL_MAX);
+  const entryEnergy = entryEnergyLevel({ mode, energyLevel, keepGalvanicEnergy });
 
   // Probe: derive the decomposition server-side from the validated key ONLY.
   const probeKey = (s.probeKey ?? "").trim();
@@ -229,7 +233,7 @@ function normalizeDraft(d: WholeSessionCopyDraftInput): WholeSessionCopySpec {
     areas: areas.map((a) => a.area),
     mode,
     apilus_modality: apilusModality,
-    energy_level: energyLevel,
+    energy_level: entryEnergy,
     machine_frequency: machineFrequency,
     thermolysis_intensity_percent: thermInt,
     thermolysis_duration_seconds: thermDur,
@@ -249,6 +253,7 @@ function normalizeDraft(d: WholeSessionCopyDraftInput): WholeSessionCopySpec {
 // success, or a single safe error message on the first invalid value.
 export function normalizeWholeSessionCopy(
   drafts: readonly WholeSessionCopyDraftInput[],
+  opts: { keepGalvanicEnergy?: boolean } = {},
 ): WholeSessionCopyNormalizeResult {
   try {
     if (!Array.isArray(drafts) || drafts.length === 0) {
@@ -257,7 +262,7 @@ export function normalizeWholeSessionCopy(
     if (drafts.length > MAX_DRAFTS) {
       return { ok: false, error: INVALID };
     }
-    const specs = drafts.map(normalizeDraft);
+    const specs = drafts.map((d) => normalizeDraft(d, opts.keepGalvanicEnergy === true));
     return { ok: true, specs };
   } catch (e) {
     if (e instanceof CopyValidationError) return { ok: false, error: e.message };

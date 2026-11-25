@@ -358,7 +358,8 @@ function buildReadings(
     out.push({ field, label: READING_FIELD_LABELS[field], value });
   };
 
-  for (const field of readingFieldOrder(mode)) {
+  // A RECORDED Galvanic energy level is shown (a read-only display: a block that never recorded one has none, so nothing appears for it).
+  for (const field of readingFieldOrder(mode, { keepGalvanicEnergy: true })) {
     switch (field) {
       case "energyLevel": {
         const v = num(block.energy_level);
@@ -466,7 +467,7 @@ function buildArea(block: PointOfCareBlock, index: number): PointOfCareArea {
       mode !== "galv" && block.apilus_modality
         ? apilusModalityLabel(block.apilus_modality)
         : null,
-    energyLevel: mode === "galv" ? null : num(block.energy_level),
+    energyLevel: num(block.energy_level),
     readings: buildReadings(block, canonical, mode),
     hairs,
     passCount: live.length,
