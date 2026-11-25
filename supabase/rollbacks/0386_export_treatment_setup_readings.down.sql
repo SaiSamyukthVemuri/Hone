@@ -1,4 +1,4 @@
--- DOWN for 0385. EMERGENCY ONLY: restores the 0325 body of the studio export audit command, whose map has no treatment_setup_readings.csv. After this, an
+-- DOWN for 0386. EMERGENCY ONLY: restores the 0325 body of the studio export audit command, whose map has no treatment_setup_readings.csv. After this, an
 -- app that exports that file cannot record the export audit (the command returns false), so roll the application back first.
 begin;
 
@@ -14,7 +14,7 @@ begin
                     and not pg_catalog.has_function_privilege('anon', p.oid, 'EXECUTE')
                     and not pg_catalog.has_function_privilege('authenticated', p.oid, 'EXECUTE')
                     and not pg_catalog.has_function_privilege('public', p.oid, 'EXECUTE')) then
-    raise exception '0385 down refuses to run: the export audit command is not the 0385 body';
+    raise exception '0386 down refuses to run: the export audit command is not the 0386 body';
   end if;
 end
 $guard$;
@@ -97,7 +97,7 @@ begin
                     and not pg_catalog.has_function_privilege('anon', p.oid, 'EXECUTE')
                     and not pg_catalog.has_function_privilege('authenticated', p.oid, 'EXECUTE')
                     and not pg_catalog.has_function_privilege('public', p.oid, 'EXECUTE')) then
-    raise exception '0385 down: the export audit command is not the 0325 body, service_role only';
+    raise exception '0386 down: the export audit command is not the 0325 body, service_role only';
   end if;
 end
 $after$;

@@ -10,7 +10,7 @@
 -- GUARDS: a preamble refuses to run unless the function is exactly the 0325 body (md5 d92af63f4e985360cc8fed6143b79988); an after-check records the md5 of the new body
 -- (946486bece2e1f8a1ace09936f3a000f) and refuses if the entry is missing or the grants differ.
 -- ORDER: apply this BEFORE the application change that writes the file ships; an app that exports the file against the old map fails at the audit step.
--- Rollback: supabase/rollbacks/0385_export_treatment_setup_readings.down.sql (restores the 0325 body).
+-- Rollback: supabase/rollbacks/0386_export_treatment_setup_readings.down.sql (restores the 0325 body).
 
 begin;
 
@@ -26,7 +26,7 @@ begin
                     and not pg_catalog.has_function_privilege('anon', p.oid, 'EXECUTE')
                     and not pg_catalog.has_function_privilege('authenticated', p.oid, 'EXECUTE')
                     and not pg_catalog.has_function_privilege('public', p.oid, 'EXECUTE')) then
-    raise exception '0385 refuses to run: the export audit command is not the 0325 body';
+    raise exception '0386 refuses to run: the export audit command is not the 0325 body';
   end if;
 end
 $guard$;
@@ -110,7 +110,7 @@ begin
                     and not pg_catalog.has_function_privilege('anon', p.oid, 'EXECUTE')
                     and not pg_catalog.has_function_privilege('authenticated', p.oid, 'EXECUTE')
                     and not pg_catalog.has_function_privilege('public', p.oid, 'EXECUTE')) then
-    raise exception '0385: the export audit command is not the 0325 body plus the treatment_setup_readings entry, service_role only';
+    raise exception '0386: the export audit command is not the 0325 body plus the treatment_setup_readings entry, service_role only';
   end if;
 end
 $after$;

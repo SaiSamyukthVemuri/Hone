@@ -49,9 +49,9 @@ describe("0242 atomic governed service commands", () => {
     // 0325's map is frozen history too: it must still be the registry's file for each resource it names.
     for (const [resource, file] of Object.entries(JSON.parse(next!))) expect(registry[resource], resource).toBe(file);
   });
-  it("0385 adds exactly treatment_setup_readings to 0325's map, and the registry never outruns the newer map", () => {
+  it("0386 adds exactly treatment_setup_readings to 0325's map, and the registry never outruns the newer map", () => {
     const earlier = readFileSync("supabase/migrations/0325_waitlist_decline_followups.sql", "utf8");
-    const later = readFileSync("supabase/migrations/0385_export_treatment_setup_readings.sql", "utf8");
+    const later = readFileSync("supabase/migrations/0386_export_treatment_setup_readings.sql", "utf8");
     const before = JSON.parse(earlier.match(/\$registry\$([\s\S]*?)\$registry\$/)![1]);
     const after = JSON.parse(later.match(/\$registry\$([\s\S]*?)\$registry\$/)![1]);
     expect(after).toEqual({ ...before, treatment_setup_readings: "treatment_setup_readings.csv" });
