@@ -253,7 +253,7 @@ export async function BookingView({
           rides along with the general preferences save. NEW CLIENTS ONLY -
           stated in the copy, because an owner choosing "not accepting" needs to
           know their existing clients keep booking. */}
-      <section className="flex flex-col gap-3">
+      <section id="admission-options" className="flex scroll-mt-36 flex-col gap-3">
         <label
           id="new-client-admission"
           className="scroll-mt-24 text-sm font-medium"
