@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import {
   seedE2eStudio,
   getE2eServiceId,
@@ -64,6 +64,42 @@ test("owner sets a service's calendar color to violet on iPhone; it persists + r
   } finally {
     await ctx.close();
   }
+});
+
+test.describe("Settings navigation on touch screens", () => {
+  test.use({ hasTouch: true });
+
+  test("menu, search, section links and Close have at least a 44px hit area", async ({ page }) => {
+    const seed = await seedE2eStudio();
+    await loginAsOwner(page, seed);
+    await page.goto("/settings/services");
+
+    async function expectTouchTarget(control: Locator) {
+      await expect(control).toBeVisible();
+      const box = await control.boundingBox();
+      expect(box?.width, String(control)).toBeGreaterThanOrEqual(44);
+      expect(box?.height, String(control)).toBeGreaterThanOrEqual(44);
+    }
+
+    for (const width of [390, 768]) {
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 1024 });
+      expect(await page.evaluate(() => matchMedia("(pointer: coarse)").matches)).toBe(true);
+      const tabs = page.getByRole("navigation", { name: "Settings sections" });
+      for (const name of ["Services", "Machines"]) {
+        await expectTouchTarget(tabs.getByRole("link", { name, exact: true }));
+      }
+      for (const name of ["Settings menu", "Find a setting"]) {
+        const trigger = page.getByRole("button", { name });
+        await expectTouchTarget(trigger);
+        await trigger.tap();
+        const dialog = page.getByRole("dialog", { name, exact: true });
+        const close = dialog.getByRole("button", { name: "Close", exact: true });
+        await expectTouchTarget(close);
+        await close.tap();
+        await expect(dialog).toBeHidden();
+      }
+    }
+  });
 });
 
 test("Settings uses the standard page width and opens the matching settings section directly", async ({ page }) => {

@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { PendingLink } from "@/components/pending-link";
+import { CONTROL_MIN_TOUCH, cx } from "@/components/ui/control-base";
 import type { OverviewSection } from "@/lib/settings/overview";
 import { focusIsNowhere, focusSettingsHeading } from "./focus-heading";
 import { HashRedirect } from "./hash-redirect";
@@ -20,6 +21,7 @@ type Props = {
 
 const navItem = "flex min-h-11 items-center gap-2.5 rounded-md px-2.5 py-2 text-sm hover:bg-surface-sunken focus-visible:outline-2";
 const selected = "border-l-2 border-fg bg-surface-sunken font-medium";
+const shellControl = cx(CONTROL_MIN_TOUCH, "min-w-[44px] pointer-fine:min-h-10");
 
 export function SettingsShell({ sections, reachable = [], studioName, roleLabel, children }: Props) {
   const pathname = usePathname() ?? "";
@@ -190,8 +192,8 @@ export function SettingsShell({ sections, reachable = [], studioName, roleLabel,
               <span aria-hidden>/</span><span>{isOverview ? "Studio workspace" : section?.name ?? reachableHere?.label ?? "Settings"}</span>
             </nav>
             <div className="flex flex-wrap gap-2">
-              <button type="button" aria-label="Settings menu" aria-haspopup="dialog" aria-controls={dialogId} aria-expanded={open && panel === "menu"} onClick={() => openPanel("menu")} className="min-h-10 rounded-md border border-line-strong px-3 text-sm min-[911px]:hidden">Settings menu</button>
-              <button type="button" aria-haspopup="dialog" aria-controls={dialogId} aria-expanded={open && panel === "search"} onClick={() => openPanel("search")} className="inline-flex min-h-10 items-center gap-2 rounded-md border border-line-strong px-3 text-sm hover:bg-surface-sunken">
+              <button type="button" aria-label="Settings menu" aria-haspopup="dialog" aria-controls={dialogId} aria-expanded={open && panel === "menu"} onClick={() => openPanel("menu")} className={cx(shellControl, "rounded-md border border-line-strong px-3 text-sm min-[911px]:hidden")}>Settings menu</button>
+              <button type="button" aria-haspopup="dialog" aria-controls={dialogId} aria-expanded={open && panel === "search"} onClick={() => openPanel("search")} className={cx(shellControl, "gap-2 rounded-md border border-line-strong px-3 text-sm hover:bg-surface-sunken")}>
                 <SettingIcon name="Search" /> Find a setting <kbd aria-hidden className="hidden text-fg-muted sm:block">/</kbd>
               </button>
             </div>
@@ -199,8 +201,8 @@ export function SettingsShell({ sections, reachable = [], studioName, roleLabel,
           {section && !isOverview && <nav aria-label="Settings sections" className="flex flex-wrap gap-x-1 border-b border-line">
             {section.links.map(link => <PendingLink pendingLabel="Loading settings…" key={link.href} href={link.href}
               aria-current={link === current ? "page" : undefined}
-              className={"inline-flex min-h-10 items-center rounded-t-md border-b-2 px-2.5 text-sm hover:bg-surface-sunken " +
-                (link === current ? "border-fg bg-surface-sunken font-medium" : "border-transparent text-fg-muted")}>
+              className={cx(shellControl, "rounded-t-md border-b-2 px-2.5 text-sm hover:bg-surface-sunken",
+                link === current ? "border-fg bg-surface-sunken font-medium" : "border-transparent text-fg-muted")}>
               {link.label}
             </PendingLink>)}
           </nav>}
@@ -210,7 +212,7 @@ export function SettingsShell({ sections, reachable = [], studioName, roleLabel,
           className="fixed inset-0 m-auto max-h-[80dvh] w-[min(32rem,calc(100%_-_2rem))] overflow-y-auto rounded-xl border border-line bg-surface p-5 text-fg shadow-xl backdrop:bg-black/30">
           <div className="mb-4 flex items-center justify-between gap-3">
             <h2 className="text-lg font-semibold">{panel === "search" ? "Find a setting" : "Settings menu"}</h2>
-            <button type="button" onClick={() => popup.current?.close()} className="min-h-10 rounded-md px-2 text-sm hover:bg-surface-sunken">Close</button>
+            <button type="button" onClick={() => popup.current?.close()} className={cx(shellControl, "rounded-md px-2 text-sm hover:bg-surface-sunken")}>Close</button>
           </div>
           {open && <div>
             {panel === "menu" ? categoryLinks("menu") : <SettingsDirectory sections={sections}/>}
