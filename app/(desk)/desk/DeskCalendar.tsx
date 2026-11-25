@@ -48,6 +48,14 @@ function CalendarPeriod({ studioId, today, date, view, timezone, rows, booking, 
   const period = date + view;
   const [dayChoice, setDayChoice] = useState({ period, date });
   const [booked, setBooked] = useState({ period, date: "" });
+  // A pick and a notice are discarded the moment the period changes, so leaving a period and coming BACK to it starts from its default day with no
+  // old "Booked for" notice (as a remount did). This resets state in render, it does not remount, so an open booking panel is untouched.
+  const [seenPeriod, setSeenPeriod] = useState(period);
+  if (seenPeriod !== period) {
+    setSeenPeriod(period);
+    setDayChoice({ period, date });
+    setBooked({ period, date: "" });
+  }
   const selectedDate = dayChoice.period === period ? dayChoice.date : date;
   const bookedDate = booked.period === period ? booked.date : "";
   // Bumped only when the receptionist picks a different day: that resets the booking panel (as before), a navigation must not.
