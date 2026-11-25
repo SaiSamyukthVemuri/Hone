@@ -82,6 +82,8 @@ for (const device of DEVICES) {
       const legacyIntensity = page.locator("label", { hasText: "Thermolysis intensity" }).locator("input").first();
       await legacyIntensity.fill("42");
       await page.getByTestId("mode-multiplex").click();
+      // The first click also opens the Machine panel (its context loads from the server); MultiPlex settles pressed before the next click.
+      await expect(page.getByTestId("mode-multiplex")).toHaveAttribute("aria-pressed", "true", { timeout: T });
       await pill(page, "Blend").click();
       await pill(page, "Thermolysis").click();
       await expect(legacyIntensity).toHaveValue("42");

@@ -190,7 +190,7 @@ describe("0385 end to end as a practitioner: MultiPlex with ZERO registered mach
       expect(byKey).not.toHaveProperty("snap_interval");
       expect(byKey).not.toHaveProperty("displayed_ul");
       // latest setup for the client (next-visit recall) carries the 3 pulses
-      const latest = await asUser(s.userId, (q) => q(`select * from public.latest_setup_for_client($1,$2,$3)`, [s.studioId, s.clientId, PUR]));
+      const latest = await asUser(s.userId, (q) => q(`select * from public.latest_setup_for_client($1,$2,$3)`, [s.studioId, s.clientId, null]));
       expect(JSON.stringify(latest.rows)).toContain("snap_count");
       // the machine is never a registered one
       expect((await adminQuery(`select count(*)::int n from public.studio_machines where studio_id=$1 and not is_unspecified`, [s.studioId])).rows[0].n).toBe(0);
@@ -253,7 +253,7 @@ function groups1(pulse: string): string {
 
 describe("0385 command census: every function that takes a machine id is classified accept or refuse", () => {
   // ACCEPT: the unspecified unit is a valid unit for the identity, readings and capture commands.
-  // REFUSE: register, retire and the default command refuse the placeholder (proved above).
+  // REFUSE: retire and the default command take a machine id and refuse the placeholder; register takes none but refuses its reserved name (all proved above).
   const ACCEPT = new Set([
     "apply_block_machine_identity", "assert_setup_scope", "create_block_with_initial_setup", "create_block_with_initial_setup_and_identity",
     "record_block_machine_identity", "record_setup_group_in_scope", "record_setup_submission_with_identity", "record_treatment_setup_group",
@@ -275,7 +275,7 @@ describe("0385 command census: every function that takes a machine id is classif
     const unclassified = names.filter((n) => !ACCEPT.has(n) && !REFUSE.has(n) && !OTHER.has(n));
     expect(unclassified, "classify these as accept or refuse in the 0385 census").toEqual([]);
     // and every classified command that exists is actually found (the census is not vacuous)
-    for (const n of [...REFUSE, "record_treatment_setup_group", "record_setup_submission_with_identity", "create_block_with_initial_setup_and_identity", "record_block_machine_identity"]) expect(names, n).toContain(n);
+    for (const n of ["retire_studio_machine", "set_own_default_machine", "record_treatment_setup_group", "record_setup_submission_with_identity", "create_block_with_initial_setup_and_identity", "record_block_machine_identity"]) expect(names, n).toContain(n);
   });
 });
 
