@@ -520,7 +520,9 @@ export function BlockSetupForm({
     (kind: "none" | "legacy" | "native") => {
       if (kind === "native" && legacyDataLocked) return;
       setMachineKind(kind);
-      if (kind === "legacy" && parkedLegacyRef.current) {
+      // WHENEVER THE LEGACY FIELDS BECOME EDITABLE AGAIN, by ANY route (the existing xCell, or no machine chosen), the parked snapshot is CONSUMED into
+      // the draft and dropped. Left parked it would be restored later OVER whatever she typed in between (Codex, #1790).
+      if (kind !== "native" && parkedLegacyRef.current) {
         const back = parkedLegacyRef.current;
         parkedLegacyRef.current = null;
         setDraftRef.current((d) => ({ ...d, ...back }));
@@ -1011,6 +1013,7 @@ export function BlockSetupForm({
         // destination from the address bar and preserve any newer operation.
         const settledHref = settledAreaOperationHref(resumedSaveKey);
         if (settledHref !== null) router.replace(settledHref, { scroll: false });
+        parkedLegacyRef.current = null; // the area is saved: nothing parked outlives it
         setResume({ state: "saved", blockId: res.blockId });
         return;
       }

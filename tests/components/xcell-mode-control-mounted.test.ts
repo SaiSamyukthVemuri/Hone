@@ -186,6 +186,32 @@ describe("MultiPlex in the ONE Mode control (new area)", () => {
     expect(intensity().value).toBe("42");
   });
 
+  // CODEX #1790: the parked Thermolysis snapshot must never be restored OVER a value typed after it was parked. Clearing the machine ("Choose machine…")
+  // shows the legacy fields again; whatever she types there is newer than the parked 42, so a later return to the existing xCell keeps it.
+  it("parked 42, MultiPlex, machine cleared, 40 typed in the legacy fields, xCell chosen again: 40 stays (the parked 42 is never restored over it)", async () => {
+    await mount(null);
+    await openPanel();
+    await pick("legacy:xcell");
+    await clickPill("Thermolysis");
+    const setValue = (el: HTMLInputElement, v: string) => act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(el, v);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const intensity = () => Array.from(host!.querySelectorAll<HTMLLabelElement>("label")).find((l) => l.textContent?.includes("Thermolysis intensity"))!.querySelector("input") as HTMLInputElement;
+    await setValue(intensity(), "42");
+    await clickMultiplex();
+    await pick("");
+    // the legacy fields are editable again (no machine): make sure Thermolysis is the mode, then type the NEWER value
+    const selected = () => pills().filter((b) => b.className.includes("bg-neutral-900")).map((b) => b.textContent!.trim());
+    if (!selected().includes("Thermolysis")) await clickPill("Thermolysis");
+    await setValue(intensity(), "40");
+    await pick("legacy:xcell");
+    expect(intensity().value, "the newer value is not overwritten by the parked one").toBe("40");
+    await clickMultiplex();
+    await clickPill("Thermolysis");
+    expect(intensity().value, "and a MultiPlex round trip afterwards still returns what is typed now").toBe("40");
+  });
+
   it("no route (contract not published, no unit): the xCell choice offers no MultiPlex", async () => {
     ctxBox.ctx = { ...CTX, multiplexRoute: null };
     await mount(null);
