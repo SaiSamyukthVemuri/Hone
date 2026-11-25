@@ -566,7 +566,10 @@ describe("MultiPlex in a studio with no registered machine", () => {
     expect(multiplexPill()!.getAttribute("aria-pressed")).toBe("true");
     await clickPill("Blend");
     expect(multiplexPill()!.getAttribute("aria-pressed")).toBe("false");
+    // a SECOND load would now come back without a route (the contract unreadable), so only a reused context ends with MultiPlex applied
+    ctxBox.ctx = { ...ZERO(), multiplexRoute: null };
     await clickMultiplex();
+    await act(async () => { await new Promise((r) => setTimeout(r, 300)); });
     expect(actions.loadMachineSetupContext, "no second load").toHaveBeenCalledTimes(1);
     expect(multiplexPill()!.getAttribute("aria-pressed")).toBe("true");
     expect(saveButton().disabled).toBe(false);

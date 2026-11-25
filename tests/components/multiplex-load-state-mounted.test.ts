@@ -224,6 +224,19 @@ describe("MultiPlex load state: transitions, mounted (stand-in panel)", () => {
     expect(saveButton().disabled).toBe(false);
   });
 
+  it("A SAME-COMMIT REMOUNT (unmount and mount back to back, as StrictMode's double effect does) is not an absence: the load keeps holding", async () => {
+    const { flushSync } = await import("react-dom");
+    await mount();
+    await clickPill();
+    await act(async () => {
+      flushSync(() => panel.hide());
+      flushSync(() => panel.show());
+    });
+    await flush();
+    expect(saveButton().disabled, "still loading, not failed").toBe(true);
+    expect(alertText()).toBeNull();
+  });
+
   it("STRICTMODE: the effect cleanup + setup pair does not report the panel gone; the load keeps holding and then completes", async () => {
     await mount({ strict: true });
     await clickPill();
