@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { isRepoMax } from "./helpers/migration-state";
 
-// 0385 (HON-119): SOURCE contract for the migration and its down file. Behaviour is the authority and is proved on a real database by
+// 0385: SOURCE contract for the migration and its down file. Behaviour is the authority and is proved on a real database by
 // tests/db/unspecified-machine.db.test.ts; this file pins what a database run cannot see in a diff.
 
 const UP = readFileSync("supabase/migrations/0385_unspecified_machine.sql", "utf8");
@@ -88,8 +88,8 @@ describe("the table", () => {
 });
 
 describe("the three production commands that take a machine id refuse the placeholder", () => {
-  it("register refuses the reserved name folded for case and whitespace", () => {
-    expect(U).toMatch(/lower\(regexp_replace\(btrim\(coalesce\(p_display_name, ''\)\), '\\s\+', ' ', 'g'\)\) = 'machine not specified'/);
+  it("register refuses the reserved name: whitespace (Unicode spaces included) is collapsed FIRST, then trimmed, then folded for case", () => {
+    expect(U).toContain("lower(btrim(regexp_replace(coalesce(p_display_name, ''), '[[:space:]\\u00a0\\u1680\\u2000-\\u200b\\u202f\\u205f\\u3000\\ufeff]+', ' ', 'g'))) = 'machine not specified'");
   });
   it("retire and set_own_default raise on is_unspecified", () => {
     expect(U.match(/if v_unspec then/g)?.length).toBe(2);

@@ -369,7 +369,7 @@ export default async function SessionDetailPage({
   }
 
 
-  // MULTIPLEX IS OFFERED TO EVERY STUDIO (HON-119): read here with the page, so the pill is present from the first visit with no extra request.
+  // MULTIPLEX IS OFFERED TO EVERY STUDIO: read here with the page, so the pill is present from the first visit with no extra request.
   const multiplexOffer =
     session.modality === "electrolysis" ? await loadMultiplexOffer((await createClient()) as unknown as MachineDb, studio.id) : null;
 

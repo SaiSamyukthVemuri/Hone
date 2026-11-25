@@ -5,7 +5,7 @@ import { seedE2eStudio, seedE2eMember, setPlatformRolloutMode, sql } from "./hel
 import { loginByMagicLink } from "./helpers/flows";
 import { planContractPublication } from "../lib/machines/contract-publication";
 
-// HON-119: MULTIPLEX FOR A STUDIO WITH NO REGISTERED MACHINE. REAL browser, REAL local stack, synthetic studio/client/values.
+// MULTIPLEX FOR A STUDIO WITH NO REGISTERED MACHINE. REAL browser, REAL local stack, synthetic studio/client/values.
 // The studio has ZERO registered machines, no xCell history and the xCell rollout OFF (the Twin-only default), and still charts a complete
 // MultiPlex visit from the first area. Desktop Chromium, an iPhone-size Chromium emulation, and an emulated iPhone 13 in WebKit.
 const T = 20_000;
@@ -174,3 +174,77 @@ test.describe("a studio with the rollout OFF", () => {
     await expect(page.getByTestId("charting-view-toggle")).toHaveCount(0);
   });
 });
+
+// THE OTHER THREE MODES, in the same studio (zero machines): Thermolysis, Blend and Galvanic areas save with their own values, reopen unchanged, and
+// carry NO machine at all (no placeholder, no profile). MultiPlex being on offer must change nothing about them.
+for (const device of [
+  { name: "desktop 1280", viewport: { width: 1280, height: 800 }, only: "chromium" },
+  { name: "iPhone 13 (WebKit emulation)", viewport: null, only: "webkit-iphone-visit" },
+] as const) {
+  test.describe(`the three existing modes in a studio with no machine, ${device.name}`, () => {
+    if (device.viewport) test.use({ viewport: device.viewport });
+    test.beforeEach(({}, info: TestInfo) => { test.skip(info.project.name !== device.only, `runs in the ${device.only} project`); });
+
+    test("Thermolysis, Blend and Galvanic areas save, reopen unchanged, and attach no machine", async ({ page }) => {
+      const s = await seedZeroMachineStudio();
+      await loginByMagicLink(page, s.member.email);
+      const sessionId = await startSession(page, s.clientId);
+      const num = (n: string) => page.getByRole("spinbutton", { name: n, exact: true });
+
+      const saveArea = async (area: string, side: string, mode: string, fill: () => Promise<void>, expected: number) => {
+        await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+        await pill(page, mode).click({ timeout: T });
+        await fill();
+        await page.getByRole("button", { name: area, exact: true }).click();
+        await page.getByTestId(`laterality-${area}-${side}`).click();
+        await page.getByTestId("save-treatment-area").click({ timeout: T });
+        await expect.poll(async () => (await blocksOf(sessionId)).length, { timeout: T }).toBe(expected);
+      };
+      await saveArea("Chin", "left", "Thermolysis", async () => {
+        await num("Energy level (EL)").fill("42");
+        await num("Thermolysis duration (s)").fill("0.5");
+        await num("Thermolysis intensity %").fill("30");
+      }, 1);
+      await saveArea("Cheeks", "left", "Blend", async () => {
+        await num("Energy level (EL)").fill("35");
+        await num("Units of lye (UL)").fill("25.5");
+        await num("Galvanic duration (s)").fill("8");
+        await num("Galvanic mA").fill("0.74");
+        await num("Thermolysis duration (s)").fill("0.733");
+        await num("Thermolysis intensity %").fill("20");
+      }, 2);
+      await saveArea("Upper lip", "left", "Galvanic", async () => {
+        await num("Galvanic duration (s)").fill("9");
+        await num("Galvanic mA").fill("0.5");
+      }, 3);
+
+      const blocks = await blocksOf(sessionId);
+      for (const b of blocks) expect(b, "no machine of any kind is attached").toMatchObject({ studio_machine_id: null, machine_profile_id: null, machine_mode_key: null });
+      expect(blocks.map((b) => b.mode)).toEqual(["thermo", "blend", "galvanic"]);
+      expect((await sql<{ n: number }>(`select count(*)::int n from public.studio_machines where studio_id=$1`, [s.seed.studioId]))[0]!.n, "no placeholder or any machine row was created").toBe(0);
+      expect((await sql<{ n: number }>(`select count(*)::int n from public.treatment_setup_readings where session_block_id = any($1)`, [blocks.map((b) => b.id)]))[0]!.n, "no native readings for legacy modes").toBe(0);
+
+      await page.reload();
+      const reopen = async (id: string) => {
+        await page.getByTestId(`edit-area-${id}`).click({ timeout: T });
+      };
+      await reopen(blocks[0]!.id);
+      await expect(num("Thermolysis intensity %")).toHaveValue("30", { timeout: T });
+      await expect(num("Thermolysis duration (s)")).toHaveValue("0.5");
+      await expect(num("Energy level (EL)")).toHaveValue("42");
+      await noOverflow(page);
+      await page.goto(`/clients/${s.clientId}/sessions/${sessionId}`);
+      await reopen(blocks[1]!.id);
+      await expect(num("Galvanic mA")).toHaveValue("0.74", { timeout: T });
+      await expect(num("Thermolysis duration (s)")).toHaveValue("0.733");
+      await expect(num("Units of lye (UL)")).toHaveValue("25.5");
+      await expect(num("Energy level (EL)")).toHaveValue("35");
+      await page.goto(`/clients/${s.clientId}/sessions/${sessionId}`);
+      await reopen(blocks[2]!.id);
+      await expect(num("Galvanic mA")).toHaveValue("0.5", { timeout: T });
+      await expect(num("Galvanic duration (s)")).toHaveValue("9");
+      await noOverflow(page);
+      expect((await sql<{ n: number }>(`select count(*)::int n from public.studio_machines where studio_id=$1`, [s.seed.studioId]))[0]!.n, "reopening created nothing").toBe(0);
+    });
+  });
+}

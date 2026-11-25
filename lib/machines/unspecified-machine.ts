@@ -3,7 +3,7 @@ import type { StudioDevice } from "./selection";
 import { XCELL_PUR_PROFILE_ID } from "./xcell-pur";
 
 /**
- * "MACHINE NOT SPECIFIED" (HON-119, migration 0385).
+ * "MACHINE NOT SPECIFIED" (migration 0385).
  *
  * MultiPlex can be charted in a studio that has registered no machine. The readings tables need a unit, so each studio gets ONE inert
  * placeholder per xCell Pur version, created by a practitioner's first save (`ensure_unspecified_machine`). Nobody sees it as a unit:

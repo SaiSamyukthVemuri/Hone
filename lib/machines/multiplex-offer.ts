@@ -6,7 +6,7 @@ import { xcellMultiplexRoute } from "./xcell-route";
 import { XCELL_PUR_PROFILE_ID } from "./xcell-pur";
 
 /**
- * WHETHER THE CHART OFFERS MULTIPLEX TO THIS STUDIO (HON-119), read on the server with the page, so the pill is on screen from the first visit
+ * WHETHER THE CHART OFFERS MULTIPLEX TO THIS STUDIO, read on the server with the page, so the pill is on screen from the first visit
  * and no extra request is made while charting. The same rule as the machine panel's own route (`xcellMultiplexRoute`), minus the registered
  * unit the panel resolves when it opens: here only the placeholder route matters. A failed read offers nothing.
  */

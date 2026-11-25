@@ -213,7 +213,7 @@ type Props = {
   // frequency seeded from the practitioner's last-used value. UI
   // defaulting only; fully editable per treatment area.
   defaultMachineFrequency?: string | null;
-  /** HON-119: MultiPlex is offered to this studio, read with the page. Null = not offered. */
+  /** MultiPlex is offered to this studio, read with the page. Null = not offered. */
   multiplexOffer?: { deviceId: string } | null;
   // Feature A (reliability): most recent lot/batch per probe in this studio,
   // keyed by probe_key AND by normalized probe_label (free-text fallback), each

@@ -4,7 +4,7 @@ import { MACHINE_CATALOGUE } from "../../lib/machines/catalogue";
 import { planContractPublication } from "../../lib/machines/contract-publication";
 import { adminQuery, adminTx, asUser, closePool, seedMember, seedSession, seedStudio, type SeededStudio } from "./helpers/harness";
 
-// HON-119 / migration 0385: the "Machine not specified" placeholder. REAL published xCell Pur MultiPlex contract (planContractPublication over the
+// Migration 0385: the "Machine not specified" placeholder. REAL published xCell Pur MultiPlex contract (planContractPublication over the
 // shipped catalogue, through the real sync command), synthetic studios only. Contract rows are immutable, so they are removed at the end with the
 // table owner (the stack is owned and discarded); nothing here touches a shared database.
 
@@ -117,7 +117,8 @@ describe("0385 the placeholder is inert", () => {
   const placeholderId = async () => (await rowsFor(a.studioId)).rows[0].id as string;
 
   it("an owner cannot REGISTER the reserved name, in any case or spacing; a different name still registers", async () => {
-    for (const name of ["Machine not specified", "  machine   NOT specified ", "MACHINE NOT SPECIFIED"]) {
+    // Leading and trailing tab, newline, non-breaking and other Unicode spaces are whitespace too: none may make a lookalike.
+    for (const name of ["Machine not specified", "  machine   NOT specified ", "MACHINE NOT SPECIFIED", "\tMachine not specified ", "\nMachine not specified\n", "\u00a0Machine not specified\u00a0", "Machine\u00a0not\u2003specified", "\u3000machine not specified\ufeff"]) {
       await expect(asUser(a.userId, (q) => q(`select public.register_studio_machine($1,$2,1,$3,'{}')`, [a.studioId, PUR, name]))).rejects.toThrow(/reserved/i);
     }
     const ok = await asUser(a.userId, (q) => q(`select public.register_studio_machine($1,$2,1,'Dectro xCell','{}') as id`, [a.studioId, PUR]));

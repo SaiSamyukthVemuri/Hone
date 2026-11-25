@@ -425,7 +425,7 @@ describe("the connected wrapper makes NO request until asked", () => {
     // only for an area that already carries a SAVED machine (migration 0301):
     // a reopened area opens on its machine instead of an empty "Choose
     // machine". Every other charting path still makes no request on mount.
-    // HON-119 adds ONE more, and it too makes no request on mount: it acts only on a MultiPlex CLICK (a request that arrives while the panel is
+    // This adds ONE more, and it too makes no request on mount: it acts only on a MultiPlex CLICK (a request that arrives while the panel is
     // closed opens it so the click is applied), and returns at once without one. It is pinned below.
     expect((code.match(/useEffect\(/g) ?? []).length).toBe(2);
     const requestEffect = code.slice(code.indexOf("requestBeforeOpenRef"), code.indexOf("}, [multiplexRequest, ctx, state]);"));

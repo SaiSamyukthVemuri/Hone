@@ -69,7 +69,7 @@ async function mount(block: Record<string, unknown> | null, offer?: { deviceId: 
     root!.render(createElement(BlockSetupForm, {
       sessionId: "s1", clientId: "c1", previousBlock: null, block: block as never, firstEntry: null,
       initialAreas: [{ area: "Upper lip", side: "center" }] as never, defaultMachineFrequency: null, onCancel: () => undefined,
-      // HON-119: the page reads the offer on the server and hands it down, so the pill is there from the first visit.
+      // the page reads the offer on the server and hands it down, so the pill is there from the first visit.
       ...(offer === undefined ? {} : { multiplexOffer: offer }),
     }));
   });
@@ -81,7 +81,7 @@ const pick = (value: string) => act(async () => {
   sel.dispatchEvent(new Event("change", { bubbles: true }));
 });
 // THE form's Mode group only: the structured panel has its own mode buttons (data-testid machine-mode-*), which are not this control.
-// The MultiPlex pill carries a small "xCell Pur" model label (HON-119); its NAME is the text before it.
+// The MultiPlex pill carries a small "xCell Pur" model label; its NAME is the text before it.
 const pillName = (b: HTMLButtonElement) => (b.getAttribute("data-testid") === "mode-multiplex" ? "MultiPlex" : (b.textContent?.trim() ?? ""));
 const pills = () =>
   Array.from(host!.querySelectorAll<HTMLButtonElement>("button")).filter(
@@ -106,7 +106,7 @@ describe("MultiPlex in the ONE Mode control (new area)", () => {
     expect(host!.querySelector('[data-testid="xcell-mode-select"]')).toBeNull();
   });
 
-  it("HON-119: no machine chosen, MultiPlex offered: the pill sits beside the three modes from the first visit, labelled xCell Pur, with the panel still closed", async () => {
+  it("no machine chosen, MultiPlex offered: the pill sits beside the three modes from the first visit, labelled xCell Pur, with the panel still closed", async () => {
     await mount(null, { deviceId: "unspecified:xcell-pur" });
     expect(host!.querySelector('[data-testid="machine-first-open"]')).toBeTruthy();
     expect(pillLabels()).toEqual(["Thermolysis", "Blend", "Galvanic", "MultiPlex"]);
@@ -331,9 +331,9 @@ describe("saved areas", () => {
   });
 });
 
-// HON-119: MultiPlex with NO registered machine. The route's unit is the inert "Machine not specified" placeholder (a real row, or the sentinel before
+// MultiPlex with NO registered machine. The route's unit is the inert "Machine not specified" placeholder (a real row, or the sentinel before
 // it exists); it is chosen by the pill, never listed in the picker, never remembered, and no legacy xCell choice stands in for it.
-describe("HON-119: MultiPlex in a studio with no registered machine", () => {
+describe("MultiPlex in a studio with no registered machine", () => {
   const PLACEHOLDER: StudioDevice = {
     deviceId: "unspecified:xcell-pur", studioId: "studio-synthetic", profileId: "dectro-apilus:xcell-pur", profileVersion: 1,
     displayName: "Machine not specified", installedOptions: [], retiredAt: null, isUnspecified: true,

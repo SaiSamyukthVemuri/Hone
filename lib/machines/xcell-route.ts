@@ -4,7 +4,7 @@ import type { StudioDevice } from "./selection";
 import { unspecifiedDeviceFor } from "./unspecified-machine";
 
 /**
- * MULTIPLEX ON THE EXISTING CHART FOR EVERY STUDIO (HON-71, widened by HON-119).
+ * MULTIPLEX ON THE EXISTING CHART FOR EVERY STUDIO (widened to every studio).
  *
  * MultiPlex sits beside Thermolysis, Blend and Galvanic from the first visit. It routes the NEW area through the native path (the xCell
  * Pur contract, mode `multiplex`), because the legacy columns cannot hold it (integer seconds, one thermolysis pair).

@@ -290,7 +290,7 @@ export function MachineFirstSetupConnected({
     if (hasSavedIdentity && state === "idle" && ctx === null) void open();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasSavedIdentity]);
-  // HON-119: the MultiPlex pill sits in the host's Mode control from the first visit, BEFORE this panel has loaded. A click on it opens the panel
+  // the MultiPlex pill sits in the host's Mode control from the first visit, BEFORE this panel has loaded. A click on it opens the panel
   // (the same load "Choose machine" does) and the panel then applies THAT request on mount, instead of treating it as already handled.
   const requestBeforeOpenRef = useRef<number | null>(null);
   useEffect(() => {
@@ -590,7 +590,7 @@ export function MachineFirstSetupConnected({
     // THE PREFERENCE (a suggestion for the next visit) is written only for a
     // native unit; choosing the existing workflow leaves it alone.
     let pref: { ok: boolean; error?: string } = { ok: true };
-    // HON-119: the "Machine not specified" placeholder is never a remembered preference (and picking it leaves the remembered unit alone).
+    // the "Machine not specified" placeholder is never a remembered preference (and picking it leaves the remembered unit alone).
     const choseUnspecified =
       choice.deviceId !== null &&
       (isUnspecifiedDeviceId(choice.deviceId) || ctx.devices.some((d) => d.deviceId === choice.deviceId && d.isUnspecified === true));

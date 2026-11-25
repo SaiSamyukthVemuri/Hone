@@ -1,4 +1,4 @@
--- 0385 (HON-119): MultiPlex readings with NO registered machine.
+-- 0385: MultiPlex readings with NO registered machine.
 --
 -- A studio that has not registered a machine can still chart xCell Pur MultiPlex. The readings tables
 -- require a unit (treatment_setup_readings / submissions / captures .studio_machine_id are NOT NULL), and
@@ -100,7 +100,7 @@ begin
 
   -- 0385: the placeholder row's name is reserved. Case and whitespace folded, so
   -- an owner cannot register a lookalike that reads as the placeholder.
-  if lower(regexp_replace(btrim(coalesce(p_display_name, '')), '\s+', ' ', 'g')) = 'machine not specified' then
+  if lower(btrim(regexp_replace(coalesce(p_display_name, ''), '[[:space:]\u00a0\u1680\u2000-\u200b\u202f\u205f\u3000\ufeff]+', ' ', 'g'))) = 'machine not specified' then
     raise exception 'That machine name is reserved.'
       using errcode = 'check_violation';
   end if;
@@ -344,7 +344,7 @@ end;
 $$;
 
 comment on function public.ensure_unspecified_machine(uuid) is
-  '0385 (HON-119). Returns the studio''s inert placeholder unit for the current published xCell Pur MultiPlex version, creating it on first use. Practitioner of the studio only; one generic refusal on any miss. Returns the id only.';
+  '0385. Returns the studio''s inert placeholder unit for the current published xCell Pur MultiPlex version, creating it on first use. Practitioner of the studio only; one generic refusal on any miss. Returns the id only.';
 
 revoke execute on function public.ensure_unspecified_machine(uuid) from public;
 revoke execute on function public.ensure_unspecified_machine(uuid) from anon;

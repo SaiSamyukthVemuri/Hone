@@ -45,7 +45,7 @@ export async function checkIdentityChoice(
   scope: SelectionScope,
   choice: IdentityChoice,
   /**
-   * HON-119: ONLY the area-create save passes this, to let a NEW MultiPlex area store the studio's "Machine not specified" placeholder.
+   * ONLY the area-create save passes this, to let a NEW MultiPlex area store the studio's "Machine not specified" placeholder.
    * Every other caller (a remembered choice, a machine change on a saved area) leaves it off, so the placeholder is an unknown unit to
    * them and can never be remembered or picked.
    */

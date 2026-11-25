@@ -281,7 +281,7 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // note above. It is REQUIRED, not opt-in. Cost, MEASURED on an owned stack: three cases in the chromium project (desktop, a 390px iPhone-sized
     // emulation, and Save pressed while the pick is pending), each a seeded studio, a magic-link login and one or two saves: about 15-20s each, a minute
     // in all. The iPhone WebKit case runs only in the non-required `webkit-iphone-visit` project and skips everywhere else.
-    // Now 69 (HON-119): multiplex-no-machine.spec.ts joined `sessions` (MultiPlex in a studio with ZERO registered machines). RECORDED AS A DECISION per the note
+    // Now 69: multiplex-no-machine.spec.ts joined `sessions` (MultiPlex in a studio with ZERO registered machines). RECORDED AS A DECISION per the note
     // above. It is REQUIRED, not opt-in. Cost, to be MEASURED on an owned stack and recorded in the pull request: three cases in the chromium project
     // (desktop, a 390px iPhone-sized emulation, and the rollout-off toggle check), each a seeded studio and a login; the iPhone WebKit case runs only in the
     // non-required `webkit-iphone-visit` project and skips everywhere else.

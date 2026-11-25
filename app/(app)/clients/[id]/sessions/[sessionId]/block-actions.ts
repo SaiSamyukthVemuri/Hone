@@ -1480,7 +1480,7 @@ export async function createTreatmentAreaWithEntryAction(
   // database constraint), unknown fields, channel bounds and the mode's
   // installed-option requirement.
   const setupGroups: SetupSubmissionGroup[] = [];
-  // HON-119: MultiPlex with no registered machine carries the placeholder's sentinel id; it becomes the real "Machine not specified" row
+  // MultiPlex with no registered machine carries the placeholder's sentinel id; it becomes the real "Machine not specified" row
   // here (created on first use), BEFORE anything else reads the unit. Any other id passes through untouched.
   let resolvedSetupMachineId: string | null = withSetup ? input.initialSetup!.machineId : null;
   let resolvedIdentityMachineId: string | null = input.machineIdentity?.machineId ?? null;
@@ -1513,7 +1513,7 @@ export async function createTreatmentAreaWithEntryAction(
     // THE ROLLOUT, ASKED AGAIN AT WRITE TIME (a new area has no stored identity, so there is no existing-block exemption here).
     const rolloutOk = await guardXcellRollout(db, {
       studioId: studio.id,
-      // HON-119: the placeholder is MultiPlex with no registered machine; the platform rollout belongs to the registered xCell unit only.
+      // the placeholder is MultiPlex with no registered machine; the platform rollout belongs to the registered xCell unit only.
       unitProfileId: device.isUnspecified === true ? null : device.profileId,
       deviceId: resolvedSetupMachineId,
       receipt: createReceiptLookup(db, input.sessionId, setup.idempotencyKey),
@@ -1575,7 +1575,7 @@ export async function createTreatmentAreaWithEntryAction(
     if (allowed.ok) {
       const rolloutOk = await guardXcellRollout(supabase as unknown as MachineDb, {
         studioId: studio.id,
-        // HON-119: the placeholder never meets the rollout (it is not the registered xCell unit).
+        // the placeholder never meets the rollout (it is not the registered xCell unit).
         unitProfileId: (resolvedIdentityMachineId !== null && placeholderIds.has(resolvedIdentityMachineId)) ? null : allowed.unitProfileId,
         deviceId: resolvedIdentityMachineId,
         receipt: createReceiptLookup(supabase as unknown as MachineDb, input.sessionId, bareKey),

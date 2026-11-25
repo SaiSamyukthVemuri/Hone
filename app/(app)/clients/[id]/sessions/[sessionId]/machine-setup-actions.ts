@@ -500,7 +500,7 @@ export async function loadMachineSetupContext(input: {
     }
   }
 
-  // THE ROUTE (HON-119): MultiPlex is offered to EVERY studio once the contract is published; it needs no registered machine, no xCell history
+  // THE ROUTE: MultiPlex is offered to EVERY studio once the contract is published; it needs no registered machine, no xCell history
   // and no rollout. The rollout above only decides whether a REGISTERED xCell unit may be the route's unit. A failed read means no route.
   const purProfile = currentProfile(catalogue, XCELL_PUR_PROFILE_ID);
   let unspecifiedUnits: StudioDevice[] = [];
@@ -976,7 +976,7 @@ export async function recordReadingsAction(input: {
 
   const db = await machineDb();
   const inventory = await listStudioDevices(db, scope.studioId);
-  // HON-119: a saved MultiPlex area may hold the studio's "Machine not specified" placeholder, which no inventory list carries.
+  // a saved MultiPlex area may hold the studio's "Machine not specified" placeholder, which no inventory list carries.
   const placeholders = await listUnspecifiedMachines(db, scope.studioId);
   const device = [...inventory.devices, ...(placeholders.ok ? placeholders.value : [])].find((d) => d.deviceId === input.machineId);
   if (!device) {
@@ -990,7 +990,7 @@ export async function recordReadingsAction(input: {
   // A block that already stores this unit is unaffected. Asked before the readings are validated: a refusal here sends nothing.
   const rolloutOk = await guardXcellRollout(db, {
     studioId: scope.studioId,
-    // HON-119: the placeholder never meets the platform rollout (that belongs to the registered xCell unit).
+    // the placeholder never meets the platform rollout (that belongs to the registered xCell unit).
     unitProfileId: device.isUnspecified === true ? null : device.profileId,
     deviceId: input.machineId,
     blockId: input.blockId,
@@ -1212,7 +1212,7 @@ export async function recordSetupSubmissionAction(input: {
 
   const db = await machineDb();
   const inventory = await listStudioDevices(db, scope.studioId);
-  // HON-119: a saved MultiPlex area may hold the studio's "Machine not specified" placeholder, which no inventory list carries.
+  // a saved MultiPlex area may hold the studio's "Machine not specified" placeholder, which no inventory list carries.
   const placeholders = await listUnspecifiedMachines(db, scope.studioId);
   const device = [...inventory.devices, ...(placeholders.ok ? placeholders.value : [])].find((d) => d.deviceId === input.machineId);
   if (!device) {
@@ -1226,7 +1226,7 @@ export async function recordSetupSubmissionAction(input: {
   // A block that already stores this unit is unaffected. Asked before the readings are validated: a refusal here sends nothing.
   const rolloutOk = await guardXcellRollout(db, {
     studioId: scope.studioId,
-    // HON-119: the placeholder never meets the platform rollout (that belongs to the registered xCell unit).
+    // the placeholder never meets the platform rollout (that belongs to the registered xCell unit).
     unitProfileId: device.isUnspecified === true ? null : device.profileId,
     deviceId: input.machineId,
     blockId: input.blockId,

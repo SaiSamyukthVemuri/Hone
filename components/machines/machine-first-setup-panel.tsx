@@ -245,7 +245,7 @@ export type MachineFirstSetupPanelProps = {
    * settings returns to the existing workflow. Null means nothing about the xCell choice changes.
    */
   multiplexRoute?: { deviceId: string; modeKey: string; unspecified?: boolean } | null;
-  /** HON-119: the pending MultiPlex request is the click that opened this panel, so it is applied on mount. */
+  /** the pending MultiPlex request is the click that opened this panel, so it is applied on mount. */
   applyRequestOnMount?: boolean;
   multiplexReadingsHost?: HTMLDivElement | null;
   /**
@@ -623,7 +623,7 @@ function MachineFirstSetupPanelImpl({
   // to a studio and the filter is studio-scoped. Without identity the panel
   // shows the catalogue status and nothing else, rather than guessing.
   const selectable = scope ? selectableDevices(scope, devices, catalogue) : [];
-  // HON-119: the MultiPlex route's "Machine not specified" placeholder can be CHOSEN (by the Mode control) but is never LISTED: the picker, its
+  // the MultiPlex route's "Machine not specified" placeholder can be CHOSEN (by the Mode control) but is never LISTED: the picker, its
   // count and its hints read `selectable`, which excludes it.
   const routeUnit = (() => {
     if (!scope || !multiplexRoute?.unspecified) return null;

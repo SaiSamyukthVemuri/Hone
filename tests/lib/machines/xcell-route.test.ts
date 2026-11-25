@@ -19,7 +19,7 @@ const base = {
   publishedModes: ["multiplex"] as string[] | null,
 };
 
-describe("HON-119: MultiPlex is offered to EVERY studio once it can really be saved", () => {
+describe("MultiPlex is offered to EVERY studio once it can really be saved", () => {
   it("a studio with NO registered machine, NO xCell history and the rollout off still gets the route, on the placeholder", () => {
     const r = xcellMultiplexRoute({ ...base, legacyOffered: false, registeredUnitAllowed: false, devices: [] });
     expect(r).toEqual({ deviceId: "unspecified:xcell-pur", modeKey: "multiplex", unspecified: true });

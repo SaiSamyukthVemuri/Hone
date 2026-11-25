@@ -296,7 +296,7 @@ export async function listStudioMachines(
 
   if (error) return { ok: false, error: fail(error, "Could not read machines.") };
 
-  // HON-119: the "Machine not specified" placeholder is never a registered unit: not in a picker, a Settings list, a count or a default.
+  // the "Machine not specified" placeholder is never a registered unit: not in a picker, a Settings list, a count or a default.
   const rows = ((data ?? []) as MachineRow[]).filter((r) => r.is_unspecified !== true);
   return {
     ok: true,
