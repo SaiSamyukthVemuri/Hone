@@ -84,6 +84,7 @@ describe("Save visit while the first MultiPlex choice is loading", () => {
 
     await act(async () => { release(ZERO()); });
     expect(multiplexPill().getAttribute("aria-pressed")).toBe("true");
+    expect(host!.querySelector('[role="alert"]'), "the Loading line goes once the load is done").toBeNull();
     await saveVisit();
     expect(create).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(create.mock.calls[0])).toContain("multiplex");
