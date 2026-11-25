@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, type MouseEvent, type ReactNode } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { PendingLink } from "@/components/pending-link";
 import type { OverviewSection } from "@/lib/settings/overview";
 import { focusIsNowhere, focusSettingsHeading } from "./focus-heading";
@@ -23,6 +23,7 @@ const selected = "border-l-2 border-fg bg-surface-sunken font-medium";
 
 export function SettingsShell({ sections, reachable = [], studioName, roleLabel, children }: Props) {
   const pathname = usePathname() ?? "";
+  const query = useSearchParams()?.toString() ?? "";
   const reachableHere = reachable.find(link => pathname === link.href || pathname.startsWith(link.href + "/"));
   const grid = useRef<HTMLDivElement>(null);
   const isOverview = pathname === "/settings";
@@ -79,7 +80,7 @@ export function SettingsShell({ sections, reachable = [], studioName, roleLabel,
     update();
     window.addEventListener("hashchange", update);
     return () => window.removeEventListener("hashchange", update);
-  }, [pathname]);
+  }, [pathname, query]);
 
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) => {
@@ -133,10 +134,10 @@ export function SettingsShell({ sections, reachable = [], studioName, roleLabel,
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     const anchor = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a[href]") : null;
     if (!anchor?.closest("nav,dialog")) return;
-    if (popup.current?.open) popup.current.close();
-    if (anchor.pathname === pathname) {
+    if (anchor.pathname === pathname && anchor.search === window.location.search) {
+      if (popup.current?.open) popup.current.close();
       setHash(anchor.hash);
-      if (!anchor.hash && anchor.search === window.location.search) {
+      if (!anchor.hash) {
         requestAnimationFrame(() => focusSettingsHeading(content.current, document.activeElement));
       }
     }

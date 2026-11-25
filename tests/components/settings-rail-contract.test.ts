@@ -7,6 +7,7 @@ import type { OverviewSection } from "@/lib/settings/overview";
 const nav = vi.hoisted(() => ({ pathname: "/settings" }));
 vi.mock("next/navigation", () => ({
   usePathname: () => nav.pathname,
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), prefetch: vi.fn() }),
 }));
 vi.mock("@/components/pending-link", () => ({
