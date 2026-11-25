@@ -377,4 +377,64 @@ describe("MultiPlex in a studio with no registered machine", () => {
     expect(legacyFieldsShown()).toBe(true);
     expect(host!.querySelector('[data-testid="machine-chosen"]')).toBeNull();
   });
+
+  // A MULTIPLEX CLICK ON A PANEL THAT WAS NEVER OPENED STARTS AN ASYNC LOAD. A Save pressed while it runs would read the previous machine and save a
+  // legacy area, so Save is held (and says why); a failed load refuses Save with a plain message and keeps the draft.
+  const saveButton = () => host!.querySelector<HTMLButtonElement>('[data-testid="save-treatment-area"]')!;
+  const createAction = async () => (await import("@/app/(app)/clients/[id]/sessions/[sessionId]/block-actions")).createTreatmentAreaWithEntryAction as unknown as ReturnType<typeof vi.fn>;
+
+  it("Save is HELD while the MultiPlex load is in flight: the button is disabled and says so, and no save request is sent; after release the area saves as MultiPlex, never legacy", async () => {
+    const create = await createAction();
+    create.mockClear();
+    create.mockResolvedValue({ ok: true, blockId: "new-b1" });
+    let release: (v: unknown) => void = () => undefined;
+    actions.loadMachineSetupContext.mockImplementationOnce(() => new Promise((r) => { release = r; }) as never);
+    await mount(null, { deviceId: PLACEHOLDER.deviceId });
+    await clickMultiplex();
+    expect(saveButton().disabled).toBe(true);
+    expect(saveButton().textContent).toContain("Loading MultiPlex");
+    await act(async () => { saveButton().click(); saveButton().form?.requestSubmit?.(); });
+    expect(create, "no save request while the load is held").not.toHaveBeenCalled();
+
+    await act(async () => { release(ZERO()); });
+    expect(multiplexPill()!.getAttribute("aria-pressed")).toBe("true");
+    expect(saveButton().disabled).toBe(false);
+    expect(saveButton().textContent).not.toContain("Loading MultiPlex");
+    await act(async () => { saveButton().click(); });
+    expect(create).toHaveBeenCalledTimes(1);
+    const sent = JSON.stringify(create.mock.calls[0]);
+    expect(sent).toContain("multiplex");
+    expect(sent).not.toMatch(/"mode":"(thermo|blend|galv)"/);
+  });
+
+  it("a FAILED MultiPlex load never saves a legacy area: Save refuses with a plain message and the draft stays; picking a legacy mode clears it", async () => {
+    const create = await createAction();
+    create.mockClear();
+    actions.loadMachineSetupContext.mockImplementationOnce((() => Promise.reject(new Error("network"))) as never);
+    await mount(null, { deviceId: PLACEHOLDER.deviceId });
+    await clickPill("Thermolysis");
+    await clickMultiplex();
+    expect(multiplexPill()!.getAttribute("aria-pressed")).toBe("false");
+    await act(async () => { saveButton().click(); });
+    expect(create, "no save request after a failed load").not.toHaveBeenCalled();
+    expect(host!.textContent).toContain("MultiPlex could not be loaded");
+    expect(host!.textContent).toContain("Machine frequency");
+
+    await clickPill("Blend");
+    await act(async () => { saveButton().click(); });
+    expect(host!.textContent).not.toContain("MultiPlex could not be loaded");
+  });
+
+  it("a failed load is retried by a NEW click, not by the failure itself", async () => {
+    actions.loadMachineSetupContext.mockClear();
+    actions.loadMachineSetupContext.mockImplementationOnce((() => Promise.reject(new Error("network"))) as never);
+    await mount(null, { deviceId: PLACEHOLDER.deviceId });
+    await clickMultiplex();
+    expect(actions.loadMachineSetupContext).toHaveBeenCalledTimes(1);
+    ctxBox.ctx = ZERO();
+    await clickMultiplex();
+    expect(actions.loadMachineSetupContext).toHaveBeenCalledTimes(2);
+    expect(multiplexPill()!.getAttribute("aria-pressed")).toBe("true");
+    expect(saveButton().disabled).toBe(false);
+  });
 });

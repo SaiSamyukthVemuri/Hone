@@ -52,6 +52,36 @@ const pill = (page: Page, label: string) => page.locator("button", { hasText: ne
 const draft = (page: Page) => page.getByTestId("machine-setting-draft").locator("input");
 const V = { el: "12", slowDur: "1.85", slowInt: "30", flashDur: "0.033", flashInt: "60", pulses: "3" };
 
+// A saved MultiPlex area reopens as MultiPlex with the exact readings, and the next visit recalls them as reference.
+async function reopenAndRecall(page: Page, s: { clientId: string; seed: { studioId: string } }, sessionId: string, blockId: string) {
+  await expect.poll(async () => Object.keys(await readingsOf(blockId)).length, { timeout: T }).toBeGreaterThan(0);
+  const r = await readingsOf(blockId);
+  expect(r["slow_thermolysis.slow_thermolysis_duration"]).toBe("1.85");
+  expect(r["snap.snap_duration"]).toBe("0.033");
+  expect(r["snap.snap_count"]).toBe("3");
+  expect("displayed_ul" in r, "blank stays blank").toBe(false);
+  await page.reload();
+  const card = page.getByTestId(`area-section-${blockId}`);
+  await expect(card.getByTestId("machine-recorded-setups")).toBeVisible({ timeout: T });
+  await expect(card).toContainText("1.85");
+  await expect(card).toContainText("0.033");
+  await expect(card).toContainText(/Pulse count\s*3/);
+  // The click can land before the page has hydrated (WebKit, right after a reload); retry it until the editor is really open.
+  await expect(async () => {
+    await page.getByTestId(`edit-area-${blockId}`).click({ timeout: 3000 });
+    await expect(page.getByTestId("mode-multiplex")).toHaveAttribute("aria-pressed", "true", { timeout: 3000 });
+  }).toPass({ timeout: T });
+  await expect(page.getByTestId("machine-recorded-setups")).toContainText("0.033");
+  await page.goto(`/clients/${s.clientId}/sessions/${sessionId}`);
+  await sql("update public.sessions set started_at = now() - interval '2 hours' where id = $1", [sessionId]);
+  const next = await startSession(page, s.clientId);
+  await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+  await page.getByTestId("machine-first-open").click({ timeout: T });
+  await expect(page.getByTestId("machine-prior-setup")).toContainText("1.85", { timeout: T });
+  await expect(page.getByTestId("machine-prior-setup")).toContainText("0.033");
+  expect((await blocksOf(next)).length, "nothing is written for the new visit").toBe(0);
+}
+
 const DEVICES = [
   { name: "desktop 1280", viewport: { width: 1280, height: 800 }, isMobile: false, hasTouch: false, only: "chromium" },
   { name: "iPhone-size 390 (Chromium emulation)", viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, only: "chromium" },
@@ -158,6 +188,84 @@ for (const device of DEVICES) {
       expect((await blocksOf(next)).length, "nothing is written for the new visit until it is entered").toBe(0);
       expect((await sql<{ n: number }>(`select count(*)::int n from public.studio_machines where studio_id=$1 and not is_unspecified`, [s.seed.studioId]))[0]!.n, "still zero registered machines").toBe(0);
       await noOverflow(page);
+    });
+
+    // SAVE PRESSED THE MOMENT MULTIPLEX IS PICKED, before the Machine panel's first load can have finished: the form holds Save until the choice
+    // resolves, so a legacy area is never written. Whatever was pressed early, every saved area is MultiPlex with its readings, none is legacy.
+    test("pressing Save right after picking MultiPlex never saves a legacy area", async ({ page }) => {
+      const s = await seedZeroMachineStudio();
+      await loginByMagicLink(page, s.member.email);
+      const sessionId = await startSession(page, s.clientId);
+      await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+      await page.getByRole("button", { name: "Chin", exact: true }).click();
+      await page.getByTestId("laterality-Chin-left").click();
+      await pill(page, "Thermolysis").click();
+      await page.locator("label", { hasText: "Thermolysis intensity" }).locator("input").first().fill("42");
+      await page.getByTestId("mode-multiplex").click();
+      // no wait: Save is pressed at once (the held button ignores it) and again after the choice has settled.
+      await page.getByTestId("save-treatment-area").click({ force: true, timeout: T }).catch(() => undefined);
+      expect((await blocksOf(sessionId)).filter((b) => b.mode !== null).length, "no legacy area was written by the early Save").toBe(0);
+      await expect(page.getByTestId("mode-multiplex")).toHaveAttribute("aria-pressed", "true", { timeout: T });
+      await expect(page.getByTestId("save-treatment-area")).toBeEnabled({ timeout: T });
+      await expect(draft(page)).toHaveCount(8, { timeout: T });
+      await draft(page).nth(0).fill("12");
+      await draft(page).nth(2).fill(V.slowDur);
+      await draft(page).nth(3).fill(V.slowInt);
+      await draft(page).nth(4).fill(V.flashDur);
+      await draft(page).nth(5).fill(V.flashInt);
+      await draft(page).nth(6).fill("3");
+      await page.getByTestId("save-treatment-area").click({ timeout: T });
+      let blocks: Awaited<ReturnType<typeof blocksOf>> = [];
+      await expect.poll(async () => (blocks = await blocksOf(sessionId)).length, { timeout: T }).toBe(1);
+      expect(blocks[0], "the saved area is MultiPlex on the placeholder, no legacy mode").toMatchObject({ machine_profile_id: "dectro-apilus:xcell-pur", machine_mode_key: "multiplex", mode: null });
+      const r = await (async () => { for (let i = 0; i < 20; i++) { const x = await readingsOf(blocks[0]!.id); if (Object.keys(x).length) return x; await page.waitForTimeout(500); } return {}; })();
+      expect(r["snap.snap_count"]).toBe("3");
+      expect(r["displayed_el"]).toBe("12");
+      await reopenAndRecall(page, s, sessionId, blocks[0]!.id);
+    });
+
+    // A FAILED LOAD: the first MultiPlex choice cannot load (the request is refused), Save is refused with a plain message, NOTHING is written, and the
+    // typed values are still on the screen. Picking MultiPlex again once the network is back loads it, and the same draft then saves as MultiPlex.
+    test("a failed MultiPlex load saves nothing, keeps the typed values, and the retry saves as MultiPlex", async ({ page }) => {
+      const s = await seedZeroMachineStudio();
+      await loginByMagicLink(page, s.member.email);
+      const sessionId = await startSession(page, s.clientId);
+      await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+      await page.getByRole("button", { name: "Chin", exact: true }).click();
+      await page.getByTestId("laterality-Chin-left").click();
+      await pill(page, "Thermolysis").click();
+      const intensity = page.locator("label", { hasText: "Thermolysis intensity" }).locator("input").first();
+      await intensity.fill("42");
+      let refuse = true;
+      await page.route("**/*", async (route) => {
+        const req = route.request();
+        if (refuse && req.method() === "POST" && req.headers()["next-action"]) { await route.abort("failed").catch(() => undefined); return; }
+        await route.continue().catch(() => undefined);
+      });
+      await page.getByTestId("mode-multiplex").click();
+      await expect(page.getByTestId("mode-multiplex")).toHaveAttribute("aria-pressed", "false");
+      await page.getByTestId("save-treatment-area").click({ timeout: T });
+      await expect(page.locator("body")).toContainText("MultiPlex could not be loaded", { timeout: T });
+      expect((await blocksOf(sessionId)).length, "nothing was saved, legacy or otherwise").toBe(0);
+      await expect(intensity, "the typed value is still there").toHaveValue("42");
+
+      refuse = false;
+      // The network is back: drop the interception entirely (a pass-through route is itself a variable in WebKit) before the retry.
+      await page.unroute("**/*");
+      await page.getByTestId("mode-multiplex").click();
+      await expect(page.getByTestId("mode-multiplex")).toHaveAttribute("aria-pressed", "true", { timeout: T });
+      await expect(draft(page)).toHaveCount(8, { timeout: T });
+      await draft(page).nth(0).fill("12");
+      await draft(page).nth(2).fill(V.slowDur);
+      await draft(page).nth(3).fill(V.slowInt);
+      await draft(page).nth(4).fill(V.flashDur);
+      await draft(page).nth(5).fill(V.flashInt);
+      await draft(page).nth(6).fill("3");
+      await page.getByTestId("save-treatment-area").click({ timeout: T });
+      let blocks: Awaited<ReturnType<typeof blocksOf>> = [];
+      await expect.poll(async () => (blocks = await blocksOf(sessionId)).length, { timeout: T }).toBe(1);
+      expect(blocks[0]).toMatchObject({ machine_profile_id: "dectro-apilus:xcell-pur", machine_mode_key: "multiplex", mode: null });
+      await reopenAndRecall(page, s, sessionId, blocks[0]!.id);
     });
   });
 }

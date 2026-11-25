@@ -63,6 +63,8 @@ export type MachineFirstSetupConnectedProps = {
   multiplexReadingsHost?: HTMLDivElement | null;
   multiplexRequest?: { seq: number; want: boolean } | null;
   onMultiplexRoute?: (route: { deviceId: string } | null) => void;
+  /** The load a MultiPlex click starts (the panel was never opened): the host holds Save while it runs and refuses it if it fails. */
+  onMultiplexLoad?: (state: "loading" | "done" | "failed") => void;
   /** The treatment block being charted, from the host form. */
   blockId?: string | null;
   /**
@@ -234,6 +236,7 @@ export function MachineFirstSetupConnected({
   multiplexReadingsHost,
   multiplexRequest = null,
   onMultiplexRoute,
+  onMultiplexLoad,
 }: MachineFirstSetupConnectedProps) {
   // WHAT THIS AREA HAS PERSISTED, tracked from this panel's own successful
   // identity writes. The prop is the identity the page
@@ -252,7 +255,7 @@ export function MachineFirstSetupConnected({
   // A hook: called here, before any early return, never conditionally. Read by the one-choice preselect below.
   const isNewView = useChartingView() === "new";
 
-  const open = useCallback(async () => {
+  const open = useCallback(async (): Promise<boolean> => {
     setState("loading");
     try {
       const loader =
@@ -269,10 +272,12 @@ export function MachineFirstSetupConnected({
       // Reported where the context ARRIVES, not from an effect: the wrapper keeps its single open-on-saved-identity effect.
       onMultiplexRoute?.(loaded.multiplexRoute ? { deviceId: loaded.multiplexRoute.deviceId } : null);
       setState("idle");
+      return true;
     } catch {
       // Charting below is unaffected by a failed identity read, so this is
       // reported in place rather than escalated.
       setState("failed");
+      return false;
     }
   }, [load, clientId, sessionId, blockId]);
 
@@ -293,11 +298,16 @@ export function MachineFirstSetupConnected({
   // the MultiPlex pill sits in the host's Mode control from the first visit, BEFORE this panel has loaded. A click on it opens the panel
   // (the same load "Choose machine" does) and the panel then applies THAT request on mount, instead of treating it as already handled.
   const requestBeforeOpenRef = useRef<number | null>(null);
+  // THE LAST REQUEST THAT STARTED A LOAD, so a failed load is retried by a NEW click only (never by the state change itself).
+  const loadedForSeqRef = useRef(0);
   useEffect(() => {
     if (!multiplexRequest || ctx !== null) return;
-    if (multiplexRequest.want && state === "idle") {
+    if (multiplexRequest.want && (state === "idle" || state === "failed") && multiplexRequest.seq !== loadedForSeqRef.current) {
+      loadedForSeqRef.current = multiplexRequest.seq;
       requestBeforeOpenRef.current = multiplexRequest.seq;
-      void open();
+      // The host holds Save until this load settles: a Save pressed now would otherwise read the previous machine and save a legacy area.
+      onMultiplexLoad?.("loading");
+      void open().then((ok) => onMultiplexLoad?.(ok ? "done" : "failed"));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [multiplexRequest, ctx, state]);

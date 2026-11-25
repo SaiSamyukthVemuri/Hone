@@ -1189,6 +1189,9 @@ describe("switching machine or mode clears the collected draft", () => {
     // A saved area's machine write in flight. Not a create-mode flag: it is released in a
     // `finally` the moment the write settles, success or refusal, so it can never strand Save.
     "identityWritePending",
+    // The load a MultiPlex click starts. Not a create-mode flag: `open()` catches its own failure and always settles, and a failed load
+    // enables Save again (it then refuses with a message), so it cannot strand the button.
+    "multiplexLoad",
   ];
   const saveDisabledIdentifiers = (expr: string) =>
     [

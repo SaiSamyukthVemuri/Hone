@@ -596,6 +596,9 @@ export function BlockSetupForm({
   const [multiplexReadingsHost, setMultiplexReadingsHost] = useState<HTMLDivElement | null>(null);
   const [multiplexRoute, setMultiplexRoute] = useState<{ deviceId: string } | null>(multiplexOffer);
   const [multiplexRequest, setMultiplexRequest] = useState<{ seq: number; want: boolean } | null>(null);
+  // THE LOAD A MULTIPLEX CLICK STARTS WHEN THE MACHINE PANEL WAS NEVER OPENED. While it runs, Save is held (a Save now would read the previous
+  // machine and save a legacy area); if it fails, Save refuses with a plain message and keeps the draft, until she picks MultiPlex again or a mode.
+  const [multiplexLoad, setMultiplexLoad] = useState<"loading" | "failed" | null>(null);
   // THE SAVED MACHINE FOLLOWS THE PANEL'S WRITES (Codex P2): once a machine change is written, the panel's own written identity is the
   // record, not the block prop this form first rendered with. `undefined` = nothing written yet, so the prop still stands.
   const [writtenDeviceId, setWrittenDeviceId] = useState<string | null | undefined>(undefined);
@@ -1477,6 +1480,7 @@ export function BlockSetupForm({
   const blockVersion = block ? heldVersion : null;
   const saveBlocked =
     pending ||
+    multiplexLoad === "loading" ||
     resume.state === "checking" ||
     resume.state === "saved" ||
     resumeChoicePending ||
@@ -1498,12 +1502,14 @@ export function BlockSetupForm({
   // THE ONE SAVE. The Save button and Save visit both run it, so there is ONE path (same gates, same retry key). It returns what happened on
   // EVERY exit: a validation refusal, a hold, a refusal, a lost answer or a save, never a promise that stays pending.
   function runSave(): Promise<SaveOutcome> {
-    if (saveBlocked) return Promise.resolve({ status: "held", message: "This area is not ready to save." });
+    if (saveBlocked) return Promise.resolve({ status: "held", message: multiplexLoad === "loading" ? "Loading MultiPlex…" : "This area is not ready to save." });
     const fail = (message: string): Promise<SaveOutcome> => {
       setError(message);
       return Promise.resolve({ status: "failed", message });
     };
     setError(null);
+    // A MULTIPLEX CHOICE THAT COULD NOT LOAD: saving now would write the previous machine's (legacy) area. Refuse, keep the draft.
+    if (multiplexLoad === "failed") return fail("MultiPlex could not be loaded, so nothing was saved. Pick MultiPlex again, or choose another mode.");
     // THE MACHINE DRAFT BLOCKS THE SAVE WHEN IT IS HALF-FINISHED, and says
     // which group and why. Skipping it would discard numbers she typed;
     // sending it would be refused by the command after a round trip.
@@ -2069,6 +2075,7 @@ export function BlockSetupForm({
         onKindChange={onKindChange}
         multiplexRequest={multiplexRequest}
         onMultiplexRoute={setMultiplexRoute}
+        onMultiplexLoad={(st) => setMultiplexLoad(st === "done" ? null : st)}
         multiplexReadingsHost={multiplexReadingsHost}
         onSavedDeviceChange={setWrittenDeviceId}
         onIdentityDraft={block ? undefined : onIdentityDraft}
@@ -2337,6 +2344,7 @@ export function BlockSetupForm({
                   else update("mode", selected ? "" : m.value);
                   // Leaving MultiPlex returns the area to the existing xCell workflow.
                   if (multiplexSelected) setMultiplexRequest((r) => ({ seq: (r?.seq ?? 0) + 1, want: false }));
+                  setMultiplexLoad(null);
                 }}
                 className={`rounded-full border px-4 py-2 text-sm transition ${
                   selected
@@ -2354,7 +2362,10 @@ export function BlockSetupForm({
               data-testid="mode-multiplex"
               aria-pressed={multiplexSelected}
               disabled={multiplexSaved || draftFrozen || identityWritePending}
-              onClick={() => setMultiplexRequest((r) => ({ seq: (r?.seq ?? 0) + 1, want: !multiplexSelected }))}
+              onClick={() => {
+                if (multiplexSelected) setMultiplexLoad(null);
+                setMultiplexRequest((r) => ({ seq: (r?.seq ?? 0) + 1, want: !multiplexSelected }));
+              }}
               className={`rounded-full border px-4 py-2 text-sm transition ${
                 multiplexSelected
                   ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
@@ -2775,12 +2786,14 @@ export function BlockSetupForm({
             // here: there, pressing Save again unchanged IS the recovery.
             revisionUnresolved ||
             // And while a saved area's machine choice is being written.
-            identityWritePending
+            identityWritePending ||
+            // And while the MultiPlex choice is still loading (a Save now would save the previous machine).
+            multiplexLoad === "loading"
           }
           data-testid="save-treatment-area"
           className="rounded-md bg-neutral-900 px-5 py-3 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
         >
-          {pending ? "Saving…" : "Save settings block"}
+          {pending ? "Saving…" : multiplexLoad === "loading" ? "Loading MultiPlex…" : "Save settings block"}
         </button>
         {/*
           CANCEL IS FROZEN WHILE THE SAVE'S OUTCOME IS UNKNOWN
