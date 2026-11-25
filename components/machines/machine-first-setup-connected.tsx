@@ -255,6 +255,11 @@ export function MachineFirstSetupConnected({
   // A hook: called here, before any early return, never conditionally. Read by the one-choice preselect below.
   const isNewView = useChartingView() === "new";
 
+  // EVERY LOAD REPORTS ITS OUTCOME, however it was started (a MultiPlex click, "Choose machine", a saved identity): a MultiPlex click that adopts a
+  // load already in flight is answered by THAT load, so the report cannot live only on the path a MultiPlex click starts. The host ignores a report
+  // unless its latest request still wants MultiPlex. Read through a ref so a changing callback never re-creates `open`.
+  const onMultiplexLoadRef = useRef(onMultiplexLoad);
+  onMultiplexLoadRef.current = onMultiplexLoad;
   const open = useCallback(async (): Promise<boolean> => {
     setState("loading");
     try {
@@ -272,11 +277,14 @@ export function MachineFirstSetupConnected({
       // Reported where the context ARRIVES, not from an effect: the wrapper keeps its single open-on-saved-identity effect.
       onMultiplexRoute?.(loaded.multiplexRoute ? { deviceId: loaded.multiplexRoute.deviceId } : null);
       setState("idle");
+      // A load that resolves WITHOUT a MultiPlex route (the contract could not be read) cannot apply MultiPlex: that is a failed MultiPlex load, never "done".
+      onMultiplexLoadRef.current?.(loaded.multiplexRoute ? "done" : "failed");
       return true;
     } catch {
       // Charting below is unaffected by a failed identity read, so this is
       // reported in place rather than escalated.
       setState("failed");
+      onMultiplexLoadRef.current?.("failed");
       return false;
     }
   }, [load, clientId, sessionId, blockId]);
@@ -307,7 +315,7 @@ export function MachineFirstSetupConnected({
       requestBeforeOpenRef.current = multiplexRequest.seq;
       // The host holds Save until this load settles: a Save pressed now would otherwise read the previous machine and save a legacy area.
       onMultiplexLoad?.("loading");
-      void open().then((ok) => onMultiplexLoad?.(ok ? "done" : "failed"));
+      void open();
     } else if (multiplexRequest.want && state !== "idle" && state !== "failed" && multiplexRequest.seq !== loadedForSeqRef.current) {
       // A NEWER click while the load it replaced is still in flight: that load answers for it too (the host drops answers to anything but the latest
       // request), so adopt the new request and hold Save again.

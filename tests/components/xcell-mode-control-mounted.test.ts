@@ -484,4 +484,43 @@ describe("MultiPlex in a studio with no registered machine", () => {
     expect(multiplexPill()!.getAttribute("aria-pressed")).toBe("true");
     expect(saveButton().disabled).toBe(false);
   });
+
+  // EVERY LOAD REPORTS ITS OUTCOME. "Choose machine" starts the load; a MultiPlex click during it ADOPTS that load, so the outcome must come from the
+  // load itself, not from the path a MultiPlex click starts, or the hold below never lifts.
+  it("MultiPlex clicked while a 'Choose machine' load is running: when that load finishes the hold lifts, MultiPlex is applied and the area saves as MultiPlex", async () => {
+    const create = await createAction();
+    create.mockClear();
+    create.mockResolvedValue({ ok: true, blockId: "new-b1" });
+    let release: (v: unknown) => void = () => undefined;
+    actions.loadMachineSetupContext.mockImplementationOnce(() => new Promise((r) => { release = r; }) as never);
+    await mount(null, { deviceId: PLACEHOLDER.deviceId });
+    await openPanel();
+    await clickMultiplex();
+    expect(saveButton().disabled, "held while the adopted load runs").toBe(true);
+    await act(async () => { release(ZERO()); });
+    expect(multiplexPill()!.getAttribute("aria-pressed")).toBe("true");
+    expect(saveButton().disabled, "the hold lifts when the load the click adopted finishes").toBe(false);
+    expect(saveButton().textContent).not.toContain("Loading MultiPlex");
+    await act(async () => { saveButton().click(); });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(create.mock.calls[0])).toContain("multiplex");
+  });
+
+  // A LOAD THAT RESOLVES BUT CANNOT APPLY MULTIPLEX (no route: the contract could not be read) is a FAILED MultiPlex load: it must not release the hold
+  // into a Save that records the previous legacy mode without a word.
+  it("a load that resolves with NO MultiPlex route is a failed load: Save refuses with the plain message and sends nothing; choosing another mode clears it", async () => {
+    const create = await createAction();
+    create.mockClear();
+    create.mockResolvedValue({ ok: true, blockId: "new-b1" });
+    actions.loadMachineSetupContext.mockImplementationOnce((async () => ({ ...ZERO(), multiplexRoute: null })) as never);
+    await mount(null, { deviceId: PLACEHOLDER.deviceId });
+    await clickMultiplex();
+    expect(multiplexPill()?.getAttribute("aria-pressed") ?? "false").toBe("false");
+    await act(async () => { saveButton().click(); });
+    expect(create, "nothing is saved while MultiPlex is not applied").not.toHaveBeenCalled();
+    expect(host!.textContent).toContain("MultiPlex could not be loaded");
+    await clickPill("Thermolysis");
+    await act(async () => { saveButton().click(); });
+    expect(create, "another mode is a deliberate choice and saves").toHaveBeenCalledTimes(1);
+  });
 });
