@@ -146,21 +146,23 @@ aside{background:#f3f5f3;padding:29px 14px 16px;position:sticky;align-self:start
 @media print{.history-controlrow,.history-top,.history-visible,.history-listhead label,.history-pages,.history-open,.history-empty button{display:none!important}.history-print-list{display:block!important}.history-group{break-inside:auto;overflow:visible}.history-group tr{break-inside:avoid}.history-group h3{break-after:avoid}.history-group thead{display:table-header-group}.history-sum{break-inside:avoid}}
 @media(min-width:761px){.history-group table{table-layout:fixed;width:100%}.history-group th:nth-child(1){width:20%}.history-group th:nth-child(2){width:30%}.history-group th:nth-child(3){width:23%}.history-group th:nth-child(4){width:14%}.history-group th:nth-child(5){width:13%}}
 
-</style></head><body><a class="skip" href="#main" onclick="event.preventDefault();document.querySelector('#main').focus()">Skip to content</a><header class="top"><div class="topin"><strong class="logo">Hone</strong><div class="global"><span>Dashboard</span><span>Clients</span><span>Calendar</span><span>Waitlist</span><span>Records</span><b>Business</b></div><div class="account"><span class="avatar">JL</span>Jordan</div></div></header><div class="layout"><aside><label class="mobilebiz">Business <select id="mobpage" aria-label="Business page"></select></label><p class="railtitle">Business</p><nav class="rail" id="rail" aria-label="Business pages"></nav><div class="studio"><strong>Example Studio</strong>Toronto · CAD</div></aside><main class="page" id="main" tabindex="-1"></main></div><dialog class="dialog" id="modal" aria-label="Preview details"></dialog><div aria-live="polite" id="feedback"></div><script>
+</style></head><body><a class="skip" href="#main" onclick="event.preventDefault();document.querySelector('#main').focus()">Skip to content</a><header class="top"><div class="topin"><strong class="logo">Hone</strong><div class="global"><span>Dashboard</span><span>Clients</span><span>Calendar</span><span>Waitlist</span><span>Records</span><b>Business</b></div><div class="account"><span class="avatar">JL</span>Jordan</div></div></header><div class="layout"><aside><label class="mobilebiz">Business <select id="mobpage" aria-label="Business page"></select></label><p class="railtitle">Business</p><nav class="rail" id="rail" aria-label="Business pages"></nav><div class="studio"><strong>Example Studio</strong>Example City · CAD</div></aside><main class="page" id="main" tabindex="-1"></main></div><dialog class="dialog" id="modal" aria-label="Preview details"></dialog><div aria-live="polite" id="feedback"></div><script>
 const $=s=>document.querySelector(s), esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])), money=(v,d=2)=>new Intl.NumberFormat('en-CA',{style:'currency',currency:'CAD',minimumFractionDigits:d,maximumFractionDigits:d}).format(v),sum=(a,f)=>a.reduce((s,r)=>s+f(r),0);
 const icons={analytics:'M3 20h18 M5 16l5-6 4 3 6-8',statements:'M5 3h14v18l-3-2-4 2-4-2-3 2z M8 8h8 M8 12h8',payments:'M3 6h18v13H3z M3 10h18 M6 15h4',capacity:'M3 7h5v13H3z M10 3h5v17h-5z M17 11h4v9h-4z',clock:'M12 3a9 9 0 1 0 .01 0 M12 7v5l3 2'};
 const icon=k=>'<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="'+icons[k]+'"/></svg>';
 const pages={home:'Overview',analytics:'Analytics',statements:'Statements',payments:'Outstanding payments',capacity:'Practice capacity'};
-const first=['Alex','Blair','Casey','Dana','Ellis','Frankie','Gale','Harper','Indy','Jamie','Kai','Lane','Morgan','Nico','Oakley','Parker','Quinn','Reese','Sage','Taylor','Avery','Bailey','Cameron','Drew','Emery','Finley','Gray','Hayden','Jules','Kendall','Lee','Micah','Noel','Paige','Robin','Sam','Terry','Val','Wren','Zoe'];
+const first=['Alex','Blair','Casey','Dana','Ellis','Frankie','Gale','Harper','Indy','Jamie','Kai','Lane','Morgan','Nico','Oakley','Parker','Quinn','Reese','Sage','Taylor','Avery','Bailey','Cameron','Drew','Emery','Finley','Gray','Hayden','Jules','Kendall','Lee','Micah','Noel','Paige','Robin','Skyler','Terry','Val','Wren','Zoe'];
 const last=['Bennett','Chen','Ellis','Foster','Grant','Hayes','Kim','Lane','Moore','Price','Reed','Scott','Vale','Walsh','Young'];
 const names=first.map((v,i)=>v+' '+last[(i*3)%last.length]);
-const novFees=[...Array(24).fill(150),...Array(21).fill(90),125,125,125,90,60,60];
-const days=[1,2,3,4,5,7,8,9,11,12,14,15,16,17,18,19,20,22,23];
+const novFees=[...Array(11).fill(135),...Array(22).fill(70),...Array(6).fill(95),...Array(3).fill(175),45,45];
+const days=[1,2,3,4,6,7,9,10,12,13,14,16,17,18,19,20];
 let visits=[];
-function build(m,n,fees,known,maxNames){for(let i=0;i<n;i++){let paid=i<known,fee=paid?fees[i]:i%3===0?90:null,day=paid?days[(i*7+Math.floor(i/9))%days.length]:23-Math.floor((i-known)/2);visits.push({id:m+'-'+i,m,name:names[i%maxNames],day,service:fee===null?'New client consultation':fee===150?'60 min electrolysis':'Electrolysis session',fee,paid:paid?fee:0,state:paid?'Paid':'Needs review',method:paid?(m==='November'&&i>=48?'E-transfer':'Card'):'',received:paid?'2026-'+(m==='November'?'11':'10')+'-'+String(day).padStart(2,'0'):'',time:['5:00 PM','3:55 PM','2:00 PM','12:40 PM'][i%4],operator:'Jordan',first:i%maxNames>=maxNames-8})}}
-build('November',59,novFees,51,40);build('October',39,[...Array(34).fill(110),220],35,28);
-visits.push({id:'old1',m:'October',name:names[4],day:29,service:'60 min electrolysis',fee:150,paid:0,state:'Money owed',method:'',received:'',time:'2:00 PM',operator:'Jordan'},{id:'old2',m:'October',name:names[7],day:28,service:'30 min electrolysis',fee:90,paid:0,state:'Money owed',method:'',received:'',time:'1:00 PM',operator:'Jordan'},{id:'old3',m:'October',name:names[10],day:27,service:'30 min electrolysis',fee:90,paid:0,state:'Processing',method:'Card',received:'',time:'2:00 PM',operator:'Jordan'});
-const REPORT_AS_OF = '2026-11-23';
+function build(m,n,fees,known,maxNames){for(let i=0;i<n;i++){let paid=i<known,fee=paid?fees[i]:i%3===0?70:null,day=paid?days[(i*7+Math.floor(i/9))%days.length]:20-Math.floor((i-known)/2);visits.push({id:m+'-'+i,m,name:names[i%maxNames],day,service:fee===null?'New client consultation':fee===135?'60 min electrolysis':'Electrolysis session',fee,paid:paid?fee:0,state:paid?'Paid':'Needs review',method:paid?((m==='November'&&i>=39)||(m==='October'&&i>=24)?'E-transfer':'Card'):'',received:paid?'2026-'+(m==='November'?'11':'10')+'-'+String(day).padStart(2,'0'):'',time:['5:00 PM','3:55 PM','2:00 PM','12:40 PM'][i%4],operator:'Jordan',first:i%maxNames>=maxNames-8})}}
+build('November',52,novFees,44,33);build('October',31,[...Array(5).fill(135),...Array(12).fill(70),...Array(7).fill(95),175,175,45],27,24);
+// One October visit is paid in November, so its collected-for-visit month and its receipt month differ.
+visits.find(r=>r.id==='October-3').received='2026-11-04';
+visits.push({id:'old1',m:'October',name:names[5],day:30,service:'60 min electrolysis',fee:135,paid:40,state:'Money owed',method:'Card',received:'2026-10-30',time:'2:00 PM',operator:'Jordan'},{id:'old2',m:'October',name:names[12],day:26,service:'30 min electrolysis',fee:70,paid:0,state:'Money owed',method:'',received:'',time:'1:00 PM',operator:'Jordan'},{id:'old3',m:'October',name:names[17],day:24,service:'45 min electrolysis',fee:95,paid:0,state:'Processing',method:'Card',received:'',time:'2:00 PM',operator:'Jordan'});
+const REPORT_AS_OF = '2026-11-20';
 const REPORT_FIRST_DAY = '2025-01-01';
 const reportMonths = Array.from({length:12},(_,n)=>new Date(Date.UTC(2026,n,1)).toLocaleString('en-CA',{month:'long',timeZone:'UTC'}));
 const reportPad = n=>String(n).padStart(2,'0');
@@ -214,7 +216,7 @@ function reportPeriod(s){
   }
   const monthText=reportTextDate(start,{month:'long',year:'numeric'});
   return {key,start,end,priorStart,priorEnd,currentMonth,isYear,buckets,title:({mtd:'Month to date',last:'Last month',ytd:'Year to date',month:monthText})[key],
-    label:periodLabel(start,end), priorLabel:periodLabel(priorStart,priorEnd),
+    collectedLabel:'Collected for visits in '+(isYear?start.slice(0,4):reportTextDate(start,{month:'long'})), label:periodLabel(start,end), priorLabel:periodLabel(priorStart,priorEnd),
     shortLabel:isYear?start.slice(0,4):shortMonth(start)+' '+start.slice(0,4),
     priorShortLabel:isYear?priorStart.slice(0,4):shortMonth(priorStart)+' '+priorStart.slice(0,4),
     rows:selectRows(start,end),previous:selectRows(priorStart,priorEnd),available:start>=REPORT_FIRST_DAY,priorAvailable:priorStart>=REPORT_FIRST_DAY};
@@ -223,7 +225,7 @@ function periodControls(s) {
   const params=periodParams(s), k=params.period;
   const button=(value,label)=>'<button type="button" aria-pressed="'+(k===value)+'" data-period="'+value+'">'+label+'</button>';
   const customLabel=k==='month'?reportTextDate(params.queryMonth+'-01',{month:'short',year:'numeric'}):'Choose month';
-  return '<div class="report-toolbar"><span class="report-label">Reporting period</span><div class="report-choices" role="group" aria-label="Reporting period">'+button('mtd','Month to date')+button('last','Last month')+button('ytd','Year to date')+'<button type="button" data-period="month" aria-haspopup="dialog" aria-pressed="'+(k==='month')+'">'+customLabel+' <span aria-hidden="true">▾</span></button></div><span class="report-asof">Sample data · Nov 23, 2026</span></div>';
+  return '<div class="report-toolbar"><span class="report-label">Reporting period</span><div class="report-choices" role="group" aria-label="Reporting period">'+button('mtd','Month to date')+button('last','Last month')+button('ytd','Year to date')+'<button type="button" data-period="month" aria-haspopup="dialog" aria-pressed="'+(k==='month')+'">'+customLabel+' <span aria-hidden="true">▾</span></button></div><span class="report-asof">Sample data · Nov 20, 2026</span></div>';
 }
 let pickerYear;
 function drawReportPicker(s,firstOpen=false){
@@ -232,7 +234,7 @@ function drawReportPicker(s,firstOpen=false){
   const calendar='<div class="rp-year"><button type="button" data-shiftyear="-1" aria-label="Previous year" '+(pickerYear<=1000?'disabled':'')+'>‹</button><label>Year<input type="number" inputmode="numeric" min="1000" max="2026" value="'+pickerYear+'" id="report-pick-year"></label><button type="button" data-shiftyear="1" aria-label="Next year" '+(pickerYear>=2026?'disabled':'')+'>›</button></div><div class="rp-months" role="group" aria-label="Month">'+reportMonths.map((m,i)=>{
     const key=pickerYear+'-'+reportPad(i+1);
     return '<button type="button" data-pickmonth="'+key+'" aria-label="'+m+' '+pickerYear+'" aria-pressed="'+(key===picked)+'" '+(validReportMonth(key)?'':'disabled')+'>'+m.slice(0,3)+'</button>';
-  }).join('')+'</div><p class="rp-help">Example records cover January 2025 through November 23, 2026.</p>';
+  }).join('')+'</div><p class="rp-help">Example records cover January 2025 through November 20, 2026.</p>';
   dialog('Choose a reporting month',calendar);
   $('#modal').setAttribute('aria-label','Choose a reporting month');
   if(firstOpen)$('#modal [aria-pressed="true"]:not(:disabled)')?.focus();
@@ -291,7 +293,7 @@ for(let year=2025;year<=2026;year++){
       const lastDay=Number(reportLast(key).slice(-2));
       for(let j=0;j<n;j++){
         const day=1+(j*7+Math.floor(j/3)+monthIndex)%lastDay;
-        const isConsult=j%13===0,fee=isConsult?0:[90,115,150,75][(j+monthIndex)%4];
+        const isConsult=j%13===0,fee=isConsult?0:[80,105,140,65][(j+monthIndex)%4];
         const name=names[(j*3+monthIndex)%20];
         visits.push({id:'example-'+key+'-'+j,year,m:mon,name,day,service:isConsult?'New client consultation':'Electrolysis session',fee,paid:fee,state:isConsult?'No charge':'Paid',method:fee?(j%6===0?'E-transfer':'Card'):'',received:fee?key+'-'+reportPad(day):'',time:['9:00 AM','12:30 PM','3:00 PM'][j%3],operator:'Jordan',first:false});
       }
@@ -318,7 +320,7 @@ const pill=s=>'<span class="pill '+(s==='Needs review'?'reviewing':s==='Paid'?'p
 const tabs=(key,options,current)=>'<div class="tabs">'+options.map(t=>btn(t,key+'|'+t,t===current?'sel':'')).join('')+'</div>';
 function toast(t){$('#feedback').innerHTML='<div class="toast">'+esc(t)+'</div>';clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#feedback').innerHTML='',2600)}
 const scopeRows=m=>visits.filter(r=>r.m===m), tally=rs=>({total:sum(rs,r=>r.paid),completed:rs.length,payers:rs.filter(r=>r.paid>0).length,active:new Set(rs.map(r=>r.name)).size,review:rs.filter(r=>r.state==='Needs review').length});
-function reviewBox(n,m){if(!n)return '';return '<div class="review"><span class="symbol">'+icon('clock')+'</span><div><h3>'+n+' '+(n===1?'visit needs':'visits need')+' a payment decision</h3><p>Record money received, confirm a free visit, or mark a balance owed.</p></div>'+btn('Review visits','reviewmonth|'+m)+'</div>'}
+function reviewBox(n,m){if(!n)return '';return '<div class="review"><span class="symbol">'+icon('clock')+'</span><div><h3>Needs review: '+n+' '+(n===1?'visit':'visits')+'</h3><p>Record money received, confirm a free visit, or mark a balance owed.</p></div>'+btn('Review visits','reviewmonth|'+m)+'</div>'}
 function switcher(items,key,current){return '<div class="switch">'+items.map(t=>btn(t,key+'|'+t,current===t?'sel':'')).join('')+'</div>'}
 function analyticsData(s) {
   const period=reportPeriod(s);
@@ -395,7 +397,7 @@ function plot(p,s){
   const alignment=extraPrior.length&&p.priorAvailable?'<p class="tiny">'+shortBucketDate(extraPrior[0].priorFrom,false)+(extraPrior.length>1?'–'+Number(extraPrior.at(-1).priorTo.slice(-2)):'')+' '+(extraPrior.length===1?'appears':'appear')+' on the comparison line only.</p>':'';
   const readingUnit=p.isYear?'month':'day',cad=moneyChart?'<small>CAD</small>':'';
   const daily=reportSeries(p,m.measure,false,false),prior=reportSeries(p,m.measure,true,false);
-  return '<section class="an-hero"><div class="an-mainrow"><div><h2>'+(moneyChart?'Collected by visit date':'Completed visits')+'</h2><div class="an-value">'+(moneyChart?money(currentTotal,currentTotal%1?2:0):currentTotal)+cad+'</div></div>'+analyticChoice([['Money','Money'],['Visits','Visits']],'v',m.measure)+'</div>'+comparable+
+  return '<section class="an-hero"><div class="an-mainrow"><div><h2>'+(moneyChart?esc(p.collectedLabel):'Completed visits')+'</h2><div class="an-value">'+(moneyChart?money(currentTotal,currentTotal%1?2:0):currentTotal)+cad+'</div></div>'+analyticChoice([['Money','Money'],['Visits','Visits']],'v',m.measure)+'</div>'+comparable+
     '<div class="an-chartbar"><div class="an-legend"><span><i></i>'+esc(p.shortLabel)+'</span>'+(p.priorAvailable?'<span><i></i>'+esc(p.priorShortLabel)+'</span>':'')+'</div>'+analyticChoice([['Running total','Running total'],[p.isYear?'Monthly':'Daily','Daily']],'chart',s.chart==='Daily'?'Daily':'Running total')+'</div><div class="an-plot">'+draw+'<input type="range" class="an-scrub" min="1" max="'+n+'" value="'+(endIndex+1)+'" aria-label="Inspect a '+readingUnit+' on the chart" aria-valuetext="'+esc(p.buckets[endIndex].label)+'" data-points="'+m.current.map(v=>v===null?'':y(v).toFixed(1)).join(',')+'"></div><div class="an-readout" id="an-readout">'+chartReadout(p,m,endIndex)+'</div>'+alignment+
     details('View '+(p.isYear?'monthly':'daily')+' figures','<div class="chartdata">'+table([p.isYear?'Month':'Day',p.shortLabel,...(p.priorAvailable?[p.priorShortLabel]:[])],p.buckets.map((b,i)=>[b.from?b.label:b.priorLabel,daily[i]===null?'—':numberFor(m.measure,daily[i]),...(p.priorAvailable?[prior[i]===null?'—':numberFor(m.measure,prior[i])]:[])]))+'</div>')+'</section>';
 }
@@ -439,8 +441,8 @@ function anMetric(label,value,old,current,period,note){
 function outcomePanel(rows){
   const review=rows.filter(r=>r.state==='Needs review').length,resolved=rows.filter(r=>['Paid','No charge','Fee waived'].includes(r.state)).length;
   const pending=rows.length-review-resolved;
-  return '<section class="an-card an-checkout"><h2>Checkout status</h2><div class="an-check-line"><strong>'+resolved+' <small>/ '+rows.length+'</small></strong><span>visits resolved</span></div><div class="an-meter" aria-hidden="true"><i style="width:'+(rows.length?100*resolved/rows.length:0)+'%"></i></div>'+line('Paid',rows.filter(r=>r.state==='Paid').length)+line('No charge or waived',rows.filter(r=>['No charge','Fee waived'].includes(r.state)).length)+(pending?line('Confirmed balance or processing',pending):'')+
-    (review?'<div class="an-attention"><span><i></i>'+review+' '+(review===1?'visit needs':'visits need')+' review</span>'+btn('Review visits','periodreview','an-review')+'</div>':'')+'</section>';
+  return '<section class="an-card an-checkout"><h2>Checkout status</h2><div class="an-check-line"><strong>'+resolved+' <small>/ '+rows.length+'</small></strong><span>visits resolved</span></div><div class="an-meter" aria-hidden="true"><i style="width:'+(rows.length?100*resolved/rows.length:0)+'%"></i></div>'+line('Paid',rows.filter(r=>r.state==='Paid').length)+line('No charge or waived',rows.filter(r=>['No charge','Fee waived'].includes(r.state)).length)+(pending?line('Money owed or Processing',pending):'')+
+    (review?'<div class="an-attention"><span><i></i>Needs review: '+review+' '+(review===1?'visit':'visits')+'</span>'+btn('Review visits','periodreview','an-review')+'</div>':'')+'</section>';
 }
 function waitlistReport(p){
   const rows=allReportWaitlist.filter(r=>r.date>=p.start&&r.date<=p.end), modes=['Booked','Awaiting response','Declined','Expired'];
@@ -573,10 +575,10 @@ function knownClientDirectory(s,rs){
   const rows=ns.map(name=>{
     const monthly=rs.filter(r=>r.name===name), t=tally(monthly), all=clientVisits(name);
     return [btn(esc(name),'client|'+name,'fin-name')+'<small>'+visitCount(all.length)+' on file</small>',
-      t.completed, t.completed?money(t.total):'—', t.review?btn(t.review+' to review','firstreview|'+monthly.find(r=>r.state==='Needs review').id,'fin-action'):'—',
+      t.completed, t.completed?money(t.total):'—', t.review?btn('Needs review · '+t.review,'firstreview|'+monthly.find(r=>r.state==='Needs review').id,'fin-action'):'—',
       btn('Monthly statement','monthlyclient|'+name,'link')];
   });
-  return '<div id="clientslist" class="finlist">'+(rows.length?table(['Client','Visits this month','Collected this month','To review',''],rows):'<div class="card fin-empty">No clients match this name.</div>')+'</div>';
+  return '<div id="clientslist" class="finlist">'+(rows.length?table(['Client','Visits this month','Collected for visits in '+reportTextDate(statementMonthKey(s)+'-01',{month:'long'}),'Needs review',''],rows):'<div class="card fin-empty">No clients match this name.</div>')+'</div>';
 }
 function historyPeriodButtons(scope,countThis,countAll){
   function button(value,label,count) {
@@ -612,7 +614,7 @@ function clientHistory(s){
   const controls='<div class="history-controlrow">'+historyPeriodButtons(scope,monthCount,all.length)+(scope==='month'?statementPicker(key):'')+'</div>';
   const stateFilter=s.stmtfilter || 'All visits';
   const opts=['All visits','Needs review','Money owed','Paid','No charge','Fee waived','Processing'].map(k=>'<option value="'+k+'" '+(stateFilter===k?'selected':'')+'>'+(k==='All visits'?'All payment outcomes':k)+'</option>').join('');
-  const summaryBlock='<div class="history-sum"><div><small>Collected for these visits</small><strong>'+money(summary.total)+' <em>CAD</em></strong></div><div><small>Confirmed money owed</small><strong>'+money(owed)+'</strong></div><div><small>Visits to review</small><strong>'+summary.review+'</strong></div></div>';
+  const summaryBlock='<div class="history-sum"><div><small>Collected for these visits</small><strong>'+money(summary.total)+' <em>CAD</em></strong></div><div><small>Money owed</small><strong>'+money(owed)+'</strong></div><div><small>Needs review</small><strong>'+summary.review+'</strong></div></div>';
   const dates=scope==='month'?details('Compare visit dates and receipt dates','<div class="fin-breakdown">'+line('Collected for visits in '+month,money(summary.total))+line('Received during '+month,money(receivedInMonth(key,s.client)))+'</div>'):'';
   let list;
   if(filtered.length) {
@@ -639,7 +641,7 @@ function statements(s){
   const monthName=statementMonthLabel(key);
   const top=head('Statements',s.client?esc(s.client):'Monthly statements',s.client?'Client statement · '+monthName:'Example Studio · '+monthName,tools(statementPicker(key),btn('Export CSV','export'),btn('Print / PDF','print')));
   const title=clientIndex?'Client statements':'Visit activity';
-  const summary='<div class="card dual fin-summary"><div><span class="lab">Collected for '+monthName+' visits</span><div class="number">'+money(t.total)+'<em>CAD</em></div><small>'+visitCount(t.payers)+' with money recorded</small></div><div><h3>Collected by method</h3>'+methods(rs)+'</div></div>';
+  const summary='<div class="card dual fin-summary"><div><span class="lab">Collected for visits in '+monthName+'</span><div class="number">'+money(t.total)+'<em>CAD</em></div><small>'+visitCount(t.payers)+' with money recorded</small></div><div><h3>Collected by method</h3>'+methods(rs)+'</div></div>';
   const colDate=receivedInMonth(key,s.client);
   const breakdown=details('Compare visit dates and receipt dates','<div class="fin-breakdown">'+line('Collected for visits in '+monthName,money(t.total))+line('Received during '+monthName,money(colDate))+'<p>Visit totals follow the appointment. Receipt totals follow the day the money arrived, including payments for earlier visits.</p></div>');
   let body;
@@ -654,7 +656,7 @@ function statements(s){
     if(filtered.length>size)body=body.replace(ledger(filtered.slice(start,start+size)), '<div class="fin-interactive">'+ledger(filtered.slice(start,start+size))+'</div><div class="fin-print">'+ledger(filtered)+'</div>');
     if(filtered.length>size)body+='<div class="fin-pager"><span>'+ (start+1)+'–'+Math.min(start+size,filtered.length)+' of '+filtered.length+' visits</span><div>'+(page>1?btn('Earlier page','pg|'+(page-1)):'')+(page<pages?btn('More visits','pg|'+(page+1)):'')+'</div></div>';
   }
-  const review=t.review&&!clientIndex&&s.stmtfilter!=='Needs review'?'<div class="fin-notice"><span>'+icon('clock')+'</span><div><strong>'+visitCount(t.review)+' to review</strong><small>Confirm what happened at checkout.</small></div>'+btn('Review visits','stmtfilter|Needs review','fin-action')+'</div>':'';
+  const review=t.review&&!clientIndex&&s.stmtfilter!=='Needs review'?'<div class="fin-notice"><span>'+icon('clock')+'</span><div><strong>Needs review: '+visitCount(t.review)+'</strong><small>Confirm what happened at checkout.</small></div>'+btn('Review visits','stmtfilter|Needs review','fin-action')+'</div>':'';
   if(!all.length&&!colDate&&!clientIndex)return top+tabs('view',['Studio','Clients'],s.view)+'<div class="card fin-empty">No example statement is available for '+monthName+'. Choose another month.</div>';
   return top+tabs('view',['Studio','Clients'],s.view)+(s.client?'<div class="block">'+btn('All client statements','backclients','link')+'</div>':'')+summary+breakdown+review+body;
 }
@@ -684,11 +686,11 @@ function queue(s){
   const modes=['Needs review','Money owed','Processing'];
   const buckets=modes.map(mode=>source.filter(r=>r.state===mode));
   const mode=modes.includes(s.queue)?s.queue:modes[0],rs=buckets[modes.indexOf(mode)];
-  const top=head('Outstanding payments','Outstanding payments','Payment decisions and confirmed balances across the studio.',tools(queueFilter(s)));
+  const top=head('Outstanding payments','Outstanding payments','Needs review, Money owed and Processing across the studio.',tools(queueFilter(s)));
   const counts=[buckets[0].length,money(sum(buckets[1],remainder),sum(buckets[1],remainder)%1?2:0),buckets[2].length];
-  const foot=['Visits to reconcile',visitCount(buckets[1].length)+' with a balance','Awaiting card confirmation'];
+  const foot=['Payment outcome unclear',visitCount(buckets[1].length)+' with a balance','Payments awaiting confirmation'];
   const cards='<div class="fin-buckets" role="group" aria-label="Payment queues">'+modes.map((m,i)=>'<button data-act="queue|'+m+'" aria-label="'+m+'" aria-pressed="'+(m===mode)+'"><span class="fin-bucket-label">'+icon(['clock','payments','statements'][i])+m+'</span><strong>'+counts[i]+'</strong><small>'+foot[i]+'</small></button>').join('')+'</div>';
-  const name=mode==='Needs review'?'Visits to reconcile':mode==='Money owed'?'Confirmed balances':'Pending card payments';
+  const name=mode;
   const descr=mode==='Needs review'?'A missing payment record needs a decision before any balance is counted.':mode==='Money owed'?'Only the unpaid remainder appears in the balance.':'Track the original card attempt until its outcome is known.';
   return top+cards+'<section class="fin-queue"><div class="fin-queue-head"><div><h2>'+name+'</h2><p>'+descr+'</p></div><label class="fin-find"><span aria-hidden="true">⌕</span><input id="qsearch" aria-label="Search payment queue" placeholder="Find a client…" value="'+esc(s.qsearch||'')+'"></label></div>'+queueResults(s,rs,mode)+'</section>';
 }
@@ -706,7 +708,7 @@ function queueResults(s,rs,mode){
       return '<div class="fin-case"><div class="fin-case-name">'+(i===0?btn(esc(n),'queueclient|'+r.id,'fin-name')+(rows.length>1?' <small>('+visitCount(rows.length)+')</small>':''):'<span class="visually">'+esc(n)+'</span>')+'<small>'+visitDate(r)+' · '+esc(r.operator)+'</small></div><div class="fin-case-desc"><span>'+esc(r.service)+'</span><small>'+reason+'</small></div><div class="fin-case-amt"><b>'+amt+'</b><small>'+(mode==='Money owed'?'Remaining':'Visit fee')+'</small></div>'+btn(action,'row|'+r.id,'fin-action')+'</div>';
     }).join('')+'</section>';
   }).join('');
-  return '<div id="qresult">'+(list||'<div class="fin-empty">'+(query?'No matching clients in this queue.':mode==='Needs review'?'Every visit in this period has a payment decision.':mode==='Processing'?'No card payments are awaiting confirmation.':'No confirmed balances for this period.')+'</div>')+'</div>';
+  return '<div id="qresult">'+(list||'<div class="fin-empty">'+(query?'No matching clients in this queue.':mode==='Needs review'?'No visits in this period need review.':mode==='Processing'?'No payments are processing.':'No money owed for this period.')+'</div>')+'</div>';
 }
 const capacityPlans = [
   ...exampleRebook.map((name, i) => ({name, minutes: [30, 45, 60][i], slot: ''})),
@@ -753,12 +755,12 @@ function capacityTimeDialog(index) {
   if(!p)return;
   if(p.slot) {
     const slot = capacityOpenings.find(o=>o.id===p.slot);
-    dialog('Upcoming treatment','<div class="cap-form"><h3>'+esc(p.name)+'</h3>'+line('Treatment','Electrolysis · '+p.minutes+' min')+line('Practitioner','Jordan')+line('Next visit',slot.day+' · '+slot.time)+'<p class="tiny">Toronto time · Example appointment</p></div>');
+    dialog('Upcoming treatment','<div class="cap-form"><h3>'+esc(p.name)+'</h3>'+line('Treatment','Electrolysis · '+p.minutes+' min')+line('Practitioner','Jordan')+line('Next visit',slot.day+' · '+slot.time)+'<p class="tiny">Example City time · Example appointment</p></div>');
     return;
   }
   const free = capacityOpenings.filter(o=>o.minutes>=p.minutes && !capacityPlans.some(plan=>plan.slot===o.id));
   const options = free.map((o,i)=>'<label class="cap-slot"><input type="radio" name="slot" value="'+o.id+'" '+(i===0?'checked':'')+' required><span>'+o.day+'</span><b>'+o.time+'</b></label>').join('');
-  dialog('Find a treatment time','<form class="cap-form" id="capacityBooking" data-plan="'+index+'"><h3>'+esc(p.name)+'</h3><p class="tiny">Electrolysis · '+p.minutes+' min with Jordan</p><fieldset class="cap-options"><legend>Available times · Toronto</legend>'+options+'</fieldset><p class="cap-disclaimer">Sample openings. Choosing a time updates this preview only.</p><div class="act"><button type="button" data-act="close">Cancel</button><button class="primary" type="submit" '+(free.length?'':'disabled')+'>Book in preview</button></div></form>');
+  dialog('Find a treatment time','<form class="cap-form" id="capacityBooking" data-plan="'+index+'"><h3>'+esc(p.name)+'</h3><p class="tiny">Electrolysis · '+p.minutes+' min with Jordan</p><fieldset class="cap-options"><legend>Available times · Example City</legend>'+options+'</fieldset><p class="cap-disclaimer">Sample openings. Choosing a time updates this preview only.</p><div class="act"><button type="button" data-act="close">Cancel</button><button class="primary" type="submit" '+(free.length?'':'disabled')+'>Book in preview</button></div></form>');
 }
 document.addEventListener('click',e=>{
   const b=e.target.closest('[data-capacity]');
@@ -848,13 +850,13 @@ function home(s) {
   const lastCard=period.isYear
     ? '<section class="homestatement"><span class="papericon">'+icon('analytics')+'</span><div><h2>Clients seen year to date</h2><p>'+esc(period.label)+'</p></div>'+workspaceLink('analytics','Explore clients '+icon('arrow'),{...selected,tab:'Clients'},'outlineLink')+'</section>'
     : '<section class="homestatement"><span class="papericon">'+icon('statements')+'</span><div><h2>'+esc(monthText)+' statement</h2><p>'+ (period.available?t.payers+' '+(t.payers===1?'visit':'visits')+' with recorded payments':'No sample records for this month')+'</p></div>'+workspaceLink('statements','Open statement '+icon('arrow'),{...selected,statementMonth:period.currentMonth},'outlineLink')+'</section>';
-  return '<div class="homeview"><div class="homehead"><div><h1>Business overview</h1><p>Example Studio <span>·</span> Toronto</p></div></div>'+periodControls(s)+
-    '<section class="homehero"><div class="heroabove"><div class="homeherobody"><div class="herolabel">Collected by visit date</div><div class="herovalue">'+(period.available?money(t.total,t.total%1?2:0)+'<small>CAD</small>':'—')+'</div>'+comparison+'<div class="heroperiod">'+esc(period.label)+'</div></div>'+homeTrend(period)+'</div><div class="herobottom"><div><span>Completed visits</span><strong>'+(period.available?t.completed:'—')+'</strong></div><div><span>Clients seen</span><strong>'+(period.available?t.active:'—')+'</strong></div><div><span>Average paid visit</span><strong>'+(period.available&&t.payers?money(t.total/t.payers):'—')+'</strong></div>'+workspaceLink('analytics','Explore analytics '+icon('arrow'),selected,'herolink')+'</div></section>'+
+  return '<div class="homeview"><div class="homehead"><div><h1>Business overview</h1><p>Example Studio <span>·</span> Example City</p></div></div>'+periodControls(s)+
+    '<section class="homehero"><div class="heroabove"><div class="homeherobody"><div class="herolabel">'+esc(period.collectedLabel)+'</div><div class="herovalue">'+(period.available?money(t.total,t.total%1?2:0)+'<small>CAD</small>':'—')+'</div>'+comparison+'<div class="heroperiod">'+esc(period.label)+'</div></div>'+homeTrend(period)+'</div><div class="herobottom"><div><span>Completed visits</span><strong>'+(period.available?t.completed:'—')+'</strong></div><div><span>Clients seen</span><strong>'+(period.available?t.active:'—')+'</strong></div><div><span>Average paid visit</span><strong>'+(period.available&&t.payers?money(t.total/t.payers):'—')+'</strong></div>'+workspaceLink('analytics','Explore analytics '+icon('arrow'),selected,'herolink')+'</div></section>'+
     '<div class="homegrid"><section class="groupbox"><div class="grouphead"><h2>Payment follow-up</h2><small>All visit dates</small></div>'+
-    homeAction('list','Needs review',nReview,'Visits missing a checkout decision','payments',{queue:'Needs review'},'wheat')+
-    homeAction('payments','Money owed',money(debt,debt%1?2:0),'Confirmed balances on '+owed.length+' visits','payments',{queue:'Money owed'},'mist')+
-    homeAction('pending','Processing',pending,'Card payments awaiting confirmation','payments',{queue:'Processing'},'fog')+
-    '</section><section class="groupbox continuity"><div class="grouphead"><h2>Treatment follow-up</h2><small>As of Nov 23</small></div><div class="continuitybody"><div class="planfigure"><strong>'+rebook.length+'</strong><span>of '+capacityPlans.length+' clients with open plans<br>have no treatment booked</span></div><div class="planmeter" aria-hidden="true">'+capacityPlans.map((_,i)=>'<i class="'+(i<rebook.length?'need':'')+'"></i>').join('')+'</div>'+workspaceLink('capacity','Review rebooking list '+icon('arrow'),{},'hometextlink')+'</div></section></div>'+lastCard+'</div>';
+    homeAction('list','Needs review',nReview,'All dates · Payment outcome unclear','payments',{queue:'Needs review'},'wheat')+
+    homeAction('payments','Money owed',money(debt,debt%1?2:0),'All dates · Unpaid balance on '+owed.length+' '+(owed.length===1?'visit':'visits'),'payments',{queue:'Money owed'},'mist')+
+    homeAction('pending','Processing',pending,'Payments awaiting confirmation','payments',{queue:'Processing'},'fog')+
+    '</section><section class="groupbox continuity"><div class="grouphead"><h2>Treatment follow-up</h2><small>As of Nov 20</small></div><div class="continuitybody"><div class="planfigure"><strong>'+rebook.length+'</strong><span>of '+capacityPlans.length+' clients with open plans<br>have no treatment booked</span></div><div class="planmeter" aria-hidden="true">'+capacityPlans.map((_,i)=>'<i class="'+(i<rebook.length?'need':'')+'"></i>').join('')+'</div>'+workspaceLink('capacity','Review rebooking list '+icon('arrow'),{},'hometextlink')+'</div></section></div>'+lastCard+'</div>';
 }
 function render() {
   const s=get();
@@ -883,13 +885,13 @@ function showRow(id){
   dialogRow=r;ledgerMode='';
   const open=['Needs review','Money owed'].includes(r.state);
   const receipts=receiptEntries(r);
-  const facts='<section class="fin-facts">'+line('Agreed visit fee',r.fee==null?'Needs confirmation':money(r.fee))+line('Already received',money(r.paid))+(r.state==='Money owed'?line('Confirmed balance',money(remainder(r))):'')+(r.due&&open?line('Follow-up date',esc(r.due)):'')+'</section>';
+  const facts='<section class="fin-facts">'+line('Agreed visit fee',r.fee==null?'Needs confirmation':money(r.fee))+line('Already received',money(r.paid))+(r.state==='Money owed'?line('Money owed',money(remainder(r))):'')+(r.due&&open?line('Follow-up date',esc(r.due)):'')+'</section>';
   const entries=(r.events||[]);
   const history=entries.length?details('Payment history · '+entries.length,entries.map(ev=>'<p>'+esc(ev)+'</p>').join('')):receipts.length?details('Payment history',receipts.map(p=>'<p>'+money(p.amount)+' · '+esc(p.method)+' · '+esc(p.date)+'</p>').join('')):'';
-  const actions=r.state==='Processing'?'<p class="notice">A card payment is pending. Its outcome will determine the balance.</p>'+btn('Refresh status','status','primary'):open?'<div class="fin-choices"><h3>Payment decision</h3>'+btn('Record payment received','edit|receive','primary')+(r.fee!=null&&remainder(r)>0?btn('Charge demo card','edit|card'):'')+(r.state==='Needs review'?btn(r.fee==null||r.fee===0?'Confirm no charge':'Waive fee','edit|free'):'')+btn(r.state==='Money owed'?'Set follow-up date':'Confirm balance owed','edit|owed')+'</div>':'';
+  const actions=r.state==='Processing'?'<p class="notice">This payment is Processing. Its outcome will determine the balance.</p>'+btn('Refresh status','status','primary'):open?'<div class="fin-choices"><h3>Payment decision</h3>'+btn('Record payment received','edit|receive','primary')+(r.fee!=null&&remainder(r)>0?btn('Charge demo card','edit|card'):'')+(r.state==='Needs review'?btn(r.fee==null||r.fee===0?'Confirm no charge':'Waive fee','edit|free'):'')+btn(r.state==='Money owed'?'Set follow-up date':'Confirm balance owed','edit|owed')+'</div>':'';
   dialog(r.name,'<div class="fin-detail"><p>'+visitDate(r)+' · '+esc(r.time)+' · '+esc(r.service)+'<small>Practitioner · '+esc(r.operator)+'</small></p>'+pill(payState(r))+'</div>'+facts+history+actions);
 }
-const today='2026-11-23';
+const today='2026-11-20';
 function edit(mode){
   const r=dialogRow;ledgerMode=mode;
   const input=(n,l,val='',type='text',extra='')=>'<label>'+l+'<input name="'+n+'" type="'+type+'" '+extra+' value="'+esc(val)+'" required></label>';
@@ -968,7 +970,7 @@ function exportStatement(s) {
     if(status!=='All visits') records=records.filter(r=>r.state===status);
   }
   records=[...records].sort((a,b)=>visitDayValue(b)-visitDayValue(a));
-  const contents=[['Visit date','Client','Service','Checkout status','Agreed fee (CAD)','Collected (CAD)','Confirmed owed (CAD)','Last receipt date']];
+  const contents=[['Visit date','Client','Service','Checkout status','Agreed fee (CAD)','Collected (CAD)','Money owed (CAD)','Last receipt date']];
   for(const r of records)contents.push([visitISO(r),r.name,r.service,payState(r),r.fee??'',r.paid,r.state==='Money owed'?remainder(r):'',r.received||'']);
   const csv=contents.map(row=>row.map(v=>'"'+String(v).replaceAll('"','""')+'"').join(',')).join('\r\n');
   const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
