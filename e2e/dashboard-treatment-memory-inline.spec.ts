@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { seedE2eStudio, seedE2eDashboardMemoryClient } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
+import { ensureLastVisitDetailsOpen, closeLastVisitDetails } from "./helpers/last-visit-details";
 
 // ===========================================================================
 // Chloe Dashboard cleanup — the browser proof.
@@ -63,14 +64,12 @@ test.describe("D1 — the Treatment Memory disclosure stays on the Dashboard", (
 
     const toggle = page.getByTestId("dashboard-memory-toggle").first();
     await expect(toggle).toBeVisible({ timeout: T });
-    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    // practitioner feedback (26 Nov): the details are open on first render, with no click.
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByTestId("dashboard-memory-full").first()).toBeVisible({ timeout: T });
 
-    // The compact line is there before expanding; the full card is not.
-    await expect(page.getByTestId("dashboard-memory-compact").first()).toBeVisible();
-    await expect(page.getByTestId("dashboard-memory-full")).toHaveCount(0);
-
-    // 3. Click the control Chloe clicks.
-    await toggle.click();
+    // 3. Make sure the details control is expanded.
+    await ensureLastVisitDetailsOpen(toggle);
 
     // 4. The FULL previous treatment is really rendered — not an empty shell.
     const full = page.getByTestId("dashboard-memory-full").first();
@@ -106,7 +105,7 @@ test.describe("D1 — the Treatment Memory disclosure stays on the Dashboard", (
     await expect(full.getByText("Open full chart")).toHaveCount(0);
 
     // 8. Collapse it.
-    await toggle.click();
+    await closeLastVisitDetails(toggle);
     await expect(page.getByTestId("dashboard-memory-full")).toHaveCount(0);
     await expect(toggle).toHaveAttribute("aria-expanded", "false");
 
@@ -139,11 +138,14 @@ test.describe("D1 — the Treatment Memory disclosure stays on the Dashboard", (
     await expect(input).toBeFocused();
     await input.fill(message);
     await input.press("Enter");
+    // The textarea's own text also matches getByText, so wait for the SAVE to finish (the editor closes) before looking for the note
+    // or reloading. The details now load on page view, and a save is queued behind that read; reloading earlier cancels it.
+    await expect(input).toBeHidden({ timeout: T });
     await expect(row.getByText(message, { exact: true })).toBeVisible({ timeout: T });
     expect(dashboardPath(page)).toBe("/dashboard");
     await page.reload();
     await expect(row.getByText(message, { exact: true })).toBeVisible({ timeout: T });
-    await expect(row.getByTestId("dashboard-memory-toggle")).toHaveAttribute("aria-expanded", "false");
+    await expect(row.getByTestId("dashboard-memory-toggle")).toHaveAttribute("aria-expanded", "true");
   });
 
   test("the STANDALONE appointment-prep card keeps its full-chart navigation", async ({

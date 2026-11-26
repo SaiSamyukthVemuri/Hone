@@ -74,6 +74,13 @@ export default defineConfig({
             grep: /aftercare warning keyboard stays contained|every photo control measures at least 44px/,
             use: { ...devices["Desktop Safari"], bypassCSP: true },
           },
+          // The receptionist desk on an emulated iPhone in WebKit. Its sign-in goes through e2e/helpers/desk.ts, which applies the shared WebKit localhost
+          // workaround (webkit-localhost.ts) to the magic link and the redirects after it. Not wired into a CI job here; run it with HONE_E2E_WEBKIT=1.
+          {
+            name: "webkit-receptionist",
+            testMatch: /(desk-calendar|desk-finder-and-isolation|receptionist-onboarding-flow)\.spec\.ts$/,
+            use: { ...devices["iPhone 13"], bypassCSP: true },
+          },
         ]
       : []),
   ],

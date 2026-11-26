@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { seedE2eStudio, seedE2eDashboardMemoryClient } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
+import { ensureLastVisitDetailsOpen } from "./helpers/last-visit-details";
 
 // Dashboard memory visibility (Chloe production feedback) — real browser, real
 // local stack.
@@ -96,7 +97,7 @@ test.describe("iPhone profile", () => {
     });
 
     await test.step("the latest-settings line is complete too", async () => {
-      await page.getByTestId("dashboard-memory-toggle").first().click();
+      await ensureLastVisitDetailsOpen(page.getByTestId("dashboard-memory-toggle").first());
       await expect(setupLine(page)).toContainText("27.12 MHz");
       const text = await setupLine(page).innerText();
       expect(text).not.toContain("…");

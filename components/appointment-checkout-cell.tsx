@@ -32,10 +32,12 @@ type AppointmentCheckoutProps = {
   dashboardStartsAt?: string;
   dashboardVisitLabel?: string;
   dashboardCardOnFile?: CardOnFileStatus | null;
+  /** The Dashboard action row passes one button look so Checkout / Mark completed match the other actions. */
+  buttonClassName?: string;
 };
 
-export function AppointmentCheckoutCell({ dashboardStartsAt, dashboardVisitLabel, dashboardCardOnFile, ...visit }: AppointmentCheckoutProps) {
-  const outcome = <AppointmentCheckoutOutcome {...visit} />;
+export function AppointmentCheckoutCell({ dashboardStartsAt, dashboardVisitLabel, dashboardCardOnFile, buttonClassName, ...visit }: AppointmentCheckoutProps) {
+  const outcome = <AppointmentCheckoutOutcome {...visit} buttonClassName={buttonClassName} />;
   if (dashboardStartsAt && (visit.status === "confirmed" || visit.status === "completed")) {
     return (
       <DashboardCheckoutEntry
@@ -45,6 +47,7 @@ export function AppointmentCheckoutCell({ dashboardStartsAt, dashboardVisitLabel
         paymentState={visit.paymentState}
         cardOnFile={dashboardCardOnFile}
         visitLabel={dashboardVisitLabel}
+        buttonClassName={buttonClassName}
       >
         {outcome}
       </DashboardCheckoutEntry>
@@ -53,7 +56,7 @@ export function AppointmentCheckoutCell({ dashboardStartsAt, dashboardVisitLabel
   return visit.status === "completed" ? outcome : null;
 }
 
-function AppointmentCheckoutOutcome({ appointmentId, status, paymentState }: AppointmentCheckoutProps) {
+function AppointmentCheckoutOutcome({ appointmentId, status, paymentState, buttonClassName }: AppointmentCheckoutProps) {
   if (
     paymentState === "paid" ||
     paymentState === "refunded" ||
@@ -105,6 +108,7 @@ function AppointmentCheckoutOutcome({ appointmentId, status, paymentState }: App
         <CheckoutButton
           appointmentId={appointmentId}
           status={status}
+          className={buttonClassName}
           variant="compact"
           label="Record outcome"
         />
@@ -160,6 +164,7 @@ function AppointmentCheckoutOutcome({ appointmentId, status, paymentState }: App
         <CheckoutButton
           appointmentId={appointmentId}
           status={status}
+          className={buttonClassName}
           variant="compact"
         />
       </span>

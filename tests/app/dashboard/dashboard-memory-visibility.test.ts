@@ -18,13 +18,15 @@ const PAGE = RAW_PAGE.split("\n")
 const PREVIEWS = read("lib/dashboard/before-today-previews.ts");
 const WORKFLOW = read("lib/dashboard/today-workflow.ts");
 
-const note = PAGE.match(/<p data-testid="dashboard-prep-remember"[\s\S]*?<\/p>/)?.[0] ?? "";
+const ACTIONS = read("app/(app)/dashboard/visit-actions.tsx");
+const note = ACTIONS.match(/<section\s+data-testid="dashboard-prep-remember"[\s\S]*?<\/section>/)?.[0] ?? "";
 const card = read("components/dashboard-prior-treatment.tsx");
 
 describe("the dashboard shows the full note and last treatment settings", () => {
   it("shows the appointment-specific note in full, including line breaks", () => {
-    expect(note).toContain("For this visit");
-    expect(note).toContain("{prepSummary.remember}");
+    expect(note).toContain("From last visit, for today");
+    expect(note).toContain("border-blue-200 bg-blue-50");
+    expect(note).toContain("{note}</p>");
     expect(note).toContain("whitespace-pre-wrap break-words");
     expect(note).not.toMatch(/truncate|line-clamp|text-ellipsis/);
   });
@@ -61,7 +63,12 @@ describe("nothing else on the dashboard changed", () => {
     const editable = PAGE.indexOf("<DashboardQuickPin");
     expect(editable).toBeGreaterThan(PAGE.indexOf("</PendingContainerLink>"));
     expect(PAGE.slice(editable, PAGE.indexOf("/>", editable))).toContain("pinnedNotes=");
-    expect(read("app/(app)/dashboard/dashboard-quick-pin.tsx")).toContain("<RowPinnedNotes pinnedNotes={pinnedNotes}");
+    // Every pin from the page data is rendered (the list handed to RowPinnedNotes is built from the whole of
+    // pinnedNotes, plus any just-saved pin), never a slice.
+    const quickPin = read("app/(app)/dashboard/dashboard-quick-pin.tsx");
+    expect(quickPin).toContain("<RowPinnedNotes pinnedNotes={shown}");
+    expect(quickPin).toMatch(/\.\.\.pinnedNotes\.map\(/);
+    expect(quickPin).not.toMatch(/pinnedNotes\.slice\(/);
     expect(SAFETY).toMatch(/pinnedNotes\.map\(/);
     expect(SAFETY).toMatch(/whitespace-pre-wrap/);
     expect(PAGE).not.toMatch(/line-clamp[^\s"']*[^\s"']*/);
@@ -83,8 +90,8 @@ describe("nothing else on the dashboard changed", () => {
       PAGE.indexOf("function AppointmentRow("),
       PAGE.indexOf("function AppointmentStatusPill("),
     );
-    expect(row).toMatch(/whitespace-pre-wrap break-words/);
-    expect(row).not.toMatch(/line-clamp/);
+    expect(row + ACTIONS).toMatch(/whitespace-pre-wrap break-words/);
+    expect(row + ACTIONS).not.toMatch(/line-clamp/);
   });
 
   it("the preview data helper still truncates nothing (the fix is render-only)", () => {
@@ -97,11 +104,11 @@ describe("nothing else on the dashboard changed", () => {
     expect(PAGE).toMatch(/flex flex-wrap items-start gap-x-3 gap-y-1 py-3 pr-4/);
     expect(PAGE).toMatch(/pl-4 hover:bg-neutral-50/);
     // Primary actions have their own wrapping line, above the last-visit disclosure.
-    const actions = PAGE.match(/data-testid="today-row-actions" className="([^"]+)"/)?.[1] ?? "";
+    const actions = ACTIONS.match(/data-testid="today-row-actions" className="([^"]+)"/)?.[1] ?? "";
     for (const token of ["min-w-0", "basis-full", "flex-wrap", "items-center"]) {
       expect(actions.split(" ")).toContain(token);
     }
-    expect(PAGE.indexOf('data-testid="today-row-actions"')).toBeLessThan(PAGE.indexOf('data-testid="today-row-details"'));
+    expect(PAGE.indexOf("<VisitActionRow")).toBeLessThan(PAGE.indexOf('data-testid="today-row-details"'));
     expect(PAGE).toMatch(/className="min-w-0 flex-1"/);
   });
 });

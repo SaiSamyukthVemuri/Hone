@@ -10,6 +10,7 @@ import {
   type E2eSeed,
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
+import { closeLastVisitDetails } from "./helpers/last-visit-details";
 
 // Chloe: "I want an option to go to the next day."
 //
@@ -460,7 +461,7 @@ test.describe("history is not asked, and therefore not answered, off Today", () 
         row(page, "Memory Client").getByTestId("dashboard-memory-toggle"),
       ).toBeVisible();
       await expect(
-        page.getByText("For this visit · Lower the energy one step").first(),
+        page.getByTestId("dashboard-prep-remember").first().filter({ hasText: "Lower the energy one step" }),
       ).toBeVisible();
       await expect(page.getByText("Avoid the jawline").first()).toBeVisible();
       await expect(page.getByText("Review Before Today").first()).toBeVisible();
@@ -492,6 +493,8 @@ test.describe("history is not asked, and therefore not answered, off Today", () 
       // …and what is NOW expected: appointment-bounded preparation from the
       // prep-memory authority, which is a different loader with a three-state
       // contract and no clock in it.
+      // Details are open by default, which hides the one-line summary; close them to see the closed row's compact line.
+      await closeLastVisitDetails(tomorrowRow.getByTestId("dashboard-memory-toggle"));
       await expect(tomorrowRow.getByTestId("dashboard-memory-compact")).toBeVisible();
       // Today was the first eligible treatment. The same note must not follow this client to tomorrow.
       await expect(tomorrowRow.getByTestId("dashboard-prep-remember")).toHaveCount(0);

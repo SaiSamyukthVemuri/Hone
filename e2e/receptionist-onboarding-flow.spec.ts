@@ -1,6 +1,5 @@
 import { test, expect, devices, type Page } from "@playwright/test";
-import { E2E_APP_ORIGIN } from "./helpers/local-env";
-import { listMessageIds, waitForMagicLink } from "./helpers/mail";
+import { expectPathRefused, signInWithMagicLink } from "./helpers/desk";
 import { loginAsOwner } from "./helpers/flows";
 import {
   getE2eServiceId, getOwnerPractitionerId, seedE2eClient, seedE2eMember, seedE2eStudio, sql,
@@ -61,12 +60,7 @@ for (const profile of [
     // 2. RECEPTIONIST signs in (real magic link), accepts, and lands on THIS studio's desk.
     const deskCtx = await browser.newContext(profile.context);
     const desk = await deskCtx.newPage();
-    await desk.goto("/login");
-    await desk.getByLabel("I am using my invited email address").check();
-    await desk.locator("#login-email").fill(deskEmail);
-    const seen = await listMessageIds(deskEmail);
-    await desk.getByRole("button", { name: /send magic link/i }).click();
-    await desk.goto(await waitForMagicLink(deskEmail, E2E_APP_ORIGIN, { excludeIds: seen }));
+    await signInWithMagicLink(desk, deskEmail);
     await desk.waitForURL(/\/accept-invitation/, { timeout: T });
     await desk.getByLabel(/I agree to the current/).check();
     await desk.getByRole("button", { name: /Join .* as/ }).click();
@@ -78,8 +72,7 @@ for (const profile of [
     expect(rows).toEqual([{ studio_id: studio.studioId, active: true }]);
     expect((await sql(`select 1 from public.practitioners p join auth.users u on u.id = p.user_id where lower(u.email) = $1`, [deskEmail])).length).toBe(0);
     // A practitioner page is closed to them.
-    await desk.goto("/dashboard");
-    await expect(desk).toHaveURL(/\/no-access/);
+    await expectPathRefused(desk, "/dashboard");
 
     // 3. THIS studio's desk: this studio's visit, by the name the desk is allowed to show, and nothing of the other studio or the account name.
     await desk.goto(`/desk?view=month&date=${date}`);
@@ -114,8 +107,7 @@ for (const profile of [
     // 6. The very next request of that open session is refused: following a link on the already-loaded desk lands on /no-access, and the desk is gone.
     await desk.getByRole("link", { name: "Week", exact: true }).first().click();
     await expect(desk).toHaveURL(/\/no-access/, { timeout: T });
-    await desk.goto("/desk");
-    await expect(desk).toHaveURL(/\/no-access/);
+    await expectPathRefused(desk, "/desk");
 
     await ownerCtx.close();
     await deskCtx.close();
