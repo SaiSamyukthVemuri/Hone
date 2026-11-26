@@ -621,7 +621,7 @@ const PATH_TO_GROUP = [
   //
   // The pattern is ANCHORED TO THE CARD rather than a bare /prep[-_]?memory/i,
   // following the OWNER-CAP precedent in this file. A loose pattern would also
-  // capture app/(app)/dashboard/prep-memory-actions.ts and
+  // capture app/(app)/dashboard/prep-memory-read.ts and
   // lib/sessions/appointment-prep-memory.ts, and the first of those currently
   // falls through to EXTENDED — so a loose rule would NARROW that file's
   // coverage from everything to one group. Additive only: the card already

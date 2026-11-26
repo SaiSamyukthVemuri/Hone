@@ -16,7 +16,8 @@ import {
 //   2. Pinned notes stay YELLOW (inline edit and "Add pinned note" preserved).
 //   3. "From last visit, for today" is its own BLUE box.
 //   4. Last visit details are ON the card on first render, with no click.
-//   5. Checkout is OWNER-ONLY: an owner sees it on the visit card, a signed-in practitioner sees the same card without it.
+//   5. A pinned note can be saved while the last visit details are still loading (a held details request).
+//   6. Checkout is OWNER-ONLY: an owner sees it on the visit card, a signed-in practitioner sees the same card without it.
 
 const T = 20_000;
 
@@ -132,4 +133,55 @@ test("Checkout is owner-only: the owner sees it on the visit card, a signed-in p
       await context.close();
     }
   });
+});
+
+test("a pinned note saves while the last visit details are still loading, and survives a reload", async ({ page }) => {
+  const studio = await seedE2eStudio();
+  const { clientId, appointmentId } = await seedE2eDashboardMemoryClient(studio, { cautionNote: null });
+  await loginAsOwner(page, studio);
+
+  // 1. Hold the details request OPEN (never aborted): it is answered only when this test releases it.
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let heldRequests = 0;
+  let released = false;
+  await page.route("**/dashboard/prep-memory**", async (route) => {
+    heldRequests += 1;
+    await gate;
+    released = true;
+    await route.continue();
+  });
+
+  await page.goto("/dashboard");
+  const row = page.locator(`#appointment-${appointmentId}`);
+  await expect(row).toBeVisible({ timeout: T });
+  await expect.poll(() => heldRequests, { timeout: T }).toBeGreaterThan(0);
+  await expect(row.getByTestId("dashboard-memory-loading")).toBeVisible();
+
+  // 2. Add a pinned note and save it, with the details still held.
+  const message = "Allergic to adhesive tape.";
+  await row.getByRole("button", { name: /^Add pinned note for / }).click();
+  const input = row.getByRole("textbox", { name: /^Pinned note for / });
+  await input.fill(message);
+  await input.press("Enter");
+
+  // 3. The save is confirmed (the editor closes and the PINNED strip shows the note) while the details request is STILL held.
+  await expect(input).toBeHidden({ timeout: T });
+  await expect(row.getByText("Pinned", { exact: true })).toBeVisible({ timeout: T });
+  await expect(row.getByText(message, { exact: true })).toBeVisible({ timeout: T });
+  expect(released, "the details request must not have been released yet").toBe(false);
+  await expect(row.getByTestId("dashboard-memory-loading")).toBeVisible();
+  // …and it is really in the database, not just on screen.
+  const saved = await sql<{ text: string }>("select text from public.client_pinned_notes where studio_id = $1 and client_id = $2", [studio.studioId, clientId]);
+  expect(saved.map((n) => n.text)).toEqual([message]);
+
+  // 4. A reload (the new details request is held too) still shows the note.
+  await page.reload();
+  await expect(row.getByText(message, { exact: true })).toBeVisible({ timeout: T });
+  expect(released).toBe(false);
+
+  // 5. Release the hold: the details then render.
+  release();
+  await expect(row.getByTestId("dashboard-memory-full")).toContainText("27.12 MHz", { timeout: T });
+  await expect(row.getByText(message, { exact: true })).toBeVisible();
 });

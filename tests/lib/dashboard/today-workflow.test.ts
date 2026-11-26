@@ -418,7 +418,7 @@ describe("dashboard wiring", () => {
     expect(readFileSync("app/(app)/dashboard/visit-actions.tsx", "utf8")).toMatch(/<p className="[^"]*whitespace-pre-wrap break-words[^"]*">\{note\}<\/p>/);
     expect(safety).toMatch(/data-testid="today-row-caution"[^>]*whitespace-pre-wrap break-words/);
     const details = readFileSync("app/(app)/dashboard/dashboard-treatment-memory.tsx", "utf8");
-    expect(details).toMatch(/await loadAppointmentPrepMemory\(appointmentId\)/);
+    expect(details).toMatch(/fetch\(`\/dashboard\/prep-memory\?appointment_id=/);
     expect(details).toMatch(/<AppointmentPrepMemoryCard[\s\S]*?memory=\{result\.memory\}[\s\S]*?embedded/);
   });
 

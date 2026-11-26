@@ -1,13 +1,10 @@
 "use client";
 
-import { useEffect, useId, useState, useTransition } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { compactSummary } from "@/lib/dashboard/today-treatment-summary";
 import { AppointmentPrepMemoryCard } from "@/components/appointment-prep-memory-card";
 import type { DashboardTreatmentDisclosureSummary } from "@/lib/dashboard/dashboard-prep-summary";
-import {
-  loadAppointmentPrepMemory,
-  type PrepMemoryResult,
-} from "./prep-memory-actions";
+import type { PrepMemoryResult } from "./prep-memory-read";
 
 // ===========================================================================
 // The previous treatment, in place, on a Dashboard appointment row.
@@ -43,6 +40,18 @@ import {
 // (components/signed-consent-viewer.tsx); this follows it so keyboard and
 // screen-reader behaviour stays uniform.
 
+/** 200 carries the answer; 404 is "no such appointment here" (the same as none); anything else is "could not be loaded". */
+async function readPrepMemoryResponse(response: Response): Promise<PrepMemoryResult> {
+  if (response.status === 404) return { status: "none" };
+  if (!response.ok) return { status: "unavailable" };
+  const body = (await response.json()) as { status?: unknown; memory?: unknown } | null;
+  if (body?.status === "none") return { status: "none" };
+  if (body?.status === "loaded" && body.memory && typeof body.memory === "object") {
+    return { status: "loaded", memory: body.memory as Extract<PrepMemoryResult, { status: "loaded" }>["memory"] };
+  }
+  return { status: "unavailable" };
+}
+
 export function DashboardTreatmentMemory({
   appointmentId,
   clientId,
@@ -69,27 +78,43 @@ export function DashboardTreatmentMemory({
   // the appointment belongs to this studio, and never travel in the page payload.
   const [open, setOpen] = useState(true);
   const [result, setResult] = useState<PrepMemoryResult | null>(null);
-  const [pending, startTransition] = useTransition();
+  // The in-flight read, so it can be cancelled on unmount and never started twice.
+  const inflight = useRef<AbortController | null>(null);
   const regionId = useId();
   const showable = !summary.unavailable && summary.hasTreatment;
 
-  function load() {
+  // A plain GET fetch (not a server action): server actions run one at a time on the client, so a read started on mount would
+  // hold a pinned-note save behind it. The route re-checks the session and studio server-side (prep-memory/route.ts).
+  async function load() {
     // A loaded or empty answer is kept; a FAILED one is retried the next time the row is opened.
-    if ((result !== null && result.status !== "unavailable") || pending) return;
-    startTransition(async () => {
-      // A rejected INVOCATION (dropped connection, deployment-id mismatch on a tab left open across a deploy) must fail
-      // to this row's own line and never escape to the route error boundary, which would replace the whole Dashboard.
-      // The thrown value is deliberately not read, rendered or logged.
-      try {
-        setResult(await loadAppointmentPrepMemory(appointmentId));
-      } catch {
-        setResult({ status: "unavailable" });
-      }
-    });
+    if ((result !== null && result.status !== "unavailable") || inflight.current) return;
+    const controller = new AbortController();
+    inflight.current = controller;
+    try {
+      const response = await fetch(`/dashboard/prep-memory?appointment_id=${encodeURIComponent(appointmentId)}`, {
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: { Accept: "application/json" },
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) return;
+      setResult(await readPrepMemoryResponse(response));
+    } catch {
+      // A dropped connection or a malformed body fails to THIS row's own line and never escapes to the route error
+      // boundary, which would replace the whole Dashboard. The thrown value is deliberately not read, rendered or logged.
+      if (!controller.signal.aborted) setResult({ status: "unavailable" });
+    } finally {
+      if (inflight.current === controller) inflight.current = null;
+    }
   }
 
   useEffect(() => {
-    if (showable && open) load();
+    if (showable && open) void load();
+    // Cancel the read if the row unmounts (a day change, a navigation). Clearing the ref lets a remounted effect start fresh.
+    return () => {
+      inflight.current?.abort();
+      inflight.current = null;
+    };
     // Load once per mount; closing and reopening reuses the result.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

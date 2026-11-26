@@ -13,7 +13,6 @@ vi.mock("@/app/(app)/clients/[id]/pinned-notes-actions", () => ({
   addClientPinnedNoteAction: async () => undefined,
   editClientPinnedNoteAction: async () => undefined,
 }));
-vi.mock("@/app/(app)/dashboard/prep-memory-actions", () => ({ loadAppointmentPrepMemory: async () => ({ status: "none" }) }));
 
 const { renderToStaticMarkup } = await import("react-dom/server");
 const { NextSessionReminder, VISIT_ACTION_CLASS, VisitActionRow } = await import("@/app/(app)/dashboard/visit-actions");

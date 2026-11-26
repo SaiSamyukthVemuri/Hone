@@ -504,13 +504,14 @@ test.describe("a rejected disclosure fails to its own line", () => {
 
     await loginAsOwner(page, seed);
 
-    // Break BOTH rows' server-action invocations (each is matched by its own appointment id). Server Actions POST back to the
-    // same route, so aborting the POST reproduces a real transport failure —
-    // the action never runs, and the browser-side promise rejects. practitioner feedback (26 Nov): the details now load on first
-    // render, so the failure is installed BEFORE the page loads, for both rows' appointments (each matched by its own id).
+    // Break BOTH rows' details requests (each is matched by its own appointment id). The details are a GET to
+    // /dashboard/prep-memory, so aborting it reproduces a real transport failure: the server is never reached and the browser-side
+    // fetch rejects. practitioner feedback (26 Nov): the details now load on first render, so the failure is installed BEFORE the
+    // page loads.
     let aborted = 0;
-    await page.route("**/dashboard**", async (route) => {
-      if (route.request().method() === "POST" && (route.request().postData() ?? "").match(new RegExp(`${apptA.appointmentId}|${apptB.appointmentId}`))) {
+    await page.route("**/dashboard/prep-memory**", async (route) => {
+      const id = new URL(route.request().url()).searchParams.get("appointment_id");
+      if (id === apptA.appointmentId || id === apptB.appointmentId) {
         aborted += 1;
         return route.abort("failed");
       }
@@ -526,7 +527,7 @@ test.describe("a rejected disclosure fails to its own line", () => {
       await expect(
         page.getByTestId("dashboard-memory-unavailable").first(),
       ).toBeVisible({ timeout: T });
-      expect(aborted, "the server action was never reached").toBeGreaterThan(0);
+      expect(aborted, "the details request was never sent on to the server").toBeGreaterThan(0);
     });
 
     await test.step("24. the Dashboard did NOT hit the route error boundary", async () => {
@@ -560,7 +561,7 @@ test.describe("a rejected disclosure fails to its own line", () => {
 
     await test.step("27. the NEIGHBOURING row is still usable once transport recovers", async () => {
       // BOTH rows failed on mount. Transport recovers; only row B is closed and reopened, which retries its read.
-      await page.unroute("**/dashboard**");
+      await page.unroute("**/dashboard/prep-memory**");
       const toggleB = page.getByTestId("dashboard-memory-toggle").nth(1);
       await expect(page.getByTestId("dashboard-memory-unavailable")).toHaveCount(2);
       await closeLastVisitDetails(toggleB);

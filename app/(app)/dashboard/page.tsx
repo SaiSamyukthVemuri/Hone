@@ -1188,7 +1188,7 @@ function AppointmentRow({
    * The compact projection of the previous visit — exactly what the collapsed
    * row paints, and nothing else. The full `AppointmentPrepMemory` is not in
    * the page props: for a row with prior treatment the client component loads it on page view
-   * through `loadAppointmentPrepMemory`, which re-checks the studio server-side (26 Nov 2026).
+   * from GET /dashboard/prep-memory, which re-checks the session and studio server-side (26 Nov 2026).
    */
   prepSummary: DashboardPrepSummary;
   // Whether the page ASKED the history question for this row at all. Only
