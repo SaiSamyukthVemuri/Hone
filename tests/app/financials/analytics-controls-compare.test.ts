@@ -9,6 +9,7 @@ import { ALL_PRACTITIONERS } from "@/lib/business-analytics/visit-metrics";
 
 // The shared Analytics controls submit the comparison. A link that arrives with compare=previous_month (the Overview's "Explore analytics" for a chosen
 // month) must be RESUBMITTABLE as it is: pressing Show, even after changing only the team member, must not quietly send "preceding".
+const REVEAL_CLASS = "group-has-[select[name=period]_option[value^=previous]:checked]:flex";
 const params = (raw: Record<string, string>) => {
   const r = parseOverviewParams(raw, { strict: false, practitionerIds: new Set() });
   if (!r.ok) throw new Error("bad");
@@ -27,7 +28,7 @@ describe("Analytics controls: the comparison survives Show", () => {
     expect(sel).toContain('<option value="previous_month">The previous calendar month</option>');
     expect(sel).toContain('<option value="preceding" selected="">');
   });
-  it("any other range does not offer it", () => {
+  it("any other range does not offer it as a choice", () => {
     expect(compareSelect(html({ period: "custom", from: "2026-03-02", to: "2026-03-31" }))).not.toContain("previous_month");
     expect(compareSelect(html({}))).not.toContain("previous_month");
   });
@@ -35,24 +36,39 @@ describe("Analytics controls: the comparison survives Show", () => {
     expect(ALL_PRACTITIONERS).toBeDefined();
     expect(html({ period: "custom", from: "2026-03-01", to: "2026-03-31", compare: "previous_month" })).toContain('name="practitioner"');
   });
-  it("LAST MONTH shows the comparison explicitly: one fixed, visible choice 'The previous calendar month', submitted as compare=previous_month", () => {
-    const h = html({ period: "previous_month", compare: "previous_month" });
-    const fixed = /<label[^>]*data-fixed-comparison[\s\S]*?<\/label>/.exec(h)?.[0] ?? "";
-    expect(fixed).toContain("Compared with");
-    expect(fixed).toContain('name="compare"');
-    expect(fixed).toContain('<option value="previous_month" selected="">The previous calendar month</option>');
-    expect(fixed.match(/<option /g)).toHaveLength(1); // one fixed choice: Show cannot send "preceding"
-    // it is not inside the hidden Custom-range group, and that group has no second compare field
-    expect(/data-custom-range[\s\S]*name="compare"/.test(h)).toBe(false);
-    expect(h.match(/name="compare"/g)).toHaveLength(1);
+  it("LAST MONTH: ONE compare field, selected 'The previous calendar month', plus the read-only line the form shows while Period reads Last month", () => {
+    const raws: Record<string, string>[] = [{ period: "previous_month", compare: "previous_month" }, { period: "previous_month" }, { period: "previous_month", compare: "preceding" }];
+    for (const raw of raws) {
+      const h = html(raw);
+      // exactly one field named compare, so nothing can be submitted twice, and it submits previous_month
+      expect(h.match(/name="compare"/g), JSON.stringify(raw)).toHaveLength(1);
+      expect(compareSelect(h)).toContain('<option value="previous_month" selected="">The previous calendar month</option>');
+      // the read-only line: text, not a control, and revealed by the form's own :has() rule for the Last month option
+      const fixed = /<div[^>]*data-fixed-comparison[\s\S]*?<\/div>/.exec(h)?.[0] ?? "";
+      expect(fixed).toContain("Compared with");
+      expect(fixed).toContain("The previous calendar month");
+      expect(fixed).not.toMatch(/<(select|input)/);
+      expect(fixed).toContain(REVEAL_CLASS);
+    }
   });
-  it("Last month WITHOUT the parameter still shows and submits the previous calendar month", () => {
-    const h = html({ period: "previous_month" });
-    expect(h).toContain('<option value="previous_month" selected="">The previous calendar month</option>');
+  it("the full selector is the one that is submitted for a Custom range, with every valid choice, so the comparison follows the period chosen", () => {
+    const h = html({ period: "custom", from: "2026-03-02", to: "2026-03-20" });
     expect(h.match(/name="compare"/g)).toHaveLength(1);
-  });
-  it("other periods have no fixed comparison", () => {
-    expect(html({})).not.toContain("data-fixed-comparison");
-    expect(html({ period: "year_to_date" })).not.toContain("data-fixed-comparison");
+    expect(compareSelect(h)).toContain('<option value="preceding" selected="">');
+    expect(compareSelect(h)).toContain('<option value="last_year">');
+    expect(compareSelect(h)).not.toContain("previous_month"); // not one whole month: not offered
   });
 });
+
+describe("the reveal rule is a REAL selector once Tailwind has compiled it", () => {
+  // A class string in the markup proves nothing: Tailwind turned the underscore in value=previous_month into a space and emitted a rule that never matched,
+  // so the read-only line stayed hidden in every browser. Compile the class with Tailwind itself and read the selector it produced.
+  it("scopes to the Period select, names the Last month option, and is not mangled", async () => {
+    const { compile } = await import("tailwindcss");
+    const css = (await compile("@tailwind utilities;")).build([REVEAL_CLASS]);
+    expect(css).toContain("select[name=period] option[value^=previous]:checked");
+    expect(css).not.toMatch(/:is\(\)|previous month/);
+    expect(css).toContain("display: flex");
+  });
+});
+

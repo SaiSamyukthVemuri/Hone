@@ -1,4 +1,4 @@
-import { CUSTOM_COMPARISONS, PERIOD_KINDS, type CustomComparison, type PeriodKind } from "./period";
+import { CUSTOM_COMPARISONS, PERIOD_KINDS, isWholeCalendarMonth, type CustomComparison, type PeriodKind } from "./period";
 import { ALL_PRACTITIONERS, type PractitionerFilter } from "./visit-metrics";
 
 // ===========================================================================
@@ -72,7 +72,16 @@ export function parseOverviewParams(raw: RawParams, opts: { strict: boolean; pra
   const to = t.present && !t.repeated ? t.value : undefined;
 
   if (bad && opts.strict) return { ok: false, error: "bad_request" };
-  return { ok: true, params: { periodKind, from, to, compare, practitioner, series }, notices };
+  // The comparison for LAST MONTH is the calendar month before it, by definition: whatever the address says, that is what is shown and resubmitted.
+  // "The previous calendar month" only makes sense for ONE whole calendar month. Anything else that arrives with it (Last month switched to a Custom range
+  // with the old choice still selected, with no script to change it) is compared with the period just before, and SAID, never refused and never quiet.
+  let effective: CustomComparison = compare;
+  if (periodKind === "previous_month") effective = "previous_month";
+  else if (periodKind === "custom" && compare === "previous_month" && !isWholeCalendarMonth(from, to)) {
+    effective = "preceding";
+    notices.push("The previous calendar month applies to one whole calendar month, so this range is compared with the period just before it.");
+  }
+  return { ok: true, params: { periodKind, from, to, compare: effective, practitioner, series }, notices };
 }
 
 /**

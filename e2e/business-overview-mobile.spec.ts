@@ -355,8 +355,10 @@ test("Overview Last month -> Explore analytics -> Show: the comparison is the pr
 
   await page.getByRole("link", { name: /Explore analytics/i }).click();
   await expect(page).toHaveURL(/\/financials\/analytics\?/, { timeout: T });
-  const comparison = page.getByLabel("Compared with");
-  const selectedComparison = () => comparison.evaluate((el) => { const s = el as HTMLSelectElement; return s.options[s.selectedIndex]?.textContent ?? ""; });
+  // ONE field named compare submits the comparison; while Period reads Last month the page also SAYS it in a read-only line.
+  const comparison = page.getByTestId("analytics-fixed-comparison");
+  const compareField = page.locator('select[name="compare"]');
+  const selectedComparison = () => compareField.evaluate((el) => { const s = el as HTMLSelectElement; return s.options[s.selectedIndex]?.textContent ?? ""; });
   // The id sits on the card's heading; the card is its parent, which holds the figure.
   const total = page.locator("#ov-collected-total").locator("xpath=..");
 
@@ -364,7 +366,9 @@ test("Overview Last month -> Explore analytics -> Show: the comparison is the pr
   expect(q(page).get("period")).toBe("previous_month");
   expect(q(page).get("compare")).toBe("previous_month");
   await expect(comparison).toBeVisible({ timeout: T });
+  await expect(comparison).toContainText("The previous calendar month");
   expect(await selectedComparison()).toBe("The previous calendar month");
+  await expect(compareField).toHaveCount(1);
   await expect(total).toContainText("$275.50", { timeout: T });
 
   // Press Show, changing nothing.
@@ -373,6 +377,7 @@ test("Overview Last month -> Explore analytics -> Show: the comparison is the pr
   expect(q(page).get("period")).toBe("previous_month");
   expect(q(page).get("compare"), "Show must resubmit the previous calendar month, never 'preceding'").toBe("previous_month");
   await expect(comparison).toBeVisible({ timeout: T });
+  await expect(comparison).toContainText("The previous calendar month");
   expect(await selectedComparison()).toBe("The previous calendar month");
   // The headline is exact dollars and cents and equals the Overview's figure to the cent.
   await expect(total).toContainText("$275.50", { timeout: T });
@@ -385,4 +390,27 @@ test("Overview Last month -> Explore analytics -> Show: the comparison is the pr
     mkdirSync(`${SHOTS}/analytics`, { recursive: true });
     await page.screenshot({ path: `${SHOTS}/analytics/analytics-after-show-${test.info().project.name}.png`, fullPage: true });
   }
+
+  // CODEX P2: switch Period from Last month to Custom range with a PARTIAL range and press Show. The comparison choices follow the period now chosen: the
+  // read-only line goes away, the full selector appears, and whichever comparison is submitted is VALID. A stale "previous calendar month" on a partial range
+  // is compared with the period just before, and said; it is never a refusal.
+  const from = `${months.lastYm}-03`;
+  const to = `${months.lastYm}-12`; // ten days of last month: not one whole calendar month
+  await page.getByRole("combobox", { name: "Period" }).selectOption("custom");
+  await expect(comparison).toBeHidden();
+  await expect(compareField).toBeVisible();
+  await page.locator('input[name="from"]').fill(from);
+  await page.locator('input[name="to"]').fill(to);
+  await page.getByRole("button", { name: "Show", exact: true }).click();
+  await expect.poll(() => q(page).get("period"), { timeout: T }).toBe("custom");
+  await expect(page.locator("#ov-collected-total")).toBeVisible({ timeout: T });
+  await expect(page.getByRole("main")).not.toContainText(/not one whole|cannot be compared|invalid/i);
+  await expect(page.getByRole("status").filter({ hasText: "compared with the period just before" })).toHaveCount(1, { timeout: T });
+  expect(["preceding", "last_year"]).toContain(await compareField.inputValue());
+  await expect(page.locator("#ov-collected-total").locator("xpath=..")).toContainText("$", { timeout: T });
+  // and a valid choice can be made before Show: the same range with "The same dates last year" is accepted as it is
+  await compareField.selectOption("last_year");
+  await page.getByRole("button", { name: "Show", exact: true }).click();
+  await expect.poll(() => q(page).get("compare"), { timeout: T }).toBe("last_year");
+  await expect(page.getByRole("main")).not.toContainText(/not one whole|invalid/i);
 });

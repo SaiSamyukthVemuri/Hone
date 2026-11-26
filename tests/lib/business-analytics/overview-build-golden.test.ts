@@ -22,7 +22,9 @@ const load = async (client: SupabaseClient, raw: Record<string, string>, clients
 
 const CASES: Array<{ name: string; raw: Record<string, string>; clients?: Clients; sha: string }> = [
   { name: "month to date", raw: {}, sha: "35cecce2cd84143db3cee7022e54dd48afd756157e1f45236915f60b80762219" },
-  { name: "previous month", raw: { period: "previous_month" }, sha: "429d5e10876064a6c646c6a73ced2147831d810174f23b65d5e9ec8af9067903" },
+  // RE-RECORDED (Codex P2, 26 Nov 2026): the ONLY change is params.compare, which is now "previous_month" for Last month (its comparison is the calendar month
+  // before it, by definition) where it was "preceding". Replacing that one value back reproduces the old digest 429d5e10... exactly, so no figure moved.
+  { name: "previous month", raw: { period: "previous_month" }, sha: "91128944ca1fd235c05e6fdd3742882431843b88ad2ad9c0329137a512133a2c" },
   { name: "year to date", raw: { period: "year_to_date" }, sha: "f64dac57c4c8cc4f9ee59957a950148eb89f110902a216f801991cbfd927802d" },
   { name: "custom range", raw: { period: "custom", from: "2026-06-01", to: "2026-07-31" }, sha: "c5e24b56fe6712ec5da2cd67bee48718bedb44771ea2392a007f2b1d09f767b2" },
   { name: "one practitioner", raw: { practitioner: "pr-2" }, sha: "40af2a208e790b6cf4a4015e3d9f30d1630b6d833f862bb346cdc249b059ba2c" },

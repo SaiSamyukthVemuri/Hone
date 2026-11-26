@@ -167,16 +167,17 @@ export function Controls({ params, options, action = OVERVIEW_PATH, hidden = [] 
         <input key={name} type="hidden" name={name} value={value} />
       ))}
       <button type="submit" className={BUTTON}>Show</button>
-      {params.periodKind === "previous_month" ? (
-        // LAST MONTH is one whole calendar month, compared with the calendar month before it. Said, not implied: one fixed choice, so Show resubmits
-        // compare=previous_month and never "preceding". It is not a Custom-range control, so it is always visible.
-        <label className="flex flex-col gap-1 text-xs text-fg-muted" data-fixed-comparison="">
-          Compared with
-          <select name="compare" defaultValue="previous_month" aria-label="Compared with" className={INPUT}>
-            <option value="previous_month">{PREVIOUS_CALENDAR_MONTH_LABEL}</option>
-          </select>
-        </label>
-      ) : null}
+      {/* LAST MONTH is one whole calendar month, compared with the calendar month before it. Said, not implied: while the Period list reads Last month this
+          line is shown (the form's own :has() rule, no script), and the one compare field below still submits previous_month, so Show resubmits it and never
+          "preceding". (value^=previous, not previous_month: Tailwind turns an underscore inside an arbitrary variant into a space and the rule never matches.) It is text, not a second compare field: a hidden field still submits, so only ONE field named compare exists. */}
+      <div
+        className="hidden flex-col gap-1 text-xs text-fg-muted group-has-[select[name=period]_option[value^=previous]:checked]:flex"
+        data-fixed-comparison=""
+        data-testid="analytics-fixed-comparison"
+      >
+        <span>Compared with</span>
+        <span className={cx("inline-flex items-center rounded-lg border border-line bg-surface-sunken px-3 text-sm text-fg", CONTROL_MIN_TOUCH)}>{PREVIOUS_CALENDAR_MONTH_LABEL}</span>
+      </div>
       <div className="hidden basis-full flex-wrap items-end justify-end gap-2 group-has-[option[value=custom]:checked]:flex" data-custom-range="">
         <label className="flex flex-col gap-1 text-xs text-fg-muted">
           From
@@ -186,15 +187,15 @@ export function Controls({ params, options, action = OVERVIEW_PATH, hidden = [] 
           To
           <input type="date" name="to" defaultValue={shownDate(params.to)} className={INPUT} />
         </label>
-        {params.periodKind === "previous_month" ? null : <label className="flex flex-col gap-1 text-xs text-fg-muted">
+        <label className="flex flex-col gap-1 text-xs text-fg-muted">
           Compare with
           <select name="compare" defaultValue={params.compare} className={INPUT}>
             <option value="preceding">The period just before</option>
             <option value="last_year">The same dates last year</option>
             {/* Offered for ONE whole calendar month, and kept when it was the comparison in use, so pressing Show does not quietly change it. */}
-            {isWholeCalendarMonth(params.from, params.to) || params.compare === "previous_month" ? <option value="previous_month">{PREVIOUS_CALENDAR_MONTH_LABEL}</option> : null}
+            {isWholeCalendarMonth(params.from, params.to) || params.compare === "previous_month" || params.periodKind === "previous_month" ? <option value="previous_month">{PREVIOUS_CALENDAR_MONTH_LABEL}</option> : null}
           </select>
-        </label>}
+        </label>
       </div>
     </form>
   );
