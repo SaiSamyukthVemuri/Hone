@@ -401,10 +401,10 @@ export const PATH_DECISIONS: Readonly<Record<string, Readonly<Record<string, str
     switchStudioAction: "not_staff(auth)",
   },
   "app/actions/demo.ts": {
-    submitDemoRequest: "not_staff(public_booking)",
+    submitDemoRequest: "not_staff(public_booking)+admin",
   },
   "app/actions/waitlist.ts": {
-    submitWaitlistEntry: "not_staff(public_booking)",
+    submitWaitlistEntry: "not_staff(public_booking)+admin",
   },
   "app/admin/actions.ts": {
     markDemoContactedAction: "not_staff(platform_admin)+admin",
@@ -444,6 +444,9 @@ export const PATH_DECISIONS: Readonly<Record<string, Readonly<Record<string, str
   },
   "app/api/cron/materialize-recurring-breaks/route.ts": {
     GET: "not_staff(cron)+admin",
+  },
+  "app/api/cron/lead-alerts/route.ts": {
+    GET: "not_staff(cron)",
   },
   "app/api/cron/no-show-check/route.ts": {
     GET: "not_staff(cron)",
@@ -659,6 +662,8 @@ export const RPC_NAMES: readonly string[] = [
   "record_email_attempt",
   "record_email_result",
   "record_new_client_waitlist_conversion",
+  "record_platform_demo_request",
+  "record_platform_early_access_signup",
   "record_setup_submission_with_identity",
   "record_sms_delivery_status",
   "record_sms_result",
@@ -954,6 +959,7 @@ export const DYNAMIC_RPC_FILES: readonly string[] = [
   "app/(app)/settings/payments/cancellation-fee-actions.ts",
   "app/(app)/settings/waitlist/actions.ts",
   "lib/email/send-appointment.ts",
+  "lib/platform-leads/alert-delivery.ts",
   "lib/rollouts/admin-commands.ts",
   "lib/rollouts/charting-rollout.ts",
   "lib/waitlist/followups-owner.ts",
