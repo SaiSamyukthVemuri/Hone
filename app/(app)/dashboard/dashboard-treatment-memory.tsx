@@ -115,9 +115,10 @@ export function DashboardTreatmentMemory({
       inflight.current?.abort();
       inflight.current = null;
     };
-    // Load once per mount; closing and reopening reuses the result.
+    // Runs on mount AND when the row first becomes showable while open (a first read that was unavailable, then a later
+    // revalidation that succeeds). load() skips a kept answer and an in-flight call, so a re-render never refetches.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [showable]);
 
   // Truthful ordering of the three genuinely different states. "We could not
   // read it" must never render as "this client has no treatment history": that
