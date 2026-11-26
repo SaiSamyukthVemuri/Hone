@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 292,
+    "count": 293,
     "last": "0389_subscription_self_service.sql",
-    "sha256": "540a82c3ed7b9fc18068bc7d5c51ee9707ce258ec48ec77d965b4d8d9b08ea41"
+    "sha256": "88e740f165486cc66a23dfaec6b94e1a2dd1b2985cde5c655635855d24db1f48"
   },
   "public": {
     "tables": [
@@ -344,6 +344,7 @@
       "enforce_treatment_image_integrity",
       "enqueue_calendar_outbound",
       "enqueue_calendar_outbound_on_delete",
+      "ensure_unspecified_machine",
       "erase_waitlist_decline_answers",
       "expire_hone_checkout",
       "expire_new_client_waitlist_invitation",
@@ -549,6 +550,7 @@
       "redeem_waitlist_preference_grant",
       "refuse_treatment_setup_capture_update",
       "refuse_treatment_setup_reading_update",
+      "refuse_unspecified_machine_change",
       "register_studio_machine",
       "reject_payment_audit_mutation",
       "reject_payment_consents_mutation",

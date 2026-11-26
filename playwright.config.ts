@@ -62,7 +62,7 @@ export default defineConfig({
           // one complete MultiPlex visit on an emulated iPhone in WebKit (the engine behind iPhone Safari; NOT real Safari, NOT a real device).
           {
             name: "webkit-iphone-visit",
-            testMatch: /xcell-multiplex-visit\.spec\.ts$/,
+            testMatch: /(xcell-multiplex-visit|multiplex-no-machine)\.spec\.ts$/,
             use: { ...devices["iPhone 13"], bypassCSP: true },
           },
           // CLN-006 mounted-keyboard and focus cases in WebKit (non-required
