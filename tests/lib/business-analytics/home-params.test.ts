@@ -58,19 +58,19 @@ describe("homeQuery round-trips every selection through its own link", () => {
 describe("analyticsRawFor picks the existing Analytics window, with the right dates", () => {
   const dates = (sel: Parameters<typeof analyticsRawFor>[0]) => {
     const raw = analyticsRawFor(sel);
-    const r = resolvePeriod({ kind: raw.period as never, today: NOW, from: raw.from as string | undefined, to: raw.to as string | undefined });
+    const r = resolvePeriod({ kind: raw.period as never, today: NOW, from: raw.from as string | undefined, to: raw.to as string | undefined, customComparison: raw.compare as string | undefined });
     if (!r.ok) throw new Error(r.error);
-    return [r.period.current.startLocal, r.period.current.lastLocal];
+    return [r.period.current.startLocal, r.period.current.lastLocal, r.period.comparison.startLocal, r.period.comparison.lastLocal];
   };
   it("the three named periods", () => {
-    expect(dates({ period: "month_to_date", month: null })).toEqual(["2026-11-01", "2026-11-24"]);
-    expect(dates({ period: "previous_month", month: null })).toEqual(["2026-10-01", "2026-10-31"]);
-    expect(dates({ period: "year_to_date", month: null })).toEqual(["2026-01-01", "2026-11-24"]);
+    expect(dates({ period: "month_to_date", month: null })).toEqual(["2026-11-01", "2026-11-24", "2026-10-01", "2026-10-24"]);
+    expect(dates({ period: "previous_month", month: null })).toEqual(["2026-10-01", "2026-10-31", "2026-09-01", "2026-09-30"]);
+    expect(dates({ period: "year_to_date", month: null })).toEqual(["2026-01-01", "2026-11-24", "2025-01-01", "2025-11-24"]);
   });
-  it("a chosen month is the whole month, to its true last day (leap February, 30-day month, December)", () => {
-    expect(dates({ period: "month", month: "2024-02" })).toEqual(["2024-02-01", "2024-02-29"]);
-    expect(dates({ period: "month", month: "2026-09" })).toEqual(["2026-09-01", "2026-09-30"]);
-    expect(dates({ period: "month", month: "2025-12" })).toEqual(["2025-12-01", "2025-12-31"]);
+  it("a chosen month is the whole month, to its true last day, compared with the PREVIOUS CALENDAR MONTH (leap February, 30-day month, year boundary)", () => {
+    expect(dates({ period: "month", month: "2024-02" })).toEqual(["2024-02-01", "2024-02-29", "2024-01-01", "2024-01-31"]);
+    expect(dates({ period: "month", month: "2026-09" })).toEqual(["2026-09-01", "2026-09-30", "2026-08-01", "2026-08-31"]);
+    expect(dates({ period: "month", month: "2026-01" })).toEqual(["2026-01-01", "2026-01-31", "2025-12-01", "2025-12-31"]);
   });
 });
 

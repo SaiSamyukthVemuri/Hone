@@ -64,7 +64,8 @@ export function homeQuery(sel: HomeSelection): string {
 /** Which existing Analytics window answers this selection. A chosen month is the custom range from its first to its last day. */
 export function analyticsRawFor(sel: HomeSelection): RawParams {
   if (sel.period === "month" && sel.month) {
-    return { period: "custom", from: `${sel.month}-01`, to: addDays(`${shiftYearMonth(sel.month, 1)}-01`, -1) };
+    // Compared with the calendar month before it, the same as Last month and Month to date (the preview's labels are calendar-based).
+    return { period: "custom", from: `${sel.month}-01`, to: addDays(`${shiftYearMonth(sel.month, 1)}-01`, -1), compare: "previous_month" };
   }
   return { period: sel.period === "month" ? DEFAULT_HOME_PERIOD : sel.period };
 }

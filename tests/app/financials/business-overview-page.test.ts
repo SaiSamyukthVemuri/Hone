@@ -93,7 +93,7 @@ describe("the figures are in the server-rendered page", () => {
   it("a chosen month reads that month's whole window", async () => {
     calls.result = view({});
     await render({ period: "month", month: "2026-03" });
-    expect(calls.load[0][3]).toEqual({ period: "custom", from: "2026-03-01", to: "2026-03-31" });
+    expect(calls.load[0][3]).toEqual({ period: "custom", from: "2026-03-01", to: "2026-03-31", compare: "previous_month" });
   });
 });
 
