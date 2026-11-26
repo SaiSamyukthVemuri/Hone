@@ -1,6 +1,12 @@
-import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { describe, expect, it, vi } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { MarkAppointmentCompleteControl } from "@/components/appointment/mark-complete-control";
+
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+vi.mock("@/app/(app)/calendar/actions", () => ({ markAppointmentCompleteAction: vi.fn() }));
 
 // PR #180. Source-grep tests pin the load-bearing shape of the
 // re-introduced "Mark completed" button on the appointment lifecycle
@@ -50,7 +56,10 @@ describe("AppointmentLifecycleActions: Mark completed button restoration", () =>
   });
 
   it("renders a 'Mark completed' button", () => {
-    expect(COMPONENT).toMatch(/>\s*Mark completed\s*</);
+    const html = renderToStaticMarkup(createElement(MarkAppointmentCompleteControl, {
+      appointmentId: "calendar-appointment", startsAt: "2025-01-01T12:00:00Z",
+    }));
+    expect(html).toContain(">Mark completed</button>");
   });
 
   it("the Mark completed button uses the primary (filled) styling so it is obvious", () => {
@@ -154,7 +163,7 @@ describe("AppointmentLifecycleActions: confirmation dialog (replaces window.conf
   });
 
   it("each dialog carries a distinct confirm label so the copy is action-specific", () => {
-    expect(COMPONENT).toMatch(/confirmLabel="Mark completed"/);
+    expect(COMPONENT).toContain('confirmLabel={checkout ? "Finish visit" : "Mark completed"}');
     expect(CALENDAR).toMatch(/confirmLabel="Mark no-show"/);
     // Charting must never offer no-show: no button, no action, no dialog.
     const controlCode = COMPONENT.split("\n")

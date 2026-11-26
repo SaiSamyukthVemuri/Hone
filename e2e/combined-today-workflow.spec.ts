@@ -97,7 +97,7 @@ function runSuite(label: string, viewport: { width: number; height: number }, is
       });
 
       await test.step("4+5. Remember and Caution are DISTINCT, each rendered once, in full", async () => {
-        const remember = page.locator("span").filter({ hasText: /^Remember: / });
+        const remember = page.getByTestId("dashboard-prep-remember");
         const caution = page.locator("span").filter({ hasText: /^Caution: / });
         await expect(remember).toHaveCount(1);
         await expect(caution).toHaveCount(1);
@@ -120,16 +120,19 @@ function runSuite(label: string, viewport: { width: number; height: number }, is
       });
 
       await test.step("4+6. latest setup once; intake and charting stated once", async () => {
-        await expect(
-          page.locator("span").filter({ hasText: /^Latest setup: / }),
-        ).toHaveCount(1);
+        const toggle = page.getByTestId("dashboard-memory-toggle");
+        await toggle.click();
+        await expect(page.getByTestId("prep-setup-area")).toHaveCount(1);
+        await expect(page.getByTestId("prep-setup-area")).toContainText("27.12 MHz");
+        await expect(page.getByText(PLAN_LINE_1, { exact: false })).toHaveCount(1);
+        await toggle.click();
         // No generic record-count line beside the specific chips.
         await expect(page.getByText(/^Records: \d+ reminder/)).toHaveCount(0);
         await expect(page.getByText("Records look complete.")).toHaveCount(0);
       });
 
       await test.step("11+12. long multiline content wraps; no sideways scroll", async () => {
-        const remember = page.locator("span").filter({ hasText: /^Remember: / }).first();
+        const remember = page.getByTestId("dashboard-prep-remember").first();
         const box = await remember.boundingBox();
         expect(box).not.toBeNull();
         // Multi-line => taller than a single line.

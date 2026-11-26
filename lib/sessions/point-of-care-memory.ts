@@ -63,6 +63,7 @@ import {
   type SetupSourceEntry,
 } from "@/lib/sessions/treatment-setup-snapshot";
 import type { ClinicalSummaryBlock } from "@/lib/sessions/clinical-summary";
+import { compareChartedRecency } from "@/lib/sessions/charted-session";
 import type { SessionBlockSide } from "@/lib/types/database";
 
 // Practitioner-facing mode names. Mirrors clinical-summary.ts's MODE_LABELS so
@@ -413,6 +414,34 @@ function buildReadings(
     }
   }
   return out;
+}
+
+export type RecordedPassSettings = {
+  recordedAt: string;
+  modeLabel: string | null;
+  readings: PointOfCareReading[];
+};
+
+/** Return the live passes in recorded order when their visible settings differ.
+ * Frequency, probe and energy belong to the block and are shown once. */
+export function changedPassSettings(block: PointOfCareBlock): RecordedPassSettings[] {
+  const live = (block.entries ?? []).filter(entry => entry.deleted_at == null);
+  if (live.length < 2) return [];
+  const ordered = live.sort((a, b) => compareChartedRecency(
+    { started_at: b.created_at, id: b.id ?? "" }, { started_at: a.created_at, id: a.id ?? "" },
+  ));
+  const passes = ordered.map(entry => {
+    const mode = resolveMode(block, entry);
+    return {
+      recordedAt: entry.created_at,
+      modeLabel: MODE_LABELS[mode] ?? null,
+      readings: buildReadings(block, entry, mode),
+    };
+  });
+  const first = passes[0];
+  const changed = passes.some(pass => pass.modeLabel !== first.modeLabel || pass.readings.length !== first.readings.length ||
+    pass.readings.some((reading, index) => reading.field !== first.readings[index].field || reading.value !== first.readings[index].value));
+  return changed ? passes : [];
 }
 
 function buildArea(block: PointOfCareBlock, index: number): PointOfCareArea {

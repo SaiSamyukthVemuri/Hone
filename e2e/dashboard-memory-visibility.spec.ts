@@ -29,11 +29,11 @@ const LONG_NOTE = `${LONG_NOTE_LINE_1}\n${LONG_NOTE_LINE_2}`;
 
 async function openDashboard(page: Page) {
   await page.goto("/dashboard");
-  await expect(page.getByText("Before today").first()).toBeVisible({ timeout: T });
+  await expect(page.getByRole("heading", { name: "Today", exact: true })).toBeVisible({ timeout: T });
 }
 
 function rememberLine(page: Page) {
-  return page.locator("span").filter({ hasText: /^Remember: / }).first();
+  return page.getByTestId("dashboard-prep-remember").first();
 }
 
 // The combined Today card labels the watch line "Caution:" and the plan note
@@ -44,7 +44,7 @@ function cautionLine(page: Page) {
 }
 
 function setupLine(page: Page) {
-  return page.locator("span").filter({ hasText: /^Latest setup: / }).first();
+  return page.getByTestId("prep-setup-area").first();
 }
 
 test.describe("iPhone profile", () => {
@@ -96,15 +96,15 @@ test.describe("iPhone profile", () => {
     });
 
     await test.step("the latest-settings line is complete too", async () => {
+      await page.getByTestId("dashboard-memory-toggle").first().click();
+      await expect(setupLine(page)).toContainText("27.12 MHz");
       const text = await setupLine(page).innerText();
       expect(text).not.toContain("…");
       const metrics = await setupLine(page).evaluate((node) => ({
-        whiteSpace: getComputedStyle(node).whiteSpace,
         textOverflow: getComputedStyle(node).textOverflow,
         scrollWidth: node.scrollWidth,
         clientWidth: node.clientWidth,
       }));
-      expect(metrics.whiteSpace).toBe("pre-wrap");
       expect(metrics.textOverflow).not.toBe("ellipsis");
       expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 1);
     });
@@ -173,7 +173,9 @@ test.describe("iPhone profile", () => {
     await loginAsOwner(page, seed);
     await page.goto("/dashboard");
     // History exists (a charted block) but no watch/plan note was recorded.
-    await expect(page.getByText("No watch/plan note.").first()).toBeVisible({ timeout: T });
+    await expect(page.getByTestId("dashboard-memory-toggle").first()).toBeVisible({ timeout: T });
+    await expect(page.getByTestId("dashboard-prep-remember")).toHaveCount(0);
+    await expect(page.getByTestId("today-row-caution")).toHaveCount(0);
   });
 });
 
@@ -235,7 +237,7 @@ test.describe("the caution line at iPhone width", () => {
       await expect(page.getByText("Caution noted:")).toHaveCount(0);
       // No plan note was recorded, so nothing claims one.
       await expect(
-        page.locator("span").filter({ hasText: /^Remember: / }),
+        page.getByTestId("dashboard-prep-remember"),
       ).toHaveCount(0);
     });
 

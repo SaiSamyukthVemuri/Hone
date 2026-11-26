@@ -259,7 +259,7 @@ test.describe("custom client pricing precedence", () => {
       "11000",
     );
     await expect(
-      page.getByRole("button", { name: /prepare session payment/i }),
+      page.getByRole("button", { name: /checkout with stripe/i }),
     ).toBeVisible();
   });
 });
@@ -290,6 +290,10 @@ test.describe("no resolvable price", () => {
       await expect(page.getByTestId("pricing-blocked")).toContainText(
         /No price is configured/i,
       );
+      // The $0 decision (24 Nov 2026): a missing price prompts the practitioner to verify the fee and is NEVER read as free.
+      await expect(page.getByTestId("pricing-blocked")).toContainText(/Check the fee/i);
+      await expect(page.getByText(/No payment due/i)).toHaveCount(0);
+      await expect(page.getByTestId("zero-charge-hint")).toHaveCount(0);
       // F-PAY-002: an unresolvable price offers no editable total either. A
       // custom amount is an adjustment TO a reference; with no reference there
       // is nothing to adjust and nothing may be charged.
@@ -298,7 +302,7 @@ test.describe("no resolvable price", () => {
         page.locator('input[name="expected_amount_cents"]'),
       ).toHaveCount(0);
       await expect(
-        page.getByRole("button", { name: /prepare session payment/i }),
+        page.getByRole("button", { name: /checkout with stripe/i }),
       ).toHaveCount(0);
       await expect(page.getByText(/Defaulted from/)).toHaveCount(0);
       const rows = await adminQuery(
@@ -328,7 +332,7 @@ test.describe("no resolvable price", () => {
         /no booked service/i,
       );
       await expect(
-        page.getByRole("button", { name: /prepare session payment/i }),
+        page.getByRole("button", { name: /checkout with stripe/i }),
       ).toHaveCount(0);
       const rows = await adminQuery(
         `select id from public.payment_charge_attempts where session_id = $1`,
@@ -419,7 +423,7 @@ test.describe("internal note is optional everywhere", () => {
     await loginAsOwner(page, seed);
     await openSessionDetail(page, seed);
     await expect(noteField(page)).toHaveValue("");
-    await page.getByRole("button", { name: /prepare session payment/i }).click();
+    await page.getByRole("button", { name: /checkout with stripe/i }).click();
     // Synchronize on the DURABLE prepared state. The transient
     // "Session payment prepared." banner is replaced the instant
     // router.refresh() lands the persisted row, so waiting on it is a race that
@@ -444,7 +448,7 @@ test.describe("internal note is optional everywhere", () => {
     // ...and the durable UI agrees with the row.
     await expect(region.getByRole("button", { name: /^run charge$/i })).toBeVisible();
     await expect(
-      region.getByRole("button", { name: /prepare session payment/i }),
+      region.getByRole("button", { name: /checkout with stripe/i }),
     ).toHaveCount(0);
   });
 });
@@ -475,28 +479,17 @@ test.describe("an operator-authored final charge", () => {
     await closePool();
   });
 
-  test("refuses $0 and an unexplained change, then prepares the discount", async ({
+  test("refuses an unexplained change, then prepares the discount", async ({
     page,
   }) => {
-    // One test, one login, three outcomes, because each refusal must be proved
+    // One test, one login, two outcomes, because each refusal must be proved
     // to leave the DATABASE untouched — and "no row" is only meaningful when
     // the very next step on the same session proves a row CAN be written.
     await loginAsOwner(page, seed);
     await openSessionDetail(page, seed);
     const region = sessionPaymentRegion(page);
     const finalCharge = finalChargeField(page);
-    const prepare = page.getByRole("button", { name: /prepare session payment/i });
-
-    // --- $0.00: calm, and nothing is prepared. -----------------------------
-    await finalCharge.fill("0.00");
-    // No reason is demanded for a total that will not be charged at all.
-    await expect(reasonField(page)).toHaveCount(0);
-    await expect(page.getByTestId("zero-charge-hint")).toBeVisible();
-    await prepare.click();
-    await expect(page.getByTestId("no-charge-required")).toContainText(
-      /No charge is required at \$0\.00/i,
-    );
-    expect(await attemptsFor(seed.sessionId)).toHaveLength(0);
+    const prepare = page.getByRole("button", { name: /checkout with stripe/i });
 
     // --- Changed total, no reason: refused. --------------------------------
     await finalCharge.fill("120.00");
@@ -526,6 +519,122 @@ test.describe("an operator-authored final charge", () => {
     // ...and the durable UI charges what was prepared, not the menu price.
     await expect(region.getByText(/saved card will be charged \$120\.00/i)).toBeVisible();
     await expect(region.getByRole("button", { name: /^run charge$/i })).toBeVisible();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5b. The $0 decision (24 Nov 2026). The AGREED price for the client and visit decides what $0 means:
+//   - ALREADY FREE: an explicit $0 price (service or client-specific) shows "No payment due". The visit finishes with
+//     no waiver reason, no payment receipt and no Stripe attempt. A MISSING price is never $0 (see "no resolvable price").
+//   - FEE WAIVED: a POSITIVE fee reduced to $0 shows the original fee, asks for a short reason, says "Confirm fee
+//     waiver", and records who waived it, why, and that no money was collected.
+//   - STILL OWES: a $145 fee with $0 paid today keeps the full $145 outstanding.
+// Every visit is RELOADED and its status and balance read back, not trusted from the click.
+// ---------------------------------------------------------------------------
+async function settlementsFor(appointmentId: string) {
+  const rows = await adminQuery(
+    `select method, reference_fee_cents, quoted_amount_cents, amount_cents, fee_adjustment_reason, note, recorded_by_practitioner_id
+       from public.appointment_settlements where appointment_id = $1 and superseded_at is null order by recorded_at`,
+    [appointmentId],
+  );
+  return rows.rows as Array<{
+    method: string; reference_fee_cents: number | null; quoted_amount_cents: number | null; amount_cents: number;
+    fee_adjustment_reason: string | null; note: string | null; recorded_by_practitioner_id: string;
+  }>;
+}
+async function chargeAttemptsFor(sessionId: string) {
+  return (await adminQuery(`select id from public.payment_charge_attempts where session_id = $1`, [sessionId])).rows;
+}
+
+test.describe("what $0 means is decided by the agreed price", () => {
+  test.afterAll(async () => {
+    await closePool();
+  });
+
+  test("ALREADY FREE: an explicit $0 service says No payment due and needs no reason, receipt or Stripe attempt", async ({ page }) => {
+    const seed = await seedEligiblePaymentWithLogin({
+      label: "zero-free",
+      bookedService: { name: `${SERVICE_NAME_PREFIX} Free`, priceCents: 0 },
+    });
+    await adminQuery(`update public.sessions set price_paid_cents = null where id = $1`, [seed.sessionId]);
+    try {
+      await loginAsOwner(page, seed);
+      await openSessionDetail(page, seed);
+      const region = sessionPaymentRegion(page);
+      await expect(region.getByText(/No payment due/i)).toBeVisible();
+      await expect(page.getByRole("button", { name: /checkout with stripe/i })).toHaveCount(0);
+      await expect(reasonField(page)).toHaveCount(0);
+      expect(await settlementsFor(seed.scenario.appointmentId!)).toEqual([]);
+      expect(await chargeAttemptsFor(seed.sessionId)).toEqual([]);
+      await page.reload();
+      await expect(sessionPaymentRegion(page).getByText(/No payment due/i)).toBeVisible();
+      expect(await settlementsFor(seed.scenario.appointmentId!)).toEqual([]);
+      expect(await chargeAttemptsFor(seed.sessionId)).toEqual([]);
+    } finally {
+      await cleanupPaymentScenario(seed.studioId);
+    }
+  });
+
+  test("FEE WAIVED: a positive fee reduced to $0 shows the original fee, asks a reason, and records who and why with no money collected", async ({ page }) => {
+    const seed = await seedEligiblePaymentWithLogin({
+      label: "zero-waived",
+      bookedService: { name: `${SERVICE_NAME_PREFIX} Waive`, priceCents: SERVICE_PRICE_CENTS },
+    });
+    await adminQuery(`update public.sessions set price_paid_cents = null where id = $1`, [seed.sessionId]);
+    // Recording a settlement is permanent financial history (appointment_settlements is never deleted), so this
+    // synthetic studio is not torn down here; the owned test stack is discarded after the run.
+    await loginAsOwner(page, seed);
+    await openSessionDetail(page, seed);
+    const region = sessionPaymentRegion(page);
+    await expect(referenceField(page)).toContainText("$145.00");
+    await finalChargeField(page).fill("0.00");
+    await expect(page.getByTestId("zero-charge-hint")).toContainText(/Confirm the fee waiver/i);
+    await expect(referenceField(page)).toContainText("$145.00");
+    await expect(reasonField(page)).toBeVisible();
+    const confirm = region.getByRole("button", { name: "Confirm fee waiver", exact: true });
+    // No reason: refused, nothing recorded.
+    await reasonField(page).evaluate((el) => el.removeAttribute("required"));
+    await confirm.click();
+    await expect(region.getByRole("alert")).toContainText(/reason for the fee waiver/i);
+    expect(await settlementsFor(seed.scenario.appointmentId!)).toEqual([]);
+    // With a reason: recorded.
+    await reasonField(page).fill("Complimentary touch-up");
+    await confirm.click();
+    await expect(region.getByText(/Fee waiver recorded/i)).toBeVisible();
+    const rows = await settlementsFor(seed.scenario.appointmentId!);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      method: "waived", reference_fee_cents: SERVICE_PRICE_CENTS, quoted_amount_cents: 0,
+      amount_cents: SERVICE_PRICE_CENTS, fee_adjustment_reason: "Complimentary touch-up",
+    });
+    expect(rows[0].recorded_by_practitioner_id).toBeTruthy(); // WHO waived it
+    expect(await chargeAttemptsFor(seed.sessionId)).toEqual([]); // no money was collected
+    await page.reload();
+    await expect(sessionPaymentRegion(page)).toContainText(/fee waived/i);
+    await expect(page.getByRole("button", { name: /checkout with stripe/i })).toHaveCount(0);
+    expect(await settlementsFor(seed.scenario.appointmentId!)).toHaveLength(1);
+  });
+
+  test("STILL OWES: a $145 fee with $0 paid today keeps the full $145 outstanding", async ({ page }) => {
+    const seed = await seedEligiblePaymentWithLogin({
+      label: "zero-owes",
+      bookedService: { name: `${SERVICE_NAME_PREFIX} Owes`, priceCents: SERVICE_PRICE_CENTS },
+    });
+    await adminQuery(`update public.sessions set price_paid_cents = null where id = $1`, [seed.sessionId]);
+    // Recording a settlement is permanent financial history (appointment_settlements is never deleted), so this
+    // synthetic studio is not torn down here; the owned test stack is discarded after the run.
+    await loginAsOwner(page, seed);
+    await openSessionDetail(page, seed);
+    await page.getByTestId("settlement-open-still_owes").click();
+    await page.getByRole("button", { name: /record amount owed/i }).click();
+    await expect.poll(() => settlementsFor(seed.scenario.appointmentId!).then((r) => r.length)).toBe(1);
+    const rows = await settlementsFor(seed.scenario.appointmentId!);
+    expect(rows[0]).toMatchObject({ method: "still_owes", amount_cents: SERVICE_PRICE_CENTS, quoted_amount_cents: SERVICE_PRICE_CENTS });
+    expect(await chargeAttemptsFor(seed.sessionId)).toEqual([]);
+    await page.reload();
+    await expect(sessionPaymentRegion(page)).toContainText(/still owes|owing|outstanding/i);
+    await expect(sessionPaymentRegion(page)).toContainText("$145.00");
+    expect(await settlementsFor(seed.scenario.appointmentId!)).toHaveLength(1);
   });
 });
 
@@ -582,7 +691,7 @@ test.describe("a non-owner practitioner (card charges are owner-only)", () => {
 
     await expect(sessionPaymentRegion(page)).toHaveCount(0);
     await expect(page.getByLabel("Session payment")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: /prepare session payment/i })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /checkout with stripe/i })).toHaveCount(0);
     await expect(finalChargeField(page)).toHaveCount(0);
     await expect(referenceField(page)).toHaveCount(0);
     await expect(page.getByTestId("owner-only-amount-hint")).toHaveCount(0);
@@ -601,7 +710,7 @@ test.describe("a non-owner practitioner (card charges are owner-only)", () => {
       await loginAsOwner(ownerPage, seed);
       await openSessionDetail(ownerPage, seed);
       const captured = captureActionPosts(ownerPage);
-      await ownerPage.getByRole("button", { name: /prepare session payment/i }).click();
+      await ownerPage.getByRole("button", { name: /checkout with stripe/i }).click();
       await expectPreparedDurable(sessionPaymentRegion(ownerPage));
       const prepare = captured.find((c) => c.body.toString("utf8").includes(seed.sessionId));
       expect(prepare, "the owner's prepare POST was not captured").toBeDefined();

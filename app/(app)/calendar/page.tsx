@@ -85,7 +85,11 @@ import {
   withSelection,
 } from "@/lib/calendar/practitioner-selection";
 
+import { withDashboardRebook, type DashboardRebook } from "@/lib/calendar/dashboard-rebook";
+import { loadDashboardRebook } from "./load-dashboard-rebook";
+
 type Search = Promise<{
+  rebookPeriod?: string;
   layout?: string;
   find?: string;
   week?: string;
@@ -131,6 +135,15 @@ export default async function CalendarPage({
     : Promise.resolve(undefined);
   const params = await searchParams;
   const today = todayInTz(studio.timezone);
+  const rebook = await loadDashboardRebook(params.rebook, params.rebookPeriod, studio, today, timeFormat);
+  if (params.rebook !== undefined && !rebook) {
+    return (
+      <section className="space-y-3">
+        <h1 className="text-xl font-semibold">This visit is unavailable for rebooking</h1>
+        <PendingLink href="/dashboard" pendingLabel="Returning…" className="text-sm underline">Back to dashboard</PendingLink>
+      </section>
+    );
+  }
   let view = parseView(params.view);
 
   // HON-48 (Sam decision 17): a team studio opens on the Day view; the rule and
@@ -147,6 +160,7 @@ export default async function CalendarPage({
   // so a week-tab click never resets a month anchor and vice versa.
   if (view === "day") {
     return renderTeamDayView({
+      rebook,
       studio,
       timeFormat,
       today,
@@ -161,6 +175,7 @@ export default async function CalendarPage({
 
   if (view === "month") {
     return renderMonthView({
+      rebook,
       studio,
       timeFormat,
       today,
@@ -367,6 +382,7 @@ export default async function CalendarPage({
       practitionerId: p.id, capacityEnabled: true }).availability)])) : {};
   return (
     <CalendarSidebar
+      rebook={rebook}
       key={`${studio.id}:${practitioner.id}:${params.rebook ?? "calendar"}`}
       studioId={studio.id}
       viewerId={practitioner.id}
@@ -387,6 +403,7 @@ export default async function CalendarPage({
           desktop-only: on mobile the PR #380 day view owns day navigation, so
           these week controls would be redundant. */}
       <CalendarToolbar
+        rebook={rebook}
         view="week"
         changeProbe={changeProbe}
         rangeLabel={weekRangeLabel(weekStart, weekEnd)}
@@ -616,6 +633,7 @@ export default async function CalendarPage({
 // days don't get a distracting bottom-right "Closed" tag.
 
 async function renderMonthView(opts: {
+  rebook: DashboardRebook | null;
   studio: { id: string; timezone: string; practitioner_capacity_enabled?: boolean };
   timeFormat: TimeFormat;
   today: string;
@@ -631,7 +649,7 @@ async function renderMonthView(opts: {
   viewerId: string;
   reviewAssignmentsHref: Promise<string | undefined>;
 }) {
-  const { studio, timeFormat, today, monthParam, lastWeekParam, peopleParam, isOwner, ownFirstId, viewerId, reviewAssignmentsHref } = opts;
+  const { rebook, studio, timeFormat, today, monthParam, lastWeekParam, peopleParam, isOwner, ownFirstId, viewerId, reviewAssignmentsHref } = opts;
   const monthAnchor = firstOfMonthString(monthParam ?? today);
   const monthEnd = firstOfNextMonthString(monthAnchor);
   const requestedDay = opts.dayParam;
@@ -752,6 +770,7 @@ async function renderMonthView(opts: {
   const hasDayViewForStudio = hasDayView(studio.practitioner_capacity_enabled === true, activePractitioners);
   return (
     <CalendarSidebar
+      rebook={rebook}
       key={`${studio.id}:${viewerId}:${opts.rebookId ?? "calendar"}`}
       studioId={studio.id}
       viewerId={viewerId}
@@ -772,6 +791,7 @@ async function renderMonthView(opts: {
           switching. Month step nav stays visible on all sizes (mobile month
           has no separate day-nav). */}
       <CalendarToolbar
+        rebook={rebook}
         view="month"
         changeProbe={changeProbe}
         rangeLabel={monthYearLabel(monthAnchor)}
@@ -804,6 +824,7 @@ async function renderMonthView(opts: {
         <EmptySelection />
       ) : (
         <MonthView
+          rebook={rebook}
           monthAnchor={monthAnchor}
           selectedDate={selectedDate}
           hasDayView={hasDayViewForStudio}
@@ -834,6 +855,7 @@ async function renderMonthView(opts: {
 // week view for the same date.
 
 async function renderTeamDayView(opts: {
+  rebook: DashboardRebook | null;
   studio: { id: string; timezone: string; practitioner_capacity_enabled?: boolean };
   timeFormat: TimeFormat;
   today: string;
@@ -844,7 +866,7 @@ async function renderTeamDayView(opts: {
   rebookId?: string;
   reviewAssignmentsHref: Promise<string | undefined>;
 }) {
-  const { studio, timeFormat, today, isOwner, practitioner, peopleParam, reviewAssignmentsHref } = opts;
+  const { rebook, studio, timeFormat, today, isOwner, practitioner, peopleParam, reviewAssignmentsHref } = opts;
   const date = opts.dayParam && DATE_PARAM_RE.test(opts.dayParam) ? opts.dayParam : today;
   const capacityEnabled = studio.practitioner_capacity_enabled === true;
 
@@ -897,7 +919,7 @@ async function renderTeamDayView(opts: {
   };
 
   if (!hasDayView(capacityEnabled, activePractitioners)) {
-    redirect(`/calendar?day=${date}`);
+    redirect(withDashboardRebook(`/calendar?day=${date}`, rebook));
   }
 
   // Sidebar selection: view-only. Columns exist only for the selected practitioners; everyone
@@ -943,6 +965,7 @@ async function renderTeamDayView(opts: {
   const rebookSource = await getCalendarRebookSource(studio.id, opts.rebookId);
   return (
     <CalendarSidebar
+      rebook={rebook}
       key={`${studio.id}:${practitioner.id}:${opts.rebookId ?? "calendar"}`}
       studioId={studio.id}
       viewerId={practitioner.id}
@@ -960,6 +983,7 @@ async function renderTeamDayView(opts: {
     >
     <div className="flex flex-col gap-6">
       <CalendarToolbar
+        rebook={rebook}
         view="day"
         changeProbe={changeProbe}
         rangeLabel={`${weekdayLabel(dayOfWeek)}, ${monthDayLabel(date)}, ${y}`}

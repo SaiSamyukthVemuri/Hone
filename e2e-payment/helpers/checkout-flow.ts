@@ -24,7 +24,7 @@ export async function expectPreparedDurable(scope: Locator): Promise<void> {
   await expect(scope.getByRole("button", { name: /^run charge$/i })).toBeVisible();
   // The form is replaced by the ready panel — proof the persisted row landed.
   await expect(
-    scope.getByRole("button", { name: /prepare session payment/i }),
+    scope.getByRole("button", { name: /checkout with stripe/i }),
   ).toHaveCount(0);
 }
 
@@ -58,25 +58,25 @@ export async function prepareInModal(modal: Locator): Promise<void> {
   await modal
     .getByPlaceholder(/note explaining the session payment/i)
     .fill("E2E concurrency-safety session payment");
-  await modal.getByRole("button", { name: /prepare session payment/i }).click();
+  await modal.getByRole("button", { name: /checkout with stripe/i }).click();
   // Durable ready state, never the transient banner (see expectPreparedDurable).
   await expect(modal.getByRole("button", { name: /^run charge$/i })).toBeVisible({
     timeout: 20_000,
   });
   await expect(
-    modal.getByRole("button", { name: /prepare session payment/i }),
+    modal.getByRole("button", { name: /checkout with stripe/i }),
   ).toHaveCount(0);
 }
 
 // Open checkout (fresh context load), advance through the explicit confirmation,
-// and return the modal + the armed "Confirm: run charge" control. Used once the
+// and return the modal + the armed "Confirm Stripe charge" control. Used once the
 // attempt is already 'ready' (the modal reopens to the Ready panel).
 export async function armReady(page: Page): Promise<{ modal: Locator; confirm: Locator }> {
   const modal = await openCheckout(page);
   const runCharge = modal.getByRole("button", { name: /^run charge$/i });
   await expect(runCharge).toBeVisible();
   await runCharge.click(); // arm the two-click confirm
-  const confirm = modal.getByRole("button", { name: /confirm: run charge/i });
+  const confirm = modal.getByRole("button", { name: /^confirm Stripe charge · /i });
   await expect(confirm).toBeVisible();
   return { modal, confirm };
 }

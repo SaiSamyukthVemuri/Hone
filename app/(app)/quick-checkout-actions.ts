@@ -1,5 +1,7 @@
 "use server";
 
+import { resolveAppointmentQuotedAmountCents } from "@/lib/billing/appointment-settlement";
+import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import {
   resolveQuickCheckoutContext,
@@ -42,4 +44,20 @@ export async function getQuickCheckoutContextAction(
     appointmentId: typeof appointmentId === "string" ? appointmentId : "",
   });
   return { ...ctx, isOwner: practitioner.role === "owner" };
+}
+
+/** A draft fee can be reviewed before completion. Only the signed-in owner
+ * sees the client-specific price, and payment confirmation rechecks it. */
+export async function getDashboardCheckoutQuoteAction(appointmentId: string) {
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  if (practitioner.role !== "owner") return null;
+  const viewerIsOwner = practitioner.role === "owner";
+  const [referenceCents, jurisdiction] = await Promise.all([
+    resolveAppointmentQuotedAmountCents(studio.id, appointmentId, studio.timezone, viewerIsOwner),
+    getStudioPaymentJurisdiction(studio.id),
+  ]);
+  return referenceCents === null ? null : {
+    referenceCents,
+    currency: jurisdiction.ok ? jurisdiction.jurisdiction.currency : null,
+  };
 }

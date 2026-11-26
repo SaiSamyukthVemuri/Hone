@@ -31,12 +31,13 @@
 //     position:sticky) with safe-area bottom padding, because sticky-inside-
 //     overflow footers can vanish mid-paint on iOS Safari
 
-import { useEffect, useId, useRef } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 
 export type ConfirmDialogProps = {
   open: boolean;
   title: string;
   description: string;
+  children?: ReactNode;
   confirmLabel: string;
   cancelLabel?: string;
   // Label shown on the confirm button while the caller's action is running.
@@ -63,6 +64,7 @@ export function ConfirmDialog({
   open,
   title,
   description,
+  children,
   confirmLabel,
   cancelLabel = "Cancel",
   busyLabel,
@@ -76,6 +78,7 @@ export function ConfirmDialog({
   const descId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
+  const choicesRef = useRef<HTMLDivElement>(null);
   const openerRef = useRef<Element | null>(null);
 
   // Capture the opener and move focus into the dialog on open; restore focus
@@ -84,9 +87,11 @@ export function ConfirmDialog({
   useEffect(() => {
     if (!open) return;
     openerRef.current = document.activeElement;
-    // Focus the confirm button so a keyboard user can proceed immediately;
-    // Escape / Cancel remain one keystroke away.
-    confirmRef.current?.focus();
+    // A dialog with options starts on the first available choice. Simple
+    // confirmations go straight to their confirm button.
+    const firstChoice = choicesRef.current?.querySelector<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled)');
+    if (firstChoice) firstChoice.focus();
+    else confirmRef.current?.focus();
     return () => {
       const opener = openerRef.current;
       if (opener instanceof HTMLElement) opener.focus();
@@ -172,6 +177,7 @@ export function ConfirmDialog({
           <p id={descId} className="text-sm text-neutral-700 dark:text-neutral-300">
             {description}
           </p>
+          {children && <div ref={choicesRef}>{children}</div>}
           {error && (
             <p
               role="alert"

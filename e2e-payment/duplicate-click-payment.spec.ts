@@ -102,7 +102,7 @@ test("rapid duplicate-click charges exactly once (one attempt, one effect)", asy
 
   // DUPLICATE INTERACTION — a genuine rapid double-click on the final charge
   // control (Playwright locator.dblclick(): two real click events in quick
-  // succession on the rendered "Confirm: run charge" button). No server action is
+  // succession on the rendered "Confirm Stripe charge" button). No server action is
   // called directly; no React handler is invoked directly.
   await confirm.dblclick();
 

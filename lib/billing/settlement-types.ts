@@ -34,8 +34,8 @@ export type SettlementMethod = (typeof SETTLEMENT_METHODS)[number];
  * list is the UI's copy of a rule the authority already enforces.
  */
 export const PRACTITIONER_METHODS = [
-  "paid_cash",
   "paid_e_transfer",
+  "paid_cash",
   "paid_other_external",
   "still_owes",
 ] as const;
@@ -74,6 +74,7 @@ export type SettlementResultCode =
   | "recorded"
   | "corrected"
   | "already_settled"
+  | "fee_changed"
   | "stale_target"
   | "card_payment_exists"
   | "not_completed"
@@ -93,15 +94,12 @@ export type AppointmentSettlement = {
   supersedesId: string | null;
 };
 
-// Practitioner-facing copy. Deliberately plain: "Paid cash" is what Chloe would
-// say out loud, and the point of this release is that the software can finally
-// say the same thing.
 export const SETTLEMENT_ACTION_LABEL: Record<SettlementMethod, string> = {
-  paid_cash: "Paid cash",
-  paid_e_transfer: "Paid by e-transfer",
-  paid_other_external: "Paid another way",
-  waived: "Waive the fee",
-  still_owes: "Client still owes",
+  paid_cash: "Cash",
+  paid_e_transfer: "E-transfer",
+  paid_other_external: "Other external",
+  waived: "Fee waived",
+  still_owes: "Still owes",
 };
 
 // The badge on a settled appointment row.
@@ -127,6 +125,7 @@ export const SETTLEMENT_RESULT_MESSAGE: Record<SettlementResultCode, string> = {
   corrected: "Correction recorded.",
   already_settled:
     "This appointment already has a recorded outcome, so nothing was added.",
+  fee_changed: "The booked price has changed. Reopen checkout to review the current fee.",
   stale_target:
     "This record was already corrected by someone else. Reload to see the current outcome.",
   card_payment_exists:
