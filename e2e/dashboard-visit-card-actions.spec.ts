@@ -1,12 +1,21 @@
 import { expect, test } from "@playwright/test";
-import { loginAsOwner } from "./helpers/flows";
-import { seedE2eDashboardMemoryClient, seedE2eStudio, seedPinnedNote, sql } from "./helpers/seed";
+import { loginAsOwner, loginByMagicLink } from "./helpers/flows";
+import {
+  seedE2eDashboardClient,
+  seedE2eDashboardMemoryClient,
+  seedE2eMember,
+  seedE2eStudio,
+  seedE2eTodayAppointment,
+  seedPinnedNote,
+  sql,
+} from "./helpers/seed";
 
 // Practitioner feedback on the dashboard visit card (26 Nov 2026), proved in a real browser. Synthetic data only.
 //   1. ONE action row, every action the same size, wrapping inside its own group on a phone.
 //   2. Pinned notes stay YELLOW (inline edit and "Add pinned note" preserved).
 //   3. "From last visit, for today" is its own BLUE box.
 //   4. Last visit details are ON the card on first render, with no click.
+//   5. Checkout is OWNER-ONLY: an owner sees it on the visit card, a signed-in practitioner sees the same card without it.
 
 const T = 20_000;
 
@@ -71,5 +80,46 @@ test("visit card: one action row, yellow pins, blue reminder, last visit details
     await expect(row.getByRole("button", { name: /^Edit pinned note for / })).toBeVisible();
     // The two boxes are separate elements.
     expect(await reminder.evaluate((e, p) => e.contains(p), await pinned.elementHandle())).toBe(false);
+  });
+});
+
+test("Checkout is owner-only: the owner sees it on the visit card, a signed-in practitioner sees the same card without it", async ({ page, browser, baseURL }) => {
+  const studio = await seedE2eStudio();
+  const { clientId } = await seedE2eDashboardClient(studio, { label: "Owner only" });
+  const member = await seedE2eMember(studio);
+  // A visit in progress (Checkout is offered once it has started), assigned to the practitioner, so the card is the member's own.
+  const { appointmentId } = await seedE2eTodayAppointment(studio, {
+    clientId,
+    startsMinutesFromNow: -20,
+    endsMinutesFromNow: 25,
+    withService: true,
+  });
+  await sql("update public.appointments set practitioner_id = $2 where id = $1", [appointmentId, member.practitionerId]);
+
+  await test.step("the owner sees Check out on the card", async () => {
+    await loginAsOwner(page, studio);
+    await page.goto("/dashboard");
+    const row = page.locator(`#appointment-${appointmentId}`);
+    await expect(row).toBeVisible({ timeout: T });
+    await expect(row.getByTestId("today-rebook")).toBeVisible();
+    await expect(row.getByRole("button", { name: "Checkout", exact: true })).toHaveCount(1);
+  });
+
+  await test.step("a signed-in practitioner sees the same visit card with NO Check out", async () => {
+    const context = await browser.newContext({ baseURL: baseURL ?? undefined, viewport: page.viewportSize() ?? undefined });
+    try {
+      const memberPage = await context.newPage();
+      await loginByMagicLink(memberPage, member.email);
+      await memberPage.goto("/dashboard");
+      const row = memberPage.locator(`#appointment-${appointmentId}`);
+      // The card is really there (its other actions render), so an absent Checkout is the owner rule, not a missing row.
+      await expect(row).toBeVisible({ timeout: T });
+      await expect(row.getByTestId("today-rebook")).toBeVisible();
+      await expect(row.getByTestId("today-chart")).toBeVisible();
+      await expect(row.getByRole("button", { name: /^Check ?out$/i })).toHaveCount(0);
+      await expect(row.getByText("Available once the appointment has started")).toHaveCount(0);
+    } finally {
+      await context.close();
+    }
   });
 });

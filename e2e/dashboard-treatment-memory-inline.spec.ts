@@ -138,6 +138,9 @@ test.describe("D1 — the Treatment Memory disclosure stays on the Dashboard", (
     await expect(input).toBeFocused();
     await input.fill(message);
     await input.press("Enter");
+    // The textarea's own text also matches getByText, so wait for the SAVE to finish (the editor closes) before looking for the note
+    // or reloading. The details now load on page view, and a save is queued behind that read; reloading earlier cancels it.
+    await expect(input).toBeHidden({ timeout: T });
     await expect(row.getByText(message, { exact: true })).toBeVisible({ timeout: T });
     expect(dashboardPath(page)).toBe("/dashboard");
     await page.reload();
