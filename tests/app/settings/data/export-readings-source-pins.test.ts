@@ -24,6 +24,6 @@ describe("treatment_setup_readings export source pins", () => {
   it("blanks studio_machine_id for the unspecified-machine placeholder, reading it studio-scoped and failing closed", () => {
     expect(source).toMatch(/from\("studio_machines"\)\.select\("id"\)\.eq\("studio_id", studio\.id\)\.eq\("is_unspecified", true\)/);
     expect(source).toMatch(/unspecifiedMachineIds\.has\(r\.studio_machine_id as string\) \? null : r\.studio_machine_id/);
-    expect(source).toMatch(/unspecifiedMachines\.error\s*\?/);
+    expect(source).toMatch(/if \(unspecifiedMachines\.error\) return \{ ok: false, error: userFacingDbFailure\("export your data", unspecifiedMachines\.error, "studio_export_read_failed"\) \};/);
   });
 });

@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { rowsToCsv } from "@/lib/csv";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { userFacingDbFailure } from "@/lib/logging/user-facing-db-failure";
 // The clinical-notes filename and header row are still owned by this module;
 // the export registry imports them from here, and this module reaches them
 // through the registry like every other file. One definition, one consumer.
@@ -1001,21 +1002,20 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   //
   // A reading on the studio's per-studio "Machine not specified" placeholder (studio_machines.is_unspecified, migration 0385) has no real machine: its
   // studio_machine_id is exported BLANK, because that id points at a row the archive does not carry and would read as a machine the studio never had.
-  // The placeholder ids are read under the same owner gate and studio scope; if that read fails the file is reported unreadable rather than written
-  // with ids that should have been blank.
+  // The placeholder ids are read under the same owner gate and studio scope; if that read fails the export is refused (a fixed sentence by class from
+  // userFacingDbFailure, the code only in the log), never written with ids that should have been blank.
   const unspecifiedMachines = await supabase.from("studio_machines").select("id").eq("studio_id", studio.id).eq("is_unspecified", true);
+  if (unspecifiedMachines.error) return { ok: false, error: userFacingDbFailure("export your data", unspecifiedMachines.error, "studio_export_read_failed") };
   const unspecifiedMachineIds = new Set((unspecifiedMachines.data ?? []).map((m) => m.id as string));
   writeCsv(
     "treatment_setup_readings",
-    unspecifiedMachines.error
-      ? ({ ...treatmentSetupReadingsRes, data: null, error: unspecifiedMachines.error } as typeof treatmentSetupReadingsRes)
-      : mapExportRows(treatmentSetupReadingsRes, (rows) =>
-          (rows as unknown as Array<Record<string, unknown>>).map((r) => ({
-            ...r,
-            studio_machine_id: unspecifiedMachineIds.has(r.studio_machine_id as string) ? null : r.studio_machine_id,
-            value_numeric: padDecimalText(r.value_numeric as string | null, r.decimals as number | null),
-          })),
-        ),
+    mapExportRows(treatmentSetupReadingsRes, (rows) =>
+      (rows as unknown as Array<Record<string, unknown>>).map((r) => ({
+        ...r,
+        studio_machine_id: unspecifiedMachineIds.has(r.studio_machine_id as string) ? null : r.studio_machine_id,
+        value_numeric: padDecimalText(r.value_numeric as string | null, r.decimals as number | null),
+      })),
+    ),
   );
 
   writeCsv("service_practitioners", servicePractitionersRes);
