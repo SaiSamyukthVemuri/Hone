@@ -287,7 +287,7 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // above. It is REQUIRED, not opt-in. Cost, to be MEASURED on an owned stack and recorded in the pull request: three cases in the chromium project
     // (desktop, a 390px iPhone-sized emulation, and the rollout-off toggle check), each a seeded studio and a login; the iPhone WebKit case runs only in the
     // non-required `webkit-iphone-visit` project and skips everywhere else.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(70);
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(71);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {

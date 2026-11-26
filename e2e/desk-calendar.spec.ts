@@ -1,25 +1,10 @@
 import { test, expect, type Page } from "@playwright/test";
-import { E2E_APP_ORIGIN } from "./helpers/local-env";
-import { listMessageIds, waitForMagicLink } from "./helpers/mail";
+import { signInAsDesk } from "./helpers/desk";
 import { markResendLedger, readResendLedger } from "./helpers/resend-ledger";
 import {
-  createLocalAuthUser, getE2eServiceId, getOwnerPractitionerId, seedE2eClient,
+  getE2eServiceId, getOwnerPractitionerId, seedE2eClient,
   seedE2eMember, seedE2eStudio, sql,
 } from "./helpers/seed";
-
-async function signInAsDesk(page: Page, studio: Awaited<ReturnType<typeof seedE2eStudio>>) {
-  const deskEmail = `desk-${studio.runId}@harness.local`;
-  const user = await createLocalAuthUser(deskEmail);
-  await sql("insert into public.studio_receptionists (studio_id,user_id,display_name,active) values ($1,$2,'Front desk',true)", [studio.studioId, user]);
-  await page.goto("/login");
-  await page.getByLabel("I am using my invited email address").check();
-  await page.locator("#login-email").fill(deskEmail);
-  const seen = await listMessageIds(deskEmail);
-  await page.getByRole("button", { name: /send magic link/i }).click();
-  await page.goto(await waitForMagicLink(deskEmail, E2E_APP_ORIGIN, { excludeIds: seen }));
-  await page.getByRole("link", { name: "Open the front desk" }).click();
-  await page.waitForURL(/\/desk(?:\?|$)/);
-}
 
 test("reception sees client names, opens contact details, and books an afternoon visit from the studio calendar", async ({ page }) => {
   const studio = await seedE2eStudio();
