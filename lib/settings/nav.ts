@@ -61,6 +61,8 @@ export type SettingsNavEntry = {
    * only for a role the static list already admits.
    */
   visibleWhen?: (ctx: SettingsNavContext) => boolean | Promise<boolean>;
+  /** False for routes that also refuse a direct visit when disabled. */
+  reachableWhenHidden?: boolean;
   /** Sort key inside the group; ties keep registry order. */
   order: number;
 };
@@ -133,7 +135,7 @@ export async function resolveSettingsNavWithReachable(
         ok = false;
       }
       if (!ok) {
-        if (!entry.children) hiddenFlat.push(entry);
+        if (!entry.children && entry.reachableWhenHidden !== false) hiddenFlat.push(entry);
         continue;
       }
     }

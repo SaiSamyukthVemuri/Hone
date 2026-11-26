@@ -3,7 +3,7 @@
   "migrations": {
     "count": 258,
     "last": "0388_subscription_team_seats.sql",
-    "sha256": "5df042ee4c9f234e9870cbed175bc53ad90f5f0cbbc66b783a9ad226a5d31543"
+    "sha256": "10c4bfa6c4950f4ea686d12514ea5db773f70e66ae85ab172cedd892d8e5fdbd"
   },
   "public": {
     "tables": [

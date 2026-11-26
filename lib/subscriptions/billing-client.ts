@@ -228,12 +228,29 @@ export function createBillingStripeClient(
       customer: string,
       returnUrl: string,
       configuration: string,
+      cardUpdate?: { subscription: string },
     ) {
+      let useCardFlow = false;
+      if (cardUpdate) {
+        const sub = await stripe.subscriptions.retrieve(cardUpdate.subscription);
+        if (sub.livemode || sub.id !== cardUpdate.subscription || idOf(sub.customer) !== customer) {
+          throw new Error("Unexpected billing subscription");
+        }
+        // The deep link changes the customer's default. When the subscription
+        // overrides it, the full portal lets the owner manage that override too.
+        useCardFlow = !sub.default_payment_method && !sub.default_source;
+      }
       return (
         await stripe.billingPortal.sessions.create({
           customer,
           configuration,
           return_url: returnUrl,
+          ...(useCardFlow && {
+            flow_data: {
+              type: "payment_method_update",
+              after_completion: { type: "redirect", redirect: { return_url: returnUrl } },
+            },
+          }),
         })
       ).url;
     },

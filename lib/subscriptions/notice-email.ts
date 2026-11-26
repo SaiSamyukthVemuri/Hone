@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { escapeHtml } from "@/lib/email/markdown-lite";
 import type { createBillingStripeClient } from "./billing-client";
+import { hostedInvoiceUrl } from "./hosted-invoice-url";
 import { planForPriceId, PLANS, type SubscriptionEnv } from "./plans";
 
 export type Notice = {
@@ -24,17 +25,6 @@ type Mail = {
   html: string;
   text: string;
 };
-
-function stripePage(raw: string | null) {
-  if (!raw) return null;
-  const url = new URL(raw);
-  return url.protocol === "https:" &&
-    url.hostname === "invoice.stripe.com" &&
-    !url.username &&
-    !url.password
-    ? url.href
-    : null;
-}
 
 function date(value: Date, zone: string, clock = false) {
   return new Intl.DateTimeFormat("en-US", {
@@ -69,7 +59,7 @@ export function subscriptionEmail(
       currency: invoice.currency.toUpperCase(),
       currencyDisplay: "code",
     }).format(cents / 100);
-  const hosted = stripePage(invoice.hostedUrl);
+  const hosted = hostedInvoiceUrl(invoice.hostedUrl);
   let subject: string;
   let intro: string;
   let action: string;

@@ -273,6 +273,9 @@ describe("sandbox paid signup", () => {
       "invoice.payment_failed",
       first + 3600,
     );
+    expect(await status()).toMatchObject({
+      status: "past_due", invoice: f.invoice.id, customer: f.sub.customer, subscription: f.sub.id,
+    });
     expect(Date.parse((await status()).deadline)).toBe(
       (first + 7 * 86400) * 1000,
     );
@@ -283,6 +286,7 @@ describe("sandbox paid signup", () => {
       "invoice.payment_failed",
       first - 86400,
     );
+    expect(await status()).toMatchObject({ status: "paused", invoice: f.invoice.id });
     await expect(chart()).rejects.toThrow(/subscription_payment_required/);
     await expect(book()).rejects.toThrow(/subscription_payment_required/);
     await expect(
@@ -309,10 +313,37 @@ describe("sandbox paid signup", () => {
     f.sub.status = "active";
     await f.receive("evt_" + randomUUID());
     await f.receive("evt_" + randomUUID(), "invoice.payment_failed", first);
-    expect((await status()).deadline).toBeNull();
+    expect(await status()).toMatchObject({ status: "active", deadline: null, invoice: null });
     await book();
     await chart();
     expect(await f.memberships()).toEqual([owner]);
+  });
+
+  it("offers the oldest unpaid invoice and advances to the next after settlement", async () => {
+    const f = await fixture();
+    await f.receive(randomUUID());
+    const [owner] = await f.memberships();
+    const snapshot = async () => (await userQuery(f.user,
+      "select public.my_hone_billing_status($1) as s", [owner.studio_id])).rows[0].s;
+    const earlier = "in_" + randomUUID();
+    const later = "in_" + randomUUID();
+    const now = Math.floor(Date.now() / 1000);
+    f.invoice.reason = "subscription_cycle";
+    f.invoice.status = "open";
+    f.invoice.amountPaid = f.invoice.collected = 0;
+    f.sub.status = "past_due";
+    f.invoice.id = later;
+    await f.receive(randomUUID(), "invoice.payment_failed", now - 60);
+    f.invoice.id = earlier;
+    await f.receive(randomUUID(), "invoice.payment_failed", now - 8 * 86400);
+    expect(await snapshot()).toMatchObject({ status: "paused", invoice: earlier });
+    f.invoice.status = "paid";
+    f.invoice.amountPaid = f.invoice.collected = 4900;
+    await f.receive(randomUUID());
+    expect(await snapshot()).toMatchObject({ status: "past_due", invoice: later });
+    f.invoice.id = later;
+    await f.receive(randomUUID());
+    expect(await snapshot()).toMatchObject({ status: "active", invoice: null });
   });
 
   it.each(["anon", "authenticated"] as const)(

@@ -246,10 +246,18 @@ for each row execute function public.check_hone_new_work_allowed();
 -- The owner can review only the selected studio's purchase, including during suspension.
 create function public.my_hone_billing_status(p_studio uuid) returns jsonb
 language sql stable security definer set search_path = '' as $$
-  select jsonb_build_object('plan',a.plan,'customer',a.customer_id,'deadline',(
-    select min(i.failed_at) + interval '168 hours' from public.hone_renewal_invoices i
-    where i.attempt_id=a.id and not i.paid))
+  select jsonb_build_object('plan', a.plan, 'customer', a.customer_id, 'subscription', a.subscription_id,
+    'invoice', overdue.invoice_id, 'deadline', overdue.deadline, 'status', case
+      when overdue.invoice_id is null then 'active'
+      when now() >= overdue.deadline then 'paused'
+      else 'past_due' end)
   from public.hone_signup_attempts a
+  left join lateral (
+    select i.invoice_id, i.failed_at + interval '168 hours' as deadline
+    from public.hone_renewal_invoices i
+    where i.attempt_id=a.id and not i.paid and i.failed_at is not null
+    order by i.failed_at, i.invoice_id limit 1
+  ) overdue on true
   where a.studio_id=p_studio and exists (select 1 from public.practitioners p where p.studio_id=a.studio_id
     and p.user_id=auth.uid() and p.role='owner' and p.active);
 $$;

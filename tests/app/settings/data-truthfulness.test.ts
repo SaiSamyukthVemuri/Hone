@@ -207,10 +207,12 @@ describe("#8 — the Terms do not describe automated Hone subscription billing a
       "app/(auth)/no-access/checkout-action.ts",
       "app/(auth)/no-access/page.tsx",
       "app/api/billing/webhook/route.ts",
+      "app/api/cron/subscription-emails/route.ts",
       // HON-70 UI head (PROPOSED, flag-gated): the plan links and the account step.
       "app/pricing/page.tsx",
       "app/signup/actions.ts",
       "app/signup/page.tsx",
+      "lib/settings/nav-registry.ts",
     ];
     const { execSync } = await import("node:child_process");
     const raw = execSync(
