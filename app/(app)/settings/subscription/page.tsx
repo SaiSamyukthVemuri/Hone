@@ -1,22 +1,45 @@
 import { notFound } from "next/navigation";
 import { OwnerOnlyNotice, SettingsViewHeading } from "@/components/settings/view-heading";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { Button, buttonClasses } from "@/components/ui/button";
 import { StatusPill } from "@/components/ui/status-pill";
+import { CONTACT_EMAIL } from "@/lib/marketing/content";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
+import { createBillingStripeClient } from "@/lib/subscriptions/billing-client";
 import { readOwnerBilling } from "@/lib/subscriptions/owner-billing";
 import { isSelfServeCheckoutEnabled, PLANS, teamAllowance } from "@/lib/subscriptions/plans";
 import { openOwnerBilling, payOutstandingInvoice, updateBillingCard } from "./actions";
+import { InvoiceHistory } from "./invoice-history";
 
 const states = {
   active: { label: "Active", tone: "success" },
   past_due: { label: "Payment overdue", tone: "warning" },
   paused: { label: "Access paused", tone: "danger" },
 } as const;
+const split = "flex flex-wrap items-center justify-between gap-x-5 gap-y-3";
+const section = "space-y-4 border-t border-line py-6";
+const sectionTitle = "text-base font-semibold tracking-tight";
+const secondary = "text-sm text-fg-muted";
+const actionStyle = buttonClasses({ size: "sm" });
+function requestByEmail(subject: string) {
+  return "mailto:" + CONTACT_EMAIL + "?subject=" + encodeURIComponent(subject);
+}
 
-export default async function SubscriptionPage({
-  searchParams,
-}: {
+async function stripeOverview(customer: string, subscription: string) {
+  try {
+    const stripe = createBillingStripeClient(process.env);
+    const config = process.env.HONE_BILLING_PORTAL_CONFIGURATION;
+    const [profile, invoices, editTax] = await Promise.all([
+      stripe.billingProfile(customer, subscription).catch(() => null),
+      stripe.billingInvoices(customer, subscription).catch(() => null),
+      config ? stripe.canEditTaxId(config).catch(() => false) : false,
+    ]);
+    return { profile, invoices, editTax };
+  } catch {
+    return { profile: null, invoices: null, editTax: false };
+  }
+}
+
+export default async function SubscriptionPage({ searchParams }: {
   searchParams: Promise<{ error?: string; notice?: string }>;
 }) {
   if (!isSelfServeCheckoutEnabled(process.env)) notFound();
@@ -28,51 +51,73 @@ export default async function SubscriptionPage({
   if (error || !billing || !states[billing.status] || !PLANS[billing.plan]) {
     return <section className="space-y-4">{heading}<p role="alert">We couldn’t load your subscription. Refresh this page to try again.</p></section>;
   }
+  const { profile, invoices, editTax } = await stripeOverview(billing.customer, billing.subscription);
   const plan = PLANS[billing.plan];
   const state = states[billing.status];
   const query = await searchParams;
-  return (
-    <section className="space-y-4">
-      {heading}
-      <Card as="section" aria-label="Current plan" className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-lg font-medium">{plan.label} plan</h3>
-          <StatusPill tone={state.tone}>{state.label}</StatusPill>
+  const tz = studio.timezone || "UTC";
+  const formatDate = (seconds: number) => new Date(seconds * 1000).toLocaleDateString("en-US", { timeZone: tz, dateStyle: "long" });
+  const portal = openOwnerBilling.bind(null, studio.id);
+  return <section className="mx-auto w-full max-w-4xl">
+    <div>{heading}</div>
+    {query.error && <p role="alert" className="my-4 text-sm text-danger-fg">{query.error === "invoice"
+      ? "We couldn’t open that invoice for payment. Check your invoice history or try again."
+      : "We couldn’t open billing. Please try again."}</p>}
+    {query.notice === "settling" && billing.invoice && <p role="status" className="my-4 text-sm">Check your invoice history for the latest payment. Refresh this page to see your updated access.</p>}
+    <section aria-label="Current plan" className="py-6">
+      <div className={split}>
+        <div className="flex items-start gap-3">
+          <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-accent text-xl font-semibold text-on-accent" aria-hidden="true">H</span>
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap items-center gap-2"><h3 className="text-xl font-semibold tracking-tight">{plan.label} plan</h3><StatusPill tone={state.tone}>{state.label}</StatusPill></div>
+            <p className="text-sm font-medium">US${plan.unitAmount / 100} per month</p>
+            {profile?.ends ? <p className={secondary}>Scheduled to end {formatDate(profile.ends)}.</p>
+              : billing.status === "active" && profile?.renews ? <p className={secondary}>Renews {formatDate(profile.renews)}.</p> : null}
+          </div>
         </div>
-        <p className="text-sm">US${plan.unitAmount / 100} per month</p>
-        <p className="text-sm text-fg-muted">{teamAllowance(billing.plan)}. The owner uses one practitioner seat.</p>
-        {billing.status === "past_due" && billing.deadline && (
-          <p>Pay before {new Date(billing.deadline).toLocaleString("en-US", {
-            timeZone: studio.timezone || "UTC", timeZoneName: "short",
-            month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit",
-          })} to keep new bookings and chart entries available.</p>
-        )}
-        {billing.status === "paused" && (
-          <p>You can still view your records. Pay your overdue invoices to resume new bookings and chart entries.</p>
-        )}
-        {billing.invoice && (
-          <form action={payOutstandingInvoice.bind(null, studio.id)}>
-            <Button type="submit" variant="primary">Pay outstanding invoice</Button>
-          </form>
-        )}
-      </Card>
-      <Card as="section" aria-label="Payment method and invoices" className="space-y-3">
-        <h3 className="font-medium">Payment method and invoices</h3>
-        <div className="flex flex-wrap gap-2">
-          <form action={updateBillingCard.bind(null, studio.id)}>
-            <Button type="submit">Update card</Button>
-          </form>
-          <form action={openOwnerBilling.bind(null, studio.id)}>
-            <Button type="submit">View invoices and receipts</Button>
-          </form>
-        </div>
-      </Card>
-      {query.error && <p role="alert">{query.error === "invoice"
-        ? "We couldn’t open that invoice for payment. Check your invoice history or try again."
-        : "We couldn’t open billing. Please try again."}</p>}
-      {query.notice === "settling" && billing.invoice && (
-        <p role="status">Check your invoice history for the latest payment. Refresh this page to see your updated access.</p>
-      )}
+        <a href={requestByEmail("Change my Hone subscription plan")} className={actionStyle}>Request plan change</a>
+      </div>
+      <p className="mt-5 text-sm text-fg-muted">{teamAllowance(billing.plan)}. The owner uses one practitioner seat.</p>
+      {(billing.status !== "active" || billing.invoice) && <div className="mt-4 space-y-3 rounded-lg border border-line bg-surface-sunken p-4 text-sm">
+        {billing.status === "past_due" && billing.deadline && <p>Pay before {new Date(billing.deadline).toLocaleString("en-US", {
+          timeZone: tz, timeZoneName: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit",
+        })} to keep new bookings and chart entries available.</p>}
+        {billing.status === "paused" && <p>You can still view your records. Pay your overdue invoices to resume new bookings and chart entries.</p>}
+        {billing.invoice && <form action={payOutstandingInvoice.bind(null, studio.id)}><Button type="submit" variant="primary">Pay outstanding invoice</Button></form>}
+      </div>}
     </section>
-  );
+    <section aria-labelledby="billing-payment" className={section}>
+      <h3 id="billing-payment" className={sectionTitle}>Payment method</h3>
+      <div className={split}>
+        <div className="flex items-center gap-3">
+          <span className="grid h-9 w-12 shrink-0 place-items-center rounded-lg border border-line" aria-hidden="true"><span className="h-4 w-6 rounded border border-current bg-[linear-gradient(transparent_25%,currentColor_25%,currentColor_44%,transparent_44%)]" /></span>
+          <div>{profile?.card ? <>
+            <div className="flex flex-wrap items-center gap-2"><span className="text-sm font-medium"><span className="capitalize">{profile.card.brand}</span> •••• {profile.card.last4}</span><StatusPill>Default</StatusPill></div>
+            <p className={secondary}>Expires {profile.card.expires}</p></> :
+            <p className={secondary}>{!profile ? "Card details are temporarily unavailable." : profile.hasMethod ? "Payment method on file with Stripe." : "No payment method on file."}</p>}
+          </div>
+        </div>
+        <form action={updateBillingCard.bind(null, studio.id)}><Button size="sm" type="submit">{profile && !profile.hasMethod ? "Add card" : "Update card"}</Button></form>
+      </div>
+    </section>
+    <section aria-labelledby="billing-tax" className={section}>
+      <div className={split}><div className="space-y-1"><h3 id="billing-tax" className={sectionTitle}>Tax ID</h3>
+        {profile?.taxIds ? profile.taxIds.length ? profile.taxIds.map((tax, i) => <p key={i} className={secondary}>{tax.type} ending in {tax.last4}</p>) : <p className={secondary}>No tax ID on file.</p>
+          : <p className={secondary}>Tax ID details are temporarily unavailable.</p>}</div>
+        {editTax && <form action={portal}><Button size="sm" type="submit">{profile?.taxIds?.length === 0 ? "Add tax ID" : "Manage tax IDs"}</Button></form>}
+      </div>
+    </section>
+    <section aria-labelledby="billing-invoices" className={section}>
+      <div className={split}><h3 id="billing-invoices" className={sectionTitle}>Invoices</h3>
+        <form action={portal}><Button size="sm" variant="quiet" type="submit">View invoices and receipts</Button></form>
+      </div>
+      {invoices ? <InvoiceHistory key={studio.id + ":" + (invoices.next ?? "")} initial={invoices} studioId={studio.id} timezone={tz}/>
+        : <p className={secondary}>Invoice history is temporarily unavailable here. You can still open it in Stripe.</p>}
+    </section>
+    {!profile?.ends && <section aria-labelledby="billing-cancel" className={section}>
+      <div className={split}><div className="space-y-1"><h3 id="billing-cancel" className={sectionTitle}>Cancellation</h3>
+        <p className={secondary}>Contact Hone to cancel your studio’s subscription.</p></div>
+        <a className={actionStyle} href={requestByEmail("Cancel my Hone subscription")}>Request cancellation</a></div>
+    </section>}
+  </section>;
 }

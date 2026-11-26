@@ -199,6 +199,7 @@ describe("#8 — the Terms do not describe automated Hone subscription billing a
     const REVIEWED_IMPORTERS = [
       "app/(app)/layout.tsx",
       "app/(app)/settings/subscription/actions.ts",
+      "app/(app)/settings/subscription/invoice-history.tsx",
       "app/(app)/settings/subscription/page.tsx",
       // HON-88 owner seat usage and invitation feedback, with no payment writes.
       "app/(app)/settings/team/InviteForm.tsx",

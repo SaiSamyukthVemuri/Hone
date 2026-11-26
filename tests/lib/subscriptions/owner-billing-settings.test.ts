@@ -2,19 +2,20 @@ import Stripe from "stripe";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import SubscriptionPage from "@/app/(app)/settings/subscription/page";
-import { openOwnerBilling, payOutstandingInvoice, updateBillingCard } from "@/app/(app)/settings/subscription/actions";
+import { loadOlderInvoices, openOwnerBilling, payOutstandingInvoice, updateBillingCard } from "@/app/(app)/settings/subscription/actions";
 import { SETTINGS_NAV } from "@/lib/settings/nav-registry";
 import { resolveSettingsNavWithReachable } from "@/lib/settings/nav";
 import type { Studio } from "@/lib/types/database";
 
 const h = vi.hoisted(() => ({
   rpc: vi.fn(), actor: vi.fn(), portal: vi.fn(), invoice: vi.fn(),
+  profile: vi.fn(), invoices: vi.fn(), taxEdit: vi.fn(),
 }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/supabase/queries", () => ({ requirePractitionerWithStudio: h.actor }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ rpc: h.rpc }) }));
 vi.mock("@/lib/subscriptions/billing-client", () => ({
-  createBillingStripeClient: () => ({ ownerPortal: h.portal, readNoticeInvoice: h.invoice }),
+  createBillingStripeClient: () => ({ ownerPortal: h.portal, readNoticeInvoice: h.invoice, billingProfile: h.profile, billingInvoices: h.invoices, canEditTaxId: h.taxEdit }),
 }));
 vi.mock("next/navigation", () => ({
   redirect: (url: string) => { throw new Error("redirect " + url); },
@@ -42,6 +43,9 @@ beforeEach(() => {
   h.rpc.mockResolvedValue({ data: billing });
   h.portal.mockResolvedValue("https://billing.stripe.com/p/session/test");
   h.invoice.mockResolvedValue(invoice);
+  h.profile.mockResolvedValue({ hasMethod: true, card: { brand: "visa", last4: "4242", expires: "12/2030" }, taxIds: [], renews: 1798200000, ends: null });
+  h.invoices.mockResolvedValue({ rows: [], next: null });
+  h.taxEdit.mockResolvedValue(true);
 });
 afterEach(() => vi.unstubAllEnvs());
 
@@ -154,4 +158,43 @@ it("creates the Stripe update-card deep link with a return to Hone and uses a no
     retrieve.mockRestore();
     create.mockRestore();
   }
+});
+
+
+it("shows the renewal, masked card, editable tax ID and real invoice links for an active studio", async () => {
+  h.rpc.mockResolvedValue({ data: { ...billing, status: "active", invoice: null } });
+  h.invoices.mockResolvedValue({ rows: [{ id: "in_paid", date: 1795600000, total: 9900, currency: "usd",
+    status: "paid", pdf: "https://pay.stripe.com/invoice/example/pdf", hosted: null, payable: false }], next: "in_paid" });
+  const html = await page();
+  for (const label of ["Renews December", "4242", "12/2030", "Add tax ID", "US$99.00", "Download PDF", "Load more", "Request cancellation"]) expect(html).toContain(label);
+  h.profile.mockResolvedValue({ hasMethod: false, taxIds: [], renews: null, ends: 1798200000 });
+  h.taxEdit.mockResolvedValue(false);
+  const ending = await page();
+  expect(ending).toContain("Scheduled to end");
+  expect(ending).toContain("Add card");
+  expect(ending).not.toContain("Request cancellation");
+  expect(ending).not.toContain("Add tax ID");
+});
+
+it("keeps billing recovery reachable if Stripe's inline details fail independently", async () => {
+  h.invoices.mockRejectedValue(new Error("unavailable"));
+  const historyOffline = await page();
+  expect(historyOffline).toContain("Invoice history is temporarily unavailable");
+  expect(historyOffline).toContain("4242");
+  h.profile.mockRejectedValue(new Error("unavailable"));
+  const offline = await page();
+  expect(offline).toContain("Card details are temporarily unavailable");
+  expect(offline).toContain("Pay outstanding invoice");
+  expect(offline).not.toContain("No payment method on file");
+});
+
+it("scopes each page of older invoices to the current studio owner and billing subscription", async () => {
+  await loadOlderInvoices(studio.id, "in_last");
+  expect(h.invoices).toHaveBeenCalledWith("cus_1", "sub_1", "in_last");
+  h.invoices.mockClear();
+  expect(await loadOlderInvoices(studio.id, "unrecognized")).toBeNull();
+  await expect(loadOlderInvoices("other", "in_last")).rejects.toThrow("redirect /settings");
+  h.actor.mockResolvedValue({ studio, practitioner: { role: "receptionist" } });
+  await expect(loadOlderInvoices(studio.id, "in_last")).rejects.toThrow("redirect /settings");
+  expect(h.invoices).not.toHaveBeenCalled();
 });

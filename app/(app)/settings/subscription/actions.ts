@@ -64,3 +64,13 @@ export async function payOutstandingInvoice(studioId: string) {
   if (alreadyPaid) redirect(billingPath + "?notice=settling");
   redirect(url ?? billingPath + "?error=invoice");
 }
+
+export async function loadOlderInvoices(studioId: string, cursor: string) {
+  const billing = await requireOwnerBilling(studioId);
+  if (!/^in_[A-Za-z0-9_]{1,120}$/.test(cursor)) return null;
+  try {
+    return await createBillingStripeClient(process.env).billingInvoices(billing.customer, billing.subscription, cursor);
+  } catch {
+    return null;
+  }
+}

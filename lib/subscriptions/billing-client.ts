@@ -15,6 +15,7 @@
 //   * Secret values are never logged or placed in an error message.
 
 import Stripe from "stripe";
+import { readBillingInvoices, readBillingProfile } from "./billing-overview";
 
 export interface BillingPrice {
   id: string;
@@ -157,6 +158,15 @@ export function createBillingStripeClient(
   });
 
   return {
+    billingProfile: (customer: string, subscription: string) => readBillingProfile(stripe, customer, subscription),
+    billingInvoices: (customer: string, subscription: string, after?: string) => readBillingInvoices(stripe, customer, subscription, after),
+
+    async canEditTaxId(configuration: string) {
+      const config = await stripe.billingPortal.configurations.retrieve(configuration);
+      const feature = config.features.customer_update;
+      return config.active && !config.livemode && feature.enabled && feature.allowed_updates.includes("tax_id");
+    },
+
     async readInvoice(id: string) {
       const inv = await stripe.invoices.retrieve(id, { expand: ["payments"] });
       return {
