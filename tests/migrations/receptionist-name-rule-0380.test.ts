@@ -148,3 +148,29 @@ describe("the down file", () => {
     }
   });
 });
+
+describe("the down file refuses to run over 0382", () => {
+  // Source contract; the behaviour is proved on a real database by tests/db/receptionist-name-rule-0380-down.db.test.ts.
+  const guardEnd = DOWN.indexOf("$guard$;");
+  const firstChange = DOWN.indexOf("create or replace function");
+  it("the refusal is in the PREAMBLE, before the first change, and is a 55000 naming 0382's down file", () => {
+    const at = DOWN.indexOf("authenticated cannot execute");
+    expect(at).toBeGreaterThan(0);
+    expect(at).toBeLessThan(guardEnd);
+    expect(guardEnd).toBeLessThan(firstChange);
+    expect(DOWN).toMatch(/Run the 0382 down file first, then this one\./);
+    expect(DOWN).toMatch(/authenticated cannot execute % \(0382 is in place[^']*'[^;]*errcode = '55000'/);
+  });
+  it("it tests EXECUTE for authenticated on BOTH functions 0382 closes, and not on the calendar function 0382 leaves open", () => {
+    const pre = DOWN.slice(0, guardEnd);
+    expect(pre).toContain("public.receptionist_client_directory(uuid, text, text[], text, integer, integer)");
+    expect(pre).toContain("public.receptionist_client_contacts_v2(uuid, text, integer)");
+    expect(pre).toMatch(/has_function_privilege\('authenticated'/);
+    expect(pre.slice(pre.indexOf("authenticated cannot execute") - 700)).not.toContain("receptionist_calendar_v2(");
+  });
+  it("the bodies, the grants and the after-check below the preamble are unchanged", () => {
+    expect(DOWN).toContain("grant execute on function public.receptionist_client_directory(uuid, text, text[], text, integer, integer) to authenticated;");
+    expect(DOWN).toContain("0380 down check: % is not the reviewed restored body");
+  });
+});
+
