@@ -9,13 +9,18 @@
 begin;
 set local lock_timeout = '5s';
 
+-- The unspecified-machine placeholder column (also added, idempotently, by the placeholder migration): this migration must be correct in either
+-- order. A placeholder is NOT a registered unit, so every rule below that counts, seeds from or looks up a unit excludes it.
+alter table public.studio_machines
+  add column if not exists is_unspecified boolean not null default false;
+
 -- The lazy-unit rule assumes at most one live xCell Pur unit per studio. Two or more is a product decision, never worked around.
 do $$
 declare v_n integer;
 begin
   select count(*) into v_n from (
     select studio_id from public.studio_machines
-     where machine_profile_id = 'dectro-apilus:xcell-pur' and retired_at is null
+     where machine_profile_id = 'dectro-apilus:xcell-pur' and retired_at is null and not is_unspecified
      group by studio_id having count(*) >= 2) s;
   if v_n > 0 then
     raise exception 'machine switches: % studio(s) hold two or more live xCell Pur units; this needs a product decision before the migration can apply', v_n
@@ -27,7 +32,7 @@ end $$;
 -- index closes the race between two registrations (and the lazy unit command, which relies on this rule).
 create unique index if not exists studio_machines_one_live_xcell_pur
   on public.studio_machines (studio_id)
-  where machine_profile_id = 'dectro-apilus:xcell-pur' and retired_at is null;
+  where machine_profile_id = 'dectro-apilus:xcell-pur' and retired_at is null and not is_unspecified;
 
 create table if not exists public.studio_machine_models (
   studio_id  uuid not null references public.studios (id) on delete cascade,
@@ -113,7 +118,8 @@ begin
   select p_studio_id, p.profile_id,
          case when p.profile_id = 'dectro-apilus:xcell-pur' then true
               else exists (select 1 from public.studio_machines m
-                            where m.studio_id = p_studio_id and m.machine_profile_id = p.profile_id and m.retired_at is null) end
+                            where m.studio_id = p_studio_id and m.machine_profile_id = p.profile_id and m.retired_at is null
+                                and not m.is_unspecified) end
     from (values ('dectro-apilus:xcell-pur'), ('dectro-apilus:senior-3g'), ('dectro-apilus:junior-3g')) as p(profile_id)
   on conflict (studio_id, profile_id) do nothing;
   insert into public.studio_machine_default (studio_id, default_profile_id, ask_each_visit)
@@ -122,7 +128,7 @@ begin
   -- Senior or Junior default under this variant: that is the case to confirm.
   values (p_studio_id,
           coalesce((select m.machine_profile_id from public.studio_machines m
-                     where m.studio_id = p_studio_id and m.retired_at is null
+                     where m.studio_id = p_studio_id and m.retired_at is null and not m.is_unspecified
                        and m.machine_profile_id in ('dectro-apilus:senior-3g', 'dectro-apilus:junior-3g')
                      order by m.created_at, m.id limit 1),
                    'dectro-apilus:xcell-pur'),
@@ -152,6 +158,10 @@ returns trigger language plpgsql security definer set search_path = pg_catalog, 
 declare
   v_changed integer;
 begin
+  -- The placeholder is not a registered machine: it never switches a model on.
+  if new.is_unspecified then
+    return null;
+  end if;
   if new.machine_profile_id in ('dectro-apilus:senior-3g', 'dectro-apilus:junior-3g') then
     -- THE SAME ROW LOCK THE OWNER COMMAND TAKES, BEFORE the recorded-choice check: a registration that races an owner's switch waits for that commit and
     -- then sees its event (the check below is a new statement, so it reads what the owner committed), and never switches the model on against it.
@@ -273,7 +283,7 @@ language sql stable security definer set search_path = pg_catalog, pg_temp as $$
          coalesce(d.default_profile_id = m.profile_id, false) as is_default,
          d.ask_each_visit,
          (select u.id from public.studio_machines u
-           where u.studio_id = m.studio_id and u.machine_profile_id = m.profile_id and u.retired_at is null
+           where u.studio_id = m.studio_id and u.machine_profile_id = m.profile_id and u.retired_at is null and not u.is_unspecified
            order by u.id limit 1) as live_unit_id,
          m.enabled
     from public.studio_machine_models m
@@ -317,9 +327,9 @@ begin
   end if;
   perform pg_advisory_xact_lock(hashtextextended(v_studio::text || '|' || p_profile, 0));
   select u.id into v_unit from public.studio_machines u
-   where u.studio_id = v_studio and u.machine_profile_id = p_profile and u.retired_at is null order by u.id limit 1;
+   where u.studio_id = v_studio and u.machine_profile_id = p_profile and u.retired_at is null and not u.is_unspecified order by u.id limit 1;
   if v_unit is not null then return v_unit::text; end if;
-  if exists (select 1 from public.studio_machines u where u.studio_id = v_studio and u.machine_profile_id = p_profile and u.retired_at is not null) then
+  if exists (select 1 from public.studio_machines u where u.studio_id = v_studio and u.machine_profile_id = p_profile and u.retired_at is not null and not u.is_unspecified) then
     return 'retired';
   end if;
   select max(c.machine_profile_version) into v_version from public.machine_profile_mode_contract c where c.machine_profile_id = p_profile;

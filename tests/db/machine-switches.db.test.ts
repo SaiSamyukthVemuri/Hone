@@ -432,6 +432,88 @@ describe("events: closed shapes, append-only, by user id", () => {
   });
 });
 
+describe("the unspecified-machine placeholder is NOT a registered unit (0385 rebase items, each excluded by name)", () => {
+  const placeholderOf = (user: string, studio: string) =>
+    asUser(user, async (q) => (await q(`select public.ensure_unspecified_machine($1) as id`, [studio])).rows[0].id as string);
+
+  it("the seed: a studio holding ONLY the placeholder seeds xCell Pur as the default, Senior and Junior OFF, and the placeholder is never the 1a unit", async () => {
+    const S = await seedStudio("sw-ph-seed");
+    await placeholderOf(S.userId, S.studioId);
+    await adminQuery(`delete from public.studio_machine_models where studio_id=$1`, [S.studioId]);
+    await adminQuery(`delete from public.studio_machine_default where studio_id=$1`, [S.studioId]);
+    await adminQuery(`select public.seed_studio_machine_settings($1)`, [S.studioId]);
+    expect(await models(S.studioId)).toEqual({ [PUR]: true, [SEN]: false, [JUN]: false });
+    expect(await dflt(S.studioId)).toEqual({ default_profile_id: PUR, ask_each_visit: false });
+  });
+
+  it("the seed with a placeholder AND a Senior unit: the default is the Senior unit's model (1a), unaffected by the placeholder", async () => {
+    const S = await seedStudio("sw-ph-seed2");
+    await placeholderOf(S.userId, S.studioId);
+    await unitOf(S.studioId, SEN, 3);
+    await adminQuery(`delete from public.studio_machine_models where studio_id=$1`, [S.studioId]);
+    await adminQuery(`delete from public.studio_machine_default where studio_id=$1`, [S.studioId]);
+    await adminQuery(`select public.seed_studio_machine_settings($1)`, [S.studioId]);
+    expect(await dflt(S.studioId)).toEqual({ default_profile_id: SEN, ask_each_visit: false });
+  });
+
+  it("the enable trigger: creating the placeholder switches no model on and writes no event", async () => {
+    const S = await seedStudio("sw-ph-trg");
+    const before = await models(S.studioId);
+    await placeholderOf(S.userId, S.studioId);
+    expect(await models(S.studioId)).toEqual(before);
+    expect(await eventCount(S.studioId)).toBe(0);
+  });
+
+  it("get_studio_machine_choices: the placeholder is no live unit (null), and a real unit beside it is the one reported", async () => {
+    const S = await seedStudio("sw-ph-choices");
+    await placeholderOf(S.userId, S.studioId);
+    expect((await choices(S.userId)).find((r) => r.studio_id === S.studioId && r.profile_id === PUR)?.live_unit_id ?? null).toBeNull();
+    const real = await unitOf(S.studioId, PUR, 1);
+    expect((await choices(S.userId)).find((r) => r.studio_id === S.studioId && r.profile_id === PUR)?.live_unit_id).toBe(real);
+  });
+
+  it("the commands: set_studio_machine_default and set_studio_machine_model work from the settings tables alone, so the placeholder cannot be named or counted there", async () => {
+    const S = await seedStudio("sw-ph-cmds");
+    await placeholderOf(S.userId, S.studioId);
+    expect(await setModel(S.userId, S.studioId, SEN, true)).toBe("changed");
+    expect(await setDefault(S.userId, S.studioId, SEN, false)).toBe("changed");
+    const err = await failure(setDefault(S.userId, S.studioId, "unspecified:xcell-pur", false));
+    expect(err, "a placeholder id is not a model").not.toBeNull();
+  });
+
+  it("ensure_studio_machine_for_save: with the placeholder present it still creates the REAL unit (never returns the placeholder), once", async () => {
+    const S = await seedStudio("sw-ph-ensure");
+    const sess = await seedSession(S);
+    const ph = await placeholderOf(S.userId, S.studioId);
+    const id = await ensure(S.userId, sess.blockId, PUR);
+    expect(id).not.toBe(ph);
+    expect(id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(await ensure(S.userId, sess.blockId, PUR)).toBe(id);
+    expect((await adminQuery(`select count(*)::int n from public.studio_machines where studio_id=$1 and not is_unspecified`, [S.studioId])).rows[0].n).toBe(1);
+  });
+
+  it("the one-live-xCell-Pur rule counts REAL units only: a placeholder and a real unit coexist", async () => {
+    const S = await seedStudio("sw-ph-index");
+    await placeholderOf(S.userId, S.studioId);
+    await unitOf(S.studioId, PUR, 1);
+    const idx = (await adminQuery(`select indexdef from pg_indexes where indexname = 'studio_machines_one_live_xcell_pur'`)).rows[0].indexdef as string;
+    expect(idx).toContain("is_unspecified");
+  });
+
+  it("COMMAND CENSUS: every 0366 function that reads studio_machines excludes the placeholder by name; the two owner commands read no unit at all", async () => {
+    const def = async (name: string) =>
+      (await adminQuery(`select pg_get_functiondef(p.oid) as d from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname = $1`, [name])).rows.map((r) => r.d as string).join("\n");
+    for (const name of ["seed_studio_machine_settings", "studio_machines_enable_model_trigger", "get_studio_machine_choices", "ensure_studio_machine_for_save"]) {
+      const d = await def(name);
+      expect(d, `${name} must read studio_machines`).toContain("studio_machines");
+      expect(d, `${name} must exclude the placeholder`).toContain("is_unspecified");
+    }
+    for (const name of ["set_studio_machine_model", "set_studio_machine_default"]) {
+      expect(await def(name), `${name} reads no unit`).not.toMatch(/studio_machines\b/);
+    }
+  });
+});
+
 describe("grants and RLS, by name", () => {
   it("RLS is on with NO policy, and no role has any table privilege on the three tables", async () => {
     for (const t of ["studio_machine_models", "studio_machine_default", "studio_machine_setting_events"]) {
