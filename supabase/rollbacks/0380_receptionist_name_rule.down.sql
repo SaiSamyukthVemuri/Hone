@@ -5,7 +5,7 @@ begin;
 
 set local lock_timeout = '5s';
 
--- 0) Preamble: the three bodies must be exactly the 0380 bodies.
+-- 0) Preamble: the three bodies must be exactly the 0380 bodies, and 0382 must not be in place (see below).
 do $guard$
 declare
   r record;
@@ -26,6 +26,21 @@ begin
          and p.proconfig = array['search_path=pg_catalog, pg_temp']
     ) then
       raise exception '0380 down refuses to run: % is not the 0380 body', r.fname using errcode = '55000';
+    end if;
+  end loop;
+
+  -- 0382 closes two of these functions by PRIVILEGE ONLY and leaves their bodies untouched, so the md5 check above passes with 0382 in place. This file ends by
+  -- granting EXECUTE to authenticated again and installing the 0374 bodies, which return a client's full phone and email: run over 0382 it would re-open the
+  -- contact book to every receptionist with nothing refusing it. So refuse, before any change, when authenticated cannot execute either function: that is the
+  -- signature of 0382 being in place. The way back is in order: the 0382 down file first, then this one.
+  for r in
+    select * from (values
+      ('receptionist_client_directory', 'public.receptionist_client_directory(uuid, text, text[], text, integer, integer)'),
+      ('receptionist_client_contacts_v2', 'public.receptionist_client_contacts_v2(uuid, text, integer)')
+    ) as t(fname, sig)
+  loop
+    if not coalesce(pg_catalog.has_function_privilege('authenticated', pg_catalog.to_regprocedure(r.sig), 'execute'), false) then
+      raise exception '0380 down refuses to run: authenticated cannot execute % (0382 is in place and closed it; this file would re-open it with a body that returns full phone and email). Run the 0382 down file first, then this one.', r.fname using errcode = '55000';
     end if;
   end loop;
 end
