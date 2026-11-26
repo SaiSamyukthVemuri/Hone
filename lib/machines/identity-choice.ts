@@ -4,6 +4,7 @@ import type { MachineDb } from "@/lib/machines/machine-queries";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import { checkDeviceChoice, type SelectionScope } from "@/lib/machines/selection";
 import { listStudioDevices } from "@/lib/machines/studio-devices";
+import { listUnspecifiedMachines } from "@/lib/machines/unspecified-machine";
 
 const UNREADABLE_INVENTORY =
   "We could not check that machine choice just now. Try again in a moment; nothing has been lost.";
@@ -43,6 +44,12 @@ export async function checkIdentityChoice(
   db: MachineDb,
   scope: SelectionScope,
   choice: IdentityChoice,
+  /**
+   * ONLY the area-create save passes this, to let a NEW MultiPlex area store the studio's "Machine not specified" placeholder.
+   * Every other caller (a remembered choice, a machine change on a saved area) leaves it off, so the placeholder is an unknown unit to
+   * them and can never be remembered or picked.
+   */
+  opts: { allowUnspecified?: boolean } = {},
 ): Promise<IdentityCheck> {
   if (choice.deviceId === null) {
     // The existing xCell workflow: a model with no unit and no mode.
@@ -58,6 +65,10 @@ export async function checkIdentityChoice(
     const inventory = await listStudioDevices(db, scope.studioId);
     devices = inventory.devices;
     inventorySource = inventory.source;
+    if (opts.allowUnspecified) {
+      const placeholders = await listUnspecifiedMachines(db, scope.studioId);
+      if (placeholders.ok) devices = [...devices, ...placeholders.value];
+    }
   } catch {
     return { ok: false, error: UNREADABLE_INVENTORY, reason: "unreadable" };
   }
@@ -112,6 +123,18 @@ export async function storedIdentityMatches(
     return choice.deviceId !== null || choice.profileId !== null ? unitMatches && modeMatches && profileMatches : false;
   } catch {
     return false;
+  }
+}
+
+/** The unit an existing area stores (route-bound), or null. A failed or odd read is null: the route then falls back to its normal rule. */
+export async function blockStoredUnitId(db: MachineDb, blockId: string, sessionId: string): Promise<string | null> {
+  try {
+    const blk = await db.from("session_blocks").select("studio_machine_id").eq("id", blockId).eq("session_id", sessionId).limit(1);
+    if (blk.error || !Array.isArray(blk.data) || blk.data.length !== 1) return null;
+    const v = (blk.data[0] as { studio_machine_id?: unknown }).studio_machine_id;
+    return typeof v === "string" && v.trim() !== "" ? v.trim() : null;
+  } catch {
+    return null;
   }
 }
 
