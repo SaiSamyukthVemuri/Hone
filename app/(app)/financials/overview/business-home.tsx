@@ -36,11 +36,11 @@ function ReportingPeriod({ selection, currentMonth }: { selection: HomeSelection
             {HOME_PERIOD_LABELS[p]}
           </PendingLink>
         ))}
-        <form method="get" action={OVERVIEW_PATH} aria-label={CHOOSE_MONTH_LABEL} className={cx(CELL, "gap-2", monthChosen ? "bg-white font-semibold text-fg shadow-[0_1px_4px_#0002]" : "text-fg hover:bg-white/60")} data-period="month">
+        <form method="get" action={OVERVIEW_PATH} aria-label={CHOOSE_MONTH_LABEL} className={cx(CELL, "col-span-2 min-w-0 justify-between gap-3", monthChosen ? "bg-white font-semibold text-fg shadow-[0_1px_4px_#0002]" : "text-fg hover:bg-white/60")} data-period="month">
           <input type="hidden" name="period" value="month" />
-          <label className="flex items-center gap-2">
+          <label className="flex w-full min-w-0 items-center justify-between gap-3">
             <span className={monthChosen ? "sr-only" : undefined}>{CHOOSE_MONTH_LABEL}</span>
-            <MonthPickerInput defaultValue={selection.month ?? currentMonth} min={STATEMENT_MIN_MONTH} max={currentMonth} className={cx("w-[9.5rem] max-w-full rounded-md border border-line-strong bg-white px-2 text-fg", CONTROL_MIN_TOUCH, FOCUS_RING)} />
+            <MonthPickerInput defaultValue={selection.month ?? currentMonth} min={STATEMENT_MIN_MONTH} max={currentMonth} className={cx("min-w-0 flex-1 rounded-md border border-line-strong bg-white px-2 text-fg", CONTROL_MIN_TOUCH, FOCUS_RING)} />
           </label>
           <button type="submit" className="sr-only focus:not-sr-only focus:rounded-lg focus:border focus:border-line-strong focus:bg-white focus:px-3 focus:py-2">Show month</button>
         </form>
@@ -62,7 +62,7 @@ function Small({ label, figure, testId }: { label: string; figure: HomeFigure<st
   return (
     <div data-testid={testId} className="min-w-0">
       <span className="block text-xs text-white/70">{label}</span>
-      <strong className="mt-1 block text-xl leading-tight">{figure.state === "value" ? String(figure.value) : <Unavailable reason={figure.reason} dark />}</strong>
+      <strong className="mt-1 block text-xl leading-tight [&_[data-figure-state]>span:first-child]:text-base">{figure.state === "value" ? String(figure.value) : <Unavailable reason={figure.reason} dark />}</strong>
     </div>
   );
 }

@@ -60,6 +60,14 @@ async function figures(page: Page) {
   return [await read("overview-collected"), await read("overview-comparison"), await read("overview-period-text"), await read("overview-visits"), await read("overview-clients"), await read("overview-average")].join(" | ");
 }
 
+async function expectPeriodControlContained(page: Page) {
+  const group = (await page.getByTestId("overview-period").locator('[role="group"]').boundingBox())!;
+  for (const sel of ['[data-period="month"]', '[data-period="month"] input[type="month"]']) {
+    const b = (await page.locator(sel).boundingBox())!;
+    expect(b.x + b.width, `${sel} stays inside the period control`).toBeLessThanOrEqual(group.x + group.width + 0.5);
+  }
+}
+
 async function expectNoSideways(page: Page, label: string) {
   const w = await page.evaluate(() => ({ s: document.documentElement.scrollWidth, c: document.documentElement.clientWidth }));
   expect(w.s, `${label}: no horizontal overflow (${w.s} vs ${w.c})`).toBeLessThanOrEqual(w.c);
@@ -99,6 +107,7 @@ test.describe("Business → Overview on a phone", () => {
     await expect(page.locator('[aria-busy="true"], [role="progressbar"]')).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Month to date" }).or(page.locator('[data-period="month_to_date"]'))).toBeVisible();
     await expectNoSideways(page, "Overview");
+    await expectPeriodControlContained(page);
     await shot(page, "overview-fold-active");
 
     // Select Last month: the address carries it, the figures are last month's.
