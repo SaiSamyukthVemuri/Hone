@@ -145,6 +145,7 @@ describe("4. Last visit details are ON the card by default", () => {
   });
   it("keeps the open / close control as a secondary Hide button", () => {
     expect(html).toContain("Hide last visit details");
-    expect(html).toContain('aria-label="Hide last visit details for Ada Synthetic"');
+    // The accessible name stays constant; aria-expanded carries the state.
+    expect(html).toContain('aria-label="Last visit details for Ada Synthetic"');
   });
 });

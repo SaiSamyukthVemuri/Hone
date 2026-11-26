@@ -12,6 +12,7 @@ import {
   seedE2eStudio,
   sql,
 } from "../e2e/helpers/seed";
+import { ensureLastVisitDetailsOpen } from "../e2e/helpers/last-visit-details";
 
 // RECORDED ACCEPTANCE WALKTHROUGH for the dashboard visit workflow (#1775), on desktop and on a phone.
 // FAKE STRIPE LANE ONLY: this file lives under e2e-payment/, whose config starts the app with the server-only fake
@@ -90,13 +91,13 @@ for (const screen of SCREENS) {
       await test.step("1. Last visit details opens once and shows the settings and the notes", async () => {
         await expect(row(page).getByTestId("dashboard-prep-remember")).toHaveText(`From last visit, for today ${PLAN}`);
         const toggle = row(page).getByRole("button", { name: /^Last visit details for / });
-        await toggle.click();
+        await ensureLastVisitDetailsOpen(toggle);
         const full = row(page).getByTestId("dashboard-memory-full");
         await expect(full).toBeVisible();
         await expect(full.getByTestId("prep-area-label").first()).toBeVisible();
         await expect(full).toContainText("Synchro");
         await expect(full.getByTestId("prep-note-item").first()).toContainText(CAUTION);
-        await expect(row(page).getByRole("button", { name: /^Hide last visit details for / })).toHaveAttribute("aria-expanded", "true");
+        await expect(row(page).getByRole("button", { name: /^Last visit details for / })).toHaveAttribute("aria-expanded", "true");
         await shot(page, "1-last-visit-details");
       });
 

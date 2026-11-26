@@ -125,7 +125,7 @@ export function DashboardTreatmentMemory({
       <button
         type="button"
         onClick={toggle}
-        aria-label={`${open ? "Hide last visit details" : "Last visit details"} for ${clientName}`}
+        aria-label={`Last visit details for ${clientName}`}
         aria-expanded={open}
         aria-controls={regionId}
         data-testid="dashboard-memory-toggle"

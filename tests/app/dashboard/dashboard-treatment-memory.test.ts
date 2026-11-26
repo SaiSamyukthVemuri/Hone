@@ -125,7 +125,7 @@ describe("the disclosure is accessible and calm by default", () => {
   });
 
   it("the toggle names the client, so repeated rows are distinguishable", () => {
-    expect(MEMORY_UI).toContain('aria-label={`${open ? "Hide last visit details" : "Last visit details"} for ${clientName}`}');
+    expect(MEMORY_UI).toContain('aria-label={`Last visit details for ${clientName}`}');
   });
 
   it("the collapsed region is hidden from the accessibility tree, not just visually", () => {

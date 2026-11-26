@@ -61,13 +61,12 @@ test("visit card: one action row, yellow pins, blue reminder, last visit details
     const reminder = row.getByTestId("dashboard-prep-remember");
     await expect(reminder).toContainText("From last visit, for today");
     await expect(reminder).toContainText("Lower the energy one step");
-    const rgb = (s: string) => s.match(/\d+(\.\d+)?/g)!.slice(0, 3).map(Number);
-    const blue = rgb(await reminder.evaluate(e => getComputedStyle(e).backgroundColor));
-    expect(blue[2], `blue box background ${blue}`).toBeGreaterThan(blue[0]);
+    // Colour by the design tokens' classes: computed colours come back as oklch/lab, which no rgb parser reads.
+    await expect(reminder).toHaveClass(/bg-blue-50/);
+    await expect(reminder).not.toHaveClass(/amber|yellow/);
     const pinned = row.getByText("Prefers the 2pm slot").first().locator("xpath=ancestor::div[contains(@class,'bg-amber-50')][1]");
     await expect(pinned).toHaveCount(1);
-    const yellow = rgb(await pinned.evaluate(e => getComputedStyle(e).backgroundColor));
-    expect(yellow[0], `yellow box background ${yellow}`).toBeGreaterThan(yellow[2]);
+    await expect(pinned).not.toHaveClass(/blue/);
     await expect(row.getByRole("button", { name: /^Add pinned note for / })).toBeVisible();
     await expect(row.getByRole("button", { name: /^Edit pinned note for / })).toBeVisible();
     // The two boxes are separate elements.

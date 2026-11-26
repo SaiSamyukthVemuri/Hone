@@ -7,7 +7,7 @@ import {
   sql,
 } from "./helpers/seed";
 import { loginByMagicLink } from "./helpers/flows";
-import { ensureLastVisitDetailsOpen } from "./helpers/last-visit-details";
+import { ensureLastVisitDetailsOpen, closeLastVisitDetails } from "./helpers/last-visit-details";
 
 const T = 15_000;
 const NOTE_A = "CLOSEDPINONE prefers the 2pm slot";
@@ -33,7 +33,7 @@ test("closed row: pinned notes in full, allergy flag, caution line and intake pi
 
   const row = page.getByTestId("today-row-body").filter({ hasText: "Memory Client" }).locator("xpath=ancestor::li[1]");
   const toggle = row.getByRole("button", { name: /^Last visit details for / });
-  await expect(toggle).toHaveAttribute("aria-expanded", "true", { timeout: T }); // open by default (Chloe, 26 Nov)
+  await closeLastVisitDetails(toggle, T); // open by default (Chloe, 26 Nov); this spec is about the CLOSED row
 
   await test.step("both pinned notes are visible in FULL (not truncated)", async () => {
     await expect(page.getByText(NOTE_A, { exact: true })).toBeVisible({ timeout: T });

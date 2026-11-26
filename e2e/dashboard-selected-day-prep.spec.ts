@@ -14,7 +14,7 @@ import {
   type E2eSeed,
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
-import { ensureLastVisitDetailsOpen } from "./helpers/last-visit-details";
+import { ensureLastVisitDetailsOpen, closeLastVisitDetails } from "./helpers/last-visit-details";
 
 // Chloe, on production, after day navigation shipped:
 //
@@ -296,6 +296,8 @@ test.describe("preparing a future day — 390px phone", () => {
 
     await test.step("16. the prep the practitioner came for is on screen", async () => {
       await expect(page.getByText("Prefers the 2pm slot")).toBeVisible();
+      // Open by default (Chloe, 26 Nov): close it to see the one-line summary the closed row carries.
+      await closeLastVisitDetails(page.getByTestId("dashboard-memory-toggle").first());
       await expect(page.getByTestId("dashboard-memory-compact")).toBeVisible();
       await expect(page.getByTestId("dashboard-prep-remember")).toHaveCount(0);
     });
@@ -446,7 +448,9 @@ test.describe("the full treatment is not transported before it is asked for", ()
         SENTINELS.probeLot,
         { timeout: T },
       );
-      const html = await page.content();
+      // Every row now loads ITS OWN details on first render, so the other client's chart is legitimately on the page
+      // under its own row; what must hold is that the first row never receives it.
+      const html = await page.getByTestId("dashboard-memory-full").first().innerHTML();
       expect(
         html.includes("SENTINELLOT-OTHER-ROW"),
         "the unopened row's chart was loaded too",
@@ -498,33 +502,34 @@ test.describe("a rejected disclosure fails to its own line", () => {
       entryComment: "SENTINELCOMMENT-b",
     });
     await sql(`delete from public.appointments where studio_id = $1`, [seed.studioId]);
-    for (const [clientId, offsetMin] of [
-      [a.clientId, OFFSET * 24 * 60 + 60],
-      [b.clientId, OFFSET * 24 * 60 + 180],
-    ] as const) {
-      await seedE2eTodayAppointment(seed, {
-        clientId,
-        startsMinutesFromNow: offsetMin,
-        endsMinutesFromNow: offsetMin + 45,
-      });
-    }
-
-    await loginAsOwner(page, seed);
-    await page.goto(`/dashboard?day=${localDay(tz, OFFSET)}`);
-    await expect(page.getByTestId("dashboard-memory-toggle").first()).toBeVisible({
-      timeout: T,
+    const apptA = await seedE2eTodayAppointment(seed, {
+      clientId: a.clientId,
+      startsMinutesFromNow: OFFSET * 24 * 60 + 60,
+      endsMinutesFromNow: OFFSET * 24 * 60 + 105,
+    });
+    await seedE2eTodayAppointment(seed, {
+      clientId: b.clientId,
+      startsMinutesFromNow: OFFSET * 24 * 60 + 180,
+      endsMinutesFromNow: OFFSET * 24 * 60 + 225,
     });
 
-    // Break ONLY the server-action invocation. Server Actions POST back to the
+    await loginAsOwner(page, seed);
+
+    // Break ONLY row A's server-action invocation. Server Actions POST back to the
     // same route, so aborting the POST reproduces a real transport failure —
-    // the action never runs, and the browser-side promise rejects.
+    // the action never runs, and the browser-side promise rejects. Chloe (26 Nov): the details now load on first
+    // render, so the failure is installed BEFORE the page loads, and only for row A's appointment.
     let aborted = 0;
     await page.route("**/dashboard**", async (route) => {
-      if (route.request().method() === "POST") {
+      if (route.request().method() === "POST" && (route.request().postData() ?? "").includes(apptA.appointmentId)) {
         aborted += 1;
         return route.abort("failed");
       }
       return route.fallback();
+    });
+    await page.goto(`/dashboard?day=${localDay(tz, OFFSET)}`);
+    await expect(page.getByTestId("dashboard-memory-toggle").first()).toBeVisible({
+      timeout: T,
     });
 
     await test.step("23. the row renders its OWN failure state", async () => {
