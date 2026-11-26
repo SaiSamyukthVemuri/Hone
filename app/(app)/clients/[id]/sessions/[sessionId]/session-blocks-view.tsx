@@ -107,6 +107,8 @@ type Props = {
   // treatment-area drafts from the practitioner's last-used value;
   // editable per area; the block row still stores the actual value.
   defaultMachineFrequency?: string | null;
+  /** MultiPlex is offered to this studio (read with the page). Null = not offered. */
+  multiplexOffer?: { deviceId: string } | null;
   // PR #279 (Chloe charting feedback): latest lot/batch per probe (probe_key) from the
   // studio's session blocks, auto-populated per selected probe (never auto-confirmed).
   probeLotSuggestions?: ProbeLotSuggestions;
@@ -129,6 +131,7 @@ export function SessionBlocksView({
   clientTagLabels = [],
   defaultPrimaryArea = null,
   defaultMachineFrequency = null,
+  multiplexOffer = null,
   probeLotSuggestions = { byKey: {}, byLabel: {} },
   probeLotInventory = [],
   autoEditBlockId = null,
@@ -211,6 +214,7 @@ export function SessionBlocksView({
           // PR #203: unlike the plan-area seed, the frequency seed
           // applies to EVERY new area; the machine rarely changes.
           defaultMachineFrequency={defaultMachineFrequency ?? null}
+          multiplexOffer={multiplexOffer}
           onCancel={() => setAdding(false)}
         />
       ) : (

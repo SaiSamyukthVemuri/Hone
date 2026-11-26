@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 289,
-    "last": "0384_rematerialize_reservations_actual_end.sql",
-    "sha256": "916d536682b7a99c7f034dc073215242a3aa5405e03911d522d0f3192736f7e3"
+    "count": 290,
+    "last": "0385_unspecified_machine.sql",
+    "sha256": "6da3001b051beff0f48b3e386d3261e523310ad0a510e906927c9ceb923bb15c"
   },
   "public": {
     "tables": [
@@ -330,6 +330,7 @@
       "enforce_treatment_image_integrity",
       "enqueue_calendar_outbound",
       "enqueue_calendar_outbound_on_delete",
+      "ensure_unspecified_machine",
       "erase_waitlist_decline_answers",
       "expire_new_client_waitlist_invitation",
       "expire_pending_sessions",
@@ -526,6 +527,7 @@
       "redeem_waitlist_preference_grant",
       "refuse_treatment_setup_capture_update",
       "refuse_treatment_setup_reading_update",
+      "refuse_unspecified_machine_change",
       "register_studio_machine",
       "reject_payment_audit_mutation",
       "reject_payment_consents_mutation",

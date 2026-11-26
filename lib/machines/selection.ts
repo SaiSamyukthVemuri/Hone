@@ -81,7 +81,17 @@ export type StudioDevice = {
   installedOptions: string[];
   /** Set once the unit leaves service. A retired device is never resolved. */
   retiredAt: string | null;
+  /**
+   * the inert "Machine not specified" placeholder. It is only ever the chart's route unit for MultiPlex: every picker, list,
+   * count, default and remembered choice excludes it (`isRegisteredUnit`).
+   */
+  isUnspecified?: boolean;
 };
+
+/** A unit the studio registered: the only kind a picker, a list, a count or a remembered choice may use. */
+export function isRegisteredUnit(d: Pick<StudioDevice, "isUnspecified">): boolean {
+  return d.isUnspecified !== true;
+}
 
 /** What persists between visits. Deliberately tiny. */
 export type StoredSelection = {
@@ -367,6 +377,8 @@ export function selectableDevices(
 ): Array<{ device: StudioDevice; profile: MachineProfile }> {
   return devices.flatMap((device) => {
     if (device.studioId !== scope.studioId || device.retiredAt) return [];
+    // the placeholder is never selectable. The chart's route reaches it by id (the panel resolves it separately).
+    if (!isRegisteredUnit(device)) return [];
     const profile = profileById(device.profileId, catalogue);
     if (!profile || profile.availability !== "active") return [];
     if (device.profileVersion !== profile.version) return [];

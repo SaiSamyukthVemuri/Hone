@@ -1189,6 +1189,9 @@ describe("switching machine or mode clears the collected draft", () => {
     // A saved area's machine write in flight. Not a create-mode flag: it is released in a
     // `finally` the moment the write settles, success or refusal, so it can never strand Save.
     "identityWritePending",
+    // The load a MultiPlex click starts. Not a create-mode flag: `open()` catches its own failure and always settles, and a failed load
+    // enables Save again (it then refuses with a message), so it cannot strand the button.
+    "multiplexLoad",
   ];
   const saveDisabledIdentifiers = (expr: string) =>
     [
@@ -1791,11 +1794,11 @@ describe("switching machine or mode clears the collected draft", () => {
     //
     // A PREDICATE IS NOT REACHABILITY, and only position can tell them apart,
     // so position is what this reads. The panel's branch opens at
-    // `{selectable.length === 0 ? (`; the reset must come BEFORE it, like the
+    // `{selectable.length === 0 && !chosen ? (`; the reset must come BEFORE it, like the
     // selection note that was moved above the same branch for the same reason.
     const src = read(PANEL_SRC);
     const reset = src.indexOf("<MachineSettingDraftReset");
-    const branch = src.indexOf("{selectable.length === 0 ? (");
+    const branch = src.indexOf("{selectable.length === 0 && !chosen ? (");
     const chosenArm = src.indexOf('data-testid="machine-chosen"');
 
     expect(reset, "the reset must exist").toBeGreaterThan(-1);
