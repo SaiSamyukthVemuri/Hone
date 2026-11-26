@@ -290,7 +290,7 @@ describe("#598 survives on every day", () => {
     const historyStart = row.indexOf("{workflow && !workflow.unavailable && !workflow.hasHistory");
     const historyEnd = row.indexOf("</p>", historyStart);
     expect(row.indexOf("<CardOnFilePill")).toBeLessThan(historyStart);
-    // Chloe (26 Nov): it now sits in the ONE action row, which comes before the details block (and so the history line).
+    // practitioner feedback (26 Nov): it now sits in the ONE action row, which comes before the details block (and so the history line).
     expect(row.indexOf("tab=treatment")).toBeLessThan(historyStart);
     expect(row.indexOf("tab=treatment")).toBeGreaterThan(row.indexOf("<VisitActionRow"));
     expect(historyEnd).toBeGreaterThan(historyStart);

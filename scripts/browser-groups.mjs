@@ -128,8 +128,8 @@ export const BROWSER_GROUPS = {
       "dashboard-closed-row.spec.ts",
       // HON-65 (Chloe, 4 Nov): Last treatment is visible on the CLOSED row, as owner and practitioner at 1280 and 390.
       "dashboard-last-treatment-closed.spec.ts",
-      // Chloe (26 Nov): one action row, yellow pinned notes, blue From-last-visit box, last visit details open on first render.
-      "dashboard-visit-card-chloe.spec.ts",
+      // practitioner feedback (26 Nov): one action row, yellow pinned notes, blue From-last-visit box, last visit details open on first render.
+      "dashboard-visit-card-actions.spec.ts",
       // #1308 phone fixes: no sideways scroll at 320/390 with a 95-character name, and the Today-row name tap navigates.
       "dashboard-phone-overflow.spec.ts",
       // Needs attention: the one heading count, exact unpaid amounts (full, partial, settlement, All outstanding), the gate-OFF default

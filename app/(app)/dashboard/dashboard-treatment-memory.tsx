@@ -64,7 +64,7 @@ export function DashboardTreatmentMemory({
   summary: DashboardTreatmentDisclosureSummary;
   timeZone: string;
 }) {
-  // CHLOE (26 Nov): the last visit's details are ON the card by default, no click needed. The button is now only a
+  // practitioner feedback (26 Nov): the last visit's details are ON the card by default, no click needed. The button is now only a
   // secondary "hide / show"; it starts open. The details are still read by the server on request, after it re-checks
   // the appointment belongs to this studio, and never travel in the page payload.
   const [open, setOpen] = useState(true);

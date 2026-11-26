@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 
-// Chloe's feedback on the dashboard visit card (26 Nov 2026), proved on the REAL components through react-dom/server
+// Practitioner feedback on the dashboard visit card (26 Nov 2026), proved on the REAL components through react-dom/server
 // (the repo has no @testing-library), one block per point. The browser runs prove layout; this proves the markup.
 
 vi.mock("next/navigation", () => ({

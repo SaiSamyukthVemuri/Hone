@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { PendingLink } from "@/components/pending-link";
 import { buttonClasses } from "@/components/ui/button";
 
-// Chloe (26 Nov), the dashboard visit card.
+// practitioner feedback (26 Nov), the dashboard visit card.
 //
 // ONE action row. Checkout / Mark completed (the `children` slot), Rebook, Chart, the next action (Open client,
 // Review and the rest), Consultation notes and Review intake all sit in the same flex-wrap group, each only where it is

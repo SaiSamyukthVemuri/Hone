@@ -1186,8 +1186,9 @@ function AppointmentRow({
   // boundary and one client can never receive another's memory.
   /**
    * The compact projection of the previous visit — exactly what the collapsed
-   * row paints, and nothing else. The full `AppointmentPrepMemory` stays
-   * server-side until the practitioner explicitly opens the disclosure.
+   * row paints, and nothing else. The full `AppointmentPrepMemory` is not in
+   * the page props: for a row with prior treatment the client component loads it on page view
+   * through `loadAppointmentPrepMemory`, which re-checks the studio server-side (26 Nov 2026).
    */
   prepSummary: DashboardPrepSummary;
   // Whether the page ASKED the history question for this row at all. Only
@@ -1443,7 +1444,7 @@ function AppointmentRow({
             />
           </div>
         )}
-        {/* Chloe (26 Nov): ONE action row. Quick checkout (owner) takes payment from the roster without opening charting;
+        {/* practitioner feedback (26 Nov): ONE action row. Quick checkout (owner) takes payment from the roster without opening charting;
             Paid / Processing / Refunded show a status badge instead. */}
         <VisitActionRow
           checkout={isOwner ? (

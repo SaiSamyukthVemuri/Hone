@@ -22,12 +22,19 @@ import {
 // asked to see any of it. Collapsing it in the DOM changes what is *rendered*,
 // not what is *transported*.
 //
-// The rule this enforces: before the practitioner explicitly opens a row, the
-// full model has not crossed to the browser at all.
+// THE RULE (changed 26 Nov 2026, on the practitioner's explicit request that
+// last visit details show directly on the card): the full model is NOT part of
+// the page payload. The row's client component asks for it on page view, one
+// call per row that has prior treatment, and this action re-resolves who is
+// asking, which studio they are in and whether the appointment belongs to it
+// before returning anything clinical. So the full details now DO reach the
+// browser for every such row on the day, without a click; they never arrive
+// for a row without prior treatment, for another studio, or via the page props.
+// The earlier rule (nothing crosses until a row is explicitly opened) is
+// retired, and docs/03_SECURITY_AND_PRIVACY.md records the change.
 //
 // This is data minimisation inside an already-authorised session, not a
-// tenancy fix — the studio fence was never in doubt. It is the difference
-// between "she may read this" and "her browser was handed all of it up front".
+// tenancy fix — the studio fence was never in doubt.
 
 /** Explicit outcome. `none` and `unavailable` are different facts. */
 export type PrepMemoryResult =

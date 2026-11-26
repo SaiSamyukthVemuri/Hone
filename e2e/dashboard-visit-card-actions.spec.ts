@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { loginAsOwner } from "./helpers/flows";
 import { seedE2eDashboardMemoryClient, seedE2eStudio, seedPinnedNote, sql } from "./helpers/seed";
 
-// Chloe's feedback on the dashboard visit card (26 Nov 2026), proved in a real browser. Synthetic data only.
+// Practitioner feedback on the dashboard visit card (26 Nov 2026), proved in a real browser. Synthetic data only.
 //   1. ONE action row, every action the same size, wrapping inside its own group on a phone.
 //   2. Pinned notes stay YELLOW (inline edit and "Add pinned note" preserved).
 //   3. "From last visit, for today" is its own BLUE box.

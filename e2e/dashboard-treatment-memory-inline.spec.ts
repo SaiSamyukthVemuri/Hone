@@ -64,7 +64,7 @@ test.describe("D1 — the Treatment Memory disclosure stays on the Dashboard", (
 
     const toggle = page.getByTestId("dashboard-memory-toggle").first();
     await expect(toggle).toBeVisible({ timeout: T });
-    // Chloe (26 Nov): the details are open on first render, with no click.
+    // practitioner feedback (26 Nov): the details are open on first render, with no click.
     await expect(toggle).toHaveAttribute("aria-expanded", "true");
     await expect(page.getByTestId("dashboard-memory-full").first()).toBeVisible({ timeout: T });
 

@@ -267,7 +267,7 @@ describe("compact appointment rows (fidelity C)", () => {
       expect(details, marker).toContain(marker);
       expect(link, marker).not.toContain(marker);
     }
-    // Chloe (26 Nov): every action lives in the ONE action row, which is also outside the profile link.
+    // practitioner feedback (26 Nov): every action lives in the ONE action row, which is also outside the profile link.
     const actions = row.slice(row.indexOf("<VisitActionRow"), row.indexOf('data-testid="today-row-details"'));
     for (const marker of ["<AppointmentCheckoutCell", "rebookHref=", "chartHref=", "nextAction=", "consultation=", "intake="]) {
       expect(actions, marker).toContain(marker);

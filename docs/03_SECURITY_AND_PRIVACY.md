@@ -83,6 +83,10 @@ Not covered by this rule and unchanged: clinical-record edits and the "risks exp
 
 Accountability expected of all four (who acted, which appointment, when, what changed, plus the reason for cancel and no-show, previous note versions, and aftercare delivery outcome): the audit already records actor, appointment, time and (for cancel) the reason; note versions, the no-show reason and the aftercare audit are a held migration, not applied. Until it is applied, an overwritten note's previous text is **not** recoverable.
 
+### Dashboard last-visit details load on page view (26 Nov 2026)
+
+On the Dashboard roster, each visit card now shows its **Last visit details** by default, with no click, at the practitioner's explicit request. This **reverses** the earlier data-minimisation rule that the full previous-treatment model had not crossed to the browser until a row was explicitly opened. The new rule: the model is still not part of the page payload; for a row with prior treatment the row's client component loads it on page view through the `loadAppointmentPrepMemory` server action, which re-resolves the caller, their studio and whether that appointment belongs to the studio before returning anything. The full details therefore reach the browser for every such row of the selected day, but only through that studio-checked call, never for a row without prior treatment, and never across studios. Pinned by `tests/app/dashboard/prep-memory-action-authority.test.ts` and `tests/app/dashboard/visit-card-layout.test.ts`.
+
 ## 2. Public route model
 
 > Treatment images (PR #271) are **not** a public surface. The `treatment-images` bucket is private (no public URLs); images are practitioner-only and viewed only via short-TTL signed URLs minted server-side after a studio-ownership re-check. No public/token route below exposes them.
