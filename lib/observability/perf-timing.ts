@@ -109,6 +109,8 @@ export const PERF_SPAN_IDS = [
   // rows, then the money for them): they are NOT phase "domain", so domain_total_ms is not double counted.
   "analytics.identity",
   "analytics.domain",
+  "overview.identity",
+  "overview.domain",
   "analytics.appointments",
   "analytics.money",
   "analytics.people",

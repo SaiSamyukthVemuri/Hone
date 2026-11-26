@@ -92,6 +92,7 @@ describe("header fit", () => {
     const LIST = read("lib/nav/business-menu.ts");
     expect(LAYOUT).toMatch(/\{practitioner\.role === "owner" && <BusinessMenu \/>\}/);
     expect(MOBILE).toMatch(/role === "owner" && \(\s*<div role="group"[\s\S]*?BUSINESS_MENU_ITEMS\.map/);
+    expect(LIST).toContain('href: "/financials/overview", label: "Overview"');
     expect(LIST).toContain('href: "/dashboard/capacity", label: "Capacity"');
     expect(LIST).toContain('href: "/financials/statement", label: "Statements"');
     expect(LIST).toContain('href: "/financials/analytics", label: "Analytics"');

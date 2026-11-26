@@ -43,7 +43,7 @@ describe("fixed copy that must stay true", () => {
   });
 });
 
-const MODULES = ["chart-geometry.ts", "clients-csv.ts", "clients-params.ts", "clients-table.ts", "copy.ts", "figure.ts", "money-format.ts", "money-metrics.ts", "named-clients.ts", "overview-csv.ts", "overview-model.ts", "overview-params.ts", "period.ts", "reconcile.ts", "reconciliation-line.ts", "service-value.ts", "visit-metrics.ts", "waitlist-model.ts"];
+const MODULES = ["chart-geometry.ts", "clients-csv.ts", "clients-params.ts", "clients-table.ts", "copy.ts", "figure.ts", "home-figures.ts", "home-params.ts", "money-format.ts", "money-metrics.ts", "named-clients.ts", "overview-csv.ts", "overview-model.ts", "overview-params.ts", "period.ts", "reconcile.ts", "reconciliation-line.ts", "service-value.ts", "visit-metrics.ts", "waitlist-model.ts"];
 
 describe("the analytics server folder is the only place that reads", () => {
   it("holds the one loader, which is owner-gated first and never writes or uses a service role", () => {

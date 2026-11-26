@@ -1,0 +1,173 @@
+import { test, expect, type Page } from "@playwright/test";
+import { randomUUID } from "node:crypto";
+import { mkdirSync } from "node:fs";
+
+import { loginAsOwner, loginByMagicLink } from "./helpers/flows";
+import { getOwnerPractitionerId, seedE2eDashboardClient, seedE2eMember, seedE2eStudio, sql, type E2eSeed } from "./helpers/seed";
+
+// ===========================================================================
+// Business → Overview on a PHONE (390 x 844): the main figures are in the first screen with no scrolling; the reporting period lives in the address;
+// Overview → Statements opens the matching month and Back returns to the same period and the same figures; a studio with no activity shows a genuine $0
+// beside a figure that is "Not available". Synthetic studios, fake data, read-only pages: nothing here writes through the app.
+// Run on Chromium at 390 and, on an owned stack, on a WebKit iPhone 13 project (the engine behind iPhone Safari; NOT real Safari, NOT a device).
+// ===========================================================================
+
+test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
+
+const T = 20_000;
+const SHOTS = process.env.OVERVIEW_SHOT_DIR;
+const shot = async (page: Page, name: string) => {
+  if (!SHOTS) return;
+  mkdirSync(SHOTS, { recursive: true });
+  await page.screenshot({ path: `${SHOTS}/${name}-${test.info().project.name}.png` });
+};
+
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const DAY = 86_400_000;
+
+async function currency(seed: E2eSeed) {
+  await sql(
+    `insert into public.studio_payment_jurisdictions (studio_id, payment_country, payment_currency, source, verification_reference) values ($1,'CA','cad','operator','synthetic overview proof')`,
+    [seed.studioId],
+  );
+}
+
+/** A completed visit with a recorded cash payment, at `startsAt` (a Date). */
+async function paidVisit(seed: E2eSeed, prac: string, label: string, startsAt: Date, cents: number) {
+  const { clientId } = await seedE2eDashboardClient(seed, { label });
+  const serviceId = randomUUID();
+  await sql(`insert into public.services (id, studio_id, name, modality, default_duration_minutes, price_cents, active) values ($1,$2,$3,'electrolysis',60,$4,true)`, [serviceId, seed.studioId, `${label} service`, cents]);
+  const apptId = randomUUID();
+  const ends = new Date(startsAt.getTime() + 3_600_000).toISOString();
+  await sql(
+    `insert into public.appointments (id, studio_id, client_id, practitioner_id, service_id, starts_at, ends_at, duration_minutes, buffer_minutes_snapshot, blocked_ends_at, status)
+     values ($1,$2,$3,$4,$5,$6,$7,60,0,$7,'completed')`,
+    [apptId, seed.studioId, clientId, prac, serviceId, startsAt.toISOString(), ends],
+  );
+  await sql(
+    `insert into public.appointment_settlements (studio_id, appointment_id, method, amount_cents, currency, quoted_amount_cents, recorded_by_practitioner_id) values ($1,$2,'paid_cash',$3,'cad',$4,$5)`,
+    [seed.studioId, apptId, cents, cents, prac],
+  );
+}
+
+const hero = (page: Page) => page.getByTestId("overview-hero");
+const collected = (page: Page) => page.getByTestId("overview-collected");
+const q = (page: Page) => new URL(page.url()).searchParams;
+
+/** Everything the page says about the money, in one comparable string. */
+async function figures(page: Page) {
+  const read = async (id: string) => (await page.getByTestId(id).innerText()).replace(/\s+/g, " ").trim();
+  return [await read("overview-collected"), await read("overview-comparison"), await read("overview-period-text"), await read("overview-visits"), await read("overview-clients"), await read("overview-average")].join(" | ");
+}
+
+async function expectNoSideways(page: Page, label: string) {
+  const w = await page.evaluate(() => ({ s: document.documentElement.scrollWidth, c: document.documentElement.clientWidth }));
+  expect(w.s, `${label}: no horizontal overflow (${w.s} vs ${w.c})`).toBeLessThanOrEqual(w.c);
+}
+
+test.describe("Business → Overview on a phone", () => {
+  test("an active studio: first-screen figures, period in the address, Overview → Statements → Back", async ({ page }) => {
+    const now = new Date();
+    test.skip(now.getUTCDate() === 1 && now.getUTCHours() < 6, "the first hours of a month have no 'earlier this month' to seed");
+    const seed = await seedE2eStudio();
+    await currency(seed);
+    const prac = await getOwnerPractitionerId(seed.studioId);
+    const lastMonthMid = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 15, 15, 0, 0));
+    // Last month: $210.00 + $65.50 = $275.50. This month: $90.00, earlier today (in the past, in this month).
+    await paidVisit(seed, prac, "Last A", lastMonthMid, 21000);
+    await paidVisit(seed, prac, "Last B", new Date(lastMonthMid.getTime() + DAY), 6550);
+    await paidVisit(seed, prac, "This", new Date(now.getTime() - 2 * 3_600_000), 9000);
+
+    await loginAsOwner(page, seed);
+
+    // Business menu → Overview. On a phone the Business group is in the menu sheet.
+    await page.goto("/dashboard");
+    await page.getByRole("button", { name: "Open navigation menu" }).click();
+    await page.getByRole("navigation", { name: "Mobile navigation" }).getByRole("link", { name: "Overview", exact: true }).click();
+    await expect(page).toHaveURL(/\/financials\/overview$/);
+    await expect(page.getByRole("heading", { name: "Business overview", level: 1 })).toBeVisible({ timeout: T });
+
+    // FIRST SCREEN: the hero figure and its comparison are in the 390 x 844 viewport at once, with no scrolling and no loading state.
+    expect(await page.evaluate(() => window.scrollY)).toBe(0);
+    await expect(collected(page)).toHaveText(/\$90/);
+    const vp = page.viewportSize()!;
+    for (const id of ["overview-collected", "overview-comparison", "overview-period-text"]) {
+      const box = (await page.getByTestId(id).boundingBox())!;
+      expect(box.y, `${id} starts inside the first screen`).toBeGreaterThanOrEqual(0);
+      expect(box.y + box.height, `${id} ends inside the first screen (${vp.height})`).toBeLessThanOrEqual(vp.height);
+    }
+    await expect(page.locator('[aria-busy="true"], [role="progressbar"]')).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Month to date" }).or(page.locator('[data-period="month_to_date"]'))).toBeVisible();
+    await expectNoSideways(page, "Overview");
+    await shot(page, "overview-fold-active");
+
+    // Select Last month: the address carries it, the figures are last month's.
+    await page.locator('[data-period="previous_month"]').click();
+    await expect.poll(() => q(page).get("period"), { timeout: T }).toBe("previous_month");
+    await expect(collected(page)).toHaveText(/\$275\.50/, { timeout: T });
+    await expect(page.locator('[data-period="previous_month"]')).toHaveAttribute("aria-current", "true");
+    const before = await figures(page);
+    const lastMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+    const lastLabel = `${MONTHS[lastMonth.getUTCMonth()]} ${lastMonth.getUTCFullYear()}`;
+    const ym = `${lastMonth.getUTCFullYear()}-${String(lastMonth.getUTCMonth() + 1).padStart(2, "0")}`;
+
+    // Overview → Statements opens that month, and its total is the Overview's figure.
+    await page.getByTestId("overview-open-statement").click();
+    await expect(page).toHaveURL(new RegExp(`/financials/statement\\?month=${ym}$`), { timeout: T });
+    await expect(page.getByRole("main")).toContainText(lastLabel, { timeout: T });
+    await expect(page.getByRole("main")).toContainText("275.50", { timeout: T });
+
+    // Back: Overview again, Last month still selected, the same figures.
+    await page.goBack();
+    await expect(page).toHaveURL(/\/financials\/overview\?period=previous_month$/, { timeout: T });
+    await expect(page.locator('[data-period="previous_month"]')).toHaveAttribute("aria-current", "true", { timeout: T });
+    await expect(collected(page)).toHaveText(/\$275\.50/, { timeout: T });
+    expect(await figures(page)).toBe(before);
+    await shot(page, "overview-last-month-after-back");
+
+    // Choose month: a month picked in the field is kept in the address.
+    const picker = page.locator('[data-period="month"] input[type="month"]');
+    await picker.fill(ym);
+    // last month is the named period, so it folds into Last month: one window, one address
+    await expect.poll(() => q(page).get("period"), { timeout: T }).toBe("previous_month");
+
+    // Reload keeps the period too.
+    await page.reload();
+    await expect(page.locator('[data-period="previous_month"]')).toHaveAttribute("aria-current", "true", { timeout: T });
+    expect(await figures(page)).toBe(before);
+  });
+
+  test("a studio with no activity: a genuine $0 and a figure that is Not available, each shown as what it is", async ({ page }) => {
+    const seed = await seedE2eStudio();
+    await currency(seed);
+    await loginAsOwner(page, seed);
+    await page.goto("/financials/overview");
+    await expect(page.getByRole("heading", { name: "Business overview", level: 1 })).toBeVisible({ timeout: T });
+
+    await expect(collected(page)).toHaveText(/\$0\b/);
+    await expect(collected(page)).toHaveAttribute("data-cents", "0");
+    await expect(page.getByTestId("overview-visits")).toContainText("0");
+    await expect(page.getByTestId("overview-clients")).toContainText("0");
+    // The average of nothing is not $0.
+    await expect(page.getByTestId("overview-average")).toContainText("Not available");
+    await expect(page.getByTestId("overview-average")).not.toContainText("$");
+    // The follow-up figures that are not connected yet say so; none is a number.
+    await expect(page.locator('[data-figure-state="unavailable"]').first()).toBeVisible();
+    const vp = page.viewportSize()!;
+    const box = (await collected(page).boundingBox())!;
+    expect(box.y + box.height).toBeLessThanOrEqual(vp.height);
+    await expectNoSideways(page, "zero-activity Overview");
+    await shot(page, "overview-fold-zero-activity");
+  });
+
+  test("a practitioner who is not the owner gets the owner-only refusal and no figures", async ({ page }) => {
+    const seed = await seedE2eStudio();
+    await currency(seed);
+    const member = await seedE2eMember(seed);
+    await loginByMagicLink(page, member.email);
+    await page.goto("/financials/overview");
+    await expect(page.getByRole("main")).toContainText("Only the studio owner", { timeout: T });
+    await expect(page.getByTestId("overview-hero")).toHaveCount(0);
+    await expect(page.getByTestId("overview-collected")).toHaveCount(0);
+  });
+});
