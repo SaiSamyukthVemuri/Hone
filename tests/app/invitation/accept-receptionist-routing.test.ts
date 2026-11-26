@@ -1,3 +1,4 @@
+import { invitationDestination } from "@/lib/supabase/invitation-destination";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -90,11 +91,25 @@ describe("acceptInvitationAction routes by the accepted role", () => {
 describe("the auth callback routes a reconciled receptionist the same way", () => {
   const ROUTE = readFileSync(path.join(process.cwd(), "app/(auth)/auth/callback/route.ts"), "utf8");
 
-  it("sends role 'receptionist' to /desk or the chooser, before the practitioner multi-studio branch", () => {
-    const desk = ROUTE.indexOf('status?.role === "receptionist"');
-    expect(ROUTE).toContain("isDeskEnabled()");
-    expect(desk).toBeGreaterThan(-1);
-    expect(ROUTE).toMatch(/dest = status\.choose_studio === true \? "\/desk\/choose" : "\/desk";/);
-    expect(desk).toBeLessThan(ROUTE.indexOf("Newly a multi-studio user"));
+  it("uses the shared resolver and clears stale studio selection", () => {
+    expect(ROUTE).toContain("await invitationDestination(supabase, next)");
+    expect(ROUTE).toContain("if (clearSelection)");
+  });
+
+  it.each([
+    [false, "/desk"],
+    [true, "/desk/choose"],
+  ])("routes a reconciled receptionist with choose_studio=%s", async (chooseStudio, dest) => {
+    ctx.flag = true;
+    const supabase = {
+      rpc: vi.fn().mockResolvedValue({
+        data: { status: "linked", role: "receptionist", choose_studio: chooseStudio },
+      }),
+    } as unknown as Parameters<typeof invitationDestination>[0];
+
+    await expect(invitationDestination(supabase, "/dashboard")).resolves.toEqual({
+      dest,
+      clearSelection: chooseStudio,
+    });
   });
 });

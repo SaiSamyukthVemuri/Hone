@@ -19,10 +19,10 @@ export async function POST(request: Request): Promise<Response> {
       createBillingStripeClient(process.env),
       process.env,
       async (command) => {
-        const { data, error } = await createAdminClient().rpc(
-          command.p_restart ? "apply_hone_restart_invoice" : "apply_hone_billing_invoice",
-          command,
-        );
+        const admin = createAdminClient();
+        const { data, error } = await (command.p_restart
+          ? admin.rpc("apply_hone_restart_invoice", command)
+          : admin.rpc("apply_hone_billing_invoice", command));
         if (error) throw new Error("billing_store_unavailable");
         return data;
       },

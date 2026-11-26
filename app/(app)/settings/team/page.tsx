@@ -97,7 +97,7 @@ export default async function TeamSettingsPage() {
       <section className="flex flex-col gap-4">
         <div>
           <h2 id="invite-practitioner" className="scroll-mt-24 text-xl font-medium">
-            {seats ? "Invite a team member" : "Invite a practitioner"}
+            {seats ? <>Invite a team member</> : <>Invite a practitioner</>}
           </h2>
           <p className="mt-1 text-sm text-neutral-500">
             Teammates sign in with the email on their invitation. You can also copy the invitation instructions to share with them.

@@ -25,6 +25,7 @@ function builder(table: string) {
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ from: (t: string) => builder(t) }) }));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({}) }));
+vi.mock("@/lib/subscriptions/owner-team-seats", () => ({ getOwnerTeamSeats: async () => null }));
 vi.mock("@/lib/supabase/queries", () => ({
   getCurrentPractitionerWithStudio: async () => ({
     practitioner: { id: "owner-practitioner", role: ctx.role, display_name: "Owner", email: "owner@example.test" },
@@ -75,13 +76,15 @@ describe("inviting a receptionist", () => {
   it("refuses an email already on this studio's front desk", async () => {
     ctx.rows = { studio_receptionists: [{ id: "existing" }] };
     const r = await invitePractitionerAction(form({ email: "desk@example.test", role: "receptionist" }));
-    expect(r).toEqual({ ok: false, error: "desk@example.test is already on this studio's front desk." });
+    expect(r).toEqual({ ok: false, error: "This receptionist is already active at your studio." });
     expect(ctx.inserted).toEqual([]);
   });
 
-  it("an unknown role from the browser falls back to practitioner, never to anything wider", async () => {
-    await invitePractitionerAction(form({ email: "someone@example.test", role: "platform_admin" }));
-    expect(ctx.inserted[0].row.role).toBe("practitioner");
+  it("rejects an unknown role from the browser without writing or sending an invitation", async () => {
+    const r = await invitePractitionerAction(form({ email: "someone@example.test", role: "platform_admin" }));
+    expect(r).toEqual({ ok: false, error: "Choose a valid team role." });
+    expect(ctx.inserted).toEqual([]);
+    expect(ctx.sent).toBe(0);
   });
 
   it("a non-owner cannot invite anyone, and nothing is written", async () => {

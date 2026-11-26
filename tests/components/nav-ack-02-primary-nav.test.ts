@@ -108,7 +108,7 @@ describe("NAV-ACK-02 · the primary navigation acknowledges", () => {
     //
     // The delegation is proved, not assumed: `PrimaryNavLink` must itself
     // render the shipped primitive, asserted below.
-    const labels = code.match(/<PendingLink[\s>]/g) ?? [];
+    const labels = code.match(/<PendingLink[\s>][^>]*data-testid="nav-wordmark"/g) ?? [];
     const sections = code.match(/<PrimaryNavLink[\s>]/g) ?? [];
     const containers = code.match(/<PendingContainerLink[\s>]/g) ?? [];
     expect(labels.length + sections.length).toBe(6);

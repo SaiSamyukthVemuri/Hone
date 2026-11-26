@@ -23,8 +23,7 @@ async function requireOwnerBilling(expectedStudio: string) {
   return billing;
 }
 
-async function openPortal(studioId: string, updateCard = false) {
-  const billing = await requireOwnerBilling(studioId);
+async function openPortal(billing: Awaited<ReturnType<typeof requireOwnerBilling>>, updateCard = false) {
   const config = process.env.HONE_BILLING_PORTAL_CONFIGURATION;
   if (!config) redirect(billingPath + "?error=portal");
   let url: string;
@@ -42,11 +41,13 @@ async function openPortal(studioId: string, updateCard = false) {
 }
 
 export async function openOwnerBilling(studioId: string) {
-  return openPortal(studioId);
+  const billing = await requireOwnerBilling(studioId);
+  return openPortal(billing);
 }
 
 export async function updateBillingCard(studioId: string) {
-  return openPortal(studioId, true);
+  const billing = await requireOwnerBilling(studioId);
+  return openPortal(billing, true);
 }
 
 export async function payOutstandingInvoice(studioId: string) {

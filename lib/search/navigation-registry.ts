@@ -803,7 +803,7 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     category: "Settings",
     href: "/settings/team#invite-practitioner",
     description: "Send an invitation so a colleague can join your studio",
-    keywords: ["invite", "invite a practitioner", "add practitioner", "add someone", "new practitioner", "invitation", "join", "add staff"],
+    keywords: ["invite", "invite a practitioner", "invite a team member", "add practitioner", "add someone", "new practitioner", "invitation", "join", "add staff"],
     visibility: "owner",
     priority: 371,
   },

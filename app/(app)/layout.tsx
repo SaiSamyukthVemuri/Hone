@@ -1,6 +1,5 @@
 import { ownerWorkspacePaused } from "@/lib/subscriptions/owner-billing";
 import { signOutFromGate } from "@/app/(auth)/no-access/actions";
-import Link from "next/link";
 import { OwnerBillingNotice } from "@/lib/subscriptions/OwnerBillingNotice";
 import { PendingLink } from "@/components/pending-link";
 import { WAITLIST_PATH } from "@/lib/waitlist/paths";
@@ -47,7 +46,7 @@ export default async function AppLayout({
     return <div className="mx-auto max-w-5xl px-5 py-6">
       <header className="mb-6 flex items-center gap-4 border-b border-line pb-4">
         <strong className="mr-auto">Hone</strong>
-        {(await listActiveStudioMemberships()).length > 1 && <Link href="/no-access?reason=multiple-studios" className="underline">Switch studio</Link>}
+        {(await listActiveStudioMemberships()).length > 1 && <PendingLink href="/no-access?reason=multiple-studios" className="underline">Switch studio</PendingLink>}
         <form action={signOutFromGate}><button className="underline">Sign out</button></form>
       </header><main>{children}</main>
     </div>;

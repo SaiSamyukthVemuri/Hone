@@ -210,14 +210,19 @@ describe("#8 — the Terms do not describe automated Hone subscription billing a
       "app/(auth)/login/layout.tsx",
       "app/(auth)/no-access/checkout-action.ts",
       "app/(auth)/no-access/page.tsx",
+      // Marketing reads the flag to select the signup entry point.
+      "app/_components/marketing/SiteHeader.tsx",
       "app/api/billing/webhook/route.ts",
       "app/api/cron/subscription-changes/route.ts",
       "app/api/cron/subscription-emails/route.ts",
+      "app/page.tsx",
       // HON-70 UI head (PROPOSED, flag-gated): the plan links and the account step.
       "app/pricing/page.tsx",
       "app/signup/SignupForm.tsx",
       "app/signup/actions.ts",
       "app/signup/page.tsx",
+      // The desk guard applies the billing pause only while checkout is enabled.
+      "lib/desk/guard.ts",
       "lib/settings/nav-registry.ts",
     ];
     const { execSync } = await import("node:child_process");

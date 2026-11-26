@@ -415,6 +415,44 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
     entryId: "settings-pending-invitations",
   },
 
+  {
+    page: "/settings/team",
+    label: "Invite a team member",
+    role: "owner",
+    decision: "searchable",
+    entryId: "settings-invite-practitioner",
+  },
+
+  // --------------------------------------------------------------- billing
+  {
+    page: "/settings/subscription",
+    label: "Payment method",
+    role: "owner",
+    decision: "excluded",
+    reason: "Billing is available in Settings only for owners of eligible subscribed studios. Global Search has no subscription-eligibility context.",
+  },
+  {
+    page: "/settings/subscription",
+    label: "Tax ID",
+    role: "owner",
+    decision: "excluded",
+    reason: "Tax ID management depends on the studio's eligibility and its Stripe portal configuration.",
+  },
+  {
+    page: "/settings/subscription",
+    label: "Invoices",
+    role: "owner",
+    decision: "excluded",
+    reason: "Subscription invoices are reached through the eligibility-gated Billing page.",
+  },
+  {
+    page: "/settings/subscription",
+    label: "Cancellation",
+    role: "owner",
+    decision: "excluded",
+    reason: "Cancellation is reached through Billing and is hidden once the subscription is ending.",
+  },
+
   // ---------------------------------------------------------------- consent
   {
     page: "/settings/consent",
