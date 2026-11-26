@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 289,
+    "count": 291,
     "last": "0386_export_treatment_setup_readings.sql",
-    "sha256": "7937c975f60498196e4c427d9952f4a82ddb845674dcb96b56893a585c7f010e"
+    "sha256": "47548599105c780e52221d2a78f9cdb0d06eda1d03d5a9af88f3cdcee846f8ff"
   },
   "public": {
     "tables": [
@@ -330,6 +330,7 @@
       "enforce_treatment_image_integrity",
       "enqueue_calendar_outbound",
       "enqueue_calendar_outbound_on_delete",
+      "ensure_unspecified_machine",
       "erase_waitlist_decline_answers",
       "expire_new_client_waitlist_invitation",
       "expire_pending_sessions",
@@ -441,6 +442,7 @@
       "practitioner_cancel_appointment",
       "practitioner_capacity_retirement_blockers",
       "practitioners_receptionist_membership_guard",
+      "preserve_settlement_fee_adjustment",
       "preview_waitlist_over_invite",
       "process_email_provider_event",
       "public_booking_local_to_utc",
@@ -482,6 +484,7 @@
       "reconcile_payment_intent_by_charge_attempt",
       "reconcile_refund_event",
       "reconcile_setup_intent_succeeded",
+      "record_adjusted_appointment_settlement",
       "record_appointment_settlement",
       "record_block_machine_identity",
       "record_calendar_sync_result",
@@ -524,6 +527,7 @@
       "redeem_waitlist_preference_grant",
       "refuse_treatment_setup_capture_update",
       "refuse_treatment_setup_reading_update",
+      "refuse_unspecified_machine_change",
       "register_studio_machine",
       "reject_payment_audit_mutation",
       "reject_payment_consents_mutation",

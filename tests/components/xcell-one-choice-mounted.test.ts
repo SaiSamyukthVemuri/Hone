@@ -86,11 +86,14 @@ describe("the panel acts on the host form's MultiPlex request (there is no secon
   it("a request for MultiPlex selects the routed unit with the multiplex mode (native) while the selector still reads xCell", async () => {
     const seen: unknown[] = []; const kinds: string[] = [];
     const onSelectMachine = vi.fn(async () => ({ ok: true }));
-    mount({ onSelectMachine, onResolvedChoice: (c: unknown) => seen.push(c), onKindChange: (k: string) => kinds.push(k) });
+    const outcomes: unknown[] = [];
+    const onMultiplexOutcome = (seq: number, o: string) => outcomes.push([seq, o]);
+    mount({ onSelectMachine, onResolvedChoice: (c: unknown) => seen.push(c), onKindChange: (k: string) => kinds.push(k), onMultiplexOutcome });
     set(machineSelect(), "legacy:xcell");
     await act(async () => { await Promise.resolve(); }); // the pick settles first: a request during a pending pick is dropped (P1)
-    rerender({ onSelectMachine, onResolvedChoice: (c: unknown) => seen.push(c), onKindChange: (k: string) => kinds.push(k), multiplexRequest: { seq: 1, want: true } });
+    rerender({ onSelectMachine, onResolvedChoice: (c: unknown) => seen.push(c), onKindChange: (k: string) => kinds.push(k), onMultiplexOutcome, multiplexRequest: { seq: 1, want: true } });
     await act(async () => { await Promise.resolve(); });
+    expect(outcomes, "an applied request is reported EXACTLY once, under its token").toEqual([[1, "applied"]]);
     expect(seen.at(-1)).toEqual({ deviceId: "unit-1", modeKey: "multiplex" });
     expect(kinds.at(-1)).toBe("native");
     expect(machineSelect().value).toBe("legacy:xcell");
@@ -112,11 +115,13 @@ describe("the panel acts on the host form's MultiPlex request (there is no secon
   });
   it("THE FREEZE WINS (P1): a request made while a save is pending is dropped, and is not applied when the freeze lifts", async () => {
     const seen: unknown[] = []; const kinds: string[] = [];
-    const common = { onSelectMachine: vi.fn(async () => ({ ok: true })), onResolvedChoice: (c: unknown) => seen.push(c), onKindChange: (k: string) => kinds.push(k) };
+    const outcomes: unknown[] = [];
+    const common = { onSelectMachine: vi.fn(async () => ({ ok: true })), onResolvedChoice: (c: unknown) => seen.push(c), onKindChange: (k: string) => kinds.push(k), onMultiplexOutcome: (seq: number, o: string) => outcomes.push([seq, o]) };
     mount({ ...common, settingDraftFrozen: true });
     set(machineSelect(), "legacy:xcell");
     rerender({ ...common, settingDraftFrozen: true, multiplexRequest: { seq: 1, want: true } });
     await act(async () => { await Promise.resolve(); });
+    expect(outcomes, "a request refused by the freeze is REPORTED as not applied, so the host never waits on it").toEqual([[1, "not_applied"]]);
     expect(kinds.at(-1)).toBe("legacy");
     expect(seen.some((c) => (c as { modeKey?: string } | null)?.modeKey === "multiplex")).toBe(false);
     rerender({ ...common, settingDraftFrozen: false, multiplexRequest: { seq: 1, want: true } });
@@ -129,8 +134,10 @@ describe("the panel acts on the host form's MultiPlex request (there is no secon
     const common = { onSelectMachine: vi.fn(() => new Promise(() => undefined)), onResolvedChoice: (c: unknown) => seen.push(c), onKindChange: (k: string) => kinds.push(k) };
     mount(common);
     set(machineSelect(), "legacy:xcell"); // the pick never settles
-    rerender({ ...common, multiplexRequest: { seq: 1, want: true } });
+    const held: unknown[] = [];
+    rerender({ ...common, onMultiplexOutcome: (seq: number, o: string) => held.push([seq, o]), multiplexRequest: { seq: 1, want: true } });
     await act(async () => { await Promise.resolve(); });
+    expect(held, "held, not decided: nothing is reported until the pick settles").toEqual([]);
     expect(seen.some((c) => (c as { modeKey?: string } | null)?.modeKey === "multiplex")).toBe(false);
     expect(kinds.at(-1)).not.toBe("native");
   });
@@ -160,9 +167,11 @@ describe("the panel acts on the host form's MultiPlex request (there is no secon
   it("a SAVED area ignores a request: it keeps the identity it was saved with", async () => {
     const onSelectMachine = vi.fn(async () => ({ ok: true }));
     mount({ blockId: "b1", initialLegacyChosen: true, onSelectMachine });
-    rerender({ blockId: "b1", initialLegacyChosen: true, onSelectMachine, multiplexRequest: { seq: 1, want: true } });
+    const outcomes: unknown[] = [];
+    rerender({ blockId: "b1", initialLegacyChosen: true, onSelectMachine, onMultiplexOutcome: (seq: number, o: string) => outcomes.push([seq, o]), multiplexRequest: { seq: 1, want: true } });
     await act(async () => { await Promise.resolve(); });
     expect(onSelectMachine).not.toHaveBeenCalled();
+    expect(outcomes).toEqual([[1, "not_applied"]]);
   });
 });
 

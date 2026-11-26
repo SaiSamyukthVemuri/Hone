@@ -998,14 +998,24 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
 
   // value_numeric is read as TEXT (value_numeric::text) and padded to the contract's own decimals by string handling only, so a recorded
   // 1.80 stays "1.80" and a 16-digit value stays exact: it never becomes a JavaScript number.
+  //
+  // A reading on the studio's per-studio "Machine not specified" placeholder (studio_machines.is_unspecified, migration 0385) has no real machine: its
+  // studio_machine_id is exported BLANK, because that id points at a row the archive does not carry and would read as a machine the studio never had.
+  // The placeholder ids are read under the same owner gate and studio scope; if that read fails the file is reported unreadable rather than written
+  // with ids that should have been blank.
+  const unspecifiedMachines = await supabase.from("studio_machines").select("id").eq("studio_id", studio.id).eq("is_unspecified", true);
+  const unspecifiedMachineIds = new Set((unspecifiedMachines.data ?? []).map((m) => m.id as string));
   writeCsv(
     "treatment_setup_readings",
-    mapExportRows(treatmentSetupReadingsRes, (rows) =>
-      (rows as unknown as Array<Record<string, unknown>>).map((r) => ({
-        ...r,
-        value_numeric: padDecimalText(r.value_numeric as string | null, r.decimals as number | null),
-      })),
-    ),
+    unspecifiedMachines.error
+      ? ({ ...treatmentSetupReadingsRes, data: null, error: unspecifiedMachines.error } as typeof treatmentSetupReadingsRes)
+      : mapExportRows(treatmentSetupReadingsRes, (rows) =>
+          (rows as unknown as Array<Record<string, unknown>>).map((r) => ({
+            ...r,
+            studio_machine_id: unspecifiedMachineIds.has(r.studio_machine_id as string) ? null : r.studio_machine_id,
+            value_numeric: padDecimalText(r.value_numeric as string | null, r.decimals as number | null),
+          })),
+        ),
   );
 
   writeCsv("service_practitioners", servicePractitionersRes);

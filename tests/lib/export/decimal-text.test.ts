@@ -23,4 +23,13 @@ describe("padDecimalText: exact decimal text for the export", () => {
     expect(padDecimalText("NaN", 2)).toBe("NaN");
     expect(padDecimalText("1.5", null)).toBe("1.5");
   });
+
+  // Anything that is not plain decimal text comes back byte for byte. It is never routed through String(Number(v)), which would turn "1e5" into
+  // "100000", "Infinity" into a number-like word, and a 17-digit value into a rounded one.
+  it("returns non-plain-text input unchanged, never String(Number(v))", () => {
+    for (const v of ["1e5", "1E-3", "NaN", "Infinity", "-Infinity", "0x10", "1,5", "1.", ".5", "", "  "]) {
+      expect(padDecimalText(v, 2), v).toBe(v);
+    }
+    expect(padDecimalText("1e5", 2)).not.toBe(String(Number("1e5")));
+  });
 });

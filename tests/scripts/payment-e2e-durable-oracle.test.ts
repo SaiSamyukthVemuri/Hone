@@ -76,7 +76,7 @@ describe("payment E2E synchronizes on durable state, not transient copy", () => 
       helper.indexOf("export async function expectPreparedDurable"),
       helper.indexOf("export function sessionPaymentRegion"),
     );
-    expect(fn).toMatch(/prepare session payment/i);
+    expect(fn).toMatch(/checkout with stripe/i);
     expect(fn).toMatch(/toHaveCount\(0\)/);
   });
 

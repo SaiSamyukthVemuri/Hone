@@ -5,7 +5,9 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { E2E_SERVICE_ROLE_KEY, E2E_SUPABASE_URL, E2E_WEB_SERVER_ENV } from "@/e2e/helpers/local-env";
 import { exportSpec } from "@/lib/export/resource-registry";
-import { adminQuery, asUser, closePool, RECORD_GROUP_SQL, seedSession, seedStudio, type SeededStudio } from "@/tests/db/helpers/harness";
+import { MACHINE_CATALOGUE } from "@/lib/machines/catalogue";
+import { planContractPublication } from "@/lib/machines/contract-publication";
+import { adminQuery, adminTx, asUser, closePool, RECORD_GROUP_SQL, seedSession, seedStudio, type SeededStudio } from "@/tests/db/helpers/harness";
 
 // The owner's data export carries machine-native (MultiPlex) readings, with real rows, real RLS, real GoTrue, and the real export action:
 //
@@ -102,8 +104,46 @@ async function recordNativeArea(studio: SeededStudio, items: unknown[]): Promise
   return blockId;
 }
 
+// A native area recorded on the studio's per-studio "Machine not specified" placeholder (HON-119, migration 0385). The placeholder is made by the real
+// command, ensure_unspecified_machine, which is fixed to the real xCell Pur MultiPlex profile, so the real shipped contract is published first (and removed
+// again in afterAll: this file shares the stack with the 0385 test, which expects no published contract before it publishes one itself).
+const PUR = "dectro-apilus:xcell-pur";
+let purPublished = false;
+async function publishRealPurContract(): Promise<void> {
+  const plan = planContractPublication(MACHINE_CATALOGUE);
+  const c = plan.publish.find((p) => p.p_machine_profile_id === PUR && p.p_mode_key === "multiplex");
+  if (!c) throw new Error("the shipped catalogue no longer publishes xCell Pur MultiPlex");
+  await adminQuery("select public.sync_machine_profile_contract($1,$2,$3,$4,$5,$6::jsonb)", [
+    c.p_machine_profile_id, c.p_machine_profile_version, c.p_mode_key, c.p_channels_max, c.p_requires_installed_option, JSON.stringify(c.p_fields),
+  ]);
+  purPublished = true;
+}
+const UNSPECIFIED_GROUPS = JSON.stringify([{
+  new_group_ref: "g1", channels: [],
+  readings: [
+    { field_key: "displayed_el", value: "12", observation_source: "machine-displayed" },
+    { stage_key: "slow_thermolysis", field_key: "slow_thermolysis_duration", value: "1.85", observation_source: "practitioner-entered" },
+    { stage_key: "slow_thermolysis", field_key: "slow_thermolysis_intensity", value: "30", observation_source: "practitioner-entered" },
+    { stage_key: "snap", field_key: "snap_duration", value: "0.033", observation_source: "practitioner-entered" },
+    { stage_key: "snap", field_key: "snap_intensity", value: "60", observation_source: "practitioner-entered" },
+    { stage_key: "snap", field_key: "snap_count", value: "3", observation_source: "practitioner-entered" },
+  ],
+}]);
+const UNSPECIFIED_READINGS = 6;
+async function recordOnUnspecifiedMachine(studio: SeededStudio): Promise<{ blockId: string; machineId: string }> {
+  await publishRealPurContract();
+  const { sessionId, blockId } = await seedSession(studio);
+  const machineId = (await asUser(studio.userId, (q) => q(`select public.ensure_unspecified_machine($1) as id`, [studio.studioId]))).rows[0].id as string;
+  await asUser(studio.userId, (q) =>
+    q(`select public.record_setup_submission_with_identity($1,$2,$3,$4,$5::jsonb,$6,$7)`, [blockId, machineId, "multiplex", `hon118-unspec-${randomUUID()}`.slice(0, 40), UNSPECIFIED_GROUPS, sessionId, studio.clientId]),
+  );
+  return { blockId, machineId };
+}
+
 let studioA: SeededStudio;
 let blockA = "";
+let blockU = "";
+let unspecifiedMachineId = "";
 let blockB = "";
 let loginEmail = "";
 let loginPassword = "";
@@ -162,6 +202,8 @@ beforeAll(async () => {
     // above 2^53: a JavaScript number would export ...992. The column is an unrestricted numeric and must stay exact.
     { field_key: "big_count", value: "9007199254740993", observation_source: "practitioner-entered" },
   ]);
+  // The SAME studio, a reading on the unspecified-machine placeholder: its machine id must be exported blank.
+  ({ blockId: blockU, machineId: unspecifiedMachineId } = await recordOnUnspecifiedMachine(studioA));
   // ANOTHER studio's native area, with values nobody in studio A may see.
   blockB = await recordNativeArea(studioB, [
     { field_key: "snap_count", value: "77", observation_source: "practitioner-entered" },
@@ -186,6 +228,14 @@ beforeAll(async () => {
 
 afterAll(async () => {
   tamper.dropLastReadingRow = false;
+  if (purPublished) {
+    // Contract rows are immutable and referenced, so they go with the table owner and replication triggers off, in the owned throwaway stack only.
+    await adminTx(async (q) => {
+      await q(`set local session_replication_role = replica`);
+      await q(`delete from public.machine_profile_field_contract where machine_profile_id=$1`, [PUR]);
+      await q(`delete from public.machine_profile_mode_contract where machine_profile_id=$1`, [PUR]);
+    }).catch(() => undefined);
+  }
   await closePool();
 });
 
@@ -219,12 +269,25 @@ describe("the readings file carries this studio's native readings, as the machin
     expect(t.rows.some((r) => r.session_block_id === blockB)).toBe(false);
     expect(t.rows.map((r) => r.value_numeric)).not.toContain("77");
     expect(t.rows.map((r) => r.value_numeric)).not.toContain("99.99");
-    expect(t.rows).toHaveLength(6);
+    expect(t.rows).toHaveLength(6 + UNSPECIFIED_READINGS);
+
+    // studio_machine_id: BLANK for a reading on the unspecified placeholder (which the archive does not carry), and still the real id, unchanged, for a
+    // reading on a registered machine (the control: the blank rule must not be a blanket blanking of the column).
+    const realMachineIds = (
+      await adminQuery(`select id from public.studio_machines where studio_id=$1 and not is_unspecified`, [studioA.studioId])
+    ).rows.map((r) => r.id as string);
+    expect(realMachineIds).toHaveLength(1);
+    const unspecifiedRows = t.rows.filter((r) => r.session_block_id === blockU);
+    expect(unspecifiedRows).toHaveLength(UNSPECIFIED_READINGS);
+    for (const r of unspecifiedRows) expect(r.studio_machine_id, "an unspecified-machine reading has no machine id").toBe("");
+    expect(unspecifiedRows.find((r) => r.field_key === "snap_count")!.value_numeric).toBe("3");
+    expect(JSON.stringify(t.rows)).not.toContain(unspecifiedMachineId);
+    for (const r of own) expect(r.studio_machine_id, "a registered machine keeps its id").toBe(realMachineIds[0]);
 
     // the source-count check ran and matched
     const manifest = JSON.parse(await archive.files["manifest.json"].async("string")) as { source_count_checks: Array<Record<string, unknown>> };
     const check = manifest.source_count_checks.find((c) => c.table === "treatment_setup_readings")!;
-    expect(check).toMatchObject({ status: "matched", exported_rows: 6, studio_row_count: 6 });
+    expect(check).toMatchObject({ status: "matched", exported_rows: 6 + UNSPECIFIED_READINGS, studio_row_count: 6 + UNSPECIFIED_READINGS });
   });
 });
 
@@ -236,7 +299,7 @@ describe("the source-count check is real for this file (negative control)", () =
       const result = await runExport();
       expect(result.ok).toBe(false);
       if (result.ok) return;
-      expect(result.error).toContain("treatment_setup_readings returned 5 rows but the studio holds 6");
+      expect(result.error).toContain("treatment_setup_readings returned 11 rows but the studio holds 12");
       expect(result.error).toContain("No partial export was produced");
     } finally {
       tamper.dropLastReadingRow = false;

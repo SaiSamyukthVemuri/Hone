@@ -1,5 +1,8 @@
 "use client";
 
+import type { DashboardRebook } from "@/lib/calendar/dashboard-rebook";
+import { DashboardRebookContext, DashboardRebookSummary } from "./dashboard-rebook-context";
+
 import { useCallback, useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -31,6 +34,7 @@ export type SidebarPractitioner = {
 const DESKTOP_QUERY = "(min-width: 768px)";
 
 export function CalendarSidebar({
+  rebook = null,
   studioId,
   viewerId,
   view,
@@ -45,6 +49,7 @@ export function CalendarSidebar({
   findTime,
   children,
 }: {
+  rebook?: DashboardRebook | null;
   studioId: string;
   /** The viewer's practitioner id: the stored selection is per studio AND per viewer (shared browsers). */
   viewerId: string;
@@ -239,6 +244,7 @@ export function CalendarSidebar({
   ].join(" ");
 
   return (
+    <DashboardRebookContext.Provider key={rebook?.appointmentId} value={rebook}>
     <OpeningContext.Provider value={{
       opening: findTime.rebookId && !findTime.rebook ? null : opening,
       booking,
@@ -356,9 +362,11 @@ export function CalendarSidebar({
           </button>
           <Button size="sm" onClick={() => { clearOpening(); leaveRebook(true); findTimeMode(); }}>+ Appointment</Button>
         </div>
+        {rebook && <DashboardRebookSummary rebook={rebook} />}
         {children}
       </div>
     </div>
     </OpeningContext.Provider>
+    </DashboardRebookContext.Provider>
   );
 }

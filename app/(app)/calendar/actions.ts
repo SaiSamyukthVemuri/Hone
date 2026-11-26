@@ -384,6 +384,7 @@ export async function bookAppointmentForClientAction(
   if (!created) {
     // Committed, but the follow-up read failed: the booking still succeeded.
     revalidatePath("/calendar");
+    revalidatePath("/dashboard");
     return { ok: true, appointmentId: createdId };
   }
 

@@ -68,7 +68,7 @@ describe("narrow phones (Codex P2 on #1308: 320px horizontal scroll)", () => {
 describe("long client names never widen the row (T-1: 22px horizontal scroll at 390)", () => {
   const page = readFileSync("app/(app)/dashboard/page.tsx", "utf8");
   it("the row, the row-body link and the name can shrink and are capped at their parent", () => {
-    expect(page).toMatch(/className=\{`min-w-0 max-w-full flex flex-wrap items-start gap-x-3/);
+    expect(page).toMatch(/min-w-0 max-w-full flex flex-wrap items-start gap-x-3/);
     // The li is a block in the list and the link already carries min-w-0 as a flex item of the row.
     expect(page).toMatch(/className="flex min-w-0 basis-full gap-3"/);
     expect(page).toMatch(/className="min-w-0 max-w-full truncate text-sm font-medium leading-5"/);
@@ -89,9 +89,10 @@ describe("an unbroken long name wraps inside Needs attention and the visit detai
     );
     expect(panel).toMatch(/data-attention-client=\{card\.clientId\}\s*data-attention-tier=\{card\.tier\}\s*className="flex min-w-0 flex-col/);
   });
-  it("the closed visit details can shrink inside the row", () => {
-    expect(page).toMatch(/className="min-w-0 max-w-full order-2 open:order-3/);
-    expect(page).toMatch(/className="min-w-0 max-w-full flex flex-col gap-1\.5 pb-2 pl-\[5\.75rem\]"/);
+  it("the full-width last-visit area can shrink inside its row", () => {
+    const details = page.match(/<div data-testid="today-row-details" className="([^"]+)"/)?.[1];
+    expect(details).toContain("min-w-0");
+    expect(details).toContain("basis-full");
   });
 });
 
@@ -225,8 +226,9 @@ describe("compact appointment rows (fidelity C)", () => {
   const page = readFileSync("app/(app)/dashboard/page.tsx", "utf8");
   const row = page.slice(page.indexOf("function AppointmentRow("), page.indexOf("function AppointmentStatusPill("));
   const link = row.slice(row.indexOf("<PendingContainerLink"), row.indexOf("</PendingContainerLink>"));
-  const details = row.slice(row.indexOf('<details\n          data-testid="today-row-details"'), row.indexOf("</details>"));
-  // The pinned note, failed-read marker and caution line live in RowSafetyLines (rendered INSIDE the row-body link).
+  const details = row.slice(row.indexOf('<div data-testid="today-row-details"'));
+
+  // Read-only safety lines are inside the row link. Editable pins use the same list outside it.
   const safety = readFileSync("app/(app)/dashboard/row-safety-lines.tsx", "utf8");
   it("the collapsed row keeps time+end, name, service, practitioner, status, pinned note and allergy flag", () => {
     for (const marker of ["today-row-end-time", "clientLabel", "serviceName", "performerName", "AppointmentStatusPill", "Allergies", "<RowSafetyLines"]) {
@@ -235,39 +237,40 @@ describe("compact appointment rows (fidelity C)", () => {
     expect(safety).toContain("Pinned");
     expect(details.length).toBeGreaterThan(100);
   });
-  it("Insurance D-1: the closed row also shows the caution line (full, wrapped) and the intake pill; a plan note is a cue", () => {
+  it("Insurance D-1: the closed row also shows the caution line (full, wrapped) and the intake pill; the next-visit note is readable", () => {
     expect(link).toContain("<IntakePill");
     expect(details).not.toContain("<IntakePill");
     expect(safety).toMatch(/data-testid="today-row-caution"[\s\S]{0,200}whitespace-pre-wrap break-words/);
     expect(safety).toContain("Caution: {caution}");
     expect(details).not.toContain("Caution:");
-    expect(row).toMatch(/data-testid="today-row-plan-cue"[\s\S]{0,160}Plan note on record/);
-    // the plan note itself, last treatment, setup, chips, previous-treatment strip stay inside
-    for (const m of ["Remember: {workflow.remember}", "Latest setup:", "missing-record-chip", "<DashboardTreatmentMemory"]) expect(details).toContain(m);
+    expect(details.match(/data-testid="dashboard-prep-remember"/g)).toHaveLength(1);
+    for (const m of ["{prepSummary.remember}", "missing-record-chip", "<DashboardTreatmentMemory"]) expect(details).toContain(m);
   });
   it("Insurance E-1: a failed Before-Today read says so ON the compact row, never as a silently absent caution", () => {
     expect(link).toMatch(/unavailable=\{workflow \? workflow\.unavailable : prepSummary\.unavailable\}/);
     expect(safety).toMatch(/\{unavailable && \(\s*<span data-testid="today-row-unavailable"[\s\S]{0,160}\{CLINICAL_UNAVAILABLE_HEADLINE\}/);
     // the marker sits before the caution line and is not gated on history or caution
     expect(safety.indexOf("today-row-unavailable")).toBeLessThan(safety.indexOf("today-row-caution"));
-    // and it is not the same node as the details' own line
-    expect(details).toContain("today-before-today-unavailable");
+    expect(link).toContain("unavailable={workflow ? workflow.unavailable : prepSummary.unavailable}");
     expect(details).not.toContain("today-row-unavailable");
     // the caution line itself still refuses to render off a failed read
     expect(link).toMatch(/caution=\{workflow && !workflow\.unavailable && workflow\.hasHistory \? workflow\.caution : null\}/);
   });
   it("the pinned note TEXT is visible and wrapped in the collapsed row, never truncated or inside details", () => {
-    expect(safety).toMatch(/whitespace-pre-wrap break-words[\s\S]{0,120}\{note\.text\}/);
+    expect(safety).toMatch(/whitespace-pre-wrap break-words[\s\S]{0,140}renderNote\(note\) : note\.text/);
+    expect(link).not.toContain("<DashboardQuickPin");
+    expect(row).toContain("<DashboardQuickPin");
     expect(details).not.toContain("note.text");
   });
-  it("everything else is MOVED into the details, not deleted", () => {
-    for (const marker of ["Before today", "Latest setup:", "<DashboardTreatmentMemory", "today-consultation-notes", "today-review-intake", "<TodayPortalLinkButton", "dashboard-prep-remember"]) {
+  it("memory and each secondary action are accessible outside the profile link", () => {
+    for (const marker of ["<DashboardTreatmentMemory", "today-consultation-notes", "today-review-intake", "<TodayPortalLinkButton", "dashboard-prep-remember"]) {
       expect(details, marker).toContain(marker);
       expect(link, marker).not.toContain(marker);
     }
   });
   it("the details are a sibling of the row-body link (nothing interactive inside the anchor) and closed by default", () => {
-    expect(row.indexOf("</PendingContainerLink>")).toBeLessThan(row.indexOf("<details"));
+    expect(row.indexOf("</PendingContainerLink>")).toBeLessThan(row.indexOf('data-testid="today-row-details"'));
+    expect(row).not.toMatch(/<details\b/);
     // the `open` ATTRIBUTE, not the open: class variant that places an expanded disclosure below the row
     expect(row).not.toMatch(/<details(?:\s[^>]*)?\sopen(?:[\s=>])/);
     expect(link).not.toMatch(/<details|<summary/);

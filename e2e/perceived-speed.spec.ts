@@ -300,6 +300,10 @@ async function provesSegmentChangeIsAcknowledged(page: Page) {
   await expect(liveRegion).toBeAttached();
   await expect(liveRegion).toHaveText("");
 
+  // On a phone the taller dashboard row can leave this control partly below the fold, and Playwright scrolls a partly hidden
+  // control into view before it clicks, which reads as the control moving. Bring it fully into view first so the box measured
+  // at rest is the box the tap is made on.
+  await cta.scrollIntoViewIfNeeded();
   const resting = await cta.boundingBox();
   expect(resting).not.toBeNull();
   expect(resting!.height).toBeGreaterThanOrEqual(44);

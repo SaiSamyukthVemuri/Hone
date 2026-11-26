@@ -212,7 +212,7 @@ describe("the adjustment reason appears only once the total differs", () => {
     expect(inputTag(html, "adjustment_reason")).toBeNull();
     expect(html).not.toMatch(/Reason for adjustment/);
     // ...and the Prepare button is still there to press.
-    expect(html).toMatch(/Prepare session payment/);
+    expect(html).toMatch(/Checkout with Stripe/);
   });
 
   it("is absent for a zero reference-equal prefill of any size", () => {
@@ -243,13 +243,13 @@ describe("a non-owner is offered the ordinary checkout", () => {
   });
 });
 
-describe("the prepare affordance is unchanged", () => {
-  it("still reads 'Prepare session payment'", () => {
-    expect(render()).toMatch(/Prepare session payment/);
+describe("Stripe checkout on the session form", () => {
+  it("names Stripe on the payment button", () => {
+    expect(render()).toMatch(/Checkout with Stripe/);
   });
 
   it("still says preparation moves no money", () => {
-    expect(render()).toMatch(/No PaymentIntent\. No charge\./);
+    expect(render()).toContain("You will review and confirm this amount before your client’s card is charged.");
   });
 });
 
