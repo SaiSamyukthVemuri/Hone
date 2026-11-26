@@ -207,7 +207,9 @@ describe("the dashboard is wired to it, and nothing else was swept up", () => {
 // app/(app)/dashboard/secondary-stack.tsx behind a Suspense boundary. This
 // assertion is about what RENDERS, so it reads the COMPOSED source.
 // See tests/app/dashboard/helpers/composed-dashboard.ts.
-  const dashboard = COMPOSED_DASHBOARD;
+  // Chloe (26 Nov): the row's action row moved to visit-actions.tsx, still rendered by the page, so it is composed in too.
+  const actionRow = read("app/(app)/dashboard/visit-actions.tsx");
+  const dashboard = COMPOSED_DASHBOARD + "\n" + actionRow;
   const dash = codeOnly(dashboard);
 
   // UI-01A: same-pathname query navigation, where no route boundary can render.
