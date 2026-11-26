@@ -1,0 +1,1024 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Hone · Business preview</title><style>
+:root{--ink:#20282e;--muted:#58656d;--sub:#6a757d;--line:#dce2e4;--wash:#f6f8f9;--blue:#375e78;--light:#e9f0f4;--warm:#fff8ec;--amber:#805721;color-scheme:light;font:16px/1.45 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;color:var(--ink)}*{box-sizing:border-box}body{margin:0;background:#fbfcfc}button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}button:focus-visible,a:focus-visible,select:focus-visible,summary:focus-visible,input:focus-visible{outline:3px solid #5183a3;outline-offset:2px}button{border:1px solid var(--line);background:white;border-radius:7px;padding:8px 12px;font-weight:550;font-size:14px}button:hover{background:var(--wash)}a{color:inherit}nav a{text-decoration:none}.top{background:#fff;border-bottom:1px solid var(--line)}.topin{max-width:1536px;height:66px;display:flex;align-items:center;gap:27px;margin:auto;padding:0 3vw}.logo{font-size:27px;font-weight:740;letter-spacing:-2px}.global{display:flex;gap:21px;align-items:center;color:#657078;font-size:14px}.global b{background:var(--wash);border-radius:6px;padding:7px 12px;color:var(--ink)}.account{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:14px}.avatar{background:#e6ecef;color:#3f5868;border-radius:50%;display:inline-grid;place-items:center;width:33px;height:33px;font-weight:650;font-size:13px}.layout{display:grid;grid-template-columns:198px minmax(0,1fr);max-width:1536px;margin:auto;min-height:calc(100vh - 66px)}aside{padding:35px 17px;border-right:1px solid var(--line);background:#f7f9fa;display:flex;flex-direction:column;gap:24px}.railtitle{font-size:21px;font-weight:680;letter-spacing:-.8px;margin:0 11px}.rail{display:grid;gap:4px}.rail a{display:flex;align-items:center;gap:10px;font-size:14px;padding:11px;border-radius:6px;font-weight:530}.rail a.active{background:#e2ebf0;color:#263f50;font-weight:650}.rail a:hover{background:#eaf0f2}.rail svg,.ico{width:17px;height:17px;flex:none;vertical-align:-3px}.studio{margin:auto 10px 8px;padding-top:18px;border-top:1px solid var(--line);font-size:13px}.studio strong{display:block;font-size:14px}.mute,small{color:var(--muted)}small{font-size:13px}.page{padding:34px clamp(20px,3vw,49px) 46px;min-width:0}.topline,.head,.row,.split,.switch,.tools,.act,.legend{display:flex;align-items:center;gap:12px}.head,.split{justify-content:space-between}.topline{font-size:13px;color:var(--muted);margin-bottom:12px}.head{align-items:flex-start;margin-bottom:20px}h1,h2,h3,p{margin:0}h1{font-size:clamp(32px,3.3vw,49px);letter-spacing:-2.3px;line-height:1.12;font-weight:620}h2{font-size:20px;letter-spacing:-.65px;font-weight:640}h3{font-size:16px;font-weight:620}.head p{color:var(--muted);margin-top:8px;font-size:14px}.tools{flex-wrap:wrap;gap:7px;justify-content:flex-end}.tools button,.tools select,.field{background:white;border:1px solid var(--line);border-radius:7px;padding:8px 10px;min-height:38px;font-size:14px}.tabs{display:flex;gap:22px;align-items:center;border-bottom:1px solid var(--line);margin:2px 0 20px}.tabs button{padding:9px 0 12px;background:transparent;border:0;border-radius:0;color:var(--muted);border-bottom:2px solid transparent}.tabs .sel{border-color:var(--blue);color:var(--ink)}.metrics{display:grid;grid-template-columns:1.32fr 1fr 1fr 1fr;border:1px solid var(--line);border-radius:11px;background:#fff;overflow:hidden;margin-bottom:17px}.metric{padding:19px 18px;border-left:1px solid var(--line)}.metric:first-child{border:none;background:#edf3f6}.metric .lab{font-size:14px;color:#40515b}.number{display:block;font-size:clamp(28px,2.9vw,42px);font-weight:600;letter-spacing:-1.9px;line-height:1.45;font-variant-numeric:tabular-nums}.number em{font-style:normal;font-size:13px;color:var(--muted);letter-spacing:0;margin-left:5px}.delta{font-size:13px;color:var(--blue)}.card{background:white;border:1px solid var(--line);border-radius:11px;padding:19px 20px}.analysisgrid{display:grid;grid-template-columns:minmax(0,1.85fr) minmax(220px,1fr);gap:16px;margin-bottom:16px}.tiny{font-size:13px;color:var(--muted)}.switch{border:1px solid var(--line);border-radius:6px;padding:2px;background:var(--wash);gap:1px}.switch button{font-size:13px;padding:5px 8px;border:0;background:transparent;color:var(--muted)}.switch .sel{background:white;color:var(--ink);box-shadow:0 1px 3px #24344429}.legend{gap:14px;font-size:12px;color:var(--muted);margin:10px 0 0}.swatch{width:20px;border-top:3px solid #52758a;display:inline-block;margin-right:5px;vertical-align:3px}.dash{border-top:2px dashed #9caab2}.chart{width:100%;height:166px;display:block}.funnel{display:flex;height:13px;gap:3px;border-radius:4px;overflow:hidden;margin:16px 0}.funnel i:first-child{background:#52758a}.funnel i:last-child{background:#c8d7df}.statbig{font-size:42px;letter-spacing:-2px;font-weight:600;line-height:1.2}.statline{display:flex;justify-content:space-between;font-size:14px;margin:6px 0}.statline b{font-variant-numeric:tabular-nums}.ruled{border-top:1px solid var(--line);padding-top:12px;margin-top:12px}.cardfoot{border-top:1px solid var(--line);padding-top:8px;margin-top:8px;color:var(--muted);font-size:13px}.link{border:0;padding:2px 0;color:var(--blue);font-size:14px;background:transparent;text-decoration:underline;text-underline-offset:3px}.review{display:flex;align-items:center;gap:14px;padding:15px 18px;background:var(--warm);border:1px solid #e8d9bc;border-radius:9px;margin:16px 0}.review .symbol{width:32px;height:32px;display:grid;place-items:center;border-radius:9px;background:#f4e7cb;color:var(--amber)}.review p{font-size:13px;color:#685b47;margin-top:2px}.review button{margin-left:auto;flex:none;border-color:#dbccac;background:#fffdf8}.footer{font-size:12px;color:var(--sub);border-top:1px solid var(--line);margin-top:24px;padding-top:12px}.block{margin:18px 0}.stack{display:grid;gap:12px}.dual{display:grid;grid-template-columns:1fr 1fr;gap:15px}.titlebar{margin:20px 0 10px}.table{overflow:hidden;border:1px solid var(--line);border-radius:9px;background:white}table{width:100%;border-collapse:collapse;text-align:left;font-size:14px}th{font-weight:500;color:var(--muted);font-size:13px;background:#f3f6f7}td,th{padding:11px 13px;border-bottom:1px solid #e7ebed}tbody tr:last-child td{border-bottom:0}td small{display:block}.right{text-align:right}.pill{padding:3px 8px;background:#edf1f3;border-radius:4px;font-size:12px;display:inline-block}.pill.reviewing{background:#f9edd5;color:#775624}.pill.paid{background:#eaf1f4;color:#385b70}.primary{background:#344f61;color:white;border-color:#344f61}.primary:hover{background:#293f4c}.quiet{font-size:13px;color:var(--muted)}details>summary{cursor:pointer;font-weight:550;font-size:13px;color:var(--blue)}details p{margin-top:8px;font-size:14px;color:var(--muted)}.subnav{display:flex;flex-wrap:wrap;gap:8px}.row{flex-wrap:wrap}.depth{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0}.depth>div{padding:14px;background:var(--wash);border-radius:6px}.depth b{font-size:27px;display:block}.depth span{font-size:13px;color:var(--muted)}.methodbar{height:8px;display:flex;background:#dfe6ea;border-radius:5px;overflow:hidden;margin:13px 0}.methodbar i{height:100%;background:#52758a}.methods{margin-top:4px}.gridform{display:grid;gap:12px}.gridform label{display:grid;gap:5px;font-size:14px;font-weight:550}.gridform input,.gridform select{border:1px solid #bdc8cd;padding:10px;border-radius:5px;width:100%;background:white}.dialog{border:1px solid var(--line);border-radius:12px;width:min(460px,94vw);max-height:88vh;padding:22px;color:var(--ink)}.dialog::backdrop{background:#172b3680}.dialog .split{align-items:flex-start}.dialog hr{border:0;border-top:1px solid var(--line);margin:15px 0}.dialog h2{font-size:23px}.dialog .act{justify-content:flex-end;flex-wrap:wrap;margin-top:15px}.notice{background:var(--light);padding:10px 12px;border-radius:6px;margin:10px 0;font-size:14px}.error{color:#923e24}.report{margin-top:16px}.report input{width:190px}.mobile-only{display:none}.controls{display:flex;flex-wrap:wrap;gap:9px}.chartdata{max-height:200px;overflow:auto}.badges{display:flex;gap:12px;flex-wrap:wrap}.mini{font-size:12px;font-weight:500;white-space:nowrap}.textmetric{font-size:29px;letter-spacing:-.9px;font-weight:620}.paneNote{margin:9px 0 16px;font-size:13px;color:var(--muted)}.visually{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#273f4e;color:white;padding:10px 16px;border-radius:7px;font-size:14px;z-index:5}.footbtn{border:0;background:transparent;padding:0;color:var(--blue);text-decoration:underline}.long{overflow-wrap:anywhere}
+@media(min-width:1490px){.metric{padding:22px}.chart{height:200px}}@media(max-width:1080px){.layout{grid-template-columns:170px minmax(0,1fr)}.page{padding:25px 18px}.global{gap:12px}.metric{padding:12px}.analysisgrid{grid-template-columns:1.55fr 1fr}.table td,.table th{padding:9px}.card{padding:15px}.tools{justify-content:flex-start}}@media(max-width:760px){.layout{display:block}.global{display:none}.topin{height:51px;padding:0 16px}.account{font-size:13px}aside{display:block;padding:8px 14px;border:0;border-bottom:1px solid var(--line)}.rail{display:grid;grid-template-columns:1fr 1fr;gap:2px}.rail a{font-size:13px;padding:7px 8px;min-height:34px}.railtitle,.studio{display:none}.page{padding:19px 14px 30px}.head{flex-direction:column;gap:12px;margin-bottom:12px}.tools{flex-wrap:wrap}.metrics{grid-template-columns:1fr 1fr}.metric:nth-child(3){border-left:0}.metric:nth-child(n+3){border-top:1px solid var(--line)}.number{font-size:28px}.analysisgrid,.dual{grid-template-columns:1fr}.tabs{gap:15px;margin-bottom:12px}.review{align-items:flex-start;flex-wrap:wrap}.review .symbol{display:none}.review button{margin-left:0}.depth{grid-template-columns:1fr 1fr}.table table,.table tbody,.table tr,.table td{display:block}.table thead{display:none}.table tr{display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;padding:12px;border-bottom:1px solid var(--line)}.table td{border:0;padding:0;text-align:left}.table td:before{content:attr(data-label);display:block;font-size:12px;color:var(--sub)}.table tr:last-child{border:0}.table td:empty{display:none}.card>.split,.titlebar{align-items:flex-start;flex-wrap:wrap}.switch{gap:0}.footer{margin-top:16px}.chart{height:146px}.topline{margin-bottom:6px}}@media print{.top,aside,.tools,.tabs,.switch,.review button,.link,.primary,.footer,.toast,.dialog,button{display:none!important}.layout,.page{display:block;padding:0}.card,.table,.metrics{break-inside:avoid}.page{font-size:11pt}.topline{display:block}.table{overflow:visible}body{background:white}}
+.an-layout{display:grid;grid-template-columns:minmax(0,1.85fr) minmax(245px,1fr);gap:16px;margin:0 0 16px;align-items:start}
+.an-main,.an-side{display:grid;gap:14px;min-width:0}
+.an-even{grid-template-columns:1fr 1fr;align-items:stretch}
+.an-hero,.an-card,.an-metrics{border:1px solid var(--line);border-radius:12px;background:#fff}
+.an-hero{background:linear-gradient(145deg,#eff5f7 0%,#fbfcfc 52%,#fff 86%);border-color:#cbd9df;padding:22px 24px 14px;overflow:hidden}
+.an-card{padding:20px}
+.an-mainrow,.an-chartbar,.an-legend,.an-toggle,.an-readout,.an-check-line,.an-attention,.an-frequency{display:flex;align-items:center}
+.an-mainrow,.an-chartbar,.an-attention{justify-content:space-between;gap:8px}
+.an-mainrow{align-items:flex-start}
+.an-mainrow h2,.an-card h2{font-size:18px;letter-spacing:-.45px}
+.an-value{font-size:clamp(38px,3.7vw,56px);font-weight:610;line-height:1.12;letter-spacing:-2.4px;margin-top:6px;font-variant-numeric:tabular-nums}
+.an-value small{font-size:14px;letter-spacing:0;margin-left:7px;font-weight:500}
+.an-toggle{border:1px solid #ccd7dc;border-radius:7px;padding:2px;gap:1px;background:#f4f7f8;width:max-content}
+.an-toggle button{border:none;padding:5px 9px;border-radius:5px;font-size:12px;line-height:1.35;background:transparent;color:#52616a}
+.an-toggle button[aria-pressed="true"]{background:#fff;color:#243744;box-shadow:0 1px 3px #23333d32}
+.an-comparison{color:#50606a;font-size:13px;margin-top:8px}.an-comparison b,.an-metrics small b{color:#30596d;font-weight:650}
+.an-comparison span{color:#68757d}
+.an-chartbar{margin:21px 0 7px;flex-wrap:wrap}
+.an-legend{font-size:12px;color:#4d5a63;gap:13px}
+.an-legend span{display:flex;align-items:center;gap:5px}
+.an-legend i{width:18px;border-top:3px solid #335d72}
+.an-legend span:nth-child(2) i{border-top:2px dashed #8396a2}
+.an-plot{position:relative}
+#an-chart{display:block;width:100%;height:auto;max-height:none;overflow:visible}
+#an-chart text{font-size:12px;fill:#53636d}
+.an-scrub{position:absolute;inset:3% 2.85% auto 7.78%;width:89.37%;height:79%;opacity:0;cursor:crosshair;touch-action:pan-y;margin:0}
+.an-plot:focus-within{outline:2px solid var(--blue);outline-offset:2px;border-radius:5px}
+.an-readout{gap:11px;font-size:12px;border-top:1px solid var(--line);padding-top:9px;flex-wrap:wrap}
+.an-readout strong{font-weight:600}.an-readout>span:first-of-type{font-variant-numeric:tabular-nums;font-weight:620}.an-secondary{color:#586770}
+.an-hero .cardfoot{border:0;margin:5px 0 0;padding-top:3px}
+.an-metrics{display:grid;grid-template-columns:repeat(3,1fr)}
+.an-metrics>div{min-width:0;display:grid;align-content:start;gap:5px;padding:15px;border-left:1px solid var(--line)}
+.an-metrics>div:first-child{border-left:0}
+.an-metrics>div>span{font-size:13px;color:var(--muted)}
+.an-metrics strong,.an-bignum,.an-check-line strong,.an-frequency b{font-size:clamp(24px,2.2vw,34px);line-height:1.15;letter-spacing:-1.4px;font-weight:610}
+.an-metrics small{font-size:12px}
+.an-check-line{gap:9px;margin:13px 0 8px}.an-check-line span{font-size:13px;color:var(--muted)}
+.an-check-line small{font-size:18px;letter-spacing:-.7px;color:var(--muted)}
+.an-meter{height:7px;border-radius:9px;background:#ecdfc4;overflow:hidden;margin:0 0 13px}
+.an-meter i{display:block;height:100%;background:#638497}
+.an-attention{background:#faf3e7;border:1px solid #eadac1;border-radius:6px;padding:8px;margin-top:12px;flex-wrap:wrap}
+.an-attention span{font-size:13px;font-weight:600;color:#724c20}
+.an-attention i{width:6px;height:6px;background:#9f6c29;display:inline-block;border-radius:99px;margin-right:6px}
+.an-review{font-size:12px;color:#744e24;background:#fffdf8;border:1px solid #ddccb1;padding:6px 8px}
+.an-mix{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:13px 0 12px}
+.an-bignum{font-size:32px;display:block}
+.an-bignum small{font-weight:500;display:block;letter-spacing:0;font-size:13px;margin-top:3px;line-height:1.35}
+.an-dots{display:grid;grid-template-columns:repeat(10,7px);gap:4px}
+.an-dots i{width:7px;height:7px;border-radius:2px;background:#d4dfe5}.an-dots .returning{background:#638497}
+.an-frequency{margin-top:14px;gap:13px}
+.an-frequency b{white-space:nowrap}.an-frequency span{max-width:260px;font-size:13px;color:var(--muted)}
+.an-outcomes{margin-top:20px;display:grid;gap:10px}
+.an-outcomes>div{display:grid;grid-template-columns:minmax(105px,1fr) 2fr 28px;gap:10px;align-items:center;font-size:14px}
+.an-outcomes i{height:8px;border-radius:2px;background:#e8eef1}
+.an-outcomes b{display:block;background:#426a80;height:100%;border-radius:2px}
+.an-card>.an-bignum{margin:14px 0}
+@media(max-width:1000px){.an-layout{grid-template-columns:minmax(0,1.55fr) minmax(216px,1fr);gap:10px}.an-even{grid-template-columns:1fr 1fr}.an-card,.an-hero{padding:15px}.an-metrics>div{padding:11px}.an-dots{gap:3px}}
+@media(max-width:760px){.an-layout,.an-even{grid-template-columns:minmax(0,1fr);gap:12px}.an-main,.an-side{gap:12px}.an-metrics>div>span,.an-metrics small{font-size:12px}.an-metrics>div{padding:10px 7px}.an-metrics strong{font-size:24px}.an-hero{padding:16px 13px 12px}.an-mainrow h2,.an-card h2{font-size:17px}.an-chartbar{margin-top:17px;gap:8px}.an-legend{font-size:11px;gap:8px}.an-toggle button{padding:5px 7px}.an-readout{gap:8px}.an-dots{grid-template-columns:repeat(10,8px);gap:4px}.an-dots i{width:8px;height:8px}#an-chart text{font-size:17px}.an-check-line strong{font-size:31px}}
+@media print{.an-toggle,.an-scrub{display:none}.an-hero,.an-card,.an-metrics{break-inside:avoid}}
+
+.fin-summary{align-items:center;border-color:#d6ddd9}.fin-summary>div+div{padding-left:4%;border-left:1px solid var(--line)}.fin-summary .lab{font-size:14px;color:var(--muted)}.fin-summary .number{margin:2px 0}.fin-breakdown{padding:9px 0 2px;max-width:640px}.fin-notice{margin:17px 0;display:flex;align-items:center;gap:12px;background:#faf5e8;border:1px solid #e5dbc0;border-radius:9px;padding:10px 14px;font-size:14px}.fin-notice>span{color:#806537}.fin-notice small,.fin-case small,.fin-buckets small,.fin-detail small{display:block}.fin-notice .fin-action{margin-left:auto}.fin-name{border:0;background:transparent;padding:0;color:var(--ink);font-size:14px;font-weight:650;text-align:left}.fin-name:hover{text-decoration:underline}.fin-action{background:white;border:1px solid #cad1d2;white-space:nowrap;padding:6px 10px;font-size:13px;font-weight:580}.fin-pager{display:flex;align-items:center;justify-content:space-between;margin:10px 0 7px;color:var(--muted);font-size:13px}.fin-pager button+button{margin-left:6px}.fin-print{display:none}.finledger .table td:nth-child(4){font-variant-numeric:tabular-nums;font-weight:650}.finledger .table td:last-child{text-align:right}.fin-buckets{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin:19px 0}.fin-buckets button{padding:16px 18px 14px;text-align:left;border-radius:9px;background:white;border:1px solid var(--line);position:relative}.fin-buckets button[aria-pressed=true]{background:#f5f5ee;border-color:#797f6e;box-shadow:inset 0 -2px #646e5e}.fin-bucket-label{display:flex;align-items:center;gap:8px}.fin-buckets button strong{display:block;font-size:clamp(27px,2.6vw,37px);letter-spacing:-1.6px;line-height:1.25;margin:8px 0 1px}.fin-buckets small{font-size:12px;font-weight:450;color:var(--muted)}.fin-queue{margin-top:22px}.fin-queue-head{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:14px}.fin-queue-head p{font-size:13px;color:var(--muted);margin-top:3px}.fin-find{display:flex;align-items:center;gap:5px;padding:5px 9px;background:white;border:1px solid var(--line);border-radius:6px}.fin-find>span{font-size:18px;color:var(--muted)}.fin-find input{outline-offset:0;border:0;padding:5px;width:145px;background:transparent;font-size:14px}.fin-queue #qresult{border:1px solid var(--line);border-radius:10px;background:white;overflow:hidden}.fin-group+.fin-group{border-top:1px solid var(--line)}.fin-case{display:grid;grid-template-columns:minmax(125px,1.05fr) minmax(140px,1.4fr) minmax(78px,.53fr) 100px;gap:18px;align-items:center;padding:13px 17px;font-size:14px}.fin-group .fin-case+.fin-case{border-top:1px dashed var(--line)}.fin-case small{font-size:12px;margin-top:2px}.fin-case-amt{text-align:right;font-variant-numeric:tabular-nums}.fin-case>.fin-action{justify-self:end}.fin-empty{padding:24px;font-size:14px;color:var(--muted)}.fin-detail{display:flex;gap:8px;align-items:start;justify-content:space-between;margin:12px 0 18px}.fin-detail p{font-size:14px}.fin-detail .pill{white-space:nowrap}.fin-detail small{margin-top:3px}.fin-facts{padding:13px;background:var(--wash);border:1px solid var(--line);border-radius:7px}.fin-facts .statline:last-child{margin-bottom:0}.fin-facts .statline:first-child{margin-top:0}.fin-choices{display:grid;gap:8px;margin-top:18px}.fin-choices h3{margin-bottom:2px}.fin-choices button{min-height:39px}.fin-bal{padding:10px 12px;background:var(--wash);border:1px solid var(--line);border-radius:7px;font-size:13px}.fin-field-pair{display:grid;grid-template-columns:1fr 1fr;gap:10px}.fin-field-pair label,.fin-field-pair input{min-width:0}.titlebar select{border:1px solid var(--line);padding:7px 10px;border-radius:7px;background:white;font-size:14px}
+@media(max-width:760px){.fin-summary>div+div{border-top:1px solid var(--line);border-left:0;padding:12px 0 0}.fin-buckets{gap:5px;margin:12px 0}.fin-buckets button{min-width:0;padding:10px 7px}.fin-bucket-label{font-size:12px;gap:0}.fin-bucket-label svg{display:none}.fin-buckets button strong{font-size:24px;margin:3px 0}.fin-buckets small{font-size:10px;line-height:1.3}.fin-queue-head{display:block}.fin-find{margin-top:10px}.fin-find input{flex:1}.fin-case{position:relative;grid-template-columns:minmax(0,1fr) auto;gap:4px 8px;padding:12px}.fin-case-name{grid-area:1/1}.fin-case-desc{grid-area:2/1;font-size:13px}.fin-case-amt{grid-area:1/2}.fin-case>.fin-action{grid-area:2/2;align-self:end;min-height:36px}.finledger .table tr{grid-template-columns:minmax(0,1fr) auto;gap:3px 8px}.finledger .table td:before{display:none}.finledger .table td:nth-child(1){grid-area:1/1}.finledger .table td:nth-child(2){grid-area:2/1;font-size:13px}.finledger .table td:nth-child(3){grid-area:3/1;display:flex;align-items:center;gap:5px}.finledger .table td:nth-child(4){grid-area:1/2;text-align:right}.finledger .table td:last-child{grid-area:2/2/4/3;align-self:end}.fin-action{min-height:36px}.finlist .table td:first-child:before{display:none}.fin-notice{gap:7px;padding:10px}.fin-notice small{font-size:11px}.fin-notice>span{display:none}.fin-field-pair{grid-template-columns:1fr}.fin-buckets button,.fin-case-name,.fin-case-desc{overflow-wrap:anywhere}}
+@media print{.fin-name{display:inline!important;color:black}.fin-pager,.fin-notice,.fin-interactive,.fin-queue-head label{display:none!important}.fin-print{display:block}.finledger .table,.finledger table{break-inside:auto}.finledger tr{break-inside:avoid}}
+
+:root{--ink:#22272a;--muted:#56636a;--sub:#606a6e;--blue:#345b72;--line:#d9dfe0;--wash:#f4f6f6}
+body{background:#f9faf9}
+.layout{max-width:1680px;grid-template-columns:224px minmax(0,1fr);min-height:calc(100vh - 62px)}
+.top{position:relative;z-index:2}.topin{max-width:1680px;height:62px;padding:0 28px;gap:58px}
+.logo{font-weight:760;font-size:29px;letter-spacing:-2.1px}.global{gap:24px;color:#586166}.global b{border-radius:7px;padding:7px 11px;background:#ecefed}.account{font-weight:580}.avatar{background:#e2e8e7;border:1px solid #cbd6d4}
+aside{background:#f3f5f3;padding:29px 14px 16px;position:sticky;align-self:start;top:0;height:100vh;max-height:100dvh;gap:19px}.railtitle{letter-spacing:-.65px;color:#2a3333;margin-left:12px}.rail{gap:4px}.rail a{min-height:43px;gap:11px;padding:10px 12px;font-weight:530}.rail a.active{background:#e0e6e4;color:#172d31}.studio{line-height:1.7;color:var(--muted)}.studio strong{color:var(--ink)}
+.page{padding:30px clamp(22px,3.3vw,58px) 42px;max-width:1570px;width:100%;margin-inline:auto}.topline{font-size:12px}.head h1,.homehead h1{font-weight:640;letter-spacing:-2.4px;line-height:1.08}.footer{display:flex;justify-content:space-between;align-items:center;gap:15px}
+.mobilebiz{display:none}.skip{position:absolute;left:-9999px}.skip:focus{z-index:10;top:3px;left:5px;background:white;padding:9px}
+.homehead{display:flex;justify-content:space-between;align-items:center;margin:5px 0 23px}.homehead p{color:var(--muted);font-size:14px;margin-top:8px}.homehead p span{margin:0 5px}
+.homehero{background:#233036;color:#fff;border-radius:16px;overflow:hidden}
+.heroabove{display:grid;grid-template-columns:minmax(230px,1fr) minmax(220px,.72fr);gap:28px;align-items:center;padding:27px 34px 23px;min-height:194px}
+.herolabel,.trendlabel{font-size:14px;font-weight:550;color:#e1e8eb}.herovalue{font-size:clamp(54px,5vw,82px);font-weight:555;letter-spacing:-.067em;line-height:1.13;font-variant-numeric:tabular-nums}.herovalue small{font-size:15px;letter-spacing:0;margin-left:10px;color:#c0ccd1;font-weight:450}.herocompare{display:flex;align-items:center;gap:9px;margin-top:10px;font-size:13px;color:#d0dadd}.herocompare b{font-size:12px;background:#3c4f54;color:#e3eced;padding:3px 7px;border-radius:4px}.herocompare svg{width:13px;height:13px}.heroperiod{font-size:12px;color:#c3cfd3;margin-top:8px}
+.hometrend{max-width:390px;width:100%;justify-self:end}.trendlabel{font-size:12px}.hometrend>svg{display:block;width:100%;height:90px;margin:5px 0 1px;overflow:visible}.chartaxis,.trendkey{font-size:10px;display:flex;align-items:center;justify-content:space-between;color:#c3ced1}.trendkey{justify-content:flex-end;gap:5px;font-size:11px}.trendkey i{width:14px;height:0;border-top:2px solid #e0e9ec}.trendkey i.dotted{margin-left:8px;border-top:2px dashed #96a6ad}
+.herobottom{display:flex;align-items:center;margin:0 34px;padding:15px 0 17px;border-top:1px solid #485356;gap:29px}.herobottom>div{padding-right:24px;border-right:1px solid #475356}.herobottom span{font-size:12px;color:#c8d1d4;display:block}.herobottom strong{font-size:25px;letter-spacing:-1.1px;font-weight:550}.herolink,.outlineLink,.hometextlink{display:inline-flex;align-items:center;gap:9px;text-decoration:none;font-size:13px;font-weight:620}.herolink{margin-left:auto;color:white}.herolink:hover,.hometextlink:hover{text-decoration:underline}
+.homegrid{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(0,1fr);gap:18px;margin:21px 0}.groupbox,.homestatement{background:white;border:1px solid var(--line);border-radius:13px;overflow:hidden}.grouphead{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:18px 21px 10px}.grouphead h2,.homestatement h2{font-size:20px;font-weight:640;letter-spacing:-.8px}.grouphead small{font-size:12px}
+.homeaction{margin:0 20px;min-height:65px;padding:11px 1px;display:flex;align-items:center;gap:12px;text-decoration:none;border-top:1px solid #e6e9e7}.grouphead+.homeaction{border:0}.homeaction:hover{background:#f6f8f7}.homeactionicon,.papericon{display:grid;place-items:center;flex:none;width:33px;height:34px;border-radius:8px}.homeactionicon.wheat{background:#f6eddb;color:#805c31}.homeactionicon.mist,.papericon{background:#eaf0f0;color:#3b545f}.homeactionicon.fog{background:#f0f1f0;color:#555e61}.hometask strong,.hometask small{display:block}.hometask strong{font-size:15px;font-weight:600}.hometask small{font-size:12px;color:var(--muted);line-height:1.4}.tasknumber{margin-left:auto;font-weight:580;white-space:nowrap;font-variant-numeric:tabular-nums;font-size:18px;letter-spacing:-.6px}.homeaction>.ico{color:#64757a;width:15px}.continuitybody{padding:7px 21px 19px}.planfigure{display:flex;gap:13px;align-items:center}.planfigure strong{font-size:61px;font-weight:540;line-height:1.2;letter-spacing:-3px}.planfigure span{font-size:14px;color:#465157}.planmeter{display:flex;gap:5px;margin:10px 0 24px}.planmeter i{flex:1;height:7px;background:#e4e9e7;border-radius:3px}.planmeter i.need{background:#748c99}.hometextlink{color:var(--blue)}
+.homestatement{display:flex;gap:14px;align-items:center;padding:16px 21px}.homestatement h2{font-size:17px}.homestatement p{font-size:13px;color:var(--muted);margin-top:2px}.outlineLink{border:1px solid #cad3d4;border-radius:7px;padding:8px 12px;margin-left:auto;background:#fff}.outlineLink:hover{background:var(--wash)}.outlineLink .ico,.herolink .ico,.hometextlink .ico{width:14px}.homeview .ico{stroke-width:1.6}
+#modal{overscroll-behavior:contain}html{scrollbar-gutter:stable}
+@media(min-width:1650px){.page{padding:36px 58px}.heroabove{min-height:224px}}
+@media(min-width:761px) and (max-width:1100px){.layout{grid-template-columns:182px minmax(0,1fr)}.rail a{font-size:13px}.page{padding-inline:21px}.herobottom{gap:14px}.herobottom>div{padding-right:12px}.homegrid{grid-template-columns:minmax(0,1.24fr) minmax(0,1fr)}.topin{gap:30px}.homeaction,.grouphead,.continuitybody{margin-inline:0;padding-inline:13px}.trendlabel{font-size:11px}}
+@media(max-width:760px){html{scrollbar-gutter:auto}.layout{display:block}.topin{height:52px;padding:0 16px;gap:20px}.logo{font-size:26px}.page{padding:21px 14px 30px}.layout>aside{position:static;height:auto;display:block;padding:0;background:#fff}.rail,.railtitle,.studio{display:none}.mobilebiz{display:flex;align-items:center;justify-content:space-between;gap:7px;padding:5px 15px;color:var(--muted);font-size:13px}.mobilebiz select{border:0;background:white;color:var(--ink);font-weight:640;max-width:70%;height:37px}.head h1,.homehead h1{letter-spacing:-1.55px}.homehead{margin:0 0 17px}.homehead p{font-size:12px}.homegrid{grid-template-columns:1fr;gap:12px;margin:13px 0}.homehero{border-radius:13px}.heroabove{display:block;padding:20px 19px 13px}.homeherobody{position:relative}.herovalue{font-size:56px}.heroperiod{margin:9px 0 2px}.hometrend{margin-top:15px;max-width:100%}.hometrend>svg{height:76px}.trendkey{display:none}.trendlabel{font-size:11px}.herobottom{margin:0 18px;gap:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));padding:10px 0 13px}.herobottom>div{border:0;padding:0}.herobottom strong{font-size:21px}.herobottom span{font-size:10px}.herolink{grid-column:1/-1;margin:10px 0 0;font-size:12px;min-height:26px}.grouphead{padding:14px 15px 6px}.grouphead h2{font-size:18px}.homeaction{margin-inline:15px;gap:9px;min-height:59px}.continuitybody{padding:0 15px 14px}.planfigure strong{font-size:47px}.planmeter{margin:6px 0 11px}.homestatement{padding:13px;flex-wrap:wrap;gap:8px}.outlineLink{font-size:12px}.footer{align-items:flex-start;font-size:11px}.homestatement h2{font-size:15px}.homestatement p{font-size:12px}.papericon{display:none}}
+@media print{.mobilebiz,.homehero a,.outlineLink,.footer{display:none!important}.layout>aside{display:none}.homehero{print-color-adjust:exact;-webkit-print-color-adjust:exact}.homeaction,.homestatement,.groupbox{break-inside:avoid}.layout,.page{display:block;max-width:none;padding:0}}
+@media(max-width:760px){.trendkey{display:flex;font-size:10px;gap:4px;margin-top:3px}.hometrend>svg{height:65px}.homeherobody{display:block}}
+.cap-wrap{--cap-ink:#314a57;--cap-mute:#57646a;--cap-edge:#d8dedd}
+.cap-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border:1px solid var(--cap-edge);border-radius:12px;overflow:hidden;background:white;margin:19px 0}
+.cap-summary>div{padding:22px 24px;border-left:1px solid var(--cap-edge);display:grid;align-content:start;gap:3px}
+.cap-summary>div:first-child{border:0;background:#f1f4f2}
+.cap-summary>div>span{font-size:14px;color:var(--cap-mute);font-weight:550}
+.cap-summary strong{font:600 clamp(30px,3vw,43px)/1.18 Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;letter-spacing:-1.7px}
+.cap-summary em{font-size:18px;font-weight:500;letter-spacing:-.6px;font-style:normal;color:var(--cap-mute)}
+.cap-summary small{font-size:13px}
+.cap-work{display:grid;grid-template-columns:minmax(0,1.75fr) minmax(200px,.85fr);gap:16px;margin-bottom:17px;align-items:start}
+.cap-list p,.cap-depth p{font-size:13px;color:var(--cap-mute);margin:4px 0 15px}
+.cap-list.card{padding:0;overflow:hidden}
+.cap-lead{padding:22px 22px 0}
+.cap-filters{display:flex;gap:12px;padding:0 22px;margin-bottom:6px;border-bottom:1px solid var(--cap-edge)}
+.cap-filters button{background:transparent;border:none;border-bottom:2px solid transparent;color:var(--cap-mute);border-radius:0;padding:9px 2px 10px;min-height:38px;font-size:14px}
+.cap-filters button[aria-pressed=true]{color:var(--ink);border-color:var(--cap-ink)}
+.cap-filters b{font-size:12px;font-weight:550;background:#f0f2f1;padding:2px 6px;border-radius:6px;margin-left:2px}
+.cap-row{padding:17px 0;display:grid;grid-template-columns:minmax(110px,1.35fr) minmax(82px,1fr) auto;align-items:center;gap:12px;margin:0 22px}
+.cap-row+.cap-row{border-top:1px solid var(--cap-edge)}
+.cap-identity b,.cap-date span{display:block}
+.cap-identity b{font-size:15px;font-weight:640}
+.cap-identity small,.cap-date small{display:block;font-size:12px}
+.cap-date span{font-size:14px}
+.cap-row-action{font-size:13px;white-space:nowrap}
+.cap-depth.card{padding:22px}
+.cap-depth>small{display:block;margin-top:17px;font-size:12px}
+.cap-band{margin-top:13px}
+.cap-band>div:first-child{display:flex;align-items:center;justify-content:space-between;font-size:13px}
+.cap-track{background:#edf0ef;height:6px;border-radius:2px;margin-top:4px}
+.cap-track>i{display:block;background:#637e8b;height:100%;border-radius:2px}
+.cap-band:nth-of-type(1) .cap-track>i{background:#b7935d}
+.cap-form h3{margin:15px 0 3px}
+.cap-form .cap-options{border:0;margin:22px 0 10px;padding:0}
+.cap-options legend{font-size:13px;font-weight:650;margin-bottom:6px}
+.cap-slot{display:flex;gap:10px;align-items:center;padding:11px;border:1px solid var(--line);border-radius:7px;cursor:pointer;margin-top:6px}
+.cap-slot input{accent-color:#384e58;width:17px;height:17px}
+.cap-slot:has(input:checked){border-color:#5d7782;background:#f2f6f6}
+.cap-slot b{margin-left:auto;font-size:14px;font-weight:600}
+.cap-disclaimer,.cap-empty{font-size:13px;color:var(--muted)}
+.cap-empty{padding:18px 22px}
+@media(max-width:1050px){.cap-work{grid-template-columns:1.5fr 1fr}.cap-row{grid-template-columns:1fr auto;margin:0 16px;gap:3px 10px}.cap-date{grid-row:2;grid-column:1}.cap-date small,.cap-date span{display:inline;font-size:12px}.cap-date small:after{content:" · "}.cap-row-action{grid-column:2;grid-row:1/3}.cap-summary>div{padding:15px 14px}}
+@media(max-width:760px){.cap-work{grid-template-columns:1fr}.cap-summary{grid-template-columns:repeat(2,minmax(0,1fr));margin:16px 0}.cap-summary>div:last-child{grid-column:1/-1;border-top:1px solid var(--cap-edge);border-left:0;display:grid;grid-template-columns:1fr auto;align-items:center}.cap-summary>div:last-child strong{grid-row:1/3;grid-column:2}.cap-summary>div:last-child small{grid-column:1}.cap-lead{padding:17px 15px 0}.cap-filters{padding:0 15px}.cap-row-action{min-height:40px}.cap-depth.card{padding:17px}.cap-summary small{font-size:12px}}
+
+
+.hometrend .trendkey{gap:5px 10px;flex-wrap:wrap}.hometrend .trendkey span{display:inline-flex;align-items:center;gap:5px}.hometrend .trendkey i.dotted{margin-left:0}.home-empty{padding:16px;border:1px dashed #63757c;border-radius:8px;color:#d2dde0}.home-empty strong,.home-empty span{display:block}.home-empty span{font-size:13px;margin-top:4px}.herocompare{flex-wrap:wrap}.herocompare b{white-space:nowrap}
+.statement-period,.statement-period form{display:inline-flex;align-items:center;gap:4px}.statement-period input{border:1px solid var(--line);border-radius:7px;padding:7px 8px;background:#fff;min-width:0;max-width:165px;font:inherit;font-size:14px;color:var(--ink)}.statement-period button{min-height:36px}.statement-period>button{font-size:19px;line-height:1}.statement-period button:disabled{opacity:.42;cursor:default}@media(max-width:760px){.statement-period{flex-wrap:wrap}.statement-period input{max-width:145px}}
+.report-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:14px;margin:0 0 19px}.report-label{font-size:13px;color:var(--muted);font-weight:560}.report-choices{display:flex;gap:2px;padding:3px;border:1px solid var(--line);border-radius:9px;background:#eef1ef}.report-choices button{margin:0;padding:8px 13px;min-height:35px;font-size:13px;border:1px solid transparent;background:transparent;white-space:nowrap;color:#475558}.report-choices button:hover{background:#fafbfa}.report-choices button[aria-pressed=true]{background:#fff;color:#202b2f;border-color:#d3dcdb;box-shadow:0 1px 3px #1a2c3314}.report-choices [data-period=month]{border-left:1px solid #d5ddda;border-radius:0 6px 6px 0}.report-choices button span{padding-left:4px}.rp-year{display:flex;align-items:center;justify-content:space-between;margin:22px 0 17px}.rp-year label{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted)}.rp-year input{width:87px;padding:7px;border-radius:6px;font-weight:650;border:1px solid var(--line)}.rp-year>button{width:39px;font-size:18px}.rp-months{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}.rp-months button{min-height:42px}.rp-months button[aria-pressed=true]{background:#243943;color:white}.rp-months button:disabled,.rp-year button:disabled{color:#9a9f9d;cursor:default}.rp-help{margin-top:16px;color:var(--muted);font-size:13px}.report-toolbar+ .tabs{margin-top:0}@media(max-width:670px){.report-toolbar{gap:6px;display:block;margin-bottom:14px}.report-label{display:block;font-size:12px;margin-bottom:6px}.report-choices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.report-choices button{min-height:38px;font-size:13px}.report-choices [data-period=month]{border-left-color:transparent;border-radius:6px}}@media print{.report-toolbar{display:none}}
+
+.report-asof{margin-left:auto;color:#616e75;font-size:12px}@media(max-width:670px){.report-asof{display:block;margin:6px 0 0;font-size:11px}}
+
+.history-top{margin:0 0 13px}.history-top button{min-height:30px}.history-view .topline{display:none}.history-view .head h1{overflow-wrap:anywhere}
+.history-controlrow{display:flex;align-items:center;justify-content:space-between;gap:10px 16px;flex-wrap:wrap;padding:0 0 16px;border-bottom:1px solid var(--line)}.history-switch{display:inline-flex;padding:3px;gap:3px;border:1px solid var(--line);background:#eef2ef;border-radius:9px}.history-switch button{display:flex;align-items:center;gap:8px;min-height:37px;border:1px solid transparent;background:transparent;border-radius:6px;padding:7px 13px;color:#47565b}.history-switch button[aria-pressed=true]{background:#fff;color:#202e33;border-color:#d3dcdb;box-shadow:0 1px 3px #13273113}.history-switch span,.history-period h2 span{font-size:12px;font-variant-numeric:tabular-nums;font-weight:550;color:#53626a}.history-switch span{border-radius:4px;background:#e4ebe8;padding:0 5px}.history-switch button strong{font-size:14px;font-weight:620}.history-period{display:flex;align-items:baseline;flex-wrap:wrap;gap:3px 13px;margin:18px 0 11px}.history-period h2{font-size:20px;letter-spacing:-.7px}.history-period h2 span{margin-left:10px;white-space:nowrap;letter-spacing:0}.history-period p{font-size:13px;color:var(--muted)}.history-sum{display:grid;grid-template-columns:1.3fr 1fr .8fr;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:white}.history-sum>div{padding:14px 17px;border-left:1px solid var(--line)}.history-sum>div:first-child{background:#eef3f2;border:0}.history-sum small{display:block;font-size:13px}.history-sum strong{display:block;font-variant-numeric:tabular-nums;font-weight:600;font-size:clamp(22px,2.3vw,36px);letter-spacing:-1.3px;line-height:1.4}.history-sum em{font-size:12px;color:var(--muted);letter-spacing:0;font-weight:500;font-style:normal}
+.history-listhead{display:flex;align-items:center;justify-content:space-between;gap:9px;flex-wrap:wrap;margin:24px 0 8px}.history-listhead select{padding:8px 11px;border:1px solid var(--line);border-radius:6px;font-size:13px;background:white}.history-filterdesc{display:block;margin-bottom:8px}
+.history-group{margin:0 0 13px;border:1px solid var(--line);border-radius:10px;background:white;overflow:hidden}.history-group h3{padding:11px 14px;margin:0;color:#2a3a41;font-size:14px;background:#eef2f1;border-bottom:1px solid var(--line)}.history-group td,.history-group th{padding:9px 13px}.history-group th{font-size:12px;background:#fafbfa}.history-group td{font-size:14px;vertical-align:middle}.history-group td:nth-child(2) strong{font-weight:550}.history-group td small{display:block;color:var(--muted);font-size:12px}.history-amount,.history-open{text-align:right;font-variant-numeric:tabular-nums}.history-open button{min-height:34px}.history-empty{border:1px solid var(--line);border-radius:8px;padding:18px;color:var(--muted);background:white}.history-empty button{margin-top:10px}
+.history-print-list{display:none}
+@media(max-width:760px){.history-controlrow{justify-content:flex-start;align-items:stretch}.history-switch{width:100%}.history-switch button{flex:1;justify-content:center}.history-sum{grid-template-columns:repeat(2,minmax(0,1fr))}.history-sum>div{padding:10px}.history-sum>div:first-child{grid-column:1/-1;border-bottom:1px solid var(--line)}.history-sum>div:nth-child(2){border-left:0}.history-sum small{font-size:12px}.history-sum>div:first-child strong{font-size:28px}.history-listhead{margin-top:17px}.history-group table,.history-group tbody{display:block}.history-group thead{display:none}.history-group tr{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 5px;padding:10px 12px;border-bottom:1px solid var(--line)}.history-group tr:last-child{border:0}.history-group td{border:0;padding:0;display:block}.history-group td:nth-child(2){grid-area:1/1}.history-group td:nth-child(1){grid-area:2/1;display:flex;flex-wrap:wrap;align-items:center;gap:4px;font-size:12px;color:var(--muted)}.history-group td:nth-child(3){grid-area:3/1;display:flex;align-items:center;gap:4px;flex-wrap:wrap}.history-group td:nth-child(4){grid-area:1/2;font-weight:550}.history-group td:nth-child(5){grid-area:2/2/4/3;align-self:end}.history-group h3{padding:9px 12px}.history-group td:nth-child(1) time{font-size:12px}}
+@media print{.history-controlrow,.history-top,.history-visible,.history-listhead label,.history-pages,.history-open,.history-empty button{display:none!important}.history-print-list{display:block!important}.history-group{break-inside:auto;overflow:visible}.history-group tr{break-inside:avoid}.history-group h3{break-after:avoid}.history-group thead{display:table-header-group}.history-sum{break-inside:avoid}}
+@media(min-width:761px){.history-group table{table-layout:fixed;width:100%}.history-group th:nth-child(1){width:20%}.history-group th:nth-child(2){width:30%}.history-group th:nth-child(3){width:23%}.history-group th:nth-child(4){width:14%}.history-group th:nth-child(5){width:13%}}
+
+</style></head><body><a class="skip" href="#main" onclick="event.preventDefault();document.querySelector('#main').focus()">Skip to content</a><header class="top"><div class="topin"><strong class="logo">Hone</strong><div class="global"><span>Dashboard</span><span>Clients</span><span>Calendar</span><span>Waitlist</span><span>Records</span><b>Business</b></div><div class="account"><span class="avatar">JL</span>Jordan</div></div></header><div class="layout"><aside><label class="mobilebiz">Business <select id="mobpage" aria-label="Business page"></select></label><p class="railtitle">Business</p><nav class="rail" id="rail" aria-label="Business pages"></nav><div class="studio"><strong>Example Studio</strong>Toronto · CAD</div></aside><main class="page" id="main" tabindex="-1"></main></div><dialog class="dialog" id="modal" aria-label="Preview details"></dialog><div aria-live="polite" id="feedback"></div><script>
+const $=s=>document.querySelector(s), esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])), money=(v,d=2)=>new Intl.NumberFormat('en-CA',{style:'currency',currency:'CAD',minimumFractionDigits:d,maximumFractionDigits:d}).format(v),sum=(a,f)=>a.reduce((s,r)=>s+f(r),0);
+const icons={analytics:'M3 20h18 M5 16l5-6 4 3 6-8',statements:'M5 3h14v18l-3-2-4 2-4-2-3 2z M8 8h8 M8 12h8',payments:'M3 6h18v13H3z M3 10h18 M6 15h4',capacity:'M3 7h5v13H3z M10 3h5v17h-5z M17 11h4v9h-4z',clock:'M12 3a9 9 0 1 0 .01 0 M12 7v5l3 2'};
+const icon=k=>'<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="'+icons[k]+'"/></svg>';
+const pages={home:'Overview',analytics:'Analytics',statements:'Statements',payments:'Outstanding payments',capacity:'Practice capacity'};
+const first=['Alex','Blair','Casey','Dana','Ellis','Frankie','Gale','Harper','Indy','Jamie','Kai','Lane','Morgan','Nico','Oakley','Parker','Quinn','Reese','Sage','Taylor','Avery','Bailey','Cameron','Drew','Emery','Finley','Gray','Hayden','Jules','Kendall','Lee','Micah','Noel','Paige','Robin','Sam','Terry','Val','Wren','Zoe'];
+const last=['Bennett','Chen','Ellis','Foster','Grant','Hayes','Kim','Lane','Moore','Price','Reed','Scott','Vale','Walsh','Young'];
+const names=first.map((v,i)=>v+' '+last[(i*3)%last.length]);
+const novFees=[...Array(24).fill(150),...Array(21).fill(90),125,125,125,90,60,60];
+const days=[1,2,3,4,5,7,8,9,11,12,14,15,16,17,18,19,20,22,23];
+let visits=[];
+function build(m,n,fees,known,maxNames){for(let i=0;i<n;i++){let paid=i<known,fee=paid?fees[i]:i%3===0?90:null,day=paid?days[(i*7+Math.floor(i/9))%days.length]:23-Math.floor((i-known)/2);visits.push({id:m+'-'+i,m,name:names[i%maxNames],day,service:fee===null?'New client consultation':fee===150?'60 min electrolysis':'Electrolysis session',fee,paid:paid?fee:0,state:paid?'Paid':'Needs review',method:paid?(m==='November'&&i>=48?'E-transfer':'Card'):'',received:paid?'2026-'+(m==='November'?'11':'10')+'-'+String(day).padStart(2,'0'):'',time:['5:00 PM','3:55 PM','2:00 PM','12:40 PM'][i%4],operator:'Jordan',first:i%maxNames>=maxNames-8})}}
+build('November',59,novFees,51,40);build('October',39,[...Array(34).fill(110),220],35,28);
+visits.push({id:'old1',m:'October',name:names[4],day:29,service:'60 min electrolysis',fee:150,paid:0,state:'Money owed',method:'',received:'',time:'2:00 PM',operator:'Jordan'},{id:'old2',m:'October',name:names[7],day:28,service:'30 min electrolysis',fee:90,paid:0,state:'Money owed',method:'',received:'',time:'1:00 PM',operator:'Jordan'},{id:'old3',m:'October',name:names[10],day:27,service:'30 min electrolysis',fee:90,paid:0,state:'Processing',method:'Card',received:'',time:'2:00 PM',operator:'Jordan'});
+const REPORT_AS_OF = '2026-11-23';
+const REPORT_FIRST_DAY = '2025-01-01';
+const reportMonths = Array.from({length:12},(_,n)=>new Date(Date.UTC(2026,n,1)).toLocaleString('en-CA',{month:'long',timeZone:'UTC'}));
+const reportPad = n=>String(n).padStart(2,'0');
+const visitISO = r=>(r.year || 2026)+'-'+reportPad(reportMonths.indexOf(r.m)+1)+'-'+reportPad(r.day);
+const reportISO = d=>d.toISOString().slice(0,10);
+const reportDate = iso=>new Date(iso+'T12:00:00Z');
+function reportOffset(month, offset) {
+  const [y,m]=month.split('-').map(Number);
+  return reportISO(new Date(Date.UTC(y,m-1+offset,1))).slice(0,7);
+}
+function reportLast(month) {
+  const [y,m]=month.split('-').map(Number);
+  return reportISO(new Date(Date.UTC(y,m,0)));
+}
+const earlierDay = (a,b)=>a<b?a:b;
+const reportTextDate = (date,opts)=>reportDate(date).toLocaleString('en-US',{...opts,timeZone:'UTC'});
+const shortMonth = date=>reportTextDate(date,{month:'short'});
+function periodLabel(a,b){
+  const ad=+a.slice(-2),bd=+b.slice(-2),first=shortMonth(a),last=shortMonth(b);
+  return a.slice(0,7)===b.slice(0,7)?first+' '+ad+'–'+bd+', '+b.slice(0,4):first+' '+ad+' – '+last+' '+bd+', '+b.slice(0,4);
+}
+function validReportMonth(v){return typeof v==='string' && /^[1-9]\d{3}-(0[1-9]|1[0-2])$/.test(v) && v<=REPORT_AS_OF.slice(0,7)}
+function periodParams(s){
+  if(!s.period && s.m==='October')return {period:'last'};
+  if(s.period==='month' && validReportMonth(s.queryMonth))return {period:'month',queryMonth:s.queryMonth};
+  return {period:['last','ytd'].includes(s.period)?s.period:'mtd'};
+}
+function reportPeriod(s){
+  const {period:key,queryMonth}=periodParams(s);
+  const currentMonth=key==='last'?reportOffset(REPORT_AS_OF.slice(0,7),-1):key==='month'?queryMonth:REPORT_AS_OF.slice(0,7);
+  const isYear=key==='ytd', partialMonth=currentMonth===REPORT_AS_OF.slice(0,7);
+  const start=isYear?currentMonth.slice(0,4)+'-01-01':currentMonth+'-01';
+  const end=partialMonth?REPORT_AS_OF:reportLast(currentMonth);
+  const priorMonth=reportOffset(currentMonth,isYear?-12:-1);
+  const priorStart=isYear?priorMonth.slice(0,4)+'-01-01':priorMonth+'-01';
+  const priorEnd=partialMonth?earlierDay(priorMonth+'-'+end.slice(-2),reportLast(priorMonth)):reportLast(priorMonth);
+  const selectRows=(a,b)=>visits.filter(r=>{const d=visitISO(r);return d>=a && d<=b && (!s.pr||s.pr==='All practitioners'||s.pr===r.operator)});
+  const buckets=[];
+  if(isYear){
+    for(let i=0;i<Number(currentMonth.slice(-2));i++){
+      const m=reportOffset(start.slice(0,7),i),p=reportOffset(priorStart.slice(0,7),i);
+      buckets.push({label:shortMonth(m+'-01'),priorLabel:shortMonth(p+'-01'),from:m+'-01',to:earlierDay(reportLast(m),end),priorFrom:p+'-01',priorTo:earlierDay(reportLast(p),priorEnd)});
+    }
+  }else{
+    const days=Number(end.slice(-2)),priorDays=Number(priorEnd.slice(-2));
+    const hasPrior=priorStart>=REPORT_FIRST_DAY;
+    for(let day=1;day<=Math.max(days,hasPrior?priorDays:0);day++){
+      const a=day<=days?currentMonth+'-'+reportPad(day):null,b=day<=priorDays?priorMonth+'-'+reportPad(day):null;
+      buckets.push({label:a?shortMonth(a)+' '+day:'',priorLabel:b?shortMonth(b)+' '+day:'',from:a,to:a,priorFrom:b,priorTo:b});
+    }
+  }
+  const monthText=reportTextDate(start,{month:'long',year:'numeric'});
+  return {key,start,end,priorStart,priorEnd,currentMonth,isYear,buckets,title:({mtd:'Month to date',last:'Last month',ytd:'Year to date',month:monthText})[key],
+    label:periodLabel(start,end), priorLabel:periodLabel(priorStart,priorEnd),
+    shortLabel:isYear?start.slice(0,4):shortMonth(start)+' '+start.slice(0,4),
+    priorShortLabel:isYear?priorStart.slice(0,4):shortMonth(priorStart)+' '+priorStart.slice(0,4),
+    rows:selectRows(start,end),previous:selectRows(priorStart,priorEnd),available:start>=REPORT_FIRST_DAY,priorAvailable:priorStart>=REPORT_FIRST_DAY};
+}
+function periodControls(s) {
+  const params=periodParams(s), k=params.period;
+  const button=(value,label)=>'<button type="button" aria-pressed="'+(k===value)+'" data-period="'+value+'">'+label+'</button>';
+  const customLabel=k==='month'?reportTextDate(params.queryMonth+'-01',{month:'short',year:'numeric'}):'Choose month';
+  return '<div class="report-toolbar"><span class="report-label">Reporting period</span><div class="report-choices" role="group" aria-label="Reporting period">'+button('mtd','Month to date')+button('last','Last month')+button('ytd','Year to date')+'<button type="button" data-period="month" aria-haspopup="dialog" aria-pressed="'+(k==='month')+'">'+customLabel+' <span aria-hidden="true">▾</span></button></div><span class="report-asof">Sample data · Nov 23, 2026</span></div>';
+}
+let pickerYear;
+function drawReportPicker(s,firstOpen=false){
+  const picked=reportPeriod(s).currentMonth;
+  if(firstOpen)pickerYear=Number(picked.slice(0,4));
+  const calendar='<div class="rp-year"><button type="button" data-shiftyear="-1" aria-label="Previous year" '+(pickerYear<=1000?'disabled':'')+'>‹</button><label>Year<input type="number" inputmode="numeric" min="1000" max="2026" value="'+pickerYear+'" id="report-pick-year"></label><button type="button" data-shiftyear="1" aria-label="Next year" '+(pickerYear>=2026?'disabled':'')+'>›</button></div><div class="rp-months" role="group" aria-label="Month">'+reportMonths.map((m,i)=>{
+    const key=pickerYear+'-'+reportPad(i+1);
+    return '<button type="button" data-pickmonth="'+key+'" aria-label="'+m+' '+pickerYear+'" aria-pressed="'+(key===picked)+'" '+(validReportMonth(key)?'':'disabled')+'>'+m.slice(0,3)+'</button>';
+  }).join('')+'</div><p class="rp-help">Example records cover January 2025 through November 23, 2026.</p>';
+  dialog('Choose a reporting month',calendar);
+  $('#modal').setAttribute('aria-label','Choose a reporting month');
+  if(firstOpen)$('#modal [aria-pressed="true"]:not(:disabled)')?.focus();
+}
+document.addEventListener('input',e=>{
+  if(e.target.id!=='report-pick-year')return;
+  const v=e.target.valueAsNumber;
+  const valid=Number.isInteger(v)&&v>=1000&&v<=2026;
+  if(valid)pickerYear=v;
+  const picked=reportPeriod(get()).currentMonth;
+  $('#modal').querySelectorAll('[data-pickmonth]').forEach((b,i)=>{
+    const key=v+'-'+reportPad(i+1);
+    b.dataset.pickmonth=key;
+    b.disabled=!valid||!validReportMonth(key);
+    b.setAttribute('aria-label',reportMonths[i]+' '+(valid?v:''));
+    b.setAttribute('aria-pressed',String(key===picked));
+  });
+  $('#modal [data-shiftyear="-1"]').disabled=!valid||v<=1000;
+  $('#modal [data-shiftyear="1"]').disabled=!valid||v>=2026;
+});
+document.addEventListener('click',e=>{
+  const b=e.target.closest('[data-period],[data-shiftyear],[data-pickmonth]');
+  if(!b)return;
+  if(b.dataset.period==='month'){drawReportPicker(get(),true);return}
+  if(b.dataset.shiftyear){pickerYear=Math.min(2026,Math.max(1000,pickerYear+Number(b.dataset.shiftyear)));drawReportPicker(get());$('#report-pick-year').focus();return}
+  if(b.dataset.pickmonth){$('#modal').close();go({period:'month',queryMonth:b.dataset.pickmonth});return}
+  go({period:b.dataset.period,queryMonth:''});
+});
+function periodNavigation(s,k) {
+  const q={p:k,...periodParams(s)};
+  if(k==='statements')q.statementMonth=s.p==='statements'?statementMonthKey(s):reportPeriod(s).currentMonth;
+  return q;
+}
+function periodAction(action,value,s) {
+  const period=reportPeriod(s);
+  if(action==='periodreview'){
+    go({p:'payments',queue:'Needs review',scope:'All months',queueFrom:period.start,queueTo:period.end,qsearch:''});
+    return;
+  }
+  let target=period.currentMonth;
+  if(action==='periodclient'){
+    const latest=period.rows.filter(r=>r.name===value).map(visitISO).sort().pop();
+    if(latest)target=latest.slice(0,7);
+    openClient(value,'month',target);return;
+  }
+  go({p:'statements',statementMonth:target,view:action==='periodclient'?'Clients':'Studio',client:action==='periodclient'?value:'',find:'',stmtfilter:'All visits',pg:'1'});
+}
+// Dated sample records share the same visit ledger as the statement and payment views.
+for (const v of visits) v.year=2026;
+const allReportWaitlist=[];
+for(let year=2025;year<=2026;year++){
+  for(let monthIndex=0;monthIndex<(year===2026?11:12);monthIndex++){
+    const mon=reportMonths[monthIndex],key=year+'-'+reportPad(monthIndex+1);
+    if(key<'2026-10'){
+      const n=(year===2025?19:29)+(monthIndex*5)%13;
+      const lastDay=Number(reportLast(key).slice(-2));
+      for(let j=0;j<n;j++){
+        const day=1+(j*7+Math.floor(j/3)+monthIndex)%lastDay;
+        const isConsult=j%13===0,fee=isConsult?0:[90,115,150,75][(j+monthIndex)%4];
+        const name=names[(j*3+monthIndex)%20];
+        visits.push({id:'example-'+key+'-'+j,year,m:mon,name,day,service:isConsult?'New client consultation':'Electrolysis session',fee,paid:fee,state:isConsult?'No charge':'Paid',method:fee?(j%6===0?'E-transfer':'Card'):'',received:fee?key+'-'+reportPad(day):'',time:['9:00 AM','12:30 PM','3:00 PM'][j%3],operator:'Jordan',first:false});
+      }
+    }
+    const booked=key==='2026-11'?6:key==='2026-10'?4:3+monthIndex%4;
+    const states=[...Array(booked).fill('Booked'),...Array(3).fill('Awaiting response'),...Array(2).fill('Declined'),'Expired'];
+    const people=key==='2026-11'?10:key==='2026-10'?9:states.length-1;
+    for(let j=0;j<states.length;j++)allReportWaitlist.push({date:key+'-'+reportPad(1+(j*3)%23),person:names[(j%people+monthIndex)%30],outcome:states[j]});
+  }
+}
+const exampleRebook=[names[1],names[15],names[31]];let dialogRow,dialogName,toastTimer,ledgerMode='';const dflt={p:'home',m:'November',tab:'Overview',v:'Money',view:'Studio',queue:'Needs review',find:'',client:'',scope:'All months',pr:'All practitioners'};
+function get(){let h=new URLSearchParams(location.hash.slice(1));let s={...dflt,...Object.fromEntries(h)};if(!Object.hasOwn(pages,s.p))s.p='home';if(!['November','October'].includes(s.m))s.m='November';return s}
+function go(changes,reset=false){let s={...(reset?dflt:get()),...changes};let h=new URLSearchParams(Object.entries(s).filter(([k,v])=>v!==dflt[k]));const next=h.toString();if(next===location.hash.slice(1))render();else{history.replaceState({...history.state,scrollY:window.scrollY},'');location.hash=next||'p=home'}}
+const btn=(label,act,cls='')=>'<button type="button" data-act="'+esc(act)+'" class="'+cls+'">'+label+'</button>';
+const op=(value,sel)=>'<option '+(value===sel?'selected':'')+'>'+esc(value)+'</option>';const select=(key,arr,val,label)=>'<label><span class="visually">'+label+'</span><select data-key="'+key+'">'+arr.map(v=>op(v,val)).join('')+'</select></label>';
+const metrics=arr=>'<div class="metrics" style="--count:'+arr.length+'">'+arr.map(([l,n,t])=>'<div class="metric"><span class="lab">'+l+'</span><span class="number">'+n+'</span><span class="delta">'+t+'</span></div>').join('')+'</div>';
+const line=(a,b)=>'<div class="statline"><span>'+a+'</span><b>'+b+'</b></div>';
+const details=(title,content)=>'<details class="cardfoot"><summary>'+title+'</summary>'+content+'</details>';
+const tools=(...x)=>'<div class="tools">'+x.join('')+'</div>';
+const head=(section,title,sub,actions='')=>'<div class="topline">Business &nbsp;/&nbsp; '+section+'</div><div class="head"><div><h1>'+title+'</h1><p>'+sub+'</p></div>'+actions+'</div>';
+const month=(s)=>select('m',['November','October'],s.m,'Statement month');
+function table(cols,rows){return rows.length?'<div class="table"><table><thead><tr>'+cols.map(c=>'<th>'+c+'</th>').join('')+'</tr></thead><tbody>'+rows.map(row=>'<tr>'+row.map((c,i)=>'<td data-label="'+cols[i]+'">'+c+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>':'<div class="card">No results for this selection.</div>'}
+const pill=s=>'<span class="pill '+(s==='Needs review'?'reviewing':s==='Paid'?'paid':'')+'">'+s+'</span>';
+const tabs=(key,options,current)=>'<div class="tabs">'+options.map(t=>btn(t,key+'|'+t,t===current?'sel':'')).join('')+'</div>';
+function toast(t){$('#feedback').innerHTML='<div class="toast">'+esc(t)+'</div>';clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#feedback').innerHTML='',2600)}
+const scopeRows=m=>visits.filter(r=>r.m===m), tally=rs=>({total:sum(rs,r=>r.paid),completed:rs.length,payers:rs.filter(r=>r.paid>0).length,active:new Set(rs.map(r=>r.name)).size,review:rs.filter(r=>r.state==='Needs review').length});
+function reviewBox(n,m){if(!n)return '';return '<div class="review"><span class="symbol">'+icon('clock')+'</span><div><h3>'+n+' '+(n===1?'visit needs':'visits need')+' a payment decision</h3><p>Record money received, confirm a free visit, or mark a balance owed.</p></div>'+btn('Review visits','reviewmonth|'+m)+'</div>'}
+function switcher(items,key,current){return '<div class="switch">'+items.map(t=>btn(t,key+'|'+t,current===t?'sel':'')).join('')+'</div>'}
+function analyticsData(s) {
+  const period=reportPeriod(s);
+  const visible=row=>!s.pr||s.pr==='All practitioners'||row.operator===s.pr;
+  return {...period, rows:period.rows.filter(visible), previous:period.previous.filter(visible)};
+}
+function changeLabel(current, previous) {
+  if (!(previous>0)) return '';
+  const percent=(current/previous-1)*100;
+  return (percent>=0?'+':'−')+Math.abs(percent).toFixed(1)+'%';
+}
+function analyticChoice(items,key,value) {
+  return '<div class="an-toggle" role="group" aria-label="'+(key==='v'?'Measure':'Chart display')+'">'+items.map(([label,choice])=>'<button type="button" data-act="'+esc(key+'|'+choice)+'" aria-pressed="'+(value===choice)+'">'+label+'</button>').join('')+'</div>';
+}
+function reportSeries(p, measure, previous, running) {
+  const dates=new Map();
+  for (const row of previous?p.previous:p.rows) {
+    const date=visitISO(row);
+    dates.set(date,(dates.get(date)||0)+(measure==='Visits'?1:row.paid));
+  }
+  let total=0;
+  return p.buckets.map(b=>{
+    const start=previous?b.priorFrom:b.from, end=previous?b.priorTo:b.to;
+    if (!start || !end || (previous&&!p.priorAvailable)) return null;
+    let bucket=0;
+    for (const [date,value] of dates) if(date>=start && date<=end)bucket+=value;
+    total+=bucket;
+    return running?total:bucket;
+  });
+}
+function analyticsChartModel(p,s) {
+  const running=s.chart!=='Daily', measure=s.v==='Visits'?'Visits':'Money';
+  return {measure,running,display:running?'Running total':p.isYear?'Monthly':'Daily',
+    current:reportSeries(p,measure,false,running),comparison:reportSeries(p,measure,true,running)};
+}
+function shortBucketDate(date,monthly) {
+  return new Intl.DateTimeFormat('en-CA',monthly?{month:'short',year:'numeric',timeZone:'UTC'}:{month:'short',day:'numeric',timeZone:'UTC'}).format(new Date(date+'T00:00:00Z'));
+}
+function numberFor(measure,amount) {
+  return measure==='Money'?money(amount,amount%1?2:0):amount+' '+(amount===1?'visit':'visits');
+}
+function chartReadout(p,m,index) {
+  const bucket=p.buckets[index];
+  const label=when=>when?shortBucketDate(when,p.isYear):'';
+  const readings=[];
+  if(bucket.to)readings.push('<strong>'+(m.running?'Through ':'')+label(bucket.to)+'</strong><span>'+numberFor(m.measure,m.current[index])+'</span>');
+  if(p.priorAvailable&&bucket.priorTo)readings.push('<span class="an-secondary">Comparison · '+label(bucket.priorTo)+' · '+numberFor(m.measure,m.comparison[index])+'</span>');
+  return readings.join('');
+}
+function plot(p,s){
+  const m=analyticsChartModel(p,s),n=p.buckets.length;
+  const moneyChart=m.measure==='Money';
+  const currentTotal=moneyChart?sum(p.rows,r=>r.paid):p.rows.length,previousTotal=moneyChart?sum(p.previous,r=>r.paid):p.previous.length;
+  const delta=p.priorAvailable?changeLabel(currentTotal,previousTotal):'';
+  const left=49,right=606,top=14,bottom=153;
+  const x=i=>left+(n>1?i/(n-1):0)*(right-left);
+  const peak=Math.max(1,...m.current,...m.comparison),base=10**Math.floor(Math.log10(Math.max(peak/3,1)));
+  const tick=[1,2,2.5,4,5,10].map(v=>v*base).find(v=>v>=peak/3);
+  const step=moneyChart?tick:Math.ceil(tick),max=step*Math.ceil(peak/step),y=v=>bottom-v/max*(bottom-top);
+  const grid=[];
+  for(let val=0;val<=max;val+=step){
+    const label=moneyChart?(val>=1000?'$'+Number((val/1000).toFixed(1))+'k':'$'+val):val;
+    grid.push('<path stroke="#dce5e8" stroke-dasharray="3 4" d="M49 '+y(val)+'H606"/><text x="39" y="'+(y(val)+4)+'" text-anchor="end">'+label+'</text>');
+  }
+  function points(series){return series.flatMap((v,i)=>v===null?[]:[[x(i),y(v)]]);}
+  function path(pts){return pts.map(([x,y],i)=>(i?'L':'M')+x.toFixed(1)+' '+y.toFixed(1)).join(' ');}
+  const cur=points(m.current),prev=points(m.comparison),endIndex=p.buckets.findLastIndex(b=>!!b.to);
+  const stepLabel=i=>p.isYear?shortBucketDate(p.buckets[i].from||p.buckets[i].priorFrom,true).split(' ')[0]:Number((p.buckets[i].from||p.buckets[i].priorFrom).slice(-2));
+  const positions=[...new Set(Array.from({length:Math.min(6,n)},(_,i)=>Math.round(i*(n-1)/(Math.min(6,n)-1||1))))];
+  const labels=positions.map(i=>'<text x="'+x(i)+'" y="177" text-anchor="'+(i===n-1?'end':'middle')+'">'+stepLabel(i)+'</text>').join('');
+  const comparable=p.priorAvailable?'<div class="an-comparison">'+(delta?'<b>'+delta+'</b> ':'')+'vs '+esc(p.priorLabel)+' <span>· '+numberFor(m.measure,previousTotal)+'</span></div>':'<div class="an-comparison">Comparison unavailable for '+esc(p.priorLabel)+'.</div>';
+  const draw='<svg viewBox="0 0 630 190" id="an-chart" role="img" aria-label="'+esc(m.display+' '+m.measure+' for '+p.label)+'"><defs><linearGradient id="an-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#93b7c8" stop-opacity=".44"/><stop offset="1" stop-color="#93b7c8" stop-opacity=".04"/></linearGradient></defs>'+grid.join('')+labels+(cur.length?'<path d="'+path(cur)+' L'+cur.at(-1)[0]+' '+bottom+' L'+cur[0][0]+' '+bottom+' Z" fill="url(#an-fill)"/>':'')+(prev.length?'<path d="'+path(prev)+'" fill="none" stroke="#8e9ea9" stroke-width="2.3" stroke-dasharray="5 5"/>':'')+'<path d="'+path(cur)+'" fill="none" stroke="#305a70" stroke-width="3" stroke-linejoin="round"/><g id="an-cursor" transform="translate('+x(endIndex)+' 0)"><path d="M0 14V153" stroke="#648498" stroke-dasharray="3 3"/><circle r="5" cx="0" cy="'+y(m.current[endIndex])+'" fill="#254e64" stroke="#fff" stroke-width="2"/></g></svg>';
+  const extraPrior=p.buckets.filter(b=>!b.from&&b.priorFrom);
+  const alignment=extraPrior.length&&p.priorAvailable?'<p class="tiny">'+shortBucketDate(extraPrior[0].priorFrom,false)+(extraPrior.length>1?'–'+Number(extraPrior.at(-1).priorTo.slice(-2)):'')+' '+(extraPrior.length===1?'appears':'appear')+' on the comparison line only.</p>':'';
+  const readingUnit=p.isYear?'month':'day',cad=moneyChart?'<small>CAD</small>':'';
+  const daily=reportSeries(p,m.measure,false,false),prior=reportSeries(p,m.measure,true,false);
+  return '<section class="an-hero"><div class="an-mainrow"><div><h2>'+(moneyChart?'Collected by visit date':'Completed visits')+'</h2><div class="an-value">'+(moneyChart?money(currentTotal,currentTotal%1?2:0):currentTotal)+cad+'</div></div>'+analyticChoice([['Money','Money'],['Visits','Visits']],'v',m.measure)+'</div>'+comparable+
+    '<div class="an-chartbar"><div class="an-legend"><span><i></i>'+esc(p.shortLabel)+'</span>'+(p.priorAvailable?'<span><i></i>'+esc(p.priorShortLabel)+'</span>':'')+'</div>'+analyticChoice([['Running total','Running total'],[p.isYear?'Monthly':'Daily','Daily']],'chart',s.chart==='Daily'?'Daily':'Running total')+'</div><div class="an-plot">'+draw+'<input type="range" class="an-scrub" min="1" max="'+n+'" value="'+(endIndex+1)+'" aria-label="Inspect a '+readingUnit+' on the chart" aria-valuetext="'+esc(p.buckets[endIndex].label)+'" data-points="'+m.current.map(v=>v===null?'':y(v).toFixed(1)).join(',')+'"></div><div class="an-readout" id="an-readout">'+chartReadout(p,m,endIndex)+'</div>'+alignment+
+    details('View '+(p.isYear?'monthly':'daily')+' figures','<div class="chartdata">'+table([p.isYear?'Month':'Day',p.shortLabel,...(p.priorAvailable?[p.priorShortLabel]:[])],p.buckets.map((b,i)=>[b.from?b.label:b.priorLabel,daily[i]===null?'—':numberFor(m.measure,daily[i]),...(p.priorAvailable?[prior[i]===null?'—':numberFor(m.measure,prior[i])]:[])]))+'</div>')+'</section>';
+}
+function inspectPeriodPoint(input,i){
+  const p=analyticsData(get()),m=analyticsChartModel(p,get()),cursor=$('#an-cursor');
+  if(!cursor)return;
+  const b=p.buckets[i];input.value=i+1;input.setAttribute('aria-valuetext',b.from?b.label:b.priorLabel);
+  cursor.setAttribute('transform','translate('+(49+557*i/(m.current.length-1||1))+' 0)');
+  const dot=cursor.querySelector('circle'),pos=input.dataset.points.split(',')[i];
+  dot.setAttribute('visibility',pos?'visible':'hidden');if(pos)dot.setAttribute('cy',pos);
+  $('#an-readout').innerHTML=chartReadout(p,m,i);
+}
+document.addEventListener('input',e=>{if(e.target.matches('.an-scrub'))inspectPeriodPoint(e.target,Number(e.target.value)-1)});
+document.addEventListener('pointermove',e=>{
+  if(!e.target.matches('.an-scrub')||e.pointerType==='touch')return;
+  const rect=e.target.getBoundingClientRect(),last=Number(e.target.max)-1;
+  inspectPeriodPoint(e.target,Math.max(0,Math.min(last,Math.round((e.clientX-rect.left)/rect.width*last))));
+});
+function clientGroup(p,client) {
+  const seen=visits.filter(r=>r.name===client && visitISO(r)<=p.end);
+  return seen.some(r=>visitISO(r)<p.start)||seen.some(r=>r.first===false)?'Returning':'First recorded visit';
+}
+function intervalDays(p){
+  const clients=new Set(p.rows.map(r=>r.name));
+  let gaps=0,days=0;
+  for(const name of clients){
+    const dates=[...new Set(visits.filter(r=>r.name===name&&visitISO(r)<=p.end).map(visitISO))].sort();
+    dates.forEach((date,i)=>{if(i&&date>=p.start){days+=(Date.parse(date)-Date.parse(dates[i-1]))/86400000;gaps++}});
+  }
+  return gaps?Math.round(days/gaps):null;
+}
+function mix(p){
+  const seen=[...new Set(p.rows.map(r=>r.name))],ret=seen.filter(n=>clientGroup(p,n)==='Returning').length;
+  const pct=seen.length?Math.round(100*ret/seen.length):0;
+  return '<section class="an-card"><div class="split"><h2>Client mix</h2><span class="tiny">'+seen.length+' seen</span></div><div class="an-mix"><span class="an-bignum">'+pct+'%<small>returning</small></span><div class="an-dots" aria-hidden="true">'+seen.map((_,i)=>'<i'+(i<ret?' class="returning"':'')+'></i>').join('')+'</div></div>'+line('Returning clients',ret)+line('First recorded visit',seen.length-ret)+'</section>';
+}
+function anMetric(label,value,old,current,period,note){
+  const diff=period.priorAvailable?changeLabel(current,old):'';
+  return '<div><span>'+label+'</span><strong>'+value+'</strong><small>'+(diff?'<b>'+diff+'</b> vs '+esc(period.priorShortLabel):note)+'</small></div>';
+}
+function outcomePanel(rows){
+  const review=rows.filter(r=>r.state==='Needs review').length,resolved=rows.filter(r=>['Paid','No charge','Fee waived'].includes(r.state)).length;
+  const pending=rows.length-review-resolved;
+  return '<section class="an-card an-checkout"><h2>Checkout status</h2><div class="an-check-line"><strong>'+resolved+' <small>/ '+rows.length+'</small></strong><span>visits resolved</span></div><div class="an-meter" aria-hidden="true"><i style="width:'+(rows.length?100*resolved/rows.length:0)+'%"></i></div>'+line('Paid',rows.filter(r=>r.state==='Paid').length)+line('No charge or waived',rows.filter(r=>['No charge','Fee waived'].includes(r.state)).length)+(pending?line('Confirmed balance or processing',pending):'')+
+    (review?'<div class="an-attention"><span><i></i>'+review+' '+(review===1?'visit needs':'visits need')+' review</span>'+btn('Review visits','periodreview','an-review')+'</div>':'')+'</section>';
+}
+function waitlistReport(p){
+  const rows=allReportWaitlist.filter(r=>r.date>=p.start&&r.date<=p.end), modes=['Booked','Awaiting response','Declined','Expired'];
+  const counts=modes.map(mode=>rows.filter(r=>r.outcome===mode).length),people=new Set(rows.map(r=>r.person)).size;
+  return {modes,counts,rows,people,rate:rows.length?Math.round(100*counts[0]/rows.length)+'%':'—'};
+}
+function analytics(s){
+  const p=analyticsData(s),t=tally(p.rows),pt=tally(p.previous);
+  const title=s.tab==='Overview'?'Studio analytics':s.tab==='Clients'?'Client activity':'Waitlist activity';
+  const header=head('Analytics',title,p.label,tools(s.tab==='Waitlist'?'':select('pr',['All practitioners','Jordan'],s.pr,'Practitioner'),p.available?btn('Export CSV','export'):'',btn('Print','print')))+periodControls(s)+tabs('tab',['Overview','Clients','Waitlist'],s.tab);
+  if(!p.available)return header+'<section class="an-card"><h2>No preview history for this period</h2><p class="paneNote">Choose a month from January 2025 through November 2026 to explore the sample records.</p></section>';
+  if(s.tab==='Waitlist'){
+    const w=waitlistReport(p),n=w.rows.length;
+    return header+'<div class="an-layout"><section class="an-card"><h2>Invitation outcomes</h2><p class="an-bignum">'+w.rate+'<small>booked through an invitation</small></p><div class="an-outcomes">'+w.modes.map((mode,i)=>'<div><span>'+mode+'</span><i><b style="width:'+(n?100*w.counts[i]/n:0)+'%;opacity:'+(1-i*.14)+'"></b></i><strong>'+w.counts[i]+'</strong></div>').join('')+'</div></section><section class="an-card"><h2>Invitation activity</h2>'+line('Invitations issued',n)+line('Distinct people invited',w.people)+line('Linked bookings',w.counts[0])+details('How the rate is calculated','<p>Share of invitations issued during this period that led to a booking.</p>')+'</section></div>';
+  }
+  const gap=intervalDays(p),days=gap===null?'—':gap+' days',gapNote='Average gap between recorded visit dates for clients seen in this period.';
+  if(s.tab==='Clients'){
+    const seen=[...new Set(p.rows.map(r=>r.name))].sort();
+    return header+'<div class="an-layout an-even">'+mix(p)+'<section class="an-card"><h2>Time between visits</h2><p class="an-bignum">'+days+'</p><p class="tiny">'+gapNote+'</p></section></div><div class="split titlebar"><h2>Clients seen</h2><span class="tiny">'+t.active+' clients</span></div>'+table(['Client','Completed visits','Collected',''],seen.map(n=>{const rows=p.rows.filter(r=>r.name===n);return [btn(esc(n),'client|'+n,'fin-name'),rows.length,money(sum(rows,r=>r.paid)),btn('Monthly statement','periodclient|'+n,'link')]}));
+  }
+  const avg=t.payers?t.total/t.payers:0,oldAvg=pt.payers?pt.total/pt.payers:0;
+  return header+'<div class="an-layout"><div class="an-main">'+plot(p,s)+'<section class="an-metrics">'+anMetric('Completed visits',t.completed,pt.completed,t.completed,p,'In this period')+anMetric('Average paid per visit',t.payers?money(avg):'—',oldAvg,avg,p,t.payers+' paid visits')+anMetric('Clients seen',t.active,pt.active,t.active,p,'Distinct clients')+'</section></div><div class="an-side">'+outcomePanel(p.rows)+mix(p)+'</div></div>'+
+    '<div class="an-layout an-even"><section class="an-card"><div class="split"><h2>Payment methods</h2>'+(!p.isYear?btn('View statement','periodstatement','link'):'')+'</div>'+methods(p.rows)+'</section><section class="an-card"><div class="split"><h2>Visit frequency</h2>'+btn('Explore clients','tab|Clients','link')+'</div><div class="an-frequency"><b>'+days+'</b><span>'+gapNote+'</span></div></section></div>'+
+    details('How these figures are calculated','<p>Collections follow visit dates. The average uses the '+t.payers+' visits with recorded money. A client with several completed visits counts once in Clients seen.</p>');
+}
+
+function methods(rs){
+  const totals = new Map();
+  for (const visit of rs) {
+    const receipts = visit.receipts || [{method: visit.method, amount: visit.paid}];
+    for (const receipt of receipts) {
+      if (receipt.amount) totals.set(receipt.method, (totals.get(receipt.method) || 0) + receipt.amount);
+    }
+  }
+  const total = sum(rs, r => r.paid);
+  const cardShare = total ? (totals.get('Card') || 0) / total * 100 : 0;
+  return '<div class="methodbar"><i style="width:'+cardShare+'%"></i></div>'+['Card','E-transfer','Cash','Other'].filter(k=>totals.has(k)).map(k=>line(k,money(totals.get(k)))).join('');
+}
+function receiptEntries(r) {
+  if (r.receipts) return r.receipts;
+  return r.paid ? [{method:r.method, amount:r.paid, date:r.received}] : [];
+}
+const lastStatementMonth='2026-11';
+const isStatementMonth=key=>/^\d{4}-(0[1-9]|1[0-2])$/.test(key||'') && key>='0001-01' && key<=lastStatementMonth;
+function statementMonthKey(s){
+  if(isStatementMonth(s.statementMonth))return s.statementMonth;
+  return s.m==='October'?'2026-10':lastStatementMonth;
+}
+const statementRows=s=>visits.filter(r=>visitISO(r).slice(0,7)===statementMonthKey(s));
+function statementMonthLabel(key){
+  const date=new Date(key+'-01T12:00:00Z');
+  return date.toLocaleDateString('en-CA',{month:'long',year:'numeric',timeZone:'UTC'});
+}
+function shiftStatementMonth(key,delta){
+  const date=new Date(key+'-01T12:00:00Z');
+  date.setUTCMonth(date.getUTCMonth()+delta);
+  return date.toISOString().slice(0,7);
+}
+function statementPicker(key){
+  const before=shiftStatementMonth(key,-1), after=shiftStatementMonth(key,1);
+  const arrow=(label,icon,k)=>'<button type="button" aria-label="'+label+'" title="'+label+'" data-act="stmtmonth|'+k+'" '+(isStatementMonth(k)?'':'disabled')+'>'+icon+'</button>';
+  return '<div class="statement-period">'+arrow('Previous month','‹',before)+
+    '<form id="statement-period-form"><input type="month" name="month" min="0001-01" max="'+lastStatementMonth+'" aria-label="Statement month" required value="'+key+'"><button type="submit">Apply</button></form>'+
+    arrow('Next month','›',after)+'</div>';
+}
+function receivedInMonth(key,client) {
+  return sum(visits.filter(v=>!client||v.name===client),r=>sum(receiptEntries(r).filter(p=>(p.date||'').slice(0,7)===key),p=>p.amount));
+}
+const visitDate=r=>new Date(visitISO(r)+'T12:00:00Z').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',timeZone:'UTC'});
+const remainder=r=>Math.round((r.fee-r.paid)*100)/100;
+const visitCount=n=>n+' '+(n===1?'visit':'visits');
+const payState=r=>r.state==='Money owed' && r.paid>0?'Partial payment':r.state;
+function visitDayValue(r){return Number(visitISO(r).replaceAll('-',''))}
+function ledger(rs){
+  return '<div class="finledger">'+table(['Client / visit','Service','Payment','Collected',''],rs.map(r=>{
+    const methodsUsed=[...new Set(receiptEntries(r).map(p=>p.method))];
+    return [btn(esc(r.name),'client|'+r.name,'fin-name')+'<small>'+visitDate(r)+' · '+r.time+'</small>',esc(r.service),pill(payState(r))+(methodsUsed.length?'<small>'+methodsUsed.join(' + ')+'</small>':''),r.paid||['No charge','Fee waived'].includes(r.state)?money(r.paid):'—',btn(r.state==='Needs review'?'Review':'Details','row|'+r.id,'fin-action')];
+  }))+'</div>';
+}
+function historyScope(s) {return s.historyScope==='month'?'month':'all'}
+function clockMinutes(time) {
+  const [hour,minute,period]=time.split(/[: ]/);
+  return (Number(hour)%12+(period==='PM'?12:0))*60+Number(minute);
+}
+function clientVisits(name) {
+  return visits.filter(v=>v.name===name).sort((a,b)=>visitDayValue(b)-visitDayValue(a)||clockMinutes(b.time)-clockMinutes(a.time)||a.id.localeCompare(b.id));
+}
+function historyRows(s){
+  const all=clientVisits(s.client);
+  return historyScope(s)==='month'?all.filter(v=>visitISO(v).slice(0,7)===statementMonthKey(s)):all;
+}
+function matchingHistoryRows(s) {
+  return historyRows(s).filter(r=>!s.stmtfilter || s.stmtfilter==='All visits' || r.state===s.stmtfilter);
+}
+function openClient(name,scope,key) {
+  const s=get();
+  const month=key||(s.p==='analytics'?reportPeriod(s).currentMonth:statementMonthKey(s));
+  if($('#modal').open)$('#modal').close();
+  go({p:'statements',view:'Clients',client:name,statementMonth:month,historyScope:scope,pg:'1',stmtfilter:'All visits',visit:'',source:s.p==='statements'&&!s.client&&s.view==='Clients'?'directory':s.p});
+}
+function openClientVisit(id){
+  const s=get();
+  if(!s.client||s.p!=='statements')return showRow(id);
+  if(!clientVisits(s.client).some(r=>r.id===id))return;
+  const query=new URLSearchParams(location.hash.slice(1));
+  query.set('visit',id);
+  const button=document.activeElement;
+  history.replaceState({...history.state,scrollY:window.scrollY,visitButton:button?.dataset.act},'');
+  history.pushState({clientVisit:true,scrollY:window.scrollY},'','#'+query);
+  showRow(id);
+}
+function closeClientVisit(){
+  if(!get().visit){$('#modal').close();return;}
+  if(history.state?.clientVisit){history.back();return;}
+  const query=new URLSearchParams(location.hash.slice(1));query.delete('visit');
+  history.replaceState(null,'','#'+query);
+  if($('#modal').open)$('#modal').close();
+  render();
+}
+function syncClientVisit(s){
+  if(s.p==='statements'&&s.client&&s.visit&&clientVisits(s.client).some(r=>r.id===s.visit))showRow(s.visit);
+  else if($('#modal').open)$('#modal').close();
+}
+$('#modal').addEventListener('cancel',e=>{if(get().visit){e.preventDefault();closeClientVisit()}});
+function knownClientDirectory(s,rs){
+  const find=(s.find||'').trim().toLowerCase();
+  const ns=[...new Set(visits.map(r=>r.name))].filter(n=>n.toLowerCase().includes(find));
+  const monthClients=new Set(rs.map(r=>r.name));
+  ns.sort((a,b)=>Number(monthClients.has(b))-Number(monthClients.has(a))||a.localeCompare(b));
+  const rows=ns.map(name=>{
+    const monthly=rs.filter(r=>r.name===name), t=tally(monthly), all=clientVisits(name);
+    return [btn(esc(name),'client|'+name,'fin-name')+'<small>'+visitCount(all.length)+' on file</small>',
+      t.completed, t.completed?money(t.total):'—', t.review?btn(t.review+' to review','firstreview|'+monthly.find(r=>r.state==='Needs review').id,'fin-action'):'—',
+      btn('Monthly statement','monthlyclient|'+name,'link')];
+  });
+  return '<div id="clientslist" class="finlist">'+(rows.length?table(['Client','Visits this month','Collected this month','To review',''],rows):'<div class="card fin-empty">No clients match this name.</div>')+'</div>';
+}
+function historyPeriodButtons(scope,countThis,countAll){
+  function button(value,label,count) {
+    return '<button type="button" data-act="historyscope|'+value+'" aria-pressed="'+(scope===value)+'"><strong>'+label+'</strong><span>'+count+'</span></button>';
+  }
+  return '<div class="history-switch" role="group" aria-label="Visit history period">'+button('month','This month',countThis)+button('all','All visits',countAll)+'</div>';
+}
+function historyGroups(rows){
+  const groups=new Map();
+  for(const visit of rows){
+    const key=visitISO(visit).slice(0,7);
+    if(!groups.has(key))groups.set(key,[]);
+    groups.get(key).push(visit);
+  }
+  return [...groups].map(([key,items])=>{
+    const lines=items.map(v=>{
+      const date=reportTextDate(visitISO(v),{weekday:'short',month:'short',day:'numeric'});
+      const receivedMethods=[...new Set(receiptEntries(v).map(r=>r.method))].join(' + ');
+      const amount=v.paid || ['No charge','Fee waived'].includes(v.state)?money(v.paid):'—';
+      const remaining=v.state==='Money owed'?' · '+money(remainder(v))+' owed':'';
+      return '<tr data-visit-id="'+esc(v.id)+'"><td><time datetime="'+visitISO(v)+'">'+esc(date)+'</time><small>'+esc(v.time)+'</small></td><td><strong>'+esc(v.service)+'</strong><small>'+esc(v.operator)+'</small></td><td>'+pill(payState(v))+'<small>'+esc(receivedMethods+remaining).replace(/^ · /,'')+'</small></td><td class="history-amount">'+amount+'</td><td class="history-open">'+btn(v.state==='Needs review'?'Review':'Details','row|'+v.id,'fin-action')+'</td></tr>';
+    }).join('');
+    return '<section class="history-group"><h3>'+statementMonthLabel(key)+'</h3><table><thead><tr><th scope="col">Date and time</th><th scope="col">Service / practitioner</th><th scope="col">Payment</th><th scope="col" class="history-amount">Collected</th><th scope="col" class="history-open"><span class="visually">Open visit</span></th></tr></thead><tbody>'+lines+'</tbody></table></section>';
+  }).join('');
+}
+function clientHistory(s){
+  const key=statementMonthKey(s),month=statementMonthLabel(key),scope=historyScope(s),all=clientVisits(s.client);
+  const monthCount=all.filter(v=>visitISO(v).slice(0,7)===key).length;
+  const rows=historyRows(s),filtered=matchingHistoryRows(s),summary=tally(rows);
+  const owed=sum(rows.filter(v=>v.state==='Money owed'),remainder);
+  const span=scope==='month'?month:all.length?visitDate(all.at(-1))+' – '+visitDate(all[0]):'All recorded visits';
+  const cover='<div class="history-top">'+btn('← Client statements','backclients','link')+'</div>'+head('Client statements',esc(s.client),'Client visit history',tools(btn('Export CSV','export'),btn('Print / PDF','print')));
+  const controls='<div class="history-controlrow">'+historyPeriodButtons(scope,monthCount,all.length)+(scope==='month'?statementPicker(key):'')+'</div>';
+  const stateFilter=s.stmtfilter || 'All visits';
+  const opts=['All visits','Needs review','Money owed','Paid','No charge','Fee waived','Processing'].map(k=>'<option value="'+k+'" '+(stateFilter===k?'selected':'')+'>'+(k==='All visits'?'All payment outcomes':k)+'</option>').join('');
+  const summaryBlock='<div class="history-sum"><div><small>Collected for these visits</small><strong>'+money(summary.total)+' <em>CAD</em></strong></div><div><small>Confirmed money owed</small><strong>'+money(owed)+'</strong></div><div><small>Visits to review</small><strong>'+summary.review+'</strong></div></div>';
+  const dates=scope==='month'?details('Compare visit dates and receipt dates','<div class="fin-breakdown">'+line('Collected for visits in '+month,money(summary.total))+line('Received during '+month,money(receivedInMonth(key,s.client)))+'</div>'):'';
+  let list;
+  if(filtered.length) {
+    const pageSize=12,pages=Math.ceil(filtered.length/pageSize),page=Math.min(Math.max(1,Math.floor(Number(s.pg)||1)),pages),start=(page-1)*pageSize;
+    list='<div class="history-visible">'+historyGroups(filtered.slice(start,start+pageSize))+'</div>';
+    list+='<div class="history-print-list">'+historyGroups(filtered)+'</div>';
+    if(pages>1)list+='<div class="fin-pager history-pages"><span>Visits '+(start+1)+'–'+Math.min(filtered.length,start+pageSize)+' of '+filtered.length+'</span><div>'+(page>1?btn('Newer visits','pg|'+(page-1)):'')+(page<pages?btn('Older visits','pg|'+(page+1)):'')+'</div></div>';
+  } else {
+    let msg='No visits match this payment outcome.';let fix=btn('Show all payment outcomes','stmtfilter|All visits','fin-action');
+    if(!rows.length){
+      msg=scope==='month'?'No visits recorded in '+month+'.':'No visits recorded for this client.';
+      fix=scope==='month'&&all.length?btn('See all '+visitCount(all.length),'historyscope|all','fin-action'):'';
+    }
+    list='<div class="history-empty"><p>'+msg+'</p>'+fix+'</div>';
+  }
+  const title=(scope==='month'?month:'All visits')+'<span>'+visitCount(summary.completed)+'</span>';
+  return '<div class="history-view">'+cover+controls+'<div class="history-period"><h2>'+title+'</h2>'+(scope==='all'?'<p>'+span+'</p>':'')+'</div>'+summaryBlock+dates+'<div class="history-listhead"><h2>Visits</h2><label><span class="visually">Filter visits by payment outcome</span><select data-key="stmtfilter">'+opts+'</select></label></div>'+(stateFilter==='All visits'?'':'<small class="history-filterdesc">'+esc(stateFilter)+' · '+visitCount(filtered.length)+'</small>')+list+'</div>';
+}
+
+function statements(s){
+  if(s.client)return clientHistory(s);
+  const key=statementMonthKey(s),all=statementRows(s),rs=s.client?all.filter(r=>r.name===s.client):all,t=tally(rs);
+  const clientIndex=s.view==='Clients'&&!s.client;
+  const monthName=statementMonthLabel(key);
+  const top=head('Statements',s.client?esc(s.client):'Monthly statements',s.client?'Client statement · '+monthName:'Example Studio · '+monthName,tools(statementPicker(key),btn('Export CSV','export'),btn('Print / PDF','print')));
+  const title=clientIndex?'Client statements':'Visit activity';
+  const summary='<div class="card dual fin-summary"><div><span class="lab">Collected for '+monthName+' visits</span><div class="number">'+money(t.total)+'<em>CAD</em></div><small>'+visitCount(t.payers)+' with money recorded</small></div><div><h3>Collected by method</h3>'+methods(rs)+'</div></div>';
+  const colDate=receivedInMonth(key,s.client);
+  const breakdown=details('Compare visit dates and receipt dates','<div class="fin-breakdown">'+line('Collected for visits in '+monthName,money(t.total))+line('Received during '+monthName,money(colDate))+'<p>Visit totals follow the appointment. Receipt totals follow the day the money arrived, including payments for earlier visits.</p></div>');
+  let body;
+  if(clientIndex){
+    body='<div class="split titlebar"><h2>'+title+'</h2><input class="field" id="search" aria-label="Find a client" placeholder="Find a client…" value="'+esc(s.find)+'"></div>'+clientlist(s,all);
+  } else {
+    const filter=s.stmtfilter||'All visits';
+    const filtered=rs.filter(r=>filter==='All visits'||r.state===filter).sort((a,b)=>visitDayValue(b)-visitDayValue(a)||b.id.localeCompare(a.id));
+    const size=8, pages=Math.max(1,Math.ceil(filtered.length/size)), page=Math.max(1,Math.min(pages,Number(s.pg)||1)), start=(page-1)*size;
+    body='<div class="split titlebar"><div><h2>'+title+'</h2><span class="tiny">'+visitCount(filtered.length)+' · Latest first</span></div>'+select('stmtfilter',['All visits','Needs review','Money owed','Paid','No charge','Fee waived','Processing'],filter,'Filter visits by payment outcome')+'</div>';
+    body+=filtered.length?ledger(filtered.slice(start,start+size)):'<div class="card fin-empty">No visits match this payment outcome.</div>';
+    if(filtered.length>size)body=body.replace(ledger(filtered.slice(start,start+size)), '<div class="fin-interactive">'+ledger(filtered.slice(start,start+size))+'</div><div class="fin-print">'+ledger(filtered)+'</div>');
+    if(filtered.length>size)body+='<div class="fin-pager"><span>'+ (start+1)+'–'+Math.min(start+size,filtered.length)+' of '+filtered.length+' visits</span><div>'+(page>1?btn('Earlier page','pg|'+(page-1)):'')+(page<pages?btn('More visits','pg|'+(page+1)):'')+'</div></div>';
+  }
+  const review=t.review&&!clientIndex&&s.stmtfilter!=='Needs review'?'<div class="fin-notice"><span>'+icon('clock')+'</span><div><strong>'+visitCount(t.review)+' to review</strong><small>Confirm what happened at checkout.</small></div>'+btn('Review visits','stmtfilter|Needs review','fin-action')+'</div>':'';
+  if(!all.length&&!colDate&&!clientIndex)return top+tabs('view',['Studio','Clients'],s.view)+'<div class="card fin-empty">No example statement is available for '+monthName+'. Choose another month.</div>';
+  return top+tabs('view',['Studio','Clients'],s.view)+(s.client?'<div class="block">'+btn('All client statements','backclients','link')+'</div>':'')+summary+breakdown+review+body;
+}
+function clientlist(s,rs){return knownClientDirectory(s,rs)}
+function queueRange(s){
+  const valid=v=>/^\d{4}-\d{2}-\d{2}$/.test(v||'');
+  return valid(s.queueFrom)&&valid(s.queueTo)&&s.queueFrom<=s.queueTo;
+}
+function queueSource(s){
+  if(queueRange(s))return visits.filter(r=>visitISO(r)>=s.queueFrom && visitISO(r)<=s.queueTo);
+  if(s.scope==='All months'||!s.scope)return visits;
+  const key=isStatementMonth(s.scope)?s.scope:s.scope==='October'?'2026-10':'2026-11';
+  return visits.filter(r=>visitISO(r).slice(0,7)===key);
+}
+function queueFilter(s){
+  const scoped=queueRange(s),openMonths=[...new Set(visits.filter(r=>['Needs review','Money owed','Processing'].includes(r.state)).map(r=>visitISO(r).slice(0,7)))];
+  const key=s.scope==='October'?'2026-10':s.scope==='November'?'2026-11':s.scope;
+  if(isStatementMonth(key)&&!openMonths.includes(key))openMonths.push(key);
+  const format=v=>new Date(v+'T12:00:00Z').toLocaleDateString('en-US',{day:'numeric',month:'short',year:'numeric',timeZone:'UTC'});
+  return '<label><span class="visually">Filter payments by visit month</span><select data-key="scope">'+
+    (scoped?'<option selected disabled>'+format(s.queueFrom)+' – '+format(s.queueTo)+'</option>':'')+
+    '<option value="All months" '+(!scoped&&key==='All months'?'selected':'')+'>All months</option>'+
+    openMonths.sort().reverse().map(m=>'<option value="'+m+'" '+(!scoped&&m===key?'selected':'')+'>'+statementMonthLabel(m)+'</option>').join('')+'</select></label>';
+}
+function queue(s){
+  const source=queueSource(s);
+  const modes=['Needs review','Money owed','Processing'];
+  const buckets=modes.map(mode=>source.filter(r=>r.state===mode));
+  const mode=modes.includes(s.queue)?s.queue:modes[0],rs=buckets[modes.indexOf(mode)];
+  const top=head('Outstanding payments','Outstanding payments','Payment decisions and confirmed balances across the studio.',tools(queueFilter(s)));
+  const counts=[buckets[0].length,money(sum(buckets[1],remainder),sum(buckets[1],remainder)%1?2:0),buckets[2].length];
+  const foot=['Visits to reconcile',visitCount(buckets[1].length)+' with a balance','Awaiting card confirmation'];
+  const cards='<div class="fin-buckets" role="group" aria-label="Payment queues">'+modes.map((m,i)=>'<button data-act="queue|'+m+'" aria-label="'+m+'" aria-pressed="'+(m===mode)+'"><span class="fin-bucket-label">'+icon(['clock','payments','statements'][i])+m+'</span><strong>'+counts[i]+'</strong><small>'+foot[i]+'</small></button>').join('')+'</div>';
+  const name=mode==='Needs review'?'Visits to reconcile':mode==='Money owed'?'Confirmed balances':'Pending card payments';
+  const descr=mode==='Needs review'?'A missing payment record needs a decision before any balance is counted.':mode==='Money owed'?'Only the unpaid remainder appears in the balance.':'Track the original card attempt until its outcome is known.';
+  return top+cards+'<section class="fin-queue"><div class="fin-queue-head"><div><h2>'+name+'</h2><p>'+descr+'</p></div><label class="fin-find"><span aria-hidden="true">⌕</span><input id="qsearch" aria-label="Search payment queue" placeholder="Find a client…" value="'+esc(s.qsearch||'')+'"></label></div>'+queueResults(s,rs,mode)+'</section>';
+}
+function queueResults(s,rs,mode){
+  const query=(s.qsearch||'').trim().toLowerCase(),groups=new Map();
+  rs.filter(r=>r.name.toLowerCase().includes(query)).sort((a,b)=>visitDayValue(a)-visitDayValue(b)).forEach(r=>{
+    if(!groups.has(r.name))groups.set(r.name,[]);
+    groups.get(r.name).push(r);
+  });
+  const list=[...groups.entries()].map(([n,rows])=>{
+    return '<section class="fin-group">'+rows.map((r,i)=>{
+      const reason=mode==='Needs review'?(r.fee==null?'Agreed fee unknown':'Payment unconfirmed'):mode==='Money owed'?(r.due?'Follow up '+esc(r.due):r.paid?'Partially paid':'Confirmed unpaid'):'Card authorization pending';
+      const amt=mode==='Money owed'?money(remainder(r)):r.fee==null?'—':money(r.fee);
+      const action=mode==='Needs review'?'Review visit':mode==='Money owed'?'Manage':'Check status';
+      return '<div class="fin-case"><div class="fin-case-name">'+(i===0?btn(esc(n),'queueclient|'+r.id,'fin-name')+(rows.length>1?' <small>('+visitCount(rows.length)+')</small>':''):'<span class="visually">'+esc(n)+'</span>')+'<small>'+visitDate(r)+' · '+esc(r.operator)+'</small></div><div class="fin-case-desc"><span>'+esc(r.service)+'</span><small>'+reason+'</small></div><div class="fin-case-amt"><b>'+amt+'</b><small>'+(mode==='Money owed'?'Remaining':'Visit fee')+'</small></div>'+btn(action,'row|'+r.id,'fin-action')+'</div>';
+    }).join('')+'</section>';
+  }).join('');
+  return '<div id="qresult">'+(list||'<div class="fin-empty">'+(query?'No matching clients in this queue.':mode==='Needs review'?'Every visit in this period has a payment decision.':mode==='Processing'?'No card payments are awaiting confirmation.':'No confirmed balances for this period.')+'</div>')+'</div>';
+}
+const capacityPlans = [
+  ...exampleRebook.map((name, i) => ({name, minutes: [30, 45, 60][i], slot: ''})),
+  {name: names[6], minutes: 30, slot: 'existing'}
+];
+const capacityOpenings = [
+  {id: 'existing', day: 'Tue, Nov 24', time: '9:00 AM', minutes: 30},
+  {id: 'tue', day: 'Tue, Nov 24', time: '2:00 PM', minutes: 60},
+  {id: 'wed', day: 'Wed, Nov 25', time: '11:00 AM', minutes: 45},
+  {id: 'fri', day: 'Fri, Nov 27', time: '10:30 AM', minutes: 60},
+  {id: 'mon', day: 'Mon, Nov 30', time: '1:00 PM', minutes: 60}
+];
+function capacityButton(label, action, index, classes='') {
+  return '<button type="button" class="'+classes+'" data-capacity="'+action+'" data-plan="'+index+'">'+label+'</button>';
+}
+function capacity(s) {
+  const booked = capacityPlans.filter(p=>p.slot);
+  const waiting = capacityPlans.length - booked.length;
+  const hours = 29.8 + booked.filter(p=>p.slot!=='existing').reduce((total,p)=>total+p.minutes/60,0);
+  const selected = s.plans === 'booked' ? 'booked' : 'waiting';
+  const people = capacityPlans.filter(p => selected === 'booked' ? p.slot : !p.slot);
+  const headBlock = head('Practice capacity','Practice capacity','Upcoming treatment and rebooking at Example Studio.');
+  const measure = (label,value,sub) => '<div><span>'+label+'</span><strong>'+value+'</strong><small>'+sub+'</small></div>';
+  const rows = people.map(p=>{
+    const i = capacityPlans.indexOf(p);
+    const last = visits.filter(v=>v.name===p.name && visitISO(v).slice(0,7)==='2026-11').sort((a,b)=>b.day-a.day)[0];
+    const slot = capacityOpenings.find(o=>o.id===p.slot);
+    return '<div class="cap-row"><div class="cap-identity">'+btn(esc(p.name),'client|'+p.name,'fin-name')+'<small>Electrolysis · '+p.minutes+' min · Jordan</small></div><div class="cap-date"><small>'+(slot?'Next treatment':'Last visit')+'</small><span>'+(slot?slot.day+' · '+slot.time:last?'Nov '+last.day+', 2026':'Unrecorded')+'</span></div>'+capacityButton(slot?'View booking':'Find a time',slot?'view':'find',i,'cap-row-action')+'</div>';
+  }).join('');
+  const filters = '<div class="cap-filters" aria-label="Filter treatment plans">'+
+    ['waiting','booked'].map((v)=>'<button type="button" data-capacity="filter" data-plan="'+v+'" aria-pressed="'+(selected===v)+'">'+(v==='waiting'?'Needs booking':'Booked')+' <b>'+(v==='waiting'?waiting:booked.length)+'</b></button>').join('')+'</div>';
+  let bands = [['No future treatment',waiting],['1 or more',booked.length],['2 or more',0],['3 or more',0]];
+  const bars = bands.map(([name,n])=>'<div class="cap-band"><div><span>'+name+'</span><b>'+n+'</b></div><div class="cap-track"><i style="width:'+(n/4*100)+'%"></i></div></div>').join('');
+  return headBlock+'<div class="cap-wrap"><div class="cap-summary">'+
+    measure('Active treatment plans','4','Among 97 client records')+
+    measure('Next visit booked',booked.length+' <em>of 4</em>','Clients with an open plan')+
+    measure('Treatment time booked',hours.toFixed(1)+' <em>h</em>','Across all current clients')+
+    '</div><div class="cap-work"><section class="card cap-list"><div class="cap-lead"><div><h2>Who to rebook</h2><p>Clients with an open plan and their next treatment.</p></div></div>'+filters+'<div class="cap-rows">'+(rows||'<div class="cap-empty">Every active treatment client has a future treatment booked.</div>')+'</div></section>'+
+    '<section class="card cap-depth"><h2>Booking depth</h2><p>Future treatments per active client</p>'+bars+'<small>Each “or more” count includes clients in the bands below it.</small></section></div>'+
+    details('What counts toward capacity','<p>An open treatment plan makes a client active. A future treatment counts as a booking. The booked hours cover treatment appointments for all current, non-archived clients and exclude consultations and buffers.</p>')+'</div>';
+}
+function capacityTimeDialog(index) {
+  const p=capacityPlans[index];
+  if(!p)return;
+  if(p.slot) {
+    const slot = capacityOpenings.find(o=>o.id===p.slot);
+    dialog('Upcoming treatment','<div class="cap-form"><h3>'+esc(p.name)+'</h3>'+line('Treatment','Electrolysis · '+p.minutes+' min')+line('Practitioner','Jordan')+line('Next visit',slot.day+' · '+slot.time)+'<p class="tiny">Toronto time · Example appointment</p></div>');
+    return;
+  }
+  const free = capacityOpenings.filter(o=>o.minutes>=p.minutes && !capacityPlans.some(plan=>plan.slot===o.id));
+  const options = free.map((o,i)=>'<label class="cap-slot"><input type="radio" name="slot" value="'+o.id+'" '+(i===0?'checked':'')+' required><span>'+o.day+'</span><b>'+o.time+'</b></label>').join('');
+  dialog('Find a treatment time','<form class="cap-form" id="capacityBooking" data-plan="'+index+'"><h3>'+esc(p.name)+'</h3><p class="tiny">Electrolysis · '+p.minutes+' min with Jordan</p><fieldset class="cap-options"><legend>Available times · Toronto</legend>'+options+'</fieldset><p class="cap-disclaimer">Sample openings. Choosing a time updates this preview only.</p><div class="act"><button type="button" data-act="close">Cancel</button><button class="primary" type="submit" '+(free.length?'':'disabled')+'>Book in preview</button></div></form>');
+}
+document.addEventListener('click',e=>{
+  const b=e.target.closest('[data-capacity]');
+  if(!b)return;
+  if(b.dataset.capacity==='filter')go({plans:b.dataset.plan});
+  else capacityTimeDialog(Number(b.dataset.plan));
+});
+document.addEventListener('submit',e=>{
+  const f=e.target;
+  if(f.id!=='capacityBooking')return;
+  e.preventDefault();
+  const p=capacityPlans[Number(f.dataset.plan)];
+  const selected=new FormData(f).get('slot');
+  const slot=capacityOpenings.find(o=>o.id===selected);
+  if(!p || p.slot || !slot || slot.minutes<p.minutes || capacityPlans.some(plan=>plan.slot===selected))return;
+  p.slot=slot.id;
+  $('#modal').close();
+  render();
+  toast('Booked in preview · '+p.name+' · '+slot.day+' at '+slot.time);
+});
+
+const businessIcon = {
+  home: 'M3 11l9-8 9 8 M5 10v10h5v-6h4v6h5V10',
+  arrow: 'M4 12h15m-6-6 6 6-6 6',
+  up: 'M4 16l6-6 4 4 6-8m-5 0h5v5',
+  plan: 'M5 5h14v15H5z M8 2v5m8-5v5M5 10h14M9 14h6',
+  list: 'M4 5h16v14H4z M7 9h10m-10 5h6',
+  pending: 'M5 3h14M5 21h14M7 3v3c0 3 4 5 5 6-1 1-5 3-5 6v3m10-18v3c0 3-4 5-5 6 1 1 5 3 5 6v3'
+};
+Object.assign(icons, businessIcon);
+function workspaceLink(page, label, extras = {}, className = '') {
+  const query = new URLSearchParams({p:page, ...extras});
+  return '<a class="'+className+'" href="#'+esc(query)+'">'+label+'</a>';
+}
+function homeDateText(iso, options) {
+  return new Intl.DateTimeFormat('en-CA',{timeZone:'UTC',...options}).format(new Date(iso+'T12:00:00Z'));
+}
+function homeTrend(report) {
+  if(!report.available || !report.rows.length) {
+    return '<div class="hometrend home-empty"><strong>'+ (report.available?'No visits recorded':'No sample activity available')+'</strong><span>'+esc(report.label)+'</span></div>';
+  }
+  function totals(records,start,end) {
+    const buckets = new Map();
+    const cursor = new Date(start+'T00:00:00Z'), stop = new Date(end+'T00:00:00Z');
+    while(cursor<=stop){
+      const key=cursor.toISOString().slice(0,report.isYear?7:10);
+      buckets.set(key,0);
+      if(report.isYear)cursor.setUTCMonth(cursor.getUTCMonth()+1,1);
+      else cursor.setUTCDate(cursor.getUTCDate()+1);
+    }
+    for(const r of records){
+      const key=visitISO(r).slice(0,report.isYear?7:10);
+      if(buckets.has(key))buckets.set(key,buckets.get(key)+r.paid);
+    }
+    let running=0;
+    return Array.from(buckets.values(),n=>running+=n);
+  }
+  const current=totals(report.rows,report.start,report.end);
+  const previous=report.priorAvailable?totals(report.previous,report.priorStart,report.priorEnd):[];
+  const peak=Math.max(...current,...previous,1);
+  const x=(i,n)=>n<=1?307:3+304*i/(n-1);
+  const y=v=>89-78*v/peak;
+  const path=a=>a.map((v,i)=>(i?'L':'M')+x(i,a.length).toFixed(1)+' '+y(v).toFixed(1)).join(' ');
+  const comparison=previous.length?'<path d="'+path(previous)+'" stroke="#8a989e" stroke-width="1.5" stroke-dasharray="4 4" fill="none"/>':'';
+  const dateFormat=report.isYear?{month:'short'}:{month:'short',day:'numeric'};
+  return '<div class="hometrend"><div class="trendlabel">Cumulative collections</div>'+
+    '<svg viewBox="0 0 312 100" preserveAspectRatio="none" role="img" aria-label="Cumulative collections for '+esc(report.label)+'"><path d="M3 90H310M3 51H310M3 12H310" stroke="#465359" stroke-dasharray="2 5"/>'+comparison+'<path d="'+path(current)+'" stroke="#e6f3fb" stroke-width="2.8" fill="none" stroke-linejoin="round"/><circle cx="307" cy="'+y(current.at(-1))+'" r="4" fill="#e6f3fb"/></svg>'+
+    '<div class="chartaxis"><span>'+homeDateText(report.start,dateFormat)+'</span><span>'+homeDateText(report.end,dateFormat)+'</span></div><div class="trendkey"><span><i></i>'+esc(report.shortLabel)+'</span>'+(previous.length?'<span><i class="dotted"></i>'+esc(report.priorShortLabel)+'</span>':'')+'</div></div>';
+}
+function homeAction(kind, label, value, description, section, options, color) {
+  return workspaceLink(section,'<span class="homeactionicon '+color+'">'+icon(kind)+'</span><span class="hometask"><strong>'+label+'</strong><small>'+description+'</small></span><b class="tasknumber">'+value+'</b>'+icon('arrow'),options,'homeaction');
+}
+function home(s) {
+  const period=reportPeriod(s), selected=periodParams(s);
+  const t=tally(period.rows), prior=tally(period.previous);
+  const pct=prior.total ? 100*(t.total-prior.total)/prior.total : null;
+  const comparison=period.available && period.priorAvailable && pct!==null
+    ? '<div class="herocompare"><b>'+(pct>0?'↗ ':pct<0?'↘ ':'')+(pct>0?'+':'')+pct.toFixed(1)+'%</b><span>vs '+esc(period.priorLabel)+'</span></div>'
+    : period.available && period.priorAvailable && period.rows.length
+      ? '<div class="herocompare"><span>'+money(prior.total,0)+' in '+esc(period.priorLabel)+'</span></div>'
+      : '';
+  const nReview=visits.filter(r=>r.state==='Needs review').length, owed=visits.filter(r=>r.state==='Money owed');
+  const pending=visits.filter(r=>r.state==='Processing').length;
+  const rebook=capacityPlans.filter(plan=>!plan.slot);
+  const debt=sum(owed,r=>r.fee-r.paid);
+  const monthText=homeDateText(period.currentMonth+'-01',{month:'long',year:'numeric'});
+  const lastCard=period.isYear
+    ? '<section class="homestatement"><span class="papericon">'+icon('analytics')+'</span><div><h2>Clients seen year to date</h2><p>'+esc(period.label)+'</p></div>'+workspaceLink('analytics','Explore clients '+icon('arrow'),{...selected,tab:'Clients'},'outlineLink')+'</section>'
+    : '<section class="homestatement"><span class="papericon">'+icon('statements')+'</span><div><h2>'+esc(monthText)+' statement</h2><p>'+ (period.available?t.payers+' '+(t.payers===1?'visit':'visits')+' with recorded payments':'No sample records for this month')+'</p></div>'+workspaceLink('statements','Open statement '+icon('arrow'),{...selected,statementMonth:period.currentMonth},'outlineLink')+'</section>';
+  return '<div class="homeview"><div class="homehead"><div><h1>Business overview</h1><p>Example Studio <span>·</span> Toronto</p></div></div>'+periodControls(s)+
+    '<section class="homehero"><div class="heroabove"><div class="homeherobody"><div class="herolabel">Collected by visit date</div><div class="herovalue">'+(period.available?money(t.total,t.total%1?2:0)+'<small>CAD</small>':'—')+'</div>'+comparison+'<div class="heroperiod">'+esc(period.label)+'</div></div>'+homeTrend(period)+'</div><div class="herobottom"><div><span>Completed visits</span><strong>'+(period.available?t.completed:'—')+'</strong></div><div><span>Clients seen</span><strong>'+(period.available?t.active:'—')+'</strong></div><div><span>Average paid visit</span><strong>'+(period.available&&t.payers?money(t.total/t.payers):'—')+'</strong></div>'+workspaceLink('analytics','Explore analytics '+icon('arrow'),selected,'herolink')+'</div></section>'+
+    '<div class="homegrid"><section class="groupbox"><div class="grouphead"><h2>Payment follow-up</h2><small>All visit dates</small></div>'+
+    homeAction('list','Needs review',nReview,'Visits missing a checkout decision','payments',{queue:'Needs review'},'wheat')+
+    homeAction('payments','Money owed',money(debt,debt%1?2:0),'Confirmed balances on '+owed.length+' visits','payments',{queue:'Money owed'},'mist')+
+    homeAction('pending','Processing',pending,'Card payments awaiting confirmation','payments',{queue:'Processing'},'fog')+
+    '</section><section class="groupbox continuity"><div class="grouphead"><h2>Treatment follow-up</h2><small>As of Nov 23</small></div><div class="continuitybody"><div class="planfigure"><strong>'+rebook.length+'</strong><span>of '+capacityPlans.length+' clients with open plans<br>have no treatment booked</span></div><div class="planmeter" aria-hidden="true">'+capacityPlans.map((_,i)=>'<i class="'+(i<rebook.length?'need':'')+'"></i>').join('')+'</div>'+workspaceLink('capacity','Review rebooking list '+icon('arrow'),{},'hometextlink')+'</div></section></div>'+lastCard+'</div>';
+}
+function render() {
+  const s=get();
+  const nav=Object.entries(pages);
+  const destination=k=>new URLSearchParams(periodNavigation(s,k));
+  $('#rail').innerHTML=nav.map(([k,n])=>'<a href="#'+esc(destination(k))+'" '+(s.p===k?'class="active" aria-current="page"':'')+'>'+icon(k)+n+'</a>').join('');
+  $('#mobpage').innerHTML=nav.map(([k,n])=>'<option value="'+k+'" '+(s.p===k?'selected':'')+'>'+n+'</option>').join('');
+  $('#main').innerHTML=({home,analytics,statements,payments:queue,capacity})[s.p](s)+'<div class="footer">Design preview · Example client activity. Changes last for this open preview.</div>';
+  document.title=pages[s.p]+' · Hone Business';
+  document.body.dataset.page=s.p;
+  syncClientVisit(s);
+}
+document.addEventListener('change', e=>{
+  if(e.target.id==='mobpage') {
+    const k=e.target.value;
+    go(periodNavigation(get(),k),true);
+  }
+});
+let previousBusinessPage=get().p;
+window.addEventListener('hashchange',()=>{
+  if(previousBusinessPage!==get().p){window.scrollTo(0,0);previousBusinessPage=get().p;}
+});
+function dialog(title,body){let d=$('#modal');d.setAttribute('aria-label',title);d.innerHTML='<div class="split"><h2>'+esc(title)+'</h2>'+btn('Close','close','link')+'</div>'+body;if(!d.open)d.showModal()}
+function showRow(id){
+  const r=visits.find(v=>v.id===id);if(!r)return;
+  dialogRow=r;ledgerMode='';
+  const open=['Needs review','Money owed'].includes(r.state);
+  const receipts=receiptEntries(r);
+  const facts='<section class="fin-facts">'+line('Agreed visit fee',r.fee==null?'Needs confirmation':money(r.fee))+line('Already received',money(r.paid))+(r.state==='Money owed'?line('Confirmed balance',money(remainder(r))):'')+(r.due&&open?line('Follow-up date',esc(r.due)):'')+'</section>';
+  const entries=(r.events||[]);
+  const history=entries.length?details('Payment history · '+entries.length,entries.map(ev=>'<p>'+esc(ev)+'</p>').join('')):receipts.length?details('Payment history',receipts.map(p=>'<p>'+money(p.amount)+' · '+esc(p.method)+' · '+esc(p.date)+'</p>').join('')):'';
+  const actions=r.state==='Processing'?'<p class="notice">A card payment is pending. Its outcome will determine the balance.</p>'+btn('Refresh status','status','primary'):open?'<div class="fin-choices"><h3>Payment decision</h3>'+btn('Record payment received','edit|receive','primary')+(r.fee!=null&&remainder(r)>0?btn('Charge demo card','edit|card'):'')+(r.state==='Needs review'?btn(r.fee==null||r.fee===0?'Confirm no charge':'Waive fee','edit|free'):'')+btn(r.state==='Money owed'?'Set follow-up date':'Confirm balance owed','edit|owed')+'</div>':'';
+  dialog(r.name,'<div class="fin-detail"><p>'+visitDate(r)+' · '+esc(r.time)+' · '+esc(r.service)+'<small>Practitioner · '+esc(r.operator)+'</small></p>'+pill(payState(r))+'</div>'+facts+history+actions);
+}
+const today='2026-11-23';
+function edit(mode){
+  const r=dialogRow;ledgerMode=mode;
+  const input=(n,l,val='',type='text',extra='')=>'<label>'+l+'<input name="'+n+'" type="'+type+'" '+extra+' value="'+esc(val)+'" required></label>';
+  const feeInput=r.fee==null?input('fee','Confirm agreed visit fee (CAD)','','number','min="0.01" step="0.01"'):'';
+  let title,fields;
+  if(mode==='receive'){
+    title='Record payment received';
+    fields=feeInput+'<label>Payment method<select name="method">'+['E-transfer','Cash','Other'].map(t=>op(t,'E-transfer')).join('')+'</select></label><div class="fin-field-pair">'+input('amount','Amount received (CAD)',r.fee!=null?remainder(r).toFixed(2):'','number','min="0.01" step="0.01"')+input('date','Date received',today,'date','max="'+today+'"')+'</div><div id="balpreview" role="status" class="fin-bal"></div>';
+  }else if(mode==='owed'){
+    title=r.state==='Money owed'?'Schedule follow-up':'Confirm balance owed';
+    fields=feeInput+(r.fee!=null?line('Unpaid balance',money(remainder(r))):'')+'<label>Follow-up date (optional)<input type="date" name="due" value="'+esc(r.due||'')+'"></label>';
+  }else if(mode==='card'){
+    title='Charge demo card';fields=line('Amount to charge',money(remainder(r)))+'<p class="notice">Confirm to simulate a successful card payment in this preview.</p>';
+  }else{
+    title=(r.fee??0)>0?'Waive fee':'Confirm no charge';
+    fields='<p>'+((r.fee??0)>0?'Waive the agreed fee of '+money(r.fee)+' for this visit?':'Confirm the agreed fee for this particular visit was $0?')+'</p>';
+  }
+  dialog(title,'<p class="paneNote">'+esc(r.name)+' · '+visitDate(r)+' · '+esc(r.service)+'</p><form id="payform" class="gridform">'+fields+'<div class="error" id="err" role="alert"></div><div class="act">'+btn('Back','backrow')+'<button class="primary" type="submit">'+(mode==='card'?'Confirm demo charge':'Save to preview')+'</button></div></form>');
+  if(mode==='receive')balancePreview();
+}
+function balancePreview(){
+  const f=$('#payform'),target=$('#balpreview');if(!f||!target)return;
+  const fee=dialogRow.fee??(f.elements.fee?.value?Number(f.elements.fee.value):null);
+  const amt=f.elements.amount.value?Number(f.elements.amount.value):null;
+  let text='Enter the agreed fee and amount received to see the remaining balance.';
+  if(fee!=null&&amt!=null){
+    const left=Math.round((fee-dialogRow.paid-amt)*100)/100;
+    text=left<0?'Amount exceeds the remaining visit fee.':left===0?'Paid in full. This visit will leave the payment queue.':money(left)+' will remain in Money owed after saving.';
+  }
+  target.textContent=text;
+}
+document.addEventListener('submit',e=>{
+  if(e.target.id!=='payform')return;
+  e.preventDefault();
+  const r=dialogRow,f=new FormData(e.target),fee=r.fee??Number(f.get('fee')),mode=ledgerMode;
+  let ev='',feedback='';
+  if(mode==='receive'||mode==='card'){
+    const amt=mode==='card'?remainder(r):Number(f.get('amount'));
+    if(!(amt>0)||amt>Math.round((fee-r.paid)*100)/100){$('#err').textContent='Enter an amount up to the remaining visit fee.';return}
+    const method=mode==='card'?'Card':f.get('method'),date=mode==='card'?today:f.get('date');
+    const prior=receiptEntries(r);
+    r.fee=fee;r.paid=Math.round((r.paid+amt)*100)/100;r.received=date;r.method=method;
+    r.receipts=prior.concat({method,amount:amt,date});r.state=r.paid>=r.fee?'Paid':'Money owed';
+    ev=money(amt)+' received by '+method+' on '+date;
+    feedback=money(amt)+' recorded · '+(r.state==='Paid'?'Paid in full':money(remainder(r))+' still owed');
+  }else if(mode==='free'){
+    r.state=(r.fee??0)>0?'Fee waived':'No charge';if(r.fee==null)r.fee=0;ev=r.state;feedback='Visit closed · '+r.state;
+  }else{
+    r.fee=fee;r.due=f.get('due')||'';r.state='Money owed';
+    ev='Balance confirmed '+money(remainder(r))+(r.due?' · Follow up '+r.due:'');feedback=ev;
+  }
+  r.events=(r.events||[]).concat(ev+' · Entered by Jordan on '+today);
+  if(get().visit){closeClientVisit()}else{$('#modal').close();render()}toast(feedback);
+});
+document.addEventListener('input',e=>{
+  if(e.target.closest('#payform')&&ledgerMode==='receive')balancePreview();
+  if(e.target.id!=='qsearch')return;
+  const s={...get(),qsearch:e.target.value}, source=queueSource(s);
+  $('#qresult').outerHTML=queueResults(s,source.filter(r=>r.state===s.queue),s.queue);
+  const par=new URLSearchParams(location.hash.slice(1));if(s.qsearch)par.set('qsearch',s.qsearch);else par.delete('qsearch');history.replaceState(null,'','#'+par);
+});
+document.addEventListener('change',e=>{if(e.target.dataset.key){const key=e.target.dataset.key;go({[key]:e.target.value,...(key==='scope'?{queueFrom:'',queueTo:'',qsearch:''}:{}),...(key==='m'||key==='stmtfilter'?{pg:'1'}:{})})}});
+document.addEventListener('submit',e=>{
+  if(e.target.id!=='statement-period-form')return;
+  e.preventDefault();
+  const key=new FormData(e.target).get('month');
+  if(isStatementMonth(key))go({statementMonth:key,pg:'1'});
+});
+document.addEventListener('input',e=>{if(e.target.id!=='search')return;let s={...get(),find:e.target.value};$('#clientslist').outerHTML=clientlist(s,statementRows(s));let par=new URLSearchParams(location.hash.slice(1));par.set('find',s.find);history.replaceState(history.state,'','#'+par)});
+function exportStatement(s) {
+  let records=statementRows(s);
+  if (s.client) records=matchingHistoryRows(s);
+  else if(s.view==='Clients' && s.find) records=records.filter(r=>r.name.toLowerCase().includes(s.find.toLowerCase()));
+  if (s.client || s.view==='Studio') {
+    const status=s.stmtfilter||'All visits';
+    if(status!=='All visits') records=records.filter(r=>r.state===status);
+  }
+  records=[...records].sort((a,b)=>visitDayValue(b)-visitDayValue(a));
+  const contents=[['Visit date','Client','Service','Checkout status','Agreed fee (CAD)','Collected (CAD)','Confirmed owed (CAD)','Last receipt date']];
+  for(const r of records)contents.push([visitISO(r),r.name,r.service,payState(r),r.fee??'',r.paid,r.state==='Money owed'?remainder(r):'',r.received||'']);
+  const csv=contents.map(row=>row.map(v=>'"'+String(v).replaceAll('"','""')+'"').join(',')).join('\r\n');
+  const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+  const link=document.createElement('a');link.href=url;link.download='Hone-Statement-'+(s.client?s.client.replace(/[^a-z0-9]+/gi,'-')+'-':'')+(s.client&&historyScope(s)==='all'?'All-visits':statementMonthKey(s))+'.csv';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+document.addEventListener('click',e=>{let b=e.target.closest('[data-act]');if(!b)return;let [a,v]=b.dataset.act.split('|'),s=get();if(['periodreview','periodclient','periodstatement'].includes(a))periodAction(a,v,s);else if(a==='reviewmonth')go({p:'payments',queue:'Needs review',scope:v});else if(a==='stmtmonth')go({statementMonth:v,pg:'1'});else if(a==='row'||a==='firstreview')openClientVisit(v);else if(a==='close')closeClientVisit();else if(a==='edit')edit(v);else if(a==='backrow')showRow(dialogRow.id);else if(a==='status'){dialog('Card payment status','<p class="block">The sample card attempt is still processing. Check this attempt again when its status changes.</p>')}else if(a==='client'||a==='monthlyclient')openClient(v,a==='client'?'all':'month');
+else if(a==='queueclient'){const row=visits.find(r=>r.id===v);if(row)openClient(row.name,'all',visitISO(row).slice(0,7))}
+else if(a==='historyscope'){go({historyScope:v==='all'?'all':'month',pg:'1',stmtfilter:'All visits',visit:''})}
+else if(a==='backclients')go({view:'Clients',client:'',visit:'',historyScope:'',stmtfilter:'All visits',pg:'1'});else if(a==='stmtfilter')go({stmtfilter:v,pg:'1'});else if(a==='view')go({view:v,client:'',find:'',pg:'1',stmtfilter:'All visits'});else if(a==='plan'){dialog(v,'<p class="paneNote">Illustrative treatment plan</p>'+line('Plan','Open')+line('Practitioner','Jordan')+line('Future treatment','None booked')+'<p class="notice">Ready for a rebooking conversation.</p>')}else if(a==='export' && s.p==='statements')exportStatement(s);else if(a==='print')window.print();else go({[a]:v})});let renderedHistoryClient=get().client;
+window.addEventListener('hashchange',()=>{
+  const oldClient=renderedHistoryClient;
+  const s=get();
+  renderedHistoryClient=s.client;
+  render();
+  if(history.state?.visitButton&&!s.visit){
+    const b=Array.from(document.querySelectorAll('#main [data-act]')).find(x=>x.dataset.act===history.state.visitButton&&x.offsetWidth);
+    if(b)b.focus({preventScroll:true});
+  }
+  if(Number.isFinite(history.state?.scrollY))window.scrollTo(0,history.state.scrollY);
+  else if(oldClient!==s.client)window.scrollTo(0,0);
+});
+render();
+function exportAnalytics(s){
+  const p=analyticsData(s);
+  if(!p.available)return;
+  const source=[['Report',s.tab],['Period start',p.start],['Period end',p.end]];
+  if(s.tab==='Waitlist'){
+    const w=waitlistReport(p);
+    source.push([],['Invitations','Distinct people','Linked bookings','Awaiting response','Declined','Expired','Booking rate'],[w.rows.length,w.people,...w.counts,w.rate]);
+  }else if(s.tab==='Clients'){
+    source.push(['Practitioner',s.pr],[],['Client','Completed visits','Collected CAD','Client group']);
+    for(const name of [...new Set(p.rows.map(r=>r.name))].sort()){
+      const rows=p.rows.filter(r=>r.name===name);
+      source.push([name,rows.length,sum(rows,r=>r.paid),clientGroup(p,name)]);
+    }
+  }else{
+    const m=analyticsChartModel(p,s),metric=(m.measure==='Money'?'Collected CAD':'Visits')+' · '+m.display;
+    source.push(['Practitioner',s.pr],['Comparison start',p.priorStart],['Comparison end',p.priorEnd],['Comparison data',p.priorAvailable?'Available':'Unavailable'],[],
+      ['From','Through',metric,...(p.priorAvailable?['Comparison from','Comparison through','Comparison '+metric]:[])]);
+    p.buckets.forEach((b,i)=>source.push([b.from,b.to,m.current[i],...(p.priorAvailable?[b.priorFrom,b.priorTo,m.comparison[i]]:[])]));
+  }
+  const raw=source.map(row=>row.map(cell=>'"'+String(cell??'').replaceAll('"','""')+'"').join(',')).join('\r\n');
+  const url=URL.createObjectURL(new Blob([raw],{type:'text/csv;charset=utf-8'}));
+  const a=document.createElement('a');a.href=url;a.download='Hone-'+s.tab+'-'+p.start+'-to-'+p.end+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
+document.addEventListener('click',e=>{
+  if (e.target.closest('[data-act="export"]') && get().p==='analytics') {
+    e.stopImmediatePropagation(); exportAnalytics(get());
+  }
+},true);
+
+</script></body></html>
