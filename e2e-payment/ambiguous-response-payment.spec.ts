@@ -195,14 +195,14 @@ test("committed charge with a lost response recovers to Paid on reload (no dupli
   const paidLine = page.getByTestId("payment-summary-paid");
   await expect(paidLine).toBeVisible();
   await expect(paidLine).toContainText(AMOUNT_LABEL);
-  await expect(page.getByRole("button", { name: /prepare session payment/i })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /checkout with stripe/i })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /^run charge$/i })).toHaveCount(0);
 
   // Calendar surface → same persisted Paid; no charge affordance.
   await page.goto(`/calendar/${seed.appointmentId}`);
   await expect(page.getByTestId("appointment-payment-paid")).toBeVisible();
   await expect(page.getByTestId("checkout-button")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /prepare session payment/i })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /checkout with stripe/i })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /run charge/i })).toHaveCount(0);
 
   // --- Hard persisted invariants.

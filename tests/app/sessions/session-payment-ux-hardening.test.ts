@@ -256,7 +256,7 @@ describe("PR #174: ReadyPanel (active prepared row)", () => {
   it("renders the Run charge button with a two-click confirm", () => {
     const block = blockFor("ReadyPanel");
     expect(block).toMatch(/Run charge/);
-    expect(block).toMatch(/Confirm: run charge/);
+    expect(block).toMatch(/Confirm Stripe charge/);
     expect(block).toMatch(/setConfirmExecute\(true\)/);
     expect(block).toMatch(/fd\.set\("confirm_charge",\s*"true"\)/);
   });
@@ -284,7 +284,7 @@ describe("PR #174: PendingPanel (post-claim, no terminal status)", () => {
   it("does NOT render the Run charge button (the row is not 'ready')", () => {
     const block = blockFor("PendingPanel");
     expect(block).not.toMatch(/Run charge/);
-    expect(block).not.toMatch(/Confirm: run charge/);
+    expect(block).not.toMatch(/Confirm Stripe charge/);
   });
 
   it("keeps the PaymentIntent id owner-only (in the technical disclosure)", () => {
@@ -327,7 +327,7 @@ describe("compact SucceededPanel (post-refresh)", () => {
   it("does NOT render the Run charge button (post-refresh terminal-success state)", () => {
     const block = blockFor("SucceededPanel");
     expect(block).not.toMatch(/Run charge/);
-    expect(block).not.toMatch(/Confirm: run charge/);
+    expect(block).not.toMatch(/Confirm Stripe charge/);
   });
 
   it("does NOT render the Prepare form (terminal status excludes the form)", () => {
@@ -337,7 +337,7 @@ describe("compact SucceededPanel (post-refresh)", () => {
     // render a form either.
     const block = blockFor("SucceededPanel");
     expect(block).not.toMatch(/<form/);
-    expect(block).not.toMatch(/Prepare session payment/);
+    expect(block).not.toMatch(/Checkout with Stripe/);
   });
 });
 
@@ -365,7 +365,7 @@ describe("PR #174: FailedPanel (terminal in this PR)", () => {
   it("does NOT render the Run charge button (failed is terminal in PR #173)", () => {
     const block = blockFor("FailedPanel");
     expect(block).not.toMatch(/Run charge/);
-    expect(block).not.toMatch(/Confirm: run charge/);
+    expect(block).not.toMatch(/Confirm Stripe charge/);
   });
 });
 

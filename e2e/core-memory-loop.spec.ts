@@ -176,7 +176,7 @@ test("core memory loop: booking to next-appointment memory", async ({
   await test.step("dashboard Today row knows the appointment is charted (PR #236)", async () => {
     await page.goto("/dashboard");
     await expect(
-      page.getByRole("link", { name: "View session" }).first(),
+      page.locator(`#appointment-${firstAppointmentId}`).getByRole("link", { name: "Chart", exact: true }),
     ).toBeVisible();
     await expect(
       page.getByText("Charted", { exact: true }).first(),
@@ -224,10 +224,8 @@ test("core memory loop: booking to next-appointment memory", async ({
       page.getByRole("heading", { name: "Today", exact: true }),
     ).toBeVisible({ timeout: 20_000 });
     await expect(
-      page
-        .getByText(/Remember: E2E caution: shorter intervals next visit/)
-        .first(),
-    ).toBeVisible();
+      page.getByTestId("dashboard-prep-remember"),
+    ).toHaveText("For this visit · E2E caution: shorter intervals next visit");
     // The retired separate list is gone.
     await expect(
       page.getByRole("heading", { name: "Daily prep brief" }),

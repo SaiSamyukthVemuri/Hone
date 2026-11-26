@@ -667,7 +667,10 @@ describe("ONB-03 — the DASHBOARD consumes the canonical authority", () => {
     expect(open, "the bundle's opening delimiter is missing").toBeGreaterThan(-1);
     const close = PAGE_CODE.indexOf("] as const)", open);
     expect(close, "the bundle's closing delimiter is missing").toBeGreaterThan(open);
-    expect(PAGE_CODE.slice(open, close)).toContain("getClientBirthdaysForMonth");
+    const read = PAGE_CODE.match(/const (\w+) = getClientBirthdaysForMonth\(/);
+    expect(read, "the shared birthday read is missing").not.toBeNull();
+    expect(PAGE_CODE.match(/getClientBirthdaysForMonth\(/g)).toHaveLength(1);
+    expect(PAGE_CODE.slice(open, close)).toMatch(new RegExp(`\\b${read![1]}\\b`));
     expect(PAGE_CODE).not.toContain("getAvailabilityDefaults");
     expect(STACK_CODE).not.toContain("availabilityDefaults");
   });
@@ -695,10 +698,11 @@ describe("ONB-03 — the DASHBOARD consumes the canonical authority", () => {
     expect(STACK_CODE).toContain("await bookingReadiness");
     expect(STACK_CODE).toContain('readiness.status !== "ready"');
     expect(CARD_CODE).toContain('readiness.status === "unknown"');
-    // Two Suspense boundaries in the page, one per region (WS-DB: Needs
-    // attention streams beside Appointments; the secondary stack streams below).
-    // Readiness lives behind the stack's boundary only.
-    expect((PAGE_CODE.match(/<Suspense\b/g) ?? []).length).toBe(2);
+    // Readiness and attention have separate top-level boundaries. A birthday
+    // badge inside an individual row streams independently of both regions.
+    const dashboard = PAGE_CODE.slice(0, PAGE_CODE.indexOf("async function BirthdayTodayBadge"));
+    expect(dashboard.match(/<Suspense\b/g)).toHaveLength(2);
+    expect(dashboard).toMatch(/<Suspense[^>]*>[\s\S]*?<SecondaryStack[\s\S]*?bookingReadiness=\{bookingReadinessPromise\}/);
     expect(existsSync(join(process.cwd(), "app/(app)/error.tsx"))).toBe(true);
   });
 

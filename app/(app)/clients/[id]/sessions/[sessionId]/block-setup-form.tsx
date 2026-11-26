@@ -20,7 +20,7 @@
 // actions already accept every field used here, no action behavior
 // change.
 
-import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, useTransition } from "react";
+import { Fragment, useCallback, useEffect, useId, useMemo, useReducer, useRef, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { SaveStatus } from "@/components/sessions/save-status";
@@ -131,6 +131,13 @@ import {
 } from "./machine-setup-actions";
 import type { GroupSubmission } from "@/lib/machines/setting-groups";
 import {
+  MULTIPLEX_LOAD_FAILED_MESSAGE,
+  MULTIPLEX_LOAD_INITIAL,
+  MULTIPLEX_LOADING_MESSAGE,
+  multiplexLoadStep,
+  multiplexSaveGate,
+} from "@/lib/machines/multiplex-load";
+import {
   createTreatmentAreaWithEntryAction,
   updateTreatmentAreaWithEntryAction,
 } from "./block-actions";
@@ -213,6 +220,8 @@ type Props = {
   // frequency seeded from the practitioner's last-used value. UI
   // defaulting only; fully editable per treatment area.
   defaultMachineFrequency?: string | null;
+  /** MultiPlex is offered to this studio, read with the page. Null = not offered. */
+  multiplexOffer?: { deviceId: string } | null;
   // Feature A (reliability): most recent lot/batch per probe in this studio,
   // keyed by probe_key AND by normalized probe_label (free-text fallback), each
   // carrying its confirmed flag. The form auto-populates the lot field for the
@@ -458,6 +467,7 @@ export function BlockSetupForm({
   firstEntry,
   defaultPrimaryArea,
   defaultMachineFrequency,
+  multiplexOffer = null,
   probeLotSuggestions = { byKey: {}, byLabel: {} },
   probeLotInventory = [],
   initialAreas,
@@ -593,8 +603,42 @@ export function BlockSetupForm({
   // MULTIPLEX IN THE ONE MODE CONTROL. The panel reports the xCell Pur unit only when the contract row is published and a unit exists.
   // Picking MultiPlex under the existing xCell choice binds a NEW area to that unit when it is saved; the mode is then frozen with the
   // area. A saved area is recognised by its stored unit, never by a control.
-  const [multiplexRoute, setMultiplexRoute] = useState<{ deviceId: string } | null>(null);
-  const [multiplexRequest, setMultiplexRequest] = useState<{ seq: number; want: boolean } | null>(null);
+  const [multiplexReadingsHost, setMultiplexReadingsHost] = useState<HTMLDivElement | null>(null);
+  const [multiplexRoute, setMultiplexRoute] = useState<{ deviceId: string } | null>(multiplexOffer);
+  // THE ONE OWNER of the MultiPlex load/apply state (lib/machines/multiplex-load.ts). The panel executes and reports back under a token; nothing
+  // else keeps a copy. Save and Save visit read the same derived `multiplexLoad`.
+  const [multiplexState, dispatchMultiplex] = useReducer(multiplexLoadStep, MULTIPLEX_LOAD_INITIAL);
+  const multiplexStateRef = useRef(multiplexState);
+  multiplexStateRef.current = multiplexState;
+  const multiplexRequest = useMemo(
+    () => (multiplexState.seq > 0 ? { seq: multiplexState.seq, want: multiplexState.want } : null),
+    [multiplexState.seq, multiplexState.want],
+  );
+  const multiplexLoad: "loading" | "failed" | null =
+    multiplexSaveGate(multiplexState) === "held" ? "loading" : multiplexSaveGate(multiplexState) === "refused" ? "failed" : null;
+  // The token a load answer must carry while loading, else null.
+  const multiplexLoadToken = multiplexState.phase === "loading" ? multiplexState.seq : null;
+  // A Save visit pressed while MultiPlex was loading or failed leaves its reason on the section for THAT token only (derived, never cleared by hand).
+  const [visitNoticeSeq, setVisitNoticeSeq] = useState<number | null>(null);
+  const multiplexNotice =
+    visitNoticeSeq !== null && visitNoticeSeq === multiplexState.seq
+      ? multiplexState.phase === "loading"
+        ? MULTIPLEX_LOADING_MESSAGE
+        : multiplexState.phase === "failed"
+          ? MULTIPLEX_LOAD_FAILED_MESSAGE
+          : null
+      : null;
+  // THE PANEL IS PRESENT, observed here so an unmount mid-load ends in `failed`, never in `loading` forever. React StrictMode runs an effect cleanup and its
+  // setup back to back in one commit, so absence is judged one microtask later: a remount in the same commit never reports it.
+  const multiplexPanelPresentRef = useRef(true);
+  const onMultiplexPanelPresence = useCallback((present: boolean) => {
+    multiplexPanelPresentRef.current = present;
+    if (present) return;
+    queueMicrotask(() => {
+      const st = multiplexStateRef.current;
+      if (!multiplexPanelPresentRef.current && st.phase === "loading") dispatchMultiplex({ t: "panelGone", token: st.seq });
+    });
+  }, []);
   // THE SAVED MACHINE FOLLOWS THE PANEL'S WRITES (Codex P2): once a machine change is written, the panel's own written identity is the
   // record, not the block prop this form first rendered with. `undefined` = nothing written yet, so the prop still stands.
   const [writtenDeviceId, setWrittenDeviceId] = useState<string | null | undefined>(undefined);
@@ -604,7 +648,7 @@ export function BlockSetupForm({
     multiplexSaved || (!block && machineKind === "native" && multiplexRoute !== null && draftDeviceId === multiplexRoute.deviceId);
   // Offered on a NEW area under the existing xCell choice. An area holding legacy values never switches (today's refusal stays).
   const multiplexOffered =
-    multiplexSaved || (multiplexRoute !== null && !legacyDataLocked && !block && (machineKind === "legacy" || multiplexSelected));
+    multiplexSaved || (multiplexRoute !== null && !legacyDataLocked && !block && (machineKind === "legacy" || machineKind === "none" || multiplexSelected));
   const showModeControl = machineKind !== "native" || multiplexSelected;
   // The Mode controls are held with every other identity control (Codex P1): while this form's save or the panel's identity write is
   // pending or unresolved, no click may start or undo a MultiPlex choice. `draftFrozen` and `identityWritePending` are declared below.
@@ -1476,6 +1520,7 @@ export function BlockSetupForm({
   const blockVersion = block ? heldVersion : null;
   const saveBlocked =
     pending ||
+    multiplexLoad === "loading" ||
     resume.state === "checking" ||
     resume.state === "saved" ||
     resumeChoicePending ||
@@ -1494,15 +1539,20 @@ export function BlockSetupForm({
     // commit first, the identity write would then be refused as stale, and the choice would be lost silently.
     identityWritePending;
 
+  // WHAT A HELD SAVE SAYS: the same words on the button's path and on Save visit's.
+  const heldMessage = multiplexLoad === "loading" ? MULTIPLEX_LOADING_MESSAGE : "This area is not ready to save.";
+
   // THE ONE SAVE. The Save button and Save visit both run it, so there is ONE path (same gates, same retry key). It returns what happened on
   // EVERY exit: a validation refusal, a hold, a refusal, a lost answer or a save, never a promise that stays pending.
   function runSave(): Promise<SaveOutcome> {
-    if (saveBlocked) return Promise.resolve({ status: "held", message: "This area is not ready to save." });
+    if (saveBlocked) return Promise.resolve({ status: "held", message: heldMessage });
     const fail = (message: string): Promise<SaveOutcome> => {
       setError(message);
       return Promise.resolve({ status: "failed", message });
     };
     setError(null);
+    // A MULTIPLEX CHOICE THAT COULD NOT LOAD: saving now would write the previous machine's (legacy) area. Refuse, keep the draft.
+    if (multiplexLoad === "failed") return fail(MULTIPLEX_LOAD_FAILED_MESSAGE);
     // THE MACHINE DRAFT BLOCKS THE SAVE WHEN IT IS HALF-FINISHED, and says
     // which group and why. Skipping it would discard numbers she typed;
     // sending it would be refused by the command after a round trip.
@@ -1807,7 +1857,16 @@ export function BlockSetupForm({
   // retry after a lost create answer carries the same key, exactly as the button does. Nothing unsaved and no error: no call is made.
   const saveRootRef = useRef<HTMLDivElement>(null);
   useRegisterVisitSaver(`block:${block?.id ?? "new"}`, block ? "Treatment area" : "New treatment area", saveRootRef, () => {
-    if (saveBlocked) return Promise.resolve<SaveOutcome>({ status: "held", message: "This area is not ready to save." });
+    if (saveBlocked) {
+      // shown on this section (derived from the load state), where the result line sends the practitioner
+      if (multiplexLoad === "loading") setVisitNoticeSeq(multiplexState.seq);
+      return Promise.resolve<SaveOutcome>({ status: "held", message: heldMessage });
+    }
+    // A FAILED MultiPlex load has nothing dirty to save, so the generic "nothing to save" answer below would let Save visit pass silently: refuse it.
+    if (multiplexLoad === "failed") {
+      setVisitNoticeSeq(multiplexState.seq);
+      return Promise.resolve<SaveOutcome>({ status: "held", message: MULTIPLEX_LOAD_FAILED_MESSAGE });
+    }
     // AN EXISTING AREA WITH UNSAVED MACHINE SETTINGS IS HELD: saving the area closes its form, which would unmount the readings entry and
     // lose what was typed there, and Save visit never drives that entry's own save. The practitioner saves or discards it with its own button first.
     if (block && draftRegistry.view.anyDraft) {
@@ -2067,8 +2126,16 @@ export function BlockSetupForm({
         }
         onKindChange={onKindChange}
         multiplexRequest={multiplexRequest}
+        multiplexLoadToken={multiplexLoadToken}
         onMultiplexRoute={setMultiplexRoute}
-        onSavedDeviceChange={setWrittenDeviceId}
+        onMultiplexSettled={(token, result) => dispatchMultiplex({ t: "settled", token, result })}
+        onMultiplexOutcome={(token, outcome) => dispatchMultiplex({ t: outcome === "applied" ? "applied" : "notApplied", token })}
+        onPanelPresence={onMultiplexPanelPresence}
+        multiplexReadingsHost={multiplexReadingsHost}
+        onSavedDeviceChange={(id) => {
+          setWrittenDeviceId(id);
+          dispatchMultiplex({ t: "identityWritten" });
+        }}
         onIdentityDraft={block ? undefined : onIdentityDraft}
         onChosenModel={setChosenModel}
         blockVersion={blockVersion}
@@ -2334,7 +2401,9 @@ export function BlockSetupForm({
                   if (base !== draft) setDraft({ ...base, mode: selected ? "" : m.value });
                   else update("mode", selected ? "" : m.value);
                   // Leaving MultiPlex returns the area to the existing xCell workflow.
-                  if (multiplexSelected) setMultiplexRequest((r) => ({ seq: (r?.seq ?? 0) + 1, want: false }));
+                  // ALWAYS a new token, even before MultiPlex is selected: a MultiPlex click whose load is pending is replaced here, so its late answer
+                  // matches nothing and can neither select MultiPlex over this mode nor refuse the Save.
+                  dispatchMultiplex({ t: "legacy" });
                 }}
                 className={`rounded-full border px-4 py-2 text-sm transition ${
                   selected
@@ -2352,7 +2421,9 @@ export function BlockSetupForm({
               data-testid="mode-multiplex"
               aria-pressed={multiplexSelected}
               disabled={multiplexSaved || draftFrozen || identityWritePending}
-              onClick={() => setMultiplexRequest((r) => ({ seq: (r?.seq ?? 0) + 1, want: !multiplexSelected }))}
+              onClick={() => {
+                dispatchMultiplex({ t: multiplexSelected ? "undo" : "select" });
+              }}
               className={`rounded-full border px-4 py-2 text-sm transition ${
                 multiplexSelected
                   ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
@@ -2360,6 +2431,8 @@ export function BlockSetupForm({
               }`}
             >
               MultiPlex
+              {/* Names the machine this mode belongs to, so nobody mistakes it for another machine's mode. */}
+              <span className="ml-1.5 text-xs opacity-70" data-testid="mode-multiplex-model">xCell Pur</span>
             </button>
           )}
         </div>
@@ -2404,8 +2477,9 @@ export function BlockSetupForm({
           fields for thermolysis/blend, galvanic fields for galvanic/blend.
           All optional (pulse defaults to 1). Saved as the treatment area's
           first entry, keyed to the chosen area. */}
-      <div className="flex flex-col gap-4 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+      <section aria-label="Treatment readings" className="flex flex-col gap-4 border-t border-neutral-200 pt-4 dark:border-neutral-800">
         <span className="text-sm font-medium">Treatment readings</span>
+        <div ref={setMultiplexReadingsHost} className="flex flex-col gap-3 empty:hidden" />
 
         {/* PR #279 (Chloe): energy level lives UNDER Treatment readings now (it
             used to sit near modality). Same energy_level column; UI move only. */}
@@ -2444,7 +2518,7 @@ export function BlockSetupForm({
             className={READING_INPUT_CLS}
           />
         </label>
-      </div>
+      </section>
 
       <label className="flex flex-col gap-1.5">
         <span className="text-sm font-medium">Minutes performed (optional)</span>
@@ -2733,9 +2807,9 @@ export function BlockSetupForm({
         </p>
       )}
 
-      {error && (
+      {(error ?? multiplexNotice) && (
         <p className="text-sm text-red-600 dark:text-red-400" role="alert">
-          {error}
+          {error ?? multiplexNotice}
         </p>
       )}
 
@@ -2770,12 +2844,14 @@ export function BlockSetupForm({
             // here: there, pressing Save again unchanged IS the recovery.
             revisionUnresolved ||
             // And while a saved area's machine choice is being written.
-            identityWritePending
+            identityWritePending ||
+            // And while the MultiPlex choice is still loading (a Save now would save the previous machine).
+            multiplexLoad === "loading"
           }
           data-testid="save-treatment-area"
           className="rounded-md bg-neutral-900 px-5 py-3 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
         >
-          {pending ? "Saving…" : "Save settings block"}
+          {pending ? "Saving…" : multiplexLoad === "loading" ? "Loading MultiPlex…" : "Save settings block"}
         </button>
         {/*
           CANCEL IS FROZEN WHILE THE SAVE'S OUTCOME IS UNKNOWN

@@ -505,7 +505,20 @@ function blockButtonTests(tap: boolean, times: { member: string; owner: string; 
   test("Block time button: a member's block lands on their own column in this studio, with no studio-wide choice", async ({ page }) => {
     const cy = byKey("cy");
     await loginByMagicLink(page, cy.email!);
-    const { drawer, press } = await blockFromButton(page, `/calendar?view=week&day=${day}`, times.member, tap);
+    // Let the practitioner start a block before the sidebar finishes restoring their own column.
+    // Deliver the real navigation after the edit, so both phone and desktop exercise the same transition.
+    const ownWeek = (url: URL) => url.pathname === "/calendar" && url.searchParams.get("people") === cy.id;
+    let releaseNavigation!: () => void;
+    const editing = new Promise<void>((resolve) => { releaseNavigation = resolve; });
+    await page.route(ownWeek, async (route) => {
+      await editing;
+      await route.fallback();
+    });
+    const { drawer, press } = await blockFromButton(page, `/calendar?view=week&day=${day}`, times.member, tap)
+      .finally(releaseNavigation);
+    await expect(page).toHaveURL(ownWeek);
+    await expect(page.getByRole("button", { name: "Block time", exact: true })).toHaveCount(0);
+    await expect(drawer.getByLabel("Start", { exact: true })).toHaveValue(times.member);
     await expect(drawer.getByLabel("Applies to")).toHaveCount(0);
     await press(drawer.getByRole("button", { name: "Save block" }));
     await expect(drawer).toHaveCount(0);

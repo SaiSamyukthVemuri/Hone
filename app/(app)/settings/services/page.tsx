@@ -27,8 +27,8 @@ export default async function ServicesSettingsPage() {
   return (
     <section className="min-w-0 space-y-4">
       <div>
-        <h2 tabIndex={-1} data-settings-heading className="text-2xl font-semibold tracking-tight outline-none">Services</h2>
-        <p className="mt-1 text-sm text-fg-muted">Manage your booking menu and how each service appears on the calendar.</p>
+        <h2 tabIndex={-1} data-settings-heading className="text-2xl font-semibold tracking-tight outline-none">Service menu</h2>
+        <p className="mt-1 text-sm text-fg-muted">Set booking prices, durations, and the colour of each service on your calendar.</p>
       </div>
       <ServiceOrderList
         groups={groupServicesByModality(orderedServices.filter((s) => s.active)).map((group) => ({

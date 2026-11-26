@@ -1,5 +1,8 @@
 "use client";
 
+import { withDashboardRebook } from "@/lib/calendar/dashboard-rebook";
+import { useDashboardRebook } from "./dashboard-rebook-context";
+
 import Link from "next/link";
 import { announceMiniPick } from "@/lib/calendar/mini-pick";
 import { useState } from "react";
@@ -40,6 +43,7 @@ export function CalendarMiniMonth({
   selectionParam: string | undefined;
   timeGrid?: boolean;
 }) {
+  const rebook = useDashboardRebook();
   const [shown, setShown] = useState(anchorDate);
   // The page's anchor moved (toolbar step, Today, a pick in another month) while this component stayed
   // mounted: follow it. Browsing months with the arrows changes `shown` only, so it is never reset
@@ -68,7 +72,7 @@ export function CalendarMiniMonth({
             {monthYearLabel(shown)}
           </div>
           <Link
-            href={withSelection(miniCalendarHref(view, today) + gridParam, selectionParam)}
+            href={withDashboardRebook(withSelection(miniCalendarHref(view, today) + gridParam, selectionParam), rebook)}
             scroll={false}
             data-testid="calendar-mini-today"
             onClick={() => {
@@ -103,7 +107,7 @@ export function CalendarMiniMonth({
           return (
             <Link
               key={date}
-              href={withSelection(miniCalendarHref(view, date) + gridParam, selectionParam)}
+              href={withDashboardRebook(withSelection(miniCalendarHref(view, date) + gridParam, selectionParam), rebook)}
               scroll={false}
               data-testid="calendar-mini-day"
               onClick={() => announceMiniPick(date)}

@@ -106,12 +106,12 @@ describe("previously shipped Dashboard fixes are preserved", () => {
     expect(PAGE).not.toMatch(/Getting started checklist/i);
   });
 
-  it("R1 the inline full-treatment disclosure is untouched by this tranche", () => {
+  it("R1 the previous treatment opens inline", () => {
     // The e2e spec (dashboard-treatment-memory-inline) is the browser
     // authority. This pins that the component still owns the inline
     // disclosure and this tranche did not reintroduce calendar navigation.
     const MEM = read("app/(app)/dashboard/dashboard-treatment-memory.tsx");
-    expect(MEM).toMatch(/View full last treatment/i);
+    expect(MEM).toMatch(/Last visit details/i);
     expect(codeOnly(MEM)).not.toMatch(/href=\{?["\`]\/calendar/);
   });
 });

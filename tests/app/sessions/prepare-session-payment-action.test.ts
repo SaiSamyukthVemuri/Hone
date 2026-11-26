@@ -335,8 +335,8 @@ describe("SessionPaymentPrepareCard UI invariants", () => {
   });
 
   it("the submit button copy is neutral (no test-mode suffix)", () => {
-    expect(CARD).toMatch(/Prepare session payment/);
-    expect(CARD).not.toMatch(/Prepare session payment \(test mode\)/);
+    expect(CARD).toMatch(/Checkout with Stripe/);
+    expect(CARD).not.toMatch(/Checkout with Stripe \(test mode\)/);
   });
 
   it("renders blocking reasons via a list", () => {

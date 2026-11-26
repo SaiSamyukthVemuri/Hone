@@ -118,7 +118,7 @@ async function chargeOnce(page: Page, seed: PaymentSeed): Promise<string> {
   configureFakeStripeOutcome(idempotencySelectorForAttempt(attemptId), "success");
 
   await modal.getByRole("button", { name: /^run charge$/i }).click();
-  await modal.getByRole("button", { name: /confirm: run charge/i }).click();
+  await modal.getByRole("button", { name: "Confirm Stripe charge · $225.00 CAD", exact: true }).click();
   // The paid line can be replaced by the dashboard's Paid badge as the server
   // refresh unmounts the modal; either is the persisted success.
   await expect(
@@ -266,7 +266,7 @@ test("receipt failure then retry: Paid stays Paid, the retry sends the receipt, 
   // No charge control is offered on a paid session whose receipt failed.
   await expect(view.getByRole("button", { name: /run charge/i })).toHaveCount(0);
   await expect(
-    view.getByRole("button", { name: /prepare session payment/i }),
+    view.getByRole("button", { name: /checkout with stripe/i }),
   ).toHaveCount(0);
 
   // The practitioner corrects the address, then retries the receipt.

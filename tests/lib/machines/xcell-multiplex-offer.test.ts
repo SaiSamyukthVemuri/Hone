@@ -2,53 +2,68 @@ import { describe, expect, it } from "vitest";
 import { MACHINE_CATALOGUE } from "../../../lib/machines/catalogue";
 import type { StudioDevice } from "../../../lib/machines/selection";
 import { XCELL_PUR_PROFILE_ID } from "../../../lib/machines/xcell-pur";
-import { XCELL_MULTIPLEX_RETIRED_MESSAGE, resolveXcellMultiplexOffer } from "../../../lib/machines/xcell-route";
+import { resolveXcellMultiplexOffer } from "../../../lib/machines/xcell-route";
 import { readXcellModelSwitch } from "../../../lib/machines/xcell-switch-seam";
 
-// The picker's decision, in one place. Until the owner's switch exists in the database the switch is UNAVAILABLE, and the studio's route is
-// EXACTLY what it was (history path). Once it is available it decides, and old history is not read. The create-at-first-save step is a
-// carried flag only: nothing in app code creates a unit.
+// MultiPlex is ALWAYS offered (placeholder unit by default). The owner's switch governs ONLY the registered-unit path:
+//  - unavailable: exactly the production route;  - off: the placeholder, never a registered unit;
+//  - on: a live registered unit binds (the client's last-used live unit, else the lowest id); a studio that never had a unit keeps the placeholder
+//    and the create-at-first-save flag is carried; a studio whose only units are retired keeps the placeholder (no refusal, nothing recreated).
 
+const S = "studio-1";
 const unit = (over: Partial<StudioDevice> = {}): StudioDevice => ({
-  deviceId: "unit-1", studioId: "s", profileId: XCELL_PUR_PROFILE_ID, profileVersion: 1, displayName: "Dectro xCell", installedOptions: [], retiredAt: null, ...over,
+  deviceId: "unit-1", studioId: S, profileId: XCELL_PUR_PROFILE_ID, profileVersion: 1, displayName: "Dectro xCell", installedOptions: [], retiredAt: null, ...over,
 });
-const common = { catalogue: MACHINE_CATALOGUE, publishedModes: ["multiplex"] as string[] | null, clientLastUnitId: null as string | null };
+const PLACEHOLDER_ID = "unspecified:xcell-pur";
+const route = (over: Record<string, unknown> = {}) => ({
+  legacyOffered: true,
+  registeredUnitAllowed: true,
+  catalogue: MACHINE_CATALOGUE,
+  devices: [] as StudioDevice[],
+  unspecifiedUnits: [] as StudioDevice[],
+  studioId: S,
+  publishedModes: ["multiplex"] as string[] | null,
+  ...over,
+});
+const offer = (switchState: Parameters<typeof resolveXcellMultiplexOffer>[0]["switchState"], r: Record<string, unknown> = {}, extra: { clientLastUnitId?: string | null; allPurUnits?: StudioDevice[] } = {}) =>
+  resolveXcellMultiplexOffer({ switchState, clientLastUnitId: extra.clientLastUnitId ?? null, allPurUnits: extra.allPurUnits ?? [], route: route(r) as never });
+const bound = (id: string) => ({ deviceId: id, modeKey: "multiplex", unspecified: false });
+const placeholder = { deviceId: expect.stringContaining("unspecified") as unknown as string, modeKey: "multiplex", unspecified: true };
 
-describe("switch unavailable: the history path, unchanged", () => {
-  it("history and a unit: the same route as before, nothing else", () => {
-    expect(resolveXcellMultiplexOffer({ ...common, switchState: { available: false }, legacyOffered: true, devices: [unit()] })).toEqual({
-      route: { deviceId: "unit-1", modeKey: "multiplex" }, createAtFirstSave: false, refusal: null
-    });
-  });
-  it("no history: nothing is offered, exactly as today", () => {
-    expect(resolveXcellMultiplexOffer({ ...common, switchState: { available: false }, legacyOffered: false, devices: [unit()] })).toEqual({
-      route: null, createAtFirstSave: false, refusal: null
-    });
+describe("switch unavailable: the production route, unchanged", () => {
+  it("history and a unit: the registered unit; no history: the placeholder", () => {
+    expect(offer({ available: false }, { devices: [unit()] })).toEqual({ route: bound("unit-1"), createAtFirstSave: false });
+    expect(offer({ available: false }, { legacyOffered: false, devices: [unit()] })).toEqual({ route: placeholder, createAtFirstSave: false });
   });
 });
 
-describe("switch available: the owner's switch decides", () => {
-  it("enabled, no history, no unit: offered, the unit is for the first save, and the xCell choice itself is offered by the switch", () => {
-    expect(resolveXcellMultiplexOffer({ ...common, switchState: { available: true, enabled: true }, legacyOffered: false, devices: [] })).toEqual({
-      route: null, createAtFirstSave: true, refusal: null
-    });
+describe("switch available: it governs only the registered-unit path", () => {
+  it("OFF: MultiPlex is still offered, with the placeholder, even with history and a live unit", () => {
+    expect(offer({ available: true, enabled: false }, { devices: [unit()] })).toEqual({ route: placeholder, createAtFirstSave: false });
   });
-  it("enabled with a live unit: the unit routes it, history is irrelevant", () => {
-    for (const legacyOffered of [true, false]) {
-      expect(resolveXcellMultiplexOffer({ ...common, switchState: { available: true, enabled: true }, legacyOffered, devices: [unit()] })).toEqual({
-        route: { deviceId: "unit-1", modeKey: "multiplex" }, createAtFirstSave: false, refusal: null
-      });
+  it("ON with a live unit: the unit binds; the client's last-used live unit wins, else the lowest id", () => {
+    const two = [unit({ deviceId: "unit-b" }), unit({ deviceId: "unit-a" })];
+    expect(offer({ available: true, enabled: true }, { devices: two }).route).toEqual(bound("unit-a"));
+    expect(offer({ available: true, enabled: true }, { devices: two }, { clientLastUnitId: "unit-b" }).route).toEqual(bound("unit-b"));
+    expect(offer({ available: true, enabled: true }, { devices: two }, { clientLastUnitId: "gone" }).route).toEqual(bound("unit-a"));
+  });
+  it("ON, no unit ever registered: the placeholder route and the create-at-first-save flag", () => {
+    expect(offer({ available: true, enabled: true }, { legacyOffered: false })).toEqual({ route: placeholder, createAtFirstSave: true });
+  });
+  it("ON, every unit retired: the placeholder, NO refusal, and nothing is created at the first save", () => {
+    const retired = unit({ retiredAt: "2026-11-01T00:00:00Z" });
+    expect(offer({ available: true, enabled: true }, { devices: [] }, { allPurUnits: [retired] })).toEqual({ route: placeholder, createAtFirstSave: false });
+  });
+  it("a placeholder row is not 'a unit that once existed': it does not stop create-at-first-save", () => {
+    expect(offer({ available: true, enabled: true }, {}, { allPurUnits: [unit({ isUnspecified: true })] }).createAtFirstSave).toBe(true);
+  });
+  it("the contract unpublished or its read failed: no route and nothing to create, whatever the switch says", () => {
+    for (const publishedModes of [[] as string[], null]) {
+      expect(offer({ available: true, enabled: true }, { publishedModes })).toEqual({ route: null, createAtFirstSave: false });
     }
   });
-  it("enabled, every unit retired: refused with the plain message, nothing created", () => {
-    expect(resolveXcellMultiplexOffer({ ...common, switchState: { available: true, enabled: true }, legacyOffered: true, devices: [unit({ retiredAt: "2026-11-01T00:00:00Z" })] })).toEqual({
-      route: null, createAtFirstSave: false, refusal: XCELL_MULTIPLEX_RETIRED_MESSAGE
-    });
-  });
-  it("not enabled: nothing is offered by the switch, even with history and a unit", () => {
-    expect(resolveXcellMultiplexOffer({ ...common, switchState: { available: true, enabled: false }, legacyOffered: true, devices: [unit()] })).toEqual({
-      route: null, createAtFirstSave: false, refusal: null
-    });
+  it("the placeholder id before its row exists is the sentinel", () => {
+    expect(offer({ available: true, enabled: false }).route?.deviceId).toBe(PLACEHOLDER_ID);
   });
 });
 

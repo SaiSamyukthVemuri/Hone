@@ -311,7 +311,7 @@ test("roles: a practitioner sees no payment or price in either view; a reception
   for (const view of ["current", "new"] as const) {
     await setView(page, view);
     await expect(sessionPaymentRegion(page), `${view}: no payment region for a practitioner (the owner positive control is in the payment-lane spec)`).toHaveCount(0);
-    await expect(page.getByRole("button", { name: /prepare session payment|run charge/i }), `${view}: no charge controls`).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /checkout with stripe|run charge/i }), `${view}: no charge controls`).toHaveCount(0);
     expect(await page.getByTestId("charting-view-root").innerText(), `${view}: no price shown`).not.toMatch(/\$\s?\d/);
     await expectTouchFloorAndNoOverflow(page, `${view}, practitioner`);
   }

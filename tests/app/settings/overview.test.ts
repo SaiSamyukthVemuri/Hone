@@ -29,7 +29,11 @@ describe("Settings overview", () => {
     expect(results.find((l) => l.href === "/settings/booking/window")?.keywords).toContain("buffer");
     expect(urls).not.toContain("/waitlist");
     expect(urls).not.toContain("/settings/profile#google-calendar");
-    expect(new Set(urls).size).toBe(urls.length);
+    const controls = results.flatMap((link) => link.controls ?? []);
+    expect(controls.find((link) => link.href === "/settings/availability#special-hours")?.keywords).toContain("holiday hours");
+    expect(controls.find((link) => link.href === "/settings/team#invite-practitioner")?.keywords).toContain("add staff");
+    const destinations = [...urls, ...controls.map((control) => control.href)];
+    expect(new Set(destinations).size).toBe(destinations.length);
     expect(sections.map(({ name }) => name)).not.toContain("Other settings");
   });
 

@@ -1,3 +1,4 @@
+import { withDashboardRebook, type RebookOrigin } from "@/lib/calendar/dashboard-rebook";
 import { PendingLink } from "@/components/pending-link";
 import { CalendarViewToggle } from "./ViewToggle";
 import { CalendarAutoRefresh, type ChangeProbeProps } from "./CalendarAutoRefresh";
@@ -22,6 +23,7 @@ import { CalendarAutoRefresh, type ChangeProbeProps } from "./CalendarAutoRefres
 // every href below is the one that was already there.
 
 type Props = {
+  rebook?: RebookOrigin | null;
   view: "day" | "week" | "month";
   rangeLabel: string;
   timezone: string;
@@ -44,20 +46,24 @@ const STEP_LINK =
   "flex h-9 w-9 items-center justify-center text-lg leading-none hover:bg-neutral-50 dark:hover:bg-neutral-900";
 
 export function CalendarToolbar({
+  rebook,
   view,
   rangeLabel,
   timezone,
   weekHref,
   monthHref,
   dayHref,
-  prevHref,
-  todayHref,
-  nextHref,
+  prevHref: prevUrl,
+  todayHref: todayUrl,
+  nextHref: nextUrl,
   upcomingHref,
   reviewAssignmentsHref,
   hideStepNavOnMobile,
   changeProbe,
 }: Props) {
+  const todayHref = withDashboardRebook(todayUrl, rebook);
+  const prevHref = withDashboardRebook(prevUrl, rebook);
+  const nextHref = withDashboardRebook(nextUrl, rebook);
   return (
     <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       {/* HON-48: keeps this screen current for the other people on the calendar. */}
@@ -71,9 +77,9 @@ export function CalendarToolbar({
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <CalendarViewToggle
           currentView={view}
-          weekHref={weekHref}
-          monthHref={monthHref}
-          dayHref={dayHref}
+          weekHref={withDashboardRebook(weekHref, rebook)}
+          monthHref={withDashboardRebook(monthHref, rebook)}
+          dayHref={dayHref && withDashboardRebook(dayHref, rebook)}
         />
 
         {/* Today + prev/next grouped, like a calendar app. */}

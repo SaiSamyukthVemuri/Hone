@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import type { ReactElement, ReactNode } from "react";
+import type { OverviewSection } from "@/lib/settings/overview";
 import {
   NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV,
   NEW_CLIENT_WAITLIST_SLUGS_ENV,
@@ -61,16 +61,13 @@ const envKeys = [NEW_CLIENT_WAITLIST_SLUGS_ENV, NEW_CLIENT_WAITLIST_DURABLE_SLUG
 let saved: Array<readonly [string, string | undefined]> = [];
 const setFlags = (on: boolean) => { for (const k of envKeys) { if (on) process.env[k] = `${SLUG_A},${SLUG_B}`; else delete process.env[k]; } };
 
-function findItems(node: ReactNode): Array<{ href: string; label: string }> | null {
-  if (!node || typeof node !== "object") return null;
-  if (Array.isArray(node)) { for (const c of node) { const f = findItems(c); if (f) return f; } return null; }
-  const el = node as ReactElement<{ items?: unknown; children?: ReactNode }>;
-  if (Array.isArray(el.props?.items)) return el.props.items as Array<{ href: string; label: string }>;
-  return findItems(el.props?.children);
-}
 async function settingsTabShown() {
   const { default: SettingsLayout } = await import("@/app/(app)/settings/layout");
-  return (findItems(await SettingsLayout({ children: null })) ?? []).some((i) => i.href === "/waitlist" && i.label === "Waitlist");
+  const layout = await SettingsLayout({ children: null });
+  const sections: OverviewSection[] = layout.props.sections;
+  return sections.some(section =>
+    section.links.some(link => link.href === "/waitlist" && link.label === "Waitlist"),
+  );
 }
 async function navShown() {
   const { showWaitlistInPrimaryNav } = await import("@/lib/settings/nav-registry");

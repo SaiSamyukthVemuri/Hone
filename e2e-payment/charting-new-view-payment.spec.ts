@@ -53,7 +53,7 @@ test("success: prepare, the confirmation names the amount and the action, run, P
   try {
     await openInNewView(page, seed);
     const region = sessionPaymentRegion(page);
-    await page.getByRole("button", { name: /prepare session payment/i }).click();
+    await page.getByRole("button", { name: /checkout with stripe/i }).click();
     await expectPreparedDurable(region);
     await expect(region).toContainText("$225.00");
     const rows = await getSessionPaymentAttemptRows(seed.sessionId);
@@ -62,7 +62,7 @@ test("success: prepare, the confirmation names the amount and the action, run, P
     configureFakeStripeOutcome(idempotencySelectorForAttempt(rows[0].id), "success");
 
     await region.getByRole("button", { name: /^run charge$/i }).click();
-    const confirm = region.getByRole("button", { name: /confirm: run charge/i });
+    const confirm = region.getByRole("button", { name: "Confirm Stripe charge · $225.00 CAD", exact: true });
     await expect(confirm, "the second step names the action").toBeVisible();
     await expect(region, "and the amount").toContainText("$225.00");
     await confirm.click();
@@ -88,13 +88,13 @@ test("failure: a declined charge never shows Paid, and switching views changes n
   try {
     await openInNewView(page, seed);
     const region = sessionPaymentRegion(page);
-    await page.getByRole("button", { name: /prepare session payment/i }).click();
+    await page.getByRole("button", { name: /checkout with stripe/i }).click();
     await expectPreparedDurable(region);
     const rows = await getSessionPaymentAttemptRows(seed.sessionId);
     configureFakeStripeOutcome(idempotencySelectorForAttempt(rows[0].id), "decline");
 
     await region.getByRole("button", { name: /^run charge$/i }).click();
-    await region.getByRole("button", { name: /confirm: run charge/i }).click();
+    await region.getByRole("button", { name: "Confirm Stripe charge · $225.00 CAD", exact: true }).click();
 
     // The fake refuses a declined charge the way Stripe does: the create call throws a card error carrying the PaymentIntent, and a signed payment_failed event
     // follows. The executor never records a terminal failure from the thrown error (the intent is not confirmed canceled), so the attempt waits as pending_stripe
@@ -148,7 +148,7 @@ test("roles: the owner sees the Session payment region in both views (control); 
         if ((await toggle.getAttribute("aria-checked")) !== String(view === "new")) await toggle.click();
         await expect(p2.getByTestId("charting-view-root")).toHaveAttribute("data-charting-view", view, { timeout: T });
         await expect(sessionPaymentRegion(p2), `${view}: no payment region for a practitioner`).toHaveCount(0);
-        await expect(p2.getByRole("button", { name: /prepare session payment|run charge/i })).toHaveCount(0);
+        await expect(p2.getByRole("button", { name: /checkout with stripe|run charge/i })).toHaveCount(0);
       }
     } finally {
       await ctx.close();

@@ -1,5 +1,6 @@
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { getSettingsNavigation } from "@/lib/settings/nav-registry";
+import { buildSettingsOverview } from "@/lib/settings/overview";
 import { SettingsShell } from "@/components/settings/settings-shell";
 
 // Settings layout. The rail is evaluated on the SERVER from the nav registry
@@ -20,12 +21,13 @@ export default async function SettingsLayout({
 
   return (
     <SettingsShell
-      items={items}
-      reachable={reachable}
-      account={{
-        name: practitioner.display_name || practitioner.email,
-        roleLabel: role === "owner" ? "Owner" : "Practitioner",
-      }}
+      sections={buildSettingsOverview(items, {
+        isOwner: role === "owner",
+        googleCalendarEnabled: studio.google_calendar_connection_enabled === true,
+      })}
+      reachable={reachable.map(({ label, href }) => ({ label, href }))}
+      studioName={studio.name}
+      roleLabel={role === "owner" ? "Owner" : "Practitioner"}
     >
       {children}
     </SettingsShell>

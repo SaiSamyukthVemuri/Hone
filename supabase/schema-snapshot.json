@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 289,
-    "last": "0384_rematerialize_reservations_actual_end.sql",
-    "sha256": "526894e4be903c6d84a9c4f8aba8962ddd344eb5a7afa4cbb7de506c234c50c7"
+    "count": 291,
+    "last": "0385_unspecified_machine.sql",
+    "sha256": "f76404e7cc31f188731a57e4880544714ea320ce7fc71c1505b41511cfa6a016"
   },
   "public": {
     "tables": [
@@ -335,6 +335,7 @@
       "enqueue_calendar_outbound",
       "enqueue_calendar_outbound_on_delete",
       "ensure_studio_machine_for_save",
+      "ensure_unspecified_machine",
       "erase_waitlist_decline_answers",
       "expire_new_client_waitlist_invitation",
       "expire_pending_sessions",
@@ -447,6 +448,7 @@
       "practitioner_cancel_appointment",
       "practitioner_capacity_retirement_blockers",
       "practitioners_receptionist_membership_guard",
+      "preserve_settlement_fee_adjustment",
       "preview_waitlist_over_invite",
       "process_email_provider_event",
       "public_booking_local_to_utc",
@@ -489,6 +491,7 @@
       "reconcile_payment_intent_by_charge_attempt",
       "reconcile_refund_event",
       "reconcile_setup_intent_succeeded",
+      "record_adjusted_appointment_settlement",
       "record_appointment_settlement",
       "record_block_machine_identity",
       "record_calendar_sync_result",
@@ -531,6 +534,7 @@
       "redeem_waitlist_preference_grant",
       "refuse_treatment_setup_capture_update",
       "refuse_treatment_setup_reading_update",
+      "refuse_unspecified_machine_change",
       "register_studio_machine",
       "reject_payment_audit_mutation",
       "reject_payment_consents_mutation",

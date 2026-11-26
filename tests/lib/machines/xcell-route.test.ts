@@ -11,38 +11,63 @@ import { XCELL_PUR_PROFILE_ID } from "../../../lib/machines/xcell-pur";
 const unit = (over: Partial<StudioDevice> = {}): StudioDevice => ({
   deviceId: "unit-1", studioId: "s", profileId: XCELL_PUR_PROFILE_ID, profileVersion: 1, displayName: "Dectro xCell", installedOptions: [], retiredAt: null, ...over,
 });
-const base = { legacyOffered: true, catalogue: MACHINE_CATALOGUE, devices: [unit()], publishedModes: ["multiplex"] as string[] | null };
+const placeholder = (over: Partial<StudioDevice> = {}): StudioDevice => ({
+  deviceId: "ph-1", studioId: "s", profileId: XCELL_PUR_PROFILE_ID, profileVersion: 1, displayName: "Machine not specified", installedOptions: [], retiredAt: null, isUnspecified: true, ...over,
+});
+const base = {
+  legacyOffered: true, registeredUnitAllowed: true, catalogue: MACHINE_CATALOGUE, devices: [unit()], unspecifiedUnits: [] as StudioDevice[], studioId: "s",
+  publishedModes: ["multiplex"] as string[] | null,
+};
 
-describe("the route exists only when MultiPlex can really be saved", () => {
-  it("is offered with the existing choice, an active profile, a PUBLISHED row and a usable unit", () => {
-    expect(xcellMultiplexRoute(base)).toEqual({ deviceId: "unit-1", modeKey: "multiplex" });
+describe("MultiPlex is offered to EVERY studio once it can really be saved", () => {
+  it("a studio with NO registered machine, NO xCell history and the rollout off still gets the route, on the placeholder", () => {
+    const r = xcellMultiplexRoute({ ...base, legacyOffered: false, registeredUnitAllowed: false, devices: [] });
+    expect(r).toEqual({ deviceId: "unspecified:xcell-pur", modeKey: "multiplex", unspecified: true });
+  });
+  it("uses the real placeholder row of the CURRENT version when it exists", () => {
+    const r = xcellMultiplexRoute({ ...base, legacyOffered: false, devices: [], unspecifiedUnits: [placeholder({ deviceId: "old", profileVersion: 0 }), placeholder()] });
+    expect(r).toEqual({ deviceId: "ph-1", modeKey: "multiplex", unspecified: true });
+  });
+  it("a registered xCell unit is the route only beside the existing xCell choice AND when the rollout allows it; otherwise the machine stays unspecified", () => {
+    expect(xcellMultiplexRoute(base)).toEqual({ deviceId: "unit-1", modeKey: "multiplex", unspecified: false });
+    expect(xcellMultiplexRoute({ ...base, registeredUnitAllowed: false })?.unspecified).toBe(true);
+    expect(xcellMultiplexRoute({ ...base, legacyOffered: false })?.unspecified).toBe(true);
+  });
+  it("the machine is never silently a registered unit the person did not select: a studio with a unit but no xCell choice still gets the placeholder", () => {
+    expect(xcellMultiplexRoute({ ...base, legacyOffered: false })).toMatchObject({ unspecified: true });
+  });
+  it("a SAVED placeholder area keeps recognising its own placeholder even when the studio has a registered unit and the xCell choice", () => {
+    const r = xcellMultiplexRoute({ ...base, unspecifiedUnits: [placeholder()], savedUnitId: "ph-1" });
+    expect(r).toEqual({ deviceId: "ph-1", modeKey: "multiplex", unspecified: true });
+  });
+  it("a placeholder is never picked as the registered unit", () => {
+    const r = xcellMultiplexRoute({ ...base, devices: [placeholder()] });
+    expect(r?.unspecified).toBe(true);
   });
   it.each([
-    ["no existing xCell choice (no history)", { legacyOffered: false }],
     ["the contract row is not published", { publishedModes: [] }],
     ["another mode is published but not multiplex", { publishedModes: ["blend"] }],
     ["the published read failed", { publishedModes: null }],
-    ["no unit exists", { devices: [] }],
-    ["the only unit is retired", { devices: [unit({ retiredAt: "2026-11-01T00:00:00Z" })] }],
-    ["the unit is another model", { devices: [unit({ profileId: "dectro-apilus:senior-3g" })] }],
-    ["the unit is on another contract version", { devices: [unit({ profileVersion: 9 })] }],
-  ])("is NOT offered when %s, so Chloe's form is exactly as it was", (_n, over) => {
+  ])("is NOT offered when %s", (_n, over) => {
     expect(xcellMultiplexRoute({ ...base, ...over } as typeof base)).toBeNull();
+    expect(xcellMultiplexRoute({ ...base, legacyOffered: false, devices: [], ...over } as typeof base)).toBeNull();
+  });
+  it("a retired or other-model or other-version registered unit is never the route's unit (the placeholder is)", () => {
+    for (const d of [unit({ retiredAt: "2026-11-01T00:00:00Z" }), unit({ profileId: "dectro-apilus:senior-3g" }), unit({ profileVersion: 9 })]) {
+      expect(xcellMultiplexRoute({ ...base, devices: [d] })?.unspecified).toBe(true);
+    }
   });
   it("PROFILE ACTIVE is its own check: a blocked profile whose MultiPlex mode still reads active offers no route", () => {
     const blockedProfile = MACHINE_CATALOGUE.map((p) => (p.profileId === XCELL_PUR_PROFILE_ID ? { ...p, availability: "blocked" as const } : p));
     expect(blockedProfile.find((p) => p.profileId === XCELL_PUR_PROFILE_ID)!.modes.find((m) => m.key === "multiplex")!.availability).toBe("active");
     expect(xcellMultiplexRoute({ ...base, catalogue: blockedProfile })).toBeNull();
   });
-  it("MODE ACTIVE is its own check: an active profile whose MultiPlex mode is withheld offers no route", () => {
+  it("MODE ACTIVE is its own check (THE STOP): an active profile whose MultiPlex mode is withheld offers no route", () => {
     const withheld = MACHINE_CATALOGUE.map((p) => (p.profileId === XCELL_PUR_PROFILE_ID ? { ...p, modes: p.modes.map((m) => ({ ...m, availability: "blocked" as const })) } : p));
     expect(xcellMultiplexRoute({ ...base, catalogue: withheld })).toBeNull();
+    expect(xcellMultiplexRoute({ ...base, legacyOffered: false, devices: [], catalogue: withheld })).toBeNull();
   });
-  it("is not offered when the catalogue does not carry an active profile", () => {
-    const blocked = MACHINE_CATALOGUE.map((p) => (p.profileId === XCELL_PUR_PROFILE_ID ? { ...p, availability: "blocked" as const } : p));
-    expect(xcellMultiplexRoute({ ...base, catalogue: blocked })).toBeNull();
-  });
-  it("picks one unit deterministically when there are several", () => {
+  it("picks one registered unit deterministically when there are several", () => {
     expect(xcellMultiplexRoute({ ...base, devices: [unit({ deviceId: "b" }), unit({ deviceId: "a" })] })?.deviceId).toBe("a");
   });
 });

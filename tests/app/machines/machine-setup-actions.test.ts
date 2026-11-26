@@ -2770,7 +2770,7 @@ describe("loadMachineSetupContext and the platform rollout", () => {
     machine_profile_version: 1, display_name: "Dectro xCell", installed_options: [], retired_at: null, ...over,
   });
 
-  it("THE SWITCH OFF applies to a NEW area (history alone no longer offers the xCell choice or MultiPlex) and an EXISTING area keeps its offer", async () => {
+  it("THE SWITCH OFF applies to a NEW area (history alone no longer offers the xCell choice; MultiPlex stays offered with the placeholder) and an EXISTING area keeps its offer", async () => {
     signIn("studio-fett", "pract-owner-a");
     HISTORY.value = true; ROLLOUT.value = "on";
     DB.rowsFor.machine_profile_mode_contract = [{ mode_key: "multiplex", machine_profile_version: 1 }];
@@ -2782,7 +2782,8 @@ describe("loadMachineSetupContext and the platform rollout", () => {
     SWITCH.value = { available: true, enabled: false };
     const off = await actions.loadMachineSetupContext(NEW_SETUP);
     expect(off.legacyMachine, "xCell switched off: a new area is not offered the existing xCell choice").toBeNull();
-    expect(off.multiplexRoute).toBeNull();
+    expect(off.multiplexRoute, "MultiPlex is still offered, with the placeholder rather than the registered unit").toMatchObject({ unspecified: true });
+    expect(on.multiplexRoute?.unspecified, "switch on with a live unit binds the registered unit").toBe(false);
     const existing = await actions.loadMachineSetupContext(EXISTING);
     expect(existing.legacyMachine, "an existing area keeps what it was charted with").not.toBeNull();
     SWITCH.value = { available: false };
@@ -2805,7 +2806,7 @@ describe("loadMachineSetupContext and the platform rollout", () => {
     expect(existing.devices.map((d) => d.deviceId)).toContain(PUR_UNIT_ID);
   });
 
-  it("with ONLY a RETIRED xCell unit the offer is REFUSED as retired (never 'create one at the first save'), and a studio with no unit at all still creates at the first save", async () => {
+  it("with ONLY a RETIRED xCell unit MultiPlex still routes to the placeholder (no refusal, nothing created), and a studio with no unit at all creates at the first save", async () => {
     signIn("studio-fett", "pract-owner-a");
     HISTORY.value = true; ROLLOUT.value = "on";
     DB.rowsFor.machine_profile_mode_contract = [{ mode_key: "multiplex", machine_profile_version: 1 }];
@@ -2814,12 +2815,11 @@ describe("loadMachineSetupContext and the platform rollout", () => {
     DB.rowsFor.studio_machines = [purRow({ retired_at: "2026-11-01T00:00:00Z" })];
     const retired = await actions.loadMachineSetupContext(NEW_SETUP);
     expect(retired.multiplexCreateAtFirstSave).toBe(false);
-    expect(retired.multiplexRoute).toBeNull();
-    expect(retired.multiplexRefusal).toMatch(/retired/i);
+    expect(retired.multiplexRoute?.unspecified).toBe(true);
     DB.rowsFor.studio_machines = [];
     const none = await actions.loadMachineSetupContext(NEW_SETUP);
     expect(none.multiplexCreateAtFirstSave).toBe(true);
-    expect(none.multiplexRefusal).toBeNull();
+    expect(none.multiplexRoute?.unspecified).toBe(true);
   });
 
   it("a FAILED rollout read for a studio with legacy history gives no route, withholds the legacy offer and returns the retryable message", async () => {
@@ -2860,7 +2860,7 @@ describe("loadMachineSetupContext and the platform rollout", () => {
     expect(ctx.inventoryReason).not.toBe(ROLLOUT_UNAVAILABLE_MESSAGE);
   });
 
-  it("a route that EXISTS with the rollout On is withheld with it Off or errored (the fixture offers a real route, so the decision is what is tested)", async () => {
+  it("a registered unit is the route's unit only with the rollout On; with it Off or errored the route is the placeholder, never the registered unit", async () => {
     signIn("studio-fett", "pract-owner-a");
     HISTORY.value = true;
     DB.rowsFor.machine_profile_mode_contract = [{ mode_key: "multiplex", machine_profile_version: 1 }];
@@ -2870,11 +2870,13 @@ describe("loadMachineSetupContext and the platform rollout", () => {
     }];
     ROLLOUT.value = "on";
     const on = await actions.loadMachineSetupContext(NEW_SETUP);
-    expect(on.multiplexRoute).toEqual({ deviceId: "22222222-2222-4222-8222-222222222222", modeKey: "multiplex" });
+    expect(on.multiplexRoute).toEqual({ deviceId: "22222222-2222-4222-8222-222222222222", modeKey: "multiplex", unspecified: false });
     for (const v of ["off", "error"] as const) {
       ROLLOUT.value = v;
       const ctx = await actions.loadMachineSetupContext(NEW_SETUP);
-      expect(ctx.multiplexRoute, v).toBeNull();
+      // MultiPlex does not depend on the rollout, so it is still offered; but the registered unit is not the machine, the placeholder is.
+      expect(ctx.multiplexRoute, v).toEqual({ deviceId: "unspecified:xcell-pur", modeKey: "multiplex", unspecified: true });
+      expect(ctx.multiplexRoute?.deviceId, v).not.toBe("22222222-2222-4222-8222-222222222222");
     }
   });
 
@@ -3007,7 +3009,7 @@ describe("loadMachineSetupContext and the platform rollout", () => {
       expect(ROLLOUT.reads).toBe(1);
       expect(on.devices.map((d) => d.deviceId)).toContain(PUR_UNIT);
       expect(on.remembered?.deviceId).toBe(PUR_UNIT);
-      expect(on.multiplexRoute, "the route needs the legacy xCell choice; a studio without it keeps today's behaviour").toBeNull();
+      expect(on.multiplexRoute, "a studio without the xCell choice gets MultiPlex on the placeholder, never on its registered unit").toMatchObject({ unspecified: true });
       ROLLOUT.value = "off";
       const off = await actions.loadMachineSetupContext(NEW_SETUP);
       expect(off.devices.map((d) => d.deviceId)).not.toContain(PUR_UNIT);
