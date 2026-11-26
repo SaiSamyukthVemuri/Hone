@@ -33,7 +33,8 @@ import {
 } from "@/lib/machines/legacy-machine";
 import { XCELL_PUR_PROFILE_ID } from "@/lib/machines/xcell-pur";
 import { withholdXcellUnits } from "@/lib/machines/xcell-withhold";
-import { xcellMultiplexRoute, type XcellMultiplexRoute } from "@/lib/machines/xcell-route";
+import { resolveXcellMultiplexOffer, type XcellMultiplexRoute } from "@/lib/machines/xcell-route";
+import { readXcellModelSwitch, type XcellModelSwitch } from "@/lib/machines/xcell-switch-seam";
 import { listUnspecifiedMachines, unspecifiedDeviceFor } from "@/lib/machines/unspecified-machine";
 import {
   restoreSelectionFromRecordedSetup,
@@ -81,7 +82,7 @@ import {
 } from "@/lib/machines/studio-devices";
 import { xcellRegistrationState } from "@/lib/machines/xcell-registration-gate";
 import { readChartingRollout, ROLLOUT_UNAVAILABLE_MESSAGE, xcellRouteDecision } from "@/lib/rollouts/charting-rollout";
-import { listStudioMachines, machinesByIds, recordBlockMachineIdentity } from "@/lib/machines/machine-queries";
+import { listRetiredUnitsOfProfile, listStudioMachines, machinesByIds, recordBlockMachineIdentity } from "@/lib/machines/machine-queries";
 import {
   assertSessionForClient,
   SessionLineageError,
@@ -242,6 +243,8 @@ export type MachineSetupContext = {
   legacyMachine: LegacyMachineOffer | null;
   /** MultiPlex as a mode of the one xCell choice: the xCell Pur unit to route it through, or null (nothing changes). */
   multiplexRoute: XcellMultiplexRoute | null;
+  /** The owner's switch is on and the studio has no unit yet: the database command will create it at the first successful MultiPlex save. Carried only; app code creates nothing. */
+  multiplexCreateAtFirstSave: boolean;
 };
 
 const ANONYMOUS: MachineSetupContext = {
@@ -264,9 +267,19 @@ const ANONYMOUS: MachineSetupContext = {
   restoredSelection: null,
   legacyMachine: null,
   multiplexRoute: null,
+  multiplexCreateAtFirstSave: false,
 };
 
 /** Everything the panel needs, derived entirely on the server. */
+async function retiredPurUnits(db: Parameters<typeof listRetiredUnitsOfProfile>[0], studioId: string) {
+  try {
+    const r = await listRetiredUnitsOfProfile(db, studioId, XCELL_PUR_PROFILE_ID);
+    return r.ok ? r.value : [];
+  } catch {
+    return [];
+  }
+}
+
 export async function loadMachineSetupContext(input: {
   /** Route values. Authorized below against the server-derived studio. */
   clientId: string;
@@ -472,6 +485,22 @@ export async function loadMachineSetupContext(input: {
   // MULTIPLEX AS A MODE OF THE ONE xCELL CHOICE (HON-71). A route only where the existing choice is offered, the contract row is
   // PUBLISHED and the studio has a usable unit; a failed read means no route, and the studio's form is exactly what it was.
   let multiplexRoute: XcellMultiplexRoute | null = null;
+  let multiplexCreateAtFirstSave = false;
+  // THE OWNER'S SWITCH. Unavailable until its migration exists, and then nothing below changes. When it is available and on, the
+  // xCell choice is offered by the switch even for a studio with no xCell history.
+  let xcellSwitch: XcellModelSwitch = { available: false };
+  try {
+    xcellSwitch = await readXcellModelSwitch(scope.studioId);
+  } catch {
+    xcellSwitch = { available: false };
+  }
+  if (xcellSwitch.available && xcellSwitch.enabled && !legacyMachine) legacyMachine = legacyMachineOffer(catalogue);
+  // THE SWITCH OFF APPLIES TO A NEW AREA: history alone must not keep offering the existing xCell choice (and with it MultiPlex) once the owner
+  // switched the xCell off. An EXISTING area keeps the machine it was charted with, so this is for a new area only.
+  // The same OFF applies to the xCell Pur UNIT: without the legacy wrapper the picker would list a live unit as an ordinary native machine, and a new
+  // MultiPlex area could be saved from it. It is withheld from a NEW area with its remembered and suggested selections (an existing area keeps its own).
+  const xcellOffForNewArea = xcellSwitch.available && !xcellSwitch.enabled && !input.blockId;
+  if (xcellOffForNewArea) legacyMachine = null;
   // PLATFORM ROLLOUT. Only a studio that is OFFERED the legacy xCell choice has anything to gate, so the rollout and
   // the existing-block read happen ONLY then: a studio with no xCell history makes no rollout read and keeps its own reason, so a rollout
   // outage (or a deploy ahead of the migration) cannot degrade machine setup for every studio. An EXISTING MultiPlex block keeps its route
@@ -509,18 +538,35 @@ export async function loadMachineSetupContext(input: {
     const placeholders = await listUnspecifiedMachines(db, scope.studioId);
     unspecifiedUnits = placeholders.ok ? placeholders.value : [];
     const savedUnitId = input.blockId ? await blockStoredUnitId(db, input.blockId, input.sessionId) : null;
-    multiplexRoute = xcellMultiplexRoute({
-      savedUnitId,
-      legacyOffered: legacyMachine !== null,
-      registeredUnitAllowed,
-      catalogue,
-      devices: inventory.devices,
-      unspecifiedUnits,
-      studioId: scope.studioId,
-      publishedModes: published && published.ok ? published.value : null,
+    let clientLastUnitId: string | null = null;
+    if (xcellSwitch.available && xcellSwitch.enabled) {
+      try {
+        clientLastUnitId = (await readClientLastMachine(input.clientId))?.deviceId ?? null;
+      } catch {
+        clientLastUnitId = null;
+      }
+    }
+    const offer = resolveXcellMultiplexOffer({
+      switchState: xcellSwitch,
+      clientLastUnitId,
+      // RETIRED xCell Pur UNITS ARE READ APART (never a route): they only say that a unit once existed, so nothing is created at the first save.
+      allPurUnits: xcellSwitch.available && xcellSwitch.enabled ? [...inventory.devices, ...(await retiredPurUnits(db, scope.studioId))] : [],
+      route: {
+        savedUnitId,
+        legacyOffered: legacyMachine !== null,
+        registeredUnitAllowed,
+        catalogue,
+        devices: inventory.devices,
+        unspecifiedUnits,
+        studioId: scope.studioId,
+        publishedModes: published && published.ok ? published.value : null,
+      },
     });
+    multiplexRoute = offer.route;
+    multiplexCreateAtFirstSave = offer.createAtFirstSave;
   } catch {
     multiplexRoute = null;
+    multiplexCreateAtFirstSave = false;
   }
   // The placeholder travels as a DEVICE of this context only so the panel can resolve it by id; no list built from `devices` shows it.
   const routeUnit =
@@ -571,7 +617,7 @@ export async function loadMachineSetupContext(input: {
   // WHEN THE ROLLOUT COULD NOT BE READ, THE xCELL UNIT IS WITHHELD WHOLE, not only its legacy-choice wrapper: with the wrapper gone the picker
   // would list a registered xCell Pur unit as an ordinary machine, and a new setup saved from it would be recorded under the native identity
   // while it is unknown whether this studio may use it. Every selection that could point at such a unit is withheld with it.
-  const offered = withholdXcellUnits({ rollout: rolloutUnavailable ? "unavailable" : rolloutOff ? "off" : "available", devices: inventory.devices, remembered, suggestedMachine, restoredSelection, clientLastMachine });
+  const offered = withholdXcellUnits({ rollout: rolloutUnavailable ? "unavailable" : rolloutOff || xcellOffForNewArea ? "off" : "available", devices: inventory.devices, remembered, suggestedMachine, restoredSelection, clientLastMachine });
 
   return {
     scope,
@@ -592,6 +638,7 @@ export async function loadMachineSetupContext(input: {
     restoredSelection: offered.restoredSelection,
     legacyMachine,
     multiplexRoute,
+    multiplexCreateAtFirstSave,
     clientLastMachine: offered.clientLastMachine,
   };
 }

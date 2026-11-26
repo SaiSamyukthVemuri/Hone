@@ -51,7 +51,7 @@ describe("auto-resolution is held while legacy values are entered", () => {
         // choice (an explicit chooseDevice); it never selects anything on its own, so it is not gated by `hold`.
         "suggestedMachine", "multiplexRoute",
         // no unit choice
-        "canManageMachines", "catalogue", "devices", "inventoryReason", "legacyMachine", "persistence", "priorSetup", "rolloutNotice",
+        "canManageMachines", "catalogue", "devices", "inventoryReason", "legacyMachine", "multiplexCreateAtFirstSave", "persistence", "priorSetup", "rolloutNotice",
         "priorSetupUnavailable", "recordedSetup", "recordedSetupUnavailable", "scope", "unitNames",
       ].sort(),
     );

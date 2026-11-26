@@ -954,6 +954,8 @@ export const DYNAMIC_RPC_FILES: readonly string[] = [
   "app/(app)/settings/payments/cancellation-fee-actions.ts",
   "app/(app)/settings/waitlist/actions.ts",
   "lib/email/send-appointment.ts",
+  // Read: runs as the SIGNED-IN user; the switch seam and the settings code name get_studio_machine_choices / set_studio_machine_model / set_studio_machine_default through it, and the database re-checks an active owner (or practitioner for the read).
+  "lib/machines/studio-machine-rpc.ts",
   "lib/rollouts/admin-commands.ts",
   "lib/rollouts/charting-rollout.ts",
   "lib/waitlist/followups-owner.ts",

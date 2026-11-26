@@ -248,6 +248,8 @@ export type MachineFirstSetupPanelProps = {
   /** the pending MultiPlex request is the click that opened this panel, so it is applied on mount. */
   applyRequestOnMount?: boolean;
   multiplexReadingsHost?: HTMLDivElement | null;
+  /** The owner's switch is on and the studio has no unit yet: the database command creates it at the first successful MultiPlex save. Carried through for the screens that will say so; this form creates nothing and shows nothing for it. */
+  multiplexCreateAtFirstSave?: boolean;
   /**
    * The host form's MULTIPLEX pick in its ONE Mode control (there is no second selector here). Each pick bumps `seq`: `want` true
    * binds this NEW area to the routed unit, false returns it to the existing xCell workflow. Acted on only when the sequence changes.

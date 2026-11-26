@@ -312,6 +312,38 @@ export async function listStudioMachines(
   };
 }
 
+/**
+ * THE STUDIO'S RETIRED UNITS OF ONE PROFILE, read apart from `listStudioMachines` (which leaves retired rows out so they can never be chosen). Only
+ * the MultiPlex offer needs them: with only a retired unit the offer must say "retired" and never "create one at the first save". Never offered
+ * as a choice; a failed read is reported, not guessed.
+ */
+export async function listRetiredUnitsOfProfile(
+  db: MachineDb,
+  studioId: string,
+  profileId: string,
+): Promise<MachineOutcome<StudioDevice[]>> {
+  const { data, error } = await db
+    .from("studio_machines")
+    .select("id, studio_id, machine_profile_id, machine_profile_version, display_name, installed_options, retired_at")
+    .eq("studio_id", studioId)
+    .eq("machine_profile_id", profileId)
+    .limit(200);
+  if (error) return { ok: false, error: fail(error, "Could not read machines.") };
+  const rows = ((data ?? []) as MachineRow[]).filter((r) => r.retired_at !== null);
+  return {
+    ok: true,
+    value: rows.map((r) => ({
+      deviceId: r.id,
+      studioId: r.studio_id,
+      profileId: r.machine_profile_id,
+      profileVersion: r.machine_profile_version,
+      displayName: r.display_name,
+      installedOptions: r.installed_options ?? [],
+      retiredAt: r.retired_at,
+    })),
+  };
+}
+
 /** Register one physical unit. Owner-only, enforced in the database. */
 export async function registerStudioMachine(
   db: MachineDb,

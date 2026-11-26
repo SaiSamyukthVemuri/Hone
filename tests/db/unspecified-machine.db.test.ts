@@ -252,6 +252,43 @@ function groups1(pulse: string): string {
   }]);
 }
 
+// The owner's machine switches (0366, present on the machines stack only): the placeholder is NEVER "switched off". An owner who switched the xCell off
+// still has MultiPlex offered with the placeholder (every studio, no opt-in), so the first save through the identity command must be accepted.
+describe("0366 x 0385: the xCell switched OFF and the rollout ON does not refuse MultiPlex on the placeholder", () => {
+  const KEY = "charting_new_view_xcell";
+  let have = false;
+  beforeAll(async () => {
+    have = Boolean((await adminQuery(`select to_regclass('public.studio_machine_models') as t`)).rows[0].t);
+    if (!published) await publishReal();
+  });
+  const setRollout = (mode: "off" | "all") => adminQuery(`update public.platform_rollouts set mode = $1, updated_at = now() where key = $2`, [mode, KEY]);
+  const save = (s: { userId: string; clientId: string }, blockId: string, sessionId: string, unit: string) =>
+    asUser(s.userId, (q) =>
+      q(`select public.record_setup_submission_with_identity($1,$2,$3,$4,$5::jsonb,$6,$7)`, [blockId, unit, "multiplex", `sw-off-${randomUUID()}`.slice(0, 40), groups1("3"), sessionId, s.clientId]),
+    );
+  it("records MultiPlex on the placeholder, and the area keeps profile, mode and the placeholder; a REGISTERED xCell unit is still refused when the xCell is off", async () => {
+    if (!have) return;
+    const s = await seedStudio("unspec-sw-off");
+    try {
+      await setRollout("all");
+      await adminQuery(`update public.studio_machine_models set enabled = false where studio_id=$1 and profile_id=$2`, [s.studioId, PUR]);
+      const { sessionId, blockId } = await seedSession(s);
+      const id = (await ensure(s.userId, s.studioId)).rows[0].id as string;
+      await save(s, blockId, sessionId, id);
+      expect((await adminQuery(`select machine_profile_id, studio_machine_id, machine_mode_key from public.session_blocks where id=$1`, [blockId])).rows[0]).toEqual({
+        machine_profile_id: PUR, studio_machine_id: id, machine_mode_key: "multiplex",
+      });
+      // the switch still means something for a REAL unit: a registered xCell unit on a new area is refused
+      const real = (await adminQuery(`insert into public.studio_machines (studio_id, machine_profile_id, machine_profile_version, display_name) values ($1,$2,1,'Dectro xCell') returning id`, [s.studioId, PUR])).rows[0].id as string;
+      const second = await seedSession(s);
+      await expect(save(s, second.blockId, second.sessionId, real)).rejects.toThrow(/switched off/);
+    } finally {
+      await setRollout("off");
+      await adminQuery(`delete from public.studio_machines where studio_id=$1`, [s.studioId]).catch(() => undefined);
+    }
+  });
+});
+
 describe("0385 command census: every function that takes a machine id is classified accept or refuse", () => {
   // ACCEPT: the unspecified unit is a valid unit for the identity, readings and capture commands.
   // REFUSE: retire and the default command take a machine id and refuse the placeholder; register takes none but refuses its reserved name (all proved above).
@@ -261,8 +298,9 @@ describe("0385 command census: every function that takes a machine id is classif
     "record_treatment_setup_submission",
   ]);
   const REFUSE = new Set(["register_studio_machine", "retire_studio_machine", "set_own_default_machine"]);
+  // get_studio_machine_choices (0366) is a READ that returns a studio's live unit id: it excludes the placeholder by name (proved in machine-switches.db.test.ts).
   // Not commands on a unit's identity: the placeholder's own creator, and READS that return what a block holds.
-  const OTHER = new Set(["ensure_unspecified_machine", "setup_readings_for_block", "latest_setup_for_client", "setup_capture_history_for_block", "refuse_unspecified_machine_change"]);
+  const OTHER = new Set(["ensure_unspecified_machine", "setup_readings_for_block", "latest_setup_for_client", "setup_capture_history_for_block", "refuse_unspecified_machine_change", "get_studio_machine_choices"]);
 
   it("reads pg_proc and fails on any public function that takes a machine / studio_machine id and is not classified", async () => {
     const r = await adminQuery(

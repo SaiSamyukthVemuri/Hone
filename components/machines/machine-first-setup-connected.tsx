@@ -743,6 +743,7 @@ export function MachineFirstSetupConnected({
       multiplexRoute={ctx.multiplexRoute}
       // THE PANEL ACTS ON A REQUEST ONLY ONCE THE CONTEXT CARRIES A ROUTE. A route-less context (a failed read of the contract) is not a reason to refuse
       // the request: the host retries the load and the request is applied when the context that has a route arrives, under the same token.
+      multiplexCreateAtFirstSave={ctx.multiplexCreateAtFirstSave}
       multiplexRequest={ctx.multiplexRoute ? multiplexRequest : null}
       applyRequestOnMount={multiplexLoadToken !== null && multiplexLoadToken === multiplexRequest?.seq}
       onMultiplexOutcome={onMultiplexOutcome}

@@ -42,6 +42,8 @@ const DB = vi.hoisted(() => ({
   errorFor: {} as Record<string, { message: string }>,
   readSequence: [] as Array<{ message: string; code?: string } | null>,
   calls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
+  /** Model the database's `retired_at is null` filter on the live-units read (off by default: older cases rely on the unfiltered fake). */
+  filterRetired: false,
 }));
 
 /** Whether the studio has legacy xCell history (the offer's precondition); the default keeps every existing case as it was (no offer). */
@@ -86,6 +88,9 @@ vi.mock("@/lib/rollouts/charting-rollout", async (orig) => {
 // The client's last machine is its own query (a chain this fake does not model, which answered null before); here it is a controlled value.
 const CLIENT_LAST = vi.hoisted(() => ({ value: null as { profileId: string | null; deviceId: string | null; modeKey: string | null } | null }));
 vi.mock("@/lib/sessions/client-last-machine", () => ({ readClientLastMachine: async () => CLIENT_LAST.value }));
+// The owner's xCell switch (a database read as the signed-in user); here a controlled value. The default is "unavailable", which is the old behaviour.
+const SWITCH = vi.hoisted(() => ({ value: { available: false } as { available: false } | { available: true; enabled: boolean } }));
+vi.mock("@/lib/machines/xcell-switch-seam", () => ({ readXcellModelSwitch: async () => SWITCH.value }));
 const revalidatePathMock = vi.hoisted(() => vi.fn());
 vi.mock("next/cache", () => ({ revalidatePath: revalidatePathMock }));
 vi.mock("@/lib/supabase/server", () => ({
@@ -157,7 +162,8 @@ vi.mock("@/lib/supabase/server", () => ({
             eq: () => ({
               limit: async () => ({ data: (table === "session_blocks" || table === "studio_machines" ? DB.rowsFor[table] : undefined) ?? [{ id: "block-1" }], error: null }),
             }),
-            is: () => ({ order: result }),
+            // THE DATABASE'S OWN FILTER for the live-units read: `listStudioMachines` asks for `retired_at is null`, so a retired row never comes back from it.
+            is: () => ({ order: async () => (table === "studio_machines" && DB.filterRetired && !error ? { data: (rows as Array<{ retired_at?: unknown }>).filter((r) => r.retired_at == null), error } : result()) }),
             order: () => ({ limit: result }),
             in: () => ({ limit: result }),
             maybeSingle: result,
@@ -195,6 +201,7 @@ function signIn(studioId: string, practitionerId: string, role = "owner") {
 
 beforeEach(() => {
   HISTORY.value = false;
+  SWITCH.value = { available: false };
   ROLLOUT.reads = 0;
   SESSION.current = null;
   DB.rows = [];
@@ -206,6 +213,7 @@ beforeEach(() => {
   DB.errorFor = {};
   DB.readSequence = [];
   DB.calls = [];
+  DB.filterRetired = false;
 });
 
 // ---------------------------------------------------------------------------
@@ -2755,6 +2763,64 @@ describe("loadMachineSetupContext and the platform rollout", () => {
     DB.rowsFor.session_blocks = [{ studio_machine_id: "unit-pur" }];
     DB.rowsFor.studio_machines = [{ id: "unit-pur" }];
   };
+
+  const PUR_UNIT_ID = "22222222-2222-4222-8222-222222222222";
+  const purRow = (over: Record<string, unknown> = {}) => ({
+    id: PUR_UNIT_ID, studio_id: "studio-fett", machine_profile_id: "dectro-apilus:xcell-pur",
+    machine_profile_version: 1, display_name: "Dectro xCell", installed_options: [], retired_at: null, ...over,
+  });
+
+  it("THE SWITCH OFF applies to a NEW area (history alone no longer offers the xCell choice; MultiPlex stays offered with the placeholder) and an EXISTING area keeps its offer", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    HISTORY.value = true; ROLLOUT.value = "on";
+    DB.rowsFor.machine_profile_mode_contract = [{ mode_key: "multiplex", machine_profile_version: 1 }];
+    DB.rowsFor.studio_machines = [purRow()];
+    SWITCH.value = { available: true, enabled: true };
+    const on = await actions.loadMachineSetupContext(NEW_SETUP);
+    expect(on.legacyMachine).not.toBeNull();
+    expect(on.multiplexRoute).not.toBeNull();
+    SWITCH.value = { available: true, enabled: false };
+    const off = await actions.loadMachineSetupContext(NEW_SETUP);
+    expect(off.legacyMachine, "xCell switched off: a new area is not offered the existing xCell choice").toBeNull();
+    expect(off.multiplexRoute, "MultiPlex is still offered, with the placeholder rather than the registered unit").toMatchObject({ unspecified: true });
+    expect(on.multiplexRoute?.unspecified, "switch on with a live unit binds the registered unit").toBe(false);
+    const existing = await actions.loadMachineSetupContext(EXISTING);
+    expect(existing.legacyMachine, "an existing area keeps what it was charted with").not.toBeNull();
+    SWITCH.value = { available: false };
+    const unavailable = await actions.loadMachineSetupContext(NEW_SETUP);
+    expect(unavailable.legacyMachine, "an unavailable switch changes nothing").not.toBeNull();
+  });
+
+  it("THE SWITCH OFF also withholds the LIVE xCell Pur UNIT from a NEW area's picker (it must not appear as an ordinary native machine), and an existing area keeps its unit", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    HISTORY.value = true; ROLLOUT.value = "on";
+    DB.rowsFor.machine_profile_mode_contract = [{ mode_key: "multiplex", machine_profile_version: 1 }];
+    DB.rowsFor.studio_machines = [purRow()];
+    SWITCH.value = { available: true, enabled: true };
+    expect((await actions.loadMachineSetupContext(NEW_SETUP)).devices.map((d) => d.deviceId)).toContain(PUR_UNIT_ID);
+    SWITCH.value = { available: true, enabled: false };
+    const off = await actions.loadMachineSetupContext(NEW_SETUP);
+    expect(off.legacyMachine).toBeNull();
+    expect(off.devices.map((d) => d.deviceId)).not.toContain(PUR_UNIT_ID);
+    const existing = await actions.loadMachineSetupContext(EXISTING);
+    expect(existing.devices.map((d) => d.deviceId)).toContain(PUR_UNIT_ID);
+  });
+
+  it("with ONLY a RETIRED xCell unit MultiPlex still routes to the placeholder (no refusal, nothing created), and a studio with no unit at all creates at the first save", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    HISTORY.value = true; ROLLOUT.value = "on";
+    DB.rowsFor.machine_profile_mode_contract = [{ mode_key: "multiplex", machine_profile_version: 1 }];
+    SWITCH.value = { available: true, enabled: true };
+    DB.filterRetired = true;
+    DB.rowsFor.studio_machines = [purRow({ retired_at: "2026-11-01T00:00:00Z" })];
+    const retired = await actions.loadMachineSetupContext(NEW_SETUP);
+    expect(retired.multiplexCreateAtFirstSave).toBe(false);
+    expect(retired.multiplexRoute?.unspecified).toBe(true);
+    DB.rowsFor.studio_machines = [];
+    const none = await actions.loadMachineSetupContext(NEW_SETUP);
+    expect(none.multiplexCreateAtFirstSave).toBe(true);
+    expect(none.multiplexRoute?.unspecified).toBe(true);
+  });
 
   it("a FAILED rollout read for a studio with legacy history gives no route, withholds the legacy offer and returns the retryable message", async () => {
     signIn("studio-one", "pract-a");

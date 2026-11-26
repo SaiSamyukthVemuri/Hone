@@ -1181,7 +1181,7 @@ export type ElectrolysisEntry = {
   mode: ElectrolysisMode | null;
   intensity: number | null;
   duration_seconds: number | null;
-  pulse_count: number;
+  pulse_count: number | null;
   // Seconds between high-frequency pulses; only set when pulse_count > 1
   // (0.03–1.90s). NULL for single-pulse entries and pre-0102 rows.
   pulse_delay_seconds: number | null;
