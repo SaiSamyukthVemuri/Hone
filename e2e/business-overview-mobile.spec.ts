@@ -333,3 +333,56 @@ test("what the figures do NOT include is said under them: an unsettled payment r
   await expectNoSideways(page, "Overview with disclosures");
   await shot(page, "overview-fold-disclosure");
 });
+
+test("Overview Last month -> Explore analytics -> Show: the comparison is the previous calendar month before and after, and Analytics' collected equals the Overview's to the cent", async ({ page }) => {
+  const now = new Date();
+  const seed = await seedE2eStudio();
+  await currency(seed);
+  const prac = await getOwnerPractitionerId(seed.studioId);
+  const months = studioMonths(now, await getStudioTimezone(seed.studioId));
+  const mid = lastMonthMidInstant(months);
+  await paidVisit(seed, prac, "Last A", mid, 21000);
+  await paidVisit(seed, prac, "Last B", new Date(mid.getTime() + DAY), 6550); // $275.50 last month, not a whole dollar
+  await paidVisit(seed, prac, "This", new Date(now.getTime() - 2 * 3_600_000), 9000);
+
+  await loginAsOwner(page, seed);
+  await page.goto("/financials/overview");
+  await page.locator('[data-period="previous_month"]').click();
+  await expect.poll(() => q(page).get("period"), { timeout: T }).toBe("previous_month");
+  await expect(collected(page)).toHaveText(/\$275\.50/, { timeout: T });
+  const overviewCents = await collected(page).getAttribute("data-cents");
+  expect(overviewCents).toBe("27550");
+
+  await page.getByRole("link", { name: /Explore analytics/i }).click();
+  await expect(page).toHaveURL(/\/financials\/analytics\?/, { timeout: T });
+  const comparison = page.getByLabel("Compared with");
+  const selectedComparison = () => comparison.evaluate((el) => { const s = el as HTMLSelectElement; return s.options[s.selectedIndex]?.textContent ?? ""; });
+  // The id sits on the card's heading; the card is its parent, which holds the figure.
+  const total = page.locator("#ov-collected-total").locator("xpath=..");
+
+  // BEFORE Show: the address says it, the control shows it, and it is visible (not hidden behind Custom range).
+  expect(q(page).get("period")).toBe("previous_month");
+  expect(q(page).get("compare")).toBe("previous_month");
+  await expect(comparison).toBeVisible({ timeout: T });
+  expect(await selectedComparison()).toBe("The previous calendar month");
+  await expect(total).toContainText("$275.50", { timeout: T });
+
+  // Press Show, changing nothing.
+  await page.getByRole("button", { name: "Show", exact: true }).click();
+  await expect.poll(() => q(page).has("practitioner"), { timeout: T }).toBe(true);
+  expect(q(page).get("period")).toBe("previous_month");
+  expect(q(page).get("compare"), "Show must resubmit the previous calendar month, never 'preceding'").toBe("previous_month");
+  await expect(comparison).toBeVisible({ timeout: T });
+  expect(await selectedComparison()).toBe("The previous calendar month");
+  // The headline is exact dollars and cents and equals the Overview's figure to the cent.
+  await expect(total).toContainText("$275.50", { timeout: T });
+  await expect(total).not.toContainText("$276");
+  expect(Math.round(Number(/\$([\d,]+\.\d{2})/.exec(await total.innerText())![1].replace(/,/g, "")) * 100)).toBe(Number(overviewCents));
+  // October against September stays October against September.
+  await expect(page.getByRole("main")).toContainText("compared with", { timeout: T });
+  await expectNoSideways(page, "Analytics after Show");
+  if (SHOTS) {
+    mkdirSync(`${SHOTS}/analytics`, { recursive: true });
+    await page.screenshot({ path: `${SHOTS}/analytics/analytics-after-show-${test.info().project.name}.png`, fullPage: true });
+  }
+});

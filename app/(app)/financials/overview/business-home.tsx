@@ -211,5 +211,7 @@ function analyticsQuery(sel: HomeSelection): string {
     const last = new Date(Date.UTC(Number(y), Number(m), 0)).getUTCDate();
     return `?period=custom&from=${sel.month}-01&to=${sel.month}-${String(last).padStart(2, "0")}&compare=previous_month`;
   }
+  // Last month is compared with the month before it. Say so in the address, so Analytics shows it as the comparison and Show resubmits it.
+  if (sel.period === "previous_month") return "?period=previous_month&compare=previous_month";
   return sel.period === "month_to_date" ? "" : `?period=${sel.period}`;
 }

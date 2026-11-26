@@ -39,7 +39,7 @@ import {
 } from "@/lib/business-analytics/copy";
 import { NAMED_LIST_SIZE, type NamedRow } from "@/lib/business-analytics/named-clients";
 import { FIGURE_UNAVAILABLE_COPY, type Figure } from "@/lib/business-analytics/figure";
-import { formatWhole } from "@/lib/business-analytics/money-format";
+import { formatExact, formatWhole } from "@/lib/business-analytics/money-format";
 import { MONEY_BASIS_NOTE, type Change } from "@/lib/business-analytics/money-metrics";
 import type { CollectedDifference, OverviewView } from "@/lib/business-analytics/overview-model";
 import { overviewQuery, type OverviewParams } from "@/lib/business-analytics/overview-params";
@@ -167,6 +167,16 @@ export function Controls({ params, options, action = OVERVIEW_PATH, hidden = [] 
         <input key={name} type="hidden" name={name} value={value} />
       ))}
       <button type="submit" className={BUTTON}>Show</button>
+      {params.periodKind === "previous_month" ? (
+        // LAST MONTH is one whole calendar month, compared with the calendar month before it. Said, not implied: one fixed choice, so Show resubmits
+        // compare=previous_month and never "preceding". It is not a Custom-range control, so it is always visible.
+        <label className="flex flex-col gap-1 text-xs text-fg-muted" data-fixed-comparison="">
+          Compared with
+          <select name="compare" defaultValue="previous_month" aria-label="Compared with" className={INPUT}>
+            <option value="previous_month">{PREVIOUS_CALENDAR_MONTH_LABEL}</option>
+          </select>
+        </label>
+      ) : null}
       <div className="hidden basis-full flex-wrap items-end justify-end gap-2 group-has-[option[value=custom]:checked]:flex" data-custom-range="">
         <label className="flex flex-col gap-1 text-xs text-fg-muted">
           From
@@ -176,7 +186,7 @@ export function Controls({ params, options, action = OVERVIEW_PATH, hidden = [] 
           To
           <input type="date" name="to" defaultValue={shownDate(params.to)} className={INPUT} />
         </label>
-        <label className="flex flex-col gap-1 text-xs text-fg-muted">
+        {params.periodKind === "previous_month" ? null : <label className="flex flex-col gap-1 text-xs text-fg-muted">
           Compare with
           <select name="compare" defaultValue={params.compare} className={INPUT}>
             <option value="preceding">The period just before</option>
@@ -184,7 +194,7 @@ export function Controls({ params, options, action = OVERVIEW_PATH, hidden = [] 
             {/* Offered for ONE whole calendar month, and kept when it was the comparison in use, so pressing Show does not quietly change it. */}
             {isWholeCalendarMonth(params.from, params.to) || params.compare === "previous_month" ? <option value="previous_month">{PREVIOUS_CALENDAR_MONTH_LABEL}</option> : null}
           </select>
-        </label>
+        </label>}
       </div>
     </form>
   );
@@ -330,7 +340,7 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
           {(c) => (
             <>
               <p className={BIG}>
-                {formatWhole(c.headlineCents)}
+                {formatExact(c.headlineCents)}
                 {currencyWord ? <span className="ml-1.5 text-sm font-medium tracking-normal text-fg-muted">{currencyWord}</span> : null}
               </p>
               <ChangeLine change={c.change} cmp={cmp} />

@@ -35,4 +35,24 @@ describe("Analytics controls: the comparison survives Show", () => {
     expect(ALL_PRACTITIONERS).toBeDefined();
     expect(html({ period: "custom", from: "2026-03-01", to: "2026-03-31", compare: "previous_month" })).toContain('name="practitioner"');
   });
+  it("LAST MONTH shows the comparison explicitly: one fixed, visible choice 'The previous calendar month', submitted as compare=previous_month", () => {
+    const h = html({ period: "previous_month", compare: "previous_month" });
+    const fixed = /<label[^>]*data-fixed-comparison[\s\S]*?<\/label>/.exec(h)?.[0] ?? "";
+    expect(fixed).toContain("Compared with");
+    expect(fixed).toContain('name="compare"');
+    expect(fixed).toContain('<option value="previous_month" selected="">The previous calendar month</option>');
+    expect(fixed.match(/<option /g)).toHaveLength(1); // one fixed choice: Show cannot send "preceding"
+    // it is not inside the hidden Custom-range group, and that group has no second compare field
+    expect(/data-custom-range[\s\S]*name="compare"/.test(h)).toBe(false);
+    expect(h.match(/name="compare"/g)).toHaveLength(1);
+  });
+  it("Last month WITHOUT the parameter still shows and submits the previous calendar month", () => {
+    const h = html({ period: "previous_month" });
+    expect(h).toContain('<option value="previous_month" selected="">The previous calendar month</option>');
+    expect(h.match(/name="compare"/g)).toHaveLength(1);
+  });
+  it("other periods have no fixed comparison", () => {
+    expect(html({})).not.toContain("data-fixed-comparison");
+    expect(html({ period: "year_to_date" })).not.toContain("data-fixed-comparison");
+  });
 });

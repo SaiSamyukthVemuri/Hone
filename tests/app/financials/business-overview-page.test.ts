@@ -169,7 +169,8 @@ describe("Explore analytics carries the same window AND the same comparison", ()
     calls.result = view({});
     const html = await render({ period: "month", month: "2025-03" });
     expect(html).toContain('href="/financials/analytics?period=custom&amp;from=2025-03-01&amp;to=2025-03-31&amp;compare=previous_month"');
-    expect(await render({ period: "previous_month" })).toContain('href="/financials/analytics?period=previous_month"');
+    // Last month is compared with the month before it, said in the address so Analytics shows it and Show resubmits it.
+    expect(await render({ period: "previous_month" })).toContain('href="/financials/analytics?period=previous_month&amp;compare=previous_month"');
     expect(await render()).toContain('href="/financials/analytics"');
   });
 });
