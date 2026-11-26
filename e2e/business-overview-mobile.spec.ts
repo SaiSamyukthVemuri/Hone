@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 
 import { loginAsOwner, loginByMagicLink } from "./helpers/flows";
-import { getOwnerPractitionerId, seedE2eDashboardClient, seedE2eMember, seedE2eStudio, sql, type E2eSeed } from "./helpers/seed";
+import { lastMonthMidInstant, studioMonths } from "./helpers/studio-months";
+import { getOwnerPractitionerId, getStudioTimezone, seedE2eDashboardClient, seedE2eMember, seedE2eStudio, sql, type E2eSeed } from "./helpers/seed";
 
 // ===========================================================================
 // Business → Overview on a PHONE (390 x 844): the main figures are in the first screen with no scrolling; the reporting period lives in the address;
@@ -76,11 +77,12 @@ async function expectNoSideways(page: Page, label: string) {
 test.describe("Business → Overview on a phone", () => {
   test("an active studio: first-screen figures, period in the address, Overview → Statements → Back", async ({ page }) => {
     const now = new Date();
-    test.skip(now.getUTCDate() === 1 && now.getUTCHours() < 6, "the first hours of a month have no 'earlier this month' to seed");
     const seed = await seedE2eStudio();
     await currency(seed);
     const prac = await getOwnerPractitionerId(seed.studioId);
-    const lastMonthMid = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 15, 15, 0, 0));
+    // The page's months are the STUDIO's local months, not UTC's (see helpers/studio-months.ts).
+    const months = studioMonths(now, await getStudioTimezone(seed.studioId));
+    const lastMonthMid = lastMonthMidInstant(months);
     // Last month: $210.00 + $65.50 = $275.50. This month: $90.00, earlier today (in the past, in this month).
     await paidVisit(seed, prac, "Last A", lastMonthMid, 21000);
     await paidVisit(seed, prac, "Last B", new Date(lastMonthMid.getTime() + DAY), 6550);
@@ -116,9 +118,8 @@ test.describe("Business → Overview on a phone", () => {
     await expect(collected(page)).toHaveText(/\$275\.50/, { timeout: T });
     await expect(page.locator('[data-period="previous_month"]')).toHaveAttribute("aria-current", "true");
     const before = await figures(page);
-    const lastMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
-    const lastLabel = `${MONTHS[lastMonth.getUTCMonth()]} ${lastMonth.getUTCFullYear()}`;
-    const ym = `${lastMonth.getUTCFullYear()}-${String(lastMonth.getUTCMonth() + 1).padStart(2, "0")}`;
+    const lastLabel = `${MONTHS[months.lastMonthNumber - 1]} ${months.lastYear}`;
+    const ym = months.lastYm;
 
     // Overview → Statements opens that month, and its total is the Overview's figure.
     await page.getByTestId("overview-open-statement").click();
@@ -214,11 +215,12 @@ async function asOwner(seed: E2eSeed, body: string) {
 
 test("a visit last month, unpaid then paid in full this month: it is last month's collection, owed until confirmed, and never this month's", async ({ page }) => {
   const now = new Date();
-  test.skip(now.getUTCDate() === 1 && now.getUTCHours() < 6, "the first hours of a month have no 'earlier this month' to seed");
   const seed = await seedE2eStudio();
   await currency(seed);
   const prac = await getOwnerPractitionerId(seed.studioId);
-  const visitAt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 15, 15, 0, 0));
+  const timezone = await getStudioTimezone(seed.studioId);
+  const months = studioMonths(now, timezone);
+  const visitAt = lastMonthMidInstant(months);
   const { clientId } = await seedE2eDashboardClient(seed, { label: "Cross month" });
   const serviceId = randomUUID();
   await sql(`insert into public.services (id, studio_id, name, modality, default_duration_minutes, price_cents, active) values ($1,$2,'Cross month service','electrolysis',60,12000,true)`, [serviceId, seed.studioId]);
@@ -228,10 +230,8 @@ test("a visit last month, unpaid then paid in full this month: it is last month'
      values ($1,$2,$3,$4,$5,$6,$7,60,0,$7,'completed')`,
     [apptId, seed.studioId, clientId, prac, serviceId, visitAt.toISOString(), new Date(visitAt.getTime() + 3_600_000).toISOString()],
   );
-  const last = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
-  const lastYm = `${last.getUTCFullYear()}-${String(last.getUTCMonth() + 1).padStart(2, "0")}`;
-  const thisYm = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
-  const lastName = MONTHS[last.getUTCMonth()];
+  const { lastYm, thisYm } = months;
+  const lastName = MONTHS[months.lastMonthNumber - 1];
   const clientStatement = `/financials/statements/${clientId}?month=${lastYm}`;
 
   // BEFORE: the owner attested the visit still owes (a recorded quote of $120.00).
@@ -252,7 +252,7 @@ test("a visit last month, unpaid then paid in full this month: it is last month'
     seed,
     `perform public.supersede_appointment_settlement('${seed.studioId}', (select id from public.appointment_settlements where appointment_id = '${apptId}' and superseded_at is null), 'paid_cash', 12000, 'Paid in full', null, false);`,
   );
-  const receipt = (await sql<{ d: string }>(`select to_char(recorded_at at time zone 'UTC', 'YYYY-MM') as d from public.appointment_settlements where appointment_id = $1 and superseded_at is null`, [apptId]))[0].d;
+  const receipt = (await sql<{ d: string }>(`select to_char(recorded_at at time zone $2, 'YYYY-MM') as d from public.appointment_settlements where appointment_id = $1 and superseded_at is null`, [apptId, timezone]))[0].d;
   expect(receipt, "the payment was received THIS month, the visit was LAST month").toBe(thisYm);
 
   // The balance clears where Money owed is shown today: the visit's own month on the client statement.

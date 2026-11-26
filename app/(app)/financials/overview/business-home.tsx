@@ -203,7 +203,7 @@ function analyticsQuery(sel: HomeSelection): string {
   if (sel.period === "month" && sel.month) {
     const [y, m] = sel.month.split("-");
     const last = new Date(Date.UTC(Number(y), Number(m), 0)).getUTCDate();
-    return `?period=custom&from=${sel.month}-01&to=${sel.month}-${String(last).padStart(2, "0")}`;
+    return `?period=custom&from=${sel.month}-01&to=${sel.month}-${String(last).padStart(2, "0")}&compare=previous_month`;
   }
   return sel.period === "month_to_date" ? "" : `?period=${sel.period}`;
 }
