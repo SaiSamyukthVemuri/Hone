@@ -265,7 +265,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 
 ### The 0374 apply (out of order; facts as recorded by the operator, 2026-11-26; operator record `01-ops/ROLES-DECISIONS-LOG.md`)
 
-- **What it is.** `0374_receptionist_name_rule.sql`: replaces three existing receptionist read functions (the client directory, the calendar and the client contacts) so they show a client's regular profile name and never the account name. Same names and arguments; no table, column, trigger, policy or row. Receptionist access stays off.
+- **What it is.** `0374_receptionist_name_rule.sql`: replaces three existing receptionist read functions (the client directory, the calendar and the client contacts) so they show a client's preferred name when it is not blank, and otherwise the fixed words "Name on file". The stored client name is no longer returned, searched or used for ordering. Returning the regular name comes only with the unapplied `0380`. Same names and arguments; no table, column, trigger, policy or row. Receptionist access stays off.
 - **Approval.** The owner approved the apply of `0374` only, for this exact sealed package, after a dry run that listed exactly `0374`.
 - **Apply.** One push of `0374` only with `--include-all`, because `0374` is below the hosted maximum `0379`, from a stage bundle that held only the hosted files, `0376` to `0379` and `0374`, so nothing else could be listed.
 - **Read-back (2026-11-26, 01:52:58Z to 01:53:01Z, client side).** All checks passed. The reconcile completed. The operator's independent read-only check gave 286 history rows, maximum `0379` and `0374` exactly once.
