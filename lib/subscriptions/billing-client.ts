@@ -75,6 +75,7 @@ export interface CreateCheckoutSessionParams {
   priceId: string;
   clientReferenceId: string;
   customerEmail: string | null;
+  customer?: string;
   metadata: Record<string, string>;
   successUrl: string;
   cancelUrl: string;
@@ -267,7 +268,7 @@ export function createBillingStripeClient(
         created: { gte: attempt.created - 60, lte: attempt.created + 1860 },
         limit: 100,
       })) {
-        if (session.metadata?.hone_attempt_id === attempt.id) return session;
+        if ((session.metadata?.hone_restart_id ?? session.metadata?.hone_attempt_id) === attempt.id) return session;
       }
       return null;
     },
@@ -355,7 +356,7 @@ export function createBillingStripeClient(
           mode: "subscription",
           line_items: [{ price: params.priceId, quantity: 1 }],
           client_reference_id: params.clientReferenceId,
-          ...(params.customerEmail
+          ...(params.customer ? { customer: params.customer } : params.customerEmail
             ? { customer_email: params.customerEmail }
             : {}),
           metadata: params.metadata,

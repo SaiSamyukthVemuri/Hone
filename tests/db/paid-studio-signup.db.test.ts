@@ -100,7 +100,7 @@ async function fixture(plan: "solo" | "studio" = "solo") {
       ENV_ON,
       async (c: PaidInvoiceCommand) =>
         (
-          await adminQuery(applySql, [
+          await adminQuery(c.p_restart ? "select public.apply_hone_restart_invoice($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) as result" : applySql, [
             c.p_event,
             c.p_attempt,
             c.p_user,
@@ -110,6 +110,7 @@ async function fixture(plan: "solo" | "studio" = "solo") {
             c.p_invoice,
             c.p_kind,
             c.p_event_at,
+            ...(c.p_restart ? [c.p_restart] : []),
           ])
         ).rows[0].result,
     );
@@ -141,6 +142,7 @@ describe("sandbox paid signup", () => {
       const members = await f.memberships();
       expect(members).toHaveLength(1);
       expect(members[0].role).toBe("owner");
+      expect((await adminQuery("select onboarding_v2_enabled from public.studios where id=$1",[members[0].studio_id])).rows[0].onboarding_v2_enabled).toBe(true);
       expect(
         (
           await userQuery(
@@ -161,6 +163,40 @@ describe("sandbox paid signup", () => {
       ).toBeNull();
     },
   );
+
+  it("restores the original studio only after collection and ignores old cancellation events", async () => {
+    const f = await fixture("studio");
+    const event = () => "evt_" + randomUUID();
+    await f.receive(event());
+    const [owner] = await f.memberships();
+    const attempt = f.sub.metadata.hone_attempt_id;
+    const original = f.sub.id;
+    async function claim(user = f.user) {
+      return (await adminQuery("select public.claim_hone_restart($1,$2) as r",[owner.studio_id,user])).rows[0].r;
+    }
+    const cancel = () => adminQuery("select public.record_hone_subscription_canceled($1,$2,$3,$4) as ok",[original,f.sub.customer,attempt,f.user]);
+    const status = async () => (await userQuery(f.user,"select public.my_hone_billing_status($1) as b",[owner.studio_id])).rows[0].b.status;
+    expect(await claim()).toBeNull();
+    await cancel();
+    expect(await claim(randomUUID())).toBeNull();
+    const [a,b] = await Promise.all([claim(),claim()]);
+    expect(a.id).toBe(b.id);
+    f.sub.id = f.invoice.subscription = "sub_new_" + randomUUID();
+    f.invoice.id = "in_new_" + randomUUID();
+    f.sub.metadata.hone_restart_id = randomUUID();
+    await f.receive(event());
+    expect(await status()).toBe("canceled");
+    f.sub.metadata.hone_restart_id = a.id;
+    f.invoice.collected=0;
+    await f.receive(event());
+    expect(await status()).toBe("canceled");
+    f.invoice.collected=f.invoice.total;
+    await Promise.all([f.receive(event()),f.receive(event())]);
+    expect((await cancel()).rows[0].ok).toBe(false);
+    expect(await status()).toBe("active");
+    expect(await f.memberships()).toEqual([owner]);
+    expect((await adminQuery("select count(*) as n from public.hone_subscription_notices where invoice_id=$1 and kind='receipt'",[f.invoice.id])).rows[0].n).toBe("1");
+  });
 
   it("recovers from a provisioning failure by replaying the same signed event", async () => {
     const f = await fixture();

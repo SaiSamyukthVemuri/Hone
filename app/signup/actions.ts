@@ -2,61 +2,86 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
-import { isSelfServeCheckoutEnabled } from "@/lib/subscriptions/plans";
+import {
+  isSelfServeCheckoutEnabled,
+  parsePlanKey,
+} from "@/lib/subscriptions/plans";
+import { invitationDestination } from "@/lib/supabase/invitation-destination";
+import { clearSelectedStudioId } from "@/lib/supabase/selected-studio";
 
-// HON-70 account step (PROPOSED). Creating an ACCOUNT is free and grants no
-// studio access: handle_new_user() has no no-invite studio fallback (0081), so
-// a new auth user lands on /no-access until a paid plan is confirmed by a
-// verified webhook (a later milestone). Nothing here touches Stripe or billing.
-//
-// The person confirms their address by following the one-time link. Whether
-// Supabase creates the auth row at request time or at link time is NOT verified
-// here (Privacy 1e5bc9a4 (b)), so neither this comment nor the copy claims
-// either. The response is identical for every well-formed address so this form
-// is not an account-enumeration oracle.
-//
-// DELIBERATE REVERSAL of PR #189: the login action allowed user creation only
-// for an invited address; this sets shouldCreateUser true for ANY well-formed
-// address. Flag-gated; a Sam decision, named in the PR body.
+type Result = { ok: true; destination?: string } | { ok: false; error: string };
+const unavailable = {
+  ok: false,
+  error: "Sign-in is unavailable. Please try again.",
+} as const;
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-export type SignupResult = { ok: true } | { ok: false; error: string };
-
-export async function requestSignupLinkAction(
-  email: string,
-): Promise<SignupResult> {
-  // Flag off: behave as if the feature does not exist.
-  if (!isSelfServeCheckoutEnabled(process.env)) {
-    return { ok: false, error: "Not available." };
-  }
-  const normalized = (email ?? "").trim().toLowerCase();
-  if (normalized.length > 254 || !EMAIL_RE.test(normalized)) {
-    return { ok: false, error: "Enter a valid email address." };
-  }
-  // After verification the person lands on the ordinary signed-in destination;
-  // with no studio the middleware sends them to /no-access. The paid "Start your
-  // studio" step is a later milestone and is deliberately not linked from here.
-  // The chosen plan is NOT carried through the link: it is re-chosen after
-  // verification (Insurance U-6). A missing origin env is a generic failure, not
-  // an unhandled 500.
-  let redirectTo: string;
+export async function startOwnerSignIn(
+  planInput: string,
+  emailInput?: string,
+): Promise<Result> {
+  const plan = parsePlanKey(planInput);
+  const returning = planInput === "signin";
+  if ((!plan && !returning) || !isSelfServeCheckoutEnabled(process.env))
+    return unavailable;
+  const next = returning ? "/dashboard" : "/no-access?plan=" + plan;
   try {
-    redirectTo = `${getRequiredAppOrigin()}/auth/callback`;
+    const origin = getRequiredAppOrigin();
+    const auth = await createClient();
+    if (emailInput === undefined) {
+      const callback = new URL("/auth/callback", origin);
+      callback.searchParams.set("next", next);
+      const { data, error } = await auth.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo: callback.href, skipBrowserRedirect: true },
+      });
+      return error || !data.url
+        ? unavailable
+        : { ok: true, destination: data.url };
+    }
+    const email = emailInput.trim().toLowerCase();
+    if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+      return { ok: false, error: "Enter a valid email address." };
+    const { error } = await auth.auth.signInWithOtp({
+      email,
+      options: {
+        shouldCreateUser: !returning,
+        emailRedirectTo: origin + "/signup",
+      },
+    });
+    return error ? unavailable : { ok: true };
   } catch {
-    // One bounded server-side signal for a misconfigured deployment: a fixed
-    // code only, never the address or the error text (Insurance G-5).
-    console.error("signup_origin_unavailable");
-    return { ok: false, error: "Could not send the link. Try again in a moment." };
+    return unavailable;
   }
-  const supabase = await createClient();
-  const { error } = await supabase.auth.signInWithOtp({
-    email: normalized,
-    options: { emailRedirectTo: redirectTo, shouldCreateUser: true },
-  });
-  if (error) {
-    // No Supabase error text leaves this function (it can quote the address).
-    return { ok: false, error: "Could not send the link. Try again in a moment." };
+}
+
+export async function confirmOwnerCode(
+  planInput: string,
+  emailInput: string,
+  code: string,
+): Promise<Result> {
+  const plan = parsePlanKey(planInput);
+  const returning = planInput === "signin";
+  if ((!plan && !returning) || !isSelfServeCheckoutEnabled(process.env))
+    return unavailable;
+  const next = returning ? "/dashboard" : "/no-access?plan=" + plan;
+  const email = emailInput.trim().toLowerCase();
+  const invalid = {
+    ok: false,
+    error: "That code is invalid or expired. Try again or request a new code.",
+  } as const;
+  if (!/^\d{6,10}$/.test(code) || !email || email.length > 254) return invalid;
+  try {
+    const db = await createClient();
+    const { data, error } = await db.auth.verifyOtp({
+      email,
+      token: code,
+      type: "email",
+    });
+    if (error || !data.user) return invalid;
+    const { dest, clearSelection } = await invitationDestination(db, next);
+    if (clearSelection) await clearSelectedStudioId();
+    return { ok: true, destination: dest };
+  } catch {
+    return unavailable;
   }
-  return { ok: true };
 }

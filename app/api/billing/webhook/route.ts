@@ -20,7 +20,7 @@ export async function POST(request: Request): Promise<Response> {
       process.env,
       async (command) => {
         const { data, error } = await createAdminClient().rpc(
-          "apply_hone_billing_invoice",
+          command.p_restart ? "apply_hone_restart_invoice" : "apply_hone_billing_invoice",
           command,
         );
         if (error) throw new Error("billing_store_unavailable");

@@ -27,7 +27,9 @@ vi.mock("@/lib/app-origin", () => ({
 describe("pricing page: flag OFF is untouched, flag ON adds account CTAs", () => {
   it("flag off: no plan choices and the original sentence is still in the page source verbatim", () => {
     expect(getPlanChoices({})).toEqual([]);
-    expect(getPlanChoices({ HONE_SELF_SERVE_CHECKOUT_ENABLED: "TRUE" })).toEqual([]);
+    expect(
+      getPlanChoices({ HONE_SELF_SERVE_CHECKOUT_ENABLED: "TRUE" }),
+    ).toEqual([]);
     const page = strip(read("app/pricing/page.tsx")).replace(/\s+/g, " ");
     expect(page).toContain(
       "Prices are in US dollars (USD). Setup and payment activation happen during guided onboarding; there is no self-service checkout.",
@@ -37,9 +39,16 @@ describe("pricing page: flag OFF is untouched, flag ON adds account CTAs", () =>
 
   it("flag on: two CTAs carry only the plan KEY, and the footnote separates account from studio access", () => {
     const c = getPlanChoices({ HONE_SELF_SERVE_CHECKOUT_ENABLED: "true" });
-    expect(c.map((x) => x.href)).toEqual(["/signup?plan=solo", "/signup?plan=studio"]);
-    expect(SELF_SERVE_PRICING_FOOTNOTE).toMatch(/free and gives no studio access/);
-    expect(SELF_SERVE_PRICING_FOOTNOTE).not.toMatch(/price_|sk_|checkout\.stripe/);
+    expect(c.map((x) => x.href)).toEqual([
+      "/signup?plan=solo",
+      "/signup?plan=studio",
+    ]);
+    expect(SELF_SERVE_PRICING_FOOTNOTE).toMatch(
+      /free and gives no studio access/,
+    );
+    expect(SELF_SERVE_PRICING_FOOTNOTE).not.toMatch(
+      /price_|sk_|checkout\.stripe/,
+    );
   });
 
   it("nothing else links to /signup with a static href", () => {
@@ -57,7 +66,9 @@ describe("pricing page: flag OFF is untouched, flag ON adds account CTAs", () =>
 describe("/signup page and middleware", () => {
   it("the page 404s unless the flag is exactly true", () => {
     const src = strip(read("app/signup/page.tsx"));
-    expect(src).toMatch(/if \(!isSelfServeCheckoutEnabled\(process\.env\)\) notFound\(\)/);
+    expect(src).toMatch(
+      /if \(!isSelfServeCheckoutEnabled\(process\.env\)\) notFound\(\)/,
+    );
     expect(src).toMatch(/robots:\s*\{\s*index:\s*false/);
   });
 
@@ -67,95 +78,98 @@ describe("/signup page and middleware", () => {
     expect(mw).not.toMatch(/startsWith\("\/signup/);
   });
 
-  it("the form keeps account creation apart from paid studio access and invents no legal terms", () => {
-    const f = strip(read("app/signup/SignupForm.tsx")).replace(/\s+/g, " ");
-    expect(f).toMatch(/Creating an account is free and gives no studio access/);
-    expect(f).toMatch(/Starting your studio is a separate, paid step/);
-    // Unverified claim (Privacy 1e5bc9a4 (b)/(c)): when the auth row is created.
-    expect(f).not.toMatch(/account is created when/i);
-    expect(f).toMatch(/link to confirm your address/);
-    expect(f).toMatch(/href="\/terms"/);
-    expect(f).toMatch(/href="\/privacy"/);
-    expect(f).not.toMatch(/I agree|I accept|consent/i);
-  });
-
-  it("the account step touches no Stripe, billing or checkout code", () => {
-    for (const f of ["app/signup/actions.ts", "app/signup/SignupForm.tsx", "app/signup/page.tsx"]) {
-      expect(strip(read(f)), f).not.toMatch(
-        /stripe|checkout-session|billing-client|createSubscriptionCheckout/i,
-      );
-    }
+  it("offers Google and email code with the chosen plan", () => {
+    const f = read("app/signup/SignupForm.tsx");
+    expect(f).toContain("Continue with Google");
+    expect(f).toContain("Send me a code");
+    expect(f).toContain('autoComplete="one-time-code"');
+    expect(read("supabase/templates/sign-in.html")).toContain("{{ .Token }}");
   });
 });
 
-describe("requestSignupLinkAction", () => {
-  beforeEach(() => createClientMock.mockReset());
+describe("owner signup", () => {
+  beforeEach(() => {
+    createClientMock.mockReset();
+    vi.stubEnv("HONE_SELF_SERVE_CHECKOUT_ENABLED", "true");
+  });
   afterEach(() => vi.unstubAllEnvs());
-
-  async function run(email: string, flag: string) {
-    vi.stubEnv("HONE_SELF_SERVE_CHECKOUT_ENABLED", flag);
-    const { requestSignupLinkAction } = await import("@/app/signup/actions");
-    return requestSignupLinkAction(email);
-  }
-
-  it("flag off: refuses and never creates a client or sends anything", async () => {
-    expect(await run("a@example.test", "")).toEqual({ ok: false, error: "Not available." });
-    expect(await run("a@example.test", "TRUE")).toEqual({ ok: false, error: "Not available." });
+  it("refuses invalid plans, disabled signup, and invalid codes", async () => {
+    const { startOwnerSignIn, confirmOwnerCode } = await import(
+      "@/app/signup/actions"
+    );
+    expect((await startOwnerSignIn("other")).ok).toBe(false);
+    expect(
+      (await confirmOwnerCode("studio", "test@example.test", "invalid")).ok,
+    ).toBe(false);
+    vi.stubEnv("HONE_SELF_SERVE_CHECKOUT_ENABLED", "false");
+    expect((await startOwnerSignIn("solo")).ok).toBe(false);
     expect(createClientMock).not.toHaveBeenCalled();
   });
-
-  it("rejects malformed addresses before any auth call", async () => {
-    for (const bad of ["", "nope", "a@b", `${"x".repeat(300)}@example.test`]) {
-      expect((await run(bad, "true")).ok).toBe(false);
-    }
-    expect(createClientMock).not.toHaveBeenCalled();
-  });
-
-  it("flag on: one verification link, user creation allowed, redirect to the ordinary callback", async () => {
-    const signInWithOtp = vi.fn().mockResolvedValue({ error: null });
-    createClientMock.mockResolvedValue({ auth: { signInWithOtp } });
-    expect(await run("  New@Example.test ", "true")).toEqual({ ok: true });
-    expect(signInWithOtp).toHaveBeenCalledTimes(1);
-    expect(signInWithOtp).toHaveBeenCalledWith({
-      email: "new@example.test",
-      options: {
-        emailRedirectTo: "https://app.example.test/auth/callback",
-        shouldCreateUser: true,
-      },
-    });
-  });
-
-  it("a missing app origin env is the generic failure, not a throw, and sends nothing", async () => {
-    const mod = await import("@/lib/app-origin");
-    const spy = vi.spyOn(mod, "getRequiredAppOrigin").mockImplementation(() => {
-      throw new Error("APP_ORIGIN missing");
-    });
-    const signInWithOtp = vi.fn();
-    createClientMock.mockResolvedValue({ auth: { signInWithOtp } });
-    const errors: string[] = [];
-    const errSpy = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => {
-      errors.push(a.map(String).join(" "));
-    });
-    const r = await run("new@example.test", "true");
-    errSpy.mockRestore();
-    spy.mockRestore();
-    // Exactly one bounded line: a fixed code, no address, no error text.
-    expect(errors).toEqual(["signup_origin_unavailable"]);
-    expect(r).toEqual({ ok: false, error: "Could not send the link. Try again in a moment." });
-    expect(signInWithOtp).not.toHaveBeenCalled();
-  });
-
-  it("a provider error returns a fixed message that never quotes the address or the error", async () => {
+  it("lets a subscriber return without picking a tier or opening another purchase", async () => {
+    const auth = {
+      signInWithOtp: vi.fn().mockResolvedValue({ error: null }),
+      verifyOtp: vi
+        .fn()
+        .mockResolvedValue({ data: { user: { id: "returning" } } }),
+    };
     createClientMock.mockResolvedValue({
-      auth: {
-        signInWithOtp: vi
-          .fn()
-          .mockResolvedValue({ error: { message: "rate limit for new@example.test req_SECRET" } }),
-      },
+      auth,
+      rpc: vi.fn().mockResolvedValue({ data: null }),
     });
-    const r = await run("new@example.test", "true");
-    expect(r).toEqual({ ok: false, error: "Could not send the link. Try again in a moment." });
-    expect(JSON.stringify(r)).not.toContain("example.test");
-    expect(JSON.stringify(r)).not.toContain("req_SECRET");
+    const { startOwnerSignIn, confirmOwnerCode } = await import(
+      "@/app/signup/actions"
+    );
+    expect((await startOwnerSignIn("signin", "owner@example.test")).ok).toBe(
+      true,
+    );
+    expect(auth.signInWithOtp.mock.calls[0][0].options.shouldCreateUser).toBe(
+      false,
+    );
+    expect(
+      await confirmOwnerCode("signin", "owner@example.test", "123456"),
+    ).toEqual({ ok: true, destination: "/dashboard" });
   });
+
+  it.each(["solo", "studio"])(
+    "carries %s through Google and through an email code",
+    async (plan) => {
+      const auth = {
+        signInWithOAuth: vi
+          .fn()
+          .mockResolvedValue({ data: { url: "https://example.test/oauth" } }),
+        signInWithOtp: vi.fn().mockResolvedValue({ error: null }),
+        verifyOtp: vi
+          .fn()
+          .mockResolvedValue({ data: { user: { id: "account" } } }),
+      };
+      const rpc = vi.fn().mockResolvedValue({ data: null });
+      createClientMock.mockResolvedValue({ auth, rpc });
+      const { startOwnerSignIn, confirmOwnerCode } = await import(
+        "@/app/signup/actions"
+      );
+      expect((await startOwnerSignIn(plan)).ok).toBe(true);
+      const callback = new URL(
+        auth.signInWithOAuth.mock.calls[0][0].options.redirectTo,
+      );
+      expect(callback.searchParams.get("next")).toBe("/no-access?plan=" + plan);
+      expect((await startOwnerSignIn(plan, " Owner@Example.test ")).ok).toBe(
+        true,
+      );
+      expect(auth.signInWithOtp.mock.calls[0][0].email).toBe(
+        "owner@example.test",
+      );
+      expect(
+        await confirmOwnerCode(plan, "owner@example.test", "123456"),
+      ).toEqual({ ok: true, destination: "/no-access?plan=" + plan });
+      expect(auth.verifyOtp).toHaveBeenCalledWith({
+        email: "owner@example.test",
+        type: "email",
+        token: "123456",
+      });
+      rpc.mockResolvedValueOnce({ data: { status: "acceptance_required" } });
+      expect(
+        await confirmOwnerCode(plan, "owner@example.test", "123456"),
+      ).toEqual({ ok: true, destination: "/accept-invitation" });
+    },
+  );
 });

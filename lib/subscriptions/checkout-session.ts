@@ -82,6 +82,7 @@ export interface CheckoutRequest {
   /** Unix seconds. Injected so tests are deterministic. */
   nowSeconds?: number;
   attemptId?: string;
+  restart?: { id: string; customer: string };
 }
 
 /**
@@ -162,7 +163,7 @@ export async function createSubscriptionCheckout(
   const refusal = priceRefusal(price, priceId, plan);
   if (refusal) return { ok: false, reason: refusal };
 
-  const metadata = { hone_user_id: req.user.id, hone_plan: planKey, ...(req.attemptId ? { hone_attempt_id: req.attemptId } : {}) };
+  const metadata = { hone_user_id: req.user.id, hone_plan: planKey, ...(req.restart ? { hone_restart_id: req.restart.id } : {}), ...(req.attemptId ? { hone_attempt_id: req.attemptId } : {}) };
   // A raw Stripe error can quote the offending parameter (e.g. an invalid
   // customer_email) and carries a request id; it must never reach the caller,
   // the route's error path or Sentry. Only this fixed code leaves. (Privacy S-1.)
@@ -171,11 +172,12 @@ export async function createSubscriptionCheckout(
     session = await req.client.createCheckoutSession({
       priceId,
       clientReferenceId: req.user.id,
-      customerEmail: req.user.email ?? null,
+      customerEmail: req.restart ? null : req.user.email ?? null,
+      ...(req.restart ? { customer: req.restart.customer } : {}),
       metadata,
-      ...(req.attemptId ? { attemptId: req.attemptId } : {}),
-      successUrl: `${origin}/no-access?reason=confirming-payment`,
-      cancelUrl: `${origin}/pricing`,
+      ...(req.attemptId ? { attemptId: req.restart?.id ?? req.attemptId } : {}),
+      successUrl: origin + (req.restart ? "/settings/subscription?notice=restarting" : "/no-access?reason=confirming-payment"),
+      cancelUrl: origin + (req.restart ? "/settings/subscription" : "/no-access?plan=" + planKey),
       expiresAt: now + CHECKOUT_SESSION_TTL_SECONDS,
     });
   } catch {

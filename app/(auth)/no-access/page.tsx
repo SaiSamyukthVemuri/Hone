@@ -1,7 +1,9 @@
+import { PaymentConfirmation } from "@/components/billing/payment-confirmation";
 import { beginStudioCheckout } from "./checkout-action";
 import {
   isSelfServeCheckoutEnabled,
   PLAN_KEYS,
+  parsePlanKey,
   PLANS,
   teamAllowance,
 } from "@/lib/subscriptions/plans";
@@ -38,14 +40,16 @@ const PALETTE = {
 export default async function NoAccessPage({
   searchParams,
 }: {
-  searchParams: Promise<{ reason?: string }>;
+  searchParams: Promise<{ reason?: string; plan?: string }>;
 }) {
-  const { reason } = await searchParams;
+  const { reason, plan: queryPlan } = await searchParams;
+  const plan = parsePlanKey(queryPlan);
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) {
+    if (plan && isSelfServeCheckoutEnabled(process.env)) redirect("/signup?plan=" + plan);
     redirect("/login");
   }
 
@@ -123,16 +127,14 @@ export default async function NoAccessPage({
           style={{ color: PALETTE.muted }}
         >
           {pending
-            ? "We’re waiting for Stripe to confirm your first payment. Check again to open your studio."
+            ? "Once Stripe confirms your payment, Hone will open your studio setup automatically."
             : purchase
-              ? "Choose your monthly Hone subscription. Your studio opens after the first payment clears."
+              ? "Enter your name and studio name. After payment, Hone will guide you through setup."
               : body}
         </p>
 
         {pending && (
-          <a className="mb-6 block underline" href="/dashboard">
-            Check studio access
-          </a>
+          <PaymentConfirmation />
         )}
         {purchase && !pending && (
           <form
@@ -159,7 +161,10 @@ export default async function NoAccessPage({
                 autoComplete="organization"
               />
             </label>
-            <label>
+            {plan ? <div><input type="hidden" name="plan" value={plan} />
+              <strong>{PLANS[plan].label} · US${PLANS[plan].unitAmount / 100}/month</strong>
+              <p>{teamAllowance(plan)}</p><a href="/pricing" className="underline">Change plan</a>
+            </div> : <label>
               Monthly plan
               <select
                 className="block w-full rounded border p-2"
@@ -177,7 +182,7 @@ export default async function NoAccessPage({
                   </option>
                 ))}
               </select>
-            </label>
+            </label>}
             {reason && checkoutMessage[reason] && (
               <p role="alert">{checkoutMessage[reason]}</p>
             )}

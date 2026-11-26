@@ -50,7 +50,7 @@ describe("createSubscriptionCheckout", () => {
         customerEmail: "owner@example.test",
         metadata: { hone_user_id: "user-1", hone_plan: "solo" },
         successUrl: `${ORIGIN}/no-access?reason=confirming-payment`,
-        cancelUrl: `${ORIGIN}/pricing`,
+        cancelUrl: `${ORIGIN}/no-access?plan=solo`,
         expiresAt: NOW + CHECKOUT_SESSION_TTL_SECONDS,
       },
     ]);
@@ -58,6 +58,14 @@ describe("createSubscriptionCheckout", () => {
     expect(CHECKOUT_SESSION_TTL_SECONDS).toBeGreaterThanOrEqual(30 * 60);
   });
 
+  it("restarts using the same customer and the new intent as the idempotency key", async () => {
+    const { client } = await run({ attemptId:"original", restart:{id:"replacement",customer:"cus_existing"} });
+    expect(client.calls.createCheckoutSession[0]).toMatchObject({
+      customer:"cus_existing", customerEmail:null, attemptId:"replacement",
+      metadata:{hone_attempt_id:"original",hone_restart_id:"replacement"},
+      successUrl:ORIGIN+"/settings/subscription?notice=restarting",
+    });
+  });
   it("uses the Studio price for the studio plan", async () => {
     const { client } = await run({ plan: "studio" });
     expect(client.calls.createCheckoutSession[0].priceId).toBe(STUDIO_PRICE);

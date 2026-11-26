@@ -29,7 +29,7 @@ export async function beginStudioCheckout(form: FormData) {
   const studio = String(form.get("studio") ?? "").trim();
   const owner = String(form.get("owner") ?? "").trim();
   if (!plan || !studio || studio.length > 100 || !owner || owner.length > 100)
-    redirect("/no-access?reason=checkout-input");
+    redirect("/no-access?reason=checkout-input" + (plan ? "&plan=" + plan : ""));
   const auth = await createClient();
   const {
     data: { user },
@@ -93,5 +93,6 @@ export async function beginStudioCheckout(form: FormData) {
   } catch {
     // The original claim and Stripe idempotency key survive a lost response.
   }
+  if (plan && destination.startsWith("/no-access?reason=checkout-")) destination += "&plan=" + plan;
   redirect(destination);
 }

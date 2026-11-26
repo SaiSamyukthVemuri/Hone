@@ -8,6 +8,7 @@ import type { BillingStripeClient, createBillingStripeClient } from "./billing-c
 
 type Client = ReturnType<typeof createBillingStripeClient>;
 export type PaidInvoiceCommand = {
+  p_restart?: string;
   p_event: string;
   p_attempt: string;
   p_user: string;
@@ -109,7 +110,10 @@ export async function acceptBillingInvoice(
   )
     kind = "renewal_failed";
   else return 200;
+  const restart = subscription.metadata.hone_restart_id;
+  if (restart && !isUserId(restart)) return 200;
   const result = await apply({
+    ...(restart ? { p_restart: restart } : {}),
     p_event: event.id,
     p_attempt: attempt,
     p_user: decision.entitlement.userId,

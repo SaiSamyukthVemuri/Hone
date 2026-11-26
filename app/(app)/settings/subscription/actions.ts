@@ -1,4 +1,6 @@
 "use server";
+import { createAdminClient } from "@/lib/supabase/admin-server";
+import { createSubscriptionCheckout, CHECKOUT_SESSION_TTL_SECONDS } from "@/lib/subscriptions/checkout-session";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { processSubscriptionChange } from "@/lib/subscriptions/subscription-change";
@@ -97,4 +99,40 @@ export async function changeSubscription(studioId: string, version: string | nul
   }
   revalidatePath("/", "layout");
   redirect(billingPath + (outcome === "refused" ? "?error=change" : "?notice=change"));
+}
+
+export async function restartSubscription(studioId: string) {
+  await requireOwnerBilling(studioId);
+  const db = await createClient();
+  const { data: { user } } = await db.auth.getUser();
+  if (!user) redirect("/login");
+  type Claim = { id: string; created: number; attempt: string; customer: string; plan: string };
+  const admin = createAdminClient();
+  async function claim(expired: string | null): Promise<Claim> {
+    const { data, error } = await admin.rpc("claim_hone_restart", {
+      p_studio: studioId, p_user: user!.id, p_expired: expired,
+    });
+    if (error || !data) throw new Error("restart_unavailable");
+    return data;
+  }
+  let destination = billingPath + "?error=restart";
+  try {
+    let intent = await claim(null);
+    const client = createBillingStripeClient(process.env);
+    if (intent.created + CHECKOUT_SESSION_TTL_SECONDS <= Date.now()/1000) {
+      const session = await client.findAttemptSession({ ...intent, session: null });
+      if (!session || session.status === "expired") intent = await claim(intent.id);
+      else if (session.status === "complete") destination = billingPath + "?notice=restarting";
+      else if (session.url) destination = session.url;
+    }
+    if (intent.created + CHECKOUT_SESSION_TTL_SECONDS > Date.now()/1000) {
+      const result = await createSubscriptionCheckout({
+        env: process.env, client, origin: getRequiredAppOrigin(), user,
+        plan: intent.plan, attemptId: intent.attempt, nowSeconds: intent.created,
+        restart: { id: intent.id, customer: intent.customer },
+      });
+      if (result.ok) destination = result.url;
+    }
+  } catch { /* The same intent can be retried after an interrupted request. */ }
+  redirect(destination);
 }

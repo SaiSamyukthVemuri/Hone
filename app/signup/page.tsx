@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { isSelfServeCheckoutEnabled } from "@/lib/subscriptions/plans";
 import { selectedPlanFromQuery } from "@/lib/subscriptions/plan-selection";
-import { PLANS, teamAllowance } from "@/lib/subscriptions/plans";
+import { createClient } from "@/lib/supabase/server";
 import { SignupForm } from "./SignupForm";
 
 export const dynamic = "force-dynamic";
@@ -17,13 +17,17 @@ export const metadata: Metadata = {
 export default async function SignupPage({
   searchParams,
 }: {
-  searchParams: Promise<{ plan?: string | string[] }>;
+  searchParams: Promise<{ plan?: string | string[]; returning?: string }>;
 }) {
   if (!isSelfServeCheckoutEnabled(process.env)) notFound();
-  const plan = selectedPlanFromQuery((await searchParams).plan);
-  return (
-    <SignupForm
-      planSummary={plan ? `${PLANS[plan].label}: US$${PLANS[plan].unitAmount / 100}/month · ${teamAllowance(plan)}` : null}
-    />
-  );
+  const query = await searchParams;
+  const plan = selectedPlanFromQuery(query.plan);
+  const returning = query.returning === "1";
+  if (!plan && !returning) redirect("/pricing");
+  const db = await createClient();
+  const {
+    data: { user },
+  } = await db.auth.getUser();
+  if (user) redirect(returning ? "/dashboard" : "/no-access?plan=" + plan);
+  return <SignupForm plan={returning ? null : plan} />;
 }

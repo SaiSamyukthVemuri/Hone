@@ -207,6 +207,7 @@ describe("#8 — the Terms do not describe automated Hone subscription billing a
       "app/(app)/settings/team/InviteForm.tsx",
       "app/(app)/settings/team/actions.ts",
       "app/(app)/settings/team/page.tsx",
+      "app/(auth)/login/layout.tsx",
       "app/(auth)/no-access/checkout-action.ts",
       "app/(auth)/no-access/page.tsx",
       "app/api/billing/webhook/route.ts",
@@ -214,6 +215,7 @@ describe("#8 — the Terms do not describe automated Hone subscription billing a
       "app/api/cron/subscription-emails/route.ts",
       // HON-70 UI head (PROPOSED, flag-gated): the plan links and the account step.
       "app/pricing/page.tsx",
+      "app/signup/SignupForm.tsx",
       "app/signup/actions.ts",
       "app/signup/page.tsx",
       "lib/settings/nav-registry.ts",

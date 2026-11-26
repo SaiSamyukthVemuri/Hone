@@ -7,7 +7,8 @@ import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { createBillingStripeClient } from "@/lib/subscriptions/billing-client";
 import { readOwnerBilling, readSoloImpact } from "@/lib/subscriptions/owner-billing";
 import { isSelfServeCheckoutEnabled, PLANS, teamAllowance } from "@/lib/subscriptions/plans";
-import { openOwnerBilling, payOutstandingInvoice, updateBillingCard } from "./actions";
+import { openOwnerBilling, payOutstandingInvoice, restartSubscription, updateBillingCard } from "./actions";
+import { PaymentConfirmation } from "@/components/billing/payment-confirmation";
 import { InvoiceHistory } from "./invoice-history";
 
 const states = {
@@ -64,12 +65,14 @@ export default async function SubscriptionPage({ searchParams }: {
     <div>{heading}</div>
     {query.error && <p role="alert" className="my-4 text-sm text-danger-fg">{query.error === "invoice"
       ? "We couldn’t open that invoice for payment. Check your invoice history or try again."
+      : query.error === "restart" ? "We couldn’t open a restart checkout. Sign in as the subscribing owner and try again."
       : query.error === "team_changed" ? "Your team changed. Open Change tier to review who will lose access."
       : query.error === "billing_owner" ? "Only the subscription owner can switch this studio to Solo."
       : query.error === "stale" ? "Your subscription changed. Review the current details before trying again."
       : query.error === "overdue" ? "Pay outstanding invoices before changing tiers."
       : query.error === "change" ? "We couldn’t complete that change. Review your billing details and try again."
       : "We couldn’t open billing. Please try again."}</p>}
+    {query.notice === "restarting" && billing.status === "active" && <p role="status" className="my-4">Your studio is open. <a href="/dashboard" className="underline">Open dashboard</a></p>}
     {query.notice === "settling" && billing.invoice && <p role="status" className="my-4 text-sm">Check your invoice history for the latest payment.</p>}
     <section aria-label="Current plan" className="py-6">
       <div className={split}>
@@ -90,6 +93,9 @@ export default async function SubscriptionPage({ searchParams }: {
         {terminal && <p role="status">{billing.status === "canceled"
           ? "Your subscription is canceled. Studio access is paused. You can still manage billing and download invoices."
           : "Studio access is paused. We’re confirming the cancellation with Stripe."}</p>}
+        {billing.status === "canceled" && (query.notice === "restarting"
+          ? <div><p>Waiting for payment confirmation to reopen {studio.name}.</p><PaymentConfirmation /></div>
+          : <form action={restartSubscription.bind(null, studio.id)}><Button type="submit">Restart {plan.label} · US${plan.unitAmount / 100}/month</Button></form>)}
         {billing.status === "past_due" && billing.deadline && <p>Pay before {new Date(billing.deadline).toLocaleString("en-US", {
           timeZone: tz, timeZoneName: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit",
         })} to keep new bookings and chart entries available.</p>}

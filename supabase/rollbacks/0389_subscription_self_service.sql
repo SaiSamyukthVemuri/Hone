@@ -2,9 +2,10 @@ begin;
 set local lock_timeout = '5s';
 lock table public.hone_signup_attempts in access exclusive mode;
 do $$ begin
-  if exists(select from public.hone_signup_attempts where change_id is not null or canceled_at is not null)
+  if exists(select from public.hone_signup_attempts where restart_id is not null or change_id is not null or canceled_at is not null)
     then raise exception 'subscription_change_history_present'; end if;
 end $$;
+drop function public.claim_hone_restart(uuid,uuid,uuid),public.apply_hone_restart_invoice(text,uuid,uuid,text,text,text,text,text,timestamptz,uuid);
 drop function public.my_hone_solo_impact(uuid), public.request_hone_subscription_change(uuid,text,uuid,text),public.my_hone_studio_canceled(uuid),
   public.claim_hone_subscription_change(uuid),public.finish_hone_subscription_change(uuid,boolean),
   public.record_hone_subscription_canceled(text,text,uuid,uuid);
@@ -134,5 +135,7 @@ where n.sent_at is null and exists (
 ));
 
 alter table public.hone_signup_attempts drop column change_id, drop column change_target,
-  drop column retry_change_at, drop column canceled_at;
+  drop column retry_change_at, drop column canceled_at, drop column restart_id, drop column restart_started_at;
+alter table public.hone_renewal_invoices drop column former_subscription;
+alter table public.hone_subscription_notices drop column former_subscription;
 commit;

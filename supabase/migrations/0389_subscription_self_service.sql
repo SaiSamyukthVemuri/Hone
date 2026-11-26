@@ -1,10 +1,14 @@
 begin;
 set local lock_timeout = '5s';
 alter table public.hone_signup_attempts
+  add column restart_id uuid unique,
+  add column restart_started_at timestamptz,
   add column change_id uuid,
   add column change_target text check (change_target in ('solo','studio','cancel')),
   add column retry_change_at timestamptz,
   add column canceled_at timestamptz;
+alter table public.hone_renewal_invoices add column former_subscription text;
+alter table public.hone_subscription_notices add column former_subscription text;
 create index hone_pending_subscription_changes on public.hone_signup_attempts(retry_change_at) where change_target is not null;
 
 
@@ -23,7 +27,7 @@ begin
     raise exception 'subscription_canceled';
   end if;
   if exists (select 1 from public.hone_signup_attempts a join public.hone_renewal_invoices i on i.attempt_id=a.id
-    where a.studio_id=target_studio and not i.paid and now() >= i.failed_at + interval '168 hours')
+    where a.studio_id=target_studio and i.former_subscription is null and not i.paid and now() >= i.failed_at + interval '168 hours')
     then raise exception 'subscription_payment_required'; end if;
   return new;
 end $$;
@@ -42,7 +46,7 @@ language sql stable security definer set search_path = '' as $$
   left join lateral (
     select i.invoice_id, i.failed_at + interval '168 hours' as deadline
     from public.hone_renewal_invoices i
-    where i.attempt_id=a.id and not i.paid and i.failed_at is not null
+    where i.attempt_id=a.id and i.former_subscription is null and not i.paid and i.failed_at is not null
     order by i.failed_at, i.invoice_id limit 1
   ) overdue on true
   where a.studio_id=p_studio and exists (select 1 from public.practitioners p where p.studio_id=a.studio_id
@@ -88,7 +92,7 @@ begin
   if p_kind='initial_paid' then
     if a.state='paid' then return 'already_provisioned'; end if;
     select email into strict verified_email from auth.users where id=a.user_id and email_confirmed_at is not null;
-    insert into public.studios(name,owner_email,slug) values(a.studio_name,verified_email,
+    insert into public.studios(name,owner_email,onboarding_v2_enabled,slug) values(a.studio_name,verified_email,true,
       'studio-' || gen_random_uuid()::text) returning id into new_studio;
     insert into public.practitioners(studio_id,user_id,display_name,email,role,active)
       values(new_studio,a.user_id,a.owner_name,verified_email,'owner',true);
@@ -113,7 +117,7 @@ begin
 end $$;
 
 create or replace view public.hone_due_subscription_notices with (security_invoker=true) as
-select n.id, n.kind, n.invoice_id, a.customer_id, a.subscription_id, a.plan,
+select n.id, n.kind, n.invoice_id, a.customer_id, coalesce(n.former_subscription,a.subscription_id) as subscription_id, a.plan,
   u.email as recipient, s.timezone,
   i.failed_at + interval '168 hours' as deadline
 from public.hone_subscription_notices n
@@ -125,16 +129,16 @@ where n.sent_at is null and exists (
   select 1 from public.practitioners p where p.studio_id=a.studio_id
     and p.user_id=u.id and p.active and p.role='owner'
 ) and (n.kind='receipt' or (
-  a.canceled_at is null and a.change_target is distinct from 'cancel' and not i.paid and i.failed_at is not null
+  n.former_subscription is null and a.canceled_at is null and a.change_target is distinct from 'cancel' and i.former_subscription is null and not i.paid and i.failed_at is not null
   and (n.kind='paused') = (now() >= i.failed_at + interval '168 hours')
   and not exists (
-    select 1 from public.hone_renewal_invoices older where older.attempt_id=a.id and not older.paid
+    select 1 from public.hone_renewal_invoices older where older.attempt_id=a.id and older.former_subscription is null and not older.paid
     and (older.failed_at,older.invoice_id) < (i.failed_at,i.invoice_id)
   )
   and not exists (
     select 1 from public.hone_subscription_notices prior
     join public.hone_renewal_invoices prior_invoice on prior_invoice.invoice_id=prior.invoice_id
-    where prior.attempt_id=a.id and prior.kind='paused' and prior.sent_at is not null
+    where prior.attempt_id=a.id and prior.former_subscription is null and prior.kind='paused' and prior.sent_at is not null
       and prior.invoice_id<>i.invoice_id and prior_invoice.failed_at<=i.failed_at
       and (prior_invoice.settled_at is null or prior_invoice.settled_at >= i.failed_at + interval '168 hours')
   )
@@ -186,7 +190,7 @@ begin
       p_team_version is distinct from (public.my_hone_solo_impact(p_studio)->>'version')) then
     return jsonb_build_object('result','team_changed');
   end if;
-  if p_target<>'cancel' and exists(select from public.hone_renewal_invoices where attempt_id=a.id and not paid and failed_at is not null)
+  if p_target<>'cancel' and exists(select from public.hone_renewal_invoices where attempt_id=a.id and former_subscription is null and not paid and failed_at is not null)
     then return jsonb_build_object('result','overdue'); end if;
   update public.hone_signup_attempts set change_id=gen_random_uuid(),change_target=p_target,retry_change_at=now()
     where id=a.id returning * into a;
@@ -274,5 +278,54 @@ revoke all on function public.my_hone_solo_impact(uuid),public.request_hone_subs
 grant execute on function public.my_hone_solo_impact(uuid),public.request_hone_subscription_change(uuid,text,uuid,text),public.my_hone_studio_canceled(uuid) to authenticated;
 grant execute on function public.claim_hone_subscription_change(uuid),public.finish_hone_subscription_change(uuid,boolean),
   public.record_hone_subscription_canceled(text,text,uuid,uuid) to service_role;
+
+-- The existing studio, customer and team survive cancellation. Serialize retries
+-- of a replacement Checkout Session on the original purchase.
+create function public.claim_hone_restart(p_studio uuid,p_user uuid,p_expired uuid default null)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare a public.hone_signup_attempts;
+begin
+  select * into a from public.hone_signup_attempts
+    where studio_id=p_studio and user_id=p_user and state='paid' and canceled_at is not null
+      and exists(select from public.practitioners where studio_id=p_studio and user_id=p_user and role='owner' and active)
+    for update;
+  if not found then return null; end if;
+  -- p_expired is supplied only by the server after checking the session at Stripe.
+  if a.restart_id is null or (p_expired=a.restart_id and a.restart_started_at+interval '31 minutes'<=now()) then
+    update public.hone_signup_attempts set restart_id=gen_random_uuid(),restart_started_at=now()
+      where id=a.id returning * into a;
+  end if;
+  return jsonb_build_object('id',a.restart_id,'created',floor(extract(epoch from a.restart_started_at)),
+    'attempt',a.id,'customer',a.customer_id,'plan',a.plan);
+end $$;
+
+create function public.apply_hone_restart_invoice(p_event text,p_attempt uuid,p_user uuid,p_plan text,
+    p_customer text,p_subscription text,p_invoice text,p_kind text,p_event_at timestamptz,p_restart uuid)
+returns text language plpgsql security definer set search_path='' as $$
+declare a public.hone_signup_attempts;
+begin
+  select * into a from public.hone_signup_attempts where id=p_attempt for update;
+  if not found or a.user_id<>p_user or a.customer_id<>p_customer or a.state<>'paid' then return 'refused'; end if;
+  if a.subscription_id=p_subscription then
+    return public.apply_hone_billing_invoice(p_event,p_attempt,p_user,p_plan,p_customer,p_subscription,p_invoice,p_kind,p_event_at);
+  end if;
+  if a.canceled_at is null or a.restart_id is distinct from p_restart or p_restart is null or a.plan<>p_plan
+     or not exists(select from public.practitioners where studio_id=a.studio_id and user_id=p_user and role='owner' and active)
+    then return 'refused'; end if;
+  if p_kind<>'initial_paid' then return 'retry_after_initial'; end if;
+  if nullif(p_subscription,'') is null or nullif(p_invoice,'') is null then return 'refused'; end if;
+  insert into public.hone_billing_events values(p_event) on conflict do nothing;
+  if not found then return 'duplicate'; end if;
+  update public.hone_renewal_invoices set former_subscription=a.subscription_id where attempt_id=a.id and former_subscription is null;
+  update public.hone_subscription_notices set former_subscription=a.subscription_id where attempt_id=a.id and former_subscription is null;
+  update public.hone_signup_attempts set subscription_id=p_subscription,canceled_at=null,
+      change_id=gen_random_uuid(),restart_id=null,restart_started_at=null where id=a.id;
+  insert into public.hone_subscription_notices(attempt_id,invoice_id,kind) values(a.id,p_invoice,'receipt');
+  return 'restarted';
+end $$;
+revoke all on function public.claim_hone_restart(uuid,uuid,uuid),public.apply_hone_restart_invoice(text,uuid,uuid,text,text,text,text,text,timestamptz,uuid)
+  from public,anon,authenticated,service_role;
+grant execute on function public.claim_hone_restart(uuid,uuid,uuid),public.apply_hone_restart_invoice(text,uuid,uuid,text,text,text,text,text,timestamptz,uuid)
+  to service_role;
 
 commit;

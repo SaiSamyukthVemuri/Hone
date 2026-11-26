@@ -3,7 +3,7 @@
   "migrations": {
     "count": 259,
     "last": "0389_subscription_self_service.sql",
-    "sha256": "725cb068dfb53af3238915d817ac9a1f06f98ccfa12ab76fd8b40d1f9a4947d8"
+    "sha256": "ce598156076c9fba6c95cab6f999c3da97e7b83c3a235a3e7990b20c05a1e56f"
   },
   "public": {
     "tables": [
@@ -158,6 +158,7 @@
       "amend_finalized_session_with_image",
       "apply_block_extra_fields",
       "apply_hone_billing_invoice",
+      "apply_hone_restart_invoice",
       "appointment_actor_role",
       "appointment_audit_derive_trusted_fields",
       "appointment_buffer_conflict",
@@ -202,6 +203,7 @@
       "claim_conversion_delivery",
       "claim_email_provider_events",
       "claim_email_send",
+      "claim_hone_restart",
       "claim_hone_signup",
       "claim_hone_subscription_change",
       "claim_hone_subscription_notice",

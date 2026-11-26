@@ -20,6 +20,24 @@ export type ServiceRoleAllowlistEntry = {
 
 export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
+    path: "app/api/cron/subscription-emails/route.ts",
+    purpose: "Send the due sandbox billing notice to the configured test inbox.",
+    why: "The authenticated scheduler claims one notice, rechecks its invoice and recipient, and records provider acceptance under the same lease.",
+    scopeGuard: "isAuthorizedCronRequest",
+  },
+  {
+    path: "lib/subscriptions/subscription-change.ts",
+    purpose: "Finish an owner’s persisted tier change or cancellation.",
+    why: "Only the service worker can claim a pending decision. It uses the customer, studio purchase and subscription from that decision and checks the Stripe result before applying it.",
+    scopeGuard: "claim_hone_subscription_change",
+  },
+  {
+    path: "app/(app)/settings/subscription/actions.ts",
+    purpose: "Reserve a replacement subscription for a canceled studio.",
+    why: "The server verifies the selected studio and active owner. The service-only claim checks the original billing owner again and rotates an expired intent only after checking its session at Stripe.",
+    scopeGuard: "requireOwnerBilling",
+  },
+  {
     path: "app/api/billing/webhook/route.ts", purpose: "Apply a verified platform subscription invoice atomically.",
     why: "Only the signed test-mode invoice handler can invoke the single transaction for its existing attempt.",
     scopeGuard: "acceptBillingInvoice",
