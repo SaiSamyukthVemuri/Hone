@@ -54,7 +54,9 @@ test.describe("Receptionist desk: finder, booking and isolation", () => {
     expect(html).not.toContain("Morgan Account");
 
     // Only the approved name, the email and the phone digits are searchable; the account name is not.
+    // (the no-match message must show, so this cannot pass because the search never ran)
     await findClient(book, "Account");
+    await expect(book.getByText("No matching clients.")).toBeVisible({ timeout: T });
     await expect(book.getByRole("button", { name: /^Morgan Vale/ })).toHaveCount(0);
   });
 
@@ -102,29 +104,55 @@ test.describe("Receptionist desk: finder, booking and isolation", () => {
     const from = new Date(Date.now() + 86_400_000).toISOString();
     const to = new Date(Date.now() + 14 * 86_400_000).toISOString();
 
+    // A refusal must be the function's OWN not_authorized (SQLSTATE 42501 with that message). 42501 alone also matches a revoked EXECUTE
+    // ("permission denied for function ..."), which would pass for the wrong reason.
     const refused = async (label: string, run: (c: Client) => Promise<unknown>) => {
       const r = await asReceptionist(userId, run);
-      expect(r.ok, `${label}: another studio is refused`).toBe(false);
-      if (!r.ok) expect(r.code, `${label}: not_authorized`).toBe("42501");
+      expect(r.ok, `${label}: refused`).toBe(false);
+      if (r.ok) return;
+      expect(r.code, `${label}: SQLSTATE`).toBe("42501");
+      expect(r.message, `${label}: the function's own refusal, not a missing EXECUTE grant`).toBe("not_authorized");
+      expect(r.message).not.toMatch(/permission denied/i);
     };
-    await refused("calendar", (c) => c.query("select * from public.receptionist_calendar_v3($1,$2,$3)", [f.other.studioId, from, to]));
+    const calendar = (studioId: string) => (c: Client) => c.query("select * from public.receptionist_calendar_v3($1,$2,$3)", [studioId, from, to]);
+
+    // POSITIVE CONTROLS on their OWN studio, so the refusals below are about the studio and not a revoked grant or a broken harness: the calendar and the
+    // finder answer, and the booking command creates a visit (rolled back with the transaction).
+    const ownCalendar = await asReceptionist(userId, calendar(f.studio.studioId));
+    expect(ownCalendar.ok, "own studio: calendar_v3 succeeds while active").toBe(true);
+    const ownFinder = await asReceptionist(userId, (c) => c.query("select * from public.receptionist_booking_clients_v3($1,'Vale',5)", [f.studio.studioId]));
+    expect(ownFinder.ok, "own studio: the finder succeeds").toBe(true);
+    const ownBooking = await asReceptionist(userId, async (c) => {
+      const found = await c.query(
+        "select * from public.receptionist_find_openings_v2($1,$2,$3,$4::date,$5::date,$6,$7)",
+        [f.studio.studioId, f.serviceId, [f.member.practitionerId], f.date, f.date, "12:00", "23:59"],
+      );
+      expect(found.rowCount, "an opening exists on the seeded day").toBeGreaterThan(0);
+      const opening = found.rows[0] as { starts_at: string; ends_at: string };
+      const booked = await c.query(
+        "select * from public.receptionist_book_opening($1,$2,$3,$4,$5,$6)",
+        [f.studio.studioId, f.returningClientId, f.serviceId, f.member.practitionerId, opening.starts_at, opening.ends_at],
+      );
+      return booked.rows[0] as { result: string };
+    });
+    expect(ownBooking.ok, "own studio: receptionist_book_opening succeeds").toBe(true);
+    if (ownBooking.ok) expect(ownBooking.value.result).toBe("created");
+
+    // Another studio is refused by every command.
+    await refused("calendar", calendar(f.other.studioId));
     await refused("client finder", (c) => c.query("select * from public.receptionist_booking_clients_v3($1,'Other',5)", [f.other.studioId]));
     await refused("appointment contact", (c) => c.query("select * from public.receptionist_appointment_contact($1,$2)", [f.other.studioId, f.otherAppointmentId]));
     await refused("book an opening", (c) =>
-      c.query("select public.receptionist_book_opening($1,$2,$3,$4,$5,$6)", [f.other.studioId, f.otherClientId, f.otherOwnerId, f.otherServiceId, from, to]),
+      c.query("select * from public.receptionist_book_opening($1,$2,$3,$4,$5,$6)", [f.other.studioId, f.otherClientId, f.otherServiceId, f.otherOwnerId, from, to]),
     );
-
-    // Controls: the same commands work on THEIR OWN studio, so the refusals above are about the studio and not a broken harness; and another studio's appointment
-    // is not reachable through their own studio id either.
-    const own = await asReceptionist(userId, (c) => c.query("select * from public.receptionist_booking_clients_v3($1,'Vale',5)", [f.studio.studioId]));
-    expect(own.ok, "own studio works").toBe(true);
+    // Another studio's appointment is not reachable through their own studio id either.
     const crossed = await asReceptionist(userId, (c) => c.query("select * from public.receptionist_appointment_contact($1,$2)", [f.studio.studioId, f.otherAppointmentId]));
     expect(crossed.ok && (crossed.value as { rowCount: number }).rowCount, "another studio's appointment through their own studio id returns nothing").toBe(0);
 
-    // Removed (the owner's Deactivate is exercised in receptionist-onboarding-flow.spec.ts; the database rule is asserted here).
+    // Removed (the owner's Deactivate is exercised in receptionist-onboarding-flow.spec.ts; the database rule is asserted here). The same own-studio call that
+    // succeeded above, as the same user, is now refused with the function's own message.
     await sql("update public.studio_receptionists set active=false, deactivated_at=now() where studio_id=$1 and user_id=$2", [f.studio.studioId, userId]);
-    const removed = await asReceptionist(userId, (c) => c.query("select * from public.receptionist_calendar_v3($1,$2,$3)", [f.studio.studioId, from, to]));
-    expect(removed.ok, "a removed receptionist is refused on their own studio").toBe(false);
+    await refused("removed receptionist, own studio calendar", calendar(f.studio.studioId));
     await expectPathRefused(page, "/desk");
   });
 });
