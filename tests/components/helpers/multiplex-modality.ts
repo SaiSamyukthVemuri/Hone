@@ -1,4 +1,4 @@
-// MultiPlex lives under Thermolysis (Chloe): Thermolysis pill, then the Modality choice. There is no standalone MultiPlex pill any more.
+// MultiPlex lives under Thermolysis (practitioner feedback): Thermolysis pill, then the Modality choice. There is no standalone MultiPlex pill any more.
 // These helpers give the mounted tests ONE spelling of that path. `multiplexPill` is a read/click adapter over the Modality choice's MultiPlex
 // option: it is non-null only while the option is OFFERED as the native xCell Pur load (its label names the machine), pressed while chosen, and
 // clicking it chooses MultiPlex, or leaves it again when it is already chosen (the old pill's undo).

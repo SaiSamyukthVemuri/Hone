@@ -2382,7 +2382,7 @@ export function BlockSetupForm({
         <div className="flex flex-wrap gap-2">
           {ELECTROLYSIS_MODES.map((m) => {
             // Pressing Blend or Galvanic while MultiPlex is chosen SELECTS it (the parked Thermolysis readings go back first), never toggles it off.
-            // MULTIPLEX LIVES UNDER THERMOLYSIS (Chloe): while it is chosen the Thermolysis pill stays pressed, and the Modality choice below
+            // MULTIPLEX LIVES UNDER THERMOLYSIS (practitioner feedback): while it is chosen the Thermolysis pill stays pressed, and the Modality choice below
             // names MultiPlex. Blend and Galvanic never show as pressed under it.
             const selected = multiplexSelected ? m.value === "thermo" : draft.mode === m.value;
             return (
@@ -2394,9 +2394,9 @@ export function BlockSetupForm({
                   // Thermolysis is already the mode while MultiPlex is chosen: pressing it again changes nothing. The way out is another modality
                   // (below) or Blend/Galvanic.
                   if (!(multiplexSelected && m.value === "thermo")) {
-                    // LEAVING MULTIPLEX BY CHOOSING A LEGACY MODE: the readings parked when she picked MultiPlex go back FIRST, under the mode they were typed
-                    // in; then the mode she clicked is selected. Restoring them AFTER the click (the leave-MultiPlex request does) would put the parked mode
-                    // back over her choice and save the wrong mode.
+                    // LEAVING MULTIPLEX BY CHOOSING A LEGACY MODE: the readings parked when they picked MultiPlex go back FIRST, under the mode they were typed
+                    // in; then the mode they clicked is selected. Restoring them AFTER the click (the leave-MultiPlex request does) would put the parked mode
+                    // back over their choice and save the wrong mode.
                     let base: Draft = draft;
                     if (multiplexSelected && parkedLegacyRef.current) {
                       base = { ...draft, ...parkedLegacyRef.current };
@@ -2440,7 +2440,7 @@ export function BlockSetupForm({
                 dispatchMultiplex({ t: "select" });
               } else if (multiplexSelected) {
                 // LEAVING MULTIPLEX BY CHOOSING ANOTHER MODALITY: the parked readings come back first under the mode they were typed in (Thermolysis),
-                // then the modality she picked is applied over them. Choosing MultiPlex again changes nothing.
+                // then the modality they picked is applied over them. Choosing MultiPlex again changes nothing.
                 if (next !== MULTIPLEX_MODALITY) {
                   const back = parkedLegacyRef.current;
                   parkedLegacyRef.current = null;
