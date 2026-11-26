@@ -2434,10 +2434,20 @@ jobs:
   # It also runs on ANY database change: CI's db lane starts Supabase without
   # storage-api, so this is the only PR-time check of storage buckets and their
   # policies. full_matrix_required and the spec terms are unchanged.
+  #
+  # CI-COST-04. The extended term no longer starts this job, or webkit-hon-62, on
+  # a pull request. Extended is the classifier's fail-safe for unattributed
+  # application code, so it held on most PR runs and these two non-required
+  # lanes ran beside the shards on nearly every push to a PR: about 16% of PR
+  # runner-minutes in a 103-run sample, 19-26 Nov. On a pull request they now
+  # run only for their own reasons, all unchanged: the named specs, a database
+  # change (this job), a payment change (webkit), and the full matrix. The
+  # blanket extended run is kept on the production push, so every merge commit
+  # still gets both lanes; that is where "any application change" is now checked.
   storage-photos:
     name: storage photos (not required)
     needs: [changes, records-preflight, validate]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.records-preflight.result == 'success' && (github.event_name != 'pull_request' || needs.validate.result == 'success') && github.event.pull_request.draft != true && ( needs.changes.outputs.full_matrix_required == 'true' || (needs.changes.outputs.browser_run == 'true' && needs.changes.outputs.browser_extended == 'true') || needs.changes.outputs.database == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/treatment-image-upload-formats.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-client-portrait.spec.ts') ) }}
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.records-preflight.result == 'success' && (github.event_name != 'pull_request' || needs.validate.result == 'success') && github.event.pull_request.draft != true && ( needs.changes.outputs.full_matrix_required == 'true' || (github.event_name != 'pull_request' && needs.changes.outputs.browser_run == 'true' && needs.changes.outputs.browser_extended == 'true') || needs.changes.outputs.database == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/treatment-image-upload-formats.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-client-portrait.spec.ts') ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
@@ -2686,9 +2696,11 @@ jobs:
   # job rather than a step in the targeted shards, so the required lane's
   # projects, sharding, budget and aggregator are untouched.
   #
-  # Runs when the HON-62 spec is selected, and on every extended or full-matrix
-  # run - extended meaning the browser shards actually run (browser_run), not
-  # the empty-selection flag a no-browser diff also carries (see storage-photos).
+  # Runs when the HON-62 spec is selected, on a payment change, and on every
+  # full-matrix run. It also runs on every extended production push - extended
+  # meaning the browser shards actually run (browser_run), not the
+  # empty-selection flag a no-browser diff also carries. On a pull request the
+  # extended term alone does not start it (CI-COST-04, see storage-photos).
   # The project exists only under HONE_E2E_WEBKIT=1 (playwright.config.ts),
   # so no other lane can pick it up.
   #
@@ -2704,7 +2716,7 @@ jobs:
   webkit-hon-62:
     name: webkit time inputs (HON-62, not required)
     needs: [changes, records-preflight, validate]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.records-preflight.result == 'success' && (github.event_name != 'pull_request' || needs.validate.result == 'success') && github.event.pull_request.draft != true && ( needs.changes.outputs.full_matrix_required == 'true' || (needs.changes.outputs.browser_run == 'true' && needs.changes.outputs.browser_extended == 'true') || contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/finish-appointment-mobile.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-touch-floor.spec.ts') || needs.changes.outputs.payment == 'true' ) }}
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.records-preflight.result == 'success' && (github.event_name != 'pull_request' || needs.validate.result == 'success') && github.event.pull_request.draft != true && ( needs.changes.outputs.full_matrix_required == 'true' || (github.event_name != 'pull_request' && needs.changes.outputs.browser_run == 'true' && needs.changes.outputs.browser_extended == 'true') || contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/finish-appointment-mobile.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-touch-floor.spec.ts') || needs.changes.outputs.payment == 'true' ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
