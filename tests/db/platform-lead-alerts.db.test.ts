@@ -620,7 +620,7 @@ describe("expiry, configuration blockers and the operator's retry", () => {
 
     const BLOCKED: Array<[string, (sent: Sent[]) => Parameters<Delivery["sweepPlatformLeadAlerts"]>[0]]> = [
       ["recipient_not_configured", (sent) => deps(undefined, sent)],
-      ["recipient_not_allowlisted", (sent) => deps("someone-else@lead-alert.test", sent)],
+      ["recipient_not_allowlisted", (sent) => deps("not an address", sent)],
       ["transport_not_configured", (sent) => ({ ...deps(OPS, sent), transport: null })],
       ["app_origin_not_configured", (sent) => ({ ...deps(OPS, sent), appOrigin: () => { throw new Error("no origin"); } })],
     ];
@@ -671,7 +671,7 @@ describe("expiry, configuration blockers and the operator's retry", () => {
       const summary = await delivery.sweepPlatformLeadAlerts(deps(OPS, sent));
       expect(summary).toMatchObject({ ok: true, attempted: 1, accepted: 1 });
       expect(sent).toHaveLength(1);
-      expect(sent[0].key).toBe(gone.key);
+      expect(sent[0].key).toBe(delivery.recipientKey(gone.key, OPS));
       expect(sent[0].payload).toMatchObject({ to: OPS, subject: MESSAGE.subject, html: MESSAGE.html, text: MESSAGE.text });
       expect(await alertRow(gone.id)).toMatchObject({ status: "accepted", attempt_count: 2, send_generation: gone.before.send_generation });
     });
@@ -882,13 +882,13 @@ describe("the delivery worker, through the existing fake Resend transport", () =
     const c = await claim(r.alert_id);
     await spy(sent).emails.send(
       { from: "Hone <hello@hone.care>", to: OPS, subject: "s", html: "h", text: "t" },
-      { idempotencyKey: c.idempotency_key },
+      { idempotencyKey: delivery.recipientKey(c.idempotency_key, OPS) },
     );
     expect((await alertRow(r.alert_id!)).status).toBe("sending");
     await expireLease(r.alert_id!);
     const summary = await delivery.sweepPlatformLeadAlerts(deps(OPS, sent));
     expect(summary).toMatchObject({ attempted: 1, accepted: 1 });
-    expect(sent.map((s) => s.key)).toEqual([c.idempotency_key, c.idempotency_key]);
+    expect(sent.map((s) => s.key)).toEqual([delivery.recipientKey(c.idempotency_key, OPS), delivery.recipientKey(c.idempotency_key, OPS)]);
     expect(await alertRow(r.alert_id!)).toMatchObject({ status: "accepted", attempt_count: 2 });
   });
 
@@ -921,7 +921,7 @@ describe("the delivery worker, through the existing fake Resend transport", () =
     expect(await delivery.deliverPlatformLeadAlert(r.alert_id!, deps(undefined, sent))).toEqual({ result: "blocked", code: "recipient_not_configured", recorded: true });
     expect(await alertRow(r.alert_id!)).toMatchObject({ status: "pending", attempt_count: 0, last_error_code: "recipient_not_configured" });
 
-    expect(await delivery.deliverPlatformLeadAlert(r.alert_id!, deps("someone-else@example.test", sent))).toEqual({ result: "blocked", code: "recipient_not_allowlisted", recorded: true });
+    expect(await delivery.deliverPlatformLeadAlert(r.alert_id!, deps("not an address", sent))).toEqual({ result: "blocked", code: "recipient_not_allowlisted", recorded: true });
     expect(await delivery.deliverPlatformLeadAlert(r.alert_id!, { ...deps(OPS, sent), transport: null })).toEqual({ result: "blocked", code: "transport_not_configured", recorded: true });
     expect(
       await delivery.deliverPlatformLeadAlert(r.alert_id!, {
