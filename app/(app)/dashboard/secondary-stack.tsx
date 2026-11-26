@@ -771,6 +771,10 @@ export function NeedsAttentionHeadingCount(props: OwnerNeedsInputs) {
 }
 
 // Wordless, like the secondary stack's: nothing about the studio is known yet.
+// Its height is calibrated to the loaded block with one item (194px at a 390px phone, 2 gaps of 8px plus three rows of 59, 59 and 60px): a period
+// change re-suspends this boundary on the page, and on a phone the block sits ABOVE the Practice snapshot, so a taller placeholder moved the snapshot
+// heading by the difference (14px at three 64px rows) until the content arrived. The real height follows the content, so this matches the common
+// single-item case rather than guaranteeing it.
 export function NeedsAttentionSkeleton() {
   return (
     <div
@@ -779,9 +783,9 @@ export function NeedsAttentionSkeleton() {
       data-testid="needs-attention-pending"
       className="flex flex-col gap-2"
     >
-      <Skeleton className="h-16 w-full" />
-      <Skeleton className="h-16 w-full" />
-      <Skeleton className="h-16 w-full" />
+      <Skeleton className="h-[59px] w-full" />
+      <Skeleton className="h-[59px] w-full" />
+      <Skeleton className="h-[60px] w-full" />
     </div>
   );
 }
