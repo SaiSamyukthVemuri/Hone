@@ -1,3 +1,6 @@
+import { ownerWorkspacePaused } from "@/lib/subscriptions/owner-billing";
+import { signOutFromGate } from "@/app/(auth)/no-access/actions";
+import Link from "next/link";
 import { OwnerBillingNotice } from "@/lib/subscriptions/OwnerBillingNotice";
 import {
   PendingContainerLink,
@@ -40,6 +43,15 @@ export default async function AppLayout({
   const { practitioner, studio } = await timed("shell.identity", () =>
     requirePractitionerWithStudio(),
   );
+  if (practitioner.role === "owner" && await ownerWorkspacePaused(studio.id)) {
+    return <div className="mx-auto max-w-5xl px-5 py-6">
+      <header className="mb-6 flex items-center gap-4 border-b border-line pb-4">
+        <strong className="mr-auto">Hone</strong>
+        {(await listActiveStudioMemberships()).length > 1 && <Link href="/no-access?reason=multiple-studios" className="underline">Switch studio</Link>}
+        <form action={signOutFromGate}><button className="underline">Sign out</button></form>
+      </header><main>{children}</main>
+    </div>;
+  }
   const admin = isAdmin(practitioner.email);
 
   // Identify the practitioner SERVER-SIDE (opaque UUID + validated coarse role

@@ -26,6 +26,10 @@ export async function POST(request: Request): Promise<Response> {
         if (error) throw new Error("billing_store_unavailable");
         return data;
       },
+      async (command) => {
+        const { error } = await createAdminClient().rpc("record_hone_subscription_canceled", command);
+        if (error) throw new Error("billing_store_unavailable");
+      },
     );
     return new Response(null, { status });
   } catch {

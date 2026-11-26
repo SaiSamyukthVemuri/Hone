@@ -243,6 +243,20 @@ export async function updateSession(request: NextRequest) {
         }
         return redirectResponse;
       }
+      if (process.env.HONE_SELF_SERVE_CHECKOUT_ENABLED === "true" && pathname !== "/subscription-paused") {
+        const selected = activeStudioIds.length === 1 ? activeStudioIds[0] : selectedStudioId;
+        const { data: canceled, error } = await supabase.rpc("my_hone_studio_canceled", { p_studio: selected });
+        if (error) return new NextResponse("Studio access is temporarily unavailable.", { status: 503 });
+        if (canceled) {
+          const { data: ownerBilling, error: ownerError } = await supabase.rpc("my_hone_billing_status", { p_studio: selected });
+          if (ownerError) return new NextResponse("Studio access is temporarily unavailable.", { status: 503 });
+          if (ownerBilling && pathname === "/settings/subscription") return supabaseResponse;
+          const url = request.nextUrl.clone();
+          url.pathname = ownerBilling ? "/settings/subscription" : "/subscription-paused";
+          url.search = "";
+          return NextResponse.redirect(url, 303);
+        }
+      }
     }
   }
 

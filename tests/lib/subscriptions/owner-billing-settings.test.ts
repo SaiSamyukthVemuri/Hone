@@ -166,13 +166,14 @@ it("shows the renewal, masked card, editable tax ID and real invoice links for a
   h.invoices.mockResolvedValue({ rows: [{ id: "in_paid", date: 1795600000, total: 9900, currency: "usd",
     status: "paid", pdf: "https://pay.stripe.com/invoice/example/pdf", hosted: null, payable: false }], next: "in_paid" });
   const html = await page();
-  for (const label of ["Renews December", "4242", "12/2030", "Add tax ID", "US$99.00", "Download PDF", "Load more", "Request cancellation"]) expect(html).toContain(label);
+  for (const label of ["Renews December", "4242", "12/2030", "Add tax ID", "US$99.00", "Download PDF", "Load more", "Change tier", "Cancel subscription now"]) expect(html).toContain(label);
   h.profile.mockResolvedValue({ hasMethod: false, taxIds: [], renews: null, ends: 1798200000 });
   h.taxEdit.mockResolvedValue(false);
   const ending = await page();
   expect(ending).toContain("Scheduled to end");
   expect(ending).toContain("Add card");
-  expect(ending).not.toContain("Request cancellation");
+  expect(ending).toContain("Cancel subscription now");
+  expect(ending).not.toContain("Change tier");
   expect(ending).not.toContain("Add tax ID");
 });
 
@@ -197,4 +198,37 @@ it("scopes each page of older invoices to the current studio owner and billing s
   h.actor.mockResolvedValue({ studio, practitioner: { role: "receptionist" } });
   await expect(loadOlderInvoices(studio.id, "in_last")).rejects.toThrow("redirect /settings");
   expect(h.invoices).not.toHaveBeenCalled();
+});
+
+it("replaces the single Stripe item at renewal pricing and cancels immediately, scoped to its owner and customer", async () => {
+  const { createBillingStripeClient } = await vi.importActual<typeof import("@/lib/subscriptions/billing-client")>("@/lib/subscriptions/billing-client");
+  const key = "sk_test_local";
+  const sdk = new Stripe(key);
+  const client = createBillingStripeClient({HONE_BILLING_STRIPE_SECRET_KEY:key, HONE_STRIPE_PRICE_SOLO:"price_solo", HONE_STRIPE_PRICE_STUDIO:"price_studio"});
+  const change = {id:"op_1", user:"owner", attempt:"purchase", plan:"solo", target:"studio", subscription:"sub_1", customer:"cus_1"} as const;
+  const metadata = {hone_user_id:"owner",hone_attempt_id:"purchase",hone_plan:"solo"};
+  const sub = {id:"sub_1",customer:"cus_1",livemode:false,status:"active",metadata,items:{data:[{id:"si_1",quantity:1,price:{id:"price_solo",livemode:false}}]}};
+  const retrieve = vi.spyOn(Object.getPrototypeOf(sdk.subscriptions),"retrieve").mockResolvedValue(sub);
+  const cancelNow = vi.spyOn(Object.getPrototypeOf(sdk.subscriptions),"cancel").mockResolvedValue({...sub,status:"canceled"});
+  const update = vi.spyOn(Object.getPrototypeOf(sdk.subscriptions),"update").mockResolvedValue({...sub,metadata:{...metadata,hone_plan:"studio"},items:{data:[{price:{id:"price_studio"}}]}});
+  const price = vi.spyOn(Object.getPrototypeOf(sdk.prices),"retrieve").mockResolvedValue({id:"price_studio",livemode:false,active:true,currency:"usd",type:"recurring",unit_amount:9900,recurring:{interval:"month",interval_count:1}});
+  try {
+    expect(await client.applyOwnerChange(change)).toBe("applied");
+    expect(update).toHaveBeenCalledWith("sub_1",{items:[{id:"si_1",quantity:1,price:"price_studio"}],metadata:{hone_plan:"studio"},proration_behavior:"none",payment_behavior:"error_if_incomplete"},{idempotencyKey:"hone-tier-op_1"});
+    expect(await client.applyOwnerChange({...change,target:"cancel"})).toBe("canceled");
+    expect(cancelNow).toHaveBeenCalledWith("sub_1",{invoice_now:false,prorate:false});
+    retrieve.mockResolvedValue({...sub,status:"canceled"});
+    expect(await client.applyOwnerChange({...change,target:"cancel"})).toBe("canceled");
+    retrieve.mockResolvedValue({...sub,customer:"cus_other"});
+    await expect(client.applyOwnerChange({...change,target:"cancel"})).rejects.toThrow("Unexpected billing subscription");
+    expect(cancelNow).toHaveBeenCalledTimes(1);
+  } finally { retrieve.mockRestore(); cancelNow.mockRestore(); update.mockRestore(); price.mockRestore(); }
+});
+
+it("retains billing and invoice history after voluntary cancellation", async () => {
+  h.rpc.mockResolvedValue({data:{...billing,status:"canceled",invoice:null}});
+  const html = await page();
+  expect(html).toContain("Studio access is paused");
+  expect(html).toContain("View invoices and receipts");
+  for (const text of ["Renews December", "Change tier", "Cancel subscription now"]) expect(html).not.toContain(text);
 });

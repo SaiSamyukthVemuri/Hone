@@ -1,3 +1,4 @@
+import { ownerWorkspacePaused } from "@/lib/subscriptions/owner-billing";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { resolveSettingsNavWithReachable } from "@/lib/settings/nav";
 import { SETTINGS_NAV } from "@/lib/settings/nav-registry";
@@ -17,6 +18,7 @@ export default async function SettingsLayout({
 }) {
   const { practitioner, studio } = await requirePractitionerWithStudio();
   const role = practitioner.role === "owner" ? "owner" : "practitioner";
+  if (role === "owner" && await ownerWorkspacePaused(studio.id)) return children;
   const { items, reachable } = await resolveSettingsNavWithReachable(SETTINGS_NAV, { role, studio });
 
   return (

@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 258,
-    "last": "0388_subscription_team_seats.sql",
-    "sha256": "10c4bfa6c4950f4ea686d12514ea5db773f70e66ae85ab172cedd892d8e5fdbd"
+    "count": 259,
+    "last": "0389_subscription_self_service.sql",
+    "sha256": "660bb90172400ef83912a219069fa47977a24cbdd5738ca000cc6741e82a4a02"
   },
   "public": {
     "tables": [
@@ -203,6 +203,7 @@
       "claim_email_provider_events",
       "claim_email_send",
       "claim_hone_signup",
+      "claim_hone_subscription_change",
       "claim_hone_subscription_notice",
       "claim_manual_fee_charge_attempt",
       "claim_new_client_waitlist_entries",
@@ -298,6 +299,7 @@
       "find_or_create_client_for_booking_payment_strict",
       "find_recurring_break_conflict",
       "find_scoped_calendar_conflict",
+      "finish_hone_subscription_change",
       "finish_hone_subscription_notice",
       "freeze_platform_lead_alert_message",
       "get_appointment_payment_display",
@@ -364,6 +366,7 @@
       "move_appointment_core",
       "move_or_reassign_appointment",
       "my_hone_billing_status",
+      "my_hone_studio_canceled",
       "my_hone_team_seats",
       "my_pending_invitation",
       "new_client_waitlist_entries_record_event",
@@ -427,6 +430,7 @@
       "record_email_provider_event",
       "record_email_result",
       "record_email_sweep_run",
+      "record_hone_subscription_canceled",
       "record_keeping_audit_actor",
       "record_keeping_audit_probe_lot",
       "record_keeping_audit_row",
@@ -470,6 +474,7 @@
       "repair_bump_appointment_sync_version",
       "repair_enqueue_orphan_link_delete",
       "report_delivery_concern",
+      "request_hone_subscription_change",
       "requeue_new_client_waitlist_entry",
       "requeue_platform_lead_alert",
       "reschedule_appointment_v2",

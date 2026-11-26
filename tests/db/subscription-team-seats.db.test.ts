@@ -314,3 +314,58 @@ describe("subscription team limits through the owner invite and acceptance paths
     });
   });
 });
+
+const requestChange = async (t: Team, target: string, version: string | null = null, actor = t.owner) =>
+  (await userQuery(actor, "select public.request_hone_subscription_change($1,$2,$3) as decision", [t.studio, target, version])).rows[0].decision;
+const settle = async (id: string) =>
+  (await adminQuery("select public.finish_hone_subscription_change($1,true) as applied", [id])).rows[0].applied;
+const billingState = async (t: Team) =>
+  (await userQuery(t.owner, "select public.my_hone_billing_status($1) as billing", [t.studio])).rows[0].billing;
+
+it("switches tiers once and reserves the lower limits while Stripe confirms a downgrade", async () => {
+  const t = await signup("solo");
+  expect(await requestChange(t, "studio", null, await authUser())).toBeNull();
+  const up = await requestChange(t, "studio");
+  expect(up.result).toBe("pending");
+  expect(await requestChange(t, "studio")).toEqual(up);
+  expect(await settle(up.id)).toBe(true);
+  expect(await settle(up.id)).toBe(false);
+  expect(await usage(t)).toMatchObject({ plan: "studio", receptionist_limit: 1 });
+  const recipient = await invite(t, "receptionist");
+  expect((await requestChange(t, "solo")).result).toBe("stale");
+  expect((await requestChange(t, "solo", up.id)).result).toBe("capacity");
+  await cancel(t, recipient);
+  const down = await requestChange(t, "solo", up.id);
+  expect(down.result).toBe("pending");
+  await expect(invite(t, "receptionist")).rejects.toMatchObject({ code: "HN002" });
+  expect(await settle(down.id)).toBe(true);
+  expect(await usage(t)).toMatchObject({ plan: "solo", receptionist_limit: 0 });
+});
+
+it("immediately pauses the canceled studio, keeps its billing and history, and stays paused after late payment", async () => {
+  const t = await signup("studio");
+  const staff = await authUser(await invite(t, "practitioner"));
+  await accept(staff);
+  const desk = await authUser(await invite(t, "receptionist"));
+  await accept(desk);
+  const client = (await adminQuery("insert into public.clients(studio_id,name) values($1,'Example') returning id", [t.studio])).rows[0].id;
+  const chart = () => adminQuery("insert into public.sessions(studio_id,client_id,practitioner_id,modality) values($1,$2,$3,'electrolysis') returning id", [t.studio,client,t.practitioner]);
+  const existingChart = (await chart()).rows[0].id;
+  const change = await requestChange(t, "cancel");
+  expect((await billingState(t)).status).toBe("canceling");
+  for (const actor of [t.owner, staff, desk]) {
+    expect((await userQuery(actor, "select public.my_hone_studio_canceled($1) as paused", [t.studio])).rows[0].paused).toBe(true);
+  }
+  expect(await requestChange(t,"cancel",null,staff)).toBeNull();
+  await expect(chart()).rejects.toThrow("subscription_canceled");
+  const claim = (await adminQuery("select public.claim_hone_subscription_change($1) as job", [change.id])).rows[0].job;
+  expect(claim.target).toBe("cancel");
+  await adminQuery("select public.record_hone_subscription_canceled($1,$2,$3,$4)", [claim.subscription,claim.customer,claim.attempt,t.owner]);
+  await adminQuery("select public.apply_hone_billing_invoice($1,$2,$3,'studio',$4,$5,$6,'renewal_paid',now())",
+    [randomUUID(),claim.attempt,t.owner,claim.customer,claim.subscription,randomUUID()]);
+  expect((await billingState(t)).status).toBe("canceled");
+  expect((await requestChange(t,"studio",change.id)).result).toBe("canceled");
+  await expect(chart()).rejects.toThrow("subscription_canceled");
+  expect((await adminQuery("select id from public.sessions where id=$1", [existingChart])).rowCount).toBe(1);
+  expect((await billingState(await signup("studio"))).status).toBe("active");
+});

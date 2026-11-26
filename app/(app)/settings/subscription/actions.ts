@@ -1,11 +1,14 @@
 "use server";
+import { revalidatePath } from "next/cache";
+import { createClient } from "@/lib/supabase/server";
+import { processSubscriptionChange } from "@/lib/subscriptions/subscription-change";
 import { redirect } from "next/navigation";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { createBillingStripeClient } from "@/lib/subscriptions/billing-client";
 import { hostedInvoiceUrl } from "@/lib/subscriptions/hosted-invoice-url";
 import { readOwnerBilling } from "@/lib/subscriptions/owner-billing";
-import { isSelfServeCheckoutEnabled } from "@/lib/subscriptions/plans";
+import { isSelfServeCheckoutEnabled, parsePlanKey } from "@/lib/subscriptions/plans";
 
 const billingPath = "/settings/subscription";
 
@@ -73,4 +76,25 @@ export async function loadOlderInvoices(studioId: string, cursor: string) {
   } catch {
     return null;
   }
+}
+
+export async function changeSubscription(studioId: string, version: string | null, form: FormData) {
+  await requireOwnerBilling(studioId);
+  const target = form.get("target");
+  if ((target !== "cancel" && !parsePlanKey(target)) ||
+      (target === "cancel" && form.get("confirm") !== "cancel-now")) redirect(billingPath + "?error=change");
+  const db = await createClient();
+  const { data, error } = await db.rpc("request_hone_subscription_change", {
+    p_studio: studioId, p_target: target, p_version: version,
+  });
+  if (error || !data) redirect(billingPath + "?error=change");
+  const { result, id } = data;
+  if (["capacity", "stale", "overdue"].includes(result)) redirect(billingPath + "?error=" + result);
+  let outcome = result;
+  if (result === "pending") {
+    // The database already paused a confirmed cancellation, even if Stripe is temporarily offline.
+    try { outcome = await processSubscriptionChange(id); } catch { outcome = "pending"; }
+  }
+  revalidatePath("/", "layout");
+  redirect(billingPath + (outcome === "refused" ? "?error=change" : "?notice=change"));
 }

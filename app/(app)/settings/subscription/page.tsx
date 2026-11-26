@@ -1,8 +1,9 @@
 import { notFound } from "next/navigation";
 import { OwnerOnlyNotice, SettingsViewHeading } from "@/components/settings/view-heading";
-import { Button, buttonClasses } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/ui/status-pill";
-import { CONTACT_EMAIL } from "@/lib/marketing/content";
+import { SubscriptionControls } from "./subscription-controls";
+import { getOwnerTeamSeats } from "@/lib/subscriptions/owner-team-seats";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { createBillingStripeClient } from "@/lib/subscriptions/billing-client";
 import { readOwnerBilling } from "@/lib/subscriptions/owner-billing";
@@ -11,6 +12,8 @@ import { openOwnerBilling, payOutstandingInvoice, updateBillingCard } from "./ac
 import { InvoiceHistory } from "./invoice-history";
 
 const states = {
+  canceling: { label: "Cancellation pending", tone: "warning" },
+  canceled: { label: "Canceled", tone: "neutral" },
   active: { label: "Active", tone: "success" },
   past_due: { label: "Payment overdue", tone: "warning" },
   paused: { label: "Access paused", tone: "danger" },
@@ -19,11 +22,6 @@ const split = "flex flex-wrap items-center justify-between gap-x-5 gap-y-3";
 const section = "space-y-4 border-t border-line py-6";
 const sectionTitle = "text-base font-semibold tracking-tight";
 const secondary = "text-sm text-fg-muted";
-const actionStyle = buttonClasses({ size: "sm" });
-function requestByEmail(subject: string) {
-  return "mailto:" + CONTACT_EMAIL + "?subject=" + encodeURIComponent(subject);
-}
-
 async function stripeOverview(customer: string, subscription: string) {
   try {
     const stripe = createBillingStripeClient(process.env);
@@ -51,7 +49,12 @@ export default async function SubscriptionPage({ searchParams }: {
   if (error || !billing || !states[billing.status] || !PLANS[billing.plan]) {
     return <section className="space-y-4">{heading}<p role="alert">We couldn’t load your subscription. Refresh this page to try again.</p></section>;
   }
-  const { profile, invoices, editTax } = await stripeOverview(billing.customer, billing.subscription);
+  const [{ profile, invoices, editTax }, seats] = await Promise.all([
+    stripeOverview(billing.customer, billing.subscription), getOwnerTeamSeats(studio.id).catch(() => null),
+  ]);
+  const terminal = billing.status === "canceled" || billing.status === "canceling";
+  const controls = { studioId: studio.id, studioName: studio.name, current: billing.plan, version: billing.change_id ?? null,
+    soloFits: seats && typeof seats.practitioner_used === "number" ? seats.practitioner_used <= 1 && seats.receptionist_used === 0 : null };
   const plan = PLANS[billing.plan];
   const state = states[billing.status];
   const query = await searchParams;
@@ -62,23 +65,31 @@ export default async function SubscriptionPage({ searchParams }: {
     <div>{heading}</div>
     {query.error && <p role="alert" className="my-4 text-sm text-danger-fg">{query.error === "invoice"
       ? "We couldn’t open that invoice for payment. Check your invoice history or try again."
+      : query.error === "capacity" ? "Solo includes one practitioner and no receptionist. Review active members and pending invitations in Settings → Team."
+      : query.error === "stale" ? "Your subscription changed. Review the current details before trying again."
+      : query.error === "overdue" ? "Pay outstanding invoices before changing tiers."
+      : query.error === "change" ? "We couldn’t complete that change. Review your billing details and try again."
       : "We couldn’t open billing. Please try again."}</p>}
-    {query.notice === "settling" && billing.invoice && <p role="status" className="my-4 text-sm">Check your invoice history for the latest payment. Refresh this page to see your updated access.</p>}
+    {query.notice === "settling" && billing.invoice && <p role="status" className="my-4 text-sm">Check your invoice history for the latest payment.</p>}
     <section aria-label="Current plan" className="py-6">
       <div className={split}>
         <div className="flex items-start gap-3">
           <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-accent text-xl font-semibold text-on-accent" aria-hidden="true">H</span>
           <div className="space-y-1.5">
-            <div className="flex flex-wrap items-center gap-2"><h3 className="text-xl font-semibold tracking-tight">{plan.label} plan</h3><StatusPill tone={state.tone}>{state.label}</StatusPill></div>
-            <p className="text-sm font-medium">US${plan.unitAmount / 100} per month</p>
-            {profile?.ends ? <p className={secondary}>Scheduled to end {formatDate(profile.ends)}.</p>
+            <div className="flex flex-wrap items-center gap-2"><h3 className="text-xl font-semibold tracking-tight">{terminal ? "Former " : ""}{plan.label} plan</h3><StatusPill tone={state.tone}>{state.label}</StatusPill></div>
+            <p className="text-sm font-medium">{terminal && "Previous rate · "}US${plan.unitAmount / 100} per month</p>
+            {!terminal && profile?.ends ? <p className={secondary}>Scheduled to end {formatDate(profile.ends)}.</p>
               : billing.status === "active" && profile?.renews ? <p className={secondary}>Renews {formatDate(profile.renews)}.</p> : null}
           </div>
         </div>
-        <a href={requestByEmail("Change my Hone subscription plan")} className={actionStyle}>Request plan change</a>
+        {billing.status === "active" && !billing.pending && !profile?.ends && <SubscriptionControls kind="tier" {...controls} />}
       </div>
-      <p className="mt-5 text-sm text-fg-muted">{teamAllowance(billing.plan)}. The owner uses one practitioner seat.</p>
+      {billing.pending && !terminal && <p role="status" className="mt-4 text-sm">Your tier change is processing. Refresh Billing to check its status.</p>}
+      {!terminal && <p className="mt-5 text-sm text-fg-muted">{teamAllowance(billing.plan)}. The owner uses one practitioner seat.</p>}
       {(billing.status !== "active" || billing.invoice) && <div className="mt-4 space-y-3 rounded-lg border border-line bg-surface-sunken p-4 text-sm">
+        {terminal && <p role="status">{billing.status === "canceled"
+          ? "Your subscription is canceled. Studio access is paused. You can still manage billing and download invoices."
+          : "Studio access is paused. We’re confirming the cancellation with Stripe."}</p>}
         {billing.status === "past_due" && billing.deadline && <p>Pay before {new Date(billing.deadline).toLocaleString("en-US", {
           timeZone: tz, timeZoneName: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit",
         })} to keep new bookings and chart entries available.</p>}
@@ -114,10 +125,10 @@ export default async function SubscriptionPage({ searchParams }: {
       {invoices ? <InvoiceHistory key={studio.id + ":" + (invoices.next ?? "")} initial={invoices} studioId={studio.id} timezone={tz}/>
         : <p className={secondary}>Invoice history is temporarily unavailable here. You can still open it in Stripe.</p>}
     </section>
-    {!profile?.ends && <section aria-labelledby="billing-cancel" className={section}>
+    {!terminal && <section aria-labelledby="billing-cancel" className={section}>
       <div className={split}><div className="space-y-1"><h3 id="billing-cancel" className={sectionTitle}>Cancellation</h3>
-        <p className={secondary}>Contact Hone to cancel your studio’s subscription.</p></div>
-        <a className={actionStyle} href={requestByEmail("Cancel my Hone subscription")}>Request cancellation</a></div>
+        <p className={secondary}>Cancel now to end future renewals and pause studio access immediately.</p></div>
+        <SubscriptionControls kind="cancel" {...controls}/></div>
     </section>}
   </section>;
 }

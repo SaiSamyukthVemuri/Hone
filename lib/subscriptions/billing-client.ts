@@ -15,6 +15,9 @@
 //   * Secret values are never logged or placed in an error message.
 
 import Stripe from "stripe";
+import type { SubscriptionChange } from "./subscription-change";
+import { parsePlanKey, PLANS, resolvePlanPriceId } from "./plans";
+import { priceRefusal } from "./checkout-session";
 import { readBillingInvoices, readBillingProfile } from "./billing-overview";
 
 export interface BillingPrice {
@@ -160,6 +163,41 @@ export function createBillingStripeClient(
   return {
     billingProfile: (customer: string, subscription: string) => readBillingProfile(stripe, customer, subscription),
     billingInvoices: (customer: string, subscription: string, after?: string) => readBillingInvoices(stripe, customer, subscription, after),
+
+    async applyOwnerChange(change: SubscriptionChange): Promise<"applied" | "canceled" | "refused"> {
+      const sub = await stripe.subscriptions.retrieve(change.subscription);
+      if (sub.id !== change.subscription || sub.livemode || idOf(sub.customer) !== change.customer ||
+          sub.metadata.hone_attempt_id !== change.attempt || sub.metadata.hone_user_id !== change.user) {
+        throw new Error("Unexpected billing subscription");
+      }
+      if (sub.status === "canceled") return "canceled";
+      if (change.target === "cancel") {
+        const canceled = await stripe.subscriptions.cancel(sub.id, { invoice_now: false, prorate: false });
+        if (canceled.id !== sub.id || canceled.status !== "canceled") throw new Error("Cancellation unconfirmed");
+        return "canceled";
+      }
+      const target = change.target;
+      const priceId = resolvePlanPriceId(target, env);
+      if (!priceId) throw new Error("Tier price unavailable");
+      const item = sub.items.data[0];
+      const current = parsePlanKey(sub.metadata.hone_plan);
+      if (!current || sub.items.has_more || sub.items.data.length !== 1 || item.quantity !== 1 ||
+          item.price.id !== resolvePlanPriceId(current, env) || item.price.livemode) return "refused";
+      if (current === target) return "applied";
+      if (sub.status !== "active" || sub.cancel_at || sub.cancel_at_period_end || sub.pending_update || sub.schedule ||
+          current !== change.plan) return "refused";
+      const price = await stripe.prices.retrieve(priceId);
+      if (priceRefusal(price, priceId, PLANS[target])) throw new Error("Unexpected tier price");
+      const updated = await stripe.subscriptions.update(sub.id, {
+        items: [{ id: item.id, price: priceId, quantity: 1 }],
+        proration_behavior: "none", payment_behavior: "error_if_incomplete",
+        metadata: { hone_plan: target },
+      }, { idempotencyKey: "hone-tier-" + change.id });
+      if (updated.id !== sub.id || updated.metadata.hone_plan !== target || updated.items.data[0]?.price.id !== priceId) {
+        throw new Error("Tier change unconfirmed");
+      }
+      return "applied";
+    },
 
     async canEditTaxId(configuration: string) {
       const config = await stripe.billingPortal.configurations.retrieve(configuration);

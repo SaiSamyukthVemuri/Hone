@@ -7,9 +7,12 @@ import { NextRequest } from "next/server";
 // has no session. Calling POST(new Request("http://localhost/api/billing/webhook", {method:"POST"})) directly misses the middleware, so this drives
 // the REAL updateSession with no user and then the route.
 
+const member = vi.hoisted(() => ({ signedIn: false, owner: false, paused: false }));
 vi.mock("@supabase/ssr", () => ({
   createServerClient: () => ({
-    auth: { getUser: async () => ({ data: { user: null } }) },
+    auth: { getUser: async () => ({ data: { user: member.signedIn ? {id: "user",email:"owner@example.test"} : null } }) },
+    from: () => ({ select: () => ({ eq: () => ({ eq: async () => ({ data: [{studio_id:"studio"}] }) }) }) }),
+    rpc: async (fn: string) => ({data:fn === "my_hone_studio_canceled" ? member.paused : member.owner ? {status:"canceled"} : null}),
   }),
 }));
 
@@ -19,7 +22,7 @@ import { POST } from "@/app/api/billing/webhook/route";
 const isRedirect = (r: Response) => r.status >= 300 && r.status < 400 && r.headers.has("location");
 const post = (p: string) => updateSession(new NextRequest(`http://localhost${p}`, { method: "POST" }));
 
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => { vi.unstubAllEnvs(); member.signedIn = member.owner = member.paused = false; });
 
 describe("/api/billing/webhook through the middleware, session-less", () => {
   it("is NOT redirected to /login, and the route then answers 404 with the flag off", async () => {
@@ -54,4 +57,17 @@ describe("/api/billing/webhook through the middleware, session-less", () => {
     expect(mw).toMatch(/pathname === "\/api\/billing\/webhook" \|\|/);
     expect(mw).not.toMatch(/startsWith\("\/api\/billing/);
   });
+});
+
+it("pauses an already signed-in studio on the next request, with owner-only Billing access", async () => {
+  vi.stubEnv("HONE_SELF_SERVE_CHECKOUT_ENABLED","true");
+  member.signedIn = true;
+  expect(isRedirect(await post("/calendar"))).toBe(false);
+  member.paused = true;
+  expect((await post("/calendar")).headers.get("location")).toContain("/subscription-paused");
+  expect((await post("/settings/subscription")).headers.get("location")).toContain("/subscription-paused");
+  expect(isRedirect(await post("/subscription-paused"))).toBe(false);
+  member.owner = true;
+  expect((await post("/dashboard")).headers.get("location")).toContain("/settings/subscription");
+  expect(isRedirect(await post("/settings/subscription"))).toBe(false);
 });

@@ -198,9 +198,11 @@ describe("#8 — the Terms do not describe automated Hone subscription billing a
     // importer is a deliberate, reviewed edit of THIS list.
     const REVIEWED_IMPORTERS = [
       "app/(app)/layout.tsx",
+      "app/(app)/settings/layout.tsx",
       "app/(app)/settings/subscription/actions.ts",
       "app/(app)/settings/subscription/invoice-history.tsx",
       "app/(app)/settings/subscription/page.tsx",
+      "app/(app)/settings/subscription/subscription-controls.tsx",
       // HON-88 owner seat usage and invitation feedback, with no payment writes.
       "app/(app)/settings/team/InviteForm.tsx",
       "app/(app)/settings/team/actions.ts",
@@ -208,6 +210,7 @@ describe("#8 — the Terms do not describe automated Hone subscription billing a
       "app/(auth)/no-access/checkout-action.ts",
       "app/(auth)/no-access/page.tsx",
       "app/api/billing/webhook/route.ts",
+      "app/api/cron/subscription-changes/route.ts",
       "app/api/cron/subscription-emails/route.ts",
       // HON-70 UI head (PROPOSED, flag-gated): the plan links and the account step.
       "app/pricing/page.tsx",

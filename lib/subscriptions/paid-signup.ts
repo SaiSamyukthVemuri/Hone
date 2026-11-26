@@ -1,7 +1,6 @@
 import {
-  parsePlanKey,
+  planForPriceId,
   PLANS,
-  resolvePlanPriceId,
   type SubscriptionEnv,
 } from "./plans";
 import { isUserId, decideBillingEvent } from "./webhook";
@@ -29,6 +28,7 @@ export async function acceptBillingInvoice(
     Pick<Client, "readInvoice">,
   env: SubscriptionEnv,
   apply: (command: PaidInvoiceCommand) => Promise<string>,
+  recordCancellation?: (command: { p_subscription: string; p_customer: string; p_attempt: string; p_user: string }) => Promise<void>,
 ): Promise<number> {
   let event;
   try {
@@ -41,6 +41,14 @@ export async function acceptBillingInvoice(
     (event.account && event.account !== env.HONE_BILLING_ACCOUNT_ID)
   )
     return 200;
+  if (event.type === "customer.subscription.deleted" && event.object.id && recordCancellation) {
+    const sub = await client.retrieveSubscription(event.object.id);
+    const { hone_attempt_id: attempt, hone_user_id: user } = sub.metadata;
+    if (sub.id === event.object.id && !sub.livemode && sub.status === "canceled" && isUserId(attempt) && isUserId(user)) {
+      await recordCancellation({ p_subscription: sub.id, p_customer: sub.customer, p_attempt: attempt, p_user: user });
+    }
+    return 200;
+  }
   if (event.type !== "invoice.paid" && event.type !== "invoice.payment_failed")
     return 200;
   const invoiceId = event.object.id;
@@ -55,7 +63,8 @@ export async function acceptBillingInvoice(
     return 200;
   const subscription = await client.retrieveSubscription(invoice.subscription);
   const attempt = subscription.metadata.hone_attempt_id;
-  const plan = parsePlanKey(subscription.metadata.hone_plan);
+  // A delayed payment can belong to the tier that preceded an upgrade.
+  const plan = planForPriceId(invoice.price ?? "", env);
   if (
     !attempt ||
     !isUserId(attempt) ||
@@ -63,7 +72,6 @@ export async function acceptBillingInvoice(
     subscription.id !== invoice.subscription ||
     !invoice.customer ||
     subscription.customer !== invoice.customer ||
-    invoice.price !== resolvePlanPriceId(plan, env) ||
     invoice.currency !== "usd" ||
     invoice.total !== PLANS[plan].unitAmount
   )
@@ -78,7 +86,8 @@ export async function acceptBillingInvoice(
       userStudioCreationUnlocked: false,
     },
   });
-  if (decision.kind !== "apply" || subscription.items[0].price.livemode)
+  if (decision.kind !== "apply" || subscription.items[0].price.livemode ||
+      (invoice.reason === "subscription_create" && decision.entitlement.plan !== plan))
     return 200;
   const paid =
     invoice.status === "paid" &&
