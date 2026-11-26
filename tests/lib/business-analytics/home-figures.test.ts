@@ -148,9 +148,9 @@ describe("what a figure does NOT include is said, not dropped", () => {
   it("other currency and refunded-in-full are said too, in the Analytics order and words; a clean period has none", () => {
     const f = buildHomeFigures(view({ collected: ok({ headlineCents: 5000, change: { kind: "none_recorded" }, previousCents: 0, caveats: { ...NO_CAVEATS, unresolvedCount: 2, otherCurrencyCount: 1, refundedInFullCents: 2550 } }) }));
     expect((f.collected as { value: { disclosures: string[] } }).value.disclosures).toEqual([
+      "Refunded in full, not in collected: $25.50.",
       "2 payment records could not be settled either way and are not counted.",
       "1 payment record in another currency is not counted.",
-      "Refunded in full, not in collected: $25.50.",
     ]);
     const clean = buildHomeFigures(view({ collected: ok({ headlineCents: 5000, change: { kind: "none_recorded" }, previousCents: 0, caveats: NO_CAVEATS }) }));
     expect((clean.collected as { value: { disclosures: string[] } }).value.disclosures).toEqual([]);

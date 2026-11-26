@@ -72,12 +72,12 @@ function cumulative(points: ReadonlyArray<{ collectedCents: number }>): number[]
   return points.map((p) => (sum += p.collectedCents));
 }
 
-/** The same sentences, in the same order, as the Analytics collected breakdown. */
+/** The same sentences, in the same order, as the Analytics collected breakdown: refunded in full, then unresolved, then other currency. */
 export function collectedDisclosures(c: { refundedInFullCents: number; unresolvedCount: number; otherCurrencyCount: number }): string[] {
   const out: string[] = [];
+  if (c.refundedInFullCents > 0) out.push(refundedInFullSentence(heroMoney(c.refundedInFullCents)));
   if (c.unresolvedCount > 0) out.push(unresolvedRecordsSentence(c.unresolvedCount));
   if (c.otherCurrencyCount > 0) out.push(otherCurrencyRecordsSentence(c.otherCurrencyCount));
-  if (c.refundedInFullCents > 0) out.push(refundedInFullSentence(heroMoney(c.refundedInFullCents)));
   return out;
 }
 
