@@ -313,8 +313,8 @@ test("what the figures do NOT include is said under them: an unsettled payment r
   const sessionId = randomUUID();
   await sql(`insert into public.sessions (id, studio_id, client_id, practitioner_id, appointment_id, modality) values ($1,$2,$3,$4,$5,'electrolysis')`, [sessionId, seed.studioId, paid.clientId, prac, paid.apptId]);
   await sql(
-    `insert into public.payment_charge_attempts (id, studio_id, client_id, session_id, charge_reason, created_by_practitioner_id, amount_cents, currency, status, stripe_livemode, refund_status, refund_amount_cents)
-     values ($1,$2,$3,$4,'session_payment',$5,8000,'cad','succeeded',false,'pending_stripe',8000)`,
+    `insert into public.payment_charge_attempts (id, studio_id, client_id, session_id, charge_reason, created_by_practitioner_id, amount_cents, currency, status, stripe_livemode, stripe_account_id, refund_status, refund_amount_cents)
+     values ($1,$2,$3,$4,'session_payment',$5,8000,'cad','succeeded',true,'acct_synthetic_overview','pending_stripe',8000)`,
     [randomUUID(), seed.studioId, paid.clientId, sessionId, prac],
   );
   // A completed visit with no payment record at all: its payment is unknown, so it is left out of the average.
