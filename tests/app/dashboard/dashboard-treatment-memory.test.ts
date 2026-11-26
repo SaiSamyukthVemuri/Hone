@@ -118,10 +118,9 @@ describe("the disclosure is accessible and calm by default", () => {
     expect(MEMORY_UI).toMatch(/id=\{regionId\}/);
   });
 
-  it("starts CLOSED, so Today is calm by default", () => {
-    expect(MEMORY_UI).toMatch(/useState\(false\)/);
-    // The heavy card is mounted only when open — a calm Today does not pay to
-    // render every client's full chart.
+  it("starts OPEN (Chloe, 26 Nov): the last visit's details are on the card with no click; the button only hides", () => {
+    expect(MEMORY_UI).toMatch(/const \[open, setOpen\] = useState\(true\)/);
+    // The card is still mounted only while open and only once the server has answered.
     expect(MEMORY_UI).toMatch(/\{open && \(/);
   });
 
@@ -444,8 +443,8 @@ describe("the Today row wires it correctly", () => {
 
   it("renders the immediate plan once on the roster, outside the historical treatment", () => {
     const row = DASH.slice(DASH.indexOf("function AppointmentRow("), DASH.indexOf("function AppointmentStatusPill("));
-    expect(row.match(/data-testid="dashboard-prep-remember"/g)).toHaveLength(1);
-    expect(row).toContain("{prepSummary.remember && (");
+    expect(readFileSync("app/(app)/dashboard/visit-actions.tsx", "utf8").match(/data-testid="dashboard-prep-remember"/g)).toHaveLength(1);
+    expect(row).toContain("{prepSummary.remember && <NextSessionReminder note={prepSummary.remember} />}");
     expect(row).not.toContain("{workflow.remember}");
     expect(MEMORY_UI_CODE).not.toMatch(/For next visit/);
   });

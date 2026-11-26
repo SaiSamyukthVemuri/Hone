@@ -125,8 +125,8 @@ describe("placement + reuse", () => {
     // HON-10: the preview is per VISIT (keyed by appointment id), not per client.
     expect(PAGE).toMatch(/beforeTodayPreviews\.get\(appt\.id\)/);
     expect(PAGE).toMatch(/workflow=\{workflowByAppointment\.get\(appt\.id\) \?\? null\}/);
-    expect(PAGE).toContain('data-testid="dashboard-prep-remember"');
-    expect(PAGE).toContain("{prepSummary.remember}");
+    expect(PAGE).toContain("<NextSessionReminder note={prepSummary.remember} />");
+    expect(read("app/(app)/dashboard/visit-actions.tsx")).toContain('data-testid="dashboard-prep-remember"');
     expect(PAGE).toContain("<DashboardTreatmentMemory");
     expect(PAGE).toContain("New client · No charted history yet");
     expect(PAGE).toContain("No appointments today.");

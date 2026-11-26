@@ -113,11 +113,12 @@ describe("the client boundary carries only the visible projection", () => {
     );
   });
 
-  it("there is NO prefetch — the fetch happens on activation only", () => {
-    expect(COMPONENT).not.toMatch(/onMouseEnter|onFocus=\{.*load|IntersectionObserver|useEffect/);
+  it("the details load once on mount (open by default), never on hover or intersection", () => {
+    expect(COMPONENT).not.toMatch(/onMouseEnter|onFocus=\{.*load|IntersectionObserver/);
+    expect(COMPONENT).toMatch(/useEffect\(\(\) => \{\s*if \(showable && open\) load\(\);/);
     expect(COMPONENT).toMatch(/function toggle\(\)/);
     // …and once fetched it is kept, so reopening costs nothing.
-    expect(COMPONENT).toMatch(/if \(!next \|\| result !== null \|\| pending\) return;/);
+    expect(COMPONENT).toMatch(/if \(result !== null \|\| pending\) return;/);
   });
 
   it("the accessible disclosure contract is preserved", () => {
@@ -176,6 +177,6 @@ describe("four distinct failure/success paths, and they stay distinct", () => {
   });
 
   it("containment does not disturb the cache — one fetch per mounted row", () => {
-    expect(COMPONENT).toMatch(/if \(!next \|\| result !== null \|\| pending\) return;/);
+    expect(COMPONENT).toMatch(/if \(result !== null \|\| pending\) return;/);
   });
 });

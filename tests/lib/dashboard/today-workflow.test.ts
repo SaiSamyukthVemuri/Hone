@@ -403,8 +403,10 @@ describe("dashboard wiring", () => {
   const safety = readFileSync("app/(app)/dashboard/row-safety-lines.tsx", "utf8");
 
   it("renders the appointment's one-visit plan once, keeping the clinical caution separate", () => {
-    expect(row.match(/>For this visit<\/span>/g) ?? []).toHaveLength(1);
-    expect(row).toMatch(/>For this visit<\/span>\s*\{" · "\}\{prepSummary\.remember\}/);
+    const reminder = readFileSync("app/(app)/dashboard/visit-actions.tsx", "utf8");
+    expect(reminder.match(/>From last visit, for today<\/h3>/g) ?? []).toHaveLength(1);
+    expect(reminder).toMatch(/>\{note\}<\/p>/);
+    expect(row.match(/<NextSessionReminder note=\{prepSummary\.remember\} \/>/g) ?? []).toHaveLength(1);
     expect(row).not.toMatch(/workflow\.remember|beforeToday\.rememberLine|beforeToday\.recordsLine/);
     expect(row.match(/caution=\{workflow && !workflow\.unavailable && workflow\.hasHistory \? workflow\.caution : null\}/g) ?? []).toHaveLength(1);
     expect(safety.match(/Caution: \{caution\}/g) ?? []).toHaveLength(1);
@@ -413,7 +415,7 @@ describe("dashboard wiring", () => {
   it("offers the recorded setup in one disclosure and keeps long notes and cautions readable", () => {
     expect(row.match(/<DashboardTreatmentMemory\b/g) ?? []).toHaveLength(1);
     expect(row).not.toMatch(/Latest setup:|workflow\.setup\b|line-clamp/);
-    expect(row).toMatch(/data-testid="dashboard-prep-remember"[^>]*whitespace-pre-wrap break-words/);
+    expect(readFileSync("app/(app)/dashboard/visit-actions.tsx", "utf8")).toMatch(/<p className="[^"]*whitespace-pre-wrap break-words[^"]*">\{note\}<\/p>/);
     expect(safety).toMatch(/data-testid="today-row-caution"[^>]*whitespace-pre-wrap break-words/);
     const details = readFileSync("app/(app)/dashboard/dashboard-treatment-memory.tsx", "utf8");
     expect(details).toMatch(/await loadAppointmentPrepMemory\(appointmentId\)/);

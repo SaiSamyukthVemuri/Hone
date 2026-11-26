@@ -146,10 +146,10 @@ describe("OFF TODAY THE PAGE ASKS NO HISTORY QUESTION — the load-bearing rule"
   });
 
   it("renders the same one-use plan on its target row on any day, with no older workflow fallback", () => {
-    expect(CODE).toMatch(/\{prepSummary\.remember && \(\s*<p[^>]*data-testid="dashboard-prep-remember"/);
-    expect(CODE.match(/\{prepSummary\.remember && \(/g) ?? []).toHaveLength(1);
-    // A title may repeat the full text for accessibility. Only JSX children add a second visible reminder.
-    expect(CODE.match(/(?<!=)\{prepSummary\.remember\}/g) ?? []).toHaveLength(1);
+    expect(CODE).toContain("{prepSummary.remember && <NextSessionReminder note={prepSummary.remember} />}");
+    expect(CODE.match(/\{prepSummary\.remember && /g) ?? []).toHaveLength(1);
+    // The reminder component renders the text once as a JSX child; its title only repeats it for accessibility.
+    expect(readFileSync("app/(app)/dashboard/visit-actions.tsx", "utf8").match(/\{note\}<\/p>/g) ?? []).toHaveLength(1);
     expect(CODE).not.toMatch(/\{workflow\.remember\}/);
   });
 
@@ -285,11 +285,15 @@ describe("#598 survives on every day", () => {
     const row = CODE.slice(CODE.indexOf("function AppointmentRow("));
     // The indicator is role-gated; the consultation link goes directly to the client's treatment tab.
     expect(row).toMatch(/\{isOwner && <CardOnFilePill status=\{cardOnFile\} \/>\}/);
-    expect(row).toMatch(/<PendingLink\s+href=\{\x60\/clients\/\$\{appt\.client_id\}\?tab=treatment\x60\}\s+data-testid="today-consultation-notes"/);
+    expect(row).toContain("href: `/clients/${appt.client_id}?tab=treatment`");
+    expect(readFileSync("app/(app)/dashboard/visit-actions.tsx", "utf8")).toMatch(/<PendingLink href=\{consultation\.href\} data-testid="today-consultation-notes"/);
     const historyStart = row.indexOf("{workflow && !workflow.unavailable && !workflow.hasHistory");
     const historyEnd = row.indexOf("</p>", historyStart);
     expect(row.indexOf("<CardOnFilePill")).toBeLessThan(historyStart);
-    expect(row.indexOf('data-testid="today-consultation-notes"')).toBeGreaterThan(historyEnd);
+    // Chloe (26 Nov): it now sits in the ONE action row, which comes before the details block (and so the history line).
+    expect(row.indexOf("tab=treatment")).toBeLessThan(historyStart);
+    expect(row.indexOf("tab=treatment")).toBeGreaterThan(row.indexOf("<VisitActionRow"));
+    expect(historyEnd).toBeGreaterThan(historyStart);
   });
 
   it("the card load is still ONE bounded, studio-scoped batch for the day's clients", () => {

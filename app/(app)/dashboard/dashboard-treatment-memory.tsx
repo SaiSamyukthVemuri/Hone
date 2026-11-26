@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState, useTransition } from "react";
+import { useEffect, useId, useState, useTransition } from "react";
 import { compactSummary } from "@/lib/dashboard/today-treatment-summary";
 import { AppointmentPrepMemoryCard } from "@/components/appointment-prep-memory-card";
 import type { DashboardTreatmentDisclosureSummary } from "@/lib/dashboard/dashboard-prep-summary";
@@ -64,10 +64,34 @@ export function DashboardTreatmentMemory({
   summary: DashboardTreatmentDisclosureSummary;
   timeZone: string;
 }) {
-  const [open, setOpen] = useState(false);
+  // CHLOE (26 Nov): the last visit's details are ON the card by default, no click needed. The button is now only a
+  // secondary "hide / show"; it starts open. The details are still read by the server on request, after it re-checks
+  // the appointment belongs to this studio, and never travel in the page payload.
+  const [open, setOpen] = useState(true);
   const [result, setResult] = useState<PrepMemoryResult | null>(null);
   const [pending, startTransition] = useTransition();
   const regionId = useId();
+  const showable = !summary.unavailable && summary.hasTreatment;
+
+  function load() {
+    if (result !== null || pending) return;
+    startTransition(async () => {
+      // A rejected INVOCATION (dropped connection, deployment-id mismatch on a tab left open across a deploy) must fail
+      // to this row's own line and never escape to the route error boundary, which would replace the whole Dashboard.
+      // The thrown value is deliberately not read, rendered or logged.
+      try {
+        setResult(await loadAppointmentPrepMemory(appointmentId));
+      } catch {
+        setResult({ status: "unavailable" });
+      }
+    });
+  }
+
+  useEffect(() => {
+    if (showable && open) load();
+    // Load once per mount; closing and reopening reuses the result.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Truthful ordering of the three genuinely different states. "We could not
   // read it" must never render as "this client has no treatment history": that
@@ -85,36 +109,10 @@ export function DashboardTreatmentMemory({
   }
   if (!summary.hasTreatment) return null;
 
-  // NO PREFETCH. Not on hover, not on mount, not on intersection — only here,
-  // after a deliberate activation. Once fetched, the result is kept for the
-  // life of the row so closing and reopening costs nothing.
   function toggle() {
     const next = !open;
     setOpen(next);
-    if (!next || result !== null || pending) return;
-    startTransition(async () => {
-      // The action RETURNS its own refusals, so a server-side failure already
-      // arrives as `{ status: "unavailable" }` below. This catch is for the
-      // OTHER class: a rejected INVOCATION — a dropped connection, a response
-      // that cannot be decoded, a deployment-id mismatch on a tab left open
-      // across a deploy. The action's internal try/catch runs on the server
-      // and cannot see any of those.
-      //
-      // Without it React re-throws the rejection out of the transition and it
-      // escapes to the route error boundary, replacing the ENTIRE Dashboard
-      // because one OPTIONAL per-row disclosure failed. A per-row read must
-      // fail to its own line. Same shape as TodayPortalLinkButton and
-      // StartAssistedIntakeButton, which document the identical hazard.
-      //
-      // The thrown value is deliberately not read, not rendered and not
-      // logged: it can carry framework and transport internals, and the row
-      // already has truthful copy that says the only thing worth saying.
-      try {
-        setResult(await loadAppointmentPrepMemory(appointmentId));
-      } catch {
-        setResult({ status: "unavailable" });
-      }
-    });
+    if (next) load();
   }
 
   return (
