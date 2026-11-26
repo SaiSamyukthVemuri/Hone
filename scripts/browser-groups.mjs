@@ -631,6 +631,18 @@ const PATH_TO_GROUP = [
   // unattributable path, and narrowing it would reduce coverage, so it is
   // reported rather than changed here.
   { group: "sessions", patterns: [/sessions?\//i, /charting/i, /electrolysis/i, /laser/i, /session[-_]?block/i, /probe/i, /observation[-_]?chip/i, /treatment[-_]?memory/i, /clinical[-_]?note/i, /appointment[-_]?prep[-_]?memory[-_]?card/i] },
+  // MACHINES (CI-SELECT-01). lib/machines/**, components/machines/** and the Settings -> Machines page matched no rule, so a diff to the MultiPlex
+  // load reducer (lib/machines/multiplex-load.ts) fell through to the unattributed fail-safe and ran the whole extended suite: four shards, the
+  // storage-photos lane and the WebKit lane, to prove a form that one group's specs drive.
+  //
+  // WHY THIS IS SAFE, AND WHAT KEEPS IT SAFE. Every app route that imports these files, directly or through other modules, is a SESSIONS route
+  // or the Settings -> Machines page, whose browser coverage is machine-real-3g.spec.ts (it visits /settings/machines) in `sessions`.
+  // tests/ci/browser-selection.test.ts walks the real import graph and FAILS if a new route starts importing a mapped file without selecting
+  // `sessions` itself, so the mapping cannot silently narrow coverage as the code grows.
+  //
+  // TWO FILES ARE DELIBERATELY LEFT OUT and keep the extended fail-safe: legacy-machine.ts and profile-contract.ts are also imported by the
+  // client page (app/(app)/clients/[id]/page.tsx) and the data export (app/(app)/settings/data/**), which match no group.
+  { group: "sessions", patterns: [/^lib\/machines\/(?!legacy-machine\.ts$|profile-contract\.ts$)/, /^components\/machines\//, /^app\/\(app\)\/settings\/machines\//] },
   { group: "calendar", patterns: [/calendar/i, /\bservices?\b/i, /disinfectant/i] },
   // OWNER-CAP Slice 1. Registering the SPEC in the group above is only half the
   // job: selection maps CHANGED PATHS to groups, and the capacity page matched
