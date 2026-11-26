@@ -18,8 +18,8 @@ export type PeriodKind = "month_to_date" | "previous_month" | "year_to_date" | "
 export const PERIOD_KINDS: readonly PeriodKind[] = ["month_to_date", "previous_month", "year_to_date", "custom"];
 
 /** How a CUSTOM period is compared. Both options are offered; the default is the preceding period. */
-export type CustomComparison = "preceding" | "last_year";
-export const CUSTOM_COMPARISONS: readonly CustomComparison[] = ["preceding", "last_year"];
+export type CustomComparison = "preceding" | "last_year" | "previous_month";
+export const CUSTOM_COMPARISONS: readonly CustomComparison[] = ["preceding", "last_year", "previous_month"];
 
 /** A custom range longer than this is refused, never silently shortened. */
 export const MAX_CUSTOM_DAYS = 366;
@@ -207,7 +207,14 @@ export function resolvePeriod(input: ResolveInput): PeriodResult {
 
   let comparison: PeriodWindow;
   let clamped = false;
-  if (mode === "preceding") {
+  if (mode === "previous_month") {
+    // Business → Overview's "Choose month": ONE WHOLE calendar month against the calendar month before it, as Last month does. Any other range has no
+    // "previous month", so it is refused, never quietly compared with something else.
+    const covered = monthsCovered(current);
+    if (covered.length !== 1 || !covered[0].wholeMonth) return { ok: false, error: "invalid_comparison" };
+    const pm = shiftMonth(parts(input.from).y, parts(input.from).m, -1);
+    comparison = windowOf(make(pm.y, pm.m, 1), make(pm.y, pm.m, daysInMonth(pm.y, pm.m)));
+  } else if (mode === "preceding") {
     comparison = windowOf(addDays(input.from, -current.days), addDays(input.from, -1));
   } else {
     const a = sameDateInYear(input.from, parts(input.from).y - 1);
@@ -215,14 +222,24 @@ export function resolvePeriod(input: ResolveInput): PeriodResult {
     clamped = a.clamped || b.clamped;
     comparison = windowOf(a.date, b.date);
   }
-  const currentLabel = `Custom range: ${rangeLabel(current)} (${dayCount(current.days)})`;
-  const comparisonLabel = `${rangeLabel(comparison)} (${dayCount(comparison.days)})`;
+  const wholeMonthLabel = mode === "previous_month" ? `${monthName(parts(input.from).m)} ${parts(input.from).y} (complete month, ${dayCount(current.days)})` : null;
+  const currentLabel = wholeMonthLabel ?? `Custom range: ${rangeLabel(current)} (${dayCount(current.days)})`;
+  const comparisonLabel = mode === "previous_month" ? `${monthName(parts(comparison.startLocal).m)} ${parts(comparison.startLocal).y} (complete month, ${dayCount(comparison.days)})` : `${rangeLabel(comparison)} (${dayCount(comparison.days)})`;
   const notes = [`${currentLabel} compared with ${comparisonLabel}.`];
   if (mode === "last_year") notes.push("The comparison is the same dates one year earlier.");
+  if (mode === "previous_month" && comparison.days !== current.days) notes.push("The two months have different numbers of days.");
   if (mode === "last_year" && comparison.days !== current.days) notes.push("The two ranges have different numbers of days.");
   if (clamped) notes.push("29 February does not exist in the previous year, so that end of the comparison is 28 February.");
   if (input.to === input.today) notes.push("Today's visits count once they are marked complete.");
-  return { ok: true, period: { kind, current, comparison, partial: true, clamped, currentLabel, comparisonLabel, notes } };
+  return { ok: true, period: { kind, current, comparison, partial: mode !== "previous_month", clamped, currentLabel, comparisonLabel, notes } };
+}
+
+/** True when `from`..`to` are exactly ONE whole calendar month (the first to the last day of the same month). Both must be real local dates. */
+export function isWholeCalendarMonth(from: unknown, to: unknown): boolean {
+  if (!isRealLocalDate(from) || !isRealLocalDate(to)) return false;
+  const a = parts(from);
+  const b = parts(to);
+  return a.y === b.y && a.m === b.m && a.d === 1 && b.d === daysInMonth(b.y, b.m);
 }
 
 /** The two UTC instants of a window in the studio's time zone: each local midnight converted on its own. */

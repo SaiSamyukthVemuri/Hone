@@ -9,9 +9,10 @@ const read = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
 // The owner's Business menu: Capacity, Statements and Analytics. Presentation only; the pages keep their own owner checks.
 
 describe("the Business menu's destinations", () => {
-  it("has exactly three items, in order: Capacity, Statements, then Analytics, each pointing at its existing page", () => {
+  it("has exactly four items, in order: Overview, Capacity, Statements, then Analytics, each pointing at its existing page", () => {
     expect(BUSINESS_MENU_LABEL).toBe("Business");
     expect(BUSINESS_MENU_ITEMS.map((i) => [i.label, i.href])).toEqual([
+      ["Overview", "/financials/overview"],
       ["Capacity", "/dashboard/capacity"],
       ["Statements", "/financials/statement"],
       ["Analytics", "/financials/analytics"],
@@ -19,6 +20,8 @@ describe("the Business menu's destinations", () => {
   });
 
   it("the menu reads as current on each page and its subtree, and on nothing else", () => {
+    expect(isBusinessPath("/financials/overview")).toBe(true);
+    expect(isBusinessPath("/financials/overview-archive")).toBe(false);
     expect(isBusinessPath("/dashboard/capacity")).toBe(true);
     expect(isBusinessPath("/dashboard/capacity/")).toBe(true);
     expect(isBusinessPath("/financials/statement")).toBe(true);

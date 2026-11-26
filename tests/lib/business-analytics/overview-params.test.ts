@@ -63,3 +63,33 @@ describe("links back to the Overview", () => {
     expect(back).toMatchObject({ ok: true, params: { periodKind: "previous_month", practitioner: { kind: "unattributed" }, series: "visits" } });
   });
 });
+
+describe("the previous calendar month follows the period, and is never an error", () => {
+  it("Last month's comparison IS the previous calendar month, whatever the address says", () => {
+    for (const compare of [undefined, "preceding", "last_year", "previous_month"]) {
+      const r = page({ period: "previous_month", compare });
+      expect(r.ok && r.params.compare, String(compare)).toBe("previous_month");
+      expect(r.ok && r.notices).toEqual([]);
+    }
+  });
+  it("Last month switched to a Custom range with a PARTIAL range: compared with the period just before, and said", () => {
+    const r = page({ period: "custom", from: "2026-10-03", to: "2026-10-20", compare: "previous_month" });
+    expect(r.ok && r.params.compare).toBe("preceding");
+    expect(r.ok && r.notices).toEqual(["The previous calendar month applies to one whole calendar month, so this range is compared with the period just before it."]);
+  });
+  it("a MULTI-month range and a half-given range fall back the same way", () => {
+    for (const range of [{ from: "2026-09-01", to: "2026-10-31" }, { from: "2026-10-01", to: undefined }, { from: undefined, to: undefined }]) {
+      const r = page({ period: "custom", compare: "previous_month", ...range });
+      expect(r.ok && r.params.compare, JSON.stringify(range)).toBe("preceding");
+      expect(r.ok && r.notices).toHaveLength(1);
+    }
+  });
+  it("it falls back even in strict mode: a stale choice is not a bad request", () => {
+    expect(strict({ period: "custom", from: "2026-10-03", to: "2026-10-20", compare: "previous_month" })).toMatchObject({ ok: true });
+  });
+  it("one whole calendar month keeps it, with no notice", () => {
+    const r = page({ period: "custom", from: "2026-10-01", to: "2026-10-31", compare: "previous_month" });
+    expect(r.ok && r.params.compare).toBe("previous_month");
+    expect(r.ok && r.notices).toEqual([]);
+  });
+});

@@ -933,6 +933,10 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
     reason: "A removed feature: the route only redirects to the Clients directory, so it is never offered as a destination.",
   },
   {
+    route: "/financials/overview",
+    reason: "Owner-only Business Overview is reached from the Business menu. It shows the studio's money for a reporting period, so it is not offered through Global Search.",
+  },
+  {
     route: "/financials/analytics",
     reason: "Owner-only Analytics is reached from the Business menu. Global Search discovery is outside this menu change.",
   },

@@ -31,14 +31,19 @@ import {
   namedClientsCap,
   namedClientsNotListed,
   noNextBookingNote,
+  PREVIOUS_CALENDAR_MONTH_LABEL,
+  excludedVisitsSentence,
+  otherCurrencyRecordsSentence,
+  refundedInFullSentence,
+  unresolvedRecordsSentence,
 } from "@/lib/business-analytics/copy";
 import { NAMED_LIST_SIZE, type NamedRow } from "@/lib/business-analytics/named-clients";
 import { FIGURE_UNAVAILABLE_COPY, type Figure } from "@/lib/business-analytics/figure";
-import { formatWhole } from "@/lib/business-analytics/money-format";
+import { formatExact, formatWhole } from "@/lib/business-analytics/money-format";
 import { MONEY_BASIS_NOTE, type Change } from "@/lib/business-analytics/money-metrics";
 import type { CollectedDifference, OverviewView } from "@/lib/business-analytics/overview-model";
 import { overviewQuery, type OverviewParams } from "@/lib/business-analytics/overview-params";
-import { PERIOD_KINDS } from "@/lib/business-analytics/period";
+import { isWholeCalendarMonth, PERIOD_KINDS } from "@/lib/business-analytics/period";
 import { DEFAULT_BEYOND_USUAL_FACTOR } from "@/lib/business-analytics/visit-metrics";
 import type { Fact } from "@/lib/dashboard/owner-capacity-model";
 
@@ -162,6 +167,17 @@ export function Controls({ params, options, action = OVERVIEW_PATH, hidden = [] 
         <input key={name} type="hidden" name={name} value={value} />
       ))}
       <button type="submit" className={BUTTON}>Show</button>
+      {/* LAST MONTH is one whole calendar month, compared with the calendar month before it. Said, not implied: while the Period list reads Last month this
+          line is shown (the form's own :has() rule, no script), and the one compare field below still submits previous_month, so Show resubmits it and never
+          "preceding". (value^=previous, not previous_month: Tailwind turns an underscore inside an arbitrary variant into a space and the rule never matches.) It is text, not a second compare field: a hidden field still submits, so only ONE field named compare exists. */}
+      <div
+        className="hidden flex-col gap-1 text-xs text-fg-muted group-has-[select[name=period]_option[value^=previous]:checked]:flex"
+        data-fixed-comparison=""
+        data-testid="analytics-fixed-comparison"
+      >
+        <span>Compared with</span>
+        <span className={cx("inline-flex items-center rounded-lg border border-line bg-surface-sunken px-3 text-sm text-fg", CONTROL_MIN_TOUCH)}>{PREVIOUS_CALENDAR_MONTH_LABEL}</span>
+      </div>
       <div className="hidden basis-full flex-wrap items-end justify-end gap-2 group-has-[option[value=custom]:checked]:flex" data-custom-range="">
         <label className="flex flex-col gap-1 text-xs text-fg-muted">
           From
@@ -176,6 +192,8 @@ export function Controls({ params, options, action = OVERVIEW_PATH, hidden = [] 
           <select name="compare" defaultValue={params.compare} className={INPUT}>
             <option value="preceding">The period just before</option>
             <option value="last_year">The same dates last year</option>
+            {/* Offered for ONE whole calendar month, and kept when it was the comparison in use, so pressing Show does not quietly change it. */}
+            {isWholeCalendarMonth(params.from, params.to) || params.compare === "previous_month" || params.periodKind === "previous_month" ? <option value="previous_month">{PREVIOUS_CALENDAR_MONTH_LABEL}</option> : null}
           </select>
         </label>
       </div>
@@ -323,7 +341,7 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
           {(c) => (
             <>
               <p className={BIG}>
-                {formatWhole(c.headlineCents)}
+                {formatExact(c.headlineCents)}
                 {currencyWord ? <span className="ml-1.5 text-sm font-medium tracking-normal text-fg-muted">{currencyWord}</span> : null}
               </p>
               <ChangeLine change={c.change} cmp={cmp} />
@@ -343,7 +361,7 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
             <>
               <p className={a.averageCents.known ? BIG : "text-sm text-fg"}>{factText(a.averageCents, format)}</p>
               {a.averageCents.known ? <ChangeLine change={view.averagePaidChange} cmp={cmp} /> : null}
-              {a.excludedUnknownVisits > 0 ? <p className="text-xs text-fg-muted">{plural(a.excludedUnknownVisits, "visit", "visits")} awaiting payment confirmation {a.excludedUnknownVisits === 1 ? "is" : "are"} left out of this average.</p> : null}
+              {a.excludedUnknownVisits > 0 ? <p className="text-xs text-fg-muted">{excludedVisitsSentence(a.excludedUnknownVisits)}</p> : null}
             </>
           )}
         </Card>
@@ -564,9 +582,9 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
                       <SplitRow label="Collected" value={format(c.split.totalCents)} strong />
                     </tbody>
                   </table>
-                  {c.caveats.refundedInFullCents > 0 ? <p className="text-sm text-fg-muted">Refunded in full, not in collected: {format(c.caveats.refundedInFullCents)}.</p> : null}
-                  {c.caveats.unresolvedCount > 0 ? <p className="text-sm text-fg-muted">{plural(c.caveats.unresolvedCount, "payment record", "payment records")} could not be settled either way and {c.caveats.unresolvedCount === 1 ? "is" : "are"} not counted.</p> : null}
-                  {c.caveats.otherCurrencyCount > 0 ? <p className="text-sm text-fg-muted">{plural(c.caveats.otherCurrencyCount, "payment record", "payment records")} in another currency {c.caveats.otherCurrencyCount === 1 ? "is" : "are"} not counted.</p> : null}
+                  {c.caveats.refundedInFullCents > 0 ? <p className="text-sm text-fg-muted">{refundedInFullSentence(format(c.caveats.refundedInFullCents))}</p> : null}
+                  {c.caveats.unresolvedCount > 0 ? <p className="text-sm text-fg-muted">{unresolvedRecordsSentence(c.caveats.unresolvedCount)}</p> : null}
+                  {c.caveats.otherCurrencyCount > 0 ? <p className="text-sm text-fg-muted">{otherCurrencyRecordsSentence(c.caveats.otherCurrencyCount)}</p> : null}
                 </div>
               )}
             </Card>

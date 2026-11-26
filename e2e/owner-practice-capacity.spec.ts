@@ -284,7 +284,7 @@ async function assertShellAt(
   await expect(sheet, `${at}: the Menu opens`).toBeVisible();
   await expect(mobileWorkingSurfaces(page), `${at}: working surfaces`).toHaveText(
     opts.owner
-      ? ["Dashboard", "Clients", "Calendar", "Records", "Capacity", "Statements", "Analytics"]
+      ? ["Dashboard", "Clients", "Calendar", "Records", "Overview", "Capacity", "Statements", "Analytics"]
       : ["Dashboard", "Clients", "Calendar", "Records"],
   );
   await expect(
@@ -821,11 +821,12 @@ test("an owner's desktop navigation carries the Business menu, once, and it reac
   // THE WHOLE ROW, IN ORDER: the four working-surface links untouched, then the Business button.
   await expect(nav.getByRole("link")).toHaveText(["Dashboard", "Clients", "Calendar", "Records"]);
 
-  // Open it: exactly three items, once each BY DESTINATION as well.
+  // Open it: exactly four items, once each BY DESTINATION as well.
   await business.click();
   await expect(business).toHaveAttribute("aria-expanded", "true");
   const panel = nav.getByRole("group", { name: "Business" });
-  await expect(panel.getByRole("link")).toHaveText(["Capacity", "Statements", "Analytics"]);
+  await expect(panel.getByRole("link")).toHaveText(["Overview", "Capacity", "Statements", "Analytics"]);
+  await expect(nav.locator('a[href="/financials/overview"]')).toHaveCount(1);
   await expect(nav.locator('a[href="/dashboard/capacity"]')).toHaveCount(1);
   await expect(nav.locator('a[href="/financials/statement"]')).toHaveCount(1);
   await expect(nav.locator('a[href="/financials/analytics"]')).toHaveCount(1);
@@ -1060,6 +1061,7 @@ test("an owner's mobile menu carries the Business group, and tapping an item clo
     "Clients",
     "Calendar",
     "Records",
+    "Overview",
     "Capacity",
     "Statements",
     "Analytics",

@@ -90,8 +90,7 @@ const REASONS: ReadFailure[] = ["too_many_appointments", "read_failed", "currenc
 describe("the Overview screen renders the view it is given", () => {
   const html = render(healthy());
   it("shows the collected total with its lines, and the line from service value to collected", () => {
-    expect(card(html, "ov-collected-total") ?? "").toContain("$265"); // 9000 + 9500 + 3000 + 5000, whole dollars on the card
-    expect(card(html, "ov-collected-total") ?? "").not.toContain("$265.00"); // the exact cents are in the split, not on the card
+    expect(card(html, "ov-collected-total") ?? "").toContain("$265.00"); // 9000 + 9500 + 3000 + 5000, dollars AND cents on the card (Sam, 26 Nov 2026)
     const split = card(html, "ov-split") ?? "";
     expect(split).toContain("$215.00"); // on completed visits
     expect(split).toContain("$50.00"); // fees
@@ -410,7 +409,7 @@ describe("period line, axis labels and chart-data row labels", () => {
   });
 });
 
-describe("compact controls, whole-dollar headline figures and the area under the line", () => {
+describe("compact controls, dollars-and-cents headline figures and the area under the line", () => {
   const text = (h: string) => h.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/\s+/g, " ");
   it("compact controls: a period list, a practitioner list and a Show button, with the dates and the comparison in a group a custom period reveals", () => {
     const form = render(healthy()).match(/<form[^>]*aria-label="Period and team member"[\s\S]*?<\/form>/)?.[0] ?? "";
@@ -431,25 +430,24 @@ describe("compact controls, whole-dollar headline figures and the area under the
     expect(form).toContain('action="/financials/analytics"');
     expect(form).toContain('method="get"');
   });
-  it("headline cards show whole dollars with one currency word; exact cents stay in the split and the chart data", () => {
+  it("the collected headline shows dollars AND cents with one currency word, and the split and chart data agree with it", () => {
     const html = render(healthy());
-    expect(text(card(html, "ov-collected-total") ?? "")).toMatch(/\$265 CAD/);
+    expect(text(card(html, "ov-collected-total") ?? "")).toMatch(/\$265\.00 CAD/);
     expect(card(html, "ov-split") ?? "").toContain("$265.00");
     expect(card(html, "ov-series") ?? "").toContain("$90.00");
   });
-  it("rounding is display only: the model's exact cents are unchanged, the split still adds up to them, and the card is within 50 cents", () => {
+  it("no rounding: the card shows the model's exact cents, and the split adds up to them", () => {
     const view = healthy();
     const c = (view.collected as { value: { headlineCents: number; split: { totalCents: number } } }).value;
     expect(c.headlineCents).toBe(26500);
     expect(c.split.totalCents).toBe(c.headlineCents);
-    const shown = Number((text(card(render(view), "ov-collected-total") ?? "").match(/\$([\d,]+)/) ?? [])[1].split(",").join(""));
-    expect(Math.abs(shown * 100 - c.headlineCents)).toBeLessThanOrEqual(50);
-    // a figure that is not a whole dollar rounds on the card but is unchanged in the view
+    expect(text(card(render(view), "ov-collected-total") ?? "")).toMatch(/\$265\.00 CAD/);
+    // a figure that is not a whole dollar is shown exactly, never rounded to $265 or $266
     const odd = { ...view, collected: { available: true, value: { ...(view.collected as { value: object }).value, headlineCents: 26549 } } } as unknown as OverviewView;
-    expect(text(card(render(odd), "ov-collected-total") ?? "")).toMatch(/\$265 CAD/);
+    expect(text(card(render(odd), "ov-collected-total") ?? "")).toMatch(/\$265\.49 CAD/);
     expect((odd.collected as { value: { headlineCents: number } }).value.headlineCents).toBe(26549);
   });
-  it("the reconciliation's total and the average paid keep exact cents, while the other headline cards are whole dollars", () => {
+  it("the reconciliation's total, the average paid and the collected headline all keep exact cents", () => {
     const v = healthy();
     const exact = (view: OverviewView) => render(view, { format: formatExact });
     const line = { serviceValueCents: 146165, collectedAbovePriceCents: 0, collectedBelowPriceCents: 0, collectedOnNoEvidenceCents: 0, feesCents: 5, uncompletedPaymentsCents: 0, otherBookingsCents: 0, collectedCents: 146170 };
@@ -462,7 +460,7 @@ describe("compact controls, whole-dollar headline figures and the area under the
     const html = exact(view);
     expect(text(card(html, "ov-line") ?? "")).toMatch(/= Collected \$1,461\.70/);
     expect(text(card(html, "ov-avgpaid") ?? "")).toContain("$87.42");
-    expect(text(card(html, "ov-collected-total") ?? "")).toMatch(/\$1,462 CAD/);
+    expect(text(card(html, "ov-collected-total") ?? "")).toMatch(/\$1,461\.70 CAD/);
   });
   it("the beyond-usual count is shown apart from the clients not judged", () => {
     const view = { ...healthy(), beyondUsual: { available: true, value: { count: 3, notEnoughHistory: 2 } } } as unknown as OverviewView;

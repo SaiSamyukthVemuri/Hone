@@ -340,6 +340,8 @@ export const BROWSER_GROUPS = {
       // briefing, an ordinary practitioner is refused it, and the owner-only
       // entry is not advertised in search. No new group: the taxonomy fits.
       "owner-practice-capacity.spec.ts",
+      // Business → Overview on a phone (owner-only figures; the Business menu entry): the same owner-authority surface.
+      "business-overview-mobile.spec.ts",
       // 0339 (owner-only writes on services and consent wording): the owner still edits services and consent wording
       // through the shipped actions; a practitioner is shown no edit control.
       "owner-only-catalog-edit.spec.ts",

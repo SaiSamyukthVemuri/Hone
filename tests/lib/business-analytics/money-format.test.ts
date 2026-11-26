@@ -29,3 +29,14 @@ describe("analytics money display", () => {
     }
   });
 });
+
+describe("Analytics headline money is dollars AND cents (Sam, 26 Nov 2026)", () => {
+  it("a last-month total of 27550 cents reads $275.50 and never $276, the figure the Overview shows", () => {
+    expect(formatExact(27550)).toBe("$275.50");
+    expect(formatExact(27550)).not.toBe(formatWhole(27550));
+    expect(formatExact(9000)).toBe("$90.00");
+    expect(formatExact(146170)).toBe("$1,461.70");
+    expect(formatExact(0)).toBe("$0.00");
+  });
+});
+

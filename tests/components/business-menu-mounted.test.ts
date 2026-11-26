@@ -55,13 +55,14 @@ afterEach(() => {
 });
 
 describe("the Business menu, mounted", () => {
-  it("is closed to begin with, and the button opens it to exactly the three links", () => {
+  it("is closed to begin with, and the button opens it to exactly the four links", () => {
     mount();
     expect(trigger().getAttribute("aria-expanded")).toBe("false");
     expect(panel()).toBeNull();
     click(trigger());
     expect(trigger().getAttribute("aria-expanded")).toBe("true");
     expect(links().map((a) => [a.textContent, a.getAttribute("href")])).toEqual([
+      ["Overview", "/financials/overview"],
       ["Capacity", "/dashboard/capacity"],
       ["Statements", "/financials/statement"],
       ["Analytics", "/financials/analytics"],

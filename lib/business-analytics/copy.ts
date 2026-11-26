@@ -99,3 +99,24 @@ export const CLIENTS_NOT_LISTED = (n: number): string => `${n} ${n === 1 ? "clie
 export const CLIENTS_SORT_NOTE = "Sort, filters and pages change only the order and which rows show. No figure above changes.";
 export const CLIENTS_RECON_INTRO = "How the clients' money adds up to the Overview's collected on completed visits. A difference is shown, never hidden.";
 
+
+// ---------------------------------------------------------------------------
+// The disclosures under a figure. Business → Analytics and Business → Overview print the same sentences, from here.
+// ---------------------------------------------------------------------------
+const noun = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
+
+/** Completed visits whose payment is unknown are left out of the average, and said to be. */
+export function excludedVisitsSentence(n: number): string {
+  return `${noun(n, "visit", "visits")} awaiting payment confirmation ${n === 1 ? "is" : "are"} left out of this average.`;
+}
+export function refundedInFullSentence(formatted: string): string {
+  return `Refunded in full, not in collected: ${formatted}.`;
+}
+export function unresolvedRecordsSentence(n: number): string {
+  return `${noun(n, "payment record", "payment records")} could not be settled either way and ${n === 1 ? "is" : "are"} not counted.`;
+}
+export function otherCurrencyRecordsSentence(n: number): string {
+  return `${noun(n, "payment record", "payment records")} in another currency ${n === 1 ? "is" : "are"} not counted.`;
+}
+/** The label for a whole-calendar-month comparison, offered in the Analytics controls. */
+export const PREVIOUS_CALENDAR_MONTH_LABEL = "The previous calendar month";

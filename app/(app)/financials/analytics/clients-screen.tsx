@@ -18,7 +18,7 @@ import {
 import { clientsQuery, type ClientsParams } from "@/lib/business-analytics/clients-params";
 import type { ClientChip, ClientSort, ClientsTableRow } from "@/lib/business-analytics/clients-table";
 import { FIGURE_UNAVAILABLE_COPY, type Figure } from "@/lib/business-analytics/figure";
-import { formatWhole } from "@/lib/business-analytics/money-format";
+import { formatExact } from "@/lib/business-analytics/money-format";
 import type { OverviewView } from "@/lib/business-analytics/overview-model";
 import { overviewQuery, type OverviewParams } from "@/lib/business-analytics/overview-params";
 import { DEFAULT_BEYOND_USUAL_FACTOR } from "@/lib/business-analytics/visit-metrics";
@@ -138,7 +138,7 @@ export function ClientsScreen({ view, params, clients, notices, practitionerOpti
         <FigureCard id="cl-collected" title="Collected (by visit date)" figure={view.collected}>
           {(c) => (
             <p className={BIG}>
-              {formatWhole(c.headlineCents)}
+              {formatExact(c.headlineCents)}
               {currencyWord ? <span className="ml-1 text-sm font-medium text-fg-muted">{currencyWord}</span> : null}
             </p>
           )}
