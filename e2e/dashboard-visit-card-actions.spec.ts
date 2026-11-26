@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { loginAsOwner, loginByMagicLink } from "./helpers/flows";
 import {
+  getE2eServiceId,
   seedE2eDashboardClient,
   seedE2eDashboardMemoryClient,
   seedE2eMember,
@@ -85,6 +86,14 @@ test("visit card: one action row, yellow pins, blue reminder, last visit details
 
 test("Checkout is owner-only: the owner sees it on the visit card, a signed-in practitioner sees the same card without it", async ({ page, browser, baseURL }) => {
   const studio = await seedE2eStudio();
+  // A priced service in a payment jurisdiction, so the owner is offered Checkout (an unpriced visit offers "Mark completed" instead).
+  const serviceId = await getE2eServiceId(studio.studioId);
+  await sql("update public.services set price_cents = 9000 where id = $1 and studio_id = $2", [serviceId, studio.studioId]);
+  await sql(
+    `insert into public.studio_payment_jurisdictions (studio_id, payment_country, payment_currency, source, verification_reference)
+     values ($1, 'CA', 'cad', 'operator', 'synthetic owner-only checkout')`,
+    [studio.studioId],
+  );
   const { clientId } = await seedE2eDashboardClient(studio, { label: "Owner only" });
   const member = await seedE2eMember(studio);
   // A visit in progress (Checkout is offered once it has started), assigned to the practitioner, so the card is the member's own.
@@ -117,6 +126,7 @@ test("Checkout is owner-only: the owner sees it on the visit card, a signed-in p
       await expect(row.getByTestId("today-rebook")).toBeVisible();
       await expect(row.getByTestId("today-chart")).toBeVisible();
       await expect(row.getByRole("button", { name: /^Check ?out$/i })).toHaveCount(0);
+      await expect(row.getByRole("button", { name: "Mark completed", exact: true })).toHaveCount(0);
       await expect(row.getByText("Available once the appointment has started")).toHaveCount(0);
     } finally {
       await context.close();
