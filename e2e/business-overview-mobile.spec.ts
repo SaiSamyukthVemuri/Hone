@@ -128,8 +128,10 @@ test.describe("Business → Overview on a phone", () => {
     // Choose month: a month picked in the field is kept in the address.
     const picker = page.locator('[data-period="month"] input[type="month"]');
     await picker.fill(ym);
-    // last month is the named period, so it folds into Last month: one window, one address
-    await expect.poll(() => q(page).get("period"), { timeout: T }).toBe("previous_month");
+    // The picker submits ?period=month&month=<last month>. Last month is also a named period, so the page shows it as Last month: one window, one selection.
+    await expect.poll(() => q(page).get("month"), { timeout: T }).toBe(ym);
+    await expect(page.locator('[data-period="previous_month"]')).toHaveAttribute("aria-current", "true", { timeout: T });
+    expect(await figures(page)).toBe(before);
 
     // Reload keeps the period too.
     await page.reload();
@@ -144,7 +146,7 @@ test.describe("Business → Overview on a phone", () => {
     await page.goto("/financials/overview");
     await expect(page.getByRole("heading", { name: "Business overview", level: 1 })).toBeVisible({ timeout: T });
 
-    await expect(collected(page)).toHaveText(/\$0\b/);
+    await expect(collected(page)).toHaveText(/^\$0(?!\d)/);
     await expect(collected(page)).toHaveAttribute("data-cents", "0");
     await expect(page.getByTestId("overview-visits")).toContainText("0");
     await expect(page.getByTestId("overview-clients")).toContainText("0");
@@ -248,13 +250,13 @@ test("a visit last month, unpaid then paid in full this month: it is last month'
   await page.goto(clientStatement);
   await expect(page.getByRole("main")).toContainText("Paid", { timeout: T });
   await expect(page.getByRole("main")).not.toContainText("Not paid");
-  await expect(page.getByRole("main")).not.toContainText("Balance due");
+  await expect(page.getByRole("main")).toContainText("Balance due $0.00"); // cleared
   await page.goto("/financials/overview?period=previous_month");
   await expect(owedTile).toContainText("Not available");
 
   // OVERVIEW, last month: the payment is counted under the VISIT's month, under the headline that says so.
   await expect(page.getByRole("heading", { name: `Collected for visits in ${lastName}` })).toBeVisible({ timeout: T });
-  await expect(collected(page)).toHaveText(/\$120\b/, { timeout: T });
+  await expect(collected(page)).toHaveText(/^\$120(?!\d)/, { timeout: T });
   await shot(page, "overview-cross-month-last");
   // ...and NOT this month's, although the money arrived this month.
   await page.goto("/financials/overview");
