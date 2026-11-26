@@ -31,7 +31,7 @@ describe("session_blocks machine identity and the studio export", () => {
     const code = ACTIONS.split("\n").filter((l) => !/^\s*\/\//.test(l)).join("\n");
     const uses = (col: string) => code.match(new RegExp(`.*${col}.*`, "g")) ?? [];
     // the block select, the row type, and (for the two that readings carry) the readings select; studio_machine_id is also named by the one line that
-    // blanks it for the unspecified-machine placeholder (HON-119's studio_machines.is_unspecified), which is why it is 4 and not 3.
+    // blanks it for the unspecified-machine placeholder, migration 0385 (studio_machines.is_unspecified), which is why it is 4 and not 3.
     expect(uses("machine_profile_id").length, uses("machine_profile_id").join(" | ")).toBe(3);
     expect(uses("studio_machine_id").length, uses("studio_machine_id").join(" | ")).toBe(4);
     expect(uses("machine_mode_key").length, uses("machine_mode_key").join(" | ")).toBe(2);

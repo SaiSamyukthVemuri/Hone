@@ -104,7 +104,7 @@ async function recordNativeArea(studio: SeededStudio, items: unknown[]): Promise
   return blockId;
 }
 
-// A native area recorded on the studio's per-studio "Machine not specified" placeholder (HON-119, migration 0385). The placeholder is made by the real
+// A native area recorded on the studio's per-studio "Machine not specified" placeholder (the unspecified-machine placeholder, migration 0385). The placeholder is made by the real
 // command, ensure_unspecified_machine, which is fixed to the real xCell Pur MultiPlex profile, so the real shipped contract is published first (and removed
 // again in afterAll: this file shares the stack with the 0385 test, which expects no published contract before it publishes one itself).
 const PUR = "dectro-apilus:xcell-pur";
@@ -227,16 +227,23 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  tamper.dropLastReadingRow = false;
-  if (purPublished) {
-    // Contract rows are immutable and referenced, so they go with the table owner and replication triggers off, in the owned throwaway stack only.
-    await adminTx(async (q) => {
-      await q(`set local session_replication_role = replica`);
-      await q(`delete from public.machine_profile_field_contract where machine_profile_id=$1`, [PUR]);
-      await q(`delete from public.machine_profile_mode_contract where machine_profile_id=$1`, [PUR]);
-    }).catch(() => undefined);
+  try {
+    tamper.dropLastReadingRow = false;
+    if (purPublished) {
+      // Contract rows are immutable and referenced, so they go with the table owner and replication triggers off, in the owned throwaway stack only.
+      // A failed removal FAILS this file loudly: swallowing it would leave the contract published for the next file on a shared stack, which
+      // asserts that no contract is published before it publishes one itself.
+      await adminTx(async (q) => {
+        await q(`set local session_replication_role = replica`);
+        await q(`delete from public.machine_profile_field_contract where machine_profile_id=$1`, [PUR]);
+        await q(`delete from public.machine_profile_mode_contract where machine_profile_id=$1`, [PUR]);
+      });
+      const left = await adminQuery(`select count(*)::int n from public.machine_profile_mode_contract where machine_profile_id=$1`, [PUR]);
+      if (left.rows[0].n !== 0) throw new Error(`the published ${PUR} contract was not removed (${left.rows[0].n} mode rows left)`);
+    }
+  } finally {
+    await closePool();
   }
-  await closePool();
 });
 
 describe("the readings file carries this studio's native readings, as the machine showed them", () => {
