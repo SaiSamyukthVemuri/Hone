@@ -243,8 +243,8 @@ describe("compact appointment rows (fidelity C)", () => {
     expect(safety).toMatch(/data-testid="today-row-caution"[\s\S]{0,200}whitespace-pre-wrap break-words/);
     expect(safety).toContain("Caution: {caution}");
     expect(details).not.toContain("Caution:");
-    expect(details.match(/data-testid="dashboard-prep-remember"/g)).toHaveLength(1);
-    for (const m of ["{prepSummary.remember}", "missing-record-chip", "<DashboardTreatmentMemory"]) expect(details).toContain(m);
+    expect(details.match(/<NextSessionReminder/g)).toHaveLength(1);
+    for (const m of ["{prepSummary.remember && <NextSessionReminder", "missing-record-chip", "<DashboardTreatmentMemory"]) expect(details).toContain(m);
   });
   it("Insurance E-1: a failed Before-Today read says so ON the compact row, never as a silently absent caution", () => {
     expect(link).toMatch(/unavailable=\{workflow \? workflow\.unavailable : prepSummary\.unavailable\}/);
@@ -263,12 +263,21 @@ describe("compact appointment rows (fidelity C)", () => {
     expect(details).not.toContain("note.text");
   });
   it("memory and each secondary action are accessible outside the profile link", () => {
-    for (const marker of ["<DashboardTreatmentMemory", "today-consultation-notes", "today-review-intake", "<TodayPortalLinkButton", "dashboard-prep-remember"]) {
+    for (const marker of ["<DashboardTreatmentMemory", "<TodayPortalLinkButton", "<NextSessionReminder"]) {
       expect(details, marker).toContain(marker);
       expect(link, marker).not.toContain(marker);
     }
+    // practitioner feedback (26 Nov): every action lives in the ONE action row, which is also outside the profile link.
+    const actions = row.slice(row.indexOf("<VisitActionRow"), row.indexOf('data-testid="today-row-details"'));
+    for (const marker of ["<AppointmentCheckoutCell", "rebookHref=", "chartHref=", "nextAction=", "consultation=", "intake="]) {
+      expect(actions, marker).toContain(marker);
+      expect(link, marker).not.toContain(marker);
+      expect(details, marker).not.toContain(marker);
+    }
+    const parts = readFileSync("app/(app)/dashboard/visit-actions.tsx", "utf8");
+    for (const id of ["today-rebook", "today-chart", "today-next-action", "today-consultation-notes", "today-review-intake"]) expect(parts, id).toContain(id);
   });
-  it("the details are a sibling of the row-body link (nothing interactive inside the anchor) and closed by default", () => {
+  it("the details are a sibling of the row-body link (nothing interactive inside the anchor) and no native details element", () => {
     expect(row.indexOf("</PendingContainerLink>")).toBeLessThan(row.indexOf('data-testid="today-row-details"'));
     expect(row).not.toMatch(/<details\b/);
     // the `open` ATTRIBUTE, not the open: class variant that places an expanded disclosure below the row

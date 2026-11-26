@@ -65,11 +65,11 @@ describe("compact row layout pins (OPS 1308: full-width visit information)", () 
   it("last visit details take a full row below the compact primary actions", () => {
     expect(row).toMatch(/data-testid="today-row-details" className="[^"]*basis-full/);
     expect(row).not.toMatch(/<details\b/);
-    const actions = row.indexOf('data-testid="today-row-actions"');
+    const actions = row.indexOf("<VisitActionRow");
     expect(actions).toBeGreaterThan(row.indexOf("<DashboardQuickPin"));
     expect(actions).toBeLessThan(row.indexOf(">Upcoming session<"));
     expect(actions).toBeLessThan(row.indexOf('data-testid="today-row-details"'));
-    expect(row).toMatch(/data-testid="today-row-actions" className="order-1 [^"]*basis-full/);
+    expect(readFileSync("app/(app)/dashboard/visit-actions.tsx", "utf8")).toMatch(/data-testid="today-row-actions" className="order-1 [^"]*basis-full/);
   });
   it("on a phone Open starts at the text column (mobile-ux pins every action's left edge to the body's)", () => {
     // 5.75rem = 80px time cell + 12px gap = the body text column offset from the card's content edge

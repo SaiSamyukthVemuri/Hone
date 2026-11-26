@@ -128,6 +128,8 @@ export const BROWSER_GROUPS = {
       "dashboard-closed-row.spec.ts",
       // HON-65 (Chloe, 4 Nov): Last treatment is visible on the CLOSED row, as owner and practitioner at 1280 and 390.
       "dashboard-last-treatment-closed.spec.ts",
+      // practitioner feedback (26 Nov): one action row, yellow pinned notes, blue From-last-visit box, last visit details open on first render.
+      "dashboard-visit-card-actions.spec.ts",
       // #1308 phone fixes: no sideways scroll at 320/390 with a 95-character name, and the Today-row name tap navigates.
       "dashboard-phone-overflow.spec.ts",
       // Needs attention: the one heading count, exact unpaid amounts (full, partial, settlement, All outstanding), the gate-OFF default
@@ -619,7 +621,7 @@ const PATH_TO_GROUP = [
   //
   // The pattern is ANCHORED TO THE CARD rather than a bare /prep[-_]?memory/i,
   // following the OWNER-CAP precedent in this file. A loose pattern would also
-  // capture app/(app)/dashboard/prep-memory-actions.ts and
+  // capture app/(app)/dashboard/prep-memory-read.ts and
   // lib/sessions/appointment-prep-memory.ts, and the first of those currently
   // falls through to EXTENDED — so a loose rule would NARROW that file's
   // coverage from everything to one group. Additive only: the card already

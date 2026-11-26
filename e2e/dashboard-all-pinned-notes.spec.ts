@@ -63,7 +63,7 @@ test("every pinned note renders on the dashboard roster", async ({ page }) => {
   });
 
   await test.step("the one-visit plan is readable alongside the pinned notes", async () => {
-    await expect(page.getByTestId("dashboard-prep-remember")).toHaveText("For this visit · Lower the energy one step", { timeout: T });
+    await expect(page.getByTestId("dashboard-prep-remember")).toHaveText("From last visit, for today Lower the energy one step", { timeout: T });
     await expect(page.getByRole("button", { name: /^Last visit details for / })).toBeVisible();
   });
 });

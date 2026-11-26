@@ -2,28 +2,57 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// The disclosure now asks the SERVER for the full treatment. The browser says
-// WHAT it wants to open; the server decides what it may have. These pin that
-// split, because a behavioural test cannot see an authority that was simply
-// never written.
+// The disclosure asks the SERVER for the full treatment, with a GET to /dashboard/prep-memory (26 Nov 2026; it was a server action
+// before, which held a pinned-note save behind the on-mount read). The browser says WHAT it wants to open; the server decides
+// what it may have. These pin that split, because a behavioural test cannot see an authority that was simply never written.
 
 const SRC = readFileSync(
-  join(process.cwd(), "app/(app)/dashboard/prep-memory-actions.ts"),
+  join(process.cwd(), "app/(app)/dashboard/prep-memory-read.ts"),
   "utf8",
 );
 const CODE = SRC.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+const ROUTE_SRC = readFileSync(
+  join(process.cwd(), "app/(app)/dashboard/prep-memory/route.ts"),
+  "utf8",
+);
+const ROUTE = ROUTE_SRC.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 describe("the browser supplies an appointment id and NOTHING else", () => {
-  it("the action takes exactly one argument", () => {
+  it("the route reads exactly one request parameter, and the read takes the id plus the SERVER-resolved studio", () => {
     expect(CODE).toMatch(
-      /export async function loadAppointmentPrepMemory\(\s*appointmentId: string,\s*\)/,
+      /export async function readAppointmentPrepMemory\(\s*appointmentId: string,\s*studioId: string,\s*\)/,
     );
+    expect(ROUTE.match(/searchParams\.get\(/g) ?? []).toHaveLength(1);
+    expect(ROUTE).toMatch(/searchParams\.get\("appointment_id"\)/);
+    expect(ROUTE).not.toMatch(/studio_id|client_id|studioId=|request\.json|formData/);
+  });
+
+  it("the route is a read-only GET: no other verb, never cached, no CORS", () => {
+    expect(ROUTE.match(/export async function (\w+)/g)).toEqual(["export async function GET"]);
+    expect(ROUTE).toMatch(/export const dynamic = "force-dynamic"/);
+    expect(ROUTE).toMatch(/"Cache-Control": "no-store, private"/);
+    expect(ROUTE).not.toMatch(/Access-Control-/);
+  });
+
+  it("the route answers 401 without a session, 403 on an identity refusal, 404 for a missing or foreign appointment", () => {
+    expect(ROUTE).toMatch(/const \{\s*data: \{ user \},\s*\} = await supabase\.auth\.getUser\(\);\s*if \(!user\) return json\(401/);
+    expect(ROUTE).toMatch(/error instanceof IdentityRefusalError\) return json\(403/);
+    expect(ROUTE).toMatch(/NEXT_REDIRECT[\s\S]*?return json\(401/);
+    expect(ROUTE).toMatch(/outcome\.status === "not_found"\) return json\(404/);
+    expect(ROUTE).toMatch(/!UUID\.test\(appointmentId\)[\s\S]*?json\(400/);
+  });
+
+  it("no admin client and no error text in the route", () => {
+    expect(ROUTE).not.toMatch(/admin-server|createAdminClient|service_role/);
+    expect(ROUTE).not.toMatch(/error\.message|\.details|\.hint/);
   });
 
   it("studio, client and the history cutoff are all SERVER-derived", () => {
     // None of these may be accepted from the caller: a forged client id or an
     // altered `before` would widen the answer.
-    expect(CODE).toMatch(/const \{ studio \} = await getCurrentPractitionerWithStudio\(\)/);
+    // WHO is asking and WHICH studio come from the session, in the route; the read only ever gets that studio's id.
+    expect(ROUTE).toMatch(/const \{ studio \} = await getCurrentPractitionerWithStudio\(\);\s*studioId = studio\.id;/);
+    expect(ROUTE).toMatch(/readAppointmentPrepMemory\(appointmentId, studioId\)/);
     expect(CODE).toMatch(/clientId: data\.client_id/);
     expect(CODE).toMatch(/before: data\.starts_at/);
     expect(CODE).toMatch(/excludeAppointmentId: data\.id/);
@@ -38,14 +67,14 @@ describe("cross-studio lookup is fenced, and says nothing about existence", () =
   });
 
   it("a second, redundant tenancy check guards a silent query change", () => {
-    expect(CODE).toMatch(/if \(data\.studio_id !== studio\.id\) return \{ status: "none" \}/);
+    expect(CODE).toMatch(/if \(data\.studio_id !== studio\.id\) return \{ status: "not_found" \}/);
   });
 
   it("a foreign appointment is INDISTINGUISHABLE from a missing one", () => {
-    // Both return `none`. Returning a different shape would let the Dashboard
+    // Both return `not_found` (the route's 404). Returning a different shape would let the Dashboard
     // be used to probe whether an appointment id exists in another studio.
-    const foreign = CODE.indexOf('if (data.studio_id !== studio.id) return { status: "none" }');
-    const missing = CODE.indexOf('if (!data) return { status: "none" }');
+    const foreign = CODE.indexOf('if (data.studio_id !== studio.id) return { status: "not_found" }');
+    const missing = CODE.indexOf('if (!data) return { status: "not_found" }');
     expect(foreign).toBeGreaterThan(-1);
     expect(missing).toBeGreaterThan(-1);
   });
@@ -113,11 +142,12 @@ describe("the client boundary carries only the visible projection", () => {
     );
   });
 
-  it("there is NO prefetch — the fetch happens on activation only", () => {
-    expect(COMPONENT).not.toMatch(/onMouseEnter|onFocus=\{.*load|IntersectionObserver|useEffect/);
+  it("the details load once on mount (open by default), never on hover or intersection", () => {
+    expect(COMPONENT).not.toMatch(/onMouseEnter|onFocus=\{.*load|IntersectionObserver/);
+    expect(COMPONENT).toMatch(/useEffect\(\(\) => \{\s*if \(showable && open\) void load\(\);/);
     expect(COMPONENT).toMatch(/function toggle\(\)/);
     // …and once fetched it is kept, so reopening costs nothing.
-    expect(COMPONENT).toMatch(/if \(!next \|\| result !== null \|\| pending\) return;/);
+    expect(COMPONENT).toMatch(/if \(\(result !== null && result\.status !== \"unavailable\"\) \|\| inflight\.current\) return;/);
   });
 
   it("the accessible disclosure contract is preserved", () => {
@@ -151,9 +181,7 @@ describe("four distinct failure/success paths, and they stay distinct", () => {
     // Uncontained, React re-throws out of the transition and it reaches the
     // route error boundary, replacing the whole Dashboard because one optional
     // per-row read failed.
-    expect(COMPONENT).toMatch(
-      /try \{\s*setResult\(await loadAppointmentPrepMemory\(appointmentId\)\);\s*\} catch \{\s*setResult\(\{ status: "unavailable" \}\);\s*\}/,
-    );
+    expect(COMPONENT).toMatch(/setResult\(await readPrepMemoryResponse\(response\)\);\s*\} catch \{\s*[^}]*?if \(!controller\.signal\.aborted\) setResult\(\{ status: "unavailable" \}\);/);
   });
 
   it("the thrown value is never read, rendered or logged", () => {
@@ -176,6 +204,38 @@ describe("four distinct failure/success paths, and they stay distinct", () => {
   });
 
   it("containment does not disturb the cache — one fetch per mounted row", () => {
-    expect(COMPONENT).toMatch(/if \(!next \|\| result !== null \|\| pending\) return;/);
+    expect(COMPONENT).toMatch(/if \(\(result !== null && result\.status !== \"unavailable\"\) \|\| inflight\.current\) return;/);
+  });
+});
+
+describe("the read is a GET fetch, NOT a server action (a pinned-note save must never queue behind it)", () => {
+  const COMPONENT = readFileSync(
+    join(process.cwd(), "app/(app)/dashboard/dashboard-treatment-memory.tsx"),
+    "utf8",
+  );
+  const CODE_ONLY = COMPONENT.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+  it("the client uses fetch to the route and imports no server action", () => {
+    expect(CODE_ONLY).toMatch(/fetch\(`\/dashboard\/prep-memory\?appointment_id=\$\{encodeURIComponent\(appointmentId\)\}`/);
+    expect(CODE_ONLY).toMatch(/cache: "no-store"/);
+    expect(CODE_ONLY).not.toMatch(/from "\.\/prep-memory-actions"|useTransition|startTransition/);
+    // Only the TYPE crosses from the server module.
+    expect(CODE_ONLY).toMatch(/import type \{ PrepMemoryResult \} from "\.\/prep-memory-read"/);
+  });
+
+  it("the read module is not a server-action file, so it can never join the action queue", () => {
+    expect(SRC).not.toMatch(/^\s*["']use server["']/m);
+    expect(ROUTE_SRC).not.toMatch(/["']use server["']/);
+  });
+
+  it("the in-flight read is cancelled on unmount and never started twice", () => {
+    expect(CODE_ONLY).toMatch(/new AbortController\(\)/);
+    expect(CODE_ONLY).toMatch(/signal: controller\.signal/);
+    expect(CODE_ONLY).toMatch(/return \(\) => \{\s*inflight\.current\?\.abort\(\);/);
+  });
+
+  it("404 reads as none, any other failure as unavailable, and a malformed body is unavailable", () => {
+    expect(CODE_ONLY).toMatch(/response\.status === 404\) return \{ status: "none" \}/);
+    expect(CODE_ONLY).toMatch(/if \(!response\.ok\) return \{ status: "unavailable" \}/);
   });
 });

@@ -94,8 +94,10 @@ describe("dashboard wiring (source pins)", () => {
 
   it("the row resolves and renders the primary action", () => {
     expect(PAGE).toMatch(/resolveDayNextAction\(\{/);
-    expect(PAGE).toMatch(/\{nextAction\.label\}/);
-    expect(PAGE).toMatch(/href=\{nextAction\.href\}/);
+    const ACTIONS = readFileSync(join(process.cwd(), "app/(app)/dashboard/visit-actions.tsx"), "utf8");
+    expect(PAGE).toMatch(/nextAction=\{nextAction\.href !== chartHref/);
+    expect(ACTIONS).toMatch(/\{nextAction\.label\}/);
+    expect(ACTIONS).toMatch(/href=\{nextAction\.href\}/);
     expect(PAGE).toMatch(/\{nextAction\.chip\}/);
   });
 

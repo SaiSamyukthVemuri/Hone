@@ -332,8 +332,10 @@ describe("combined Today workflow (replaces the Daily Prep Brief card)", () => {
       PAGE.indexOf("function AppointmentRow("),
       PAGE.indexOf("function AppointmentStatusPill("),
     );
-    expect((row.match(/break-words/g) ?? []).length).toBeGreaterThanOrEqual(3);
-    expect(row).not.toMatch(/whitespace-nowrap|w-\[\d/);
+    // The reminder box and the action row moved to visit-actions.tsx; the rule is about the whole card, so read both.
+    const card = row + read("app/(app)/dashboard/visit-actions.tsx");
+    expect((card.match(/break-words/g) ?? []).length).toBeGreaterThanOrEqual(3);
+    expect(card).not.toMatch(/whitespace-nowrap|w-\[\d/);
   });
 
   it("the e2e specs assert ONE combined list, with no separate brief", () => {

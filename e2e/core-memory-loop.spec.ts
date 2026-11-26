@@ -225,7 +225,7 @@ test("core memory loop: booking to next-appointment memory", async ({
     ).toBeVisible({ timeout: 20_000 });
     await expect(
       page.getByTestId("dashboard-prep-remember"),
-    ).toHaveText("For this visit · E2E caution: shorter intervals next visit");
+    ).toHaveText("From last visit, for today E2E caution: shorter intervals next visit");
     // The retired separate list is gone.
     await expect(
       page.getByRole("heading", { name: "Daily prep brief" }),

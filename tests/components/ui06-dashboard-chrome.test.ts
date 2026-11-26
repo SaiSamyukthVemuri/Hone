@@ -392,7 +392,7 @@ describe("UI-06: the planner actually selects this spec for its own subjects", (
     expect(s.groups).toEqual(["__extended__"]);
 
     // The pattern's specificity, proved on files that merely look similar.
-    const actions = selection(["app/(app)/dashboard/prep-memory-actions.ts"]);
+    const actions = selection(["app/(app)/dashboard/prep-memory-read.ts"]);
     expect(
       actions.groups,
       "a loose /prep-memory/ pattern would have NARROWED this file from extended to one group",

@@ -2,6 +2,7 @@ import { test, expect, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { seedE2eStudio, seedE2eDashboardMemoryClient, sql } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
+import { ensureLastVisitDetailsOpen } from "./helpers/last-visit-details";
 
 // UI-06 — the flattened memory cards, proved at three widths.
 //
@@ -82,7 +83,7 @@ async function openDashboardMemory(page: Page) {
   await loginAsOwner(page, seed);
   await page.goto("/dashboard");
   const toggle = page.getByTestId("dashboard-memory-toggle").first();
-  if (await toggle.count()) await toggle.click();
+  if (await toggle.count()) await ensureLastVisitDetailsOpen(toggle);
   return seed;
 }
 
