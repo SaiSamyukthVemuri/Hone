@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { isValidElement } from "react";
+import * as birthdayQueries from "@/lib/clients/birthday-queries";
 
 // DAT-002 regression: "Dashboard database errors are displayed as zero
 // activity". #981 made the practice snapshot refuse (tests/lib/dashboard/
@@ -107,6 +108,26 @@ beforeEach(() => {
 describe("DAT-002 dashboard reads that must refuse rather than show an empty day", () => {
   it("control: the page renders on successful reads", async () => {
     await expect(render()).resolves.toBeTruthy();
+  });
+
+  it("marks only today's birthday clients on today's roster, reusing the monthly read", async () => {
+    const now = new Date();
+    const month = now.getUTCMonth() + 1;
+    const day = now.getUTCDate();
+    const nextDay = new Date(now);
+    nextDay.setUTCDate(day + 1);
+    const read = vi.spyOn(birthdayQueries, "getClientBirthdaysForMonth").mockResolvedValue([
+      { id: "client-1", name: "First client", month, day },
+      { id: "client-2", name: "Second client", month, day: day === 1 ? 2 : 1 },
+    ]);
+    try {
+      expect(await findProp(await render(), "todayBirthdayIds")).toEqual(new Set(["client-1"]));
+      expect(read).toHaveBeenCalledTimes(1);
+      const nextRoster = await DashboardPage({ searchParams: Promise.resolve({ day: nextDay.toISOString().slice(0, 10) }) });
+      expect(findProp(nextRoster, "todayBirthdayIds")).toBeNull();
+    } finally {
+      read.mockRestore();
+    }
   });
 
   it("refuses the page when today's appointments cannot be read", async () => {

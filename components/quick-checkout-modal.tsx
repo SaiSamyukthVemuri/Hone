@@ -4,6 +4,8 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useDialogKeyboard } from "@/components/use-dialog-keyboard";
 import Link from "next/link";
 import { FormattedDateTime } from "@/components/formatted-date-time";
+import type { CheckoutFeeDraft } from "@/components/checkout-fee-fields";
+import type { CheckoutMethod } from "@/components/checkout-method-picker";
 import { SessionPaymentPrepareCard } from "@/components/session-payment-prepare-card";
 import { AppointmentSettlementControls } from "@/components/appointment-settlement-controls";
 import {
@@ -41,10 +43,14 @@ export function QuickCheckoutModal({
   appointmentId,
   open,
   onClose,
+  initialMethod,
+  initialFeeDraft,
 }: {
   appointmentId: string;
   open: boolean;
   onClose: () => void;
+  initialMethod?: CheckoutMethod;
+  initialFeeDraft?: CheckoutFeeDraft;
 }) {
   const [ctx, setCtx] = useState<QuickCheckoutContextResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -200,18 +206,6 @@ export function QuickCheckoutModal({
 
         {!loading && ctx && ctx.ok === false && (
           <div className="mt-4 flex flex-col gap-3" data-testid="quick-checkout-ineligible">
-            <p className="text-sm text-neutral-700 dark:text-neutral-300">
-              {ctx.reason}
-            </p>
-            {ctx.clientId && (
-              <Link
-                href={`/clients/${ctx.clientId}?tab=sessions`}
-                className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-neutral-300 px-4 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-              >
-                Open the client&apos;s sessions
-              </Link>
-            )}
-
             {/* PAY-SETTLE / 0187 — THE CARD PATH BEING UNAVAILABLE IS THE MAIN
                 REASON TO OFFER THIS, NOT A REASON TO WITHHOLD IT.
 
@@ -226,8 +220,12 @@ export function QuickCheckoutModal({
                 the session page rather than three. The charting requirement for
                 CARD charging is untouched, and the reason above still names it
                 truthfully. */}
-            {ctx.settlement?.canRecord && (
+            {ctx.settlement?.canRecord && (ctx.settlement.quotedAmountCents !== 0 || ctx.settlement.settledMethod) && (
               <AppointmentSettlementControls
+                initialFeeDraft={initialFeeDraft}
+                initialMethod={initialMethod ?? (ctx.isOwner ? "paid_e_transfer" : undefined)}
+                currency={ctx.settlement.currency ?? null}
+                stripeUnavailable={ctx.settlement.quotedAmountCents === 0 ? undefined : "A linked treatment session is needed to charge with Stripe."}
                 appointmentId={ctx.settlement.appointmentId}
                 isOwner={ctx.isOwner}
                 settledMethod={ctx.settlement.settledMethod}
@@ -238,9 +236,23 @@ export function QuickCheckoutModal({
                 onRecorded={refetchAfterSettlement}
               />
             )}
+            <p className="text-sm text-neutral-700 dark:text-neutral-300">
+              {ctx.settlement?.canRecord && ctx.settlement.quotedAmountCents === 0 && !ctx.settlement.settledMethod ? "No payment due for this visit." : ctx.reason}
+            </p>
+            {ctx.clientId && (
+              <Link
+                href={`/clients/${ctx.clientId}?tab=sessions`}
+                className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-neutral-300 px-4 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+              >
+                Open the client&apos;s sessions
+              </Link>
+            )}
           </div>
         )}
 
+        {!loading && ctx?.settlement && initialFeeDraft && ctx.settlement.quotedAmountCents !== initialFeeDraft.referenceCents && (
+          <p role="status" className="mt-3 text-sm">The booked fee changed. Review the current fee before confirming.</p>
+        )}
         {!loading && ctx && ctx.ok === true && (
           <div className="mt-3 flex flex-col gap-3">
             <div className="text-xs text-neutral-500 dark:text-neutral-400">
@@ -262,6 +274,8 @@ export function QuickCheckoutModal({
                 with withRefresh so a successful step advances this modal's view to
                 the persisted next state without a close/reopen. */}
             <SessionPaymentPrepareCard
+              initialFeeDraft={initialFeeDraft}
+              initialMethod={initialMethod}
               sessionId={ctx.sessionId}
               clientId={ctx.clientId}
               appointmentId={ctx.appointment.id}

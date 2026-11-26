@@ -1,12 +1,14 @@
+import { DashboardCheckoutEntry } from "@/components/dashboard-checkout-entry";
 import { CheckoutButton } from "@/components/checkout-button";
+import type { CardOnFileStatus } from "@/lib/payment-methods/card-on-file";
 import type { AppointmentPaymentState } from "@/lib/billing/appointment-payment-state";
 
 // The dashboard/calendar checkout cell for one appointment. Renders the SAME
 // quick-checkout entry (CheckoutButton → shared modal) for chargeable
 // appointments, or a status-labelled badge (never colour-only) for
 // paid/processing/refunded, so an already-paid appointment shows "Paid", not a
-// misleading Checkout. Only completed appointments are checkout-relevant;
-// cancelled / no-show / confirmed render nothing.
+// misleading Checkout. Dashboard callers may also offer an explicit completion
+// step for a confirmed appointment before opening the shared payment flow.
 // The five attested outcomes and their badge copy. Kept here, beside the
 // emerald branch it must never be confused with, rather than imported from the
 // vocabulary module — so anyone editing one is looking directly at the other.
@@ -23,17 +25,35 @@ const SETTLED_LABEL: Partial<Record<AppointmentPaymentState, string>> = {
   settled_collected_none: "Still owes",
 };
 
-export function AppointmentCheckoutCell({
-  appointmentId,
-  status,
-  paymentState,
-}: {
+type AppointmentCheckoutProps = {
   appointmentId: string;
   status: string | null;
   paymentState: AppointmentPaymentState;
-}) {
-  if (status !== "completed") return null;
+  dashboardStartsAt?: string;
+  dashboardVisitLabel?: string;
+  dashboardCardOnFile?: CardOnFileStatus | null;
+};
 
+export function AppointmentCheckoutCell({ dashboardStartsAt, dashboardVisitLabel, dashboardCardOnFile, ...visit }: AppointmentCheckoutProps) {
+  const outcome = <AppointmentCheckoutOutcome {...visit} />;
+  if (dashboardStartsAt && (visit.status === "confirmed" || visit.status === "completed")) {
+    return (
+      <DashboardCheckoutEntry
+        appointmentId={visit.appointmentId}
+        startsAt={dashboardStartsAt}
+        status={visit.status}
+        paymentState={visit.paymentState}
+        cardOnFile={dashboardCardOnFile}
+        visitLabel={dashboardVisitLabel}
+      >
+        {outcome}
+      </DashboardCheckoutEntry>
+    );
+  }
+  return visit.status === "completed" ? outcome : null;
+}
+
+function AppointmentCheckoutOutcome({ appointmentId, status, paymentState }: AppointmentCheckoutProps) {
   if (
     paymentState === "paid" ||
     paymentState === "refunded" ||
@@ -168,7 +188,7 @@ export function AppointmentCheckoutCell({
         data-testid="appointment-payment-free"
         className="inline-flex items-center rounded-full bg-neutral-100 px-2.5 py-1 text-xs font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
       >
-        No payment required
+        No payment due
       </span>
     );
   }

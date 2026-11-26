@@ -19,8 +19,8 @@ describe("override resets OFF for each booking attempt (not sticky)", () => {
     expect(closeBlock).toMatch(/setOverrideConfirmed\(false\)/);
   });
   it("resets on a NEW bare-click slot (the else branch no longer leaks the prior override)", () => {
-    // the draft-change effect's else branch (bare click) now resets override off
-    expect(DRAWER).toMatch(/Bare click on a NEW slot[\s\S]*setOverrideEnabled\(false\)[\s\S]*setOverrideConfirmed\(false\)/);
+    // the draft-change effect's else branch (bare click) resets the prior override and never inherits confirmation
+    expect(DRAWER).toMatch(/A bare click starts a fresh draft[\s\S]*setOverrideEnabled\(rebookDuration !== null\)[\s\S]*setOverrideConfirmed\(false\)/);
   });
   it("resets after a FAILED submit so it is not stuck on for the next attempt", () => {
     expect(DRAWER).toMatch(

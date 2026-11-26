@@ -199,7 +199,7 @@ export function unresolvedAmountMessage(
     case "missing_service":
       return "This appointment has no booked service, so there is no price to charge. Add the service to the appointment first.";
     case "missing_price":
-      return `No price is configured for ${result.serviceName}. Set its price in your service menu, or add a client-specific price, before preparing payment.`;
+      return `No price is configured for ${result.serviceName}. Check the fee, then set its price in your service menu or add a client-specific price, before preparing payment.`;
     case "invalid_custom_pricing":
       return `This client's recorded price for ${result.serviceName} is not a usable price. Correct it in this client's pricing before preparing payment.`;
     case "ambiguous_custom_pricing":

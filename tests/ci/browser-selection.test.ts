@@ -61,7 +61,7 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     ]);
   });
 
-  it("the manifest still maps every spec, and the targeted lane still selects 30", () => {
+  it("maps every spec and preserves the expected targeted selection", () => {
     const mapped = Object.values(BROWSER_GROUPS as Record<string, { specs: string[] }>).flatMap(
       (g) => g.specs,
     );
@@ -274,14 +274,16 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // Now 65 after merging production (production alone: 64): hon48-week-month-per-user.spec.ts joined `calendar` (HON-48: per-practitioner Week and Month, desktop and iPhone width). RECORDED AS A
     // DECISION per the note above. It is REQUIRED, not opt-in: it runs whenever the calendar group is selected. Its added run time is measured on an
     // owned stack and recorded in the pull request, not assumed here.
-    // Now 67 after merging production (production alone: 66): service-discard-while-saving.spec.ts joined `calendar` (Discard edits is disabled while a service save is in flight; desktop and emulated phone). RECORDED AS A
+    // Three required dashboard journeys exercise checkout, rebooking and charting whenever the sessions group runs.
+    expect(specsForGroups(["sessions"])).toContain("dashboard-rebook-chart.spec.ts");
+    // Now 68 after merging production (production alone: 67; dashboard-rebook-chart.spec.ts, above, adds one). The last addition to production was: service-discard-while-saving.spec.ts joined `calendar` (Discard edits is disabled while a service save is in flight; desktop and emulated phone). RECORDED AS A
     // DECISION per the note above. It is REQUIRED, not opt-in: two cases, each a seeded studio and a login, about 2 minutes on an owned stack.
     // The receptionist calendar journey runs in the calendar group using the local desk flag.
-    // Now 68: The xcell-multiplex-visit.spec.ts joined `sessions` (the machine panel inside the settings-block form). RECORDED AS A DECISION per the
+    // Now 69 after merging production again (production alone: 68; dashboard-rebook-chart.spec.ts adds one). The last addition to production was: xcell-multiplex-visit.spec.ts, which joined `sessions` (the machine panel inside the settings-block form). RECORDED AS A DECISION per the
     // note above. It is REQUIRED, not opt-in. Cost, MEASURED on an owned stack: three cases in the chromium project (desktop, a 390px iPhone-sized
     // emulation, and Save pressed while the pick is pending), each a seeded studio, a magic-link login and one or two saves: about 15-20s each, a minute
     // in all. The iPhone WebKit case runs only in the non-required `webkit-iphone-visit` project and skips everywhere else.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(68);
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(69);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {

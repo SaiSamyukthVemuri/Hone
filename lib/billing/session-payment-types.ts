@@ -163,6 +163,7 @@ export type SessionPaymentEligibility =
     }
   | {
       eligible: false;
+      jurisdiction?: StudioPaymentJurisdiction | null;
       blockingReasons: string[];
       session: SessionPaymentSessionSummary | null;
       appointment: SessionPaymentAppointmentSummary | null;

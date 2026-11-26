@@ -111,17 +111,19 @@ test.describe("preparing a future day", () => {
       await expect(returning.getByTestId("dashboard-memory-toggle")).toBeVisible();
     });
 
-    await test.step("4. the plan note reaches her as Remember", async () => {
-      await expect(
-        returning.getByTestId("dashboard-prep-remember"),
-      ).toContainText("Lower the energy one step");
+    await test.step("4. the plan belongs to the earlier appointment and is absent from this one", async () => {
+      await expect(returning.getByTestId("dashboard-prep-remember")).toHaveCount(0);
+      await expect(returning).not.toContainText("Lower the energy one step");
     });
 
-    await test.step("5. the full treatment expands WITHOUT leaving the Dashboard", async () => {
-      await returning.getByTestId("dashboard-memory-toggle").click();
+    await test.step("5. one click opens the full recorded settings in the same row", async () => {
+      await returning.getByRole("button", { name: /^Last visit details for / }).click();
       await expect(returning.getByTestId("dashboard-memory-full")).toBeVisible({
         timeout: T,
       });
+      await expect(returning.getByTestId("dashboard-memory-full")).toContainText("27.12 MHz");
+      await expect(returning.getByTestId("dashboard-memory-full")).toContainText("Synchro");
+      await expect(returning.getByTestId("dashboard-memory-full")).not.toContainText("Lower the energy one step");
       expect(new URL(page.url()).pathname).toBe("/dashboard");
     });
 
@@ -154,7 +156,7 @@ test.describe("preparing a future day", () => {
     });
   });
 
-  test("TODAY is unchanged — the full briefing is still there", async ({ page }) => {
+  test("Today shows its own plan, its caution, pinned notes and previous treatment", async ({ page }) => {
     const seed = await seedE2eStudio();
     const { clientId } = await seedE2eDashboardMemoryClient(seed, {
       cautionNote: "Avoid the jawline",
@@ -163,25 +165,22 @@ test.describe("preparing a future day", () => {
     await seedPinnedNote(seed.studioId, clientId, "Prefers the 2pm slot");
     await loginAsOwner(page, seed);
 
-    await test.step("9. Today still shows Before today, Remember, Caution and the memory", async () => {
+    await test.step("9. Today shows the plan for this appointment and the caution", async () => {
       await page.goto("/dashboard");
       await expect(
         page.getByRole("heading", { level: 2, name: "Today", exact: true }),
       ).toBeVisible({ timeout: T });
       const today = row(page, "Memory Client");
-      await expect(today.getByText("Before today", { exact: true })).toBeVisible();
-      await expect(today.getByText("Remember: Lower the energy one step")).toBeVisible();
-      await expect(today.getByText("Avoid the jawline")).toBeVisible();
+      await expect(today.getByTestId("dashboard-prep-remember")).toHaveText("For this visit · Lower the energy one step");
+      await expect(today.getByTestId("today-row-caution")).toContainText("Avoid the jawline");
       await expect(today.getByText("Prefers the 2pm slot")).toBeVisible();
       await expect(today.getByTestId("dashboard-memory-compact")).toBeVisible();
       await expect(page.getByText("Review Before Today").first()).toBeVisible();
     });
 
     await test.step("10. the plan note is NOT printed twice on Today", async () => {
-      // It is the same field as the Before-Today "Remember" line; printing it
-      // under two labels is a bug this row has had once already.
       const today = row(page, "Memory Client");
-      await expect(today.getByTestId("dashboard-prep-remember")).toHaveCount(0);
+      await expect(today.getByTestId("dashboard-prep-remember")).toHaveCount(1);
       await expect(today.getByText(/Lower the energy one step/)).toHaveCount(1);
     });
 
@@ -246,10 +245,16 @@ test.describe("preparing a future day — 390px phone", () => {
       // thing a thumb has to find. The disclosure toggle was omitted from this
       // loop once already, and shipped at the height of its own 11px text
       // while every control around it was 44px.
-      const primary = page.getByRole("link", { name: "Open client" }).first();
-      await expect(primary).toBeVisible();
-      const primaryBox = await primary.boundingBox();
-      expect(primaryBox!.height, "primary action height").toBeGreaterThanOrEqual(44);
+      const client = row(page, "Memory Client");
+      for (const action of [
+        client.getByRole("button", { name: "Checkout", exact: true }),
+        client.getByRole("link", { name: "Rebook", exact: true }),
+        client.getByRole("link", { name: "Chart", exact: true }),
+        client.getByRole("link", { name: "Open client", exact: true }),
+      ]) {
+        await expect(action).toBeVisible();
+        expect((await action.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+      }
 
       const toggle = page.getByTestId("dashboard-memory-toggle").first();
       await expect(toggle).toBeVisible();
@@ -287,7 +292,7 @@ test.describe("preparing a future day — 390px phone", () => {
     await test.step("16. the prep the practitioner came for is on screen", async () => {
       await expect(page.getByText("Prefers the 2pm slot")).toBeVisible();
       await expect(page.getByTestId("dashboard-memory-compact")).toBeVisible();
-      await expect(page.getByTestId("dashboard-prep-remember")).toBeVisible();
+      await expect(page.getByTestId("dashboard-prep-remember")).toHaveCount(0);
     });
   });
 });
@@ -363,9 +368,7 @@ test.describe("the full treatment is not transported before it is asked for", ()
       await expect(page.getByTestId("dashboard-memory-compact")).toContainText(
         "Last treatment:",
       );
-      await expect(page.getByTestId("dashboard-prep-remember")).toContainText(
-        "Lower the energy one step",
-      );
+      await expect(page.getByTestId("dashboard-prep-remember")).toHaveCount(0);
     });
 
     await test.step("20. after an EXPLICIT click, the full detail arrives", async () => {
@@ -578,25 +581,8 @@ test.describe("a rejected disclosure fails to its own line", () => {
 // The plan note is SERVER-rendered, and only where it is visible.
 // ===========================================================================
 
-test.describe("the plan note is server-rendered where it is shown", () => {
-  // NOTE ON WHAT IS PROVEN WHERE.
-  //
-  // The decisive proof for the disclosure boundary is the RUNTIME unit test in
-  // tests/app/dashboard/today-two-authority-truth.test.ts: `toDisclosureSummary`
-  // returns a new object with exactly three keys, so the plan note cannot be on
-  // the wire as a disclosure prop regardless of what the type says.
-  //
-  // A browser proof of the same property is NOT constructible by seeding:
-  // Before-Today resolves its "Remember" line from the newest session that
-  // recorded a plan note — the same session the prep loader picks — so on Today
-  // the note is visible whenever it exists at all. There is no seedable state
-  // where it is present but unrendered. Asserting its absence from Today's
-  // payload would therefore be asserting something false, and counting
-  // occurrences cannot separate the rendered copy from a prop, because Next
-  // emits both HTML and an RSC payload for anything rendered.
-  //
-  // What this covers instead is the visible half of the contract.
-  test("off Today the note renders, and nothing else claims it", async ({ page }) => {
+test.describe("the plan is limited to the immediate next appointment", () => {
+  test("only the immediately following treatment receives the plan", async ({ page }) => {
     const seed = await seedE2eStudio();
     const tz = await getStudioTimezone(seed.studioId);
     const PLAN = "SENTINELPLAN-drop-one-energy-step";
@@ -611,22 +597,25 @@ test.describe("the plan note is server-rendered where it is shown", () => {
     });
     await loginAsOwner(page, seed);
 
-    await test.step("28. off Today the SERVER paints it, once", async () => {
-      await page.goto(`/dashboard?day=${localDay(tz, OFFSET)}`);
-      await expect(page.getByTestId("dashboard-prep-remember")).toContainText(PLAN, {
-        timeout: T,
-      });
-      await expect(page.getByTestId("dashboard-prep-remember")).toHaveCount(1);
+    await test.step("28. a later appointment omits the plan, including its initial payload", async () => {
+      const url = `/dashboard?day=${localDay(tz, OFFSET)}`;
+      const response = await page.request.get(url);
+      expect(response.ok()).toBe(true);
+      expect(await response.text()).not.toContain(PLAN);
+      await page.goto(url);
+      const client = row(page, "Memory Client");
+      await expect(client.getByTestId("dashboard-memory-toggle")).toBeVisible();
+      await expect(client).not.toContainText(PLAN);
     });
 
-    await test.step("29. on Today the Before-Today line owns it, not the prep strip", async () => {
+    await test.step("29. the immediate appointment shows the plan once, including after expansion", async () => {
       await page.goto("/dashboard");
-      await expect(
-        page.getByRole("heading", { level: 2, name: "Today", exact: true }),
-      ).toBeVisible({ timeout: T });
-      // One note, one label. The prep strip does not repeat it.
-      await expect(page.getByTestId("dashboard-prep-remember")).toHaveCount(0);
-      await expect(page.getByText(`Remember: ${PLAN}`)).toBeVisible();
+      const client = row(page, "Memory Client");
+      await expect(client.getByTestId("dashboard-prep-remember")).toHaveText(`For this visit · ${PLAN}`);
+      await client.getByRole("button", { name: /^Last visit details for / }).click();
+      await expect(client.getByTestId("dashboard-memory-full")).toContainText("Synchro");
+      await expect(client.getByTestId("dashboard-memory-full")).not.toContainText(PLAN);
+      await expect(client.getByText(PLAN, { exact: false })).toHaveCount(1);
     });
   });
 });
@@ -636,7 +625,7 @@ test.describe("Today never says 'no history' beside a proven treatment", () => {
     page,
   }) => {
     const seed = await seedE2eStudio();
-    const { clientId } = await seedE2eDashboardMemoryClient(seed, {
+    await seedE2eDashboardMemoryClient(seed, {
       cautionNote: "Avoid the jawline",
       nextVisitNote: "Lower the energy one step",
     });
