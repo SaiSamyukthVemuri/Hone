@@ -171,3 +171,111 @@ test.describe("Business → Overview on a phone", () => {
     await expect(page.getByTestId("overview-collected")).toHaveCount(0);
   });
 });
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+// A visit in LAST month, unpaid, then paid in full THIS month (the receipt date is this month). The server's clock is the real one, so "last month" and
+// "this month" are relative to it (it reads October / November on 26 Nov 2026); the names are derived, never typed, so the case is stable on any day.
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+
+/**
+ * WHICH DATE EACH PAGE GROUPS MONEY BY. Totals are compared across pages ONLY when they share a basis: comparing a visit-date figure with a
+ * received-date figure is comparing two different questions and would "fail" for a payment made in a later month than its visit. Overview and Analytics
+ * group by VISIT date. Statements groups by the visit's month TODAY (its rows are the month's visits; no receipt date is stored or shown anywhere on it).
+ * When Statements adopts the date the money was RECEIVED, this ONE constant changes to "received_date" and the Statements expectations below flip.
+ */
+type Basis = "visit_date" | "received_date";
+const BASIS: Record<"overview" | "analytics" | "statements", Basis> = { overview: "visit_date", analytics: "visit_date", statements: "visit_date" };
+function comparable(a: keyof typeof BASIS, b: keyof typeof BASIS): boolean {
+  return BASIS[a] === BASIS[b];
+}
+
+/** Run settlement commands AS THE OWNER, through the real authority boundary (the command re-derives the actor from auth.uid()). Ids are ours, never input. */
+async function asOwner(seed: E2eSeed, body: string) {
+  await sql(
+    `do $do$ declare uid uuid; begin
+       select id into uid from auth.users where email = '${seed.ownerEmail}';
+       perform set_config('request.jwt.claims', json_build_object('sub', uid, 'role', 'authenticated')::text, true);
+       set local role authenticated;
+       ${body}
+     end $do$`,
+  );
+}
+
+test("a visit last month, unpaid then paid in full this month: it is last month's collection, owed until confirmed, and never this month's", async ({ page }) => {
+  const now = new Date();
+  test.skip(now.getUTCDate() === 1 && now.getUTCHours() < 6, "the first hours of a month have no 'earlier this month' to seed");
+  const seed = await seedE2eStudio();
+  await currency(seed);
+  const prac = await getOwnerPractitionerId(seed.studioId);
+  const visitAt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 15, 15, 0, 0));
+  const { clientId } = await seedE2eDashboardClient(seed, { label: "Cross month" });
+  const serviceId = randomUUID();
+  await sql(`insert into public.services (id, studio_id, name, modality, default_duration_minutes, price_cents, active) values ($1,$2,'Cross month service','electrolysis',60,12000,true)`, [serviceId, seed.studioId]);
+  const apptId = randomUUID();
+  await sql(
+    `insert into public.appointments (id, studio_id, client_id, practitioner_id, service_id, starts_at, ends_at, duration_minutes, buffer_minutes_snapshot, blocked_ends_at, status)
+     values ($1,$2,$3,$4,$5,$6,$7,60,0,$7,'completed')`,
+    [apptId, seed.studioId, clientId, prac, serviceId, visitAt.toISOString(), new Date(visitAt.getTime() + 3_600_000).toISOString()],
+  );
+  const last = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+  const lastYm = `${last.getUTCFullYear()}-${String(last.getUTCMonth() + 1).padStart(2, "0")}`;
+  const thisYm = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+  const lastName = MONTHS[last.getUTCMonth()];
+  const clientStatement = `/financials/statements/${clientId}?month=${lastYm}`;
+
+  // BEFORE: the owner attested the visit still owes (a recorded quote of $120.00).
+  await asOwner(seed, `perform public.record_appointment_settlement('${seed.studioId}', '${apptId}', 'still_owes', 12000, null, false);`);
+  await loginAsOwner(page, seed);
+  await page.goto(clientStatement);
+  await expect(page.getByRole("main")).toContainText("Not paid", { timeout: T });
+  await expect(page.getByRole("main")).toContainText("120.00", { timeout: T }); // the balance due
+  await expect(page.getByRole("main")).not.toContainText("Paid in full");
+  // Overview's Money owed tile is not connected yet: it says Not available, never a stale or partial number.
+  await page.goto("/financials/overview?period=previous_month");
+  const owedTile = page.locator('[data-figure-state="unavailable"]').filter({ hasText: "Money owed" });
+  await expect(owedTile).toContainText("Not available");
+  await expect(owedTile).not.toContainText("$");
+
+  // AFTER: paid in full, received now (this month), through the real supersede command.
+  await asOwner(
+    seed,
+    `perform public.supersede_appointment_settlement('${seed.studioId}', (select id from public.appointment_settlements where appointment_id = '${apptId}' and superseded_at is null), 'paid_cash', 12000, 'Paid in full', null, false);`,
+  );
+  const receipt = (await sql<{ d: string }>(`select to_char(recorded_at at time zone 'UTC', 'YYYY-MM') as d from public.appointment_settlements where appointment_id = $1 and superseded_at is null`, [apptId]))[0].d;
+  expect(receipt, "the payment was received THIS month, the visit was LAST month").toBe(thisYm);
+
+  // The balance clears where Money owed is shown today: the visit's own month on the client statement.
+  await page.goto(clientStatement);
+  await expect(page.getByRole("main")).toContainText("Paid", { timeout: T });
+  await expect(page.getByRole("main")).not.toContainText("Not paid");
+  await expect(page.getByRole("main")).not.toContainText("Balance due");
+  await page.goto("/financials/overview?period=previous_month");
+  await expect(owedTile).toContainText("Not available");
+
+  // OVERVIEW, last month: the payment is counted under the VISIT's month, under the headline that says so.
+  await expect(page.getByRole("heading", { name: `Collected for visits in ${lastName}` })).toBeVisible({ timeout: T });
+  await expect(collected(page)).toHaveText(/\$120\b/, { timeout: T });
+  await shot(page, "overview-cross-month-last");
+  // ...and NOT this month's, although the money arrived this month.
+  await page.goto("/financials/overview");
+  await expect(page.getByRole("heading", { name: "Collected for visits this month" })).toBeVisible({ timeout: T });
+  await expect(collected(page)).toHaveAttribute("data-cents", "0");
+
+  // CROSS-PAGE TOTALS, only between pages that share a date basis.
+  expect(comparable("overview", "analytics")).toBe(true);
+  await page.goto("/financials/analytics?period=previous_month");
+  await expect(page.getByRole("main")).toContainText("$120.00", { timeout: T }); // Analytics' visit-date figure = Overview's
+  if (comparable("overview", "statements")) {
+    // Statements groups by the visit's month today: last month's statement holds it, this month's does not.
+    await page.goto(`/financials/statement?month=${lastYm}`);
+    await expect(page.getByRole("main")).toContainText("120.00", { timeout: T });
+    await page.goto(`/financials/statement?month=${thisYm}`);
+    await expect(page.getByRole("main")).toContainText("Collected in total: $0.00", { timeout: T });
+  } else {
+    // Statements by RECEIVED date: the payment is in this month's statement and not last month's. Overview legitimately differs.
+    await page.goto(`/financials/statement?month=${thisYm}`);
+    await expect(page.getByRole("main")).toContainText("120.00", { timeout: T });
+    await page.goto(`/financials/statement?month=${lastYm}`);
+    await expect(page.getByRole("main")).toContainText("Collected in total: $0.00", { timeout: T });
+  }
+});
