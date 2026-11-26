@@ -155,6 +155,25 @@ describe("deliverPlatformLeadAlert", () => {
     });
   });
 
+  it("a claim that answers none (even with a full-looking row): no freeze, no send, no settle, and the queue is drained", async () => {
+    const calls: Call[] = [];
+    let sends = 0;
+    const summary = await sweepPlatformLeadAlerts({
+      // the row carries every claimed field on purpose: only its result says "none", so a worker that trusted the fields would send
+      admin: fakeAdmin({ expire_platform_lead_alerts: 0, claim_platform_lead_alert: [{ ...CLAIMED, result: "none" }] }, calls),
+      transport: transport(async () => {
+        sends += 1;
+        return { data: { id: "m" }, error: null };
+      }),
+      env: ENV,
+      appOrigin: () => "https://hone.example",
+    });
+    expect(summary).toMatchObject({ ok: true, drained: true, attempted: 0, accepted: 0 });
+    expect(sends).toBe(0);
+    expect(calls.map((c) => c.fn)).toEqual(["expire_platform_lead_alerts", "claim_platform_lead_alert"]);
+    expect(calls.some((c) => c.fn === FREEZE || c.fn === "settle_platform_lead_alert")).toBe(false);
+  });
+
   it("LEAD_ALERT_EMAIL unset: the sweep answers ok with a blocker, touches only the expiry and the blocker record, and sends nothing", async () => {
     const calls: Call[] = [];
     let sends = 0;

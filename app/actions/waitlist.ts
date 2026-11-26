@@ -38,10 +38,18 @@ export async function submitWaitlistEntry(
   // nobody is alerted -- and it still reads as success here, because the
   // address is on the list either way and the answer must not reveal which.
   // The command writes only the address; `source` keeps its column default.
-  const admin = createAdminClient();
-  const { data, error } = await admin.rpc("record_platform_early_access_signup", {
-    p_email: normalized,
-  });
+  // A missing or invalid service-role configuration throws from createAdminClient(): the same failure as a refused write, so it
+  // gets the form's own generic error, never an unhandled throw.
+  let data: unknown = null;
+  let error: unknown = null;
+  try {
+    const admin = createAdminClient();
+    ({ data, error } = await admin.rpc("record_platform_early_access_signup", {
+      p_email: normalized,
+    }));
+  } catch {
+    error = true;
+  }
   const saved = (Array.isArray(data) ? data[0] : null) as
     | { result: string; alert_id: string | null }
     | null;

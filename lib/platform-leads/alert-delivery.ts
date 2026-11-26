@@ -356,7 +356,7 @@ async function settle(
         severity: "warning",
         event: "platform_lead_alert_failed",
         message:
-          "A new-lead alert email could not be sent. The lead is saved; see Lead alerts in /admin.",
+          "A new-lead alert email could not be sent. The lead is saved; it appears in the lead list in /admin.",
         route: "lead-alerts",
         safeDetails: {
           alert_id: row.alert_id,
@@ -669,7 +669,7 @@ export async function sweepPlatformLeadAlerts(
           {
             severity: "warning",
             event: "platform_lead_alerts_expired",
-            message: `${summary.expired} new-lead alert email(s) were never sent and have expired. The leads are saved; see Lead alerts in /admin.`,
+            message: `${summary.expired} new-lead alert email(s) were never sent and have expired. The leads are saved; they appear in the lead list in /admin.`,
             route: "lead-alerts",
             safeDetails: { count: summary.expired },
           },
@@ -779,6 +779,8 @@ export type ReminderTriggerLeadAlertResult =
 
 export async function recoverLeadAlertsOnReminderTrigger(
   deps: LeadAlertDeps = {},
+  /** The caller's own ceiling: the sweep's budget is never longer than this (default: the fixed budget). */
+  opts: { maxBudgetMs?: number } = {},
 ): Promise<ReminderTriggerLeadAlertResult> {
   try {
     const ready = resolveLeadAlertReadiness(deps);
@@ -786,7 +788,7 @@ export async function recoverLeadAlertsOnReminderTrigger(
     const summary = await sweepPlatformLeadAlerts({
       ...deps,
       maxAlerts: REMINDER_TRIGGER_LEAD_ALERT_MAX,
-      budgetMs: REMINDER_TRIGGER_LEAD_ALERT_BUDGET_MS,
+      budgetMs: Math.min(REMINDER_TRIGGER_LEAD_ALERT_BUDGET_MS, opts.maxBudgetMs ?? REMINDER_TRIGGER_LEAD_ALERT_BUDGET_MS),
     });
     if (!summary.ok) {
       const report = new AbortController();

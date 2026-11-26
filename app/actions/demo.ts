@@ -72,20 +72,28 @@ export async function submitDemoRequest(
   // columns and values are exactly what this form always saved. Every request
   // that gets this far is a new lead with its own single alert; the limiter
   // above is what bounds repeats.
-  const admin = createAdminClient();
-  const { data, error } = await admin.rpc("record_platform_demo_request", {
-    p_name: name,
-    p_email: email,
-    p_practice_name: emptyToNull(payload.practice_name),
-    p_location: emptyToNull(payload.location),
-    p_practice_type: checkEnum(payload.practice_type, PRACTICE_TYPES),
-    p_practitioner_count: checkEnum(
-      payload.practitioner_count,
-      PRACTITIONER_COUNTS,
-    ),
-    p_current_tool: emptyToNull(payload.current_tool),
-    p_notes: emptyToNull(payload.notes),
-  });
+  // A missing or invalid service-role configuration throws from createAdminClient(): it is the same failure as a refused write
+  // and gets the form's own generic error, never an unhandled throw.
+  let data: unknown = null;
+  let error: unknown = null;
+  try {
+    const admin = createAdminClient();
+    ({ data, error } = await admin.rpc("record_platform_demo_request", {
+      p_name: name,
+      p_email: email,
+      p_practice_name: emptyToNull(payload.practice_name),
+      p_location: emptyToNull(payload.location),
+      p_practice_type: checkEnum(payload.practice_type, PRACTICE_TYPES),
+      p_practitioner_count: checkEnum(
+        payload.practitioner_count,
+        PRACTITIONER_COUNTS,
+      ),
+      p_current_tool: emptyToNull(payload.current_tool),
+      p_notes: emptyToNull(payload.notes),
+    }));
+  } catch {
+    error = true;
+  }
   const saved = (Array.isArray(data) ? data[0] : null) as
     | { result: string; alert_id: string | null }
     | null;

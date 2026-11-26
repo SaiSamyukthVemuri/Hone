@@ -50,9 +50,9 @@ const REASON: Record<LeadAlertErrorCode, string> = {
   provider_exception: "The email provider gave no usable answer.",
   render_failed: "The alert email could not be composed.",
   recipient_changed:
-    "The alert recipient (LEAD_ALERT_EMAIL) changed after the first attempt, so a retry could not repeat it. Use Retry to send it to the current recipient under a new key.",
+    "The alert recipient (LEAD_ALERT_EMAIL) changed after the first attempt, so a retry could not repeat it. The lead is saved.",
   lease_expired: "A send attempt stopped before it finished.",
-  expired: "It was not sent within its automatic retry window. Use Retry to send it under a new key.",
+  expired: "It was not sent within its automatic retry window. The lead is saved.",
 };
 
 export function isLeadAlertConfigCode(code: unknown): code is LeadAlertConfigCode {

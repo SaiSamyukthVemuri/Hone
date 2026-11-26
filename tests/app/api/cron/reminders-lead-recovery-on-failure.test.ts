@@ -21,6 +21,7 @@ vi.mock("@/lib/ops/alerts", () => ({
 }));
 vi.mock("@/lib/cron/reminder-heartbeat", () => ({ recordReminderRunSuccess: async () => undefined }));
 vi.mock("@/lib/platform-leads/alert-delivery", () => ({
+  REMINDER_TRIGGER_LEAD_ALERT_REPORT_MS: 1_000,
   recoverLeadAlertsOnReminderTrigger: async () => {
     h.recoveries += 1;
     h.order.push("lead_recovery");
