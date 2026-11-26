@@ -261,8 +261,9 @@ describe("0385 command census: every function that takes a machine id is classif
     "record_treatment_setup_submission",
   ]);
   const REFUSE = new Set(["register_studio_machine", "retire_studio_machine", "set_own_default_machine"]);
+  // get_studio_machine_choices (0366) is a READ that returns a studio's live unit id: it excludes the placeholder by name (proved in machine-switches.db.test.ts).
   // Not commands on a unit's identity: the placeholder's own creator, and READS that return what a block holds.
-  const OTHER = new Set(["ensure_unspecified_machine", "setup_readings_for_block", "latest_setup_for_client", "setup_capture_history_for_block", "refuse_unspecified_machine_change"]);
+  const OTHER = new Set(["ensure_unspecified_machine", "setup_readings_for_block", "latest_setup_for_client", "setup_capture_history_for_block", "refuse_unspecified_machine_change", "get_studio_machine_choices"]);
 
   it("reads pg_proc and fails on any public function that takes a machine / studio_machine id and is not classified", async () => {
     const r = await adminQuery(

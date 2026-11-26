@@ -17,6 +17,7 @@ let A: SeededStudio; // owner A
 let B: SeededStudio; // another studio
 let memA: { userId: string; practitionerId: string }; // a practitioner member of A
 let recept: string; // a user with no practitioner row (a receptionist has none)
+const createdContracts: Array<readonly [string, number, string]> = [];
 
 const setRollout = (mode: "off" | "pilot" | "all") =>
   adminQuery(`update public.platform_rollouts set mode = $1, updated_at = now() where key = $2`, [mode, KEY]);
@@ -63,8 +64,12 @@ beforeAll(async () => {
   // The migration is part of the chain: this suite NEVER replays its SQL (a replay would change a catalog that may be measured or sealed).
   const have = await adminQuery(`select to_regprocedure('public.set_studio_machine_model(uuid,text,boolean)') as p`);
   if (!have.rows[0].p) throw new Error("The machine-switches migration is not on this stack. Build a fresh stack from the chain; this suite does not apply it.");
-  await adminQuery(`insert into public.machine_profile_mode_contract (machine_profile_id, machine_profile_version, mode_key) values ($1,1,'multiplex') on conflict do nothing`, [PUR]);
-  await adminQuery(`insert into public.machine_profile_mode_contract (machine_profile_id, machine_profile_version, mode_key) values ($1,3,'flash') on conflict do nothing`, [SEN]);
+  // Contract rows this suite adds are REMOVED again afterwards (only the ones it created), so a suite that runs after it on the same stack still
+  // sees "contract not published" where it expects that.
+  for (const [profile, version, mode] of [[PUR, 1, "multiplex"], [SEN, 3, "flash"]] as const) {
+    const r = await adminQuery(`insert into public.machine_profile_mode_contract (machine_profile_id, machine_profile_version, mode_key) values ($1,$2,$3) on conflict do nothing returning 1`, [profile, version, mode]);
+    if (r.rowCount) createdContracts.push([profile, version, mode]);
+  }
   A = await seedOn("sw-a");
   B = await seedOn("sw-b");
   memA = await seedMember(A, "sw-ma");
@@ -74,6 +79,13 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  for (const [profile, version, mode] of createdContracts) {
+    try {
+      await adminQuery(`delete from public.machine_profile_mode_contract where machine_profile_id=$1 and machine_profile_version=$2 and mode_key=$3`, [profile, version, mode]);
+    } catch {
+      // still referenced by a block this suite recorded: leave it (the removal is a courtesy to later suites, not a property under test)
+    }
+  }
   await setRollout("off");
   await closePool();
 });
