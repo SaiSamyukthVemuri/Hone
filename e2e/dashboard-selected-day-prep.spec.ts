@@ -275,7 +275,7 @@ test.describe("preparing a future day — 390px phone", () => {
 
     await test.step("14b. and it still opens and closes under a thumb", async () => {
       const toggle = page.getByTestId("dashboard-memory-toggle").first();
-      // Open by default (Chloe, 26 Nov): a tap hides it, a second tap shows it again.
+      // Open by default (practitioner feedback, 26 Nov): a tap hides it, a second tap shows it again.
       await expect(page.getByTestId("dashboard-memory-full").first()).toBeVisible({
         timeout: T,
       });
@@ -296,7 +296,7 @@ test.describe("preparing a future day — 390px phone", () => {
 
     await test.step("16. the prep the practitioner came for is on screen", async () => {
       await expect(page.getByText("Prefers the 2pm slot")).toBeVisible();
-      // Open by default (Chloe, 26 Nov): close it to see the one-line summary the closed row carries.
+      // Open by default (practitioner feedback, 26 Nov): close it to see the one-line summary the closed row carries.
       await closeLastVisitDetails(page.getByTestId("dashboard-memory-toggle").first());
       await expect(page.getByTestId("dashboard-memory-compact")).toBeVisible();
       await expect(page.getByTestId("dashboard-prep-remember")).toHaveCount(0);

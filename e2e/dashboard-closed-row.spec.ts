@@ -33,7 +33,7 @@ test("closed row: pinned notes in full, allergy flag, caution line and intake pi
 
   const row = page.getByTestId("today-row-body").filter({ hasText: "Memory Client" }).locator("xpath=ancestor::li[1]");
   const toggle = row.getByRole("button", { name: /^Last visit details for / });
-  await closeLastVisitDetails(toggle, T); // open by default (Chloe, 26 Nov); this spec is about the CLOSED row
+  await closeLastVisitDetails(toggle, T); // open by default (practitioner feedback, 26 Nov); this spec is about the CLOSED row
 
   await test.step("both pinned notes are visible in FULL (not truncated)", async () => {
     await expect(page.getByText(NOTE_A, { exact: true })).toBeVisible({ timeout: T });

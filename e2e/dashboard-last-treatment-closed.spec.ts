@@ -21,9 +21,9 @@ const T = 15_000;
 async function expectLineOnClosedRow(page: Page, shot: string) {
   const toggles = page.getByRole("button", { name: /^Last visit details for / });
   await expect(toggles.first()).toBeVisible({ timeout: T });
-  // Open by default (Chloe, 26 Nov); this spec is about the CLOSED row, so close every row's details first.
+  // Open by default (practitioner feedback, 26 Nov); this spec is about the CLOSED row, so close every row's details first.
   for (let i = 0; i < (await toggles.count()); i++) await closeLastVisitDetails(toggles.nth(i), T);
-  const toggle = toggles.first(); // open by default (Chloe, 26 Nov); this spec is about the CLOSED row
+  const toggle = toggles.first(); // open by default (practitioner feedback, 26 Nov); this spec is about the CLOSED row
   const line = page.getByTestId("dashboard-memory-compact").first();
   await expect(line).toBeVisible({ timeout: T });
   await expect(line).toContainText("Last treatment:");

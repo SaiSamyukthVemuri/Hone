@@ -118,7 +118,7 @@ describe("the disclosure is accessible and calm by default", () => {
     expect(MEMORY_UI).toMatch(/id=\{regionId\}/);
   });
 
-  it("starts OPEN (Chloe, 26 Nov): the last visit's details are on the card with no click; the button only hides", () => {
+  it("starts OPEN (practitioner feedback, 26 Nov): the last visit's details are on the card with no click; the button only hides", () => {
     expect(MEMORY_UI).toMatch(/const \[open, setOpen\] = useState\(true\)/);
     // The card is still mounted only while open and only once the server has answered.
     expect(MEMORY_UI).toMatch(/\{open && \(/);
