@@ -117,7 +117,16 @@ begin
     from (values ('dectro-apilus:xcell-pur'), ('dectro-apilus:senior-3g'), ('dectro-apilus:junior-3g')) as p(profile_id)
   on conflict (studio_id, profile_id) do nothing;
   insert into public.studio_machine_default (studio_id, default_profile_id, ask_each_visit)
-  values (p_studio_id, 'dectro-apilus:xcell-pur', false)
+  -- OPTION (a): a studio that already has a Senior 3G or Junior 3G unit in service defaults to the model of its EARLIEST such unit (created_at,
+  -- then id); every other studio defaults to the xCell Pur, as before. A studio with both an xCell Pur unit and a Senior or Junior unit gets the
+  -- Senior or Junior default under this variant: that is the case to confirm.
+  values (p_studio_id,
+          coalesce((select m.machine_profile_id from public.studio_machines m
+                     where m.studio_id = p_studio_id and m.retired_at is null
+                       and m.machine_profile_id in ('dectro-apilus:senior-3g', 'dectro-apilus:junior-3g')
+                     order by m.created_at, m.id limit 1),
+                   'dectro-apilus:xcell-pur'),
+          false)
   on conflict (studio_id) do nothing;
 end $$;
 

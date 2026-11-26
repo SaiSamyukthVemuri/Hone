@@ -85,15 +85,16 @@ describe("the seed: once, by a trigger on studios, never re-run", () => {
     expect(await dflt(R.studioId)).toEqual({ default_profile_id: PUR, ask_each_visit: false });
   });
 
-  it("an EXISTING studio is seeded by the same function: its Senior unit keeps Senior on, xCell is on and the default, and a re-run never overwrites an owner's choice", async () => {
+  it("an EXISTING studio is seeded by the same function: its Senior unit keeps Senior on, xCell is on and the Senior unit is the default (option a), and a re-run never overwrites an owner's choice", async () => {
     const S = await seedStudio("sw-existing");
     await unitOf(S.studioId, SEN, 3);
     await adminQuery(`delete from public.studio_machine_models where studio_id=$1`, [S.studioId]);
     await adminQuery(`delete from public.studio_machine_default where studio_id=$1`, [S.studioId]);
     await adminQuery(`select public.seed_studio_machine_settings($1)`, [S.studioId]);
     expect(await models(S.studioId)).toEqual({ [PUR]: true, [SEN]: true, [JUN]: false });
-    expect(await dflt(S.studioId)).toEqual({ default_profile_id: PUR, ask_each_visit: false });
-    expect(await setDefault(S.userId, S.studioId, SEN, false)).toBe("changed");
+    expect(await dflt(S.studioId)).toEqual({ default_profile_id: SEN, ask_each_visit: false });
+    expect(await setDefault(S.userId, S.studioId, SEN, false), "already the default under option (a)").toBe("unchanged");
+    expect(await setDefault(S.userId, S.studioId, PUR, false)).toBe("changed");
     expect(await setModel(S.userId, S.studioId, PUR, false)).toBe("changed");
     await adminQuery(`select public.seed_studio_machine_settings($1)`, [S.studioId]);
     expect(await models(S.studioId)).toEqual({ [PUR]: false, [SEN]: true, [JUN]: false });
@@ -1063,5 +1064,45 @@ describe("the owner's switch decides, old history is not needed, and the unit co
     await setModel(S.userId, S.studioId, PUR, true);
     expect((await failure(ensure(recept, sess.blockId, PUR)))?.message).toBe("Not available.");
     expect(await unitCount(S.studioId)).toBe(0);
+  });
+});
+
+describe("OPTION (a): the seed defaults a studio with its own Senior or Junior unit to that model", () => {
+  const seedAgain = async (studio: string) => {
+    await adminQuery(`delete from public.studio_machine_default where studio_id = $1`, [studio]);
+    await adminQuery(`select public.seed_studio_machine_settings($1)`, [studio]);
+    return (await adminQuery(`select default_profile_id d from public.studio_machine_default where studio_id = $1`, [studio])).rows[0].d as string;
+  };
+  it("no unit: xCell; a live Senior: Senior; a live Junior only: Junior; both: the earliest; a retired Senior only: xCell; a Pur unit alone: xCell", async () => {
+    const none = await seedStudio("opta-none");
+    expect(await seedAgain(none.studioId)).toBe(PUR);
+    const sen = await seedStudio("opta-sen");
+    await unitOf(sen.studioId, SEN);
+    expect(await seedAgain(sen.studioId)).toBe(SEN);
+    const jun = await seedStudio("opta-jun");
+    await unitOf(jun.studioId, JUN);
+    expect(await seedAgain(jun.studioId)).toBe(JUN);
+    const both = await seedStudio("opta-both");
+    await unitOf(both.studioId, JUN);
+    await adminQuery(`update public.studio_machines set created_at = now() - interval '1 day' where studio_id = $1`, [both.studioId]);
+    await unitOf(both.studioId, SEN);
+    expect(await seedAgain(both.studioId), "the earliest live Senior or Junior unit decides").toBe(JUN);
+    const ret = await seedStudio("opta-ret");
+    const rid = await unitOf(ret.studioId, SEN);
+    await adminQuery(`update public.studio_machines set retired_at = now() where id = $1`, [rid]);
+    expect(await seedAgain(ret.studioId)).toBe(PUR);
+    const pur = await seedStudio("opta-pur");
+    await unitOf(pur.studioId, PUR);
+    expect(await seedAgain(pur.studioId)).toBe(PUR);
+  });
+  it("the existing default is never overwritten (on conflict do nothing)", async () => {
+    const S = await seedStudio("opta-keep");
+    await unitOf(S.studioId, SEN);
+    await adminQuery(`select public.seed_studio_machine_settings($1)`, [S.studioId]);
+    const d = (await adminQuery(`select default_profile_id d from public.studio_machine_default where studio_id = $1`, [S.studioId])).rows[0].d;
+    await adminQuery(`update public.studio_machine_default set default_profile_id = $2 where studio_id = $1`, [S.studioId, PUR]);
+    await adminQuery(`select public.seed_studio_machine_settings($1)`, [S.studioId]);
+    expect((await adminQuery(`select default_profile_id d from public.studio_machine_default where studio_id = $1`, [S.studioId])).rows[0].d).toBe(PUR);
+    expect(d).toBeTruthy();
   });
 });
