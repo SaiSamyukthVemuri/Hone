@@ -204,7 +204,7 @@ test("two contexts charge the same attempt concurrently: one effect, one succeed
   await pageB.goto(`/calendar/${seed.appointmentId}`);
   await expect(pageB.getByTestId("appointment-payment-paid")).toBeVisible();
   await expect(pageB.getByTestId("checkout-button")).toHaveCount(0);
-  await expect(pageB.getByRole("button", { name: /prepare session payment/i })).toHaveCount(0);
+  await expect(pageB.getByRole("button", { name: /checkout with stripe/i })).toHaveCount(0);
   await expect(pageB.getByRole("button", { name: /run charge/i })).toHaveCount(0);
 
   // Counts unchanged after convergence.

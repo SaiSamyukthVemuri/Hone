@@ -495,6 +495,7 @@ export async function getSessionPaymentEligibility(
 
   return {
     eligible: false,
+    jurisdiction,
     blockingReasons: reasons.length > 0 ? reasons : [
       "Session payment cannot be prepared right now. Refresh and try again.",
     ],

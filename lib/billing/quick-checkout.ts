@@ -1,6 +1,7 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
-import { todayInTz } from "@/lib/booking/tz";
+import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
+import type { PaymentCurrency } from "@/lib/billing/payment-jurisdiction";
 import { getSessionPaymentEligibility } from "@/lib/billing/session-payment-eligibility";
 import { getAuthoritativeSessionPaymentAmount } from "@/lib/billing/authoritative-session-payment";
 import type { SessionPaymentAmountResult } from "@/lib/billing/session-payment-amount";
@@ -63,6 +64,7 @@ export type AppointmentSettlementContext = {
    * it server-side regardless.
    */
   quotedAmountCents: number | null;
+  currency?: PaymentCurrency | null;
 };
 
 export type QuickCheckoutContext =
@@ -193,12 +195,13 @@ export async function resolveQuickCheckoutContext(
     .maybeSingle();
 
   if (!sessionRow) {
+    const jurisdiction = settlement.canRecord ? await getStudioPaymentJurisdiction(args.studioId) : null;
     return {
       ok: false,
       reason:
-        "No treatment session for this appointment yet, so a card charge is not available. Open the client's session to start charting, or record how the visit was settled below.",
+        "No treatment session for this appointment yet, so a card charge is not available.",
       clientId,
-      settlement,
+      settlement: { ...settlement, currency: jurisdiction?.ok ? jurisdiction.jurisdiction.currency : null },
     };
   }
   const sessionId = sessionRow.id as string;

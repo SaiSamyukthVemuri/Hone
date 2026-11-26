@@ -102,7 +102,7 @@ test("quick checkout: an authored $145 total is prepared, confirmed and charged 
   // The reference has NOT moved: the reminder is not overwritten by the total.
   await expect(modal.getByTestId("authoritative-amount")).toHaveText("$120.00");
 
-  await modal.getByRole("button", { name: /prepare session payment/i }).click();
+  await modal.getByRole("button", { name: /checkout with stripe/i }).click();
 
   // Prepared → the Ready panel must quote the AUTHORED amount, not the menu.
   const runCharge = modal.getByRole("button", { name: /^run charge$/i });
@@ -126,7 +126,7 @@ test("quick checkout: an authored $145 total is prepared, confirmed and charged 
 
   // The two-click confirm must also quote the authored amount.
   await runCharge.click();
-  const confirmCharge = modal.getByRole("button", { name: /confirm: run charge/i });
+  const confirmCharge = modal.getByRole("button", { name: "Confirm Stripe charge · $145.00 CAD", exact: true });
   await expect(confirmCharge).toContainText("$145.00");
   await confirmCharge.click();
 
