@@ -63,7 +63,12 @@ describe("nothing else on the dashboard changed", () => {
     const editable = PAGE.indexOf("<DashboardQuickPin");
     expect(editable).toBeGreaterThan(PAGE.indexOf("</PendingContainerLink>"));
     expect(PAGE.slice(editable, PAGE.indexOf("/>", editable))).toContain("pinnedNotes=");
-    expect(read("app/(app)/dashboard/dashboard-quick-pin.tsx")).toContain("<RowPinnedNotes pinnedNotes={pinnedNotes}");
+    // Every pin from the page data is rendered (the list handed to RowPinnedNotes is built from the whole of
+    // pinnedNotes, plus any just-saved pin), never a slice.
+    const quickPin = read("app/(app)/dashboard/dashboard-quick-pin.tsx");
+    expect(quickPin).toContain("<RowPinnedNotes pinnedNotes={shown}");
+    expect(quickPin).toMatch(/\.\.\.pinnedNotes\.map\(/);
+    expect(quickPin).not.toMatch(/pinnedNotes\.slice\(/);
     expect(SAFETY).toMatch(/pinnedNotes\.map\(/);
     expect(SAFETY).toMatch(/whitespace-pre-wrap/);
     expect(PAGE).not.toMatch(/line-clamp[^\s"']*[^\s"']*/);
