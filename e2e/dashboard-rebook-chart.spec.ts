@@ -12,7 +12,10 @@ import {
   sql,
 } from "./helpers/seed";
 
-test("Rebook opens the full calendar and returns to the original visit with its new upcoming appointment", async ({ page }) => {
+test("Rebook opens the full calendar and returns to the original visit with its new upcoming appointment", async ({ page, viewport }) => {
+  // Desktop week grid only: below the md breakpoint the calendar hides the week step-nav on purpose (the mobile day view owns navigation, see CalendarToolbar's
+  // hideStepNavOnMobile) and Rebook opens the mobile "Find time" panel instead, so the calendar-next / quick-book-draft steps below do not exist on a phone.
+  test.skip((viewport?.width ?? 1280) < 768, "the week step-nav is desktop-only; a phone rebooks through the Find time panel");
   const studio = await seedE2eStudio();
   const client = await seedE2eDashboardClient(studio, { label: "Rebooking client" });
   const { appointmentId } = await seedE2eTodayAppointment(studio, {
