@@ -29,8 +29,9 @@ vi.mock("@/app/(app)/clients/[id]/sessions/[sessionId]/block-actions", () => blo
 import { readFileSync } from "node:fs";
 import { MACHINE_CATALOGUE } from "@/lib/machines/catalogue";
 import type { StudioDevice } from "@/lib/machines/selection";
+import { multiplexPill as multiplexPillOf, ensureThermolysis, chooseMultiplex, modeButton } from "./helpers/multiplex-modality";
 
-// ONE MODE CONTROL, on the REAL form: MultiPlex is a fourth pill in the existing Mode group, offered under the existing xCell
+// ONE MODE CONTROL, on the REAL form: MultiPlex is a choice in Thermolysis's Modality control, offered under the existing xCell
 // choice on a NEW area. Choosing it binds the area to the registered unit and swaps the charting fields; choosing any other pill is
 // exactly today's form. Senior and Junior units, legacy-valued areas and saved areas are unaffected. Synthetic records.
 
@@ -107,7 +108,7 @@ describe("a NEW area saved on MultiPlex after Thermolysis was typed (M1, M2)", (
     await setValue(labelled("Energy level"), "9");
     await setValue(labelled("Minutes performed"), "12");
     await click(Array.from(host!.querySelectorAll<HTMLButtonElement>("button")).find((b) => b.textContent?.trim() === "Chin")!);
-    await click(host!.querySelector('[data-testid="mode-multiplex"]'));
+    await chooseMultiplex(host!);
     await click(host!.querySelector('[data-testid="save-treatment-area"]'));
     expect(blockActions.createTreatmentAreaWithEntryAction).toHaveBeenCalledTimes(1);
     const sent = (blockActions.createTreatmentAreaWithEntryAction.mock.calls[0] as unknown[])[0] as Record<string, unknown> & { readings: Record<string, unknown> };
@@ -132,7 +133,7 @@ describe("Save pressed while the leave-MultiPlex request is HELD (M1, behavioura
     await click(Array.from(host!.querySelectorAll<HTMLButtonElement>("button")).find((b) => b.textContent?.trim() === "27.12 MHz")!);
     // the MultiPlex pick's preference write never settles, so the panel holds the next request (machine-first-setup-panel.tsx: `if (selectionPending) return;`)
     actions.rememberMachineSelectionAction.mockImplementationOnce(() => new Promise(() => undefined) as never);
-    await click(host!.querySelector('[data-testid="mode-multiplex"]'));
+    await chooseMultiplex(host!);
     await click(pill("Blend"));
     // the form's draft now says Blend while the panel is still native; Save is not disabled by a pending PREFERENCE write
     await click(Array.from(host!.querySelectorAll<HTMLButtonElement>("button")).find((b) => b.textContent?.trim() === "Chin")!);
@@ -173,13 +174,13 @@ describe("what is parked belongs to ONE identity: unit, profile, version AND mod
     await click(host!.querySelector('[data-testid="machine-mode-flash"]'));
     await setValue(draftInputs().find((i) => i.type === "number")!, "33");
     await pick("legacy:xcell");
-    await click(host!.querySelector('[data-testid="mode-multiplex"]'));
+    await chooseMultiplex(host!);
     await setValue(draftInputs().find((i) => i.type === "number")!, "44");
     await pick("unit-senior");
     await click(host!.querySelector('[data-testid="machine-mode-flash"]'));
     expect(firstDraftValue(), "the Senior's own value").toBe("33");
     await pick("legacy:xcell");
-    await click(host!.querySelector('[data-testid="mode-multiplex"]'));
+    await chooseMultiplex(host!);
     expect(firstDraftValue(), "the xCell's own value").toBe("44");
   });
 });

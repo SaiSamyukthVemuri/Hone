@@ -157,6 +157,9 @@ export function leaveGuardArmed(dirty: boolean, saveConfirmed: boolean): boolean
   return dirty && !saveConfirmed;
 }
 
+// The stored modality label that names MultiPlex under Thermolysis (APILUS_MODALITIES_BY_MODE.thermo).
+const MULTIPLEX_MODALITY = "Multiplex";
+
 const EDIT_SAVE_UNCONFIRMED =
   "The connection failed, so whether your changes were saved is not known. Your edits are still here: press Save to try again, or reload the page to see what is saved.";
 
@@ -2378,29 +2381,34 @@ export function BlockSetupForm({
         <span className="text-sm font-medium">Mode</span>
         <div className="flex flex-wrap gap-2">
           {ELECTROLYSIS_MODES.map((m) => {
-            // WHILE MULTIPLEX IS CHOSEN no legacy pill is pressed (the legacy mode stays parked underneath), and pressing one SELECTS it, never toggles it
-            // off: otherwise a switch back from MultiPlex to the mode she had typed under cleared that mode and showed its readings empty.
-            const selected = draft.mode === m.value && !multiplexSelected;
+            // Pressing Blend or Galvanic while MultiPlex is chosen SELECTS it (the parked Thermolysis readings go back first), never toggles it off.
+            // MULTIPLEX LIVES UNDER THERMOLYSIS (Chloe): while it is chosen the Thermolysis pill stays pressed, and the Modality choice below
+            // names MultiPlex. Blend and Galvanic never show as pressed under it.
+            const selected = multiplexSelected ? m.value === "thermo" : draft.mode === m.value;
             return (
               <button
                 key={m.value}
                 type="button"
                 disabled={multiplexSaved || draftFrozen || identityWritePending}
                 onClick={() => {
-                  // LEAVING MULTIPLEX BY CHOOSING A LEGACY MODE: the readings parked when she picked MultiPlex go back FIRST, under the mode they were typed
-                  // in; then the mode she clicked is selected. Restoring them AFTER the click (the leave-MultiPlex request does) would put the parked mode
-                  // back over her choice and save the wrong mode.
-                  let base: Draft = draft;
-                  if (multiplexSelected && parkedLegacyRef.current) {
-                    base = { ...draft, ...parkedLegacyRef.current };
-                    parkedLegacyRef.current = null;
+                  // Thermolysis is already the mode while MultiPlex is chosen: pressing it again changes nothing. The way out is another modality
+                  // (below) or Blend/Galvanic.
+                  if (!(multiplexSelected && m.value === "thermo")) {
+                    // LEAVING MULTIPLEX BY CHOOSING A LEGACY MODE: the readings parked when she picked MultiPlex go back FIRST, under the mode they were typed
+                    // in; then the mode she clicked is selected. Restoring them AFTER the click (the leave-MultiPlex request does) would put the parked mode
+                    // back over her choice and save the wrong mode.
+                    let base: Draft = draft;
+                    if (multiplexSelected && parkedLegacyRef.current) {
+                      base = { ...draft, ...parkedLegacyRef.current };
+                      parkedLegacyRef.current = null;
+                    }
+                    if (base !== draft) setDraft({ ...base, mode: selected ? "" : m.value });
+                    else update("mode", selected ? "" : m.value);
+                    // Leaving MultiPlex returns the area to the existing xCell workflow.
+                    // ALWAYS a new token, even before MultiPlex is selected: a MultiPlex click whose load is pending is replaced here, so its late answer
+                    // matches nothing and can neither select MultiPlex over this mode nor refuse the Save.
+                    dispatchMultiplex({ t: "legacy" });
                   }
-                  if (base !== draft) setDraft({ ...base, mode: selected ? "" : m.value });
-                  else update("mode", selected ? "" : m.value);
-                  // Leaving MultiPlex returns the area to the existing xCell workflow.
-                  // ALWAYS a new token, even before MultiPlex is selected: a MultiPlex click whose load is pending is replaced here, so its late answer
-                  // matches nothing and can neither select MultiPlex over this mode nor refuse the Save.
-                  dispatchMultiplex({ t: "legacy" });
                 }}
                 className={`rounded-full border px-4 py-2 text-sm transition ${
                   selected
@@ -2412,57 +2420,57 @@ export function BlockSetupForm({
               </button>
             );
           })}
-          {multiplexOffered && (
-            <button
-              type="button"
-              data-testid="mode-multiplex"
-              aria-pressed={multiplexSelected}
-              disabled={multiplexSaved || draftFrozen || identityWritePending}
-              onClick={() => {
-                dispatchMultiplex({ t: multiplexSelected ? "undo" : "select" });
-              }}
-              className={`rounded-full border px-4 py-2 text-sm transition ${
-                multiplexSelected
-                  ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
-                  : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300"
-              }`}
-            >
-              MultiPlex
-              {/* Names the machine this mode belongs to, so nobody mistakes it for another machine's mode. */}
-              <span className="ml-1.5 text-xs opacity-70" data-testid="mode-multiplex-model">xCell Pur</span>
-            </button>
-          )}
         </div>
       </div>
       )}
 
-      {showLegacyFields && showModality && (
+      {((showLegacyFields && showModality) || multiplexSelected) && (
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-medium">Modality</span>
           <select
-            value={draft.apilusModality}
+            data-testid="modality-select"
+            value={multiplexSelected ? MULTIPLEX_MODALITY : draft.apilusModality}
+            disabled={multiplexSaved || draftFrozen || identityWritePending}
             onChange={(e) => {
               const next = e.target.value;
-              setDraft((d) => ({
-                ...d,
-                apilusModality: next,
-                // PR #279: OmniBlend has no thermolysis duration. Clear any value
-                // typed under a different modality so a NEW OmniBlend record can't
-                // persist a now-hidden reading. (Editing an existing OmniBlend
-                // record seeds from the saved entry and fires no onChange, so its
-                // history is preserved.) Galvanic intensity is retired everywhere,
-                // so there is nothing to clear for it here.
-                ...(next === "Omniblend"
-                  ? { thermolysisDurationSeconds: "" }
-                  : {}),
-              }));
+              // MULTIPLEX UNDER THERMOLYSIS: where the route is offered (a NEW area), choosing MultiPlex starts the native xCell Pur load. The stored
+              // modality label is NOT set; the native area carries no legacy modality. Where it is not offered (an existing legacy entry, no route)
+              // it stays the plain label it has always been. Offer is decided by route and identity, never by the label's text.
+              if (next === MULTIPLEX_MODALITY && multiplexOffered && !multiplexSelected) {
+                dispatchMultiplex({ t: "select" });
+              } else if (multiplexSelected) {
+                // LEAVING MULTIPLEX BY CHOOSING ANOTHER MODALITY: the parked readings come back first under the mode they were typed in (Thermolysis),
+                // then the modality she picked is applied over them. Choosing MultiPlex again changes nothing.
+                if (next !== MULTIPLEX_MODALITY) {
+                  const back = parkedLegacyRef.current;
+                  parkedLegacyRef.current = null;
+                  setDraft({ ...draft, ...(back ?? {}), mode: "thermo", apilusModality: next });
+                  dispatchMultiplex({ t: "legacy" });
+                }
+              } else {
+                setDraft((d) => ({
+                  ...d,
+                  apilusModality: next,
+                  // PR #279: OmniBlend has no thermolysis duration. Clear any value
+                  // typed under a different modality so a NEW OmniBlend record can't
+                  // persist a now-hidden reading. (Editing an existing OmniBlend
+                  // record seeds from the saved entry and fires no onChange, so its
+                  // history is preserved.) Galvanic intensity is retired everywhere,
+                  // so there is nothing to clear for it here.
+                  ...(next === "Omniblend"
+                    ? { thermolysisDurationSeconds: "" }
+                    : {}),
+                }));
+              }
             }}
             className="max-w-sm rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
           >
             <option value="">Select…</option>
-            {modalityOptions.map((opt) => (
+            {(multiplexSelected ? APILUS_MODALITIES_BY_MODE.thermo : modalityOptions).map((opt) => (
               <option key={opt} value={opt}>
                 {apilusModalityLabel(opt)}
+                {/* Names the machine this modality belongs to, so nobody mistakes it for another machine's mode. */}
+                {opt === MULTIPLEX_MODALITY && multiplexOffered ? " · xCell Pur" : ""}
               </option>
             ))}
           </select>
