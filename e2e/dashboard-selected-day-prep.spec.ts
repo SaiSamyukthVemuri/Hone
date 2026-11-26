@@ -315,7 +315,7 @@ test.describe("preparing a future day — 390px phone", () => {
 // in the DOM changes what is RENDERED, not what is TRANSPORTED, so this asserts
 // the transport boundary directly, with sentinel values that exist nowhere else.
 
-test.describe("the full treatment is not transported before it is asked for", () => {
+test.describe("the full treatment is not in the page payload (each row loads its own through the studio-checked action)", () => {
   const SENTINELS = {
     probeLot: "SENTINELLOT-77Q",
     reactionNote: "SENTINELREACTION-erythema-noted",
@@ -323,7 +323,7 @@ test.describe("the full treatment is not transported before it is asked for", ()
     entryComment: "SENTINELCOMMENT-third-pass-slow",
   };
 
-  test("no full-detail value is in the payload before expansion, and it is after", async ({
+  test("no full-detail value is in the page payload, and it is in the row once loaded", async ({
     page,
   }) => {
     const seed = await seedE2eStudio();
@@ -356,29 +356,17 @@ test.describe("the full treatment is not transported before it is asked for", ()
       }
     });
 
-    await test.step("18. …and it is not in the rendered document either", async () => {
-      await page.goto(url);
-      await expect(page.getByTestId("dashboard-memory-compact")).toBeVisible({
-        timeout: T,
-      });
-      const html = await page.content();
-      for (const [name, value] of Object.entries(SENTINELS)) {
-        expect(html.includes(value), `${name} present in the DOM before expansion`).toBe(
-          false,
-        );
-      }
-    });
-
-    await test.step("19. the compact row still shows what it is meant to", async () => {
-      // The point is minimisation, not blindness: the visible projection is
-      // still there.
+    await test.step("19. with the details hidden, the compact row still shows what it is meant to", async () => {
+      // The details are open by default and load on page view, so close them: the compact line is the closed row's
+      // content. (Step 17 is what guards the page payload.)
+      await closeLastVisitDetails(page.getByTestId("dashboard-memory-toggle"));
       await expect(page.getByTestId("dashboard-memory-compact")).toContainText(
         "Last treatment:",
       );
       await expect(page.getByTestId("dashboard-prep-remember")).toHaveCount(0);
     });
 
-    await test.step("20. after an EXPLICIT click, the full detail arrives", async () => {
+    await test.step("20. with the details open, the full detail is present", async () => {
       await ensureLastVisitDetailsOpen(page.getByTestId("dashboard-memory-toggle"));
       await expect(page.getByTestId("dashboard-memory-full")).toBeVisible({
         timeout: T,
@@ -442,7 +430,7 @@ test.describe("the full treatment is not transported before it is asked for", ()
     await loginAsOwner(page, seed);
     await page.goto(`/dashboard?day=${localDay(tz, OFFSET)}`);
 
-    await test.step("22. expanding the first row leaves the second unloaded", async () => {
+    await test.step("22. each row loads its OWN details, never another row's", async () => {
       await ensureLastVisitDetailsOpen(page.getByTestId("dashboard-memory-toggle").first());
       await expect(page.getByTestId("dashboard-memory-full").first()).toContainText(
         SENTINELS.probeLot,
@@ -507,7 +495,7 @@ test.describe("a rejected disclosure fails to its own line", () => {
       startsMinutesFromNow: OFFSET * 24 * 60 + 60,
       endsMinutesFromNow: OFFSET * 24 * 60 + 105,
     });
-    await seedE2eTodayAppointment(seed, {
+    const apptB = await seedE2eTodayAppointment(seed, {
       clientId: b.clientId,
       startsMinutesFromNow: OFFSET * 24 * 60 + 180,
       endsMinutesFromNow: OFFSET * 24 * 60 + 225,
@@ -515,13 +503,13 @@ test.describe("a rejected disclosure fails to its own line", () => {
 
     await loginAsOwner(page, seed);
 
-    // Break ONLY row A's server-action invocation. Server Actions POST back to the
+    // Break BOTH rows' server-action invocations (each is matched by its own appointment id). Server Actions POST back to the
     // same route, so aborting the POST reproduces a real transport failure —
     // the action never runs, and the browser-side promise rejects. practitioner feedback (26 Nov): the details now load on first
     // render, so the failure is installed BEFORE the page loads, and only for row A's appointment.
     let aborted = 0;
     await page.route("**/dashboard**", async (route) => {
-      if (route.request().method() === "POST" && (route.request().postData() ?? "").includes(apptA.appointmentId)) {
+      if (route.request().method() === "POST" && (route.request().postData() ?? "").match(new RegExp(`${apptA.appointmentId}|${apptB.appointmentId}`))) {
         aborted += 1;
         return route.abort("failed");
       }
@@ -555,7 +543,7 @@ test.describe("a rejected disclosure fails to its own line", () => {
       await expect(page.getByTestId("dashboard-memory-toggle")).toHaveCount(2);
     });
 
-    await test.step("26. no clinical sentinel leaked from the failed request", async () => {
+    await test.step("26. no clinical sentinel leaked from the failed requests", async () => {
       const html = await page.content();
       for (const sentinel of [
         "SENTINELLOT-ROW-A",
@@ -570,19 +558,21 @@ test.describe("a rejected disclosure fails to its own line", () => {
     });
 
     await test.step("27. the NEIGHBOURING row is still usable once transport recovers", async () => {
+      // BOTH rows failed on mount. Transport recovers; only row B is closed and reopened, which retries its read.
       await page.unroute("**/dashboard**");
-      await ensureLastVisitDetailsOpen(page.getByTestId("dashboard-memory-toggle").nth(1));
-      // `.nth(1)`: row A's region is still open showing its failure state, so
-      // two disclosure regions are mounted. That is the point — the failure
-      // stayed in row A.
+      const toggleB = page.getByTestId("dashboard-memory-toggle").nth(1);
+      await expect(page.getByTestId("dashboard-memory-unavailable")).toHaveCount(2);
+      await closeLastVisitDetails(toggleB);
+      await ensureLastVisitDetailsOpen(toggleB);
       await expect(page.getByTestId("dashboard-memory-full").nth(1)).toContainText(
         "SENTINELLOT-ROW-B",
         { timeout: T },
       );
-      // …and row A still shows its own failure, unchanged by B succeeding.
+      // …and row A, untouched, still shows its own failure, unchanged by B recovering.
       await expect(
         page.getByTestId("dashboard-memory-unavailable").first(),
       ).toBeVisible();
+      await expect(page.getByTestId("dashboard-memory-full").first()).not.toContainText("SENTINELLOT-ROW-A");
     });
   });
 });

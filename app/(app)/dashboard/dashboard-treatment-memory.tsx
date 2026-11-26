@@ -74,7 +74,8 @@ export function DashboardTreatmentMemory({
   const showable = !summary.unavailable && summary.hasTreatment;
 
   function load() {
-    if (result !== null || pending) return;
+    // A loaded or empty answer is kept; a FAILED one is retried the next time the row is opened.
+    if ((result !== null && result.status !== "unavailable") || pending) return;
     startTransition(async () => {
       // A rejected INVOCATION (dropped connection, deployment-id mismatch on a tab left open across a deploy) must fail
       // to this row's own line and never escape to the route error boundary, which would replace the whole Dashboard.

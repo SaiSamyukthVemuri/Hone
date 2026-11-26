@@ -277,7 +277,7 @@ describe("compact appointment rows (fidelity C)", () => {
     const parts = readFileSync("app/(app)/dashboard/visit-actions.tsx", "utf8");
     for (const id of ["today-rebook", "today-chart", "today-next-action", "today-consultation-notes", "today-review-intake"]) expect(parts, id).toContain(id);
   });
-  it("the details are a sibling of the row-body link (nothing interactive inside the anchor) and closed by default", () => {
+  it("the details are a sibling of the row-body link (nothing interactive inside the anchor) and no native details element", () => {
     expect(row.indexOf("</PendingContainerLink>")).toBeLessThan(row.indexOf('data-testid="today-row-details"'));
     expect(row).not.toMatch(/<details\b/);
     // the `open` ATTRIBUTE, not the open: class variant that places an expanded disclosure below the row

@@ -118,7 +118,7 @@ describe("the client boundary carries only the visible projection", () => {
     expect(COMPONENT).toMatch(/useEffect\(\(\) => \{\s*if \(showable && open\) load\(\);/);
     expect(COMPONENT).toMatch(/function toggle\(\)/);
     // …and once fetched it is kept, so reopening costs nothing.
-    expect(COMPONENT).toMatch(/if \(result !== null \|\| pending\) return;/);
+    expect(COMPONENT).toMatch(/if \(\(result !== null && result\.status !== \"unavailable\"\) \|\| pending\) return;/);
   });
 
   it("the accessible disclosure contract is preserved", () => {
@@ -177,6 +177,6 @@ describe("four distinct failure/success paths, and they stay distinct", () => {
   });
 
   it("containment does not disturb the cache — one fetch per mounted row", () => {
-    expect(COMPONENT).toMatch(/if \(result !== null \|\| pending\) return;/);
+    expect(COMPONENT).toMatch(/if \(\(result !== null && result\.status !== \"unavailable\"\) \|\| pending\) return;/);
   });
 });
