@@ -14,6 +14,7 @@ import {
   type E2eSeed,
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
+import { ensureLastVisitDetailsOpen } from "./helpers/last-visit-details";
 
 // Chloe, on production, after day navigation shipped:
 //
@@ -117,7 +118,7 @@ test.describe("preparing a future day", () => {
     });
 
     await test.step("5. one click opens the full recorded settings in the same row", async () => {
-      await returning.getByRole("button", { name: /^Last visit details for / }).click();
+      await ensureLastVisitDetailsOpen(returning.getByRole("button", { name: /^Last visit details for / }));
       await expect(returning.getByTestId("dashboard-memory-full")).toBeVisible({
         timeout: T,
       });
@@ -171,7 +172,7 @@ test.describe("preparing a future day", () => {
         page.getByRole("heading", { level: 2, name: "Today", exact: true }),
       ).toBeVisible({ timeout: T });
       const today = row(page, "Memory Client");
-      await expect(today.getByTestId("dashboard-prep-remember")).toHaveText("For this visit · Lower the energy one step");
+      await expect(today.getByTestId("dashboard-prep-remember")).toHaveText("From last visit, for today Lower the energy one step");
       await expect(today.getByTestId("today-row-caution")).toContainText("Avoid the jawline");
       await expect(today.getByText("Prefers the 2pm slot")).toBeVisible();
       await expect(today.getByTestId("dashboard-memory-compact")).toBeVisible();
@@ -274,12 +275,16 @@ test.describe("preparing a future day — 390px phone", () => {
 
     await test.step("14b. and it still opens and closes under a thumb", async () => {
       const toggle = page.getByTestId("dashboard-memory-toggle").first();
-      await toggle.tap();
+      // Open by default (Chloe, 26 Nov): a tap hides it, a second tap shows it again.
       await expect(page.getByTestId("dashboard-memory-full").first()).toBeVisible({
         timeout: T,
       });
       await toggle.tap();
       await expect(page.getByTestId("dashboard-memory-full")).toHaveCount(0);
+      await toggle.tap();
+      await expect(page.getByTestId("dashboard-memory-full").first()).toBeVisible({
+        timeout: T,
+      });
     });
 
     await test.step("15. no horizontal overflow at 390px", async () => {
@@ -372,7 +377,7 @@ test.describe("the full treatment is not transported before it is asked for", ()
     });
 
     await test.step("20. after an EXPLICIT click, the full detail arrives", async () => {
-      await page.getByTestId("dashboard-memory-toggle").click();
+      await ensureLastVisitDetailsOpen(page.getByTestId("dashboard-memory-toggle"));
       await expect(page.getByTestId("dashboard-memory-full")).toBeVisible({
         timeout: T,
       });
@@ -436,7 +441,7 @@ test.describe("the full treatment is not transported before it is asked for", ()
     await page.goto(`/dashboard?day=${localDay(tz, OFFSET)}`);
 
     await test.step("22. expanding the first row leaves the second unloaded", async () => {
-      await page.getByTestId("dashboard-memory-toggle").first().click();
+      await ensureLastVisitDetailsOpen(page.getByTestId("dashboard-memory-toggle").first());
       await expect(page.getByTestId("dashboard-memory-full").first()).toContainText(
         SENTINELS.probeLot,
         { timeout: T },
@@ -523,7 +528,7 @@ test.describe("a rejected disclosure fails to its own line", () => {
     });
 
     await test.step("23. the row renders its OWN failure state", async () => {
-      await page.getByTestId("dashboard-memory-toggle").first().click();
+      await ensureLastVisitDetailsOpen(page.getByTestId("dashboard-memory-toggle").first());
       await expect(
         page.getByTestId("dashboard-memory-unavailable").first(),
       ).toBeVisible({ timeout: T });
@@ -561,7 +566,7 @@ test.describe("a rejected disclosure fails to its own line", () => {
 
     await test.step("27. the NEIGHBOURING row is still usable once transport recovers", async () => {
       await page.unroute("**/dashboard**");
-      await page.getByTestId("dashboard-memory-toggle").nth(1).click();
+      await ensureLastVisitDetailsOpen(page.getByTestId("dashboard-memory-toggle").nth(1));
       // `.nth(1)`: row A's region is still open showing its failure state, so
       // two disclosure regions are mounted. That is the point — the failure
       // stayed in row A.
@@ -611,8 +616,8 @@ test.describe("the plan is limited to the immediate next appointment", () => {
     await test.step("29. the immediate appointment shows the plan once, including after expansion", async () => {
       await page.goto("/dashboard");
       const client = row(page, "Memory Client");
-      await expect(client.getByTestId("dashboard-prep-remember")).toHaveText(`For this visit · ${PLAN}`);
-      await client.getByRole("button", { name: /^Last visit details for / }).click();
+      await expect(client.getByTestId("dashboard-prep-remember")).toHaveText(`From last visit, for today ${PLAN}`);
+      await ensureLastVisitDetailsOpen(client.getByRole("button", { name: /^Last visit details for / }));
       await expect(client.getByTestId("dashboard-memory-full")).toContainText("Synchro");
       await expect(client.getByTestId("dashboard-memory-full")).not.toContainText(PLAN);
       await expect(client.getByText(PLAN, { exact: false })).toHaveCount(1);

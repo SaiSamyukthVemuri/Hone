@@ -460,7 +460,7 @@ test.describe("history is not asked, and therefore not answered, off Today", () 
         row(page, "Memory Client").getByTestId("dashboard-memory-toggle"),
       ).toBeVisible();
       await expect(
-        page.getByText("For this visit · Lower the energy one step").first(),
+        page.getByTestId("dashboard-prep-remember").first().filter({ hasText: "Lower the energy one step" }),
       ).toBeVisible();
       await expect(page.getByText("Avoid the jawline").first()).toBeVisible();
       await expect(page.getByText("Review Before Today").first()).toBeVisible();

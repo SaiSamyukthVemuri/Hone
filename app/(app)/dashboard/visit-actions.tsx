@@ -73,7 +73,7 @@ export function NextSessionReminder({ note }: { note: string }) {
       title={note}
       className="mb-2 min-w-0 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs dark:border-blue-900 dark:bg-blue-950/40"
     >
-      <h3 className="text-[10px] font-semibold uppercase tracking-wider text-blue-800 dark:text-blue-300">From last visit, for today</h3>
+      <h3 className="text-[10px] font-semibold uppercase tracking-wider text-blue-800 dark:text-blue-300">From last visit, for today</h3>{" "}
       <p className="mt-0.5 whitespace-pre-wrap break-words leading-5 text-blue-950 dark:text-blue-100">{note}</p>
     </section>
   );

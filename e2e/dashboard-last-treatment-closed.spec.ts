@@ -19,7 +19,7 @@ const T = 15_000;
 
 async function expectLineOnClosedRow(page: Page, shot: string) {
   const toggle = page.getByRole("button", { name: /^Last visit details for / }).first();
-  await expect(toggle).toHaveAttribute("aria-expanded", "false", { timeout: T });
+  await expect(toggle).toHaveAttribute("aria-expanded", "true", { timeout: T }); // open by default (Chloe, 26 Nov)
   const line = page.getByTestId("dashboard-memory-compact").first();
   await expect(line).toBeVisible({ timeout: T });
   await expect(line).toContainText("Last treatment:");

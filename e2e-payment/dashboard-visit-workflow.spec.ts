@@ -88,7 +88,7 @@ for (const screen of SCREENS) {
       await expect(row(page)).toBeVisible();
 
       await test.step("1. Last visit details opens once and shows the settings and the notes", async () => {
-        await expect(row(page).getByTestId("dashboard-prep-remember")).toHaveText(`For this visit · ${PLAN}`);
+        await expect(row(page).getByTestId("dashboard-prep-remember")).toHaveText(`From last visit, for today ${PLAN}`);
         const toggle = row(page).getByRole("button", { name: /^Last visit details for / });
         await toggle.click();
         const full = row(page).getByTestId("dashboard-memory-full");
