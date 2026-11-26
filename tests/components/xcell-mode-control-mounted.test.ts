@@ -554,6 +554,45 @@ describe("MultiPlex in a studio with no registered machine", () => {
     expect(saveButton().disabled).toBe(false);
   });
 
+  const chooseModality = (value: string) => act(async () => {
+    const sel = modalitySelect(host!)!;
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(sel, value);
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+
+  // P2-1: another Thermolysis MODALITY chosen while the load is pending is a replacement of the request, exactly as a mode pill is.
+  it("a load that SUCCEEDS after ANOTHER MODALITY was chosen does not apply MultiPlex over it, and the modality stays", async () => {
+    let release: (v: unknown) => void = () => undefined;
+    actions.loadMachineSetupContext.mockImplementationOnce(() => new Promise((r) => { release = r; }) as never);
+    await mount(null, { deviceId: PLACEHOLDER.deviceId });
+    await clickMultiplex();
+    expect(saveButton().disabled).toBe(true);
+    await chooseModality("Picoflash");
+    expect(saveButton().disabled, "choosing another modality ends the hold").toBe(false);
+    await act(async () => { release(ZERO()); });
+    expect(multiplexOn()).toBe(false);
+    expect(modalitySelect(host!)!.value).toBe("Picoflash");
+    expect(legacyFieldsShown()).toBe(true);
+    expect(saveButton().disabled).toBe(false);
+  });
+
+  // P2-2: the failure message says to choose another mode; choosing another modality must clear the refusal too.
+  it("after a FAILED load, choosing another modality clears the refusal and Save is open", async () => {
+    const create = await createAction();
+    create.mockClear();
+    create.mockResolvedValue({ ok: true, blockId: "new-b1" });
+    actions.loadMachineSetupContext.mockImplementationOnce((() => Promise.reject(new Error("network"))) as never);
+    await mount(null, { deviceId: PLACEHOLDER.deviceId });
+    await clickMultiplex();
+    await act(async () => { saveButton().click(); });
+    expect(host!.textContent).toContain("MultiPlex could not be loaded");
+    await chooseModality("Meloflash");
+    await act(async () => { saveButton().click(); });
+    expect(host!.textContent).not.toContain("MultiPlex could not be loaded");
+    expect(create, "the legacy area saves").toHaveBeenCalledTimes(1);
+    expect(modalitySelect(host!)!.value).toBe("Meloflash");
+  });
+
   it("MultiPlex clicked again while the first load is pending still loads once and then selects MultiPlex", async () => {
     actions.loadMachineSetupContext.mockClear();
     let release: (v: unknown) => void = () => undefined;

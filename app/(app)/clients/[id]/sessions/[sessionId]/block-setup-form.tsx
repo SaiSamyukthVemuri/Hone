@@ -2448,6 +2448,9 @@ export function BlockSetupForm({
                   dispatchMultiplex({ t: "legacy" });
                 }
               } else {
+                // ANY OTHER MODALITY while MultiPlex is not selected or saved REPLACES the request, as a mode pill does: a new token, so a pending
+                // load's late answer matches nothing and a failed load's refusal is cleared.
+                dispatchMultiplex({ t: "legacy" });
                 setDraft((d) => ({
                   ...d,
                   apilusModality: next,
