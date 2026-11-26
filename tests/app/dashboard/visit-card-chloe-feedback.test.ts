@@ -73,7 +73,7 @@ describe("1. ONE action row, one size", () => {
   it("a completed visit's Checkout button (CheckoutButton) matches the other actions too", () => {
     const html = actionRow(createElement(CheckoutButton, { appointmentId: "a1", status: "completed", className: VISIT_ACTION_CLASS }));
     const checkout = tags(html, /<button\b[^>]*data-testid="checkout-button"[^>]*>/g)[0];
-    expect(attr(checkout, "class")).toBe(VISIT_ACTION_CLASS);
+    expect(attr(checkout!, "class")).toBe(VISIT_ACTION_CLASS);
   });
 
   it("only the actions that are available render, in the same group", () => {
