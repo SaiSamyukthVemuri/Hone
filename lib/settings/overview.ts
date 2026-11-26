@@ -3,6 +3,7 @@ import "server-only";
 import {
   NAV_ENTRIES,
   isNavEntryVisible,
+  type NavEntry,
   type NavSearchContext,
 } from "@/lib/search/navigation-registry";
 import type { SettingsNavItem } from "./nav";
@@ -18,10 +19,16 @@ const categories = [
   { name: "My profile", ids: ["profile-details", "settings-calendar-feed", "settings-google-calendar-own"] },
 ];
 
+type OverviewDestination = { label: string; href: string; keywords: string };
+
 export type OverviewSection = {
   name: string;
-  links: { label: string; href: string; keywords: string }[];
+  links: (OverviewDestination & { controls?: OverviewDestination[] })[];
 };
+
+function searchVocabulary(entry: NavEntry) {
+  return [entry.title, entry.description, ...entry.keywords].join(" ");
+}
 
 export function buildSettingsOverview(
   items: readonly SettingsNavItem[],
@@ -51,11 +58,11 @@ export function buildSettingsOverview(
     for (const id of ids) {
       const leaf = byId.get(id);
       if (!leaf) continue;
-      const keywords = entries
-        .filter((entry) => entry.href === leaf.href || (entry.href.split("#")[0] === leaf.href && !byHref.has(entry.href)))
-        .map((entry) => [entry.title, entry.description, ...entry.keywords].join(" "))
-        .join(" ");
-      links.push({ label: leaf.label, href: leaf.href, keywords });
+      const keywords = entries.filter((entry) => entry.href === leaf.href).map(searchVocabulary).join(" ");
+      const controls = entries
+        .filter((entry) => entry.href.startsWith(leaf.href + "#") && !byHref.has(entry.href))
+        .map((entry) => ({ label: entry.title, href: entry.href, keywords: searchVocabulary(entry) }));
+      links.push({ label: leaf.label, href: leaf.href, keywords, controls });
       byId.delete(id);
     }
     if (links.length) result.push({ name, links });

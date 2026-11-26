@@ -136,8 +136,10 @@ describe("checkout cell + dashboard/calendar wiring (one shared flow)", () => {
     expect(CELL).toMatch(/Paid/);
     expect(CELL).toMatch(/Processing/);
     expect(CELL).toMatch(/Refunded/);
-    // Only completed appointments are checkout-relevant.
-    expect(CELL).toMatch(/if \(status !== "completed"\) return null/);
+    // Calendar checkout still requires completion. The dashboard may show
+    // its separate method-intent and finish-visit dialog for a confirmed visit.
+    expect(CELL).toContain('return visit.status === "completed" ? outcome : null;');
+    expect(CELL).toContain('dashboardStartsAt && (visit.status === "confirmed" || visit.status === "completed")');
     // Status conveyed by text, not colour alone.
     expect(CELL).toMatch(/appointment-payment-/);
   });

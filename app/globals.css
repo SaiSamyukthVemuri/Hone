@@ -9,49 +9,6 @@
  */
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* Expanded Settings uses the same accessible drawer as a phone, even on a wide screen. */
-@custom-variant settings-wide {
-  @media (min-width: 781px) {
-    &:where([data-settings-expanded="false"] *) {
-      @slot;
-    }
-  }
-}
-
-main[data-settings-layout],
-header:has(~ main[data-settings-layout]) > div:first-child,
-[data-settings-screen]:fullscreen {
-  --settings-gutter: clamp(0.875rem, 1.5vw, 1.75rem);
-  padding-left: max(var(--settings-gutter), env(safe-area-inset-left));
-  padding-right: max(var(--settings-gutter), env(safe-area-inset-right));
-}
-
-main[data-settings-layout] {
-  padding-block: clamp(0.75rem, 1.5vw, 1.5rem) max(1.5rem, env(safe-area-inset-bottom));
-}
-
-header:has(~ main[data-settings-layout]) > div:first-child {
-  max-width: none;
-}
-
-header:has(~ main [data-settings-expanded="true"]) {
-  display: none;
-}
-
-/* Keep the entire Settings subtree, including confirmation dialogs, in the native fullscreen element. */
-[data-settings-screen]:fullscreen {
-  overflow: auto;
-  overscroll-behavior: contain;
-  background: var(--background);
-  padding-top: env(safe-area-inset-top);
-  padding-bottom: max(1rem, env(safe-area-inset-bottom));
-}
-
-[data-settings-expanded="true"] {
-  --settings-top: env(safe-area-inset-top, 0px);
-}
-
-
 :root {
   --background: #ffffff;
   --foreground: #0a0a0a;

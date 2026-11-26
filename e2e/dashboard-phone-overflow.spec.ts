@@ -130,7 +130,7 @@ test.describe("tapping the appointment name on a 390px touch phone", () => {
 
   test("reaches /calendar/<id> on every one of 5 taps across the rows", async ({ page }) => {
     const { seed } = await seedStudioWithLongName();
-    await loginByMagicLink(page, seed.ownerEmail, { openRowDetails: false });
+    await loginByMagicLink(page, seed.ownerEmail);
     await page.goto("/dashboard");
     const names = page.getByTestId("today-row-client-name");
     await expect(names.first()).toBeVisible({ timeout: T });

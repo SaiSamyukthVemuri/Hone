@@ -126,10 +126,7 @@ describe("the disclosure is accessible and calm by default", () => {
   });
 
   it("the toggle names the client, so repeated rows are distinguishable", () => {
-    // Twenty rows of "View full last treatment" are indistinguishable to a
-    // screen reader navigating by control.
-    expect(MEMORY_UI).toMatch(/View full last treatment for \$\{clientName\}/);
-    expect(MEMORY_UI).toMatch(/Hide full last treatment for \$\{clientName\}/);
+    expect(MEMORY_UI).toContain('aria-label={`${open ? "Hide last visit details" : "Last visit details"} for ${clientName}`}');
   });
 
   it("the collapsed region is hidden from the accessibility tree, not just visually", () => {
@@ -445,19 +442,12 @@ describe("the Today row wires it correctly", () => {
     expect(MEMORY_UI).toMatch(/result\.status === "none"/);
   });
 
-  it("does not repeat the plan note that the row already shows as 'Remember'", () => {
-    // sessions.next_session_note feeds BOTH the row's Remember line and the
-    // model's forNextVisit. Printing one note twice under two labels is a bug
-    // this row has already had once.
+  it("renders the immediate plan once on the roster, outside the historical treatment", () => {
+    const row = DASH.slice(DASH.indexOf("function AppointmentRow("), DASH.indexOf("function AppointmentStatusPill("));
+    expect(row.match(/data-testid="dashboard-prep-remember"/g)).toHaveLength(1);
+    expect(row).toContain("{prepSummary.remember && (");
+    expect(row).not.toContain("{workflow.remember}");
     expect(MEMORY_UI_CODE).not.toMatch(/For next visit/);
-    // …and the reason is recorded where the next reader will look: the page
-    // prints the plan note ONLY off Today, where the Before-Today "Remember"
-    // line does not run.
-    const DASH_CODE = DASH.replace(/\/\*[\s\S]*?\*\//g, "").replace(
-      /^\s*\/\/.*$/gm,
-      "",
-    );
-    expect(DASH_CODE).toMatch(/\{!workflow && prepSummary\.remember && \(/);
   });
 
   it("writes nothing and touches no appointment mutation surface", () => {

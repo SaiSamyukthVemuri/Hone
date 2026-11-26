@@ -71,7 +71,8 @@ import {
   buildPointOfCareMemory,
   type PointOfCareArea,
   type PointOfCareBlock,
-  type PointOfCareEntry,
+  changedPassSettings,
+  type RecordedPassSettings,
 } from "@/lib/sessions/point-of-care-memory";
 import { formatAreaLabel, resolveBlockAreas } from "@/lib/sessions/block-areas";
 
@@ -183,16 +184,8 @@ export type AppointmentPrepArea = {
   // True when NOTHING about the setup was recorded, so the card can say that
   // once instead of rendering an empty chip row.
   setupRecorded: boolean;
-  // True when a LATER live pass recorded different machine readings from the
-  // canonical (earliest) one.
-  //
-  // The readings shown come from the canonical pass: Session 1B's rule, shared
-  // with the live charting card and with the in-form Copy settings control, and
-  // deliberately not changed here. But this card's whole promise is that the
-  // prior visit can be read without opening the chart, and silently showing
-  // only the first pass of a session that ended somewhere else would break that
-  // promise quietly. Chloe gets told to look, rather than misled.
   settingsChangedDuringSession: boolean;
+  changedPasses: RecordedPassSettings[];
   // True when any outcome value was recorded. An absent outcome reads as
   // absent; it is never fabricated into 0 hairs / 0 minutes / "no reaction".
   outcomeRecorded: boolean;
@@ -640,40 +633,8 @@ export function buildLastSessionNoteSections(input: {
 }
 
 // Split one point-of-care area into the explicit setup / outcome halves.
-// The reading fields whose divergence between passes actually matters. Block
-// -level values (energy level, frequency, probe) cannot differ per pass.
-const PASS_READING_FIELDS = [
-  "thermolysis_intensity_percent",
-  "thermolysis_duration_seconds",
-  "galvanic_ma",
-  "galvanic_duration_seconds",
-  "units_of_lye",
-  "pulse_count",
-  "pulse_delay_seconds",
-] as const;
-
-function readingsDiverge(
-  entries: ReadonlyArray<PointOfCareEntry> | null | undefined,
-): boolean {
-  const live = (entries ?? []).filter((e) => e.deleted_at == null);
-  if (live.length < 2) return false;
-  const ordered = [...live].sort((a, b) =>
-    a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0,
-  );
-  const canonical = ordered[0];
-  const norm = (v: unknown) => (v == null ? null : Number(v));
-  return ordered
-    .slice(1)
-    .some((e) =>
-      PASS_READING_FIELDS.some((f) => norm(e[f]) !== norm(canonical[f])),
-    );
-}
-
-function toPrepArea(
-  area: PointOfCareArea,
-  areaParts: string[],
-  entries: ReadonlyArray<PointOfCareEntry> | null | undefined,
-): AppointmentPrepArea {
+function toPrepArea(area: PointOfCareArea, block?: PointOfCareBlock): AppointmentPrepArea {
+  const passes = block ? changedPassSettings(block) : [];
   const passCountOf = area.passCount;
   const setup = {
     modeLabel: area.modeLabel,
@@ -697,7 +658,7 @@ function toPrepArea(
   return {
     key: area.key,
     areaLabel: area.areaLabel,
-    areaParts,
+    areaParts: block ? areaPartsFor(block) : [area.areaLabel],
     passCount: area.passCount,
     setup,
     outcome,
@@ -708,7 +669,8 @@ function toPrepArea(
       || setup.probeLine != null
       || setup.energyLevel != null
       || setup.readings.length > 0,
-    settingsChangedDuringSession: readingsDiverge(entries),
+    settingsChangedDuringSession: passes.length > 0,
+    changedPasses: passes,
     // NOTE the explicit null checks. A recorded `minutes: 0` is a real value
     // and a truthiness test would report it as "not recorded".
     //
@@ -754,17 +716,8 @@ export function buildAppointmentPrepMemory(
 
   // Per-area labels, in the SAME order buildPointOfCareMemory produced. Keyed
   // by block id rather than zipped by index, so the two can never drift.
-  const partsByKey = new Map<string, string[]>();
-  for (const block of input.blocks) {
-    partsByKey.set(block.id, areaPartsFor(block));
-  }
-
-  const entriesByKey = new Map<string, ReadonlyArray<PointOfCareEntry>>();
-  for (const b of input.blocks) entriesByKey.set(b.id, b.entries ?? []);
-
-  const areas = memory.areas.map((a) =>
-    toPrepArea(a, partsByKey.get(a.key) ?? [a.areaLabel], entriesByKey.get(a.key)),
-  );
+  const blocksById = new Map(input.blocks.map(block => [block.id, block]));
+  const areas = memory.areas.map(area => toPrepArea(area, blocksById.get(area.key)));
 
   return {
     sessionId: memory.sessionId,

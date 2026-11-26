@@ -216,18 +216,21 @@ describe("the dashboard is wired to it, and nothing else was swept up", () => {
     "dashboard-today",
     "dashboard-next-day",
   ];
-  // UI-01B: the appointment row's three SEGMENT-changing actions. Proven safe
+  // UI-01B: the appointment row's named navigation actions. Proven safe
   // by the pre-implementation experiment: with zero loading.tsx the old tree
   // and the tapped control both stay mounted while the destination is pending.
   const SEGMENT_NAV = [
     "today-next-action",
+    "today-chart",
+    "today-rebook",
     "today-consultation-notes",
     "today-review-intake",
   ];
 
-  it("uses PendingLink for exactly the six named controls", () => {
+  it("uses PendingLink for each dashboard navigation control and the upcoming appointment", () => {
+    expect(dash).toContain('href={`/calendar/${nextVisit.id}`} pendingLabel="Opening appointment…"');
     expect(dash.match(/<PendingLink\b/g) ?? []).toHaveLength(
-      QUERY_NAV.length + SEGMENT_NAV.length,
+      QUERY_NAV.length + SEGMENT_NAV.length + 1,
     );
     for (const testid of [...QUERY_NAV, ...SEGMENT_NAV]) {
       expect(dashboard).toMatch(

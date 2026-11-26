@@ -31,8 +31,8 @@ describe("AppMain: which pages get the wider contained column", () => {
   });
 
   it.each(["/settings", "/settings/", "/settings/services", "/settings/payments/fees"])(
-    "%s uses the full viewport",
-    (path) => expect(layoutAt(path)).toEqual({ width: "full", wideColumn: false }),
+    "%s shares the standard width with Notifications",
+    (path) => expect(layoutAt(path)).toEqual(layoutAt("/notifications")),
   );
 
   it("a similarly named path keeps the normal width", () => {

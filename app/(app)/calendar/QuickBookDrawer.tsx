@@ -1,5 +1,7 @@
 "use client";
 
+import { useDashboardRebook } from "./dashboard-rebook-context";
+
 // Phase C calendar-first booking drawer.
 //
 // Drives an internal practitioner-side booking for an existing OR
@@ -142,16 +144,27 @@ export function QuickBookDrawer({
   isOwner,
   currentPractitionerId,
   currentPractitionerName,
-  preferredPractitionerId,
+  preferredPractitionerId: columnPractitionerId,
   onBooked,
   onClose,
 }: Props) {
   const router = useRouter();
+  const rebook = useDashboardRebook();
+  const rebookClient = useMemo(() => {
+    if (!rebook) return null;
+    const contact = clients.find(client => client.id === rebook.clientId);
+    return {
+      id: rebook.clientId, name: rebook.clientName,
+      email: contact?.email ?? null, phone: contact?.phone ?? null, pronouns: contact?.pronouns ?? null,
+    };
+  }, [clients, rebook]);
   const serviceGroups = useMemo(
     () => groupServicesByModality(services),
     [services],
   );
-  const firstServiceId = serviceGroups[0]?.services[0]?.id ?? "";
+  const firstServiceId = rebook
+    ? services.find(service => service.id === rebook.serviceId)?.id ?? ""
+    : serviceGroups[0]?.services[0]?.id ?? "";
 
   // Item 6: owner practitioner selector (same rules as the client-profile
   // surface). Shown ONLY when capacity is ON and the actor is an owner; members
@@ -159,6 +172,7 @@ export function QuickBookDrawer({
   const showSelector = isOwner;
   const [eligible, setEligible] = useState<EligiblePractitioner[]>([]);
   const [eligibleError, setEligibleError] = useState<string | null>(null);
+  const preferredPractitionerId = columnPractitionerId ?? rebook?.practitionerId;
   const initialTarget = (showSelector && preferredPractitionerId) || currentPractitionerId;
   const [target, setTarget] = useState<string>(initialTarget);
   const [loadingPractitioners, startLoadingPractitioners] = useTransition();
@@ -174,7 +188,7 @@ export function QuickBookDrawer({
   const [clientMode, setClientMode] = useState<"search" | "new">("search");
   const [clientQuery, setClientQuery] = useState("");
   const [selectedClient, setSelectedClient] =
-    useState<QuickBookClient | null>(() => clients.find((c) => c.id === draft?.opening?.clientId) ?? null);
+    useState<QuickBookClient | null>(() => rebookClient ?? clients.find((c) => c.id === draft?.opening?.clientId) ?? null);
   // Clients created during this drawer session. The server-passed
   // `clients` prop only updates after a full router.refresh(), which
   // happens after booking. We merge `clients + extraClients` so a
@@ -238,7 +252,7 @@ export function QuickBookDrawer({
     if (!open) {
       setClientMode("search");
       setClientQuery("");
-      setSelectedClient(null);
+      setSelectedClient(rebookClient);
       setExtraClients([]);
       setNewClientName("");
       setNewClientEmail("");
@@ -260,7 +274,14 @@ export function QuickBookDrawer({
       setOverrideDurationMinutes("");
       autoOverrideRef.current = false;
     }
-  }, [open, firstServiceId, initialTarget]);
+  }, [open, firstServiceId, initialTarget, rebookClient]);
+
+  const selectedService = services.find(service => service.id === serviceId);
+  const differentPreviousDuration = rebook && rebook.serviceId === selectedService?.id
+    && rebook.durationMinutes !== selectedService?.default_duration_minutes ? rebook.durationMinutes : null;
+  // The booking command accepts custom durations in 15-minute increments from 15 through 360.
+  const rebookDuration = differentPreviousDuration !== null && differentPreviousDuration >= 15
+    && differentPreviousDuration <= 360 && differentPreviousDuration % 15 === 0 ? differentPreviousDuration : null;
 
   // When the drawer opens (or the draft time changes), seed the
   // override time field with the time the practitioner clicked on
@@ -296,11 +317,10 @@ export function QuickBookDrawer({
       setOverrideConfirmed(false);
       autoOverrideRef.current = true;
     } else {
-      // Bare click on a NEW slot: the outside-availability override must start
-      // OFF for each new booking attempt. It is never sticky across slots
-      // (Chloe feedback). A drag soft-enables above; a plain click resets.
-      setOverrideDurationMinutes("");
-      setOverrideEnabled(false);
+      // A bare click starts a fresh draft. A rebook with a custom duration needs
+      // the existing override flow; it always requires fresh confirmation.
+      setOverrideDurationMinutes(rebookDuration === null ? "" : String(rebookDuration));
+      setOverrideEnabled(rebookDuration !== null);
       setOverrideConfirmed(false);
       autoOverrideRef.current = false;
     }
@@ -308,7 +328,7 @@ export function QuickBookDrawer({
     // override above. Within the SAME draft it does not re-fire, so a manual
     // override toggle sticks until the slot changes or the drawer closes: we
     // intentionally do NOT add overrideEnabled / overrideConfirmed to the deps.
-  }, [open, draft?.localDate, draft?.localTime, draft?.durationMinutes]);
+  }, [open, draft?.localDate, draft?.localTime, draft?.durationMinutes, rebookDuration]);
 
   // Service change after a drag (PR #128, Part 2). A drag of 105 min
   // followed by picking a 60-minute service should book at the
@@ -365,7 +385,7 @@ export function QuickBookDrawer({
   // null and the rebook card stays hidden. Runs on client change only;
   // does not touch slot fetching, availability, or booking.
   useEffect(() => {
-    if (!open || !selectedClient) {
+    if (!open || !selectedClient || rebook) {
       setLastService(null);
       return;
     }
@@ -382,7 +402,7 @@ export function QuickBookDrawer({
     };
     // startLoadingLastService is a stable transition starter.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, selectedClient?.id]);
+  }, [open, selectedClient?.id, rebook]);
 
   // Close on Esc.
   useEffect(() => {
@@ -649,6 +669,10 @@ export function QuickBookDrawer({
         }
         return;
       }
+      if (rebook) {
+        router.replace(rebook.dashboardHref);
+        return;
+      }
       router.refresh();
       onClose();
       onBooked?.();
@@ -711,7 +735,7 @@ export function QuickBookDrawer({
                   </div>
                 )}
               </div>
-              <button
+              {!rebook && <button
                 type="button"
                 onClick={() => {
                   setSelectedClient(null);
@@ -720,7 +744,7 @@ export function QuickBookDrawer({
                 className="shrink-0 text-xs text-neutral-500 hover:underline"
               >
                 Change
-              </button>
+              </button>}
             </div>
           ) : (
             <>
@@ -920,6 +944,12 @@ export function QuickBookDrawer({
               </div>
             )}
 
+          {differentPreviousDuration !== null && (
+            <p className="text-xs text-neutral-600 dark:text-neutral-400">
+              Previous visit · {differentPreviousDuration} min. Standard booking · {selectedService?.default_duration_minutes} min.
+              {rebookDuration === null && " The previous duration is outside the supported custom booking range."}
+            </p>
+          )}
           {services.length === 0 ? (
             <p className="rounded-md border border-dashed border-neutral-300 px-3 py-3 text-xs text-neutral-500 dark:border-neutral-700">
               No active services. Add one in Settings → Services.
@@ -930,6 +960,7 @@ export function QuickBookDrawer({
               onChange={(e) => setServiceId(e.target.value)}
               className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
             >
+              {rebook && !firstServiceId && <option value="">Choose an active service</option>}
               {serviceGroups.map((group) =>
                 serviceGroups.length === 1 && group.modality === null ? (
                   group.services.map((s) => (

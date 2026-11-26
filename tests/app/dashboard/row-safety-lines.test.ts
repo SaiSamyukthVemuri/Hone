@@ -62,9 +62,14 @@ describe("compact row layout pins (OPS 1308: full-width visit information)", () 
     expect(row).not.toMatch(/py-4 pr-4/);
     expect(row).toMatch(/basis-full gap-3/);
   });
-  it("an open disclosure takes the full width below; a closed one sits beside Open", () => {
-    expect(row).toMatch(/order-2 open:order-3 open:basis-full lg:order-1 lg:ml-\[5\.75rem\] lg:open:order-3/);
-    expect(row).toMatch(/order-1 ml-\[5\.75rem\] flex flex-wrap items-center gap-2 lg:order-2 lg:ml-auto lg:justify-end/);
+  it("last visit details take a full row below the compact primary actions", () => {
+    expect(row).toMatch(/data-testid="today-row-details" className="[^"]*basis-full/);
+    expect(row).not.toMatch(/<details\b/);
+    const actions = row.indexOf('data-testid="today-row-actions"');
+    expect(actions).toBeGreaterThan(row.indexOf("<DashboardQuickPin"));
+    expect(actions).toBeLessThan(row.indexOf(">Upcoming session<"));
+    expect(actions).toBeLessThan(row.indexOf('data-testid="today-row-details"'));
+    expect(row).toMatch(/data-testid="today-row-actions" className="order-1 [^"]*basis-full/);
   });
   it("on a phone Open starts at the text column (mobile-ux pins every action's left edge to the body's)", () => {
     // 5.75rem = 80px time cell + 12px gap = the body text column offset from the card's content edge
@@ -76,6 +81,6 @@ describe("compact row layout pins (OPS 1308: full-width visit information)", () 
     expect(row.indexOf("<IntakePill")).toBeLessThan(row.indexOf("COMPACT ROW: service"));
   });
   it("the disclosure content is indented to the text column (80px time cell + 12px gap + 16px padding)", () => {
-    expect(row).toMatch(/flex flex-col gap-1\.5 pb-2 pl-\[5\.75rem\]/);
+    expect(row).toMatch(/data-testid="today-row-details" className="[^"]*pl-\[5\.75rem\]/);
   });
 });

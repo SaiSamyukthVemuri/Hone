@@ -1,3 +1,4 @@
+import { withDashboardRebook, type RebookOrigin } from "@/lib/calendar/dashboard-rebook";
 import { PendingContainerLink, PendingLink } from "@/components/pending-link";
 import { localDateString, startOfWeek } from "@/lib/booking/tz";
 import { dayOfMonth, firstOfMonthString, isInMonth, monthGridDates, monthYearLabel } from "@/lib/booking/month-grid";
@@ -23,8 +24,10 @@ function visitsLabel(count: number) {
 }
 
 export function MonthView({
+  rebook,
   monthAnchor, appointmentsByDate, blockedByDate, today, selectedDate = today, hasDayView = false, isClosedDate, selectionParam,
 }: {
+  rebook?: RebookOrigin | null;
   monthAnchor: string;
   appointmentsByDate: Map<string, MonthDayAppt[]>;
   blockedByDate: Map<string, MonthDayBlocked>;
@@ -65,7 +68,7 @@ export function MonthView({
           const blockedLabel = blocked?.fullDay ? displayBlockoutLabel(blocked.fullDayReason) : blocked?.labels.join(" · ");
           const summaryId = `month-day-${cellDate}`;
           const dayHref = withSelection(`/calendar?view=month&month=${firstOfMonthString(cellDate)}&day=${cellDate}`, selectionParam);
-          return <PendingContainerLink key={cellDate} href={dayHref + "#month-agenda"} prefetch={false}
+          return <PendingContainerLink key={cellDate} href={withDashboardRebook(dayHref, rebook) + "#month-agenda"} prefetch={false}
             aria-label={`Open ${cellDate}`} aria-describedby={inMonth ? summaryId : undefined}
             aria-current={cellDate === selectedDate ? "date" : undefined}
             className={`flex min-h-[64px] min-w-0 flex-col gap-1 border-b border-r border-neutral-100 p-1 hover:bg-neutral-100 sm:min-h-[84px] sm:p-2 dark:border-neutral-800 dark:hover:bg-neutral-800 ${cellDate === today ? "border-t-2 border-t-sky-500" : ""} ${closed || !inMonth ? "bg-neutral-50 dark:bg-neutral-900" : ""} aria-[current=date]:bg-neutral-100 aria-[current=date]:ring-1 aria-[current=date]:ring-inset aria-[current=date]:ring-neutral-700 dark:aria-[current=date]:bg-neutral-800`}>

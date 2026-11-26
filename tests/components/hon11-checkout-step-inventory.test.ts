@@ -17,6 +17,7 @@ const read = (p: string) => readFileSync(path.join(process.cwd(), p), "utf8");
 const ENTRY = "components/checkout-button.tsx";
 const MODAL = "components/quick-checkout-modal.tsx";
 const CARD = "components/session-payment-prepare-card.tsx";
+const PICKER = "components/checkout-method-picker.tsx";
 const SETTLE = "components/appointment-settlement-controls.tsx";
 const COMPLETE = "components/appointment/mark-complete-control.tsx";
 const CTX = "app/(app)/quick-checkout-actions.ts";
@@ -27,15 +28,15 @@ type Step = { path: "card" | "external"; kind: "tap" | "value"; mandatory: boole
 // The shortest successful paths, in order.
 const STEPS: Step[] = [
   { path: "card", kind: "tap", mandatory: true, what: "Checkout (opens the modal)", file: ENTRY, marker: 'data-testid="checkout-button"' },
-  { path: "card", kind: "tap", mandatory: true, what: "Prepare session payment (creates the attempt; no charge)", file: CARD, marker: "Prepare session payment" },
+  { path: "card", kind: "tap", mandatory: true, what: "Checkout with Stripe (creates the attempt; no charge)", file: CARD, marker: "Checkout with Stripe" },
   { path: "card", kind: "value", mandatory: false, what: "Final charge (prefilled with the booked price)", file: CARD, marker: 'data-testid="final-charge-input"' },
   { path: "card", kind: "value", mandatory: false, what: "Internal note", file: CARD, marker: 'name="internal_note"' },
   { path: "card", kind: "tap", mandatory: true, what: "Run charge (arms the confirmation)", file: CARD, marker: '"Run charge"' },
-  { path: "card", kind: "tap", mandatory: true, what: "Confirm: run charge", file: CARD, marker: "Confirm: run charge" },
+  { path: "card", kind: "tap", mandatory: true, what: "Confirm Stripe charge", file: CARD, marker: "Confirm Stripe charge" },
   { path: "card", kind: "tap", mandatory: false, what: "Send receipt", file: CARD, marker: '"Send receipt"' },
   { path: "card", kind: "tap", mandatory: true, what: "Close the modal", file: MODAL, marker: 'data-testid="quick-checkout-close"' },
   { path: "external", kind: "tap", mandatory: true, what: "Checkout (opens the modal)", file: ENTRY, marker: 'data-testid="checkout-button"' },
-  { path: "external", kind: "tap", mandatory: true, what: "Choose the method (cash, e-transfer, another way, still owes; owner also waive)", file: SETTLE, marker: "data-testid={`settlement-open-${m}`}" },
+  { path: "external", kind: "tap", mandatory: true, what: "Choose the method (cash, e-transfer, another way, still owes; owner also waive)", file: PICKER, marker: "data-testid={`settlement-open-${option}`}" },
   { path: "external", kind: "value", mandatory: false, what: "Amount (prefilled with the booked price)", file: SETTLE, marker: 'data-testid="settlement-amount"' },
   { path: "external", kind: "value", mandatory: false, what: "Note", file: SETTLE, marker: 'data-testid="settlement-note"' },
   { path: "external", kind: "tap", mandatory: true, what: "Record (confirms the attestation)", file: SETTLE, marker: "data-testid={`settlement-confirm-${open}`}" },
@@ -68,7 +69,7 @@ describe("HON-11 checkout step inventory", () => {
 
   it("the card path is two phases by design: prepare writes an attempt, the charge needs an armed second tap", () => {
     const src = read(CARD);
-    expect(src).toContain("This prepares a row only. No PaymentIntent. No charge. No receipt.");
+    expect(src).toContain("You will review and confirm this amount before your client’s card is charged.");
     expect(src).toMatch(/if \(!confirmExecute\) \{\s*setConfirmExecute\(true\);\s*return;\s*\}/);
     expect(src).toContain('fd.set("confirm_charge", "true")');
   });
@@ -84,10 +85,10 @@ describe("HON-11 checkout step inventory", () => {
 
   it("settlement offers four practitioner methods plus owner-only waive, and the amount is prefilled", () => {
     const src = read(SETTLE);
-    expect(src).toContain("...PRACTITIONER_METHODS");
-    expect(src).toContain('[...PRACTITIONER_METHODS, "waived"]');
+    expect(src).toContain("<CheckoutMethodPicker");
+    expect(read(PICKER)).toContain('isOwner ? [...PRACTITIONER_METHODS, "waived"] : [...PRACTITIONER_METHODS]');
     expect(src).toContain("(defaultAmountCents / 100).toFixed(2)");
-    expect(read("lib/billing/settlement-types.ts")).toMatch(/PRACTITIONER_METHODS = \[\s*"paid_cash",\s*"paid_e_transfer",\s*"paid_other_external",\s*"still_owes",\s*\] as const/);
+    expect(read("lib/billing/settlement-types.ts")).toMatch(/PRACTITIONER_METHODS = \[\s*"paid_e_transfer",\s*"paid_cash",\s*"paid_other_external",\s*"still_owes",\s*\] as const/);
   });
 
   it("settlement controls are withheld once Hone holds card money, and checkout is owner-only", () => {

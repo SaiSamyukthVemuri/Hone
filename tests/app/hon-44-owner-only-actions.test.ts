@@ -77,7 +77,7 @@ import {
   sendFeeReceiptAction,
 } from "@/app/(app)/calendar/[id]/manual-fee-actions";
 import { recordAppointmentSettlementAction } from "@/app/(app)/appointment-settlement-actions";
-import { getQuickCheckoutContextAction } from "@/app/(app)/quick-checkout-actions";
+import { getDashboardCheckoutQuoteAction, getQuickCheckoutContextAction } from "@/app/(app)/quick-checkout-actions";
 import { updateSessionPriceAction } from "@/app/(app)/clients/[id]/sessions/[sessionId]/actions";
 import { addClientPricingAction, deleteClientPricingAction } from "@/app/(app)/clients/[id]/actions";
 import {
@@ -158,6 +158,11 @@ const CASES: Case[] = [
     name: "recordAppointmentSettlementAction",
     run: () => recordAppointmentSettlementAction(form({ appointment_id: ID_A, method: "paid_cash", amount_cents: "5000" })),
     refused: (o) => notAuthorized(o) && (o.value as { code?: string }).code === "not_owner",
+  },
+  {
+    name: "getDashboardCheckoutQuoteAction",
+    run: () => getDashboardCheckoutQuoteAction(ID_A),
+    refused: (outcome) => outcome.value === null,
   },
   {
     name: "getQuickCheckoutContextAction",

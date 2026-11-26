@@ -166,7 +166,7 @@ describe("SessionPaymentPrepareCard: Run charge button (PR #173)", () => {
   it("uses a two-click confirm pattern (first click flips confirmExecute, second submits)", () => {
     expect(CARD).toMatch(/if \(!confirmExecute\)/);
     expect(CARD).toMatch(/setConfirmExecute\(true\)/);
-    expect(CARD).toMatch(/Confirm: run charge/);
+    expect(CARD).toMatch(/Confirm Stripe charge/);
   });
 
   it("submits confirm_charge='true' on the second click", () => {

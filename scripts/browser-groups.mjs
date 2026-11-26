@@ -97,6 +97,7 @@ export const BROWSER_GROUPS = {
       "finish-appointment-mobile.spec.ts",
       "combined-today-workflow.spec.ts",
       "dashboard-memory-visibility.spec.ts",
+      "dashboard-rebook-chart.spec.ts",
       // Chloe D1: the Today treatment-memory disclosure must EXPAND without
       // navigating (it used to sit inside the row-body link and push a route),
       // while the standalone appointment-prep card keeps its full-chart link.

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import type { ReactElement, ReactNode } from "react";
+import type { OverviewSection } from "@/lib/settings/overview";
 import {
   NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV,
   NEW_CLIENT_WAITLIST_SLUGS_ENV,
@@ -136,35 +136,11 @@ vi.mock("@/lib/supabase/admin-server", () => ({
 
 const envKeys = [NEW_CLIENT_WAITLIST_SLUGS_ENV, NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV];
 let savedEnv: Array<readonly [string, string | undefined]> = [];
-const setFlags = (on: boolean) => {
-  for (const k of envKeys) {
-    if (on) process.env[k] = SLUG;
-    else delete process.env[k];
-  }
-};
-
-function findItems(node: ReactNode): Array<{ href: string; label: string }> | null {
-  if (!node || typeof node !== "object") return null;
-  if (Array.isArray(node)) {
-    for (const child of node) {
-      const found = findItems(child);
-      if (found) return found;
-    }
-    return null;
-  }
-  const el = node as ReactElement<{ items?: unknown; children?: ReactNode }>;
-  if (Array.isArray(el.props?.items)) {
-    return el.props.items as Array<{ href: string; label: string }>;
-  }
-  return findItems(el.props?.children);
-}
-
 async function waitlistTabShown(): Promise<boolean> {
   const { default: SettingsLayout } = await import("@/app/(app)/settings/layout");
   const tree = await SettingsLayout({ children: null });
-  const items = findItems(tree);
-  expect(items, "layout must hand the Settings shell its items").not.toBeNull();
-  return items!.some((i) => i.href === "/waitlist" && i.label === "Waitlist");
+  const sections: OverviewSection[] = tree.props.sections;
+  return sections.some(section => section.links.some(link => link.href === "/waitlist" && link.label === "Waitlist"));
 }
 
 beforeEach(() => {

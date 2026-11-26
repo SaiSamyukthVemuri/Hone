@@ -124,3 +124,53 @@ describe.each(ACTIONS)("%s: payment_jurisdiction_missing", (action, run) => {
     expect(logged).toEqual([]);
   });
 });
+
+describe("external checkout fee adjustment", () => {
+  const fields = {
+    appointment_id: APPT,
+    method: "paid_e_transfer",
+    amount_cents: "5025",
+    reference_fee_cents: "9000",
+    final_fee_cents: "7550",
+    fee_adjustment_reason: " Shorter treatment ",
+  };
+
+  it("sends the receipt and the owner-agreed fee to the atomic writer with the authenticated studio and deployment mode", async () => {
+    rpc.mockResolvedValue({ data: [{ result: "recorded", settlement_id: SETTLEMENT }], error: null });
+    const result = await recordAppointmentSettlementAction(form(fields));
+    expect(result.ok).toBe(true);
+    expect(rpc).toHaveBeenCalledWith("record_adjusted_appointment_settlement", {
+      p_studio_id: STUDIO, p_appointment_id: APPT, p_method: "paid_e_transfer", p_amount_cents: 5025,
+      p_reference_fee_cents: 9000, p_final_fee_cents: 7550, p_fee_adjustment_reason: "Shorter treatment",
+      p_note: null, p_livemode: false,
+    });
+  });
+
+  it("rejects an incomplete adjustment rather than falling back to an ordinary receipt", async () => {
+    const result = await recordAppointmentSettlementAction(form({ ...fields, fee_adjustment_reason: "" }));
+    expect(result).toMatchObject({ ok: false, code: "invalid_input" });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("shows an actionable refusal when the authoritative quote changes", async () => {
+    rpc.mockResolvedValue({ data: [{ result: "fee_changed" }], error: null });
+    expect(await recordAppointmentSettlementAction(form(fields))).toMatchObject({ ok: false, code: "fee_changed" });
+  });
+
+  it("explains an invalid correction amount without echoing the database error", async () => {
+    rpc.mockResolvedValue({data: null, error: {code: "23514", message: "settlement_adjusted_amount_invalid"}});
+    const result = await supersedeAppointmentSettlementAction(form({
+      settlement_id: SETTLEMENT, appointment_id: APPT, method: "paid_cash", amount_cents: "8000", reason: "Cash correction",
+    }));
+    expect(result).toMatchObject({ok: false, code: "invalid_input"});
+    expect(result.message).not.toContain("settlement_adjusted_amount_invalid");
+  });
+
+  it("keeps a visit reduced to zero on the waiver path", async () => {
+    rpc.mockResolvedValue({ data: [{ result: "recorded", settlement_id: SETTLEMENT }], error: null });
+    expect((await waiveAppointmentFeeAction(form({ ...fields, final_fee_cents: "0", amount_cents: "9000" }))).ok).toBe(true);
+    expect(rpc).toHaveBeenCalledWith("record_adjusted_appointment_settlement", expect.objectContaining({
+      p_method: "waived", p_amount_cents: 9000, p_reference_fee_cents: 9000, p_final_fee_cents: 0,
+    }));
+  });
+});

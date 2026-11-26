@@ -27,6 +27,7 @@ Hone collapses that into one practice surface where the calendar is informed by 
 | Consent / e-sign | Author templates (general / treatment / policy / card authorization / photo consent); see signed history with the title + body + version snapshot. |
 | Card-on-file | View whether the client has an active card and a signed card authorization. **Live + test**, mode-scoped with live/test isolation. |
 | Manual cancellation/no-show fee | Set fee amounts; on cancelled/no-show appointments with full evidence, prepare a `ready` attempt; then run the charge or cancel the prepared attempt. **TEST MODE ONLY — live manual fees are on a server-side hard hold** (`lib/billing/live-charge-reason-allowlist.ts`); only `session_payment` charges live. |
+| Settings | Settings uses the shared page width. Pick a category to open its editor, use the mobile Settings menu, or search for a specific control. Owners can open new-client admission and weekly hours directly from the overview. |
 | Public booking link | Shareable booking page at `/book/<studio-slug>`; configurable booking window, buffers, descriptions. |
 
 ## What clients can do today

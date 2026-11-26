@@ -891,7 +891,7 @@ for (const width of CARD_WIDTHS) {
   test.describe(`MOBILE-UI-01 appointment card @ ${width}px`, () => {
     test.use({ viewport: { width, height: 900 }, hasTouch: true, isMobile: true });
 
-    test(`body, Before Today and every action share one left edge`, async ({
+    test("the compact actions align with their groups and fit inside the appointment", async ({
       page,
     }) => {
       const seed = await seedE2eStudio();
@@ -915,12 +915,10 @@ for (const width of CARD_WIDTHS) {
         const card = rowBody.parentElement!;
         const timeCell = rowBody.firstElementChild as HTMLElement;
         const textCol = rowBody.children[1] as HTMLElement;
-        const beforeToday =
-          [...document.querySelectorAll("span")].find(
-            (s) => s.textContent?.trim() === "Before today",
-          )?.parentElement ?? null;
-        const x = (el: Element | null) =>
-          el ? +el.getBoundingClientRect().x.toFixed(1) : null;
+        const details = card.querySelector<HTMLElement>('[data-testid="today-row-details"]')!;
+        const rebook = card.querySelector<HTMLElement>('[data-testid="today-rebook"]')!;
+        const footer = rebook.parentElement!;
+        const detailsX = details.getBoundingClientRect().x + parseFloat(getComputedStyle(details).paddingLeft);
         const rect = (el: Element | null) => {
           if (!el) return null;
           const r = el.getBoundingClientRect();
@@ -932,7 +930,7 @@ for (const width of CARD_WIDTHS) {
         const timeRange = document.createRange();
         // The start label is the cell's first span; the end time is a deliberate second line beneath it.
         timeRange.selectNodeContents(timeCell.firstElementChild ?? timeCell);
-        const actions = [...document.querySelectorAll('[data-testid="today-next-action"],[data-testid="today-consultation-notes"]')];
+        const actions = [...footer.querySelectorAll("a, button")];
         // The VISIBLE text edge, not the box edge. A borderless link with
         // horizontal padding has a box that aligns while its glyphs sit 12px
         // further in — which is exactly how this card looked wrong while a
@@ -945,9 +943,9 @@ for (const width of CARD_WIDTHS) {
           return rects.length ? +Math.min(...rects.map((q) => q.left)).toFixed(1) : null;
         };
         return {
-          bodyX: x(textCol),
-          bodyTextX: textLeft(textCol.firstElementChild),
-          beforeTodayX: x(beforeToday),
+          bodyX: textCol.getBoundingClientRect().x,
+          footerX: footer.getBoundingClientRect().x,
+          detailsX,
           secondaryTextX: textLeft(
             document.querySelector('[data-testid="today-consultation-notes"]'),
           ),
@@ -974,30 +972,14 @@ for (const width of CARD_WIDTHS) {
       // 2. The complete time label stays on ONE line at every phone width.
       expect(m.timeLineBoxes).toBe(1);
 
-      // 3. Before Today shares the body's left edge exactly (it is the same
-      //    column, not a nested one).
-      expect(m.beforeTodayX).toBe(m.bodyX);
-
-      // 4. EVERY action aligns with the BODY, never with the TIME gutter.
-      //    This is the assertion the defect fails: it put one action 26px left
-      //    of the body and the other 96px left of it.
+      // The primary group aligns with the client name. Each wrapped line can fit
+      // multiple controls. Secondary links align with the details column.
+      expect(m.footerX).toBeCloseTo(m.bodyX, 0);
+      expect(m.actions.map(a => a.id)).toEqual(expect.arrayContaining(["today-rebook", "today-chart"]));
       for (const a of m.actions) {
-        expect(a.x, `${a.id} left edge`).toBe(m.bodyX);
+        expect(a.x, `${a.id} left edge`).toBeGreaterThanOrEqual(m.footerX - 1);
       }
-
-      // 4b. The BORDERLESS secondary action's GLYPHS align with the body text,
-      //     not merely its padded box. The primary action is bordered, so its
-      //     border is its alignment edge and its label is legitimately inset —
-      //     that is why this assertion names the borderless control only.
-      //     Tolerance, not equality: the left side bearing of a glyph differs
-      //     between type sizes, so the body name (base size) and this link
-      //     (text-xs) can differ by a pixel with their boxes perfectly aligned.
-      //     The defect being pinned moved the glyphs 12px, so 2px is a bar it
-      //     cannot sneak under.
-      expect(
-        Math.abs((m.secondaryTextX ?? 0) - (m.bodyTextX ?? 0)),
-        "secondary action text edge vs body text edge",
-      ).toBeLessThanOrEqual(2);
+      expect(Math.abs((m.secondaryTextX ?? 0) - m.detailsX)).toBeLessThanOrEqual(2);
 
       // 5. Actions stay inside the card.
       for (const a of m.actions) {
@@ -1110,25 +1092,26 @@ for (const width of HOSTILE_WIDTHS) {
         const rg = document.createRange();
         rg.selectNodeContents(timeCell.firstElementChild ?? timeCell);
         const card = rowBody.parentElement!.getBoundingClientRect();
-        const acts = [
-          ...document.querySelectorAll(
-            '[data-testid="today-next-action"],[data-testid="today-consultation-notes"]',
-          ),
-        ].map((a) => {
+        const rebook = rowBody.parentElement!.querySelector<HTMLElement>('[data-testid="today-rebook"]')!;
+        const footer = rebook.parentElement!;
+        const acts = [...footer.querySelectorAll("a, button")].map(a => {
           const r = a.getBoundingClientRect();
-          return { x: +r.x.toFixed(1), h: +r.height.toFixed(1), right: +r.right.toFixed(1) };
+          return { x: r.x, h: r.height, right: r.right };
         });
         return {
           timeLineBoxes: rg.getClientRects().length,
           bodyX: +textCol.getBoundingClientRect().x.toFixed(1),
           acts,
+          footerX: footer.getBoundingClientRect().x,
           cardRight: +card.right.toFixed(1),
         };
       });
       expect(geo).not.toBeNull();
       expect(geo!.timeLineBoxes, "time still one line").toBe(1);
+      expect(geo!.footerX, "action group aligned to body").toBeCloseTo(geo!.bodyX, 0);
+      expect(geo!.acts.length).toBeGreaterThanOrEqual(3);
       for (const a of geo!.acts) {
-        expect(a.x, "action still aligned to body").toBe(geo!.bodyX);
+        expect(a.x, "action inside its group").toBeGreaterThanOrEqual(geo!.footerX - 1);
         expect(a.h, "44px floor preserved").toBeGreaterThanOrEqual(44);
         expect(a.right, "action still inside card").toBeLessThanOrEqual(geo!.cardRight + 0.5);
       }

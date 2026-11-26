@@ -163,7 +163,20 @@ test("iPad success journey: dashboard → prepare → confirm → execute → pe
   await modal
     .getByPlaceholder(/note explaining the session payment/i)
     .fill("E2E success-path session payment");
-  await modal.getByRole("button", { name: /prepare session payment/i }).click();
+  // Selecting a tender is reversible. Only the explicit confirmation may record it.
+  const stripeMethod = modal.getByRole("button", { name: "Stripe", exact: true });
+  const eTransferMethod = modal.getByRole("button", { name: "E-transfer", exact: true });
+  await expect(stripeMethod).toHaveAttribute("aria-pressed", "true");
+  await eTransferMethod.click();
+  await expect(modal.getByRole("button", { name: "Confirm payment · $225.00 CAD", exact: true })).toBeVisible();
+  await expect(modal.getByTestId("settlement-amount")).toHaveValue("225.00");
+  await expect(modal.getByTestId("final-charge-input")).toBeHidden();
+  await stripeMethod.click();
+  await expect(modal.getByTestId("final-charge-input")).toHaveValue("225.00");
+  await expect(modal.getByPlaceholder(/note explaining the session payment/i)).toHaveValue("E2E success-path session payment");
+  expect(await getSessionPaymentAttemptRows(seed.sessionId)).toHaveLength(0);
+  expect(readFakeStripeCalls()).toHaveLength(0);
+  await modal.getByRole("button", { name: /checkout with stripe/i }).click();
 
   // --- Chloe workflow fix (CTA discoverability): the "Run charge" button now
   //     surfaces IN PLACE right after Prepare — no close/reopen. The modal
@@ -187,7 +200,7 @@ test("iPad success journey: dashboard → prepare → confirm → execute → pe
   // --- Execute the charge with the explicit two-click confirmation (21-23),
   //     WITHOUT any close/reopen dance.
   await runCharge.click(); // arms the confirm step
-  const confirmCharge = modal.getByRole("button", { name: /confirm: run charge/i });
+  const confirmCharge = modal.getByRole("button", { name: "Confirm Stripe charge · $225.00 CAD", exact: true });
   await expect(confirmCharge).toBeVisible();
   // HON-45 (prepare is not charge): ARMING the two-click confirm is not a charge either. Between the first click and the confirm there is still exactly
   // one prepared attempt and the processor was never called. Only the explicit confirm below creates the effect.
@@ -250,7 +263,7 @@ test("iPad success journey: dashboard → prepare → confirm → execute → pe
   await page.goto(`/calendar/${seed.appointmentId}`);
   await expect(page.getByTestId("appointment-payment-paid")).toBeVisible();
   await expect(page.getByTestId("checkout-button")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /prepare session payment/i })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /checkout with stripe/i })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /run charge/i })).toHaveCount(0);
 
   // --- Attempt + fake call counts unchanged; no second charge (steps 38-39).

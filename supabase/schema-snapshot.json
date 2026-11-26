@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 289,
+    "count": 290,
     "last": "0385_unspecified_machine.sql",
-    "sha256": "92b0a90d229e6ee3988e4be96a47aa3af192df77669475e4b997d717c3e0cba8"
+    "sha256": "6da3001b051beff0f48b3e386d3261e523310ad0a510e906927c9ceb923bb15c"
   },
   "public": {
     "tables": [
@@ -442,6 +442,7 @@
       "practitioner_cancel_appointment",
       "practitioner_capacity_retirement_blockers",
       "practitioners_receptionist_membership_guard",
+      "preserve_settlement_fee_adjustment",
       "preview_waitlist_over_invite",
       "process_email_provider_event",
       "public_booking_local_to_utc",
@@ -483,6 +484,7 @@
       "reconcile_payment_intent_by_charge_attempt",
       "reconcile_refund_event",
       "reconcile_setup_intent_succeeded",
+      "record_adjusted_appointment_settlement",
       "record_appointment_settlement",
       "record_block_machine_identity",
       "record_calendar_sync_result",
