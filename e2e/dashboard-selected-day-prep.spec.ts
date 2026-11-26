@@ -359,6 +359,7 @@ test.describe("the full treatment is not in the page payload (each row loads its
     await test.step("19. with the details hidden, the compact row still shows what it is meant to", async () => {
       // The details are open by default and load on page view, so close them: the compact line is the closed row's
       // content. (Step 17 is what guards the page payload.)
+      await page.goto(url);
       await closeLastVisitDetails(page.getByTestId("dashboard-memory-toggle"));
       await expect(page.getByTestId("dashboard-memory-compact")).toContainText(
         "Last treatment:",
