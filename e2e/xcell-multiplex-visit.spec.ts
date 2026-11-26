@@ -65,6 +65,13 @@ async function noOverflow(page: Page) {
 const pill = (page: Page, label: string) => page.locator("button", { hasText: new RegExp(`^${label}$`) }).and(page.locator(":not([data-testid^='machine-mode-'])")).first();
 const draft = (page: Page) => page.getByTestId("machine-setting-draft").locator("input");
 
+// MULTIPLEX LIVES UNDER THERMOLYSIS: press Thermolysis (when it is not the mode yet), then pick MultiPlex in its Modality choice.
+const modality = (page: Page) => page.getByTestId("modality-select");
+async function chooseMultiplex(page: Page) {
+  if ((await page.locator('[data-testid="modality-select"] option[value="Multiplex"]').count()) === 0) await pill(page, "Thermolysis").click();
+  await modality(page).selectOption("Multiplex");
+}
+
 // ONE complete visit. Values are SYNTHETIC. Decimals at the contract's own precision (slow duration 2 dp, flash duration 3 dp), a pulse count, and two
 // OPTIONAL fields left blank (UL and the flash interval) that must stay blank in the record, never 0.
 const V = { el: "12", slowDur: "1.85", slowInt: "30", flashDur: "0.033", flashInt: "60", pulses: "3" };
@@ -97,7 +104,7 @@ test.describe("press Save while the MultiPlex pick is still settling", () => {
       await route.continue().catch(() => undefined);
     });
     armed = true;
-    await page.getByTestId("mode-multiplex").click();
+    await chooseMultiplex(page);
     await expect.poll(() => held, { timeout: T }).toBe(1);
 
     // The pick is still pending. Blend, an area, Save.
@@ -147,11 +154,11 @@ for (const device of DEVICES) {
       await pill(page, "Thermolysis").click();
       const legacyIntensity = page.locator("label", { hasText: "Thermolysis intensity" }).locator("input").first();
       await legacyIntensity.fill("42");
-      await page.getByTestId("mode-multiplex").click();
+      await chooseMultiplex(page);
       await pill(page, "Blend").click();
       await pill(page, "Thermolysis").click();
       await expect(legacyIntensity).toHaveValue("42");
-      await page.getByTestId("mode-multiplex").click();
+      await chooseMultiplex(page);
 
       // MultiPlex readings. Field order on the screen: EL, UL, slow duration, slow intensity, flash duration, flash intensity, pulse count, interval.
       await expect(page.getByRole("region", { name: "Treatment readings" }).getByTestId("machine-setting-draft")).toBeVisible({ timeout: T });
@@ -164,7 +171,7 @@ for (const device of DEVICES) {
       await expect(page.getByTestId("machine-setting-draft")).toHaveCount(1);
       await expect(region.getByTestId("machine-setting-draft").locator("input")).toHaveCount(8);
       await expect(page.getByTestId("machine-first-panel").getByTestId("machine-setting-draft")).toHaveCount(0);
-      const modeY = (await page.getByTestId("mode-multiplex").boundingBox())!.y;
+      const modeY = (await modality(page).boundingBox())!.y;
       const regionY = (await region.boundingBox())!.y;
       const firstInputY = (await inputs.nth(0).boundingBox())!.y;
       expect(regionY, "the Treatment readings region is below the Mode buttons").toBeGreaterThan(modeY);
@@ -178,7 +185,7 @@ for (const device of DEVICES) {
       // UL (1) and the interval (7) stay blank.
       // Switch AWAY (Blend leaves MultiPlex) and BACK: what was typed is still there, and blank is still blank.
       await pill(page, "Blend").click();
-      await page.getByTestId("mode-multiplex").click();
+      await chooseMultiplex(page);
       await expect(inputs.nth(2)).toHaveValue(V.slowDur);
       await expect(inputs.nth(4)).toHaveValue(V.flashDur);
       await expect(inputs.nth(6)).toHaveValue(V.pulses);

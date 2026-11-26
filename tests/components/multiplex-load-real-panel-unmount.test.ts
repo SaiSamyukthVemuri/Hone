@@ -40,6 +40,7 @@ vi.mock("@/components/machines/machine-first-setup-connected", async () => {
 
 import { MACHINE_CATALOGUE } from "@/lib/machines/catalogue";
 import type { StudioDevice } from "@/lib/machines/selection";
+import { multiplexPill as multiplexPillOf, ensureThermolysis, chooseMultiplex, modeButton } from "./helpers/multiplex-modality";
 
 const { createElement, act } = await import("react");
 const { createRoot } = await import("react-dom/client");
@@ -61,7 +62,7 @@ let root: ReturnType<typeof createRoot> | null = null;
 let host: HTMLElement | null = null;
 afterEach(() => { act(() => root?.unmount()); host?.remove(); root = host = null; vi.clearAllMocks(); });
 
-const pill = () => host!.querySelector<HTMLButtonElement>('[data-testid="mode-multiplex"]');
+const pill = () => multiplexPillOf(host!);
 const saveButton = () => host!.querySelector<HTMLButtonElement>('[data-testid="save-treatment-area"]')!;
 const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
@@ -80,7 +81,7 @@ describe("the REAL panel unmounted while a MultiPlex load is pending", () => {
         defaultMachineFrequency: null, onCancel: () => undefined, multiplexOffer: { deviceId: PLACEHOLDER.deviceId },
       } as never)),
     );
-    await act(async () => { pill()!.click(); });
+    await ensureThermolysis(host!); await act(async () => { pill()!.click(); });
     expect(saveButton().disabled, "held while the load is pending").toBe(true);
 
     await act(async () => { ctl.hide(); }); // the real panel unmounts; the host stays
@@ -92,7 +93,7 @@ describe("the REAL panel unmounted while a MultiPlex load is pending", () => {
 
     // retry from the pill, with the real panel back
     await act(async () => { ctl.show(); });
-    await act(async () => { pill()!.click(); });
+    await ensureThermolysis(host!); await act(async () => { pill()!.click(); });
     await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
     expect(pill()!.getAttribute("aria-pressed")).toBe("true");
     expect(saveButton().disabled).toBe(false);

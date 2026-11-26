@@ -51,9 +51,11 @@ describe("the host form's dirty flag", () => {
 
 describe("switching to a native machine parks the legacy entries and returning restores them", () => {
   const FORM = readFileSync("app/(app)/clients/[id]/sessions/[sessionId]/block-setup-form.tsx", "utf8");
-  it("parks before clearing, restores on any non-native kind (legacy xCell or no machine), and a legacy pill never toggles itself off while MultiPlex is chosen", () => {
+  it("parks before clearing, restores on any non-native kind (legacy xCell or no machine), and Blend/Galvanic select (never toggle off) while MultiPlex is chosen; Thermolysis stays the pressed mode under it", () => {
     expect(FORM).toMatch(/parkedLegacyRef\.current = \{[^}]*mode: d\.mode[^}]*machineFrequency: d\.machineFrequency/);
     expect(FORM).toMatch(/kind !== "native" && parkedLegacyRef\.current/);
-    expect(FORM).toMatch(/const selected = draft\.mode === m\.value && !multiplexSelected;/);
+    expect(FORM).toMatch(/const selected = multiplexSelected \? m\.value === "thermo" : draft\.mode === m\.value;/);
+    // Pressing Thermolysis while MultiPlex is chosen is a no-op: the way out of MultiPlex on Thermolysis is another modality.
+    expect(FORM).toMatch(/if \(!\(multiplexSelected && m\.value === "thermo"\)\) \{/);
   });
 });

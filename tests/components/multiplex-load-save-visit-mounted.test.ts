@@ -26,6 +26,7 @@ vi.mock("@/app/(app)/clients/[id]/sessions/[sessionId]/block-actions", () => blo
 
 import { MACHINE_CATALOGUE } from "@/lib/machines/catalogue";
 import type { StudioDevice } from "@/lib/machines/selection";
+import { multiplexPill as multiplexPillOf, ensureThermolysis, chooseMultiplex, modeButton } from "./helpers/multiplex-modality";
 
 const { createElement, act } = await import("react");
 const { createRoot } = await import("react-dom/client");
@@ -64,8 +65,8 @@ async function mount() {
     ),
   );
 }
-const multiplexPill = () => host!.querySelector<HTMLButtonElement>('[data-testid="mode-multiplex"]')!;
-const clickMultiplex = () => act(async () => { multiplexPill().click(); });
+const multiplexPill = () => multiplexPillOf(host!)!;
+const clickMultiplex = async () => { await ensureThermolysis(host!); await act(async () => { multiplexPill().click(); }); };
 const saveVisit = () => act(async () => void host!.querySelector<HTMLButtonElement>('[data-testid="visit-save-button"]')!.click());
 const result = () => host!.querySelector('[data-testid^="visit-save-result-"]');
 const create = blockActions.createTreatmentAreaWithEntryAction;
