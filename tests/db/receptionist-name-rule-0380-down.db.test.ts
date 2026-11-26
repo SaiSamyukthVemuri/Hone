@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { adminQuery, closePool } from "./helpers/harness";
 
@@ -35,6 +35,19 @@ const BODIES_0374: Record<string, string> = {
   receptionist_calendar_v2: "911df019f695523168b39fd6e43afbc7",
   receptionist_client_contacts_v2: "b157fca004345dddd4ad15586d92dc1d",
 };
+
+// Puts the database at the repository head (0380 AND 0382 applied) from whichever of the states these tests can leave it in. Idempotent: at the head it
+// re-states the closed ACL and nothing else. Run before the cases (so a stack left half-way by an earlier run cannot fail them for the wrong reason) and in
+// every finally (so a failing assertion cannot leave the next suite on the wrong state).
+async function restoreHead() {
+  const now = await snapshot();
+  if (now.every((r) => r.md5 === BODIES_0374[r.name])) await adminQuery(UP_0380);
+  await adminQuery(UP_0382);
+}
+
+beforeAll(async () => {
+  await restoreHead();
+});
 
 afterAll(async () => {
   await closePool();
@@ -95,10 +108,8 @@ describe("the 0380 down file is guarded against 0382", () => {
       await wayBack();
       expect(await snapshot()).toEqual(at0374);
     } finally {
-      // 4. Restore the head whatever happened above (both up files are idempotent over the 0374 state and over each other's output).
-      const now = await snapshot();
-      if (now.some((r) => r.md5 === BODIES_0374[r.name])) await adminQuery(UP_0380);
-      await adminQuery(UP_0382);
+      // 4. Restore the head whatever happened above.
+      await restoreHead();
     }
     expect(await snapshot()).toEqual(head);
   });
@@ -112,7 +123,7 @@ describe("the 0380 down file is guarded against 0382", () => {
       await expect(adminQuery(DOWN_0380)).rejects.toMatchObject({ code: "55000", message: expect.stringMatching(/receptionist_client_contacts_v2/) });
       expect(await snapshot()).toEqual(partial);
     } finally {
-      await adminQuery(UP_0382);
+      await restoreHead();
     }
     expect(await snapshot()).toEqual(head);
   });
