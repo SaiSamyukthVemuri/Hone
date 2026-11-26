@@ -3,7 +3,7 @@
   "migrations": {
     "count": 259,
     "last": "0389_subscription_self_service.sql",
-    "sha256": "660bb90172400ef83912a219069fa47977a24cbdd5738ca000cc6741e82a4a02"
+    "sha256": "725cb068dfb53af3238915d817ac9a1f06f98ccfa12ab76fd8b40d1f9a4947d8"
   },
   "public": {
     "tables": [
@@ -366,6 +366,7 @@
       "move_appointment_core",
       "move_or_reassign_appointment",
       "my_hone_billing_status",
+      "my_hone_solo_impact",
       "my_hone_studio_canceled",
       "my_hone_team_seats",
       "my_pending_invitation",

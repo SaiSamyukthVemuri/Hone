@@ -5,7 +5,7 @@ do $$ begin
   if exists(select from public.hone_signup_attempts where change_id is not null or canceled_at is not null)
     then raise exception 'subscription_change_history_present'; end if;
 end $$;
-drop function public.request_hone_subscription_change(uuid,text,uuid),public.my_hone_studio_canceled(uuid),
+drop function public.my_hone_solo_impact(uuid), public.request_hone_subscription_change(uuid,text,uuid,text),public.my_hone_studio_canceled(uuid),
   public.claim_hone_subscription_change(uuid),public.finish_hone_subscription_change(uuid,boolean),
   public.record_hone_subscription_canceled(text,text,uuid,uuid);
 create or replace function public.check_hone_new_work_allowed() returns trigger

@@ -27,3 +27,18 @@ export async function ownerWorkspacePaused(studioId: string) {
   const { billing } = await readOwnerBilling(studioId);
   return billing?.status === "canceled" || billing?.status === "canceling";
 }
+
+export type SoloImpact = {
+  version: string;
+  owner: string;
+  can_confirm: boolean;
+  members: { name: string; role: "owner" | "practitioner" | "receptionist" }[];
+  invitations: string[];
+};
+
+export async function readSoloImpact(studioId: string): Promise<SoloImpact | null> {
+  const db = await createClient();
+  const { data, error } = await db.rpc("my_hone_solo_impact", { p_studio: studioId });
+  if (error || !data) return null;
+  return data;
+}

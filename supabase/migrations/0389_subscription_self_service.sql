@@ -142,26 +142,52 @@ where n.sent_at is null and exists (
 
 
 
+-- Preview only this paid studio's affected team. Never expose the list to staff.
+create function public.my_hone_solo_impact(p_studio uuid) returns jsonb
+language sql stable security definer set search_path='' as $$
+  select roster || jsonb_build_object('version', md5(roster::text)) from (
+    select jsonb_build_object(
+      'owner', keeper.display_name, 'can_confirm', a.user_id = auth.uid(),
+      'members', coalesce((
+        select jsonb_agg(jsonb_build_object('id', m.id, 'name', m.name, 'role', m.role) order by m.name,m.id)
+        from (
+          select p.id,p.display_name as name,p.role from public.practitioners p
+          where p.studio_id=a.studio_id and p.active and p.id<>keeper.id
+          union all
+          select r.id,r.display_name,'receptionist' from public.studio_receptionists r
+          where r.studio_id=a.studio_id and r.active
+        ) m
+      ),'[]'::jsonb),
+      'invitations',coalesce((select jsonb_agg(i.email order by i.email,i.id)
+        from public.pending_invitations i where i.studio_id=a.studio_id and i.status='pending'),'[]'::jsonb)) as roster
+    from public.hone_signup_attempts a join public.practitioners keeper
+      on keeper.studio_id=a.studio_id and keeper.user_id=a.user_id and keeper.active and keeper.role='owner'
+    where a.studio_id=p_studio and a.state='paid' and a.plan='studio' and public.is_studio_owner(p_studio)
+  ) current_team;
+$$;
+
 -- Only an active owner can submit a decision. The ledger row also serializes seat acquisition.
-create function public.request_hone_subscription_change(p_studio uuid,p_target text,p_version uuid)
+create function public.request_hone_subscription_change(p_studio uuid,p_target text,p_version uuid,p_team_version text default null)
 returns jsonb language plpgsql security definer set search_path='' as $$
-declare a public.hone_signup_attempts; seats record;
+declare a public.hone_signup_attempts;
 begin
   if p_target is null or p_target not in ('solo','studio','cancel') then return null; end if;
   select * into a from public.hone_signup_attempts where studio_id=p_studio and state='paid'
     and public.is_studio_owner(p_studio) for update;
   if not found then return null; end if;
   if a.canceled_at is not null then return jsonb_build_object('result','canceled'); end if;
+  if p_target='solo' and a.user_id<>auth.uid() then
+    return jsonb_build_object('result','billing_owner'); end if;
   if a.change_target=p_target then return jsonb_build_object('result','pending','id',a.change_id); end if;
   if a.change_id is distinct from p_version or (a.change_target is not null and p_target<>'cancel') then
     return jsonb_build_object('result','stale'); end if;
   if p_target=a.plan then return jsonb_build_object('result','unchanged'); end if;
+  if p_target='solo' and (p_team_version is null or
+      p_team_version is distinct from (public.my_hone_solo_impact(p_studio)->>'version')) then
+    return jsonb_build_object('result','team_changed');
+  end if;
   if p_target<>'cancel' and exists(select from public.hone_renewal_invoices where attempt_id=a.id and not paid and failed_at is not null)
     then return jsonb_build_object('result','overdue'); end if;
-  if p_target='solo' then
-    select * into strict seats from public.hone_team_seat_counts(p_studio);
-    if seats.practitioner_used>1 or seats.receptionist_used>0 then return jsonb_build_object('result','capacity'); end if;
-  end if;
   update public.hone_signup_attempts set change_id=gen_random_uuid(),change_target=p_target,retry_change_at=now()
     where id=a.id returning * into a;
   return jsonb_build_object('result','pending','id',a.change_id);
@@ -182,13 +208,48 @@ begin
 end $$;
 
 create function public.finish_hone_subscription_change(p_id uuid,p_applied boolean) returns boolean
-language sql security definer set search_path='' as $$
-  with finished as (update public.hone_signup_attempts set
+language plpgsql security definer set search_path='' as $$
+declare
+  a public.hone_signup_attempts;
+  keeper uuid;
+  desk record;
+  result text;
+begin
+  select * into a from public.hone_signup_attempts where change_id=p_id and change_target is not null;
+  if not found then return false; end if;
+  if p_applied and a.change_target='solo' then
+    select id into strict keeper from public.practitioners
+      where studio_id=a.studio_id and user_id=a.user_id and role='owner' and active;
+    -- Follow the ordinary staff-removal lock order before locking the billing request.
+    if public.lock_studio_and_assert_owner(a.studio_id,keeper)<>'ok' then
+      raise exception 'billing_owner_changed';
+    end if;
+  end if;
+  select * into a from public.hone_signup_attempts
+    where change_id=p_id and change_target is not null for update;
+  if not found then return false; end if;
+
+  if keeper is not null then
+    -- Stripe accepted the change. Revoke every outstanding seat and switch tier
+    -- in one transaction. Membership IDs and all historical assignments survive.
+    perform 1 from public.practitioners where id=keeper and studio_id=a.studio_id
+      and user_id=a.user_id and role='owner' and active for update;
+    if not found then raise exception 'billing_owner_changed'; end if;
+    update public.pending_invitations set status='revoked'
+      where studio_id=a.studio_id and status='pending';
+    for desk in select id from public.studio_receptionists where studio_id=a.studio_id and active order by id loop
+      result := public.set_studio_receptionist_active(a.studio_id,keeper,desk.id,false);
+      if result not in ('updated','no_change') then raise exception 'desk_membership_changed'; end if;
+    end loop;
+    update public.practitioners set active=false
+      where studio_id=a.studio_id and active and id<>keeper;
+  end if;
+  update public.hone_signup_attempts set
     plan=case when p_applied and change_target in ('solo','studio') then change_target else plan end,
     canceled_at=case when p_applied and change_target='cancel' then coalesce(canceled_at,now()) else canceled_at end,
-    change_target=null,retry_change_at=null where change_id=p_id and change_target is not null returning id)
-  select exists(select from finished);
-$$;
+    change_target=null,retry_change_at=null where change_id=p_id;
+  return true;
+end $$;
 
 -- Stripe can also cancel the subscription outside an interactive request. Cancellation is terminal.
 create function public.record_hone_subscription_canceled(p_subscription text,p_customer text,p_attempt uuid,p_user uuid)
@@ -207,10 +268,10 @@ language sql stable security definer set search_path='' as $$
       or exists(select from public.studio_receptionists r where r.studio_id=p_studio and r.user_id=auth.uid() and r.active)));
 $$;
 
-revoke all on function public.request_hone_subscription_change(uuid,text,uuid),public.my_hone_studio_canceled(uuid),
+revoke all on function public.my_hone_solo_impact(uuid),public.request_hone_subscription_change(uuid,text,uuid,text),public.my_hone_studio_canceled(uuid),
   public.claim_hone_subscription_change(uuid),public.finish_hone_subscription_change(uuid,boolean),
   public.record_hone_subscription_canceled(text,text,uuid,uuid) from public,anon,authenticated,service_role;
-grant execute on function public.request_hone_subscription_change(uuid,text,uuid),public.my_hone_studio_canceled(uuid) to authenticated;
+grant execute on function public.my_hone_solo_impact(uuid),public.request_hone_subscription_change(uuid,text,uuid,text),public.my_hone_studio_canceled(uuid) to authenticated;
 grant execute on function public.claim_hone_subscription_change(uuid),public.finish_hone_subscription_change(uuid,boolean),
   public.record_hone_subscription_canceled(text,text,uuid,uuid) to service_role;
 

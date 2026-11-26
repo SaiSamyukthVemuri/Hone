@@ -8,12 +8,12 @@ import { resolveSettingsNavWithReachable } from "@/lib/settings/nav";
 import type { Studio } from "@/lib/types/database";
 
 const h = vi.hoisted(() => ({
-  rpc: vi.fn(), actor: vi.fn(), portal: vi.fn(), invoice: vi.fn(),
+  rpc: vi.fn(), impact: vi.fn(), actor: vi.fn(), portal: vi.fn(), invoice: vi.fn(),
   profile: vi.fn(), invoices: vi.fn(), taxEdit: vi.fn(),
 }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/supabase/queries", () => ({ requirePractitionerWithStudio: h.actor }));
-vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ rpc: h.rpc }) }));
+vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ rpc: (fn: string, args: unknown) => fn === "my_hone_solo_impact" ? h.impact(args) : h.rpc(fn,args) }) }));
 vi.mock("@/lib/subscriptions/billing-client", () => ({
   createBillingStripeClient: () => ({ ownerPortal: h.portal, readNoticeInvoice: h.invoice, billingProfile: h.profile, billingInvoices: h.invoices, canEditTaxId: h.taxEdit }),
 }));
@@ -41,6 +41,7 @@ beforeEach(() => {
   vi.stubEnv("NEXT_PUBLIC_APP_ORIGIN", "https://hone.example.test");
   h.actor.mockResolvedValue({ studio, practitioner: { role: "owner" } });
   h.rpc.mockResolvedValue({ data: billing });
+  h.impact.mockResolvedValue({data:{owner:"Example owner",can_confirm:true,members:[{name:"Test staff",role:"practitioner"}],invitations:["pending@example.test"]}});
   h.portal.mockResolvedValue("https://billing.stripe.com/p/session/test");
   h.invoice.mockResolvedValue(invoice);
   h.profile.mockResolvedValue({ hasMethod: true, card: { brand: "visa", last4: "4242", expires: "12/2030" }, taxIds: [], renews: 1798200000, ends: null });
@@ -166,7 +167,7 @@ it("shows the renewal, masked card, editable tax ID and real invoice links for a
   h.invoices.mockResolvedValue({ rows: [{ id: "in_paid", date: 1795600000, total: 9900, currency: "usd",
     status: "paid", pdf: "https://pay.stripe.com/invoice/example/pdf", hosted: null, payable: false }], next: "in_paid" });
   const html = await page();
-  for (const label of ["Renews December", "4242", "12/2030", "Add tax ID", "US$99.00", "Download PDF", "Load more", "Change tier", "Cancel subscription now"]) expect(html).toContain(label);
+  for (const label of ["Renews December", "4242", "12/2030", "Add tax ID", "US$99.00", "Download PDF", "Load more", "Change tier", "Cancel subscription now", "Test staff", "pending@example.test", "Invitations Hone will revoke"]) expect(html).toContain(label);
   h.profile.mockResolvedValue({ hasMethod: false, taxIds: [], renews: null, ends: 1798200000 });
   h.taxEdit.mockResolvedValue(false);
   const ending = await page();

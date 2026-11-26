@@ -3,10 +3,9 @@ import { OwnerOnlyNotice, SettingsViewHeading } from "@/components/settings/view
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/ui/status-pill";
 import { SubscriptionControls } from "./subscription-controls";
-import { getOwnerTeamSeats } from "@/lib/subscriptions/owner-team-seats";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { createBillingStripeClient } from "@/lib/subscriptions/billing-client";
-import { readOwnerBilling } from "@/lib/subscriptions/owner-billing";
+import { readOwnerBilling, readSoloImpact } from "@/lib/subscriptions/owner-billing";
 import { isSelfServeCheckoutEnabled, PLANS, teamAllowance } from "@/lib/subscriptions/plans";
 import { openOwnerBilling, payOutstandingInvoice, updateBillingCard } from "./actions";
 import { InvoiceHistory } from "./invoice-history";
@@ -49,12 +48,12 @@ export default async function SubscriptionPage({ searchParams }: {
   if (error || !billing || !states[billing.status] || !PLANS[billing.plan]) {
     return <section className="space-y-4">{heading}<p role="alert">We couldn’t load your subscription. Refresh this page to try again.</p></section>;
   }
-  const [{ profile, invoices, editTax }, seats] = await Promise.all([
-    stripeOverview(billing.customer, billing.subscription), getOwnerTeamSeats(studio.id).catch(() => null),
+  const [{ profile, invoices, editTax }, soloImpact] = await Promise.all([
+    stripeOverview(billing.customer, billing.subscription), billing.plan === "studio" && billing.status === "active" ? readSoloImpact(studio.id).catch(() => null) : null,
   ]);
   const terminal = billing.status === "canceled" || billing.status === "canceling";
   const controls = { studioId: studio.id, studioName: studio.name, current: billing.plan, version: billing.change_id ?? null,
-    soloFits: seats && typeof seats.practitioner_used === "number" ? seats.practitioner_used <= 1 && seats.receptionist_used === 0 : null };
+    soloImpact };
   const plan = PLANS[billing.plan];
   const state = states[billing.status];
   const query = await searchParams;
@@ -65,7 +64,8 @@ export default async function SubscriptionPage({ searchParams }: {
     <div>{heading}</div>
     {query.error && <p role="alert" className="my-4 text-sm text-danger-fg">{query.error === "invoice"
       ? "We couldn’t open that invoice for payment. Check your invoice history or try again."
-      : query.error === "capacity" ? "Solo includes one practitioner and no receptionist. Review active members and pending invitations in Settings → Team."
+      : query.error === "team_changed" ? "Your team changed. Open Change tier to review who will lose access."
+      : query.error === "billing_owner" ? "Only the subscription owner can switch this studio to Solo."
       : query.error === "stale" ? "Your subscription changed. Review the current details before trying again."
       : query.error === "overdue" ? "Pay outstanding invoices before changing tiers."
       : query.error === "change" ? "We couldn’t complete that change. Review your billing details and try again."

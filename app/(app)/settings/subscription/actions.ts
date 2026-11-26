@@ -85,11 +85,11 @@ export async function changeSubscription(studioId: string, version: string | nul
       (target === "cancel" && form.get("confirm") !== "cancel-now")) redirect(billingPath + "?error=change");
   const db = await createClient();
   const { data, error } = await db.rpc("request_hone_subscription_change", {
-    p_studio: studioId, p_target: target, p_version: version,
+    p_studio: studioId, p_target: target, p_version: version, p_team_version: form.get("teamVersion"),
   });
   if (error || !data) redirect(billingPath + "?error=change");
   const { result, id } = data;
-  if (["capacity", "stale", "overdue"].includes(result)) redirect(billingPath + "?error=" + result);
+  if (["billing_owner", "team_changed", "stale", "overdue"].includes(result)) redirect(billingPath + "?error=" + result);
   let outcome = result;
   if (result === "pending") {
     // The database already paused a confirmed cancellation, even if Stripe is temporarily offline.

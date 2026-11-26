@@ -263,7 +263,7 @@ describe("subscription team limits through the owner invite and acceptance paths
     });
   });
 
-  it("refuses a downgrade over either limit and allows it once the owner frees the seats", async () => {
+  it("protects direct plan writes unless the resulting team fits", async () => {
     const t = await signup("studio");
     const clinical = await invite(t, "practitioner");
     const desk = await invite(t, "receptionist");
@@ -315,8 +315,13 @@ describe("subscription team limits through the owner invite and acceptance paths
   });
 });
 
-const requestChange = async (t: Team, target: string, version: string | null = null, actor = t.owner) =>
-  (await userQuery(actor, "select public.request_hone_subscription_change($1,$2,$3) as decision", [t.studio, target, version])).rows[0].decision;
+async function requestChange(t: Team, target: string, version: string | null = null, actor = t.owner) {
+  const impact = target === "solo"
+    ? (await userQuery(actor, "select public.my_hone_solo_impact($1) as impact", [t.studio])).rows[0].impact
+    : null;
+  return (await userQuery(actor, "select public.request_hone_subscription_change($1,$2,$3,$4) as decision",
+    [t.studio, target, version, impact?.version ?? null])).rows[0].decision;
+}
 const settle = async (id: string) =>
   (await adminQuery("select public.finish_hone_subscription_change($1,true) as applied", [id])).rows[0].applied;
 const billingState = async (t: Team) =>
@@ -333,13 +338,12 @@ it("switches tiers once and reserves the lower limits while Stripe confirms a do
   expect(await usage(t)).toMatchObject({ plan: "studio", receptionist_limit: 1 });
   const recipient = await invite(t, "receptionist");
   expect((await requestChange(t, "solo")).result).toBe("stale");
-  expect((await requestChange(t, "solo", up.id)).result).toBe("capacity");
-  await cancel(t, recipient);
   const down = await requestChange(t, "solo", up.id);
   expect(down.result).toBe("pending");
-  await expect(invite(t, "receptionist")).rejects.toMatchObject({ code: "HN002" });
+  await expect(invite(t, "practitioner")).rejects.toMatchObject({ code: "HN001" });
   expect(await settle(down.id)).toBe(true);
   expect(await usage(t)).toMatchObject({ plan: "solo", receptionist_limit: 0 });
+  expect((await adminQuery("select status from public.pending_invitations where email=$1",[recipient])).rows[0].status).toBe("revoked");
 });
 
 it("immediately pauses the canceled studio, keeps its billing and history, and stays paused after late payment", async () => {
@@ -368,4 +372,81 @@ it("immediately pauses the canceled studio, keeps its billing and history, and s
   await expect(chart()).rejects.toThrow("subscription_canceled");
   expect((await adminQuery("select id from public.sessions where id=$1", [existingChart])).rowCount).toBe(1);
   expect((await billingState(await signup("studio"))).status).toBe("active");
+});
+
+it("automatically retains the subscribing owner, deactivates staff only here, and keeps appointments and charts attributed", async () => {
+  const t = await signup("studio");
+  const staff = await authUser(await invite(t, "practitioner"));
+  const desk = await authUser(await invite(t, "receptionist"));
+  await accept(staff); await accept(desk);
+  const pending = await invite(t,"owner");
+  const other = await signup("studio");
+  const staffRows = await adminQuery("select id,email from public.practitioners where studio_id=$1 and user_id=$2",[t.studio,staff]);
+  const original = staffRows.rows[0].id;
+  await invite(other,"practitioner",staffRows.rows[0].email);
+  await accept(staff);
+  const authorized = async (team: Team, actor: string) =>
+    (await userQuery(actor,"select public.is_studio_member($1) as active",[team.studio])).rows[0].active;
+  const deskAccess = async () =>
+    (await adminQuery("select active,deactivated_at from public.studio_receptionists where studio_id=$1 and user_id=$2",[t.studio,desk])).rows[0];
+  const teamImpact = async (actor: string) =>
+    (await userQuery(actor,"select public.my_hone_solo_impact($1) as impact",[t.studio])).rows[0].impact;
+
+  expect(await teamImpact(staff)).toBeNull();
+  expect(await teamImpact((await authUser()))).toBeNull();
+  expect(await teamImpact(t.owner)).toMatchObject({owner:"Owner",can_confirm:true,invitations:[pending]});
+  expect((await teamImpact(t.owner)).members.map((m:{role:string})=>m.role).sort()).toEqual(["practitioner","receptionist"]);
+  const client = (await adminQuery("insert into public.clients(studio_id,name) values($1,'Synthetic') returning id",[t.studio])).rows[0].id;
+  const chart = (await adminQuery("insert into public.sessions(studio_id,client_id,practitioner_id,modality) values($1,$2,$3,'electrolysis') returning id",[t.studio,client,original])).rows[0].id;
+  const booking = (await adminQuery("insert into public.appointments(studio_id,client_id,practitioner_id,starts_at,ends_at,duration_minutes) values ($1,$2,$3,now()+interval '1 day',now()+interval '1 day 15 min',15) returning id",[t.studio,client,original])).rows[0].id;
+
+  const first = await requestChange(t,"solo");
+  expect(first.result).toBe("pending");
+  await adminQuery("select public.finish_hone_subscription_change($1,false)", [first.id]);
+  expect(await authorized(t,staff)).toBe(true);
+  expect((await deskAccess()).active).toBe(true);
+  expect((await teamImpact(t.owner)).invitations).toEqual([pending]);
+
+  const confirmed = await requestChange(t,"solo",first.id);
+  const completions = await Promise.all([settle(confirmed.id),settle(confirmed.id)]);
+  expect(completions.sort()).toEqual([false,true]);
+  expect(await usage(t)).toEqual({plan:"solo",practitioner_used:1,practitioner_limit:1,receptionist_used:0,receptionist_limit:0});
+  expect(await authorized(t,t.owner)).toBe(true);
+  expect(await authorized(t,staff)).toBe(false);
+  expect(await authorized(other,staff)).toBe(true);
+  expect(await deskAccess()).toMatchObject({active:false,deactivated_at:expect.any(Date)});
+  expect((await adminQuery("select status from public.pending_invitations where studio_id=$1 and email=$2",[t.studio,pending])).rows[0].status).toBe("revoked");
+  const invited = await authUser(pending);
+  await accept(invited);
+  expect(await authorized(t,invited)).toBe(false);
+  const history = await adminQuery("select practitioner_id from public.sessions where id=$1 union all select practitioner_id from public.appointments where id=$2",[chart,booking]);
+  expect(history.rows.map(r=>r.practitioner_id)).toEqual([original,original]);
+
+  const upgrade = await requestChange(t,"studio",confirmed.id);
+  expect(await settle(upgrade.id)).toBe(true);
+  expect(await authorized(t,staff)).toBe(false);
+  expect((await deskAccess()).active).toBe(false);
+});
+
+it("requires the owner to review a changed roster before removing access", async () => {
+  const t = await signup("studio");
+  const original = (await userQuery(t.owner, "select public.my_hone_solo_impact($1) as roster", [t.studio])).rows[0].roster;
+  const email = await invite(t, "receptionist");
+  for (const displayedVersion of [null, original.version]) {
+    const result = await userQuery(t.owner, "select public.request_hone_subscription_change($1,'solo',null,$2) as decision", [t.studio, displayedVersion]);
+    expect(result.rows[0].decision.result).toBe("team_changed");
+  }
+  expect((await billingState(t)).plan).toBe("studio");
+  expect((await adminQuery("select status from public.pending_invitations where studio_id=$1 and email=$2", [t.studio, email])).rows[0].status).toBe("pending");
+});
+
+it("keeps the subscribing owner's seat when a studio has another owner", async () => {
+  const t = await signup("studio");
+  const second = await authUser(await invite(t,"owner"));
+  await accept(second);
+  expect((await requestChange(t,"solo",null,second)).result).toBe("billing_owner");
+  const down = await requestChange(t,"solo");
+  expect(await settle(down.id)).toBe(true);
+  expect((await userQuery(second,"select public.is_studio_owner($1) as allowed",[t.studio])).rows[0].allowed).toBe(false);
+  expect((await usage(t)).practitioner_used).toBe(1);
 });
