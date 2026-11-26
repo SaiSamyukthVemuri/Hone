@@ -291,7 +291,7 @@ test("a visit last month, unpaid then paid in full this month: it is last month'
   }
 });
 
-test("what the figures do NOT include is said under them: another-currency money is not counted, and a visit awaiting payment confirmation is left out of the average", async ({ page }) => {
+test("what the figures do NOT include is said under them: an unsettled payment record is not counted, and a visit awaiting payment confirmation is left out of the average", async ({ page }) => {
   const seed = await seedE2eStudio();
   await currency(seed);
   const prac = await getOwnerPractitionerId(seed.studioId);
@@ -308,13 +308,13 @@ test("what the figures do NOT include is said under them: another-currency money
     );
     return { clientId, apptId };
   };
-  // A card payment in ANOTHER currency (a CAD studio): on a completed visit, so it is on the page but never in the CAD total.
+  // A card payment whose refund is still in flight: it may or may not have moved money back, so it is an UNRESOLVED record, never in the total and never a $0 payment.
   const paid = await mk("Other currency", new Date(now.getTime() - 3 * 3_600_000));
   const sessionId = randomUUID();
   await sql(`insert into public.sessions (id, studio_id, client_id, practitioner_id, appointment_id, modality) values ($1,$2,$3,$4,$5,'electrolysis')`, [sessionId, seed.studioId, paid.clientId, prac, paid.apptId]);
   await sql(
-    `insert into public.payment_charge_attempts (id, studio_id, client_id, session_id, charge_reason, created_by_practitioner_id, amount_cents, currency, status, stripe_livemode)
-     values ($1,$2,$3,$4,'session_payment',$5,8000,'usd','succeeded',false)`,
+    `insert into public.payment_charge_attempts (id, studio_id, client_id, session_id, charge_reason, created_by_practitioner_id, amount_cents, currency, status, stripe_livemode, refund_status, refund_amount_cents)
+     values ($1,$2,$3,$4,'session_payment',$5,8000,'cad','succeeded',false,'pending_stripe',8000)`,
     [randomUUID(), seed.studioId, paid.clientId, sessionId, prac],
   );
   // A completed visit with no payment record at all: its payment is unknown, so it is left out of the average.
@@ -322,7 +322,7 @@ test("what the figures do NOT include is said under them: another-currency money
 
   await loginAsOwner(page, seed);
   await page.goto("/financials/overview");
-  await expect(page.getByTestId("overview-collected-disclosures")).toContainText("payment record in another currency is not counted", { timeout: T });
+  await expect(page.getByTestId("overview-collected-disclosures")).toContainText("payment record could not be settled either way and is not counted", { timeout: T });
   // The disclosure sits directly under the figure, and the figure is still in the first screen.
   const fig = (await collected(page).boundingBox())!;
   const note = (await page.getByTestId("overview-collected-disclosures").boundingBox())!;
