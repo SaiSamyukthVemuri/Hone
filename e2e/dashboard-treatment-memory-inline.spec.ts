@@ -68,7 +68,7 @@ test.describe("D1 — the Treatment Memory disclosure stays on the Dashboard", (
     await expect(toggle).toHaveAttribute("aria-expanded", "true");
     await expect(page.getByTestId("dashboard-memory-full").first()).toBeVisible({ timeout: T });
 
-    // 3. Make sure the control Chloe uses is expanded.
+    // 3. Make sure the details control is expanded.
     await ensureLastVisitDetailsOpen(toggle);
 
     // 4. The FULL previous treatment is really rendered — not an empty shell.

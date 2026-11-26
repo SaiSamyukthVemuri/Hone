@@ -507,7 +507,7 @@ test.describe("a rejected disclosure fails to its own line", () => {
     // Break BOTH rows' server-action invocations (each is matched by its own appointment id). Server Actions POST back to the
     // same route, so aborting the POST reproduces a real transport failure —
     // the action never runs, and the browser-side promise rejects. practitioner feedback (26 Nov): the details now load on first
-    // render, so the failure is installed BEFORE the page loads, and only for row A's appointment.
+    // render, so the failure is installed BEFORE the page loads, for both rows' appointments (each matched by its own id).
     let aborted = 0;
     await page.route("**/dashboard**", async (route) => {
       if (route.request().method() === "POST" && (route.request().postData() ?? "").match(new RegExp(`${apptA.appointmentId}|${apptB.appointmentId}`))) {
