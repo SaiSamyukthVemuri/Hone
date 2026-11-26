@@ -9,22 +9,46 @@ import { RowPinnedNotes } from "./row-safety-lines";
 type DashboardPin = Pick<ClientPinnedNote, "id" | "text" | "created_by_practitioner_id">;
 type Client = { clientId: string; clientName: string };
 
+/** A pin the save action handed back. It is drawn at once, then reconciled with the refreshed page tree by id. */
+function isSavedPin(value: unknown): value is DashboardPin {
+  const pin = value as Partial<DashboardPin> | null | undefined;
+  return !!pin && typeof pin.id === "string" && typeof pin.text === "string";
+}
+
 export function DashboardQuickPin({ clientId, clientName, pinnedNotes, viewer }: Client & {
   pinnedNotes: readonly DashboardPin[];
   viewer: { isOwner: boolean; practitionerId: string };
 }) {
+  // WHY THE SAVED PIN IS KEPT HERE. The refreshed page tree that revalidatePath sends back after a save is the
+  // slow path: while other work is in flight it can arrive late, or not at all, and a note the practitioner
+  // has just saved must not depend on it. The action returns the saved pin, it is drawn from that value
+  // straight away, and a later tree replaces it BY ID (never a duplicate). An entry is dropped once the page
+  // data carries the same text for that id, so a later change from elsewhere is not masked.
+  const [saved, setSaved] = useState<readonly DashboardPin[]>([]);
+  const confirmed = saved.filter(pin => pinnedNotes.some(note => note.id === pin.id && note.text === pin.text));
+  if (confirmed.length > 0) setSaved(saved.filter(pin => !confirmed.includes(pin)));
+
+  const byId = new Map(saved.map(pin => [pin.id, pin]));
+  const shown = [
+    ...saved.filter(pin => !pinnedNotes.some(note => note.id === pin.id)),
+    ...pinnedNotes.map(note => byId.get(note.id) ?? note),
+  ];
+  function remember(pin: DashboardPin) {
+    setSaved(current => [pin, ...current.filter(existing => existing.id !== pin.id)]);
+  }
+
   return (
     <>
-      <DashboardPinEditor clientId={clientId} clientName={clientName} />
-      <RowPinnedNotes pinnedNotes={pinnedNotes} renderNote={note => pinnedNotePermissions(note, viewer).canEdit
-        ? <DashboardPinEditor clientId={clientId} clientName={clientName} note={note} />
+      <DashboardPinEditor clientId={clientId} clientName={clientName} onSaved={remember} />
+      <RowPinnedNotes pinnedNotes={shown} renderNote={note => pinnedNotePermissions(note, viewer).canEdit
+        ? <DashboardPinEditor clientId={clientId} clientName={clientName} note={note} onSaved={remember} />
         : note.text}
       />
     </>
   );
 }
 
-function DashboardPinEditor({ clientId, clientName, note }: Client & { note?: DashboardPin }) {
+function DashboardPinEditor({ clientId, clientName, note, onSaved }: Client & { note?: DashboardPin; onSaved: (pin: DashboardPin) => void }) {
   const [originalText, setOriginalText] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [error, setError] = useState(false);
@@ -59,8 +83,8 @@ function DashboardPinEditor({ clientId, clientName, note }: Client & { note?: Da
     setError(false);
     startTransition(async () => {
       try {
-        if (note) await editClientPinnedNoteAction(data);
-        else await addClientPinnedNoteAction(data);
+        const result: unknown = note ? await editClientPinnedNoteAction(data) : await addClientPinnedNoteAction(data);
+        if (isSavedPin(result)) onSaved({ id: result.id, text: result.text, created_by_practitioner_id: result.created_by_practitioner_id ?? null });
         close();
       } catch {
         setError(true);
