@@ -39,8 +39,12 @@ describe("readers guard a NULL count (source contracts)", () => {
   const read = (p: string) => readFileSync(p, "utf8");
   it("the saved-entry row shows a count and a delay only when the count is present", () => {
     const s = read("components/entry-row.tsx");
-    expect(s).toMatch(/entry\.pulse_count != null\s*&&\s*\n?\s*entry\.pulse_count > 1/);
-    expect((s.match(/entry\.pulse_count != null/g) ?? []).length).toBeGreaterThanOrEqual(3);
+    // THE RULE, not the spelling: the row reads the count through ONE local (native blocks null it), and shows the delay only when that count is
+    // present and above 1, and the count line only when it is present. A NULL count therefore shows neither.
+    expect(s).toMatch(/const pulseCount = [^;]*entry\.pulse_count;/);
+    expect(s).toMatch(/pulseCount != null\s*&&\s*pulseCount > 1/);
+    expect(s).toMatch(/isThermoish && pulseCount != null/);
+    expect(s).not.toMatch(/pulseCount\s*(\?\?|\|\|)\s*0\b/);
   });
   it("the point-of-care and clinical summary read the count through the nullable number reader", () => {
     const s = read("lib/sessions/point-of-care-memory.ts");
@@ -93,9 +97,14 @@ describe("a NULL count renders as blank or not recorded, never 0 or null (census
     expect(csvCell(3)).toBe("3");
     expect(readFileSync("app/(app)/settings/data/actions.ts", "utf8")).toMatch(/duration_seconds, pulse_count, pulse_delay_seconds/);
   });
-  it("appointment prep: a blank count normalises to null (equal to another blank), never to 0", () => {
-    const s = readFileSync("lib/sessions/appointment-prep-memory.ts", "utf8");
-    expect(s).toMatch(/const norm = \(v: unknown\) => \(v == null \? null : Number\(v\)\);/);
+  it("appointment prep: it no longer reads the pulse count at all (production's prior-treatment card replaced the per-pass comparison), so no blank can become 0 there", () => {
+    // The rule that matters: nothing on the prep path turns a blank count into a number. Production removed the per-pass comparison that
+    // normalised it, so the guard is that no prep source coerces or defaults the count.
+    for (const f of ["lib/sessions/appointment-prep-memory.ts", "components/dashboard-prior-treatment.tsx", "components/appointment-prep-memory-card.tsx"]) {
+      const s = readFileSync(f, "utf8");
+      expect(s, f).not.toMatch(/pulse_count\s*(\?\?|\|\|)\s*\d/);
+      expect(s, f).not.toMatch(/Number\([^)]*pulse_count/);
+    }
   });
   it("last-treatment loader: the count is selected and passed through; nothing coerces it to a number or a default", () => {
     const s = readFileSync("lib/sessions/last-treatment-loader.ts", "utf8");

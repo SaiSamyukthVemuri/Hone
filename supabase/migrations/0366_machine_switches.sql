@@ -639,7 +639,10 @@ begin
   -- A NEW binding to ANY model the owner switched OFF is refused, native or legacy (the legacy xCell choice is the xCell model). A model with no
   -- switch row is not switched off. While the rollout is off the switches are dormant, as everywhere else; a failed rollout read raises (fails closed).
   -- An unchanged identity on an existing block is not a new binding and still saves.
+  -- THE PLACEHOLDER IS NEVER "SWITCHED OFF": it is not a registered machine and MultiPlex is offered in every studio with it, whatever the owner chose
+  -- for the registered xCell unit. A binding to it is exempt; a registered unit of the same model is still refused.
   if v_new_identity
+     and not coalesce((select pm.is_unspecified from public.studio_machines pm where pm.id = p_studio_machine_id), false)
      and v_profile in ('dectro-apilus:xcell-pur', 'dectro-apilus:senior-3g', 'dectro-apilus:junior-3g', 'dectro-apilus:xcell')
      and exists (select 1 from public.studio_machine_models sm
                   where sm.studio_id = p_studio_id and not sm.enabled

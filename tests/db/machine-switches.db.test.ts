@@ -515,7 +515,7 @@ describe("the unspecified-machine placeholder is NOT a registered unit (0385 reb
   it("COMMAND CENSUS: every 0366 function that reads studio_machines excludes the placeholder by name; the two owner commands read no unit at all", async () => {
     const def = async (name: string) =>
       (await adminQuery(`select pg_get_functiondef(p.oid) as d from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname = $1`, [name])).rows.map((r) => r.d as string).join("\n");
-    for (const name of ["seed_studio_machine_settings", "studio_machines_enable_model_trigger", "get_studio_machine_choices", "ensure_studio_machine_for_save"]) {
+    for (const name of ["seed_studio_machine_settings", "studio_machines_enable_model_trigger", "get_studio_machine_choices", "ensure_studio_machine_for_save", "apply_block_machine_identity"]) {
       const d = await def(name);
       expect(d, `${name} must read studio_machines`).toContain("studio_machines");
       expect(d, `${name} must exclude the placeholder`).toContain("is_unspecified");
