@@ -100,8 +100,7 @@ export function formatEventTime(eventAt: string): string {
 
 /**
  * The authenticated console link: the configured origin, never the request's,
- * to the lead's own page (Codex P2 4248920469). Signing in on the way keeps
- * the target (Codex P2 4248920454): see lib/auth/return-path.ts.
+ * to the existing /admin lead lists (see leadDetailPath).
  */
 export function leadConsoleUrl(
   appOrigin: string,

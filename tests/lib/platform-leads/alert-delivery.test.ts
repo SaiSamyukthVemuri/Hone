@@ -155,6 +155,24 @@ describe("deliverPlatformLeadAlert", () => {
     });
   });
 
+  it("LEAD_ALERT_EMAIL unset: the sweep answers ok with a blocker, touches only the expiry and the blocker record, and sends nothing", async () => {
+    const calls: Call[] = [];
+    let sends = 0;
+    const summary = await sweepPlatformLeadAlerts({
+      admin: fakeAdmin({ expire_platform_lead_alerts: 0, record_platform_lead_alerts_unconfigured: 3 }, calls),
+      transport: transport(async () => {
+        sends += 1;
+        return { data: { id: "m" }, error: null };
+      }),
+      env: { ADMIN_EMAILS: OPS },
+      appOrigin: () => "https://hone.example",
+    });
+    // ok: true is what the cron route answers 200 for; the blocker is data, not a failure of the run
+    expect(summary).toMatchObject({ ok: true, blocked: "recipient_not_configured", blockedAlerts: 3, attempted: 0, accepted: 0 });
+    expect(calls.map((c) => c.fn)).toEqual(["expire_platform_lead_alerts", "record_platform_lead_alerts_unconfigured"]);
+    expect(sends).toBe(0);
+  });
+
   it("blocked configuration claims nothing and sends nothing", async () => {
     const calls: Call[] = [];
     let sends = 0;

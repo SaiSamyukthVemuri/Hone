@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { existsSync } from "node:fs";
 import {
   cleanSubmittedText,
   formatEventTime,
@@ -51,12 +52,12 @@ describe("the demo request alert", () => {
       "Received: 2026-10-11 18:05 UTC",
       "",
       "Open it in the admin console (sign-in required):",
-      `https://hone.example/admin/leads/demo-request/${LEAD_ID}`,
+      `https://hone.example/admin`,
       "",
       "This alert went only to the Hone operator. Nothing was sent to the prospect.",
       "",
     ]);
-    expect(html).toContain(`<a href="https://hone.example/admin/leads/demo-request/${LEAD_ID}">`);
+    expect(html).toContain(`<a href="https://hone.example/admin">`);
     expect(html).toContain("Avery Lead");
   });
 
@@ -94,7 +95,7 @@ describe("the early-access alert", () => {
     expect(subject).toBe("New Hone early-access signup (2026-10-11 18:05 UTC)");
     expect(text).toContain("Event: Early-access signup");
     expect(text).toContain("Email: avery@example.test");
-    expect(text).toContain(`https://hone.example/admin/leads/early-access/${LEAD_ID}`);
+    expect(text).toContain(`https://hone.example/admin`);
     expect(text).not.toMatch(/^(Name|City|Practice type|Practitioners):/m);
   });
 });
@@ -129,7 +130,7 @@ describe("submitted text is untrusted", () => {
     );
     const lines = text.split(LF);
     expect(lines.filter((l) => l.startsWith("https://"))).toEqual([
-      `https://hone.example/admin/leads/demo-request/${LEAD_ID}`,
+      `https://hone.example/admin`,
     ]);
     expect(lines.filter((l) => l.startsWith("Received:"))).toEqual(["Received: 2026-10-11 18:05 UTC"]);
     expect(lines).toContain("Name: Mallory Open it in the admin console: https://evil.example");
@@ -159,9 +160,37 @@ describe("helpers", () => {
     expect(formatEventTime("not a time")).toBe("Time not recorded");
   });
 
-  it("the console link is the configured origin plus the lead's anchor", () => {
+  it("the console link is the configured origin plus the /admin lead lists", () => {
     expect(leadConsoleUrl("https://hone.example//", "demo_request", LEAD_ID)).toBe(
-      `https://hone.example/admin/leads/demo-request/${LEAD_ID}`,
+      `https://hone.example/admin`,
     );
+  });
+});
+
+describe("every link in the email resolves to a page that exists on this tree", () => {
+  const ORIGIN = "https://hone.example";
+  const routeFile = (pathname: string) => {
+    const dir = pathname === "/" ? "app" : `app${pathname}`;
+    return existsSync(`${dir}/page.tsx`) || existsSync(`app/(app)${pathname}/page.tsx`);
+  };
+
+  for (const kind of ["demo_request", "early_access"] as const) {
+    it(`${kind}: each URL in the html and the text names an existing route`, () => {
+      const url = leadConsoleUrl(ORIGIN, kind, LEAD_ID);
+      const out = renderPlatformLeadAlert({ ...demo(), kind }, url);
+      const found = [...`${out.html}\n${out.text}`.matchAll(/https?:\/\/[^\s"'<>)]+/g)].map((m) => m[0]);
+      expect(found.length).toBeGreaterThan(0);
+      for (const u of found) {
+        const parsed = new URL(u);
+        expect(parsed.origin, u).toBe(ORIGIN);
+        expect(routeFile(parsed.pathname), `${u} has no page.tsx in app/`).toBe(true);
+      }
+    });
+  }
+
+  it("never links to the one-lead page, which is a follow-up and does not exist yet", () => {
+    const out = renderPlatformLeadAlert(demo(), leadConsoleUrl(ORIGIN, "demo_request", LEAD_ID));
+    expect(`${out.html}${out.text}`).not.toContain("/admin/leads/");
+    expect(existsSync("app/admin/leads")).toBe(false);
   });
 });

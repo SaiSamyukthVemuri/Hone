@@ -71,19 +71,12 @@ export function leadAlertReason(code: string | null | undefined): string | null 
 export type PlatformLeadKind = "demo_request" | "early_access";
 
 /**
- * The one-lead console page the alert email links to (Codex P2 4248920469):
- * it loads the named lead whatever its age, unlike the /admin tables, which
- * show the latest 20 of each kind.
+ * Where the alert email sends the operator: the existing /admin lead lists. A one-lead page (/admin/leads/<kind>/<id>) is a
+ * follow-up, and the email must never link to a route that does not exist on this tree, so every kind lands on /admin. The kind
+ * and id stay in the signature so the day the page ships only this function changes.
  */
-export function leadDetailPath(kind: PlatformLeadKind, leadId: string): string {
-  return `/admin/leads/${kind === "demo_request" ? "demo-request" : "early-access"}/${leadId}`;
-}
-
-/** The console row's anchor on /admin. */
-export function leadAnchorId(kind: PlatformLeadKind, leadId: string): string {
-  return kind === "demo_request"
-    ? `lead-demo-request-${leadId}`
-    : `lead-early-access-${leadId}`;
+export function leadDetailPath(_kind: PlatformLeadKind, _leadId: string): string {
+  return "/admin";
 }
 
 export type LeadAlertSummary = {

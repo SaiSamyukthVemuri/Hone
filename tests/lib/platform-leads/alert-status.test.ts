@@ -9,7 +9,6 @@ import {
   LEAD_ALERT_MAX_ATTEMPTS,
   LEAD_ALERT_STATUSES,
   leadAlertReason,
-  leadAnchorId,
 } from "@/lib/platform-leads/alert-status";
 
 // LEAD-ALERT-01 (#826): the console's words for each alert state, and the
@@ -97,9 +96,3 @@ describe("describeLeadAlert", () => {
   });
 });
 
-describe("leadAnchorId", () => {
-  it("one anchor per lead kind, shared by the email link and the console row", () => {
-    expect(leadAnchorId("demo_request", "abc")).toBe("lead-demo-request-abc");
-    expect(leadAnchorId("early_access", "abc")).toBe("lead-early-access-abc");
-  });
-});
