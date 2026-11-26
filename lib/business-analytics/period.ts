@@ -234,6 +234,14 @@ export function resolvePeriod(input: ResolveInput): PeriodResult {
   return { ok: true, period: { kind, current, comparison, partial: mode !== "previous_month", clamped, currentLabel, comparisonLabel, notes } };
 }
 
+/** True when `from`..`to` are exactly ONE whole calendar month (the first to the last day of the same month). Both must be real local dates. */
+export function isWholeCalendarMonth(from: unknown, to: unknown): boolean {
+  if (!isRealLocalDate(from) || !isRealLocalDate(to)) return false;
+  const a = parts(from);
+  const b = parts(to);
+  return a.y === b.y && a.m === b.m && a.d === 1 && b.d === daysInMonth(b.y, b.m);
+}
+
 /** The two UTC instants of a window in the studio's time zone: each local midnight converted on its own. */
 export function windowInstants(w: Pick<PeriodWindow, "startLocal" | "endLocalExclusive">, timezone: string): { startUtc: string; endUtc: string } {
   return {

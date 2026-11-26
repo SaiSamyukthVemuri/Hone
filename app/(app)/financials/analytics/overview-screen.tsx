@@ -31,6 +31,11 @@ import {
   namedClientsCap,
   namedClientsNotListed,
   noNextBookingNote,
+  PREVIOUS_CALENDAR_MONTH_LABEL,
+  excludedVisitsSentence,
+  otherCurrencyRecordsSentence,
+  refundedInFullSentence,
+  unresolvedRecordsSentence,
 } from "@/lib/business-analytics/copy";
 import { NAMED_LIST_SIZE, type NamedRow } from "@/lib/business-analytics/named-clients";
 import { FIGURE_UNAVAILABLE_COPY, type Figure } from "@/lib/business-analytics/figure";
@@ -38,7 +43,7 @@ import { formatWhole } from "@/lib/business-analytics/money-format";
 import { MONEY_BASIS_NOTE, type Change } from "@/lib/business-analytics/money-metrics";
 import type { CollectedDifference, OverviewView } from "@/lib/business-analytics/overview-model";
 import { overviewQuery, type OverviewParams } from "@/lib/business-analytics/overview-params";
-import { PERIOD_KINDS } from "@/lib/business-analytics/period";
+import { isWholeCalendarMonth, PERIOD_KINDS } from "@/lib/business-analytics/period";
 import { DEFAULT_BEYOND_USUAL_FACTOR } from "@/lib/business-analytics/visit-metrics";
 import type { Fact } from "@/lib/dashboard/owner-capacity-model";
 
@@ -176,6 +181,8 @@ export function Controls({ params, options, action = OVERVIEW_PATH, hidden = [] 
           <select name="compare" defaultValue={params.compare} className={INPUT}>
             <option value="preceding">The period just before</option>
             <option value="last_year">The same dates last year</option>
+            {/* Offered for ONE whole calendar month, and kept when it was the comparison in use, so pressing Show does not quietly change it. */}
+            {isWholeCalendarMonth(params.from, params.to) || params.compare === "previous_month" ? <option value="previous_month">{PREVIOUS_CALENDAR_MONTH_LABEL}</option> : null}
           </select>
         </label>
       </div>
@@ -343,7 +350,7 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
             <>
               <p className={a.averageCents.known ? BIG : "text-sm text-fg"}>{factText(a.averageCents, format)}</p>
               {a.averageCents.known ? <ChangeLine change={view.averagePaidChange} cmp={cmp} /> : null}
-              {a.excludedUnknownVisits > 0 ? <p className="text-xs text-fg-muted">{plural(a.excludedUnknownVisits, "visit", "visits")} awaiting payment confirmation {a.excludedUnknownVisits === 1 ? "is" : "are"} left out of this average.</p> : null}
+              {a.excludedUnknownVisits > 0 ? <p className="text-xs text-fg-muted">{excludedVisitsSentence(a.excludedUnknownVisits)}</p> : null}
             </>
           )}
         </Card>
@@ -564,9 +571,9 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
                       <SplitRow label="Collected" value={format(c.split.totalCents)} strong />
                     </tbody>
                   </table>
-                  {c.caveats.refundedInFullCents > 0 ? <p className="text-sm text-fg-muted">Refunded in full, not in collected: {format(c.caveats.refundedInFullCents)}.</p> : null}
-                  {c.caveats.unresolvedCount > 0 ? <p className="text-sm text-fg-muted">{plural(c.caveats.unresolvedCount, "payment record", "payment records")} could not be settled either way and {c.caveats.unresolvedCount === 1 ? "is" : "are"} not counted.</p> : null}
-                  {c.caveats.otherCurrencyCount > 0 ? <p className="text-sm text-fg-muted">{plural(c.caveats.otherCurrencyCount, "payment record", "payment records")} in another currency {c.caveats.otherCurrencyCount === 1 ? "is" : "are"} not counted.</p> : null}
+                  {c.caveats.refundedInFullCents > 0 ? <p className="text-sm text-fg-muted">{refundedInFullSentence(format(c.caveats.refundedInFullCents))}</p> : null}
+                  {c.caveats.unresolvedCount > 0 ? <p className="text-sm text-fg-muted">{unresolvedRecordsSentence(c.caveats.unresolvedCount)}</p> : null}
+                  {c.caveats.otherCurrencyCount > 0 ? <p className="text-sm text-fg-muted">{otherCurrencyRecordsSentence(c.caveats.otherCurrencyCount)}</p> : null}
                 </div>
               )}
             </Card>

@@ -24,6 +24,7 @@ vi.mock("@/lib/business-analytics/server/overview-read", () => ({
 import BusinessOverviewPage from "@/app/(app)/financials/overview/page";
 import { STATEMENTS_OWNER_ONLY } from "@/lib/finance/statement-screen";
 
+const NOC = { refundedInFullCents: 0, unresolvedCount: 0, otherCurrencyCount: 0, excludedCount: 0, unreadableCount: 0 };
 const ok = <T,>(value: T) => ({ available: true as const, value });
 const point = (key: string, collectedCents: number) => ({ key, collectedCents, completedVisits: 0 });
 const view = (over: Record<string, unknown>) => ({
@@ -38,10 +39,10 @@ const view = (over: Record<string, unknown>) => ({
     asOfLocal: "2026-11-24",
     currentRange: { startLocal: "2026-11-01", lastLocal: "2026-11-24" },
     currency: "cad",
-    collected: ok({ headlineCents: 607500, change: { kind: "percent", percent: 53.4 }, previousCents: 396000 }),
+    collected: ok({ headlineCents: 607500, change: { kind: "percent", percent: 53.4 }, previousCents: 396000, caveats: NOC }),
     completedVisits: ok({ count: 41 }),
     activeClients: ok({ count: 30 }),
-    averagePaid: ok({ averageCents: { known: true, value: 14800 } }),
+    averagePaid: ok({ averageCents: { known: true, value: 14800 }, excludedUnknownVisits: 0 }),
     series: ok({ unit: "day", points: [point("2026-11-01", 10000)] }),
     previousSeries: ok({ unit: "day", points: [point("2026-10-01", 5000)] }),
     ...over,
@@ -100,10 +101,10 @@ describe("the figures are in the server-rendered page", () => {
 describe("a studio with no activity", () => {
   it("prints a genuine $0 and 'Not available' for the average, side by side and different", async () => {
     calls.result = view({
-      collected: ok({ headlineCents: 0, change: { kind: "none_recorded" }, previousCents: 0 }),
+      collected: ok({ headlineCents: 0, change: { kind: "none_recorded" }, previousCents: 0, caveats: NOC }),
       completedVisits: ok({ count: 0 }),
       activeClients: ok({ count: 0 }),
-      averagePaid: ok({ averageCents: { known: false, reason: "No completed visit has a known payment." } }),
+      averagePaid: ok({ averageCents: { known: false, reason: "No completed visit has a known payment." }, excludedUnknownVisits: 0 }),
       series: ok({ unit: "day", points: [point("2026-11-01", 0)] }),
       previousSeries: ok({ unit: "day", points: [point("2026-10-01", 0)] }),
     });
@@ -170,5 +171,35 @@ describe("Explore analytics carries the same window AND the same comparison", ()
     expect(html).toContain('href="/financials/analytics?period=custom&amp;from=2025-03-01&amp;to=2025-03-31&amp;compare=previous_month"');
     expect(await render({ period: "previous_month" })).toContain('href="/financials/analytics?period=previous_month"');
     expect(await render()).toContain('href="/financials/analytics"');
+  });
+});
+
+describe("the disclosures are on the page, directly under the figure", () => {
+  it("an unresolved payment alone: $0 with its sentence between the figure and the comparison, in the first block", async () => {
+    calls.result = view({
+      collected: ok({ headlineCents: 0, change: { kind: "none_recorded" }, previousCents: 0, caveats: { ...NOC, unresolvedCount: 1 } }),
+      completedVisits: ok({ count: 1 }),
+    });
+    const html = await render();
+    const figure = html.indexOf('data-testid="overview-collected"');
+    const note = html.indexOf("1 payment record could not be settled either way and is not counted.");
+    const cmp = html.indexOf('data-testid="overview-comparison"');
+    expect(note).toBeGreaterThan(figure);
+    expect(note).toBeLessThan(cmp);
+    expect(html).toContain('data-testid="overview-collected-disclosures"');
+  });
+  it("a clean period has no disclosure block", async () => {
+    calls.result = view({});
+    const html = await render();
+    expect(html).not.toContain("overview-collected-disclosures");
+    expect(html).not.toContain("overview-average-disclosure");
+  });
+  it("one paid visit and nine unknown ones: '10' visits and '$100' average come WITH the sentence about the nine", async () => {
+    calls.result = view({
+      completedVisits: ok({ count: 10 }),
+      averagePaid: ok({ averageCents: { known: true, value: 10000 }, excludedUnknownVisits: 9 }),
+    });
+    const html = await render();
+    expect(html).toMatch(/data-testid="overview-average-disclosure"[^>]*>9 visits awaiting payment confirmation are left out of this average\./);
   });
 });

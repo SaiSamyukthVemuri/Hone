@@ -6,6 +6,7 @@ import {
   bucketsOf,
   daysBetween,
   isRealLocalDate,
+  isWholeCalendarMonth,
   monthsCovered,
   rangeLabel,
   resolvePeriod,
@@ -101,6 +102,13 @@ describe("custom", () => {
     const bad = (from: string, to: string) => { const r = resolvePeriod({ kind: "custom", today, from, to, customComparison: "previous_month" }); return r.ok ? "ok" : r.error; };
     expect(bad("2026-03-02", "2026-03-31")).toBe("invalid_comparison"); // part of a month
     expect(bad("2026-02-01", "2026-03-31")).toBe("invalid_comparison"); // two months
+  });
+  it("isWholeCalendarMonth is true for exactly one whole calendar month and nothing else", () => {
+    expect(isWholeCalendarMonth("2026-03-01", "2026-03-31")).toBe(true);
+    expect(isWholeCalendarMonth("2024-02-01", "2024-02-29")).toBe(true);
+    expect(isWholeCalendarMonth("2026-02-01", "2026-02-28")).toBe(true);
+    for (const [a, b] of [["2026-03-02", "2026-03-31"], ["2026-03-01", "2026-03-30"], ["2026-02-01", "2026-03-31"], ["2026-03-01", "2026-04-30"], ["x", "2026-03-31"], ["2026-02-01", "2026-02-30"]]) expect(isWholeCalendarMonth(a, b), `${a}..${b}`).toBe(false);
+    expect(isWholeCalendarMonth(undefined, undefined)).toBe(false);
   });
   it("refuses bad input and never silently shortens or clamps it", () => {
     const e = (o: Partial<Parameters<typeof resolvePeriod>[0]>) => {

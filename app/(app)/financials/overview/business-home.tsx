@@ -103,6 +103,11 @@ function Hero({ figures, currency, title }: { figures: HomeFigures; currency: st
             <span className="text-5xl font-bold leading-none tracking-tight">{c.value.display}</span>
             {currency ? <small className="text-lg font-normal text-white/70">{currency.toUpperCase()}</small> : null}
           </p>
+          {c.value.disclosures.length > 0 ? (
+            <div className="mt-2 space-y-1 text-xs text-white/80" data-testid="overview-collected-disclosures">
+              {c.value.disclosures.map((d) => (<p key={d}>{d}</p>))}
+            </div>
+          ) : null}
           <p className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm" data-testid="overview-comparison">
             {c.value.comparison.kind === "percent" ? (
               <>
@@ -124,6 +129,7 @@ function Hero({ figures, currency, title }: { figures: HomeFigures; currency: st
         <Small label="Clients seen" figure={figures.activeClients} testId="overview-clients" />
         <Small label="Average paid visit" figure={figures.averagePaid} testId="overview-average" />
       </div>
+      {figures.averageDisclosure ? <p className="mt-3 text-xs text-white/80" data-testid="overview-average-disclosure">{figures.averageDisclosure}</p> : null}
     </section>
   );
 }

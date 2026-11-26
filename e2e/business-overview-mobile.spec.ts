@@ -290,3 +290,46 @@ test("a visit last month, unpaid then paid in full this month: it is last month'
     await expect(page.getByRole("main")).toContainText("Collected in total: $0.00", { timeout: T });
   }
 });
+
+test("what the figures do NOT include is said under them: another-currency money is not counted, and a visit awaiting payment confirmation is left out of the average", async ({ page }) => {
+  const seed = await seedE2eStudio();
+  await currency(seed);
+  const prac = await getOwnerPractitionerId(seed.studioId);
+  const now = new Date();
+  const mk = async (label: string, startsAt: Date) => {
+    const { clientId } = await seedE2eDashboardClient(seed, { label });
+    const serviceId = randomUUID();
+    await sql(`insert into public.services (id, studio_id, name, modality, default_duration_minutes, price_cents, active) values ($1,$2,$3,'electrolysis',60,$4,true)`, [serviceId, seed.studioId, `${label} service`, 8000]);
+    const apptId = randomUUID();
+    await sql(
+      `insert into public.appointments (id, studio_id, client_id, practitioner_id, service_id, starts_at, ends_at, duration_minutes, buffer_minutes_snapshot, blocked_ends_at, status)
+       values ($1,$2,$3,$4,$5,$6,$7,60,0,$7,'completed')`,
+      [apptId, seed.studioId, clientId, prac, serviceId, startsAt.toISOString(), new Date(startsAt.getTime() + 3_600_000).toISOString()],
+    );
+    return { clientId, apptId };
+  };
+  // A card payment in ANOTHER currency (a CAD studio): on a completed visit, so it is on the page but never in the CAD total.
+  const paid = await mk("Other currency", new Date(now.getTime() - 3 * 3_600_000));
+  const sessionId = randomUUID();
+  await sql(`insert into public.sessions (id, studio_id, client_id, practitioner_id, appointment_id, modality) values ($1,$2,$3,$4,$5,'electrolysis')`, [sessionId, seed.studioId, paid.clientId, prac, paid.apptId]);
+  await sql(
+    `insert into public.payment_charge_attempts (id, studio_id, client_id, session_id, charge_reason, created_by_practitioner_id, amount_cents, currency, status, stripe_livemode)
+     values ($1,$2,$3,$4,'session_payment',$5,8000,'usd','succeeded',false)`,
+    [randomUUID(), seed.studioId, paid.clientId, sessionId, prac],
+  );
+  // A completed visit with no payment record at all: its payment is unknown, so it is left out of the average.
+  await mk("No payment record", new Date(now.getTime() - 2 * 3_600_000));
+
+  await loginAsOwner(page, seed);
+  await page.goto("/financials/overview");
+  await expect(page.getByTestId("overview-collected-disclosures")).toContainText("payment record in another currency is not counted", { timeout: T });
+  // The disclosure sits directly under the figure, and the figure is still in the first screen.
+  const fig = (await collected(page).boundingBox())!;
+  const note = (await page.getByTestId("overview-collected-disclosures").boundingBox())!;
+  expect(note.y).toBeGreaterThanOrEqual(fig.y + fig.height - 1);
+  expect(fig.y + fig.height).toBeLessThanOrEqual(page.viewportSize()!.height);
+  expect(note.y + note.height, "the disclosure is in the first screen too").toBeLessThanOrEqual(page.viewportSize()!.height);
+  await expect(page.getByTestId("overview-average-disclosure")).toContainText("awaiting payment confirmation", { timeout: T });
+  await expectNoSideways(page, "Overview with disclosures");
+  await shot(page, "overview-fold-disclosure");
+});

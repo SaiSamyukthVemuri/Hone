@@ -1,3 +1,4 @@
+import { excludedVisitsSentence, otherCurrencyRecordsSentence, refundedInFullSentence, unresolvedRecordsSentence } from "./copy";
 import { FIGURE_UNAVAILABLE_COPY } from "./figure";
 import { formatExact, formatWhole } from "./money-format";
 import type { OverviewView } from "./overview-model";
@@ -20,7 +21,17 @@ export type HomeComparison =
   | { kind: "none_recorded"; text: string }
   | { kind: "unavailable"; text: string };
 
-export type HomeHero = { display: string; cents: number; comparison: HomeComparison; comparisonLabel: string };
+export type HomeHero = {
+  display: string;
+  cents: number;
+  comparison: HomeComparison;
+  comparisonLabel: string;
+  /**
+   * What the total does NOT include: payment records that could not be settled either way, records in another currency, money refunded in full. Said under
+   * the figure, so a confirmed total is told apart from a period that has uncounted payment records (an unresolved payment alone is NOT a genuine $0).
+   */
+  disclosures: string[];
+};
 
 export type HomeFigures = {
   periodLabel: string;
@@ -29,6 +40,10 @@ export type HomeFigures = {
   completedVisits: HomeFigure<number>;
   activeClients: HomeFigure<number>;
   averagePaid: HomeFigure<string>;
+  /** Completed visits left out of the average because their payment is unknown. Said whether or not an average could be shown. */
+  averageExcludedVisits: number;
+  /** The sentence for them, or null when none were left out. */
+  averageDisclosure: string | null;
   /** Cumulative collections for the current and the comparison period (cents), for the line. Unavailable when the series could not be read. */
   trend: HomeFigure<{ current: number[]; previous: number[] | null; unit: "day" | "month"; firstKey: string; lastKey: string }>;
 };
@@ -57,6 +72,15 @@ function cumulative(points: ReadonlyArray<{ collectedCents: number }>): number[]
   return points.map((p) => (sum += p.collectedCents));
 }
 
+/** The same sentences, in the same order, as the Analytics collected breakdown. */
+export function collectedDisclosures(c: { refundedInFullCents: number; unresolvedCount: number; otherCurrencyCount: number }): string[] {
+  const out: string[] = [];
+  if (c.unresolvedCount > 0) out.push(unresolvedRecordsSentence(c.unresolvedCount));
+  if (c.otherCurrencyCount > 0) out.push(otherCurrencyRecordsSentence(c.otherCurrencyCount));
+  if (c.refundedInFullCents > 0) out.push(refundedInFullSentence(heroMoney(c.refundedInFullCents)));
+  return out;
+}
+
 export function buildHomeFigures(view: OverviewView): HomeFigures {
   const collected: HomeFigures["collected"] = view.collected.available
     ? {
@@ -66,6 +90,7 @@ export function buildHomeFigures(view: OverviewView): HomeFigures {
           display: heroMoney(view.collected.value.headlineCents),
           comparison: describeComparison(view.collected.value.change, view.comparisonLabel),
           comparisonLabel: view.comparisonLabel,
+          disclosures: collectedDisclosures(view.collected.value.caveats),
         },
       }
     : unavailable(view.collected.reason);
@@ -75,6 +100,8 @@ export function buildHomeFigures(view: OverviewView): HomeFigures {
     : view.averagePaid.value.averageCents.known
       ? { state: "value", value: heroMoney(view.averagePaid.value.averageCents.value) }
       : { state: "unavailable", reason: view.averagePaid.value.averageCents.reason };
+
+  const averageExcludedVisits = view.averagePaid.available ? view.averagePaid.value.excludedUnknownVisits : 0;
 
   const trend: HomeFigures["trend"] = view.series.available
     ? {
@@ -96,6 +123,8 @@ export function buildHomeFigures(view: OverviewView): HomeFigures {
     completedVisits: view.completedVisits.available ? { state: "value", value: view.completedVisits.value.count } : unavailable(view.completedVisits.reason),
     activeClients: view.activeClients.available ? { state: "value", value: view.activeClients.value.count } : unavailable(view.activeClients.reason),
     averagePaid,
+    averageExcludedVisits,
+    averageDisclosure: averageExcludedVisits > 0 ? excludedVisitsSentence(averageExcludedVisits) : null,
     trend,
   };
 }
