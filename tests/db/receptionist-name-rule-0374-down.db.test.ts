@@ -24,6 +24,7 @@ const DOWN_0374 = read("supabase/rollbacks/0374_receptionist_name_rule.down.sql"
 const UP_0380 = read("supabase/migrations/0380_receptionist_name_rule.sql");
 const DOWN_0380 = read("supabase/rollbacks/0380_receptionist_name_rule.down.sql");
 const UP_0382 = read("supabase/migrations/0382_receptionist_close_older_contact_commands.sql");
+const DOWN_0382 = read("supabase/rollbacks/0382_receptionist_close_older_contact_commands.down.sql");
 
 const FUNCTIONS = ["receptionist_client_directory", "receptionist_calendar_v2", "receptionist_client_contacts_v2"] as const;
 // The bodies on the hosted database before 0374 (the md5s 0374's own preamble requires).
@@ -66,6 +67,8 @@ describe("the 0374 down file is guarded against a later body", () => {
       expect(await snapshot()).toEqual(head);
 
       // 2. Bring the database to "only 0374 applied" with 0380's own down file, then the 0374 down must run.
+      // The 0380 down now refuses while 0382 is in place, so undo 0382 first, in order.
+      await adminQuery(DOWN_0382);
       await adminQuery(DOWN_0380);
       const at0374 = await snapshot();
       for (const r of at0374) expect(r.md5, `${r.name} is not the head body after the 0380 down`).not.toBe(bodiesOf(head)[r.name]);

@@ -148,3 +148,48 @@ describe("the down file", () => {
     }
   });
 });
+
+describe("the down file refuses to run over 0382", () => {
+  // Source contract; the behaviour is proved on a real database by tests/db/receptionist-name-rule-0380-down.db.test.ts.
+  const guardEnd = DOWN.indexOf("$guard$;");
+  const firstChange = DOWN.indexOf("create or replace function");
+  it("the refusal is in the PREAMBLE, before the first change, and is a 55000 naming 0382's down file", () => {
+    const at = DOWN.indexOf("authenticated cannot execute");
+    expect(at).toBeGreaterThan(0);
+    expect(at).toBeLessThan(guardEnd);
+    expect(guardEnd).toBeLessThan(firstChange);
+    expect(DOWN).toMatch(/Run the 0382 down file first, then this one\./);
+    expect(DOWN).toMatch(/authenticated cannot execute % \(0382 is in place[^']*'[^;]*errcode = '55000'/);
+  });
+  it("it tests EXECUTE for authenticated on BOTH functions 0382 closes, and not on the calendar function 0382 leaves open", () => {
+    const pre = DOWN.slice(0, guardEnd);
+    expect(pre).toContain("public.receptionist_client_directory(uuid, text, text[], text, integer, integer)");
+    expect(pre).toContain("public.receptionist_client_contacts_v2(uuid, text, integer)");
+    expect(pre).toMatch(/has_function_privilege\('authenticated'/);
+    expect(pre.slice(pre.indexOf("authenticated cannot execute") - 700)).not.toContain("receptionist_calendar_v2(");
+  });
+  it("POLARITY: it raises when authenticated can NOT execute (false or NULL), for each of the two functions, and never when it can", () => {
+    // Inverting the condition (raising when authenticated CAN execute) would refuse every normal rollback and allow the one this file exists to stop; the
+    // other source tests cannot see that, only a database run can. So pin the shape: the second loop of the preamble, over BOTH functions, whose only raise
+    // is under `if not coalesce(has_function_privilege('authenticated', <fn>, 'execute'), false)`. NULL (a missing function) counts as "cannot", via coalesce.
+    const pre = DOWN.slice(0, guardEnd);
+    const loops = [...pre.matchAll(/for r in[\s\S]*?end loop;/g)].map((m) => m[0]);
+    const grantLoop = loops.find((l) => l.includes("authenticated cannot execute"));
+    expect(grantLoop, "the privilege loop is in the preamble").toBeDefined();
+    const loop = grantLoop as string;
+    for (const sig of ["public.receptionist_client_directory(uuid, text, text[], text, integer, integer)", "public.receptionist_client_contacts_v2(uuid, text, integer)"]) {
+      expect(loop, `${sig} is in the loop that raises`).toContain(`'${sig}'`);
+    }
+    expect(loop).toMatch(/if not coalesce\(\s*pg_catalog\.has_function_privilege\('authenticated',\s*pg_catalog\.to_regprocedure\(r\.sig\),\s*'execute'\),\s*false\)\s+then\s+raise exception '0380 down refuses to run: authenticated cannot execute/);
+    // exactly ONE condition guards the raise, and it is the negated one: no un-negated has_function_privilege('authenticated') test in this loop
+    expect(loop.match(/has_function_privilege\('authenticated'/g)).toHaveLength(1);
+    expect(loop).not.toMatch(/if\s+(?!not\b)coalesce\(\s*pg_catalog\.has_function_privilege\('authenticated'/);
+    expect(loop).not.toMatch(/if\s+pg_catalog\.has_function_privilege\('authenticated'/);
+    expect(loop.match(/raise exception/g)).toHaveLength(1);
+  });
+  it("the bodies, the grants and the after-check below the preamble are unchanged", () => {
+    expect(DOWN).toContain("grant execute on function public.receptionist_client_directory(uuid, text, text[], text, integer, integer) to authenticated;");
+    expect(DOWN).toContain("0380 down check: % is not the reviewed restored body");
+  });
+});
+
