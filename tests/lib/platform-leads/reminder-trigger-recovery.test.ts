@@ -24,7 +24,7 @@ import {
 } from "@/lib/platform-leads/alert-delivery";
 
 const OPS = "ops@hone.example";
-const ENV = { LEAD_ALERT_EMAIL: OPS, ADMIN_EMAILS: OPS };
+const ENV = { LEAD_ALERT_RECIPIENTS: OPS, ADMIN_EMAILS: OPS };
 
 function recordingAdmin(calls: string[], claims = 10): SupabaseClient {
   let left = claims;
@@ -57,7 +57,7 @@ const transport: IdempotentEmailTransport = { emails: { send: async () => ({ dat
 
 describe("recoverLeadAlertsOnReminderTrigger", () => {
   it("UNCONFIGURED: no database call and no provider call at all (production reminders stay untouched)", async () => {
-    for (const env of [{}, { ADMIN_EMAILS: OPS }, { LEAD_ALERT_EMAIL: "not-an-admin@x.test", ADMIN_EMAILS: OPS }]) {
+    for (const env of [{}, { ADMIN_EMAILS: OPS }, { LEAD_ALERT_RECIPIENTS: "not an address" }]) {
       const calls: string[] = [];
       let sends = 0;
       const out = await recoverLeadAlertsOnReminderTrigger({

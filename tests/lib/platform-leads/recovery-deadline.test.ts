@@ -35,11 +35,12 @@ import {
   REMINDER_TRIGGER_LEAD_ALERT_BUDGET_MS as BUDGET,
   REMINDER_TRIGGER_LEAD_ALERT_REPORT_MS as REPORT,
   recoverLeadAlertsOnReminderTrigger,
+  recipientKey,
   type ReminderTriggerLeadAlertResult,
 } from "@/lib/platform-leads/alert-delivery";
 
 const OPS = "ops@hone.example";
-const ENV = { LEAD_ALERT_EMAIL: OPS, ADMIN_EMAILS: OPS };
+const ENV = { LEAD_ALERT_RECIPIENTS: OPS, ADMIN_EMAILS: OPS };
 const TRIGGER_EVERY_MS = 15 * 60_000;
 
 let db: ReturnType<typeof fakeLeadAlertDb>;
@@ -133,7 +134,7 @@ describe("a stalled database call is cancelled at the deadline, its outcome unkn
     const second = await trigger();
     expect(summaryOf(second.out)).toMatchObject({ ok: true, accepted: 1 });
     // Same key, same id: a replay, not a second email.
-    expect(provider.requests.map((r) => r.key)).toEqual(["lead-alert/a1/1", "lead-alert/a1/1"]);
+    expect(provider.requests.map((r) => r.key)).toEqual([recipientKey("lead-alert/a1/1", OPS), recipientKey("lead-alert/a1/1", OPS)]);
     expect(provider.delivered).toBe(1);
     expect(db.alert("a1")).toMatchObject({ status: "accepted", messageId: "email-1", attempts: 2 });
   });
@@ -184,7 +185,7 @@ describe("a timeout AFTER the provider accepted", () => {
     await vi.advanceTimersByTimeAsync(TRIGGER_EVERY_MS - first.elapsed);
     const second = await trigger();
     expect(summaryOf(second.out)).toMatchObject({ ok: true, accepted: 1 });
-    expect(provider.requests.map((r) => r.key)).toEqual(["lead-alert/a1/1", "lead-alert/a1/1"]);
+    expect(provider.requests.map((r) => r.key)).toEqual([recipientKey("lead-alert/a1/1", OPS), recipientKey("lead-alert/a1/1", OPS)]);
     expect(provider.delivered).toBe(1);
     expect(db.alert("a1")).toMatchObject({ status: "accepted", messageId: "email-1" });
   });
@@ -223,7 +224,7 @@ describe("an overlapping recovery", () => {
 describe("disabled configuration", () => {
   it("no database request, no provider request, no timer -- at once", async () => {
     db.add("a1");
-    for (const env of [{}, { ADMIN_EMAILS: OPS }, { LEAD_ALERT_EMAIL: "not-an-admin@x.test", ADMIN_EMAILS: OPS }]) {
+    for (const env of [{}, { ADMIN_EMAILS: OPS }, { LEAD_ALERT_RECIPIENTS: "not an address" }]) {
       const out = await recoverLeadAlertsOnReminderTrigger({ admin: db.client, transport: resend, env, appOrigin: () => "https://hone.example" });
       expect(out.ran).toBe(false);
     }

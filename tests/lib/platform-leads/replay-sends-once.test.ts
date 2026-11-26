@@ -13,10 +13,10 @@ import { fakeLeadAlertDb } from "./helpers/fake-transports";
 vi.mock("next/server", () => ({ after: (task: unknown) => void task }));
 vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: async () => undefined }));
 
-import { deliverPlatformLeadAlert, sweepPlatformLeadAlerts } from "@/lib/platform-leads/alert-delivery";
+import { deliverPlatformLeadAlert, recipientKey, sweepPlatformLeadAlerts } from "@/lib/platform-leads/alert-delivery";
 
 const OPS = "ops@hone.example";
-const ENV = { LEAD_ALERT_EMAIL: OPS, ADMIN_EMAILS: OPS };
+const ENV = { LEAD_ALERT_RECIPIENTS: OPS, ADMIN_EMAILS: OPS };
 const A = "8f0c2b7e-5d1a-4a2b-9c3d-4e5f6a7b8c9d";
 const B = "1b2c3d4e-5f60-4718-8293-a4b5c6d7e8f9";
 
@@ -57,7 +57,7 @@ describe("a replayed lead event sends one alert", () => {
     const again = await deliverPlatformLeadAlert(A, deps(db, sent));
     expect(again).not.toEqual({ result: "accepted" });
     expect(sent).toHaveLength(1);
-    expect(sent[0]).toEqual({ to: OPS, key: `lead-alert/${A}/1` });
+    expect(sent[0]).toEqual({ to: OPS, key: recipientKey(`lead-alert/${A}/1`, OPS) });
     expect(db.alert(A).status).toBe("accepted");
   });
 
@@ -90,7 +90,7 @@ describe("two lead events arriving reordered", () => {
     await deliverPlatformLeadAlert(B, deps(db, sent));
     await sweepPlatformLeadAlerts(deps(db, sent));
     await sweepPlatformLeadAlerts(deps(db, sent));
-    expect(sent.map((s) => s.key).sort()).toEqual([`lead-alert/${A}/1`, `lead-alert/${B}/1`].sort());
+    expect(sent.map((s) => s.key).sort()).toEqual([recipientKey(`lead-alert/${A}/1`, OPS), recipientKey(`lead-alert/${B}/1`, OPS)].sort());
     expect(new Set(sent.map((s) => s.key)).size).toBe(2);
     expect(db.alert(A).status).toBe("accepted");
     expect(db.alert(B).status).toBe("accepted");
@@ -109,8 +109,8 @@ describe("two lead events arriving reordered", () => {
     ]);
     await sweepPlatformLeadAlerts(deps(db, sent));
     const keys = sent.map((s) => s.key);
-    expect(keys.filter((k) => k === `lead-alert/${A}/1`)).toHaveLength(1);
-    expect(keys.filter((k) => k === `lead-alert/${B}/1`)).toHaveLength(1);
+    expect(keys.filter((k) => k === recipientKey(`lead-alert/${A}/1`, OPS))).toHaveLength(1);
+    expect(keys.filter((k) => k === recipientKey(`lead-alert/${B}/1`, OPS))).toHaveLength(1);
     expect(sent).toHaveLength(2);
   });
 

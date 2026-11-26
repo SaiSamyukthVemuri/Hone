@@ -27,13 +27,14 @@ import {
   deliverPlatformLeadAlert,
   leadAlertConfigurationStatus,
   recipientDigest,
+  recipientKey,
   schedulePlatformLeadAlert,
   settlementFor,
   sweepPlatformLeadAlerts,
 } from "@/lib/platform-leads/alert-delivery";
 
 const OPS = "ops@hone.example";
-const ENV = { LEAD_ALERT_EMAIL: OPS, ADMIN_EMAILS: OPS };
+const ENV = { LEAD_ALERT_RECIPIENTS: OPS, ADMIN_EMAILS: OPS };
 const ALERT = "8f0c2b7e-5d1a-4a2b-9c3d-4e5f6a7b8c9d";
 
 const CLAIMED = {
@@ -146,7 +147,7 @@ describe("deliverPlatformLeadAlert", () => {
     });
     await vi.advanceTimersByTimeAsync(15_000);
     expect(await running).toEqual({ result: "retry_scheduled" });
-    expect(keys).toEqual([`lead-alert/${ALERT}/1`]);
+    expect(keys).toEqual([recipientKey(`lead-alert/${ALERT}/1`, OPS)]);
     expect(calls.find((c) => c.fn === "settle_platform_lead_alert")?.args).toMatchObject({
       p_alert_id: ALERT,
       p_claim_token: "token-1",
@@ -174,7 +175,7 @@ describe("deliverPlatformLeadAlert", () => {
     expect(calls.some((c) => c.fn === FREEZE || c.fn === "settle_platform_lead_alert")).toBe(false);
   });
 
-  it("LEAD_ALERT_EMAIL unset: the sweep answers ok with a blocker, touches only the expiry and the blocker record, and sends nothing", async () => {
+  it("LEAD_ALERT_RECIPIENTS unset: the sweep answers ok with a blocker, touches only the expiry and the blocker record, and sends nothing", async () => {
     const calls: Call[] = [];
     let sends = 0;
     const summary = await sweepPlatformLeadAlerts({
@@ -345,7 +346,7 @@ describe("leadAlertConfigurationStatus", () => {
   it("masks the recipient, and names the blocker when there is one", () => {
     expect(
       leadAlertConfigurationStatus({ env: ENV, transport: transport(async () => ({})), appOrigin: () => "https://hone.example" }),
-    ).toEqual({ state: "ready", maskedRecipient: "o•••@h•••.example" });
+    ).toEqual({ state: "ready", maskedRecipients: ["o•••@h•••.example"] });
     expect(leadAlertConfigurationStatus({ env: ENV, transport: null, appOrigin: () => "x" })).toEqual({
       state: "blocked",
       code: "transport_not_configured",

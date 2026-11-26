@@ -1,87 +1,89 @@
 import { describe, expect, it } from "vitest";
 import {
-  LEAD_ALERT_RECIPIENT_ENV,
+  LEAD_ALERT_RECIPIENTS_ENV,
+  MAX_LEAD_ALERT_RECIPIENTS,
   maskRecipient,
-  resolveLeadAlertRecipient,
+  resolveLeadAlertRecipients,
 } from "@/lib/platform-leads/alert-config";
 
-// LEAD-ALERT-01 (#826): the operator alert goes to ONE server-configured
-// address that is also on the admin allowlist, and to nothing else.
-
-const OPS = "ops@hone.example";
+// The recipients are fake addresses on a reserved test domain. The real list is server config, set at release, never in the repo.
+const A = "one@hone.example";
+const B = "two@hone.example";
+const C = "three@hone.example";
 const env = (o: Record<string, string | undefined>) => o;
+const BAD = { ok: false, code: "recipient_not_allowlisted" } as const;
 
-describe("resolveLeadAlertRecipient", () => {
-  it("reads one variable, LEAD_ALERT_EMAIL", () => {
-    expect(LEAD_ALERT_RECIPIENT_ENV).toBe("LEAD_ALERT_EMAIL");
+describe("resolveLeadAlertRecipients", () => {
+  it("reads one variable, LEAD_ALERT_RECIPIENTS; the old single-address variable is retired", () => {
+    expect(LEAD_ALERT_RECIPIENTS_ENV).toBe("LEAD_ALERT_RECIPIENTS");
+    expect(resolveLeadAlertRecipients(env({ LEAD_ALERT_EMAIL: A }))).toEqual({ ok: false, code: "recipient_not_configured" });
   });
 
-  it("an allowlisted address is the recipient, normalized", () => {
-    expect(
-      resolveLeadAlertRecipient(env({ LEAD_ALERT_EMAIL: "  Ops@Hone.Example ", ADMIN_EMAILS: `someone@x.example, ${OPS}` })),
-    ).toEqual({ ok: true, recipient: OPS });
+  it("three comma-separated addresses: trimmed, lower-cased, in the configured order", () => {
+    expect(resolveLeadAlertRecipients(env({ LEAD_ALERT_RECIPIENTS: ` ${A.toUpperCase()} ,${B},  ${C}` }))).toEqual({
+      ok: true,
+      recipients: [A, B, C],
+    });
   });
 
-  it("nothing configured is BLOCKED, never a fallback", () => {
-    for (const value of [undefined, "", "   "]) {
-      expect(resolveLeadAlertRecipient(env({ LEAD_ALERT_EMAIL: value, ADMIN_EMAILS: OPS }))).toEqual({
-        ok: false,
-        code: "recipient_not_configured",
-      });
+  it("a duplicate is sent once (case-insensitive)", () => {
+    expect(resolveLeadAlertRecipients(env({ LEAD_ALERT_RECIPIENTS: `${A},${B},${A.toUpperCase()}` }))).toEqual({ ok: true, recipients: [A, B] });
+  });
+
+  it("no default: unset, empty and blank are 'not configured'", () => {
+    for (const v of [undefined, "", "   "]) {
+      expect(resolveLeadAlertRecipients(env({ LEAD_ALERT_RECIPIENTS: v }))).toEqual({ ok: false, code: "recipient_not_configured" });
     }
   });
 
-  it("an address outside ADMIN_EMAILS is refused", () => {
-    expect(resolveLeadAlertRecipient(env({ LEAD_ALERT_EMAIL: OPS, ADMIN_EMAILS: "other@hone.example" }))).toEqual({
-      ok: false,
-      code: "recipient_not_allowlisted",
-    });
-  });
-
-  it("the allowlist is the env alone: lib/admin's non-production fallback never admits a recipient", () => {
-    // NODE_ENV is 'test' here, where lib/admin.ts would fall back to its
-    // built-in admin list for /admin access. The alert must not.
-    expect(resolveLeadAlertRecipient(env({ LEAD_ALERT_EMAIL: OPS }))).toEqual({
-      ok: false,
-      code: "recipient_not_allowlisted",
-    });
-    expect(resolveLeadAlertRecipient(env({ LEAD_ALERT_EMAIL: OPS, ADMIN_EMAILS: "" }))).toEqual({
-      ok: false,
-      code: "recipient_not_allowlisted",
-    });
-  });
-
-  it("anything but ONE plain address is refused, even when each part is allowlisted", () => {
-    const LF = String.fromCharCode(10);
-    const CRLF = String.fromCharCode(13, 10);
-    const attacker = "attacker@evil.example";
-    const allow = `${OPS},${attacker}`;
-    for (const configured of [
-      `${OPS},${attacker}`,
-      `${OPS}; ${attacker}`,
-      `${OPS} ${attacker}`,
-      `${OPS}${LF}Bcc: ${attacker}`,
-      `${OPS}${CRLF}Cc: ${attacker}`,
-      `Ops <${OPS}>`,
-      `<${OPS}>`,
-      "ops@",
-      "@hone.example",
-      "ops@hone",
-      `${"a".repeat(250)}@hone.example`,
-    ]) {
-      expect(resolveLeadAlertRecipient(env({ LEAD_ALERT_EMAIL: configured, ADMIN_EMAILS: allow })), configured).toEqual({
-        ok: false,
-        code: "recipient_not_allowlisted",
-      });
+  it("an invalid entry refuses the WHOLE list at config, never a partial reading", () => {
+    const entries = [
+      "not an address",
+      "no-at-sign",
+      "Name <a@hone.example>",
+      "a@hone.example;b@hone.example",
+      "a@hone.example\nBcc: x@hone.example",
+      "a@@hone.example",
+      "a@hone",
+      "a b@hone.example",
+      `${"x".repeat(250)}@hone.example`,
+    ];
+    for (const bad of entries) {
+      expect(resolveLeadAlertRecipients(env({ LEAD_ALERT_RECIPIENTS: `${A},${bad},${B}` })), bad).toEqual(BAD);
+      expect(resolveLeadAlertRecipients(env({ LEAD_ALERT_RECIPIENTS: bad })), bad).toEqual(BAD);
     }
+  });
+
+  it("a stray or doubled comma is a malformed list, not a skipped entry", () => {
+    for (const v of [`${A},`, `,${A}`, `${A},,${B}`]) expect(resolveLeadAlertRecipients(env({ LEAD_ALERT_RECIPIENTS: v })), v).toEqual(BAD);
+  });
+
+  it("is capped: the limit is allowed, one over is refused", () => {
+    const list = (n: number) => Array.from({ length: n }, (_, i) => `r${i}@hone.example`).join(",");
+    expect(MAX_LEAD_ALERT_RECIPIENTS).toBe(5);
+    expect(resolveLeadAlertRecipients(env({ LEAD_ALERT_RECIPIENTS: list(5) }))).toMatchObject({ ok: true });
+    expect(resolveLeadAlertRecipients(env({ LEAD_ALERT_RECIPIENTS: list(6) }))).toEqual(BAD);
+  });
+
+  it("is NOT tied to the admin allowlist: a recipient who is not an admin is accepted, and being a recipient grants nothing", () => {
+    expect(resolveLeadAlertRecipients(env({ LEAD_ALERT_RECIPIENTS: A, ADMIN_EMAILS: "someone-else@hone.example" }))).toEqual({ ok: true, recipients: [A] });
+    expect(resolveLeadAlertRecipients(env({ LEAD_ALERT_RECIPIENTS: A }))).toEqual({ ok: true, recipients: [A] });
+  });
+
+  it("this module never reads the admin allowlist at all (source guard)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const code = readFileSync("lib/platform-leads/alert-config.ts", "utf8")
+      .split("\n")
+      .filter((l) => !/^\s*\/\//.test(l))
+      .join("\n");
+    expect(code).not.toMatch(/ADMIN_EMAILS|parseAdminEmails|@\/lib\/admin|isAdmin/);
   });
 });
 
 describe("maskRecipient", () => {
-  it("shows enough to recognise the inbox, not to copy it", () => {
+  it("keeps enough to recognise an inbox, not to copy it", () => {
     const masked = maskRecipient("someone.long@example.com");
     expect(masked).toBe("s•••@e•••.com");
     expect(masked).not.toContain("someone");
-    expect(masked).not.toContain("example");
   });
 });

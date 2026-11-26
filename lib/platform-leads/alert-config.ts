@@ -1,36 +1,38 @@
-import { parseAdminEmails } from "@/lib/admin";
-
 // ===========================================================================
-// LEAD-ALERT-01 (#826): WHO the operator lead alert may go to
+// LEAD-ALERT-01 (#826): WHO the operator lead alert goes to
 // ===========================================================================
 //
-// ONE recipient, from SERVER configuration only:
+// A short LIST of recipients, from SERVER configuration only:
 //
-//   LEAD_ALERT_EMAIL   exactly one plain address
+//   LEAD_ALERT_RECIPIENTS   comma-separated plain addresses, no default
 //
-// and that address must ALSO be on the admin allowlist, ADMIN_EMAILS, read from
-// the env alone. The alert carries a prospect's name and contact details, which
-// only the platform operator may see: /admin is gated on that same allowlist.
-// An address outside it is refused, never mailed.
+// Each entry must be exactly one plain address (no display name, no whitespace or control character, no header syntax). The list is
+// lower-cased, de-duplicated and capped at MAX_LEAD_ALERT_RECIPIENTS. ANY invalid entry, or a list over the cap, refuses the WHOLE list:
+// nothing is sent to a partial reading of it.
 //
-// What NEVER decides the recipient: a submitted form value (a lead's own
-// address is lead DATA), the request, the database, an account name, or the
-// non-production admin fallback in lib/admin.ts. With nothing configured the
-// alert is BLOCKED: recorded on the alert, shown in the console, never treated
-// as sent.
+// It is deliberately NOT tied to the admin allowlist (ADMIN_EMAILS). Being a recipient grants no admin or console access, and the alert
+// itself carries no prospect details (alert-email.ts): the lead is only readable after signing in to /admin.
 //
-// Pure: no I/O and no imports beyond the allowlist parser, so it is testable
-// with a plain env object.
+// LEAD_ALERT_EMAIL, the single-address variable an earlier draft read, is RETIRED. It never shipped, so nothing sets it, and keeping a
+// second way to configure the same thing would only invite the two to disagree.
+//
+// What NEVER decides a recipient: a submitted form value (a lead's own address is lead DATA), the request, the database, or an account.
+// With nothing configured the alert is BLOCKED: recorded on the alert, never treated as sent.
+//
+// Pure: no I/O, so it is testable with a plain env object.
 // ===========================================================================
 
-export const LEAD_ALERT_RECIPIENT_ENV = "LEAD_ALERT_EMAIL";
+export const LEAD_ALERT_RECIPIENTS_ENV = "LEAD_ALERT_RECIPIENTS";
+export const MAX_LEAD_ALERT_RECIPIENTS = 5;
 
+// The stored blocker code for "the list is unusable" keeps its 0213 name (the database enumerates these codes and 0213 is frozen);
+// its operator-facing wording says what it means here (alert-status.ts).
 export type LeadAlertRecipientBlock =
   | "recipient_not_configured"
   | "recipient_not_allowlisted";
 
-export type LeadAlertRecipient =
-  | { ok: true; recipient: string }
+export type LeadAlertRecipients =
+  | { ok: true; recipients: readonly string[] }
   | { ok: false; code: LeadAlertRecipientBlock };
 
 type Env = Readonly<Record<string, string | undefined>>;
@@ -42,22 +44,20 @@ const SINGLE_ADDRESS =
 
 const MAX_ADDRESS_LENGTH = 254;
 
-export function resolveLeadAlertRecipient(
-  env: Env = process.env,
-): LeadAlertRecipient {
-  const configured = (env[LEAD_ALERT_RECIPIENT_ENV] ?? "").trim().toLowerCase();
-  if (configured.length === 0) {
-    return { ok: false, code: "recipient_not_configured" };
+export function resolveLeadAlertRecipients(env: Env = process.env): LeadAlertRecipients {
+  const raw = env[LEAD_ALERT_RECIPIENTS_ENV] ?? "";
+  if (raw.trim().length === 0) return { ok: false, code: "recipient_not_configured" };
+  const seen = new Set<string>();
+  for (const piece of raw.split(",")) {
+    const address = piece.trim().toLowerCase();
+    // An empty piece (a stray or doubled comma) is a malformed list, not a skipped entry.
+    if (address.length === 0 || address.length > MAX_ADDRESS_LENGTH || !SINGLE_ADDRESS.test(address)) {
+      return { ok: false, code: "recipient_not_allowlisted" };
+    }
+    seen.add(address);
   }
-  // Not ONE plain address (a list, a display name, an injected header): it
-  // cannot equal an allowlist entry, and it is refused before it is compared.
-  if (configured.length > MAX_ADDRESS_LENGTH || !SINGLE_ADDRESS.test(configured)) {
-    return { ok: false, code: "recipient_not_allowlisted" };
-  }
-  if (!parseAdminEmails(env.ADMIN_EMAILS).includes(configured)) {
-    return { ok: false, code: "recipient_not_allowlisted" };
-  }
-  return { ok: true, recipient: configured };
+  if (seen.size > MAX_LEAD_ALERT_RECIPIENTS) return { ok: false, code: "recipient_not_allowlisted" };
+  return { ok: true, recipients: [...seen] };
 }
 
 /** For the console: enough to recognise the inbox, not to copy it. */

@@ -91,7 +91,7 @@ function deps(recipient: string | undefined, sent: Sent[] = []) {
   return {
     admin,
     transport: spy(sent),
-    env: { LEAD_ALERT_EMAIL: recipient, ADMIN_EMAILS },
+    env: { LEAD_ALERT_RECIPIENTS: recipient, ADMIN_EMAILS },
     appOrigin: () => ORIGIN,
   };
 }
@@ -803,15 +803,36 @@ describe("the delivery worker, through the existing fake Resend transport", () =
     const out = await delivery.deliverPlatformLeadAlert(r.alert_id!, deps(OPS, sent));
     expect(out).toEqual({ result: "accepted" });
     expect(sent).toHaveLength(1);
-    expect(sent[0].key).toBe(`lead-alert/${r.alert_id}/1`);
+    expect(sent[0].key).toBe(delivery.recipientKey(`lead-alert/${r.alert_id}/1`, OPS));
     expect(sent[0].payload.to).toBe(OPS);
     expect(sent[0].payload.from).toBe("Hone <hello@hone.care>");
     expect(sent[0].payload).not.toHaveProperty("replyTo");
-    expect(sent[0].payload.text).toContain(r.email);
+    // BRIEF notice: no prospect detail at all, only that a lead exists and where to sign in.
+    expect(sent[0].payload.text).not.toContain(r.email);
+    expect(sent[0].payload.text).not.toContain("Avery");
+    expect(sent[0].payload.subject).toBe("New Hone demo request");
     expect(sent[0].payload.text).toContain(`${ORIGIN}/admin`);
     expect(sent[0].payload.text).not.toContain("/admin/leads/");
     const a = await alertRow(r.alert_id!);
     expect(a).toMatchObject({ status: "accepted", provider_message_id: "fake-resend-message-id", attempt_count: 1 });
+  });
+
+  it("three recipients: one email each under its own key; the alert is accepted once; a replay sends nothing (real claim/settle contract)", async () => {
+    const r = await recordDemo();
+    const sent: Sent[] = [];
+    const list = ["one@lead-alert.test", "two@lead-alert.test", "three@lead-alert.test"];
+    const d = { ...deps(undefined, sent), env: { LEAD_ALERT_RECIPIENTS: list.join(",") } };
+    expect(await delivery.deliverPlatformLeadAlert(r.alert_id!, d)).toEqual({ result: "accepted" });
+    expect(sent.map((x) => x.payload.to).sort()).toEqual([...list].sort());
+    expect(new Set(sent.map((x) => x.key)).size).toBe(3);
+    for (const x of sent) expect(x.key).toBe(delivery.recipientKey(`lead-alert/${r.alert_id}/1`, String(x.payload.to)));
+    const a = await alertRow(r.alert_id!);
+    expect(a).toMatchObject({ status: "accepted", attempt_count: 1 });
+    expect(String(a.provider_message_id).length).toBeGreaterThan(0);
+    // replay: the settled alert is never claimed again
+    await delivery.deliverPlatformLeadAlert(r.alert_id!, d);
+    await delivery.sweepPlatformLeadAlerts(d);
+    expect(sent).toHaveLength(3);
   });
 
   it("a new early-access signup: accepted", async () => {
@@ -819,8 +840,8 @@ describe("the delivery worker, through the existing fake Resend transport", () =
     const r = await recordEarlyAccess(email);
     const sent: Sent[] = [];
     expect(await delivery.deliverPlatformLeadAlert(r.alert_id!, deps(OPS, sent))).toEqual({ result: "accepted" });
-    expect(sent[0].payload.subject).toMatch(/^New Hone early-access signup \(\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC\)$/);
-    expect(sent[0].payload.text).toContain(email);
+    expect(sent[0].payload.subject).toBe("New Hone early-access signup");
+    expect(sent[0].payload.text).not.toContain(email);
     expect((await alertRow(r.alert_id!)).status).toBe("accepted");
   });
 
@@ -850,7 +871,7 @@ describe("the delivery worker, through the existing fake Resend transport", () =
     await makeDue(r.alert_id!);
     const summary = await delivery.sweepPlatformLeadAlerts(deps(OPS, sent));
     expect(summary).toMatchObject({ ok: true, attempted: 1, accepted: 1 });
-    expect(sent.map((s) => s.key)).toEqual([`lead-alert/${r.alert_id}/1`, `lead-alert/${r.alert_id}/1`]);
+    expect(sent.map((s) => s.key)).toEqual([delivery.recipientKey(`lead-alert/${r.alert_id}/1`, OPS), delivery.recipientKey(`lead-alert/${r.alert_id}/1`, OPS)]);
     expect(await count("select count(*) n from public.demo_requests where email = $1", [r.email])).toBe(1);
   });
 
@@ -891,7 +912,7 @@ describe("the delivery worker, through the existing fake Resend transport", () =
       delivery.sweepPlatformLeadAlerts(deps(OPS, sent)),
     ]);
     expect(x.accepted + y.accepted).toBe(3);
-    expect(sent.map((s) => s.key).sort()).toEqual(ids.map((id) => `lead-alert/${id}/1`).sort());
+    expect(sent.map((s) => s.key).sort()).toEqual(ids.map((id) => delivery.recipientKey(`lead-alert/${id}/1`, OPS)).sort());
   });
 
   it("missing or refused configuration: nothing sent, no attempt spent, the alert says why; fixed, it sends", async () => {
@@ -927,7 +948,7 @@ describe("the delivery worker, through the existing fake Resend transport", () =
     expect(sent).toHaveLength(0);
   });
 
-  it("malicious submitted text is flattened and escaped; the subject carries none of it", async () => {
+  it("hostile submitted text never reaches the email: the notice is brief and holds no prospect detail", async () => {
     const CR = String.fromCharCode(13);
     const LF = String.fromCharCode(10);
     const RLO = String.fromCharCode(0x202e);
@@ -941,16 +962,14 @@ describe("the delivery worker, through the existing fake Resend transport", () =
     const sent: Sent[] = [];
     expect(await delivery.deliverPlatformLeadAlert(r.alert_id!, deps(OPS, sent))).toEqual({ result: "accepted" });
     const { subject, html, text } = sent[0].payload;
-    expect(subject).toMatch(/^New Hone demo request \(\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC\)$/);
-    expect(html).not.toMatch(/<script|<img/i);
-    expect(html).toContain("&lt;script&gt;");
-    expect(`${html}${text}`).not.toContain(RLO);
-    // Every line of the text starts with a known label or fixed copy: no
-    // submitted value opened a line of its own.
-    expect(text.split(LF).filter((l) => /^(Console|Bcc):/.test(l))).toEqual([]);
-    expect(text).toContain("Notes: Included with the request. Read them in the console.");
-    expect(`${html}${text}`).not.toContain("SECRET-NOTE-TEXT");
-    expect(text.length).toBeLessThan(3000);
+    expect(subject).toBe("New Hone demo request");
+    const all = `${subject}${html}${text}`;
+    for (const detail of ["<script", "<img", "evil.example", "attacker@", "SECRET-NOTE-TEXT", "xxxx", "Paper", RLO]) {
+      expect(all, detail).not.toContain(detail);
+    }
+    expect(text.length).toBeLessThan(600);
+    // and the message frozen on the alert row held no personal data either (it is cleared on acceptance; checked while it was held in
+    // the claim/freeze tests above)
   });
 
   it("recipient injection: the prospect's own address and every submitted value never become a destination", async () => {
@@ -964,9 +983,10 @@ describe("the delivery worker, through the existing fake Resend transport", () =
     expect(Object.keys(sent[0].payload).sort()).toEqual(["from", "html", "subject", "text", "to"]);
     expect(sent[0].payload.to).toBe(OPS);
 
-    // And a configured value that is not exactly ONE allowlisted address is refused.
+    // And a configured list with an entry that is not one plain address is refused whole.
+    expect(sent.map((x) => x.payload.to)).toEqual([OPS]);
     for (const configured of [
-      `${OPS},attacker@evil.example`,
+      `${OPS},not an address`,
       `${OPS}${String.fromCharCode(10)}Bcc: attacker@evil.example`,
       `Ops <${OPS}>`,
     ]) {

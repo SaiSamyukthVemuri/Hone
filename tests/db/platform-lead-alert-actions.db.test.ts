@@ -63,7 +63,7 @@ const ENV_KEYS = [
   "SUPABASE_SERVICE_ROLE_KEY",
   "HONE_E2E_FAKE_RESEND",
   "HONE_E2E_FAKE_RESEND_MODE",
-  "LEAD_ALERT_EMAIL",
+  "LEAD_ALERT_RECIPIENTS",
   "ADMIN_EMAILS",
   "NEXT_PUBLIC_APP_ORIGIN",
 ] as const;
@@ -78,7 +78,7 @@ beforeAll(async () => {
   process.env.HONE_E2E_FAKE_RESEND = "1";
   delete process.env.HONE_E2E_FAKE_RESEND_MODE;
   process.env.ADMIN_EMAILS = `${OPS},${REJECT}`;
-  process.env.LEAD_ALERT_EMAIL = OPS;
+  process.env.LEAD_ALERT_RECIPIENTS = OPS;
   process.env.NEXT_PUBLIC_APP_ORIGIN = "https://console.lead-alert-action.test";
   ({ submitDemoRequest } = await import("@/app/actions/demo"));
   ({ submitWaitlistEntry } = await import("@/app/actions/waitlist"));
@@ -97,7 +97,7 @@ beforeEach(async () => {
   ctx.afterKinds.length = 0;
   ctx.allowed = true;
   ctx.limiterCalls = 0;
-  process.env.LEAD_ALERT_EMAIL = OPS;
+  process.env.LEAD_ALERT_RECIPIENTS = OPS;
   process.env.NEXT_PUBLIC_SUPABASE_URL = E2E_SUPABASE_URL;
   await adminQuery("delete from public.platform_lead_alerts");
   await adminQuery("delete from public.demo_requests where email like $1", [`%@${DOMAIN}`]);
@@ -176,7 +176,7 @@ describe("/demo: submitDemoRequest", () => {
   });
 
   it("a failing alert never changes the answer, and the lead survives it", async () => {
-    process.env.LEAD_ALERT_EMAIL = REJECT;
+    process.env.LEAD_ALERT_RECIPIENTS = REJECT;
     const email = address();
     expect(await submitDemoRequest(demoPayload(email))).toEqual({ ok: true });
     await runAfter();
@@ -185,7 +185,7 @@ describe("/demo: submitDemoRequest", () => {
   });
 
   it("missing recipient configuration: the lead is saved and its alert waits, visibly", async () => {
-    delete process.env.LEAD_ALERT_EMAIL;
+    delete process.env.LEAD_ALERT_RECIPIENTS;
     const email = address();
     expect(await submitDemoRequest(demoPayload(email))).toEqual({ ok: true });
     await runAfter();

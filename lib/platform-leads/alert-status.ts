@@ -38,9 +38,9 @@ export const LEAD_ALERT_ERROR_CODES = [
 export type LeadAlertErrorCode = (typeof LEAD_ALERT_ERROR_CODES)[number];
 
 const REASON: Record<LeadAlertErrorCode, string> = {
-  recipient_not_configured: "No alert recipient is configured (LEAD_ALERT_EMAIL).",
+  recipient_not_configured: "No alert recipients are configured (LEAD_ALERT_RECIPIENTS).",
   recipient_not_allowlisted:
-    "LEAD_ALERT_EMAIL is not exactly one address on the admin allowlist (ADMIN_EMAILS).",
+    "LEAD_ALERT_RECIPIENTS is not a valid list: every entry must be one plain address, with at most 5 entries.",
   transport_not_configured: "The email provider is not configured (RESEND_API_KEY).",
   app_origin_not_configured:
     "The console link cannot be built: NEXT_PUBLIC_APP_ORIGIN is not set.",
@@ -50,7 +50,7 @@ const REASON: Record<LeadAlertErrorCode, string> = {
   provider_exception: "The email provider gave no usable answer.",
   render_failed: "The alert email could not be composed.",
   recipient_changed:
-    "The alert recipient (LEAD_ALERT_EMAIL) changed after the first attempt, so a retry could not repeat it. The lead is saved.",
+    "The alert recipients (LEAD_ALERT_RECIPIENTS) changed after the first attempt, so a retry could not repeat it. The lead is saved.",
   lease_expired: "A send attempt stopped before it finished.",
   expired: "It was not sent within its automatic retry window. The lead is saved.",
 };

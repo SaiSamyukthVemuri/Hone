@@ -13,7 +13,7 @@ import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import {
   maskRecipient,
-  resolveLeadAlertRecipient,
+  resolveLeadAlertRecipients,
 } from "./alert-config";
 import {
   leadConsoleUrl,
@@ -94,7 +94,7 @@ export type LeadAlertDeps = {
 export type LeadAlertReadiness =
   | {
       ready: true;
-      recipient: string;
+      recipients: readonly string[];
       transport: IdempotentEmailTransport;
       appOrigin: string;
     }
@@ -102,8 +102,8 @@ export type LeadAlertReadiness =
 
 /** Everything a send needs, from server configuration alone. */
 export function resolveLeadAlertReadiness(deps: LeadAlertDeps = {}): LeadAlertReadiness {
-  const recipient = resolveLeadAlertRecipient(deps.env ?? process.env);
-  if (!recipient.ok) return { ready: false, code: recipient.code };
+  const recipients = resolveLeadAlertRecipients(deps.env ?? process.env);
+  if (!recipients.ok) return { ready: false, code: recipients.code };
 
   const transport =
     deps.transport !== undefined
@@ -117,12 +117,12 @@ export function resolveLeadAlertReadiness(deps: LeadAlertDeps = {}): LeadAlertRe
   } catch {
     return { ready: false, code: "app_origin_not_configured" };
   }
-  return { ready: true, recipient: recipient.recipient, transport, appOrigin };
+  return { ready: true, recipients: recipients.recipients, transport, appOrigin };
 }
 
 /** The console's view of the configuration: masked, never the address itself. */
 export type LeadAlertConfigurationStatus =
-  | { state: "ready"; maskedRecipient: string }
+  | { state: "ready"; maskedRecipients: string[] }
   | { state: "blocked"; code: LeadAlertConfigCode };
 
 export function leadAlertConfigurationStatus(
@@ -130,7 +130,7 @@ export function leadAlertConfigurationStatus(
 ): LeadAlertConfigurationStatus {
   const r = resolveLeadAlertReadiness(deps);
   return r.ready
-    ? { state: "ready", maskedRecipient: maskRecipient(r.recipient) }
+    ? { state: "ready", maskedRecipients: r.recipients.map(maskRecipient) }
     : { state: "blocked", code: r.code };
 }
 
@@ -226,6 +226,16 @@ export function recipientDigest(recipient: string): string {
   return createHash("sha256").update(recipient, "utf8").digest("hex");
 }
 
+/** The whole configured list, order-independent: a changed list (an address added, removed or swapped) is a changed digest. */
+export function recipientsDigest(recipients: readonly string[]): string {
+  return recipientDigest([...recipients].sort().join("\n"));
+}
+
+/** One recipient's own idempotency key under the alert's key: a replay never re-sends to anyone, whatever the list's order. */
+export function recipientKey(alertKey: string, recipient: string): string {
+  return `${alertKey}/${recipientDigest(recipient).slice(0, 16)}`;
+}
+
 function isFrozenMessage(v: unknown): v is FrozenMessage {
   if (!v || typeof v !== "object") return false;
   const m = v as Record<string, unknown>;
@@ -286,19 +296,8 @@ function log(level: "info" | "error", payload: Record<string, unknown>): void {
 }
 
 function contentFromClaim(row: ClaimRow): PlatformLeadAlertContent {
-  return {
-    kind: row.lead_kind,
-    leadId: row.lead_id,
-    eventAt: row.event_at,
-    name: row.lead_name,
-    email: row.lead_email,
-    practiceName: row.practice_name,
-    location: row.location,
-    practiceType: row.practice_type,
-    practitionerCount: row.practitioner_count,
-    currentTool: row.current_tool,
-    hasNotes: row.has_notes === true,
-  };
+  // Only the kind and the time: the alert carries no prospect detail (alert-email.ts).
+  return { kind: row.lead_kind, eventAt: row.event_at };
 }
 
 async function settle(
@@ -401,7 +400,7 @@ async function claimAndSend(
   const row = (Array.isArray(data) ? data[0] : null) as ClaimRow | null;
   if (!row || row.result !== "claimed") return "none";
 
-  const digest = recipientDigest(ready.recipient);
+  const digest = recipientsDigest(ready.recipients);
   let message: FrozenMessage;
   if (row.frozen_message !== null && row.frozen_message !== undefined) {
     // A later attempt of this generation: the frozen bytes, or nothing.
@@ -456,26 +455,73 @@ async function claimAndSend(
     message = answer.message;
   }
 
-  // The ONE configured recipient, and exactly the frozen bytes.
+  // One email per configured recipient, each under its OWN key (the alert's key x the recipient), and exactly the frozen bytes.
+  // A replay of the whole alert (a retry after one recipient failed, a re-lease after a crash) re-presents every key, and the provider
+  // answers the already-accepted ones with their original result instead of sending again, so nobody is mailed twice. The 0213 replay
+  // window (no automatic attempt later than 20 hours after the first) sits inside the provider's 24-hour key memory for that reason.
   //
-  // THE SWEEP'S DEADLINE HOLDS DURING THE SEND (Codex P2 4253569253,
-  // 4259034271). The request carries the sweep's send signal, aborted the
-  // settle reserve before the deadline, so the provider request itself is
-  // CANCELLED there -- nothing is left running past the invocation. A cut-off
-  // request may still have been taken (the abort can cross an acceptance), so
-  // anything short of an acceptance it answered is the ambiguous outcome a
-  // timeout already is: retried later under the SAME key and frozen message,
-  // and the provider replays rather than sends twice.
+  // THE SWEEP'S DEADLINE HOLDS DURING THE SENDS (Codex P2 4253569253, 4259034271). Each request carries the sweep's send signal,
+  // aborted the settle reserve before the deadline, so the provider request itself is CANCELLED there -- nothing is left running past the
+  // invocation. A cut-off request may still have been taken (the abort can cross an acceptance), so anything short of an acceptance it
+  // answered is the ambiguous outcome a timeout already is: retried later under the SAME key and frozen message.
   const send = bounds?.send ?? null;
-  let outcome = await sendOnceWithIdempotencyKey(
-    send ? cancellableTransport(ready.transport, send) : ready.transport,
-    { from: message.from, to: ready.recipient, subject: message.subject, html: message.html, text: message.text },
-    row.idempotency_key,
-  );
-  if (send?.aborted && outcome.status !== "accepted") {
-    outcome = { status: "ambiguous", reason: "timeout" };
+  const transport = send ? cancellableTransport(ready.transport, send) : ready.transport;
+  const settlements: Settlement[] = [];
+  for (const recipient of ready.recipients) {
+    let outcome: WaitlistSendOutcome;
+    if (send?.aborted) {
+      outcome = { status: "ambiguous", reason: "timeout" };
+    } else {
+      outcome = await sendOnceWithIdempotencyKey(
+        transport,
+        { from: message.from, to: recipient, subject: message.subject, html: message.html, text: message.text },
+        recipientKey(row.idempotency_key, recipient),
+      );
+      if (send?.aborted && outcome.status !== "accepted") outcome = { status: "ambiguous", reason: "timeout" };
+    }
+    settlements.push(settlementFor(outcome));
   }
-  return settle(admin, row, settlementFor(outcome), db);
+  const decided = combineSettlements(settlements);
+  if (decided.failedCount > 0 && decided.settlement.outcome === "accepted") {
+    // Some were mailed and the rest can never be: the alert is accepted (a retry would only repeat what was already sent), and the
+    // failure is recorded here. Counts and a code only: no address, no lead detail.
+    await recordOpsAlert({
+      severity: "warning",
+      event: "platform_lead_alert_recipient_failed",
+      message: `A new-lead alert email reached ${decided.acceptedCount} of ${settlements.length} recipients; the rest were refused by the provider.`,
+      route: "lead-alerts",
+      safeDetails: { alert_id: row.alert_id, accepted: decided.acceptedCount, failed: decided.failedCount, code: decided.failedCode ?? "provider_rejected" },
+    }, db ? { signal: db } : undefined);
+  }
+  return settle(admin, row, decided.settlement, db);
+}
+
+/**
+ * The alert's one outcome from its recipients' outcomes. Every recipient accepted: accepted. Any recipient worth retrying: retry the
+ * ALERT (the accepted ones replay idempotently, so only the failed ones are actually sent). Otherwise some refusal is final: if anyone was
+ * mailed the alert is accepted and the refusal is reported separately; if no one was, the first refusal fails the alert.
+ */
+export function combineSettlements(list: readonly Settlement[]): {
+  settlement: Settlement;
+  acceptedCount: number;
+  failedCount: number;
+  failedCode: string | null;
+} {
+  const accepted = list.filter((x) => x.outcome === "accepted");
+  const retry = list.find((x) => x.outcome === "retry");
+  const fail = list.find((x) => x.outcome === "fail");
+  const failedCount = list.length - accepted.length;
+  const base = { acceptedCount: accepted.length, failedCount, failedCode: (retry ?? fail)?.errorCode ?? null };
+  if (failedCount === 0) {
+    const ids = accepted.map((x) => x.messageId).filter((x): x is string => typeof x === "string" && x.length > 0);
+    return { ...base, settlement: { outcome: "accepted", messageId: ids.join(",").slice(0, 200) || undefined } };
+  }
+  if (retry) return { ...base, settlement: retry };
+  if (accepted.length > 0) {
+    const ids = accepted.map((x) => x.messageId).filter((x): x is string => typeof x === "string" && x.length > 0);
+    return { ...base, settlement: { outcome: "accepted", messageId: ids.join(",").slice(0, 200) || undefined } };
+  }
+  return { ...base, settlement: fail! };
 }
 
 /**
@@ -751,7 +797,7 @@ export async function sweepPlatformLeadAlerts(
 // cap). The daily cron stays as a backstop.
 //
 // GATED BEFORE ANY DATABASE OR PROVIDER CALL. Until lead alerts are configured
-// (an allowlisted LEAD_ALERT_EMAIL, the email transport and the console
+// (a valid LEAD_ALERT_RECIPIENTS list, the email transport and the console
 // origin), this makes NO RPC and NO provider call, so a production reminders
 // run is untouched while 0213 is unapplied or lead alerts are unactivated. It
 // never throws: whatever happens, the reminders run's result is its own.

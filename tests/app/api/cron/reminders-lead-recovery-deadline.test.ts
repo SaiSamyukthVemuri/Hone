@@ -58,7 +58,7 @@ beforeEach(() => {
   vi.useFakeTimers({ now: Date.parse("2026-10-13T12:00:00Z") });
   h.alerts.length = 0;
   h.adminCalls = 0;
-  vi.stubEnv("LEAD_ALERT_EMAIL", "ops@hone.example");
+  vi.stubEnv("LEAD_ALERT_RECIPIENTS", "ops@hone.example");
   vi.stubEnv("ADMIN_EMAILS", "ops@hone.example");
   vi.stubGlobal("fetch", fakeResendFetch().fetch);
   h.transport = new Resend("re_test_not_a_key");
