@@ -64,9 +64,10 @@ describe("1. ONE action row, one size", () => {
     expect(buttons).toHaveLength(6);
     // PendingLink only prepends `relative` (the pending overlay's positioning context); the look itself is identical.
     for (const tag of buttons) expect(attr(tag, "class").replace(/^relative /, ""), tag).toBe(VISIT_ACTION_CLASS);
-    // The shared compact size: 12px type, 32px box on a precise pointer, 44px on touch. No dark primary fill, no 14px type.
+    // The shared compact size: 12px type and a 44px box on EVERY pointer (touch floor kept). No dark primary fill, no 14px type.
     expect(VISIT_ACTION_CLASS).toMatch(/text-xs/);
-    expect(VISIT_ACTION_CLASS).toMatch(/pointer-fine:min-h-8/);
+    expect(VISIT_ACTION_CLASS).toMatch(/min-h-\[44px\]/);
+    expect(VISIT_ACTION_CLASS).toMatch(/pointer-fine:min-h-11!/);
     expect(VISIT_ACTION_CLASS).not.toMatch(/bg-neutral-900|text-sm/);
   });
 

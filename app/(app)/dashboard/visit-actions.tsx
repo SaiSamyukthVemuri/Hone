@@ -11,7 +11,11 @@ import { buttonClasses } from "@/components/ui/button";
 //
 // Every control is a link or the shared checkout entry, and the row sits OUTSIDE the row-body link, so nothing
 // interactive is nested in an anchor.
-export const VISIT_ACTION_CLASS = buttonClasses({ variant: "secondary", size: "sm" });
+//
+// 44px on EVERY pointer, not only touch: the Consultation notes and Checkout controls were already 44px on a mouse, the
+// UI-01B/UI-01D specs pin that floor, and one size for the whole row is what was asked. (`!` beats size sm's 32px on a
+// precise pointer.)
+export const VISIT_ACTION_CLASS = buttonClasses({ variant: "secondary", size: "sm", className: "pointer-fine:min-h-11!" });
 
 export function VisitActionRow({
   checkout,
