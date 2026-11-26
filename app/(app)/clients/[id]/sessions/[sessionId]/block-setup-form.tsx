@@ -2472,8 +2472,6 @@ export function BlockSetupForm({
             {(multiplexSelected ? APILUS_MODALITIES_BY_MODE.thermo : modalityOptions).map((opt) => (
               <option key={opt} value={opt}>
                 {apilusModalityLabel(opt)}
-                {/* Names the machine this modality belongs to, so nobody mistakes it for another machine's mode. */}
-                {opt === MULTIPLEX_MODALITY && multiplexOffered ? " · xCell Pur" : ""}
               </option>
             ))}
           </select>

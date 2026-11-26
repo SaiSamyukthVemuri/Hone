@@ -82,7 +82,6 @@ const pick = (value: string) => act(async () => {
   sel.dispatchEvent(new Event("change", { bubbles: true }));
 });
 // THE form's Mode group only: the structured panel has its own mode buttons (data-testid machine-mode-*), which are not this control.
-// The MultiPlex pill carries a small "xCell Pur" model label; its NAME is the text before it.
 const pillName = (b: HTMLButtonElement) => b.textContent?.trim() ?? "";
 const pills = () =>
   Array.from(host!.querySelectorAll<HTMLButtonElement>("button")).filter(
@@ -94,6 +93,14 @@ const multiplexOn = () => multiplexPill()?.getAttribute("aria-pressed") === "tru
 // The way out of MultiPlex that stays on Thermolysis: another modality (here the empty choice).
 const leaveMultiplex = () => act(async () => { multiplexPill()!.click(); });
 const legacyFieldsShown = () => host!.textContent!.includes("Machine frequency");
+// BEHAVIOUR, not label text: pressing the option engages the native structured readings form (the native load) or it does not (the legacy label,
+// or no option at all). Leaves the form where the press left it.
+const pressGivesNative = async () => {
+  if (!multiplexPill()) return false;
+  await act(async () => { multiplexPill()!.click(); });
+  for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+  return host!.querySelector('[data-testid="machine-setting-draft"]') !== null;
+};
 const clickMultiplex = async () => { await ensureThermolysis(host!); await act(async () => { multiplexPill()!.click(); }); };
 const clickPill = (label: string) => act(async () => { pills().find((b) => pillName(b) === label)!.click(); });
 
@@ -106,21 +113,38 @@ describe("MultiPlex in the ONE Mode control (new area)", () => {
     await openPanel();
     expect(pillLabels()).toEqual(["Thermolysis", "Blend", "Galvanic"]);
     expect(legacyFieldsShown()).toBe(true);
-    expect(multiplexPill()).toBeNull();
+    expect(await pressGivesNative(), "route not offered: MultiPlex is only the legacy label, no native load").toBe(false);
     expect(host!.querySelector('[data-testid="xcell-mode-select"]')).toBeNull();
   });
 
-  it("no machine chosen, MultiPlex offered: there is NO fourth pill; MultiPlex is under Thermolysis's Modality choice from the first visit, labelled xCell Pur, with the panel still closed", async () => {
+  it("no machine chosen, MultiPlex offered: there is NO fourth pill; MultiPlex is under Thermolysis's Modality choice from the first visit, with the panel still closed and the option reading plain MultiPlex", async () => {
     await mount(null, { deviceId: "unspecified:xcell-pur" });
     expect(host!.querySelector('[data-testid="machine-first-open"]')).toBeTruthy();
     expect(pillLabels()).toEqual(["Thermolysis", "Blend", "Galvanic"]);
     expect(host!.querySelector('[data-testid="mode-multiplex"]'), "the standalone pill is gone").toBeNull();
     expect(multiplexPill(), "no Modality choice until Thermolysis is chosen").toBeNull();
     await ensureThermolysis(host!);
-    expect(multiplexPill()!.textContent).toContain("xCell Pur");
+    expect(multiplexPill()!.textContent.trim()).toBe("MultiPlex");
     expect(multiplexOn()).toBe(false);
     expect(legacyFieldsShown()).toBe(true);
     expect(actions.loadMachineSetupContext).not.toHaveBeenCalled();
+  });
+
+  it("the option reads the same plain MultiPlex either way; only what a press DOES tells native from legacy", async () => {
+    // route offered: the press engages the native structured readings form
+    await mount(null, { deviceId: "unspecified:xcell-pur" });
+    await ensureThermolysis(host!);
+    const offeredLabel = multiplexPill()!.textContent.trim();
+    expect(await pressGivesNative()).toBe(true);
+    act(() => root?.unmount()); host?.remove(); root = host = null;
+    // route not offered: the same option is only the legacy label, and the legacy fields stay
+    ctxBox.ctx = { ...CTX, multiplexRoute: null };
+    await mount(null);
+    await openPanel();
+    await ensureThermolysis(host!);
+    expect(multiplexPill()!.textContent.trim()).toBe(offeredLabel);
+    expect(await pressGivesNative()).toBe(false);
+    expect(legacyFieldsShown()).toBe(true);
   });
 
   it("the xCell choice offers MultiPlex under Thermolysis only; Blend and Galvanic have none and the form is exactly today's", async () => {
@@ -318,7 +342,7 @@ describe("saved areas", () => {
   it("an area already holding xCell values never offers MultiPlex (today's refusal stands)", async () => {
     await mount({ ...BLOCK, mode: "thermo", machine_profile_id: "dectro-apilus:xcell" });
     await openPanel();
-    expect(multiplexPill()).toBeNull();
+    expect(await pressGivesNative(), "an area already holding xCell values: MultiPlex never becomes native").toBe(false);
     expect(pillLabels()).toEqual(["Thermolysis", "Blend", "Galvanic"]);
     expect(legacyFieldsShown()).toBe(true);
   });
@@ -354,7 +378,7 @@ describe("MultiPlex under Thermolysis: reopening what was saved", () => {
     expect(pills().filter((b) => b.className.includes("bg-neutral-900")).map(pillName)).toEqual(["Thermolysis"]);
     expect(modalitySelect(host!)!.value).toBe("Multiplex");
     expect(modalitySelect(host!)!.disabled).toBe(false);
-    expect(multiplexPill(), "not offered as a native choice on an existing entry").toBeNull();
+    expect(host!.querySelector('[data-testid="machine-setting-draft"]'), "an existing entry is never a native choice").toBeNull();
     expect(legacyFieldsShown()).toBe(true);
     expect(host!.querySelector('[data-testid="machine-setting-draft"]')).toBeNull();
     expect(actions.loadMachineSetupContext).not.toHaveBeenCalled();

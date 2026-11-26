@@ -112,7 +112,7 @@ for (const device of DEVICES) {
       await expect(page.getByTestId("mode-multiplex")).toHaveCount(0);
       for (const m of ["Thermolysis", "Blend", "Galvanic"]) await expect(pill(page, m)).toBeVisible();
       await pill(page, "Thermolysis").click();
-      await expect(modality(page).locator('option[value="Multiplex"]')).toContainText("xCell Pur");
+      await expect(modality(page).locator('option[value="Multiplex"]')).toHaveText("MultiPlex");
       await pill(page, "Blend").click();
       await expect(modality(page).locator('option[value="Multiplex"]'), "Blend has no MultiPlex").toHaveCount(0);
       // THE NEW VIEW TOGGLE IS NOT THERE: the combined rollout stays Twin-only, and MultiPlex does not depend on it.

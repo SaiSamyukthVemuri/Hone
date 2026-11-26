@@ -1,7 +1,8 @@
 // MultiPlex lives under Thermolysis (practitioner feedback): Thermolysis pill, then the Modality choice. There is no standalone MultiPlex pill any more.
 // These helpers give the mounted tests ONE spelling of that path. `multiplexPill` is a read/click adapter over the Modality choice's MultiPlex
-// option: it is non-null only while the option is OFFERED as the native xCell Pur load (its label names the machine), pressed while chosen, and
-// clicking it chooses MultiPlex, or leaves it again when it is already chosen (the old pill's undo).
+// option: it is non-null while the option is on screen, pressed while chosen, and clicking it chooses MultiPlex, or leaves it again when it is
+// already chosen (the old pill's undo). The option reads "MultiPlex" whether the choice is the native xCell Pur load or the legacy label, so
+// which one a press gives is told by BEHAVIOUR (the structured readings form engages or not), never by the label: see `pressGivesNative`.
 import { act } from "react";
 
 export const MULTIPLEX_VALUE = "Multiplex";
@@ -35,7 +36,7 @@ export type MultiplexPill = {
 
 export function multiplexPill(host: HTMLElement): MultiplexPill | null {
   const sel = modalitySelect(host);
-  const opt = sel ? Array.from(sel.options).find((o) => o.value === MULTIPLEX_VALUE && (o.textContent ?? "").includes("xCell Pur")) : undefined;
+  const opt = sel ? Array.from(sel.options).find((o) => o.value === MULTIPLEX_VALUE) : undefined;
   if (!sel || !opt) return null;
   return {
     get disabled() { return sel.disabled; },
