@@ -50,6 +50,13 @@ async function noOverflow(page: Page) {
 }
 const pill = (page: Page, label: string) => page.locator("button", { hasText: new RegExp(`^${label}$`) }).and(page.locator(":not([data-testid^='machine-mode-'])")).first();
 const draft = (page: Page) => page.getByTestId("machine-setting-draft").locator("input");
+
+// MULTIPLEX LIVES UNDER THERMOLYSIS: press Thermolysis (when it is not the mode yet), then pick MultiPlex in its Modality choice.
+const modality = (page: Page) => page.getByTestId("modality-select");
+async function chooseMultiplex(page: Page) {
+  if ((await page.locator('[data-testid="modality-select"] option[value="Multiplex"]').count()) === 0) await pill(page, "Thermolysis").click();
+  await modality(page).selectOption("Multiplex");
+}
 const V = { el: "12", slowDur: "1.85", slowInt: "30", flashDur: "0.033", flashInt: "60", pulses: "3" };
 
 // A saved MultiPlex area reopens as MultiPlex with the exact readings, and the next visit recalls them as reference.
@@ -69,7 +76,7 @@ async function reopenAndRecall(page: Page, s: { clientId: string; seed: { studio
   // The click can land before the page has hydrated (WebKit, right after a reload); retry it until the editor is really open.
   await expect(async () => {
     await page.getByTestId(`edit-area-${blockId}`).click({ timeout: 3000 });
-    await expect(page.getByTestId("mode-multiplex")).toHaveAttribute("aria-pressed", "true", { timeout: 3000 });
+    await expect(modality(page)).toHaveValue("Multiplex", { timeout: 3000 });
   }).toPass({ timeout: T });
   await expect(page.getByTestId("machine-recorded-setups")).toContainText("0.033");
   await page.goto(`/clients/${s.clientId}/sessions/${sessionId}`);
@@ -101,9 +108,13 @@ for (const device of DEVICES) {
 
       // THE PILL IS BESIDE THE THREE MODES FROM THE FIRST VISIT, labelled with the machine it belongs to, with the Machine panel still closed.
       await expect(page.getByTestId("machine-first-open")).toBeVisible({ timeout: T });
-      await expect(page.getByTestId("mode-multiplex")).toBeVisible({ timeout: T });
-      await expect(page.getByTestId("mode-multiplex")).toContainText("xCell Pur");
+      // There is NO fourth pill: MultiPlex is under Thermolysis's Modality choice, labelled with the machine it belongs to.
+      await expect(page.getByTestId("mode-multiplex")).toHaveCount(0);
       for (const m of ["Thermolysis", "Blend", "Galvanic"]) await expect(pill(page, m)).toBeVisible();
+      await pill(page, "Thermolysis").click();
+      await expect(modality(page).locator('option[value="Multiplex"]')).toHaveText("MultiPlex");
+      await pill(page, "Blend").click();
+      await expect(modality(page).locator('option[value="Multiplex"]'), "Blend has no MultiPlex").toHaveCount(0);
       // THE NEW VIEW TOGGLE IS NOT THERE: the combined rollout stays Twin-only, and MultiPlex does not depend on it.
       await expect(page.getByTestId("charting-view-toggle")).toHaveCount(0);
 
@@ -111,13 +122,13 @@ for (const device of DEVICES) {
       await pill(page, "Thermolysis").click();
       const legacyIntensity = page.locator("label", { hasText: "Thermolysis intensity" }).locator("input").first();
       await legacyIntensity.fill("42");
-      await page.getByTestId("mode-multiplex").click();
+      await chooseMultiplex(page);
       // The first click also opens the Machine panel (its context loads from the server); MultiPlex settles pressed before the next click.
-      await expect(page.getByTestId("mode-multiplex")).toHaveAttribute("aria-pressed", "true", { timeout: T });
+      await expect(modality(page)).toHaveValue("Multiplex", { timeout: T });
       await pill(page, "Blend").click();
       await pill(page, "Thermolysis").click();
       await expect(legacyIntensity).toHaveValue("42");
-      await page.getByTestId("mode-multiplex").click();
+      await chooseMultiplex(page);
 
       // The eight inputs appear ONCE, under Treatment readings, none in the Machine panel; the machine is shown as not specified.
       const region = page.getByRole("region", { name: "Treatment readings" });
@@ -136,7 +147,7 @@ for (const device of DEVICES) {
       await inputs.nth(5).fill(V.flashInt);
       await inputs.nth(6).fill(V.pulses);
       await pill(page, "Blend").click();
-      await page.getByTestId("mode-multiplex").click();
+      await chooseMultiplex(page);
       await expect(inputs.nth(2)).toHaveValue(V.slowDur);
       await expect(inputs.nth(6)).toHaveValue(V.pulses);
       await expect(inputs.nth(1)).toHaveValue("");
@@ -173,7 +184,7 @@ for (const device of DEVICES) {
       await expect(card).not.toContainText(/\b1 pulse\b/);
       await page.getByTestId(`edit-area-${blockId}`).click({ timeout: T });
       await expect(page.getByTestId("machine-first-panel")).toBeVisible({ timeout: T });
-      await expect(page.getByTestId("mode-multiplex")).toHaveAttribute("aria-pressed", "true");
+      await expect(modality(page)).toHaveValue("Multiplex");
       await expect(page.getByTestId("machine-recorded-setups")).toContainText("0.033");
       await noOverflow(page);
 
@@ -201,11 +212,11 @@ for (const device of DEVICES) {
       await page.getByTestId("laterality-Chin-left").click();
       await pill(page, "Thermolysis").click();
       await page.locator("label", { hasText: "Thermolysis intensity" }).locator("input").first().fill("42");
-      await page.getByTestId("mode-multiplex").click();
+      await chooseMultiplex(page);
       // no wait: Save is pressed at once (the held button ignores it) and again after the choice has settled.
       await page.getByTestId("save-treatment-area").click({ force: true, timeout: T }).catch(() => undefined);
       expect((await blocksOf(sessionId)).filter((b) => b.mode !== null).length, "no legacy area was written by the early Save").toBe(0);
-      await expect(page.getByTestId("mode-multiplex")).toHaveAttribute("aria-pressed", "true", { timeout: T });
+      await expect(modality(page)).toHaveValue("Multiplex", { timeout: T });
       await expect(page.getByTestId("save-treatment-area")).toBeEnabled({ timeout: T });
       await expect(draft(page)).toHaveCount(8, { timeout: T });
       await draft(page).nth(0).fill("12");
@@ -242,8 +253,8 @@ for (const device of DEVICES) {
         if (refuse && req.method() === "POST" && req.headers()["next-action"]) { await route.abort("failed").catch(() => undefined); return; }
         await route.continue().catch(() => undefined);
       });
-      await page.getByTestId("mode-multiplex").click();
-      await expect(page.getByTestId("mode-multiplex")).toHaveAttribute("aria-pressed", "false");
+      await chooseMultiplex(page);
+      await expect(modality(page)).not.toHaveValue("Multiplex");
       await page.getByTestId("save-treatment-area").click({ timeout: T });
       await expect(page.locator("body")).toContainText("MultiPlex could not be loaded", { timeout: T });
       expect((await blocksOf(sessionId)).length, "nothing was saved, legacy or otherwise").toBe(0);
@@ -252,8 +263,8 @@ for (const device of DEVICES) {
       refuse = false;
       // The network is back: drop the interception entirely (a pass-through route is itself a variable in WebKit) before the retry.
       await page.unroute("**/*");
-      await page.getByTestId("mode-multiplex").click();
-      await expect(page.getByTestId("mode-multiplex")).toHaveAttribute("aria-pressed", "true", { timeout: T });
+      await chooseMultiplex(page);
+      await expect(modality(page)).toHaveValue("Multiplex", { timeout: T });
       await expect(draft(page)).toHaveCount(8, { timeout: T });
       await draft(page).nth(0).fill("12");
       await draft(page).nth(2).fill(V.slowDur);
@@ -278,7 +289,9 @@ test.describe("a studio with the rollout OFF", () => {
     await startSession(page, s.clientId);
     await expect(page.getByTestId("charting-view-toggle")).toHaveCount(0);
     await page.getByTestId("add-settings-block-cta").click({ timeout: T });
-    await expect(page.getByTestId("mode-multiplex")).toBeVisible({ timeout: T });
+    await pill(page, "Thermolysis").click();
+    await expect(modality(page).locator('option[value="Multiplex"]')).toHaveCount(1, { timeout: T });
+    await expect(page.getByTestId("mode-multiplex")).toHaveCount(0);
     await expect(page.getByTestId("charting-view-toggle")).toHaveCount(0);
   });
 });
