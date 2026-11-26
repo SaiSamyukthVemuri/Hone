@@ -19,7 +19,7 @@ import {
 } from "@/lib/dashboard/practice-metrics";
 import { getClientsNeedingAttention } from "@/lib/dashboard/clients-needing-attention";
 import { getMissingRecordsAssistant } from "@/lib/dashboard/missing-records-assistant";
-import { getExpiringSterileItems } from "@/lib/record-keeping/queries";
+import { EXPIRING_SUPPLIES_LIMIT, getExpiringSterileItems } from "@/lib/record-keeping/queries";
 import { NeedsAttentionPanel } from "./needs-attention-panel";
 import { buildDashboardTodo } from "@/lib/dashboard/todo-model";
 import {
@@ -27,8 +27,8 @@ import {
   CHECK_UNAVAILABLE,
   type NeedsAttention,
 } from "@/lib/dashboard/needs-attention-model";
-import { applyDismissals, headingCount, type DismissedRow } from "@/lib/dashboard/needs-attention-visibility";
-import { loadMyDismissals } from "@/lib/dashboard/attention-dismissal-store";
+import { applyDismissals, headingCount, resolvedStudioDismissalKeys, type DismissedRow } from "@/lib/dashboard/needs-attention-visibility";
+import { loadMyDismissals, restoreResolvedDismissals } from "@/lib/dashboard/attention-dismissal-store";
 import { dashboardDismissalsEnabled } from "@/lib/dashboard/dismissals-gate";
 import { dashboardUnpaidEnabled } from "@/lib/dashboard/unpaid-gate";
 import { loadUnpaidAttention, UNPAID_DEFAULT_WINDOW_DAYS } from "@/lib/dashboard/unpaid-attention";
@@ -175,7 +175,7 @@ export function SecondaryStackSkeleton() {
   );
 }
 
-// Birthdays, top-right on desktop (the page places it; this is its own boundary). Same data as before:
+// Birthdays, in a strip on desktop (the page places it; this is its own boundary). Same data as before:
 // the birthdays bundle the page started before the roster, so no read is added or moved.
 async function BirthdaysFromBundle({
   attentionSources,
@@ -196,17 +196,15 @@ async function BirthdaysFromBundle({
   );
 }
 
-export function BirthdaysTopRight(props: {
+export function DashboardBirthdays(props: {
   attentionSources: Promise<AttentionSources>;
   today: string;
   accentColor: BirthdayReminderColor;
 }) {
   return (
-    <div className="min-w-0 lg:col-start-2 lg:row-start-1">
-      <Suspense fallback={null}>
-        <BirthdaysFromBundle {...props} />
-      </Suspense>
-    </div>
+    <Suspense fallback={null}>
+      <BirthdaysFromBundle {...props} />
+    </Suspense>
   );
 }
 
@@ -357,7 +355,9 @@ export async function SecondaryStack({
           auto-detected steps remain; the full checklist always lives on
           /getting-started. Demoted out of the operational flow: setup is not
           daily work. */}
-      {!onboardingV2On && !setupComplete && (
+      {/* Owner setup guidance only: `onboardingV2On` is owner-gated, so without this a staff member on a
+          studio with the flag on fell into the legacy branch and was shown the owner's checklist. */}
+      {isOwner && !onboardingV2On && !setupComplete && (
         <Link
           href="/getting-started"
           className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-neutral-200 px-4 py-3 hover:border-neutral-400 dark:border-neutral-800 dark:hover:border-neutral-600"
@@ -365,8 +365,8 @@ export async function SecondaryStack({
           <span className="text-sm font-medium">Getting started</span>
           <span className="text-xs text-neutral-500">
             {gettingStartedSignals.nextStepSignalsAvailable
-              ? `${gettingStarted.autoDone} of ${gettingStarted.autoTotal} steps complete →`
-              : "Some steps could not be checked just now →"}
+              ? `${gettingStarted.autoDone} of ${gettingStarted.autoTotal} steps complete`
+              : "Some steps could not be checked just now"}
           </span>
         </Link>
       )}
@@ -440,7 +440,7 @@ function BirthdaysThisMonth({
   // month with many birthdays no longer pushes the setup cards off the screen.
   // Same data, same links (`?tab=personal`), same studio accent; today's
   // birthdays still carry the "Today" badge.
-  // Compact, top-right: the first few are always visible (today's birthdays first); the rest stay one
+  // Compact strip: the first few are always visible (today's birthdays first); the rest stay one
   // click away inside a server-rendered <details>, so nobody is dropped. Nothing is sent to anyone.
   const ordered = [
     ...birthdays.filter((b) => b.day === todayDay),
@@ -454,11 +454,11 @@ function BirthdaysThisMonth({
     return (
       <li
         key={b.id}
-        className={`flex items-baseline gap-2 rounded-full border px-3 py-1.5 ${accent.card}`}
+        className={`flex min-w-0 max-w-full flex-wrap items-baseline gap-x-2 rounded-md border px-2.5 py-1 ${accent.card}`}
       >
         <Link
           href={`/clients/${b.id}?tab=personal`}
-          className="text-sm font-medium hover:underline"
+          className="min-w-0 text-sm font-medium [overflow-wrap:anywhere] hover:underline"
         >
           {b.name}
         </Link>
@@ -476,8 +476,8 @@ function BirthdaysThisMonth({
     );
   };
   return (
-    <section data-testid="dashboard-birthdays" className="flex min-w-0 flex-col gap-2 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
-      <h2 className="text-lg font-medium">Birthdays this month</h2>
+    <section data-testid="dashboard-birthdays" className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-neutral-200 px-4 py-2.5 lg:-order-1 lg:col-span-2 dark:border-neutral-800">
+      <h2 className="text-sm font-semibold">Birthdays this month</h2>
       <ul className="flex flex-wrap gap-2">{shown.map(chip)}</ul>
       {rest.length > 0 && (
         <details>
@@ -649,6 +649,8 @@ async function resolveNeedsAttentionInput({
       ...(procedureActionsRead.unavailable ? [UNAVAILABLE_RECORD_DETAILS] : []),
       ...(expiringSuppliesRead.unavailable ? [UNAVAILABLE_EXPIRING_SUPPLIES] : []),
     ],
+    // The supplies read is capped and its cut is not in treatmentMemoryNotReturned: a list this long may be missing supplies (AP2 must not read that as resolved).
+    suppliesMayBeCapped: expiringSupplies.length >= EXPIRING_SUPPLIES_LIMIT,
     treatmentMemoryNotReturned:
       clientsNeedingAttention.totalClients - clientsNeedingAttention.clients.length,
     recordDetailGaps: procedureActions.detailGaps,
@@ -684,7 +686,7 @@ function resolveVisibleNeeds(props: OwnerNeedsInputs): Promise<VisibleNeeds> {
   const hit = visibleMemo.get(props.attentionSources);
   if (hit) return hit;
   const run = (async (): Promise<VisibleNeeds> => {
-    const input = await resolveNeedsAttentionInput(props);
+    const { suppliesMayBeCapped, ...input } = await resolveNeedsAttentionInput(props);
     // Unpaid balances are owner-only money (0254). A practitioner's render never queries them and never receives a figure.
     // HON-65: also OFF unless the unpaid gate is on (lib/dashboard/unpaid-gate). OFF = the loader is never called, so there are no
     // items, no window note or link, no "could not check" entry, and the heading count excludes unpaid.
@@ -711,6 +713,12 @@ function resolveVisibleNeeds(props: OwnerNeedsInputs): Promise<VisibleNeeds> {
     const read = await loadMyDismissals(props.studioId);
     if (!read.ok) return { shown: model, unpaid, dismissed: [], dismissalsEnabled: true, dismissalsUnavailable: true, countKnown };
     const { shown, dismissed } = applyDismissals(model, read.rows);
+    // AP2: a studio reminder that has resolved no longer holds its dismissal, so the same state returning later shows again.
+    await restoreResolvedDismissals(
+      props.studioId,
+      resolvedStudioDismissalKeys(model, read.rows, { suppliesMayBeCapped }),
+      read.rows,
+    );
     return { shown, unpaid, dismissed, dismissalsEnabled: true, dismissalsUnavailable: false, countKnown };
   })();
   visibleMemo.set(props.attentionSources, run);

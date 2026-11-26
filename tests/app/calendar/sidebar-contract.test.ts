@@ -59,8 +59,28 @@ describe("persistence and the URL", () => {
     expect(SIDEBAR).not.toMatch(/fetch\(|\.rpc\(|from "@\/lib\/supabase|"use server"|actions"/);
   });
   it("a link with no param restores the viewer's own last selection, once", () => {
-    expect(SIDEBAR).toContain("restoreParam(readStoredSelection(");
+    // The stored preference is read first and passed through; firstVisitParam falls back to the viewer's own column only when nothing is stored.
+    expect(SIDEBAR).toContain("decideFirstVisit({");
+    expect(SIDEBAR).toContain("readStored: () => readStoredSelection(storage, studioId, viewerId)");
     expect(SIDEBAR).toContain("restored.current");
+    expect(SIDEBAR).toContain("if (!restored.current) clearLegacySelection(storage, studioId);"); // once per mount, never read
+    // The in-memory flag is set by the decision AND by a checkbox, so a blocked storage cannot re-arm the default.
+    expect(SIDEBAR).toMatch(/restored\.current = decided/);
+    expect(SIDEBAR).toMatch(/restored\.current = true;[^\n]*first-visit default/);
+  });
+  it("all three sidebar sites pass the viewer's own id, and an owner passes null (everyone)", () => {
+    const sites = [...PAGE.matchAll(/<CalendarSidebar[\s\S]*?>/g)].map((m) => m[0]);
+    expect(sites).toHaveLength(3);
+    for (const site of sites) expect(site).toMatch(/ownFirstId=\{(?:isOwner \? null : practitioner\.id|ownFirstId)\}/);
+    expect(PAGE).toContain("ownFirstId: isOwner ? null : practitioner.id");
+  });
+  it("all three sidebar sites pass the viewer's practitioner id, so the stored choice is per viewer (Photos O4)", () => {
+    const sites = [...PAGE.matchAll(/<CalendarSidebar[\s\S]*?>/g)].map((m) => m[0]);
+    expect(sites).toHaveLength(3);
+    for (const site of sites) expect(site).toMatch(/viewerId=\{(?:practitioner\.id|viewerId)\}/);
+    expect(PAGE).toContain("viewerId: practitioner.id");
+    expect(SIDEBAR).toContain("writeStoredSelection(storage, studioId, viewerId, selectionParam)");
+    expect(SIDEBAR).toContain("writeStoredSelection(window.localStorage, studioId, viewerId, param)");
   });
   it("every toolbar link in all three views carries the selection", () => {
     // None of the 17 toolbar hrefs (6 per view, the week view's day link included) is a bare string.
@@ -95,7 +115,8 @@ describe("full width", () => {
   it("the app shell main uses AppMain, which is full width for the calendar grid only", () => {
     expect(LAYOUT).toContain("<AppMain>{children}</AppMain>");
     expect(LAYOUT).not.toContain('<main className="mx-auto max-w-5xl');
-    expect(APPMAIN).toContain("calendarUsesFullWidth(usePathname())");
+    expect(APPMAIN).toContain("const pathname = usePathname()");
+    expect(APPMAIN).toContain("calendarUsesFullWidth(pathname)");
     expect(APPMAIN).toContain("APP_MAIN_FULL");
     expect(APPMAIN).toContain("APP_MAIN_NORMAL");
   });
@@ -116,7 +137,7 @@ describe("the mini calendar", () => {
   it("a date navigates the current view to it and keeps the selection", () => {
     expect(html("day", "p1,p2")).toContain('href="/calendar?view=day&amp;day=2026-11-18&amp;people=p1%2Cp2"');
     expect(html("week")).toContain('href="/calendar?view=week&amp;day=2026-11-18"');
-    expect(html("month", "none")).toContain('href="/calendar?view=month&amp;month=2026-11-01&amp;people=none"');
+    expect(html("month", "none")).toContain('href="/calendar?view=month&amp;month=2026-11-01&amp;day=2026-11-18&amp;people=none"');
   });
 });
 
@@ -145,7 +166,7 @@ describe("mini calendar: today vs selected, Today action", () => {
       mini({ view, selectionParam }).match(/<a[^>]*data-testid="calendar-mini-today"[^>]*>/)?.[0] ?? "";
     expect(today("day")).toContain('href="/calendar?view=day&amp;day=2026-10-31"');
     expect(today("week", "p1")).toContain('href="/calendar?view=week&amp;day=2026-10-31&amp;people=p1"');
-    expect(today("month")).toContain('href="/calendar?view=month&amp;month=2026-10-01"');
+    expect(today("month")).toContain('href="/calendar?view=month&amp;month=2026-10-01&amp;day=2026-10-31"');
   });
   it("marks come from the server's studio-timezone keys: the mini calendar never builds a Date", () => {
     const src = readFileSync("app/(app)/calendar/CalendarMiniMonth.tsx", "utf8").replace(/^\s*\/\/.*$/gm, "");
@@ -180,7 +201,7 @@ describe("selection and date stay in step on mobile and across navigation (Codex
   it("every URL the mobile day view pushes carries the practitioner selection", () => {
     const pushes = [...MOBILE_VIEW.matchAll(/router\.push\(([^;]*)\);/g)].map((m) => m[1]);
     expect(pushes.length).toBe(3); // prev past the week, next past the week, Today outside the week
-    for (const p of pushes) expect(p, p).toMatch(/^withSelection\(.*selectionParam\)$/);
+    for (const p of pushes) expect(p, p).toMatch(/^withDashboardRebook\(withSelection\(.*selectionParam\), rebook\)$/);
   });
   it("the page hands the mobile view the selection", () => {
     expect(PAGE).toMatch(/<CalendarMobileDayView[\s\S]*?selectionParam=\{sidebar\.param\}/);

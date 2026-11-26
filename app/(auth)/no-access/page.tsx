@@ -10,6 +10,8 @@ import {
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { listActiveStudioMemberships } from "@/lib/supabase/queries";
+import Link from "next/link";
+import { deskEntryAvailable, type EntrySupabase } from "@/lib/desk/entry";
 import { signOutFromGate, switchStudioAction } from "./actions";
 
 // Invite-only "no studio access yet" gate (PR #253). Hone is invite-only
@@ -62,6 +64,8 @@ export default async function NoAccessPage({
     redirect("/dashboard");
   }
   const multiple = memberships.length > 1;
+  // The front desk, when it is switched on and this person is an active receptionist (no read at all while it is off).
+  const deskOpen = memberships.length === 0 && (await deskEntryAvailable(supabase as unknown as EntrySupabase, user.id));
   // Safe, self-scoped copy for the reconciliation edge cases (no DB/Auth text,
   // no cross-tenant information). These only apply to a 0-membership user.
   const inviteIssue =
@@ -220,6 +224,14 @@ export default async function NoAccessPage({
               </form>
             ))}
           </div>
+        )}
+
+        {deskOpen && (
+          <p className="mb-6 text-[15px]">
+            <Link href="/desk" prefetch={false} className="underline">
+              Open the front desk
+            </Link>
+          </p>
         )}
 
         <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:justify-center">

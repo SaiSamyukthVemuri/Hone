@@ -10,7 +10,7 @@ const deps = vi.hoisted(() => ({
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/email/client", () => ({
-  resend: { emails: { send: deps.send } },
+  getResendTransport: () => ({ emails: { send: deps.send } }),
   FROM_ADDRESS: "test@example.test",
 }));
 vi.mock("@/lib/subscriptions/owner-team-seats", () => ({
@@ -100,6 +100,16 @@ describe("paid team invitations", () => {
         }),
       ),
     ).toMatch(/<option[^>]+value="receptionist"[^>]*disabled/);
+  });
+  it("keeps the existing invitation flow for studios outside subscription billing", async () => {
+    deps.seats.mockResolvedValue(null);
+    vi.stubEnv("HONE_RECEPTIONIST_DESK_ENABLED", "false");
+    const html = renderToStaticMarkup(
+      createElement(InviteForm, { seats: null, deskEnabled: false }),
+    );
+    expect(html).toContain('value="receptionist"');
+    expect(await submit("receptionist")).toMatchObject({ ok: true });
+    expect(deps.insert).toHaveBeenCalledWith(expect.objectContaining({ role: "receptionist" }));
   });
   it("creates a receptionist invitation for a subscribed Studio", async () => {
     expect(await submit("receptionist")).toMatchObject({ ok: true });

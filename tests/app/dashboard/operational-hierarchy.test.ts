@@ -180,7 +180,7 @@ describe("dashboard hierarchy — reporting and setup are DEMOTED, not deleted",
   it("the Getting started card sits below the operational sections", () => {
     // Setup is not daily work. It used to render directly under Today.
     // Still the INCOMPLETE branch only — see the CHLOE D3 block below.
-    expect(at(BIRTHDAYS)).toBeLessThan(at("{!onboardingV2On && !setupComplete && ("));
+    expect(at(BIRTHDAYS)).toBeLessThan(at("{isOwner && !onboardingV2On && !setupComplete && ("));
   });
 
   it("the booking setup card sits below Birthdays", () => {
@@ -318,7 +318,7 @@ describe("dashboard cleanup — completed setup and pilot tooling do not render"
 
   it("D3: incomplete onboarding STILL gets its assistance, both systems", () => {
     // New-studio onboarding must be undamaged. Legacy (flag-off) path:
-    expect(DASH).toMatch(/\{!onboardingV2On && !setupComplete && \(/);
+    expect(DASH).toMatch(/\{isOwner && !onboardingV2On && !setupComplete && \(/);
     expect(DASH).toMatch(/const setupComplete =/);
     // Onboarding v2 path: its pinned card already hides itself when complete,
     // which is why no page-level change was needed for it.
@@ -338,7 +338,7 @@ describe("dashboard cleanup — completed setup and pilot tooling do not render"
       /\{!model\.isComplete && !completedLocally && \(\s*<OnboardingProgressCard/,
     );
     // The local flag is never set except on a RECORDED completion.
-    expect(surface).toMatch(/if \(res\.ok\) setCompletedLocally\(true\)/);
+    expect(surface).toMatch(/if \(res\.ok\)\s*\{?\s*setCompletedLocally\(true\)/);
     expect(surface).not.toMatch(/setCompletedLocally\(true\);?\s*\n?\s*\}?\s*startTransition/);
   });
 

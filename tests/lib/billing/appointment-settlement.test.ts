@@ -153,7 +153,7 @@ describe("no attested outcome may present itself as verified money", () => {
   });
 
   it("the controls say out loud that Hone did not verify this", () => {
-    expect(CONTROLS).toMatch(/does not take a payment and Hone/);
+    expect(CONTROLS).toContain("Hone does not collect or verify them.");
     expect(CONTROLS).toMatch(/not verified by Hone/);
   });
 });
@@ -197,7 +197,10 @@ describe("the write path touches no Stripe surface", () => {
     // `authenticated` — so anything this file could pass, a hand-built
     // PostgREST call could pass instead.
     expect(ACTIONS).not.toMatch(/p_quoted_amount_cents/);
-    expect(ACTIONS).not.toMatch(/resolveAppointmentQuotedAmountCents/);
+    // The one permitted use is staleSeenFee: it COMPARES the fee the owner saw with the price now (an unchanged Final fee has
+    // no adjusted command to carry the check) and refuses with fee_changed. It never supplies a value to any command.
+    expect(ACTIONS.match(/resolveAppointmentQuotedAmountCents/g)).toHaveLength(2); // the import and staleSeenFee
+    expect(ACTIONS).toMatch(/\(await resolveAppointmentQuotedAmountCents\(studioId, appointmentId, timezone, isOwner\)\) !== seen/);
     expect(ACTIONS).not.toMatch(/resolveAuthoritativeSessionPaymentAmount/);
   });
 
@@ -292,7 +295,10 @@ describe("retained card money is measured in cents, not inferred from a status",
 
   it("the card gates on FULL refund, not on the presence of an attempt", () => {
     expect(CARD).toMatch(/const fullyRefunded =/);
-    expect(CARD).toMatch(/activeAttempt\.refundAmountCents \?\? 0\) >= activeAttempt\.amountCents/);
+    // R1 (Insurance F3): FULL is read through refundDisplayState (both refund columns agree AND nothing remains), which
+    // keeps the in-cents rule: an unreadable or partial amount is never "fully refunded".
+    expect(CARD).toMatch(/activeRefund\?\.kind === "refunded" &&\s*activeRefund\.remainingRefundableCents === 0/);
+    expect(CARD).not.toMatch(/activeAttempt\.refundStatus === "succeeded" &&\s*\(activeAttempt\.refundAmountCents/);
     expect(CARD).toMatch(/const cardMoneyHeld = activeAttempt !== null && !fullyRefunded/);
     // The settlement controls are gated on money HELD, never on the mere
     // existence of a succeeded row.

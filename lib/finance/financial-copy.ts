@@ -101,7 +101,7 @@ export const UNKNOWN_EXPLANATION: Record<FinancialUnknownCause, string> = {
   not_recorded:
     "Nobody has said what happened here yet. This is not zero, and it is not a free visit.",
   unavailable:
-    "A read Hone depends on did not come back, so there is no figure to show. Nothing here is zero — Hone simply could not look.",
+    "A read Hone depends on did not come back, so there is no figure to show. These figures are unavailable, not zero.",
   unknowable:
     "No record of this was ever kept, so there is nothing to find and nothing for you to do.",
   not_yet_supported:
@@ -122,7 +122,7 @@ export const UNKNOWN_ACTION: Partial<Record<FinancialUnknownCause, string>> = {
 // ---------------------------------------------------------------------------
 
 export const DISPOSITION_CHAIN_NOT_YET =
-  "How each completed visit was settled — paid by card, collected outside Hone, still owed, waived — is not on this screen yet.";
+  "Settlement details are not on this screen yet: card payments, money collected outside Hone, amounts still owed and waived amounts.";
 
 export const MONEY_BRIDGES_NOT_YET =
   "Card payments Hone verified, and what a practitioner recorded collecting outside Hone, are not on this screen yet. They are different measurements from the service value above and will be shown apart from it.";

@@ -802,6 +802,7 @@ describe("findings register — the CSV and the JSON cannot disagree", () => {
     // fidelity cannot be re-diffed here. It is pinned instead.
     const manifest = JSON.parse(read("AUDIT_INPUT_MANIFEST.json"));
     const pinned = manifest.preserved_source_content_digests;
+    // The july_18 digest was re-pinned on 2026-11-24 for the record privacy scrub (one slug replaced by an alias in one cell); see the manifest note.
     expect(pinned, "the manifest must pin the preserved source content").toBeDefined();
 
     const SEP1 = String.fromCharCode(1), SEP2 = String.fromCharCode(2);

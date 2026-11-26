@@ -70,17 +70,33 @@ describe("legal identity has exactly one writer and no receptionist reader (R4, 
     expect(touching(/set_receptionist_legal_name_access|studio_legal_name_access|client_legal_name_access_audit/)).toEqual([]);
   });
 
-  it("no file that reads a legal name mentions a receptionist, and no receptionist RPC is called from the app", () => {
+  it("separates legal-name readers from the receptionist desk and pins every desk RPC to its caller", () => {
     for (const f of touching(/client_legal_identities|can_read_client_legal_identity/)) {
       expect(code(read(f)), f).not.toMatch(/receptionist/i);
     }
-    expect(touching(/\.rpc\(\s*["'][a-z_]*receptionist[a-z_]*["']/)).toEqual([]);
+    const calls = APP_FILES.flatMap(file => Array.from(
+      code(read(file)).matchAll(/\.rpc(?:<[^>]*>)?\(\s*["']([a-z_\d]*receptionist[a-z_\d]*)["']/g),
+      match => `${file}:${match[1]}`,
+    ));
+    expect(calls.sort()).toEqual([
+      // Not a desk RPC: the OWNER's Team page deactivates or reactivates a receptionist. The owner check runs first and the command is scoped to the
+      // owner's own studio. It reads and writes no client data and no legal field.
+      "app/(app)/settings/team/receptionist-actions.ts:set_studio_receptionist_active",
+      "app/(desk)/desk/booking-actions.ts:receptionist_book_opening",
+      "app/(desk)/desk/booking-actions.ts:receptionist_booking_clients_v3",
+      "app/(desk)/desk/booking-actions.ts:receptionist_booking_options",
+      "app/(desk)/desk/booking-actions.ts:receptionist_find_openings_v2",
+      "app/(desk)/desk/booking-actions.ts:receptionist_studio_timezone",
+      "app/(desk)/desk/contact-actions.ts:receptionist_appointment_contact",
+      "lib/desk/read.ts:receptionist_calendar_v3",
+    ]);
   });
 
-  it("the receptionist projection reads no legal field and returns the literal Name on file", () => {
+  it("the receptionist projection reads no legal field and returns the literal Name on file only when both names are blank", () => {
     const rules = code(read("lib/clients/directory-rules.ts"));
     expect(rules).not.toMatch(/legal_/);
-    expect(rules).toMatch(/row\.nameOnFile \? NAME_ON_FILE_LABEL/);
+    expect(rules).toMatch(/const blank = row\.displayName\.length === 0/);
+    expect(rules).toMatch(/blank \? NAME_ON_FILE_LABEL/);
   });
 });
 

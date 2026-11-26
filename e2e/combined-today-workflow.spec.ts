@@ -97,7 +97,7 @@ function runSuite(label: string, viewport: { width: number; height: number }, is
       });
 
       await test.step("4+5. Remember and Caution are DISTINCT, each rendered once, in full", async () => {
-        const remember = page.locator("span").filter({ hasText: /^Remember: / });
+        const remember = page.getByTestId("dashboard-prep-remember");
         const caution = page.locator("span").filter({ hasText: /^Caution: / });
         await expect(remember).toHaveCount(1);
         await expect(caution).toHaveCount(1);
@@ -120,16 +120,19 @@ function runSuite(label: string, viewport: { width: number; height: number }, is
       });
 
       await test.step("4+6. latest setup once; intake and charting stated once", async () => {
-        await expect(
-          page.locator("span").filter({ hasText: /^Latest setup: / }),
-        ).toHaveCount(1);
+        const toggle = page.getByTestId("dashboard-memory-toggle");
+        await toggle.click();
+        await expect(page.getByTestId("prep-setup-area")).toHaveCount(1);
+        await expect(page.getByTestId("prep-setup-area")).toContainText("27.12 MHz");
+        await expect(page.getByText(PLAN_LINE_1, { exact: false })).toHaveCount(1);
+        await toggle.click();
         // No generic record-count line beside the specific chips.
         await expect(page.getByText(/^Records: \d+ reminder/)).toHaveCount(0);
         await expect(page.getByText("Records look complete.")).toHaveCount(0);
       });
 
       await test.step("11+12. long multiline content wraps; no sideways scroll", async () => {
-        const remember = page.locator("span").filter({ hasText: /^Remember: / }).first();
+        const remember = page.getByTestId("dashboard-prep-remember").first();
         const box = await remember.boundingBox();
         expect(box).not.toBeNull();
         // Multi-line => taller than a single line.
@@ -140,7 +143,11 @@ function runSuite(label: string, viewport: { width: number; height: number }, is
 
       await test.step("8+9+10. actions survive: checkout cell, primary action, row link", async () => {
         const section = todaySection(page);
-        await expect(section.getByRole("link", { name: /Book appointment/ })).toHaveCount(1);
+        // #1757 moved the Book action into the page header, outside every <section>: look for it on the whole page (the <main> region), so a
+        // second Book link anywhere on the dashboard still fails this count, and it must carry the selected day (today: the plain /calendar link).
+        const book = page.getByRole("main").getByRole("link", { name: /Book appointment/ });
+        await expect(book).toHaveCount(1);
+        await expect(book).toHaveAttribute("href", "/calendar");
         // The primary action resolver still produces exactly one action link.
         const action = section.getByRole("link", {
           name: /Review Before Today|Open client|Chart appointment|Continue charting|View session/,
@@ -234,7 +241,6 @@ function runSuite(label: string, viewport: { width: number; height: number }, is
       await loginAsOwner(page, seed);
       await openDashboard(page);
 
-      const section = todaySection(page);
       // The counts live in the summary strip (DaySummary was folded into it): the Appointments
       // value, with the client count as its sub-label.
       const strip = page.getByTestId("dashboard-summary-strip");
@@ -243,9 +249,10 @@ function runSuite(label: string, viewport: { width: number; height: number }, is
       // ...and the empty state is absent on a day that has appointments.
       await expect(page.getByText("No appointments today.")).toHaveCount(0);
       // The Book appointment action is unchanged.
-      await expect(
-        section.getByRole("link", { name: "Book appointment" }),
-      ).toHaveCount(1);
+      // (It lives in the page header since #1757, so the lookup is page-wide, and it must still be exactly one link for today.)
+      const bookToday = page.getByRole("main").getByRole("link", { name: "Book appointment" });
+      await expect(bookToday).toHaveCount(1);
+      await expect(bookToday).toHaveAttribute("href", "/calendar");
     });
 
     // -----------------------------------------------------------------------

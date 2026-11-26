@@ -6,82 +6,22 @@ import {
   mapSessionCommandError,
   GENERIC_SESSION_COMMAND_ERROR,
 } from "@/lib/sessions/session-command-errors";
+import {
+  ASSIGNED_ELSEWHERE_RAISED,
+  classifyAppointmentForStart,
+  sessionStartRefusalHref,
+  type StartAppointmentLookup,
+} from "@/lib/sessions/session-start-refusal";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import type { Modality } from "@/lib/types/database";
 import { captureServerEvent } from "@/lib/analytics/server";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
-import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
-// PR #180. Loaded from a separate scope so the RPC call can use the
-// service role (the mark_appointment_complete RPC is SECURITY DEFINER
-// and expects the service-role context; calling it through the
-// authenticated supabase client would still work but mirrors the
-// pattern in app/(app)/calendar/actions.ts:markAppointmentCompleteAction).
-// Dynamic import keeps the cold-path admin client out of every
-// session-start request.
-async function maybeMarkAppointmentCompletedOnSessionStart(args: {
-  appointmentId: string;
-  studioId: string;
-  practitionerId: string;
-  status: string;
-  endsAt: string;
-}): Promise<void> {
-  // PR #180. Auto-complete contract:
-  //   * Only confirmed appointments are eligible (cancelled / no_show /
-  //     completed are explicitly skipped per the prompt's safety rules).
-  //   * Only past appointments (ends_at <= now()) are sent to the RPC
-  //     because the RPC refuses the future case anyway; calling it
-  //     would just waste a roundtrip + log a noisy error.
-  //   * Failure is fail-soft. The session has already been created;
-  //     the practitioner can still mark the appointment completed by
-  //     hand via the calendar Mark completed button (PR #180 also
-  //     restores that). A failed auto-complete is logged but never
-  //     thrown so the session-start UX is never blocked by it.
-  if (args.status !== "confirmed") {
-    return;
-  }
-  const endsAtMs = new Date(args.endsAt).getTime();
-  if (!Number.isFinite(endsAtMs) || endsAtMs > Date.now()) {
-    return;
-  }
-  try {
-    const { createAdminClient } = await import("@/lib/supabase/admin-server");
-    const admin = createAdminClient();
-    const { error: rpcErr } = await admin.rpc("mark_appointment_complete", {
-      p_appointment_id: args.appointmentId,
-      p_studio_id: args.studioId,
-      p_practitioner_id: args.practitionerId,
-    });
-    if (rpcErr) {
-      console.error(
-        JSON.stringify({
-          event: "session_start_auto_mark_complete_rpc_error",
-          appointmentId: args.appointmentId,
-          code: dbErrorCode(rpcErr),
-          timestamp: new Date().toISOString(),
-        }),
-      );
-    } else {
-      // Migration 0110: appointment is now completed: auto-send postcare if the
-      // studio opted in. Fail-soft + idempotent (never throws), so a postcare
-      // failure never blocks session start or completion.
-      const { autoSendPostcareOnComplete } = await import(
-        "@/app/(app)/calendar/postcare-auto-send"
-      );
-      await autoSendPostcareOnComplete(args.appointmentId, args.studioId, args.practitionerId);
-    }
-  } catch (err) {
-    console.error(
-      JSON.stringify({
-        event: "session_start_auto_mark_complete_threw",
-        appointmentId: args.appointmentId,
-        errorClass: thrownErrorClass(err),
-        timestamp: new Date().toISOString(),
-      }),
-    );
-  }
-}
+// HON-45 (Sam's decision): starting a chart does NOT complete the appointment. Completion is a separate,
+// explicit act (the Finish appointment control on the session page, or Mark completed on the calendar),
+// and it neither sends postcare nor takes payment. This reverses the PR #180 auto-complete on session start.
 
 // Two "+ Log session" taps within this window for the same client +
 // practitioner + modality reuse the same session row. Two genuinely
@@ -127,15 +67,10 @@ export async function startSessionAction(formData: FormData): Promise<void> {
   // (studio_id, client_id) match the session being created. The form
   // value is treated as untrusted user input.
   let appointmentId: string | null = null;
-  // PR #180. The auto-complete-on-session-start path also needs the
-  // appointment's current status + ends_at; widen the SELECT here so
-  // we make the decision off a single roundtrip. The values are only
-  // consumed if appointmentId resolves successfully.
-  let appointmentStatus: string | null = null;
-  let appointmentEndsAt: string | null = null;
   if (typeof appointmentIdRaw === "string" && appointmentIdRaw.length > 0) {
     if (!UUID_RE.test(appointmentIdRaw)) {
-      throw new Error("Invalid appointment id.");
+      // Malformed: answered as a missing appointment, before any lookup.
+      redirect(sessionStartRefusalHref(clientId, appointmentIdRaw, "appointment_missing"));
     }
     const { data: appt, error: apptErr } = await timed(
       "session-start.lineage",
@@ -151,40 +86,19 @@ export async function startSessionAction(formData: FormData): Promise<void> {
     if (apptErr) {
       throw new Error(`Failed to verify appointment: ${dbErrorCode(apptErr)}`);
     }
-    if (!appt) {
-      throw new Error("Appointment not found.");
+    // Each refusal below is EXPECTED (a booking assigned to a colleague, a stale
+    // link) and is answered by redirecting back to this client's new-session
+    // page with a refusal code, which renders what happened. It used to be
+    // thrown, which put the generic error boundary in front of the person.
+    // The refusals themselves are unchanged and still happen BEFORE anything is
+    // written; start_session (0181) re-enforces them at the database boundary.
+    // ONE decision shared with the new-session page. A missing, not-visible or other-studio appointment is the SAME refusal (no existence oracle).
+    const decided = classifyAppointmentForStart(appt as StartAppointmentLookup | null, { studioId: studio.id, clientId, practitionerId: practitioner.id });
+    if (decided.refusal) {
+      redirect(sessionStartRefusalHref(clientId, appointmentIdRaw, decided.refusal));
     }
-    if (appt.studio_id !== studio.id) {
-      // Studio mismatch is a hard reject: a tampered form value cannot
-      // bind a session to another studio's appointment. RLS would
-      // already have refused the lookup, but the check is defence in
-      // depth.
-      throw new Error("Appointment is not in your studio.");
-    }
-    if (appt.client_id !== clientId) {
-      // Same studio, different client. Refuse: a session is per-client,
-      // and linking it to another client's appointment would corrupt
-      // both clients' treatment timelines.
-      throw new Error("Appointment is for a different client.");
-    }
-    // PR #156 patch. Practitioner lineage: refuse a session-to-
-    // appointment link when the appointment is assigned to a
-    // different practitioner. The appointments table currently
-    // allows practitioner_id to be non-null on every active booking
-    // surface (public booking + calendar create both stamp the
-    // practitioner), but historically a few legacy rows may carry
-    // null; we treat null as "unassigned, anyone in the studio may
-    // chart" rather than reject outright. Same-studio + same-client
-    // is preserved as the absolute floor. The session itself still
-    // records the current practitioner via the server-resolved
-    // practitioner.id on the insert below; this check is about which
-    // appointment the session links TO, not who performed it.
-    if (appt.practitioner_id && appt.practitioner_id !== practitioner.id) {
-      throw new Error("Appointment is assigned to a different practitioner.");
-    }
+    if (!appt) throw new Error("unreachable: a missing appointment was refused above");
     appointmentId = appt.id;
-    appointmentStatus = (appt.status as string | null) ?? null;
-    appointmentEndsAt = (appt.ends_at as string | null) ?? null;
   }
 
   // L18 Phase 3: the coalesce lookup, the appointment-link promotion and the
@@ -262,6 +176,12 @@ export async function startSessionAction(formData: FormData): Promise<void> {
   rpcSpan.end();
 
   if (startErr) {
+    // The command re-checks lineage; if the assignment changed between the
+    // check above and the command (an owner reassigned it meanwhile), answer
+    // the same expected refusal rather than the generic error boundary.
+    if (appointmentId && mapSessionCommandError(startErr) === ASSIGNED_ELSEWHERE_RAISED) {
+      redirect(sessionStartRefusalHref(clientId, appointmentId, "assigned_elsewhere"));
+    }
     throw new Error(`Failed to start session: ${mapSessionCommandError(startErr)}`);
   }
   const started = Array.isArray(startRows)
@@ -293,25 +213,8 @@ export async function startSessionAction(formData: FormData): Promise<void> {
     }
   }
 
-  // PR #180. Auto-mark the linked appointment completed BEFORE
-  // revalidate so the calendar / appointment detail page sees the
-  // new terminal status when the practitioner navigates back. The
-  // call is gated to confirmed + past appointments (skipped for
-  // cancelled / no_show / completed, and for future appointments
-  // the RPC would refuse anyway). Fail-soft: the helper logs but
-  // never throws so a failed auto-complete cannot break session
-  // start. The practitioner can still complete the appointment
-  // by hand via the calendar Mark completed button.
-  if (appointmentId && appointmentStatus && appointmentEndsAt) {
-    await timed("session-start.appointment-complete", () =>
-      maybeMarkAppointmentCompletedOnSessionStart({
-        appointmentId,
-        studioId: studio.id,
-        practitionerId: practitioner.id,
-        status: appointmentStatus,
-        endsAt: appointmentEndsAt,
-      }),
-    );
+  // The appointment detail page shows the linked session, so refresh it. The appointment's STATUS is untouched here.
+  if (appointmentId) {
     revalidatePath(`/calendar/${appointmentId}`);
   }
 

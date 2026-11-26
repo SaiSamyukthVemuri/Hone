@@ -1,5 +1,8 @@
 "use server";
 
+import { loadTreatmentTimeNameFields } from "@/lib/treatment-time/client-first-name";
+import { notificationClientName } from "@/lib/notifications/client-name";
+import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { requirePortalSessionForAction } from "@/lib/portal/session";
@@ -33,6 +36,7 @@ import {
   sendBookingNotificationToPractitioner,
 } from "@/lib/email/send-appointment";
 import { recordPractitionerNotification } from "@/lib/notifications/practitioner-notifications";
+import { buildBookedText } from "@/lib/notifications/notification-text";
 import {
   buildTreatmentTimeLine,
   getTreatmentTimeContextForEmail,
@@ -187,6 +191,8 @@ type PortalBookingContext = {
   /** Straight from the portal session. The only client identity in this file. */
   clientId: string;
   clientName: string;
+  /** The preferred name from the same client read, for the practitioner notification. */
+  clientPreferredName: string | null;
   clientEmail: string | null;
   clientPhone: string | null;
   /**
@@ -230,12 +236,25 @@ async function resolvePortalBookingContext(): Promise<
   // The client must be THIS studio's and must not be archived. Both filters are
   // in the query, so an archived or cross-studio row is simply absent rather
   // than something a later branch has to remember to check.
-  const { data: clientRow, error: clientErr } = await admin
-    .from("clients")
-    .select("id, name, email, phone, sms_consent_at, sms_opted_out_at, archived_at")
-    .eq("id", clientId)
-    .eq("studio_id", studioId)
-    .maybeSingle();
+  // The preferred name rides on this existing read (missing-column-safe), so the bell names the client without a second lookup.
+  const { data: clientRowRaw, error: clientErr } = await readWithPreferredName((includePreferred) =>
+    admin
+      .from("clients")
+      .select(`${preferredNameColumn(includePreferred)}id, name, email, phone, sms_consent_at, sms_opted_out_at, archived_at`)
+      .eq("id", clientId)
+      .eq("studio_id", studioId)
+      .maybeSingle(),
+  );
+  const clientRow = clientRowRaw as {
+    id: string;
+    name: string | null;
+    preferred_name?: string | null;
+    email: string | null;
+    phone: string | null;
+    sms_consent_at: string | null;
+    sms_opted_out_at: string | null;
+    archived_at: string | null;
+  } | null;
   if (clientErr) {
     logRebookError("portal_rebook_client_lookup_failed", {
       code: dbErrorCode(clientErr),
@@ -290,6 +309,7 @@ async function resolvePortalBookingContext(): Promise<
       studio: studioRow as Studio,
       clientId,
       clientName: ((clientRow.name as string | null) ?? "").trim() || "Client",
+      clientPreferredName: clientRow.preferred_name ?? null,
       clientEmail: (clientRow.email as string | null) ?? null,
       clientPhone: (clientRow.phone as string | null) ?? null,
       clientSmsConsentAt: (clientRow.sms_consent_at as string | null) ?? null,
@@ -498,6 +518,7 @@ export async function bookAnotherAppointmentAction(
     studio,
     clientId,
     clientName,
+    clientPreferredName,
     clientEmail,
     clientPhone,
     clientSmsConsentAt,
@@ -723,18 +744,27 @@ export async function bookAnotherAppointmentAction(
     assignedPractitioner?.email ||
     studio.name;
 
-  await postCommit("portal_rebook_practitioner_notification_threw", undefined, () =>
-    recordPractitionerNotification({
+  // The notification names the client by their DISPLAY name (the calendar's field: preferred where set), never the legal identity.
+  const notificationName = notificationClientName({ name: clientName, preferred_name: clientPreferredName });
+  await postCommit("portal_rebook_practitioner_notification_threw", undefined, () => {
+    // Built INSIDE the closure: a date or timezone formatting failure is contained here, after the booking committed, and loses only the notification.
+    const bookedText = buildBookedText({
+      clientName: notificationName,
+      serviceName: service.service.name,
+      dayLabel: formatDayLabel(start, studio.timezone),
+      timeLabel: localTimeString12h(start, studio.timezone),
+    });
+    return recordPractitionerNotification({
       studioId: studio.id,
       practitionerId: assignedPractitionerId,
       eventType: "new_booking",
-      title: "New booking",
-      body: `${clientName} booked ${service.service.name} for ${formatDayLabel(start, studio.timezone)} at ${localTimeString12h(start, studio.timezone)}.`,
+      title: bookedText.title,
+      body: bookedText.body,
       appointmentId: createdId,
       clientId,
       href: `/calendar/${createdId}`,
-    }),
-  );
+    });
+  });
 
   const cancellationUrl = `${appOrigin}/cancel/${appointmentToken}`;
   const rescheduleUrl = `${appOrigin}/reschedule/${appointmentToken}`;
@@ -773,7 +803,7 @@ export async function bookAnotherAppointmentAction(
           async () =>
             buildTreatmentTimeLine({
               enabled: true,
-              clientFirstName: clientName.split(/\s+/)[0] || clientName,
+              client: await loadTreatmentTimeNameFields(admin, studio.id, clientId, clientName),
               context: await getTreatmentTimeContextForEmail(studio.id, clientId),
             }),
         )
@@ -787,6 +817,7 @@ export async function bookAnotherAppointmentAction(
       { ok: false, error: "confirmation sender threw", retryable: false },
       () =>
         sendBookingConfirmationToClient({
+      nameReader: admin,
           appointment: created,
           service: service.service,
           studio,
@@ -863,6 +894,7 @@ export async function bookAnotherAppointmentAction(
   ) {
     await postCommit("portal_rebook_practitioner_email_threw", undefined, () =>
       sendBookingNotificationToPractitioner({
+      nameReader: admin,
         appointment: created,
         service: service.service,
         studio,

@@ -216,18 +216,21 @@ describe("the dashboard is wired to it, and nothing else was swept up", () => {
     "dashboard-today",
     "dashboard-next-day",
   ];
-  // UI-01B: the appointment row's three SEGMENT-changing actions. Proven safe
+  // UI-01B: the appointment row's named navigation actions. Proven safe
   // by the pre-implementation experiment: with zero loading.tsx the old tree
   // and the tapped control both stay mounted while the destination is pending.
   const SEGMENT_NAV = [
     "today-next-action",
+    "today-chart",
+    "today-rebook",
     "today-consultation-notes",
     "today-review-intake",
   ];
 
-  it("uses PendingLink for exactly the six named controls", () => {
+  it("uses PendingLink for each dashboard navigation control and the upcoming appointment", () => {
+    expect(dash).toContain('href={`/calendar/${nextVisit.id}`} pendingLabel="Opening appointment…"');
     expect(dash.match(/<PendingLink\b/g) ?? []).toHaveLength(
-      QUERY_NAV.length + SEGMENT_NAV.length,
+      QUERY_NAV.length + SEGMENT_NAV.length + 1,
     );
     for (const testid of [...QUERY_NAV, ...SEGMENT_NAV]) {
       expect(dashboard).toMatch(
@@ -415,9 +418,9 @@ describe("UI-01C: the row body and the calendar toolbar are wired to it", () => 
       /<PendingContainerLink[\s\S]{0,300}href=\{`\/calendar\/\$\{appt\.id\}`\}/,
     );
     // Destination unchanged. The layout classes follow the compact row (#1308): the body is a direct flex
-    // item of the row, full width on a phone and the growing column beside Visit details and Open on desktop.
+    // item of the row, full width above Visit details and Open at every width.
     expect(dash).toMatch(
-      /<PendingContainerLink[\s\S]{0,300}className="flex min-w-0 basis-full gap-3 lg:basis-0 lg:flex-1"/,
+      /<PendingContainerLink[\s\S]{0,300}className="flex min-w-0 basis-full gap-3"/,
     );
     expect(dash).toContain('pendingLabel="Opening appointment…"');
   });

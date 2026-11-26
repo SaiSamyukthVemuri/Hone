@@ -25,7 +25,7 @@ const SESSION = vi.hoisted(() => ({
 const DB = vi.hoisted(() => ({
   rows: [] as unknown[],
   rpcResult: null as unknown,
-  rpcError: null as null | { message: string },
+  rpcError: null as null | { message: string; code?: string },
   selectError: null as null | { message: string },
   /**
    * PER-TABLE overrides, because some behaviour only exists when one read
@@ -40,11 +40,15 @@ const DB = vi.hoisted(() => ({
    */
   rowsFor: {} as Record<string, unknown[]>,
   errorFor: {} as Record<string, { message: string }>,
+  readSequence: [] as Array<{ message: string; code?: string } | null>,
   calls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
 }));
 
+/** Whether the studio has legacy xCell history (the offer's precondition); the default keeps every existing case as it was (no offer). */
+const HISTORY = vi.hoisted(() => ({ value: false }));
 vi.mock("@/lib/supabase/queries", () => ({
   getCurrentPractitionerWithStudio: async () => SESSION.current,
+  studioHasLegacyMachineHistory: async () => HISTORY.value,
 }));
 
 /**
@@ -58,6 +62,7 @@ const LINEAGE = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/sessions/session-lineage", () => ({
+  SessionLineageError: class SessionLineageError extends Error {},
   assertSessionForClient: async (
     studioId: string,
     clientId: string,
@@ -71,6 +76,18 @@ vi.mock("@/lib/sessions/session-lineage", () => ({
 /** The route values every loader call needs. */
 const ROUTE = { clientId: "client-ana", sessionId: "session-1" };
 
+vi.mock("server-only", () => ({}));
+// The platform rollout is a database read through the service role; here it is a controlled value ("on" | "off" | "error").
+const ROLLOUT = vi.hoisted(() => ({ value: "on" as "on" | "off" | "error", reads: 0 }));
+vi.mock("@/lib/rollouts/charting-rollout", async (orig) => {
+  const real = await orig<typeof import("@/lib/rollouts/charting-rollout")>();
+  return { ...real, readChartingRollout: async () => { ROLLOUT.reads += 1; return ROLLOUT.value; }, chartingRolloutFor: async () => ROLLOUT.value === "on" };
+});
+// The client's last machine is its own query (a chain this fake does not model, which answered null before); here it is a controlled value.
+const CLIENT_LAST = vi.hoisted(() => ({ value: null as { profileId: string | null; deviceId: string | null; modeKey: string | null } | null }));
+vi.mock("@/lib/sessions/client-last-machine", () => ({ readClientLastMachine: async () => CLIENT_LAST.value }));
+const revalidatePathMock = vi.hoisted(() => vi.fn());
+vi.mock("next/cache", () => ({ revalidatePath: revalidatePathMock }));
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
     rpc: async (fn: string, args: Record<string, unknown>) => {
@@ -85,6 +102,12 @@ vi.mock("@/lib/supabase/server", () => ({
       // every case to a differently-named fixture would have changed what
       // those cases say while claiming only to move a fake.
       if (fn === "setup_readings_for_block") {
+        // A SEQUENCE OF OUTCOMES for the retry cases: each call takes the next entry (an error, or null for success).
+        if (DB.readSequence.length > 0) {
+          const next = DB.readSequence.shift()!;
+          if (next) return { data: null, error: next };
+          return { data: DB.rowsFor.treatment_setup_readings ?? [], error: null };
+        }
         const err = DB.errorFor.treatment_setup_readings ?? null;
         if (err) return { data: null, error: err };
         return {
@@ -132,7 +155,7 @@ vi.mock("@/lib/supabase/server", () => ({
             // session instead, so the binding is a predicate on the read
             // itself. This branch stays for the other tables that use it.
             eq: () => ({
-              limit: async () => ({ data: [{ id: "block-1" }], error: null }),
+              limit: async () => ({ data: (table === "session_blocks" || table === "studio_machines" ? DB.rowsFor[table] : undefined) ?? [{ id: "block-1" }], error: null }),
             }),
             is: () => ({ order: result }),
             order: () => ({ limit: result }),
@@ -150,6 +173,7 @@ const actions = await import(
   "@/app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions"
 );
 const synthetic = await import("@/lib/machines/synthetic-profile");
+const { ROLLOUT_UNAVAILABLE_MESSAGE } = await import("@/lib/rollouts/charting-rollout");
 
 const ACTIONS_SRC = readFileSync(
   path.resolve(
@@ -170,13 +194,17 @@ function signIn(studioId: string, practitionerId: string, role = "owner") {
 }
 
 beforeEach(() => {
+  HISTORY.value = false;
+  ROLLOUT.reads = 0;
   SESSION.current = null;
   DB.rows = [];
   DB.rpcResult = null;
+  CLIENT_LAST.value = null;
   DB.rpcError = null;
   DB.selectError = null;
   DB.rowsFor = {};
   DB.errorFor = {};
+  DB.readSequence = [];
   DB.calls = [];
 });
 
@@ -274,11 +302,11 @@ describe("identity comes from the session, per call", () => {
   });
 
   it("an authenticated request gets ITS OWN scope, derived not supplied", async () => {
-    signIn("studio-fett", "pract-sabrina");
+    signIn("studio-fett", "pract-owner-a");
     const ctx = await actions.loadMachineSetupContext(ROUTE);
     expect(ctx.scope).toEqual({
       studioId: "studio-fett",
-      practitionerId: "pract-sabrina",
+      practitionerId: "pract-owner-a",
     });
   });
 
@@ -290,14 +318,14 @@ describe("identity comes from the session, per call", () => {
   });
 
   it("reports DATABASE persistence when the remembered read succeeds", async () => {
-    signIn("studio-fett", "pract-sabrina");
+    signIn("studio-fett", "pract-owner-a");
     const ctx = await actions.loadMachineSetupContext(ROUTE);
     expect(ctx.persistence.kind).toBe("database");
     expect(ctx.persistence.persisted).toBe(true);
   });
 
   it("falls back to NO persistence when that read FAILS, rather than claiming it", async () => {
-    signIn("studio-fett", "pract-sabrina");
+    signIn("studio-fett", "pract-owner-a");
     DB.selectError = { message: "connection reset" };
     const ctx = await actions.loadMachineSetupContext(ROUTE);
     expect(ctx.persistence.kind).toBe("none");
@@ -306,15 +334,15 @@ describe("identity comes from the session, per call", () => {
   });
 
   it("an empty studio is reported as empty, not unreadable", async () => {
-    signIn("studio-fett", "pract-sabrina");
+    signIn("studio-fett", "pract-owner-a");
     const ctx = await actions.loadMachineSetupContext(ROUTE);
     expect(ctx.inventoryReason).toMatch(/no machine registered yet/i);
   });
 
   it("only an owner may manage machines", async () => {
-    signIn("studio-fett", "pract-sabrina", "practitioner");
+    signIn("studio-fett", "pract-owner-a", "practitioner");
     expect((await actions.loadMachineSetupContext(ROUTE)).canManageMachines).toBe(false);
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     expect((await actions.loadMachineSetupContext(ROUTE)).canManageMachines).toBe(true);
   });
 });
@@ -330,7 +358,7 @@ describe("registration refuses a profile the server does not offer", () => {
   });
 
   it("refuses a BLOCKED real profile, so no model is activated by registering it", async () => {
-    signIn("studio-fett", "pract-sabrina");
+    signIn("studio-fett", "pract-owner-a");
     for (const id of [
       "silhouettone:evolution-st-350",
       "permanence-gemm:gemm-16",
@@ -348,7 +376,7 @@ describe("registration refuses a profile the server does not offer", () => {
   });
 
   it("refuses an invented profile id", async () => {
-    signIn("studio-fett", "pract-sabrina");
+    signIn("studio-fett", "pract-owner-a");
     const r = await actions.registerMachineAction({
       profileId: "acme:whatever",
       displayName: "Room 1",
@@ -358,7 +386,7 @@ describe("registration refuses a profile the server does not offer", () => {
   });
 
   it("refuses an empty or over-long name before any write", async () => {
-    signIn("studio-fett", "pract-sabrina");
+    signIn("studio-fett", "pract-owner-a");
     for (const name of ["", "   ", "x".repeat(81)]) {
       const r = await actions.registerMachineAction({
         profileId: "synthetic:demo-multineedle",
@@ -378,6 +406,203 @@ describe("registration refuses a profile the server does not offer", () => {
   });
 });
 
+describe("the studio's one xCell: registration of the xCell Pur unit (HON-71)", () => {
+  const PUR = "dectro-apilus:xcell-pur";
+  const published = (modes: string[]) => modes.map((m) => ({ mode_key: m, machine_profile_version: 1 }));
+  const purRow = (over: Record<string, unknown> = {}) => ({
+    id: "22222222-2222-4222-8222-222222222222", studio_id: "studio-fett", machine_profile_id: PUR, machine_profile_version: 1,
+    display_name: "Dectro xCell", installed_options: [], retired_at: null, ...over,
+  });
+  const wrote = () => DB.calls.some((c) => c.fn === "register_studio_machine");
+  const LISTED_STUDIO = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"; // synthetic
+  const OTHER_STUDIO = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"; // synthetic
+  beforeEach(() => { ROLLOUT.value = "on"; }); // the cases below are about the registration rules; the gate cases set their own value
+
+  it("registers it through the existing owner command once its contract is published and the studio has none", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = [];
+    DB.rpcResult = "33333333-3333-4333-8333-333333333333";
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r).toMatchObject({ ok: true, machineId: "33333333-3333-4333-8333-333333333333" });
+    expect(wrote()).toBe(true);
+  });
+
+  it("UNPUBLISHED stays unregisterable: no contract rows, no write", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = [];
+    DB.rowsFor.studio_machines = [];
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/No published field contract/);
+    expect(wrote()).toBe(false);
+  });
+
+  it("a SECOND registration is refused with a clear message, and nothing is written", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = [purRow()];
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "xCell second room" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/already has its xCell registered/);
+    expect(wrote()).toBe(false);
+  });
+
+  it("an unreadable inventory refuses too (it cannot be shown that none exists)", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.errorFor.studio_machines = { message: "connection reset" };
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r.ok).toBe(false);
+    expect(wrote()).toBe(false);
+  });
+
+  it("a RETIRED xCell does not block a new one (the inventory read excludes retired units)", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = []; // listStudioMachines filters retired units in SQL
+    DB.rpcResult = "44444444-4444-4444-8444-444444444444";
+    expect((await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" })).ok).toBe(true);
+  });
+
+  it("the guard is specific to the xCell: another model's registration is not blocked by an existing xCell", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["flash", "microflash", "multiplex", "blend", "omniblend", "multiblend", "electrolysis"]).map((r) => ({ ...r, machine_profile_version: 3 }));
+    DB.rowsFor.studio_machines = [purRow()];
+    DB.rpcResult = "55555555-5555-4555-8555-555555555555";
+    const r = await actions.registerMachineAction({ profileId: "dectro-apilus:senior-3g", displayName: "Room 2" });
+    expect(r.ok).toBe(true);
+  });
+
+  it("the xCell's name is FIXED: a posted name is ignored, so the unique name index is the atomic one-per-studio guarantee", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = [];
+    DB.rpcResult = "88888888-8888-4888-8888-888888888888";
+    expect((await actions.registerMachineAction({ profileId: PUR, displayName: "Room 4 laser" })).ok).toBe(true);
+    const call = DB.calls.find((c) => c.fn === "register_studio_machine");
+    expect(call?.args.p_display_name).toBe("Dectro xCell");
+  });
+  it("RACE: two owner tabs both pass the inventory read; the second insert hits the unique name index and gets the same clear message", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = []; // both tabs saw none
+    DB.rpcError = { message: 'duplicate key value violates unique constraint "studio_machines_studio_display_name_uniq"', code: "23505" };
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r).toMatchObject({ ok: false, code: "rejected", error: "This studio already has its xCell registered." });
+  });
+  it("RACE: an UNRELATED unique violation (23505 on another constraint) or a matching message without the code is NOT disguised", async () => {
+    for (const err of [
+      { message: 'duplicate key value violates unique constraint "some_other_uniq"', code: "23505" },
+      { message: 'duplicate key value violates unique constraint "studio_machines_studio_display_name_uniq"', code: "42501" },
+      { message: "already exists" },
+    ]) {
+      signIn("studio-fett", "pract-owner-a");
+      DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+      DB.rowsFor.studio_machines = [];
+      DB.rpcError = err;
+      const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.error).not.toBe("This studio already has its xCell registered.");
+    }
+  });
+  it("RACE: another database error on the xCell is NOT disguised as 'already registered'", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = [];
+    DB.rpcError = { message: "Only the studio owner may register a machine.", code: "42501" };
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/Only the studio owner/);
+  });
+  it("a non-xCell model keeps the name the owner typed", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["flash", "microflash", "multiplex", "blend", "omniblend", "multiblend", "electrolysis"]).map((r) => ({ ...r, machine_profile_version: 3 }));
+    DB.rowsFor.studio_machines = [];
+    DB.rpcResult = "99999999-9999-4999-8999-999999999999";
+    await actions.registerMachineAction({ profileId: "dectro-apilus:senior-3g", displayName: "Room 2" });
+    expect(DB.calls.find((c) => c.fn === "register_studio_machine")?.args.p_display_name).toBe("Room 2");
+  });
+  it("ROLLOUT GATE: off means nobody, and the refusal is the generic one, before any contract or inventory read", async () => {
+    ROLLOUT.value = "off";
+    signIn(LISTED_STUDIO, "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = []; // unpublished too: the generic gate message must win, so the gate ran first
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toMatch(/not offered yet/);
+      expect(r.error).not.toMatch(/No published field contract|allowlist|studio/i);
+    }
+    expect(wrote()).toBe(false);
+  });
+  it("ROLLOUT GATE: a studio the rollout is OFF for is refused by the action even though the form was forged and the contract is published", async () => {
+    ROLLOUT.value = "off";
+    signIn(OTHER_STUDIO, "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = [];
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/not offered yet/);
+    expect(wrote()).toBe(false);
+  });
+  it("ROLLOUT GATE: a studio the rollout is ON for may register it", async () => {
+    ROLLOUT.value = "on";
+    signIn(LISTED_STUDIO, "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = [];
+    DB.rpcResult = "66666666-6666-4666-8666-666666666666";
+    expect((await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" })).ok).toBe(true);
+  });
+  it("ROLLOUT GATE: an unpublished contract is refused even when the rollout is on", async () => {
+    ROLLOUT.value = "on";
+    signIn(LISTED_STUDIO, "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = [];
+    DB.rowsFor.studio_machines = [];
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/No published field contract/);
+  });
+  it("ROLLOUT GATE: another model is not affected by the gate (3G registers with the gate unset)", async () => {
+    ROLLOUT.value = "off";
+    signIn(OTHER_STUDIO, "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["flash", "microflash", "multiplex", "blend", "omniblend", "multiblend", "electrolysis"]).map((r) => ({ ...r, machine_profile_version: 3 }));
+    DB.rowsFor.studio_machines = [];
+    DB.rpcResult = "77777777-7777-4777-8777-777777777777";
+    expect((await actions.registerMachineAction({ profileId: "dectro-apilus:senior-3g", displayName: "Room 2" })).ok).toBe(true);
+  });
+  it("ROLLOUT OFF: the xCell is refused with the generic not-offered message and nothing is written", async () => {
+    ROLLOUT.value = "off";
+    signIn(OTHER_STUDIO, "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = [];
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r).toMatchObject({ ok: false, code: "rejected" });
+    if (!r.ok) expect(r.error).toMatch(/not offered yet/);
+    expect(wrote()).toBe(false);
+  });
+  it("ROLLOUT READ FAILED: a retryable refusal that is NOT 'not offered', and nothing is written", async () => {
+    ROLLOUT.value = "error";
+    signIn(LISTED_STUDIO, "pract-owner-a");
+    DB.rowsFor.machine_profile_mode_contract = published(["multiplex"]);
+    DB.rowsFor.studio_machines = [];
+    const r = await actions.registerMachineAction({ profileId: PUR, displayName: "Dectro xCell" });
+    expect(r).toMatchObject({ ok: false, code: "unknown" });
+    if (!r.ok) expect(r.error).toMatch(/try again/i);
+    expect(wrote()).toBe(false);
+  });
+  it("the studio the gate tests is the authenticated scope's, never a posted value", () => {
+    const body = CODE.slice(CODE.indexOf("export async function registerMachineAction"));
+    expect(body).toContain("xcellRegistrationState(scope.studioId)");
+    expect(body).not.toMatch(/xcellRegistrationState\(input\./);
+  });
+
+  it("the owner check stays in the database command, and the settings page itself shows only the owner notice to anyone else", () => {
+    expect(CODE).toContain("registerStudioMachine(db");
+    const page = readFileSync(path.resolve(__dirname, "../../../app/(app)/settings/machines/page.tsx"), "utf8");
+    expect(page).toMatch(/role !== "owner"[\s\S]{0,120}OwnerOnlyNotice/);
+  });
+});
+
 describe("the prior-setup read is scoped to the ROUTE CLIENT, not the studio", () => {
   // The defect this replaced: latestRecordedSetup took only a studio id, so in
   // a studio with more than one client the panel showed whichever block was
@@ -390,7 +615,7 @@ describe("the prior-setup read is scoped to the ROUTE CLIENT, not the studio", (
   });
 
   it("AUTHORIZES the route client against the server-derived studio", async () => {
-    signIn("studio-fett", "pract-sabrina");
+    signIn("studio-fett", "pract-owner-a");
     await actions.loadMachineSetupContext(ROUTE);
     expect(LINEAGE.calls).toEqual([
       {
@@ -403,7 +628,7 @@ describe("the prior-setup read is scoped to the ROUTE CLIENT, not the studio", (
   });
 
   it("refuses rather than reading when the session is not this client's", async () => {
-    signIn("studio-fett", "pract-sabrina");
+    signIn("studio-fett", "pract-owner-a");
     LINEAGE.throws = new Error("Session does not belong to this client.");
     await expect(
       actions.loadMachineSetupContext(ROUTE),
@@ -411,7 +636,7 @@ describe("the prior-setup read is scoped to the ROUTE CLIENT, not the studio", (
   });
 
   it("asks the database for THIS CLIENT's latest setup, by name", async () => {
-    signIn("studio-fett", "pract-sabrina");
+    signIn("studio-fett", "pract-owner-a");
     DB.calls.length = 0;
     await actions.loadMachineSetupContext(ROUTE);
     const call = DB.calls.find((c) => c.fn === "latest_setup_for_client");
@@ -460,7 +685,7 @@ describe("the prior-setup read is scoped to the ROUTE CLIENT, not the studio", (
 function synthDevice() {
   vi.stubEnv("HONE_SYNTHETIC_MACHINE_PROFILE", "1");
   vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "http://127.0.0.1:54321");
-  signIn("studio-fett", "pract-sabrina", "owner");
+  signIn("studio-fett", "pract-owner-a", "owner");
   DB.rows = [
     {
       id: "dev-1",
@@ -504,7 +729,7 @@ describe("recordSetupSubmissionAction sends ONE call for the whole save", () => 
     expect(out.ok, out.ok ? "" : out.error).toBe(true);
 
     const calls = DB.calls.filter(
-      (c) => c.fn === "record_treatment_setup_submission",
+      (c) => c.fn === "record_setup_submission_with_identity",
     );
     // ONE CALL. Two would mean the atomicity this exists for was never
     // obtained, whatever the command does.
@@ -542,7 +767,7 @@ describe("recordSetupSubmissionAction sends ONE call for the whole save", () => 
       groups: [{ groupKey: "g1", newGroupRef: null, channels: [1], readings: [READING(120)] }],
     });
     const args = DB.calls.find(
-      (c) => c.fn === "record_treatment_setup_submission",
+      (c) => c.fn === "record_setup_submission_with_identity",
     )!.args as Record<string, unknown>;
     const readings = (args.p_groups as Array<Record<string, unknown>>)[0]!
       .readings as Array<Record<string, unknown>>;
@@ -588,7 +813,7 @@ describe("recordSetupSubmissionAction sends ONE call for the whole save", () => 
     // NOTHING WAS SENT. A refusal that had already issued the call would have
     // recorded the first group.
     expect(
-      DB.calls.filter((c) => c.fn === "record_treatment_setup_submission"),
+      DB.calls.filter((c) => c.fn === "record_setup_submission_with_identity"),
     ).toHaveLength(0);
   });
 
@@ -837,7 +1062,7 @@ describe("the connected wrapper forwards the whole SAVE", () => {
     // enumerates nothing from the form — so the rule this test exists for is
     // unchanged and only its spelling moved.
     expect(CONNECTED).toMatch(
-      /recordSetupSubmissionAction\(\{\s*\.\.\.input,\s*clientId,\s*sessionId,\s*\}\)/,
+      /recordSetupSubmissionAction\(\{\s*\.\.\.input,\s*clientId,\s*sessionId,(\s*expectedUpdatedAt: blockVersion \?\? null,)?\s*\}\)/,
     );
     // AND IT STILL DOES NOT REBUILD: naming any of the form's own fields here
     // is how one of them gets dropped on the next change.
@@ -903,7 +1128,7 @@ describe("reading metadata is DERIVED from the profile, never accepted", () => {
     // flag.
     vi.stubEnv("HONE_SYNTHETIC_MACHINE_PROFILE", "1");
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "http://127.0.0.1:54321");
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.rows = [
       {
         id: "dev-1",
@@ -1144,7 +1369,7 @@ describe("the synthetic demo profile cannot reach production", () => {
     // The REAL profiles that are active on their own merits (HON-8's first slice): the gate neither adds nor removes them. Pinned by
     // id so a stray activation of any other real profile still fails here, and so these two are never read as synthetic.
     const realActiveIds = realBefore.filter((p) => p.availability === "active").map((p) => p.profileId).sort();
-    expect(realActiveIds).toEqual(["dectro-apilus:junior-3g", "dectro-apilus:senior-3g"]);
+    expect(realActiveIds).toEqual(["dectro-apilus:junior-3g", "dectro-apilus:senior-3g", "dectro-apilus:xcell-pur"]);
     const on = synthetic.catalogueForRuntime(base);
     const fixtures = on.filter((p) => p.profileId.startsWith("synthetic:"));
     expect(fixtures.map((p) => p.profileId).sort()).toEqual(expectedSyntheticIds);
@@ -1323,9 +1548,13 @@ describe("the module stays out of the clinical record", () => {
     }
   });
 
-  it("performs no raw DML and no cache invalidation of its own", () => {
+  it("performs no raw DML, and invalidates the cache only after a stored identity write or settings submission", () => {
     expect(CODE).not.toMatch(/\.(insert|update|upsert|delete)\(/);
-    expect(CODE).not.toContain("revalidatePath");
+    const owners = [...CODE.matchAll(/revalidatePath\(/g)].map((m) => {
+      const fn = CODE.lastIndexOf("export async function ", m.index);
+      return CODE.slice(fn, fn + 80).match(/function (\w+)/)![1];
+    });
+    expect(owners).toEqual(["recordSetupSubmissionAction", "recordBlockMachineIdentityAction"].sort((a, b) => CODE.indexOf(a) - CODE.indexOf(b)));
   });
 
   it("reaches the database only through 0223's named commands", () => {
@@ -1454,7 +1683,7 @@ describe("a failed recorded-captures read is reported, not flattened", () => {
   // captures exist, no captures exist, and the question could not be answered.
 
   it("reports unavailable when the read fails", async () => {
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.errorFor.treatment_setup_readings = { message: "connection reset" };
 
     const ctx = await actions.loadMachineSetupContext({
@@ -1471,7 +1700,7 @@ describe("a failed recorded-captures read is reported, not flattened", () => {
   it("does NOT report unavailable when the block simply has nothing", async () => {
     // The ordinary empty case must stay empty, or every first capture would
     // carry a warning about a failure that did not happen.
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.rowsFor.treatment_setup_readings = [];
 
     const ctx = await actions.loadMachineSetupContext({
@@ -1487,7 +1716,7 @@ describe("a failed recorded-captures read is reported, not flattened", () => {
     // A third state again: no block means nothing is recorded against it and
     // nothing failed. Reporting a failure here would warn her on every new
     // treatment area.
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     const ctx = await actions.loadMachineSetupContext(ROUTE);
     expect(ctx.recordedSetupUnavailable).toBe(false);
   });
@@ -1568,7 +1797,7 @@ describe("previous-treatment guidance excludes the session being charted", () =>
   // that the action hands the authorized route session down rather than
   // omitting it or inventing one.
   it("passes the ROUTE's sessionId as the exclusion", async () => {
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     await actions.loadMachineSetupContext(ROUTE);
 
     const call = DB.calls.find((c) => c.fn === "latest_setup_for_client");
@@ -1586,11 +1815,76 @@ describe("previous-treatment guidance excludes the session being charted", () =>
     // Guards the shape of the fix rather than its presence: passing null or
     // an empty string would satisfy "a third argument exists" while excluding
     // nothing, and `is distinct from null` excludes no row.
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     await actions.loadMachineSetupContext(ROUTE);
     const call = DB.calls.find((c) => c.fn === "latest_setup_for_client");
     expect(call!.args.p_exclude_session_id).toBeTruthy();
     expect(typeof call!.args.p_exclude_session_id).toBe("string");
+  });
+});
+
+describe("readingsForBlockAction reports a DEFINITIVE refusal apart from a transient failure", () => {
+  const input = { ...ROUTE, blockId: "block-1" };
+
+  it("not signed in is an ACCESS refusal", async () => {
+    expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false, refused: "access" });
+  });
+
+  it("a refused route (the session is not this client's, or a lineage lookup error) is UNAVAILABLE, not an accusation of access", async () => {
+    signIn("studio-fett", "pract-owner-a", "owner");
+    const { SessionLineageError } = await import("@/lib/sessions/session-lineage");
+    LINEAGE.throws = new SessionLineageError("Treatment session not found.");
+    try {
+      expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false, refused: "unavailable" });
+    } finally {
+      LINEAGE.throws = null;
+    }
+  });
+
+  it("the database's not-found for the block (deleted in another tab) is UNAVAILABLE", async () => {
+    signIn("studio-fett", "pract-owner-a", "owner");
+    DB.errorFor.treatment_setup_readings = { message: "Unknown treatment block for this session.", code: "P0002" } as never;
+    expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false, refused: "unavailable" });
+  });
+
+  it("an insufficient-privilege error from the database is an ACCESS refusal", async () => {
+    signIn("studio-fett", "pract-owner-a", "owner");
+    DB.errorFor.treatment_setup_readings = { message: "permission denied", code: "42501" } as never;
+    expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false, refused: "access" });
+  });
+
+  // ONE retry of the (STABLE, side-effect-free) read, only for a CODE-LESS error.
+  const readCalls = () => DB.calls.filter((c) => c.fn === "setup_readings_for_block").length;
+  it("RETRY: a code-less error then success returns the readings (no failure for the caller), after exactly two reads", async () => {
+    signIn("studio-fett", "pract-owner-a", "owner");
+    DB.readSequence = [{ message: "FetchError: socket hang up" }, null];
+    const out = await actions.readingsForBlockAction(input);
+    expect(out.ok).toBe(true);
+    expect(readCalls()).toBe(2);
+  });
+
+  it("RETRY: two code-less failures are reported as a failure (not a refusal), after exactly two reads", async () => {
+    signIn("studio-fett", "pract-owner-a", "owner");
+    DB.readSequence = [{ message: "Unexpected token < in JSON" }, { message: "Unexpected token < in JSON" }];
+    expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false });
+    expect(readCalls()).toBe(2);
+  });
+
+  it("RETRY NEGATIVE CONTROL: a CODED error is a definite database answer and is never retried", async () => {
+    signIn("studio-fett", "pract-owner-a", "owner");
+    DB.readSequence = [{ message: "boom", code: "XX000" }, null];
+    expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false });
+    expect(readCalls(), "one read only").toBe(1);
+    DB.calls = [];
+    DB.readSequence = [{ message: "denied", code: "42501" }, null];
+    expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false, refused: "access" });
+    expect(readCalls()).toBe(1);
+  });
+
+  it("NEGATIVE CONTROL: a transient database failure is NOT a refusal", async () => {
+    signIn("studio-fett", "pract-owner-a", "owner");
+    DB.errorFor.treatment_setup_readings = { message: "connection reset", code: "08006" } as never;
+    expect(await actions.readingsForBlockAction(input)).toEqual({ ok: false });
   });
 });
 
@@ -1617,11 +1911,11 @@ describe("loadMachineSetupContext reads the block's recorded captures", () => {
     decimals: 0,
     observation_source: "practitioner-entered",
     recorded_at: "2026-10-14T14:00:00Z",
-    recorded_by_practitioner_id: "pract-sabrina",
+    recorded_by_practitioner_id: "pract-owner-a",
   };
 
   it("returns them when a block is being charted", async () => {
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.rowsFor = { treatment_setup_readings: [READING_ROW] };
     const ctx = await actions.loadMachineSetupContext({
       clientId: "client-1",
@@ -1636,7 +1930,7 @@ describe("loadMachineSetupContext reads the block's recorded captures", () => {
   it("returns NONE without a block, which in create mode is simply true", async () => {
     // The block has no row yet, so nothing is recorded against it. The read
     // must not happen at all rather than returning something arbitrary.
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.rowsFor = { treatment_setup_readings: [READING_ROW] };
     const ctx = await actions.loadMachineSetupContext({
       clientId: "client-1",
@@ -1648,7 +1942,7 @@ describe("loadMachineSetupContext reads the block's recorded captures", () => {
   it("degrades to EMPTY when the read fails, rather than losing the chart", async () => {
     // This surface is reassurance. A failed cosmetic read must not cost her
     // the machine panel, so it must not throw.
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.errorFor = { treatment_setup_readings: { message: "boom" } };
     const ctx = await actions.loadMachineSetupContext({
       clientId: "client-1",
@@ -1664,7 +1958,7 @@ describe("loadMachineSetupContext reads the block's recorded captures", () => {
     // A treatment recorded on a unit that has since been retired is exactly
     // the case that must still name it, and only the server can see one.
     // `machinesByIds` has no retired filter; the device list does.
-    signIn("studio-fett", "pract-sabrina", "owner");
+    signIn("studio-fett", "pract-owner-a", "owner");
     DB.rowsFor = {
       treatment_setup_readings: [READING_ROW],
       studio_machines: [
@@ -1817,7 +2111,7 @@ describe("the staleness refusal, narrowed to the revise path", () => {
 
     expect(out.ok, out.ok ? "" : out.error).toBe(true);
     const calls = DB.calls.filter(
-      (c) => c.fn === "record_treatment_setup_submission",
+      (c) => c.fn === "record_setup_submission_with_identity",
     );
     expect(calls, "the save was refused, or never reached the command").toHaveLength(1);
     // AND IT ASKED FOR AN IDENTITY rather than naming one. The placeholder
@@ -1869,7 +2163,7 @@ describe("the staleness refusal, narrowed to the revise path", () => {
     // REFUSED BEFORE THE WRITE. A refusal that still called the command would
     // be a message, not a guard.
     expect(
-      DB.calls.filter((c) => c.fn === "record_treatment_setup_submission"),
+      DB.calls.filter((c) => c.fn === "record_setup_submission_with_identity"),
       "the command ran anyway",
     ).toHaveLength(0);
   });
@@ -1905,7 +2199,7 @@ describe("the staleness refusal, narrowed to the revise path", () => {
     if (!out.ok) return;
     expect(out.reused).toBe(true);
     expect(
-      DB.calls.filter((c) => c.fn === "record_treatment_setup_submission"),
+      DB.calls.filter((c) => c.fn === "record_setup_submission_with_identity"),
       "the retry never reached the command that recognises the key",
     ).toHaveLength(1);
   });
@@ -1926,7 +2220,7 @@ describe("the staleness refusal, narrowed to the revise path", () => {
     if (out.ok) return;
     expect(out.error).toBe(SETUP_GROUPS_MOVED);
     expect(
-      DB.calls.filter((c) => c.fn === "record_treatment_setup_submission"),
+      DB.calls.filter((c) => c.fn === "record_setup_submission_with_identity"),
     ).toHaveLength(0);
   });
 
@@ -1976,7 +2270,889 @@ describe("the staleness refusal, narrowed to the revise path", () => {
 
     expect(out.ok, out.ok ? "" : out.error).toBe(true);
     expect(
-      DB.calls.filter((c) => c.fn === "record_treatment_setup_submission"),
+      DB.calls.filter((c) => c.fn === "record_setup_submission_with_identity"),
     ).toHaveLength(1);
+  });
+});
+
+// THE UNIT THE IDENTITY WRITES BELOW ARE MADE AGAINST. The action now checks the pick against the studio's own inventory and
+// the catalogue, so every case that expects a write needs a registered, supported unit and mode.
+const UNIT_ID = "11111111-1111-4111-8111-111111111111";
+const UNIT_MODE = "galvanic";
+const unitRow = (over: Record<string, unknown> = {}) => ({
+  id: UNIT_ID,
+  studio_id: "studio-1",
+  machine_profile_id: synthetic.SYNTHETIC_DEMO_PROFILE.profileId,
+  machine_profile_version: synthetic.SYNTHETIC_DEMO_PROFILE.version,
+  display_name: "Room 9",
+  installed_options: [],
+  retired_at: null,
+  ...over,
+});
+function arrangeUnit(over: Record<string, unknown> = {}) {
+  vi.stubEnv("HONE_SYNTHETIC_MACHINE_PROFILE", "1");
+  vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "http://127.0.0.1:54321");
+  DB.rowsFor.studio_machines = [unitRow(over)];
+}
+afterEach(() => vi.unstubAllEnvs());
+
+const RECEIPT = (updatedAt: string) => ({
+  updated_at: updatedAt,
+  reused: false,
+  machine_profile_id: "fixture:p",
+  studio_machine_id: "11111111-1111-4111-8111-111111111111",
+  machine_mode_key: "flash",
+});
+
+// ===========================================================================
+// 0301 NOT APPLIED YET: saving the machine choice on an
+// existing area says it cannot be saved yet. It never says saved.
+// ===========================================================================
+describe("recordBlockMachineIdentityAction without 0301", () => {
+  const args = {
+    clientId: "client-ana",
+    sessionId: "session-1",
+    blockId: "block-1",
+    deviceId: UNIT_ID,
+    modeKey: UNIT_MODE,
+    profileId: null,
+    idempotencyKey: "pick-key-0001",
+  };
+  beforeEach(() => arrangeUnit());
+
+  it("a missing command (PGRST202) is a visible, definitive 'can't save the machine choice yet'", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcError = { code: "PGRST202", message: "Could not find the function" };
+    const out = await actions.recordBlockMachineIdentityAction(args);
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.code).toBe("rejected");
+    expect(out.error).toMatch(/can't save the machine choice yet/i);
+  });
+
+  it("NEGATIVE CONTROL: another refusal keeps its own message, not the 0301 one", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcError = { code: "23514", message: "check violation" };
+    const out = await actions.recordBlockMachineIdentityAction(args);
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.error).not.toMatch(/yet/i);
+  });
+
+  it("with the command present the choice is saved", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcResult = RECEIPT("v2");
+    const out = await actions.recordBlockMachineIdentityAction(args);
+    expect(out.ok).toBe(true);
+  });
+});
+
+
+// ===========================================================================
+// MULTIPLEX ON AN AREA THAT ALREADY HOLDS xCELL VALUES IS REFUSED BY THE SERVER (one xCell, one Mode control).
+// The Mode control hides MultiPlex for such an area, but a stale tab or a crafted request must not reach the area's identity: the
+// command refuses it inside its transaction and the action reports it as rejected, never saved.
+// ===========================================================================
+describe("recordBlockMachineIdentityAction refuses MultiPlex on a legacy-valued area (server side)", () => {
+  const multiplex = {
+    clientId: "client-ana", sessionId: "session-1", blockId: "block-legacy",
+    deviceId: UNIT_ID, modeKey: "multiplex", profileId: null as string | null, idempotencyKey: "pick-key-0002",
+  };
+  beforeEach(() => arrangeUnit({ machine_profile_id: "dectro-apilus:xcell-pur", machine_profile_version: 1 }));
+
+  it("the command's refusal is returned as rejected: no identity is reported as stored", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcError = { code: "P0001", message: "This area already holds xCell Pur readings; add a new area for another machine." };
+    const out = await actions.recordBlockMachineIdentityAction(multiplex);
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.code).toBe("rejected");
+    expect((out as { identity?: unknown }).identity).toBeUndefined();
+    expect(DB.calls.some((c) => c.fn === "record_block_machine_identity")).toBe(true);
+  });
+
+  it("NEGATIVE CONTROL: the same request on an area with no legacy values is stored", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcResult = { ...RECEIPT("v3"), machine_profile_id: "dectro-apilus:xcell-pur", machine_mode_key: "multiplex" };
+    expect((await actions.recordBlockMachineIdentityAction(multiplex)).ok).toBe(true);
+  });
+});
+
+// ===========================================================================
+// AN IMPOSSIBLE UNIT / MODE PAIR IS REFUSED BEFORE ANYTHING IS WRITTEN
+// The identity command only checks that the unit is the studio's and not retired. The action applies the contract
+// `rememberMachineSelectionAction` uses, first, so a stale panel or a crafted request cannot store a mode the unit's model does
+// not offer. Every refusal here must leave the command uncalled: "nothing written" is the point.
+// ===========================================================================
+describe("recordBlockMachineIdentityAction checks the choice against the unit's contract first", () => {
+  const base = {
+    clientId: "client-ana",
+    sessionId: "session-1",
+    blockId: "block-1",
+    deviceId: UNIT_ID,
+    modeKey: UNIT_MODE,
+    profileId: null as string | null,
+    idempotencyKey: "pick-key-0001",
+  };
+  const wrote = () => DB.calls.some((c) => c.fn === "record_block_machine_identity");
+  beforeEach(() => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcResult = RECEIPT("v2");
+  });
+
+  it("CONTROL: a supported mode on a registered unit is saved, and the command is called once with it", async () => {
+    arrangeUnit();
+    const out = await actions.recordBlockMachineIdentityAction(base);
+    expect(out.ok).toBe(true);
+    expect(DB.calls.filter((c) => c.fn === "record_block_machine_identity")).toHaveLength(1);
+    expect(DB.calls.at(-1)?.args).toMatchObject({ p_mode_key: UNIT_MODE });
+  });
+
+  it("a mode the unit's model does not offer is refused with clear copy and NOTHING is written", async () => {
+    arrangeUnit();
+    const out = await actions.recordBlockMachineIdentityAction({ ...base, modeKey: "blend" });
+    expect(out).toMatchObject({ ok: false, code: "rejected" });
+    if (!out.ok) {
+      expect(out.error).toMatch(/does not offer that mode/i);
+      expect(out.error).toMatch(/nothing was saved/i);
+    }
+    expect(wrote()).toBe(false);
+  });
+
+  it("an invented mode key is refused, nothing written", async () => {
+    arrangeUnit();
+    expect((await actions.recordBlockMachineIdentityAction({ ...base, modeKey: "not-a-mode" })).ok).toBe(false);
+    expect(wrote()).toBe(false);
+  });
+
+  // AVAILABILITY IS LEFT TO THE RECEIPT-AWARE COMMAND. The command answers a repeated key from its receipt
+  // before it looks at the unit, and refuses a NEW write to a retired or foreign unit itself, so the action calls it and, when it
+  // refuses, reports the preflight's own clear words.
+  it("a unit that is not this studio's: the command is asked and refuses the NEW write; the clear words come back", async () => {
+    arrangeUnit({ studio_id: "studio-other" });
+    DB.rpcResult = null;
+    DB.rpcError = { code: "23514", message: "That machine is not available in this studio." };
+    const out = await actions.recordBlockMachineIdentityAction(base);
+    expect(out).toMatchObject({ ok: false, code: "rejected" });
+    expect(wrote()).toBe(true);
+  });
+
+  it("a retired unit: a NEW write is refused by the command and the words are 'out of service'", async () => {
+    arrangeUnit({ retired_at: "2026-10-01T00:00:00Z" });
+    DB.rpcResult = null;
+    DB.rpcError = { code: "23514", message: "That machine is not available in this studio." };
+    const out = await actions.recordBlockMachineIdentityAction(base);
+    expect(out).toMatchObject({ ok: false, code: "rejected" });
+    if (!out.ok) expect(out.error).toMatch(/out of service/i);
+    expect(wrote()).toBe(true);
+  });
+
+  it("a unit registered against a superseded profile version is refused, nothing written", async () => {
+    arrangeUnit({ machine_profile_version: synthetic.SYNTHETIC_DEMO_PROFILE.version - 1 });
+    expect((await actions.recordBlockMachineIdentityAction(base)).ok).toBe(false);
+    expect(wrote()).toBe(false);
+  });
+
+  it("a profile id that is not the unit's own is refused, nothing written", async () => {
+    arrangeUnit();
+    const out = await actions.recordBlockMachineIdentityAction({ ...base, profileId: "some-other-profile" });
+    expect(out).toMatchObject({ ok: false, code: "rejected" });
+    expect(wrote()).toBe(false);
+  });
+
+  it("the unit's own profile id is accepted (NEGATIVE CONTROL for the mismatch case)", async () => {
+    arrangeUnit();
+    const out = await actions.recordBlockMachineIdentityAction({ ...base, profileId: synthetic.SYNTHETIC_DEMO_PROFILE.profileId });
+    expect(out.ok).toBe(true);
+    expect(wrote()).toBe(true);
+  });
+
+  it("the legacy model (no unit) carries no mode: a mode with it is refused, nothing written", async () => {
+    arrangeUnit();
+    const out = await actions.recordBlockMachineIdentityAction({
+      ...base,
+      deviceId: null,
+      modeKey: "thermo",
+      profileId: "dectro-apilus:xcell",
+    });
+    expect(out.ok).toBe(false);
+    expect(wrote()).toBe(false);
+  });
+
+  it("an unreadable inventory is UNKNOWN (the retry key is kept), nothing written and never 'saved'", async () => {
+    arrangeUnit();
+    DB.errorFor.studio_machines = { message: "boom" };
+    const out = await actions.recordBlockMachineIdentityAction(base);
+    expect(out).toMatchObject({ ok: false, code: "unknown" });
+    expect(wrote()).toBe(false);
+  });
+
+  // ---- THE LOST-ANSWER RETRY: commit, lose the reply, the unit is retired, retry the SAME key, recover.
+  describe("a same-key retry of a committed write recovers whatever has changed since", () => {
+    const STORED_ROW = [{ id: "block-1", machine_profile_id: null, studio_machine_id: UNIT_ID, machine_mode_key: UNIT_MODE }];
+    const REPLAY = { ...RECEIPT("v2"), reused: true, machine_mode_key: UNIT_MODE };
+
+    it("the full story: the write commits and its reply is lost, the unit is then retired, the same key recovers the stored result", async () => {
+      // 1. the original write: the reply is lost (transport failure): unknown, so the caller keeps its key.
+      arrangeUnit();
+      DB.rpcError = { message: "fetch failed" };
+      const first = await actions.recordBlockMachineIdentityAction(base);
+      expect(first).toMatchObject({ ok: false, code: "unknown" });
+      // 2. it had committed; the unit is retired afterwards.
+      DB.calls = [];
+      DB.rpcError = null;
+      DB.rpcResult = REPLAY;
+      arrangeUnit({ retired_at: "2026-11-07T00:00:00Z" });
+      // 3. the SAME key: the command answers from its receipt.
+      const retry = await actions.recordBlockMachineIdentityAction(base);
+      expect(retry).toMatchObject({ ok: true, reused: true, updatedAt: "v2" });
+      expect(DB.calls.filter((c) => c.fn === "record_block_machine_identity")).toHaveLength(1);
+      expect(DB.calls.at(-1)?.args).toMatchObject({ p_idempotency_key: "pick-key-0001" });
+    });
+
+    it("the inventory read fails at retry time and the block already stores this choice: the key still recovers", async () => {
+      arrangeUnit();
+      DB.errorFor.studio_machines = { message: "boom" };
+      DB.rowsFor.session_blocks = STORED_ROW;
+      DB.rpcResult = REPLAY;
+      const out = await actions.recordBlockMachineIdentityAction(base);
+      expect(out).toMatchObject({ ok: true, reused: true });
+    });
+
+    it("the mode is no longer offered but the block already stores this choice: the replay is still answered", async () => {
+      arrangeUnit({ machine_profile_version: synthetic.SYNTHETIC_DEMO_PROFILE.version - 1 });
+      DB.rowsFor.session_blocks = STORED_ROW;
+      DB.rpcResult = REPLAY;
+      expect((await actions.recordBlockMachineIdentityAction(base)).ok).toBe(true);
+    });
+
+    it("NEGATIVE CONTROL: the same impossible choice with NOTHING stored is still refused before the command", async () => {
+      arrangeUnit({ machine_profile_version: synthetic.SYNTHETIC_DEMO_PROFILE.version - 1 });
+      DB.rowsFor.session_blocks = [{ id: "block-1", machine_profile_id: null, studio_machine_id: null, machine_mode_key: null }];
+      expect((await actions.recordBlockMachineIdentityAction(base)).ok).toBe(false);
+      expect(wrote()).toBe(false);
+    });
+
+    it("NEGATIVE CONTROL: an inventory failure with nothing stored is unknown and writes nothing", async () => {
+      arrangeUnit();
+      DB.errorFor.studio_machines = { message: "boom" };
+      const out = await actions.recordBlockMachineIdentityAction(base);
+      expect(out).toMatchObject({ ok: false, code: "unknown" });
+      expect(wrote()).toBe(false);
+    });
+  });
+});
+
+// ===========================================================================
+// THE FORM'S OWN IDENTITY WRITE IS NOT "CHANGED ELSEWHERE"
+// The held version is checked INSIDE the command's transaction and the new one comes back from
+// the same UPDATE ... RETURNING, so the action reads nothing itself.
+// ===========================================================================
+describe("recordBlockMachineIdentityAction hands back the new block version", () => {
+  const args = {
+    clientId: "client-ana",
+    sessionId: "session-1",
+    blockId: "block-1",
+    deviceId: UNIT_ID,
+    modeKey: UNIT_MODE,
+    profileId: null,
+    idempotencyKey: "pick-key-0001",
+  };
+  beforeEach(() => arrangeUnit());
+  it("passes the held version to the command and returns the version the command returned", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcResult = RECEIPT("v2");
+    const out = await actions.recordBlockMachineIdentityAction({ ...args, expectedUpdatedAt: "v1" });
+    expect(out).toMatchObject({ ok: true, updatedAt: "v2", reused: false });
+    expect(DB.calls.at(-1)?.args).toMatchObject({ p_expected_updated_at: "v1", p_idempotency_key: "pick-key-0001" });
+  });
+  it("without a held version it sends null; a reply that is not the receipt object is UNKNOWN, never 'saved'", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcResult = RECEIPT("v2");
+    expect((await actions.recordBlockMachineIdentityAction(args)).ok).toBe(true);
+    expect(DB.calls.at(-1)?.args).toMatchObject({ p_expected_updated_at: null });
+    DB.rpcResult = null;
+    const odd = await actions.recordBlockMachineIdentityAction(args);
+    expect(odd).toMatchObject({ ok: false, code: "unknown" });
+  });
+  it("NEGATIVE CONTROL: a stale_block_version refusal from the command is the changed-elsewhere conflict, with no token", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcError = { code: "P0001", message: "stale_block_version: this settings block was changed elsewhere" };
+    const out = await actions.recordBlockMachineIdentityAction({ ...args, expectedUpdatedAt: "v1" });
+    expect(out.ok).toBe(false);
+    expect((out as { error?: string }).error).toMatch(/changed elsewhere/);
+    expect("updatedAt" in out).toBe(false);
+  });
+  it("a refused write returns no token", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcError = { code: "23514", message: "check violation" };
+    const out = await actions.recordBlockMachineIdentityAction({ ...args, expectedUpdatedAt: "v1" });
+    expect(out.ok).toBe(false);
+    expect("updatedAt" in out).toBe(false);
+  });
+  // A stored pick must reach the session page data, like Save, so a reopened editor is never stale.
+  it("a stored identity write revalidates the session page, and a refused or failed one does not", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    revalidatePathMock.mockClear();
+    DB.rpcResult = RECEIPT("v2");
+    expect((await actions.recordBlockMachineIdentityAction({ ...args, expectedUpdatedAt: "v1" })).ok).toBe(true);
+    expect(revalidatePathMock).toHaveBeenCalledTimes(1);
+    expect(revalidatePathMock).toHaveBeenCalledWith("/clients/client-ana/sessions/session-1");
+
+    revalidatePathMock.mockClear();
+    DB.rpcError = { code: "P0001", message: "stale_block_version: this settings block was changed elsewhere" };
+    expect((await actions.recordBlockMachineIdentityAction({ ...args, expectedUpdatedAt: "v1" })).ok).toBe(false);
+    DB.rpcError = { code: "23514", message: "check violation" };
+    expect((await actions.recordBlockMachineIdentityAction({ ...args, expectedUpdatedAt: "v1" })).ok).toBe(false);
+    expect(revalidatePathMock).not.toHaveBeenCalled();
+  });
+  it("the action reads session_blocks itself no more (no before/after race)", () => {
+    const src = readFileSync("app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts", "utf8");
+    expect(src).not.toMatch(/readBlockVersion|block-version/);
+  });
+});
+
+// ===========================================================================
+// A LOST ANSWER IS UNKNOWN, AND A SAME-KEY REPLAY IS ANSWERED FROM ITS RECEIPT
+// ===========================================================================
+describe("recordBlockMachineIdentityAction: a lost answer is unknown, a replay returns the stored version and identity", () => {
+  const args = {
+    clientId: "client-ana",
+    sessionId: "session-1",
+    blockId: "block-1",
+    deviceId: UNIT_ID,
+    modeKey: UNIT_MODE,
+    profileId: null,
+    idempotencyKey: "pick-key-0001",
+    expectedUpdatedAt: "v1",
+  };
+  beforeEach(() => arrangeUnit());
+  it("a transport failure (no database code) is code 'unknown', not 'not_persisted' or a refusal, so the caller keeps the key", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcError = { message: "fetch failed" };
+    const out = await actions.recordBlockMachineIdentityAction(args);
+    expect(out).toMatchObject({ ok: false, code: "unknown" });
+  });
+  it("a definitive refusal stays 'rejected' (nothing was written, the key is released)", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcError = { code: "23514", message: "check violation" };
+    expect(await actions.recordBlockMachineIdentityAction(args)).toMatchObject({ ok: false, code: "rejected" });
+  });
+  it("a replay returns the STORED version and identity with reused: true", async () => {
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rpcResult = { ...RECEIPT("v2"), reused: true };
+    const out = await actions.recordBlockMachineIdentityAction(args);
+    expect(out).toEqual({
+      ok: true,
+      reused: true,
+      updatedAt: "v2",
+      identity: { profileId: "fixture:p", deviceId: "11111111-1111-4111-8111-111111111111", modeKey: "flash" },
+    });
+  });
+});
+
+
+// A non-replayed submission stamps the block identity (bumps updated_at) too.
+describe("recordSetupSubmissionAction hands back the new block version", () => {
+  const call = (expectedUpdatedAt?: string) =>
+    actions.recordSetupSubmissionAction({
+      ...ROUTE,
+      blockId: "block-1",
+      machineId: "dev-1",
+      modeKey: "galvanic",
+      idempotencyKey: "save-key-0001",
+      groups: [{ groupKey: "g1", newGroupRef: null, channels: [1], readings: [READING(120)] }],
+      ...(expectedUpdatedAt ? { expectedUpdatedAt } : {}),
+    });
+  const ok = (extra: Record<string, unknown> = {}) => {
+    synthDevice();
+    DB.rpcResult = { submission_id: "sub-1", groups: 1, readings: 1, reused: false, ...extra };
+  };
+  it("sends the held version and returns the version the command returned", async () => {
+    ok({ block_updated_at: "v2" });
+    const out = await call("v1");
+    expect(out.ok).toBe(true);
+    expect((out as { updatedAt?: string }).updatedAt).toBe("v2");
+    expect(DB.calls.at(-1)?.args).toMatchObject({ p_expected_updated_at: "v1" });
+  });
+  // Cancel then reopen after "Save these settings" must not hold the pre-submission version.
+  it("a successful submission revalidates the session page (replay included); a refused one does not", async () => {
+    revalidatePathMock.mockClear();
+    ok({ block_updated_at: "v2" });
+    expect((await call("v1")).ok).toBe(true);
+    expect(revalidatePathMock).toHaveBeenCalledTimes(1);
+    expect(revalidatePathMock).toHaveBeenCalledWith("/clients/client-ana/sessions/session-1");
+    revalidatePathMock.mockClear();
+    synthDevice();
+    DB.rpcError = { code: "P0001", message: "stale_block_version: this settings block was changed elsewhere" };
+    expect((await call("v1")).ok).toBe(false);
+    expect(revalidatePathMock).not.toHaveBeenCalled();
+  });
+  it("without a held version no token is expected back", async () => {
+    ok();
+    const out = await call();
+    expect(out.ok).toBe(true);
+    expect("updatedAt" in out).toBe(false);
+  });
+  it("NEGATIVE CONTROL: a stale_block_version refusal rolls the save back and reads as changed-elsewhere", async () => {
+    synthDevice();
+    DB.rpcError = { code: "P0001", message: "stale_block_version: this settings block was changed elsewhere" };
+    const out = await call("v1");
+    expect(out.ok).toBe(false);
+    expect((out as { code?: string }).code).toBe("rejected");
+    expect((out as { error?: string }).error).toMatch(/changed elsewhere/);
+  });
+});
+
+// A same-key replay hands back NO token (the command returns none when reused).
+describe("a replayed submission hands back no token", () => {
+  it("NEGATIVE CONTROL: reused=true carries no block_updated_at, so no token and the next block save still conflicts", async () => {
+    synthDevice();
+    DB.rpcResult = { submission_id: "sub-1", groups: 1, readings: 1, reused: true };
+    const out = await actions.recordSetupSubmissionAction({
+      ...ROUTE,
+      blockId: "block-1",
+      machineId: "dev-1",
+      modeKey: "galvanic",
+      idempotencyKey: "save-key-0001",
+      groups: [{ groupKey: "g1", newGroupRef: null, channels: [1], readings: [READING(120)] }],
+      expectedUpdatedAt: "v1",
+    });
+    expect(out.ok).toBe(true);
+    expect("updatedAt" in out).toBe(false);
+  });
+});
+
+// 0301 receipts: every caller of the identity write outside the tests. The write needs a per-pick retry key and
+// a caller that settles an unconfirmed answer by it, so only the panel's wrapper may call the action, and only the action the query.
+describe("callers of the area identity write", () => {
+  const walk = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+      e.name === "node_modules" || e.name === ".next" ? [] : e.isDirectory() ? walk(`${dir}/${e.name}`) : /\.(ts|tsx)$/.test(e.name) ? [`${dir}/${e.name}`] : [],
+    );
+  const files = ["app", "components", "lib"].flatMap(walk);
+  const callers = (needle: RegExp) => files.filter((f) => needle.test(readFileSync(f, "utf8"))).sort();
+  it("recordBlockMachineIdentityAction is referenced by the action module and the panel's wrapper only", () => {
+    expect(callers(/recordBlockMachineIdentityAction/)).toEqual([
+      "app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts",
+      "components/machines/machine-first-setup-connected.tsx",
+    ]);
+  });
+  it("the query function and the RPC are referenced by the action module and the query module only", () => {
+    expect(callers(/\brecordBlockMachineIdentity\b|record_block_machine_identity/)).toEqual([
+      "app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions.ts",
+      "lib/machines/machine-queries.ts",
+    ]);
+  });
+});
+
+
+// PLATFORM ROLLOUT at the context level: the loader is where a failed read must refuse, an existing block must keep its
+// route, and a studio with no legacy history must make no rollout read at all.
+describe("loadMachineSetupContext and the platform rollout", () => {
+  const NEW_SETUP = { clientId: "client-ana", sessionId: "session-1" };
+  const EXISTING = { clientId: "client-ana", sessionId: "session-1", blockId: "block-1" };
+  const existingPurBlock = () => {
+    DB.rowsFor.session_blocks = [{ studio_machine_id: "unit-pur" }];
+    DB.rowsFor.studio_machines = [{ id: "unit-pur" }];
+  };
+
+  it("a FAILED rollout read for a studio with legacy history gives no route, withholds the legacy offer and returns the retryable message", async () => {
+    signIn("studio-one", "pract-a");
+    HISTORY.value = true; ROLLOUT.value = "error";
+    const ctx = await actions.loadMachineSetupContext(NEW_SETUP);
+    expect(ROLLOUT.reads).toBe(1);
+    expect(ctx.multiplexRoute).toBeNull();
+    expect(ctx.legacyMachine).toBeNull();
+    expect(ctx.inventoryReason).toBe(ROLLOUT_UNAVAILABLE_MESSAGE);
+    expect(ctx.rolloutNotice).toBe(ROLLOUT_UNAVAILABLE_MESSAGE);
+  });
+
+  it("OFF keeps an EXISTING xCell Pur block's route: the rollout is not even read and the offer stays", async () => {
+    signIn("studio-one", "pract-a");
+    HISTORY.value = true; ROLLOUT.value = "off"; existingPurBlock();
+    const ctx = await actions.loadMachineSetupContext(EXISTING);
+    expect(ROLLOUT.reads).toBe(0);
+    expect(ctx.legacyMachine).not.toBeNull();
+    expect(ctx.inventoryReason).not.toBe(ROLLOUT_UNAVAILABLE_MESSAGE);
+  });
+
+  it("an ERROR keeps an EXISTING xCell Pur block's route: nothing is refused or withheld", async () => {
+    signIn("studio-one", "pract-a");
+    HISTORY.value = true; ROLLOUT.value = "error"; existingPurBlock();
+    const ctx = await actions.loadMachineSetupContext(EXISTING);
+    expect(ROLLOUT.reads).toBe(0);
+    expect(ctx.legacyMachine).not.toBeNull();
+    expect(ctx.inventoryReason).not.toBe(ROLLOUT_UNAVAILABLE_MESSAGE);
+  });
+
+  it("OFF for a NEW setup hides the MultiPlex route (and reads the rollout once)", async () => {
+    signIn("studio-one", "pract-a");
+    HISTORY.value = true; ROLLOUT.value = "off";
+    const ctx = await actions.loadMachineSetupContext(NEW_SETUP);
+    expect(ROLLOUT.reads).toBe(1);
+    expect(ctx.multiplexRoute).toBeNull();
+    expect(ctx.inventoryReason).not.toBe(ROLLOUT_UNAVAILABLE_MESSAGE);
+  });
+
+  it("a route that EXISTS with the rollout On is withheld with it Off or errored (the fixture offers a real route, so the decision is what is tested)", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    HISTORY.value = true;
+    DB.rowsFor.machine_profile_mode_contract = [{ mode_key: "multiplex", machine_profile_version: 1 }];
+    DB.rowsFor.studio_machines = [{
+      id: "22222222-2222-4222-8222-222222222222", studio_id: "studio-fett", machine_profile_id: "dectro-apilus:xcell-pur",
+      machine_profile_version: 1, display_name: "Dectro xCell", installed_options: [], retired_at: null,
+    }];
+    ROLLOUT.value = "on";
+    const on = await actions.loadMachineSetupContext(NEW_SETUP);
+    expect(on.multiplexRoute).toEqual({ deviceId: "22222222-2222-4222-8222-222222222222", modeKey: "multiplex" });
+    for (const v of ["off", "error"] as const) {
+      ROLLOUT.value = v;
+      const ctx = await actions.loadMachineSetupContext(NEW_SETUP);
+      expect(ctx.multiplexRoute, v).toBeNull();
+    }
+  });
+
+  it("a FAILED rollout read withholds a registered xCell unit from the choices altogether, not only the legacy offer (it must not appear as a standalone machine)", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    HISTORY.value = true;
+    const PUR_UNIT = "22222222-2222-4222-8222-222222222222";
+    DB.rowsFor.machine_profile_mode_contract = [{ mode_key: "multiplex", machine_profile_version: 1 }];
+    DB.rowsFor.studio_machines = [{
+      id: PUR_UNIT, studio_id: "studio-fett", machine_profile_id: "dectro-apilus:xcell-pur",
+      machine_profile_version: 1, display_name: "Dectro xCell", installed_options: [], retired_at: null,
+    }];
+    ROLLOUT.value = "on";
+    const on = await actions.loadMachineSetupContext(NEW_SETUP);
+    expect(on.devices.map((d) => d.deviceId)).toContain(PUR_UNIT);
+    ROLLOUT.value = "error";
+    const ctx = await actions.loadMachineSetupContext(NEW_SETUP);
+    expect(ctx.legacyMachine).toBeNull();
+    expect(ctx.devices.map((d) => d.deviceId)).not.toContain(PUR_UNIT);
+    expect(ctx.remembered?.deviceId).not.toBe(PUR_UNIT);
+    expect(ctx.suggestedMachine?.deviceId).not.toBe(PUR_UNIT);
+    expect(ctx.clientLastMachine?.deviceId).not.toBe(PUR_UNIT);
+    expect(ctx.inventoryReason).toBe(ROLLOUT_UNAVAILABLE_MESSAGE);
+    // OFF for a NEW setup also removes the unit (a retryable message is not needed: the rollout is known to be off).
+    ROLLOUT.value = "off";
+    const off = await actions.loadMachineSetupContext(NEW_SETUP);
+    expect(off.devices.map((d) => d.deviceId)).not.toContain(PUR_UNIT);
+    expect(off.rolloutNotice).toBeNull();
+  });
+
+  it("WIRING: a remembered selection of the xCell unit is returned with the rollout On and withheld (null) when the read failed", async () => {
+    signIn("studio-fett", "pract-owner-a");
+    HISTORY.value = true;
+    const PUR_UNIT = "22222222-2222-4222-8222-222222222222";
+    DB.rowsFor.machine_profile_mode_contract = [{ mode_key: "multiplex", machine_profile_version: 1 }];
+    DB.rowsFor.studio_machines = [{
+      id: PUR_UNIT, studio_id: "studio-fett", machine_profile_id: "dectro-apilus:xcell-pur",
+      machine_profile_version: 1, display_name: "Dectro xCell", installed_options: [], retired_at: null,
+    }];
+    DB.rowsFor.practitioners = [{ default_machine_id: PUR_UNIT, default_machine_mode: "multiplex" }];
+    ROLLOUT.value = "on";
+    expect((await actions.loadMachineSetupContext(NEW_SETUP)).remembered?.deviceId).toBe(PUR_UNIT);
+    ROLLOUT.value = "error";
+    expect((await actions.loadMachineSetupContext(NEW_SETUP)).remembered).toBeNull();
+  });
+
+  // EVERY selection is pinned at the LOADER level. They cannot all be non-null in one call (the prior-unit suggestion is offered only when
+  // nothing is remembered; a restored selection needs an existing block that does not itself use the unit), so three calls each arrange the
+  // selections that can coexist, and each asserts "returned with the rollout On, null with the read failed".
+  describe("every selection pointing at the xCell unit is withheld at the loader when the rollout read fails", () => {
+    const PUR_UNIT = "22222222-2222-4222-8222-222222222222";
+    const PUR_PROFILE = "dectro-apilus:xcell-pur";
+    const arrange = () => {
+      signIn("studio-fett", "pract-owner-a");
+      HISTORY.value = true;
+      DB.rowsFor.machine_profile_mode_contract = [{ mode_key: "multiplex", machine_profile_version: 1 }];
+      DB.rowsFor.studio_machines = [{
+        id: PUR_UNIT, studio_id: "studio-fett", machine_profile_id: PUR_PROFILE,
+        machine_profile_version: 1, display_name: "Dectro xCell", installed_options: [], retired_at: null,
+      }];
+    };
+    const reading = {
+      session_block_id: "block-1", machine_profile_id: PUR_PROFILE, machine_profile_version: 1, mode_key: "multiplex", group_key: "g1",
+      channels: [], stage_key: null, field_key: "slow_duration", value_numeric: 2, absence_reason: null, native_unit: "s", decimals: 0,
+      revision: 1, capture_id: "cap-1", studio_machine_id: PUR_UNIT, observation_source: "practitioner-entered", recorded_at: "2026-10-01T10:00:00Z",
+    };
+    const both = async (input: typeof NEW_SETUP | typeof EXISTING) => {
+      ROLLOUT.value = "on";
+      const on = await actions.loadMachineSetupContext(input);
+      ROLLOUT.value = "error";
+      const failed = await actions.loadMachineSetupContext(input);
+      ROLLOUT.value = "off";
+      const off = await actions.loadMachineSetupContext(input);
+      return { on, failed, off };
+    };
+
+    it("remembered and the client's last machine (a new block)", async () => {
+      arrange();
+      DB.rowsFor.practitioners = [{ default_machine_id: PUR_UNIT, default_machine_mode: "multiplex" }];
+      CLIENT_LAST.value = { profileId: PUR_PROFILE, deviceId: PUR_UNIT, modeKey: "multiplex" };
+      const { on, failed, off } = await both(NEW_SETUP);
+      expect(on.remembered?.deviceId).toBe(PUR_UNIT);
+      expect(on.clientLastMachine?.deviceId).toBe(PUR_UNIT);
+      expect(failed.remembered).toBeNull();
+      expect(failed.clientLastMachine).toBeNull();
+      // OFF: a NEW area does not start on the unit (the rollout was turned off after a pilot practitioner charted it), though the unit is still listed.
+      expect(off.remembered).toBeNull();
+      expect(off.clientLastMachine).toBeNull();
+      expect(off.devices.map((d) => d.deviceId)).not.toContain(PUR_UNIT);
+    });
+
+    it("the suggested machine (nothing remembered; the client's last recorded setup used the unit)", async () => {
+      arrange();
+      DB.rowsFor.practitioners = [{ default_machine_id: null, default_machine_mode: null }];
+      DB.rpcResult = [reading];
+      const { on, failed, off } = await both(NEW_SETUP);
+      expect(on.suggestedMachine?.deviceId).toBe(PUR_UNIT);
+      expect(failed.suggestedMachine).toBeNull();
+      expect(off.suggestedMachine).toBeNull();
+    });
+
+    it("the restored selection (an existing block whose recorded readings used the unit)", async () => {
+      arrange();
+      DB.rowsFor.practitioners = [{ default_machine_id: null, default_machine_mode: null }];
+      DB.rowsFor.session_blocks = [{ studio_machine_id: null }];
+      DB.rowsFor.treatment_setup_readings = [reading];
+      const { on, failed, off } = await both(EXISTING);
+      expect(on.restoredSelection?.deviceId).toBe(PUR_UNIT);
+      expect(failed.restoredSelection).toBeNull();
+      expect(off.restoredSelection?.deviceId).toBe(PUR_UNIT); // an existing block keeps its own record when Off
+    });
+  });
+
+  describe("a studio that registered an xCell unit but has NO legacy xCell history", () => {
+    const PUR_UNIT = "22222222-2222-4222-8222-222222222222";
+    const arrange = () => {
+      signIn("studio-fett", "pract-owner-a");
+      HISTORY.value = false;
+      DB.rowsFor.machine_profile_mode_contract = [{ mode_key: "multiplex", machine_profile_version: 1 }];
+      DB.rowsFor.studio_machines = [{
+        id: PUR_UNIT, studio_id: "studio-fett", machine_profile_id: "dectro-apilus:xcell-pur",
+        machine_profile_version: 1, display_name: "Dectro xCell", installed_options: [], retired_at: null,
+      }];
+      DB.rowsFor.practitioners = [{ default_machine_id: PUR_UNIT, default_machine_mode: "multiplex" }];
+    };
+    it("reads the rollout; with it OFF a NEW setup cannot start on the unit (listed no more, not preselected)", async () => {
+      arrange();
+      ROLLOUT.value = "on";
+      const on = await actions.loadMachineSetupContext(NEW_SETUP);
+      expect(ROLLOUT.reads).toBe(1);
+      expect(on.devices.map((d) => d.deviceId)).toContain(PUR_UNIT);
+      expect(on.remembered?.deviceId).toBe(PUR_UNIT);
+      expect(on.multiplexRoute, "the route needs the legacy xCell choice; a studio without it keeps today's behaviour").toBeNull();
+      ROLLOUT.value = "off";
+      const off = await actions.loadMachineSetupContext(NEW_SETUP);
+      expect(off.devices.map((d) => d.deviceId)).not.toContain(PUR_UNIT);
+      expect(off.remembered).toBeNull();
+    });
+    it("a failed read withholds the unit with the retryable message", async () => {
+      arrange();
+      ROLLOUT.value = "error";
+      const ctx = await actions.loadMachineSetupContext(NEW_SETUP);
+      expect(ctx.devices.map((d) => d.deviceId)).not.toContain(PUR_UNIT);
+      expect(ctx.rolloutNotice).toBe(ROLLOUT_UNAVAILABLE_MESSAGE);
+    });
+    it("an EXISTING block already on the unit keeps it with the rollout OFF (no rollout read is needed)", async () => {
+      arrange();
+      existingPurBlock();
+      ROLLOUT.value = "off";
+      const before = ROLLOUT.reads;
+      const ctx = await actions.loadMachineSetupContext(EXISTING);
+      expect(ctx.devices.map((d) => d.deviceId)).toContain("unit-pur");
+      expect(ROLLOUT.reads).toBe(before); // an existing block on the unit keeps its route without a read
+    });
+    it("a RETIRED unit and no history means no rollout read at all", async () => {
+      arrange();
+      DB.rowsFor.studio_machines = [{ ...(DB.rowsFor.studio_machines as Array<Record<string, unknown>>)[0], retired_at: "2026-10-01T00:00:00Z" }];
+      ROLLOUT.value = "error";
+      await actions.loadMachineSetupContext(NEW_SETUP);
+      expect(ROLLOUT.reads).toBe(0);
+    });
+  });
+
+  it("a studio with NO legacy history makes no rollout read and keeps its own reason, whatever the rollout says (outage blast radius)", async () => {
+    signIn("studio-one", "pract-a");
+    for (const v of ["error", "off", "on"] as const) {
+      HISTORY.value = false; ROLLOUT.value = v; ROLLOUT.reads = 0;
+      const ctx = await actions.loadMachineSetupContext(NEW_SETUP);
+      expect(ROLLOUT.reads, v).toBe(0);
+      expect(ctx.legacyMachine, v).toBeNull();
+      expect(ctx.multiplexRoute, v).toBeNull();
+      expect(ctx.inventoryReason, v).not.toBe(ROLLOUT_UNAVAILABLE_MESSAGE);
+    }
+  });
+});
+
+// ===========================================================================
+// THE ROLLOUT, ASKED AGAIN AT WRITE TIME. A rollout read once when choices load is not enough, because a form opened while the unit was offered can submit after
+// it was switched Off, and a crafted call can name the unit at any time, so every action that creates or assigns an xCell identity
+// re-reads the rollout. Off and a failed read refuse before anything is sent; a block that already stores the unit is unaffected;
+// a unit that is not the xCell makes no rollout read at all.
+// ===========================================================================
+describe("the rollout is re-read at write time by every path that assigns an xCell identity", async () => {
+  const { XCELL_ROLLOUT_OFF_MESSAGE, ROLLOUT_UNAVAILABLE_MESSAGE_SAVE, XCELL_ROLLOUT_OFF_MESSAGE_UNCERTAIN, ROLLOUT_UNAVAILABLE_MESSAGE_UNCERTAIN, XCELL_RECEIPT_UNKNOWN_MESSAGE } = await import("@/lib/machines/xcell-rollout-guard");
+  const PUR = { machine_profile_id: "dectro-apilus:xcell-pur", machine_profile_version: 1 };
+  const ROUTE_ARGS = { clientId: "client-ana", sessionId: "session-1", blockId: "block-1" };
+  const GROUP = { groupKey: null, newGroupRef: "n1", channels: [1], readings: [READING(1)] };
+  type Path = { name: string; rpc: string; run: (unitId: string, mode: string) => Promise<{ ok: boolean; error?: string }> };
+  const PATHS: Path[] = [
+    {
+      name: "the identity command",
+      rpc: "record_block_machine_identity",
+      run: (u, m) => actions.recordBlockMachineIdentityAction({ ...ROUTE_ARGS, deviceId: u, modeKey: m, profileId: null, idempotencyKey: "pick-key-0001" }) as never,
+    },
+    {
+      name: "the single group save",
+      rpc: "record_treatment_setup_group",
+      run: (u, m) => actions.recordReadingsAction({ ...ROUTE_ARGS, machineId: u, modeKey: m, ...GROUP }) as never,
+    },
+    {
+      name: "the whole-setup submission (also add-pass)",
+      rpc: "record_setup_submission_with_identity",
+      run: (u, m) => actions.recordSetupSubmissionAction({ ...ROUTE_ARGS, machineId: u, modeKey: m, idempotencyKey: "save-key-0001", groups: [GROUP] }) as never,
+    },
+  ];
+  const arrange = (profile: Record<string, unknown>) => {
+    vi.stubEnv("HONE_SYNTHETIC_MACHINE_PROFILE", "1");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "http://127.0.0.1:54321");
+    signIn("studio-1", "prac-1", "practitioner");
+    DB.rowsFor.studio_machines = [unitRow(profile)];
+    DB.rpcResult = RECEIPT("v2");
+  };
+  for (const p of PATHS) {
+    describe(p.name, () => {
+      it("Off: refused with the plain message, and no command is sent", async () => {
+        arrange(PUR); ROLLOUT.value = "off";
+        const out = await p.run(UNIT_ID, "multiplex");
+        expect(out.ok).toBe(false);
+        expect(out.error).toBe(p.rpc === "record_block_machine_identity" ? XCELL_ROLLOUT_OFF_MESSAGE_UNCERTAIN : XCELL_ROLLOUT_OFF_MESSAGE);
+        expect(DB.calls.filter((c) => c.fn === p.rpc)).toHaveLength(0);
+      });
+      it("a failed read: refused with the retryable message, and no command is sent", async () => {
+        arrange(PUR); ROLLOUT.value = "error";
+        const out = await p.run(UNIT_ID, "multiplex");
+        expect(out.ok).toBe(false);
+        if (p.rpc === "record_block_machine_identity") {
+          expect(out.error).toBe(ROLLOUT_UNAVAILABLE_MESSAGE_UNCERTAIN);
+          expect(out.error).toContain("reload the chart");
+        } else {
+          expect(out.error).toBe(ROLLOUT_UNAVAILABLE_MESSAGE_SAVE);
+          expect(out.error).toContain("Nothing was saved.");
+        }
+        expect(DB.calls.filter((c) => c.fn === p.rpc)).toHaveLength(0);
+      });
+      it("On: reads the rollout once and is not refused by it", async () => {
+        arrange(PUR); ROLLOUT.value = "on";
+        const out = await p.run(UNIT_ID, "multiplex");
+        expect(ROLLOUT.reads).toBe(1);
+        expect(out.error).not.toBe(XCELL_ROLLOUT_OFF_MESSAGE);
+        expect(out.error).not.toBe(ROLLOUT_UNAVAILABLE_MESSAGE_SAVE);
+      });
+      it("EXISTING block already on this unit, with the rollout Off or failing: unaffected, and no rollout read", async () => {
+        for (const v of ["off", "error"] as const) {
+          arrange(PUR); ROLLOUT.value = v; ROLLOUT.reads = 0; DB.calls = [];
+          DB.rowsFor.session_blocks = [{ studio_machine_id: UNIT_ID, machine_profile_id: "dectro-apilus:xcell-pur", machine_mode_key: "multiplex" }];
+          const out = await p.run(UNIT_ID, "multiplex");
+          expect(ROLLOUT.reads, v).toBe(0);
+          expect(out.error, v).not.toBe(XCELL_ROLLOUT_OFF_MESSAGE);
+          expect(out.error, v).not.toBe(ROLLOUT_UNAVAILABLE_MESSAGE_SAVE);
+        }
+      });
+      it("a unit that is NOT the xCell makes no rollout read, whatever the rollout says", async () => {
+        for (const v of ["off", "error"] as const) {
+          arrange({}); ROLLOUT.value = v; ROLLOUT.reads = 0;
+          await p.run(UNIT_ID, UNIT_MODE);
+          expect(ROLLOUT.reads, v).toBe(0);
+        }
+      });
+    });
+  }
+  it("the identity command goes through when the rollout is On (a real write, not only 'not refused')", async () => {
+    arrange(PUR); ROLLOUT.value = "on";
+    const out = await actions.recordBlockMachineIdentityAction({ ...ROUTE_ARGS, deviceId: UNIT_ID, modeKey: "multiplex", profileId: null, idempotencyKey: "pick-key-0001" });
+    expect(out.ok, out.ok ? "" : out.error).toBe(true);
+    expect(DB.calls.filter((c) => c.fn === "record_block_machine_identity")).toHaveLength(1);
+  });
+
+  describe("a non-canonical retry key (tab, newline, Unicode space; leading or trailing) is refused up front", () => {
+    const WHITESPACE = ["\t", "\n", "\r", "\u00a0", "\u2003", "\u3000", "\u200b", " "];
+    const variantsOf = (key: string) => WHITESPACE.flatMap((w) => [w + key, key + w]);
+    const { NON_CANONICAL_KEY_MESSAGE } = { NON_CANONICAL_KEY_MESSAGE: "This save could not be sent safely. Reload the chart and try again. Nothing was saved." };
+    for (const v of ["off", "on"] as const) {
+      it(`whole-setup submission (${v}): every variant of an EXISTING key, with its receipt present, sends nothing and reads no rollout`, async () => {
+        for (const key of variantsOf("save-key-0001")) {
+          arrange(PUR); ROLLOUT.value = v; ROLLOUT.reads = 0; DB.calls = [];
+          DB.rowsFor.treatment_setup_submissions = [{ id: "sub-1" }];
+          const out = await actions.recordSetupSubmissionAction({ ...ROUTE_ARGS, machineId: UNIT_ID, modeKey: "multiplex", idempotencyKey: key, groups: [GROUP] }) as { ok: boolean; error?: string };
+          expect(out, JSON.stringify(key)).toMatchObject({ ok: false, error: NON_CANONICAL_KEY_MESSAGE });
+          expect(DB.calls, JSON.stringify(key)).toHaveLength(0);
+          expect(ROLLOUT.reads, JSON.stringify(key)).toBe(0);
+        }
+      });
+      it(`identity command (${v}): every variant of an EXISTING key sends nothing and reads no rollout`, async () => {
+        for (const key of variantsOf("pick-key-0001")) {
+          arrange(PUR); ROLLOUT.value = v; ROLLOUT.reads = 0; DB.calls = [];
+          const out = await actions.recordBlockMachineIdentityAction({ ...ROUTE_ARGS, deviceId: UNIT_ID, modeKey: "multiplex", profileId: null, idempotencyKey: key }) as { ok: boolean; error?: string };
+          expect(out, JSON.stringify(key)).toMatchObject({ ok: false, error: NON_CANONICAL_KEY_MESSAGE });
+          expect(DB.calls.filter((c) => c.fn === "record_block_machine_identity"), JSON.stringify(key)).toHaveLength(0);
+          expect(ROLLOUT.reads, JSON.stringify(key)).toBe(0);
+        }
+      });
+    }
+    it("a genuine canonical same-key retry still replays while the rollout is Off, and a fresh key stays blocked", async () => {
+      arrange(PUR); DB.rowsFor.session_blocks = [{ studio_machine_id: "22222222-2222-4222-8222-222222222222" }]; ROLLOUT.value = "off"; ROLLOUT.reads = 0;
+      DB.rowsFor.treatment_setup_submissions = [{ id: "sub-1" }];
+      const retry = await PATHS[2]!.run(UNIT_ID, "multiplex");
+      expect(retry.error).not.toBe(XCELL_ROLLOUT_OFF_MESSAGE);
+      expect(ROLLOUT.reads).toBe(0);
+      DB.rowsFor.treatment_setup_submissions = [];
+      const fresh = await PATHS[2]!.run(UNIT_ID, "multiplex");
+      expect(fresh.error).toBe(XCELL_ROLLOUT_OFF_MESSAGE);
+    });
+  });
+  // A LOST-ANSWER RETRY on an EXISTING block whose unit was changed by someone else since: the block no longer stores this unit, so the
+  // existing-block exemption cannot recognise it.
+  describe("a retry whose block now stores ANOTHER unit", () => {
+    const otherUnit = () => { DB.rowsFor.session_blocks = [{ studio_machine_id: "22222222-2222-4222-8222-222222222222" }]; };
+    it("whole-setup submission: a committed receipt for the key is REPLAYED, never refused, and the rollout is not read", async () => {
+      for (const v of ["off", "error"] as const) {
+        arrange(PUR); otherUnit(); ROLLOUT.value = v; ROLLOUT.reads = 0; DB.calls = [];
+        DB.rowsFor.treatment_setup_submissions = [{ id: "sub-1" }];
+        const out = await PATHS[2]!.run(UNIT_ID, "multiplex");
+        // The fixture's readings are not valid for this mode, so the save is rejected by validation AFTER the guard: what matters is that
+        // the guard let a receipted retry through (neither refusal message) without reading the rollout.
+        expect(out.error, v).not.toBe(XCELL_ROLLOUT_OFF_MESSAGE);
+        expect(out.error, v).not.toBe(ROLLOUT_UNAVAILABLE_MESSAGE_SAVE);
+        expect(out.error, v).not.toBe(XCELL_RECEIPT_UNKNOWN_MESSAGE);
+        expect(ROLLOUT.reads, v).toBe(0);
+      }
+    });
+    it("whole-setup submission: NO receipt for the key is refused as before; a failed receipt read is refused as unknown, sending nothing", async () => {
+      arrange(PUR); otherUnit(); ROLLOUT.value = "off";
+      DB.rowsFor.treatment_setup_submissions = [];
+      const none = await PATHS[2]!.run(UNIT_ID, "multiplex");
+      expect(none.error).toBe(XCELL_ROLLOUT_OFF_MESSAGE);
+      DB.calls = []; DB.errorFor.treatment_setup_submissions = { message: "boom" };
+      const unknown = await PATHS[2]!.run(UNIT_ID, "multiplex");
+      expect(unknown.error).toBe(XCELL_RECEIPT_UNKNOWN_MESSAGE);
+      expect(DB.calls.filter((c) => c.fn === "record_setup_submission_with_identity")).toHaveLength(0);
+    });
+    it("the identity command cannot read its receipt, so its refusals never claim an earlier attempt saved nothing", async () => {
+      arrange(PUR); otherUnit(); ROLLOUT.value = "off";
+      const off = await PATHS[0]!.run(UNIT_ID, "multiplex");
+      expect(off.error).toBe(XCELL_ROLLOUT_OFF_MESSAGE_UNCERTAIN);
+      ROLLOUT.value = "error";
+      const err = await PATHS[0]!.run(UNIT_ID, "multiplex");
+      expect(err.error).toBe(ROLLOUT_UNAVAILABLE_MESSAGE_UNCERTAIN);
+      for (const m of [off.error, err.error]) { expect(m).toContain("reload the chart"); expect(m).not.toContain("Nothing was saved"); }
+      expect(DB.calls.filter((c) => c.fn === "record_block_machine_identity")).toHaveLength(0);
+    });
+    it("the single group save has no retry key, so it keeps the definitive wording", async () => {
+      arrange(PUR); otherUnit(); ROLLOUT.value = "off";
+      const out = await PATHS[1]!.run(UNIT_ID, "multiplex");
+      expect(out.error).toBe(XCELL_ROLLOUT_OFF_MESSAGE);
+    });
   });
 });

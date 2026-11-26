@@ -1,7 +1,11 @@
 "use client";
 
+import { refundDisplayState } from "@/lib/billing/refund-display-state";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { checkoutDraftAmount, useCheckoutFeeDraft, waivedVisitData, type CheckoutFeeDraft } from "@/components/checkout-fee-fields";
+import { waiveAppointmentFeeAction } from "@/app/(app)/appointment-settlement-actions";
+import type { CheckoutMethod } from "@/components/checkout-method-picker";
 import type {
   SessionPaymentEligibility,
   SessionPaymentExistingAttemptSummary,
@@ -27,6 +31,8 @@ import { OWNER_ONLY_AMOUNT_ERROR } from "@/lib/billing/checkout-final-amount";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
   derivePaymentSummary,
+  REFUND_REVIEW_HEADING,
+  REFUND_ACTION_HEADING,
   humanChargeFailure,
   maskReceiptEmail,
   technicalRowsForAttempt,
@@ -215,6 +221,8 @@ export function SessionPaymentPrepareCard({
   settlementQuotedAmountCents = null,
   canRecordSettlement = true,
   onSettlementRecorded,
+  initialMethod,
+  initialFeeDraft,
   prepareAction,
   executeAction,
   sendReceiptAction,
@@ -253,6 +261,8 @@ export function SessionPaymentPrepareCard({
   // lives in CLIENT state that a server re-render does not reach; the session
   // detail page omits it entirely and relies on the ordinary server refresh.
   onSettlementRecorded?: () => void | Promise<void>;
+  initialMethod?: CheckoutMethod;
+  initialFeeDraft?: CheckoutFeeDraft;
   // PR #200: resolved booked-service / custom-pricing default for the
   // prepare form's amount field. Display default only; the field
   // stays editable and the prepare action re-validates the submitted
@@ -315,11 +325,25 @@ export function SessionPaymentPrepareCard({
   // refundAmountCents < amountCents. A PARTIAL refund therefore still counts as
   // money held, exactly as the database computes it, so nobody can be recorded
   // as paying cash for money the studio is still holding on a card.
+  // R1 (Insurance F3): the same reading as the refund panel, so settlement controls open only when our column AND the
+  // provider's agree the whole charge went back. A disagreement or an unknown keeps the card money HELD.
+  const activeRefund =
+    activeAttempt !== null
+      ? refundDisplayState({
+          chargeStatus: activeAttempt.status,
+          amountCents: activeAttempt.amountCents,
+          refundStatus: activeAttempt.refundStatus,
+          refundAmountCents: activeAttempt.refundAmountCents,
+          providerRefundStatus: activeAttempt.stripeRefundStatus,
+          stripeRefundId: activeAttempt.stripeRefundId,
+          cumulativeFullRefundVerified: activeAttempt.cumulativeFullRefundVerified,
+        })
+      : null;
   const fullyRefunded =
     activeAttempt !== null &&
     activeAttempt.status === "succeeded" &&
-    activeAttempt.refundStatus === "succeeded" &&
-    (activeAttempt.refundAmountCents ?? 0) >= activeAttempt.amountCents;
+    activeRefund?.kind === "refunded" &&
+    activeRefund.remainingRefundableCents === 0;
   const cardMoneyHeld = activeAttempt !== null && !fullyRefunded;
 
   const previousTerminalAttempt =
@@ -329,8 +353,9 @@ export function SessionPaymentPrepareCard({
       ? latestHistoricalAttempt
       : null;
 
+  const mayCollectPayment = settledMethod === null || settledMethod === "still_owes";
   const showPrepareForm =
-    eligibility.eligible && !activeAttempt && !prepareJustSucceeded;
+    eligibility.eligible && !activeAttempt && !prepareJustSucceeded && mayCollectPayment;
   // FREE-01 / review 3777045531. Freeness is a property of the CURRENT price,
   // not of whether a prepare form happens to be showing. A positive-price
   // attempt already in `ready` sets showPrepareForm false, so gating the free
@@ -353,6 +378,8 @@ export function SessionPaymentPrepareCard({
   const presentation = decideSessionPaymentPresentation({
     attemptStatus: activeAttempt?.status ?? null,
     amountResult: amountResult ?? null,
+    settlementQuotedAmountCents,
+    hasSettlement: settledMethod !== null,
     showPrepareForm,
   });
   // Current pricing governs whether a READY attempt may still act. It never
@@ -362,6 +389,81 @@ export function SessionPaymentPrepareCard({
   // resolved ONE authoritative amount, or preparation is blocked with a reason.
   // The historical session price is NOT a pricing authority and is no longer
   // consulted here.
+
+  const freeVisit = presentation.freeNoticeServiceName !== null;
+  const canOfferSettlement = Boolean(appointmentId && canRecordSettlement && !cardMoneyHeld && !prepareJustSucceeded && (!freeVisit || settledMethod));
+  const draftReference = presentation.prepareFormAmount?.amountCents ?? settlementQuotedAmountCents;
+  const [feeDraft, setFeeDraft] = useCheckoutFeeDraft(
+    canOfferSettlement && isOwner && !settledMethod ? draftReference : null, initialFeeDraft,
+  );
+  // The recorded outstanding balance can be different from today's service
+  // price. Keep the latter as Stripe's expected reference for its stale check.
+  const outstanding = settledMethod === "still_owes" && settledAmountCents !== null && settledAmountCents > 0
+    ? settledAmountCents : null;
+  const confirmWaiver = Boolean(feeDraft && checkoutDraftAmount(feeDraft.finalFee) === 0);
+  const needsSavedCard = !eligibility.eligible && eligibility.blockingReasons.includes(NO_CARD_ON_FILE_REASON);
+  const stripeForm = presentation.prepareFormAmount !== null && eligibleDetails ? (
+    <PrepareForm
+      feeDraft={feeDraft}
+      onFeeChange={setFeeDraft}
+      confirmWaiver={confirmWaiver}
+      outstandingCents={outstanding}
+      sessionId={sessionId}
+      eligibility={eligibleDetails}
+      amount={presentation.prepareFormAmount}
+      isOwner={isOwner}
+      pending={preparePending}
+      error={prepareError}
+      noChargeRequired={prepareNoCharge}
+      blockingReasons={prepareBlockingReasons}
+      onSubmit={(fd) => {
+        setPrepareError(null);
+        setPrepareNoCharge(null);
+        setPrepareBlockingReasons([]);
+        startPrepareTransition(async () => {
+          if (confirmWaiver && appointmentId && feeDraft) {
+            if (!feeDraft.reason.trim()) {
+              setPrepareError("Enter a reason for the fee waiver.");
+              return;
+            }
+            const result = await waiveAppointmentFeeAction(waivedVisitData(appointmentId, feeDraft, fd.get("internal_note")));
+            if (!result.ok) {
+              setPrepareError(result.message);
+              return;
+            }
+            setPrepareNoCharge("Fee waiver recorded.");
+            router.refresh();
+            if (onSettlementRecorded) {
+              try { await onSettlementRecorded(); } catch { /* The waiver was already saved. */ }
+            }
+            return;
+          }
+          const r = await prepareAction(fd);
+          if (r.ok) {
+            setPrepareJustSucceeded({ attemptId: r.attemptId });
+            // PR #181. Force the persisted ready row to flow
+            // into the page so the AttemptStatusPanel takes
+            // over as the single source of truth. The local
+            // banner is gated on !activeAttempt above so it
+            // disappears as soon as the refresh completes.
+            router.refresh();
+            return;
+          }
+          if (r.noChargeRequired) {
+            setPrepareNoCharge(r.error);
+            return;
+          }
+          setPrepareError(r.error);
+          setPrepareBlockingReasons(r.blockingReasons ?? []);
+        });
+      }}
+    />
+  ) : null;
+  const stripeUnavailable = freeVisit || stripeForm
+    ? undefined
+    : needsSavedCard
+      ? "Stripe needs an authorized saved card."
+      : "Stripe is unavailable for this visit.";
 
   return (
     <section
@@ -388,7 +490,7 @@ export function SessionPaymentPrepareCard({
       {activeAttempt && (
         <AttemptStatusPanel
           attempt={activeAttempt}
-          runChargeVisible={presentation.runChargeVisible}
+          runChargeVisible={presentation.runChargeVisible && mayCollectPayment}
           sessionId={sessionId}
           clientId={clientId}
           isOwner={isOwner}
@@ -430,6 +532,29 @@ export function SessionPaymentPrepareCard({
         </div>
       )}
 
+      {appointmentId && canOfferSettlement && (
+        <AppointmentSettlementControls
+          feeDraft={feeDraft}
+          onFeeChange={setFeeDraft}
+          initialMethod={initialMethod ?? (isOwner && needsSavedCard ? "paid_e_transfer" : undefined)}
+          currency={eligibility.jurisdiction?.currency ?? null}
+          stripeForm={stripeForm}
+          stripeUnavailable={stripeUnavailable}
+          preparingCard={preparePending}
+          appointmentId={appointmentId}
+          isOwner={isOwner}
+          settledMethod={settledMethod}
+          settledId={settledId}
+          settledAmountCents={settledAmountCents}
+          settledQuotedCents={settledQuotedCents}
+          defaultAmountCents={
+            presentation.prepareFormAmount?.amountCents ??
+            settlementQuotedAmountCents
+          }
+          onRecorded={onSettlementRecorded}
+        />
+      )}
+
       {/* HON-45. "No card on file" is a fact about the client, not a fault:
           completing and charting a visit takes no payment, and the visit stays
           outstanding. When it is the ONLY reason, say what is true, calmly.
@@ -438,19 +563,10 @@ export function SessionPaymentPrepareCard({
       {!eligibility.eligible && !activeAttempt && !prepareJustSucceeded &&
         (isNoCardOnly(eligibility.blockingReasons) ? (
           <NoCardOnFilePanel
-            settlementOffered={Boolean(appointmentId && canRecordSettlement)}
             settledMethod={settledMethod}
             settledAmountCents={settledAmountCents}
             quotedAmountCents={settlementQuotedAmountCents}
-            // Codex P2 4365600228. An authoritative $0 price is not a debt.
-            // Read from the presentation decision (the same field that renders
-            // "No payment required"; the card never interprets pricing), or
-            // from the appointment's settlement snapshot, which is 0 only for
-            // an authoritatively free service.
-            authoritativelyFree={
-              presentation.freeNoticeServiceName !== null ||
-              settlementQuotedAmountCents === 0
-            }
+            authoritativelyFree={freeVisit}
           />
         ) : (
           <BlockedPanel reasons={eligibility.blockingReasons} />
@@ -478,7 +594,7 @@ export function SessionPaymentPrepareCard({
           data-testid="payment-not-required"
           className="rounded-md border border-neutral-300 bg-neutral-50 p-3 text-xs text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"
         >
-          {presentation.freeNoticeServiceName} is free · No payment required.
+          {presentation.freeNoticeServiceName ? `${presentation.freeNoticeServiceName} is free · ` : ""}No payment due.
         </p>
       )}
 
@@ -491,73 +607,13 @@ export function SessionPaymentPrepareCard({
         </p>
       )}
 
-      {presentation.prepareFormAmount !== null && eligibleDetails && (
-        <PrepareForm
-          sessionId={sessionId}
-          eligibility={eligibleDetails}
-          amount={presentation.prepareFormAmount}
-          isOwner={isOwner}
-          pending={preparePending}
-          error={prepareError}
-          noChargeRequired={prepareNoCharge}
-          blockingReasons={prepareBlockingReasons}
-          onSubmit={(fd) => {
-            setPrepareError(null);
-            setPrepareNoCharge(null);
-            setPrepareBlockingReasons([]);
-            startPrepareTransition(async () => {
-              const r = await prepareAction(fd);
-              if (r.ok) {
-                setPrepareJustSucceeded({ attemptId: r.attemptId });
-                // PR #181. Force the persisted ready row to flow
-                // into the page so the AttemptStatusPanel takes
-                // over as the single source of truth. The local
-                // banner is gated on !activeAttempt above so it
-                // disappears as soon as the refresh completes.
-                router.refresh();
-                return;
-              }
-              if (r.noChargeRequired) {
-                setPrepareNoCharge(r.error);
-                return;
-              }
-              setPrepareError(r.error);
-              setPrepareBlockingReasons(r.blockingReasons ?? []);
-            });
-          }}
-        />
-      )}
+      {(!canOfferSettlement || settledMethod) && stripeForm}
 
       {eligibility.existingAttempts.length > 1 && (
         <AttemptHistory attempts={eligibility.existingAttempts} />
       )}
 
-      {/* PAY-SETTLE / 0187. THE SECOND HALF OF CHECKOUT.
-          Placed BELOW the charge path deliberately: taking the card is still
-          the primary action, and this is the honest alternative rather than a
-          competing one.
 
-          HIDDEN once Hone holds verified card money for this session
-          (activeAttempt in succeeded / pending_stripe / ready). Offering
-          "Paid cash" beside a real charge invites exactly the double
-          collection the database refuses, and a control that always fails is
-          worse than no control. The refusal still lives in SQL — this only
-          keeps the UI from asking. */}
-      {appointmentId && canRecordSettlement && !cardMoneyHeld && (
-        <AppointmentSettlementControls
-          appointmentId={appointmentId}
-          isOwner={isOwner}
-          settledMethod={settledMethod}
-          settledId={settledId}
-          settledAmountCents={settledAmountCents}
-          settledQuotedCents={settledQuotedCents}
-          defaultAmountCents={
-            presentation.prepareFormAmount?.amountCents ??
-            settlementQuotedAmountCents
-          }
-          onRecorded={onSettlementRecorded}
-        />
-      )}
     </section>
   );
 }
@@ -618,13 +674,11 @@ function isNoCardOnly(reasons: string[]): boolean {
 // (Codex P2 4365600228), so no balance is claimed; a recorded "still owes"
 // is a real record and is still shown.
 function NoCardOnFilePanel({
-  settlementOffered,
   settledMethod,
   settledAmountCents,
   quotedAmountCents,
   authoritativelyFree,
 }: {
-  settlementOffered: boolean;
   settledMethod: SettlementMethod | null;
   settledAmountCents: number | null;
   quotedAmountCents: number | null;
@@ -642,8 +696,7 @@ function NoCardOnFilePanel({
     >
       <p className="font-medium">No card on file · Nothing has been charged.</p>
       <p className="mt-1">
-        Hone can only charge a saved card, and this client has none. Completing
-        and charting this visit does not take a payment.
+        Completing and charting this visit does not take a payment.
       </p>
       {outstanding && (
         <p data-testid="session-payment-outstanding" className="mt-1 font-medium">
@@ -654,9 +707,7 @@ function NoCardOnFilePanel({
       )}
       {outstanding && (
         <p className="mt-1">
-          {settlementOffered
-            ? "It stays outstanding until payment is actually received. Record it below only then."
-            : "It stays outstanding until payment is actually received."}
+          It stays outstanding until payment is actually received.
         </p>
       )}
     </div>
@@ -887,7 +938,7 @@ function ReadyPanel({
             {executePending
               ? "Running charge..."
               : confirmExecute
-                ? `Confirm: run charge (${formatMoney(attempt.amountCents, attempt.currency)})`
+                ? `Confirm Stripe charge · ${formatMoney(attempt.amountCents, attempt.currency)}`
                 : "Run charge"}
           </button>
           {confirmExecute && !executePending && (
@@ -963,20 +1014,25 @@ function SucceededPanel({
   // "Paid" for a live charge, "Refunded" once the row carries
   // refund_status='succeeded', so the practitioner never sees a paid heading
   // and a refunded sub-panel fighting each other. Sub-panels handle the rest.
-  const refunded = attempt.refundStatus === "succeeded";
+  const summary = derivePaymentSummary(attempt);
+  const refunded = summary.kind === "refunded";
   return (
     <div
       className={
-        refunded
-          ? "rounded-md border border-neutral-200 bg-white p-3 dark:border-neutral-800 dark:bg-neutral-950"
-          : "rounded-md border border-emerald-200 bg-emerald-50/60 p-3 dark:border-emerald-900/50 dark:bg-emerald-950/20"
+        // Keyed on the SUMMARY KIND (Insurance N1): only a paid charge is styled as paid. Refunded, pending and
+        // unresolved states are never dressed in the emerald "paid" container.
+        summary.kind === "paid" || summary.kind === "paid_receipt_failed"
+          ? "rounded-md border border-emerald-200 bg-emerald-50/60 p-3 dark:border-emerald-900/50 dark:bg-emerald-950/20"
+          : summary.kind === "refund_review" || summary.kind === "refund_action"
+            ? "rounded-md border border-amber-300 bg-amber-50/60 p-3 dark:border-amber-800 dark:bg-amber-950/20"
+            : "rounded-md border border-neutral-200 bg-white p-3 dark:border-neutral-800 dark:bg-neutral-950"
       }
     >
       {/* Compact practitioner face: "Paid · $X" (or "Refunded · $X"), with the
           charge date. Processor identifiers move into the owner-only disclosure
           below, never shown in the default charting view. */}
       <PaymentSummaryCard
-        summary={derivePaymentSummary(attempt)}
+        summary={summary}
         subLine={
           refunded ? (
             attempt.refundedAt ? (
@@ -1192,9 +1248,24 @@ function RefundSubPanel({
   // Persisted state takes precedence; local in-session state is
   // for the same-render-cycle flip before the page revalidatePath
   // catches up.
-  const persistedSucceeded = attempt.refundStatus === "succeeded";
-  const persistedPending = attempt.refundStatus === "pending_stripe";
-  const persistedFailed = attempt.refundStatus === "failed";
+  // R1: ONE reading of our refund column AND the provider's (0240), so a refund the provider reports
+  // failed/canceled is never shown as "succeeded", an unknown is never shown as "failed", and a New refund is
+  // offered only when none can be in flight or done.
+  const display = refundDisplayState({
+    chargeStatus: attempt.status,
+    amountCents: attempt.amountCents,
+    refundStatus: attempt.refundStatus,
+    refundAmountCents: attempt.refundAmountCents,
+    providerRefundStatus: attempt.stripeRefundStatus,
+    stripeRefundId: attempt.stripeRefundId,
+    cumulativeFullRefundVerified: attempt.cumulativeFullRefundVerified,
+  });
+  const persistedNeedsReview = display.kind === "needs_review";
+  const persistedSucceeded = display.kind === "refunded";
+  const persistedPending = display.kind === "pending";
+  const persistedNeedsAction = display.kind === "needs_action";
+  const persistedUnclear = display.kind === "unclear";
+  const persistedFailed = display.kind === "failed";
 
   // v1 refunds are full-only. The amount the practitioner is
   // confirming equals the charge amount; partial refunds may
@@ -1245,6 +1316,31 @@ function RefundSubPanel({
         </div>
       )}
 
+      {persistedNeedsAction && !localRefunded && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+          <p className="font-medium">{REFUND_ACTION_HEADING}.</p>
+          <p className="mt-1">Stripe has not finished this refund. Do not refund again.</p>
+        </div>
+      )}
+
+      {(persistedNeedsReview || persistedUnclear) && !localRefunded && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+          {/* ONE heading for every unresolved state (Sam, 12 Nov): the same words as the card header
+              (REFUND_REVIEW_HEADING). The explanation under it differs by cause. */}
+          <p className="font-medium">{REFUND_REVIEW_HEADING}.</p>
+          {persistedNeedsReview ? (
+            <p className="mt-1">
+              Stripe has a record of a refund here that we could not confirm. The studio owner must review it before
+              another refund is started.
+            </p>
+          ) : (
+            <p className="mt-1">
+              Our record and Stripe do not agree. Do not refund again until the studio owner has reviewed this.
+            </p>
+          )}
+        </div>
+      )}
+
       {persistedFailed && !localRefunded && (
         <div className="rounded-md border border-red-300 bg-red-50 p-2 text-xs text-red-800 dark:border-red-800 dark:bg-red-950/30 dark:text-red-200">
           <p className="font-medium">Refund failed.</p>
@@ -1259,8 +1355,7 @@ function RefundSubPanel({
       )}
 
       {isOwner &&
-        !persistedSucceeded &&
-        !persistedPending &&
+        display.mayStartRefund &&
         !localRefunded && (
           <>
             <p className="text-xs text-neutral-600 dark:text-neutral-400">
@@ -1459,6 +1554,10 @@ function UnknownStatusPanel({
 // payment_charge_attempts and returns the new attempt id.
 // ---------------------------------------------------------------------------
 function PrepareForm({
+  feeDraft,
+  onFeeChange,
+  confirmWaiver,
+  outstandingCents,
   sessionId,
   eligibility,
   amount,
@@ -1469,6 +1568,10 @@ function PrepareForm({
   blockingReasons,
   onSubmit,
 }: {
+  feeDraft?: CheckoutFeeDraft;
+  onFeeChange: (draft: CheckoutFeeDraft) => void;
+  confirmWaiver: boolean;
+  outstandingCents: number | null;
   sessionId: string;
   eligibility: Extract<SessionPaymentEligibility, { eligible: true }>;
   // The SERVER's resolved REFERENCE price: what this booked service (or this
@@ -1490,9 +1593,18 @@ function PrepareForm({
   // F-PAY-002. The final charge is the practitioner's to author, so it is
   // CONTROLLED state here: the adjustment reason, the delta line and the
   // owner warning all have to react to it as she types.
-  const [finalAmount, setFinalAmount] = useState(
-    centsToAmountInputValue(amount.amountCents),
+  const [localAmount, setLocalAmount] = useState(
+    centsToAmountInputValue(outstandingCents ?? amount.amountCents),
   );
+  const [localReason, setLocalReason] = useState(
+    outstandingCents !== null && outstandingCents !== amount.amountCents ? "Collect recorded outstanding balance" : "",
+  );
+
+  const finalAmount = feeDraft?.finalFee ?? localAmount;
+  function setFinalAmount(value: string) {
+    if (feeDraft) onFeeChange({...feeDraft, finalFee: value});
+    else setLocalAmount(value);
+  }
 
   // THE SAME parser the server uses, imported rather than re-written, so the
   // field cannot decide "this is a $100 adjustment" while the action decides
@@ -1526,7 +1638,7 @@ function PrepareForm({
   const untouched = finalAmount.trim() === centsToAmountInputValue(amount.amountCents);
   const blank = finalAmount.trim().length === 0;
   const differsFromReference =
-    !untouched && !blank && !isZero && finalCents !== amount.amountCents;
+    confirmWaiver || (!untouched && !blank && !isZero && finalCents !== amount.amountCents);
 
   return (
     <form
@@ -1663,7 +1775,7 @@ function PrepareForm({
           aria-live="polite"
           className="rounded-md border border-neutral-300 bg-neutral-50 p-2 text-[11px] text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"
         >
-          No charge is required at $0.00. Nothing will be prepared.
+          {confirmWaiver ? "Confirm the fee waiver to close this visit’s balance." : "No charge is required at $0.00. Nothing will be prepared."}
         </p>
       )}
 
@@ -1681,6 +1793,11 @@ function PrepareForm({
               data-testid="adjustment-reason-input"
               aria-label="Reason for adjustment"
               required
+              value={feeDraft?.reason ?? localReason}
+              onChange={e => {
+                if (feeDraft) onFeeChange({...feeDraft, reason: e.target.value});
+                else setLocalReason(e.target.value);
+              }}
               maxLength={SESSION_PAYMENT_ADJUSTMENT_REASON_MAX_LENGTH}
               placeholder="Client discount, aftercare product, package adjustment…"
               className="min-h-[44px] rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
@@ -1732,7 +1849,7 @@ function PrepareForm({
           <FormattedDateTime iso={eligibility.cardAuthorization.signedAt} />.
         </p>
         <p>
-          This prepares a row only. No PaymentIntent. No charge. No receipt.
+          You will review and confirm this amount before your client’s card is charged.
         </p>
       </div>
 
@@ -1744,7 +1861,7 @@ function PrepareForm({
         // the charting surfaces already use.
         className="inline-flex min-h-[44px] items-center justify-center self-start rounded-md bg-neutral-900 px-4 py-2 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
       >
-        {pending ? "Preparing..." : "Prepare session payment"}
+        {pending ? (confirmWaiver ? "Recording..." : "Preparing...") : confirmWaiver ? "Confirm fee waiver" : "Checkout with Stripe"}
       </button>
     </form>
   );

@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getStudioBySlug } from "@/lib/booking/queries";
 import {
@@ -6,6 +7,7 @@ import {
   pickDayWindow,
   reservationWindowStartUtc,
   type ReservationExclusion,
+  type SlotPackingOptions,
   type ReservationRow,
   type Slot,
 } from "@/lib/booking/slots";
@@ -75,7 +77,15 @@ export type PublicSlotRangeResult =
       /** Dates the caller asked for that the horizon excluded. */
       skippedOutsideHorizon: string[];
     }
-  | { ok: false; error: string };
+  | {
+      ok: false;
+      error: string;
+      /**
+       * Set ONLY when the studio has at least one active service and NO open weekday at all: a real answer ("nothing is open"), not a failed read.
+       * A caller that counts appointments may treat it as zero; every other failure stays an error. Absent for any read failure.
+       */
+      reason?: "no_open_days";
+    };
 
 /**
  * The weekday of a STUDIO-LOCAL calendar date.
@@ -144,7 +154,13 @@ export async function fetchPublicSlotsForDates(params: {
       openAvailabilityDaysCount,
     })
   ) {
-    return { ok: false, error: "This studio is not accepting bookings online." };
+    // A closed week is an ANSWER, not a failed read: both queries above succeeded. It is named only when a bookable service exists, so a studio
+    // with no active service stays an error for every caller.
+    return {
+      ok: false,
+      error: "This studio is not accepting bookings online.",
+      ...((servicesRes.count ?? 0) >= 1 && openAvailabilityDaysCount === 0 ? { reason: "no_open_days" as const } : {}),
+    };
   }
 
   const { data: service, error: serviceError } = await admin
@@ -269,7 +285,6 @@ export async function loadPublicSlotsByDate(
   } = {},
 ): Promise<PublicSlotsByDateResult> {
   const tz = ctx.timezone;
-  const capacityOn = ctx.practitionerCapacityEnabled === true && ctx.practitionerId != null;
 
   // THE HORIZON CLAMP. Beyond it a date is unbookable by any route, so querying
   // it buys nothing and discovering that one refusal at a time is how an
@@ -286,6 +301,23 @@ export async function loadPublicSlotsByDate(
   }
 
   const sorted = [...scanned].sort();
+  const grouped = await loadSlotsForAuthorizedDates(admin, ctx, sorted, now, opts);
+  if (!grouped.ok) return grouped;
+  return { ...grouped, scanned: sorted, skippedOutsideHorizon };
+}
+
+/** Bulk data read for one authorized timeline. Each caller supplies its own
+ * request client, sorted local dates, booking policy, and resolved target. */
+export async function loadSlotsForAuthorizedDates(
+  supabase: SupabaseClient,
+  ctx: Omit<PublicRangeContext, "publicBookingHorizonMonths">,
+  sorted: readonly string[],
+  now: Date,
+  opts: { stopAfterFirstMatch?: boolean; packing?: SlotPackingOptions } = {},
+): Promise<{ ok: true; byDate: { date: string; slots: Slot[] }[] } | { ok: false; error: string }> {
+  if (sorted.length === 0) return { ok: true, byDate: [] };
+  const tz = ctx.timezone;
+  const capacityOn = ctx.practitionerCapacityEnabled === true && ctx.practitionerId != null;
   const first = sorted[0]!;
   const last = sorted[sorted.length - 1]!;
 
@@ -308,14 +340,14 @@ export async function loadPublicSlotsByDate(
       // override, personal weekday, then studio weekday. Failed reads throw;
       // only successful absence permits inheritance.
       const scoped = await loadScopedAvailability(
-        admin, ctx.studioId, { kind: "practitioner", practitionerId: ctx.practitionerId! }, first, last,
+        supabase, ctx.studioId, { kind: "practitioner", practitionerId: ctx.practitionerId! }, first, last,
       );
       overrides = scoped.overrides;
       defaults = scoped.week;
     } else {
       [overrides, defaults] = (await Promise.all([
-        getStudioWideOverridesSafe(admin, ctx.studioId, first, last),
-        getStudioWideDefaultsSafe(admin, ctx.studioId),
+        getStudioWideOverridesSafe(supabase, ctx.studioId, first, last),
+        getStudioWideDefaultsSafe(supabase, ctx.studioId),
       ])) as [typeof overrides, typeof defaults];
     }
   } catch {
@@ -323,7 +355,7 @@ export async function loadPublicSlotsByDate(
   }
 
   const [blockoutRes, reservationRes] = await Promise.all([
-    admin
+    supabase
       .from("studio_blockouts")
       .select("starts_on, ends_on")
       .eq("studio_id", ctx.studioId)
@@ -344,7 +376,7 @@ export async function loadPublicSlotsByDate(
     // sort can put one row on two pages and drop another, and `id` is the
     // primary key.
     fetchAllRows<ReservationRow>((from, to) => {
-      const query = admin
+      const query = supabase
         .from("studio_calendar_reservations")
         .select("starts_at, ends_at, source_kind, source_id")
         .eq("studio_id", ctx.studioId)
@@ -436,6 +468,7 @@ export async function loadPublicSlotsByDate(
         closeTime,
         reservations: dayReservations,
         excludeReservation: ctx.excludeReservation,
+        options: opts.packing,
       }),
       now,
     );
@@ -449,5 +482,5 @@ export async function loadPublicSlotsByDate(
     }
   }
 
-  return { ok: true, byDate, scanned: sorted, skippedOutsideHorizon };
+  return { ok: true, byDate };
 }

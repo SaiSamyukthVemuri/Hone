@@ -51,6 +51,13 @@ import type { TreatmentAreaId } from "@/lib/waitlist/treatment-area-catalog";
 
 export type ProfileAdapterCapabilities = {
   /**
+   * The completion command accepts ONE legal name (held migration 0286's
+   * `complete_waitlist_profile_by_grant_v2`). Optional and FALSE until that migration is
+   * applied: while false the surface does not offer the option and the adapter refuses a
+   * single-name completion rather than writing a made-up family name.
+   */
+  singleLegalName?: boolean;
+  /**
    * The entry row can store first/last name, mobile, areas and availability.
    * FALSE until WAIT-04B's columns exist — and while it is false the join
    * surface must not be offered, because the answers would be discarded.

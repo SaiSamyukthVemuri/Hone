@@ -1,124 +1,106 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { usePathname } from "next/navigation";
-
+import { useEffect, useId, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 import { PendingLink } from "@/components/pending-link";
-import {
-  SETTINGS_NAV_GROUP_LABEL,
-  SETTINGS_NAV_GROUP_ORDER,
-  activeSettingsLocation,
-  currentSettingsRailId,
-  isRailLinkClick,
-  type SettingsNavItem,
-} from "@/lib/settings/nav";
-import { focusIsNowhere, focusSettingsHeading, stayFocusTarget } from "./focus-heading";
+import { CONTROL_MIN_TOUCH, cx } from "@/components/ui/control-base";
+import type { OverviewSection } from "@/lib/settings/overview";
+import { focusIsNowhere, focusSettingsHeading } from "./focus-heading";
 import { HashRedirect } from "./hash-redirect";
 import { UnsavedChangesProvider } from "./unsaved-changes";
-
-// The Settings shell (settings redesign, WS-B): back-to-app header, a left rail
-// of expandable categories with indented subsections and an active marker, a
-// breadcrumb, and a drawer for narrow screens. The rail's entries arrive already
-// filtered for the signed-in role by the server layout; this component only
-// presents them. It never decides who may see anything.
+import { SettingsDirectory } from "./settings-directory";
+import { SettingIcon } from "./setting-icon";
 
 type Props = {
-  items: ReadonlyArray<SettingsNavItem>;
-  /** Entries the role may open by URL but whose rail entry is hidden (waitlist). Listed, selected, only while on their route. */
-  reachable?: ReadonlyArray<SettingsNavItem>;
-  account: { name: string; roleLabel: string };
+  showSetupReturn?: boolean;
+  sections: OverviewSection[];
+  reachable?: { label: string; href: string }[];
+  studioName: string;
+  roleLabel: string;
   children: ReactNode;
 };
 
-// ONE look for every ordinary rail item (links and group buttons alike): the
-// same colour and weight. A group is told apart by its chevron, never by darker
-// or bolder text. ONLY the current page takes ITEM_ACTIVE (a filled row plus an
-// accent bar); hover is a lighter wash with no bar, so it never reads as
-// selected, and an expanded group has no fill at all.
-const ITEM_BASE =
-  "relative block rounded-md px-3 py-2 text-sm font-normal transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900 dark:focus-visible:outline-neutral-100";
-const ITEM_IDLE =
-  "text-neutral-700 hover:bg-neutral-50 hover:text-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-900 dark:hover:text-neutral-100";
-// An EXPANDED group (the parent of the page being viewed) is quieter than the
-// selected page: its text and chevron darken, and that is all. It never takes a
-// fill, an accent bar, a heavier weight or aria-current, so it cannot be mistaken
-// for the one selected page. A flat entry has no parent styling at all.
-const ITEM_PARENT_OPEN =
-  "text-neutral-900 hover:bg-neutral-50 dark:text-neutral-100 dark:hover:bg-neutral-900";
-const ITEM_ACTIVE =
-  "bg-neutral-100 font-medium text-neutral-900 before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-neutral-900 dark:bg-neutral-800 dark:text-neutral-100 dark:before:bg-neutral-100";
+const navItem = "flex min-h-11 items-center gap-2.5 rounded-md px-2.5 py-2 text-sm hover:bg-surface-sunken focus-visible:outline-2";
+const selected = "border-l-2 border-fg bg-surface-sunken font-medium";
+const shellControl = cx(CONTROL_MIN_TOUCH, "min-w-[44px] pointer-fine:min-h-10");
 
-export function SettingsShell({ items: railItems, reachable = [], account, children }: Props) {
+export function SettingsShell({ sections, reachable = [], studioName, roleLabel, showSetupReturn = false, children }: Props) {
   const pathname = usePathname() ?? "";
-  // A reachable entry joins the rail only while its own route is open, so that
-  // page has exactly one current item and its breadcrumb; it is never listed
-  // otherwise.
-  const reachableHere = reachable.filter(
-    (r) => pathname === r.href || pathname.startsWith(`${r.href}/`),
-  );
-  const items = [...railItems, ...reachableHere];
-  const location = activeSettingsLocation(items, pathname);
-  const activeItem = location?.item ?? null;
-  const currentId = currentSettingsRailId(items, pathname);
-  const activeChild = location?.child ?? null;
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  // The sticky title bar and rail sit directly under the app header. Its height
-  // is not a constant (the nav row, a wrapped account name), so it is measured
-  // and handed down as --settings-top; 4.5rem is the first-paint fallback.
-  const [headerPx, setHeaderPx] = useState<number | null>(null);
-  // The space BELOW the layout grid (main's bottom padding and the app footer). A
-  // sticky rail may not be taller than the viewport minus its top offset minus
-  // this tail, or sticky pushes it up out of view at the end of the page.
-  const [tailPx, setTailPx] = useState<number | null>(null);
+  const query = useSearchParams()?.toString() ?? "";
+  const reachableHere = reachable.find(link => pathname === link.href || pathname.startsWith(link.href + "/"));
   const grid = useRef<HTMLDivElement>(null);
-  const topVar: CSSProperties | undefined =
-    headerPx === null && tailPx === null
-      ? undefined
-      : ({
-          ...(headerPx === null ? {} : { "--settings-top": `${headerPx}px` }),
-          ...(tailPx === null ? {} : { "--settings-tail": `${tailPx}px` }),
-        } as CSSProperties);
-  // Exactly one group is open (R2): opening another closes the previous. Opening
-  // is only a disclosure; it navigates nowhere and unmounts nothing, so it can
-  // never discard unsaved edits (a link click out of the page is what the
-  // unsaved-changes guard intercepts). Navigating re-opens the active group.
-  const [openId, setOpenId] = useState<string | null>(activeItem?.id ?? null);
-  const menuButton = useRef<HTMLButtonElement>(null);
-  const rail = useRef<HTMLElement>(null);
+  const isOverview = pathname === "/settings";
+  const dialogId = useId();
+  const popup = useRef<HTMLDialogElement>(null);
   const content = useRef<HTMLDivElement>(null);
-  const railId = useId();
   const mounted = useRef(false);
+  const [panel, setPanel] = useState<"menu" | "search">("search");
+  const [hash, setHash] = useState("");
+  const [open, setOpen] = useState(false);
+  const opener = useRef<HTMLElement | null>(null);
+  const heldPopup = useRef(false);
+
+  // Search fragments win over the route's ordinary tab when both are available.
+  const section = sections.find(group => group.links.some(link => link.href === pathname + hash)) ??
+    sections.find(group => group.links.some(link => link.href === pathname || pathname.startsWith(link.href + "/")));
+  const current = section?.links.find(link => link.href === pathname + hash) ??
+    section?.links.find(link => link.href === pathname || pathname.startsWith(link.href + "/"));
 
   useEffect(() => {
-    // The app header is the first <header> in the document.
-    const appHeader = document.querySelector<HTMLElement>("header");
-    if (!appHeader) return;
-    const measure = () => {
-      setHeaderPx(Math.ceil(appHeader.getBoundingClientRect().height));
-      const g = grid.current;
-      if (g) {
-        const below =
-          document.documentElement.scrollHeight - (g.getBoundingClientRect().bottom + window.scrollY);
-        setTailPx(Math.max(0, Math.ceil(below)));
-      }
-    };
+    const root = grid.current;
+    const header = document.querySelector("header");
+    if (!root || !header) return;
+    function measure() {
+      if (!root || !header) return;
+      root.style.setProperty("--settings-top", Math.ceil(header.getBoundingClientRect().height) + "px");
+      const tail = document.documentElement.scrollHeight - (root.getBoundingClientRect().bottom + window.scrollY);
+      root.style.setProperty("--settings-tail", Math.max(0, Math.ceil(tail)) + "px");
+    }
     measure();
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(measure);
-    observer.observe(appHeader);
+    observer.observe(header);
     observer.observe(document.body);
     return () => observer.disconnect();
   }, []);
 
+  function openPanel(view: "menu" | "search") {
+    opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setPanel(view);
+    setOpen(true);
+    popup.current?.showModal();
+  }
+
   useEffect(() => {
-    setOpenId(activeItem?.id ?? null);
-  }, [activeItem?.id, activeChild?.id]);
+    if (open && panel === "search") popup.current?.querySelector("input")?.focus();
+  }, [open, panel]);
+
+  useEffect(() => {
+    const update = () => {
+      setHash(window.location.hash);
+      if (popup.current?.open) popup.current.close();
+    };
+    update();
+    window.addEventListener("hashchange", update);
+    return () => window.removeEventListener("hashchange", update);
+  }, [pathname, query]);
+
+  useEffect(() => {
+    const shortcut = (event: KeyboardEvent) => {
+      if (event.key !== "/" || event.altKey || event.ctrlKey || event.metaKey || event.defaultPrevented) return;
+      if ((event.target instanceof Element && event.target.closest("input,textarea,select,[contenteditable=true]")) ||
+          document.querySelector('dialog[open],[aria-modal=true]')) return;
+      event.preventDefault();
+      openPanel("search");
+    };
+    document.addEventListener("keydown", shortcut);
+    return () => document.removeEventListener("keydown", shortcut);
+  }, []);
 
   // A route change closes the drawer and moves keyboard focus to the new view's
   // heading, WITHOUT scrolling (the view opens at its top) and never into a
   // field. Not on first load: that would steal focus from the page.
   useEffect(() => {
-    setDrawerOpen(false);
     if (!mounted.current) {
       mounted.current = true;
       return;
@@ -151,295 +133,98 @@ export function SettingsShell({ items: railItems, reachable = [], account, child
     };
   }, [pathname]);
 
-  // A keyboard activation or a browser hash navigation can change the URL
-  // without a pathname change: close the drawer on that too.
-  useEffect(() => {
-    const close = () => setDrawerOpen(false);
-    window.addEventListener("hashchange", close);
-    return () => window.removeEventListener("hashchange", close);
-  }, []);
-
-  // Drawer: Escape closes, focus moves in on open and back to the button on close.
-  useEffect(() => {
-    if (!drawerOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setDrawerOpen(false);
-        menuButton.current?.focus();
+  function followLink(event: MouseEvent) {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const anchor = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a[href]") : null;
+    if (!anchor?.closest("nav,dialog")) return;
+    if (anchor.pathname === pathname && anchor.search === window.location.search) {
+      if (popup.current?.open) popup.current.close();
+      setHash(anchor.hash);
+      if (!anchor.hash) {
+        requestAnimationFrame(() => focusSettingsHeading(content.current, document.activeElement));
       }
-    };
-    document.addEventListener("keydown", onKey);
-    rail.current?.querySelector<HTMLElement>("nav a, nav button")?.focus();
-    return () => document.removeEventListener("keydown", onKey);
-  }, [drawerOpen]);
+    }
+  }
 
-  // "Stay" on the unsaved-changes dialog. Whether the drawer was open is read
-  // when the dialog appears (a held click from page content leaves it shut). Only
-  // an open drawer is closed, and focus goes back to the Menu button because the
-  // rail link that held it is about to be hidden; otherwise focus returns to the
-  // held anchor, wherever it was.
-  const drawerOpenRef = useRef(false);
-  drawerOpenRef.current = drawerOpen;
-  const drawerWasOpen = useRef(false);
-  const rememberDrawer = () => {
-    drawerWasOpen.current = drawerOpenRef.current;
-  };
-  const stayOnPage = (anchor: HTMLAnchorElement | null) => {
-    const target = stayFocusTarget({
-      drawerWasOpen: drawerWasOpen.current,
-      isDesktop: window.matchMedia("(min-width: 700px)").matches,
-    });
-    if (target === "menu") setDrawerOpen(false);
-    // Two frames: the dialog restores focus to its trigger first.
-    window.requestAnimationFrame(() =>
-      window.requestAnimationFrame(() => {
-        if (target === "menu") menuButton.current?.focus();
-        else if (anchor?.isConnected) anchor.focus({ preventScroll: true });
-      }),
+  function categoryLinks(location: "sidebar" | "menu") {
+    return (
+      <nav aria-label="Settings categories" className="space-y-0.5">
+        <PendingLink pendingLabel="Loading settings…" href="/settings" aria-current={isOverview ? "page" : undefined} className={navItem + (isOverview ? " " + selected : "")}>
+          <span className="flex items-center gap-2.5"><SettingIcon name="Settings overview" />Settings overview</span>
+        </PendingLink>
+        {["Studio settings", "Personal settings"].map(scope => {
+          const groups = sections.filter(group => (scope === "Personal settings") === (group.name === "My profile"));
+          return groups.length ? <div key={scope} role="group" aria-labelledby={dialogId + location + scope.replace(" ", "-")}>
+            <p id={dialogId + location + scope.replace(" ", "-")} className="px-2.5 pt-4 pb-1.5 text-xs font-semibold tracking-wide text-fg-muted">{scope}</p>
+            {groups.map(group => <PendingLink pendingLabel="Loading settings…" key={group.name} href={group.links[0].href}
+              aria-current={section === group ? "location" : undefined}
+              className={navItem + (section === group ? " " + selected : "")}>
+              <span className="flex items-center gap-2.5"><SettingIcon name={group.name} />{group.name}</span>
+            </PendingLink>)}
+          </div> : null;
+        })}
+        {reachableHere && <PendingLink pendingLabel="Loading settings…" href={reachableHere.href} aria-current="page" className={navItem + " " + selected}>{reachableHere.label}</PendingLink>}
+      </nav>
     );
-  };
-
-  const groups = SETTINGS_NAV_GROUP_ORDER.map((group) => ({
-    group,
-    entries: items.filter((i) => i.group === group),
-  })).filter((g) => g.entries.length > 0);
+  }
 
   return (
-    <UnsavedChangesProvider onHold={rememberDrawer} onStay={stayOnPage}>
-      <HashRedirect />
-      {/* Desktop: ONE grid. The rail takes the whole left column from the first row,
-          so it starts directly under the app header (not under the Settings title
-          row) and fits the viewport with no window scroll; the title row and the
-          view sit in the right column. */}
-      <div ref={grid} className="flex flex-col gap-6 min-[700px]:grid min-[700px]:grid-cols-[245px_minmax(0,1fr)] min-[700px]:grid-rows-[auto_minmax(0,1fr)] min-[700px]:items-start min-[700px]:gap-x-10 min-[700px]:gap-y-4"
-        style={topVar}>
-        {/* Sticky so the menu is reachable without scrolling back to the top. */}
-        <header className="sticky top-[var(--settings-top,4.5rem)] z-20 -mx-4 flex items-center gap-3 bg-white px-4 py-2 min-[700px]:static min-[700px]:col-start-2 min-[700px]:row-start-1 min-[700px]:mx-0 min-[700px]:bg-transparent min-[700px]:p-0 dark:bg-neutral-950">
-          <PendingLink
-            href="/dashboard"
-            pendingLabel="Loading…"
-            aria-label="Back to Hone"
-            className="rounded-md p-2 text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
-          >
-            <span aria-hidden>←</span>
-          </PendingLink>
-          <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
-          <button
-            ref={menuButton}
-            type="button"
-            aria-expanded={drawerOpen}
-            aria-controls={railId}
-            aria-label="Settings menu"
-            onClick={() => setDrawerOpen((v) => !v)}
-            className="ml-auto rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium min-[700px]:hidden dark:border-neutral-700"
-          >
-            <span aria-hidden>☰</span> Menu
-          </button>
-        </header>
-
-          {drawerOpen && (
-            <button
-              type="button"
-              aria-label="Close settings menu"
-              tabIndex={-1}
-              onClick={() => setDrawerOpen(false)}
-              className="fixed inset-x-0 bottom-0 top-[var(--settings-top,4.5rem)] z-30 bg-black/40 min-[700px]:hidden"
-            />
-          )}
-          <aside
-            id={railId}
-            ref={rail}
-            aria-label="Settings navigation"
-            className={`${
-              drawerOpen
-                ? "fixed bottom-0 left-0 top-[var(--settings-top,4.5rem)] z-40 w-72 overflow-y-auto overscroll-contain bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-xl dark:bg-neutral-950"
-                : "hidden"
-            } min-[700px]:sticky min-[700px]:top-[calc(var(--settings-top,4.5rem)+0.75rem)] min-[700px]:z-auto min-[700px]:col-start-1 min-[700px]:row-span-2 min-[700px]:row-start-1 min-[700px]:block min-[700px]:max-h-[calc(100vh_-_var(--settings-top,4.5rem)_-_var(--settings-tail,4.5rem)_-_1rem)] min-[700px]:w-auto min-[700px]:overflow-y-auto min-[700px]:bg-transparent min-[700px]:p-0 min-[700px]:shadow-none`}
-          >
-            <button
-              type="button"
-              onClick={() => {
-                setDrawerOpen(false);
-                menuButton.current?.focus();
-              }}
-              className="mb-2 rounded-md px-3 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900 min-[700px]:hidden dark:text-neutral-300 dark:hover:bg-neutral-900"
-            >
-              <span aria-hidden>✕</span> Close menu
-            </button>
-            <nav
-              aria-label="Settings sections"
-              className="flex flex-col gap-1"
-              onClick={(e) => {
-                const target = e.target as Element | null;
-                if (!isRailLinkClick(target)) return;
-                setDrawerOpen(false);
-                // Choosing the view already open changes no pathname, so the
-                // route effect never runs: move focus to its heading here, or it
-                // falls to <body> when the drawer hides.
-                const anchor = target?.closest?.("a[href]") as HTMLAnchorElement | null;
-                if (anchor && anchor.pathname === pathname) {
-                  focusSettingsHeading(content.current, document.activeElement);
-                }
-              }}
-            >
-              {groups.map(({ group, entries }, groupIndex) => (
-                <div
-                  key={group}
-                  role="group"
-                  aria-labelledby={SETTINGS_NAV_GROUP_LABEL[group] ? `${railId}-cat-${group}` : undefined}
-                  className={`flex flex-col gap-1 ${
-                    groupIndex > 0
-                      ? "mt-2 border-t border-neutral-200 pt-3 dark:border-neutral-800"
-                      : ""
-                  }`}
-                >
-                  {SETTINGS_NAV_GROUP_LABEL[group] && (
-                    // A category heading, not a control: small caps, muted, no
-                    // hover, not focusable.
-                    <p
-                      id={`${railId}-cat-${group}`}
-                      className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-500 dark:text-neutral-400"
-                    >
-                      {SETTINGS_NAV_GROUP_LABEL[group]}
-                    </p>
-                  )}
-                  {entries.map((entry) => {
-                    if (entry.children.length === 0) {
-                      const isCurrent = currentId === entry.id;
-                      return (
-                        <PendingLink
-                          key={entry.id}
-                          href={entry.href}
-                          pendingLabel="Loading settings…"
-                          aria-current={isCurrent ? "page" : undefined}
-                          data-rail-item={entry.id}
-                          data-rail-kind="flat"
-                          data-rail-state={isCurrent ? "selected" : "idle"}
-                          className={`${ITEM_BASE} ${isCurrent ? ITEM_ACTIVE : ITEM_IDLE}`}
-                        >
-                          {entry.label}
-                        </PendingLink>
-                      );
-                    }
-                    const open = openId === entry.id;
-                    const listId = `${railId}-${entry.id}`;
-                    return (
-                      <div key={entry.id}>
-                        {/* A group is a disclosure button with a chevron. Its text is
-                            the same colour and weight as every other item and it
-                            never takes the selected look, open or not. */}
-                        <button
-                          type="button"
-                          aria-expanded={open}
-                          aria-controls={listId}
-                          onClick={() => setOpenId(open ? null : entry.id)}
-                          data-rail-item={entry.id}
-                          data-rail-kind="group"
-                          data-rail-state={open ? "expanded" : "collapsed"}
-                          className={`${ITEM_BASE} ${open ? ITEM_PARENT_OPEN : ITEM_IDLE} flex w-full items-center justify-between text-left`}
-                        >
-                          <span>{entry.label}</span>
-                          <svg
-                            aria-hidden
-                            viewBox="0 0 16 16"
-                            className={`h-4 w-4 shrink-0 transition-transform ${
-                              open
-                                ? "rotate-90 text-neutral-900 dark:text-neutral-100"
-                                : "text-neutral-500 dark:text-neutral-400"
-                            }`}
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="1.5"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          >
-                            <path d="M6 3.5 10.5 8 6 12.5" />
-                          </svg>
-                        </button>
-                        {open && (
-                          <ul
-                            id={listId}
-                            className="ml-3 mt-1 flex flex-col gap-0.5 border-l border-neutral-200 pl-2 dark:border-neutral-800"
-                          >
-                            {entry.children.map((child) => {
-                              const childActive = currentId === child.id;
-                              return (
-                                <li key={child.id}>
-                                  <PendingLink
-                                    href={child.href}
-                                    pendingLabel="Loading settings…"
-                                    aria-current={childActive ? "page" : undefined}
-                                    data-rail-item={child.id}
-                                    data-rail-kind="child"
-                                    data-rail-state={childActive ? "selected" : "idle"}
-                                    className={`${ITEM_BASE} ${childActive ? ITEM_ACTIVE : ITEM_IDLE}`}
-                                  >
-                                    {child.label}
-                                  </PendingLink>
-                                </li>
-                              );
-                            })}
-                          </ul>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              ))}
-            </nav>
-            <div className="mt-6 border-t border-neutral-200 px-3 pt-4 text-sm dark:border-neutral-800">
-              <p className="truncate font-medium text-neutral-900 dark:text-neutral-100">
-                {account.name}
-              </p>
-              <p className="text-neutral-500 dark:text-neutral-400">
-                {account.roleLabel}
-              </p>
-            </div>
-          </aside>
-
-          {/* ONE heading-to-content rhythm: a view's root stacks at gap-8 (2rem) and the
-              element after its heading block is pulled up 1.5rem, so every view has
-              0.5rem between the heading block and its first content box. */}
-          <div
-            ref={content}
-            className="min-w-0 min-[700px]:col-start-2 min-[700px]:row-start-2 [&>*>header[data-view-head]:first-child+*]:-mt-6"
-          >
-            {!activeItem && (
-              // A route that is not in this role's rail (an owner-only page opened
-              // by a practitioner): nothing is current, because nothing here is
-              // theirs to select, and the page itself states the refusal.
-              <nav
-                aria-label="Breadcrumb"
-                className="mb-4 text-xs text-neutral-500 dark:text-neutral-400"
-              >
-                <ol className="flex flex-wrap items-center gap-1.5">
-                  <li aria-current="page">Settings</li>
-                </ol>
-              </nav>
-            )}
-            {activeItem && (
-              <nav
-                aria-label="Breadcrumb"
-                className="mb-4 text-xs text-neutral-500 dark:text-neutral-400"
-              >
-                <ol className="flex flex-wrap items-center gap-1.5">
-                  <li>Settings</li>
-                  <li aria-hidden>/</li>
-                  <li aria-current={activeChild ? undefined : "page"}>
-                    {activeItem.label}
-                  </li>
-                  {activeChild && (
-                    <>
-                      <li aria-hidden>/</li>
-                      <li aria-current="page">{activeChild.label}</li>
-                    </>
-                  )}
-                </ol>
-              </nav>
-            )}
-            {children}
+    <div ref={grid} data-settings-screen="" onClickCapture={followLink} className="grid min-w-0 gap-5 min-[911px]:grid-cols-[12rem_minmax(0,1fr)] min-[911px]:gap-6">
+      <UnsavedChangesProvider onHold={() => {
+        heldPopup.current = Boolean(popup.current?.open);
+        if (heldPopup.current) popup.current?.close();
+      }} onStay={anchor => {
+        const target = heldPopup.current ? opener.current : anchor;
+        requestAnimationFrame(() => target?.focus({ preventScroll: true }));
+      }}>
+        <HashRedirect />
+        <aside aria-label="Settings navigation" className="hidden min-w-0 self-start border-r border-line pr-3 min-[911px]:sticky min-[911px]:top-[calc(var(--settings-top,4.5rem)_+_.75rem)] min-[911px]:block min-[911px]:max-h-[calc(100dvh_-_var(--settings-top,4.5rem)_-_var(--settings-tail,4.5rem)_-_1rem)] min-[911px]:overflow-y-auto">
+          <div className="mb-4 flex items-center gap-3 border-b border-line pb-4">
+            <span aria-hidden className="grid size-9 shrink-0 place-items-center rounded-lg bg-fg font-semibold text-white">{studioName.trim().slice(0,1)}</span>
+            <div className="min-w-0"><p className="break-words text-sm font-semibold">{studioName}</p><p className="text-xs text-fg-muted">{roleLabel} workspace</p></div>
           </div>
-      </div>
-    </UnsavedChangesProvider>
+          {categoryLinks("sidebar")}
+        </aside>
+        <div ref={content} className="min-w-0 space-y-4 [&>*>header[data-view-head]:first-child+*]:-mt-6">
+          {!isOverview && <h1 className="sr-only">Settings</h1>}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-2 text-sm text-fg-muted">
+              <PendingLink pendingLabel="Loading settings…" href="/settings" className="hover:underline">Settings</PendingLink>
+              <span aria-hidden>/</span><span>{isOverview ? "Studio workspace" : section?.name ?? reachableHere?.label ?? "Settings"}</span>
+            </nav>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" aria-label="Settings menu" aria-haspopup="dialog" aria-controls={dialogId} aria-expanded={open && panel === "menu"} onClick={() => openPanel("menu")} className={cx(shellControl, "rounded-md border border-line-strong px-3 text-sm min-[911px]:hidden")}>Settings menu</button>
+              <button type="button" aria-haspopup="dialog" aria-controls={dialogId} aria-expanded={open && panel === "search"} onClick={() => openPanel("search")} className={cx(shellControl, "gap-2 rounded-md border border-line-strong px-3 text-sm hover:bg-surface-sunken")}>
+                <SettingIcon name="Search" /> Find a setting <kbd aria-hidden className="hidden text-fg-muted sm:block">/</kbd>
+              </button>
+            </div>
+          </div>
+          {section && !isOverview && <nav aria-label="Settings sections" className="flex flex-wrap gap-x-1 border-b border-line">
+            {section.links.map(link => <PendingLink pendingLabel="Loading settings…" key={link.href} href={link.href}
+              aria-current={link === current ? "page" : undefined}
+              className={cx(shellControl, "rounded-t-md border-b-2 px-2.5 text-sm hover:bg-surface-sunken",
+                link === current ? "border-fg bg-surface-sunken font-medium" : "border-transparent text-fg-muted")}>
+              {link.label}
+            </PendingLink>)}
+          </nav>}
+          {showSetupReturn && (
+            <PendingLink href="/dashboard?setup=resume" prefetch={false} className="mb-4 inline-flex min-h-11 items-center text-sm font-medium underline underline-offset-4">
+              Return to studio setup
+            </PendingLink>
+          )}
+          {children}
+        </div>
+        <dialog id={dialogId} ref={popup} aria-label={panel === "search" ? "Find a setting" : "Settings menu"} onClose={() => setOpen(false)}
+          className="fixed inset-0 m-auto max-h-[80dvh] w-[min(32rem,calc(100%_-_2rem))] overflow-y-auto rounded-xl border border-line bg-surface p-5 text-fg shadow-xl backdrop:bg-black/30">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold">{panel === "search" ? "Find a setting" : "Settings menu"}</h2>
+            <button type="button" onClick={() => popup.current?.close()} className={cx(shellControl, "rounded-md px-2 text-sm hover:bg-surface-sunken")}>Close</button>
+          </div>
+          {open && <div>
+            {panel === "menu" ? categoryLinks("menu") : <SettingsDirectory sections={sections}/>}
+          </div>}
+        </dialog>
+      </UnsavedChangesProvider>
+    </div>
   );
 }

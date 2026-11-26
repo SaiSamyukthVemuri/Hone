@@ -61,7 +61,7 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     ]);
   });
 
-  it("the manifest still maps every spec, and the targeted lane still selects 30", () => {
+  it("maps every spec and preserves the expected targeted selection", () => {
     const mapped = Object.values(BROWSER_GROUPS as Record<string, { specs: string[] }>).flatMap(
       (g) => g.specs,
     );
@@ -249,10 +249,41 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // run (gate OFF; the two dismissal cases skip), each a seeded studio, a magic-link login and a page load: about 45 seconds.
     // Now 52 after merging production into HON-8 (#1350): production's 51 (which counts dashboard-attention-dismissal.spec.ts) plus HON-8's
     // machine-real-3g.spec.ts, which is not in production. The number is the measured count of the merged tree; no group was re-decided.
-    // Now 53: HON-65's dashboard-last-treatment-closed.spec.ts (Last treatment visible on the CLOSED row, owner and practitioner at 1280 and
+    // Production, 53: HON-65's dashboard-last-treatment-closed.spec.ts (Last treatment visible on the CLOSED row, owner and practitioner at 1280 and
     // 390) joined `sessions` with the other Today-roster specs. RECORDED AS A DECISION per the note above. Cost: FOUR executed cases (two
     // roles x two widths), each a seeded studio, a magic-link login and one page load: about 90 seconds.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(53);
+    // Now 54: #1424's calendar-own-first.spec.ts joined `calendar`. RECORDED AS A DECISION per the note above. It is OPT-IN
+    // (CAL_OWN_FIRST_E2E=1) and self-skips in every CI lane, so the cost is listing one skipped file: no added run time. The 12-case
+    // 1280/390 matrix (about 9 minutes with a cold build) is run on demand, not in the targeted lane.
+    // After merging production (which took the count to 54 with calendar-own-first.spec.ts, above): HON-8 adds machine-one-selector.spec.ts (HON-8, one selector for xCell/Junior/Senior, save/reopen, leave guard) joined `sessions`
+    // beside machine-switch-discards-draft.spec.ts. RECORDED AS A DECISION per the note above: it is the only lane its subject can regress in.
+    // Now 56: machine-mode-then-save.spec.ts (HON-8: a mode click then a block save must not conflict with the user's own write; a genuine
+    // second-tab edit still does) joined `sessions`. RECORDED AS A DECISION per the note above. Cost: FOUR executed cases (two models x two), each a
+    // seeded studio, a magic-link login and a few page loads: about 2 minutes.
+    // Now 64: HON-106's notifications-live-bell.spec.ts joined `calendar` (the shell's bell). RECORDED AS A DECISION per the note above. Cost: EIGHT
+    // executed cases, each a seeded studio and a magic-link login: about 5 minutes in the targeted lane.
+    // Now 62 after merging production (production alone: 56): HON-48's six five-user proof specs (hon48-five-user-booking, -moves-blocks, -denial, hon48-tablet-phone-selection,
+    // hon48-returning-client-lookup, hon48-commit-visibility-timing) joined `calendar`. RECORDED AS A DECISION per the note above. Five of the six
+    // are REQUIRED in the calendar lane and no longer self-skip (the self-skip was removed from those five). Only hon48-commit-visibility-timing
+    // stays OPT-IN (HON48_TIMING_E2E=1, the timing rig) and self-skips in every CI lane, so it costs one listed skipped file and no added run time.
+    // 63 with the charting New view spec joining `sessions`. It is OPT-IN (needs the rollout setting set to "all" on the app server) and self-skips in every
+    // CI lane, so, like the HON-48 specs above, the cost is one listed skipped file and no added run time.
+    // The five HON-48 five-user specs above are NO LONGER opt-in: they run in the required calendar lane (18 declarations, 23 cases after the device and size loops
+    // in the tablet and phone spec; about 3 minutes measured on an owned stack). RECORDED AS A DECISION per the note above. The count is unchanged because the files were already listed; only the self-skip went.
+    // hon48-commit-visibility-timing stays opt-in (HON48_TIMING_E2E=1), as do the two day-layout matrices and calendar-own-first.
+    // Now 65 after merging production (production alone: 64): hon48-week-month-per-user.spec.ts joined `calendar` (HON-48: per-practitioner Week and Month, desktop and iPhone width). RECORDED AS A
+    // DECISION per the note above. It is REQUIRED, not opt-in: it runs whenever the calendar group is selected. Its added run time is measured on an
+    // owned stack and recorded in the pull request, not assumed here.
+    // Three required dashboard journeys exercise checkout, rebooking and charting whenever the sessions group runs.
+    expect(specsForGroups(["sessions"])).toContain("dashboard-rebook-chart.spec.ts");
+    // Now 68 after merging production (production alone: 67; dashboard-rebook-chart.spec.ts, above, adds one). The last addition to production was: service-discard-while-saving.spec.ts joined `calendar` (Discard edits is disabled while a service save is in flight; desktop and emulated phone). RECORDED AS A
+    // DECISION per the note above. It is REQUIRED, not opt-in: two cases, each a seeded studio and a login, about 2 minutes on an owned stack.
+    // The receptionist calendar journey runs in the calendar group using the local desk flag.
+    // Now 69 after merging production again (production alone: 68; dashboard-rebook-chart.spec.ts adds one). The last addition to production was: xcell-multiplex-visit.spec.ts, which joined `sessions` (the machine panel inside the settings-block form). RECORDED AS A DECISION per the
+    // note above. It is REQUIRED, not opt-in. Cost, MEASURED on an owned stack: three cases in the chromium project (desktop, a 390px iPhone-sized
+    // emulation, and Save pressed while the pick is pending), each a seeded studio, a magic-link login and one or two saves: about 15-20s each, a minute
+    // in all. The iPhone WebKit case runs only in the non-required `webkit-iphone-visit` project and skips everywhere else.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(69);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {
@@ -318,7 +349,7 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
   it("a full-matrix diff with NO browser groups is planned as the EXTENDED lane", () => {
     // `vitest.config.ts` yields no groups, so `browser_specs` is empty and the
     // shard command runs the WHOLE suite. The workflow treats that as extended
-    // coverage — 4 shards, 18 min — and this planner has to agree, or it tells
+    // coverage — 4 shards, 35 min — and this planner has to agree, or it tells
     // a contributor the targeted lane runs when CI runs the other one.
     const p = plan("vitest.config.ts");
     expect(p.full_matrix_required).toBe(true);
@@ -459,8 +490,10 @@ describe("acceptance case 10 — superseded PR runs are cancelled", () => {
   it("the PR workflow declares a PR-scoped cancelling concurrency group", async () => {
     const { readFileSync } = await import("node:fs");
     const ci = readFileSync(".github/workflows/ci.yml", "utf8");
-    expect(ci).toMatch(/group: hone-pr-ci-\$\{\{ github\.event\.pull_request\.number \|\| github\.ref \}\}/);
-    expect(ci).toMatch(/cancel-in-progress: true/);
+    // CI-PUSH-CONCURRENCY-01: the PR group is keyed on the PR number and cancels; push runs are keyed on the sha and never cancel
+    // (the behavioural proof, with a negative control, is in ci-config.test.ts).
+    expect(ci).toMatch(/group: \$\{\{ github\.event_name == 'pull_request' && format\('hone-pr-ci-\{0\}', github\.event\.pull_request\.number\)/);
+    expect(ci).toMatch(/cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}/);
   });
   it("nightly concurrency stays separate from PR concurrency", async () => {
     const { readFileSync } = await import("node:fs");

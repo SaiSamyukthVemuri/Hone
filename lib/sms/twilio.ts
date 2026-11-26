@@ -367,6 +367,16 @@ export function isStopKeyword(body: string | null | undefined): boolean {
   return STOP_KEYWORDS.has(normalized);
 }
 
+// HELP and INFO are the only other keywords the inbound route answers: a REPLY to the person who wrote in, never a proactive send, and it
+// touches no data. START / UNSTOP are deliberately NOT here: re-subscribing changes consent, which is a separate decision.
+const HELP_KEYWORDS = new Set<string>(["HELP", "INFO"]);
+
+/** True if the whole body (trimmed, upper-cased) is HELP or INFO. Same matching rule as isStopKeyword. */
+export function isHelpKeyword(body: string | null | undefined): boolean {
+  if (typeof body !== "string") return false;
+  return HELP_KEYWORDS.has(body.trim().toUpperCase());
+}
+
 // ---------------------------------------------------------------------------
 // Log masking
 // ---------------------------------------------------------------------------

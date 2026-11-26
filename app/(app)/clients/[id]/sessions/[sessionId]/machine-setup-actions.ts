@@ -1,17 +1,39 @@
 "use server";
 
+import { machineModelLabel, XCELL_ONE_CHOICE_LABEL } from "@/lib/machines/display-name";
+import { revalidatePath } from "next/cache";
+import { readClientLastMachine } from "@/lib/sessions/client-last-machine";
+import { validateClientLastMachine } from "@/lib/machines/client-last-machine";
 import { createClient } from "@/lib/supabase/server";
 import { isAreaOperationId } from "@/lib/machines/area-operation";
 import { SETUP_GROUPS_MOVED } from "@/lib/machines/pending-setup";
 import { recordedGroupsMoved } from "@/lib/machines/setting-groups";
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import {
+  getCurrentPractitionerWithStudio,
+  studioHasLegacyMachineHistory,
+} from "@/lib/supabase/queries";
 import {
   activeModes,
   currentProfile,
   type MachineProfile,
 } from "@/lib/machines/profile-contract";
+import { blockUsesXcellPur, checkIdentityChoice, storedIdentityMatches } from "@/lib/machines/identity-choice";
+import { isCanonicalRetryKey, NON_CANONICAL_KEY_MESSAGE } from "@/lib/machines/retry-key";
+import { guardXcellRollout, submissionReceiptLookup } from "@/lib/machines/xcell-rollout-guard";
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
+import {
+  isMissingCommand,
+  MACHINE_CHOICE_NOT_STORABLE_YET,
+} from "@/lib/machines/save-attempt";
+import {
+  LEGACY_MACHINE_PROFILE_ID,
+  legacyMachineOffer,
+  type LegacyMachineOffer,
+} from "@/lib/machines/legacy-machine";
+import { XCELL_PUR_PROFILE_ID } from "@/lib/machines/xcell-pur";
+import { withholdXcellUnits } from "@/lib/machines/xcell-withhold";
+import { xcellMultiplexRoute, type XcellMultiplexRoute } from "@/lib/machines/xcell-route";
 import {
   restoreSelectionFromRecordedSetup,
   type RestoredSelection,
@@ -56,7 +78,9 @@ import {
   inventoryUnavailable,
   listStudioDevices,
 } from "@/lib/machines/studio-devices";
-import { machinesByIds } from "@/lib/machines/machine-queries";
+import { xcellRegistrationState } from "@/lib/machines/xcell-registration-gate";
+import { readChartingRollout, ROLLOUT_UNAVAILABLE_MESSAGE, xcellRouteDecision } from "@/lib/rollouts/charting-rollout";
+import { listStudioMachines, machinesByIds, recordBlockMachineIdentity } from "@/lib/machines/machine-queries";
 import {
   assertSessionForClient,
   SessionLineageError,
@@ -124,6 +148,8 @@ export type MachineSetupContext = {
   devices: StudioDevice[];
   /** Set when there is nothing to offer and the reason is worth showing. */
   inventoryReason: string | null;
+  /** Set when the platform rollout could not be read for this studio: shown beside the machine choices whether or not the studio has another machine. */
+  rolloutNotice: string | null;
   /** The stored selection, ONLY when it is actually usable for charting. */
   remembered: { deviceId: string; modeKey: string | null } | null;
   /**
@@ -192,18 +218,36 @@ export type MachineSetupContext = {
    */
   suggestedMachine: SuggestedMachine | null;
   /**
+   * THIS CLIENT's most recent machine (their last treatment area's saved identity),
+   * validated against the inventory: a unit the picker would refuse, or a model that
+   * is not the existing workflow, is dropped. It outranks the practitioner's
+   * remembered preference for a NEW area: the previous machine
+   * means this client's last machine, not the practitioner's last pick anywhere.
+   */
+  clientLastMachine: { deviceId: string | null; modeKey: string | null; legacy: boolean } | null;
+  /**
    * The unit and mode the block's LAST SAVED capture used, so a reopened visit
    * comes back as it was saved. Selection only: it is never written to the
    * remembered default. Null when there is no block or the rule in
    * restore-recorded-selection restores nothing.
    */
   restoredSelection: RestoredSelection | null;
+  /**
+   * The existing charting workflow as a choice in the one selector, offered
+   * ONLY where this studio has that workflow's history (a treatment area with
+   * a legacy mode, or one already saved as that model). Null for a studio
+   * that has never charted that way; nothing tenant-specific lives in code.
+   */
+  legacyMachine: LegacyMachineOffer | null;
+  /** MultiPlex as a mode of the one xCell choice: the xCell Pur unit to route it through, or null (nothing changes). */
+  multiplexRoute: XcellMultiplexRoute | null;
 };
 
 const ANONYMOUS: MachineSetupContext = {
   scope: null,
   devices: [],
   inventoryReason: null,
+  rolloutNotice: null,
   remembered: null,
   rememberedUnavailable: null,
   persistence: NO_PERSISTENCE,
@@ -215,7 +259,10 @@ const ANONYMOUS: MachineSetupContext = {
   recordedSetupUnavailable: false,
   unitNames: {},
   suggestedMachine: null,
+  clientLastMachine: null,
   restoredSelection: null,
+  legacyMachine: null,
+  multiplexRoute: null,
 };
 
 /** Everything the panel needs, derived entirely on the server. */
@@ -410,6 +457,72 @@ export async function loadMachineSetupContext(input: {
     catalogue,
   });
 
+  // OFFERED FROM THE STUDIO'S OWN HISTORY (read in lib/supabase/queries, as
+  // this module reads no clinical table itself). A failed read offers nothing.
+  let legacyMachine: LegacyMachineOffer | null = null;
+  try {
+    if (await studioHasLegacyMachineHistory(scope.studioId, LEGACY_MACHINE_PROFILE_ID)) {
+      legacyMachine = legacyMachineOffer(catalogue);
+    }
+  } catch {
+    legacyMachine = null;
+  }
+
+  // MULTIPLEX AS A MODE OF THE ONE xCELL CHOICE (HON-71). A route only where the existing choice is offered, the contract row is
+  // PUBLISHED and the studio has a usable unit; a failed read means no route, and the studio's form is exactly what it was.
+  let multiplexRoute: XcellMultiplexRoute | null = null;
+  // PLATFORM ROLLOUT. Only a studio that is OFFERED the legacy xCell choice has anything to gate, so the rollout and
+  // the existing-block read happen ONLY then: a studio with no xCell history makes no rollout read and keeps its own reason, so a rollout
+  // outage (or a deploy ahead of the migration) cannot degrade machine setup for every studio. An EXISTING MultiPlex block keeps its route
+  // whatever the rollout says. For a new setup: on = offer, off = no route, and a FAILED read must NOT degrade (that would save a new setup
+  // under the legacy machine): the context refuses retryably.
+  let rolloutUnavailable = false;
+  let rolloutOff = false;
+  // THE ROLLOUT IS READ FOR A STUDIO THAT HAS THE xCELL IN ANY FORM: legacy xCell history OR a live registered xCell Pur unit. A studio with neither
+  // makes no read (an outage cannot touch it). Only pilot studios register a unit, so the extra reads stay few. Without this, a studio that registered
+  // a unit during the pilot kept starting new MultiPlex setups after the rollout was turned Off.
+  const hasLiveXcellUnit = inventory.devices.some((d) => d.profileId === XCELL_PUR_PROFILE_ID && d.retiredAt === null);
+  if (legacyMachine || hasLiveXcellUnit) {
+    const existingUsesXcellPur = input.blockId ? await blockUsesXcellPur(db, input.blockId, input.sessionId) : false;
+    const rollout = existingUsesXcellPur ? "on" : await readChartingRollout(scope.studioId);
+    const routeDecision = xcellRouteDecision({ existingBlockUsesXcellPur: existingUsesXcellPur, rollout });
+    if (routeDecision === "refuse") {
+      // WITHHOLD the legacy xCell offer too: with it on screen a new setup could be saved under the legacy machine, which may be the wrong
+      // machine on a clinical record. Nothing is lost: an existing block keeps its route, and a retry reads the rollout again.
+      legacyMachine = null;
+      rolloutUnavailable = true;
+    } else if (routeDecision === "hide") {
+      rolloutOff = true;
+    } else if (routeDecision === "offer" && legacyMachine) {
+      try {
+        const purProfile = currentProfile(catalogue, XCELL_PUR_PROFILE_ID);
+        const published = purProfile ? await publishedModesFor(db, purProfile.profileId, purProfile.version) : null;
+        multiplexRoute = xcellMultiplexRoute({
+          legacyOffered: true,
+          catalogue,
+          devices: inventory.devices,
+          publishedModes: published && published.ok ? published.value : null,
+        });
+      } catch {
+        multiplexRoute = null;
+      }
+    }
+  }
+
+  // THE CLIENT'S OWN LAST MACHINE, validated like any other choice.
+  let clientLastMachine: MachineSetupContext["clientLastMachine"] = null;
+  try {
+    clientLastMachine = validateClientLastMachine({
+      last: await readClientLastMachine(input.clientId),
+      scope,
+      devices: inventory.devices,
+      catalogue,
+      legacyProfileId: legacyMachine?.profileId ?? null,
+    });
+  } catch {
+    clientLastMachine = null;
+  }
+
   const unitNames: Record<string, string> = {};
   const needNames = [
     ...priorSetup.map((r) => r.deviceId),
@@ -438,11 +551,17 @@ export async function loadMachineSetupContext(input: {
     }
   }
 
+  // WHEN THE ROLLOUT COULD NOT BE READ, THE xCELL UNIT IS WITHHELD WHOLE, not only its legacy-choice wrapper: with the wrapper gone the picker
+  // would list a registered xCell Pur unit as an ordinary machine, and a new setup saved from it would be recorded under the native identity
+  // while it is unknown whether this studio may use it. Every selection that could point at such a unit is withheld with it.
+  const offered = withholdXcellUnits({ rollout: rolloutUnavailable ? "unavailable" : rolloutOff ? "off" : "available", devices: inventory.devices, remembered, suggestedMachine, restoredSelection, clientLastMachine });
+
   return {
     scope,
-    devices: inventory.devices,
-    inventoryReason: inventory.reason,
-    remembered,
+    devices: offered.devices,
+    inventoryReason: rolloutUnavailable ? ROLLOUT_UNAVAILABLE_MESSAGE : inventory.reason,
+    rolloutNotice: rolloutUnavailable ? ROLLOUT_UNAVAILABLE_MESSAGE : null,
+    remembered: offered.remembered,
     rememberedUnavailable,
     persistence,
     catalogue,
@@ -452,10 +571,16 @@ export async function loadMachineSetupContext(input: {
     priorSetupUnavailable,
     recordedSetupUnavailable,
     unitNames,
-    suggestedMachine,
-    restoredSelection,
+    suggestedMachine: offered.suggestedMachine,
+    restoredSelection: offered.restoredSelection,
+    legacyMachine,
+    multiplexRoute,
+    clientLastMachine: offered.clientLastMachine,
   };
 }
+
+const BLOCK_CHANGED_ELSEWHERE =
+  "This settings block was changed elsewhere. Reload the session and re-apply your edit.";
 
 export type ActionResult =
   | { ok: true }
@@ -529,11 +654,129 @@ export async function clearMachineSelectionAction(): Promise<ActionResult> {
 }
 
 /**
+ * SAVE THE MACHINE CHOSEN FOR AN EXISTING TREATMENT AREA (migration 0301).
+ *
+ * This is the saved TREATMENT RECORD, kept apart from the remembered
+ * preference `rememberMachineSelectionAction` writes: one is the truth about
+ * this area, the other only a suggestion for the next one. Studio and actor are
+ * derived in the database; the route's own client and session bind the block.
+ * Either a registered unit (with its mode) or, for the existing xCell
+ * workflow, a model with no unit and no mode.
+ */
+export async function recordBlockMachineIdentityAction(input: {
+  clientId: string;
+  sessionId: string;
+  blockId: string;
+  deviceId: string | null;
+  modeKey: string | null;
+  profileId: string | null;
+  /** The block version the host form is holding (its optimistic-concurrency token). */
+  expectedUpdatedAt?: string | null;
+  /** One key per pick, reused by every retry of it: a write whose answer was lost is answered again from its receipt (0301). */
+  idempotencyKey: string;
+}): Promise<
+  ActionResult & {
+    updatedAt?: string;
+    /** The key matched an earlier write: the version and identity are the ones THAT write produced. */
+    reused?: boolean;
+    identity?: { profileId: string | null; deviceId: string | null; modeKey: string | null };
+  }
+> {
+  const scope = await identity();
+  if (!scope) {
+    return { ok: false, code: "unauthenticated", error: "Sign in to choose a machine." };
+  }
+  // A KEY THAT IS NOT ALREADY CANONICAL IS REFUSED BEFORE ANYTHING IS READ OR SENT (see lib/machines/retry-key.ts): the receipt lookup and the write
+  // must see the very same string.
+  if (!isCanonicalRetryKey(input.idempotencyKey)) {
+    return { ok: false, code: "rejected", error: NON_CANONICAL_KEY_MESSAGE };
+  }
+  const db = await machineDb();
+  // BEFORE ANYTHING IS WRITTEN: the same contract `rememberMachineSelectionAction` enforces.
+  const choice = { deviceId: input.deviceId, modeKey: input.modeKey, profileId: input.profileId };
+  const allowed = await checkIdentityChoice(db, scope, choice);
+  // A REFUSAL MUST NOT STOP THE RETRY OF A WRITE THAT ALREADY COMMITTED. The command answers a repeated
+  // key from its receipt BEFORE it looks at the unit, but this preflight runs first: a unit retired since, or an inventory read that
+  // fails, would otherwise refuse the retry and the caller would drop the key. So the receipt-aware command decides when
+  //   * the unit is merely not available now (retired/unknown/foreign): the command itself refuses those for a NEW write; or
+  //   * the block already stores exactly this choice (the receipt table is readable by no API role; the block is the proof).
+  // An impossible pair for a NEW write is still refused here, and an unreadable inventory is "unknown": the key is kept.
+  let deferredRefusal: string | null = null;
+  if (!allowed.ok) {
+    const alreadyStored = await storedIdentityMatches(db, { blockId: input.blockId, sessionId: input.sessionId }, choice);
+    if (alreadyStored || allowed.reason === "availability") deferredRefusal = allowed.error;
+    else if (allowed.reason === "unreadable") return { ok: false, code: "unknown", error: allowed.error };
+    else return { ok: false, code: "rejected", error: allowed.error };
+  }
+  // THE ROLLOUT, ASKED AGAIN AT WRITE TIME. Only a choice that passed the contract check is assigned a NEW identity here; a deferred
+  // refusal (a unit retired since, or a choice the block already stores) is the receipt-aware command's to answer.
+  if (allowed.ok) {
+    const rolloutOk = await guardXcellRollout(db, {
+      studioId: scope.studioId,
+      unitProfileId: allowed.unitProfileId,
+      deviceId: input.deviceId,
+      blockId: input.blockId,
+      sessionId: input.sessionId,
+      // The identity command's receipt is readable by no API role, so a retry of a save that committed (and was changed since) cannot be
+      // recognised here; the refusal says so instead of claiming nothing was ever saved.
+      receiptUnreadable: true,
+    });
+    if (!rolloutOk.ok) return { ok: false, code: "rejected", error: rolloutOk.error };
+  }
+  try {
+    await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
+    const out = await recordBlockMachineIdentity(db, {
+      blockId: input.blockId,
+      sessionId: input.sessionId,
+      clientId: input.clientId,
+      deviceId: input.deviceId,
+      modeKey: input.modeKey,
+      profileId: input.profileId,
+      // CHECKED INSIDE THE COMMAND'S TRANSACTION, and the new version comes back from
+      // the same UPDATE ... RETURNING: no separate read can race it.
+      expectedUpdatedAt: input.expectedUpdatedAt ?? null,
+      idempotencyKey: input.idempotencyKey,
+    });
+    if (!out.ok) {
+      if (out.stale) {
+        return { ok: false, code: "rejected", error: BLOCK_CHANGED_ELSEWHERE };
+      }
+      // 0301 not applied yet: say so, never "saved".
+      if (isMissingCommand(out.error)) {
+        return { ok: false, code: "rejected", error: MACHINE_CHOICE_NOT_STORABLE_YET };
+      }
+      // The command refused a NEW write the preflight had deferred to it: say why, in the preflight's own words.
+      if (deferredRefusal !== null && !out.unresolved) {
+        return { ok: false, code: "rejected", error: deferredRefusal };
+      }
+      // UNKNOWN IS NOT REJECTED. With no database answer the write may have committed; "unknown" keeps the
+      // key so the caller can ask again and be answered from the receipt, instead of treating the pick as reverted.
+      return out.unresolved
+        ? { ok: false, code: "unknown", error: "We could not confirm that your machine choice was saved." }
+        : { ok: false, code: "rejected", error: "That machine choice could not be saved for this area." };
+    }
+    // Like Save: a stored pick must reach the session page data, or a reopened editor shows the pre-pick identity.
+    revalidatePath(`/clients/${input.clientId}/sessions/${input.sessionId}`);
+    return {
+      ok: true,
+      reused: out.reused,
+      ...(out.updatedAt ? { updatedAt: out.updatedAt } : {}),
+      ...(out.identity ? { identity: out.identity } : {}),
+    };
+  } catch {
+    // A THROW AFTER THE WRITE WAS SENT SAYS NOTHING ABOUT IT: unknown, not "not saved".
+    return { ok: false, code: "unknown", error: "We could not confirm that your machine choice was saved." };
+  }
+}
+
+/**
  * Register a physical machine. OWNER ONLY, refused in the database.
  *
  * The profile must be one the server's own catalogue offers, so a client cannot
  * register a unit against an unverified or invented profile id.
  */
+const XCELL_ALREADY_REGISTERED = "This studio already has its xCell registered.";
+
 export async function registerMachineAction(input: {
   profileId: string;
   displayName: string;
@@ -564,6 +807,15 @@ export async function registerMachineAction(input: {
       error:
         "That machine model is not offered yet. A model becomes available only after its evidence review.",
     };
+  }
+
+  // ROLLOUT GATE (Sam): only allowlisted studios may register the xCell. The same answer as the listing, enforced here so a forged form
+  // cannot bypass it; the message does not reveal the rollout.
+  if (profile.profileId === XCELL_PUR_PROFILE_ID) {
+    const rollout = await xcellRegistrationState(scope.studioId);
+    // A failed read is NOT "off": say so, retryably, rather than pretend the model does not exist.
+    if (rollout === "error") return { ok: false, code: "unknown", error: ROLLOUT_UNAVAILABLE_MESSAGE };
+    if (rollout !== "on") return { ok: false, code: "rejected", error: "That machine model is not offered yet. A model becomes available only after its evidence review." };
   }
 
   const name = input.displayName.trim();
@@ -606,13 +858,27 @@ export async function registerMachineAction(input: {
       ok: false,
       code: "rejected",
       error:
-        `No published field contract covers ${profile.manufacturer} ${profile.model} ` +
+        `No published field contract covers ${machineModelLabel(profile)} ` +
         `version ${profile.version} (${missing.join(", ")}). A machine cannot be ` +
         `registered until its contract is published, because its settings could ` +
         `not then be recorded.`,
     };
   }
 
+  // ONE xCell (HON-71): a studio has one xCell Pur unit. A second registration is refused with a clear message, and a failed read refuses
+  // too (it cannot be shown that none exists). The owner check itself stays in the database command.
+  if (profile.profileId === XCELL_PUR_PROFILE_ID) {
+    const existing = await listStudioMachines(db, scope.studioId);
+    if (!existing.ok) return { ok: false, code: "rejected", error: existing.error };
+    if (existing.value.some((m) => m.profileId === XCELL_PUR_PROFILE_ID)) {
+      return { ok: false, code: "rejected", error: XCELL_ALREADY_REGISTERED };
+    }
+  }
+
+  // THE xCell'S NAME IS FIXED, so the database's unique name index (studio_machines_studio_display_name_uniq, 0223) is the atomic
+  // one-xCell-per-studio guarantee: two owner tabs that both pass the inventory read above cannot both insert it. (A retired unit keeps
+  // its name reserved, so retiring it is not an undo that frees the name.)
+  const isXcell = profile.profileId === XCELL_PUR_PROFILE_ID;
   const made = await registerStudioMachine(db, {
     studioId: scope.studioId,
     profileId: profile.profileId,
@@ -620,10 +886,14 @@ export async function registerMachineAction(input: {
     // a unit cannot be registered against a contract version that does not
     // exist.
     profileVersion: profile.version,
-    displayName: name,
+    displayName: isXcell ? XCELL_ONE_CHOICE_LABEL : name,
     installedOptions: input.installedOptions ?? [],
   });
-  if (!made.ok) return { ok: false, code: "rejected", error: made.error };
+  if (!made.ok) {
+    // The racing second insert: ONLY the unique name index's violation (SQLSTATE 23505 on that constraint) is the race; any other error passes through. Same message as the read-time refusal.
+    if (isXcell && made.dbCode === "23505" && made.error.includes("studio_machines_studio_display_name_uniq")) return { ok: false, code: "rejected", error: XCELL_ALREADY_REGISTERED };
+    return { ok: false, code: "rejected", error: made.error };
+  }
 
   return { ok: true, machineId: made.value };
 }
@@ -697,6 +967,16 @@ export async function recordReadingsAction(input: {
       error: "That machine is not registered to this studio.",
     };
   }
+  // THE ROLLOUT, ASKED AGAIN AT WRITE TIME: a form opened while the xCell unit was offered can still submit after it was switched Off.
+  // A block that already stores this unit is unaffected. Asked before the readings are validated: a refusal here sends nothing.
+  const rolloutOk = await guardXcellRollout(db, {
+    studioId: scope.studioId,
+    unitProfileId: device.profileId,
+    deviceId: input.machineId,
+    blockId: input.blockId,
+    sessionId: input.sessionId,
+  });
+  if (!rolloutOk.ok) return { ok: false, code: "rejected", error: rolloutOk.error };
 
   // THE CURRENT VERSION (Codex, #860 4308488012): `activeModes` below reads
   // the modes OFF this profile, so a first-match v1 offers a superseded
@@ -829,12 +1109,15 @@ export async function recordSetupSubmissionAction(input: {
    */
   clientId: string;
   sessionId: string;
+  /** The block version the host form holds; see recordBlockMachineIdentityAction. */
+  expectedUpdatedAt?: string | null;
 }): Promise<
   ActionResult & {
     submissionId?: string;
     captures?: number;
     written?: number;
     reused?: boolean;
+    updatedAt?: string;
   }
 > {
   // AN IDENTITY REFUSAL IS DEFINITIVE, NOT UNKNOWN (Codex, #860 4308620487).
@@ -847,6 +1130,11 @@ export async function recordSetupSubmissionAction(input: {
   //
   // THE SAME HELPER AS THE INITIAL WRITE, so the two cannot drift apart the
   // way the previous pair of pre-write-refusal fixes did.
+  // A KEY THAT IS NOT ALREADY CANONICAL IS REFUSED FIRST, before any read or write (lib/machines/retry-key.ts): the receipt lookup and the command
+  // must see the very same string, and nothing is trimmed or rewritten.
+  if (!isCanonicalRetryKey(input.idempotencyKey)) {
+    return { ok: false, code: "rejected", error: NON_CANONICAL_KEY_MESSAGE };
+  }
   const who = await resolveWritingIdentity();
   if (!who.ok) {
     // THE HELPER'S OWN CODE, so `unauthenticated` still reaches the caller as
@@ -912,6 +1200,18 @@ export async function recordSetupSubmissionAction(input: {
       error: "That machine is not registered to this studio.",
     };
   }
+  // THE ROLLOUT, ASKED AGAIN AT WRITE TIME: a form opened while the xCell unit was offered can still submit after it was switched Off.
+  // A block that already stores this unit is unaffected. Asked before the readings are validated: a refusal here sends nothing.
+  const rolloutOk = await guardXcellRollout(db, {
+    studioId: scope.studioId,
+    unitProfileId: device.profileId,
+    deviceId: input.machineId,
+    blockId: input.blockId,
+    sessionId: input.sessionId,
+    // A save carrying a key whose submission already committed is a lost-answer RETRY: the command replays it (or refuses a different payload).
+    receipt: submissionReceiptLookup(() => setupSubmissionExists(db, input.blockId, input.sessionId, input.idempotencyKey)),
+  });
+  if (!rolloutOk.ok) return { ok: false, code: "rejected", error: rolloutOk.error };
 
   // THE CURRENT VERSION (Codex, #860 4308488012): `activeModes` below reads
   // the modes OFF this profile, so a first-match v1 offers a superseded
@@ -1022,7 +1322,11 @@ export async function recordSetupSubmissionAction(input: {
     sessionId: input.sessionId,
     clientId: input.clientId,
     groups,
+    expectedUpdatedAt: input.expectedUpdatedAt ?? null,
   });
+  if (!out.ok && /stale_block_version/.test(out.error)) {
+    return { ok: false, code: "rejected", error: BLOCK_CHANGED_ELSEWHERE };
+  }
   if (!out.ok) {
     // UNKNOWN IS NOT REJECTED. Collapsing the two here would discard the
     // distinction the query just preserved, one layer above it.
@@ -1032,12 +1336,16 @@ export async function recordSetupSubmissionAction(input: {
       error: out.error,
     };
   }
+  // Like the identity write and Save: the submission bumped the block, and a reopened editor must not hold the old version.
+  revalidatePath(`/clients/${input.clientId}/sessions/${input.sessionId}`);
   return {
     ok: true,
     submissionId: out.value.submissionId,
     captures: out.value.groups,
     written: out.value.readings,
     reused: out.value.reused,
+    // From the command's own UPDATE ... RETURNING; none on a replay.
+    ...(out.value.blockUpdatedAt ? { updatedAt: out.value.blockUpdatedAt } : {}),
   };
 }
 
@@ -1050,7 +1358,7 @@ export async function readingsForBlockAction(input: {
   const scope = await identity();
   // NOT SIGNED IN is a FAILURE, not an empty treatment. It reaches the same
   // surface as a failed query and must not read as "nothing recorded".
-  if (!scope) return { ok: false };
+  if (!scope) return { ok: false, refused: "access" };
   // BEYOND THE REPORTED FINDING, and deliberately. Codex named the WRITE
   // path (#860 4297032712), but this read took a bare block id with no
   // lineage check either: the member-scoped SELECT policy admits any block
@@ -1063,7 +1371,14 @@ export async function readingsForBlockAction(input: {
   // nothing about the block, which is exactly the mistake round 8 made here -
   // the check was added, the hole was reported closed, and the read still
   // filtered on an unbound block id (Codex, #860 4298457378).
-  await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
+  // A refused route is a DEFINITIVE refusal: the caller must not keep showing the old readings. A database error inside
+  // the lineage lookup throws the same error, so this fails closed for access in that rare case too.
+  try {
+    await assertSessionForClient(scope.studioId, input.clientId, input.sessionId);
+  } catch (e) {
+    if (e instanceof SessionLineageError) return { ok: false, refused: "unavailable" };
+    throw e;
+  }
   const db = await machineDb();
   // ...and this one binds the BLOCK to that session, in the query.
   const got = await readingsForBlock(db, input.blockId, input.sessionId);
@@ -1083,7 +1398,7 @@ export async function readingsForBlockAction(input: {
   //
   // The caller decides what to do with a failure; this one's job is to stop
   // pretending there was none.
-  if (!got.ok) return { ok: false };
+  if (!got.ok) return got.refused ? { ok: false, refused: got.refused } : { ok: false };
 
   // AND THE UNIT NAMES FOR WHAT CAME BACK (Codex, #860 4301669061).
   //
@@ -1134,7 +1449,12 @@ export type ReadingsRead =
        */
       unitNames: Record<string, string>;
     }
-  | { ok: false };
+  /**
+   * `refused`: the record must not be shown. "access" is a REAL access refusal (not signed in, insufficient privilege). "unavailable"
+   * is a record that cannot be loaded for this route (a transient lineage error, or a block deleted in another tab): neutral wording.
+   * Absent: a failed read that may be transient (the previous readings stay, with a note).
+   */
+  | { ok: false; refused?: "access" | "unavailable" };
 
 /** The profiles a practitioner may pick in this studio right now. */
 export async function listSelectableForCaller(): Promise<

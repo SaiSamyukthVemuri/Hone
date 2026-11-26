@@ -104,13 +104,16 @@ describe("a refused or empty command never reaches the lineage readback or a sid
 });
 
 describe("appointment lineage is refused before the command runs", () => {
+  // HON-54: each refusal is EXPECTED, so it is answered by redirecting to the new-session page with a refusal code (which renders the sentence)
+  // instead of being thrown into the generic error boundary. Nothing is written and the command is never called.
+  const refusedHref = (code: string) => `REDIRECT:/clients/client/sessions/new?appointment_id=${B}&refused=${code}`;
   it.each([
-    ["another studio", { studio_id: "other-studio" }, "Appointment is not in your studio."],
-    ["another client", { client_id: "other-client" }, "Appointment is for a different client."],
-    ["another practitioner", { practitioner_id: "other-practitioner" }, "Appointment is assigned to a different practitioner."],
-  ] as const)("an appointment for %s", async (_name, patch, message) => {
+    ["another studio", { studio_id: "other-studio" }, "appointment_missing"],
+    ["another client", { client_id: "other-client" }, "other_client"],
+    ["another practitioner", { practitioner_id: "other-practitioner" }, "assigned_elsewhere"],
+  ] as const)("an appointment for %s", async (_name, patch, code) => {
     appointment = { ...appointment, ...patch };
-    await expect(startSessionAction(form())).rejects.toThrow(message);
+    await expect(startSessionAction(form())).rejects.toThrow(refusedHref(code));
     expect(runtime.rpc).not.toHaveBeenCalled();
     expectNoSideEffects();
   });
@@ -120,8 +123,39 @@ describe("appointment lineage is refused before the command runs", () => {
       const chain = { select: vi.fn(() => chain), eq: vi.fn(() => chain), maybeSingle: vi.fn(async () => ({ data: null, error: null })) };
       return chain;
     });
-    await expect(startSessionAction(form())).rejects.toThrow("Appointment not found.");
+    await expect(startSessionAction(form())).rejects.toThrow(refusedHref("appointment_missing"));
     expect(runtime.rpc).not.toHaveBeenCalled();
+    expectNoSideEffects();
+  });
+
+  it("another studio's appointment, an unseen one and a nonexistent one redirect to the IDENTICAL url (no existence oracle)", async () => {
+    appointment = { ...appointment, studio_id: "other-studio" };
+    let foreign = "";
+    await startSessionAction(form()).catch((e: Error) => { foreign = e.message; });
+    runtime.from.mockImplementation(() => {
+      const chain = { select: vi.fn(() => chain), eq: vi.fn(() => chain), maybeSingle: vi.fn(async () => ({ data: null, error: null })) };
+      return chain;
+    });
+    let missing = "";
+    await startSessionAction(form()).catch((e: Error) => { missing = e.message; });
+    expect(foreign).toBe(missing);
+    expect(foreign).toBe(refusedHref("appointment_missing"));
+    expect(foreign).not.toMatch(/other-studio|other_studio/);
+  });
+
+  it("a failed lookup is NOT a refusal: it still throws, so an unreadable appointment is never turned into an unlinked chart", async () => {
+    runtime.from.mockImplementation(() => {
+      const chain = { select: vi.fn(() => chain), eq: vi.fn(() => chain), maybeSingle: vi.fn(async () => ({ data: null, error: { code: "XX000", message: "boom" } })) };
+      return chain;
+    });
+    await expect(startSessionAction(form())).rejects.toThrow("Failed to verify appointment");
+    expect(runtime.rpc).not.toHaveBeenCalled();
+    expectNoSideEffects();
+  });
+
+  it("the command re-checks lineage: an assignment that changed after the check answers the same expected refusal", async () => {
+    runtime.rpc.mockResolvedValue({ data: null, error: { code: "P0001", message: "Appointment is assigned to a different practitioner." } });
+    await expect(startSessionAction(form())).rejects.toThrow(refusedHref("assigned_elsewhere"));
     expectNoSideEffects();
   });
 
@@ -145,20 +179,26 @@ describe("a correctly linked B chart completes B only when B is confirmed and ha
     expect(runtime.postcare).not.toHaveBeenCalled();
   });
 
-  it("a failed completion is fail-soft: no postcare, and the chart still opens", async () => {
-    runtime.adminRpc.mockResolvedValue({ error: { code: "P0001", message: "synthetic refusal" } });
-    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  it("HON-45: a PAST CONFIRMED appointment stays confirmed when its chart is started: no completion, no postcare", async () => {
+    // The default appointment here is confirmed and ended in the past, i.e. exactly what PR #180 used to auto-complete.
     await expect(startSessionAction(form())).rejects.toThrow("REDIRECT:/clients/client/sessions/chart");
-    expect(runtime.adminRpc).toHaveBeenCalledTimes(1);
+    expect(runtime.adminRpc).not.toHaveBeenCalled();
     expect(runtime.postcare).not.toHaveBeenCalled();
-    log.mockRestore();
   });
 
-  it("separate appointments get separate charts: B's new chart completes B, never A", async () => {
+  it("separate appointments get separate charts: B's new chart opens and leaves B's status alone", async () => {
     runtime.rpc.mockResolvedValue({ data: [{ session_id: "chart-b", reused: false }], error: null });
     await expect(startSessionAction(form())).rejects.toThrow("REDIRECT:/clients/client/sessions/chart-b");
-    expect(runtime.adminRpc).toHaveBeenCalledTimes(1);
-    expect(runtime.adminRpc).toHaveBeenCalledWith("mark_appointment_complete", expect.objectContaining({ p_appointment_id: B }));
+    expect(runtime.adminRpc).not.toHaveBeenCalled();
     expect(runtime.analytics).toHaveBeenCalledWith(expect.objectContaining({ properties: expect.objectContaining({ is_new_session: true }) }));
+  });
+});
+
+describe("a malformed appointment id", () => {
+  it("is answered as a missing appointment before any lookup, and the id is not echoed", async () => {
+    await expect(startSessionAction(form("../../x?y=1"))).rejects.toThrow("REDIRECT:/clients/client/sessions/new?appointment_id=invalid&refused=appointment_missing");
+    expect(runtime.from).not.toHaveBeenCalled();
+    expect(runtime.rpc).not.toHaveBeenCalled();
+    expectNoSideEffects();
   });
 });

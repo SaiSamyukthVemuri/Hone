@@ -31,6 +31,7 @@ import { marketingMetadata } from "@/lib/marketing/metadata";
 import {
   SELF_SERVE_PRICING_FOOTNOTE,
   getPlanChoices,
+  type PlanChoice,
 } from "@/lib/subscriptions/plan-selection";
 
 // Pricing page, USD (US$), three plans, no artificial feature restrictions, no
@@ -69,43 +70,45 @@ const INCLUDED: string[] = [
   "CSV data export at any time, with a list of what it includes",
 ];
 
-const FAQ: { q: string; a: string }[] = [
-  {
-    q: "How much does Hone cost?",
-    a: "Solo is US$49/month for one practitioner. Studio is US$99/month for up to three practitioners. If your studio has more than three practitioners, contact us. All prices are in US dollars (USD).",
-  },
-  {
-    // NARROWED WITH ITS ANSWER. This asked "...or a contract?" and, once the
-    // contract half of the answer went, the page put a question to the visitor
-    // that it then declined to answer — and published that pairing as
-    // FAQPage structured data. A question is a promise to answer it.
-    q: "Is there a setup fee?",
-    a: "No. Setup is founder-led during onboarding, and you can cancel anytime.",
-  },
-  {
-    q: "What's included on each plan?",
-    a: "Every plan includes the full Hone workflow: booking, intake and consent, charting, treatment memory, photos and records, and client follow-up. Plans differ only by who they are for and how many practitioners they cover.",
-  },
-  {
-    q: "Can I bring my existing client history into Hone?",
-    a: "Yes. Standard client import is free and part of guided onboarding. We help bring history over from paper cards, spreadsheets or another tool.",
-  },
-  {
-    q: "How do payments work?",
-    a: "Hone connects to your own Stripe account, so payments and payouts go directly to you and card details never touch Hone's servers. Payments are enabled during guided onboarding.",
-  },
-  {
-    q: "How does the Studio plan work?",
-    a: "Studio covers up to three practitioners at US$99/month, and Studio setup is completed through guided onboarding. If your studio has more than three practitioners, get in touch and we'll set up a plan that fits.",
-  },
-  {
-    q: "Does Hone replace my other tools?",
-    a: REPLACES_STATEMENT,
-  },
-];
+function pricingFaq(selfServe: boolean) {
+  return [
+    {
+      q: "How much does Hone cost?",
+      a: "Solo is US$49/month for one practitioner. Studio is US$99/month for up to three practitioners. If your studio has more than three practitioners, contact us. All prices are in US dollars (USD).",
+    },
+    {
+      // NARROWED WITH ITS ANSWER. This asked "...or a contract?" and, once the
+      // contract half of the answer went, the page put a question to the visitor
+      // that it then declined to answer — and published that pairing as
+      // FAQPage structured data. A question is a promise to answer it.
+      q: "Is there a setup fee?",
+      a: selfServe ? "There is no setup fee. Choose Solo or Studio to get started." : "No. Setup is founder-led during onboarding, and you can cancel anytime.",
+    },
+    {
+      q: "What's included on each plan?",
+      a: "Every plan includes the full Hone workflow: booking, intake and consent, charting, treatment memory, photos and records, and client follow-up. Plans differ only by who they are for and how many practitioners they cover.",
+    },
+    {
+      q: "Can I bring my existing client history into Hone?",
+      a: "Yes. Standard client import is free and part of guided onboarding. We help bring history over from paper cards, spreadsheets or another tool.",
+    },
+    {
+      q: "How do payments work?",
+      a: "Hone connects to your own Stripe account, so payments and payouts go directly to you and card details never touch Hone's servers. Payments are enabled during guided onboarding.",
+    },
+    {
+      q: "How does the Studio plan work?",
+      a: selfServe ? "Studio is US$99 per month for up to three practitioners, including the owner, plus one receptionist. Choose Studio to sign up. Contact us for a larger team." : "Studio covers up to three practitioners at US$99/month, and Studio setup is completed through guided onboarding. If your studio has more than three practitioners, get in touch and we'll set up a plan that fits.",
+    },
+    {
+      q: "Does Hone replace my other tools?",
+      a: REPLACES_STATEMENT,
+    },
+  ];
+}
 
-function PlanColumn({ plan }: { plan: (typeof PRICING_PLANS)[number] }) {
-  // EVERY PLAN IS RENDERED IDENTICALLY. The emphasised border and shadow were
+function PlanColumn({ plan, choice }: { plan: (typeof PRICING_PLANS)[number]; choice?: PlanChoice }) {
+  // All plans use the same type and spacing.  The emphasised border and shadow were
   // driven by the badge, so one tier appeared recommended by styling alone.
   //
   // A PRICE LIST, NOT THREE CARDS — the same ruled columns the homepage uses,
@@ -124,7 +127,7 @@ function PlanColumn({ plan }: { plan: (typeof PRICING_PLANS)[number] }) {
           <span className="text-[0.9375rem] text-muted"> {plan.cadence}</span>
         ) : null}
       </p>
-      {plan.seats ? (
+      {plan.seats && !choice ? (
         <p className="mt-1 text-[0.9375rem] text-muted">For {plan.seats}</p>
       ) : null}
 
@@ -135,7 +138,14 @@ function PlanColumn({ plan }: { plan: (typeof PRICING_PLANS)[number] }) {
           {plan.transition}
         </p>
       ) : null}
-      {plan.id === "studio" ? (
+      {choice ? (
+        <div className="mt-4">
+          <p className="mb-3 text-sm text-muted">{teamAllowance(choice.plan)}</p>
+          <CTAButton href={choice.href} event={ANALYTICS_EVENTS.pricingPlanViewed}>
+            {choice.label}
+          </CTAButton>
+        </div>
+      ) : plan.id === "studio" ? (
         <p className="mt-3 text-[0.9375rem] leading-[1.55] text-muted">
           Studio setup is completed through guided onboarding.
         </p>
@@ -149,6 +159,7 @@ export default function PricingPage() {
   // leaves every byte of the page below exactly as it was. The flag is read from
   // the deployment env, so flipping it needs a redeploy.
   const planChoices = getPlanChoices(process.env);
+  const FAQ = pricingFaq(planChoices.length > 0);
   return (
     <MarketingSurface>
       <SkipLink />
@@ -185,7 +196,7 @@ export default function PricingPage() {
         <Container className="pb-[var(--mk-section-pad)] pt-[clamp(1.75rem,1rem+2vw,3rem)]">
           <div className="grid grid-cols-1 border-t border-[color:var(--color-hairline-strong)] sm:grid-cols-3">
             {PRICING_PLANS.map((plan) => (
-              <PlanColumn key={plan.id} plan={plan} />
+              <PlanColumn key={plan.id} plan={plan} choice={planChoices.find((c) => c.plan === plan.id)} />
             ))}
           </div>
           {/* A LIST, not a styled sentence, so a screen reader hears four
@@ -205,22 +216,7 @@ export default function PricingPage() {
             guided onboarding; there is no self-service checkout.
           </p>
           ) : (
-            <>
-              <p className="mt-3 text-[0.875rem] text-muted">{SELF_SERVE_PRICING_FOOTNOTE}</p>
-              <ul className="mt-4 flex flex-wrap gap-x-6 gap-y-2">
-                {planChoices.map((c) => (
-                  <li key={c.plan}>
-                    <Link
-                      href={c.href}
-                      className="font-medium text-mineral underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--color-mineral)]"
-                    >
-                      {c.label}
-                    </Link>
-                    <p className="text-sm text-muted">{teamAllowance(c.plan)}</p>
-                  </li>
-                ))}
-              </ul>
-            </>
+            <p className="mt-3 text-[0.875rem] text-muted">{SELF_SERVE_PRICING_FOOTNOTE}</p>
           )}
           <CTAButton
             href={WALKTHROUGH.href}

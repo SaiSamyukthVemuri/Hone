@@ -63,6 +63,9 @@ export async function getSterileItemRecords(
 // inventory the charting form and every historical link resolve through) and
 // getLotTraceability — are DIFFERENT functions and are deliberately left
 // unfiltered. Current inventory is not historical record existence.
+/** The most expiring supplies the dashboard read returns. A list this long may have been cut, so it cannot prove a supply has resolved. */
+export const EXPIRING_SUPPLIES_LIMIT = 50;
+
 export async function getExpiringSterileItems(
   studioId: string,
   todayIso: string,
@@ -84,7 +87,7 @@ export async function getExpiringSterileItems(
     .not("expiry_date", "is", null)
     .lte("expiry_date", horizon)
     .order("expiry_date", { ascending: true })
-    .limit(options.limit ?? 50);
+    .limit(options.limit ?? EXPIRING_SUPPLIES_LIMIT);
   // DAT-002 (the #981 pattern): refuse through the route error boundary.
   // An empty list on a failed read would hide expiring sterile stock.
   if (error) throw new Error("Failed to load expiring supplies");

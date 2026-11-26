@@ -126,10 +126,7 @@ describe("the disclosure is accessible and calm by default", () => {
   });
 
   it("the toggle names the client, so repeated rows are distinguishable", () => {
-    // Twenty rows of "View full last treatment" are indistinguishable to a
-    // screen reader navigating by control.
-    expect(MEMORY_UI).toMatch(/View full last treatment for \$\{clientName\}/);
-    expect(MEMORY_UI).toMatch(/Hide full last treatment for \$\{clientName\}/);
+    expect(MEMORY_UI).toContain('aria-label={`${open ? "Hide last visit details" : "Last visit details"} for ${clientName}`}');
   });
 
   it("the collapsed region is hidden from the accessibility tree, not just visually", () => {
@@ -208,7 +205,7 @@ describe("every #517 field family is reachable from Today", () => {
 //
 //   1. the toggle <button>'s click bubbled to that ancestor link, so one press
 //      both opened the region and pushed a route;
-//   2. once open, the embedded card rendered an <a> ("Open full chart →")
+//   2. once open, the embedded card rendered an <a> ("Open full chart")
 //      inside an <a>, which is invalid HTML with undefined activation.
 //
 // FIX, in two halves, both pinned here:
@@ -320,10 +317,10 @@ describe("D1: the disclosure never navigates away from the Dashboard", () => {
 
   it("the EMBEDDED card carries no full-chart navigation CTA", () => {
     expect(MEMORY_UI).toMatch(/showFullChartLink=\{false\}/);
-    // Both of the card's "Open full chart →" affordances obey the capability —
+    // Both of the card's "Open full chart" affordances obey the capability —
     // the header one and the one in the blockless branch. Neither may be
     // unconditional, or the Dashboard disclosure gets a link out anyway.
-    const cta = [...CARD.matchAll(/Open full chart →/g)];
+    const cta = [...CARD.matchAll(/Open full chart/g)];
     expect(cta.length, "the card has exactly two full-chart affordances").toBe(2);
     for (const m of cta) {
       const preceding = CARD.slice(Math.max(0, m.index! - 400), m.index!);
@@ -445,19 +442,12 @@ describe("the Today row wires it correctly", () => {
     expect(MEMORY_UI).toMatch(/result\.status === "none"/);
   });
 
-  it("does not repeat the plan note that the row already shows as 'Remember'", () => {
-    // sessions.next_session_note feeds BOTH the row's Remember line and the
-    // model's forNextVisit. Printing one note twice under two labels is a bug
-    // this row has already had once.
+  it("renders the immediate plan once on the roster, outside the historical treatment", () => {
+    const row = DASH.slice(DASH.indexOf("function AppointmentRow("), DASH.indexOf("function AppointmentStatusPill("));
+    expect(row.match(/data-testid="dashboard-prep-remember"/g)).toHaveLength(1);
+    expect(row).toContain("{prepSummary.remember && (");
+    expect(row).not.toContain("{workflow.remember}");
     expect(MEMORY_UI_CODE).not.toMatch(/For next visit/);
-    // …and the reason is recorded where the next reader will look: the page
-    // prints the plan note ONLY off Today, where the Before-Today "Remember"
-    // line does not run.
-    const DASH_CODE = DASH.replace(/\/\*[\s\S]*?\*\//g, "").replace(
-      /^\s*\/\/.*$/gm,
-      "",
-    );
-    expect(DASH_CODE).toMatch(/\{!workflow && prepSummary\.remember && \(/);
   });
 
   it("writes nothing and touches no appointment mutation surface", () => {

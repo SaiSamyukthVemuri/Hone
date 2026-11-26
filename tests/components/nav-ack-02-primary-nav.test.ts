@@ -1,3 +1,4 @@
+import { WAITLIST_PATH } from "@/lib/waitlist/paths";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -34,7 +35,11 @@ const read = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
 
 const LAYOUT = "app/(app)/layout.tsx";
 const NAVLINK = "app/(app)/PrimaryNavLink.tsx";
-const raw = read(LAYOUT);
+// Step 0 of the HON-40 shell contract moved the bell and the header cluster out of layout.tsx verbatim: the shell is the three files.
+// The bell is its own client LEAF since HON-106 (it reads the live count from NotificationsProvider); the shell proper is the layout and the header cluster.
+const BELL = read("app/(app)/NotificationsBell.tsx");
+const raw = read(LAYOUT) + "\n" + read("app/(app)/HeaderCluster.tsx") + "\n" + BELL;
+const shellRaw = read(LAYOUT) + "\n" + read("app/(app)/HeaderCluster.tsx");
 
 // The shell DISCUSSES `PendingLink`, `relative` and the rejected label form by
 // name when explaining why the bell differs. Prose must not satisfy or trip a
@@ -56,14 +61,15 @@ const codeOnly = (source: string) =>
 const code = codeOnly(raw);
 const navCode = codeOnly(read(NAVLINK));
 
-/** The seven anchors, and the form each one must take. */
+/** The seven anchors (one of them conditional; Business is the BusinessMenu leaf, pinned below), and the form each one must take. */
 const ANCHORS = [
   { testId: "nav-wordmark", href: "/dashboard", form: "label", attr: "data-testid" },
   { testId: "nav-dashboard", href: "/dashboard", form: "label", attr: "testId" },
   { testId: "nav-clients", href: "/clients", form: "label", attr: "testId" },
   { testId: "nav-calendar", href: "/calendar", form: "label", attr: "testId" },
+  // Rendered only where the Settings Waitlist tab's own rule allows it; still one acknowledging anchor in the source.
+  { testId: "nav-waitlist", href: "/waitlist", form: "label", attr: "testId" },
   { testId: "nav-records", href: "/records", form: "label", attr: "testId" },
-  { testId: "nav-business", href: "/dashboard/capacity", form: "label", attr: "testId" },
   { testId: "nav-notifications", href: "/notifications", form: "container", attr: "data-testid" },
 ] as const;
 
@@ -81,15 +87,18 @@ describe("NAV-ACK-02 · the comment stripper itself", () => {
 
 describe("NAV-ACK-02 · the primary navigation acknowledges", () => {
   it("imports the shipped primitive and no longer imports next/link", () => {
-    expect(code).toMatch(
-      /import\s*\{[\s\S]*?PendingContainerLink[\s\S]*?PendingLink[\s\S]*?\}\s*from\s*"@\/components\/pending-link"/,
+    // Step 0 of the HON-40 shell contract moved the bell, the only container form, into its own file: the
+    // two primitives are now imported by the two files that use them, from the same module.
+    expect(codeOnly(read(LAYOUT))).toMatch(/import\s*\{[\s\S]*?PendingLink[\s\S]*?\}\s*from\s*"@\/components\/pending-link"/);
+    expect(codeOnly(read("app/(app)/NotificationsBell.tsx"))).toMatch(
+      /import\s*\{[\s\S]*?PendingContainerLink[\s\S]*?\}\s*from\s*"@\/components\/pending-link"/,
     );
     // The whole point of the slice: no un-acknowledged anchor remains.
     expect(code).not.toMatch(/from\s*"next\/link"/);
     expect(code).not.toMatch(/<Link[\s>]/);
   });
 
-  it("renders exactly seven acknowledging anchors — six labels, one container", () => {
+  it("renders exactly seven acknowledging anchors — six labels, one container (Business is its own leaf menu)", () => {
     // UX-01 QW2 moved the five SECTION links into `PrimaryNavLink`, a client
     // leaf that renders `PendingLink` itself (it needs `usePathname`, which a
     // server layout cannot call). The count below therefore treats a
@@ -124,7 +133,9 @@ describe("NAV-ACK-02 · the primary navigation acknowledges", () => {
       // directly. Both spellings are the same fact, so the table names which
       // one each anchor uses rather than accepting either.
       expect(code).toContain(`${anchor.attr}="${anchor.testId}"`);
-      expect(code).toContain(`href="${anchor.href}"`);
+      // The Waitlist link takes its path from the one constant (HON-104); the constant's value is the same string and is pinned in tests/lib/waitlist/waitlist-paths.test.ts.
+      const spelling = anchor.href === WAITLIST_PATH ? "href={WAITLIST_PATH}" : `href="${anchor.href}"`;
+      expect(code).toContain(spelling);
     });
   }
 });
@@ -183,7 +194,12 @@ describe("NAV-ACK-02 · adopting the contract changed nothing else", () => {
   it("the shell stays a SERVER component", () => {
     // PendingLink is a leaf client island. If the shell itself hydrates, every
     // server-rendered clinical page under it pays for this slice.
-    expect(raw).not.toMatch(/^"use client";/m);
+    expect(shellRaw).not.toMatch(/^"use client";/m);
+  });
+
+  it("the bell is the one client leaf of the slot, and imports no server-only module", () => {
+    expect(BELL).toMatch(/^"use client";/m);
+    expect(BELL).not.toMatch(/from "(next\/headers|server-only|@\/lib\/supabase\/[^"]*)"/);
   });
 
   // SUPERSEDED, deliberately and by owner decision — not quietly.
@@ -214,7 +230,9 @@ describe("NAV-ACK-02 · adopting the contract changed nothing else", () => {
     // a bare prefix match lights both on the capacity page. Dashboard is
     // therefore `exact` and every other section owns its subtree.
     expect(code).toMatch(/href="\/dashboard"\s+match="exact"/);
-    expect(code).toMatch(/href="\/dashboard\/capacity"\s+match="section"/);
+    // Business is no longer a section link: it is the owner-only BusinessMenu, whose own current rule covers both of its pages.
+    expect(code).toMatch(/\{practitioner\.role === "owner" && <BusinessMenu \/>\}/);
+    expect(code).not.toMatch(/href="\/dashboard\/capacity"/);
     expect(code).toMatch(/href="\/clients"\s+match="section"/);
   });
 
@@ -234,5 +252,18 @@ describe("NAV-ACK-02 · adopting the contract changed nothing else", () => {
     // PR #228: the horizontal nav is desktop-only; the compact shell uses the
     // menu instead. An acknowledgement must not change WHICH shell renders.
     expect(code).toMatch(/className="hidden items-center gap-0\.5 whitespace-nowrap text-sm lg:flex lg:gap-1"/);
+  });
+});
+
+describe("NAV-ACK-02 · the owner's Business menu keeps the acknowledgement contract", () => {
+  const menu = codeOnly(read("app/(app)/BusinessMenu.tsx"));
+  it("renders its two destinations through the shipped PendingLink, each with a request-describing label", () => {
+    expect(menu).toContain('from "@/components/pending-link"');
+    expect(menu.match(/<PendingLink[\s>]/g) ?? []).toHaveLength(1);
+    expect(menu).toContain("pendingLabel={`Opening ${item.label}…`}");
+    expect(menu).not.toMatch(/from\s*"next\/link"/);
+  });
+  it("its trigger keeps the nav-business test id", () => {
+    expect(menu).toContain('data-testid="nav-business"');
   });
 });

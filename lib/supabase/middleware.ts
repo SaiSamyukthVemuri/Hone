@@ -1,6 +1,8 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { isAdmin } from "@/lib/admin";
+import { isDeskEnabled, isDeskPath } from "@/lib/desk/flag";
+import { RETURN_TO_COOKIE, RETURN_TO_COOKIE_MAX_AGE_SECONDS, returnToKeyFor } from "@/lib/auth/return-to";
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -44,6 +46,9 @@ export async function updateSession(request: NextRequest) {
     pathname === "/demo" ||
     pathname === "/privacy" ||
     pathname === "/terms" ||
+    // Public evidence of the appointment-SMS opt-in flow (carrier / reviewer link). No login, no data.
+    pathname === "/sms-consent" ||
+    pathname === "/sms-terms" ||
     // Public marketing category / feature / resource pages (the flagship
     // marketing site). Anonymous visitors and search-engine crawlers must reach
     // these without a /login bounce. Feature routes are listed by exact match
@@ -167,8 +172,27 @@ export async function updateSession(request: NextRequest) {
   if (!user && !isPublicRoute) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
-    return NextResponse.redirect(url);
+    const redirect = NextResponse.redirect(url);
+    // HON-7. Remember WHICH allowlisted internal page was asked for (a key, never a path), so the sign-in can land there. See lib/auth/return-to.ts.
+    const returnKey = returnToKeyFor(pathname, request.nextUrl.search);
+    if (returnKey) {
+      redirect.cookies.set(RETURN_TO_COOKIE, returnKey, {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: request.nextUrl.protocol === "https:",
+        path: "/",
+        maxAge: RETURN_TO_COOKIE_MAX_AGE_SECONDS,
+      });
+    }
+    return redirect;
   }
+
+  // The receptionist desk. Only while the desk flag is ON, /desk is exempt from the practitioner gate below: a
+  // receptionist-only user has no practitioners row, so the gate would send them to /no-access before any desk page
+  // could resolve them. Authentication above still applies, and the exemption grants NOTHING by itself: every desk
+  // page and action must resolve an active receptionist itself and the database refuses everyone else. Flag off
+  // (the default), /desk follows the ordinary gate exactly as every other path does.
+  const isDeskRoute = isDeskEnabled() && isDeskPath(pathname);
 
   // PR #253 invite-only gate: an AUTHENTICATED user with no active
   // practitioner row (an uninvited sign-in, auth.users exists but the
@@ -188,6 +212,8 @@ export async function updateSession(request: NextRequest) {
   if (
     user &&
     !isPublicRoute &&
+    !isDeskRoute &&
+    pathname !== "/subscription-paused" &&
     pathname !== "/no-access" &&
     pathname !== "/accept-invitation"
   ) {
@@ -243,7 +269,7 @@ export async function updateSession(request: NextRequest) {
         }
         return redirectResponse;
       }
-      if (process.env.HONE_SELF_SERVE_CHECKOUT_ENABLED === "true" && pathname !== "/subscription-paused") {
+      if (process.env.HONE_SELF_SERVE_CHECKOUT_ENABLED === "true") {
         const selected = activeStudioIds.length === 1 ? activeStudioIds[0] : selectedStudioId;
         const { data: canceled, error } = await supabase.rpc("my_hone_studio_canceled", { p_studio: selected });
         if (error) return new NextResponse("Studio access is temporarily unavailable.", { status: 503 });

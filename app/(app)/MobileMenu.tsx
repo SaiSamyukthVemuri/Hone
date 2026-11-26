@@ -1,5 +1,6 @@
 "use client";
 
+import { WAITLIST_PATH } from "@/lib/waitlist/paths";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -8,6 +9,7 @@ import { SignOutMenuItem } from "./SignOutMenuItem";
 import { useSetSignOutInFlight, useSignOutInFlight } from "./signout-flight";
 import { SignOutFlightReporter } from "./SignOutFlightReporter";
 import { cx, PRESS_TRANSITION } from "@/components/ui/control-base";
+import { BUSINESS_MENU_ITEMS, BUSINESS_MENU_LABEL } from "@/lib/nav/business-menu";
 import { spinnerClasses } from "@/components/ui/spinner";
 
 // PR #229: compact mobile menu, now a small client component instead
@@ -23,12 +25,15 @@ export function MobileMenu({
   studioName,
   role,
   canSwitchStudio,
+  showWaitlist = false,
 }: {
   admin: boolean;
   displayName: string;
   studioName: string;
   role: string;
   canSwitchStudio: boolean;
+  /** Decided on the server by the same rule as the Settings tab; this only presents it. */
+  showWaitlist?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   // SIGNOUT-02c. The in-flight flag is NOT owned here any more. Both shells are
@@ -244,6 +249,34 @@ export function MobileMenu({
     });
   }
 
+  // One working-surface row: a held placeholder while a sign-out is in flight, otherwise a real link. `nested` indents the owner's
+  // Business pages under their group heading.
+  const workItem = (item: { href: string; label: string }, nested: boolean) =>
+    isHeld() ? (
+      <span
+        key={item.href}
+        aria-disabled="true"
+        className={cx(
+          "flex min-h-[44px] cursor-not-allowed items-center rounded-md px-3 py-2 opacity-50",
+          nested && "pl-6",
+        )}
+      >
+        {item.label}
+      </span>
+    ) : (
+      <Link
+        key={item.href}
+        href={item.href}
+        onClick={(e) => navigate(e, item.href, item.label)}
+        className={cx(
+          "flex min-h-[44px] items-center rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900",
+          nested && "pl-6",
+        )}
+      >
+        {item.label}
+      </Link>
+    );
+
   return (
     // `lg:hidden`, matching the three header-mode classes in layout.tsx: the
     // compact shell owns every width below 1024px, where five primary items
@@ -341,6 +374,7 @@ export function MobileMenu({
               be the bold headline: when the display name looks like an
               email, lead with "My account" and demote the address to
               small secondary text. */}
+          {/* HON-40 SHELL CONTRACT, SECTION 1 of 3 · ACCOUNT (owner: HON-107): the identity block. */}
           <div className="border-b border-neutral-200 px-3 pb-2 pt-1 dark:border-neutral-800">
             <p className="truncate text-sm font-medium">
               {displayName.includes("@") ? "My account" : displayName}
@@ -354,49 +388,50 @@ export function MobileMenu({
               </p>
             )}
           </div>
+          {/* HON-40 SHELL CONTRACT, SECTION 2 of 3 · NAVIGATION (owner: HON-98): the working surfaces and the
+              owner's Business group, down to the divider. */}
           {[
             { href: "/dashboard", label: "Dashboard" },
             { href: "/clients", label: "Clients" },
             { href: "/calendar", label: "Calendar" },
+            ...(showWaitlist ? [{ href: WAITLIST_PATH, label: "Waitlist" }] : []),
             { href: "/records", label: "Records" },
-            // OWNER-CAP follow-up: the owner's permanent Business entry, the
-            // phone half of the desktop tab in layout.tsx. It belongs HERE, in
-            // the working-surface section, and not below the divider with
-            // Settings / Getting Started / Admin: Business is somewhere the
-            // owner works, not an account preference.
-            //
-            // Gated on the `role` this component is ALREADY given — no second
-            // authority query, and nothing rendered-but-disabled for a
-            // practitioner, who simply has no such item. The presentation gate
-            // is not the boundary: /dashboard/capacity keeps its own
-            // server-side owner check.
-            ...(role === "owner"
-              ? [{ href: "/dashboard/capacity", label: "Business" }]
-              : []),
-          ].map((item) => (
-            isHeld() ? (
+          ].map((item) => workItem(item, false))}
+          {/* OWNER-CAP follow-up: the owner's permanent Business entry, the
+              phone half of the desktop menu in layout.tsx. It belongs HERE, in
+              the working-surface section, and not below the divider with
+              Settings / Getting Started / Admin: Business is somewhere the
+              owner works, not an account preference.
+
+              Gated on the `role` this component is ALREADY given: no second
+              authority query, and nothing rendered-but-disabled for a
+              practitioner, who simply has no such group. The presentation gate
+              is not the boundary: /dashboard/capacity and
+              /financials/statement each keep their own server-side owner
+              check. The two pages are listed flat (a disclosure here would
+              only hide them) inside one labelled group. `contents` keeps the
+              group out of the layout, so the rows stay the sheet's own flex
+              children. */}
+          {role === "owner" && (
+            <div role="group" aria-labelledby="mobile-nav-business-heading" className="contents">
               <span
-                key={item.href}
-                aria-disabled="true"
-                className="flex min-h-[44px] cursor-not-allowed items-center rounded-md px-3 py-2 opacity-50"
+                id="mobile-nav-business-heading"
+                data-testid="mobile-nav-business-heading"
+                className="px-3 pb-0.5 pt-2 text-xs font-medium uppercase tracking-wide text-neutral-500"
               >
-                {item.label}
+                {BUSINESS_MENU_LABEL}
               </span>
-            ) : (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={(e) => navigate(e, item.href, item.label)}
-                className="flex min-h-[44px] items-center rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
-              >
-                {item.label}
-              </Link>
-            )
-          ))}
+              {BUSINESS_MENU_ITEMS.map((item) => workItem(item, true))}
+            </div>
+          )}
+          {/* HON-40 SHELL CONTRACT, SECTION 3 of 3 · ACCOUNT ACTIONS (owner: HON-107): Settings, Getting
+              Started, Switch studio, Admin and Sign out. Sections 1 and 3 are one slot; 2 is another. A
+              change here that touches section 2, or the reverse, is a shell-owner change. */}
           <div className="mt-0.5 flex flex-col gap-0.5 border-t border-neutral-200 pt-1 dark:border-neutral-800">
             {[
-              { href: "/settings/profile", label: "Settings" },
-              { href: "/getting-started", label: "Getting Started" },
+              { href: "/settings", label: "Settings" },
+              // Owner setup guidance: staff are never shown it.
+              ...(role === "owner" ? [{ href: "/getting-started", label: "Getting Started" }] : []),
               ...(canSwitchStudio
                 ? [
                     {

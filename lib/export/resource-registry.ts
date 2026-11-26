@@ -212,6 +212,21 @@ export type ExportedDisposition = {
   readonly sourceCountCheck: SourceCountCheck;
   /** One sentence, reused verbatim by the ZIP README and the settings page. */
   readonly description: string;
+  /**
+   * Set when the table cannot be SELECTed by any browser role (RLS on, no policy) and the owner-gated function is the only door.
+   * The exporter calls `fn` after the owner check with the session actor, never a service client and never the raw table.
+   */
+  readonly rpcSource?: RpcSourceDeclaration;
+};
+
+export type RpcSourceDeclaration = {
+  readonly fn: string;
+  /** Ascending keyset column the function pages by (`p_after_id`). */
+  readonly keyColumn: string;
+  /** The columns the function returns, exactly, in the database's declared order. */
+  readonly returns: readonly string[];
+  /** Returned columns that deliberately do not reach the CSV, each with why. */
+  readonly notEmitted?: Readonly<Record<string, string>>;
 };
 
 export type ExclusionCategory =
@@ -312,9 +327,9 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       { column: "sms_phone", reason: "internal_state", note: "Generated from exported `phone`; carries no additional customer fact and exists to support canonical SMS routing/eligibility. Same call as normalized_email: the export preserves the AUTHORED customer value, never a second generated copy of it. Migration 0199 added the column as `generated always as (public.sms_normalized_phone(phone)) stored`." },
       { column: "archived_by", reason: "pending_review", note: "Archive attribution; see archived_at." },
       { column: "portrait_image_id", reason: "pending_review", note: "0231 identification-portrait pointer to one of the client's own treatment_images rows; it travels with the treatment-photo export decision, not as a bare id." },
-      { column: "preferred_name", reason: "pending_review", note: "0258 (HON-58): the name the client goes by. Studio-owned client data that belongs in this file; adding a CSV column changes the export contract (0242 file map), so it is decided with the legal identity under HON-58, not as a side effect of the migration." },
-      { column: "name_revision", reason: "internal_state", note: "0281 (HON-58): a counter that rises when the client's name changes, used only to detect a stale save; it is not a customer fact." },
-      { column: "preferred_name_revision", reason: "internal_state", note: "0281 (HON-58): the same stale-save counter for the preferred name; not a customer fact." },
+      { column: "preferred_name", reason: "pending_review", note: "0258: the name the client goes by. Studio-owned client data that belongs in this file; adding a CSV column changes the export contract (0242 file map), so it is decided with the legal identity work, not as a side effect of the migration." },
+      { column: "name_revision", reason: "internal_state", note: "0281: a counter that rises when the client's name changes, used only to detect a stale save; it is not a customer fact." },
+      { column: "preferred_name_revision", reason: "internal_state", note: "0281: the same stale-save counter for the preferred name; not a customer fact." },
     ],
     sourceCountCheck: { kind: "studio_scoped" },
     rowScope: "Every client row this studio holds is exported, archived clients included — the read does not filter on archived_at — and archived_at IS emitted, so archived state stays distinguishable from active.",
@@ -556,7 +571,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       { column: "default_machine_id", reason: "pending_review", note: "Migration 0223. A UI default, not a treatment record: what was actually used is on treatment_setup_readings. It is also an opaque uuid pointing at studio_machines, whose own export disposition is still pending, so emitting it would hand a studio an identifier it cannot resolve inside the archive. Unlike default_machine_frequency below, it is not self-describing. Revisit with the MPX-02 export decision." },
       { column: "default_machine_mode", reason: "pending_review", note: "Migration 0223. The mode half of the same UI default, meaningful only alongside default_machine_id. Held with it rather than emitted on its own." },
     ],
-    sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database. Adding the check is TRUTH-01B; declaring the gap here is what stops the manifest reading as though every file were verified." },
+    sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database. Adding the check is later work; declaring the gap here is what stops the manifest reading as though every file were verified." },
     rowScope:
       "Every practitioner row this studio holds, ACTIVE AND INACTIVE. Tenant scope is studio_id and nothing else: the read carries no `active` predicate. Inactive rows are in scope deliberately, because service_practitioners rows survive a practitioner's deactivation by design (0134 - removal is a separate, explicit action), so an active-only read left service_practitioners.csv and historical session rows naming a practitioner_id that appeared in no file. The `active` column is emitted, so a deactivated practitioner is exported and honestly labelled rather than presented as current.",
     description:
@@ -585,7 +600,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     excludedColumns: [
       { column: "studio_id", reason: "tenant_key" },
     ],
-    sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database. Adding the check is TRUTH-01B; declaring the gap here is what stops the manifest reading as though every file were verified." },
+    sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database. Adding the check is later work; declaring the gap here is what stops the manifest reading as though every file were verified." },
     rowScope: "Every custom price row this studio holds.",
     description:
       "Per-client custom pricing.",
@@ -740,7 +755,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     excludedColumns: [
       { column: "studio_id", reason: "tenant_key" },
     ],
-    sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database. Adding the check is TRUTH-01B; declaring the gap here is what stops the manifest reading as though every file were verified." },
+    sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database. Adding the check is later work; declaring the gap here is what stops the manifest reading as though every file were verified." },
     derivedHeaders: {
       client_name: "clients.name, resolved from an in-memory map",
     },
@@ -784,7 +799,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     excludedColumns: [
       { column: "studio_id", reason: "tenant_key" },
     ],
-    sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database. Adding the check is TRUTH-01B; declaring the gap here is what stops the manifest reading as though every file were verified." },
+    sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database. Adding the check is later work; declaring the gap here is what stops the manifest reading as though every file were verified." },
     derivedHeaders: {
       plan_name: "treatment_plans.name for the parent plan",
       client_id: "treatment_plans.client_id for the parent plan",
@@ -831,7 +846,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     excludedColumns: [
       { column: "studio_id", reason: "tenant_key" },
     ],
-    sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database. Adding the check is TRUTH-01B; declaring the gap here is what stops the manifest reading as though every file were verified." },
+    sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database. Adding the check is later work; declaring the gap here is what stops the manifest reading as though every file were verified." },
     rowScope: "Every sterile-supply row this studio holds, discarded stock included.",
     description:
       "Sterile-supply inspection log: item, manufacturer, amount, lot number, purchase/expiry/discarded dates, notes. Expiry status is derivable from the expiry_date column (a date on or before today is expired); the in-app Records list and the print view flag expired / expires-today / expires-soon items. A date_discarded value means the practitioner recorded that this stock was physically thrown away on that date: it is then no longer current inventory (it raises no expiry reminder and is not offered as a probe lot), but the record and every treatment that used it are kept in full. An empty date_discarded means no discard was recorded.",
@@ -871,7 +886,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     excludedColumns: [
       { column: "studio_id", reason: "tenant_key" },
     ],
-    sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database. Adding the check is TRUTH-01B; declaring the gap here is what stops the manifest reading as though every file were verified." },
+    sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database. Adding the check is later work; declaring the gap here is what stops the manifest reading as though every file were verified." },
     rowScope: "Every disinfectant-preparation row this studio holds.",
     description:
       "Disinfectant preparation log: name, concentration, prepared/discarded/discard-due dates, operator, notes.",
@@ -911,7 +926,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     excludedColumns: [
       { column: "studio_id", reason: "tenant_key" },
     ],
-    sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database. Adding the check is TRUTH-01B; declaring the gap here is what stops the manifest reading as though every file were verified." },
+    sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database. Adding the check is later work; declaring the gap here is what stops the manifest reading as though every file were verified." },
     rowScope: "Every exposure-incident row this studio holds. Owner-only twice over: the action's role gate and an owner-only RLS SELECT.",
     description:
       "Exposure-incident log (OWNER-ONLY). Contains sensitive personal information about the exposed person (name, address, phone) and incident details.",
@@ -946,7 +961,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       { column: "actor_user_id", reason: "internal_state", note: "Supabase auth user identifier; actor_practitioner_id and actor_display_name are exported instead." },
       { column: "metadata", reason: "pii_duplication", note: "Free-form metadata, same reduced-audit decision as changes." },
     ],
-    sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database. Adding the check is TRUTH-01B; declaring the gap here is what stops the manifest reading as though every file were verified." },
+    sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database. Adding the check is later work; declaring the gap here is what stops the manifest reading as though every file were verified." },
     rowScope: "Every record-keeping change event this studio holds, reduced to the columns below.",
     description:
       "Record-keeping change history: record type/id, action, which fields changed, who made the change, and when. (Reduced: it does not include the before/after value snapshots.)",
@@ -1003,7 +1018,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     excludedColumns: [
       { column: "studio_id", reason: "tenant_key" },
     ],
-    sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database. Adding the check is TRUTH-01B; declaring the gap here is what stops the manifest reading as though every file were verified." },
+    sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database. Adding the check is later work; declaring the gap here is what stops the manifest reading as though every file were verified." },
     derivedHeaders: {
       client_name: "clients.name, resolved from an in-memory map",
     },
@@ -1015,6 +1030,24 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
   // -------------------------------------------------------------------------
   // EXCLUDED - a decision on the record, with the reason it was made.
   // -------------------------------------------------------------------------
+
+  // derived
+  // 0298. Per-owner view state of the Dashboard "Needs attention" list: which reminder an owner chose to hide, and when. It holds record
+  // identifiers (client, appointment, session ids) and, for unpaid reminders, the dismissed outstanding amount; no names, free text or clinical
+  // content. Every reminder it hides is recomputed from records that ARE exported, and it is rebuilt by simply not dismissing.
+  // Excluded as a DECISION (Privacy: APPROVE_WITH_CONDITIONS, 5 Nov), not an omission: nothing in it is studio content a departing studio needs back,
+  // and exporting it would hand one owner's view history to whoever receives the file.
+  // MUST BE HANDLED by any client-erasure, offboarding or account-removal design (Privacy ET-2, ET-3), and listed before activation is proposed:
+  //   - client and appointment ids sit inside item_key, and the table is append-only (a trigger refuses every UPDATE, and a DELETE unless the
+  //     whole studio is already gone), so a client erasure or anonymisation cannot clear them without a governed override;
+  //   - user_id has no foreign key to the account record, so a removed or deleted account leaves its rows behind (only that user could read
+  //     them, and the studio cascade removes them with the studio).
+  dashboard_attention_events: {
+    kind: "excluded",
+    category: "derived",
+    reason:
+      "An owner's own tidy-up of the Dashboard Needs attention list (dismiss and restore events). View state, not studio content: it holds record identifiers (client, appointment, session ids) and, for unpaid reminders, the dismissed outstanding amount; no names, free text or clinical content. Every reminder it hides is recomputed from records that ARE exported.",
+  },
 
   // security
   calendar_connection_secrets: {
@@ -1066,6 +1099,18 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     category: "platform",
     reason:
       "A single global row holding the calendar worker kill-switch. No studio_id, no studio meaning.",
+  },
+  platform_rollouts: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "Hone operator rollout switch (one row per platform feature: off, pilot or all). Hone's own release configuration; it holds no studio data.",
+  },
+  platform_rollout_studios: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "Hone operator pilot list (which studios a platform feature is piloted for). Hone's own release configuration, keyed by studio id only; it holds no studio-authored content.",
   },
   admin_action_events: {
     kind: "excluded",
@@ -1119,7 +1164,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision belongs to TRUTH-01B, after a field review of the payment-consent decisions and the metadata recorded with them.",
+      "Introduced by migration 0032. NOT included in this CSV export yet. This export makes NO FINDING about which code paths reach this table, so this record neither claims nor denies that anything uses it. It is pending a field review of the payment-consent decisions and the metadata recorded with them.",
   },
   pending_booking_payment_sessions: {
     kind: "pending",
@@ -1127,7 +1172,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. What IS established comes from the database rather than from reading application code: studio_id carries ON DELETE CASCADE from studios, read from pg_constraint, so PostgreSQL removes these rows when a studio row is deleted. The export decision belongs to TRUTH-01B, after a field review of the public-booking payment session state and provider identifiers it carries.",
+      "Introduced by migration 0032. NOT included in this CSV export yet. This export makes NO FINDING about which code paths reach this table, so this record neither claims nor denies that anything uses it. What IS established comes from the database rather than from reading application code: studio_id carries ON DELETE CASCADE from studios, read from pg_constraint, so PostgreSQL removes these rows when a studio row is deleted. It is pending a field review of the public-booking payment session state and provider identifiers it carries.",
   },
   stripe_charge_attempts: {
     kind: "pending",
@@ -1135,7 +1180,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision belongs to TRUTH-01B, after a field review of the Stripe charge identifiers and provider failure detail it carries.",
+      "Introduced by migration 0032. NOT included in this CSV export yet. This export makes NO FINDING about which code paths reach this table, so this record neither claims nor denies that anything uses it. It is pending a field review of the Stripe charge identifiers and provider failure detail it carries.",
   },
   stripe_disputes: {
     kind: "pending",
@@ -1143,7 +1188,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision belongs to TRUTH-01B, after a field review of the Stripe dispute identifiers and provider detail it carries.",
+      "Introduced by migration 0032. NOT included in this CSV export yet. This export makes NO FINDING about which code paths reach this table, so this record neither claims nor denies that anything uses it. It is pending a field review of the Stripe dispute identifiers and provider detail it carries.",
   },
   stripe_payment_audit: {
     kind: "pending",
@@ -1151,7 +1196,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision belongs to TRUTH-01B, after a field review of the free-form provider audit payloads it carries.",
+      "Introduced by migration 0032. NOT included in this CSV export yet. This export makes NO FINDING about which code paths reach this table, so this record neither claims nor denies that anything uses it. It is pending a field review of the free-form provider audit payloads it carries.",
   },
   stripe_refund_attempts: {
     kind: "pending",
@@ -1159,7 +1204,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision belongs to TRUTH-01B, after a field review of the Stripe refund identifiers and provider failure detail it carries.",
+      "Introduced by migration 0032. NOT included in this CSV export yet. This export makes NO FINDING about which code paths reach this table, so this record neither claims nor denies that anything uses it. It is pending a field review of the Stripe refund identifiers and provider failure detail it carries.",
   },
   stripe_refunds: {
     kind: "pending",
@@ -1167,7 +1212,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision belongs to TRUTH-01B, after a field review of the Stripe refund identifiers it carries.",
+      "Introduced by migration 0032. NOT included in this CSV export yet. This export makes NO FINDING about which code paths reach this table, so this record neither claims nor denies that anything uses it. It is pending a field review of the Stripe refund identifiers it carries.",
   },
 
   // deliberate_privacy
@@ -1175,7 +1220,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     kind: "excluded",
     category: "deliberate_privacy",
     reason:
-      "Private practitioner warnings about a client, deliberately withheld from the general studio export and disclosed as withheld on the Data settings page. Recorded here as the decision it is; whether it should survive a studio DEPARTURE is a product question for TRUTH-01B, not a defect in this slice.",
+      "Private practitioner warnings about a client, deliberately withheld from the general studio export and disclosed as withheld on the Data settings page. Recorded here as the decision it is; whether it should survive a studio DEPARTURE is a product question for a later export decision, not a defect in this slice.",
   },
   client_pinned_notes: {
     kind: "excluded",
@@ -1194,7 +1239,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     ticket: "TRUTH-01B",
     tier: 1,
     reason:
-      "The unit of charting, and it has no file of its own. Eleven of its forty columns travel as denormalized decoration on electrolysis_entries.csv; a block with no electrolysis entry is absent from the export entirely, and block-level clinical fields (tolerance_rating, reaction_notes, caution_for_next_session, caution_note, numbing_status, numbing_notes, probe_lot_number, probe_inventory_item_id) reach no file.",
+      "The unit of charting, and it has no file of its own. Eleven of its forty columns travel as denormalized decoration on electrolysis_entries.csv; a block with no electrolysis entry is absent from the export entirely, and block-level clinical fields (tolerance_rating, reaction_notes, caution_for_next_session, caution_note, numbing_status, numbing_notes, probe_lot_number, probe_inventory_item_id) reach no file. Migration 0301 adds three more that also reach no file: machine_profile_id, studio_machine_id and machine_mode_key (the machine and mode an area was charted on; NULL means not recorded). They are left out of the denormalized decoration on purpose: that list is a fixed twelve-column join, and the identity travels with the area when session_blocks gets its own file under this ticket.",
   },
   session_block_areas: {
     kind: "pending",
@@ -1227,28 +1272,28 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     ticket: "TRUTH-01B",
     tier: 1,
     reason:
-      "Introduced by migration 0258 (HON-58 identity). Staff-entered legal name of a client, one row per client, readable only by an owner or practitioner of the studio. Studio-owned client data with no representation in any exported file yet; the export decision (and whether it joins clients.csv) belongs with the preferred-name column and HON-46 document identity.",
+      "Introduced by migration 0258. Staff-entered legal name of a client, one row per client, readable only by an owner or practitioner of the studio. Studio-owned client data with no representation in any exported file yet; the export decision (and whether it joins clients.csv) belongs with the preferred-name column and the document identity work.",
   },
   studio_legal_name_access: {
     kind: "pending",
     ticket: "TRUTH-01B",
     tier: 1,
     reason:
-      "Introduced by migration 0266 (HON-58 Q1). The studio's own switch for whether front desk staff may see client legal names (no row = off). Studio-owned configuration with no representation in any exported file yet.",
+      "Introduced by migration 0266. The studio's own switch for whether front desk staff may see client legal names (no row = off). Studio-owned configuration with no representation in any exported file yet.",
   },
   client_legal_name_access_audit: {
     kind: "pending",
     ticket: "TRUTH-01B",
     tier: 1,
     reason:
-      "Introduced by migration 0266 (HON-58 Q1). Append-only record of who changed the front-desk legal-name switch, when, and from what to what. Studio-owned audit history with no representation in any exported file yet.",
+      "Introduced by migration 0266. Append-only record of who changed the front-desk legal-name switch, when, and from what to what. Studio-owned audit history with no representation in any exported file yet.",
   },
   client_identity_audit: {
     kind: "pending",
     ticket: "TRUTH-01B",
     tier: 1,
     reason:
-      "Introduced by migration 0281 (HON-58 identity revisions). Append-only record of which concept of a client's name changed (name, preferred name or legal name), when, by which practitioner and at which revision. It stores NO name value. Studio-owned audit history with no representation in any exported file yet.",
+      "Introduced by migration 0281. Append-only record of which concept of a client's name changed (name, preferred name or legal name), when, by which practitioner and at which revision. It stores NO name value. Studio-owned audit history with no representation in any exported file yet.",
   },
   client_intake_forms: {
     kind: "pending",
@@ -1298,7 +1343,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     ticket: "TRUTH-01C",
     tier: 1,
     reason:
-      "Treatment photo METADATA (client, session, block, note, capture time). Deferred to TRUTH-01C with the binaries it describes, so metadata and files ship together rather than as a catalogue of things the studio did not receive.",
+      "Treatment photo METADATA (client, session, block, note, capture time). Deferred with the photo files it describes, so metadata and files ship together rather than as a catalogue of things the studio did not receive.",
   },
   photos: {
     kind: "pending",
@@ -1351,7 +1396,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 1,
     fieldReviewRequired: true,
     reason:
-      "HON-18 / CLN-007: 0244 routine clinical reading correction diffs and actor snapshots. PENDING field review under TRUTH-01B, NOT EXPORTED: old/new values are clinical data; this registry entry grants no new export authority or retention policy. Retired signed-record ledgers and native setup captures remain separate.",
+      "Migration 0244 routine clinical reading correction diffs and actor snapshots. PENDING field review, NOT EXPORTED: old/new values are clinical data; this registry entry grants no new export authority or retention policy. Retired signed-record ledgers and native setup captures remain separate.",
   },
   imported_treatment_memories: {
     kind: "pending",
@@ -1471,7 +1516,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     ticket: "TRUTH-01B",
     tier: 1,
     reason:
-      "Migration 0159 retired signed clinical records but deliberately dropped nothing: existing rows are untouched. Any pre-retirement row is clinical evidence a studio owns, so this is PENDING rather than EXCLUDED until TRUTH-01B establishes whether production holds any such row.",
+      "Migration 0159 retired signed clinical records but deliberately dropped nothing: existing rows are untouched. Any pre-retirement row is clinical evidence a studio owns, so this is PENDING rather than EXCLUDED until a later review establishes whether production holds any such row.",
   },
   clinical_record_amendments: {
     kind: "pending",
@@ -1495,7 +1540,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "Created by migration 0032, and NOT dead. Two database functions READ it and both are invoked from live user paths: reschedule_appointment_v2 (app/reschedule/[token]/actions.ts) and appointment_has_blocking_dependents (app/(app)/calendar/appointment-repair-actions.ts). Its contents decide whether a client may reschedule and whether an appointment outcome may be reverted, so a studio's own operations depend on it. An earlier revision classified it dead and said so in this very list - a false statement that reached the ZIP README and the settings page, which is exactly the class of untruth this registry exists to remove. Field review before any export: the row is Stripe-linked provider state, and whether a studio can act on any of it outside Hone is the question TRUTH-01B has to answer, not this slice.",
+      "Created by migration 0032, and NOT dead. Two database functions READ it and both are invoked from live user paths: reschedule_appointment_v2 (app/reschedule/[token]/actions.ts) and appointment_has_blocking_dependents (app/(app)/calendar/appointment-repair-actions.ts). Its contents decide whether a client may reschedule and whether an appointment outcome may be reverted, so a studio's own operations depend on it. An earlier revision classified it dead and said so in this very list - a false statement that reached the ZIP README and the settings page, which is exactly the class of untruth this registry exists to remove. Field review before any export: the row is Stripe-linked provider state, and whether a studio can act on any of it outside Hone is the question a later field review has to answer, not this slice.",
   },
   payment_charge_attempts: {
     kind: "pending",
@@ -1503,7 +1548,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "The Stripe-verified card ledger. Customer-owned money truth, but the row also carries Stripe account, customer, payment-method, PaymentIntent and charge identifiers, idempotency keys and provider failure codes. A raw dump would export provider identifiers; the field selection is a deliberate decision TRUTH-01B must make, not a default.",
+      "The Stripe-verified card ledger. Customer-owned money truth, but the row also carries Stripe account, customer, payment-method, PaymentIntent and charge identifiers, idempotency keys and provider failure codes. A raw dump would export provider identifiers; the field selection is a deliberate decision a later field review must make, not a default.",
   },
   manual_fee_charge_attempts: {
     kind: "pending",
@@ -1583,7 +1628,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "The Stripe Connect onboarding attempt ledger, and it is LIVE: create_or_claim_stripe_account_provisioning, complete_stripe_account_provisioning and mark_stripe_account_provisioning_failed are all invoked from lib/stripe/account.ts, which the payment settings actions and the return/refresh pages drive. It was classified `dead` on the first TRUTH-01A head, which was wrong - the liveness check looked for direct table access and could not see a SECURITY DEFINER writer - and that error would have printed a false statement into the generated README and settings page. Field review before any export: the row carries the Stripe account identifier, the onboarding claim token and provider failure detail, none of which a studio can act on outside Hone.",
+      "The Stripe Connect onboarding attempt ledger, and it is LIVE: create_or_claim_stripe_account_provisioning, complete_stripe_account_provisioning and mark_stripe_account_provisioning_failed are all invoked from lib/stripe/account.ts, which the payment settings actions and the return/refresh pages drive. It was classified `dead` in the first version of this registry, which was wrong - the liveness check looked for direct table access and could not see a SECURITY DEFINER writer - and that error would have printed a false statement into the generated README and settings page. Field review before any export: the row carries the Stripe account identifier, the onboarding claim token and provider failure detail, none of which a studio can act on outside Hone.",
   },
   stripe_customer_provisioning_attempts: {
     kind: "pending",
@@ -1660,6 +1705,20 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Private invitation history for the new-client waitlist, live since migration 0188. The lifecycle itself is studio-owned demand truth and belongs in the backlog alongside new_client_waitlist_entries, so this is PENDING rather than EXCLUDED. It is tier 2 and field-review-required because the row is not only that history: token_hash is security material and MUST NEVER be emitted, raw or otherwise, and the row also carries operational attribution and lifecycle stamps (issued_by_practitioner_id, redeemed_at, expired_at, released_at) whose export shape has not been reviewed. Excluding the whole resource on account of one column would hide legitimate studio-owned invitation history from the backlog; the field review decides the payload column by column, the way calendar_connections separates its non-secret half from secrets that stay permanently excluded.",
   },
+  waitlist_invitation_batches: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "Over-invite batches the owner confirms for the new-client waitlist: the batch key, the live-count snapshot and who confirmed. Studio-owned operational history; export shape not yet reviewed, so PENDING.",
+  },
+  waitlist_invitation_batch_items: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "One row per waitlist entry in an over-invite batch with its send state (pending, claimed, issued, sent, failed, skipped). Holds no token, address or phone number. Studio-owned operational history; PENDING.",
+  },
   studio_sms_senders: {
     kind: "pending",
     ticket: "TRUTH-01B",
@@ -1697,6 +1756,96 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Append-only lifecycle provenance for waitlist entries, written by trigger on every status change since migration 0188. Studio-owned operational history - it is the only record of a claim/release cycle that issues no invitation - but it is an event log whose payload and export shape have not been reviewed, so it is tier 2 and decided deliberately rather than dumped.",
   },
+  waitlist_decline_answers: {
+    kind: "exported",
+    file: "waitlist-decline-answers.csv",
+    csvHeaders: [
+      "answer_id", "followup_id", "entry_id", "invitation_id", "client_id", "kind",
+      "why_not_work", "better_times", "submitted_at", "answers_erased_at",
+    ],
+    // Bound to the 0325 table: followup_id (primary key), studio_id, why_not_work, better_times, submitted_at, erased_at, erased_by_practitioner_id.
+    includedColumns: ["followup_id", "why_not_work", "better_times", "submitted_at", "erased_at"],
+    excludedColumns: [
+      { column: "studio_id", reason: "tenant_key" },
+      {
+        column: "erased_by_practitioner_id",
+        reason: "internal_state",
+        note: "Who erased the answers is the studio's own audit detail, not the client's answer; the erased marker (answers_erased_at) is exported.",
+      },
+    ],
+    emittedAs: {
+      followup_id: { headers: ["answer_id", "followup_id"], note: "The answer's id is its follow-up's id; emitted under both names." },
+      erased_at: { headers: ["answers_erased_at"], note: "The function names the erased marker answers_erased_at." },
+    },
+    derivedHeaders: {
+      entry_id: "the waitlist entry the person answered as",
+      invitation_id: "the invitation that was declined",
+      client_id: "the client whose normalized email equals the entry's, in this studio; empty when there is none",
+      kind: "decline or withdrawal, from the follow-up",
+    },
+    rowScope:
+      "Every saved decline answer of this studio, erased ones included as a marker row. Read only through the owner-gated function export_waitlist_decline_answers after the owner check; the table has no policy and no browser grant.",
+    sourceCountCheck: {
+      kind: "none",
+      reason:
+        "The table has no browser-readable surface to count against; the owner-gated database function is its only reader and re-derives ownership itself.",
+    },
+    description:
+      "What waiting-list recipients answered when they said the offered times did not work. An erased answer is a row with no text and the time it was erased.",
+    rpcSource: {
+      fn: "export_waitlist_decline_answers",
+      keyColumn: "answer_id",
+      returns: [
+        "answer_id", "followup_id", "entry_id", "invitation_id", "client_id", "kind",
+        "why_not_work", "better_times", "submitted_at", "answers_erased_at",
+      ],
+    },
+  },
+  waitlist_invitation_followups: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "The owner's durable follow-up item for a waitlist invitation that was used without a confirmed booking, draft migration 0313. One row per invitation (unique), with a closed reason code, created and resolved instants and the entry it belongs to. Studio-owned operational history, so PENDING rather than EXCLUDED, decided with new_client_waitlist_entries. It holds no client text, name, contact or appointment time; any free-text response a client later leaves is a separate owner-only column that is not registered here. Rows are erased with the studio. No export surface ships in 0313.",
+  },
+  waitlist_invitation_bookings: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "Evidence link from a waitlist invitation to the appointment its booking command created, draft migration 0313. One row per invitation (primary key), with the studio, the appointment and a created instant. It holds no client text, name or contact; it exists so a reopened, already-used invitation can show the time that was actually booked rather than infer it. Studio-owned operational history, so PENDING, decided with new_client_waitlist_invitations. Rows are erased with the invitation, the appointment or the studio. No export surface ships in 0313.",
+  },
+  waitlist_times_feedback: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 1,
+    reason:
+      "Owner-only record that an invited prospect said the offered times do not work, draft migration 0319. One row per invitation (unique) with an optional free-text note of at most 500 characters written by the recipient, beside the prospect's name on the entry, plus created and acknowledged instants. Client-supplied free text, so tier 1 and PENDING review of retention and export shape: not exported by default and never selected by a count. Rows are erased with the STUDIO only: an invited entry cannot be deleted on its own (invitations are append-only), so person-level erasure of this text is not possible yet (open item L1). No export surface ships in 0319.",
+  },
+  waitlist_followups: {
+    kind: "excluded",
+    category: "derived",
+    reason:
+      "Operational record (ids, status and dates only); contains no client text.",
+  },
+  waitlist_decline_owner_emails: {
+    kind: "excluded",
+    category: "derived",
+    reason:
+      "Operational email-status record (ids, statuses and dates only); contains no client text.",
+  },
+  waitlist_erase_records: {
+    kind: "excluded",
+    category: "deliberate_privacy",
+    reason:
+      "Retained for 30 days by policy, then purged by the scheduled cleanup.",
+  },
+  waitlist_retention_runs: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "Platform maintenance log of the waitlist cleanup job (run times and counts only). It has no studio column and holds no client data, so it is not studio content.",
+  },
   studio_waitlist_admission_rounds: {
     kind: "pending",
     ticket: "TRUTH-01B",
@@ -1729,12 +1878,72 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
   // -------------------------------------------------------------------------
   // STORAGE
   // -------------------------------------------------------------------------
+  "storage:client-identification-photos": {
+    kind: "pending",
+    ticket: "TRUTH-01C",
+    tier: 1,
+    fieldReviewRequired: true,
+    reason:
+      "The private bucket holding client identification photos (0375), apart from treatment photography. Consent-bound and deleted on withdrawal; an export of it needs its own consent and deletion decision. PENDING grants no export authority.",
+  },
   "storage:treatment-images": {
     kind: "pending",
     ticket: "TRUTH-01C",
     tier: 1,
     reason:
-      "The private bucket holding every treatment photo a studio has taken. It is the single largest studio-owned asset the export does not carry, and it CANNOT ship on the current path: the exporter returns one base64 string from a server action, which is not a mechanism for an image corpus. TRUTH-01C is the asynchronous, object-storage-backed export that makes binaries possible; deferring it here is a capability statement, not a decision that photos do not matter. Terms section 6 defines Your Data to include photos, so the settings page must say plainly that this export does not contain them.",
+      "The private bucket holding every treatment photo a studio has taken. It is the single largest studio-owned asset the export does not carry, and it CANNOT ship on the current path: the exporter returns one base64 string from a server action, which is not a mechanism for an image corpus. A later export slice is the asynchronous, object-storage-backed export that makes binaries possible; deferring it here is a capability statement, not a decision that photos do not matter. Terms section 6 defines Your Data to include photos, so the settings page must say plainly that this export does not contain them.",
+  },
+
+  // 0375 client identification photo. Held, OFF by default; no export surface ships with it.
+  client_id_photos: {
+    kind: "pending",
+    ticket: "TRUTH-01C",
+    tier: 1,
+    fieldReviewRequired: true,
+    reason:
+      "The client's optional identification photo (0375). Consent-bound and deleted on withdrawal, removal or client archive, so it must never travel in an export without its own decision about consent and deletion. PENDING grants no export authority.",
+  },
+  client_id_photo_consents: {
+    kind: "pending",
+    ticket: "TRUTH-01C",
+    tier: 1,
+    reason:
+      "Append-only consent evidence for the identification photo: who provided, who recorded, channel, time, wording version and hash. Studio-held evidence, decided with the photo itself. No export surface ships in 0375.",
+  },
+  client_id_photo_audit: {
+    kind: "pending",
+    ticket: "TRUTH-01C",
+    tier: 2,
+    reason:
+      "Image-free audit facts for identification photos (actor, client reference, event, time). Operational history, decided with the consent evidence.",
+  },
+  studio_client_id_photo_settings: {
+    kind: "pending",
+    ticket: "TRUTH-01C",
+    tier: 2,
+    reason:
+      "The per-studio OFF-by-default switch for identification photos, operator-controlled. Configuration the studio does not author.",
+  },
+  studio_client_id_photo_switch_log: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "Append-only log of operator changes to the identification-photo switch. Platform operations record, not studio content.",
+  },
+  client_id_photo_wording_versions: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "The platform's versioned consent wording. The text a client agreed to is identified by version and hash on the consent rows.",
+  },
+  client_id_photo_pending_object_deletions: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "Transient queue of storage objects awaiting deletion through the Storage API. Holds only paths already removed from the record; never studio content.",
   },
 
   // Existing finite-prefix owner decisions; pending entries grant no export authority.
@@ -1784,6 +1993,27 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Introduced by migration 0223 (MPX-02, #829). The studio's own list of physical electrolysis machines: a display name, the catalogue profile and version it was registered against, the options physically fitted, and a retirement instant. It holds NO client or clinical data and no provider identifier. It is plainly studio-owned content and a studio export should probably carry it, but that is a product decision this lane was not asked to make, so nothing is claimed here. Whoever takes it should note that treatment_setup_readings references this table, so exporting the readings without the machines would leave an unresolvable identifier in the archive.",
   },
+  studio_cancellation_fee_rule_changes: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "The studio's own record of changes to its cancellation fee tiers: the previous and new rule, who changed it and when. It holds no client data and no free text, only a staff user id. It is not in this export yet; whether it is included is decided together with the studio's other settings histories.",
+  },
+  studio_cancellation_fee_rules: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "The studio's current cancellation fee tiers: one row per studio holding the notice window in hours, a fixed or percentage rate for the notice window and for the same day, whether charging is switched on, the revision and a hash of the policy text the owner reviewed. It is studio payment configuration, not client data, and holds no free text. It is not in this export yet; it is decided together with the studio's other payment settings.",
+  },
+  studio_manual_fee_setting_changes: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "The studio's own record of changes to its manual late-cancellation and no-show fee settings (0351): which setting, the old and new value, who changed it and when. Studio-owned settings history, so PENDING rather than EXCLUDED; the same class as studio_payment_jurisdiction_changes. It holds no client data and no free text (the field is a fixed list), only a staff user id, so it needs no field review, but whether an owner's export includes it is decided with the other settings histories.",
+  },
   studio_payment_jurisdiction_changes: {
     kind: "pending",
     ticket: "TRUTH-01B",
@@ -1813,7 +2043,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "What a provider check observed about a studio sender's Messaging Service and its US A2P campaign, one current row per sender, live since migration 0229 (SMS-CAMPAIGN-BINDING-01, HON-50 G4a). Studio-scoped and split like studio_sms_sender_registrations: whether the campaign was verified, and when it was checked, are studio-meaningful, while messaging_service_sid and campaign_sid are Hone's provider identifiers with no customer meaning. Decided column by column, not excluded. Revoked from every client role; read only through the service-role snapshot. No export surface ships in SMS-CAMPAIGN-BINDING-01.",
+      "What a provider check observed about a studio sender's Messaging Service and its US A2P campaign, one current row per sender, live since migration 0229. Studio-scoped and split like studio_sms_sender_registrations: whether the campaign was verified, and when it was checked, are studio-meaningful, while messaging_service_sid and campaign_sid are Hone's provider identifiers with no customer meaning. Decided column by column, not excluded. Revoked from every client role; read only through the service-role snapshot. No export surface ships in SMS-CAMPAIGN-BINDING-01.",
   },
   studio_sms_sender_registrations: {
     kind: "pending",
@@ -1829,7 +2059,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "The recorded inbound STOP preflight of a studio sender, one current row per sender, live since migration 0230 (SMS-STOP-PREFLIGHT-RECORD-01, HON-50 G6). Studio-scoped and split like studio_sms_sender_campaign_bindings: whether the STOP path passed, which checks passed, and when it was checked are studio-meaningful, while messaging_service_sid is Hone's provider identifier and webhook_base and credentials_epoch are Hone deployment configuration with no customer meaning. It holds no secret and no free text. Decided column by column, not excluded. Revoked from every client role; read only through the service-role snapshot. No export surface ships in SMS-STOP-PREFLIGHT-RECORD-01.",
+      "The recorded inbound STOP preflight of a studio sender, one current row per sender, live since migration 0230. Studio-scoped and split like studio_sms_sender_campaign_bindings: whether the STOP path passed, which checks passed, and when it was checked are studio-meaningful, while messaging_service_sid is Hone's provider identifier and webhook_base and credentials_epoch are Hone deployment configuration with no customer meaning. It holds no secret and no free text. Decided column by column, not excluded. Revoked from every client role; read only through the service-role snapshot. No export surface ships in SMS-STOP-PREFLIGHT-RECORD-01.",
   },
   treatment_area_create_claims: {
     kind: "pending",
@@ -1837,6 +2067,13 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     reason:
       "Introduced by migration 0223 (MPX-03, #829) to make the INITIAL save of a treatment area repeatable. One row per (session, caller-supplied retry key), recording a digest of the whole initial payload together with the block, entry and submission that key produced - so a retry after a lost response returns the original area instead of creating a second one carrying a second copy of the settings. TIER 2 RATHER THAN 1 because nothing in it is clinical content: it is a RECEIPT for a transport, and the three ids in it point at rows that each carry their own disposition in this registry. THE OBVIOUS ANSWER IS AN EXCLUSION on the same footing as studio_calendar_reservations - but `derived` would be an OVERCLAIM, and saying so is the point of leaving this pending. Two of its columns exist nowhere else: `idempotency_key`, which is opaque and minted by the caller's browser, and `payload_digest`, an md5 over the save's arguments. Neither is derivable from the rows it points at, and neither would mean anything to a client reading an archive - which is an argument for excluding it, not for calling it derived. It is studio-scoped and member-read like everything else here, because a key names a session and a session names a client.",
+  },
+  block_write_receipts: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "Introduced by migration 0301 so a machine-identity write or a readings submission that committed and whose answer was lost can be answered again with the block version THAT write produced. One row per (treatment area, kind, caller-supplied retry key): a digest of the identity chosen, the identity itself (model id, unit id, mode key) and the updated_at the write produced. TIER 2 and the same disposition as treatment_area_create_claims, for the same reason: nothing in it is clinical content or free text, it is a RECEIPT for a transport, and the ids in it point at rows that each carry their own disposition in this registry. Left pending rather than declared derived because `idempotency_key` is opaque and minted by the caller's browser and `payload_digest` is a hash of the choice, so neither exists anywhere else to be re-derived from. RLS is on, no policy exists and every API role's privileges are revoked: only the 0301 commands write it, in the transaction of the write it describes. Kept for the life of the block (no pruning).",
   },
   treatment_setup_captures: {
     kind: "pending",
@@ -2250,6 +2487,52 @@ export function selectedColumnError(audit: SelectedColumnAudit): string {
   return `Export aborted: ${parts.join("; ")}. No partial export was produced.`;
 }
 
+export function rpcSourceOf(resource: string): RpcSourceDeclaration | null {
+  return exportedResources().find((e) => e.resource === resource)?.disposition.rpcSource ?? null;
+}
+
+export type RpcSourceAudit = {
+  readonly ok: boolean;
+  readonly problems: readonly string[];
+};
+
+/**
+ * An rpc-sourced file is only as honest as the function behind it. Three comparisons, each in both directions:
+ * every CSV header must be a returned column or a declared derived header; every returned column must reach the CSV or be listed in
+ * `notEmitted`; and the function's LIVE return columns (supplied by the DB suite from pg_proc) must equal the declared `returns`.
+ */
+export function auditRpcSources(
+  liveReturnsByFn: Readonly<Record<string, readonly string[]>>,
+  resources: ReadonlyArray<RegistryEntry<ExportedDisposition>> = exportedResources(),
+): RpcSourceAudit {
+  const problems: string[] = [];
+  for (const { resource, disposition } of resources) {
+    const rpc = disposition.rpcSource;
+    if (!rpc) continue;
+    const returns = new Set(rpc.returns);
+    const headers = new Set(disposition.csvHeaders);
+    const derived = new Set(Object.keys(disposition.derivedHeaders ?? {}));
+    const emittedTargets = new Set(Object.values(disposition.emittedAs ?? {}).flatMap((e) => e.headers));
+    if (!returns.has(rpc.keyColumn)) problems.push(`${resource}: key column ${rpc.keyColumn} is not a returned column`);
+    for (const h of disposition.csvHeaders) {
+      if (!returns.has(h) && !derived.has(h) && !emittedTargets.has(h)) problems.push(`${resource}: header ${h} is not returned by ${rpc.fn}`);
+    }
+    for (const c of rpc.returns) {
+      const reaches = headers.has(c) || (disposition.emittedAs?.[c]?.headers ?? []).every((x) => headers.has(x)) && !!disposition.emittedAs?.[c];
+      if (!reaches && !(rpc.notEmitted && c in rpc.notEmitted)) problems.push(`${resource}: ${rpc.fn} returns ${c} but it neither reaches the CSV nor is declared notEmitted`);
+    }
+    const live = liveReturnsByFn[rpc.fn];
+    if (!live) {
+      problems.push(`${resource}: no live return columns supplied for ${rpc.fn}`);
+      continue;
+    }
+    const liveSet = new Set(live);
+    for (const c of rpc.returns) if (!liveSet.has(c)) problems.push(`${resource}: declared column ${c} is not returned by live ${rpc.fn}`);
+    for (const c of live) if (!returns.has(c)) problems.push(`${resource}: live ${rpc.fn} returns undeclared column ${c}`);
+  }
+  return { ok: problems.length === 0, problems: problems.sort() };
+}
+
 export function auditSelectedColumns(
   selectedByResource: Readonly<Record<string, readonly string[]>>,
   resources: ReadonlyArray<RegistryEntry<ExportedDisposition>> = exportedResources(),
@@ -2264,7 +2547,10 @@ export function auditSelectedColumns(
     }
     const have = new Set(selected);
     for (const column of disposition.includedColumns) {
-      if (!have.has(column)) notSelected.push(`${resource}.${column}`);
+      // An rpc-sourced read has no select to read back; what it observed is the function's returned names, so an included column counts
+      // as selected when every header it is emitted under was returned.
+      const names = disposition.rpcSource ? (disposition.emittedAs?.[column]?.headers ?? [column]) : [column];
+      if (!names.every((n) => have.has(n))) notSelected.push(`${resource}.${column}`);
     }
   }
   return {

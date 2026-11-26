@@ -39,9 +39,14 @@ async function noOverflow(page: Page) {
   expect(sw, `no horizontal overflow (scrollWidth ${sw} vs clientWidth ${cw})`).toBeLessThanOrEqual(cw);
 }
 async function openMachinePanel(page: Page) {
-  await expect(page.getByTestId("machine-first-trigger")).toBeVisible({ timeout: T });
-  await page.getByTestId("machine-first-open").click();
-  await expect(page.getByTestId("machine-first-panel")).toBeVisible({ timeout: T });
+  // An area that already carries a saved machine opens its panel itself on reopen (the saved choice is restored), so the trigger
+  // is only briefly visible, disabled on "Loading", then gone. The panel appearing is the assertion; the click is best effort.
+  const panel = page.getByTestId("machine-first-panel");
+  await expect(page.getByTestId("machine-first-trigger").or(panel)).toBeVisible({ timeout: T });
+  if (!(await panel.isVisible())) {
+    await page.getByTestId("machine-first-open").click({ timeout: 3000 }).catch(() => undefined);
+  }
+  await expect(panel).toBeVisible({ timeout: T });
 }
 async function openCreateForm(page: Page, clientId: string, sessionId: string) {
   await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
@@ -105,7 +110,12 @@ for (const device of [
           await expect(options).not.toHaveCount(0, { timeout: T });
           const values = await options.evaluateAll((els) => els.map((e) => (e as HTMLOptionElement).value));
           expect(values.some((v) => v.startsWith("synthetic:")), "the app server must not offer a synthetic profile").toBe(false);
-          expect([...values].sort()).toEqual(["dectro-apilus:junior-3g", "dectro-apilus:senior-3g"]);
+          // The two 3G models are offered exactly as before; the xCell Pur row is published in the same plan but is never offered here.
+          expect([...values].filter((v) => v.endsWith("-3g")).sort()).toEqual(["dectro-apilus:junior-3g", "dectro-apilus:senior-3g"]);
+          // The xCell is offered ONLY to a studio on the rollout allowlist and only once published. This app server
+          // sets no rollout allowlist, so the e2e studio is unlisted: the list is the two 3G models only. The listed-and-published case is proved in the unit
+          // tests (tests/app/machines/machine-setup-actions.test.ts, tests/components/xcell-one-choice-mounted.test.ts).
+          expect([...values].filter((v) => !v.endsWith("-3g"))).toEqual([]);
           if (REAL_PATH) {
             // OWNER REGISTRATION through the real path (registerMachineAction), gated on the published contract.
             await page.locator("#machine-model").selectOption(profile.profileId);

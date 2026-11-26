@@ -1,5 +1,9 @@
 "use server";
 
+import { loadTreatmentTimeNameFields } from "@/lib/treatment-time/client-first-name";
+import { loadCommunicationName } from "@/lib/clients/communication-name-loader";
+import { notificationClientName } from "@/lib/notifications/client-name";
+import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
 import { CLIENT_NAME_MAX, CLIENT_NAME_TOO_LONG } from "@/lib/clients/identity";
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
@@ -32,6 +36,7 @@ import {
 } from "@/lib/booking/referral-source";
 import { localTimeString12h } from "@/lib/booking/tz";
 import { recordPractitionerNotification } from "@/lib/notifications/practitioner-notifications";
+import { buildBookedText } from "@/lib/notifications/notification-text";
 import { addDays, localDateString, todayInTz } from "@/lib/booking/tz";
 import {
   horizonRangeInStudioTz,
@@ -60,11 +65,13 @@ import {
   NEW_CLIENT_ADMISSION_REFUSAL_CODE,
   newClientAdmissionRefusesOutright,
   newClientMayBook,
+  readClosedInvitedBookingRule,
 } from "@/lib/booking/new-client-admission";
 import {
   clientManagePageAllowed,
   clientOnlineBookingDisabledMessage,
   clientSelfServicePolicyFromStudio,
+  studioManagesAppointments,
 } from "@/lib/booking/client-self-service-policy";
 import {
   NEW_CLIENT_WAITLIST_BOOKING_REFUSAL,
@@ -82,6 +89,7 @@ import {
 } from "@/lib/booking/marketing-consent";
 import { dispatchBookingConversion } from "@/lib/conversion/dispatch";
 import { normalizeWaitlistBookingResult } from "@/lib/booking/waitlist-atomic-result";
+import { waitlistBookingCommandEnabled } from "@/lib/booking/waitlist-booking-command";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { captureServerEvent } from "@/lib/analytics/server";
 // PR #261: salted SHA-256 fingerprint helper reused for public booking
@@ -175,6 +183,7 @@ export async function fetchPublicSlotsAction(params: {
 
   const studio = await getStudioBySlug(params.slug);
   if (!studio) return { ok: false, error: "Studio not found." };
+  if (studioManagesAppointments(studio)) return { ok: false, error: clientOnlineBookingDisabledMessage(studio.name) };
 
   const horizon = horizonRangeInStudioTz(
     studio.timezone,
@@ -324,6 +333,7 @@ export async function fetchNextAvailableDateAction(params: {
 
   const studio = await getStudioBySlug(params.slug);
   if (!studio) return { ok: false, error: "Studio not found." };
+  if (studioManagesAppointments(studio)) return { ok: false, error: clientOnlineBookingDisabledMessage(studio.name) };
 
   const admin = createAdminClient();
 
@@ -473,7 +483,13 @@ export type PublicBookResult =
          * booking committed. Structurally separate from `invitation_consumed`,
          * which asserts no appointment exists.
          */
-        | "invitation_booking_indeterminate";
+        | "invitation_booking_indeterminate"
+        /**
+         * 0313. The response was lost but the database confirms the booking
+         * committed. Carries the appointment start it holds.
+         */
+        | "invitation_already_booked";
+      startsAt?: string;
     };
 
 export async function publicBookAppointmentAction(formData: FormData): Promise<PublicBookResult> {
@@ -570,6 +586,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
 
   const studio = await getStudioBySlug(slug);
   if (!studio) return { ok: false, error: "Studio not found." };
+  if (studioManagesAppointments(studio)) return { ok: false, error: clientOnlineBookingDisabledMessage(studio.name) };
 
   // HON-47. RETURNING-CLIENT ONLINE BOOKING follows the studio's client portal
   // flag. It is NOT new-client admission: new_client_admission_mode below stays
@@ -648,8 +665,12 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   //   waitlist -> the ORDINARY path refuses, and a valid scoped invitation is
   //               the ONE exception that may authorise. This is the WAIT
   //               invitation lifecycle and it is preserved unchanged below.
-  //   closed   -> NOBODY new books. A previously issued invitation must not
-  //               override a studio its owner has closed.
+  //   closed   -> no PUBLIC new-client booking. Until 0323 is applied, nobody new
+  //               books: a previously issued invitation must not override a
+  //               studio its owner has closed. Once 0323 is applied (the marker
+  //               answers true) a person presenting BOTH halves of an invitation
+  //               is sent on to authorizeInvitationForBooking like a waitlist
+  //               studio's invitee; everyone else is still refused here.
   //   unknown  -> fail closed. A failed read must not be recoverable by
   //               presenting credentials.
   //
@@ -667,7 +688,22 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   //
   // EXISTING CLIENTS ARE OUTSIDE THIS AUTHORITY: the condition is
   // clientType === "new", exactly as the ordinary gate below.
-  if (clientType === "new" && newClientAdmissionRefusesOutright(admission)) {
+  //
+  // 0323: the ONLY exception is a CLOSED studio, both invitation halves presented, and the
+  // database rule applied (the marker). The marker is read only in that case. A failed or absent
+  // marker, an unreadable mode, and any request without both halves keep the refusal below.
+  const closedInvitedBookingAllowed =
+    clientType === "new" &&
+    admission.ok &&
+    admission.mode === "closed" &&
+    Boolean(invitationToken) &&
+    Boolean(invitationCapability) &&
+    (await readClosedInvitedBookingRule()) === "applied";
+  if (
+    clientType === "new" &&
+    newClientAdmissionRefusesOutright(admission) &&
+    !closedInvitedBookingAllowed
+  ) {
     return {
       ok: false,
       error: NEW_CLIENT_ADMISSION_CLOSED_REFUSAL,
@@ -742,6 +778,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     return {
       ok: false,
       error: "That time is no longer available. Please choose another time.",
+      code: "slot_taken",
     };
   }
 
@@ -805,9 +842,14 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     );
     const free = slots.some((s) => new Date(s.start).getTime() === start.getTime());
     if (!free) {
+      // CODED, so the invitation screen can say the time was just taken. This is
+      // the path a LOST RACE takes: the winner's appointment makes the time not
+      // free here, before the booking command is ever reached. Without the code
+      // the invitation fell through to its generic "couldn't complete" copy.
       return {
         ok: false,
         error: "That time is no longer available. Please choose another time.",
+        code: "slot_taken",
       };
     }
   } catch (err) {
@@ -837,13 +879,25 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // 23505 race-fallback branch, where we re-read the unique-index
   // winner WITHOUT this filter so we can distinguish "no winner" from
   // "winner is archived" and return a non-revealing error.
-  const { data: existingClient, error: lookupErr } = await admin
-    .from("clients")
-    .select("id, name, email, phone, sms_consent_at, sms_opted_out_at")
-    .eq("studio_id", studio.id)
-    .eq("normalized_email", normalizedEmail)
-    .is("archived_at", null)
-    .maybeSingle();
+  // The preferred name rides on this existing read (missing-column-safe), so the bell can name an EXISTING client without a second lookup.
+  const { data: existingClientRaw, error: lookupErr } = await readWithPreferredName((includePreferred) =>
+    admin
+      .from("clients")
+      .select(`${preferredNameColumn(includePreferred)}id, name, email, phone, sms_consent_at, sms_opted_out_at`)
+      .eq("studio_id", studio.id)
+      .eq("normalized_email", normalizedEmail)
+      .is("archived_at", null)
+      .maybeSingle(),
+  );
+  const existingClient = existingClientRaw as {
+    id: string;
+    name: string;
+    preferred_name?: string | null;
+    email: string;
+    phone: string | null;
+    sms_consent_at: string | null;
+    sms_opted_out_at: string | null;
+  } | null;
   if (lookupErr) {
     // PR #261: sqlstate code + studioId + salted email fingerprint;
     // drop raw DB message. The fingerprint correlates repeated
@@ -934,7 +988,14 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // same round, a shared household address, an entry requeued after a release.
   // So the id travels from the command that spent it, and nowhere else.
   let redeemedEntryId: string | null = null;
-  if (invitationAuth?.kind === "authorized") {
+  // 0313. WITH THE FLAG ON, NOTHING IS REDEEMED HERE. The command below redeems
+  // and books in one transaction, so a refused booking leaves the invitation
+  // live. Flag off, the redeem-first path that follows is unchanged.
+  const invitedCommand =
+    invitationAuth?.kind === "authorized" && waitlistBookingCommandEnabled()
+      ? invitationAuth
+      : null;
+  if (invitationAuth?.kind === "authorized" && !invitedCommand) {
     const redeemed = await consumeInvitationForBooking(
       invitationAuth,
       invitationCapability,
@@ -1029,6 +1090,9 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // before using it. Named so it cannot be mistaken for a real id in a log.
   const NO_CLIENT_RESOLVED = "__transport_failed__";
   let clientName: string;
+  // The client's preferred name where THIS action read the client row; `undefined` = the row was not read here (a new client, or one the command adopted),
+  // so the notification asks the bounded display-name loader instead.
+  let clientPreferredName: string | null | undefined;
   let clientPhone: string | null;
   // SMS consent state used by the SMS confirmation attempt at the
   // bottom. Tracked through both client branches so the dispatch
@@ -1037,6 +1101,8 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // only consent_at can be stamped from this public surface.
   let clientSmsConsentAt: string | null = null;
   let clientSmsOptedOutAt: string | null = null;
+  // Set only on the 0313 command path; run strictly after a committed booking.
+  let deferredConsentStamp: (() => Promise<void>) | null = null;
 
   // No-enumeration gate for the existing-client path. When the
   // visitor said "I am an existing client" but the studio has no
@@ -1077,51 +1143,64 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     // branch.
     resolvedClientId = existingClient.id;
     clientName = existingClient.name;
+    clientPreferredName = existingClient.preferred_name ?? null;
     clientPhone = existingClient.phone;
     clientSmsConsentAt = existingClient.sms_consent_at ?? null;
     clientSmsOptedOutAt = existingClient.sms_opted_out_at ?? null;
 
-    // SMS consent stamp for existing clients is gated by two rules:
-    //   1. The client must not already be opted out (STOP is sticky).
-    //   2. The submitted phone must normalize to the same digits as
-    //      the stored phone. Without this, anyone who knows a real
-    //      client's email could opt them into SMS by typing a
-    //      different phone number on the public form.
-    // We also do not overwrite an already-set sms_consent_at; the
-    // earlier source-of-truth wins.
-    if (
-      smsConsent &&
-      clientSmsOptedOutAt == null &&
-      clientSmsConsentAt == null
-    ) {
-      const submittedDigits = normalizePhoneForMatch(phone);
-      const storedDigits = normalizePhoneForMatch(existingClient.phone);
+    // 0313. WITH THE FLAG ON, THIS WRITE MUST NOT PRECEDE PROOF. The invitation is
+    // `authorized` here only by the recipient's email hash; the CAPABILITY is
+    // proved inside redeem_and_book_waitlist_invitation. Stamping consent first
+    // let a holder of a live link, a bogus capability and a known email and phone
+    // record write-once SMS consent on an existing client that the later refusal
+    // could not undo. So with the flag on the stamp is DEFERRED until the command
+    // has returned a committed booking (`deferredConsentStamp`, below). Flag off,
+    // the invitation was already redeemed above (proof first), so it keeps its place.
+    const stampExistingClientConsent = async (): Promise<void> => {
+      // SMS consent stamp for existing clients is gated by two rules:
+      //   1. The client must not already be opted out (STOP is sticky).
+      //   2. The submitted phone must normalize to the same digits as
+      //      the stored phone. Without this, anyone who knows a real
+      //      client's email could opt them into SMS by typing a
+      //      different phone number on the public form.
+      // We also do not overwrite an already-set sms_consent_at; the
+      // earlier source-of-truth wins.
       if (
-        submittedDigits.length > 0 &&
-        submittedDigits === storedDigits
+        smsConsent &&
+        clientSmsOptedOutAt == null &&
+        clientSmsConsentAt == null
       ) {
-        // G3 / 0211: consent is write-once, so the stamp is a conditional
-        // FIRST write; an overlapping booking that got there first, or a STOP
-        // that landed meanwhile, is adopted from the row rather than lost
-        // (lib/booking/public-consent-stamp.ts).
-        const stamp = await stampPublicBookingConsent(admin, existingClient.id, new Date().toISOString());
-        if (stamp.result === "error") {
-          // Soft fail. The booking and the email path must not break
-          // because of a consent-stamp error; future bookings can
-          // re-attempt. We log a sanitized error and proceed.
-          // PR #261: sqlstate code + studioId + salted email
-          // fingerprint; drop raw DB message.
-          logInternalBookingError("public_booking_sms_consent_update_failed", {
-            code: stamp.code,
-            studioId: studio.id,
-            emailFingerprint: hashFingerprint(normalizedEmail),
-          });
-        } else {
-          clientSmsConsentAt = stamp.smsConsentAt;
-          clientSmsOptedOutAt = stamp.smsOptedOutAt;
+        const submittedDigits = normalizePhoneForMatch(phone);
+        const storedDigits = normalizePhoneForMatch(existingClient.phone);
+        if (
+          submittedDigits.length > 0 &&
+          submittedDigits === storedDigits
+        ) {
+          // G3 / 0211: consent is write-once, so the stamp is a conditional
+          // FIRST write; an overlapping booking that got there first, or a STOP
+          // that landed meanwhile, is adopted from the row rather than lost
+          // (lib/booking/public-consent-stamp.ts).
+          const stamp = await stampPublicBookingConsent(admin, existingClient.id, new Date().toISOString());
+          if (stamp.result === "error") {
+            // Soft fail. The booking and the email path must not break
+            // because of a consent-stamp error; future bookings can
+            // re-attempt. We log a sanitized error and proceed.
+            // PR #261: sqlstate code + studioId + salted email
+            // fingerprint; drop raw DB message.
+            logInternalBookingError("public_booking_sms_consent_update_failed", {
+              code: stamp.code,
+              studioId: studio.id,
+              emailFingerprint: hashFingerprint(normalizedEmail),
+            });
+          } else {
+            clientSmsConsentAt = stamp.smsConsentAt;
+            clientSmsOptedOutAt = stamp.smsOptedOutAt;
+          }
         }
       }
-    }
+    };
+    if (invitedCommand) deferredConsentStamp = stampExistingClientConsent;
+    else await stampExistingClientConsent();
   } else {
     // DEFERRED TO THE COMMIT TRANSACTION, and that is the whole point.
     //
@@ -1229,7 +1308,24 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // AN EXISTING CLIENT IS UNTOUCHED. `clientType` is the branch, and the
   // existing-client path reaches the same commands it always did with the same
   // arguments, consulting no admission authority at any point.
-  const { data: rpcRows, error: rpcErr } = clientType === "new"
+  const { data: rpcRows, error: rpcErr } = invitedCommand
+    ? await admin.rpc("redeem_and_book_waitlist_invitation", {
+        p_raw_token: invitedCommand.rawToken,
+        p_raw_capability: invitationCapability,
+        p_studio_id: studio.id,
+        p_client_id: resolvedClientId,
+        p_client_name: clientName,
+        p_client_email: email,
+        p_client_phone: clientPhone,
+        p_sms_consent_at: resolvedClientId ? null : clientSmsConsentAt,
+        p_service_id: serviceId,
+        p_starts_at: start.toISOString(),
+        p_cancellation_token_hash: commitArgs.p_cancellation_token_hash,
+        p_legacy_bridge_waitlist: newClientAdmissionLegacyBridgeWaitlist(studio.slug),
+        p_notes: notes,
+        p_referral_source: referralSource,
+      })
+    : clientType === "new"
     ? await admin.rpc("create_public_appointment_for_new_client", {
         ...commitArgs,
         p_client_name: clientName,
@@ -1254,6 +1350,85 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     : await admin.rpc("create_public_appointment", commitArgs);
   const commandRow = Array.isArray(rpcRows) ? rpcRows[0] : rpcRows;
   const rawCommandResult = (commandRow?.result as string | undefined) ?? null;
+
+  // 0313. THE UNCERTAIN OUTCOME, AND THE REFUSALS THAT LEAVE THE INVITATION LIVE.
+  //
+  // An error from the command is not a verdict: the transaction may have
+  // committed before the answer was lost. Ask the database, which is the only
+  // authority, before saying anything. `live` means nothing happened and the
+  // invitation is still usable. Anything else is reported as unknown and leaves a
+  // durable item for the owner (idempotent per invitation); the derived
+  // "Needs your attention" list is the safety net if even that write fails.
+  if (invitedCommand && rpcErr) {
+    // FAIL CLOSED when the flag is on but the command does not exist (0313 not
+    // applied): never fall back to redeem-first. Nothing ran, nothing was spent.
+    if (rpcErr.code === "PGRST202" || rpcErr.code === "42883") {
+      console.error(
+        JSON.stringify({
+          event: "waitlist_booking_command_missing",
+          studioId: studio.id,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      return {
+        ok: false,
+        error:
+          "Booking from this invitation isn't available right now. Please contact the studio.",
+      };
+    }
+    consumedInvitationId = invitedCommand.invitation.invitationId;
+    let bookingState: string | null = null;
+    let bookedStartsAt: string | null = null;
+    try {
+      const { data: st } = await admin.rpc("waitlist_invitation_booking_state", {
+        p_raw_token: invitedCommand.rawToken,
+      });
+      const stRow = Array.isArray(st) ? st[0] : st;
+      bookingState = typeof stRow?.state === "string" ? stRow.state : null;
+      bookedStartsAt = typeof stRow?.starts_at === "string" ? stRow.starts_at : null;
+    } catch {
+      bookingState = null;
+    }
+    if (bookingState === "live") {
+      return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
+    }
+    // The answer was lost but the booking committed: say so, with the time the
+    // database holds, instead of the "couldn't confirm" copy.
+    if (bookingState === "booked" && bookedStartsAt) {
+      return {
+        ok: false,
+        error: "Your appointment is booked.",
+        code: "invitation_already_booked",
+        startsAt: bookedStartsAt,
+      };
+    }
+    if (bookingState !== "booked") {
+      try {
+        await admin.rpc("record_waitlist_invitation_followup", {
+          p_raw_token: invitedCommand.rawToken,
+          p_reason: "booking_outcome_unknown",
+        });
+      } catch {
+        // Best effort: the derived list still shows this entry.
+      }
+    }
+    return invitationBookingIndeterminate("command_error");
+  }
+  if (
+    invitedCommand &&
+    rawCommandResult !== null &&
+    (rawCommandResult.startsWith("redeem_") ||
+      rawCommandResult === "invalid_token" ||
+      rawCommandResult === "invalid_input")
+  ) {
+    // Nothing was written and the invitation is as it was.
+    return {
+      ok: false,
+      error:
+        "We couldn't confirm your invitation. Please reopen the link from your email and try again.",
+      code: "invitation_refused",
+    };
+  }
 
   // THE COMMIT-TIME REFUSALS, answered before anything was written.
   //
@@ -1313,6 +1488,8 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // client whose stored phone or consent differs. So whenever the command
   // reports a profile, it replaces what was typed.
   if (commandRow?.client_name !== undefined && commandRow?.client_name !== null) {
+    // A different row than the one read above (adopted by the command): its preferred name is unknown here.
+    if (commandRow.client_id !== undefined && commandRow.client_id !== resolvedClientId) clientPreferredName = undefined;
     clientName = commandRow.client_name as string;
   }
   if (commandRow?.client_phone !== undefined) {
@@ -1332,7 +1509,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // unreachable — `consumedInvitationId` and `redeemedEntryId` are assigned
   // together, so the consumed-without-booking exit returns first. The unwrapped
   // code's observable effect today is the word in that operator log line.
-  const normalized = atomicEntryId
+  const normalized = atomicEntryId || invitedCommand
     ? normalizeWaitlistBookingResult(rawCommandResult)
     : null;
   // THE VERDICT IS THE MAPPER'S, AND IT IS NOT RE-DERIVED FROM A STRING.
@@ -1480,6 +1657,16 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       emailFingerprint: hashFingerprint(normalizedEmail),
     });
     return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
+  }
+
+  // 0313 command path only: the capability was proved and the booking committed, so the
+  // existing client's write-once SMS consent may now be recorded. Soft-fail, as before.
+  // `clientSms*` hold the COMMITTED values (overwritten from the command's row above),
+  // so an already-recorded consent or a STOP is respected.
+  // H1: the stamp targets and compares against `existingClient`, so it runs only when the
+  // booking's committed client IS that client; any other id writes nothing.
+  if (deferredConsentStamp && existingClient && committedClientId === existingClient.id) {
+    await deferredConsentStamp();
   }
 
   // The appointment is COMMITTED (create_public_appointment returned 'created'),
@@ -1683,18 +1870,30 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // BOOK-01 P2-A: the helper itself is synchronous and documented never to
   // throw, but the `body` template is evaluated EAGERLY at this call site, so a
   // date/timezone formatting failure would propagate from here. Contained.
-  await postCommit("public_booking_practitioner_notification_threw", undefined, () =>
-    recordPractitionerNotification({
+  // The notification names the client by their DISPLAY name (the calendar's field: preferred where set), never the legal identity.
+  const notificationName =
+    clientPreferredName === undefined
+      ? await loadCommunicationName(admin, studio.id, clientId, clientName)
+      : notificationClientName({ name: clientName, preferred_name: clientPreferredName });
+  await postCommit("public_booking_practitioner_notification_threw", undefined, () => {
+    // Built INSIDE the closure: a date or timezone formatting failure is contained here, after the booking committed, and loses only the notification.
+    const bookedText = buildBookedText({
+      clientName: notificationName,
+      serviceName: service.name,
+      dayLabel: formatDayLabel(start, studio.timezone),
+      timeLabel: localTimeString12h(start, studio.timezone),
+    });
+    return recordPractitionerNotification({
       studioId: studio.id,
       practitionerId: assignedPractitionerId,
       eventType: "new_booking",
-      title: "New booking",
-      body: `${clientName} booked ${service.name} for ${formatDayLabel(start, studio.timezone)} at ${localTimeString12h(start, studio.timezone)}.`,
+      title: bookedText.title,
+      body: bookedText.body,
       appointmentId: createdId,
       clientId: clientId,
       href: `/calendar/${createdId}`,
-    }),
-  );
+    });
+  });
 
   // Fire-and-forget marketing/analytics consent capture. The appointment is
   // already committed, so this NEVER fails or delays the booking (a failed
@@ -1813,7 +2012,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
           async () =>
             buildTreatmentTimeLine({
               enabled: true,
-              clientFirstName: clientName.split(/\s+/)[0] || clientName,
+              client: await loadTreatmentTimeNameFields(admin, studio.id, clientId, clientName),
               context: await getTreatmentTimeContextForEmail(studio.id, clientId),
             }),
         )
@@ -1833,6 +2032,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       { ok: false, error: "confirmation sender threw", retryable: false },
       () =>
         sendBookingConfirmationToClient({
+      nameReader: admin,
           appointment: created,
           service,
           studio,
@@ -1913,6 +2113,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     // depend on notifying staff. Recipients and enablement logic are unchanged.
     await postCommit("public_booking_practitioner_email_threw", undefined, () =>
       sendBookingNotificationToPractitioner({
+      nameReader: admin,
         appointment: created,
         service,
         studio,

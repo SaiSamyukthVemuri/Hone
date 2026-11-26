@@ -14,7 +14,7 @@ import {
   type MoveSlot,
   type MovePractitionerOption,
 } from "./move-appointment-actions";
-import { moveConfirmState } from "./move-confirm-state";
+import { moveConfirmState, parseCustomMoveTime } from "./move-confirm-state";
 import { isServerActionTransportFailure } from "@/lib/reliability/server-action-transport";
 
 // Practitioner Move appointment, ONE shared responsive dialog + state machine used by
@@ -31,7 +31,6 @@ import { isServerActionTransportFailure } from "@/lib/reliability/server-action-
 //     owner (canUseCustomTime from loadMoveSlotsAction); the action re-authorizes on submit.
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const TIME_RE = /^\d{2}:\d{2}$/;
 
 export type MoveDialogAppointment = {
   id: string;
@@ -79,7 +78,9 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
   // Custom-time mode (owner only). `canUseCustomTime` is authoritative from the server.
   const [mode, setMode] = useState<Mode>("available_slot");
   const [canUseCustomTime, setCanUseCustomTime] = useState(false);
-  const [customTime, setCustomTime] = useState(""); // studio-local "HH:MM"
+  const [customTimeInput, setCustomTimeInput] = useState("");
+  const [typeCustomTime, setTypeCustomTime] = useState(false);
+  const customTime = parseCustomMoveTime(customTimeInput);
   const [ackOverride, setAckOverride] = useState(false);
 
   // Item 7: owner-only reassignment. All server-authoritative from loadMoveSlotsAction.
@@ -101,7 +102,7 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
 
   // Studio-tz instant for the custom date+time (DST-correct), for the confirm summary.
   const customInstant = useMemo(() => {
-    if (!DATE_RE.test(date) || !TIME_RE.test(customTime)) return null;
+    if (!DATE_RE.test(date) || !customTime) return null;
     const d = utcInstantFromLocal(date, customTime, tz);
     return Number.isNaN(d.getTime()) ? null : d;
   }, [date, customTime, tz]);
@@ -175,7 +176,8 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
     setSelected(null);
     setMoveError(null);
     setMode("available_slot");
-    setCustomTime("");
+    setCustomTimeInput("");
+    setTypeCustomTime(false);
     setAckOverride(false);
     setCanUseCustomTime(false);
     setReassignEnabled(false);
@@ -272,7 +274,8 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
   const switchToAvailable = () => {
     if (submitting || mode === "available_slot") return;
     setMode("available_slot");
-    setCustomTime("");
+    setCustomTimeInput("");
+    setTypeCustomTime(false);
     setAckOverride(false);
     setMoveError(null);
     load(date, target); // reload current available slots
@@ -342,7 +345,7 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
       if (!selected) return;
       localTime = localTimeString(new Date(selected.start), tz); // 24h HH:MM in the studio tz
     } else {
-      if (!DATE_RE.test(date) || !TIME_RE.test(customTime) || !ackOverride) return;
+      if (!DATE_RE.test(date) || !customTime || !ackOverride) return;
       localTime = customTime;
       ack = true;
     }
@@ -545,15 +548,31 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
               <label className="block">
                 <span className="text-sm font-medium">Custom time</span>
                 <input
-                  type="time"
-                  step={900}
-                  value={customTime}
-                  onChange={(e) => { setCustomTime(e.target.value); setMoveError(null); }}
+                  type={typeCustomTime ? "text" : "time"}
+                  step={typeCustomTime ? undefined : 900}
+                  placeholder={typeCustomTime ? "3:30 PM or 15:30" : undefined}
+                  value={customTimeInput}
+                  onChange={(e) => { setCustomTimeInput(e.currentTarget.value); setMoveError(null); }}
+                  onBlur={(e) => {
+                    if (!typeCustomTime) setCustomTimeInput(e.currentTarget.value);
+                  }}
                   disabled={submitting}
                   aria-label="Custom time"
                   className="mt-1 block w-full rounded-lg border border-neutral-300 px-3 py-3 text-base focus:border-neutral-900 focus:outline-none focus:ring-2 focus:ring-neutral-900/10 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900"
                 />
               </label>
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => {
+                  setCustomTimeInput(customTime);
+                  setTypeCustomTime(!typeCustomTime);
+                  setMoveError(null);
+                }}
+                className="min-h-[44px] text-sm underline underline-offset-2 disabled:opacity-50"
+              >
+                {typeCustomTime ? "Use time picker" : "Type a time instead"}
+              </button>
               <p className="mt-1 text-xs text-neutral-500">Studio time zone: {tz}</p>
               <p className="mt-3 rounded-lg bg-amber-50 p-3 text-xs leading-relaxed text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
                 Custom time can be outside regular operating hours. Existing appointments, buffers and blocked time still apply.

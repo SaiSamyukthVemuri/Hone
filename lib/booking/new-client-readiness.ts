@@ -1,3 +1,4 @@
+import { WAITLIST_PATH } from "@/lib/waitlist/paths";
 import "server-only";
 import type { Service, Studio, StudioAvailabilityDefault } from "@/lib/types/database";
 import { isBookableByNewClient } from "@/lib/booking/consultation";
@@ -145,7 +146,7 @@ const BLOCKERS: Record<NewClientBlockerKey, Omit<NewClientBlocker, "key">> = {
   },
   wait_admission: {
     label: "New clients join the waitlist instead of booking directly.",
-    href: "/settings/waitlist",
+    href: WAITLIST_PATH,
   },
   booking_link: { label: "Booking link is not set.", href: "/settings/booking/link" },
   booking_settings: {

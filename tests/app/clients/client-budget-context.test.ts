@@ -582,6 +582,6 @@ describe("N. budget context never reaches a client-facing surface", () => {
   });
 
   it("the card documents itself as practitioner-only", () => {
-    expect(BUDGET_CARD).toContain("never shown to the client");
+    expect(BUDGET_CARD).toMatch(/never shown to the client/i);
   });
 });

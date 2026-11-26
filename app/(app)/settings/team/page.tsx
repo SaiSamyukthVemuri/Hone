@@ -10,11 +10,30 @@ import type {
 } from "@/lib/types/database";
 import { getOwnerTeamSeats } from "@/lib/subscriptions/owner-team-seats";
 import { PLANS } from "@/lib/subscriptions/plans";
+import { isDeskEnabled } from "@/lib/desk/flag";
 import { InviteForm } from "./InviteForm";
 import {
   removePractitionerAction,
   revokeInvitationAction,
 } from "./actions";
+import { PendingButton } from "@/components/pending-button";
+import { setReceptionistActiveAction } from "./receptionist-actions";
+
+type ReceptionistRow = { id: string; display_name: string; email: string | null; active: boolean };
+
+// Read under the OWNER's own session: the 0216 policy lets an owner read their studio's receptionist rows, and nobody else's.
+// The legal identity of a client is not on this row or this page.
+async function getReceptionists(studioId: string): Promise<ReceptionistRow[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("studio_receptionists")
+    .select("id, display_name, email, active")
+    .eq("studio_id", studioId)
+    .order("active", { ascending: false })
+    .order("display_name", { ascending: true });
+  if (error) throw new Error(`Failed to load the front desk team: ${dbErrorCode(error)}`);
+  return (data ?? []) as ReceptionistRow[];
+}
 import { dbErrorCode } from "@/lib/logging/error-class";
 import { OwnerOnlyNotice } from "@/components/settings/view-heading";
 import { shouldShowReviewLink } from "@/lib/appointments/review-link";
@@ -58,10 +77,11 @@ export default async function TeamSettingsPage() {
     return <OwnerOnlyNotice>Only studio owners can manage the team.</OwnerOnlyNotice>;
   }
 
-  const [practitioners, invitations, seats] = await Promise.all([
+  const [practitioners, invitations, seats, receptionists] = await Promise.all([
     getPractitionersForStudio(studio.id),
     getPendingInvitations(studio.id),
     getOwnerTeamSeats(studio.id),
+    getReceptionists(studio.id),
   ]);
 
   const showReviewLink = await shouldShowReviewLink(studio.id);
@@ -92,11 +112,61 @@ export default async function TeamSettingsPage() {
             <p className="text-neutral-500">The owner counts as a practitioner. Pending invites reserve seats until accepted or revoked.</p>
           </div>
         )}
-        <InviteForm seats={seats} deskEnabled={process.env.HONE_RECEPTIONIST_DESK_ENABLED === "true"} />
+        <InviteForm seats={seats} deskEnabled={isDeskEnabled()} />
       </section>
 
       <PendingInvitations invitations={invitations} />
+
+      <FrontDesk receptionists={receptionists} />
     </div>
+  );
+}
+
+function FrontDesk({ receptionists }: { receptionists: ReceptionistRow[] }) {
+  const active = receptionists.filter((r) => r.active).length;
+  return (
+    <section className="flex flex-col gap-4">
+      <div>
+        <h2 id="front-desk" className="scroll-mt-24 text-xl font-medium">
+          Front desk
+        </h2>
+        <p className="mt-1 text-sm text-neutral-500">
+          Receptionists see the schedule and client contact details.
+          They never see treatment records, clinical notes, images or payments, and they are never booked as a
+          practitioner.
+          {receptionists.length === 0 ? " No receptionists yet." : ` ${active} active.`}
+        </p>
+      </div>
+      {receptionists.length > 0 && (
+        <ul className="divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
+          {receptionists.map((r) => (
+            <li key={r.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-baseline gap-2">
+                  <span className="font-medium">{r.display_name}</span>
+                  <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+                    receptionist
+                  </span>
+                  {!r.active && <span className="text-xs text-neutral-500">inactive</span>}
+                </div>
+                {r.email && <div className="truncate text-xs text-neutral-500">{r.email}</div>}
+              </div>
+              <form action={setReceptionistActiveAction}>
+                <input type="hidden" name="id" value={r.id} />
+                <input type="hidden" name="active" value={r.active ? "false" : "true"} />
+                {/* PendingButton: the press is acknowledged and the control is disabled while the action runs, so a slow connection cannot show nothing or submit twice. */}
+                <PendingButton variant="secondary" size="sm">
+                  {r.active ? "Deactivate" : "Reactivate"}
+                </PendingButton>
+              </form>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="text-xs text-neutral-500">
+        Invite a receptionist above by choosing the Receptionist role. They sign in with that email and land on the front desk.
+      </p>
+    </section>
   );
 }
 

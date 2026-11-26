@@ -96,6 +96,12 @@ export type EligibilityExistingAttemptSummary = {
   // 'ready' row still passes the type check before any Stripe call.
   stripe_payment_intent_id: string | null;
   stripe_charge_id: string | null;
+  /** 0351: how the amount was derived at prepare (canonical fee attempts only; legacy rows leave these undefined). */
+  calc_mode?: "fixed" | "percent" | null;
+  basis_cents?: number | null;
+  percent_bp?: number | null;
+  /** Stored provider PaymentIntent status; null for legacy rows (a failed legacy row therefore cannot prove it is uncollectable). */
+  stripe_status?: string | null;
   charged_at: string | null;
   failed_at: string | null;
   failure_code: string | null;
@@ -105,8 +111,22 @@ export type EligibilityExistingAttemptSummary = {
   // PR #196: canonical-ledger fee attempts carry refund/receipt state;
   // legacy rows leave these undefined.
   refund_status?: string | null;
+  refund_amount_cents?: number | null;
+  refunded_at?: string | null;
+  /** The provider's own refund status (0240) and refund id: used to say "unclear" on disagreement. */
+  stripe_refund_status?: string | null;
+  stripe_refund_id?: string | null;
+  /** TRUE when the signed cumulative full-refund receipt (0240 stripe_charge_refund_event_id) exists. Derived on the server; the event id itself is never carried here or to the client. */
+  cumulative_full_refund_verified?: boolean;
   receipt_sent_at?: string | null;
+  /** When the row last changed; the claim sets pending_stripe, so this is when a charge started. */
+  updated_at?: string | null;
 };
+
+/** How a fee amount was derived at prepare (0351). Frozen onto the attempt; execute never recomputes. */
+export type ManualFeeBasis =
+  | { calcMode: "fixed"; basisCents: null; percentBp: null }
+  | { calcMode: "percent"; basisCents: number; percentBp: number };
 
 export type ManualFeeEligibility =
   | {
@@ -116,8 +136,9 @@ export type ManualFeeEligibility =
       policyAcknowledgementId: string;
       policySnapshotHash: string;
       amountCents: number;
+      feeBasis: ManualFeeBasis;
       currency: string;
-      timingClassification: "practitioner_asserted";
+      timingClassification: "practitioner_asserted" | "system_derived";
       appointment: EligibilityAppointmentSummary;
       client: EligibilityClientSummary;
       card: EligibilityCardSummary;
@@ -134,7 +155,10 @@ export type ManualFeeEligibility =
       cardAuthorization: EligibilityCardAuthorizationSummary | null;
       policyAcknowledgement: EligibilityPolicyAckSummary | null;
       amountCents: number | null;
+      feeBasis: ManualFeeBasis | null;
+      /** True when percent mode calculated a fee of exactly $0.00 (zero price or rounds to zero): nothing is owed, no attempt. */
+      noFeeOwed: boolean;
       currency: string | null;
-      timingClassification: "practitioner_asserted";
+      timingClassification: "practitioner_asserted" | "system_derived";
       existingAttempts: EligibilityExistingAttemptSummary[];
     };

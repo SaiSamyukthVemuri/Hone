@@ -11,21 +11,29 @@ import { loginByMagicLink } from "./helpers/flows";
 // ===========================================================================
 // HON-65 regression (Chloe, 4 Nov 2026): the Dashboard stopped showing "Last treatment".
 // ===========================================================================
-// #1308 moved the one-line summary inside the CLOSED "Visit details" disclosure, and every other dashboard spec
-// opens that disclosure on load, so none noticed. This spec deliberately does NOT: with the details closed, an
-// owner and a practitioner each see the line on the row, at desktop and phone width, with no sideways scroll.
+// A practitioner sees the most recent visit without opening the full settings.
+// Exercise the default row as both an owner and a practitioner at each width.
 // LT_SHOTS_DIR (optional) writes a screenshot of each case.
 
 const T = 15_000;
 
 async function expectLineOnClosedRow(page: Page, shot: string) {
-  const details = page.locator('details[data-testid="today-row-details"]').first();
-  await expect(details).toBeAttached({ timeout: T });
-  await expect(details).not.toHaveAttribute("open", "");
+  const toggle = page.getByRole("button", { name: /^Last visit details for / }).first();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false", { timeout: T });
   const line = page.getByTestId("dashboard-memory-compact").first();
   await expect(line).toBeVisible({ timeout: T });
   await expect(line).toContainText("Last treatment:");
   await expect(line).toContainText(/upper lip/i);
+  // The visit uses the full line. Side-by-side actions used to squeeze long
+  // notes and treatment history into a narrow column even on desktop.
+  const row = line.locator("xpath=ancestor::li[1]");
+  const body = row.getByTestId("today-row-body");
+  const action = row.getByRole("link", { name: "Rebook", exact: true });
+  const bodyBox = await body.boundingBox();
+  const actionBox = await action.boundingBox();
+  expect(bodyBox).not.toBeNull();
+  expect(actionBox).not.toBeNull();
+  expect(actionBox!.y).toBeGreaterThanOrEqual(bodyBox!.y + bodyBox!.height - 1);
   // The full chart is still behind the disclosure.
   await expect(page.getByTestId("dashboard-memory-full")).toHaveCount(0);
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
@@ -40,7 +48,7 @@ for (const width of [1280, 390]) {
     test(`owner sees Last treatment on the closed row`, async ({ page }) => {
       const seed = await seedE2eStudio();
       await seedE2eDashboardMemoryClient(seed, { cautionNote: null });
-      await loginByMagicLink(page, seed.ownerEmail, { openRowDetails: false });
+      await loginByMagicLink(page, seed.ownerEmail);
       await page.goto("/dashboard");
       await expectLineOnClosedRow(page, `owner-${width}`);
     });
@@ -51,7 +59,7 @@ for (const width of [1280, 390]) {
       const member = await seedE2eMember(seed);
       const tz = await getStudioTimezone(seed.studioId);
       await seedFutureAppointmentAt(seed.studioId, member.practitionerId, clientId, tz, "18:00");
-      await loginByMagicLink(page, member.email, { openRowDetails: false });
+      await loginByMagicLink(page, member.email);
       await page.goto("/dashboard");
       await expectLineOnClosedRow(page, `practitioner-${width}`);
     });

@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { machineModelLabel } from "@/lib/machines/display-name";
+import { recordedSummary } from "@/lib/machines/recorded-count";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import type { Preselect } from "@/lib/machines/preselect";
+import { pickerUnits } from "@/lib/machines/picker-entries";
+import { LEGACY_MACHINE_OPTION_VALUE } from "@/lib/machines/legacy-machine";
 
 import { unsupportedModes } from "@/lib/machines/unsupported-modes";
 import { Button } from "@/components/ui/button";
@@ -23,11 +29,13 @@ import type {
   ReadingSubmission,
   RecordedReading,
 } from "@/lib/machines/machine-queries";
+import { LocalDraftRegistry, useDraftView, useHasDraftRegistry } from "./draft-registry";
 import { MachineReadingEntry } from "./machine-reading-entry";
 import { MachinePriorSetup } from "./machine-prior-setup";
 import { MachineRecordedSetups } from "./machine-recorded-setups";
 import {
   MachineSettingDraft,
+  type ParkedSettingDraft,
   MachineSettingDraftReset,
 } from "./machine-setting-draft";
 import type { GroupSubmission } from "@/lib/machines/setting-groups";
@@ -128,6 +136,12 @@ export type MachineFirstSetupPanelProps = {
    * empty studio and an unreadable inventory are different situations.
    */
   inventoryReason?: string | null;
+  /** The platform rollout could not be read: said beside the choices even when the studio has another machine (an empty list already says it through inventoryReason). */
+  rolloutNotice?: string | null;
+  /** Reports the display label of the unit's model now chosen (machineModelLabel), or null. DISPLAY ONLY: read by the New view's "This visit" card. */
+  onChosenModel?: (model: string | null) => void;
+  /** The ONE-CHOICE PRESELECT (New view): used only as the INITIAL state, and only when no restored, remembered or unavailable selection applies. */
+  onlyChoice?: Preselect;
   /** The treatment block being charted. Entry is impossible without it. */
   blockId?: string | null;
   /**
@@ -141,15 +155,6 @@ export type MachineFirstSetupPanelProps = {
    */
   /** The host form's save is unresolved, so the create-mode draft is frozen. */
   settingDraftFrozen?: boolean;
-  /**
-   * Report that a REVISION save's outcome is unknown, so the HOST can freeze
-   * its own controls.
-   *
-   * The panel freezes what it owns. It cannot freeze the host form's Cancel,
-   * and that is the control whose use destroys the retry key by unmounting
-   * the entry (Codex, #860 4302176844).
-   */
-  onRevisionUnresolved?: (unresolved: boolean) => void;
   onSettingDraft?: (
     draft: {
       groups: GroupSubmission[];
@@ -192,6 +197,12 @@ export type MachineFirstSetupPanelProps = {
    */
   recordedSetupUnavailable?: boolean;
   /**
+   * The host holds further saves: the recorded settings shown are STALE because the refresh after a confirmed save failed,
+   * and a later save would be a revision made against a baseline she is not looking at. The server compares only the SET of group keys
+   * (`recordedGroupsMoved`), which a same-group revision does not change, so it cannot refuse this; the panel blocks until a reload.
+   */
+  submissionBlocked?: boolean;
+  /**
    * Persists the chosen machine as this practitioner's default. Supplied by
    * the connected wrapper.
    *
@@ -207,7 +218,68 @@ export type MachineFirstSetupPanelProps = {
   onSelectMachine?: (choice: {
     deviceId: string | null;
     modeKey: string | null;
-  }) => Promise<{ ok: boolean; error?: string }>;
+    /** The existing charting workflow was chosen: no unit, no mode. */
+    legacy?: boolean;
+  }) => Promise<{
+    ok: boolean;
+    error?: string;
+    /** The AREA'S OWN identity write was refused: the stored machine is unchanged, so the pick must be undone. */
+    reverted?: boolean;
+    /**
+     * A refusal that FOLLOWED an adoption: an earlier unconfirmed pick was settled (the database holds it) before this one was refused,
+     * so "the previous machine" this panel remembers is no longer the stored one. The panel moves to THIS machine instead;
+     * without it the picker and the readings form disagreed with the confirmed identity.
+     */
+    fallback?: { deviceId: string | null; modeKey: string | null; legacy: boolean };
+  }>;
+  /**
+   * The existing charting workflow (the studio's xCell) as one more choice in
+   * THE selector, so there is one control for one decision. Offered only when
+   * the server says this studio has that workflow's history.
+   */
+  legacyMachine?: { profileId: string; label: string } | null;
+  /**
+   * MultiPlex as a MODE of the one xCell choice (HON-71): the studio's usable xCell Pur unit, present only when the server found the
+   * contract published. The unit is never listed as a second xCell; picking MultiPlex under xCell selects it, picking the existing
+   * settings returns to the existing workflow. Null means nothing about the xCell choice changes.
+   */
+  multiplexRoute?: { deviceId: string; modeKey: string } | null;
+  multiplexReadingsHost?: HTMLDivElement | null;
+  /**
+   * The host form's MULTIPLEX pick in its ONE Mode control (there is no second selector here). Each pick bumps `seq`: `want` true
+   * binds this NEW area to the routed unit, false returns it to the existing xCell workflow. Acted on only when the sequence changes.
+   */
+  multiplexRequest?: { seq: number; want: boolean } | null;
+  /** The area was saved as that workflow: open on it. */
+  initialLegacyChosen?: boolean;
+  /** A saved area that already holds xCell Pur readings: native machines are listed but cannot be chosen. */
+  nativeLocked?: boolean;
+  /**
+   * The unit stored on the area's own record (its studio_machine_id), or null. This, not the panel's current pick, decides that a saved
+   * area is native when its unit is no longer selectable.
+   */
+  savedDeviceId?: string | null;
+  /** The mode stored on the area's own record, or null when it holds a unit without one (migration 0301 allows that). */
+  savedModeKey?: string | null;
+  /**
+   * What kind of machine is in force, so the host form can show ONLY that
+   * machine's fields: the existing fields for `legacy` and `none`, none of the
+   * overlapping legacy ones for `native`.
+   */
+  onKindChange?: (kind: "none" | "legacy" | "native") => void;
+  /**
+   * The machine and mode IN FORCE after every resolution, including the one
+   * the panel makes on its own from a remembered, restored or suggested
+   * choice. The host needs it because a machine the panel SHOWS must be the
+   * machine the area SAVES; reporting only explicit picks left an
+   * auto-selected machine on screen that the save never carried.
+   */
+  onResolvedChoice?: (
+    choice:
+      | { deviceId: string; modeKey: string; legacy?: false }
+      | { deviceId: null; modeKey: null; legacy: true }
+      | null,
+  ) => void;
   /**
    * Records ONE SAVE - every settings group at once. Supplied by the connected
    * wrapper.
@@ -265,14 +337,14 @@ export function withheld(catalogue: readonly MachineProfile[]) {
     .filter((p) => p.availability !== "active")
     .map((p) => ({
       key: p.profileId,
-      name: `${p.manufacturer} ${p.model}${p.variant ? ` (${p.variant})` : ""}`,
+      name: machineModelLabel(p),
       availability: p.availability,
       reason: p.availabilityReason ?? "Not offered for new capture.",
       openQuestions: p.openQuestions.length,
     }));
 }
 
-export function MachineFirstSetupPanel({
+function MachineFirstSetupPanelImpl({
   devices = [],
   scope = null,
   initialDeviceId = null,
@@ -280,20 +352,33 @@ export function MachineFirstSetupPanel({
   catalogue = MACHINE_CATALOGUE,
   persistence = NO_PERSISTENCE,
   inventoryReason = null,
+  rolloutNotice = null,
+  onChosenModel,
+  onlyChoice = null,
   blockId = null,
   canManageMachines = false,
   priorSetup = [],
   recordedSetup = [],
   priorSetupUnavailable = false,
   recordedSetupUnavailable = false,
+  submissionBlocked = false,
   onSettingDraft,
   settingDraftFrozen = false,
-  onRevisionUnresolved,
   unavailableSelection = null,
   suggestedMachine = null,
   restoredSelection: restored = null,
   unitNames = {},
   onSelectMachine,
+  legacyMachine = null,
+  multiplexRoute = null,
+  multiplexReadingsHost,
+  multiplexRequest = null,
+  initialLegacyChosen = false,
+  nativeLocked = false,
+  savedDeviceId = null,
+  savedModeKey = null,
+  onKindChange,
+  onResolvedChoice,
   onRecord,
 }: MachineFirstSetupPanelProps) {
   // SELECTION, STORED FACT AND NOTE MOVE TOGETHER, under one rule.
@@ -331,46 +416,12 @@ export function MachineFirstSetupPanel({
    */
   const [selectionPending, setSelectionPending] = useState(false);
   /**
-   * A REVISION SAVE'S OUTCOME IS UNKNOWN.
-   *
-   * `settingDraftFrozen` is the CREATE form's unresolved save, reported by
-   * the host. This is the other save path — `MachineReadingEntry` on an
-   * existing block — whose unresolved state lived only in that child, so
-   * the identity controls stayed live through it (Codex, #860 4300759930).
-   *
-   * The two are kept separate and combined at the point of use rather than
-   * merged into one flag, because they are reported by different owners
-   * and either can be true alone.
+   * A REVISION SAVE'S OUTCOME IS UNKNOWN: read from the host's registry (draft-registry.tsx), where the reading entry reports it as a LEVEL
+   * and removes it when it unmounts, so the hold cannot outlive the entry that owned it and cannot be dropped by this panel's own re-render
+   * (the old local state, its report effect and the release on `recordedSetupUnavailable` are gone). It is a hold on the identity controls
+   * and on the host's Cancel and Save, because each of them can unmount the entry and with it the retry key.
    */
-  const [revisionUnresolved, setRevisionUnresolved] = useState(false);
-
-  // AND THE HOST IS TOLD (Codex, #860 4302176844).
-  //
-  // This state froze the panel's OWN identity controls from round 12, and
-  // stayed here. The host form's Cancel button is outside the panel, checks
-  // only the create-mode flag, and unmounting the entry is what destroys
-  // the retry key - so the one control that can lose the key never saw the
-  // state that should have frozen it.
-  const reportUnresolved = useRef<boolean | null>(null);
-  useEffect(() => {
-    if (reportUnresolved.current === revisionUnresolved) return;
-    reportUnresolved.current = revisionUnresolved;
-    onRevisionUnresolved?.(revisionUnresolved);
-  }, [revisionUnresolved, onRevisionUnresolved]);
-  // THE HOLD DIES WITH THE ENTRY THAT OWNED IT (Codex, #1205 4400713832).
-  //
-  // The entry reports its transport hold from an effect, and it is the only
-  // thing that ever reports it back to false. A save that is CONFIRMED but
-  // whose history refresh then fails marks the record unavailable, which
-  // unmounts the entry while its last report was still "held" - so nothing
-  // could release it, and the machine and mode pickers and the host's Cancel
-  // stayed disabled after a save the practitioner had been told succeeded.
-  // No key is left to protect once the entry is gone, so the hold is released
-  // here, where the unmount is decided, instead of relying on a child that
-  // no longer exists. A remounted entry reports afresh.
-  useEffect(() => {
-    if (recordedSetupUnavailable) setRevisionUnresolved(false);
-  }, [recordedSetupUnavailable]);
+  const { anyUnresolved: revisionUnresolved } = useDraftView();
   // EITHER SAVE PATH FREEZES THE IDENTITY. The machine and the mode are
   // part of the payload both digests are bound to, and switching away can
   // unmount the component holding a retry key.
@@ -387,7 +438,10 @@ export function MachineFirstSetupPanel({
     // keeps all three facts straight; see lib/machines/selection-state.
     unavailableSelection
       ? unusableSelection(unavailableSelection.deviceId, unavailableSelection.reason)
-      : initialSelection(initialDeviceId),
+      : initialDeviceId == null && onlyChoice?.kind === "native"
+        // A PRESELECT IS NOT A REMEMBERED CHOICE: it selects the only unit and claims nothing is stored.
+        ? restoredSelection(onlyChoice.deviceId, null)
+        : initialSelection(initialDeviceId),
   );
   const deviceId = selection.selected;
   const selectionNote = selection.note;
@@ -397,8 +451,16 @@ export function MachineFirstSetupPanel({
     restored ? restored.modeKey : initialModeKey,
   );
   // How many readings this panel has actually saved in this mount. Drives the
-  // "Recorded:" line, which previously claimed "nothing" even after a save.
+  // "Readings from this panel" line, which previously claimed "nothing" even after a save.
   const [savedCount, setSavedCount] = useState(0);
+  // The recorded list as it stood when this visit last saved: while the host still passes THAT array, its refresh has not landed.
+  const [savedAgainst, setSavedAgainst] = useState<{ list: typeof recordedSetup } | null>(null);
+  const selectRef = useRef<HTMLSelectElement | null>(null);
+  const [legacyChosen, setLegacyChosen] = useState(
+    (initialLegacyChosen || (onlyChoice?.kind === "legacy" && !restored && !unavailableSelection && initialDeviceId == null)) && legacyMachine !== null,
+  );
+  // The route applies only beside the existing xCell choice (never a second xCell on its own).
+  const xcellRouted = multiplexRoute !== null && legacyMachine !== null;
   /**
    * Choose (or clear) the machine.
    *
@@ -406,7 +468,14 @@ export function MachineFirstSetupPanel({
    * but it will not survive a reload, and saying nothing is what made the old
    * behaviour look like it had worked.
    */
-  const chooseDevice = async (next: string | null) => {
+  const chooseDevice = async (next: string | null, legacy = false) => {
+    // A SAVED AREA'S PICK IS WRITTEN FIRST AND APPLIED AFTER. The record can refuse it (a clear,
+    // a stale tab), and moving the panel first unmounts the reading entry, so a refusal remounted it EMPTY and the typed
+    // readings were gone. Nothing a refusal could undo is changed, cleared or unmounted until the write settles. A new
+    // area writes nothing here, so its pick stays immediate.
+    const writeFirst = Boolean(blockId && onSelectMachine);
+    // What was in force before this pick, for a refusal that leaves the stored machine unchanged.
+    const before = { deviceId, legacy: legacyChosen, modeKey };
     // THE MODE IS RESET TO THE NEW DEVICE'S OWN FIRST MODE. Carrying the
     // previous one over would persist a key from a different profile, which
     // means nothing - a mode exists only within the profile that declares it.
@@ -415,9 +484,12 @@ export function MachineFirstSetupPanel({
     const nextMode = nextPick
       ? (supportedModes(nextPick.device, nextPick.profile)[0]?.key ?? null)
       : null;
-    setModeKey(nextMode);
-    // Step 1: the optimistic move, so the form stays responsive.
-    setSelection((prev) => selectionRequested(prev, next));
+    if (!writeFirst) {
+      setLegacyChosen(legacy);
+      setModeKey(nextMode);
+      // Step 1: the optimistic move, so the form stays responsive.
+      setSelection((prev) => selectionRequested(prev, next));
+    }
     // Step 2: the acknowledged outcome. `null` means no persister is wired,
     // which is NOT the same as a successful write and must not be reported as
     // one - `selectionSettled` is what keeps those apart.
@@ -432,7 +504,11 @@ export function MachineFirstSetupPanel({
     let write: Awaited<ReturnType<NonNullable<typeof onSelectMachine>>> | null = null;
     try {
       write = onSelectMachine
-        ? await onSelectMachine({ deviceId: next, modeKey: nextMode })
+        ? await onSelectMachine({
+            deviceId: next,
+            modeKey: nextMode,
+            ...(legacy ? { legacy: true } : {}),
+          })
         : null;
     } catch {
       // A REJECTION IS A FAILED WRITE, not an absence of one.
@@ -449,6 +525,9 @@ export function MachineFirstSetupPanel({
       write = {
         ok: false,
         error: "That did not save.",
+        // A saved area's pick is applied only after its write: a THROWN write (a server failure, not a refusal) left
+        // the record unchanged as far as this panel knows, so the panel must not move.
+        ...(writeFirst ? { reverted: true } : {}),
       };
     } finally {
       // CLEARED EVEN ON A THROW, or one failed write leaves the picker dead
@@ -456,6 +535,28 @@ export function MachineFirstSetupPanel({
       setSelectionPending(false);
     }
     if (token !== selectionRequestRef.current) return;
+    if (write && write.ok === false && write.reverted) {
+      // The record still holds the previous machine: the panel stays on it (or goes back to it), with the reason said.
+      // A saved area's pick is written BEFORE anything moves (writeFirst), so a refusal has cleared nothing and there is
+      // nothing to give back; restoring typed values here would put hidden legacy fields under a native machine.
+      if (write.fallback) {
+        setLegacyChosen(write.fallback.legacy);
+        setModeKey(write.fallback.modeKey);
+      } else if (!writeFirst) {
+        setLegacyChosen(before.legacy);
+        setModeKey(before.modeKey);
+      }
+      setSelection((prev) => ({
+        selected: write.fallback ? write.fallback.deviceId : before.deviceId,
+        persisted: prev.persisted,
+        note: write.error ?? "That did not save.",
+      }));
+      return;
+    }
+    if (writeFirst) {
+      setLegacyChosen(legacy);
+      setModeKey(nextMode);
+    }
     setSelection((prev) => selectionSettled(prev, next, write));
   };
 
@@ -467,8 +568,13 @@ export function MachineFirstSetupPanel({
    * block either way, but it will not survive a reload.
    */
   const chooseMode = async (key: string) => {
-    setModeKey(key);
-    setSelection((prev) => selectionRequested(prev, deviceId));
+    // WRITE FIRST, APPLY AFTER, as for the device: the mode is part of the entry's key, so moving
+    // it before the write settles remounts the reading entry and a refusal then throws the typed readings away.
+    const writeFirst = Boolean(blockId && onSelectMachine);
+    if (!writeFirst) {
+      setModeKey(key);
+      setSelection((prev) => selectionRequested(prev, deviceId));
+    }
     // SAME TOKEN AS THE DEVICE PICK, deliberately: a mode change and a device
     // change are both writes to one stored selection, so a stale mode
     // completion must not land after a newer device pick either. Two counters
@@ -481,15 +587,29 @@ export function MachineFirstSetupPanel({
         ? await onSelectMachine({ deviceId, modeKey: key })
         : null;
     } catch {
-      // Same rule as the device pick: a rejection is a failed write.
+      // Same rule as the device pick: a rejection is a failed write, and on a saved area it changed nothing here.
       write = {
         ok: false,
         error: "That did not save.",
+        ...(writeFirst ? { reverted: true } : {}),
       };
     } finally {
       setSelectionPending(false);
     }
     if (token !== selectionRequestRef.current) return;
+    if (write && write.ok === false && write.reverted) {
+      if (write.fallback) {
+        setLegacyChosen(write.fallback.legacy);
+        setModeKey(write.fallback.modeKey);
+      } else if (!writeFirst) setModeKey(modeKey);
+      setSelection((prev) => ({
+        selected: write.fallback ? write.fallback.deviceId : prev.selected,
+        persisted: prev.persisted,
+        note: write.error ?? "That did not save.",
+      }));
+      return;
+    }
+    if (writeFirst) setModeKey(key);
     setSelection((prev) => selectionSettled(prev, deviceId, write));
   };
 
@@ -497,17 +617,104 @@ export function MachineFirstSetupPanel({
   // to a studio and the filter is studio-scoped. Without identity the panel
   // shows the catalogue status and nothing else, rather than guessing.
   const selectable = scope ? selectableDevices(scope, devices, catalogue) : [];
-  const chosen = selectable.find((s) => s.device.deviceId === deviceId) ?? null;
+  const chosen = legacyChosen
+    ? null
+    : (selectable.find((s) => s.device.deviceId === deviceId) ?? null);
   // A MODE KEY IS ONLY MEANINGFUL WITHIN ONE PROFILE, so an unrecognised one
   // falls back rather than blanking the panel: a remembered mode can outlive
   // the machine it was chosen on.
   // FROM THE PHYSICAL UNIT, not the model: a mode gated on an option this
   // device does not have is not a choice, and offering it only to have the
   // capture refused two layers down is worse than not offering it.
+  // The existing xCell choice (and a saved legacy block) has no unit, so it reports the picker's own label for it.
+  // A SAVED unit that is retired or unavailable is still this area's identity (the panel keeps it through savedUnavailable), so it is
+  // reported by the name the panel itself shows for it, not as no machine.
+  const chosenModel = legacyChosen
+    ? (legacyMachine?.label ?? null)
+    : chosen
+      ? machineModelLabel(chosen.profile)
+      : Boolean(blockId) && savedDeviceId !== null
+        ? `${unitNames[savedDeviceId] ?? "Saved machine"} (no longer available)`
+        : null;
+  useEffect(() => {
+    onChosenModel?.(chosenModel);
+  }, [onChosenModel, chosenModel]);
   const modes = chosen ? supportedModes(chosen.device, chosen.profile) : [];
-  const mode = modes.find((m) => m.key === modeKey) ?? modes[0] ?? null;
+  // A MODE KEY THIS UNIT DOES NOT OFFER IS NEVER SHOWN AS A DIFFERENT MODE (Vercel Security Review 01M6VEJJ83G4GZ10DFCKMJAEVP).
+  // The old fallback (`?? modes[0]`) made a stored or remembered key that the unit does not offer appear as the unit's FIRST mode, so the
+  // panel showed a mode the record does not hold. Only "no key at all" defaults to the first mode; a key that is set but not offered is an
+  // explicit UNRESOLVED state with no mode selected, so no reading for that mode can be recorded until a mode is chosen on purpose.
+  // A NULL CHECK, NOT TRUTHINESS: an empty-string key is a key that is set and not offered.
+  const modeKeySet = modeKey !== null && modeKey !== undefined;
+  const modeFound = modeKeySet ? (modes.find((m) => m.key === modeKey) ?? null) : null;
+  const modeUnresolved = Boolean(chosen) && modeKeySet && modes.length > 0 && modeFound === null;
+  const mode = modeUnresolved ? null : (modeFound ?? modes[0] ?? null);
   const groups = chosen && mode ? nativeFieldGroups(chosen.profile, mode) : [];
   const unsupported = chosen ? unsupportedModes(chosen.profile) : [];
+  // TELL THE HOST WHICH KIND OF MACHINE IS IN FORCE, so its form shows only
+  // that machine's fields. A chosen native unit with a mode hides the
+  // overlapping legacy fields; nothing chosen, or the existing workflow, keeps
+  // them exactly as they were.
+  //
+  // THE KIND COMES FROM THE SAVED IDENTITY, NOT FROM SELECTABILITY. A saved area whose native unit has since
+  // been retired (or is otherwise no longer selectable) has no `chosen`, but it is still a native area: reporting "none" exposed the
+  // existing legacy fields on it, and a Save could write legacy values onto an area that holds a native identity. The unit stays
+  // shown, read-only, as the saved machine, and the legacy fields stay hidden.
+  const savedUnavailable = Boolean(blockId) && savedDeviceId !== null && !legacyChosen && chosen === null;
+  const machineKind: "none" | "legacy" | "native" = legacyChosen
+    ? "legacy"
+    : (chosen && mode) || savedUnavailable || modeUnresolved
+      ? "native"
+      : "none";
+  // WHAT SHE TYPED FOR EACH NATIVE IDENTITY, kept in memory while this NEW area is open, so choosing another machine or mode and coming back
+  // restores exactly her entries. Never stored. Cleared when the area is saved (a block exists) and dies with the panel.
+  const parkedNative = useRef(new Map<string, ParkedSettingDraft>());
+  useEffect(() => {
+    if (blockId) parkedNative.current.clear();
+  }, [blockId]);
+  // THE LAST REQUEST THIS PANEL HAS FINISHED WITH (applied, or dropped for a reason that will not change).
+  const handledMultiplexSeq = useRef(multiplexRequest?.seq ?? 0);
+  useEffect(() => {
+    if (!multiplexRequest || multiplexRequest.seq === handledMultiplexSeq.current) return;
+    // A NEW area only: a saved area keeps the identity it was saved with.
+    if (!xcellRouted || !multiplexRoute || blockId) {
+      handledMultiplexSeq.current = multiplexRequest.seq;
+      return;
+    }
+    // THE FREEZE WINS (Codex P1): a request that arrives while a create is pending or its response is unknown is dropped, never queued,
+    // so no click can move the identity under an unresolved save.
+    if (identityFrozen) {
+      handledMultiplexSeq.current = multiplexRequest.seq;
+      return;
+    }
+    // A PICK STILL SETTLING (its preference write is in flight) HOLDS the request instead of losing it. Dropping it left the form showing
+    // two modes at once with the old machine still chosen, and her next click did nothing visible. The effect re-runs when the pick settles
+    // (`selectionPending` is a dependency) and applies the LATEST request; nothing is written for a new area here, so nothing can be
+    // moved under an unresolved save (that case is the freeze above).
+    if (selectionPending) return;
+    handledMultiplexSeq.current = multiplexRequest.seq;
+    if (multiplexRequest.want) void chooseDevice(multiplexRoute.deviceId);
+    else if (deviceId === multiplexRoute.deviceId) void chooseDevice(null, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [multiplexRequest, selectionPending]);
+  useEffect(() => {
+    onKindChange?.(machineKind);
+  }, [machineKind, onKindChange]);
+  const resolvedDeviceId = chosen && mode ? chosen.device.deviceId : null;
+  const resolvedModeKey = chosen && mode ? mode.key : null;
+  useEffect(() => {
+    // THE EXISTING WORKFLOW IS A CHOICE TOO. This effect re-fires whenever the
+    // host hands a new callback, so reporting nothing for it let a later pass
+    // overwrite the host's draft with "none" and the area saved with no
+    // machine at all.
+    onResolvedChoice?.(
+      legacyChosen
+        ? { deviceId: null, modeKey: null, legacy: true }
+        : resolvedDeviceId && resolvedModeKey
+          ? { deviceId: resolvedDeviceId, modeKey: resolvedModeKey }
+          : null,
+    );
+  }, [legacyChosen, resolvedDeviceId, resolvedModeKey, onResolvedChoice]);
 
   /**
    * onRecord, plus the one side effect the status line needs. Counting here
@@ -528,10 +735,17 @@ export function MachineFirstSetupPanel({
             out.written ??
             input.groups.reduce((n, g) => n + g.readings.length, 0);
           setSavedCount((n) => n + written);
+          setSavedAgainst({ list: recordedSetup });
         }
         return out;
       }
     : undefined;
+
+  // The visit form owns the layout. Keep the editor under its existing draft provider.
+  const placeReadings = (editor: ReactNode) =>
+    multiplexReadingsHost && chosen && chosen.device.deviceId === multiplexRoute?.deviceId && mode?.key === multiplexRoute.modeKey
+      ? createPortal(editor, multiplexReadingsHost)
+      : editor;
 
   return (
     <section
@@ -586,8 +800,17 @@ export function MachineFirstSetupPanel({
         >
           <select
             className={fieldControlClass()}
-            value={deviceId ?? ""}
-            onChange={(e) => void chooseDevice(e.target.value || null)}
+            ref={selectRef}
+            value={
+              legacyChosen || (xcellRouted && deviceId === multiplexRoute?.deviceId)
+                ? LEGACY_MACHINE_OPTION_VALUE
+                : (deviceId ?? (savedUnavailable ? savedDeviceId : "") ?? "")
+            }
+            onChange={(e) =>
+              e.target.value === LEGACY_MACHINE_OPTION_VALUE
+                ? void chooseDevice(null, true)
+                : void chooseDevice(e.target.value || null)
+            }
             // FROZEN BY THE HOST'S UNRESOLVED SAVE TOO, not only by a
             // selection write in flight.
             //
@@ -603,8 +826,12 @@ export function MachineFirstSetupPanel({
             // The machine and the mode are PART OF THE PAYLOAD the retry
             // key is bound to. A freeze that covers the readings and not
             // the identity is not a freeze.
+            // The legacy option is a choice too: a studio with xCell Pur history and no registered native unit still
+            // has something to select.
             disabled={
-              selectable.length === 0 || selectionPending || identityFrozen
+              (selectable.length === 0 && !legacyMachine) ||
+              selectionPending ||
+              identityFrozen
             }
             data-testid="machine-select"
           >
@@ -614,14 +841,49 @@ export function MachineFirstSetupPanel({
               so clearing remains reachable.
             */}
             <option value="">Choose machine…</option>
-            {selectable.map(({ device, profile }) => (
-              <option key={device.deviceId} value={device.deviceId}>
-                {device.displayName} — {profile.manufacturer} {profile.model}
-                {profile.variant ? ` (${profile.variant})` : ""}
+            {pickerUnits(selectable, { legacyOffered: legacyMachine !== null, xcellRouted, currentDeviceId: deviceId })
+              // ONE xCell CHOICE: the MultiPlex unit is reached through the xCell entry's mode, never listed as a second xCell.
+              // Hidden whenever the existing xCell is offered (even before a route exists), so there is never both; the exception keeps a unit that is
+              // already this area's chosen identity visible when no route is active.
+              .map(({ device, profile }) => (
+              <option key={device.deviceId} value={device.deviceId} disabled={nativeLocked}>
+                {device.displayName} — {machineModelLabel(profile)}
               </option>
             ))}
+            {savedUnavailable && savedDeviceId !== null && (
+              <option value={savedDeviceId} disabled>
+                {(unitNames[savedDeviceId] ?? "Saved machine") + " (saved on this area, no longer available)"}
+              </option>
+            )}
+            {legacyMachine && (
+              <option value={LEGACY_MACHINE_OPTION_VALUE}>
+                {legacyMachine.label}
+              </option>
+            )}
           </select>
         </FieldLabel>
+      )}
+      {scope && rolloutNotice && selectable.length > 0 && (
+        <p className="text-sm text-amber-800 dark:text-amber-300" role="status" data-testid="machine-rollout-unavailable">
+          {rolloutNotice}
+        </p>
+      )}
+      {modeUnresolved && (
+        <p className="text-sm text-amber-800 dark:text-amber-300" role="status" data-testid="machine-mode-unresolved">
+          {modeKey === ""
+            ? "No mode is recorded for this machine on this area. Choose a mode to continue."
+            : "Recorded mode not available on this machine. Choose a mode to continue."}
+        </p>
+      )}
+      {savedUnavailable && (
+        <p className="text-sm text-neutral-600 dark:text-neutral-400" data-testid="machine-saved-unavailable">
+          {unitNames[savedDeviceId as string] ?? "This area's machine"} is saved on this area but is no longer available. Its settings stay as recorded.
+        </p>
+      )}
+      {scope && nativeLocked && (
+        <p className="text-sm text-neutral-600 dark:text-neutral-400" data-testid="machine-native-locked">
+          {xcellRouted ? "This area already has readings saved in the other xCell modes. Add a new area to chart MultiPlex." : "This area already has xCell Pur readings. Add a new area to chart another machine."}
+        </p>
       )}
 
       {/*
@@ -703,8 +965,16 @@ export function MachineFirstSetupPanel({
       {!blockId && onSettingDraft && !(chosen && mode) && (
         <MachineSettingDraftReset onSettingDraft={onSettingDraft} />
       )}
+      {legacyChosen && (
+        <p
+          className="text-sm text-neutral-600 dark:text-neutral-400"
+          data-testid="machine-legacy-chosen"
+        >
+          {legacyMachine?.label}: use the treatment fields below.
+        </p>
+      )}
       {selectable.length === 0 ? (
-        <p className="text-sm text-neutral-600 dark:text-neutral-400">
+        <p className="text-sm text-neutral-600 dark:text-neutral-400" hidden={legacyChosen}>
           No verified machine is available to select yet.{" "}
           {!scope
             ? "This surface does not yet know which practitioner and studio is charting, so no machine list can be scoped to it."
@@ -720,19 +990,31 @@ export function MachineFirstSetupPanel({
           controls for one decision, which is the "additional conflicting
           set" the assignment rules out (#860 6156583955).
         */
-        <p className="text-sm text-neutral-600 dark:text-neutral-400">
+        <p className="text-sm text-neutral-600 dark:text-neutral-400" hidden={legacyChosen}>
           Choose the machine you are working on, and its own settings appear
           here.
         </p>
       ) : (
         <div className="flex flex-col gap-3" data-testid="machine-chosen">
           <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-            {chosen.device.displayName}
+            {xcellRouted && chosen.device.deviceId === multiplexRoute?.deviceId ? legacyMachine?.label : chosen.device.displayName}
             <span className="ml-2 font-normal text-neutral-600 dark:text-neutral-400">
-              {chosen.profile.manufacturer} {chosen.profile.model}
-              {chosen.profile.variant ? ` (${chosen.profile.variant})` : ""}
+              {xcellRouted && chosen.device.deviceId === multiplexRoute?.deviceId ? "" : machineModelLabel(chosen.profile)}
               {mode ? ` - ${mode.nativeLabel}` : ""}
             </span>
+            {/* AN EXPLICIT WAY TO CHANGE IT: takes the practitioner to the one
+                selector, so a machine suggested or restored is never a trap. */}
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="ml-3"
+              disabled={selectionPending || identityFrozen}
+              onClick={() => selectRef.current?.focus()}
+              data-testid="machine-change"
+            >
+              Change machine
+            </Button>
           </p>
 
           {/*
@@ -742,7 +1024,8 @@ export function MachineFirstSetupPanel({
             because the field contract - the labels, units and precision below
             - is per MODE, not per machine.
           */}
-          {modes.length > 1 && (
+          {/* The picker also renders when the stored mode is unresolved, even on a single-mode unit: the notice says "choose a mode", so a control must exist. */}
+          {(modes.length > 1 || modeUnresolved) && (
             <div className="flex flex-col gap-1.5" data-testid="machine-mode-picker">
               <SectionLabel size="caption">Mode</SectionLabel>
               {/*
@@ -815,7 +1098,7 @@ export function MachineFirstSetupPanel({
             THE DRAFT RESET USED TO SIT HERE, and it could not do its job from
             inside this branch. See the hoisted copy above the branch.
           */}
-          {!blockId && onSettingDraft && mode ? (
+          {placeReadings(!blockId && onSettingDraft && mode ? (
             <MachineSettingDraft
               // Same payload, same freeze — see block-setup-form.
               frozen={settingDraftFrozen}
@@ -827,6 +1110,8 @@ export function MachineFirstSetupPanel({
               key={`${chosen.device.deviceId}::${chosen.profile.profileId}::${chosen.profile.version}::${mode.key}`}
               profile={chosen.profile}
               mode={mode}
+              restore={parkedNative.current.get(`${chosen.device.deviceId}::${chosen.profile.profileId}::${chosen.profile.version}::${mode.key}`) ?? null}
+              onPark={(p) => parkedNative.current.set(`${chosen.device.deviceId}::${chosen.profile.profileId}::${chosen.profile.version}::${mode.key}`, p)}
               // THE IDENTITY IS ADDED HERE, where the chosen unit is known.
               onDraftChange={(d) =>
                 onSettingDraft({
@@ -871,8 +1156,10 @@ export function MachineFirstSetupPanel({
               // The revision path's half of the freeze: the entry owns that
               // save's state, and the controls that can discard its retry
               // key are out here.
-              onUnresolvedChange={setRevisionUnresolved}
               onRecord={recordAndCount!}
+              // The host's own save (`settingDraftFrozen`) holds the same block version this save would send: if both went out, the host save
+              // wins, this one is rejected as stale, and the editor closes with the typed readings discarded.
+              submissionHeld={selectionPending || submissionBlocked || settingDraftFrozen}
             />
           ) : (
             groups.map((group) => (
@@ -928,7 +1215,7 @@ export function MachineFirstSetupPanel({
               </ul>
             </div>
             ))
-          )}
+          ))}
         </div>
       )}
 
@@ -988,10 +1275,40 @@ export function MachineFirstSetupPanel({
       <PersistenceStatus
         hasScope={scope != null}
         persistence={persistence}
-        savedCount={savedCount}
+        // WHAT THE BLOCK HOLDS, not what this visit did: the saved identity comes from the area's own record, and the readings are
+        // the ones recorded for the block (this visit's own saves are the floor until the page refreshes them).
+        identitySaved={
+          Boolean(blockId) && (savedDeviceId !== null || (initialLegacyChosen && legacyMachine !== null))
+        }
+        modeSaved={Boolean(blockId) && savedDeviceId !== null && savedModeKey !== null && savedModeKey !== ""}
+        // CURRENT settings (the highest revision of each group, absences not counted), never the row count: the list holds every
+        // revision. A number is shown ONLY while the list is known current. After a save of this visit the list is the old snapshot
+        // until the host's refresh replaces it, and when that refresh failed it stays old; the old count is not even a floor (a later
+        // revision can have fewer fields, or absences), so then NO number is shown.
+        readingsSaved={recordedSetupUnavailable ? null : recordedSummary(recordedSetup).current}
+        earlierVersions={recordedSummary(recordedSetup).earlierVersions}
+        absenceOnly={recordedSummary(recordedSetup).absenceOnly}
+        readingsExact={
+          !recordedSetupUnavailable &&
+          !submissionBlocked &&
+          !(savedAgainst !== null && savedAgainst.list === recordedSetup)
+        }
+        savedThisVisit={savedCount > 0}
         rememberedDeviceId={selection.persisted}
       />
     </section>
+  );
+}
+
+/** The panel reads and reports through the host's draft registry; mounted without a host it brings its own. */
+export function MachineFirstSetupPanel(props: MachineFirstSetupPanelProps) {
+  const hosted = useHasDraftRegistry();
+  return hosted ? (
+    <MachineFirstSetupPanelImpl {...props} />
+  ) : (
+    <LocalDraftRegistry>
+      <MachineFirstSetupPanelImpl {...props} />
+    </LocalDraftRegistry>
   );
 }
 
@@ -1007,13 +1324,31 @@ export function MachineFirstSetupPanel({
 function PersistenceStatus({
   hasScope,
   persistence,
-  savedCount,
+  identitySaved,
+  modeSaved,
+  readingsSaved,
+  readingsExact,
+  savedThisVisit,
+  earlierVersions,
+  absenceOnly,
   rememberedDeviceId,
 }: {
   hasScope: boolean;
   persistence: PersistenceCapability;
-  /** Readings this panel has actually saved, so the line below is derived. */
-  savedCount: number;
+  /** The block has a saved machine (a unit, or the existing workflow). */
+  identitySaved: boolean;
+  /** ...and that unit has a saved mode. A unit can be saved without one, and the line must not claim it. */
+  modeSaved: boolean;
+  /** Readings saved for this block, or null when that could not be read. */
+  readingsSaved: number | null;
+  /** False while the list is known stale (saved this visit, refresh not landed or failed): no number is shown then. */
+  readingsExact: boolean;
+  /** Some rows are superseded revisions. */
+  earlierVersions: boolean;
+  /** Rows exist and every current one is an absence. */
+  absenceOnly: boolean;
+  /** This visit saved readings (so "could not be read" is not "nothing"). */
+  savedThisVisit: boolean;
   /**
    * The machine ACTUALLY remembered right now, or null.
    *
@@ -1051,19 +1386,30 @@ function PersistenceStatus({
           </dd>
         )}
       </div>
-      <div className="flex gap-1.5">
-        <dt className="font-medium">Recorded:</dt>
+      {identitySaved && (
+        <div className="flex gap-1.5" data-testid="machine-first-status-identity">
+          <dt className="font-medium">Machine:</dt>
+          <dd>saved to this block.{modeSaved ? " Mode: saved." : ""}</dd>
+        </div>
+      )}
+      <div className="flex gap-1.5" data-testid="machine-first-status-readings">
+        <dt className="font-medium">Readings from this panel:</dt>
         <dd>
           {/*
-            This line used to say "nothing from this panel" unconditionally,
-            which stopped being true the moment reading entry shipped: after a
-            successful save it contradicted both the success message and the
-            rows actually inserted, leaving a practitioner unsure whether the
-            settings were stored (Codex, 9c6fbbe5).
+            Two facts, said separately. "Nothing from this panel" used to cover both, and it was wrong twice: after a machine is chosen
+            (the block saves the machine and mode) and on reopen beside the saved list (it counted only this visit's saves).
           */}
-          {savedCount > 0
-            ? `${savedCount} setting${savedCount === 1 ? "" : "s"} saved to this block's machine record. The treatment fields below are separate and unchanged.`
-            : "nothing from this panel yet. The treatment fields below are unchanged and remain the record."}
+          {readingsSaved === null
+            ? savedThisVisit
+              ? "saved this visit. The count could not be read just now. The treatment fields below are separate and unchanged."
+              : "could not be checked just now. The treatment fields below are unchanged and remain the record."
+            : !readingsExact
+              ? "saved this visit. The count will update when the list refreshes. The treatment fields below are separate and unchanged."
+              : readingsSaved > 0
+                ? `${readingsSaved} setting${readingsSaved === 1 ? "" : "s"} saved to this block's machine record${earlierVersions ? " (earlier versions kept)" : ""}. The treatment fields below are separate and unchanged.`
+                : absenceOnly
+                  ? "no values yet. The treatment fields below are unchanged and remain the record."
+                  : "none yet. The treatment fields below are unchanged and remain the record."}
         </dd>
       </div>
     </dl>

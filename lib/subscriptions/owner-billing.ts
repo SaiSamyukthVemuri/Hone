@@ -19,7 +19,7 @@ export type OwnerBilling = {
 export const readOwnerBilling = cache(async (studioId: string) => {
   const db = await createClient();
   const { data, error } = await db.rpc("my_hone_billing_status", { p_studio: studioId });
-  return { billing: data as OwnerBilling | null, error };
+  return { billing: data as OwnerBilling | null, error: Boolean(error) };
 });
 
 export async function ownerWorkspacePaused(studioId: string) {

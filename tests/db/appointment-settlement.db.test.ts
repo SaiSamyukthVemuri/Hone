@@ -18,8 +18,7 @@ import {
 
 // PAY-SETTLE / 0187 — the BEHAVIOURAL half.
 //
-// The source-contract half (tests/migrations/0187-appointment-settlement.test.ts)
-// proves what the migration SAYS. This file proves what the migrated database
+// This file proves what the migrated database
 // DOES, against the real local Postgres: that authority is re-derived rather
 // than trusted, that financial history is genuinely append-only, and — the part
 // no static test can reach — that settlement and card charging exclude each
@@ -1724,4 +1723,105 @@ describe("0239 — bound signed payment event command", () => {
     expect(await readCumulative(p)).toEqual(before);
   });
 
+});
+
+describe("0381 — a visit-specific fee and external receipt are recorded together", () => {
+  const bookedService = { name: "Synthetic half hour", priceCents: 9000 };
+  const adjusted = (s: PaymentScenario, options: {
+    user?: string; method?: string; receipt?: number; baseline?: number; fee?: number; reason?: string;
+    appointment?: string; live?: boolean;
+  } = {}) => asUser(options.user ?? s.practitionerUserId, async q => {
+    const result = await q(
+      "select * from public.record_adjusted_appointment_settlement($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+      [s.studioId, options.appointment ?? s.appointmentId, options.method ?? "paid_e_transfer",
+        options.receipt ?? 5025, null, options.live ?? TEST_MODE, options.baseline ?? 9000, options.fee ?? 7550,
+        options.reason ?? "Shorter treatment"],
+    );
+    return result.rows[0];
+  });
+
+  it("retains $90 as the reference, $75.50 as the agreed fee, and $50.25 as received across retries and corrections", async () => {
+    const s = await scenario({ bookedService, withCard: false });
+    const both = await Promise.all([adjusted(s), adjusted(s)]);
+    expect(both.map(r => r.result).sort()).toEqual(["already_settled", "recorded"]);
+    const id = both[0].settlement_id;
+    expect(both[1].settlement_id).toBe(id);
+    const facts = () => adminQuery(
+      "select method, quoted_amount_cents, amount_cents, reference_fee_cents, fee_adjustment_reason, recorded_by_practitioner_id, currency from public.appointment_settlements where studio_id=$1 order by recorded_at",
+      [s.studioId],
+    );
+    expect((await facts()).rows).toEqual([{
+      method: "paid_e_transfer", amount_cents: 5025, quoted_amount_cents: 7550, reference_fee_cents: 9000,
+      fee_adjustment_reason: "Shorter treatment", recorded_by_practitioner_id: s.practitionerId, currency: "cad",
+    }]);
+    await expect(adminQuery("update public.appointment_settlements set fee_adjustment_reason='changed' where id=$1", [id])).rejects.toThrow(/immutable/);
+    await adminQuery("update public.services set price_cents=10500 where studio_id=$1 and name=$2", [s.studioId, bookedService.name]);
+    await expect(asUser(s.practitionerUserId, q => q(
+      "select * from public.supersede_appointment_settlement($1,$2,'paid_cash',9000,'Correct amount',null,false)",
+      [s.studioId, id],
+    ))).rejects.toThrow(/settlement_adjusted_amount_invalid/);
+    expect((await liveRows(s.studioId))[0].id).toBe(id);
+    const correction = await asUser(s.practitionerUserId, q => q(
+      "select * from public.supersede_appointment_settlement($1,$2,'paid_cash',7550,'Balance received in cash',null,false)",
+      [s.studioId, id],
+    ));
+    expect(correction.rows[0].result).toBe("corrected");
+    expect((await facts()).rows[1]).toMatchObject({amount_cents: 7550, quoted_amount_cents: 7550, reference_fee_cents: 9000});
+  });
+
+  it("refuses forged or outdated prices, no-fee payments, an overpayment and a blank reason before retiring a prepared card charge", async () => {
+    const s = await scenario({ bookedService, attempt: "ready" });
+    expect((await adjusted(s, { baseline: 12000 })).result).toBe("fee_changed");
+    for (const options of [{ receipt: 0 }, { receipt: 8000 }, { fee: 0 }, { reason: " " }]) {
+      expect((await adjusted(s, options)).result).toBe("invalid_input");
+    }
+    expect(await liveRows(s.studioId)).toHaveLength(0);
+    expect((await adminQuery("select status from public.payment_charge_attempts where studio_id=$1", [s.studioId])).rows[0].status).toBe("ready");
+  });
+
+  it("records a fee reduced to zero as a waiver without collecting any money", async () => {
+    const s = await scenario({bookedService, withSession: false});
+    const waiver = await adjusted(s, {method: "waived", receipt: 9000, fee: 0});
+    expect(waiver.result).toBe("recorded");
+    expect((await adminQuery("select method, amount_cents, quoted_amount_cents, reference_fee_cents from public.appointment_settlements where studio_id=$1", [s.studioId])).rows[0])
+      .toEqual({method: "waived", amount_cents: 9000, quoted_amount_cents: 0, reference_fee_cents: 9000});
+    await adminQuery("update public.services set price_cents=11000 where studio_id=$1 and name=$2", [s.studioId, bookedService.name]);
+    const correction = await asUser(s.practitionerUserId, q => q(
+      "select * from public.supersede_appointment_settlement($1,$2,'paid_cash',9000,'Waived wrong visit',null,false)",
+      [s.studioId, waiver.settlement_id],
+    ));
+    expect(correction.rows[0].result).toBe("corrected");
+    const latest = await adminQuery(
+      "select method, quoted_amount_cents, reference_fee_cents from public.appointment_settlements where studio_id=$1 and superseded_at is null",
+      [s.studioId],
+    );
+    expect(latest.rows).toEqual([{method: "paid_cash", quoted_amount_cents: 9000, reference_fee_cents: 9000}]);
+  });
+
+  it("never loses a retained live-mode Stripe payment when the caller changes the requested mode", async () => {
+    const s = await scenario({bookedService, attempt: "succeeded"});
+    await adminQuery(
+      "update public.payment_charge_attempts set stripe_livemode=true, stripe_account_id=coalesce(stripe_account_id, 'acct_live_' || $2) where studio_id=$1",
+      [s.studioId, s.runId],
+    );
+    for (const live of [false, true]) expect((await adjusted(s, {live})).result).toBe("card_payment_exists");
+    expect(await liveRows(s.studioId)).toHaveLength(0);
+  });
+
+  it("records the agreed balance as owed and never counts a transfer before it arrives", async () => {
+    const s = await scenario({bookedService});
+    expect((await adjusted(s, {method: "still_owes", receipt: 5025})).result).toBe("invalid_input");
+    expect((await adjusted(s, {method: "still_owes", receipt: 7550})).result).toBe("recorded");
+    expect(await liveRows(s.studioId)).toMatchObject([{method: "still_owes", amount_cents: 7550}]);
+  });
+
+  it("requires an active owner, same-studio completed visit and no retained or processing card payment", async () => {
+    const s = await scenario({bookedService, attempt: "succeeded"});
+    expect((await adjusted(s)).result).toBe("card_payment_exists");
+    const uncompleted = await scenario({bookedService, appointmentStatus: "confirmed"});
+    expect((await adjusted(uncompleted)).result).toBe("not_completed");
+    expect((await adjusted(s, {appointment: uncompleted.appointmentId})).result).toBe("not_found");
+    const member = await seedMember({studioId: s.studioId, userId: s.practitionerUserId, practitionerId: s.practitionerId, clientId: s.clientId}, "adjusted-fee-member");
+    expect((await adjusted(s, {user: member.userId})).result).toBe("not_owner");
+  });
 });

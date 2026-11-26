@@ -25,8 +25,8 @@ export function InviteForm({
   deskEnabled?: boolean;
 }) {
   const canInvitePractitioner = !seats || hasTeamSeat(seats, "practitioner");
-  const showReceptionist = !!seats?.receptionist_limit && deskEnabled;
-  const canInviteReceptionist = !!seats && showReceptionist && hasTeamSeat(seats, "receptionist");
+  const showReceptionist = !seats || (seats.receptionist_limit > 0 && deskEnabled);
+  const canInviteReceptionist = showReceptionist && (!seats || hasTeamSeat(seats, "receptionist"));
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
   const defaultRole = canInvitePractitioner ? "practitioner" : "receptionist";

@@ -1,12 +1,14 @@
+import { DashboardCheckoutEntry } from "@/components/dashboard-checkout-entry";
 import { CheckoutButton } from "@/components/checkout-button";
+import type { CardOnFileStatus } from "@/lib/payment-methods/card-on-file";
 import type { AppointmentPaymentState } from "@/lib/billing/appointment-payment-state";
 
 // The dashboard/calendar checkout cell for one appointment. Renders the SAME
 // quick-checkout entry (CheckoutButton → shared modal) for chargeable
 // appointments, or a status-labelled badge (never colour-only) for
 // paid/processing/refunded, so an already-paid appointment shows "Paid", not a
-// misleading Checkout. Only completed appointments are checkout-relevant;
-// cancelled / no-show / confirmed render nothing.
+// misleading Checkout. Dashboard callers may also offer an explicit completion
+// step for a confirmed appointment before opening the shared payment flow.
 // The five attested outcomes and their badge copy. Kept here, beside the
 // emerald branch it must never be confused with, rather than imported from the
 // vocabulary module — so anyone editing one is looking directly at the other.
@@ -23,17 +25,35 @@ const SETTLED_LABEL: Partial<Record<AppointmentPaymentState, string>> = {
   settled_collected_none: "Still owes",
 };
 
-export function AppointmentCheckoutCell({
-  appointmentId,
-  status,
-  paymentState,
-}: {
+type AppointmentCheckoutProps = {
   appointmentId: string;
   status: string | null;
   paymentState: AppointmentPaymentState;
-}) {
-  if (status !== "completed") return null;
+  dashboardStartsAt?: string;
+  dashboardVisitLabel?: string;
+  dashboardCardOnFile?: CardOnFileStatus | null;
+};
 
+export function AppointmentCheckoutCell({ dashboardStartsAt, dashboardVisitLabel, dashboardCardOnFile, ...visit }: AppointmentCheckoutProps) {
+  const outcome = <AppointmentCheckoutOutcome {...visit} />;
+  if (dashboardStartsAt && (visit.status === "confirmed" || visit.status === "completed")) {
+    return (
+      <DashboardCheckoutEntry
+        appointmentId={visit.appointmentId}
+        startsAt={dashboardStartsAt}
+        status={visit.status}
+        paymentState={visit.paymentState}
+        cardOnFile={dashboardCardOnFile}
+        visitLabel={dashboardVisitLabel}
+      >
+        {outcome}
+      </DashboardCheckoutEntry>
+    );
+  }
+  return visit.status === "completed" ? outcome : null;
+}
+
+function AppointmentCheckoutOutcome({ appointmentId, status, paymentState }: AppointmentCheckoutProps) {
   if (
     paymentState === "paid" ||
     paymentState === "refunded" ||
@@ -168,7 +188,7 @@ export function AppointmentCheckoutCell({
         data-testid="appointment-payment-free"
         className="inline-flex items-center rounded-full bg-neutral-100 px-2.5 py-1 text-xs font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
       >
-        No payment required
+        No payment due
       </span>
     );
   }
@@ -191,6 +211,33 @@ export function AppointmentCheckoutCell({
 
   // chargeable or no_session → the shared Checkout entry. The modal resolves the
   // accurate state (and routes to charting when there is no session yet).
+  //
+  // A completed visit with a session, NO card money and NO settlement, whose
+  // service the studio has not priced at zero, is unpaid, and the row now says
+  // so beside Checkout. A visit whose price is simply not set also qualifies
+  // (`chargeable` does not require a known price). A neutral fact: never
+  // green, never "Paid", no amount, no charge. Claimed only for
+  // `chargeable`; `no_session` and `unavailable` claim nothing.
+  //
+  // OWNER-ONLY BY CONSTRUCTION, not by this component: both callers render the
+  // cell for the owner only and load payment state for the owner only (money
+  // reads are owner-only). A non-owner version is therefore NOT a
+  // flag flip here; it needs a non-owner-safe, amount-free derivation first.
+  if (paymentState === "chargeable") {
+    return (
+      <span className="inline-flex flex-wrap items-center gap-2">
+        <span
+          data-testid="appointment-not-paid-yet"
+          className="inline-flex items-center rounded-full bg-neutral-100 px-2.5 py-1 text-xs font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
+        >
+          Not paid yet
+        </span>
+        <CheckoutButton appointmentId={appointmentId} status={status} variant="compact" />
+      </span>
+    );
+  }
+
+  // no_session (and anything else) → the ordinary Checkout entry alone.
   return (
     <CheckoutButton appointmentId={appointmentId} status={status} variant="compact" />
   );

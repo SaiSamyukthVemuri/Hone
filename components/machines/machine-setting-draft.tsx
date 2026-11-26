@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { useReportDraft } from "./draft-registry";
 import { RangeConfirmationList } from "./range-confirmation-list";
+import { machineDraftHasEntries } from "@/lib/machines/pending-setup";
 import { SettingDraftFields } from "./setting-draft-fields";
 import {
   pruneConfirmations,
@@ -13,6 +15,7 @@ import {
   assembleGroupSubmissions,
   draftBlocking,
   firstGroup,
+  highestOrdinal,
   toggleChannel,
   type SettingGroupDraft,
 } from "@/lib/machines/setting-groups";
@@ -42,6 +45,8 @@ import type { GroupSubmission } from "@/lib/machines/setting-groups";
 // the record must not be able to acquire one by her failing to notice a filled
 // box.
 
+export type ParkedSettingDraft = { groups: SettingGroupDraft[]; groupOrdinal: number; confirmed: string[] };
+
 export type MachineSettingDraftProps = {
   /**
    * The host's save is unresolved, so this draft is part of a frozen payload.
@@ -54,6 +59,13 @@ export type MachineSettingDraftProps = {
   frozen?: boolean;
   profile: MachineProfile;
   mode: MachineMode;
+  /**
+   * MEMORY-ONLY PARKING (switch away and back). When the host chose another machine or mode and then came back to THIS identity, it hands the
+   * typed values back here so nothing she typed is lost. Never stored anywhere: the host holds them in memory for this open area only.
+   */
+  restore?: ParkedSettingDraft | null;
+  /** Called after every change with what to park for this identity. */
+  onPark?: (parked: ParkedSettingDraft) => void;
   /**
    * Reports the draft after every change.
    *
@@ -98,9 +110,11 @@ export function MachineSettingDraft({
   mode,
   onDraftChange,
   frozen = false,
+  restore = null,
+  onPark,
 }: MachineSettingDraftProps) {
   const fieldGroups = nativeFieldGroups(profile, mode);
-  const [groups, setGroups] = useState<SettingGroupDraft[]>(firstGroup);
+  const [groups, setGroups] = useState<SettingGroupDraft[]>(restore ? () => restore.groups : firstGroup);
 
   // REPORT THE EMPTY DRAFT ON MOUNT, which is what makes a machine or mode
   // SWITCH safe.
@@ -121,13 +135,16 @@ export function MachineSettingDraft({
   // effect keyed on the identity instead would fire on a re-render and clear
   // a draft she was still typing into.
   useEffect(() => {
-    onDraftChange({ groups: [], blocking: null });
+    // A RESTORED DRAFT IS REPORTED IN FULL, under THIS identity (the panel adds it), so the host never holds another identity's values; a fresh
+    // mount reports the empty draft, as before.
+    if (restore) report(restore.groups, new Set(restore.confirmed));
+    else onDraftChange({ groups: [], blocking: null });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   // MONOTONIC, never derived from the list: a removed group's identity is
   // retired for the life of the mount, because reuse would corrupt a group's
   // revision history. Same rule as the entry form, same reason.
-  const [groupOrdinal, setGroupOrdinal] = useState(1);
+  const [groupOrdinal, setGroupOrdinal] = useState(() => (restore ? Math.max(restore.groupOrdinal, restore.groups.length + 1, highestOrdinal(restore.groups)) : 1));
 
   /**
    * What the host must know, recomputed from a candidate draft.
@@ -141,7 +158,12 @@ export function MachineSettingDraft({
   // outside a documented range must not ride through unconfirmed here. The
   // gate is reported upward as `blocking`; nothing records the tick until 0267
   // is applied and wired.
-  const [confirmed, setConfirmed] = useState<ReadonlySet<string>>(new Set());
+  // Whether anything has been typed: reported as a LEVEL to the host's registry, and removed when this draft unmounts (draft-registry.tsx).
+  const [hasEntries, setHasEntries] = useState(false);
+  const ordinalRef = useRef(1);
+  ordinalRef.current = groupOrdinal;
+  useReportDraft({ draft: hasEntries, unresolved: false });
+  const [confirmed, setConfirmed] = useState<ReadonlySet<string>>(() => new Set(restore?.confirmed ?? []));
   const confirmedRef = useRef(confirmed);
   confirmedRef.current = confirmed;
   const warnings = rangeWarningsForDraft(profile, mode, groups);
@@ -157,12 +179,17 @@ export function MachineSettingDraft({
     // every test stayed green, because a static render cannot type into a
     // field. What decides whether a clinical save proceeds does not belong
     // where only a mounted browser can reach it.
-    onDraftChange({
+    const payload = {
       groups: assembleGroupSubmissions(fieldGroups, next),
       blocking:
         draftBlocking(profile, fieldGroups, next) ??
         rangeConfirmationBlocking(nextWarnings, live),
-    });
+    };
+    setHasEntries(machineDraftHasEntries(payload));
+    // THE LARGER OF THE COUNTER AND THE HIGHEST ID IN THIS DRAFT: an add reports before its ordinal advance has applied, so the counter alone is one
+    // behind the group just added, and restoring from it issued the same id twice after an add, remove and switch back.
+    onPark?.({ groups: next, groupOrdinal: Math.max(ordinalRef.current, highestOrdinal(next)), confirmed: [...live] });
+    onDraftChange(payload);
   };
 
   const editDraft = (f: (prev: SettingGroupDraft[]) => SettingGroupDraft[]) => {

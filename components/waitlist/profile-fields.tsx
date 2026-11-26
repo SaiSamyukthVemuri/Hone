@@ -132,6 +132,7 @@ export function ProfileFields({
   emailLocked = false,
   mobileLocked = false,
   showMobileCandidateNote = false,
+  singleNameOption = false,
   collectsSmsConsent,
 }: {
   draft: JoinProfileDraft;
@@ -194,6 +195,13 @@ export function ProfileFields({
    * their own; it never promises a confirmation step.
    */
   showMobileCandidateNote?: boolean;
+  /**
+   * Offer "I have one legal name". Absent means false: the control is not rendered and the form is
+   * exactly the two-name form it was. Passed true only once the single-name command exists
+   * (WAIT_04B_CAPABILITIES.singleLegalName, held migration 0286). Ticking it hides the last-name
+   * field and empties it; no family name is ever invented or split from the first name.
+   */
+  singleNameOption?: boolean;
 }) {
   const firstId = useId();
   const lastId = useId();
@@ -206,6 +214,7 @@ export function ProfileFields({
   const availabilityErrorId = useId();
   const consentId = useId();
   const consentNoteId = useId();
+  const singleNameId = useId();
 
   return (
     <div className="flex w-full max-w-full flex-col gap-5" data-testid="waitlist-profile-fields">
@@ -225,19 +234,36 @@ export function ProfileFields({
           disabled={disabled}
           onChange={(firstName) => onChange({ ...draft, firstName })}
         />
-        <TextField
-          id={lastId}
-          testId="waitlist-field-last-name"
-          label="Last name"
-          type="text"
-          autoComplete="family-name"
-          maxLength={PROFILE_LAST_NAME_MAX}
-          value={draft.lastName}
-          error={errors.lastName}
-          disabled={disabled}
-          onChange={(lastName) => onChange({ ...draft, lastName })}
-        />
+        {!(singleNameOption && draft.singleLegalName) && (
+          <TextField
+            id={lastId}
+            testId="waitlist-field-last-name"
+            label="Last name"
+            type="text"
+            autoComplete="family-name"
+            maxLength={PROFILE_LAST_NAME_MAX}
+            value={draft.lastName}
+            error={errors.lastName}
+            disabled={disabled}
+            onChange={(lastName) => onChange({ ...draft, lastName })}
+          />
+        )}
       </div>
+      {singleNameOption && (
+        <label htmlFor={singleNameId} className="flex items-start gap-2 text-[14px]">
+          <input
+            id={singleNameId}
+            type="checkbox"
+            data-testid="waitlist-field-single-name"
+            checked={draft.singleLegalName}
+            disabled={disabled}
+            onChange={(e) =>
+              onChange({ ...draft, singleLegalName: e.target.checked, lastName: e.target.checked ? "" : draft.lastName })
+            }
+          />
+          <span>I have one legal name (no last name)</span>
+        </label>
+      )}
 
       {emailLocked ? (
         <div className="flex w-full flex-col gap-1" data-testid="waitlist-field-email-locked">

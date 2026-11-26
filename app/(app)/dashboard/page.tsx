@@ -1,9 +1,13 @@
+import { StaffWelcome } from "@/components/onboarding/staff-welcome";
 import { Suspense } from "react";
 import { SummaryStrip } from "./summary-strip";
+import { dashboardRebookCalendarHref } from "@/lib/calendar/dashboard-rebook";
+import { getNextVisitsForRoster, type NextRosterVisit } from "@/lib/dashboard/next-visit-for-roster";
 import { computeTimeInsights, formatInsightHours, insightPeriod } from "@/lib/calendar/time-insights";
 import { getBoundaryCrossingAppointments } from "@/lib/calendar/boundary-appointments";
 import Link from "next/link";
 import { buttonClasses } from "@/components/ui/button";
+import { SectionLabel } from "@/components/ui/section-label";
 import {
   PendingContainerLink,
   PendingLink,
@@ -15,6 +19,7 @@ import {
   getAppointmentPaymentStates,
   type AppointmentPaymentState,
 } from "@/lib/billing/appointment-payment-state";
+import { timed } from "@/lib/observability/perf-timing";
 import {
   requirePractitionerWithStudio,
   getPractitionersForStudio,
@@ -44,6 +49,7 @@ import {
   addDays,
   formatTimeForStudio,
   localTimeString12h,
+  localLongDate,
   resolveTimeFormat,
   todayInTz,
   utcInstantFromLocal,
@@ -57,7 +63,7 @@ import {
 import {
   SecondaryStack,
   NeedsAttentionSection,
-  BirthdaysTopRight,
+  DashboardBirthdays,
   NeedsAttentionHeadingCount,
   NeedsAttentionSkeleton,
   SecondaryStackSkeleton,
@@ -85,7 +91,6 @@ import {
   getBeforeTodayPreviews,
   type BeforeTodayPreview,
 } from "@/lib/dashboard/before-today-previews";
-import { CLINICAL_UNAVAILABLE_HEADLINE } from "@/components/clinical-unavailable-notice";
 import { getClientsNeedingAttention } from "@/lib/dashboard/clients-needing-attention";
 import {
   loadLastChartedTreatmentsForClients,
@@ -110,11 +115,13 @@ import {
   type TodayWorkflowInput,
   type TodayWorkflowItem,
 } from "@/lib/dashboard/today-workflow";
+import { memorySourceLabels } from "@/lib/dashboard/memory-source-labels";
 import {
   resolveTodayIntakeAction,
   selectCurrentIntakeByClient,
   type TodayIntakeRow,
 } from "@/lib/dashboard/today-intake";
+import { UnfinishedVisitsNote } from "./unfinished-visits-note";
 import { getMissingRecordsAssistant } from "@/lib/dashboard/missing-records-assistant";
 import { currentAppointmentIds } from "@/lib/dashboard/current-appointment";
 import {
@@ -124,6 +131,8 @@ import {
   type CardOnFileStatus,
 } from "@/lib/payment-methods/card-on-file";
 import { CardOnFilePill, CurrentPill } from "./today-status-pills";
+import { DashboardQuickPin } from "./dashboard-quick-pin";
+import { immediateVisitPlans } from "@/lib/dashboard/immediate-visit-plans";
 import { RowSafetyLines } from "./row-safety-lines";
 import { TodayPortalLinkButton } from "./TodayPortalLinkButton";
 import { clientSelfServicePolicyFromStudio } from "@/lib/booking/client-self-service-policy";
@@ -139,6 +148,7 @@ import type {
   AppointmentStatus,
   Client,
   ClientIntakeForm,
+  ClientPinnedNote,
   Service,
 } from "@/lib/types/database";
 import { DashboardGreeting } from "./DashboardGreeting";
@@ -242,14 +252,14 @@ export default async function DashboardPage({
 }: {
   // `day` is browser-controlled and Next hands repeated params through as an
   // array, so the type says so rather than lying about it.
-  searchParams: Promise<{ period?: string; day?: string | string[]; unpaid?: string }>;
+  searchParams: Promise<{ period?: string; day?: string | string[]; unpaid?: string; setup?: string }>;
 }) {
   const sp = await searchParams;
   // PR #208: practice-snapshot period filter. Default: this week.
   const period: ReportingPeriod = isReportingPeriod(sp.period)
     ? sp.period
     : "week";
-  const { practitioner, studio } = await requirePractitionerWithStudio();
+  const { practitioner, studio } = await timed("dashboard.identity", () => requirePractitionerWithStudio());
   const isOwner = practitioner.role === "owner";
   const supabase = await createClient();
 
@@ -306,6 +316,11 @@ export default async function DashboardPage({
     promise.catch(() => undefined);
     return promise;
   };
+  const birthdays = getClientBirthdaysForMonth(studio.id, Number(todayLocal.slice(5, 7)));
+  const todayBirthdayIds = viewingToday ? birthdays.then(
+    rows => new Set(rows.filter(row => row.day === Number(todayLocal.slice(8))).map(row => row.id)),
+    () => new Set<string>(),
+  ) : null;
   const attentionSourcesPromise = settleLater(
     Promise.all([
       // Insurance B2: a failure here is "unavailable" for THIS count only. It
@@ -316,7 +331,7 @@ export default async function DashboardPage({
       // Birthday reminders: month-of-year only, derived from
       // clients.date_of_birth. Practitioner-facing only. Never sent as
       // email/SMS or exposed to client/public surfaces.
-      getClientBirthdaysForMonth(studio.id, parseInt(todayLocal.slice(5, 7), 10)),
+      birthdays,
     ] as const),
   );
   // BOOKING READINESS IS ITS OWN DEFERRED READ, not a member of the bundle
@@ -499,7 +514,7 @@ export default async function DashboardPage({
 
   // Bulk lookups for the visible client set. Each query is read-only,
   // RLS-scoped, and bounded by today's client list.
-  const [practitioners, pinnedByClient, intakeByClient, cardOnFileLoad] =
+  const [practitioners, pinnedByClient, intakeByClient, cardOnFileLoad, nextVisits] =
     await Promise.all([
       getPractitionersForStudio(studio.id),
       getPinnedNotesByClient(studio.id, selectedDayClientIds),
@@ -519,6 +534,9 @@ export default async function DashboardPage({
       isOwner
         ? loadCardOnFileForStudio(studio.id, selectedDayClientIds)
         : Promise.resolve(null),
+      getNextVisitsForRoster(supabase, studio.id, visibleAppointments, renderNow.toISOString()).catch(
+        () => null,
+      ),
     ]);
   void practitioners; // currently unused on the appointments roster;
   // kept fetched in parallel because future per-practitioner annotations
@@ -674,13 +692,14 @@ export default async function DashboardPage({
   // (areas, machine settings, probe lot, tolerance, reactions, narrative) is
   // resolved again, for ONE appointment, only when the practitioner opens the
   // disclosure and the server has re-checked that the appointment is hers.
+  const plansForVisit = await immediateVisitPlans(supabase, studio.id, visibleAppointments, prepLoads).catch(() => new Map<string, string>());
   const prepSummaryByAppointment = new Map<string, DashboardPrepSummary>();
   for (const appt of visibleAppointments) {
     const load = prepLoads.get(appt.id);
     if (!load) {
       prepSummaryByAppointment.set(
         appt.id,
-        toDashboardPrepSummary({ memory: null, unavailable: false, planNote: null }),
+        toDashboardPrepSummary({ memory: null, unavailable: false, planNote: null, timeZone: studio.timezone }),
       );
       continue;
     }
@@ -691,10 +710,8 @@ export default async function DashboardPage({
           ? buildAppointmentPrepMemory(prepMemoryInputFromTreatment(load.treatment))
           : null,
         unavailable: load.unavailable,
-        // `narrative.plan` is the newest recorded "for next visit" note. The
-        // loader builds it to survive both "nothing charted" and a failed block
-        // read, so a note-only visit still reaches the practitioner.
-        planNote: load.narrative.plan?.text?.trim() || null,
+        planNote: plansForVisit.get(appt.id) ?? null,
+        timeZone: studio.timezone,
       }),
     );
   }
@@ -710,6 +727,7 @@ export default async function DashboardPage({
   // exists to avoid. An empty input list means every non-Today row gets
   // `workflow === null`, and the preparation block and treatment memory —
   // both already guarded on it in production — go quiet on their own.
+  const nowIsoForLabels = renderNow.toISOString();
   const todayWorkflowInputs: TodayWorkflowInput[] = (
     viewingToday ? visibleAppointments : []
   ).map(
@@ -741,6 +759,11 @@ export default async function DashboardPage({
         nextVisitNote: preview?.nextVisitNote ?? null,
         cautionNote: preview?.cautionNote ?? null,
         setupLine: preview?.setupLine ?? null,
+        // Where the notes and the setup came from, in the STUDIO's calendar (never the server's locale).
+        ...(() => {
+          const l = memorySourceLabels(preview?.sources, nowIsoForLabels, studio.timezone);
+          return { notesSourceLabel: l.notes, setupSourceLabel: l.setup };
+        })(),
         reminders: preview?.reminders ?? [],
         intake,
         charting,
@@ -776,26 +799,36 @@ export default async function DashboardPage({
         const model = buildOnboardingModel(signals, toPersisted(row));
         // Auto-open on load until the owner dismisses it or finishes; the pinned
         // card re-opens it thereafter.
-        const initialOpen = !model.dismissed && !model.isComplete;
+        const initialOpen = !model.isComplete && (!model.dismissed || sp.setup === "resume");
         return { model, initialOpen };
       })()
     : null;
 
   return (
     <div className="flex flex-col gap-10">
-      {/* ONE grid for the top of the page. Desktop: the greeting top-left and the compact Birthdays block
-          top-right (Sam's placement); onboarding spans both columns; then Appointments | Needs attention.
-          DOM order stays Today first: Birthdays is the LAST child, so on a phone it follows Needs attention
-          (below the operational work) and `lg:col-start-2 lg:row-start-1` lifts it to the top right only
-          where there is room. */}
-      <div className="grid grid-cols-1 gap-10 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:items-start">
-      <section className="flex flex-col gap-1 lg:col-start-1 lg:row-start-1">
-        <DashboardGreeting displayName={practitioner.display_name} />
-        <p className="text-xs uppercase tracking-wider text-neutral-500">
-          <FormattedToday format="weekday-date" />
-        </p>
-        <h1 className="text-3xl font-semibold tracking-tight">Dashboard</h1>
-      </section>
+      {/* Keep the operational sections first on phones. On wider screens the
+          birthday strip spans the grid above the schedule and attention list. */}
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1.8fr)_minmax(0,1fr)] lg:items-start">
+      <header className="flex flex-wrap items-center justify-between gap-3 [--color-accent:#4d405b] [--color-accent-hover:#41354e] [--color-accent-active:#372d43] lg:order-first lg:col-span-2">
+        <div className="flex min-w-0 flex-col gap-1">
+          <SectionLabel as="p">
+            <FormattedToday format="weekday-date" />
+          </SectionLabel>
+          <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Dashboard</h1>
+          <DashboardGreeting displayName={practitioner.display_name} />
+        </div>
+        <Link
+          href={calendarHrefForDashboardDay({
+            selectedDay: selectedDayLocal,
+            todayLocal,
+          })}
+          className={buttonClasses({ variant: "primary" })}
+        >
+          Book appointment
+        </Link>
+      </header>
+
+      {practitioner.role === "practitioner" && <StaffWelcome role="practitioner" membershipId={practitioner.id} />}
 
       {/* Onboarding v2: pinned setup-progress card + auto-opening guided wizard,
           above the fold. Opt-in per studio + owner-only; supersedes the legacy
@@ -813,16 +846,16 @@ export default async function DashboardPage({
           mobile. `min-w-0` on both columns lets long names wrap instead of
           widening the grid. The appointments column does not wait for Needs
           Attention: that column streams behind its own boundary. */}
-      <section aria-label="Appointments" className="flex min-w-0 flex-col gap-3">
+      <section aria-label="Appointments" className="flex min-w-0 flex-col rounded-xl border border-neutral-200 dark:border-neutral-800">
         {/* `flex-wrap` matters: this header was the one multi-control row on
             the page without it, and it now carries day navigation beside the
             primary action. Without wrapping, 390px overflows horizontally. */}
-        <div className="flex min-h-[44px] flex-wrap items-center justify-between gap-3">
+        <div className="flex min-h-[44px] flex-wrap items-center justify-between gap-3 px-4 py-3">
           <div>
             {/* The heading names the day being shown. It says "Today" on the
                 real present day, so the ordinary case reads exactly as before;
                 it must not keep saying "Today" over another day's roster. */}
-            <h2 className="text-lg font-medium">
+            <h2 className="text-lg font-semibold tracking-tight">
               {dayHeading(selectedDayLocal, todayLocal)}
             </h2>
             {/* ONE node per fact. The sub-line exists only to say WHICH day
@@ -925,33 +958,7 @@ export default async function DashboardPage({
               </span>
             )}
           </nav>
-          {/* The primary action in the appointments area is booking, not
-              adding a client (Chloe: she'd never add a client here). Links
-              to the calendar, where the quick-book flow lives — CARRYING the
-              day being viewed, so stepping to a date and pressing the obvious
-              book button does not silently land on today's week. */}
-          {/* UX-01 QW3. This was a hand-rolled solid button at `py-2 text-sm`,
-              i.e. ~36px, sitting in the same flex row as the day-nav's 44px
-              segments — an 8px baseline clash, with the page's flagship action
-              as the SHORTER of the two. `buttonClasses` composes
-              CONTROL_MIN_TOUCH, so it reaches the floor and the row shares one
-              baseline.
 
-              Identity is unchanged, not restyled: `--color-accent` IS
-              neutral-900 and `--color-accent-hover` IS neutral-800, so this
-              paints exactly what it painted before. What it gains is the
-              `active:` step the hand-rolled copy never had — the press
-              acknowledgement LAW 4 asks for, through the existing CSS contract
-              rather than any new motion. */}
-          <Link
-            href={calendarHrefForDashboardDay({
-              selectedDay: selectedDayLocal,
-              todayLocal,
-            })}
-            className={buttonClasses({ variant: "primary" })}
-          >
-            Book appointment
-          </Link>
         </div>
 
         <SummaryStrip
@@ -979,11 +986,15 @@ export default async function DashboardPage({
         {visibleAppointments.length === 0 ? (
           <EmptyDayState selectedDay={selectedDayLocal} todayLocal={todayLocal} />
         ) : (
-          <ul className="divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
+          <ul className="divide-y divide-neutral-200 dark:divide-neutral-800">
             {visibleAppointments.map((appt) => (
               <li key={appt.id}>
                 <AppointmentRow
                   appt={appt}
+                  rebookHref={dashboardRebookCalendarHref(appt.id, selectedDayLocal, period)}
+                  todayBirthdayIds={todayBirthdayIds}
+                  viewerId={practitioner.id}
+                  nextVisit={nextVisits === null ? "unavailable" : nextVisits.get(appt.id) ?? null}
                   workflow={workflowByAppointment.get(appt.id) ?? null}
                   pinnedNotes={pinnedByClient.get(appt.client_id) ?? null}
                   intakeStatus={intakeByClient.get(appt.client_id) ?? null}
@@ -993,6 +1004,7 @@ export default async function DashboardPage({
                   portalEnabled={clientSelfServicePolicyFromStudio(studio).portal}
                   historyAsked={viewingToday}
                   isCurrent={currentAppointmentIdSet.has(appt.id)}
+                  hasEnded={new Date(appt.ends_at).getTime() <= renderNow.getTime()}
                   cardOnFile={resolveCardOnFileStatus(
                     cardOnFileLoad,
                     appt.client_id,
@@ -1016,10 +1028,10 @@ export default async function DashboardPage({
             The daily workspace should not ask a practitioner to email the
             founder; that was pilot tooling, not product. */}
       </section>
-      <section aria-labelledby="needs-attention-heading" className="flex min-w-0 flex-col gap-3">
+      <section aria-labelledby="needs-attention-heading" className="flex min-w-0 flex-col gap-3 rounded-xl border border-neutral-200 p-3 sm:p-4 dark:border-neutral-800">
         {/* Header row on the same top edge and minimum height as the appointments header. */}
         <div className="flex min-h-[44px] items-center justify-between gap-3">
-          <h2 id="needs-attention-heading" className="text-lg font-medium">
+          <h2 id="needs-attention-heading" className="text-lg font-semibold tracking-tight">
             Needs attention
           </h2>
           <NeedsAttentionHeadingCount
@@ -1044,6 +1056,7 @@ export default async function DashboardPage({
           key={`needs:${selectedDayLocal}:${period}`}
           fallback={<NeedsAttentionSkeleton />}
         >
+          <UnfinishedVisitsNote studioId={studio.id} nowIso={renderNow.toISOString()} />
           <NeedsAttentionSection
             studioId={studio.id}
             studioTimezone={studio.timezone}
@@ -1063,7 +1076,7 @@ export default async function DashboardPage({
       </section>
       {/* Compact Birthdays: its own boundary, keyed like the others; reads the bundle the page already
           started. Rendered unconditionally (relationship context is not role-gated). */}
-      <BirthdaysTopRight
+      <DashboardBirthdays
         key={`birthdays:${selectedDayLocal}:${period}`}
         attentionSources={attentionSourcesPromise}
         today={todayLocal}
@@ -1129,8 +1142,17 @@ export default async function DashboardPage({
 // ---------------------------------------------------------------------------
 // Appointment row
 // ---------------------------------------------------------------------------
+async function BirthdayTodayBadge({ clientId, ids }: { clientId: string; ids: Promise<Set<string>> }) {
+  if (!(await ids).has(clientId)) return null;
+  return <span className="rounded-full bg-rose-50 px-2 py-1 font-medium text-rose-900 dark:bg-rose-950/50 dark:text-rose-200">Birthday today</span>;
+}
+
 function AppointmentRow({
   appt,
+  todayBirthdayIds,
+  viewerId,
+  rebookHref,
+  nextVisit,
   workflow,
   pinnedNotes,
   intakeStatus,
@@ -1141,15 +1163,20 @@ function AppointmentRow({
   prepSummary,
   historyAsked,
   isCurrent,
+  hasEnded,
   cardOnFile,
   tz,
   timeFormat,
 }: {
   appt: TodayAppointment;
+  viewerId: string;
+  todayBirthdayIds: Promise<Set<string>> | null;
+  rebookHref: string;
+  nextVisit: NextRosterVisit | "unavailable" | null;
   // The ONE derived preparation model for THIS appointment (keyed by
   // appointment id, so two same-client appointments never share a card).
   workflow: TodayWorkflowItem | null;
-  pinnedNotes: ReadonlyArray<{ id: string; text: string }> | null;
+  pinnedNotes: ReadonlyArray<Pick<ClientPinnedNote, "id" | "text" | "created_by_practitioner_id">> | null;
   intakeStatus: ClientIntakeForm["status"] | null;
   linkedSession: { sessionId: string; hasChartedArea: boolean } | null;
   paymentState: AppointmentPaymentState;
@@ -1173,6 +1200,8 @@ function AppointmentRow({
   // Resolved ONCE for the whole page against one instant (see `renderNow`), not
   // re-derived per row from its own clock read.
   isCurrent: boolean;
+  // HON-45: the appointment's end has passed, judged against the same single `renderNow` as `isCurrent`.
+  hasEnded: boolean;
   // Three states, never two. `unavailable` means the card read failed, which is
   // NOT the same claim as "this client has no card".
   // `null` = this studio has no card-on-file route, so the row asks no card
@@ -1220,6 +1249,7 @@ function AppointmentRow({
           },
     sessionId: linkedSession?.sessionId ?? null,
     hasChartedArea: linkedSession?.hasChartedArea ?? false,
+    hasEnded,
   });
   // Review intake: the direct route from Today into the canonical
   // practitioner intake-review surface, replacing the
@@ -1240,6 +1270,11 @@ function AppointmentRow({
     : null;
   const serviceName = appt.service?.name ?? null;
   const showAllergyFlag = !!appt.client?.allergies;
+  const chartHref = linkedSession
+    ? `/clients/${appt.client_id}/sessions/${linkedSession.sessionId}`
+    : appt.status === "confirmed" || appt.status === "completed"
+      ? `/clients/${appt.client_id}/sessions/new?appointment_id=${encodeURIComponent(appt.id)}`
+      : null;
   // Chloe: "a button for consultation notes so i can start them immediately
   // from dashboard". The label is derived from the SERVICE MODALITY ALREADY
   // LOADED for this row (zero queries), so "Start consultation notes" is only
@@ -1261,9 +1296,11 @@ function AppointmentRow({
     // padding (pl-3 + border-4 = the pl-4 the other rows use), so the time
     // column stays on the same vertical line and nothing shifts.
     <div
+      id={`appointment-${appt.id}`}
+      tabIndex={-1}
       data-testid={isCurrent ? "today-current-row" : undefined}
       data-current={isCurrent ? "true" : undefined}
-      className={`min-w-0 max-w-full flex flex-wrap items-start gap-x-3 gap-y-0 py-1.5 pr-4 lg:items-center ${
+      className={`group/visit scroll-mt-20 min-w-0 max-w-full flex flex-wrap items-start gap-x-3 gap-y-1 py-3 pr-4 ${
         isCurrent
           ? "border-l-4 border-l-blue-500 bg-blue-50 pl-3 hover:bg-blue-100/70 dark:border-l-blue-400 dark:bg-blue-950/40 dark:hover:bg-blue-950/60"
           : "pl-4 hover:bg-neutral-50 dark:hover:bg-neutral-900"
@@ -1290,13 +1327,8 @@ function AppointmentRow({
           same text column (pl-24 = the w-20 time cell + the gap-4), which
           is where it already appeared. The row body still opens the
           appointment; the disclosure is simply no longer part of it. */}
-      {/* COMPACT LAYOUT. The row body, the visit-details disclosure and the Open action are flex siblings of
-          ONE wrapping row. On a wide screen they share a single band (body | Visit details | Open) so the
-          44px disclosure trigger adds no height of its own; on a phone the body is one full-width line and
-          the disclosure and Open share the next, with Open at the text column (the phone-width alignment
-          e2e/mobile-ux.spec.ts pins: every action's left edge is the body's) and Visit details beside it.
-          An OPEN disclosure takes the full width and drops below (open:order-3 open:basis-full), so its
-          content is never squeezed beside the button. */}
+      {/* The row body owns the full width so long notes can wrap naturally.
+          Visit details and checkout are independent controls in the footer. */}
         {/* UI-01C: PendingContainerLink, not Link. This is the LAST navigation
             on the Dashboard with no acknowledgement, and it was deliberately
             left out of UI-01A/B because the shipped PendingLink could not
@@ -1313,7 +1345,7 @@ function AppointmentRow({
           href={`/calendar/${appt.id}`}
           data-testid="today-row-body"
           pendingLabel="Opening appointment…"
-          className="flex min-w-0 basis-full gap-3 lg:basis-0 lg:flex-1"
+          className="flex min-w-0 basis-full gap-3"
         >
           <div className="w-20 flex-none text-sm font-medium tabular-nums text-neutral-700 dark:text-neutral-300">
             <span>{time}</span>
@@ -1332,6 +1364,11 @@ function AppointmentRow({
               >
                 {clientLabel}
               </span>
+              {todayBirthdayIds && (
+                <Suspense fallback={null}>
+                  <BirthdayTodayBadge clientId={appt.client_id} ids={todayBirthdayIds} />
+                </Suspense>
+              )}
               {isCurrent && <CurrentPill />}
               <AppointmentStatusPill status={appt.status} />
               {/* Beside the NAME, exactly where Chloe asked for it, and ahead
@@ -1341,7 +1378,7 @@ function AppointmentRow({
               {nextAction.chip && (
                 <span
                   className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] leading-3 font-medium uppercase tracking-wider ${
-                    nextAction.chip === "Charting needed"
+                    nextAction.chip === "Charting needed" || nextAction.chip === "Not finished"
                       ? "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200"
                       : "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-200"
                   }`}
@@ -1355,7 +1392,7 @@ function AppointmentRow({
             </div>
             {/* COMPACT ROW: service · modality · duration · practitioner on ONE line; allergy flag stays
                 visible; everything else about the visit is in the details below the row. */}
-            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs leading-4 text-neutral-500">
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm leading-5 text-neutral-600 dark:text-neutral-400">
               {/* A flex item: min-w-0 + overflow-wrap:anywhere let an unbroken service name wrap inside the card
                   (break-words alone does not lower a flex item's min-content width). */}
               <span className="min-w-0 break-words [overflow-wrap:anywhere]">
@@ -1390,279 +1427,148 @@ function AppointmentRow({
             {/* The lines that must stay visible on the CLOSED row (Insurance D-1/E-1): every pinned note in
                 full, the failed-read marker, and the caution/watch line. They add only their own height. */}
             <RowSafetyLines
-              pinnedNotes={pinnedNotes}
+              pinnedNotes={appt.client ? null : pinnedNotes}
               unavailable={workflow ? workflow.unavailable : prepSummary.unavailable}
               caution={workflow && !workflow.unavailable && workflow.hasHistory ? workflow.caution : null}
+              cautionSource={workflow && !workflow.unavailable && workflow.hasHistory ? workflow.notesSourceLabel : null}
               lastTreatment={prepSummary.hasTreatment ? prepSummary.compactSummary : null}
             />
           </div>
         </PendingContainerLink>
-        {/* COMPACT ROW (fidelity C): everything beyond time, name, service, practitioner, status, the
-            pinned note, the allergy flag and the primary action lives here, server-rendered and CLOSED by
-            default. Nothing was deleted: Before-Today memory, latest setup, last treatment, consultation
-            notes, review intake and the portal link are all inside. It is a SIBLING of the row-body link,
-            never inside it (CHLOE D1). */}
-        <details
-          data-testid="today-row-details"
-          className="min-w-0 max-w-full order-2 open:order-3 open:basis-full lg:order-1 lg:open:order-3 [&_summary::-webkit-details-marker]:hidden"
-        >
-          <summary className="inline-flex min-h-[44px] cursor-pointer flex-col justify-center text-xs font-medium leading-4 text-neutral-600 underline-offset-2 hover:underline dark:text-neutral-400">
-            Visit details
-            {(workflow?.remember || prepSummary.remember) && (
-              <span data-testid="today-row-plan-cue" className="text-[11px] font-normal text-neutral-500">
-                Plan note on record
-              </span>
-            )}
-          </summary>
-          <div className="min-w-0 max-w-full flex flex-col gap-1.5 pb-2 pl-[5.75rem]">
-            {/* PREPARATION: the facts that used to be split across the Today
-                row and the Daily Prep Brief, now resolved ONCE by
-                buildTodayWorkflow and rendered once here. Nothing below repeats
-                a status already shown by a pill or chip above. */}
-            {workflow && (
-              <div className="mt-1.5 flex flex-col gap-0.5 text-xs">
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
-                  Before today
-                </span>
-                {workflow.unavailable ? (
-                  // CLIN-BEFORE-TODAY-F2. FIRST, before either authority is
-                  // consulted, because both arms below state something about
-                  // what is recorded and this row's Before-today read did not
-                  // come back.
-                  //
-                  // `hasHistory` is false here for the same reason it is false
-                  // for a first-visit client, so a branch that reads it first
-                  // cannot tell the two apart — which is precisely how a failed
-                  // read used to print "No watch/plan note." and "Latest setup:
-                  // Not recorded" over a client with live charted history.
-                  //
-                  // ONE line, in the row's own voice, reusing the profile's
-                  // clinical-unavailable copy so the two surfaces cannot drift.
-                  // Not the profile's amber notice: that is a card-sized
-                  // surface, and this failure belongs to a page load rather
-                  // than to the client.
-                  <span
-                    data-testid="today-before-today-unavailable"
-                    className="text-neutral-500"
-                  >
-                    {CLINICAL_UNAVAILABLE_HEADLINE}
-                  </span>
-                ) : !workflow.hasHistory &&
-                !prepSummary.hasTreatment &&
-                !prepSummary.unavailable ? (
-                  // ONE relationship line, not "New client" here and "No prior
-                  // treatment history yet" somewhere else.
-                  //
-                  // GUARDED BY BOTH AUTHORITIES. Today carries two independent
-                  // evidence sources — the Before-Today workflow and the
-                  // appointment-prep loader — and they can disagree, because
-                  // they differ on void records, truncation and error
-                  // handling. Once the prep memory renders on its own
-                  // authority, the unguarded form could print "New client · No
-                  // charted history yet" directly above "Last treatment: …"
-                  // for the same person.
-                  //
-                  // So this claim now requires that NEITHER source contradicts
-                  // it: the workflow says no history, the prep loader proved no
-                  // treatment, and the prep read actually answered. A
-                  // truncated or failed prep read is not permission to call
-                  // someone new.
-                  <span className="text-neutral-500">
-                    New client · No charted history yet
-                  </span>
-                ) : !workflow.hasHistory ? (
-                  // The workflow says no history but the prep loader either
-                  // proved a treatment or could not answer. Say nothing about
-                  // the relationship; the treatment strip below speaks for
-                  // itself, truthfully, from its own read.
-                  null
-                ) : (
-                  <>
-                    {/* Remember = the PLAN note (next_session_note). It is no
-                        longer taken from `rememberLine`, which collapsed the
-                        caution and the plan into one string, so the caution
-                        used to print twice under two different labels. */}
-                    {workflow.remember && (
-                      <span
-                        className="whitespace-pre-wrap break-words text-blue-900 dark:text-blue-200"
-                        title={workflow.remember}
-                      >
-                        Remember: {workflow.remember}
-                      </span>
-                    )}
-                    {!workflow.remember && !workflow.caution && (
-                      <span className="text-neutral-500">
-                        No watch/plan note.
-                      </span>
-                    )}
-                    {/* Latest setup, once. The brief's duplicate "Last
-                        recorded:" line is gone. */}
-                    <span className="whitespace-pre-wrap break-words text-neutral-600 dark:text-neutral-400">
-                      Latest setup: {workflow.setup ?? "Not recorded"}
-                    </span>
-                  </>
-                )}
-                {/* Specific missing-record reminders, once each. The generic
-                    "Records: N reminders" count is gone: it said nothing these
-                    chips do not say precisely. */}
-                {workflow.missingRecords.length > 0 && (
-                  <span className="mt-0.5 flex flex-wrap gap-1">
-                    {workflow.missingRecords.map((r) => (
-                      <span
-                        key={r}
-                        data-testid="missing-record-chip"
-                        className="inline-flex items-center rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
-                      >
-                        {r}
-                      </span>
-                    ))}
-                  </span>
-                )}
-              </div>
-            )}
-        {/* Dashboard V2 Part 2A: the previous treatment in place. Compact by
-            default (one line naming the visit) and expandable to the complete
-            #517 card WITHOUT leaving Today. Rendered only for a client who HAS
-            history, so a first visit stays a single calm relationship line.
-
-            GATED ON ITS OWN LOADER, not on the Before-Today workflow. That gate
-            was `workflow?.hasHistory`, which is null off Today by construction,
-            so this region vanished on exactly the days a practitioner opens to
-            PREPARE. It now asks the prep loader's own three-state answer: a
-            treatment, or a truthful "could not be loaded", or silence. Silence
-            is never rendered as a claim about the client.
-
-            CHLOE D1: it is a SIBLING of the row-body link, never a descendant.
-            The left padding lines it up with the text column above it (w-14
-            time cell + gap-4), so it reads as the last line of "Before today"
-            exactly as it did before: it simply is no longer inside a control
-            that navigates. */}
-        {/* PREP FOR THIS VISIT — the plan note, off Today only.
-
-            `narrative.plan` is the newest recorded "for next visit" note. On
-            TODAY the row already prints exactly this field as its "Remember"
-            line from the Before-Today model, so showing it here too would
-            print one note twice under two labels — a bug this row has had
-            once already. Off Today that model does not run, so this is the
-            only place the note can appear, and it is the single most useful
-            thing a practitioner opening tomorrow can read.
-
-            It renders even when there is no treatment card: the loader builds
-            the narrative to survive both "nothing charted" and a failed block
-            read, so a note-only visit still reaches her. */}
-        {!workflow && prepSummary.remember && (
-          <div className="text-xs">
-            <span
-              data-testid="dashboard-prep-remember"
-              className="whitespace-pre-wrap break-words text-blue-900 dark:text-blue-200"
-            >
-              <span className="font-medium text-neutral-500">Remember: </span>
-              {prepSummary.remember}
-            </span>
-          </div>
-        )}
-        {(prepSummary.hasTreatment || prepSummary.unavailable) && (
-          <div className="text-xs">
-            <DashboardTreatmentMemory
-              appointmentId={appt.id}
+        {appt.client && (
+          <div className="order-1 ml-[5.75rem] min-w-0 basis-full">
+            <DashboardQuickPin
               clientId={appt.client_id}
-              clientName={appt.client ? clientDisplayName(appt.client) : "this client"}
-              /* The NARROW projection. `prepSummary` also carries the plan
-                 note, which the server renders itself and only off Today —
-                 passing the whole object crossed that note to the browser on
-                 Today, where nothing displays it. */
-              summary={toDisclosureSummary(prepSummary)}
+              clientName={clientLabel}
+              pinnedNotes={(pinnedNotes ?? []).map(({ id, text, created_by_practitioner_id }) => ({ id, text, created_by_practitioner_id }))}
+              viewer={{ isOwner, practitionerId: viewerId }}
             />
           </div>
         )}
-        {/* Secondary by design: borderless, so it never competes with the
-            resolved primary action (Start/Continue charting) or the checkout
-            cell above it. Sibling of the row-body link, never nested inside
-            it. */}
-        {/* SECONDARY STRIP. One wrapping line rather than a stack of buttons:
-            each item is quiet, borderless, and never competes with the resolved
-            primary action or the checkout cell above. Every item here is a
-            SIBLING of the row-body link, never nested inside it. */}
-        <div className="flex flex-wrap items-center justify-start gap-x-3 gap-y-1">
-          {/* Chloe: consultation notes in ONE TAP from the Dashboard. It
-              NAVIGATES to the canonical practitioner writer
-              (/clients/<id>?tab=treatment, client_clinical_notes) exactly as
-              the appointment-side ConsultationNotesCard does. The
-              consultation writer lives in the Treatment tab since #1300
-              (the legacy ?tab=consultation link still redirects there). No modal, no
-              drawer, no second textarea, no second note action, no second
-              clinical-note loader — a second writer is precisely what this
-              contract exists to prevent. */}
+        <div data-testid="today-row-actions" className="order-1 ml-[5.75rem] flex min-w-0 basis-full flex-wrap items-center gap-2">
+          {/* Quick checkout (owner): take payment from the roster without opening
+              charting. Paid/Processing/Refunded show a status badge instead. */}
+          {isOwner && (
+            <AppointmentCheckoutCell
+              appointmentId={appt.id}
+              status={appt.status}
+              paymentState={paymentState}
+              dashboardStartsAt={appt.starts_at}
+              dashboardVisitLabel={[clientLabel, serviceName, time].filter(Boolean).join(" · ")}
+              dashboardCardOnFile={cardOnFile}
+            />
+          )}
           <PendingLink
-            href={`/clients/${appt.client_id}?tab=treatment`}
-            data-testid="today-consultation-notes"
-            pendingLabel="Opening client…"
-            className="inline-flex min-h-[44px] items-center rounded-md px-0 py-1.5 text-xs font-medium text-neutral-600 sm:px-3 underline-offset-2 hover:text-neutral-900 hover:underline dark:text-neutral-400 dark:hover:text-neutral-100"
+            href={rebookHref}
+            data-testid="today-rebook"
+            pendingLabel="Opening calendar…"
+            className={buttonClasses({ variant: "secondary", size: "sm" })}
           >
-            {isConsultationVisit
-              ? "Start consultation notes"
-              : "Consultation notes"}
+            Rebook
           </PendingLink>
-          {intakeAction && (
+          {chartHref && (
             <PendingLink
-              href={intakeAction.href}
-              data-testid="today-review-intake"
-              pendingLabel="Opening intake…"
-              className="inline-flex min-h-[44px] items-center rounded-md px-0 py-1.5 text-xs font-medium text-neutral-600 sm:px-3 underline-offset-2 hover:text-neutral-900 hover:underline dark:text-neutral-400 dark:hover:text-neutral-100"
+              href={chartHref}
+              data-testid="today-chart"
+              prefetch={false}
+              pendingLabel="Opening chart…"
+              className={buttonClasses({ variant: "secondary", size: "sm" })}
             >
-              {intakeAction.label}
+              Chart
             </PendingLink>
           )}
-          {/* Only for a TRUSTED "no card". Reuses the existing practitioner
-              portal-link authority whole; sends nothing until she clicks. */}
-          {offerPortalLink && (
-            <TodayPortalLinkButton
-              clientId={appt.client_id}
-              clientHasEmail={!!appt.client?.email?.trim()}
-              portalEnabled={portalEnabled}
-            />
+          {(nextAction.href !== chartHref || nextAction.label === "Finish visit") && (
+            <PendingLink
+              href={nextAction.href}
+              data-testid="today-next-action"
+              pendingLabel="Opening…"
+              className="inline-flex min-h-[44px] items-center px-2 text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
+            >
+              {nextAction.label}
+            </PendingLink>
           )}
         </div>
+        <div className="order-1 ml-[5.75rem] basis-full text-xs text-neutral-600 dark:text-neutral-400">
+          <span className="font-medium">Upcoming session</span>{" · "}
+          {nextVisit === "unavailable" ? "Couldn’t load upcoming sessions" : nextVisit ? (
+            <PendingLink href={`/calendar/${nextVisit.id}`} pendingLabel="Opening appointment…" className="underline underline-offset-2">
+              {localLongDate(new Date(nextVisit.starts_at), tz)} · {formatTimeForStudio(new Date(nextVisit.starts_at), tz, timeFormat)}
+              <span className="block text-fg-muted">
+                {[nextVisit.service?.name, `${nextVisit.duration_minutes} min`, nextVisit.practitioner?.display_name].filter(Boolean).join(" · ")}
+              </span>
+            </PendingLink>
+          ) : "No upcoming session booked"}
+        </div>
+        <div data-testid="today-row-details" className="order-2 min-w-0 basis-full pl-1 sm:pl-[5.75rem]">
+          {prepSummary.remember && (
+            <p data-testid="dashboard-prep-remember" title={prepSummary.remember} className="whitespace-pre-wrap break-words text-xs leading-5 text-fg-muted">
+              <span className="font-semibold">For this visit</span>{" · "}{prepSummary.remember}
+            </p>
+          )}
+          {workflow && !workflow.unavailable && !workflow.hasHistory && !prepSummary.hasTreatment && !prepSummary.unavailable && (
+            <p className="text-xs text-neutral-500">New client · No charted history yet</p>
+          )}
+          <div className="text-xs">
+            {(prepSummary.hasTreatment || prepSummary.unavailable) && (
+              <DashboardTreatmentMemory
+                appointmentId={appt.id}
+                clientId={appt.client_id}
+                clientName={appt.client ? clientDisplayName(appt.client) : "this client"}
+                timeZone={tz}
+                summary={toDisclosureSummary(prepSummary)}
+              />
+            )}
           </div>
-        </details>
-      {/* ONE compact appointment footer. `gap-1` and `self-start` replace
-          `gap-2` + `self-center`: on a phone this column wraps onto its own
-          full-width line, where centring it against a tall text column opened
-          dead space above and below with nothing in it. */}
-      <div className="order-1 ml-[5.75rem] flex flex-wrap items-center gap-2 lg:order-2 lg:ml-auto lg:justify-end">
-        {/* Quick checkout (Chloe): take payment from the roster without opening
-            charting. Paid/Processing/Refunded show a status badge instead. */}
-        {isOwner && (
-          <AppointmentCheckoutCell
-            appointmentId={appt.id}
-            status={appt.status}
-            paymentState={paymentState}
-          />
-        )}
-        {/* UI-01B: PendingLink, not Link. This is a SEGMENT change, so no
-            route boundary is involved and — with zero loading.tsx in the tree —
-            React keeps this row mounted while the destination RSC is in flight.
-            The control the thumb is on is therefore still there to speak, and
-            it is the only thing that can: nothing else on screen changes until
-            the new page commits.
+          {workflow && workflow.missingRecords.length > 0 && (
+            <div className="mt-1 flex flex-wrap gap-1">
+              {workflow.missingRecords.map(r => (
+                <span key={r} data-testid="missing-record-chip" className="rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">{r}</span>
+              ))}
+            </div>
+          )}
+          {/* Secondary appointment tools stay reachable with the prior treatment closed. */}
+          <div className="flex flex-wrap items-center justify-start gap-x-3 gap-y-1">
+            {/* A practitioner: consultation notes in ONE TAP from the Dashboard. It
+                NAVIGATES to the canonical practitioner writer
+                (/clients/<id>?tab=treatment, client_clinical_notes) exactly as
+                the appointment-side ConsultationNotesCard does. The
+                consultation writer lives in the Treatment tab since #1300
+                (the legacy ?tab=consultation link still redirects there). No modal, no
+                drawer, no second textarea, no second note action, no second
+                clinical-note loader — a second writer is precisely what this
+                contract exists to prevent. */}
+            <PendingLink
+              href={`/clients/${appt.client_id}?tab=treatment`}
+              data-testid="today-consultation-notes"
+              pendingLabel="Opening client…"
+              className="inline-flex min-h-[44px] items-center rounded-md px-0 py-1.5 text-xs font-medium text-neutral-600 sm:px-3 underline-offset-2 hover:text-neutral-900 hover:underline dark:text-neutral-400 dark:hover:text-neutral-100"
+            >
+              {isConsultationVisit
+                ? "Start consultation notes"
+                : "Consultation notes"}
+            </PendingLink>
+            {intakeAction && (
+              <PendingLink
+                href={intakeAction.href}
+                data-testid="today-review-intake"
+                pendingLabel="Opening intake…"
+                className="inline-flex min-h-[44px] items-center rounded-md px-0 py-1.5 text-xs font-medium text-neutral-600 sm:px-3 underline-offset-2 hover:text-neutral-900 hover:underline dark:text-neutral-400 dark:hover:text-neutral-100"
+              >
+                {intakeAction.label}
+              </PendingLink>
+            )}
+            {/* Only for a TRUSTED "no card". Reuses the existing practitioner
+                portal-link authority whole; sends nothing until she clicks. */}
+            {offerPortalLink && (
+              <TodayPortalLinkButton
+                clientId={appt.client_id}
+                clientHasEmail={!!appt.client?.email?.trim()}
+                portalEnabled={portalEnabled}
+              />
+            )}
+          </div>
+        </div>
 
-            `pendingLabel` says "Opening…" because this control's LABEL varies
-            (Open client / Start charting / Continue charting / Review) while
-            its destination is always a client-scoped page. It describes the
-            REQUEST, never an outcome. */}
-        <PendingLink
-          href={nextAction.href}
-          data-testid="today-next-action"
-          pendingLabel="Opening…"
-          /* `min-h-[44px]` — this was the ONE control in the action area below
-             the touch target, at 34px, while all three SECONDARY actions were
-             already 44px. The most important control on the row was the
-             hardest to hit. */
-          className="inline-flex min-h-[44px] items-center rounded-md border border-neutral-300 px-3 text-xs font-medium text-neutral-700 hover:border-neutral-900 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:border-neutral-100 dark:hover:bg-neutral-900"
-        >
-          {nextAction.label}
-        </PendingLink>
-      </div>
     </div>
   );
 }

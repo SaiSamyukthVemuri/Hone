@@ -62,7 +62,16 @@ describe("behaviour of the real Team page, by role (queries mocked, page and com
       getPractitionersForStudio,
     }));
     vi.doMock("@/lib/supabase/server", () => ({
-      createClient: async () => ({ from: () => ({ select: () => ({ eq: () => ({ eq: () => ({ order: async () => ({ data: [], error: null }) }) }) }) }) }),
+      createClient: async () => ({
+        // Every read on this page (invitations, receptionists) ends in an empty, successful result, however many eq/order calls it chains.
+        from: () => {
+          const chain: Record<string, unknown> = {};
+          const done = { data: [], error: null };
+          for (const k of ["select", "eq", "order"]) chain[k] = () => chain;
+          chain.then = (resolve: (v: typeof done) => unknown) => resolve(done);
+          return chain;
+        },
+      }),
     }));
     vi.doMock("@/lib/appointments/review-link", () => ({ shouldShowReviewLink }));
     vi.doMock("../../../app/(app)/settings/team/actions", () => ({ removePractitionerAction: vi.fn(), revokeInvitationAction: vi.fn() }));

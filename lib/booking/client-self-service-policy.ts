@@ -24,6 +24,9 @@
 // withdraws anything. Any other non-boolean (a string, a number) is treated as
 // FALSE: a value this code does not understand must not grant access.
 //
+// The separate studio_managed_appointments override withdraws all three
+// permissions while retaining these saved preferences and admission settings.
+//
 // PURE AND ISOMORPHIC: email templates, server actions, pages and tests import
 // it. The server-only loader lives in client-self-service-policy-store.ts.
 
@@ -49,13 +52,22 @@ export type ClientSelfServiceStudioFlags = {
   client_cancellation_enabled?: boolean;
   client_reschedule_enabled?: boolean;
   client_portal_enabled?: boolean;
+  studio_managed_appointments?: boolean;
 };
 
 export type ClientSelfServicePolicyColumns = {
   client_cancellation_enabled?: unknown;
   client_reschedule_enabled?: unknown;
   client_portal_enabled?: unknown;
+  studio_managed_appointments?: unknown;
 };
+
+/** Missing before rollout means the existing self-service preferences still apply.
+ * A malformed persisted mode refuses self-service instead of opening a path. */
+export function studioManagesAppointments(studio: object | null | undefined): boolean {
+  const value = (studio as { studio_managed_appointments?: unknown } | null | undefined)?.studio_managed_appointments;
+  return value !== undefined && value !== null && value !== false;
+}
 
 function flag(value: unknown): boolean {
   if (value === undefined || value === null) return true;
@@ -66,6 +78,9 @@ export function clientSelfServicePolicyFromStudio(
   studio: ClientSelfServicePolicyColumns | null | undefined,
 ): ClientSelfServicePolicy {
   if (!studio) return DEFAULT_CLIENT_SELF_SERVICE_POLICY;
+  if (studioManagesAppointments(studio)) {
+    return { cancellation: false, reschedule: false, portal: false };
+  }
   return {
     cancellation: flag(studio.client_cancellation_enabled),
     reschedule: flag(studio.client_reschedule_enabled),
@@ -120,6 +135,10 @@ export function clientManageDisabledMessage(studioName?: string | null): string 
  */
 export const PORTAL_OFF_STAFF_MESSAGE =
   "Client portal access is off for your studio. Clients cannot sign in, and no portal links are sent. Reminders and appointment emails are unaffected.";
+
+/** HON-47. Shown in place of the staff "New message" composer when client portal access is off. */
+export const PORTAL_MESSAGES_OFF_NOTE =
+  "Client portal is off for this studio, so new portal messages can't be sent. Earlier messages stay visible here.";
 
 export function clientPortalDisabledMessage(studioName?: string | null): string {
   return `Online client access isn't available for ${contact(studioName)}. Please contact the studio directly about your appointments, forms or care instructions.`;

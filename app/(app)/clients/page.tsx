@@ -1,5 +1,6 @@
+import { directoryHref } from "@/lib/clients/directory-query";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { PendingLink } from "@/components/pending-link";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { createClient } from "@/lib/supabase/server";
@@ -23,7 +24,7 @@ import {
   readNextAppointments,
   type DirectorySupabase,
 } from "@/lib/clients/directory-read";
-import { readLastVisits, type LastVisitSupabase } from "@/lib/clients/last-visit";
+import { readAllLastVisits, readLastVisits, type LastVisitSupabase } from "@/lib/clients/last-visit";
 import { DirectoryControls } from "./DirectoryControls";
 import {
   ClientOverview,
@@ -63,6 +64,12 @@ export default async function ClientsPage({
   // Default deny: only an owner or a practitioner may use this directory.
   if (!isStaffRole(practitioner.role)) notFound();
 
+  // The custom groups feature was removed. An old link that still carries ?group= lands on the standard directory, keeping only
+  // the standard view, search, filters and sort (parseDirectoryParams already whitelists them); the group value is
+  // never echoed and no other parameter is passed through.
+  if (params.group !== undefined) {
+    redirect(directoryHref({ view, q: query.q, filters: query.filters, sort: query.sort, lastVisit: query.lastVisit }));
+  }
   const supabase = await createClient();
   const db = supabase as unknown as DirectorySupabase;
   const domain = startPerfSpan("clients.domain");
@@ -76,16 +83,29 @@ export default async function ClientsPage({
   // and intake form (Insurance K1). The archived view reads neither.
   const needAllNext = !archived && (query.sort === "next" || query.filters.includes("no_upcoming"));
   const needAllIntake = !archived && query.filters.includes("intake_review");
+  // The last-visit sort and the "not seen in N months" filter decide the set or its order, so they need every
+  // client's last visit (one bounded whole-studio read, same definition). A plain page only reads its own.
+  const needAllLastVisit = !archived && (query.sort === "lastvisit" || query.lastVisit !== "any");
+  const clock = { nowIso, timeZone: studio.timezone };
   const none = <T,>() => Promise.resolve(new Map<string, T>());
 
-  const [source, wholeNext, wholeIntake] = await Promise.all([
+  const [source, wholeNext, wholeIntake, wholeLastVisits] = await Promise.all([
     readDirectoryClients(db, studio.id, archived),
     needAllNext ? readNextAppointments(db, studio.id, nowIso) : none<string>(),
     needAllIntake ? readCurrentIntake(db, studio.id) : none<"in_progress">(),
+    needAllLastVisit
+      ? readAllLastVisits(supabase as unknown as LastVisitSupabase, studio.id, nowIso)
+      : Promise.resolve(null),
   ]);
+  // undefined: not needed this request; null: needed and unavailable; a map: the whole set.
+  const wholeLastVisitMap = wholeLastVisits === null ? undefined : wholeLastVisits.ok ? wholeLastVisits.value : null;
   const identityRows = source.map(projectStaffRow);
-  let aggregates: DirectoryAggregates = { nextAppointments: wholeNext, intake: wholeIntake };
-  let data = queryDirectory(identityRows, aggregates, query);
+  let aggregates: DirectoryAggregates = {
+    nextAppointments: wholeNext,
+    intake: wholeIntake,
+    lastVisits: wholeLastVisitMap,
+  };
+  let data = queryDirectory(identityRows, aggregates, query, clock);
 
   // The overview's client comes from the same authorized set; the page's rows are
   // known now, so the display-only aggregates are read for exactly those clients.
@@ -98,10 +118,12 @@ export default async function ClientsPage({
       needAllNext ? Promise.resolve(wholeNext) : readNextAppointments(db, studio.id, nowIso, pageIds),
       needAllIntake ? Promise.resolve(wholeIntake) : readCurrentIntake(db, studio.id, pageIds),
     ]);
-    aggregates = { nextAppointments: pageNext, intake: pageIntake };
+    aggregates = { nextAppointments: pageNext, intake: pageIntake, lastVisits: wholeLastVisitMap };
     // Same set, order and count (neither aggregate decided them); only the shown values are now real.
-    data = queryDirectory(identityRows, aggregates, query);
+    data = queryDirectory(identityRows, aggregates, query, clock);
   }
+
+  data = { ...data, directoryEmpty: identityRows.length === 0 };
 
   // The overview's client comes from the same authorized set: an id that is not in
   // this view's set shows nothing and reveals nothing.
@@ -113,13 +135,23 @@ export default async function ClientsPage({
   // Last visit: ONE batched read for the visible page (plus the open overview).
   const ids = data.rows.map((r) => r.id);
   if (selected && !ids.includes(selected.id)) ids.push(selected.id);
+  // When the whole-studio read already answered, the page's cells come from it (no second read).
   const lastVisits = archived
     ? null
-    : await readLastVisits(supabase as unknown as LastVisitSupabase, studio.id, ids, nowIso);
+    : wholeLastVisits !== null
+      ? wholeLastVisits
+      : await readLastVisits(supabase as unknown as LastVisitSupabase, studio.id, ids, nowIso);
   const lastVisitMap = lastVisits && lastVisits.ok ? lastVisits.value : null;
   domain.end();
 
-  const state: DirectoryState = { view, q: query.q, filters: query.filters, sort: query.sort, page: data.page };
+  const state: DirectoryState = {
+    view,
+    q: query.q,
+    filters: query.filters,
+    sort: query.sort,
+    lastVisit: query.lastVisit,
+    page: data.page,
+  };
 
   // The overview opens under its own row (nothing above it moves). A selected client
   // that is not on the page being shown (an edited URL) is shown above the list instead.
@@ -135,19 +167,19 @@ export default async function ClientsPage({
   ) : null;
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <div className="flex min-w-0 flex-col gap-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">Clients</h1>
-          <p className="mt-1 text-sm text-neutral-500">
-            {archived
-              ? "Archived clients are hidden from active lists and booking pickers. Historical records are preserved."
-              : "Find, review and open your clients."}
-          </p>
+          {archived && (
+            <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
+              Archived clients are hidden from active lists and booking pickers. Historical records are preserved.
+            </p>
+          )}
         </div>
         <Link
           href="/clients/new"
-          className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+          className="inline-flex min-h-11 items-center rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
         >
           + Add client
         </Link>
@@ -176,7 +208,7 @@ export default async function ClientsPage({
   );
 }
 
-// Two-link segmented control. Plain anchor links so the active state
+// Two standard directory views. Plain anchor links so the active state
 // survives a full page navigation; this control just toggles the ?view= param.
 function ViewTabs({ current }: { current: View }) {
   const tabs = CLIENT_LIST_VIEWS.map((v) => ({
@@ -186,7 +218,7 @@ function ViewTabs({ current }: { current: View }) {
   return (
     <nav
       aria-label="Client list view"
-      className="flex w-fit gap-1 rounded-lg border border-neutral-200 bg-neutral-50 p-1 text-sm dark:border-neutral-800 dark:bg-neutral-900"
+      className="flex gap-5 border-b border-neutral-200 text-sm dark:border-neutral-800"
     >
       {tabs.map((tab) => {
         const active = tab.value === current;
@@ -198,8 +230,8 @@ function ViewTabs({ current }: { current: View }) {
             aria-current={active ? "page" : undefined}
             className={
               active
-                ? "rounded-md bg-white px-3 py-1.5 font-medium text-neutral-900 shadow-sm dark:bg-neutral-950 dark:text-neutral-100"
-                : "rounded-md px-3 py-1.5 text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+                ? "inline-flex min-h-11 items-center border-b-2 border-current font-semibold text-neutral-900 dark:text-neutral-100"
+                : "inline-flex min-h-11 items-center border-b-2 border-transparent text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
             }
           >
             {tab.label}

@@ -1,3 +1,4 @@
+import { isDeskEnabled } from "@/lib/desk/flag";
 import type { createClient } from "./server";
 
 export async function invitationDestination(
@@ -21,7 +22,7 @@ export async function invitationDestination(
     } else if (
       (status?.status === "linked" || status?.status === "already_linked") &&
       status.role === "receptionist" &&
-      process.env.HONE_RECEPTIONIST_DESK_ENABLED === "true"
+      isDeskEnabled()
     ) {
       clearSelection = status.choose_studio === true;
       dest = clearSelection ? "/desk/choose" : "/desk";

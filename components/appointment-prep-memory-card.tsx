@@ -1,3 +1,4 @@
+import { DashboardPriorTreatment } from "./dashboard-prior-treatment";
 import Link from "next/link";
 import { SectionLabel } from "@/components/ui/section-label";
 import { FormattedDateTime } from "@/components/formatted-date-time";
@@ -145,6 +146,7 @@ export function AppointmentPrepMemoryCard({
   embedded?: boolean;
   showFullChartLink?: boolean;
 }) {
+  if (embedded && !showFullChartLink) return <DashboardPriorTreatment memory={memory} />;
   const fullChartHref = `/clients/${clientId}/sessions/${memory.sessionId}`;
   // A prior visit can be genuinely charted and still carry no settings blocks,
   // a LASER visit charts into laser_entries, and pre-0019 legacy electrolysis
@@ -181,7 +183,7 @@ export function AppointmentPrepMemoryCard({
               data-testid="prep-full-chart-link"
               className="text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
             >
-              Open full chart →
+              Open full chart
             </Link>
           )}
         </div>
@@ -248,7 +250,7 @@ export function AppointmentPrepMemoryCard({
                 href={fullChartHref}
                 className="font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
               >
-                Open full chart →
+                Open full chart
               </Link>
             </p>
           )}

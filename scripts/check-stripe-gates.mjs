@@ -151,6 +151,21 @@ const RULES = [
     ],
     exactly: 1,
   },
+  // Owner self-service on the separate test-key-only subscription client.
+  {
+    name: "subscriptions.update",
+    pattern: /\bsubscriptions\.update\b/g,
+    allowlist: ["lib/subscriptions/billing-client.ts"],
+    exactly: 1,
+    stripComments: true,
+  },
+  {
+    name: "subscriptions.cancel",
+    pattern: /\bsubscriptions\.cancel\b/g,
+    allowlist: ["lib/subscriptions/billing-client.ts"],
+    exactly: 1,
+    stripComments: true,
+  },
   {
     name: "billingPortal.sessions.create",
     pattern: /billingPortal\.sessions\.create\b/g,
@@ -459,6 +474,7 @@ const STRIPE_BROWSER_WRITE_SHAPE = /\b(confirmSetup|confirmPayment|confirmCardPa
 // A write SHAPE occurrence is "classified" (already inventoried above) if its
 // matched text hits one of these. Non-global so .test() is stateless.
 const CLASSIFIED_WRITE_PATTERNS = [
+  /^stripe\.subscriptions\.(?:cancel|update)$/,
   /paymentIntents\.create/,
   /paymentIntents\.cancel/,
   /refunds\.create/,

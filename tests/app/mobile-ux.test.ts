@@ -10,7 +10,9 @@ function read(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf8");
 }
 
-const LAYOUT = read("app/(app)/layout.tsx");
+// Step 0 of the HON-40 shell contract moved the header cluster and the bell out of layout.tsx verbatim, so the
+// shell is the three files together.
+const LAYOUT = read("app/(app)/layout.tsx") + "\n" + read("app/(app)/HeaderCluster.tsx") + "\n" + read("app/(app)/NotificationsBell.tsx");
 const MENU = read("app/(app)/MobileMenu.tsx");
 const ACCOUNT = read("app/(app)/AccountMenu.tsx");
 // SIGNOUT-02: the submit control both shells now delegate to.
@@ -52,7 +54,7 @@ describe("app shell: responsive navigation", () => {
     // account button's 12ch cap. At md that overflowed the page by up to 145px.
     const MENU = read("app/(app)/MobileMenu.tsx");
     expect(LAYOUT).toMatch(/className="hidden items-center gap-0\.5[^"]*lg:flex/); // primary nav
-    expect(LAYOUT).toMatch(/className="hidden items-center gap-3 lg:flex"/); // desktop controls
+    expect(LAYOUT).toMatch(/className="hidden min-w-0 items-center gap-3 lg:flex"/); // desktop controls
     expect(LAYOUT).toMatch(/className="flex items-center gap-1\.5 lg:hidden"/); // compact controls
     expect(MENU).toMatch(/className="relative lg:hidden"/); // MobileMenu root
 
@@ -91,7 +93,7 @@ describe("app shell: responsive navigation", () => {
       '"/clients"',
       '"/calendar"',
       '"/records"',
-      '"/settings/profile"',
+      '"/settings"',
     ]) {
       expect(MENU).toContain(dest);
     }
@@ -136,11 +138,11 @@ describe("app shell: responsive navigation", () => {
   });
 
   it("the notifications bell carries the destination and the unread count", () => {
-    expect(LAYOUT).toMatch(/function NotificationsBell/);
+    expect(LAYOUT).toMatch(/export function NotificationsBell/);
     expect(LAYOUT).toMatch(/Notifications, \$\{unread\} unread/);
     expect(LAYOUT).toMatch(/href="\/notifications"/);
     // Bell renders in BOTH the desktop group and the mobile group.
-    expect((LAYOUT.match(/<NotificationsBell unread=\{unreadNotifications\} \/>/g) ?? []).length).toBe(2);
+    expect((LAYOUT.match(/<NotificationsBell unread=\{unreadPersisted \+ computedUnread\} \/>/g) ?? []).length).toBe(2);
     // The old full-width Notifications tab is gone from the nav row.
     const navRow = LAYOUT.slice(LAYOUT.indexOf("<nav"), LAYOUT.indexOf("</nav>"));
     expect(navRow).not.toContain('"/notifications"');
@@ -163,7 +165,7 @@ describe("desktop account dropdown (PR #231)", () => {
   });
 
   it("contains the account destinations, the profile block, and Sign out", () => {
-    expect(ACCOUNT).toContain('"/settings/profile"');
+    expect(ACCOUNT).toContain('"/settings"');
     expect(ACCOUNT).toContain('"/getting-started"');
     expect(ACCOUNT).toMatch(/<form\b[\s\S]{0,200}?action=\{signOut\}/);
     expect(ACCOUNT).toMatch(/Sign out/);
@@ -175,7 +177,7 @@ describe("desktop account dropdown (PR #231)", () => {
     for (const dest of ['"/dashboard"', '"/clients"', '"/calendar"', '"/records"']) {
       expect(navRow).toContain(dest);
     }
-    expect(navRow).not.toContain('"/settings/profile"');
+    expect(navRow).not.toContain('"/settings"');
     expect(navRow).not.toContain('"/admin"');
     expect(LAYOUT).toMatch(/<AccountMenu/);
   });

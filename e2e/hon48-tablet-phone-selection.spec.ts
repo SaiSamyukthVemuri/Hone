@@ -1,0 +1,213 @@
+import { test, expect, devices, type Page } from "@playwright/test";
+import {
+  seedE2eStudio, seedE2eMember, seedE2eClient, setStudioCapacityEnabled, setStudioCapacityBookingEnabled,
+  seedPractitionerDefault, seedServiceEligibility, getE2eServiceId, getOwnerPractitionerId, setStudioTimezone, sql,
+} from "./helpers/seed";
+import { loginByMagicLink } from "./helpers/flows";
+import { clientNameOf, TZ } from "./hon48-support/five-user-team";
+
+// HON-48 tablet and phone appointment selection. Chromium EMULATION of an iPad Pro 11 (landscape and portrait) and an
+// iPhone 13: touch input, a coarse pointer, the device viewport. It is NOT a physical iPad and NOT the WebKit engine; the
+// human recheck on a real device stays open.
+//
+// Runs in the required calendar lane.
+//
+// The report: on an iPad, nearby appointments in the day calendar were hidden in one "multiple appointments" bubble. A
+// calendar of 15-minute appointments back to back is the case that crowds: each card is drawn at least 44 px tall, so
+// neighbours overlap on the screen even though the database holds them apart.
+//
+// Proved per device, with three back-to-back 15-minute appointments in one practitioner's column:
+//   * every one of the three clients is individually reachable (a card of its own, or a row in the chooser that names it);
+//   * every tap target that stands for them (card, chooser button, chooser row) is at least 44 x 44 CSS px;
+//   * choosing each opens THAT appointment (the preview drawer, or the appointment's own page), never a neighbour;
+//   * the chooser, when used, lists all three: nothing is hidden behind a count alone.
+
+test.describe.configure({ mode: "serial" });
+
+const { defaultBrowserType: _a, ...IPAD } = devices["iPad Pro 11"];
+const { defaultBrowserType: _b, ...IPAD_LAND } = devices["iPad Pro 11 landscape"];
+const { defaultBrowserType: _c, ...IPHONE } = devices["iPhone 13"];
+void _a; void _b; void _c;
+
+let seed: Awaited<ReturnType<typeof seedE2eStudio>>;
+let day: string;
+const cluster: Array<{ id: string; name: string }> = [];
+let practitionerId = "";
+
+test.beforeAll(async () => {
+  seed = await seedE2eStudio();
+  await setStudioTimezone(seed.studioId, TZ);
+  await setStudioCapacityEnabled(seed.studioId, true);
+  await setStudioCapacityBookingEnabled(seed.studioId, true);
+  const serviceId = await getE2eServiceId(seed.studioId);
+  const ownerId = await getOwnerPractitionerId(seed.studioId);
+  const member = await seedE2eMember(seed);
+  await seedServiceEligibility(seed.studioId, serviceId, member.practitionerId);
+  for (const p of [ownerId, member.practitionerId]) for (let wd = 0; wd <= 6; wd++) await seedPractitionerDefault(seed.studioId, p, wd, true, "06:00", "22:00");
+  practitionerId = member.practitionerId;
+  const [d] = await sql<{ day: string }>("select ((now() at time zone $1)::date+3)::text as day", [TZ]);
+  day = d.day;
+  for (const local of ["10:00", "10:15", "10:30"]) {
+    const { clientId } = await seedE2eClient(seed);
+    const [row] = await sql<{ id: string }>(
+      "insert into public.appointments (id,studio_id,client_id,practitioner_id,service_id,starts_at,ends_at,duration_minutes,buffer_minutes_snapshot,blocked_ends_at,status) " +
+        "select gen_random_uuid(),$1,$2,$3,$4,s,s+interval '15 minutes',15,0,s+interval '15 minutes','confirmed' " +
+        "from (select (($5::date + $6::time) at time zone $7) as s) t returning id",
+      [seed.studioId, clientId, practitionerId, serviceId, day, local, TZ],
+    );
+    cluster.push({ id: row.id, name: await clientNameOf(seed, clientId) });
+  }
+});
+
+async function size(page: Page, loc: ReturnType<Page["locator"]>) {
+  const box = await loc.boundingBox();
+  expect(box, "the target is on screen").not.toBeNull();
+  return box!;
+}
+
+async function openByName(page: Page, name: string, tapped: string[]) {
+  // A card of its own for this client, or the chooser that stands for the cluster.
+  const card = page.getByRole("button").filter({ hasText: name }).first();
+  const isChooserButton = ((await card.getAttribute("aria-label").catch(() => null)) ?? "").startsWith("Choose from");
+  if (!isChooserButton && (await card.isVisible().catch(() => false))) {
+    const b = await size(page, card);
+    expect(b.width, `${name} card width`).toBeGreaterThanOrEqual(43.5);
+    expect(b.height, `${name} card height`).toBeGreaterThanOrEqual(43.5);
+    tapped.push("card");
+    await card.click();
+    return;
+  }
+  const bubble = page.getByRole("button", { name: /^Choose from \d+ appointments$/ }).first();
+  await expect(bubble, `${name} must be reachable: neither a card nor a chooser button was found`).toBeVisible();
+  const bb = await size(page, bubble);
+  expect(bb.width).toBeGreaterThanOrEqual(43.5);
+  expect(bb.height).toBeGreaterThanOrEqual(43.5);
+  await bubble.click();
+  const chooser = page.getByRole("dialog", { name: "Choose an appointment" });
+  await expect(chooser).toBeVisible();
+  // Nothing is hidden behind a count: every one of the three names is a row.
+  for (const c of cluster) await expect(chooser.getByText(c.name), `chooser lists ${c.name}`).toBeVisible();
+  const row = chooser.getByRole("button").filter({ hasText: name }).or(chooser.getByRole("link").filter({ hasText: name })).first();
+  const rb = await size(page, row);
+  expect(rb.width).toBeGreaterThanOrEqual(43.5);
+  expect(rb.height).toBeGreaterThanOrEqual(43.5);
+  tapped.push("chooser");
+  await row.click();
+}
+
+async function expectOpened(page: Page, c: { id: string; name: string }) {
+  await expect
+    .poll(async () => {
+      const preview = page.getByRole("dialog", { name: "Appointment preview" });
+      if ((await preview.count()) > 0 && (await preview.first().innerText()).includes(c.name)) return "preview";
+      if (page.url().includes(`/calendar/${c.id}`)) return "page";
+      return "none";
+    }, { message: `choosing ${c.name} opens that appointment`, timeout: 15_000 })
+    .not.toBe("none");
+}
+
+for (const [label, device] of [["iPad portrait", IPAD], ["iPad landscape", IPAD_LAND], ["iPhone", IPHONE]] as const) {
+  test(`${label}: every appointment in a crowded column is individually selectable`, async ({ browser }) => {
+    const ctx = await browser.newContext({ ...device });
+    const page = await ctx.newPage();
+    await loginByMagicLink(page, seed.ownerEmail);
+    const tapped: string[] = [];
+    for (const c of cluster) {
+      await page.goto(`/calendar?view=day&day=${day}&people=${practitionerId}`);
+      await expect(page.getByRole("main")).toBeVisible();
+      await openByName(page, c.name, tapped);
+      await expectOpened(page, c);
+    }
+    test.info().annotations.push({ type: `${label}-path`, description: tapped.join(",") });
+    console.log(`HON48_SELECTION ${label} paths=${tapped.join(",")}`);
+    await ctx.close();
+  });
+}
+
+
+// ---------------------------------------------------------------------------------------------------------------------
+// iPad VISIBILITY (not only selection): the chooser button that stands for crowded items must NAME each client on the
+// calendar itself, so the owner sees who is there without opening anything. 820 x 1180 (portrait) and 1180 x 820
+// (landscape), touch + coarse pointer, Day (all five practitioners) and Week. Chromium emulation: NOT WebKit, NOT a
+// physical iPad; the real-device recheck stays a human step.
+
+const IPAD_820 = { ...IPAD, viewport: { width: 820, height: 1180 } };
+const IPAD_1180 = { ...IPAD_LAND, viewport: { width: 1180, height: 820 } };
+const lone: Array<{ id: string; name: string; practitionerId: string }> = [];
+let allFive: string[] = [];
+
+test.describe("iPad: crowded items are named on the calendar", () => {
+  test.beforeAll(async () => {
+    const serviceId = await getE2eServiceId(seed.studioId);
+    const ownerId = await getOwnerPractitionerId(seed.studioId);
+    const others: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const m = await seedE2eMember(seed);
+      await seedServiceEligibility(seed.studioId, serviceId, m.practitionerId);
+      for (let wd = 0; wd <= 6; wd++) await seedPractitionerDefault(seed.studioId, m.practitionerId, wd, true, "06:00", "22:00");
+      others.push(m.practitionerId);
+    }
+    allFive = [ownerId, practitionerId, ...others];
+    for (const [i, pid] of [ownerId, ...others].entries()) {
+      const { clientId } = await seedE2eClient(seed);
+      const local = ["09:00", "11:00", "13:00", "15:00"][i];
+      const [row] = await sql<{ id: string }>(
+        "insert into public.appointments (id,studio_id,client_id,practitioner_id,service_id,starts_at,ends_at,duration_minutes,buffer_minutes_snapshot,blocked_ends_at,status) " +
+          "select gen_random_uuid(),$1,$2,$3,$4,s,s+interval '30 minutes',30,0,s+interval '30 minutes','confirmed' " +
+          "from (select (($5::date + $6::time) at time zone $7) as s) t returning id",
+        [seed.studioId, clientId, pid, serviceId, day, local, TZ],
+      );
+      lone.push({ id: row.id, name: await clientNameOf(seed, clientId), practitionerId: pid });
+    }
+  });
+
+  for (const [label, device] of [["820 x 1180", IPAD_820], ["1180 x 820", IPAD_1180]] as const) {
+    for (const view of ["day", "week"] as const) {
+      test(`${label} ${view}: all three back-to-back clients are named on the calendar and each opens its own appointment`, async ({ browser }) => {
+        const ctx = await browser.newContext({ ...device });
+        const page = await ctx.newPage();
+        await loginByMagicLink(page, seed.ownerEmail);
+        const people = view === "day" ? allFive.join(",") : practitionerId;
+        const url = `/calendar?view=${view}&day=${day}&people=${people}`;
+        await page.goto(url);
+        await expect(page.getByRole("main")).toBeVisible();
+
+        // 1. Visible on the calendar surface, before anything is tapped.
+        for (const c of cluster) {
+          const row = page.locator("[data-chooser-row]:visible").filter({ hasText: c.name }).first();
+          await expect(row, `${c.name} is named on the calendar (${label} ${view})`).toBeVisible();
+          // Day with five practitioners scrolls sideways inside the grid: bring the column into view first.
+          await row.scrollIntoViewIfNeeded();
+          const box = await row.boundingBox();
+          expect(box, `${c.name} row is on screen`).not.toBeNull();
+          expect(box!.x + box!.width, `${c.name} stays inside the viewport`).toBeLessThanOrEqual(device.viewport.width + 1);
+        }
+        if (process.env.HON48_SHOT_DIR) {
+          await page.screenshot({ path: `${process.env.HON48_SHOT_DIR}/ipad-${label.replace(/ /g, "")}-${view}.png` });
+        }
+        // 2. The one-per-practitioner appointments are not swallowed by the cluster (Day: other columns).
+        if (view === "day") {
+          for (const l of lone) {
+            await expect(page.getByRole("button").filter({ hasText: l.name }).first(), `${l.name} still has its own card`).toBeVisible();
+          }
+        }
+        // 3. The button that holds them is a real touch target, and the chooser still lists all three.
+        const bubble = page.getByRole("button", { name: /^Choose from 3 appointments$/ }).first();
+        const bb = await bubble.boundingBox();
+        expect(bb!.width).toBeGreaterThanOrEqual(43.5);
+        expect(bb!.height).toBeGreaterThanOrEqual(43.5);
+        // 4. Each client opens THEIR appointment.
+        for (const c of cluster) {
+          await page.goto(url);
+          await page.getByRole("button", { name: /^Choose from 3 appointments$/ }).first().click();
+          const chooser = page.getByRole("dialog", { name: "Choose an appointment" });
+          await expect(chooser).toBeVisible();
+          for (const other of cluster) await expect(chooser.getByText(other.name)).toBeVisible();
+          await chooser.getByRole("button").filter({ hasText: c.name }).or(chooser.getByRole("link").filter({ hasText: c.name })).first().click();
+          await expectOpened(page, c);
+        }
+        await ctx.close();
+      });
+    }
+  }
+});

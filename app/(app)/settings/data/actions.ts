@@ -15,7 +15,10 @@ import {
   type ClinicalNoteExportSource,
 } from "@/lib/export/clinical-notes";
 import { fetchAllRows, EXPORT_PAGE_SIZE } from "@/lib/export/paginate";
+import { exportDeclineAnswersPage } from "@/lib/waitlist/followups-owner";
 import {
+  emptyExportRpcRead,
+  fetchExportRpcRows,
   fetchExportRows,
   mapExportRows,
   rowsForResource,
@@ -39,6 +42,7 @@ import {
   exportedResources,
   exportSpec,
   pendingResources,
+  rpcSourceOf,
 } from "@/lib/export/resource-registry";
 // One decision point for the budget read, backed by the SAME narrow
 // migration-skew classifier the Consultation page uses, so the two surfaces
@@ -48,6 +52,7 @@ import {
   type BudgetExportReadResult,
 } from "@/lib/budget/export-read";
 import { mergeReactionIntoChips } from "@/lib/observation-chips";
+import { isNativeMachineBlock } from "@/lib/machines/legacy-machine";
 import {
   blockAreasLabel,
   type BlockArea,
@@ -253,7 +258,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
       supabase
         .from("session_blocks")
         .select(
-          "id, primary_area, side, custom_area_detail, probe_key, probe_brand, probe_material, probe_piece_type, probe_shank, probe_size_value, probe_length, probe_label, reaction_type",
+          "id, primary_area, side, custom_area_detail, probe_key, probe_brand, probe_material, probe_piece_type, probe_shank, probe_size_value, probe_length, probe_label, reaction_type, machine_profile_id, studio_machine_id, machine_mode_key",
         )
         .eq("studio_id", studio.id)
         .order("id", { ascending: true })
@@ -518,7 +523,33 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   // serialized. A column declared included but never asked for produces a blank
   // cell, and a blank cell is indistinguishable from a studio that recorded
   // nothing there.
+  // waitlist_decline_answers has no browser-readable surface; the owner-gated function is its only door. This runs after the owner check at
+  // the top of the action, with the session user. ALWAYS called, whatever the answers flag says: answers saved while it was on stay part of the
+  // client's export after it is turned off. The one tolerated failure is "the function does not exist" (PGRST202 / 42883), the window before
+  // 0325 is applied: a header-only file and a logged code. Every other error fails the whole export.
+  const actorUserId = practitioner.user_id;
+  if (!actorUserId) return { ok: false, error: "You do not have permission to export data." };
+  const declineAnswersSpec = rpcSourceOf("waitlist_decline_answers");
+  if (!declineAnswersSpec) return { ok: false, error: "Export aborted: the decline answers export is not declared. No partial export was produced." };
+  let declineAnswersRes = await fetchExportRpcRows<Record<string, unknown>>("waitlist_decline_answers", declineAnswersSpec, (after, limit) =>
+    exportDeclineAnswersPage(studio.id, actorUserId, after, limit),
+  );
+  const declineAnswersCode = (declineAnswersRes.error as { code?: string } | null)?.code;
+  let declineAnswersUnavailable = false;
+  if (declineAnswersRes.error && (declineAnswersCode === "PGRST202" || declineAnswersCode === "42883")) {
+    console.warn(
+      JSON.stringify({ event: "studio_export_decline_answers_function_missing", code: declineAnswersCode, timestamp: new Date().toISOString() }),
+    );
+    declineAnswersRes = emptyExportRpcRead<Record<string, unknown>>("waitlist_decline_answers", declineAnswersSpec);
+    declineAnswersUnavailable = true;
+  }
+  // All-or-nothing like every other read: a failed page never ships a file that is silently missing answers.
+  if (declineAnswersRes.error) {
+    return { ok: false, error: exportReadFailure(declineAnswersRes.error) };
+  }
+
   const exportReads: ReadonlyArray<ExportRead<unknown>> = [
+    declineAnswersRes,
     clientsRes,
     sessionsRes,
     electRes,
@@ -673,6 +704,10 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
 
   writeCsv("clients", clientsRes);
 
+  // While the answers function does not exist the file is left OUT of the archive, not written empty: the audit command accepts only files it
+  // knows, so a header-only file in a database that predates it would fail every export, and an empty file would read as "no answers".
+  if (!declineAnswersUnavailable) writeCsv("waitlist_decline_answers", declineAnswersRes);
+
   writeCsv("sessions", sessionsRes);
 
   // Block-level structured area + probe metadata, keyed by id for an
@@ -691,6 +726,9 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     probe_length: string | null;
     probe_label: string | null;
     reaction_type: string | null;
+    machine_profile_id: string | null;
+    studio_machine_id: string | null;
+    machine_mode_key: string | null;
   };
   const blocksById = new Map<string, BlockExportRow>();
   for (const b of (blocksRes.data ?? []) as BlockExportRow[]) {
@@ -772,6 +810,9 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
       const b = e.block_id ? blocksById.get(e.block_id) : undefined;
       return {
         ...e,
+        // A NATIVE area's legacy entry holds only the database default (pulse_count 1, migration 0166); the pulse count that was done is a native
+        // reading, which this file does not carry yet. A 1 here would read as the pulse count actually done, so it is blank.
+        pulse_count: isNativeMachineBlock(b) ? null : e.pulse_count,
         areas: Array.isArray(e.areas) ? e.areas.join("; ") : "",
         // Migration 0108 + charting unification: flatten the UNIFIED findings,
         // observation chips PLUS a folded legacy reaction_type from the entry's
@@ -1115,9 +1156,10 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   const writtenCsvNames = Object.entries(zip.files)
     .filter(([name, entry]) => name.endsWith(".csv") && !entry.dir)
     .map(([name]) => name);
-  const toleratedOmissions = budgetContextExported
-    ? []
-    : [exportSpec("client_budget_context").file];
+  const toleratedOmissions = [
+    ...(budgetContextExported ? [] : [exportSpec("client_budget_context").file]),
+    ...(declineAnswersUnavailable ? [exportSpec("waitlist_decline_answers").file] : []),
+  ];
   const parity = auditEmissionParity(writtenCsvNames, toleratedOmissions);
   if (!parity.ok) {
     return { ok: false, error: emissionParityError(parity) };
@@ -1200,10 +1242,23 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     // disagree.
     not_exported: pendingResources().map(({ resource, disposition }) => ({
       resource,
-      ticket: disposition.ticket,
       tier: disposition.tier,
       reason: disposition.reason,
     })),
+    // A header-only file because the function does not exist yet must not be mistaken for "this studio has no answers".
+    ...(declineAnswersUnavailable
+      ? {
+          not_available_yet: [
+            {
+              file: exportSpec("waitlist_decline_answers").file,
+              status: "not available yet",
+              reason:
+                "Saved decline answers could not be read because the database function that returns them is not installed yet. " +
+                "The file is NOT in this archive. It does NOT mean this studio has no saved answers.",
+            },
+          ],
+        }
+      : {}),
     ...(budgetContextExported
       ? {}
       : {
@@ -1238,9 +1293,14 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   const includedLines = exportedResources()
     .filter(({ disposition }) => disposition.file in manifestCounts)
     .map(({ disposition }) => `- ${disposition.file}: ${disposition.description}`)
-    .join("\n");
+    .join("\n")
+    .concat(
+      declineAnswersUnavailable
+        ? `\n- ${exportSpec("waitlist_decline_answers").file}: NOT AVAILABLE YET. Saved decline answers could not be read, so the file is not in this archive. It does NOT mean this studio has no saved answers.`
+        : "",
+    );
   const notExportedLines = pendingResources()
-    .map(({ resource, disposition }) => `- ${resource} (${disposition.ticket}): ${disposition.reason}`)
+    .map(({ resource, disposition }) => `- ${resource}: ${disposition.reason}`)
     .join("\n");
   const withheldLines = excludedResources()
     .map(({ resource, disposition }) => `- ${resource} (${disposition.category}): ${disposition.reason}`)

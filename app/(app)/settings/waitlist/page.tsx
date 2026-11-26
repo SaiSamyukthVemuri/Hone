@@ -1,17 +1,15 @@
+import { WAITLIST_ARCHIVED_PATH, WAITLIST_PATH, WAITLIST_RELEASED_PATH, WAITLIST_REPLIES_PATH } from "@/lib/waitlist/paths";
 import { InviteComposer } from "@/components/waitlist/invite-composer";
-import { InvitationCapacityPanel } from "@/components/waitlist/invitation-capacity-panel";
-import {
-  canOfferInvite,
-  inviteUnavailableReason,
-  type InvitationCapacity,
-} from "@/lib/waitlist/invitation-capacity";
-import { closeInvitationsFormAction, startInvitingFormAction } from "./capacity-actions";
-import { readRoundConsumed } from "@/lib/waitlist/round-consumption-server";
+import { allowanceHeadline } from "@/lib/waitlist/consultation-capacity";
+import { DEFAULT_BOOKING_WINDOW_DAYS } from "@/lib/waitlist/b4-invitation-draft";
 import { InviteOutcomeBoundary } from "@/components/waitlist/invite-outcome-boundary";
 import {
   INVITATION_DELIVERY_COPY,
   type InvitationDeliveryState,
 } from "@/lib/waitlist/invite-to-book-contract";
+import { WorkspaceQueue } from "@/components/waitlist/workspace-queue";
+import { workspaceView } from "@/lib/waitlist/workspace-view";
+import { SEARCH_MIN, SEARCH_MAX } from "@/lib/waitlist/entry-search";
 import { WaitlistNavLink } from "@/components/waitlist/waitlist-nav-link";
 import { isBookableByNewClient } from "@/lib/booking/consultation";
 import {
@@ -19,6 +17,28 @@ import {
   INVITE_TO_BOOK_STATUSES,
 } from "@/lib/waitlist/b4-invitation-draft";
 import { admissionCommandAdapter } from "@/lib/waitlist/invite-to-book-adapter";
+import { estimateWindowCapacityAction } from "./window-capacity-actions";
+import { loadNeedsAttention } from "@/lib/waitlist/needs-attention";
+import { loadDeclinedAttention } from "@/lib/waitlist/declined-attention";
+import { loadDeclineEmailStatus, loadOutboxCounts } from "@/lib/waitlist/decline-owner-email";
+import { declineOwnerEmailActivation } from "@/lib/waitlist/decline-owner-email-gate";
+import { waitlistDeclineAnswersEnabled } from "@/lib/waitlist/decline-answers-gate";
+import { readFollowUps } from "@/lib/waitlist/followups-owner";
+import { loadLinkableAppointments } from "@/lib/waitlist/followup-linkable";
+import { loadReplyContacts } from "@/lib/waitlist/reply-contact";
+import { DeclineFollowUpSection } from "@/components/waitlist/decline-follow-up-section";
+import { DeclineEmailFailedNotice } from "@/components/waitlist/decline-email-failed-notice";
+import {
+  getNewClientAdmissionMode,
+  invitedBookingRefusalKind,
+} from "@/lib/booking/new-client-admission";
+import {
+  INVITE_ADMISSION_CLOSED_BANNER_COPY,
+  INVITE_CLOSED_INVITED_ONLY_COPY,
+  INVITE_ADMISSION_UNREADABLE_COPY,
+} from "@/lib/waitlist/invite-to-book-contract";
+import { countTimesFeedback } from "@/lib/waitlist/times-feedback-owner";
+import { waitlistTimesFeedbackEnabled } from "@/lib/waitlist/times-feedback";
 import { inviteToBookAction } from "./invite-actions";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -34,6 +54,8 @@ import {
   UNKNOWN_JOINED_AT_COPY,
 } from "@/lib/waitlist/entry-provenance";
 import { EntryAvailability } from "@/components/waitlist/entry-availability";
+import { OverInviteLink } from "@/components/waitlist/over-invite-link";
+import { WaitlistWorkspaceHeader } from "@/components/waitlist/workspace-header";
 import { WaitlistTextsSetting } from "@/components/waitlist/waitlist-texts-setting";
 import { EntrySmsConsent, type SmsConsentView } from "@/components/waitlist/entry-sms-consent";
 import { AddToWaitlistPanel } from "@/components/waitlist/add-to-waitlist-panel";
@@ -43,7 +65,15 @@ import {
   importLegacyWaitlistEntryFormAction,
 } from "./profile-actions";
 import { recordProspectSmsConsentFormAction } from "./consent-actions";
+import { timed } from "@/lib/observability/perf-timing";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
+import { expirySummary, rowExpiry, summaryText } from "@/lib/waitlist/invitation-expiry-display";
+import { declinedCount, declinedPageWindow, declinedPeople, declinedSummaryText, DECLINED_PAGE_PARAM, DECLINED_VIEW, latestDeclinePerPerson } from "@/lib/waitlist/decline-visibility";
+import { loadDeclinedEntryFacts, loadDeclineRecords, loadEntryQueuePages, loadScopedFollowUps } from "@/lib/waitlist/decline-visibility-read";
+import { DeclinedSection } from "@/components/waitlist/declined-section";
+import { InvitationBookingSummary } from "@/components/waitlist/invitation-booking-summary";
+import { buildInvitationBookingSummary, periodStart, SUMMARY_PERIOD_DAYS } from "@/lib/waitlist/invitation-booking-summary";
+import { loadCommandCounts, loadOutcomeCounts } from "@/lib/waitlist/invitation-booking-summary-read";
 import { formatLocalDateLabel, localDateString, localLongDate } from "@/lib/booking/tz";
 // `claimWaitlistEntryAction` and `claimNextWaitlistEntriesAction` are
 // deliberately NOT imported. Both still exist, are still tested and still reach
@@ -67,8 +97,16 @@ import {
   type WaitlistEntryStatus,
 } from "@/lib/waitlist/admission-model";
 import { OPERATOR_QUEUE_STATUSES } from "@/lib/waitlist/operator-queue-presence";
+import { cookies } from "next/headers";
+import { LIFECYCLE_NOTICE_COOKIE, lifecycleNoticeCopy } from "@/lib/waitlist/lifecycle-notice";
 import { dbErrorCode } from "@/lib/logging/error-class";
 import { OwnerOnlyNotice } from "@/components/settings/view-heading";
+/**
+ * The most rows ONE Data API statement returns (supabase/config.toml `max_rows = 1000`; hosted is not assumed to be any higher). The studio-wide
+ * expiry summary asks for exactly this many and trusts them only when the EXACT count PostgREST reports (Content-Range, which the ceiling does
+ * not bound) equals the rows returned. A studio with more live invitations than this gets no summary, never a partial one.
+ */
+const EXPIRY_SUMMARY_PAGE = 1000;
 
 // ===========================================================================
 // NEW-CLIENT WAITLIST — OPERATOR QUEUE (WAIT-02)
@@ -160,7 +198,7 @@ const SECTION_PAGE_SIZE = 100;
 /** This route. Pagination links are plain hrefs to it: the read is decided
  *  entirely on the server, so a full navigation is the honest mechanism and
  *  costs the page no client JavaScript. */
-const QUEUE_PATH = "/settings/waitlist";
+const QUEUE_PATH = WAITLIST_PATH;
 
 /**
  * One person's stated availability, as the queue renders it.
@@ -334,9 +372,9 @@ export default async function WaitlistSettingsPage({
   // an array. Both values are browser-controlled, so the type says so rather
   // than lying about it — and neither reaches a query except through the
   // validation immediately below.
-  searchParams?: Promise<{ section?: string | string[]; page?: string | string[] }>;
+  searchParams?: Promise<{ tab?: string | string[]; followup?: string | string[]; section?: string | string[]; page?: string | string[]; fu?: string | string[]; view?: string | string[]; dpage?: string | string[] }>;
 }) {
-  const { practitioner, studio } = await requirePractitionerWithStudio();
+  const { practitioner, studio } = await timed("waitlist.identity", () => requirePractitionerWithStudio());
 
   if (practitioner.role !== "owner") {
     return <OwnerOnlyNotice>Only studio owners can see the new-client waitlist.</OwnerOnlyNotice>;
@@ -351,8 +389,27 @@ export default async function WaitlistSettingsPage({
   const requestedSection = firstParam(params.section);
   const focusedStatus =
     SECTIONS.find(({ status }) => status === requestedSection)?.status ?? null;
+  const currentView = workspaceView({
+    section: focusedStatus ?? undefined,
+    tab: firstParam(params.tab),
+    view: firstParam(params.view),
+    followup: firstParam(params.followup),
+    fu: firstParam(params.fu),
+  });
+  // Bare queue links also served #entry-… anchors in every group. Keep their first
+  // pages addressable. Explicit workspace tabs render only their own sections.
+  const visibleSections = focusedStatus
+    ? SECTIONS.filter(({ status }) => status === focusedStatus)
+    : currentView === "history"
+      ? SECTIONS.filter(({ status }) => status === "released" || status === "expired")
+      : currentView === "responses" ? [] : SECTIONS;
   // `page` is meaningless without a section, so it is only read alongside one.
   const pageNumber = focusedStatus ? parsePageNumber(firstParam(params.page)) : 1;
+  // A LIFECYCLE NOTICE NAMES ONE FIXED SENTENCE OR NOTHING. It comes ONLY from the flash cookie the owner's
+  // own action just set (never from the URL, so a crafted or bookmarked link shows nothing), is looked up in
+  // a closed table, and only the table's own text is rendered; an unknown value shows no banner and is
+  // never echoed.
+  const lifecycleNotice = lifecycleNoticeCopy((await cookies()).get(LIFECYCLE_NOTICE_COOKIE)?.value);
 
   // RLS-scoped user client, NOT the service-role client: the read is genuinely
   // gated by `is_studio_owner` at the database rather than by this page having
@@ -374,82 +431,16 @@ export default async function WaitlistSettingsPage({
   // database itself puts after page 1. Nothing here re-sorts or re-ranks.
   const supabase = await createClient();
 
-  // ===========================================================================
-  // INVITATION CAPACITY — read with THIS page's client, not another one
-  // ===========================================================================
-  //
-  // ONE CLIENT. The queue above and this read share the single owner-scoped
-  // instance the page already built. A second client would be a second identity
-  // to keep in step and a second thing to mock; 0192 grants `authenticated` a
-  // COLUMN-LEVEL SELECT on this table behind the owner RLS policy
-  // `studio_waitlist_admission_rounds_owner_select`, so the owner's own session
-  // is the designed reader. Service-role would bypass that policy and move the
-  // tenant scope into application code.
-  //
-  // `studio_id` is still filtered explicitly as DEFENCE IN DEPTH — RLS is the
-  // authority, this is the belt. `closed_at is null` asks only for the open
-  // round, which the database already guarantees is at most one per studio.
-  //
-  // ONE VALUE, SHARED. The panel and the send guard must never disagree about
-  // whether a capacity is open, so both read this and neither asks again.
-  //
-  // FAILS CLOSED, NEVER TO "none". An unreadable capacity is `unknown`, which
-  // withholds the send. Reading it as "no capacity" would be the same sentence
-  // to the practitioner but a different fact, and a SECOND row -- which the
-  // one-open-round index forbids -- means something is wrong with an assumption
-  // here, not that the first row is fine to use.
-  const capacityRead = await supabase
-    .from("studio_waitlist_admission_rounds")
-    .select("id,allowance,opened_at")
-    .eq("studio_id", studio.id)
-    .is("closed_at", null)
-    .limit(2);
-
-  const capacity: InvitationCapacity = await (async () => {
-    if (capacityRead.error) return { state: "unknown" } as const;
-    const rows = capacityRead.data ?? [];
-    if (rows.length > 1) {
-      console.error(
-        JSON.stringify({
-          event: "waitlist_capacity_impossible_shape",
-          studioId: studio.id,
-          openRounds: rows.length,
-          timestamp: new Date().toISOString(),
-        }),
-      );
-      return { state: "unknown" } as const;
-    }
-    const row = rows[0];
-    if (!row) return { state: "none" } as const;
-    const allowance = Number(row.allowance);
-    if (!Number.isFinite(allowance)) return { state: "unknown" } as const;
-    // The database's own definition of "used". Null means it could not be
-    // established, which is unknown capacity -- not zero.
-    // BOTH IDS FROM SERVER STATE: the studio this page is already scoped to, and
-    // the round its OWN owner/RLS-scoped read just returned. The 0197 gateway
-    // validates the pair again regardless.
-    const used = await readRoundConsumed(studio.id, String(row.id));
-    if (used === null) return { state: "unknown" } as const;
-    return {
-      state: "open",
-      capacity: {
-        roundId: String(row.id),
-        allowance,
-        used,
-        openedAt: String(row.opened_at),
-      },
-    } as const;
-  })();
-
   const rangeFrom = (pageNumber - 1) * SECTION_PAGE_SIZE;
-  const sectionReads = await Promise.all(
+  const sectionReads = await timed("waitlist.domain", () => Promise.all(
     SECTIONS.map(async ({ status }) => {
       // IN A FOCUSED VIEW THE OTHER FOUR SECTIONS ARE STILL COUNTED — head-only,
       // so no rows come back but their exact counts do. Without that, the
       // headline "Waitlist entries: N" would quietly change meaning from "the
       // whole queue" to "this group", which is a different claim under the same
       // words. Five reads either way.
-      const listed = focusedStatus === null || focusedStatus === status;
+      // Responses also needs the first-page entry ids to build links back to the queue.
+      const listed = visibleSections.some((section) => section.status === status) || (!focusedStatus && currentView === "responses");
       const from = focusedStatus === status ? rangeFrom : 0;
       const query = supabase
         .from("new_client_waitlist_entries")
@@ -466,9 +457,9 @@ export default async function WaitlistSettingsPage({
         : query);
       return { status, res, from };
     }),
-  );
+  ));
 
-  const failed = sectionReads.find(({ res }) => res.error);
+  const failed = sectionReads.find(({ res }) => res.error || res.count === null);
   if (failed) {
     // Say so plainly instead of rendering an empty queue, which would read as
     // "nobody is waiting" — the one wrong answer this page can give. ANY
@@ -478,7 +469,7 @@ export default async function WaitlistSettingsPage({
       JSON.stringify({
         event: "waitlist_queue_load_failed",
         studioId: studio.id,
-        code: failed.res.error?.code ?? "unknown",
+        code: failed.res.error?.code ?? "missing_exact_count",
         timestamp: new Date().toISOString(),
       }),
     );
@@ -512,11 +503,6 @@ export default async function WaitlistSettingsPage({
   // The headline counts the WHOLE queue in both views, because every section is
   // counted in both views.
   const active = SECTIONS.reduce((n, { status }) => n + (bySection.get(status)?.total ?? 0), 0);
-  // The FOCUSED view renders one section; the default renders all five, first
-  // page each — the same read count, and the same rows a reader saw before.
-  const visibleSections = focusedStatus
-    ? SECTIONS.filter(({ status }) => status === focusedStatus)
-    : SECTIONS;
   const now = Date.now();
 
   // WAIT-04A — STATED AVAILABILITY, on the page's OWN owner-scoped client.
@@ -651,6 +637,26 @@ export default async function WaitlistSettingsPage({
     )
     .map((s) => ({ id: s.id, name: s.name, modality: s.modality ?? null }));
 
+  // THE ALLOWANCE, FROM THE SAME ESTIMATOR THE COMPOSER USES. Default view: the next two weeks, every
+  // day, every time. The owner never types a capacity; the number is the consultations that fit minus
+  // live invitations competing for those dates. It is re-computed on the server at SEND (0324 enforces
+  // it under the studio lock), so this display is information, never authority.
+  const allowanceService = bookableServices[0];
+  const allowance = allowanceService
+    ? await estimateWindowCapacityAction({
+        serviceId: allowanceService.id,
+        windowDays: DEFAULT_BOOKING_WINDOW_DAYS,
+        allowedWeekdays: null,
+      })
+    : null;
+  const allowanceText = allowance && allowance.ok ? allowanceHeadline(allowance, allowance.outstandingScope) : null;
+  // "as of" is the server's render instant in the studio's own time zone: the number is a reading, not a promise.
+  const allowanceAsOf = new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: studio.timezone ?? "UTC",
+  }).format(new Date());
+
   // WHETHER AN INVITATION HAS RUN OUT IS A DATABASE FACT, NOT A GUESS.
   //
   // "Record expired" may only be offered once `expires_at` has actually
@@ -674,6 +680,43 @@ export default async function WaitlistSettingsPage({
   /** Recorded provider outcome per invited entry. ABSENT means never recorded,
    *  which is NOT the same as the observed verdict `unknown`. */
   const deliveryByEntry = new Map<string, InvitationDeliveryState>();
+  /** The LIVE invitation's database `expires_at` per invited entry, for display only. Filled from the live read below; stays
+   *  empty when that read fails, so no expiry text is ever shown from an unknown state. */
+  const expiryByEntry = new Map<string, string>();
+  const attention = await loadNeedsAttention(supabase, studio.id);
+  const declined = await loadDeclinedAttention(supabase, studio.id);
+  // The outbox has no policy for the user client (0325), so its status is read inside this helper, which builds its own server-only client. This page's data reads stay on the RLS client.
+  const declineEmail = await loadDeclineEmailStatus(studio.id, practitioner.user_id);
+  // 0325: the follow-up section is read only behind its own flag (the commands do not exist until the migration is applied).
+  const declineAnswersOn = waitlistDeclineAnswersEnabled();
+  const followUps = declineAnswersOn ? await readFollowUps(studio.id, practitioner.user_id) : null;
+  const followUpOpenRows = followUps?.kind === "ok" ? followUps.rows : [];
+  // Contact for each response, by ENTRY ID within the studio (never by name), read through the owner's own session.
+  const followUpContacts =
+    followUps?.kind === "ok" ? await loadReplyContacts(studio.id, [...new Set(followUps.rows.map((r) => r.entryId))]) : null;
+  const linkable = await loadLinkableAppointments(supabase, studio.id, followUpOpenRows, studio.timezone ?? "UTC");
+  const outbox = await loadOutboxCounts(
+    studio.id,
+    followUpOpenRows.flatMap((r) => (r.invitationId ? [r.invitationId] : [])),
+  );
+  const fuParam = firstParam(params.fu);
+  const followUpNotice = fuParam === "done" || fuParam === "already" || fuParam === "refused" || fuParam === "failed" ? fuParam : null;
+  // 0204 refuses an INVITED booking while admission is Closed until 0323 is applied (and while unreadable), so Send is
+  // withheld and the reason stated. Usability only: inviteToBookAction re-checks.
+  const admissionForInvites = await getNewClientAdmissionMode(studio);
+  const invitesBlockedKind = await invitedBookingRefusalKind(admissionForInvites);
+  const invitesBlockedByAdmission = invitesBlockedKind !== null;
+  // Closed and NOT blocked means the 0323 marker answered true: say plainly what Closed now means.
+  const invitesClosedInvitedOnly =
+    admissionForInvites.ok && admissionForInvites.mode === "closed" && !invitesBlockedByAdmission;
+  const invitesBlockedCopy =
+    invitesBlockedKind === "closed"
+      ? INVITE_ADMISSION_CLOSED_BANNER_COPY
+      : INVITE_ADMISSION_UNREADABLE_COPY;
+  // Count only: no text is read on this page. Skipped entirely while the flag is off.
+  const replies = waitlistTimesFeedbackEnabled()
+    ? await countTimesFeedback(studio.id, practitioner.user_id)
+    : ({ kind: "unknown" } as const);
   let cycleByEntry: Map<string, { elapsed: boolean; redeemed: boolean }> | null = new Map();
   if (cycleIds.length > 0) {
     // THE LIVE INVITATION IS A SCHEMA INVARIANT, NOT A CHRONOLOGY GUESS.
@@ -784,6 +827,7 @@ export default async function WaitlistSettingsPage({
         ) {
           deliveryByEntry.set(inv.entry_id, inv.delivery_disposition);
         }
+        expiryByEntry.set(inv.entry_id, inv.expires_at);
         const expiresAt = new Date(inv.expires_at).getTime();
         cycleByEntry.set(inv.entry_id, {
           // A LIVE row whose clock has passed is the only thing that may be
@@ -795,69 +839,380 @@ export default async function WaitlistSettingsPage({
     }
   }
 
-  return (
-    <div className="flex flex-col gap-6">
-      {/* Absent only on a row read before 0206; the column defaults FALSE, so
-          absent displays as OFF. */}
-      <WaitlistTextsSetting initial={studio.send_waitlist_invitation_sms === true} />
-      <InvitationCapacityPanel
-        capacity={capacity}
-        startAction={startInvitingFormAction}
-        closeAction={closeInvitationsFormAction}
-      />
-      {/* WAIT-04A. BELOW CAPACITY, ABOVE THE QUEUE. Capacity is the decision
-          that gates inviting anyone at all, so it stays first; adding a person
-          is the next thing an operator does and belongs beside the list it
-          changes rather than buried under five sections of it. */}
-      <AddToWaitlistPanel
-        addAction={addWaitlistEntryFormAction}
-        importAction={importLegacyWaitlistEntryFormAction}
-      />
-      <section>
-        <h2 tabIndex={-1} data-settings-heading className="text-xl font-medium outline-none">Waitlist</h2>
-        <p className="mt-1 text-sm text-neutral-500">
-          New clients who asked to be contacted while new-client booking is by
-          waitlist. They are not clients yet: nothing here has an appointment,
-          an intake form or a record.
-        </p>
-      </section>
+  // THE SUMMARY IS STUDIO-WIDE, NOT PAGE-WIDE. The rows above are one page of the invited section, so a summary built from them would name
+  // the wrong "next" expiry and undercount "within 24 hours" once an invitation on another page expires sooner. This is its own small
+  // owner-RLS read of `expires_at` ONLY (no entry id, no name) over every LIVE invitation of the studio, with the same four-column predicate
+  // as the one-live-per-entry index. It is trusted ONLY when the exact count equals the rows returned: a response cut at the API's row ceiling,
+  // an unreadable count or a failed read shows no summary at all. It is never a partial answer.
+  let studioExpiries: string[] | null = null;
+  {
+    const all = await supabase
+      .from("new_client_waitlist_invitations")
+      .select("expires_at", { count: "exact" })
+      .eq("studio_id", studio.id)
+      .is("redeemed_at", null)
+      .is("expired_at", null)
+      .is("released_at", null)
+      .is("declined_at", null)
+      .limit(EXPIRY_SUMMARY_PAGE);
+    if (all.error || !Array.isArray(all.data) || typeof all.count !== "number" || all.count !== all.data.length) {
+      if (all.error) {
+        console.error(
+          JSON.stringify({
+            event: "waitlist_invitation_expiry_summary_read_failed",
+            studioId: studio.id,
+            code: all.error.code ?? "unknown",
+            timestamp: new Date().toISOString(),
+          }),
+        );
+      }
+    } else {
+      studioExpiries = (all.data as Array<{ expires_at: string }>).map((r) => r.expires_at);
+    }
+  }
+  const expirySummaryLine =
+    studioExpiries === null ? null : summaryText(expirySummary(studioExpiries, studio.timezone, now));
 
-      <p className="text-sm font-medium" aria-live="polite">
+  // DECLINE VISIBILITY. A decline is the invitation's own `declined_at` and nothing else (never a passed deadline, never a release). The count
+  // is a number of people only; names, answers and contact details are read ONLY for the people listed in the declined view (the first
+  // DECLINED_SHOW_MAX), after the owner check above, and none of them reaches the address, a log or the summary.
+  const viewDeclined = firstParam(params.view) === DECLINED_VIEW;
+  // INVITATION-TO-BOOKING SUMMARY (owner only: the page gate above). Counts only, read with the owner's own session, after the owner check. The
+  // period is the last SUMMARY_PERIOD_DAYS days; nothing here writes, sends or tracks.
+  const summaryStart = periodStart(now, SUMMARY_PERIOD_DAYS);
+  const [summaryCommand, summaryOutcomes] = await Promise.all([
+    loadCommandCounts(supabase, studio.id, summaryStart),
+    loadOutcomeCounts(supabase, studio.id, summaryStart, new Date(now).toISOString()),
+  ]);
+  const bookingSummary = buildInvitationBookingSummary({ periodStartIso: summaryStart, command: summaryCommand, outcomes: summaryOutcomes });
+  const declineRecords = await loadDeclineRecords(supabase, studio.id);
+  const declinedTotal = declinedCount(declineRecords);
+  let declinedList: ReturnType<typeof declinedPeople> = [];
+  let declinedFactsUnreadable = false;
+  let declinedContacts: Awaited<ReturnType<typeof loadReplyContacts>> | null = null;
+  let declinedScoped: Awaited<ReturnType<typeof loadScopedFollowUps>> | undefined;
+  let declinedEntryPages: Map<string, number> | null = null;
+  const allDeclined = declineRecords.kind === "ok" ? latestDeclinePerPerson(declineRecords.rows) : [];
+  const declinedWindow = declinedPageWindow(allDeclined.length, firstParam((params as Record<string, string | string[] | undefined>)[DECLINED_PAGE_PARAM]));
+  if (viewDeclined && declineRecords.kind === "ok") {
+    // ONE bounded list: the people on THIS page (at most DECLINED_SHOW_MAX of all that declined). The facts, contact, answers and position
+    // reads below all use it, so each costs at most one page whatever the total, and every recorded decline is reachable by paging.
+    const pageRows = allDeclined.slice(declinedWindow.from, declinedWindow.to);
+    const shownIds = pageRows.map((r) => r.entry_id);
+    const facts = await loadDeclinedEntryFacts(supabase, studio.id, shownIds);
+    declinedFactsUnreadable = facts === null;
+    declinedList = declinedPeople({ kind: "ok", rows: pageRows }, facts);
+    declinedContacts = await loadReplyContacts(studio.id, shownIds);
+    // The page-wide follow-up list leaves out closed follow-ups whose answers were erased or are past retention, so for every shown person it
+    // does not already cover, ask the existing command for THAT invitation's follow-ups (any state) before saying anything about answers.
+    if (declineAnswersOn) {
+      const covered = new Set(followUps?.kind === "ok" ? followUps.rows.filter((r) => r.kind === "decline").map((r) => r.invitationId) : []);
+      const need = declinedList.map((p) => p.invitationId).filter((id) => !covered.has(id));
+      declinedScoped = await loadScopedFollowUps(studio.id, practitioner.user_id, need);
+    }
+    // Where each entry sits in its own section, so the link opens the page that contains it.
+    if (facts !== null) {
+      const placed = declinedList.flatMap((p) => {
+        const f = facts.get(p.entryId);
+        return f && typeof f.joinedAt === "string" && (SECTION_STATUSES as readonly string[]).includes(f.status)
+          ? [{ id: p.entryId, status: f.status, joinedAt: f.joinedAt }]
+          : [];
+      });
+      declinedEntryPages = await loadEntryQueuePages(supabase, studio.id, placed, SECTION_PAGE_SIZE);
+    }
+  }
+
+  const waitingCount = (bySection.get("waiting")?.total ?? 0) + (bySection.get("claimed")?.total ?? 0);
+  const historyCount = (bySection.get("released")?.total ?? 0) + (bySection.get("expired")?.total ?? 0);
+  const responseCount = declineAnswersOn
+    ? (followUps?.kind === "ok" ? String(followUps.rows.filter((row) => row.status === "open").length) + (followUps.capped ? "+" : "") : null)
+    : (replies.kind === "ok" ? String(replies.n) : null);
+
+  return (
+    <InviteOutcomeBoundary
+      action={inviteToBookAction}
+      entryNames={Object.fromEntries(rows.map((r) => [r.id, r.name]))}
+    >
+      <div className="flex flex-col gap-6">
+      {lifecycleNotice && (
+        <p
+          role="status"
+          data-testid="lifecycle-notice"
+          data-tone={lifecycleNotice.tone}
+          className={
+            lifecycleNotice.tone === "success"
+              ? "rounded-lg border border-emerald-300 bg-emerald-50 p-4 text-sm dark:border-emerald-700 dark:bg-emerald-950"
+              : "rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-700 dark:bg-amber-950"
+          }
+        >
+          {lifecycleNotice.text}
+          {lifecycleNotice.tone === "refusal" && " Nothing was changed. The list below is up to date."}
+        </p>
+      )}
+      <WaitlistWorkspaceHeader
+        settings={<WaitlistTextsSetting initial={studio.send_waitlist_invitation_sms === true} />}
+        addPerson={<AddToWaitlistPanel addAction={addWaitlistEntryFormAction} importAction={importLegacyWaitlistEntryFormAction} />}
+      />
+      <section
+        data-testid="invitation-allowance"
+        aria-label="Invitation allowance"
+        className="rounded-lg border border-line bg-neutral-50 px-4 pt-4 sm:px-6 sm:pt-5 dark:bg-neutral-900"
+      >
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+          <h2 className="text-base font-semibold">Consultation availability</h2>
+          <span className="text-sm text-fg-muted">Next {DEFAULT_BOOKING_WINDOW_DAYS} days</span>
+        </div>
+        {allowance?.ok && allowanceText ? (
+          <>
+            <div className="my-4 flex flex-wrap items-center gap-x-8 gap-y-2">
+              <div data-testid="allowance-headline" className="grid min-w-0 flex-1 grid-cols-2 gap-4">
+                <p className="sr-only">{allowanceText.headline}</p>
+                <div aria-hidden="true">
+                  <p className="text-3xl font-semibold tabular-nums sm:text-4xl">{allowance.fit}</p>
+                  <p className="mt-1 text-sm">Available appointments</p>
+                </div>
+                <div aria-hidden="true" className="border-l border-line pl-4">
+                  <p className="text-3xl font-semibold tabular-nums sm:text-4xl">{allowance.open}</p>
+                  <p className="mt-1 text-sm">More {allowance.open === 1 ? "person" : "people"} you can invite</p>
+                </div>
+              </div>
+              <WaitlistNavLink href="" className="inline-flex min-h-11 items-center rounded-md border border-line bg-surface px-3 text-sm font-medium underline-offset-4 hover:underline">Re-check</WaitlistNavLink>
+            </div>
+            <p data-testid="allowance-note" className="mb-3 text-xs leading-relaxed text-fg-muted">
+              {allowanceService.name}. {allowanceText.note}
+            </p>
+          </>
+        ) : (
+          <p data-testid="allowance-unavailable" className="my-4 text-sm text-fg-muted">
+            We couldn&rsquo;t check availability just now. <WaitlistNavLink className="underline" href="">Reload the page</WaitlistNavLink> to see how many people you can invite.
+            Availability can change; invitations don&rsquo;t reserve appointments.
+          </p>
+        )}
+        <div className="flex flex-wrap items-center justify-between gap-x-4 border-t border-line py-1">
+          <span data-testid="allowance-as-of" className="text-xs text-fg-muted">Checked at {allowanceAsOf}</span>
+          <div className="[&_a]:inline-flex [&_a]:items-center [&_p]:sr-only"><OverInviteLink isOwner={practitioner.role === "owner"} /></div>
+        </div>
+      </section>
+      <WorkspaceQueue
+        initialView={currentView}
+        waiting={waitingCount}
+        invited={bySection.get("invited")?.total ?? 0}
+        responses={responseCount}
+        responseLabel={declineAnswersOn ? "open follow-ups" : "replies to review"}
+        searchMin={SEARCH_MIN}
+        searchMax={SEARCH_MAX}
+      >
+      <p className="sr-only">
         Waitlist entries: <span className="tabular-nums">{active}</span>
       </p>
-
+      {expirySummaryLine && (
+        <p data-workspace-section="invited" data-testid="invitation-expiry-summary" className="flex-wrap gap-x-1 text-sm text-fg-muted">
+          {expirySummaryLine}{" "}
+          <span className="text-xs">As of {allowanceAsOf}.</span>
+        </p>
+      )}
+      <div data-workspace-section="history" className="flex-col gap-2">
+        <h2 className="text-lg font-semibold">History</h2>
+        <nav aria-label="Waitlist history" className="flex flex-wrap gap-x-5 text-sm" data-testid="waitlist-tools-nav">
+          <WaitlistNavLink href={WAITLIST_RELEASED_PATH} className="inline-flex min-h-11 items-center underline">Released and expired history</WaitlistNavLink>
+          <WaitlistNavLink href={WAITLIST_ARCHIVED_PATH} className="inline-flex min-h-11 items-center underline">Archived entries</WaitlistNavLink>
+        </nav>
+        {historyCount === 0 && !focusedStatus && <p className="text-sm text-fg-muted">No released or expired entries.</p>}
+      </div>
       {/* NO BULK CLAIM CONTROL. "Claim the next N" was removed with the rest of
           the claiming vocabulary — see the CLAIMING IS INTERNAL note at the top
           of this file. `claim_new_client_waitlist_entries` and its server action
           are untouched and still tested; nothing on this page invokes them. */}
 
-      {active === 0 ? (
-        <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
-          Nobody is waiting right now. New-client requests from your booking
-          page will appear here.
-        </div>
-      ) : (
-        <>
-          <InviteOutcomeBoundary
-            action={inviteToBookAction}
-            entryNames={Object.fromEntries(rows.map((r) => [r.id, r.name]))}
-          >
-          {focusedStatus && (
-            <p className="text-sm">
-              <WaitlistNavLink href={QUEUE_PATH} className="underline">
-                Back to all groups
-              </WaitlistNavLink>
-            </p>
+      {invitesClosedInvitedOnly && (
+        <section
+          role="note"
+          data-testid="invites-closed-invited-only"
+          className="rounded-lg border border-neutral-200 bg-neutral-50 p-4 text-sm text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+        >
+          <p>{INVITE_CLOSED_INVITED_ONLY_COPY}</p>
+        </section>
+      )}
+
+      {invitesBlockedByAdmission && (
+        <section
+          role="status"
+          data-testid="invites-blocked-admission"
+          className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-700 dark:bg-amber-950"
+        >
+          <p>
+            {invitesBlockedCopy}{" "}
+            <WaitlistNavLink href="/settings/booking#new-client-admission" className="underline">
+              Open Settings → Booking
+            </WaitlistNavLink>
+          </p>
+        </section>
+      )}
+
+      <div data-workspace-section="responses" className="flex-col gap-3">
+        <h2 className="text-lg font-semibold">Responses</h2>
+        <p data-testid="declined-summary" className="text-sm text-fg-muted">
+        {declinedSummaryText(declinedTotal)}
+        {declinedTotal !== null && declinedTotal > 0 && !viewDeclined ? (
+          <>
+            {" "}
+            <WaitlistNavLink href={`${QUEUE_PATH}?view=${DECLINED_VIEW}`} className="underline" data-testid="declined-view-link">
+              View the people who declined
+            </WaitlistNavLink>
+          </>
+        ) : null}
+      </p>
+      {/* THE OWNER FOLLOW-UP CARDS RENDER WHETHER OR NOT ANYONE IS ACTIVE. They describe
+          things that outlive the queue: reply rows persist after the entry converts or is
+          removed, and a used-but-unbooked invitation or a declined offer is exactly when
+          the queue may look empty. Inside the `active !== 0` branch they vanished with the
+          last active entry (Codex P2). */}
+          {/* NEEDS YOUR ATTENTION. Derived from facts this page already read: an
+              invited entry whose invitation was used. It survives a reload and
+              says only what is known: the booking did not complete. It cannot
+              say why, so it names no reason. */}
+          {(() => {
+            if (attention.kind === "unknown") {
+              return (
+                <p className="text-sm text-neutral-600 dark:text-neutral-400" role="status">
+                  We couldn&rsquo;t check whether any invitation was used without a booking.
+                  Reload to try again.
+                </p>
+              );
+            }
+            if (attention.total === 0) return null;
+            return (
+              <section
+                // Exactly one #follow-up per state: with the decline-answers flag on, the new follow-up section owns the anchor.
+                id={declineAnswersOn ? undefined : "follow-up"}
+                aria-labelledby="needs-attention-heading"
+                className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-700 dark:bg-amber-950"
+              >
+                <h2 id="needs-attention-heading" className="font-medium">
+                  Needs your attention ({attention.total})
+                </h2>
+                <p className="mt-1">
+                  The booking didn&rsquo;t complete for {attention.total === 1 ? "this person" : "these people"}.
+                  Their invitation has been used, so it can&rsquo;t be sent again. Please check
+                  the calendar, then contact them to book a time.
+                </p>
+                <ul className="mt-2 list-disc pl-5">
+                  {attention.shown.map((r) => (
+                    <li key={r.id}>{r.name}</li>
+                  ))}
+                </ul>
+                {attention.total > attention.shown.length && (
+                  <p className="mt-1">
+                    Showing {attention.shown.length} of {attention.total}.
+                  </p>
+                )}
+                <p className="mt-2">
+                  <WaitlistNavLink href={sectionHref("invited")} className="underline">
+                    Open the Invited group
+                  </WaitlistNavLink>{" "}
+                  to close each one once it is resolved.
+                </p>
+              </section>
+            );
+          })()}
+
+          {declineAnswersOn &&
+            (followUps?.kind === "ok" ? (
+              <DeclineFollowUpSection
+                rows={followUps.rows}
+                timeZone={studio.timezone ?? "UTC"}
+                emailEnabled={declineOwnerEmailActivation().enabled}
+                outbox={outbox}
+                linkable={linkable}
+                notice={followUpNotice}
+                capped={followUps.capped === true}
+                contacts={followUpContacts?.kind === "ok" ? followUpContacts.byEntry : null}
+                renderedEntryIds={new Set(rows.map((r) => r.id))}
+              />
+            ) : (
+              <p id="follow-up" className="scroll-mt-[calc(var(--settings-top,4.5rem)+4rem)] text-sm text-neutral-600 min-[700px]:scroll-mt-[calc(var(--settings-top,4.5rem)+1rem)] dark:text-neutral-400" role="status">
+                We couldn&rsquo;t load the waitlist responses. Reload to try again.
+              </p>
+            ))}
+          {declineEmail.kind === "ok" && <DeclineEmailFailedNotice failed={declineEmail.failed} atLeast={declineEmail.atLeast === true} />}
+          {declined.kind === "ok" && declined.total > 0 && (
+            <section
+              aria-labelledby="declined-heading"
+              data-testid="declined-card"
+              className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-700 dark:bg-amber-950"
+            >
+              <h2 id="declined-heading" className="font-medium">
+                Declined the offered times ({declined.total})
+              </h2>
+              <p className="mt-1">
+                {declined.total === 1 ? "This person said" : "These people said"} none of the offered times
+                suit them. {declined.total === 1 ? "They are" : "Each is"} off the waitlist for now and
+                nobody has been told. Return {declined.total === 1 ? "them" : "each one"} to the waitlist to
+                restore their original place. The same window can&rsquo;t be offered again, so send a
+                different one.
+              </p>
+              <ul className="mt-2 list-disc pl-5">
+                {declined.shown.map((r) => (
+                  <li key={r.id}>{r.name}</li>
+                ))}
+              </ul>
+              {declined.total > declined.shown.length && (
+                <p className="mt-1">
+                  Showing {declined.shown.length} of {declined.total}.
+                </p>
+              )}
+              <p className="mt-2">
+                <WaitlistNavLink href={sectionHref("released")} className="underline">
+                  Open the Released group
+                </WaitlistNavLink>{" "}
+                to return each one.
+              </p>
+            </section>
+          )}
+          {replies.kind === "ok" && replies.n > 0 && (
+            <section
+              aria-labelledby="replies-heading"
+              className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-700 dark:bg-amber-950"
+            >
+              <h2 id="replies-heading" className="font-medium">
+                Replies to review ({replies.n})
+              </h2>
+              <p className="mt-1">
+                {replies.n === 1 ? "Someone" : "Some people"} told us the offered times
+                don&rsquo;t work. {replies.n === 1 ? "They were" : "Each was"} returned to the
+                waiting list with their original join date when they replied.
+              </p>
+              <p className="mt-2">
+                <WaitlistNavLink href={WAITLIST_REPLIES_PATH} className="underline">
+                  Open the replies
+                </WaitlistNavLink>
+              </p>
+            </section>
           )}
 
-          {/* THE SUBMISSION RESULT LIVES HERE, above every section.
-              `revalidatePath` on a committed admission moves the row to
-              `invited`, and a composer is mounted only for waiting/claimed — so
-              the composer unmounts on exactly the outcomes that carry a delivery
-              disposition. This boundary survives that, and survives the row
-              leaving the visible list altogether. */}
-
-          {visibleSections.map(({ status, heading }) => {
+      {viewDeclined ? (
+        <DeclinedSection
+          people={declinedList}
+          total={declinedTotal}
+          timeZone={studio.timezone ?? "UTC"}
+          answersOn={declineAnswersOn}
+          followUps={followUps}
+          scopedFollowUps={declinedScoped}
+          contacts={declinedContacts?.kind === "ok" ? declinedContacts.byEntry : null}
+          entryFactsUnreadable={declinedFactsUnreadable}
+          linkableStatuses={new Set<string>(SECTION_STATUSES)}
+          entryPages={declinedEntryPages}
+          pageWindow={declinedWindow}
+          backHref={QUEUE_PATH}
+        />
+      ) : null}
+      </div>
+      {!viewDeclined && !focusedStatus && waitingCount === 0 && (
+        <div data-workspace-section="waiting" className="flex-col rounded-lg border border-line p-6 text-sm text-fg-muted">
+          Nobody is waiting right now. New-client requests from your booking page will appear here.
+        </div>
+      )}
+      {!viewDeclined && visibleSections.map(({ status, heading }) => {
             const group = bySection.get(status);
             if (!group) return null;
             const focused = focusedStatus === status;
@@ -874,10 +1229,14 @@ export default async function WaitlistSettingsPage({
             // a group that is not empty, so it says what actually happened and
             // offers the way back.
             const pastEnd = focused && group.rows.length === 0 && group.total > 0;
+            const rowGrid = "md:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)_10.5rem]";
+            const joinedDate = new Intl.DateTimeFormat("en-US", {
+              month: "short", day: "numeric", year: "numeric", timeZone: studio.timezone,
+            });
             const hasPrev = focused && pageNumber > 1;
             const hasNext = focused && lastShown < group.total;
             return (
-              <section key={status} className="flex flex-col gap-3">
+              <section key={status} data-workspace-section={status} className="flex flex-col gap-3">
                 <h3 className="text-sm font-medium" data-testid={`waitlist-section-${status}`}>
                   {/* THE GROUP'S OWN EXACT COUNT, not the number on screen.
                       `rows.length` here would restate the page size and tell a
@@ -942,11 +1301,12 @@ export default async function WaitlistSettingsPage({
                   )
                 )}
 
-                {/* One card per person, stacking naturally on a phone: no
-                    horizontal table to scroll at 390px, and every contact detail
-                    is selectable text so it can be copied straight into an email
-                    or a phone app. */}
-                <ul className="flex flex-col gap-3">
+                {group.rows.length > 0 && (
+                  <div aria-hidden="true" className={`-mb-3 hidden gap-4 rounded-t-lg border border-line bg-surface-sunken px-4 py-2 text-xs font-medium text-fg-muted md:grid ${rowGrid}`}>
+                    <span>Person</span><span>Joined</span><span>Availability</span><span>Action</span>
+                  </div>
+                )}
+                <ul className="divide-y divide-line overflow-clip rounded-lg border-line empty:hidden md:rounded-t-none [&:not(:empty)]:border">
                   {group.rows.map((row) => {
                     // WAIT-04A. THE CLAIM COMES FIRST, THEN THE NUMBER.
                     // `daysWaiting` is computed only where a wait may be
@@ -968,9 +1328,14 @@ export default async function WaitlistSettingsPage({
                     const elapsed = cycleByEntry === null ? undefined : cycle?.elapsed === true;
                     const redeemed =
                       cycleByEntry === null ? undefined : cycle?.redeemed === true;
+                    // The 14-day studio estimate governs prominence only. The composer
+                    // still calculates its own selected service/window and checks admission.
+                    const directInvite = INVITE_TO_BOOK_STATUSES.includes(row.status)
+                      && !invitesBlockedByAdmission && allowance?.ok === true && allowance.open > 0;
                     return (
                       <li
                         key={row.id}
+                        id={`entry-${row.id}`}
                         // WHICH PERSON THIS ROW IS, on the row itself.
                         //
                         // A control is only reachable if it is reachable ON THE
@@ -990,10 +1355,32 @@ export default async function WaitlistSettingsPage({
                         // still has to be identifiable.
                         data-entry-id={row.id}
                         data-entry-status={row.status}
-                        className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800 sm:flex-row sm:items-start sm:justify-between"
+                        className="relative flex min-w-0 flex-col scroll-mt-20"
                       >
-                        <div className="flex min-w-0 flex-col gap-1">
-                          <p className="font-medium break-words">{row.name}</p>
+                        <details className="peer/entry group/entry" data-testid="waitlist-entry-details">
+                          <summary className={`grid min-h-12 cursor-pointer list-none grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 px-4 py-3 text-sm hover:bg-surface-sunken focus-visible:outline-2 focus-visible:outline-inset [&::-webkit-details-marker]:hidden ${rowGrid}`}>
+                            <span className="min-w-0 break-words font-medium [overflow-wrap:anywhere]">{row.name}</span>
+                            <span className="col-start-1 row-start-2 min-w-0 text-xs text-fg-muted md:col-auto md:row-auto md:text-sm">
+                              {days === null ? "Join date unknown" : (
+                                <>
+                                  <span className="md:sr-only">Joined </span>
+                                  <time dateTime={row.joined_at}>{joinedDate.format(new Date(row.joined_at))}</time>
+                                  {claimNote && <span className="block text-xs">{claimNote}</span>}
+                                </>
+                              )}
+                            </span>
+                            <span className="col-start-1 row-start-3 min-w-0 text-xs text-fg-muted md:col-auto md:row-auto md:text-sm">
+                              <span className="sr-only">Availability: </span>
+                              {preferenceByEntry === null ? "Unavailable" : availability ? AVAILABILITY_PREFERENCE_LABEL[availability.preference] : "Not stated"}
+                            </span>
+                            <span className={`col-start-2 row-start-1 text-sm md:col-auto md:row-auto ${directInvite ? "pr-16" : ""}`}>
+                              <span>View details</span>
+                              <span className="sr-only"> for {row.name}</span>
+                              <span aria-hidden="true" className="ml-1 inline-block text-lg leading-none group-open/entry:rotate-90">›</span>
+                            </span>
+                          </summary>
+                          <div className="flex flex-col gap-3 border-t border-line bg-surface-sunken px-4 py-4 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="flex min-w-0 flex-1 flex-col gap-1">
                           <p className="text-sm break-all text-neutral-600 dark:text-neutral-400">
                             {row.email}
                           </p>
@@ -1069,6 +1456,23 @@ export default async function WaitlistSettingsPage({
                               the practitioner navigating away, which no amount of
                               in-page state could do. */}
                           {row.status === "invited" &&
+                            (() => {
+                              const raw = expiryByEntry.get(row.id);
+                              const e = raw === undefined ? null : rowExpiry(raw, studio.timezone, now);
+                              if (e === null) return null;
+                              return (
+                                <p
+                                  data-testid="row-invitation-expiry"
+                                  data-state={e.kind}
+                                  className="text-sm text-neutral-500"
+                                >
+                                  {e.kind === "open"
+                                    ? `Expires ${e.label}, in ${e.remaining}.`
+                                    : `Deadline was ${e.label}. It has passed.`}
+                                </p>
+                              );
+                            })()}
+                          {row.status === "invited" &&
                             deliveryByEntry.has(row.id) && (
                               <p
                                 data-testid="row-delivery-outcome"
@@ -1092,7 +1496,7 @@ export default async function WaitlistSettingsPage({
                               closed, because 0200 refuses that requeue. The row
                               was therefore promising, in prose, exactly what
                               the missing control could not deliver. */}
-                          {(row.status === "invited" || row.status === "released") && (
+                          {(row.status === "invited" || row.status === "released" || row.status === "expired") && (
                             <p
                               data-testid="row-status-meaning"
                               className="text-sm text-neutral-500"
@@ -1101,12 +1505,16 @@ export default async function WaitlistSettingsPage({
                                 invitationElapsed: elapsed,
                                 invitationRedeemed: redeemed,
                                 invitationFactsUnknown: cycleByEntry === null,
+                                declinedByRecipient: declined.kind === "ok" && declined.ids.has(row.id),
                               })}
                             </p>
                           )}
                         </div>
 
-                        <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto">
+                        <div
+                          data-testid="row-controls"
+                          className="flex w-full min-w-0 shrink-0 flex-col gap-2 sm:w-56"
+                        >
                           {/* CLAIM IS NOT IN THIS LIST. Claiming is an internal
                               transition, not a practitioner's job — the model
                               still rules on it and the command is untouched,
@@ -1144,7 +1552,12 @@ export default async function WaitlistSettingsPage({
                                   <button
                                     type="submit"
                                     data-testid={`waitlist-action-${action}`}
-                                    className="min-h-[44px] w-full rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900 sm:w-auto"
+                                    className={
+                                      // On an expired offer, returning them is THE next step (Sam: a clear route to another offer).
+                                      action === "requeue" && row.status === "expired"
+                                        ? "min-h-[44px] w-full rounded-md border border-neutral-900 bg-neutral-900 px-3 py-2 text-sm font-medium text-white hover:bg-neutral-700 dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300 sm:w-auto"
+                                        : "min-h-[44px] w-full rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900 sm:w-auto"
+                                    }
                                   >
                                     {/* THE ROW DECIDES THE VERB, AND IT MAY ONLY
                                         PROMISE WHAT THE COMMAND DELIVERS.
@@ -1211,9 +1624,9 @@ export default async function WaitlistSettingsPage({
                               className="mt-2 flex flex-col gap-2"
                             >
                               <input type="hidden" name="entry_id" value={row.id} />
-                              <p className="text-sm text-neutral-500">
+                              <p className="text-sm break-words text-neutral-500">
                                 Take {row.name} off the waitlist? This cannot be
-                                undone from here.
+                                undone from here.{declineAnswersOn && " Removing also erases any answers they gave."}
                               </p>
                               <button
                                 type="submit"
@@ -1224,6 +1637,9 @@ export default async function WaitlistSettingsPage({
                             </form>
                           </details>
                           )}
+                        </div>
+                        </div>
+                        </details>
                           {/* WAIT INTEGRATION-01 — THE REAL INVITE-TO-BOOK PATH.
                               #683 ships the composer and #685 ships `admit_`;
                               they are siblings off production, so this binding
@@ -1240,30 +1656,49 @@ export default async function WaitlistSettingsPage({
                               disabled state is about the DRAFT, not about
                               whether this person can be invited. */}
                           {INVITE_TO_BOOK_STATUSES.includes(row.status) && (
-                            <details className="mt-2">
-                              <summary className="min-h-[44px] cursor-pointer list-none rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium dark:border-neutral-700">
-                                Invite to book
+                            <details
+                              // A composer the owner has OPENED stays on screen. The studio estimate only decides whether Invite sits beside the
+                              // name; a Send answered by the question "invite anyway?" refreshes the page with an estimate of zero, and without
+                              // `open:block` that refresh hid the question the owner had just been asked.
+                              className={`w-full min-w-0 ${directInvite ? "" : "hidden peer-open/entry:block open:block"}`}
+                              data-testid="row-invite"
+                            >
+                              <summary className={directInvite
+                                ? "absolute right-3 top-1 flex min-h-11 cursor-pointer list-none items-center rounded-md px-2 text-sm font-medium underline underline-offset-4 hover:bg-surface-sunken [&::-webkit-details-marker]:hidden"
+                                : "mx-4 mb-3 flex min-h-11 cursor-pointer list-none flex-wrap items-center gap-2 rounded-md border border-line px-3 py-2 text-sm font-medium [&::-webkit-details-marker]:hidden"}>
+                                <span className={directInvite ? "sr-only" : ""}>Invite to book</span>
+                                {directInvite && <span aria-hidden="true">Invite</span>}
+                                <span className="sr-only"> {row.name}</span>
+                                {allowanceText && (
+                                  <span data-testid="row-allowance" className={directInvite ? "sr-only" : "font-normal text-fg-muted"}>
+                                    {allowanceText.short}
+                                  </span>
+                                )}
                               </summary>
                               <InviteComposer
                                 entryId={row.id}
                                 entryName={row.name}
                                 draft={emptyDraft()}
                                 services={bookableServices}
+                                estimateCapacity={estimateWindowCapacityAction}
                                 // NO CAPACITY, NO OFFERED SEND. The composer
                                 // still opens for inspection; what it must not
                                 // do is present Send as valid and fail only
                                 // after submission. Usability, not authority —
                                 // the command re-checks regardless.
                                 capabilities={
-                                  canOfferInvite(capacity)
+                                  !invitesBlockedByAdmission
                                     ? admissionCommandAdapter.capabilities
                                     : null
                                 }
-                                unavailableReason={inviteUnavailableReason(capacity)}
+                                unavailableReason={
+                                  invitesBlockedByAdmission
+                                    ? invitesBlockedCopy
+                                    : null
+                                }
                               />
                             </details>
                           )}
-                        </div>
                       </li>
                     );
                   })}
@@ -1298,9 +1733,12 @@ export default async function WaitlistSettingsPage({
               </section>
             );
           })}
-          </InviteOutcomeBoundary>
-        </>
-      )}
-    </div>
+      <details className="rounded-xl border border-line bg-surface px-4">
+        <summary className="cursor-pointer py-4 text-sm font-semibold">Invitation results <span className="ml-2 font-normal text-fg-muted">Last {SUMMARY_PERIOD_DAYS} days</span></summary>
+        <div className="pb-4"><InvitationBookingSummary summary={bookingSummary} timeZone={studio.timezone} /></div>
+      </details>
+      </WorkspaceQueue>
+      </div>
+    </InviteOutcomeBoundary>
   );
 }

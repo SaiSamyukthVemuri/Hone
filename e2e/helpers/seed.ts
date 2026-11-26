@@ -2990,3 +2990,11 @@ export async function seedE2eCardOnFileCapability(seed: E2eSeed): Promise<void> 
     [seed.studioId],
   );
 }
+
+/**
+ * Set the platform rollout for xCell MultiPlex and New view on the OWNED LOCAL stack (the platform tables have no client grant, so this is a direct
+ * database write by the harness, exactly like every other fixture here). The app reads it per request, so no server restart is needed.
+ */
+export async function setPlatformRolloutMode(mode: "off" | "pilot" | "all"): Promise<void> {
+  await sql(`update public.platform_rollouts set mode = $1, updated_at = now() where key = 'charting_new_view_xcell'`, [mode]);
+}

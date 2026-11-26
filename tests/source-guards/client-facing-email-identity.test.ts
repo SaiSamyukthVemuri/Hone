@@ -122,6 +122,11 @@ const HONE_FACING_CALLERS: ReadonlyArray<{ file: string; to: string; why: string
     to: "recipient",
     why: "waitlist namespace:'studio' notification — tells the STUDIO someone joined; the client acknowledgement on the same path IS branded",
   },
+  {
+    file: "lib/waitlist/decline-owner-email.ts",
+    to: "recipient.email",
+    why: "tells a verified studio OWNER that a waitlist response needs attention; the invitee never receives it and is not named in it",
+  },
 ];
 
 function walk(dir: string, out: string[] = []): string[] {

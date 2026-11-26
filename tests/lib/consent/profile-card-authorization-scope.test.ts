@@ -121,7 +121,7 @@ describe("only an active owner reaches the card-authorization read", () => {
 describe("the profile page asks for the scope per viewer, and card authorization stays in Billing", () => {
   const page = readFileSync("app/(app)/clients/[id]/page.tsx", "utf8");
   it("both consent reads pass includeCardAuthorization: isOwner", () => {
-    expect(page).toMatch(/getConsentTemplatesForStudio\(studio\.id, \{ includeCardAuthorization: isOwner \}\)/);
+    expect(page).toMatch(/checkConsentTemplatesForStudio\(studio\.id, \{ includeCardAuthorization: isOwner \}\)/);
     expect(page).toMatch(/getLatestSignaturesForPractitionerView\(studio\.id, client\.id, \{ includeCardAuthorization: isOwner \}\)/);
   });
   it("the card-authorization derivation lives only inside the owner Billing block", () => {
@@ -152,13 +152,13 @@ describe("no caller can read card authorization by omission", () => {
   it("every call to the two loaders names includeCardAuthorization", async () => {
     const { execSync } = await import("node:child_process");
     const files = execSync(
-      "grep -rlE 'getConsentTemplatesForStudio|getLatestSignaturesForPractitionerView' app lib components --include=*.ts --include=*.tsx",
+      "grep -rlE 'getConsentTemplatesForStudio|checkConsentTemplatesForStudio|getLatestSignaturesForPractitionerView' app lib components --include=*.ts --include=*.tsx",
       { encoding: "utf8" },
     ).split("\n").filter((f) => f && f !== "lib/consent/queries.ts");
     expect(files.length).toBeGreaterThan(0);
     for (const f of files) {
       const src = readFileSync(f, "utf8");
-      const calls = src.match(/(getConsentTemplatesForStudio|getLatestSignaturesForPractitionerView)\([^)]*\)/g) ?? [];
+      const calls = src.match(/(getConsentTemplatesForStudio|checkConsentTemplatesForStudio|getLatestSignaturesForPractitionerView)\([^)]*\)/g) ?? [];
       for (const c of calls) expect(c, `${f}: ${c}`).toMatch(/includeCardAuthorization/);
     }
   });

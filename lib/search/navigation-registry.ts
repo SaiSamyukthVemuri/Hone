@@ -1,3 +1,4 @@
+import { LEGACY_WAITLIST_ROUTES, WAITLIST_ARCHIVED_PATH, WAITLIST_OVER_INVITE_PATH, WAITLIST_PATH, WAITLIST_RELEASED_PATH, WAITLIST_REPLIES_PATH, WAITLIST_SEARCH_PATH } from "@/lib/waitlist/paths";
 import "server-only";
 
 // Global Search V2-A, the canonical searchable navigation/settings registry.
@@ -139,7 +140,7 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     id: "settings",
     title: "Settings",
     category: "Settings",
-    href: "/settings/profile",
+    href: "/settings",
     description: "Everything you can configure in Hone",
     keywords: ["preferences", "configuration", "options", "setup", "config"],
     visibility: "practitioner",
@@ -220,6 +221,18 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     ],
     visibility: "owner",
     priority: 95,
+  },
+  {
+    id: "financials-statement",
+    title: "Statements",
+    category: "Navigation",
+    href: "/financials/statement",
+    description: "Visits and money for one month",
+    // Owner-only like Capacity, and advertised under Business. Presentation only: the page and its read refuse any role but owner
+    // before any query, and the money tables are owner-readable only (0254).
+    keywords: ["statements", "monthly statement", "statement", "money statement", "business", "income", "revenue", "payments this month", "month end"],
+    visibility: "owner",
+    priority: 94,
   },
 
   // --- Record Keeping sections ------------------------------------------
@@ -424,7 +437,7 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     category: "Settings",
     href: "/settings/services",
     description: "Treatments you offer, with duration, price, and colour",
-    keywords: ["services", "service", "treatments", "price", "prices", "pricing", "cost", "duration", "consultation", "menu", "offerings"],
+    keywords: ["services", "service", "treatments", "price", "prices", "pricing", "cost", "duration", "consultation", "menu", "offerings", "service colour", "service color", "calendar colour", "calendar color", "palette", "colour picker", "color picker"],
     visibility: "owner",
     priority: 360,
   },
@@ -503,11 +516,11 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
   },
   {
     id: "settings-fee-amounts",
-    title: "Cancellation and no-show fees",
+    title: "Cancellation & no-show fees",
     category: "Settings",
     href: "/settings/payments/fees",
-    description: "Late-cancellation and no-show fee amounts",
-    keywords: ["fee amounts", "cancellation and no show fee amounts", "late cancellation fee", "cancellation fee", "no show fee", "fees"],
+    description: "Cancellation notice window, same-day rate, no-show rules and on/off settings",
+    keywords: ["fee amounts", "cancellation and no show fee amounts", "late cancellation fee", "cancellation fee", "no show fee", "fees", "48 hours", "notice window", "same-day cancellation"],
     visibility: "owner",
     priority: 412,
   },
@@ -916,19 +929,52 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
   reason: string;
 }> = [
   {
+    route: "/settings/subscription",
+    reason: "Billing appears in Settings for an owner with an eligible software subscription.",
+  },
+  {
+    route: "/clients/groups",
+    reason: "A removed feature: the route only redirects to the Clients directory, so it is never offered as a destination.",
+  },
+  {
+    route: "/financials/analytics",
+    reason: "Owner-only Analytics is reached from the Business menu. Global Search discovery is outside this menu change.",
+  },
+  {
+    route: "/financials/analytics/clients",
+    reason: "The owner-only Clients tab of Analytics is reached from the Overview tab strip, never searched. It lists clients by name, so it must never become discoverable through Global Search.",
+  },
+  {
+    route: "/financials/analytics/waitlist",
+    reason: "The owner-only Waitlist tab of Analytics is reached from the Analytics tab strip, never searched. It reports invitation outcomes and the waiting list, so it must not become discoverable through Global Search.",
+  },
+  {
+    route: "/financials/analytics/print",
+    reason: "The printable form of the owner-only Analytics screen; reached only from that screen's Print link, never searched.",
+  },
+  {
+    route: "/financials/statements",
+    reason: "The Clients statements screens are new and are not yet reachable from the menu or Global Search; the search entry ships with the menu entry in the navigation change, so a destination is never searchable before it is linkable.",
+  },
+  {
+    route: WAITLIST_OVER_INVITE_PATH,
+    reason:
+      "Owner-only invite-beyond-the-estimate page, reached from a link on the waitlist page. It follows its parent: the waitlist navigation entry is visible only to eligible owners, so listing this page in Global Search would offer a page its studio cannot otherwise reach. Search does not advertise it separately.",
+  },
+  {
     route: "/calendar/check-practitioner",
     reason:
       "Owner-only review of open appointments whose recorded practitioner may be wrong (HON-44, before completion becomes assigned-only). Reached from the owner's Calendar toolbar and Team settings (Review practitioner assignments), not a destination to search for.",
   },
   {
+    route: "/dashboard/unfinished",
+    reason:
+      "The full list behind the dashboard's 'N visits not finished · View all' line (HON-45). A drill-down from the dashboard, not a destination to search for.",
+  },
+  {
     route: "/records/print",
     reason:
       "Print/export view of whichever Records section you are already in. Not a destination on its own; reached from /records.",
-  },
-  {
-    route: "/settings",
-    reason:
-      "Index route with no content of its own: it only redirects to /settings/profile. Each settings page is registered individually.",
   },
   {
     route: "/settings/booking",
@@ -965,10 +1011,34 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
     reason:
       "Doorway or legacy URL that only redirects to a focused settings view. Each view is registered individually.",
   },
+  ...LEGACY_WAITLIST_ROUTES.map(({ source }) => ({
+    route: source,
+    reason: "Former settings URL that permanently redirects to the owner waitlist workspace.",
+  })),
   {
-    route: "/settings/waitlist",
+    route: WAITLIST_PATH,
     reason:
-      "WAIT-02 operator queue for the new-client waitlist. Its Settings tab appears only for a studio whose durable waitlist is switched on, so advertising it in search would resolve to an empty surface for every studio that has not been enabled. Revisit when the capability is generally available rather than pilot-gated.",
+      "WAIT-02 operator queue for the new-client waitlist. Its navigation entry appears only for owners of studios with a live waitlist or existing entries, so advertising it in search would resolve to an empty surface for every studio that has not been enabled. Revisit when the capability is generally available rather than pilot-gated.",
+  },
+  {
+    route: WAITLIST_REPLIES_PATH,
+    reason:
+      "Owner-only list of the replies people left when the offered times did not suit them (0319). It holds clients' own words, appears only when the reply feature is switched on, and is reached from the count on the waitlist page, so listing it in Global Search would offer an empty or refused page to everyone else.",
+  },
+  {
+    route: WAITLIST_SEARCH_PATH,
+    reason:
+      "Owner-only name search over the waitlist, reached from a link on the waitlist page. It follows its parent: the waitlist navigation entry is visible only to eligible owners, so listing it in Global Search would offer an empty or refused page to everyone else.",
+  },
+  {
+    route: WAITLIST_ARCHIVED_PATH,
+    reason:
+      "Owner-only read-only view of waitlist entries an owner removed, reached from a link on the waitlist page. It follows its parent: listing it in Global Search would offer an empty or refused page to every studio that has not enabled the waitlist and to non-owners.",
+  },
+  {
+    route: WAITLIST_RELEASED_PATH,
+    reason:
+      "Owner-only read-only history of released and expired waitlist entries, reached from a link on the waitlist page. It follows its parent: listing it in Global Search would offer an empty or refused page to every studio that has not enabled the waitlist and to non-owners.",
   },
   {
     route: "/settings/payments/refresh",
@@ -1001,6 +1071,10 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
   {
     route: "/admin/payments/manual-review",
     reason: "Platform payment review surface, cross-studio.",
+  },
+  {
+    route: "/admin/rollouts",
+    reason: "Platform rollout control, cross-studio.",
   },
   {
     route: "/admin/studios/new",
@@ -1042,7 +1116,7 @@ export function normalizeNavText(value: string): string {
     .trim();
 }
 
-function isVisible(entry: NavEntry, ctx: NavSearchContext): boolean {
+export function isNavEntryVisible(entry: NavEntry, ctx: NavSearchContext): boolean {
   if (entry.visibility === "owner" && !ctx.isOwner) return false;
   if (entry.requiresFlag === "googleCalendar" && !ctx.googleCalendarEnabled) {
     return false;
@@ -1104,7 +1178,7 @@ export function matchNavEntries(
   ctx: NavSearchContext,
 ): NavMatch[] {
   const query = normalizeNavText(rawQuery);
-  const visible = NAV_ENTRIES.filter((e) => isVisible(e, ctx));
+  const visible = NAV_ENTRIES.filter((e) => isNavEntryVisible(e, ctx));
 
   if (query.length === 0) {
     return visible

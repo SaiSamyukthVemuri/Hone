@@ -1,3 +1,5 @@
+import { machineModelLabel, registrableProfiles } from "@/lib/machines/display-name";
+import { xcellRegistrationAllowed } from "@/lib/machines/xcell-registration-gate";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
@@ -33,12 +35,15 @@ export default async function MachineSettingsPage() {
     if (!res.ok) checkFailed = true;
     published.set(`${p.profileId}@${p.version}`, res.ok ? res.value : null);
   }
-  const models = listableProfiles(active, (p) => published.get(`${p.profileId}@${p.version}`) ?? null).map((p) => ({
-    profileId: p.profileId,
-    label: `${p.manufacturer} ${p.model}`,
-  }));
-
   const listed = await listStudioMachines(db, studio.id);
+  const models = registrableProfiles(
+    listableProfiles(active, (p) => published.get(`${p.profileId}@${p.version}`) ?? null),
+    listed.ok ? listed.value : [],
+    await xcellRegistrationAllowed(studio.id),
+  ).map((p) => ({
+    profileId: p.profileId,
+    label: machineModelLabel(p),
+  }));
 
   async function register(input: {
     profileId: string;

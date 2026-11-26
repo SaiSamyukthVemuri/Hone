@@ -61,6 +61,31 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
+    path: "app/(app)/settings/waitlist/over-invite/actions.ts",
+    purpose:
+      "Owner-confirmed invite beyond the estimate: creates the owner's one batch, runs only THAT batch's first rounds, stops it, and runs the owner's separately confirmed retries.",
+    why: "The batch commands (create, preview, claim, settle, replace, stop) are `security definer` with EXECUTE granted to service_role ALONE, so no browser role reaches them and this module is the only application path. Every action resolves the studio and the acting practitioner server-side via getCurrentPractitionerWithStudio() and refuses a non-owner before anything runs; the form supplies a selection, a service and a window, never a studio, user or role id. The confirm action's rounds are claimed in `scoped` mode (its own batch AND its own owner, checked in the database against the batch's studio), never the unscoped claim, which only the background route may use. The retry targets are read through the OWNER's session (RLS) from the batches shown, never posted. This file performs no waitlist DML of its own.",
+    scopeGuard: "getCurrentPractitionerWithStudio",
+  },
+  {
+    path: "app/(app)/settings/waitlist/over-invite/page.tsx",
+    purpose: "Owner-only page for the over-invite flow: the consultation-fit estimate and a read-only preview of the selection (no recipient, no write).",
+    why: "computeConsultationFit and the preview command are read-only helpers that need the service client. The page resolves the studio and the practitioner server-side via requirePractitionerWithStudio() and renders only an owner notice for a non-owner; every call is scoped to that studio and that owner. Persisted progress is read through the owner's own session (RLS), not this client, and the chooser receives names only.",
+    scopeGuard: "requirePractitionerWithStudio",
+  },
+  {
+    path: "lib/waitlist/over-invite-deliver.ts",
+    purpose: "Delivery of one invitation email for a batch item: the studio's sender details and the observed-delivery record.",
+    why: "Internal server-only helper used by the worker and the owner's retry after the claim or replace has authorised the item. The service client reads only the studio's own sender row, by the studio id the item itself names. It does NOT read the waitlist entries: service_role has no table privilege there, so the recipient address comes from the admit command's own answer, or, on a retry, from the owner's own session reader (RLS) passed in by the caller. Nothing here returns an address, a name or a token to a caller. It sends only the existing invitation email, with no SMS path.",
+    scopeGuard: '.eq("id", studioId)',
+  },
+  {
+    path: "lib/waitlist/over-invite-run.ts",
+    purpose: "Server-side runner for the over-invite batch: claims rounds (scoped to one batch and owner, or the background round-robin), and settles each item.",
+    why: "The claim, admit, settle and replace commands are `security definer` with EXECUTE granted to service_role ALONE. Callers are exactly two: the owner's confirm action (scoped mode, its own batch and owner) and the background route behind its CRON_SECRET check (background mode). The claim modes are a closed pair and any other shape claims nothing before reaching the database; every settle names the item's own studio and entry, and the database refuses a mismatch.",
+    scopeGuard: "ClaimMode",
+  },
+  {
     path: "app/(app)/settings/waitlist/consent-actions.ts",
     purpose:
       "0208 owner surface — the sole caller of record_waitlist_sms_consent_by_practitioner, and a phone-wide STOP read before it.",
@@ -68,32 +93,95 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "record_waitlist_sms_consent_by_practitioner",
   },
   {
-    path: "app/(app)/settings/waitlist/capacity-actions.ts",
-    purpose: "Owner's invitation-capacity open/close commands.",
+    path: "app/(app)/settings/waitlist/window-capacity-actions.ts",
+    purpose: "HON-7 owner-only estimate of how many consultations fit the window being offered.",
     why:
-      "0192 grants EXECUTE on open_/close_new_client_waitlist_admission_round to " +
-      "service_role ALONE, and revokes all DML on studio_waitlist_admission_rounds from " +
-      "every browser role -- so there is no user-reachable path and no raw-write " +
-      "alternative. This module issues RPC only and never .from(). Studio and actor come " +
-      "from getCurrentPractitionerWithStudio(), never from a form field, and both " +
-      "commands re-derive ownership through new_client_waitlist_resolve_owner regardless. " +
-      "The consumed-count READER is deliberately not here: this file is a \"use server\" " +
-      "module, so anything exported from it is a remotely invocable Server Action.",
+      "Reads the studio's slug, timezone and buffer, the canonical public slot list for the " +
+      "selected service and dates. The COUNT of live invitations across all services is read through the " +
+      "owner's own SESSION client (RLS owner policy), not this admin client: service_role has no SELECT " +
+      "on that table. It writes " +
+      "nothing and reserves nothing. The studio comes from getCurrentPractitionerWithStudio() " +
+      "and the action returns { ok: false } for any non-owner before it constructs the admin " +
+      "client; the browser supplies only a service id, a window length and weekdays, each " +
+      "validated. This is a \"use server\" module, so it exposes the estimate and nothing else; " +
+      "the live-invitation read is a head count scoped by studio_id from the session.",
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
-    path: "lib/waitlist/round-consumption-server.ts",
-    purpose: "The canonical consumed-seat count for an already-authorized round.",
+    path: "lib/waitlist/times-feedback-owner.ts",
+    purpose: "HON-7 / 0319 owner-side count, list and acknowledge of 'these times don't work' replies.",
     why:
-      "waitlist_admission_round_consumed is granted to service_role ALONE by 0192 and has " +
-      "no user-reachable equivalent; granting it to a browser role to render a counter " +
-      "would widen the privilege frontier for a display concern. This module is NOT a " +
-      "Server Action -- it carries `import \"server-only\"` so a client import is a build " +
-      "error, and it sits outside any \"use server\" file so Next mints no action id for " +
-      "it. It issues RPC only, never .from(), and takes a round id the waitlist page " +
-      "already obtained through its OWN owner/RLS-scoped read -- so the tenant decision is " +
-      "made before this is reached, and no browser-supplied id can arrive here.",
-    scopeGuard: "server-only",
+      "count_/list_/acknowledge_waitlist_times_feedback are `security definer` with EXECUTE granted to " +
+      "service_role ALONE (revoked by name from public, anon, authenticated and service_role first), and " +
+      "waitlist_times_feedback has RLS on, no policy and no grant. This module issues RPC only and never " +
+      ".from(). It is NOT a \"use server\" module and is imported only by the owner-gated settings page and " +
+      "the owner-gated replies page/action, each of which passes the studio id and practitioner.user_id from " +
+      "the session -- never a form field -- and each of which refuses a non-owner before calling it. Every " +
+      "command re-derives ownership through new_client_waitlist_resolve_owner regardless. The count selects " +
+      "no text; only the list returns a recipient's note, and nothing here logs a row or an error body.",
+    scopeGuard: "count_waitlist_times_feedback",
+  },
+  {
+    path: "lib/waitlist/followups-owner.ts",
+    purpose: "HON-7 (0325): the owner's decline and withdrawal follow-up reads and commands.",
+    why:
+      "Every function passes the studio and the verified actor user id to a service_role-only command that re-derives " +
+      "the owner role inside (new_client_waitlist_resolve_owner). The callers take both from the session (getUser), " +
+      "never from a form field, and each refuses a non-owner before calling. Only readFollowUps returns the " +
+      "recipient's answers, and only to the owner-gated settings page; the status read returns no name and no " +
+      "answer. An unreadable result is unknown, never an empty list, and nothing here logs a row or an error body. " +
+      "exportDeclineAnswersPage is the one export call site: the owner-only studio export (exportStudioDataAction) passes the " +
+      "session user after its role refusal, the function (export_waitlist_decline_answers) re-derives ownership and returns zero " +
+      "rows to anyone else, the raw table is never read, and an error carries no body.",
+    scopeGuard: "p_actor_user_id",
+  },
+  {
+    path: "lib/waitlist/decline-owner-email.ts",
+    purpose: "HON-7 item 4: send, retry and report the owner email on a waitlist decline.",
+    why:
+      "waitlist_decline_owner_emails (0325) has RLS on, no policy and no browser grant; service_role may select and " +
+      "update only, and inserts happen inside the decline function. The module touches ids, statuses, counts and dates, " +
+      "never the invitee, and re-resolves each recipient as an active owner of the row's own studio with a confirmed " +
+      "email before sending. The only reader outside the cron route is the owner-gated settings page, through " +
+      "loadDeclineEmailStatus(studio.id, actor) after its role refusal; the studio id comes from the session. Off unless " +
+      "HONE_WAITLIST_DECLINE_OWNER_EMAIL_ENABLED is exactly \"true\" and a SINCE instant is set.",
+    scopeGuard: "recipient_practitioner_id",
+  },
+  {
+    path: "app/api/cron/waitlist-decline-owner-email/route.ts",
+    purpose: "HON-7 item 4: cron backstop for the owner decline email.",
+    why:
+      "Rejects any request without the CRON_SECRET bearer (isAuthorizedCronRequest) before building a client, then calls " +
+      "dispatchDeclineOwnerEmail, which is inert while the flag is off, and runRetentionForCron (0326), which runs the scheduled erase " +
+      "of overdue waitlist answers whatever the flag says. It returns counts only.",
+    scopeGuard: "isAuthorizedCronRequest",
+  },
+  {
+    path: "app/api/cron/stuck-fee-sweep/route.ts",
+    purpose: "Monitoring for the manual-fee feature: a non-mutating sweep that raises the critical ops alert for a stuck fee attempt.",
+    why:
+      "Rejects any request without the CRON_SECRET bearer (isAuthorizedCronRequest) before building a client, then calls " +
+      "sweepStuckFeeAttempts, which only READS payment_charge_attempts and ops_alerts and writes only an ops_alerts row through " +
+      "recordOpsAlertDurably. It never updates an attempt and never calls Stripe. It returns counts only.",
+    scopeGuard: "isAuthorizedCronRequest",
+  },
+  {
+    path: "lib/waitlist/retention-run.ts",
+    purpose: "HON-7 (0326): the daily route's scheduled erase of overdue waitlist decline answers, and the early crons' health check.",
+    why:
+      "Called only from cron routes that reject any request without the CRON_SECRET bearer before reaching it. The cleanup and failure-record " +
+      "functions are service_role only and take no studio, client or id: they work on rows already past their deadline. Everything this module " +
+      "returns, logs or alerts is a count, an age or an error class; it never reads an answer, a name or an id. It never throws.",
+    scopeGuard: "runRetentionForCron",
+  },
+  {
+    path: "lib/waitlist/retention-health.ts",
+    purpose: "HON-7 (0326): read the erase heartbeat and raise deduped critical ops alerts when the daily erase is missed, failed or overdue.",
+    why:
+      "Reads waitlist_retention_health() (service_role only; counts, timestamps and an outcome word, nothing personal) and reads ops_alerts only " +
+      "to dedupe its own event names inside a 23 hour window. Called only from cron routes after their CRON_SECRET check. Alerts carry counts, " +
+      "ages in hours and an error class, never a studio, client, answer or id. It never throws.",
+    scopeGuard: "waitlist_retention_health",
   },
   {
     path: "app/(app)/calendar/[id]/manual-fee-actions.ts",
@@ -244,12 +332,6 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
-    path: "app/(app)/clients/[id]/sessions/new/actions.ts",
-    purpose: "Authenticated practitioner server action/query.",
-    why: "Service-role write/read-through after the caller's studio is resolved via getCurrentPractitionerWithStudio(); every query is scoped to that studio.id.",
-    scopeGuard: "getCurrentPractitionerWithStudio",
-  },
-  {
     path: "app/(app)/settings/availability/actions.ts",
     purpose: "Authenticated practitioner server action/query.",
     why: "Service-role write/read-through after the caller's studio is resolved via getCurrentPractitionerWithStudio(); every query is scoped to that studio.id.",
@@ -265,6 +347,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     path: "app/(app)/settings/team/actions.ts",
     purpose: "Owner team management — practitioner deactivation via the locked set_practitioner_active_locked command (Part 4 Item 2).",
     why: "removePractitionerAction resolves the owner + studio server-side (assertOwner → getCurrentPractitionerWithStudio) then calls the service-role-only locked RPC with the server-derived studio + actor ids; the RPC re-validates active-owner and same-studio target.",
+    scopeGuard: "getCurrentPractitionerWithStudio",
+  },
+  {
+    path: "app/(app)/settings/team/receptionist-actions.ts",
+    purpose: "Owner team management: deactivate or reactivate a front-desk receptionist through the set_studio_receptionist_active command.",
+    why: "setReceptionistActiveAction resolves the signed-in practitioner and studio on the server (getCurrentPractitionerWithStudio), refuses anyone who is not the owner BEFORE any database call, then calls the service-role-only command with the server-derived studio id and owner id (only the receptionist id and the wanted state come from the form). The command re-verifies the active owner in the database and answers not_found for a receptionist of another studio, so a forged id cannot reach across studios. It writes the one row's active flag; it reads no client data.",
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
@@ -302,6 +390,24 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     purpose: "Operator-only admin console surface.",
     why: "No practitioner session; gated by the ADMIN_EMAILS/isAdmin operator check. Cross-studio access is intentional for support/ops, so service-role is required.",
     scopeGuard: "isAdmin",
+  },
+  {
+    path: "app/admin/rollouts/page.tsx",
+    purpose: "Operator-only rollout control page: reads the platform rollout mode and pilot studio NAMES, and operator display labels.",
+    why: "No practitioner session; the platform tables have no client grant at all, and pilot studios are cross-studio by nature. Gated by the platform-admin check on the page (and the layout); it shows names only, never an id, owner email or clinical data.",
+    scopeGuard: "requirePlatformAdmin",
+  },
+  {
+    path: "lib/rollouts/admin-commands.ts",
+    purpose: "Operator-only platform rollout commands (set mode, add or remove a pilot studio, log a blocked attempt).",
+    why: "The commands are service-role-only database functions that audit every change in the same transaction. The only callers are the admin server actions, which re-check isAdmin and pass the actor taken from the authenticated session.",
+    scopeGuard: "p_actor_user_id",
+  },
+  {
+    path: "lib/rollouts/charting-rollout.ts",
+    purpose: "The server's per-request read of whether a studio is enabled for xCell MultiPlex and New view.",
+    why: "The platform rollout tables have no client grant, so the read is a service-role-only command that answers one boolean for the studio the CALLER derived from its own authenticated scope. It is read-only, never cached, and fails closed.",
+    scopeGuard: "platform_rollout_enabled_for",
   },
   {
     path: "app/admin/ops-alerts/page.tsx",
@@ -658,6 +764,18 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     path: "lib/billing/session-payment-charge.ts",
     purpose: "Payment / consent ledger helper.",
     why: "Invoked by authenticated actions and the signature-verified webhook; uses service-role for the payment_charge_attempts / consent RPCs and write-throughs. Scoped by the caller-supplied studio_id/client_id/appointment_id.",
+    scopeGuard: '.eq("studio_id"',
+  },
+  {
+    path: "lib/billing/close-declined-fee-attempt.ts",
+    purpose: "Payment ledger helper (owner-only Close declined attempt).",
+    why: "Invoked only by the owner-authenticated closeDeclinedFeeAttemptAction; uses service-role to read and update the one payment_charge_attempts row. Scoped by studio_id and attempt id; it cancels only the PaymentIntent already stored on that row (never creates one) through the single cancelPaymentIntentConfirmed call site.",
+    scopeGuard: '.eq("studio_id"',
+  },
+  {
+    path: "lib/billing/cancel-declined-session-intent.ts",
+    purpose: "Payment ledger helper (close the original Stripe attempt of a failed, declined session payment).",
+    why: "Invoked only by the signature-verified payment_intent.payment_failed handler after the attempt is recorded failed; uses service-role to read the one payment_charge_attempts row and record stripe_status canceled on it. Scoped by studio_id and attempt id; it cancels only the intent stored on that row after verifying identity, never another attempt, and never writes the failed status.",
     scopeGuard: '.eq("studio_id"',
   },
   {

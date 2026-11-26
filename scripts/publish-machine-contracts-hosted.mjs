@@ -3,6 +3,9 @@
 // Nothing runs without an approval token that Sam wrote and whose sha256 he quoted. --dry-run (the default) is what the VPS runs:
 // it prints the plan and its sha256, never reads the key, and makes no network call. The logic and every refusal live in
 // scripts/lib/hosted-publish.mjs and are tested against fakes; this file only wires the real effects.
+// KNOWN LIMITS, stated so nobody reads the refusals as more than they are. The startup checks do not refuse NODE_USE_SYSTEM_CA, --use-openssl-ca or
+// --require / --import preloads, and `git status` does not see gitignored or skip-worktree files. Each needs a machine that is already compromised,
+// and a changed plan or catalogue would change the plan sha256 the approver quoted.
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { join, resolve, relative, isAbsolute } from "node:path";

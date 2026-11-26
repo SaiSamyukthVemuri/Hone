@@ -83,11 +83,11 @@ describe("1 — the roster does not wait for the secondary stack", () => {
   it("the secondary stack sits behind exactly one Suspense boundary", () => {
     expect(PAGE_CODE).toContain("fallback={<SecondaryStackSkeleton />}");
     expect(PAGE_CODE).toContain("<SecondaryStack");
-    // WS-DB: Needs attention is the Appointments column's neighbour, so it
-    // streams behind its OWN boundary and the stack behind another. TWO
-    // boundaries, no more: one per region. Spinner soup is a design failure,
-    // not a style preference.
-    expect(PAGE_CODE.match(/<Suspense\b/g)?.length ?? 0).toBe(2);
+    // The page has two region-wide loading states. A row's birthday badge
+    // can fill in separately without delaying the roster or showing a spinner.
+    const pageBody = PAGE_CODE.slice(0, PAGE_CODE.indexOf("function AppointmentRow("));
+    expect(pageBody.match(/<Suspense\b/g)?.length ?? 0).toBe(2);
+    expect(PAGE_CODE).toMatch(/<Suspense fallback=\{null\}>\s*<BirthdayTodayBadge/);
     expect(PAGE_CODE).toContain("fallback={<NeedsAttentionSkeleton />}");
     expect(PAGE_CODE.match(/fallback=\{<SecondaryStackSkeleton \/>\}/g)).toHaveLength(1);
   });

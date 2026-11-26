@@ -1,6 +1,10 @@
 import Link from "next/link";
+import { PendingLink } from "@/components/pending-link";
+import { buttonClasses } from "@/components/ui/button";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { clientDisplayName } from "@/lib/clients/identity";
+import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { getPinnedNotesForClient } from "@/lib/client-pinned-notes/queries";
 import { getClientTags } from "@/lib/client-tags/queries";
@@ -45,6 +49,7 @@ import { PostcareSendButton } from "../PostcareSendButton";
 import { PostcareSection } from "@/components/appointment/postcare-section";
 import { buildPostcareEmail } from "@/lib/email/templates/postcare";
 import { ManualFeeChargeCard } from "./ManualFeeChargeCard";
+import { projectFeeEligibility } from "@/lib/billing/manual-fee-card-view";
 import { getManualFeeChargeEligibility } from "@/lib/billing/manual-fee-eligibility";
 import {
   appointmentDisplayStatus,
@@ -99,26 +104,40 @@ export default async function AppointmentDetailPage({
     day?: string | string[];
     week?: string | string[];
     month?: string | string[];
+    cancelled?: string | string[];
   }>;
 }) {
   const { id } = await params;
   // Safe, internal-only back link: returns to the view/date the practitioner
   // came from (falls back to /calendar). Never an external URL.
   const backHref = calendarReturnHref(await searchParams);
+  const justCancelled = (await searchParams).cancelled === "1";
   const { practitioner, studio } = await requirePractitionerWithStudio();
   const isOwner = practitioner.role === "owner";
   const supabase = await createClient();
 
-  const { data, error } = await supabase
-    .from("appointments")
-    .select(
-      "*, client:clients(id, name, email, phone, pronouns, allergies, fitzpatrick_type, skin_notes), service:services(id, name, default_duration_minutes, modality), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name, color)",
-    )
-    .eq("id", id)
-    .eq("studio_id", studio.id)
-    .maybeSingle<Joined>();
+  // HON-58: the page shows the DISPLAY name (preferred, else stored), computed here on the server. The embed names
+  // its columns (never `*`, never the legal identity table); `preferred_name` is read with the shared missing-column fallback.
+  const { data, error } = await readWithPreferredName((includePreferred) =>
+    supabase
+      .from("appointments")
+      .select(
+        `*, client:clients(id, name, ${preferredNameColumn(includePreferred)}email, phone, pronouns, allergies, fitzpatrick_type, skin_notes), service:services(id, name, default_duration_minutes, modality), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name, color)`,
+      )
+      .eq("id", id)
+      .eq("studio_id", studio.id)
+      .maybeSingle<Joined>(),
+  );
   if (error) throw new Error(`db_error:${dbErrorCode(error)}`);
   if (!data) notFound();
+  // Client communications keep the STORED name until the studio decides whether they use the preferred name: the send action
+  // greets with the stored name, so every preview on this page must too. Captured before the display name replaces it.
+  const storedClientName = data.client?.name ?? "";
+  // ONE string leaves this block for the screen: the preferred and stored names are not both passed on to the rest of the page.
+  if (data.client) {
+    const { preferred_name: preferredName, ...rest } = data.client as typeof data.client & { preferred_name?: string | null };
+    data.client = { ...rest, name: clientDisplayName({ name: rest.name, preferred_name: preferredName }) };
+  }
 
   const isCancelled = data.status === "cancelled";
 
@@ -410,6 +429,15 @@ export default async function AppointmentDetailPage({
         ← Calendar
       </Link>
 
+      {isCancelled && justCancelled ? (
+        <p
+          role="status"
+          className="rounded-md border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200"
+        >
+          Appointment cancelled.
+        </p>
+      ) : null}
+
       <StatusHeader
         serviceName={data.service?.name ?? "Appointment"}
         startsAt={data.starts_at}
@@ -417,6 +445,19 @@ export default async function AppointmentDetailPage({
         practitioner={data.practitioner}
         displayStatus={displayStatus}
       />
+
+      {data.client && data.service && (
+        <div>
+          <PendingLink
+            href={`/calendar?view=week&rebook=${encodeURIComponent(id)}`}
+            prefetch={false}
+            className={buttonClasses({ size: "sm" })}
+            pendingLabel="Opening calendar…"
+          >
+            Rebook this client
+          </PendingLink>
+        </div>
+      )}
 
       <PinnedNotesReadonly notes={pinnedNotes} />
 
@@ -581,7 +622,7 @@ export default async function AppointmentDetailPage({
           }
           reviewUrl={studio.postcare_review_url}
           reviewPromptText={studio.postcare_review_prompt_text}
-          clientName={data.client.name}
+          clientName={storedClientName}
           serviceName={data.service?.name ?? null}
           serviceModality={data.service?.modality ?? null}
           startsAt={data.starts_at}
@@ -736,8 +777,8 @@ export default async function AppointmentDetailPage({
       {showManualFeeCard && manualFeeLateCancel && manualFeeNoShow && (
         <ManualFeeChargeCard
           appointmentId={id}
-          lateCancel={manualFeeLateCancel}
-          noShow={manualFeeNoShow}
+          lateCancel={projectFeeEligibility(manualFeeLateCancel, new Date(), isOwner)}
+          noShow={projectFeeEligibility(manualFeeNoShow, new Date(), isOwner)}
         />
       )}
 
@@ -1501,7 +1542,7 @@ function TreatmentPlanCard({
               href={`/clients/${clientId}?tab=treatment`}
               className="text-neutral-700 hover:underline dark:text-neutral-300"
             >
-              Open Treatment Plans →
+              Open treatment plans
             </Link>
           </p>
         )}

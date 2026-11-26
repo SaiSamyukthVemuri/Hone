@@ -206,6 +206,42 @@ test.describe("Dashboard Needs attention: dismissal", () => {
     await expect(page.locator("main")).toContainText(/not connected|connect|set up|not set up/i);
   });
 
+  // Privacy AP2-5: the restore of a resolved studio reminder runs in after() once the response is sent. vitest can only mock after(), so this
+  // drives a REAL request: the dashboard is loaded in a browser and the appended `restore` events are read back from the database.
+  gated("AP2-5: a resolved studio reminder's dismissal is restored by the after() restore of a real request; client/unpaid dismissals are left alone", async ({ page }) => {
+    const { seed } = await seedStudioWithMoney();
+    const owner = (await sql<{ user_id: string }>(`select user_id from public.practitioners where studio_id = $1 and role = 'owner' limit 1`, [seed.studioId]))[0]!.user_id;
+    // Stored dismissals for studio reminders that are NOT live in this studio (it has a service and no incomplete checks), plus one that must
+    // never be touched here. Inserted as the database owner: the table has RLS and no policy, and the events are append-only.
+    const keys = { studioA: "legacy_setup:studio", studioB: "no_services:studio", untouched: "unpaid:ap25-untouched" };
+    for (const k of Object.values(keys)) {
+      await sql(`insert into public.dashboard_attention_events (studio_id, user_id, item_key, instance_token, action) values ($1, $2, $3, 'ap25', 'dismiss')`, [seed.studioId, owner, k]);
+    }
+    const latest = async (key: string) => (await sql<{ action: string; n: string }>(
+      `select (array_agg(action order by seq desc))[1] as action, count(*)::text as n from public.dashboard_attention_events where studio_id = $1 and user_id = $2 and item_key = $3`,
+      [seed.studioId, owner, key],
+    ))[0]!;
+    expect((await latest(keys.studioA)).action).toBe("dismiss");
+
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await loginAsOwner(page, seed);
+    await openDashboard(page);
+
+    // The restore lands AFTER the response: poll the database, not the page.
+    await expect.poll(async () => (await latest(keys.studioA)).action, { timeout: T }).toBe("restore");
+    await expect.poll(async () => (await latest(keys.studioB)).action, { timeout: T }).toBe("restore");
+    // Exactly one restore each (2 events: the dismiss and its restore), and the client/unpaid-class key is untouched.
+    expect((await latest(keys.studioA)).n).toBe("2");
+    expect((await latest(keys.studioB)).n).toBe("2");
+    expect(await latest(keys.untouched)).toEqual({ action: "dismiss", n: "1" });
+
+    // A second load appends nothing: the latest event is a restore now, so nothing is observed as dismissed.
+    await openDashboard(page);
+    await page.waitForTimeout(3000);
+    expect((await latest(keys.studioA)).n).toBe("2");
+    expect((await latest(keys.studioB)).n).toBe("2");
+  });
+
   // Gate OFF (the default of every ordinary run, and what ships while 0298 is held): no Dismiss, no Dismissed view, no "could not read"
   // note, and nothing in the page asked the database for dismissals; the one count and the exact unpaid amounts still work.
   // It asserts the unpaid amounts, so it also needs the unpaid gate ON; with it OFF the case below proves the same dismissal absence.
@@ -367,9 +403,28 @@ test.describe("Dashboard Needs attention: dismissal", () => {
     await expect(unpaidAmountOf(page, unpaid.name)).toContainText("120.00", { timeout: T });
     await expect(unpaidAmountOf(page, paid.name)).toHaveCount(0);
     await expect(page.locator("li[data-attention-client]").filter({ hasText: paid.name }).getByText(/Unpaid|Amount unavailable|outstanding/i)).toHaveCount(0);
+    // Fully paid visits are also NOT COUNTED as "no price or payment detail Hone can verify": with every visit here either paid or priced, the
+    // count line must be absent altogether.
+    await expect(page.getByTestId("needs-attention-unpaid-unlisted")).toHaveCount(0);
+    await expect(page.locator("#needs-attention-list, [data-testid=needs-attention-unpaid-window]").first()).toBeVisible({ timeout: T });
     // The same visit's own page says Paid.
     await page.goto(`/calendar/${paid.apptId}`);
     await expect(page.getByRole("heading", { name: "Payment" }).locator("xpath=..").getByText("Paid")).toBeVisible({ timeout: T });
+  });
+
+  unpaidGated("HON-65: a visit with no price on record is not listed but COUNTED, in words and with no amount", async ({ page }) => {
+    const { seed, unpaid, visit } = await seedStudioWithMoney();
+    const unknown = await visit("NoPrice", 0, 3);
+    await sql(`update public.services set price_cents = null where id = $1`, [unknown.serviceId]);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await loginAsOwner(page, seed);
+    await openDashboard(page);
+    await expect(unpaidAmountOf(page, unknown.name)).toHaveCount(0, { timeout: T });
+    const line = page.getByTestId("needs-attention-unpaid-unlisted");
+    await expect(line).toBeVisible({ timeout: T });
+    await expect(line).toContainText(/no price or payment detail Hone can verify, so (it is|they are) not listed/);
+    await expect(line).not.toContainText(/\d\.\d\d/);
+    expect(unpaid.name).toBeTruthy();
   });
 
   unpaidGated("All outstanding: an older unpaid visit is outside the 90-day default and shown by the toggle", async ({ page }) => {

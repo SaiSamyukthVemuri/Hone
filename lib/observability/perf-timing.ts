@@ -93,6 +93,7 @@ export const PERF_SPAN_IDS = [
   "shell.identity",
   "shell.memberships",
   "shell.support-reads",
+  "shell.waitlist-nav",
   // Per-surface page work. `.identity` is the page's own practitioner/studio
   // resolution; `.domain` is everything the page reads for its own content.
   "clients.identity",
@@ -103,6 +104,21 @@ export const PERF_SPAN_IDS = [
   "calendar.domain",
   "records.identity",
   "records.domain",
+  // HON-109 slice 1. The surfaces the 23 Nov baseline ranked slowest and that had NO span. `.identity` and `.domain` follow the
+  // convention above. `analytics.appointments` and `analytics.money` split the analytics read into its two terms (appointment
+  // rows, then the money for them): they are NOT phase "domain", so domain_total_ms is not double counted.
+  "analytics.identity",
+  "analytics.domain",
+  "analytics.appointments",
+  "analytics.money",
+  "analytics.people",
+  "analytics.names",
+  "analytics.build",
+  "statements.identity",
+  "statements.domain",
+  "waitlist.identity",
+  "waitlist.domain",
+  "dashboard.identity",
   // SESSION-START-01 slice 2. The charting entry path, which the recon showed
   // is the product's worst measured wait and had NO instrumentation at all.
   // Split finely on purpose: the question is not "is it slow" but WHICH term
@@ -171,6 +187,10 @@ export type PerfSurface =
   | "client-profile"
   | "calendar"
   | "records"
+  | "analytics"
+  | "statements"
+  | "waitlist"
+  | "dashboard"
   // A server ACTION, not a page. surfaceOf() reads the prefix, so the action's
   // spans aggregate separately from the page they redirect to — which is the
   // whole point: the recon's hypothesis is that the wait is split across both.
@@ -268,6 +288,14 @@ export function surfaceOf(span: PerfSpanId): PerfSurface {
   return prefix as PerfSurface;
 }
 
+/**
+ * Spans that run INSIDE another span of the same request. Their time is already
+ * part of the enclosing span's duration, so shell_total_ms must not add it again
+ * (shell.waitlist-nav runs inside shell.support-reads). They stay in `spans` and
+ * keep their own per-span value; only the surface total skips them.
+ */
+const NESTED_SPANS: ReadonlySet<PerfSpanId> = new Set<PerfSpanId>(["shell.waitlist-nav"]);
+
 function phaseOf(span: PerfSpanId): string {
   return span.slice(span.indexOf(".") + 1);
 }
@@ -300,7 +328,7 @@ export function buildPerfSummary(
     const phase = phaseOf(record.span);
 
     if (surface === "shell") {
-      shellTotalMs += record.duration_ms;
+      if (!NESTED_SPANS.has(record.span)) shellTotalMs += record.duration_ms;
     } else {
       pageSurface = surface;
     }

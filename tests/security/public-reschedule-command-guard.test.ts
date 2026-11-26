@@ -139,7 +139,14 @@ describe("public reschedule route — token-delivery gate", () => {
   );
 
   it("captures the client lookup's error rather than discarding it", () => {
-    expect(SUBMIT).toMatch(/const\s*\{\s*data:\s*clientRow,\s*error:\s*clientErr\s*\}/);
+    // The lookup runs through readWithPreferredName (the missing-column-safe helper): `data` is bound as clientRowRaw and cast to the typed row.
+    expect(SUBMIT).toMatch(/const\s*\{\s*data:\s*clientRow(?:Raw)?,\s*error:\s*clientErr\s*\}\s*=\s*await\s+readWithPreferredName\(/);
+    expect(SUBMIT).toMatch(/const clientRow = clientRowRaw as RescheduleClientRow \| null;/);
+  });
+
+  it("the helper returns every error except a missing preferred_name column UNTOUCHED, and retries with the SAME filters", () => {
+    const helper = readFileSync(join(process.cwd(), "lib/clients/preferred-name-read.ts"), "utf8");
+    expect(helper).toMatch(/if \(isMissingColumnError\(first\.error, PREFERRED_NAME_COLUMN\)\) return attempt\(false\);\s*return first;/);
   });
 
   it("refuses before the mutation on lookup error, missing row OR missing email", () => {
@@ -149,9 +156,12 @@ describe("public reschedule route — token-delivery gate", () => {
   });
 
   it("scopes the client lookup by studio as well as id (no cross-tenant satisfaction)", () => {
-    const idx = SUBMIT.indexOf("clientRow, error: clientErr");
-    const window = SUBMIT.slice(idx, idx + 500);
-    expect(window).toMatch(/eq\(\s*["']studio_id["']/);
+    // The ONE builder passed to readWithPreferredName serves BOTH attempts (with and without the column), so both are scoped by id AND studio_id.
+    const idx = SUBMIT.indexOf("error: clientErr } = await readWithPreferredName(");
+    expect(idx).toBeGreaterThan(-1);
+    const window = SUBMIT.slice(idx, idx + 700);
+    expect(window).toMatch(/\.eq\(\s*["']id["'],\s*asserted\.original\.client_id\s*\)/);
+    expect(window).toMatch(/\.eq\(\s*["']studio_id["'],\s*asserted\.original\.studio_id\s*\)/);
   });
 
   it("mints the raw token only AFTER the delivery gate", () => {

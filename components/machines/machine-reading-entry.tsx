@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { nativeFieldGroups } from "@/lib/machines/charting";
+import { useReportDraft } from "./draft-registry";
+import { useReportVisitDraft } from "@/components/charting-visit-draft";
 import { RangeConfirmationList } from "./range-confirmation-list";
 import { SettingDraftFields } from "./setting-draft-fields";
 import {
@@ -134,22 +136,12 @@ export type MachineReadingEntryProps = {
   /** Injected by tests so the retry key is deterministic. */
   mintKey?: () => string;
   /**
-   * REPORT WHEN THIS SAVE'S OUTCOME IS UNKNOWN, so the panel can freeze the
-   * machine and mode with it.
-   *
-   * Round 10 froze the identity controls against the CREATE form's
-   * unresolved save. A REVISION save is the other path, and its unresolved
-   * state lived entirely in this child: the dropdown stayed live, and
-   * switching after a lost response UNMOUNTED this component and discarded
-   * the retry key it was holding. Switching back and saving then minted a
-   * new key and appended a duplicate immutable capture if the first request
-   * had committed (Codex, #860 4300759930).
-   *
-   * The key's whole purpose is to survive the gap between a lost answer and
-   * the retry; a control that can unmount the thing holding it is part of
-   * that gap.
+   * TRUE WHILE A MACHINE OR MODE CHANGE IS BEING WRITTEN. On a saved area the pick is written first and
+   * applied after; in between, this entry still belongs to the OLD machine while the record may already hold the new one, so a save
+   * here would submit the old machine's readings under the new machine. Submission is held until the change settles; the entry is
+   * then remounted for the new machine (its key) or, on a refusal, stays and works again. The draft itself is kept.
    */
-  onUnresolvedChange?: (unresolved: boolean) => void;
+  submissionHeld?: boolean;
 };
 
 /**
@@ -165,6 +157,15 @@ function recordedKeysOf(
   return [...new Set(recorded.map((g) => g.groupKey))].sort();
 }
 
+/**
+ * "Needs attention" on the visit card for a readings save: not while a save is in flight, then when its outcome is unknown, or when it was
+ * refused and nothing is recorded. Pure so the truth table is pinned directly (the unresolved term is only reachable with `recorded` true, a
+ * revision, which this surface's mounted tests cannot drive).
+ */
+export function readingsSaveNeedsAttention(s: { pending: boolean; unresolved: boolean; recorded: boolean; message: string | null }): boolean {
+  return !s.pending && (s.unresolved || (!s.recorded && s.message !== null));
+}
+
 export function MachineReadingEntry({
   profile,
   mode,
@@ -173,7 +174,7 @@ export function MachineReadingEntry({
   recordedGroups,
   onRecord,
   mintKey,
-  onUnresolvedChange,
+  submissionHeld = false,
 }: MachineReadingEntryProps) {
   const fieldGroups = nativeFieldGroups(profile, mode);
   // SETTING GROUPS - probes sharing one set of values. One to begin with, which
@@ -348,12 +349,24 @@ export function MachineReadingEntry({
    */
   const transportHold = pending || save.unresolved;
 
-  const reportedUnresolved = useRef<boolean | null>(null);
-  useEffect(() => {
-    if (reportedUnresolved.current === transportHold) return;
-    reportedUnresolved.current = transportHold;
-    onUnresolvedChange?.(transportHold);
-  }, [transportHold, onUnresolvedChange]);
+  // NOT AFTER AN ACKNOWLEDGED SAVE. The typed values stay in `groups`
+  // until the practitioner starts a new capture, but they are RECORDED by then: the page must
+  // stop saying Unsaved and stop warning on leave. A save still in flight or of unknown outcome
+  // is not recorded, so it keeps counting.
+  const hasDraft =
+    !save.recorded &&
+    groups.some((g) => Object.values(g.values).some((v) => String(v ?? "").trim() !== ""));
+  // REPORTED AS LEVELS TO THE HOST'S REGISTRY (draft-registry.tsx): the current flags on every change of their value, removed on unmount only.
+  // The controls that can destroy this save's retry key are outside this component, and they read the registry's derived view.
+  useReportDraft({ draft: hasDraft, unresolved: transportHold });
+  // "This visit" (New view): a refused save, or one whose outcome is unknown, needs attention until it is settled. Display only: this reports
+  // and never reads it back. A request still in flight is not yet a failure.
+  useReportVisitDraft(`readings:${useId()}`, {
+    machine: null,
+    draftAreas: [],
+    unsaved: false,
+    attention: readingsSaveNeedsAttention({ pending, ...save }),
+  });
 
   // EVERY DRAFT CHANGE CLOSES THE OPEN SAVE, which is how the retry key keeps
   // meaning what it says: a changed draft is a DIFFERENT save and must mint a
@@ -381,6 +394,7 @@ export function MachineReadingEntry({
     );
 
   async function submit() {
+    if (submissionHeld) return;
     setPending(true);
     // ONE CALL, EVERY GROUP. The loop this replaced had to carry the
     // consequence of several calls: with two groups the first could succeed
@@ -458,6 +472,7 @@ export function MachineReadingEntry({
             type="button"
             variant="secondary"
             size="sm"
+            disabled={submissionHeld}
             onClick={() => {
               // A NEW capture, not an edit of the last one. Values AND channel
               // associations are cleared deliberately: pre-filling either from
@@ -565,7 +580,7 @@ export function MachineReadingEntry({
           variant="primary"
           size="md"
           onClick={submit}
-          disabled={pending || !ready}
+          disabled={pending || !ready || submissionHeld}
           pending={pending}
           busyLabel="Saving…"
           data-testid="machine-reading-save"

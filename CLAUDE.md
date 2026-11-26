@@ -2,6 +2,10 @@
 
 Working agreements for anyone (human or agent) changing this repository.
 
+## Default development workflow
+
+@docs/engineering/pstack.md
+
 ---
 
 ## Engineering standards — read this first
@@ -237,7 +241,60 @@ Confirm `has_table_privilege(...)` before trusting a failing lane.
   green — do not re-ask. A **changed head invalidates the authorization**.
 - **No post-merge full CI rerun.** After merging, verify only: branch
   containment, deployment success where applicable, and a clean tree.
-- **Green CI is not merge authorization.**
+- **Green CI is not merge authorization** on its own. It becomes one only
+  under the standing routine-merge authorization below.
+- **Standing routine-merge authorization** (operator, 2026-11-23). The OPS
+  coordinator merges a routine PR for approved work without asking again
+  when every one of these holds on the PR's **current head commit**:
+  the PR is ready for review (not a draft), and every required lane has
+  passed at that head, including the stable `browser e2e (local stack)`
+  aggregator (a deferred, cancelled or wrongly skipped lane is not a pass),
+  the reviews these delivery rules require for
+  that change have passed (the exact-head Codex review and the assigned
+  privacy and quality reviews), every review finding is fixed or does not
+  apply (threads handled as in *Resolving a thread* below), the release
+  records are current, and there is no outstanding hold. "Approved work"
+  means work the operator assigned or approved, directly or through a
+  recorded plan or task. The merge is pinned to the verified commit: merge
+  only if the PR head still equals it. If the head changes, including by a
+  base refresh, recheck the new commit and proceed only when it qualifies
+  again. Only the OPS coordinator holds this authorization; reviewer and
+  lane sessions never merge. While the ENG-LOOP shepherd is shadow evidence,
+  the required reviews above are the evidence; a shepherd
+  `CANDIDATE_READY_FOR_HUMAN_REVIEW` never overrides a missing review or an
+  open finding. After merging, verify the
+  deployment where one applies, and report the result to the operator
+  with anything they should test.
+  This authorization does **not** cover, and these still go to the
+  operator for explicit approval:
+  - a change that adds or edits a migration file, and any production
+    database migration apply;
+  - a change to authentication, accounts, access control (row-level
+    security, grants, roles), consent, or client-data handling;
+  - feature or flag activation, payment or provider changes, live sends,
+    customer or team messages, hosted data writes or deletes, and
+    infrastructure changes;
+  - force-pushes and direct pushes to the production branch;
+  - release exceptions, security exceptions, and any finding that needs a
+    product decision or an exception to a release requirement;
+  - a change to the rules that bound the merger: these delivery rules,
+    this authorization, `ENGINEERING_STANDARDS.md`, `DESIGN.md`, the
+    pstack adaptation in `docs/engineering/pstack.md`, the CI workflows,
+    branch protection, permission settings or credentials.
+
+### DRAFT-DEFERRED
+
+A draft PR does not run the heavy lanes (database, browser shards, payment,
+mobile, Google, storage-photos, webkit). When the diff needs any of them, the
+stable `browser e2e (local stack)` check **fails** with
+`DRAFT-DEFERRED: draft PR: required coverage for this diff was deferred.`
+
+- It means required coverage has **not run**. It is not evidence of an
+  application defect.
+- Do not weaken tests, and do not rerun or push to the draft to make it green.
+- Mark the PR ready for review when you want full verification; the
+  `ready_for_review` run executes the required coverage on the same head.
+- The PR is **not mergeable** until all required coverage has passed.
 
 ### ENG-LOOP shepherd — advisory and read-only
 
@@ -248,8 +305,9 @@ to GitHub and never merges. Run it:
 - after pushing a PR head;
 - after that head's CI run or a requested review settles — wait with the single
   watcher above, never a new loop;
-- before asking for human merge authorization, quoting its `decision`,
-  `headSha` and `evidenceHash`.
+- before asking for human merge authorization, or before a merge under the
+  standing routine-merge authorization, quoting its `decision`, `headSha`
+  and `evidenceHash`.
 
 Act only on its bounded `nextAction`, inside your own task's authorization:
 
@@ -263,15 +321,26 @@ Act only on its bounded `nextAction`, inside your own task's authorization:
 | `EXTERNAL_BLOCKED` | inspect the failing external check; fix it or escalate |
 | `REVIEW_MISSING` | request a review of the exact head |
 | `UNKNOWN` | follow its `nextAction` when that is a step inside your authorization (retarget, a new branch, split the PR); otherwise escalate with the reason — never read it as green |
-| `CANDIDATE_READY_FOR_HUMAN_REVIEW` | present the exact head to the human; it is **not** merge permission |
+| `CANDIDATE_READY_FOR_HUMAN_REVIEW` | present the exact head to the human; it is **not** merge permission on its own. For a routine PR that meets every condition of the standing routine-merge authorization at that exact head, the OPS coordinator may merge and then report; everything else still goes to the human |
 
 **Codex review comments and threads are evidence, not workspace** (operator
 policy, 2026-10-08). Agents never edit, delete, conceal, minimize or otherwise
-manipulate a Codex comment or review thread. Resolving any specific thread
-requires the operator's explicit authorization for that thread. The limitation
-behind this (SPEC-05A §7, R5-DELETE): the shepherd cannot see a deleted finding
-— a thread whose Codex comment was deleted disappears from FINDINGS_OPEN — and
-it cannot tell an agent using the operator's credential from the operator.
+manipulate a Codex comment or review thread. The limitation behind this
+(SPEC-05A §7, R5-DELETE): the shepherd cannot see a deleted finding — a thread
+whose Codex comment was deleted disappears from FINDINGS_OPEN — and it cannot
+tell an agent using the operator's credential from the operator.
+
+**Resolving a thread** (operator standing authorization, 2026-11-19, superseding
+the per-thread rule of 2026-10-08). The coordinator may resolve a review thread
+only after verifying, on the PR's current head commit, that the finding is fixed
+or no longer applies. Before resolving, it posts a reply in that thread naming
+the commit verified and the test or code evidence (file and line, or the test
+that pins it). That reply is public text: it carries no internal ids, private
+paths, tenant or person names, or review labels. When the evidence is
+incomplete the thread stays open. A
+resolution that needs a product decision or an exception to a release
+requirement goes to the operator first. Resolving is the only permitted change
+to a thread: its comments are never edited, deleted, hidden or minimized.
 
 It needs the dedicated read-only token in `HONE_ENG_READ_TOKEN`; without it,
 every answer is `UNKNOWN(read_failed)`. Until ENG-LOOP V1 is declared LIVE, its

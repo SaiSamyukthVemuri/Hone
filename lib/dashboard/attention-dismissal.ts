@@ -12,7 +12,8 @@ import type { AttentionIdentity } from "./attention-identity";
 //
 // An "unstamped" token (see attention-identity) is never hidden.
 
-export type StoredDismissal = AttentionIdentity;
+/** A stored dismissal. `eventSeq` is the database event it was read from (0298 `event_seq`); the AP2 clear carries it so a stale observation cannot restore a newer dismissal. */
+export type StoredDismissal = AttentionIdentity & { eventSeq?: number };
 
 export function isDismissed(
   live: AttentionIdentity,

@@ -107,6 +107,18 @@ function makeQuery(table: string) {
       writes.push({ table, op: "delete" });
       return chain;
     },
+    // The owner-email read is a LIST (every active owner is told), awaited without a terminator.
+    then(resolve: (v: { data: unknown; error: null }) => void, reject: (e: unknown) => void) {
+      try {
+        if (table === "practitioners" && columns === "display_name, email") {
+          if (scenario.ownerLookupThrows) throw new Error("PRIVATE owner lookup");
+          return resolve({ data: scenario.ownerMissing ? [] : [{ display_name: "Synthetic owner", email: "owner@example.invalid" }], error: null });
+        }
+        return resolve({ data: null, error: null });
+      } catch (e) {
+        return reject(e);
+      }
+    },
     async maybeSingle() {
       if (table === "appointments") {
         if (columns.startsWith("id, status, starts_at") && scenario.fetchError) return { data: null, error: scenario.fetchError };
@@ -135,10 +147,6 @@ function makeQuery(table: string) {
       // HON-47: the studio policy read. No policy column, so the studio has
       // today's defaults and every existing assertion keeps its meaning.
       if (table === "studios") return { data: studioRow(), error: null };
-      if (table === "practitioners") {
-        if (scenario.ownerLookupThrows) throw new Error("PRIVATE owner lookup");
-        return { data: scenario.ownerMissing ? null : { display_name: "Synthetic owner", email: "owner@example.invalid" }, error: null };
-      }
       return { data: null, error: null };
     },
     async single() {
@@ -536,7 +544,8 @@ describe("MSG-004 public cancellation owner-notification recovery", () => {
       expect(rpcCalls).toHaveLength(1);
       expect(rpcCalls[0].fn).toBe("public_cancel_appointment_with_token");
       expect(writes).toEqual([]);
-      expect(log).toHaveBeenCalledTimes(1);
+      // HON-7: this harness has no owner list, so the bell writer also logs one PII-free owner-read code; the recovery log is still exactly one.
+      expect(log.mock.calls.filter((c) => String(c[0]).includes("cancellation_notification_alert_unavailable"))).toHaveLength(1);
       expect(JSON.stringify([result, recoveryAlert.mock.calls, log.mock.calls])).not.toMatch(/PRIVATE|raw-url-token|owner@example.invalid/);
     } finally { log.mockRestore(); }
   });

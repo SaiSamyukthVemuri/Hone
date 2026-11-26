@@ -405,6 +405,11 @@ describe("span names are a closed set", () => {
     expect(surfaceOf("shell.identity")).toBe("shell");
     expect(surfaceOf("client-profile.domain")).toBe("client-profile");
     expect(surfaceOf("records.identity")).toBe("records");
+    // HON-109 slice 1
+    expect(surfaceOf("analytics.appointments")).toBe("analytics");
+    expect(surfaceOf("statements.domain")).toBe("statements");
+    expect(surfaceOf("waitlist.identity")).toBe("waitlist");
+    expect(surfaceOf("dashboard.identity")).toBe("dashboard");
   });
 });
 
@@ -523,6 +528,21 @@ describe("buildPerfSummary", () => {
     const summary = buildPerfSummary([...request], 0, "2026-08-20T00:00:00Z");
     expect(summary.shell_total_ms).toBe(97);
     expect(summary.domain_total_ms).toBe(210);
+  });
+
+  it("does not count a nested span twice: a 100 ms window holding an 80 ms nested span totals 100", () => {
+    const summary = buildPerfSummary(
+      [
+        { span: "shell.support-reads", seq: 1, duration_ms: 100, outcome: "ok" },
+        { span: "shell.waitlist-nav", seq: 2, duration_ms: 80, outcome: "ok" },
+      ],
+      0,
+      "2026-08-20T00:00:00Z",
+    );
+    expect(summary.shell_total_ms).toBe(100);
+    // The nested span is still reported on its own.
+    expect((summary.spans as { span: string; duration_ms: number }[]).find((x) => x.span === "shell.waitlist-nav")?.duration_ms).toBe(80);
+    expect(summary.span_count).toBe(2);
   });
 
   it("keeps the phase totals disjoint so they can be reasoned about", () => {

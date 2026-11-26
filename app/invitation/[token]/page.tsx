@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
+import { waitlistDeclineAnswersEnabled } from "@/lib/waitlist/decline-answers-gate";
 import { loadInvitationAction } from "./actions";
 import { InvitationContainer } from "./InvitationContainer";
+import { waitlistTimesFeedbackEnabled } from "@/lib/waitlist/times-feedback";
 
 // WAIT-03 B3 — the recipient's invitation page.
 //
@@ -32,5 +34,10 @@ export default async function InvitationPage({
   // The FIRST authority call happens on the server, before anything renders, so
   // a dead or forged link never paints an offer.
   const initial = await loadInvitationAction(token);
-  return <InvitationContainer token={token} initial={initial} />;
+  return <InvitationContainer
+      token={token}
+      initial={initial}
+      timesFeedback={waitlistTimesFeedbackEnabled()}
+      declineAnswers={waitlistDeclineAnswersEnabled()}
+    />;
 }

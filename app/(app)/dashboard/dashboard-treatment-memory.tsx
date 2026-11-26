@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useState, useTransition } from "react";
+import { compactSummary } from "@/lib/dashboard/today-treatment-summary";
 import { AppointmentPrepMemoryCard } from "@/components/appointment-prep-memory-card";
 import type { DashboardTreatmentDisclosureSummary } from "@/lib/dashboard/dashboard-prep-summary";
 import {
@@ -47,6 +48,7 @@ export function DashboardTreatmentMemory({
   clientId,
   clientName,
   summary,
+  timeZone,
 }: {
   appointmentId: string;
   /** For the card's own links only. Never used as authorization. */
@@ -60,6 +62,7 @@ export function DashboardTreatmentMemory({
    * that note across the boundary on Today, where it is not visible at all.
    */
   summary: DashboardTreatmentDisclosureSummary;
+  timeZone: string;
 }) {
   const [open, setOpen] = useState(false);
   const [result, setResult] = useState<PrepMemoryResult | null>(null);
@@ -115,12 +118,16 @@ export function DashboardTreatmentMemory({
   }
 
   return (
-    <div className="mt-1 flex flex-col gap-1">
+    <div
+      data-prior-visible={open && result?.status === "loaded" ? "true" : undefined}
+      className="mt-1 flex flex-col gap-1"
+    >
       {/* The one-line "Last treatment" summary is painted on the CLOSED row by RowSafetyLines (HON-65), so
           it is not repeated here; this control only opens the full chart. */}
       <button
         type="button"
         onClick={toggle}
+        aria-label={`${open ? "Hide last visit details" : "Last visit details"} for ${clientName}`}
         aria-expanded={open}
         aria-controls={regionId}
         data-testid="dashboard-memory-toggle"
@@ -129,11 +136,11 @@ export function DashboardTreatmentMemory({
            but the hit area matches every other control on the row. It was the
            height of its own text, which this PR made worse by putting it on
            the future-day path, where preparing on a phone is the whole point. */
-        className="inline-flex min-h-[44px] items-center self-start py-2 text-[11px] font-medium text-blue-700 underline underline-offset-2 hover:text-blue-900 dark:text-blue-300"
+        className="inline-flex min-h-[44px] min-w-0 max-w-full items-center self-start py-2 text-left text-[11px] font-medium text-blue-700 underline underline-offset-2 [overflow-wrap:anywhere] hover:text-blue-900 dark:text-blue-300"
       >
         {open
-          ? `Hide full last treatment for ${clientName}`
-          : `View full last treatment for ${clientName}`}
+          ? "Hide last visit details"
+          : "Last visit details"}
       </button>
 
       {/* The region is always in the DOM as a labelled container so
@@ -156,12 +163,18 @@ export function DashboardTreatmentMemory({
               /* showFullChartLink={false} is the Dashboard half of the
                  stay-inline contract. Expanding a row is a READ; the
                  disclosure must not contain a control that leaves the page. */
-              <AppointmentPrepMemoryCard
-                clientId={clientId}
-                memory={result.memory}
-                embedded
-                showFullChartLink={false}
-              />
+              <>
+                <p className="mb-2 text-xs text-fg-muted">
+                  <span className="font-medium">Last treatment</span>{" · "}
+                  {compactSummary({ ...result.memory, areaHeadline: null, totalMinutes: null }, timeZone)}
+                </p>
+                <AppointmentPrepMemoryCard
+                  clientId={clientId}
+                  memory={result.memory}
+                  embedded
+                  showFullChartLink={false}
+                />
+              </>
             ) : result.status === "none" ? (
               <p className="text-xs text-neutral-500">
                 No previous treatment to show.

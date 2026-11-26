@@ -22,7 +22,6 @@ const COPY_BUTTON = read(
 );
 const INFO_CARD = read("components/session-performer-line.tsx");
 const ATTACHMENT = read("components/treatment-plan-attachment.tsx");
-const BIRTHDAY_ACTION = read("app/(app)/clients/[id]/birthday-actions.ts");
 const BIRTHDAY_CARD = read("components/client-birthday-card.tsx");
 const CALENDAR_PAGE = read("app/(app)/calendar/page.tsx");
 const DAY_COLUMN = read("app/(app)/calendar/DayColumn.tsx");
@@ -159,15 +158,6 @@ describe("11. birthday year", () => {
   it("the row still surfaces a stored real year (PR #199: display-only row; editing via the edit page)", () => {
     expect(BIRTHDAY_CARD).toMatch(/realYear/);
     expect(BIRTHDAY_CARD).toMatch(/storedYear >= 1900/);
-  });
-
-  it("the action stores a provided year, preserves an existing one when blank", () => {
-    expect(BIRTHDAY_ACTION).toMatch(
-      /const yearInput = parseIntOrNull\(formData\.get\("birthday_year"\)\);/,
-    );
-    expect(BIRTHDAY_ACTION).toMatch(
-      /if \(yearInput != null\) \{\s*\n?\s*year = yearInput;\s*\n?\s*\} else if \(client\.date_of_birth\) \{/,
-    );
   });
 
   it("display shows the year only when a real year exists", () => {

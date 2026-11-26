@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { SafeAnalytics } from "./_components/SafeAnalytics";
 import { SkipLink } from "./_components/marketing/SkipLink";
+import { isSelfServeCheckoutEnabled } from "@/lib/subscriptions/plans";
 import { SiteHeader } from "./_components/marketing/SiteHeader";
 import { SiteFooter } from "./_components/marketing/SiteFooter";
 import {
@@ -157,6 +158,7 @@ const OWNERSHIP: { title: string; body: string }[] = [
 ];
 
 export default function HomePage() {
+  const selfServe = isSelfServeCheckoutEnabled(process.env);
   return (
     <MarketingSurface>
       <SkipLink />
@@ -186,11 +188,11 @@ export default function HomePage() {
           <div>
             <Lede>{POSITIONING.heroSub}</Lede>
             <CTAButton
-              href={WALKTHROUGH.href}
+              href={selfServe ? "/pricing" : WALKTHROUGH.href}
               event={ANALYTICS_EVENTS.primaryCtaClick}
               className="mt-5 max-sm:w-full"
             >
-              {WALKTHROUGH.primaryLabel}
+              {selfServe ? "Try Hone" : WALKTHROUGH.primaryLabel}
             </CTAButton>
           </div>
         </Container>

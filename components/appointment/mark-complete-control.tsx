@@ -1,17 +1,17 @@
 "use client";
 
-// THE completion control for an appointment, one implementation, two mounts.
+// THE completion control for an appointment, shared across calendar, charting and dashboard.
 //
 // Extracted from AppointmentLifecycleActions so the calendar appointment page
 // and the charting page's "Finish appointment" workflow use the SAME control
 // rather than two lookalikes that can drift. Everything consequential lives
-// here and is unchanged: the end-time gate and its self-enabling timer, the
+// here and is unchanged: the start-time gate and its self-enabling timer, the
 // accessible in-DOM confirmation, single-flight protection, the curated error
 // copy, and router.refresh() so every dependent surface re-renders.
 //
 // The server action `markAppointmentCompleteAction` and its SECURITY DEFINER
 // RPC `public.mark_appointment_complete` (migration 0032) remain the authority,
-// including the end-time check and the appointment_audit row. This component
+// including the start-time check and the appointment_audit row. This component
 // gates the BUTTON; the server gates the WRITE.
 //
 // CONFIRMATION HISTORY (kept from the original). The confirmation used to be a
@@ -25,7 +25,7 @@
 // practitioner inside charting has just treated the client, so offering
 // "no-show" there would be nonsense.
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { markAppointmentCompleteAction } from "@/app/(app)/calendar/actions";
@@ -54,6 +54,13 @@ export type MarkAppointmentCompleteControlProps = {
   notStartedHint?: string;
   // Full-width, one-column layout for the charting surface at 390px.
   block?: boolean;
+  /** Dashboard checkout continues to payment only after confirmed completion. */
+  checkout?: {
+    visitLabel?: string;
+    onCompleted: () => void;
+    onOpen: () => void;
+    choices?: (busy: boolean) => ReactNode;
+  };
 };
 
 export function MarkAppointmentCompleteControl({
@@ -61,6 +68,7 @@ export function MarkAppointmentCompleteControl({
   startsAt,
   notStartedHint = "Available once the appointment has started",
   block = false,
+  checkout,
 }: MarkAppointmentCompleteControlProps) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -91,6 +99,7 @@ export function MarkAppointmentCompleteControl({
   function openConfirm() {
     setError(null);
     setHint(null);
+    checkout?.onOpen();
     setConfirming(true);
   }
 
@@ -124,6 +133,7 @@ export function MarkAppointmentCompleteControl({
       }
       setConfirming(false);
       setHint("Appointment marked completed.");
+      checkout?.onCompleted();
       router.refresh();
     });
   }
@@ -144,7 +154,7 @@ export function MarkAppointmentCompleteControl({
           block ? "w-full" : ""
         }`}
       >
-        Mark completed
+        {checkout ? "Checkout" : "Mark completed"}
       </button>
       {!canComplete && (
         <p data-testid="mark-complete-not-started" className="text-xs text-neutral-500">
@@ -156,15 +166,19 @@ export function MarkAppointmentCompleteControl({
 
       <ConfirmDialog
         open={confirming}
-        title="Mark appointment completed?"
-        description={COMPLETE_CONFIRM_MESSAGE}
-        confirmLabel="Mark completed"
+        title={checkout ? ["Checkout", checkout.visitLabel].filter(Boolean).join(" · ") : "Mark appointment completed?"}
+        description={checkout?.choices
+          ? "Finish the visit to enable payment confirmation."
+          : COMPLETE_CONFIRM_MESSAGE}
+        confirmLabel={checkout ? "Finish visit" : "Mark completed"}
         busyLabel="Marking completed…"
         pending={pending}
         error={confirming ? error : null}
         onConfirm={handleConfirm}
         onCancel={handleCancel}
-      />
+      >
+        {confirming && checkout?.choices?.(pending)}
+      </ConfirmDialog>
     </div>
   );
 }

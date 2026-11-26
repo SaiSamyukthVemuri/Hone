@@ -106,12 +106,19 @@ export type SessionPaymentPresentation = {
 export function decideSessionPaymentPresentation(input: {
   attemptStatus: string | null;
   amountResult: SessionPaymentAmountResult | null;
+  settlementQuotedAmountCents?: number | null;
+  hasSettlement?: boolean;
   // Eligibility-driven, and independent of pricing. False whenever an attempt
   // is active, which is exactly why the explanations could not hang off it
   // alone: the reason vanished precisely when a blocked ready attempt showed.
   showPrepareForm: boolean;
 }): SessionPaymentPresentation {
-  const { attemptStatus, amountResult, showPrepareForm } = input;
+  const { attemptStatus, showPrepareForm } = input;
+  // Ineligible card checkout may have only the appointment’s verified quote. A
+  // known zero can establish a free visit. Missing or conflicting prices cannot.
+  const amountResult = input.amountResult ?? (input.settlementQuotedAmountCents === 0
+    ? { kind: "free" as const, serviceName: "This visit", durationMinutes: null }
+    : null);
 
   const isReady = attemptStatus === "ready";
   // `ready` is the only status carrying a money-moving control; pending_stripe
@@ -139,7 +146,7 @@ export function decideSessionPaymentPresentation(input: {
     // A settled or in-flight attempt is money that moved; never overwrite it
     // with "No payment required".
     freeNoticeServiceName:
-      amountResult?.kind === "free" && !settledOrInFlight
+      amountResult?.kind === "free" && !settledOrInFlight && !input.hasSettlement
         ? amountResult.serviceName
         : null,
     unavailableExplanationVisible: explain && amountResult === null,

@@ -33,7 +33,7 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: process.env.CI ? 1 : 0,
-  reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
+  reporter: process.env.CI ? [["list"], ["html", { open: "never" }], ["junit", { outputFile: `junit-results/playwright-${process.pid}.xml`, includeProjectInTestName: true }]] : "list",
   use: {
     baseURL: E2E_APP_ORIGIN,
     trace: "retain-on-failure",
@@ -59,6 +59,12 @@ export default defineConfig({
             // exercising it.
             use: { ...devices["Desktop Safari"], bypassCSP: true },
           },
+          // one complete MultiPlex visit on an emulated iPhone in WebKit (the engine behind iPhone Safari; NOT real Safari, NOT a real device).
+          {
+            name: "webkit-iphone-visit",
+            testMatch: /xcell-multiplex-visit\.spec\.ts$/,
+            use: { ...devices["iPhone 13"], bypassCSP: true },
+          },
           // CLN-006 mounted-keyboard and focus cases in WebKit (non-required
           // job only). Scoped by file AND by title so the rest of these two
           // specs, which Chromium already runs in full, is not repeated here.
@@ -76,7 +82,13 @@ export default defineConfig({
     // whenever Playwright writes artifacts, which Fast-Refreshes the
     // page mid-test and aborts in-flight server actions. A built
     // server is deterministic and matches what CI would run.
-    command: "npm run e2e:server",
+    // HONE_E2E_REUSE_BUILD=1 starts the build an EARLIER step of the same job
+    // already produced for this checkout instead of compiling it again. Only
+    // the CI native-3G step sets it (pinned in tests/ci/ci-config.test.ts): its
+    // server differs from the ordinary pass by one runtime-read variable, so
+    // the second `next build` (~100 s per shard) produced an identical build.
+    // With no .next present `next start` exits and the run fails loudly.
+    command: process.env.HONE_E2E_REUSE_BUILD === "1" ? "npm run start" : "npm run e2e:server",
     url: E2E_APP_ORIGIN,
     env: E2E_WEB_SERVER_ENV,
     // TEST-PORT-01. This was `!process.env.CI`, i.e. TRUE locally, which is how

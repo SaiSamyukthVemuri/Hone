@@ -25,6 +25,7 @@ import {
   normalizeProcedureRecordFilter,
   utcInstantsForLocalDayRange,
   FILTERED_PROCEDURE_RECORD_LIMIT,
+  UNFILTERED_PROCEDURE_RECORD_LIMIT,
 } from "@/lib/record-keeping/queries";
 import {
   isSupplyDiscarded,
@@ -78,13 +79,26 @@ import { RefreshRetryButton } from "./refresh-retry-button";
 // This is record keeping support, not a legal compliance guarantee.
 
 const SECTIONS = [
-  { key: "sterile", label: "Sterile Items" },
-  { key: "disinfectants", label: "Disinfectants" },
-  { key: "incidents", label: "Exposure Incidents" },
-  // PR #238 (Chloe pilot): friendlier section label; the printed
-  // document keeps its formal "Client Record for Invasive
-  // Procedures" title required for inspections.
-  { key: "procedures", label: "Procedure records" },
+  {
+    key: "sterile", label: "Sterile Items", add: "Log purchase",
+    description: "Purchased stock, expiry dates and the sessions linked to each lot.",
+    icon: "M3 7l9-5 9 5-9 5z M3 7v10l9 5 9-5V7 M12 12v10 M7 5l9 5",
+  },
+  {
+    key: "disinfectants", label: "Disinfectants", add: "Log batch",
+    description: "Prepared batches, replacement dates and disposal history.",
+    icon: "M8 3h8 M9 3v5l-5 9a2 2 0 0 0 2 3h12a2 2 0 0 0 2-3l-5-9V3 M7 14h10",
+  },
+  {
+    key: "incidents", label: "Exposure Incidents", add: "Report incident",
+    description: "Accidental blood or body fluid exposures reported in your studio.",
+    icon: "M12 3l8 3v6c0 4-4 8-8 10-4-2-8-6-8-10V6z M12 8v5 M12 16h.01",
+  },
+  {
+    key: "procedures", label: "Procedure records", add: null,
+    description: "Review recorded sessions or prepare a procedure record for one client.",
+    icon: "M8 4H5v17h14V4h-3 M9 3h6v4H9z M8 11h8 M8 15h6",
+  },
 ] as const;
 type SectionKey = (typeof SECTIONS)[number]["key"];
 
@@ -228,6 +242,8 @@ export default async function RecordKeepingPage({
   searchParams: Promise<{
     section?: string;
     lot?: string;
+    view?: string;
+    stock?: string;
     record?: string;
     clientId?: string;
     from?: string;
@@ -236,8 +252,11 @@ export default async function RecordKeepingPage({
 }) {
   const sp = await searchParams;
   const section: SectionKey = isSection(sp.section) ? sp.section : "sterile";
+  const book = SECTIONS.find((item) => item.key === section)!;
+  const adding = sp.view === "add" && book.add !== null;
   // PR #213: probe lot traceability search (exact normalized match).
   const lotSearch = normalizeLotSearch(sp.lot);
+  const tracingLot = section === "sterile" && Boolean(lotSearch) && !adding;
   // Measurement only (perf/route-timing-baseline).
   const { practitioner, studio } = await timed("records.identity", () =>
     requirePractitionerWithStudio(),
@@ -270,17 +289,21 @@ export default async function RecordKeepingPage({
         return SterileItemsSection({
           studioId: studio.id,
           lotSearch,
+          adding,
+          stock: sp.stock,
           timezone: studio.timezone,
         });
       case "disinfectants":
         return DisinfectantsSection({
           studioId: studio.id,
           focusRecordId: sp.record,
+          adding,
+          stock: sp.stock,
           currentPractitionerId: practitioner.id,
           timezone: studio.timezone,
         });
       case "incidents":
-        return ExposureIncidentsSection({ studioId: studio.id, isOwner });
+        return ExposureIncidentsSection({ studioId: studio.id, isOwner, adding });
       case "procedures":
         return ClientProcedureRecordsSection({
           studioId: studio.id,
@@ -291,63 +314,115 @@ export default async function RecordKeepingPage({
   });
 
   return (
-    <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-3xl font-semibold tracking-tight">
+    <div className="grid min-w-0 gap-6 lg:grid-cols-[12rem_minmax(0,1fr)] lg:gap-8">
+      <aside className="min-w-0 lg:border-r lg:border-line lg:pr-5">
+        <h1 className="mb-3 text-xl font-semibold tracking-tight lg:mb-6">
           Record Keeping
         </h1>
-        <p className="mt-1 text-sm text-neutral-500">
-          Health-inspection logbooks for {studio.name}. Records are visible to
-          your studio only.
-        </p>
+        <nav aria-label="Record keeping sections" className="grid grid-cols-2 gap-1 lg:grid-cols-1">
+          {SECTIONS.map((item) => (
+            <PendingLink
+              key={item.key}
+              href={`/records?section=${item.key}`}
+              pendingLabel="Loading section…"
+              aria-current={section === item.key ? "page" : undefined}
+              className={`flex min-h-11 items-center rounded-md px-3 py-2 text-sm focus-visible:outline-2 ${section === item.key
+                ? "bg-slate-100 font-semibold text-slate-800 dark:bg-slate-800 dark:text-slate-100"
+                : "text-fg-muted hover:bg-surface-sunken hover:text-fg"}`}
+            >
+              <span className="flex items-center gap-2">
+                <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="size-4 shrink-0">
+                  <path d={item.icon} />
+                </svg>
+                {item.label}
+              </span>
+            </PendingLink>
+          ))}
+        </nav>
+        <p className="mt-7 hidden border-t border-line pt-4 text-sm font-medium lg:block">{studio.name}</p>
+      </aside>
+      <div className="min-w-0 space-y-6">
+        <header className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
+            {adding && (
+              <PendingLink href={`/records?section=${section}`} className="mb-2 inline-flex min-h-11 items-center text-sm font-medium text-fg-muted hover:underline">
+                ← Back to {book.label.toLowerCase()}
+              </PendingLink>
+            )}
+            <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">{adding ? book.add : book.label}</h2>
+            {!adding && <p className="mt-2 max-w-prose text-sm text-fg-muted">{book.description}</p>}
+          </div>
+          {!adding && !tracingLot && (
+            <div className="flex flex-wrap gap-2 sm:ml-auto">
+              {(section !== "incidents" || isOwner) && (
+                <Link href={`/records/print?section=${section}${section === "procedures" ? procedureFilterQuery : ""}`} className={buttonClasses({ variant: "secondary" })}>
+                  Print / Export
+                </Link>
+              )}
+              {book.add && (
+                <PendingLink href={`/records?section=${section}&view=add`} className={buttonClasses({ variant: "primary" })}>
+                  <span aria-hidden="true">+ </span>{book.add}
+                </PendingLink>
+              )}
+            </div>
+          )}
+        </header>
+        {body.ok ? body.value : <SectionUnavailable />}
+        <p className="border-t border-line pt-3 text-xs text-fg-muted lg:hidden">{studio.name} · Studio records</p>
       </div>
+    </div>
+  );
+}
 
-      {/* PR #207: inspector-friendly print/export for the ACTIVE
-          section. Opens the protected print view; history is opt-in
-          there. */}
-      <nav className="flex flex-wrap gap-2" aria-label="Record keeping sections">
-        {SECTIONS.map((s) => (
-          <PendingLink
-            key={s.key}
-            href={`/records?section=${s.key}`}
-            pendingLabel="Loading section…"
-            aria-current={section === s.key ? "page" : undefined}
-            className={
-              section === s.key
-                ? "rounded-full bg-neutral-900 px-4 py-2 text-sm font-medium text-white dark:bg-white dark:text-neutral-900"
-                : "rounded-full border border-neutral-300 px-4 py-2 text-sm text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:text-neutral-300"
-            }
-          >
-            {s.label}
-          </PendingLink>
-        ))}
-        {/* UX-01 QW3. Hand-rolled bordered button at `py-2 text-sm` ≈ 36px,
-            below the 44px floor. `ml-auto` is preserved through `className`
-            because it is this control's LAYOUT role in the nav row — pushing
-            it to the trailing edge — and has nothing to do with its geometry. */}
-        <Link
-          href={`/records/print?section=${section}${section === "procedures" ? procedureFilterQuery : ""}`}
-          className={buttonClasses({ variant: "secondary", className: "ml-auto" })}
+function StockFilters({ section, currentLabel, stock }: {
+  section: "sterile" | "disinfectants";
+  currentLabel: string;
+  stock?: string;
+}) {
+  const selected = stock === "current" || stock === "discarded" ? stock : "";
+  return (
+    <nav aria-label="Stock status" className="inline-flex w-fit flex-wrap rounded-lg border border-line bg-surface-sunken p-1">
+      {([["", "All"], ["current", currentLabel], ["discarded", "Discarded"]] as const).map(([value, label]) => (
+        <PendingLink
+          key={value}
+          href={`/records?section=${section}${value ? `&stock=${value}` : ""}`}
+          aria-current={selected === value ? "page" : undefined}
+          className={`inline-flex min-h-11 items-center rounded-md px-3 text-sm pointer-fine:min-h-9 ${selected === value ? "bg-surface font-semibold text-fg shadow-sm" : "text-fg-muted hover:text-fg"}`}
         >
-          Print / Export
-        </Link>
-      </nav>
+          {label}
+        </PendingLink>
+      ))}
+    </nav>
+  );
+}
 
-      {body.ok ? (
-        body.value
-      ) : (
-        <SectionUnavailable />
-      )}
+function stockMatches(discarded: boolean, stock?: string) {
+  if (stock === "current") return !discarded;
+  if (stock === "discarded") return discarded;
+  return true;
+}
+
+const sterileColumns = "lg:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,.85fr)]";
+const batchColumns = "lg:grid-cols-[minmax(0,1.45fr)_minmax(0,.95fr)_minmax(0,1fr)_minmax(0,.95fr)_minmax(0,1.1fr)_minmax(0,.65fr)]";
+
+function RegisterColumns({ columns, labels }: { columns: string; labels: string[] }) {
+  return (
+    <div aria-hidden="true" className={`hidden gap-3 border-b border-line bg-surface-sunken px-4 py-3 text-xs font-semibold text-fg-muted lg:grid ${columns}`}>
+      {labels.map((label) => <span key={label}>{label}</span>)}
     </div>
   );
 }
 
 async function SterileItemsSection({
   studioId,
+  adding = false,
+  stock,
   lotSearch,
   timezone,
 }: {
   studioId: string;
+  adding?: boolean;
+  stock?: string;
   lotSearch: string | null;
   timezone: string;
 }) {
@@ -356,83 +431,11 @@ async function SterileItemsSection({
   // one request records one of them.
   const domain = startPerfSpan("records.domain");
   const records = await getSterileItemRecords(studioId);
-  // PR #316: expiry states for row styling + the summary banner (studio-local
-  // "today"). Display-only over the existing expiry_date column.
-  const today = todayInTz(timezone);
-  const expirySummary = summarizeSupplyExpiry(records, today);
-  // PR #213: traceability for the searched/selected lot.
-  // RECORDS-SECTION-RECOVERY: the lot search is optional, so its failure is
-  // its own panel. The sterile records above were read separately and still
-  // render; if THAT read fails, the whole section shows the page's panel.
-  const trace = lotSearch
-    ? await recoverRecordsRead("records", "sterile_lot_search", () =>
-        getLotTraceability(studioId, lotSearch),
-      )
-    : null;
-  const audit = await getAuditEventsByRecord(
-    studioId,
-    "sterile_item",
-    records.map((r) => r.id),
-  );
-  domain.end();
-  return (
-    <div className="flex flex-col gap-5">
-      {/* PR #213: probe lot traceability. Search a lot number (exact
-          normalized match; trim + case-insensitive; never fuzzy) or
-          tap Trace usage on a record below. Traceability only; never
-          implies causation or any conclusion about a lot. */}
-      <section className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
-        <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
-          Lot traceability
-        </h2>
-        <form method="get" action="/records" className="flex flex-wrap items-end gap-2">
-          <input type="hidden" name="section" value="sterile" />
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] uppercase tracking-wider text-neutral-500">
-              Search lot number
-            </span>
-            <input
-              type="text"
-              name="lot"
-              defaultValue={lotSearch ?? ""}
-              placeholder="Enter lot number, for example 460941"
-              className="w-72 max-w-full rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
-            />
-          </label>
-          <button
-            type="submit"
-            className="rounded-md bg-neutral-900 px-5 py-3 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
-          >
-            Trace usage
-          </button>
-        </form>
-        {!trace || (trace.ok && !trace.value) ? (
-          <p className="text-xs text-neutral-500">
-            Search a lot number or choose a Sterile Item record to see where
-            it was used.
-          </p>
-        ) : trace.ok && trace.value ? (
-          <LotTraceabilityPanel trace={trace.value} />
-        ) : (
-          <p
-            role="alert"
-            data-testid="records-lot-search-unavailable"
-            className="text-xs text-amber-700 dark:text-amber-500"
-          >
-            Lot search unavailable. The usage of this lot could not be read;
-            this does not mean the lot was never used. Search again to retry.
-          </p>
-        )}
-      </section>
-
-      <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
-        <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
-          Add sterile item purchase
-        </h2>
-        <p className="mb-4 mt-1 text-xs text-neutral-500">
-          Commercially purchased prepackaged and sterile items, e.g. a box of
-          probes. Record the lot number and expiry from the packaging.
-        </p>
+  if (adding) {
+    domain.end();
+    return (
+      <section className="rounded-xl border border-line p-4 sm:p-6">
+        <p className="mb-5 text-sm text-fg-muted">Enter the purchase details and the lot and expiry shown on the packaging.</p>
         <AddSterileItemForm
           action={addSterileItemRecordAction}
           lastRecord={
@@ -453,136 +456,157 @@ async function SterileItemsSection({
           }
         />
       </section>
-      <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-medium">
-          Sterile item records{" "}
-          <span className="text-sm font-normal text-neutral-500">
-            ({records.length})
-          </span>
-        </h2>
-        {(expirySummary.expired > 0 || expirySummary.expiring > 0) && (
-          <p
-            className={`rounded-lg border px-4 py-3 text-sm font-medium ${
-              expirySummary.expired > 0
-                ? "border-red-300 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200"
-                : "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
-            }`}
-            role="status"
+    );
+  }
+  const visible = records.filter((r) => stockMatches(isSupplyDiscarded(r.date_discarded), stock));
+  // PR #316: expiry states for row styling + the summary banner (studio-local
+  // "today"). Display-only over the existing expiry_date column.
+  const today = todayInTz(timezone);
+  const expirySummary = summarizeSupplyExpiry(records, today);
+  // PR #213: traceability for the searched/selected lot.
+  // RECORDS-SECTION-RECOVERY: the lot search is optional, so its failure is
+  // its own panel. The sterile records above were read separately and still
+  // render; if THAT read fails, the whole section shows the page's panel.
+  const trace = lotSearch
+    ? await recoverRecordsRead("records", "sterile_lot_search", () =>
+        getLotTraceability(studioId, lotSearch),
+      )
+    : null;
+  const stockQuery = stock === "current" || stock === "discarded" ? `&stock=${stock}` : "";
+  if (trace?.ok && trace.value) {
+    domain.end();
+    return (
+      <section className="space-y-3">
+        <PendingLink href={`/records?section=sterile${stockQuery}`} className="inline-flex min-h-11 items-center text-sm font-medium text-fg-muted hover:underline">
+          ← Back to purchase log
+        </PendingLink>
+        <LotTraceabilityPanel trace={trace.value} />
+      </section>
+    );
+  }
+  const audit = await getAuditEventsByRecord(
+    studioId,
+    "sterile_item",
+    records.map((r) => r.id),
+  );
+  domain.end();
+  return (
+    <div className="flex flex-col gap-5">
+      {/* PR #213: probe lot traceability. Search a lot number (exact
+          normalized match; trim + case-insensitive; never fuzzy) or
+          tap Trace usage on a record below. Traceability only; never
+          implies causation or any conclusion about a lot. */}
+      <section className="space-y-3 rounded-xl border border-line bg-surface-sunken p-4 sm:p-5">
+        <h3 className="text-base font-semibold">Trace a lot</h3>
+        <form method="get" action="/records" className="flex flex-wrap items-end gap-2">
+          <input type="hidden" name="section" value="sterile" />
+          {stockQuery && <input type="hidden" name="stock" value={stock} />}
+          <label className="flex min-w-0 max-w-full flex-col gap-1">
+            <span className="text-[11px] uppercase tracking-wider text-neutral-500">
+              Search lot number
+            </span>
+            <input
+              type="text"
+              name="lot"
+              defaultValue={lotSearch ?? ""}
+              placeholder="Enter lot number, for example 460941"
+              className="min-w-0 w-72 max-w-full rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
+            />
+          </label>
+          <button
+            type="submit"
+            className="rounded-md bg-neutral-900 px-5 py-3 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
           >
-            {expirySummary.expired > 0 &&
-              `${expirySummary.expired} expired`}
-            {expirySummary.expired > 0 && expirySummary.expiring > 0 && " · "}
-            {expirySummary.expiring > 0 &&
-              `${expirySummary.expiring} expiring within 30 days`}
-          </p>
-        )}
-        {records.length === 0 ? (
-          <p className="rounded-lg border border-dashed border-neutral-300 px-5 py-8 text-sm text-neutral-500 dark:border-neutral-700">
-            No sterile item records yet.
+            Trace usage
+          </button>
+        </form>
+        {!trace || (trace.ok && !trace.value) ? (
+          <p className="text-xs text-neutral-500">
+            Search a lot number or choose a Sterile Item record to see where
+            it was used.
           </p>
         ) : (
-          <ul className="flex flex-col divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
-            {records.map((r) => {
-              // Migration 0182. A discarded item STAYS IN THIS LIST — this is
-              // the historical record-keeping log and nothing may disappear
-              // from it. What changes is that it stops shouting: the expiry
-              // state is suppressed, so no red "Expired" badge and no red row
-              // for stock that is already in the bin. It carries a neutral
-              // "Discarded" badge instead, which is the honest reading of the
-              // row and the answer to "does Hone think I'm still using these?".
-              const discarded = isSupplyDiscarded(r.date_discarded);
-              const expiry = discarded
-                ? "neutral"
-                : supplyExpiryState(r.expiry_date, today);
-              const expiryLabel = supplyExpiryLabel(expiry);
-              const rowCls =
-                expiry === "expired"
-                  ? "bg-red-50 dark:bg-red-950/30"
-                  : expiry === "today" || expiry === "expiring"
-                    ? "bg-amber-50 dark:bg-amber-950/20"
-                    : "";
-              const badgeCls =
-                expiry === "expired"
-                  ? "bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-200"
-                  : "bg-amber-100 text-amber-900 dark:bg-amber-900/50 dark:text-amber-200";
-              return (
-              <li key={r.id} className={`flex flex-col gap-1 p-4 text-sm ${rowCls}`}>
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <span className="flex items-baseline gap-2">
-                    <span className="font-medium">{r.item_description}</span>
-                    {expiryLabel && (
-                      <span
-                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${badgeCls}`}
-                      >
-                        {expiryLabel}
-                      </span>
-                    )}
-                    {/* 0182: neutral, not alarming. "Discarded" is a completed
-                        action, not an outstanding task. */}
-                    {discarded && (
-                      <span className="inline-flex items-center rounded-full bg-neutral-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
-                        Discarded
-                      </span>
-                    )}
-                  </span>
-                  <span className="flex items-baseline gap-3 text-xs text-neutral-500">
-                    <span>Purchased {dateOnly(r.date_purchased)}</span>
-                    {r.lot_number && (
-                      <Link
-                        href={`/records?section=sterile&lot=${encodeURIComponent(r.lot_number)}`}
-                        className="font-medium text-neutral-700 hover:underline dark:text-neutral-300"
-                      >
-                        Trace usage
-                      </Link>
-                    )}
-                  </span>
-                </div>
-                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-600 dark:text-neutral-400">
-                  <span>
-                    Lot #:{" "}
-                    <span className="font-medium text-neutral-900 dark:text-neutral-100">
-                      {r.lot_number || "Not recorded"}
-                    </span>
-                  </span>
-                  <span>
-                    Expiry:{" "}
-                    <span className="font-medium text-neutral-900 dark:text-neutral-100">
-                      {dateOnly(r.expiry_date) ?? "Not recorded"}
-                    </span>
-                  </span>
-                  {/* 0182: the discard date is part of the inspection record. */}
-                  {discarded && (
-                    <span>
-                      Discarded:{" "}
-                      <span className="font-medium text-neutral-900 dark:text-neutral-100">
-                        {dateOnly(r.date_discarded) ?? "Not recorded"}
-                      </span>
-                    </span>
-                  )}
-                  {r.manufacturer_name && (
-                    <span>Manufacturer: {r.manufacturer_name}</span>
-                  )}
-                  {r.amount_purchased && (
-                    <span>Amount: {r.amount_purchased}</span>
-                  )}
-                </div>
-                {r.notes && (
-                  <p className="text-xs text-neutral-500">{r.notes}</p>
-                )}
-                <RowTools
-                  editForm={
-                    <EditSterileItemForm
-                      record={r}
-                      action={updateSterileItemRecordAction}
-                    />
-                  }
-                  events={audit.byRecord.get(r.id)}
-                  historyUnavailable={audit.unavailableRecordIds.has(r.id)}
-                />
-              </li>
-              );
-            })}
-          </ul>
+          <p
+            role="alert"
+            data-testid="records-lot-search-unavailable"
+            className="text-xs text-amber-700 dark:text-amber-500"
+          >
+            Lot search unavailable. The usage of this lot could not be read;
+            this does not mean the lot was never used. Search again to retry.
+          </p>
+        )}
+      </section>
+
+      <section className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 className="text-lg font-semibold">
+            Purchase log <span className="sr-only">— Sterile item records</span>
+            <span className="ml-1 text-sm font-normal text-fg-muted">{visible.length} {visible.length === 1 ? "record" : "records"}</span>
+          </h3>
+          <StockFilters section="sterile" currentLabel="In stock" stock={stock} />
+        </div>
+        {records.length >= 200 && <p className="text-xs text-fg-muted">Showing matches in the latest 200 purchases.</p>}
+        {stock !== "discarded" && (expirySummary.expired > 0 || expirySummary.expiring > 0) && (
+          <p role="status" className={`rounded-lg border px-4 py-3 text-sm font-medium ${expirySummary.expired ? "border-red-200 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200" : "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200"}`}>
+            {expirySummary.expired > 0 && `${expirySummary.expired} expired`}
+            {expirySummary.expired > 0 && expirySummary.expiring > 0 && " · "}
+            {expirySummary.expiring > 0 && `${expirySummary.expiring} expiring within 30 days`}
+          </p>
+        )}
+        {visible.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-line px-5 py-8 text-sm text-fg-muted">
+            {records.length ? "No purchases match this stock filter." : "No sterile item records yet."}
+          </p>
+        ) : (
+          <div className="overflow-hidden rounded-xl border border-line">
+            <RegisterColumns columns={sterileColumns} labels={["Item / manufacturer", "Lot number", "Purchased", "Expiry", "Status", ""]} />
+            <ul className="divide-y divide-line">
+              {visible.map((r) => {
+                const discarded = isSupplyDiscarded(r.date_discarded);
+                const expiry = discarded ? "neutral" : supplyExpiryState(r.expiry_date, today);
+                const expiryLabel = supplyExpiryLabel(expiry);
+                const rowCls = expiry === "expired" ? "bg-red-50 dark:bg-red-950/30"
+                  : expiry === "today" || expiry === "expiring" ? "bg-amber-50 dark:bg-amber-950/20" : "";
+                const badgeCls = expiry === "expired" ? "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200"
+                  : "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200";
+                return (
+                  <li key={r.id} className={rowCls}>
+                    <details className="group">
+                      <summary className={`grid cursor-pointer list-none grid-cols-2 items-start gap-x-3 gap-y-2 px-4 py-4 text-sm [overflow-wrap:anywhere] hover:bg-surface-sunken lg:items-center [&::-webkit-details-marker]:hidden ${sterileColumns}`}>
+                        <span className="col-span-2 lg:col-span-1">
+                          <strong className="font-semibold">{r.item_description}</strong>
+                          {r.manufacturer_name && <span className="block text-xs text-fg-muted">{r.manufacturer_name}</span>}
+                        </span>
+                        <span><span className="text-fg-muted lg:sr-only">Lot #: </span><span className="font-mono">{r.lot_number || "Not recorded"}</span></span>
+                        <span><span className="text-fg-muted lg:sr-only">Purchased: </span>{dateOnly(r.date_purchased)}</span>
+                        <span><span className="text-fg-muted lg:sr-only">Expiry: </span>{dateOnly(r.expiry_date) ?? "Not recorded"}</span>
+                        <span>
+                          {expiryLabel ? <span className={`rounded px-2 py-1 text-xs font-medium ${badgeCls}`}>{expiryLabel}</span>
+                            : <span className="rounded bg-surface-sunken px-2 py-1 text-xs font-medium">{discarded ? "Discarded" : "In stock"}</span>}
+                        </span>
+                        <span className="flex flex-col items-start gap-1 text-xs font-medium">
+                          {r.lot_number && (
+                            <Link href={`/records?section=sterile&lot=${encodeURIComponent(r.lot_number)}${stockQuery}`} className="inline-flex min-h-11 items-center underline underline-offset-4 pointer-fine:min-h-8">Trace usage</Link>
+                          )}
+                          <span className="inline-flex min-h-7 items-center text-fg-muted">Details <span aria-hidden="true" className="ml-1 group-open:rotate-90">›</span></span>
+                        </span>
+                      </summary>
+                      <div className="space-y-2 border-t border-line bg-surface-sunken px-4 py-4 text-sm">
+                        {discarded && <p>Discarded: {dateOnly(r.date_discarded)}</p>}
+                        {r.amount_purchased && <p>Amount purchased: {r.amount_purchased}</p>}
+                        {r.notes && <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{r.notes}</p>}
+                        <RowTools
+                          editForm={<EditSterileItemForm record={r} action={updateSterileItemRecordAction} />}
+                          events={audit.byRecord.get(r.id)}
+                          historyUnavailable={audit.unavailableRecordIds.has(r.id)}
+                        />
+                      </div>
+                    </details>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
         )}
       </section>
     </div>
@@ -591,17 +615,34 @@ async function SterileItemsSection({
 
 async function DisinfectantsSection({
   studioId,
+  adding = false,
+  stock,
   focusRecordId,
   currentPractitionerId,
   timezone,
 }: {
   studioId: string;
+  adding?: boolean;
+  stock?: string;
   // HON-12: the record the overdue notice points at (opened for editing).
   focusRecordId?: string;
   currentPractitionerId: string;
   timezone: string;
 }) {
   const domain = startPerfSpan("records.domain");
+  const staff = (await getPractitionersForStudio(studioId)).map((p) => ({
+    id: p.id,
+    name: p.display_name?.trim() || p.email,
+  }));
+  if (adding) {
+    domain.end();
+    return (
+      <section className="rounded-xl border border-line p-4 sm:p-6">
+        <p className="mb-5 text-sm text-fg-muted">Record the preparation and replacement dates. Add the actual discard date when the batch is discarded.</p>
+        <AddDisinfectantForm action={addDisinfectantRecordAction} staff={staff} currentPractitionerId={currentPractitionerId} />
+      </section>
+    );
+  }
   const newest = await getDisinfectantRecords(studioId);
   // The notice's record can be older than the newest 200 rows: fetch that ONE
   // record (studio-scoped, RLS client) and place it first. Compare-only; an
@@ -621,170 +662,125 @@ async function DisinfectantsSection({
   );
   // PR #280: same-studio staff for the operator dropdown; studio-local "today"
   // for the read-time discard due/overdue alerts.
-  const staff = (await getPractitionersForStudio(studioId)).map((p) => ({
-    id: p.id,
-    name: p.display_name?.trim() || p.email,
-  }));
   const today = todayInTz(timezone);
   const focusId = resolveFocusedDisinfectantId(
     focusRecordId,
     records.map((r) => r.id),
   );
+  const activeFilter = focusId ? undefined : stock;
+  const visible = records.filter((r) => stockMatches(Boolean(r.date_discarded), activeFilter));
+  const nextDue = records.filter((r) => isDisinfectantAlert(disinfectantDueStatus(r, today)))
+    .sort((a, b) => a.discard_due_date!.localeCompare(b.discard_due_date!))[0];
   domain.end();
   return (
-    <div className="flex flex-col gap-5">
-      <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
-        <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
-          Add disinfectant record
-        </h2>
-        <p className="mb-4 mt-1 text-xs text-neutral-500">
-          Disinfectants prepared for use, their concentration, when each batch
-          must be replaced by, and when it was actually discarded.
+    <section className="space-y-5">
+      {nextDue && activeFilter !== "discarded" && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+          <div>
+            <h3 className="font-semibold">{disinfectantDueStatus(nextDue, today) === "due_soon" ? "Upcoming batch replacement" : "Batch needs replacement"}</h3>
+            <p className="mt-1 text-sm">{nextDue.disinfectant_name} · Replace by {dateOnly(nextDue.discard_due_date)}</p>
+          </div>
+          <PendingLink href={`/records?section=disinfectants&record=${encodeURIComponent(nextDue.id)}#${disinfectantRecordAnchor(nextDue.id)}`} className="inline-flex min-h-11 items-center text-sm font-semibold underline underline-offset-4">Review batch</PendingLink>
+        </div>
+      )}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 className="text-lg font-semibold">Batch log <span className="ml-1 text-sm font-normal text-fg-muted">{visible.length} {visible.length === 1 ? "record" : "records"}</span></h3>
+        <StockFilters section="disinfectants" currentLabel="In use" stock={activeFilter} />
+      </div>
+      {newest.length >= 200 && <p className="text-xs text-fg-muted">Showing matches in the latest 200 batches{records.length > newest.length ? " plus the requested batch" : ""}.</p>}
+      {visible.length === 0 ? (
+        <p className="rounded-xl border border-dashed border-line px-5 py-8 text-sm text-fg-muted">
+          {records.length ? "No batches match this stock filter." : "No disinfectant records yet."}
         </p>
-        <AddDisinfectantForm
-          action={addDisinfectantRecordAction}
-          staff={staff}
-          currentPractitionerId={currentPractitionerId}
-        />
-      </section>
-      <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-medium">
-          Disinfectant records{" "}
-          <span className="text-sm font-normal text-neutral-500">
-            ({records.length})
-          </span>
-        </h2>
-        {records.length === 0 ? (
-          <p className="rounded-lg border border-dashed border-neutral-300 px-5 py-8 text-sm text-neutral-500 dark:border-neutral-700">
-            No disinfectant records yet.
-          </p>
-        ) : (
-          <ul className="flex flex-col divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
-            {records.map((r) => {
-              // PR #280: read-time due/overdue status (no cron/notification).
+      ) : (
+        <div className="overflow-hidden rounded-xl border border-line">
+          <RegisterColumns columns={batchColumns} labels={["Disinfectant", "Prepared", "Replace by", "Discarded", "Operator", ""]} />
+          <ul className="divide-y divide-line">
+            {visible.map((r) => {
               const status = disinfectantDueStatus(r, today);
               const alert = isDisinfectantAlert(status);
               return (
-              <li
-                key={r.id}
-                id={disinfectantRecordAnchor(r.id)}
-                className={`flex scroll-mt-20 flex-col gap-1 p-4 text-sm ${r.id === focusId ? "bg-amber-50/60 dark:bg-amber-950/20" : ""}`}
-              >
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <span className="font-medium">
-                    {r.disinfectant_name}
-                    {r.concentration && (
-                      <span className="font-normal text-neutral-500">
-                        {" "}
-                        · {r.concentration}
+                <li key={r.id} id={disinfectantRecordAnchor(r.id)} className="scroll-mt-24">
+                  <details open={r.id === focusId} className="group">
+                    <summary className={`grid cursor-pointer list-none grid-cols-2 items-start gap-x-3 gap-y-2 px-4 py-4 text-sm [overflow-wrap:anywhere] hover:bg-surface-sunken lg:items-center [&::-webkit-details-marker]:hidden ${batchColumns}`}>
+                      <span className="col-span-2 lg:col-span-1"><strong className="font-semibold">{r.disinfectant_name}</strong>{r.concentration && <span className="block text-xs text-fg-muted">{r.concentration}</span>}</span>
+                      <span><span className="text-fg-muted lg:sr-only">Prepared: </span>{dateOnly(r.date_prepared)}</span>
+                      <span><span className="text-fg-muted lg:sr-only">Replace by: </span>{dateOnly(r.discard_due_date) ?? "Not set"}
+                        {alert && <span role="status" className={`mt-1 block w-fit rounded px-1.5 py-0.5 text-xs font-medium ${status === "overdue" ? "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200" : "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200"}`}>{disinfectantStatusLabel(status)}</span>}
                       </span>
-                    )}
-                    {alert && (
-                      <span
-                        role="status"
-                        className={
-                          status === "overdue"
-                            ? "ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800 dark:bg-red-950/50 dark:text-red-300"
-                            : "ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900 dark:bg-amber-950/50 dark:text-amber-300"
-                        }
-                      >
-                        {disinfectantStatusLabel(status)}
-                      </span>
-                    )}
-                  </span>
-                  <span className="text-xs text-neutral-500">
-                    Operator: {r.operator_name || "Not recorded"}
-                  </span>
-                </div>
-                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-600 dark:text-neutral-400">
-                  <span>
-                    Prepared:{" "}
-                    <span className="font-medium text-neutral-900 dark:text-neutral-100">
-                      {dateOnly(r.date_prepared)}
-                    </span>
-                  </span>
-                  {/* PR #280: the three distinct dates, clearly separated. */}
-                  <span>
-                    Replace by:{" "}
-                    <span className="font-medium text-neutral-900 dark:text-neutral-100">
-                      {dateOnly(r.discard_due_date) ?? "Not set"}
-                    </span>
-                  </span>
-                  <span>
-                    Discarded:{" "}
-                    <span className="font-medium text-neutral-900 dark:text-neutral-100">
-                      {dateOnly(r.date_discarded) ?? "In use"}
-                    </span>
-                  </span>
-                </div>
-                {r.notes && (
-                  <p className="text-xs text-neutral-500">{r.notes}</p>
-                )}
-                <RowTools
-                  editOpen={r.id === focusId}
-                  editForm={
-                    <EditDisinfectantForm
-                      record={r}
-                      action={updateDisinfectantRecordAction}
-                      staff={staff}
-                      currentPractitionerId={currentPractitionerId}
-                    />
-                  }
-                  events={audit.byRecord.get(r.id)}
-                  historyUnavailable={audit.unavailableRecordIds.has(r.id)}
-                />
-              </li>
+                      <span><span className="text-fg-muted lg:sr-only">Discarded: </span>{dateOnly(r.date_discarded) ?? "In use"}</span>
+                      <span><span className="text-fg-muted lg:sr-only">Operator: </span>{r.operator_name || "Not recorded"}</span>
+                      <span className="text-xs font-medium text-fg-muted">Details <span aria-hidden="true" className="inline-block group-open:rotate-90">›</span></span>
+                    </summary>
+                    <div className="space-y-2 border-t border-line bg-surface-sunken px-4 py-4 text-sm">
+                      {r.notes && <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{r.notes}</p>}
+                      <RowTools
+                        editOpen={r.id === focusId}
+                        editForm={<EditDisinfectantForm record={r} action={updateDisinfectantRecordAction} staff={staff} currentPractitionerId={currentPractitionerId} />}
+                        events={audit.byRecord.get(r.id)}
+                        historyUnavailable={audit.unavailableRecordIds.has(r.id)}
+                      />
+                    </div>
+                  </details>
+                </li>
               );
             })}
           </ul>
-        )}
-      </section>
-    </div>
+        </div>
+      )}
+    </section>
   );
 }
 
 async function ExposureIncidentsSection({
   studioId,
   isOwner,
+  adding,
 }: {
   studioId: string;
   isOwner: boolean;
+  adding: boolean;
 }) {
   const domain = startPerfSpan("records.domain");
-  // Non-owners get no list query: RLS (migration 0088) would return
-  // zero rows anyway, but skipping the read keeps the UI honest (an
-  // owner-only note instead of a misleading "no incidents" state).
-  const records = isOwner ? await getExposureIncidentRecords(studioId) : [];
-  const audit = await getAuditEventsByRecord(
-    studioId,
-    "exposure_incident",
-    records.map((r) => r.id),
-  );
-  // PR #280: same-studio clients + staff for the exposed-person selector +
-  // autofill. Both lists are member-readable, so any member filing an incident
-  // can use them; they only pre-fill the existing free-text fields (no FK
-  // stored), so the owner-only read posture is unchanged.
-  const clients = (await getClientsForStudio(studioId)).map((c) => ({
+  // Reporting is available to studio members. Only the owner may read reports.
+  const records = isOwner && !adding ? await getExposureIncidentRecords(studioId) : [];
+  if (!adding && records.length === 0) {
+    domain.end();
+    return (
+      <section className="rounded-xl border border-neutral-200 px-5 py-9 dark:border-neutral-800">
+        <h3 className="text-base font-semibold">
+          {isOwner ? "No exposure incidents recorded." : "Exposure incident history is owner-only."}
+        </h3>
+        <p className="mt-2 text-sm text-fg-muted">
+          {isOwner
+            ? "Reports you and your team submit will appear here."
+            : "You can still report an accidental blood or body fluid exposure."}
+        </p>
+      </section>
+    );
+  }
+
+  // The creation and owner edit forms both use same-studio contact pickers.
+  const [clientRows, practitionerRows] = await Promise.all([
+    getClientsForStudio(studioId),
+    getPractitionersForStudio(studioId),
+  ]);
+  const clients = clientRows.map((c) => ({
     id: c.id,
     name: c.name,
     phone: c.phone ?? "",
     address: c.address ?? "",
   }));
-  const staff = (await getPractitionersForStudio(studioId)).map((p) => ({
+  const staff = practitionerRows.map((p) => ({
     id: p.id,
     name: p.display_name?.trim() || p.email,
   }));
-  domain.end();
-  return (
-    <div className="flex flex-col gap-5">
-      <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
-        <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
-          Add exposure incident
-        </h2>
-        <p className="mb-4 mt-1 text-xs text-neutral-500">
-          Accidental blood or body fluid exposures. This record contains
-          sensitive personal information; the incident history is visible to
-          the studio owner only.
+  if (adding) {
+    domain.end();
+    return (
+      <section aria-label="Incident report">
+        <p className="mb-5 rounded-lg bg-neutral-50 px-4 py-3 text-sm text-fg-muted dark:bg-neutral-900">
+          This report contains personal information. Only the studio owner can review incident history.
         </p>
         <AddExposureIncidentForm
           action={addExposureIncidentRecordAction}
@@ -792,60 +788,37 @@ async function ExposureIncidentsSection({
           staff={staff}
         />
       </section>
-      {!isOwner ? (
-        <section className="flex flex-col gap-3">
-          <h2 className="text-lg font-medium">Exposure incident records</h2>
-          <p className="rounded-lg border border-dashed border-neutral-300 px-5 py-8 text-sm text-neutral-500 dark:border-neutral-700">
-            Exposure incident history is owner-only. You can still report a
-            new incident above.
-          </p>
-        </section>
-      ) : (
-      <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-medium">
-          Exposure incident records{" "}
-          <span className="text-sm font-normal text-neutral-500">
-            ({records.length})
-          </span>
-        </h2>
-        {records.length === 0 ? (
-          <p className="rounded-lg border border-dashed border-neutral-300 px-5 py-8 text-sm text-neutral-500 dark:border-neutral-700">
-            No exposure incidents recorded.
-          </p>
-        ) : (
-          <ul className="flex flex-col divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
-            {records.map((r) => (
-              <li key={r.id} className="flex flex-col gap-1 p-4 text-sm">
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <span className="font-medium">
-                    {r.exposed_person_full_name}
-                  </span>
-                  <span className="text-xs text-neutral-500">
-                    {dateOnly(r.incident_date)}
-                  </span>
-                </div>
-                <div className="flex flex-col gap-1 text-xs text-neutral-600 dark:text-neutral-400">
-                  {r.exposure_details && (
-                    <p>
-                      <span className="font-medium">Exposure:</span>{" "}
-                      {r.exposure_details}
-                    </p>
-                  )}
-                  {r.action_taken && (
-                    <p>
-                      <span className="font-medium">Action taken:</span>{" "}
-                      {r.action_taken}
-                    </p>
-                  )}
-                  <p>
-                    Contact: {r.exposed_person_phone || "Not recorded"}
-                    {r.exposed_person_address && ` · ${r.exposed_person_address}`}
-                  </p>
-                  <p>Staff involved: {r.staff_involved_name || "Not recorded"}</p>
-                </div>
-                {r.notes && (
-                  <p className="text-xs text-neutral-500">{r.notes}</p>
-                )}
+    );
+  }
+
+  const audit = await getAuditEventsByRecord(
+    studioId,
+    "exposure_incident",
+    records.map((r) => r.id),
+  );
+  domain.end();
+  return (
+    <section className="flex flex-col gap-3">
+      <h3 className="text-base font-semibold">
+        Incident history <span className="font-normal text-fg-muted">({records.length})</span>
+      </h3>
+      <ul className="flex flex-col divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
+        {records.map((r) => (
+          <li key={r.id}>
+            <details>
+              <summary className="cursor-pointer rounded-md px-4 py-4 text-sm hover:bg-neutral-50 focus-visible:outline-offset-[-2px] sm:px-5 dark:hover:bg-neutral-900">
+                <span className="ms-1 break-words font-medium">{r.exposed_person_full_name}</span>
+                <span className="ms-3 whitespace-nowrap text-fg-muted">{dateOnly(r.incident_date)}</span>
+              </summary>
+              <div className="space-y-4 border-t border-neutral-200 px-4 py-4 sm:px-5 dark:border-neutral-800">
+                <dl className="grid min-w-0 gap-4 text-sm sm:grid-cols-2 [&_dd]:mt-1 [&_dd]:break-words [&_dt]:font-medium">
+                  <div><dt>How the exposure occurred</dt><dd>{r.exposure_details || "Not recorded"}</dd></div>
+                  <div><dt>Action taken</dt><dd>{r.action_taken || "Not recorded"}</dd></div>
+                  <div><dt>Phone</dt><dd>{r.exposed_person_phone || "Not recorded"}</dd></div>
+                  <div><dt>Address</dt><dd>{r.exposed_person_address || "Not recorded"}</dd></div>
+                  <div><dt>Staff involved</dt><dd>{r.staff_involved_name || "Not recorded"}</dd></div>
+                  {r.notes && <div className="sm:col-span-2"><dt>Notes</dt><dd>{r.notes}</dd></div>}
+                </dl>
                 <RowTools
                   editForm={
                     <EditExposureIncidentForm
@@ -858,13 +831,12 @@ async function ExposureIncidentsSection({
                   events={audit.byRecord.get(r.id)}
                   historyUnavailable={audit.unavailableRecordIds.has(r.id)}
                 />
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-      )}
-    </div>
+              </div>
+            </details>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
@@ -897,42 +869,25 @@ async function ClientProcedureRecordsSection({
     records.map((r) => r.sessionId),
   );
   const filterActive = Boolean(filter.clientId || filter.from || filter.to);
+  const registerColumns = "md:grid md:grid-cols-[1.1fr_1fr_1fr_minmax(6rem,.8fr)_6.5rem] md:items-center";
+  const filterField = "min-h-11 w-full min-w-0 rounded-md border border-neutral-300 bg-white px-3 text-base dark:border-neutral-700 dark:bg-neutral-900 sm:text-sm";
   domain.end();
   return (
-    <div className="flex flex-col gap-3">
-      <div>
-        <h2 className="text-lg font-medium">Procedure records</h2>
-        <p className="mt-1 text-xs text-neutral-500">
-          Generated from your existing client and session records. Missing
-          information shows as Not recorded; add it on the client or session
-          page.
-        </p>
-        {/* PR #238 (Chloe pilot): say what the filter is FOR before
-            showing the controls. */}
-        <p className="mt-1 text-xs text-neutral-500">
-          Use this when you need a procedure record for one client: choose the
-          client below, then use Print / Export to print this client&apos;s
-          procedure record.
-        </p>
-      </div>
-
-      {/* PR #223: per-client filter for inspection/transfer pulls. A
-          plain GET form so the URL stays shareable with the print
-          view; no client-side JS required. */}
+    <div className="flex min-w-0 flex-col gap-4">
       <form
         method="get"
         action="/records"
-        className="flex flex-wrap items-end gap-3 rounded-lg border border-neutral-200 p-4 text-sm dark:border-neutral-800"
+        className="grid min-w-0 gap-3 rounded-lg border border-neutral-200 p-4 sm:grid-cols-2 lg:grid-cols-[minmax(9rem,1.5fr)_minmax(7rem,1fr)_minmax(7rem,1fr)_auto] lg:items-end dark:border-neutral-800"
       >
         <input type="hidden" name="section" value="procedures" />
-        <label className="flex flex-col gap-1 text-xs">
+        <label className="flex min-w-0 flex-col gap-1 text-sm">
           <span className="font-medium text-neutral-600 dark:text-neutral-400">
             Choose a client
           </span>
           <select
             name="clientId"
             defaultValue={filter.clientId ?? ""}
-            className="rounded-md border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+            className={filterField}
           >
             <option value="">All clients (most recent sessions)</option>
             {clients.map((c) => (
@@ -942,7 +897,7 @@ async function ClientProcedureRecordsSection({
             ))}
           </select>
         </label>
-        <label className="flex flex-col gap-1 text-xs">
+        <label className="flex min-w-0 flex-col gap-1 text-sm">
           <span className="font-medium text-neutral-600 dark:text-neutral-400">
             From (optional)
           </span>
@@ -950,10 +905,10 @@ async function ClientProcedureRecordsSection({
             type="date"
             name="from"
             defaultValue={filter.from ?? ""}
-            className="rounded-md border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+            className={filterField}
           />
         </label>
-        <label className="flex flex-col gap-1 text-xs">
+        <label className="flex min-w-0 flex-col gap-1 text-sm">
           <span className="font-medium text-neutral-600 dark:text-neutral-400">
             To (optional)
           </span>
@@ -961,54 +916,57 @@ async function ClientProcedureRecordsSection({
             type="date"
             name="to"
             defaultValue={filter.to ?? ""}
-            className="rounded-md border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+            className={filterField}
           />
         </label>
         <button
           type="submit"
-          className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white dark:bg-white dark:text-neutral-900"
+          className={buttonClasses({ variant: "primary" })}
         >
           Apply filter
         </button>
         {filterActive && (
           <Link
             href="/records?section=procedures"
-            className="px-2 py-2 text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+            className="inline-flex min-h-11 items-center text-sm underline sm:col-span-full"
           >
             Clear filters
           </Link>
         )}
       </form>
+      <p className="text-sm text-neutral-600 dark:text-neutral-400">
+        Choose a client and dates to print a filtered procedure record.
+      </p>
 
-      {filterActive ? (
-        <p className="text-xs text-neutral-600 dark:text-neutral-400">
-          Showing {records.length} recorded session
-          {records.length === 1 ? "" : "s"} for{" "}
-          <span className="font-medium">
-            {filteredClient?.name ?? "all clients"}
-          </span>
-          {filter.from || filter.to ? (
-            <>
-              {" "}
-              between <span className="font-medium">{filter.from ?? "the first record"}</span> and{" "}
-              <span className="font-medium">{filter.to ?? "today"}</span>
-            </>
-          ) : null}
-          {records.length >= FILTERED_PROCEDURE_RECORD_LIMIT &&
-            ` (capped at the ${FILTERED_PROCEDURE_RECORD_LIMIT} most recent; narrow the date range for older sessions)`}
-          . Use Print / Export above to print{" "}
-          {filteredClient
-            ? "this client's procedure record"
-            : "this filtered record"}
-          .
-        </p>
-      ) : (
-        <p className="text-xs text-neutral-500">
-          Showing the {records.length} most recent recorded session
-          {records.length === 1 ? "" : "s"} across all clients.
-        </p>
-      )}
-
+      <div>
+        <h2 className="text-xl font-semibold tracking-tight">Session register</h2>
+        {filterActive ? (
+          <p className="text-xs text-neutral-600 dark:text-neutral-400">
+            Showing {records.length} recorded session
+            {records.length === 1 ? "" : "s"} for{" "}
+            <span className="font-medium">
+              {filter.clientId ? filteredClient?.name ?? "the selected client" : "all clients"}
+            </span>
+            {filter.from || filter.to ? (
+              <>
+                {" "}
+                between <span className="font-medium">{filter.from ?? "the first record"}</span> and{" "}
+                <span className="font-medium">{filter.to ?? "today"}</span>
+              </>
+            ) : null}
+            {!filter.clientId && records.length >= UNFILTERED_PROCEDURE_RECORD_LIMIT &&
+              ` (showing the ${UNFILTERED_PROCEDURE_RECORD_LIMIT} most recent; narrow the dates or choose a client for older sessions)`}
+            {filter.clientId && records.length >= FILTERED_PROCEDURE_RECORD_LIMIT &&
+              ` (capped at the ${FILTERED_PROCEDURE_RECORD_LIMIT} most recent; narrow the date range for older sessions)`}
+            .
+          </p>
+        ) : (
+          <p className="text-xs text-neutral-500">
+            Showing the {records.length} most recent recorded session
+            {records.length === 1 ? "" : "s"} across all clients.
+          </p>
+        )}
+      </div>
       {records.length === 0 ? (
         <p className="rounded-lg border border-dashed border-neutral-300 px-5 py-8 text-sm text-neutral-500 dark:border-neutral-700">
           {filterActive
@@ -1016,113 +974,113 @@ async function ClientProcedureRecordsSection({
             : "No sessions recorded yet."}
         </p>
       ) : (
-        <ul className="flex flex-col gap-3">
-          {records.map((r) => (
-            <li
-              key={r.sessionId}
-              className="flex flex-col gap-2 rounded-lg border border-neutral-200 p-4 text-sm dark:border-neutral-800"
-            >
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <span className="font-medium">
-                  {r.clientName || "Not recorded"}
-                  <span className="ml-2 font-normal capitalize text-neutral-500">
-                    {r.modality}
-                  </span>
-                </span>
-                <span className="text-xs text-neutral-500">
-                  <FormattedDateTime iso={r.startedAt} />
-                </span>
-              </div>
-              <dl className="grid gap-x-6 gap-y-1 text-xs text-neutral-600 dark:text-neutral-400 sm:grid-cols-2">
-                <div>
-                  <dt className="inline font-medium">Date of birth: </dt>
-                  <dd className="inline">
-                    {r.dateOfBirth ? r.dateOfBirth : <NotRecorded />}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="inline font-medium">Phone: </dt>
-                  <dd className="inline">{r.phone ?? <NotRecorded />}</dd>
-                </div>
-                <div>
-                  <dt className="inline font-medium">Email: </dt>
-                  <dd className="inline">{r.email ?? <NotRecorded />}</dd>
-                </div>
-                <div>
-                  <dt className="inline font-medium">Address: </dt>
-                  <dd className="inline">{r.address ?? <NotRecorded />}</dd>
-                </div>
-                <div>
-                  <dt className="inline font-medium">Operator: </dt>
-                  <dd className="inline">
-                    {r.operatorName ?? <NotRecorded />}
-                  </dd>
-                </div>
-              </dl>
-              <div className="flex flex-col gap-1 text-xs">
-                <span className="font-medium text-neutral-600 dark:text-neutral-400">
-                  Items used
-                </span>
-                {r.areas.length === 0 ? (
-                  <span className="text-neutral-400">
-                    No treatment areas charted.
-                  </span>
-                ) : (
-                  <ul className="flex flex-col gap-0.5 text-neutral-700 dark:text-neutral-300">
-                    {r.areas.map((a, i) => (
-                      <li key={`${r.sessionId}-${i}`}>
-                        {a.name}
-                        {a.probeLabel ? ` · ${a.probeLabel}` : ""}
-                        {a.machineFrequency ? ` · ${a.machineFrequency}` : ""}
-                        {" · Lot #: "}
-                        {a.probeLotNumber ? (
-                          <span className="font-medium">{a.probeLotNumber}</span>
-                        ) : (
-                          <NotRecorded />
-                        )}
-                        {a.minutesPerformed != null &&
-                          ` · ${a.minutesPerformed} min`}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-              {/* The disclosure is shown when there is history to show OR when
-                  we could not find out. Hiding it on an unreadable history
-                  would be the same clinical lie as printing "no history", told
-                  by omission instead of in words. */}
-              {((audit.byRecord.get(r.sessionId)?.length ?? 0) > 0 ||
-                audit.unavailableRecordIds.has(r.sessionId)) && (
-                <details>
-                  <summary className="cursor-pointer text-xs text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100">
-                    History
+        <div className="overflow-hidden rounded-lg border border-neutral-200 dark:border-neutral-800">
+          <div aria-hidden="true" className={`hidden gap-3 bg-neutral-50 px-4 py-3 text-xs font-medium text-neutral-600 dark:bg-neutral-900 dark:text-neutral-400 ${registerColumns}`}>
+            <span>Client / procedure</span><span>Session</span><span>Treatment area</span><span>Risks &amp; aftercare</span>
+          </div>
+          <ul className="divide-y divide-neutral-200 dark:divide-neutral-800">
+            {records.map((r) => (
+              <li key={r.sessionId}>
+                <details className="group/record">
+                  <summary className={`grid cursor-pointer list-none gap-x-3 gap-y-2 px-4 py-4 text-sm hover:bg-neutral-50 focus-visible:outline-offset-[-3px] dark:hover:bg-neutral-900 [&::-webkit-details-marker]:hidden ${registerColumns}`}>
+                    <span className="min-w-0 break-words">
+                      <strong className="font-semibold">{r.clientName || "Not recorded"}</strong>
+                      <span className="block text-xs capitalize text-neutral-500">{r.modality}</span>
+                    </span>
+                    <span className="text-neutral-600 dark:text-neutral-400"><span className="sr-only">Session </span><FormattedDateTime iso={r.startedAt} /></span>
+                    <span className="break-words"><span className="sr-only">Treatment area: </span>{r.areas.map((area) => area.name).join(" · ") || <NotRecorded />}</span>
+                    <span className="text-xs">
+                      <span className="md:sr-only">Risks &amp; aftercare: </span>
+                      <span className={r.aftercareExplainedAt ? "rounded border border-neutral-200 px-2 py-1 dark:border-neutral-700" : "rounded border border-amber-200 bg-amber-50 px-2 py-1 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"}>
+                        {r.aftercareExplainedAt ? "Recorded" : "Not marked"}
+                      </span>
+                    </span>
+                    <span className="font-medium underline underline-offset-4">
+                      <span className="group-open/record:hidden">View record</span>
+                      <span className="hidden group-open/record:inline">Hide details</span>
+                    </span>
                   </summary>
-                  <div className="mt-2">
-                    <AuditHistoryList
-                      events={audit.byRecord.get(r.sessionId)}
-                      unavailable={audit.unavailableRecordIds.has(r.sessionId)}
-                    />
+                  <div className="grid min-w-0 gap-4 border-t border-neutral-200 bg-neutral-50/50 p-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] dark:border-neutral-800 dark:bg-neutral-900/30">
+                    <section className="flex min-w-0 flex-col gap-2.5">
+                      <h3 className="font-semibold">Session details</h3>
+                      <p className="text-sm">Operator: {r.operatorName ?? <NotRecorded />}</p>
+                      <div className="flex flex-col gap-1 text-sm">
+                        <span className="font-medium text-neutral-600 dark:text-neutral-400">
+                          Items used
+                        </span>
+                        {r.areas.length === 0 ? (
+                          <span className="text-neutral-400">
+                            No treatment areas charted.
+                          </span>
+                        ) : (
+                          <ul className="flex flex-col gap-0.5 text-neutral-700 dark:text-neutral-300">
+                            {r.areas.map((a, i) => (
+                              <li key={`${r.sessionId}-${i}`}>
+                                {a.name}
+                                {a.probeLabel ? ` · ${a.probeLabel}` : ""}
+                                {a.machineFrequency ? ` · ${a.machineFrequency}` : ""}
+                                {" · Lot #: "}
+                                {a.probeLotNumber ? (
+                                  <span className="font-medium">{a.probeLotNumber}</span>
+                                ) : (
+                                  <NotRecorded />
+                                )}
+                                {a.minutesPerformed != null &&
+                                  ` · ${a.minutesPerformed} min`}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    </section>
+                    <section className="flex min-w-0 flex-col gap-2">
+                      <h3 className="font-semibold">Client details</h3>
+                      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 break-words text-sm [&>dt]:text-neutral-500">
+                        <dt>Date of birth</dt><dd>{r.dateOfBirth ?? <NotRecorded />}</dd>
+                        <dt>Phone</dt><dd>{r.phone ?? <NotRecorded />}</dd>
+                        <dt>Email</dt><dd>{r.email ?? <NotRecorded />}</dd>
+                        <dt>Address</dt><dd>{r.address ?? <NotRecorded />}</dd>
+                      </dl>
+                    </section>
+                    {/* The disclosure is shown when there is history to show OR when
+                        we could not find out. Hiding it on an unreadable history
+                        would be the same clinical lie as printing "no history", told
+                        by omission instead of in words. */}
+                    {((audit.byRecord.get(r.sessionId)?.length ?? 0) > 0 ||
+                      audit.unavailableRecordIds.has(r.sessionId)) && (
+                      <details className="col-span-full">
+                        <summary className="cursor-pointer text-xs text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100">
+                          History
+                        </summary>
+                        <div className="mt-2">
+                          <AuditHistoryList
+                            events={audit.byRecord.get(r.sessionId)}
+                            unavailable={audit.unavailableRecordIds.has(r.sessionId)}
+                          />
+                        </div>
+                      </details>
+                    )}
+                    <div className="col-span-full flex flex-wrap items-center justify-between gap-2 border-t border-neutral-200 pt-2 dark:border-neutral-800">
+                      <AftercareExplainedToggle
+                        sessionId={r.sessionId}
+                        explainedAt={r.aftercareExplainedAt}
+                        action={markAftercareExplainedAction}
+                      />
+                      {r.clientId && (
+                        <Link
+                          href={`/clients/${r.clientId}/sessions/${r.sessionId}`}
+                          className="text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
+                        >
+                          Open session
+                        </Link>
+                      )}
+                    </div>
                   </div>
                 </details>
-              )}
-              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-neutral-200 pt-2 dark:border-neutral-800">
-                <AftercareExplainedToggle
-                  sessionId={r.sessionId}
-                  explainedAt={r.aftercareExplainedAt}
-                  action={markAftercareExplainedAction}
-                />
-                {r.clientId && (
-                  <Link
-                    href={`/clients/${r.clientId}/sessions/${r.sessionId}`}
-                    className="text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
-                  >
-                    Open session →
-                  </Link>
-                )}
-              </div>
-            </li>
-          ))}
-        </ul>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </div>
   );
@@ -1138,106 +1096,79 @@ function LotTraceabilityPanel({
   trace: import("@/lib/record-keeping/queries").LotTraceability;
 }) {
   return (
-    <div className="flex flex-col gap-3 text-sm">
-      <h3 className="font-medium">Lot #{trace.lot}</h3>
-
-      <div>
-        <p className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
-          Matching sterile item record
-        </p>
+    <div className="space-y-6 text-sm [overflow-wrap:anywhere]">
+      <h3 className="text-2xl font-semibold tracking-tight">Lot <span className="font-mono">#{trace.lot}</span></h3>
+      <section className="space-y-3">
+        <h4 className="font-semibold">Matching sterile item record{trace.sterileItems.length > 1 ? "s" : ""}</h4>
         {trace.sterileItems.length === 0 ? (
-          <p className="mt-0.5 text-xs text-neutral-500">
-            No matching sterile item record found for this lot number.
-          </p>
+          <p className="rounded-xl border border-dashed border-line p-4 text-fg-muted">No matching sterile item record found for this lot number.</p>
         ) : (
-          <ul className="mt-0.5 flex flex-col gap-1">
+          <ul className="divide-y divide-line rounded-xl border border-line">
             {trace.sterileItems.map((r) => (
-              <li key={r.id} className="text-xs text-neutral-700 dark:text-neutral-300">
-                <span className="font-medium">{r.item_description}</span>
-                {r.manufacturer_name && ` · ${r.manufacturer_name}`}
-                {r.amount_purchased && ` · ${r.amount_purchased}`}
-                {" · Purchased "}
-                {dateOnly(r.date_purchased)}
-                {" · Expires "}
-                {dateOnly(r.expiry_date) ?? "Not recorded"}
-                {r.notes && ` · ${r.notes}`}
+              <li key={r.id} className="space-y-4 p-4 sm:p-5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-base font-semibold">{r.item_description}</span>
+                  <span className="rounded bg-surface-sunken px-2 py-1 text-xs font-medium">{r.date_discarded ? "Discarded" : "In stock"}</span>
+                </div>
+                <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                  {[
+                    ["Manufacturer", r.manufacturer_name],
+                    ["Amount purchased", r.amount_purchased],
+                    ["Lot number", r.lot_number],
+                    ["Purchased", dateOnly(r.date_purchased)],
+                    ["Expiry", dateOnly(r.expiry_date) ?? "Not recorded"],
+                    ["Discarded", dateOnly(r.date_discarded)],
+                  ].map(([label, value]) => (
+                    <div key={label}><dt className="text-xs text-fg-muted">{label}</dt><dd>{value || "Not recorded"}</dd></div>
+                  ))}
+                </dl>
+                {r.notes && <p className="whitespace-pre-wrap border-t border-line pt-3">{r.notes}</p>}
               </li>
             ))}
           </ul>
         )}
-      </div>
-
-      <div>
-        <p className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
-          Used in
-        </p>
+      </section>
+      <section className="space-y-3">
+        <h4 className="font-semibold">Used in charting <span className="ml-1 font-normal text-fg-muted">{trace.usages.length} {trace.usages.length === 1 ? "entry" : "entries"}</span></h4>
         {trace.usages.length === 0 ? (
-          <p className="mt-0.5 text-xs text-neutral-500">
-            {trace.sterileItems.length > 0
-              ? "No charted treatment areas have used this lot yet."
-              : "No usage found for this lot number."}
+          <p className="rounded-xl border border-dashed border-line p-4 text-fg-muted">
+            {trace.sterileItems.length ? "No charted treatment areas have used this lot yet." : "No usage found for this lot number."}
           </p>
         ) : (
           <>
             {trace.sterileItems.length === 0 && (
-              <p className="mt-0.5 text-xs text-neutral-500">
-                Used in charting, but no matching Sterile Item record was
-                found.
-              </p>
+              <p className="text-fg-muted">Used in charting, but no matching Sterile Item record was found.</p>
             )}
-            <ul className="mt-1 flex flex-col divide-y divide-neutral-200 dark:divide-neutral-800">
-              {trace.usages.map((u) => (
-                <li
-                  key={u.blockId}
-                  className="flex flex-wrap items-baseline justify-between gap-2 py-1.5 text-xs"
-                >
-                  <span className="text-neutral-700 dark:text-neutral-300">
-                    {u.clientId ? (
-                      <Link
-                        href={`/clients/${u.clientId}`}
-                        className="font-medium hover:underline"
-                      >
-                        {u.clientName ?? "Client"}
-                      </Link>
-                    ) : (
-                      <span className="font-medium">
-                        {u.clientName ?? "Client not recorded"}
-                      </span>
+            <div className="overflow-hidden rounded-xl border border-line">
+              <RegisterColumns columns="lg:grid-cols-[1fr_.85fr_1.5fr_1fr_.7fr]" labels={["Client / session", "Date", "Treatment", "Aftercare", ""]} />
+              <ul className="divide-y divide-line">
+                {trace.usages.map((u) => (
+                  <li key={u.blockId} className="grid grid-cols-2 items-start gap-3 p-4 lg:grid-cols-[1fr_.85fr_1.5fr_1fr_.7fr] lg:items-center">
+                    <span>
+                      {u.clientId ? (
+                        <Link href={`/clients/${u.clientId}`} className="font-semibold hover:underline">{u.clientName ?? "Client"}</Link>
+                      ) : (
+                        <strong>{u.clientName ?? "Client not recorded"}</strong>
+                      )}
+                      {u.modality && <span className="block text-xs capitalize text-fg-muted">{u.modality}</span>}
+                    </span>
+                    <span>{u.startedAt ? <FormattedDateTime iso={u.startedAt} format="date" /> : "Not recorded"}</span>
+                    <span>
+                      <span>{u.areaName || "Area not recorded"}</span>
+                      {u.operatorName && <span className="block text-xs text-fg-muted">{u.operatorName}</span>}
+                      {(u.machineFrequency || u.probeLabel) && <span className="block text-xs text-fg-muted">{[u.machineFrequency, u.probeLabel].filter(Boolean).join(" · ")}</span>}
+                    </span>
+                    <span className="text-xs">{u.aftercareExplainedAt ? "Aftercare marked" : "Aftercare not marked"}</span>
+                    {u.clientId && (
+                      <Link href={`/clients/${u.clientId}/sessions/${u.sessionId}`} className="inline-flex min-h-11 items-center text-xs font-semibold underline underline-offset-4">Open session</Link>
                     )}
-                    {u.startedAt && (
-                      <>
-                        {" · "}
-                        <FormattedDateTime iso={u.startedAt} format="date" />
-                      </>
-                    )}
-                    {u.areaName && ` · ${u.areaName}`}
-                    {u.modality && (
-                      <span className="capitalize"> · {u.modality}</span>
-                    )}
-                    {u.operatorName && ` · ${u.operatorName}`}
-                    {(u.machineFrequency || u.probeLabel) &&
-                      ` · ${[u.machineFrequency, u.probeLabel]
-                        .filter(Boolean)
-                        .join(" · ")}`}
-                    {" · "}
-                    {u.aftercareExplainedAt
-                      ? "Aftercare marked"
-                      : "Aftercare not marked"}
-                  </span>
-                  {u.clientId && (
-                    <Link
-                      href={`/clients/${u.clientId}/sessions/${u.sessionId}`}
-                      className="font-medium text-neutral-700 hover:underline dark:text-neutral-300"
-                    >
-                      Open session →
-                    </Link>
-                  )}
-                </li>
-              ))}
-            </ul>
+                  </li>
+                ))}
+              </ul>
+            </div>
           </>
         )}
-      </div>
+      </section>
     </div>
   );
 }

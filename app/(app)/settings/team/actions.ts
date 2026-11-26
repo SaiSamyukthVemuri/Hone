@@ -5,9 +5,10 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { getOwnerTeamSeats } from "@/lib/subscriptions/owner-team-seats";
+import { isDeskEnabled } from "@/lib/desk/flag";
 import { seatLimitMessage } from "@/lib/subscriptions/team-seats";
 import type { InvitationRole } from "@/lib/types/database";
-import { resend, FROM_ADDRESS } from "@/lib/email/client";
+import { getResendTransport, FROM_ADDRESS } from "@/lib/email/client";
 import { buildInvitationEmail } from "@/lib/email/templates/invitation";
 import { safeLog } from "@/lib/logging/safe-log";
 import { dbErrorCode, failureCode } from "@/lib/logging/error-class";
@@ -52,7 +53,9 @@ async function assertOwner(): Promise<OwnerContext> {
   };
 }
 
-// Sends the invitation email through Resend. Never throws; logs failures
+// Sends the invitation email through the SHARED transport (getResendTransport:
+// the real Resend client, or the capture-ledger fake under the E2E marker, so a
+// run can see and retry it like every other app email). Never throws; logs failures
 // and lets the caller continue, since the pending_invitations row plus the
 // share-message UI are the source of truth.
 async function sendInvitationEmail(params: {
@@ -61,7 +64,8 @@ async function sendInvitationEmail(params: {
   studioName: string;
   inviterName: string;
 }): Promise<void> {
-  if (!resend) {
+  const transport = getResendTransport();
+  if (!transport) {
     console.warn(
       "Skipping invitation email: Resend client is not configured.",
     );
@@ -70,7 +74,7 @@ async function sendInvitationEmail(params: {
 
   const { subject, html, text } = buildInvitationEmail(params);
   try {
-    const { error } = await resend.emails.send({
+    const { error } = await transport.emails.send({
       from: FROM_ADDRESS,
       to: params.inviteeEmail,
       subject,
@@ -165,7 +169,7 @@ export async function invitePractitionerAction(
     } catch {
       return { ok: false, error: "Could not check the studio’s team seats. Try again." };
     }
-    if (!seats || seats.receptionist_limit === 0 || process.env.HONE_RECEPTIONIST_DESK_ENABLED !== "true") {
+    if (seats && (seats.receptionist_limit === 0 || !isDeskEnabled())) {
       return { ok: false, error: "Receptionist invitations are unavailable for this studio." };
     }
     const { data: existingDesk, error: deskErr } = await supabase.from("studio_receptionists")

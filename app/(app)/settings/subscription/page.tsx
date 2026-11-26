@@ -40,8 +40,8 @@ async function stripeOverview(customer: string, subscription: string) {
 export default async function SubscriptionPage({ searchParams }: {
   searchParams: Promise<{ error?: string; notice?: string }>;
 }) {
-  if (!isSelfServeCheckoutEnabled(process.env)) notFound();
   const { practitioner, studio } = await requirePractitionerWithStudio();
+  if (!isSelfServeCheckoutEnabled(process.env)) notFound();
   if (practitioner.role !== "owner") return <OwnerOnlyNotice>Only studio owners can manage billing.</OwnerOnlyNotice>;
   const { billing, error } = await readOwnerBilling(studio.id);
   if (!error && !billing) notFound();

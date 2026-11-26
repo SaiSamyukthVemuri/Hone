@@ -1,6 +1,7 @@
+import { withDashboardRebook, type RebookOrigin } from "@/lib/calendar/dashboard-rebook";
 import { PendingLink } from "@/components/pending-link";
 import { CalendarViewToggle } from "./ViewToggle";
-import { CalendarAutoRefresh } from "./CalendarAutoRefresh";
+import { CalendarAutoRefresh, type ChangeProbeProps } from "./CalendarAutoRefresh";
 
 // Google/Apple-style desktop calendar toolbar (PR A). Presentational only: it
 // renders navigation LINKS using the calendar's existing query params
@@ -22,6 +23,7 @@ import { CalendarAutoRefresh } from "./CalendarAutoRefresh";
 // every href below is the one that was already there.
 
 type Props = {
+  rebook?: RebookOrigin | null;
   view: "day" | "week" | "month";
   rangeLabel: string;
   timezone: string;
@@ -36,29 +38,36 @@ type Props = {
   // Owner only (HON-44). Absent for everyone else, so the link is not rendered; the page itself still 404s for a non-owner.
   reviewAssignmentsHref?: string;
   hideStepNavOnMobile: boolean;
+  // HON-48: what this render was drawn from, so the screen can ask "has it changed?" instead of refreshing on a timer.
+  changeProbe?: ChangeProbeProps;
 };
 
 const STEP_LINK =
   "flex h-9 w-9 items-center justify-center text-lg leading-none hover:bg-neutral-50 dark:hover:bg-neutral-900";
 
 export function CalendarToolbar({
+  rebook,
   view,
   rangeLabel,
   timezone,
   weekHref,
   monthHref,
   dayHref,
-  prevHref,
-  todayHref,
-  nextHref,
+  prevHref: prevUrl,
+  todayHref: todayUrl,
+  nextHref: nextUrl,
   upcomingHref,
   reviewAssignmentsHref,
   hideStepNavOnMobile,
+  changeProbe,
 }: Props) {
+  const todayHref = withDashboardRebook(todayUrl, rebook);
+  const prevHref = withDashboardRebook(prevUrl, rebook);
+  const nextHref = withDashboardRebook(nextUrl, rebook);
   return (
     <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       {/* HON-48: keeps this screen current for the other people on the calendar. */}
-      <CalendarAutoRefresh />
+      <CalendarAutoRefresh probe={changeProbe} />
       <div>
         {/* The visible date range IS the heading, Google-style. */}
         <h1 className="text-2xl font-semibold tracking-tight">{rangeLabel}</h1>
@@ -68,9 +77,9 @@ export function CalendarToolbar({
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <CalendarViewToggle
           currentView={view}
-          weekHref={weekHref}
-          monthHref={monthHref}
-          dayHref={dayHref}
+          weekHref={withDashboardRebook(weekHref, rebook)}
+          monthHref={withDashboardRebook(monthHref, rebook)}
+          dayHref={dayHref && withDashboardRebook(dayHref, rebook)}
         />
 
         {/* Today + prev/next grouped, like a calendar app. */}

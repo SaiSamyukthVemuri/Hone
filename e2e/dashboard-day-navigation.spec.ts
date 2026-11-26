@@ -457,10 +457,10 @@ test.describe("history is not asked, and therefore not answered, off Today", () 
       await page.goto("/dashboard");
       await expect(heading(page, "Today")).toBeVisible({ timeout: T });
       await expect(
-        row(page, "Memory Client").getByText("Before today", { exact: true }),
+        row(page, "Memory Client").getByTestId("dashboard-memory-toggle"),
       ).toBeVisible();
       await expect(
-        page.getByText("Remember: Lower the energy one step").first(),
+        page.getByText("For this visit · Lower the energy one step").first(),
       ).toBeVisible();
       await expect(page.getByText("Avoid the jawline").first()).toBeVisible();
       await expect(page.getByText("Review Before Today").first()).toBeVisible();
@@ -493,9 +493,8 @@ test.describe("history is not asked, and therefore not answered, off Today", () 
       // prep-memory authority, which is a different loader with a three-state
       // contract and no clock in it.
       await expect(tomorrowRow.getByTestId("dashboard-memory-compact")).toBeVisible();
-      await expect(tomorrowRow.getByTestId("dashboard-prep-remember")).toContainText(
-        "Lower the energy one step",
-      );
+      // Today was the first eligible treatment. The same note must not follow this client to tomorrow.
+      await expect(tomorrowRow.getByTestId("dashboard-prep-remember")).toHaveCount(0);
     });
 
     await test.step("18. and the primary action makes no claim either", async () => {

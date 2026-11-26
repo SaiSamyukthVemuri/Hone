@@ -6,17 +6,10 @@
 // The "Clients to review" cell is gone (Sam, 4 Nov): Needs attention shows ONE count, in its own heading.
 // Display only: no write, no new read.
 
-// Narrow phones (under 360px, e.g. 320): two cells share the row, so the padding and the value size
-// step down and a long value such as "Unavailable" may break rather than push the card and the
-// viewport wider. From 360px up the cells are exactly as before.
-const CELL =
-  "min-w-0 rounded-lg border border-neutral-200 px-2 py-3 min-[360px]:px-4 dark:border-neutral-800";
-// The uppercase LABEL can be wider than its cell at 320 ("APPOINTMENTS" at 11px with wide tracking ran into the next card), so it may
-// wrap or break and steps down in size and tracking under 360px; from 360px up it is exactly as before.
-const LABEL =
-  "min-w-0 text-[11px] font-medium uppercase tracking-wider text-neutral-500 [overflow-wrap:anywhere] max-[359px]:text-[10px] max-[359px]:tracking-normal";
-const VALUE =
-  "mt-1 min-w-0 text-xl font-semibold tracking-tight text-neutral-900 [overflow-wrap:anywhere] max-[359px]:text-sm dark:text-neutral-100";
+// Each group can wrap independently when a translated label or unavailable value is long.
+const CELL = "flex min-w-0 flex-wrap items-baseline gap-x-2";
+const LABEL = "min-w-0 text-xs text-neutral-600 [overflow-wrap:anywhere] dark:text-neutral-400";
+const VALUE = "min-w-0 text-base font-semibold tabular-nums [overflow-wrap:anywhere]";
 
 export function SummaryStrip({
   appointmentCount,
@@ -29,16 +22,16 @@ export function SummaryStrip({
   bookedTime: string;
 }) {
   return (
-    <dl aria-label="Day summary" data-testid="dashboard-summary-strip" className="grid grid-cols-2 gap-3">
+    <dl aria-label="Day summary" data-testid="dashboard-summary-strip" className="flex flex-wrap gap-x-6 gap-y-1 border-y border-neutral-200 bg-neutral-50 px-4 py-2 dark:border-neutral-800 dark:bg-neutral-900">
       <div className={CELL}>
         <dt className={LABEL}>Appointments</dt>
         <dd className={VALUE} data-testid="summary-appointments-value">
           {appointmentCount}
         </dd>
         {appointmentCount > 0 && (
-          <p className="mt-0.5 text-xs text-neutral-500" data-testid="summary-clients-sublabel">
+          <dd className="text-xs text-neutral-500" data-testid="summary-clients-sublabel">
             {clientCount} {clientCount === 1 ? "client" : "clients"}
-          </p>
+          </dd>
         )}
       </div>
       <div className={CELL}>

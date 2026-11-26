@@ -11,10 +11,12 @@ const LEAK_EMAIL = "leak.probe@example.test";
 const INVITEE = "invitee.synthetic@example.test";
 
 const send = vi.hoisted(() => vi.fn());
+// The invitation goes through the SHARED transport (getResendTransport), so the E2E capture ledger sees it.
+const transportRef = vi.hoisted(() => ({ current: null as null | { emails: { send: unknown } } }));
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/email/client", () => ({
-  resend: { emails: { send } },
+  getResendTransport: () => transportRef.current,
   FROM_ADDRESS: "Hone <hello@hone.care>",
 }));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: vi.fn() }));
@@ -47,6 +49,7 @@ let logged: string[];
 
 beforeEach(() => {
   send.mockReset();
+  transportRef.current = { emails: { send } };
   logged = [];
   for (const level of ["error", "warn", "info", "log", "debug"] as const) {
     vi.spyOn(console, level).mockImplementation((...args: unknown[]) => {
@@ -62,7 +65,9 @@ afterEach(() => {
 function expectNoLeak() {
   const text = logged.join("\n");
   expect(text).not.toContain(LEAK_PHONE);
-  expect(text).not.toContain("555");
+  // No fragment of the probe phone (+1 555 010 0199). A bare "555" also matched an
+  // ISO timestamp's milliseconds (e.g. "…:36.555Z") and failed at random.
+  expect(text).not.toMatch(/555\D{0,3}010|010\D?0199|5550100199/);
   expect(text).not.toContain(LEAK_EMAIL);
   expect(text).not.toContain(INVITEE);
 }
@@ -124,5 +129,26 @@ describe("team invitation email failure log (MSG-LOG-RAW-ERROR)", () => {
 
     expect(result).toEqual({ ok: true, email: INVITEE });
     expect(logged).toEqual([]);
+  });
+
+  it("the invitation is handed to the shared transport once, to the invitee, with the studio's sender", async () => {
+    send.mockResolvedValue({ data: { id: "email-1" }, error: null });
+
+    await invitePractitionerAction(inviteForm());
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0]).toMatchObject({ from: "Hone <hello@hone.care>", to: INVITEE });
+    expect(typeof send.mock.calls[0][0].subject).toBe("string");
+  });
+
+  it("no transport configured: nothing is sent, the invite still succeeds, one closed warning", async () => {
+    transportRef.current = null;
+
+    const result = await invitePractitionerAction(inviteForm());
+
+    expect(result).toEqual({ ok: true, email: INVITEE });
+    expect(send).not.toHaveBeenCalled();
+    expectNoLeak();
+    expect(logged).toEqual(["Skipping invitation email: Resend client is not configured."]);
   });
 });

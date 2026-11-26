@@ -27,6 +27,8 @@ const ACTION_PATH = path.resolve(
 );
 const SOURCE = readFileSync(ACTION_PATH, "utf8");
 
+const REFUSAL_SRC = readFileSync(path.resolve(__dirname, "../../../../lib/sessions/session-start-refusal.ts"), "utf8");
+
 describe("startSessionAction lineage + safety contract for appointment_id", () => {
   it("reads appointment_id from formData", () => {
     expect(SOURCE).toMatch(
@@ -48,25 +50,13 @@ describe("startSessionAction lineage + safety contract for appointment_id", () =
     // therefore happen via the createClient from lib/supabase/server,
     // not the service-role admin client.
     //
-    // PR #180 introduces a SEPARATE, cold-path RPC call to the
-    // SECURITY DEFINER mark_appointment_complete from the auto-
-    // complete helper at the bottom of the action. That helper does
-    // require the admin client (the RPC expects the service-role
-    // context). To preserve the original safety guarantee we now
-    // pin: (1) the lineage SELECT still uses the RLS client (the
-    // .from("appointments") call appears in the action body BEFORE
-    // any admin import); (2) the only admin-client reference is
-    // inside the maybeMarkAppointmentCompletedOnSessionStart helper
-    // (audited separately in tests/app/sessions/start-session-auto-
-    // complete.test.ts).
+    // HON-45 (Sam's decision) REMOVED the PR #180 auto-complete helper, which was the only
+    // reason this action ever touched the admin client. Starting a chart no longer completes
+    // the appointment, so the action must hold NO admin client and name no completion command.
     expect(SOURCE).toMatch(/from\("appointments"\)/);
-    // The admin import is dynamic + scoped to the auto-complete helper.
-    const adminImportMatches =
-      SOURCE.match(/import\("@\/lib\/supabase\/admin-server"\)/g) ?? [];
-    expect(adminImportMatches.length).toBe(1);
-    expect(SOURCE).toMatch(
-      /maybeMarkAppointmentCompletedOnSessionStart[\s\S]{0,2000}await import\("@\/lib\/supabase\/admin-server"\)/,
-    );
+    expect(SOURCE).not.toMatch(/admin-server/);
+    expect(SOURCE).not.toMatch(/mark_appointment_complete/);
+    expect(SOURCE).not.toMatch(/autoSendPostcareOnComplete/);
   });
 
   it("selects studio_id, client_id, practitioner_id (and PR #180 also status + ends_at) from the appointment row", () => {
@@ -86,14 +76,16 @@ describe("startSessionAction lineage + safety contract for appointment_id", () =
     // The action MUST compare appt.studio_id to studio.id and reject
     // mismatches; trusting the form value would let a tampered POST
     // bind a session to another studio's appointment.
-    expect(SOURCE).toMatch(/appt\.studio_id\s*!==\s*studio\.id/);
+    expect(SOURCE).toMatch(/classifyAppointmentForStart\(appt as StartAppointmentLookup \| null, \{ studioId: studio\.id,/);
+    expect(REFUSAL_SRC).toMatch(/appt\.studio_id !== ctx\.studioId/);
   });
 
   it("validates client_id lineage server-side", () => {
     // Same studio, different client is also a reject: a session is
     // per-client, and a cross-client link would corrupt two clients'
     // treatment timelines.
-    expect(SOURCE).toMatch(/appt\.client_id\s*!==\s*clientId/);
+    expect(SOURCE).toMatch(/clientId, practitionerId: practitioner\.id/);
+    expect(REFUSAL_SRC).toMatch(/appt\.client_id !== ctx\.clientId/);
   });
 
   it("validates practitioner_id lineage server-side (non-null case)", () => {
@@ -105,18 +97,24 @@ describe("startSessionAction lineage + safety contract for appointment_id", () =
     // against the server-resolved practitioner.id is a hard reject so
     // a tampered form value cannot bind a session to another
     // practitioner's appointment within the same studio + client.
-    expect(SOURCE).toMatch(
-      /if \(appt\.practitioner_id && appt\.practitioner_id !== practitioner\.id\)/,
-    );
+    expect(REFUSAL_SRC).toMatch(/appt\.practitioner_id && appt\.practitioner_id !== ctx\.practitionerId/);
   });
 
-  it("uses a stable practitioner-mismatch error message", () => {
-    // The error message is part of the public contract for callers
-    // that surface it (today: the practitioner sees it in the
-    // browser). Pin the exact copy so a future refactor cannot drift
-    // the wording silently.
-    expect(SOURCE).toMatch(
-      /"Appointment is assigned to a different practitioner\."/,
+  it("answers a practitioner mismatch with the stable refusal, not a thrown error", () => {
+    // The mismatch is EXPECTED (a booking assigned to a colleague, or an owner
+    // opening one) and used to be thrown, which surfaced the generic error
+    // boundary. It now redirects to the new-session page with a stable refusal
+    // code that the page renders; the refusal is no weaker.
+    expect(SOURCE).toMatch(/if \(decided\.refusal\) \{\s*redirect\(sessionStartRefusalHref\(clientId, appointmentIdRaw, decided\.refusal\)\);/);
+    expect(SOURCE).not.toMatch(/throw new Error\("Appointment is assigned to a different practitioner\."\)/);
+    // The command's raised copy is pinned in ONE place, which the action uses
+    // to recognise the same refusal coming back from start_session.
+    const REFUSAL = readFileSync(
+      path.resolve(__dirname, "../../../../lib/sessions/session-start-refusal.ts"),
+      "utf8",
+    );
+    expect(REFUSAL).toMatch(
+      /ASSIGNED_ELSEWHERE_RAISED = "Appointment is assigned to a different practitioner\."/,
     );
   });
 
@@ -259,8 +257,8 @@ describe("new-session page carries appointment_id from search params", () => {
   });
 
   it("guards the search-param value with a UUID match", () => {
-    expect(PAGE_SOURCE).toMatch(/UUID_RE/);
-    expect(PAGE_SOURCE).toMatch(/UUID_RE\.test\(/);
+    expect(PAGE_SOURCE).toMatch(/isAppointmentUuid\(sp\.appointment_id\)/);
+    expect(REFUSAL_SRC).toMatch(/APPOINTMENT_UUID_RE\.test\(/);
   });
 
   it("renders a hidden appointment_id input in the modality picker", () => {
@@ -363,12 +361,13 @@ describe("CLN-002 committed appointment lineage before action side effects", () 
     expect(runtime.revalidate).not.toHaveBeenCalled();
     expect(sessionFilters).toEqual([["id", "chart"], ["studio_id", "studio"], ["client_id", "client"]]);
   });
-  it("continues matching appointment B including reused-chart completion recovery", async () => {
+  it("opens the chart for a PAST CONFIRMED appointment B without completing it, sending postcare or touching payment", async () => {
     await expect(startSessionAction(form())).rejects.toThrow("REDIRECT:/clients/client/sessions/chart");
-    expect(runtime.adminRpc).toHaveBeenCalledWith("mark_appointment_complete", {
-      p_appointment_id: appointmentB, p_studio_id: "studio", p_practitioner_id: "practitioner",
-    });
-    expect(runtime.postcare).toHaveBeenCalledWith(appointmentB, "studio", "practitioner");
+    // HON-45: completion is a separate, explicit act. Charting changes nothing about the appointment's status.
+    expect(runtime.adminRpc).not.toHaveBeenCalled();
+    expect(runtime.postcare).not.toHaveBeenCalled();
+    // ...but the appointment page is refreshed so it shows the linked chart.
+    expect(runtime.revalidate).toHaveBeenCalledWith(`/calendar/${appointmentB}`);
   });
   it("preserves chart-without-appointment starts without an appointment side effect", async () => {
     await expect(startSessionAction(form(""))).rejects.toThrow("REDIRECT:/clients/client/sessions/chart");

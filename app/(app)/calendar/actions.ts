@@ -1,9 +1,12 @@
 "use server";
 
+import { loadTreatmentTimeNameFields } from "@/lib/treatment-time/client-first-name";
+import { recordAppointmentCancelNotifications } from "@/lib/notifications/appointment-cancel-notification";
 import { CLIENT_NAME_MAX, CLIENT_NAME_TOO_LONG } from "@/lib/clients/identity";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { observePermission } from "@/lib/permissions/observe-permission";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { getAvailableSlots, INTERNAL_SLOT_PACKING } from "@/lib/booking/slots";
 import { captureServerEvent } from "@/lib/analytics/server";
@@ -200,6 +203,10 @@ export async function bookAppointmentForClientAction(
 
   const supabase = await createClient();
 
+  // Permission engine, OBSERVE ONLY: records what the engine would answer for this booking and never changes
+  // the outcome. A booking has no appointment yet, so the own-scope context is the target practitioner.
+  observePermission(supabase, studio.id, practitioner.role, { key: "appt.book", practitionerId: targetPractitionerId });
+
   // Pull service for duration; also confirms it's in this studio.
   const { data: service, error: serviceErr } = await supabase
     .from("services")
@@ -377,6 +384,7 @@ export async function bookAppointmentForClientAction(
   if (!created) {
     // Committed, but the follow-up read failed: the booking still succeeded.
     revalidatePath("/calendar");
+    revalidatePath("/dashboard");
     return { ok: true, appointmentId: createdId };
   }
 
@@ -521,6 +529,15 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
     };
   }
 
+  // HON-7. The bell for the studio's owners, EXCEPT the person who just cancelled: nobody is notified of their own action
+  // (an owner who cancels sees a success message on screen instead). Never throws; a failure cannot undo the cancel.
+  await recordAppointmentCancelNotifications(admin, {
+    appointmentId,
+    studioId: studio.id,
+    reasonLabel: null,
+    actorPractitionerId: practitioner.id,
+  });
+
   // Look up enough data to send the client-notification email.
   const supabase = await createClient();
   const { data: appt } = await supabase
@@ -546,6 +563,7 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
     if (client?.email) {
       try {
         await sendCancellationEmail({
+      nameReader: admin,
           appointmentId,
           to: client.email,
           recipientName: client.name,
@@ -984,7 +1002,7 @@ async function dispatchBookingEmails(p: DispatchParams) {
     const treatmentTimeLine = p.studio.show_treatment_time_to_clients
       ? buildTreatmentTimeLine({
           enabled: true,
-          clientFirstName: p.clientName.split(/\s+/)[0] || p.clientName,
+          client: await loadTreatmentTimeNameFields(createAdminClient(), p.studio.id, p.appointment.client_id, p.clientName),
           context: await getTreatmentTimeContextForEmail(
             p.studio.id,
             p.appointment.client_id,
@@ -995,6 +1013,7 @@ async function dispatchBookingEmails(p: DispatchParams) {
     // confirmation_sent_at only when Resend actually delivered. The old
     // code path stamped on every booking, falsely advertising delivery.
     const result = await sendBookingConfirmationToClient({
+      nameReader: createAdminClient(),
       appointment: p.appointment,
       service: p.service,
       studio: p.studio,
@@ -1048,6 +1067,7 @@ async function dispatchBookingEmails(p: DispatchParams) {
     return;
   }
   await sendBookingNotificationToPractitioner({
+      nameReader: createAdminClient(),
     appointment: p.appointment,
     service: p.service,
     studio: p.studio,

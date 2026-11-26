@@ -196,7 +196,7 @@ After PR #180 ships, the workflow Chloe could not finish becomes reachable. Run 
    where id = '<appointment_id>';
    ```
    Expected: `status='completed'`.
-7. (Optional, demonstrates auto-complete.) Skip step 5 and instead click "Chart session" from the appointment detail. After the session record is created, return to the calendar appointment detail. The appointment must now be `completed` (auto-marked by `maybeMarkAppointmentCompletedOnSessionStart`). SQL verify the same way.
+7. (Optional, demonstrates that charting does NOT complete.) Skip step 5 and instead click "Chart session" from the appointment detail. After the session record is created, return to the calendar appointment detail. The appointment must still be `confirmed`: starting a chart no longer completes it (HON-45 reversed the PR #180 auto-mark). Completion is the separate Finish appointment / Mark completed action, which sends no postcare (unless the studio opted into automatic postcare) and takes no payment. SQL verify the same way.
 
 Negative checks (each should leave the appointment status alone):
 - Future confirmed appointment: both buttons are visible but disabled. Hover title for the Mark completed button reads "Appointment can be marked completed after the appointment has ended."
@@ -531,6 +531,12 @@ Expected end state:
    - "Client note: <your note>".
    - "Follow-up okay" badge.
    - "Cancelled N minutes after booking" if `cancelled_at - created_at <= 15 minutes`.
+
+## Find time in a team calendar
+
+In a test studio with practitioner capacity enabled, open Calendar as the owner. Search Find time for a service that two practitioners offer. Select an opening on another day and confirm that the calendar shows its practitioner and local start time. Open the booking drawer and compare its service, practitioner and time with the result. Close the drawer and confirm no appointment was created. From an existing appointment, choose Rebook this client and repeat, checking the client prefill. Repeat as a practitioner member and verify the available times belong to that member.
+
+On an enabled **test** receptionist desk, open Month and compare the count for one practitioner with the selected date’s agenda. Open a visit and check the displayed name, service, phone and email against the test client. Switch to Week and Day, then search the same date range for a service the selected practitioners offer. Try a noon-or-later preference and select an existing test client. Verify the picker shows the preferred name for a client who supplied one, the regular name for a client without one, and a masked contact hint. Search by surname and confirm that the same display name appears on the booking and in the agenda. Previewing an opening must leave the schedule unchanged. Confirm once and check the appointment time and practitioner on the schedule. Use a second tab to check that a taken opening cannot be booked again.
 
 ## 7. Calendar block smoke (PR #139 + #140)
 
@@ -1483,3 +1489,23 @@ When opening a PR, the report MUST explicitly call out which smoke steps were no
 - Anything requiring the Vercel production env dashboard.
 
 The DB/RLS integration lane (PR #220) removed several items from this list: cross-studio RLS isolation, audit-trail immutability and trigger behavior, the clinical delete posture, the double-booking constraint, and the claim RPCs are now exercised on a real local database in CI instead of requiring manual SQL against production. What the DB lane still cannot verify: production-specific state (data drift, policies edited outside migrations: the prod catalog audit recipe in docs/09 remains the check for that), Stripe/Resend/Twilio behavior, and the browser.
+
+## Waitlist Analytics
+
+- As an owner, open Business → Analytics → Waitlist on desktop and mobile.
+  Verify the existing tab styling, readable cards, focus rings and no horizontal
+  overflow. Overview and Clients remain reachable.
+- The cohort says invitations **issued** in the last 30 days. Check the issued
+  and outcome counts against the existing waitlist records. Link use is not
+  booked; booking rows are indented beneath the link-used total. If booking
+  attribution support is absent, booked and conversion say Not available.
+- Provider accepted means accepted for delivery, not Delivered. Email opens and
+  invitation-page views say Not tracked. No fake open rate is displayed.
+- Choose each eligible consultation and next 7 / 14 / 28 days, then Show capacity.
+  Compare with the existing composer estimator. A failed read stays unavailable;
+  unknown outstanding counts never become zero. All-live fallback scope is
+  stated. No capacity estimate reserves an appointment or sends an invitation.
+- Review waitlist opens the existing workflow. No invocation in this analytics
+  journey sends email/SMS or changes admission, consent or appointments.
+- A non-owner opening `/financials/analytics/waitlist` receives the owner-only
+  Analytics sentence. Do not use live customer messages to exercise this check.

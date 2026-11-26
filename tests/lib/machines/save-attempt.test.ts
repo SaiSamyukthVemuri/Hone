@@ -499,7 +499,7 @@ describe("the create path's `saveUnresolved` is monotonic too", () => {
    */
   const call = code.indexOf("createTreatmentAreaWithEntryAction({");
   const from = call === -1 ? -1 : code.indexOf("if (!res.ok) {", call);
-  const branch = from === -1 ? "" : code.slice(from, code.indexOf("return;", from));
+  const branch = from === -1 ? "" : code.slice(from, code.indexOf("setPendingSaveKey(null)", from));
 
   /** The EDIT call's branch, kept only to prove the two are not confused. */
   const editCall = code.indexOf("updateTreatmentAreaWithEntryAction({");
@@ -520,11 +520,13 @@ describe("the create path's `saveUnresolved` is monotonic too", () => {
     expect(branch).toMatch(/setError\(res\.error\)/);
     expect(branch).toMatch(/unresolved/);
     expect(branch.length).toBeGreaterThan(20);
-    expect(branch.length).toBeLessThan(400);
+    expect(branch.length).toBeLessThan(900);
   });
 
   it("the refusal branch SETS the flag, guarded by the result's own field", () => {
-    expect(branch).toMatch(/res\.unresolved\)\s*setSaveUnresolved\(true\)/);
+    expect(branch).toMatch(/res\.unresolved\)\s*\{[\s\S]*?setSaveUnresolved\(true\)/);
+    // A refusal AFTER a lost answer also holds the form, so the flag is set on that path too.
+    expect(branch).toMatch(/createAttemptRef\.current\.unresolved\) \{[\s\S]*?setSaveUnresolved\(true\)/);
   });
 
   it("and NEVER clears it", () => {

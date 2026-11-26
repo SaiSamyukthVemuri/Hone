@@ -146,7 +146,9 @@ export async function updateConsentTemplateAction(
     return { ok: false, error: "Template not found." };
   }
 
-  const { error } = await admin
+  // Compare-and-swap on the version we read: two owners saving at once must not both
+  // write version N+1 with different texts. Zero rows updated means someone else edited first.
+  const { data: updated, error } = await admin
     .from("consent_form_templates")
     .update({
       title,
@@ -156,7 +158,12 @@ export async function updateConsentTemplateAction(
       version: existing.version + 1,
     })
     .eq("id", id)
-    .eq("studio_id", studio.id);
+    .eq("studio_id", studio.id)
+    .eq("version", existing.version)
+    .select("id");
+  if (!error && (updated ?? []).length === 0) {
+    return { ok: false, error: "Someone just edited this template. Reload to see their changes." };
+  }
   if (error) {
     console.error(
       JSON.stringify({

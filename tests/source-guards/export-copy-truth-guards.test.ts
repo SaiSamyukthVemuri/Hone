@@ -143,8 +143,8 @@ describe("terms section 16 is an open legal-policy decision, not a copy fix", ()
     expect(terms).toMatch(/Export Your Data\s*\n?\s*before you terminate/);
   });
 
-  it("the effective date is unchanged by TRUTH-01A", () => {
+  it("the effective date is unchanged by TRUTH-01A (last updated moved deliberately for the appointment text section)", () => {
     expect(terms).toMatch(/effectiveDate="May 22, 2026"/);
-    expect(terms).toMatch(/lastUpdated="May 22, 2026"/);
+    expect(terms).toMatch(/lastUpdated="November 22, 2026"/);
   });
 });

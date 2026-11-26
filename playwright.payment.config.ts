@@ -41,7 +41,7 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: process.env.CI ? 1 : 0,
-  reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
+  reporter: process.env.CI ? [["list"], ["html", { open: "never" }], ["junit", { outputFile: `junit-results/playwright-${process.pid}.xml`, includeProjectInTestName: true }]] : "list",
   use: {
     ...devices["Desktop Chrome"],
     baseURL: PAYMENT_E2E_APP_ORIGIN,
@@ -73,7 +73,10 @@ export default defineConfig({
       }
     : {}),
   webServer: {
-    command: "npm run e2e:payment-server",
+    // HONE_E2E_REUSE_BUILD=1 starts the build an EARLIER step already produced for this checkout instead of compiling
+    // it again inside the server-start timeout (a cold build on a busy host can exceed it before any test runs). With no
+    // .next present `next start` exits and the run fails loudly. Same switch as playwright.config.ts.
+    command: process.env.HONE_E2E_REUSE_BUILD === "1" ? "npm run start" : "npm run e2e:payment-server",
     url: PAYMENT_E2E_APP_ORIGIN,
     env: PAYMENT_WEB_SERVER_ENV,
     reuseExistingServer: false,

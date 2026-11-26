@@ -277,7 +277,7 @@ describe("3a — the loader behind the chart page 'From last visit'", () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     stub({ data: null, error: { code: "57014" } });
     const { loadPreviousVisitNote } = await import("@/lib/sessions/previous-visit-note");
-    expect(await loadPreviousVisitNote(input)).toEqual({ note: null, unavailable: true });
+    expect(await loadPreviousVisitNote(input)).toEqual({ note: null, unavailable: true, session: null });
     const line = String(log.mock.calls[0]?.[0]);
     expect(line).toContain("57014");
     expect(line).not.toContain(CLIENT);
@@ -295,9 +295,9 @@ describe("3a — the loader behind the chart page 'From last visit'", () => {
   it("no earlier note is an answer, not a failure; the note is trimmed", async () => {
     const { loadPreviousVisitNote } = await import("@/lib/sessions/previous-visit-note");
     stub({ data: [], error: null });
-    expect(await loadPreviousVisitNote(input)).toEqual({ note: null, unavailable: false });
+    expect(await loadPreviousVisitNote(input)).toEqual({ note: null, unavailable: false, session: null });
     stub({ data: [{ id: "s", started_at: YESTERDAY, next_session_note: "  PRIOR plan \n" }], error: null });
-    expect(await loadPreviousVisitNote(input)).toEqual({ note: "PRIOR plan", unavailable: false });
+    expect(await loadPreviousVisitNote(input)).toEqual({ note: "PRIOR plan", unavailable: false, session: { id: "s", startedAt: YESTERDAY } });
   });
 
   it("is scoped to this studio and client, live and non-void, strictly earlier, ordered started_at then id", async () => {
@@ -333,7 +333,7 @@ describe("3b — HON-10 F4: a blank amended note does not hide the real one befo
   it("a whitespace-only newest note is skipped; the older real note is shown", async () => {
     stubRows([row("new", YESTERDAY, "   \n "), row("old", "2026-10-10T10:00:00.000Z", "REAL plan")]);
     const { loadPreviousVisitNote } = await import("@/lib/sessions/previous-visit-note");
-    expect(await loadPreviousVisitNote(input)).toEqual({ note: "REAL plan", unavailable: false });
+    expect(await loadPreviousVisitNote(input)).toEqual({ note: "REAL plan", unavailable: false, session: { id: "old", startedAt: "2026-10-10T10:00:00.000Z" } });
   });
   it("an empty-string newest note is skipped too", async () => {
     stubRows([row("new", YESTERDAY, ""), row("old", "2026-10-10T10:00:00.000Z", "REAL plan")]);
@@ -348,12 +348,12 @@ describe("3b — HON-10 F4: a blank amended note does not hide the real one befo
   it("only blank notes, fewer than the window: genuinely no note", async () => {
     stubRows([row("a", YESTERDAY, " "), row("b", "2026-10-10T10:00:00.000Z", "")]);
     const { loadPreviousVisitNote } = await import("@/lib/sessions/previous-visit-note");
-    expect(await loadPreviousVisitNote(input)).toEqual({ note: null, unavailable: false });
+    expect(await loadPreviousVisitNote(input)).toEqual({ note: null, unavailable: false, session: null });
   });
   it("a full window of blank notes proves nothing about older ones: unavailable", async () => {
     stubRows(Array.from({ length: 10 }, (_, i) => row(`b${i}`, `2026-10-${String(19 - i).padStart(2, "0")}T10:00:00.000Z`, "  ")));
     const { loadPreviousVisitNote } = await import("@/lib/sessions/previous-visit-note");
-    expect(await loadPreviousVisitNote(input)).toEqual({ note: null, unavailable: true });
+    expect(await loadPreviousVisitNote(input)).toEqual({ note: null, unavailable: true, session: null });
   });
 });
 
@@ -391,5 +391,36 @@ describe("3 — the chart page 'From last visit' read", () => {
     expect(src).toMatch(
       /\.order\("started_at", \{ ascending: false \}\)\s*\.order\("id", \{ ascending: false \}\)/,
     );
+  });
+});
+
+describe("HON-10 identity: the note names the visit it was written on", () => {
+  const row = (id: string | null, at: string | null, note: string | null) => ({ id, started_at: at, next_session_note: note });
+  function stubRows(rows: unknown[]) {
+    const b: Record<string, unknown> = {};
+    for (const m of ["from", "select", "eq", "is", "neq", "not", "lt", "order"]) b[m] = () => b;
+    b.limit = async () => ({ data: rows, error: null });
+    vi.mocked(createClient).mockResolvedValue(b as unknown as Awaited<ReturnType<typeof createClient>>);
+  }
+  const input = { studioId: STUDIO, clientId: CLIENT, before: STARTS_AT };
+  it("returns the id and start time of the session the note is ON, not of a newer note-less one", async () => {
+    stubRows([row("blank-newer", YESTERDAY, "  "), row("the-note-visit", "2026-10-01T09:30:00.000Z", "plan A")]);
+    const { loadPreviousVisitNote } = await import("@/lib/sessions/previous-visit-note");
+    const r = await loadPreviousVisitNote(input);
+    expect(r.session).toEqual({ id: "the-note-visit", startedAt: "2026-10-01T09:30:00.000Z" });
+  });
+  it("a note whose row lost its identity is NOT shown as a note (unavailable), never an unlabelled one", async () => {
+    const { loadPreviousVisitNote } = await import("@/lib/sessions/previous-visit-note");
+    for (const bad of [row(null, YESTERDAY, "plan"), row("x", null, "plan")]) {
+      stubRows([bad]);
+      expect(await loadPreviousVisitNote(input)).toEqual({ note: null, unavailable: true, session: null });
+    }
+  });
+  it("session is null exactly when note is null", async () => {
+    const { loadPreviousVisitNote } = await import("@/lib/sessions/previous-visit-note");
+    stubRows([]);
+    const none = await loadPreviousVisitNote(input);
+    expect(none.session).toBeNull();
+    expect(none.note).toBeNull();
   });
 });

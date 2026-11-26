@@ -27,6 +27,7 @@ import {
   controlState,
   delegateFor,
   draftToInviteInput,
+  DEFAULT_BOOKING_WINDOW_DAYS,
   emptyDraft,
   entryActionSurface,
   practitionerActionAvailability,
@@ -845,6 +846,14 @@ describe("this module is UNREACHABLE from the application", () => {
   const SANCTIONED_INTEGRATION_ENTRY = [
     "app/(app)/settings/waitlist/invite-actions.ts",
     "app/(app)/settings/waitlist/page.tsx",
+    // The standalone owner route re-exports the same guarded queue page.
+    "app/(app)/waitlist/page.tsx",
+    // The owner's over-invite page, its action and confirmed-batch cron reach the same delivery adapter.
+    "app/(app)/settings/waitlist/over-invite/actions.ts",
+    "app/(app)/settings/waitlist/over-invite/page.tsx",
+    "app/(app)/waitlist/over-invite/page.tsx", // same owner page, at the standalone route
+    // The background route that sends the owner's CONFIRMED batches (cron pattern): the same delivery function, reached through the run module.
+    "app/api/cron/waitlist-invitation-batches/route.ts",
   ];
 
   it("no prototype entry point is reachable from the SHIPPED APPLICATION, at ANY depth", { timeout: 30_000 }, () => {
@@ -2168,7 +2177,7 @@ describe("the composer's draft", () => {
     // whole rather than what any one field happens to hold today.
     expect(draftToInviteInput("e1", draft())).toEqual({
       entryId: "e1",
-      scope: { serviceId: "svc-1", windowDays: 7, allowedWeekdays: null },
+      scope: { serviceId: "svc-1", windowDays: DEFAULT_BOOKING_WINDOW_DAYS, allowedWeekdays: null },
     });
   });
 

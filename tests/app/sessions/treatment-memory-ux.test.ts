@@ -63,7 +63,7 @@ describe("1. a new treatment area never auto-copies the previous area", () => {
 describe("2. copy settings: full, area-aware, never the response", () => {
   const copyFn = codeOnly(FORM).slice(
     codeOnly(FORM).indexOf("function copySettings"),
-    codeOnly(FORM).indexOf("function submit"),
+    codeOnly(FORM).indexOf("function runSave"),
   );
 
   it("copies every treatment setting a practitioner expects (via the shared snapshot contract)", () => {
@@ -193,7 +193,7 @@ describe("4. back navigation returns to the Sessions tab", () => {
   it("session detail and new-session back links carry ?tab=sessions", () => {
     expect(SESSION_PAGE).toMatch(/href=\{`\/clients\/\$\{id\}\?tab=sessions`\}/);
     expect(NEW_SESSION_PAGE).toMatch(
-      /href=\{`\/clients\/\$\{id\}\?tab=sessions`\}/,
+      /href=\{`\/clients\/\$\{encodeURIComponent\(id\)\}\?tab=sessions`\}/,
     );
   });
 });

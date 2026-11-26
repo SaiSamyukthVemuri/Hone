@@ -26,6 +26,7 @@ export const AREAS: ReadonlyArray<string> = [
   "Bikini",
   "Brazilian",
   "Buttocks",
+  "Areolas",
   "Other",
 ];
 
@@ -54,7 +55,7 @@ export const AREA_REGIONS: ReadonlyArray<{
   },
   {
     region: "Torso",
-    areas: ["Chest", "Abdomen", "Back", "Underarms"],
+    areas: ["Chest", "Abdomen", "Back", "Underarms", "Areolas"],
   },
   {
     region: "Limbs",
@@ -67,6 +68,11 @@ export const AREA_REGIONS: ReadonlyArray<{
 ];
 
 export const OTHER_AREA = "Other";
+
+// Areas a PRACTITIONER may chart but a waitlist PROSPECT may not name. The prospect catalogue
+// (lib/waitlist/treatment-area-catalog.ts) is derived from AREAS and its ids are frozen by a database
+// CHECK constraint, so these are subtracted there and the prospect picker stays unchanged.
+export const PRACTITIONER_ONLY_AREAS: ReadonlyArray<string> = ["Areolas"];
 
 // Laser treatments use larger anatomical zones; overlap with AREAS but not identical.
 export const LASER_ZONES: ReadonlyArray<string> = [

@@ -114,7 +114,7 @@ export function OnboardingWizard({
   model: OnboardingModel;
   open: boolean;
   onDismiss: () => void;
-  onComplete: () => void;
+  onComplete: (destination?: "dashboard" | "calendar") => void;
 }) {
   const [activeStep, setActiveStep] = useState<OnboardingStepKey>(
     model.currentStep,
@@ -292,7 +292,7 @@ export function OnboardingWizard({
           </ul>
         )}
 
-        {active.key === "booking" && model.publicBookingUrl && (
+        {active.key === "booking" && active.status === "done" && model.publicBookingUrl && (
           <div className="mt-4 rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm dark:border-neutral-800 dark:bg-neutral-900">
             <span className="break-all text-neutral-700 dark:text-neutral-200">
               {model.publicBookingUrl}
@@ -342,7 +342,7 @@ export function OnboardingWizard({
                 </Link>
               )
             )}
-            {active.key === "booking" && model.publicBookingUrl && (
+            {active.key === "booking" && active.status === "done" && model.publicBookingUrl && (
               <>
                 <Link
                   href={model.publicBookingUrl}
@@ -405,11 +405,17 @@ export function OnboardingWizard({
               type="button"
               className={PRIMARY_BTN}
               disabled={pending}
-              onClick={onComplete}
+              onClick={() => onComplete()}
             >
               Go to dashboard
             </button>
-            {model.publicBookingUrl && (
+            {model.requiredComplete && (
+              <button type="button" className={SECONDARY_BTN} disabled={pending} onClick={() => onComplete("calendar")}>
+                Open calendar
+              </button>
+            )}
+            {/* A saved position can reach this step after a readiness regression, so the link needs the live gate too. */}
+            {model.requiredComplete && model.publicBookingUrl && (
               <CopyLinkButton url={model.publicBookingUrl} />
             )}
           </>

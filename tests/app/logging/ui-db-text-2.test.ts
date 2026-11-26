@@ -4,7 +4,7 @@ import { captureConsole } from "../../lib/sms/helpers/log-capture";
 
 // MSG-LOG-RAW-ERROR (UI-DB-TEXT-2). The remaining places that RETURN database
 // text to the page (or to a caller that throws or prints it): the client
-// birthday, budget, personal-notes and treatment-goal actions, the onboarding
+// budget, personal-notes and treatment-goal actions, the onboarding
 // state writer, the service reorder, the team invite, the area removal, the
 // recurring-break cron response and the payment-webhook attempt lookup. Every
 // case feeds a fake error whose message, details and hint carry synthetic text
@@ -98,26 +98,7 @@ function failClientLookup(error: Hostile) {
   world.script = (t, v) => (t === "clients" && v === "select" ? { data: null, error } : { data: null, error: null });
 }
 
-describe("client actions: birthday, budget, personal notes, treatment goal", () => {
-  it("birthday: the client lookup (:63 clear, :119 save) and both writes", async () => {
-    const { updateClientBirthdayAction } = await import("@/app/(app)/clients/[id]/birthday-actions");
-    failClientLookup(hostile("22P02"));
-    const clear = await updateClientBirthdayAction(form({ client_id: "c1", birthday_month: "", birthday_day: "" }));
-    expect(clear).toMatchObject({ ok: false, error: expect.stringContaining("check the client") });
-    expectNoLeak(clear);
-    const save = await updateClientBirthdayAction(form({ client_id: "c1", birthday_month: "5", birthday_day: "17" }));
-    expect(save).toMatchObject({ ok: false, error: expect.stringContaining("check the client") });
-    expectNoLeak(save);
-
-    failAt("clients", "update", hostile("42501"));
-    const writeFail = await updateClientBirthdayAction(form({ client_id: "c1", birthday_month: "5", birthday_day: "17" }));
-    expect(writeFail).toEqual({ ok: false, error: "You do not have permission to save the birthday." });
-    expectNoLeak(writeFail);
-    const clearFail = await updateClientBirthdayAction(form({ client_id: "c1", birthday_month: "", birthday_day: "" }));
-    expect(clearFail).toMatchObject({ ok: false, error: expect.stringContaining("clear the birthday") });
-    expectNoLeak(clearFail);
-  });
-
+describe("client actions: budget, personal notes, treatment goal", () => {
   it("budget context: the lookup (:94) and the save (:111)", async () => {
     const { updateClientBudgetContextAction } = await import("@/app/(app)/clients/[id]/budget-context-actions");
     failClientLookup(hostile("22P02"));

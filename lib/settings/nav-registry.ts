@@ -1,4 +1,7 @@
+import { WAITLIST_PATH } from "@/lib/waitlist/paths";
 import "server-only";
+import { cache } from "react";
+import { resolveSettingsNavWithReachable } from "./nav";
 
 import { launchNav } from "@/app/(app)/settings/launch/nav";
 import { calendarNav } from "@/app/(app)/settings/calendar/nav";
@@ -8,7 +11,7 @@ import { createClient } from "@/lib/supabase/server";
 import { hasActiveWaitlistEntries } from "@/lib/waitlist/operator-queue-presence";
 import { readOwnerBilling } from "@/lib/subscriptions/owner-billing";
 import { isSelfServeCheckoutEnabled } from "@/lib/subscriptions/plans";
-import type { SettingsNavEntry } from "./nav";
+import type { SettingsNavContext, SettingsNavEntry } from "./nav";
 
 // The Settings rail registry (settings redesign, WS-B owns this file).
 //
@@ -34,7 +37,7 @@ const OWNER = ["owner"] as const;
  * COMMIT PATH, not the mode (see the bridge): a WAITLIST mode whose joins still
  * commit through legacy email acceptance would open an empty queue.
  */
-const waitlistVisible: NonNullable<SettingsNavEntry["visibleWhen"]> = async (ctx) => {
+export const waitlistVisible: NonNullable<SettingsNavEntry["visibleWhen"]> = async (ctx) => {
   if (ctx.role !== "owner") return false;
   const admission = await getNewClientAdmissionMode(ctx.studio);
   const waitlistLive = newClientWaitlistCommitIsDurable(admission, ctx.studio.slug);
@@ -43,6 +46,23 @@ const waitlistVisible: NonNullable<SettingsNavEntry["visibleWhen"]> = async (ctx
     (await hasActiveWaitlistEntries(await createClient(), ctx.studio.id))
   );
 };
+
+/**
+ * Does the main navigation show "Waitlist" for this signed-in user in this studio?
+ *
+ * EXACTLY the Settings tab's rule, reused and not re-derived (`waitlistVisible` above): an owner, in a studio that is waitlisting
+ * new clients and recording them durably, or that already holds an entry the operator can act on. Admission being Closed does not
+ * hide it: that is a separate setting, and existing entries and invitations still need managing. It widens no access: the page
+ * keeps its own owner check, and a practitioner never sees the link. A failed read hides it (the same fail-closed answer the tab
+ * gives) and never breaks the shell.
+ */
+export async function showWaitlistInPrimaryNav(ctx: SettingsNavContext): Promise<boolean> {
+  try {
+    return (await waitlistVisible(ctx)) === true;
+  } catch {
+    return false;
+  }
+}
 
 // Groups open one focused view each (R2): every child is its OWN route, entered
 // at its heading, with no anchors into a longer page. Flat entries have no
@@ -106,7 +126,7 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsNavEntry> = [
     id: "waitlist",
     group: "studio",
     label: "Waitlist",
-    href: "/settings/waitlist",
+    href: WAITLIST_PATH,
     roles: OWNER,
     visibleWhen: waitlistVisible,
     order: 50,
@@ -158,3 +178,10 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsNavEntry> = [
   { id: "import", group: "studio", label: "Import", href: "/settings/import", roles: OWNER, order: 130 },
   { id: "data", group: "studio", label: "Data", href: "/settings/data", roles: OWNER, order: 140 },
 ];
+
+// The layout and overview render together. Reuse the same permission and
+// visibility decision, including reads for launch and waitlist, in this request.
+export const getSettingsNavigation = cache(
+  (role: SettingsNavContext["role"], studio: SettingsNavContext["studio"]) =>
+    resolveSettingsNavWithReachable(SETTINGS_NAV, { role, studio }),
+);

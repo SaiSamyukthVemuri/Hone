@@ -54,6 +54,7 @@ export const PRICING_UNCONFIRMED_ERROR =
  * missing_service           -> block
  * missing_price             -> block
  * ambiguous_custom_pricing  -> block
+ * invalid_custom_pricing    -> block
  * load/context failure      -> block
  * no pricing context at all -> block
  */
@@ -85,6 +86,7 @@ export function decideExecutionPricingPermission(
     case "missing_service":
     case "missing_price":
     case "ambiguous_custom_pricing":
+    case "invalid_custom_pricing":
       return { allow: false, error: unresolvedAmountMessage(result) };
   }
 }

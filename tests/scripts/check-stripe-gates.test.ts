@@ -446,6 +446,14 @@ describe("check-stripe-gates: checkout.sessions is the HON-70 billing adapter on
     expect(r.stdout ?? "").toMatch(/^FAIL checkout\.sessions:/m);
   });
 
+  it.each(["update", "cancel"])("permits exactly one subscription %s in the sandbox billing adapter", (method) => {
+    const call = `await stripe.subscriptions.${method}(id);\n`;
+    const label = `subscriptions.${method}:`;
+    expect(runAgainst({ [BILLING_CLIENT]: call }).stdout).toContain(`PASS ${label} 1 occurrence(s)`);
+    expect(runAgainst({ [BILLING_CLIENT]: call + call }).stdout).toContain(`FAIL ${label}`);
+    expect(runAgainst({ "lib/stripe/x.ts": call }).stdout).toContain(`FAIL ${label}`);
+  });
+
   it("the billing client never uses getStripe() or the Connect key (separate account and client)", () => {
     const src = readFileSync(path.resolve(REPO_ROOT, BILLING_CLIENT), "utf8")
       .replace(/\/\*[\s\S]*?\*\//g, "")

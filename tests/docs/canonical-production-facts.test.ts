@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { currentProse, ignoreMarkers, matchAll } from "./helpers/canonical-facts";
+import { aggregatorSteps, runAggregatorSteps } from "../ci/helpers/aggregator-steps";
 
 // ---------------------------------------------------------------------------
 // CANONICAL PRODUCTION FACTS — the anti-drift guard.
@@ -336,7 +337,10 @@ async function loadClassifier(): Promise<(files: string[]) => { docs_only: boole
 // claim the receipt makes. Nothing is taken on trust:
 //
 //   (a) it is a two-parent merge whose subject is GitHub's
-//       "Merge pull request #N from ...";
+//       "Merge pull request #N from ...", or a one-parent squash merge made by
+//       GitHub (committer `GitHub <noreply@github.com>`) whose subject ends
+//       "(#N)" and is not a revert (the receipt is then bound the
+//       same way, and runtime and migrations are recomputed against its parent);
 //   (b) the receipt is bound to it - either added BY that merge (the in-PR
 //       form, <N>.json absent from its first parent), or naming its exact SHA
 //       in `merge` (the late form, for a merge that has already landed);
@@ -368,6 +372,18 @@ export type PendingReceipt = {
 
 const RECEIPT_KEYS = new Set(["pr", "merge", "runtime", "migrations", "release_receipt"]);
 const MERGE_SUBJECT = /^Merge pull request #(\d+) from /;
+/**
+ * A squash merge has ONE parent, GitHub's default subject "<title> (#N)" and
+ * the committer `GitHub <noreply@github.com>`. It is covered by a receipt exactly
+ * as a two-parent merge is, but only in this narrow form: the committer must be
+ * GitHub's, and the subject must END with "(#N)" and must not be a revert (a
+ * revert's subject is `Revert "<title> (#N)"` and would otherwise name the
+ * reverted PR). Everything else is recomputed from git as for a merge: the
+ * receipt must be ADDED by the commit, name the same PR, and match its diff
+ * against its parent for runtime and migrations.
+ */
+const GITHUB_COMMITTER = "GitHub <noreply@github.com>";
+const SQUASH_SUBJECT = /^(?!Revert\b).*\(#(\d+)\)\s*$/;
 
 /** Strict: an unknown key, a wrong type or a mismatched pointer is malformed, never ignored. */
 export function parseReceipt(text: string): { ok: true; receipt: PendingReceipt } | { ok: false; reason: string } {
@@ -399,13 +415,19 @@ export function parseReceipt(text: string): { ok: true; receipt: PendingReceipt 
 async function mergeFacts(
   g: Git,
   c: string,
-): Promise<{ parents: number; pr: number | null; firstParent: string | null; runtime: boolean; migrations: string[] } | null> {
+): Promise<{ parents: number; pr: number | null; committer: string | null; firstParent: string | null; runtime: boolean; migrations: string[] } | null> {
   const parents = g("rev-list", "--parents", "-n", "1", c)?.split(" ").slice(1) ?? null;
   if (parents === null) return null;
   const subject = g("log", "-1", "--format=%s", c);
   if (subject === null) return null;
-  const pr = subject.match(MERGE_SUBJECT)?.[1];
+  const pr =
+    parents.length === 2
+      ? subject.match(MERGE_SUBJECT)?.[1]
+      : parents.length === 1
+        ? subject.match(SQUASH_SUBJECT)?.[1]
+        : undefined;
   const firstParent = parents[0] ?? null;
+  const committer = g("log", "-1", "--format=%cn <%ce>", c);
   const files = firstParent ? g("diff", "--name-only", "--no-renames", firstParent, c) : null;
   if (files === null) return null;
   const list = files.split("\n").filter(Boolean);
@@ -413,6 +435,7 @@ async function mergeFacts(
   return {
     parents: parents.length,
     pr: pr ? Number(pr) : null,
+    committer,
     firstParent,
     // A3's deployed decision, applied to this merge alone.
     runtime: list.some((f) => nonShippingReason(f) === null && !classify([f]).docs_only),
@@ -429,8 +452,16 @@ export async function receiptCoverage(
   const at = c.slice(0, 8);
   const facts = await mergeFacts(g, c);
   if (!facts) return { ok: false, reason: `${at} cannot be inspected` };
-  if (facts.parents !== 2 || !facts.firstParent) return { ok: false, reason: `${at} is not a two-parent merge` };
-  if (facts.pr === null) return { ok: false, reason: `${at} is not a GitHub pull-request merge` };
+  if ((facts.parents !== 2 && facts.parents !== 1) || !facts.firstParent) {
+    return { ok: false, reason: `${at} is not a two-parent merge or a one-parent squash merge` };
+  }
+  if (facts.pr === null) return { ok: false, reason: `${at} is not a GitHub pull-request merge or squash merge` };
+  // A one-parent commit is only a squash merge when GitHub made it: a web or API
+  // squash carries this committer, while a direct push carries its author's own
+  // address, so a local commit is refused here. This narrows what is accepted.
+  if (facts.parents === 1 && facts.committer !== GITHUB_COMMITTER) {
+    return { ok: false, reason: `${at} is a one-parent commit whose committer is not ${GITHUB_COMMITTER}, so it is not a GitHub squash merge` };
+  }
 
   let receipt: PendingReceipt | null = null;
   const named = late.filter((r) => r.merge === c);
@@ -794,7 +825,7 @@ const L2_TITLE = /^##\s+L2\s+—\s+No real production whole-session copy has eve
 function tenantRow(slug: string): number[] | null {
   const row = currentProse(CURRENT_STATE)
     .split("\n")
-    .find((l) => l.includes(`\`${slug}\``) && l.trim().startsWith("|"));
+    .find((l) => l.trim().startsWith("|") && l.split("|")[1]?.replace(/[`*\s]/g, "") === slug.replace(/[`*\s]/g, ""));
   if (!row) return null;
   return [...row.matchAll(/\|\s*\*{0,2}(\d+)\*{0,2}\s*(?=\|)/g)].map((m) => Number(m[1]));
 }
@@ -821,7 +852,7 @@ function allTenantTotals(): { clients: number; appointments: number } {
 export function findSyntheticAsCustomer(text: string, totals: number[]): string[] {
   const hits: string[] = [];
   for (const line of text.split("\n")) {
-    if (!/\b(?:real[\s-]customer|customer activity|Willow)\b/i.test(line)) continue;
+    if (!/\b(?:real[\s-]customer|customer activity|(?:Willow|the pilot studio))\b/i.test(line)) continue;
     // A line may legally NAME a forbidden figure in order to LABEL or DISCLAIM
     // it. §0's own reading rule does exactly that: it names the Twin-subtracted
     // remainder precisely to say the remainder is not customer activity. The
@@ -1369,7 +1400,7 @@ describe("canonical production docs: synthetic rows are never customer activity"
    */
   function forbiddenCustomerFigures(): number[] {
     const out = [totals.clients, totals.appointments];
-    const twin = tenantRow("hone-synthetic-twin");
+    const twin = tenantRow("the synthetic twin");
     if (twin && twin.length >= 2) {
       out.push(totals.clients - twin[0], totals.appointments - twin[1]);
     }
@@ -1381,12 +1412,12 @@ describe("canonical production docs: synthetic rows are never customer activity"
     expect(register, "the tenant register must exist").toMatch(/^##\s+0\.\s+Tenant register/m);
     expect(
       register,
-      "hone-synthetic-twin must be classified as synthetic, by name",
-    ).toMatch(/`hone-synthetic-twin`[^|]*\|[^|]*\*\*Synthetic\*\*/);
+      "the synthetic twin must be classified as synthetic, by name",
+    ).toMatch(/the synthetic twin[^|]*\|[^|]*\*\*Synthetic\*\*/);
     expect(
       register,
-      "willow-electrolysis must be classified as the real-customer tenant",
-    ).toMatch(/`willow-electrolysis`[^|]*\|[^|]*\*\*Real customer\*\*/);
+      "the pilot studio must be classified as the real-customer tenant",
+    ).toMatch(/\|\s*the pilot studio\s*\|[^|]*\*\*Real customer\*\*/);
     expect(
       register,
       "the register must warn that the non-synthetic remainder is NOT real-customer activity — " +
@@ -1394,20 +1425,20 @@ describe("canonical production docs: synthetic rows are never customer activity"
     ).toMatch(/Non-synthetic is not the same as real-customer/i);
   });
 
-  it("the stated real-customer figures are the WILLOW row, not a subtraction", () => {
-    const willow = tenantRow("willow-electrolysis");
-    expect(willow, "§0 must carry a willow-electrolysis row with numbers").toBeTruthy();
-    const [clients, appts] = willow as number[];
+  it("the stated real-customer figures are the pilot studio's row, not a subtraction", () => {
+    const pilot = tenantRow("the pilot studio");
+    expect(pilot, "§0 must carry a pilot studio row with numbers").toBeTruthy();
+    const [clients, appts] = pilot as number[];
     const rule = currentProse(CURRENT_STATE).match(
-      /Real-customer activity is `willow-electrolysis` only:\s*\*{0,2}(\d+)\*{0,2}\s*clients,\s*\*{0,2}(\d+)\*{0,2}\s*appointments/i,
+      /Real-customer activity is (?:`the pilot studio`|the pilot studio) only:\s*\*{0,2}(\d+)\*{0,2}\s*clients,\s*\*{0,2}(\d+)\*{0,2}\s*appointments/i,
     );
     expect(
       rule,
       "§0's reading rule must state the customer figures explicitly, so they are tied to the " +
         "customer-classified tenant rather than inferred by subtracting the Twin",
     ).toBeTruthy();
-    expect(Number(rule?.[1]), "customer clients must equal the Willow row").toBe(clients);
-    expect(Number(rule?.[2]), "customer appointments must equal the Willow row").toBe(appts);
+    expect(Number(rule?.[1]), "customer clients must equal the pilot studio row").toBe(clients);
+    expect(Number(rule?.[2]), "customer appointments must equal the pilot studio row").toBe(appts);
   });
 
   it("no CURRENT-state doc labels an all-tenant total as customer activity", () => {
@@ -1443,7 +1474,7 @@ describe("canonical production docs: synthetic rows are never customer activity"
 // written. None of them was true when this was corrected.
 //
 // A read-only hosted query on 2026-09-19 returned 31 rows in
-// `new_client_waitlist_entries`, 28 of them for `willow-electrolysis`, the
+// `new_client_waitlist_entries`, 28 of them for the pilot studio, the
 // oldest joined 2026-08-25. The guard was therefore not merely stale: it was
 // actively holding the canonical documentation at a falsehood, and a lane that
 // tried to tell the truth would have gone red for doing so.
@@ -1582,7 +1613,7 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
       // Neither asserts that the flag is off now, and banning them would push
       // real history out of the document to satisfy a regex.
       /durable\s+WAIT\s+(?:is|remains|stays)\s+(?:deliberately\s+|intentionally\s+)?OFF\b/i,
-      /Willow[^.\n]{0,40}durable[^.\n]{0,40}\b(?:is|remains|stays)\s+(?:deliberately\s+|intentionally\s+)?off\b/i,
+      /(?:Willow|the pilot studio)[^.\n]{0,40}durable[^.\n]{0,40}\b(?:is|remains|stays)\s+(?:deliberately\s+|intentionally\s+)?off\b/i,
       // ADJECTIVE FORM, where OFF modifies "durable" instead of following the
       // verb: "Willow remains legacy-enabled and durable-OFF". Codex #740,
       // fourth round, found this after the narrowing above -- the hole was
@@ -1615,7 +1646,7 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
       // table still said "No studio HAS BEEN enabled" three rows below the
       // correction that contradicted it.
       /\bNo studio (?:is|has been|was|had been) enabled\b/i,
-      /\bWillow is\s+\*{0,2}not\s+enabled\*{0,2}/i,
+      /\b(?:Willow|the pilot studio) is\s+\*{0,2}not\s+enabled\*{0,2}/i,
       // The activation-authorization claim, which is the same falsehood stated
       // as a gate rather than as a count.
       /activation\s+(?:—|-|--)?\s*is ungranted/i,
@@ -1707,9 +1738,9 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
         // a heading reading "WAIT-01 - the email-delivered waitlist. LIVE at
         // Willow." and a row reading "LIVE for Willow" both slipped through.
         // `[\s\S]` spans sentences; at|for covers both prepositions.
-        /WAIT-01[\s\S]{0,90}?\b(?:enabled|live)\b[^\n]{0,40}?\b(?:at|for)\s+Willow\b/i,
-        /\bWillow\b[^.\n]{0,50}\bWAIT-01\b[^.\n]{0,40}\bcommit point\b/i,
-        /WAIT-01[^.\n]{0,40}\bcommit point\b[^.\n]{0,40}\bWillow\b/i,
+        /WAIT-01[\s\S]{0,90}?\b(?:enabled|live)\b[^\n]{0,40}?\b(?:at|for)\s+(?:Willow|the pilot studio)\b/i,
+        /\b(?:Willow|the pilot studio)\b[^.\n]{0,50}\bWAIT-01\b[^.\n]{0,40}\bcommit point\b/i,
+        /WAIT-01[^.\n]{0,40}\bcommit point\b[^.\n]{0,40}\b(?:Willow|the pilot studio)\b/i,
       ]) {
         expect(
           prose.match(shape)?.[0] ?? null,
@@ -1745,14 +1776,14 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
       const prose = currentProse(doc);
       for (const shape of [
         /\bthen\s+explicitly\s+enable\s+durable\b/i,
-        /\b(?:before|prior to)\s+Willow\s+migration\b/i,
-        /\bsilently\s+durable-enabling\s+Willow\b/i,
+        /\b(?:before|prior to)\s+(?:Willow|the pilot studio)\s+migration\b/i,
+        /\bsilently\s+durable-enabling\s+(?:Willow|the pilot studio)\b/i,
         // Codex #740, eighth round: the same instruction phrased as a CUTOVER
         // rather than an enable. Five active sections still sequenced work
         // "before" or "only then authorize" a cutover performed in August.
-        /\b(?:before|prior to)\s+(?:Willow\s+)?durable\s+cutover\b/i,
+        /\b(?:before|prior to)\s+(?:(?:Willow|the pilot studio)\s+)?durable\s+cutover\b/i,
         /\bonly then\s+authoriz\w*[^.\n]{0,40}\bcutover\b/i,
-        /\bauthorize\s+Willow\s+durable\s+cutover\b/i,
+        /\bauthorize\s+(?:Willow|the pilot studio)\s+durable\s+cutover\b/i,
         // GENERIC "before migration", with no Willow or durable token in the
         // sentence at all. Codex #740, twelfth direction: an acceptance-debt row
         // told operators to close WAIT-CONTINUITY-01 "before migration". Scoped
@@ -1763,9 +1794,9 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
         // BARE WORDING. Codex #740, ninth round: "then Willow cutover" listed as
         // remaining work, with no "durable" and no verb to anchor on. The guard
         // had been matching the decorated forms only.
-        /\bthen\s+Willow\s+cutover\b/i,
-        /\bWillow\s+cutover\b[^.\n]{0,30}\bremain\w*/i,
-        /\bremain\w*[^.\n]{0,40}\bWillow\s+cutover\b/i,
+        /\bthen\s+(?:Willow|the pilot studio)\s+cutover\b/i,
+        /\b(?:Willow|the pilot studio)\s+cutover\b[^.\n]{0,30}\bremain\w*/i,
+        /\bremain\w*[^.\n]{0,40}\b(?:Willow|the pilot studio)\s+cutover\b/i,
       ]) {
         expect(
           prose.match(shape)?.[0] ?? null,
@@ -1897,9 +1928,9 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
   });
 });
 
-const APPLY_HISTORY_ENTRIES = 22;
+const APPLY_HISTORY_ENTRIES = 43;
 const APPLY_HISTORY_DIGEST =
-  "a9c351137ac99e4f4606a9ee06d867717cd442fd36125b32d59159ecf68171df";
+  "c1a4e2b1432dd352c8ad730ce0e9a159cc0c8e07e77e168ee1aadb5a4fd174a0";
 
 describe("canonical production docs: the apply history is append-only", () => {
   /**
@@ -2160,6 +2191,23 @@ describe("NEGATIVE CONTROLS — the guard actually goes red", () => {
 // ===========================================================================
 
 /** Every 40-hex string in a document, deduplicated. */
+/**
+ * The SHAs in `shas` that are NOT commits in this repository (missing, or present as a tree, blob or tag), in input order.
+ * One `git cat-file --batch-check` process for the whole list. A git failure THROWS: it must never read as "every SHA is fine".
+ */
+export function nonCommitShas(shas: string[]): string[] {
+  if (shas.length === 0) return [];
+  const out = execFileSync("git", ["cat-file", "--batch-check"], { encoding: "utf8", cwd: ROOT, input: shas.join("\n") + "\n", stdio: ["pipe", "pipe", "ignore"] });
+  return nonCommitsIn(shas, out);
+}
+
+/** Reads a `git cat-file --batch-check` answer: one line per SHA, in order. Fewer or more lines than SHAs THROWS, so a truncated answer cannot pass for "all fine". */
+export function nonCommitsIn(shas: string[], batchCheckOutput: string): string[] {
+  const lines = batchCheckOutput.split("\n").filter((l) => l.length > 0);
+  if (lines.length !== shas.length) throw new Error(`git cat-file --batch-check answered ${lines.length} lines for ${shas.length} SHAs`);
+  return shas.filter((_, i) => lines[i].split(" ")[1] !== "commit");
+}
+
 export function shasIn(doc: string): string[] {
   return [...new Set(doc.match(/\b[0-9a-f]{40}\b/g) ?? [])];
 }
@@ -2221,13 +2269,44 @@ describe("RULE A — current-state.md pins a real, current production SHA", () =
     // "Not in this clone" and "not a commit" are different claims and only the
     // second is a defect.
     requireUsableGit("A1");
-    const unreal = shasIn(CURRENT_STATE).filter((sha) => git("cat-file", "-t", sha) !== "commit");
+    const named = shasIn(CURRENT_STATE);
+    // Non-vacuity: an empty extraction would make this pass for the wrong reason. The record lists 216 SHAs today and only ever grows; a floor of 100 catches a
+    // broken extraction without making a normal edit fail.
+    expect(named.length, "the SHA extraction found almost nothing: the check below would be vacuous").toBeGreaterThan(100);
+    const unreal = nonCommitShas(named);
     expect(
       unreal,
       "current-state.md names one or more 40-hex SHAs that are not commits in this " +
         "repository. A fabricated or mistyped SHA reads exactly like a real one; this is the " +
         "only thing that tells them apart. Offending: " + JSON.stringify(unreal),
     ).toEqual([]);
+    // An explicit budget, not the 5 s default: the record names a few hundred SHAs and every refresh adds more, so this check grows with it. It measured
+    // 5.0-5.3 s on a loaded host with one `git cat-file` process per SHA and went red under wide runs while passing alone. The lookups are now ONE
+    // `git cat-file --batch-check` call; the 30 s is headroom for a loaded host, not a licence to be slow.
+  }, 30_000);
+
+  it("A1 negative control: a fabricated SHA, a non-commit object and a missing SHA are each reported; a real commit is not", () => {
+    requireUsableGit("A1 negative control");
+    const head = git("rev-parse", "HEAD") as string;
+    const tree = git("rev-parse", "HEAD^{tree}") as string;
+    const fake = "0123456789abcdef0123456789abcdef01234567";
+    expect(nonCommitShas([head])).toEqual([]);
+    expect(nonCommitShas([fake])).toEqual([fake]);
+    expect(nonCommitShas([tree])).toEqual([tree]);
+    expect(nonCommitShas([head, fake, tree, head])).toEqual([fake, tree]);
+    expect(nonCommitShas([])).toEqual([]);
+  });
+
+  it("A1 a short or long batch answer THROWS instead of passing", () => {
+    const sha = (n: number) => String(n).repeat(40).slice(0, 40);
+    const shas = [sha(1), sha(2), sha(3)];
+    const line = (s: string) => `${s} commit 200`;
+    expect(nonCommitsIn(shas, shas.map(line).join("\n") + "\n")).toEqual([]);
+    expect(() => nonCommitsIn(shas, line(shas[0]) + "\n")).toThrow(/answered 1 lines for 3 SHAs/);
+    expect(() => nonCommitsIn(shas, "")).toThrow(/answered 0 lines for 3 SHAs/);
+    expect(() => nonCommitsIn(shas, shas.map(line).join("\n") + "\n" + line(sha(4)) + "\n")).toThrow(/answered 4 lines for 3 SHAs/);
+    // a missing line in the middle is still a count mismatch, and a "missing" answer is reported, not skipped
+    expect(nonCommitsIn(shas, [line(shas[0]), `${shas[1]} missing`, line(shas[2])].join("\n"))).toEqual([shas[1]]);
   });
 
   it("A1b: every abbreviated SHA presented as the CURRENT baseline matches the pin", () => {
@@ -4161,33 +4240,18 @@ describe("freshness policy controls (#825 6215529089)", () => {
     const agg = ci.slice(ci.indexOf("\n  browser-e2e:\n"), ci.indexOf("\n  payment-browser-e2e:"));
     expect(agg).toMatch(/needs: \[changes, browser-e2e-shard, canonical-record\]/);
     expect(agg).toMatch(/RECORD_RESULT: \$\{\{ needs\.canonical-record\.result \}\}/);
-    const body = agg.slice(agg.indexOf("run: |\n") + "run: |\n".length);
-    const script = body
-      .split("\n")
-      .map((l) => l.replace(/^ {10}/, ""))
-      .join("\n");
-    const exitOf = (env: Record<string, string>) => {
-      try {
-        execFileSync("bash", ["-c", script], {
-          env: {
-            NODE_ENV: "test",
-            PATH: process.env.PATH ?? "",
-            HOME: process.env.HOME ?? "/tmp",
-            CHANGES_RESULT: "success",
-            SHARD_RESULT: "",
-            BROWSER_RUN: "false",
-            FULL_MATRIX: "false",
-            EXTENDED: "false",
-            SHARDS: "[1]",
-            ...env,
-          },
-          stdio: "ignore",
-        });
-        return 0;
-      } catch (e) {
-        return (e as { status?: number }).status ?? -1;
-      }
-    };
+    // SHEP-LATEST-01 PR1: the aggregator is several steps; run them in order, one process each.
+    const steps = aggregatorSteps(ci);
+    const exitOf = (env: Record<string, string>) =>
+      runAggregatorSteps(steps, {
+        CHANGES_RESULT: "success",
+        SHARD_RESULT: "",
+        BROWSER_RUN: "false",
+        FULL_MATRIX: "false",
+        EXTENDED: "false",
+        SHARDS: "[1]",
+        ...env,
+      }).code;
     const record = { DOCS_ONLY: "true", PRODUCTION_RECORD: "true" };
     expect(exitOf({ ...record, RECORD_RESULT: "success" })).toBe(0);
     for (const bad of ["failure", "cancelled", "skipped", ""]) {
@@ -4366,12 +4430,17 @@ describe("pending-release receipt controls (HON-18 39ad5aaf)", () => {
       }
     };
     let clock = 1_800_000_000; // fixed git time, so lag controls are deterministic
-    const run = (args: string[], at?: number) => {
+    const run = (args: string[], at?: number, committer?: { name: string; email: string }) => {
       const when = `${at ?? clock} +0000`;
       execFileSync("git", ["-c", "user.email=t@example.invalid", "-c", "user.name=t", ...args], {
         cwd: dir,
         stdio: "ignore",
-        env: { ...process.env, GIT_AUTHOR_DATE: when, GIT_COMMITTER_DATE: when },
+        env: {
+          ...process.env,
+          GIT_AUTHOR_DATE: when,
+          GIT_COMMITTER_DATE: when,
+          ...(committer ? { GIT_COMMITTER_NAME: committer.name, GIT_COMMITTER_EMAIL: committer.email } : {}),
+        },
       });
     };
     const write = (f: string, body: string) => {
@@ -4404,14 +4473,28 @@ describe("pending-release receipt controls (HON-18 39ad5aaf)", () => {
       return head();
     };
     /** A direct, single-parent commit on prod (what branch protection forbids). */
-    const direct = (files: Record<string, string>) => {
+    const direct = (files: Record<string, string>, subject = "direct push") => {
       clock += 60;
       for (const [f, body] of Object.entries(files)) write(f, body);
       run(["add", "-A"]);
-      run(["commit", "-qm", "direct push"]);
+      run(["commit", "-qm", subject]);
       return head();
     };
-    return { g, land, direct, head };
+    /** A GitHub squash merge: ONE parent, subject "<title> (#N)" unless overridden. */
+    const GITHUB = { name: "GitHub", email: "noreply@github.com" };
+    const squash = (pr: number, files: Record<string, string>, opts: { subject?: string; committer?: { name: string; email: string } } = {}) => {
+      const br = `b${++n}`;
+      clock += 60;
+      run(["checkout", "-q", "-b", br, "prod"]);
+      for (const [f, body] of Object.entries(files)) write(f, body);
+      run(["add", "-A"]);
+      run(["commit", "-qm", br]);
+      run(["checkout", "-q", "prod"]);
+      run(["merge", "-q", "--squash", br]);
+      run(["commit", "-qm", opts.subject ?? `title (#${pr})`], undefined, opts.committer ?? GITHUB);
+      return head();
+    };
+    return { g, land, direct, squash, head };
   }
   const receipt = (pr: number, runtime: boolean, migrations: string[] = [], merge?: string) =>
     JSON.stringify({ pr, ...(merge ? { merge } : {}), runtime, migrations, release_receipt: `01-ops/${pr}-release-receipt.json` });
@@ -4489,15 +4572,31 @@ describe("pending-release receipt controls (HON-18 39ad5aaf)", () => {
     expect((await coveredSince(t.g, tr, tp, [])).ok).toBe(true);
   });
 
-  it("N4. a direct (single-parent) commit changing app code is never covered, even carrying a receipt", async () => {
+  it("N4. a direct (single-parent) commit not made by GitHub is never covered, even carrying a receipt and a (#N) subject", async () => {
     const r = receiptRepo();
     const recorded = r.head();
     const prod = r.direct({ "app/page.tsx": "v2\n", [file(40)]: receipt(40, true) });
     const out = await coveredSince(r.g, recorded, prod, []);
     expect(out.ok).toBe(false);
-    expect((out as { reason: string }).reason).toMatch(/not a two-parent merge/);
+    expect((out as { reason: string }).reason).toMatch(/not a GitHub pull-request merge or squash merge/);
     // Nor by a late receipt naming its exact SHA.
     expect((await coveredSince(r.g, recorded, prod, [late(receipt(40, true, [], prod))])).ok).toBe(false);
+    // The squash-shaped direct push: subject ends "(#99)", it adds a correct 99.json,
+    // and only the committer differs from a GitHub squash (the twin below).
+    const f = receiptRepo();
+    const fr = f.head();
+    const fp = f.direct({ "app/page.tsx": "v2\n", [file(99)]: receipt(99, true) }, "direct push (#99)");
+    const fo = await coveredSince(f.g, fr, fp, []);
+    expect(fo.ok).toBe(false);
+    expect((fo as { reason: string }).reason).toMatch(/committer is not GitHub <noreply@github\.com>/);
+    const t = receiptRepo();
+    const tr = t.head();
+    expect((await coveredSince(t.g, tr, t.squash(99, { "app/page.tsx": "v2\n", [file(99)]: receipt(99, true) }, { subject: "direct push (#99)" }), [])).ok).toBe(true);
+    // A local commit carrying a user's noreply address is not GitHub either.
+    const u = receiptRepo();
+    const ur = u.head();
+    const up = u.squash(99, { "app/page.tsx": "v2\n", [file(99)]: receipt(99, true) }, { committer: { name: "x", email: "x@users.noreply.github.com" } });
+    expect((await coveredSince(u.g, ur, up, [])).ok).toBe(false);
   });
 
   it("N5. a receipt for a different PR number than the merge subject does not cover it", async () => {
@@ -4575,6 +4674,111 @@ describe("pending-release receipt controls (HON-18 39ad5aaf)", () => {
     const out = await coveredSince(r.g, recorded, prod, []);
     expect(out.ok).toBe(false);
     expect((await runtimeChangedSince(r.g, recorded, prod))).toEqual(["app/x.ts"]); // the deletion ships
+  });
+
+  // SQUASH MERGES. A squash commit has one parent, so the rule used to refuse it
+  // outright and every squash needed a record refresh to make it the recorded
+  // HEAD and pin. It is now covered when its subject ends "(#N)" (and is not a
+  // revert), the receipt is ADDED by that commit, and the receipt's runtime and
+  // migrations equal what the commit's diff against its parent says. The checks
+  // that compare the receipt with git are the same code path as for a merge.
+  it("S1. a squash with a correct receipt is covered by A5, A3 and A7 — and was RED before", async () => {
+    const r = receiptRepo();
+    const pinned = r.head();
+    const prod = r.squash(70, { "app/page.tsx": "v2\n", [file(70)]: receipt(70, true) });
+    expect(recordOnlySince(r.g, pinned, prod).ok).toBe(false); // old A5: red
+    expect(await runtimeChangedSince(r.g, pinned, prod)).toEqual(["app/page.tsx"]); // old A3: red
+    expect(await runtimeCoveredSince(r.g, pinned, pinned, prod, [])).toEqual({ ok: true });
+    const since = await coveredSince(r.g, pinned, prod, []);
+    expect(since).toEqual({ ok: true, commits: 1, covered: [prod] });
+    expect(coveredLag(r.g, (since as { covered: string[] }).covered, prod)).toEqual({ ok: true });
+  });
+
+  it("S2. a squash whose receipt is for another PR does not cover it", async () => {
+    const a = receiptRepo();
+    const ar = a.head();
+    const ap = a.squash(71, { "app/page.tsx": "v2\n", [file(72)]: receipt(72, true) }); // no 71.json
+    expect((await coveredSince(a.g, ar, ap, [])).ok).toBe(false);
+    const b = receiptRepo();
+    const br = b.head();
+    const bp = b.squash(71, { "app/page.tsx": "v2\n", [file(71)]: receipt(72, true) }); // contents claim #72
+    const out = await coveredSince(b.g, br, bp, []);
+    expect(out.ok).toBe(false);
+    expect((out as { reason: string }).reason).toMatch(/merges #71 but its receipt is for #72/);
+    const t = receiptRepo(); // twin: the right PR
+    const tr = t.head();
+    expect((await coveredSince(t.g, tr, t.squash(71, { "app/page.tsx": "v2\n", [file(71)]: receipt(71, true) }), [])).ok).toBe(true);
+  });
+
+  it("S3. a squash whose receipt already existed before it (reused or backdated) does not cover it", async () => {
+    const r = receiptRepo();
+    const recorded = r.head();
+    r.land(73, { [file(74)]: receipt(74, true) }); // record-only merge that pre-places #74's receipt
+    const prod = r.squash(74, { "app/page.tsx": "v2\n" });
+    const out = await coveredSince(r.g, recorded, prod, []);
+    expect(out.ok).toBe(false);
+    expect((out as { reason: string }).reason).toMatch(/already existed before this merge/);
+  });
+
+  it("S4. a squash whose receipt understates runtime, or omits a migration, is refused", async () => {
+    const mig = "supabase/migrations/0251_x.sql";
+    const a = receiptRepo();
+    const ar = a.head();
+    const ap = a.squash(75, { "app/page.tsx": "v2\n", [file(75)]: receipt(75, false) });
+    const ao = await coveredSince(a.g, ar, ap, []);
+    expect(ao.ok).toBe(false);
+    expect((ao as { reason: string }).reason).toMatch(/receipt says runtime:false, but its diff is runtime:true/);
+    const b = receiptRepo();
+    const br = b.head();
+    const bp = b.squash(76, { [mig]: "select 1;\n", [file(76)]: receipt(76, true, []) });
+    const bo = await coveredSince(b.g, br, bp, []);
+    expect(bo.ok).toBe(false);
+    expect((bo as { reason: string }).reason).toMatch(/declares migrations \[\], but it changes/);
+    const t = receiptRepo(); // twin: declared
+    const tr = t.head();
+    expect((await coveredSince(t.g, tr, t.squash(76, { [mig]: "select 1;\n", [file(76)]: receipt(76, true, [mig]) }), [])).ok).toBe(true);
+  });
+
+  it("S5. a revert subject never covers: Revert \"… (#N)\" is not a squash of #N", async () => {
+    const r = receiptRepo();
+    const recorded = r.head();
+    const prod = r.squash(77, { "app/page.tsx": "v2\n", [file(77)]: receipt(77, true) }, { subject: 'Revert "title (#77)"' });
+    const out = await coveredSince(r.g, recorded, prod, []);
+    expect(out.ok).toBe(false);
+    expect((out as { reason: string }).reason).toMatch(/not a GitHub pull-request merge or squash merge/);
+    for (const subject of ["title (#77) extra", "title #77", "(#77) title"]) {
+      const x = receiptRepo();
+      const xr = x.head();
+      expect((await coveredSince(x.g, xr, x.squash(77, { "app/page.tsx": "v2\n", [file(77)]: receipt(77, true) }, { subject }), [])).ok).toBe(false);
+    }
+  });
+
+  it("S6. a squash with no receipt is refused; a late receipt naming its exact SHA covers it only when correct", async () => {
+    const r = receiptRepo();
+    const recorded = r.head();
+    // no receipt: refused (the receipt is what binds the claim).
+    const prod = r.squash(78, { "app/page.tsx": "v2\n" });
+    expect((await coveredSince(r.g, recorded, prod, [])).ok).toBe(false);
+    // a late receipt naming the squash SHA covers it, as for a merge.
+    expect((await coveredSince(r.g, recorded, prod, [late(receipt(78, true, [], prod))])).ok).toBe(true);
+    expect((await coveredSince(r.g, recorded, prod, [late(receipt(78, false, [], prod))])).ok).toBe(false);
+  });
+
+  it("S7. POSITIVE CONTROL on the real squashes #1444 (a7a825b94) and #1447 (2d69bc6a8)", async () => {
+    // C2: on a shallow clone the commits are absent, so this control returns
+    // early there (as A1 documents) and proves nothing; CI runs it at full depth.
+    if (!GIT_USABLE) return;
+    for (const [sha, pr, runtime] of [
+      ["a7a825b942f5dec930d6c3860154bdfaea2320ad", 1444, true],
+      ["2d69bc6a890f7aab8d6eb14072d631fd6bd328b4", 1447, true],
+    ] as const) {
+      if (git("cat-file", "-t", sha) !== "commit") continue;
+      const parents = git("rev-list", "--parents", "-n", "1", sha)?.split(" ").slice(1) ?? [];
+      expect(parents.length, `${sha} is a one-parent squash`).toBe(1);
+      expect(git("log", "-1", "--format=%cn <%ce>", sha), `${sha} carries the GitHub committer`).toBe("GitHub <noreply@github.com>");
+      const out = await receiptCoverage(git, sha, []);
+      expect(out, `${pr}: ${JSON.stringify(out)}`).toEqual({ ok: true, runtime });
+    }
   });
 
   it("late receipts: an exact-SHA receipt covers a merge that landed without one; one for another SHA does not", async () => {

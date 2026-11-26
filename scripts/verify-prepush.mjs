@@ -161,6 +161,17 @@ check("schema snapshot matches supabase/migrations", () => {
   }
 });
 
+// 7. The ledger's derived repo-max and next-free rows are written only by `npm run ledger:sync`. A stale row would
+// fail the unit lane; catch it before the push. On a merge conflict in those rows, re-run the command; never hand-merge.
+check("ledger derived rows are current", () => {
+  try {
+    execFileSync("node", ["scripts/ledger-sync.mjs", "--check"], { encoding: "utf8", stdio: "pipe" });
+    return null;
+  } catch (err) {
+    return `${(err.stderr || err.stdout || err.message).toString().trim()}\n(run \`npm run ledger:sync\`; on a merge conflict in the derived rows, re-run it, never hand-merge)`;
+  }
+});
+
 console.log("");
 for (const n of notes) console.log(`${DIM}note: ${n}${RESET}`);
 

@@ -60,12 +60,15 @@ const STATUS_LABELS: Record<ConsentTemplateStatus, string> = {
 // and having them sign random stuff I'm doing."
 export function ConsentTemplatesEditor({
   templates,
+  unavailable = false,
   createAction,
   updateAction,
   setStatusAction,
   setLiveAction,
 }: {
   templates: ConsentFormTemplate[];
+  // The template read FAILED: say so instead of the "No consent forms yet" empty state.
+  unavailable?: boolean;
   createAction: ActionCreate;
   updateAction: ActionCreate;
   setStatusAction: ActionStatus;
@@ -117,7 +120,13 @@ export function ConsentTemplatesEditor({
         </p>
       )}
 
-      {templates.length === 0 && !adding && (
+      {unavailable && (
+        <p role="status" data-testid="consent-forms-unavailable" className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+          Couldn’t check consent forms. Reload to try again.
+        </p>
+      )}
+
+      {templates.length === 0 && !adding && !unavailable && (
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           No consent forms yet. Create one to start collecting signatures in
           the secure client portal.
