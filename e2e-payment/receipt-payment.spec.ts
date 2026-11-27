@@ -163,7 +163,7 @@ test.afterAll(async () => {
       // alert. ops_alerts keeps its row on studio delete (ON DELETE SET NULL),
       // so remove THIS scenario's alerts first, or every green run leaves
       // orphaned critical alerts behind (Codex P2 4301505448).
-      await adminQuery(`delete from public.ops_alerts where studio_id = $1`, [s.studioId]);
+      await adminQuery(`delete from public.ops_alerts where studio_id = $1 or safe_details->>'studio_id' = $1::text`, [s.studioId]);
       await cleanupPaymentScenario(s.studioId);
     }
   } finally {

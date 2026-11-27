@@ -393,6 +393,8 @@ export const BROWSER_GROUPS = {
       "perceived-speed.spec.ts",
       // HON-109: the Analytics controls' press acknowledgement (PendingLink / PendingGetForm), same shared vocabulary as the line above.
       "hon109-analytics-feedback.spec.ts",
+      // HON-109: the Analytics filter selects always show the applied values after any navigation (Clients: sort, chip, page, Back).
+      "hon109-analytics-filters-applied.spec.ts",
       // RESP-CLIENT-INTAKE-01: the same primitive as the line above, adopted on
       // the clinical navigation controls (Client Profile -> Log session /
       // previous session / intake / photos, Intake -> client) and the two raw
