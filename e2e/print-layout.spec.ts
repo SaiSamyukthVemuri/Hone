@@ -17,6 +17,8 @@ const SHEETS = {
   a4: { px: { width: 698, height: 1027 }, format: "A4" as const, pt: [595, 842] },
 };
 
+const STATEMENT_MONTH = "2026-03";
+
 let seed: E2eSeed;
 let routes: Record<string, string>;
 
@@ -27,11 +29,15 @@ test.beforeAll(async () => {
   await sql(`update public.clients set name='Alexandria Montgomery-Featherstonehaugh', preferred_name='Alexandria Montgomery-Featherstonehaugh' where id=$1`, [clientId]);
   const serviceId = await getE2eServiceId(seed.studioId);
   const owner = await getOwnerPractitionerId(seed.studioId);
+  // The statement is for ONE studio-local month, named in the URL below, and the visits are seeded INSIDE that month at 10:00 studio-local time. Seeding
+  // relative to now() would put them in whichever month the run happens to fall in (and, on the 1st, in the month before the one the route selects), so a
+  // run could print an empty statement or fewer than the 16 visits the two-page assertion relies on. A fixed past month is the same on every day.
   for (let i = 0; i < 16; i++) {
     const [{ id }] = await sql<{ id: string }>(
-      `insert into public.appointments (studio_id, practitioner_id, client_id, service_id, starts_at, ends_at, blocked_ends_at, duration_minutes, buffer_minutes_snapshot, status)
-       values ($1,$2,$3,$4, now() - ($5 || ' hours')::interval, now() - ($5 || ' hours')::interval + interval '60 minutes', now() - ($5 || ' hours')::interval + interval '60 minutes', 60, 0, 'completed') returning id`,
-      [seed.studioId, owner, clientId, serviceId, String(30 + i * 7)],
+      `with s as (select ((date '${STATEMENT_MONTH}-01' + $5::int) + time '10:00') at time zone (select timezone from public.studios where id = $1) as starts)
+       insert into public.appointments (studio_id, practitioner_id, client_id, service_id, starts_at, ends_at, blocked_ends_at, duration_minutes, buffer_minutes_snapshot, status)
+       select $1,$2,$3,$4, s.starts, s.starts + interval '60 minutes', s.starts + interval '60 minutes', 60, 0, 'completed' from s returning id`,
+      [seed.studioId, owner, clientId, serviceId, i],
     );
     await sql(`insert into public.appointment_settlements (studio_id, appointment_id, method, amount_cents, currency, quoted_amount_cents, recorded_by_practitioner_id) values ($1,$2,$3,$4,'cad',$4,$5)`, [seed.studioId, id, i % 2 ? "paid_e_transfer" : "paid_cash", 12000 + i * 1111, owner]);
   }
@@ -40,9 +46,8 @@ test.beforeAll(async () => {
     await seedE2eOverdueDisinfectant(seed, { name: `Barbicide E2E jar number ${i} with a long name`, datePrepared: "2026-10-01", discardDueDate: "2026-11-01" });
   }
   await sql(`insert into public.client_clinical_notes (client_id, studio_id, practitioner_id, kind, body, areas) select $1,$2,$3,'consultation', repeat('Synthetic consultation sentence for print layout. ', 40), array['Upper lip','Chin'] from generate_series(1,6)`, [clientId, seed.studioId, owner]);
-  const [{ ym }] = await sql<{ ym: string }>(`select to_char(now(),'YYYY-MM') as ym`);
   routes = {
-    statement: `/financials/statements/${clientId}/print?month=${ym}`,
+    statement: `/financials/statements/${clientId}/print?month=${STATEMENT_MONTH}`,
     "sterile records": `/records/print?section=sterile`,
     "disinfectant records": `/records/print?section=disinfectants`,
     "clinical notes": `/clients/${clientId}/clinical-notes/print`,
