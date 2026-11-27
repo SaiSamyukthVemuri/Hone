@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { buttonClasses } from "@/components/ui/button";
+import { NAV_ROW_FEEDBACK, NAV_ROW_FOCUS, TEXT_LINK_FEEDBACK, cx } from "@/components/ui/control-base";
 import { PendingLink } from "@/components/pending-link";
 import {
   getClientsForStudio,
@@ -326,9 +327,12 @@ export default async function RecordKeepingPage({
               href={`/records?section=${item.key}`}
               pendingLabel="Loading section…"
               aria-current={section === item.key ? "page" : undefined}
-              className={`flex min-h-11 items-center rounded-md px-3 py-2 text-sm focus-visible:outline-2 ${section === item.key
-                ? "bg-slate-100 font-semibold text-slate-800 dark:bg-slate-800 dark:text-slate-100"
-                : "text-fg-muted hover:bg-surface-sunken hover:text-fg"}`}
+              className={cx(
+                "flex min-h-11 items-center rounded-md px-3 py-2 text-sm",
+                section === item.key
+                  ? cx("bg-slate-100 font-semibold text-slate-800 dark:bg-slate-800 dark:text-slate-100", NAV_ROW_FOCUS)
+                  : cx("text-fg-muted hover:text-fg", NAV_ROW_FEEDBACK),
+              )}
             >
               <span className="flex items-center gap-2">
                 <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="size-4 shrink-0">
@@ -345,7 +349,7 @@ export default async function RecordKeepingPage({
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
             {adding && (
-              <PendingLink href={`/records?section=${section}`} className="mb-2 inline-flex min-h-11 items-center text-sm font-medium text-fg-muted hover:underline">
+              <PendingLink href={`/records?section=${section}`} className={cx("mb-2 inline-flex min-h-11 items-center text-sm font-medium text-fg-muted", TEXT_LINK_FEEDBACK)}>
                 ← Back to {book.label.toLowerCase()}
               </PendingLink>
             )}
@@ -387,7 +391,10 @@ function StockFilters({ section, currentLabel, stock }: {
           key={value}
           href={`/records?section=${section}${value ? `&stock=${value}` : ""}`}
           aria-current={selected === value ? "page" : undefined}
-          className={`inline-flex min-h-11 items-center rounded-md px-3 text-sm pointer-fine:min-h-9 ${selected === value ? "bg-surface font-semibold text-fg shadow-sm" : "text-fg-muted hover:text-fg"}`}
+          className={cx(
+            "inline-flex min-h-11 items-center rounded-md px-3 text-sm pointer-fine:min-h-9",
+            selected === value ? cx("bg-surface font-semibold text-fg shadow-sm", NAV_ROW_FOCUS) : cx("text-fg-muted hover:text-fg", NAV_ROW_FEEDBACK),
+          )}
         >
           {label}
         </PendingLink>
@@ -515,7 +522,7 @@ async function SterileItemsSection({
           </label>
           <button
             type="submit"
-            className="rounded-md bg-neutral-900 px-5 py-3 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+            className={buttonClasses({ variant: "primary" })}
           >
             Trace usage
           </button>

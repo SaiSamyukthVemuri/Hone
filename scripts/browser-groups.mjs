@@ -380,6 +380,8 @@ export const BROWSER_GROUPS = {
       // refusal family, and any diff that can reach it is unattributable
       // application code that already fails safe to EXTENDED.
       "dat-002-read-failure-refusal.spec.ts",
+      // HON-124 item 7. Record Keeping: section menu, stock tabs, Trace usage and the back link show hover, pressed, keyboard focus, tap size.
+      "records-feedback.spec.ts",
       // UI-01: the shared pending-navigation primitive, a sibling concern to
       // the app-shell error boundary above it — PendingLink is what every
       // query-only navigation (day nav, period pills, calendar toolbar) has
