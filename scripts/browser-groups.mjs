@@ -235,6 +235,8 @@ export const BROWSER_GROUPS = {
       "move-appointment-responsive.spec.ts",
       "safe-willow-appointment-lifecycle.spec.ts",
       "create-plan-from-appointment.spec.ts",
+      // HON-124 item 7. The appointment page's links: hover, pressed, keyboard focus, tap size.
+      "appointment-detail-feedback.spec.ts",
       // P0 emergency: the new-client waitlist admission gate on the PUBLIC
       // booking page (waitlist UX for new clients, untouched booking UX for
       // existing clients, and the zero-business-write contract).

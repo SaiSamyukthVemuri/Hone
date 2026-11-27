@@ -100,8 +100,8 @@ describe("PR #181: NextStepCard three-state CTA precedence", () => {
 describe("PR #181: NextStepCard styling + safety", () => {
   it("uses primary (filled) styling on the CTA so it is the obvious next action", () => {
     const block = blockFor("NextStepCard");
-    expect(block).toMatch(/bg-neutral-900/);
-    expect(block).toMatch(/text-white/);
+    // The filled look is the shared primary button (bg-accent / text-on-accent in components/ui/button.tsx), not a hand-written class string.
+    expect(block).toMatch(/buttonClasses\(\{ variant: "primary"/);
   });
 
   it("renders a fallback header when clientId is null (no CTA)", () => {
