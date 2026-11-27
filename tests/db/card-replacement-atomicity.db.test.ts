@@ -468,7 +468,8 @@ describe("B/D — terminal rejection is CLIENT-BOUND and fail-closed", () => {
       rejected: "non_card_payment_method",
     }, { studioId: f.studioId });
     const alerts = await adminQuery(
-      `select id from public.ops_alerts where studio_id=$1 and event='card_on_file_setup_rejected'`,
+      // HON-125: this alert may be written operator-only (studio_id NULL, studio in safe_details), so match BOTH shapes or the zero is vacuous.
+      `select id from public.ops_alerts where (studio_id=$1 or safe_details->>'studio_id'=$1::text) and event='card_on_file_setup_rejected'`,
       [f.studioId],
     );
     expect(alerts.rowCount).toBe(0);
