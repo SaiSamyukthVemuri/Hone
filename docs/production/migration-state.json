@@ -2693,7 +2693,7 @@
       ]
     }
   ],
-  "reserved_unallocated_above_hosted": [],
+  "reserved_unallocated_above_hosted": ["0387", "0388", "0389", "0390", "0391", "0392", "0393", "0394", "0395", "0396"],
   "hosted_without_repo_file": [
     {
       "version": "0287",
