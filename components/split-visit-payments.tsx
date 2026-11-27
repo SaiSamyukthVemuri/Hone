@@ -4,7 +4,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { formatMoney } from "@/lib/billing/payment-jurisdiction";
 import {
   canStartCharge, cardReduce, CHECKING_PAYMENT_STATUS, historyLines, methodLabel, parseDollarsToCents, showCheckingStatus,
-  STATUS_LABEL, unresolvedCardAttempt, chargeFingerprint, refundFingerprint, submissionFor, settleSubmission, idDisposition, awaitRefund, settleFromLedger, releaseRefund, bindAttempt, releaseCardAttempt, type Awaiting, type AttemptBindings, reconcileRefundSelection, refundSendable, type Submissions, type CardPhase, type ExternalMethod, type VisitCurrency,
+  STATUS_LABEL, unresolvedCardAttempt, chargeFingerprint, refundFingerprint, submissionFor, settleSubmission, idDisposition, awaitRefund, awaitFromAnswer, settleFromLedger, releaseRefund, bindAttempt, releaseCardAttempt, type Awaiting, type AttemptBindings, reconcileRefundSelection, refundSendable, type Submissions, type CardPhase, type ExternalMethod, type VisitCurrency,
 } from "@/lib/billing/visit-payments-core";
 import {
   confirmTransferAction, sendSplitCardReceiptAction, prepareSplitCardPaymentAction, refundCardPaymentAction, recordExternalPaymentAction, refundExternalPaymentAction, runSplitCardPaymentAction,
@@ -73,7 +73,7 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
     if (r.state) onChanged(r.state);
     // A definite answer ends this intent (the next ask is a new command). A refusal or a lost answer keeps the id and what was typed.
     if (idDisposition(r) === "release") { if (fp) settleSub(fp); if (r.ok) setAmount(""); }
-    else if (fp) awaitingRef.current = awaitRefund(awaitingRef.current, fp, r.refundId ?? null);
+    else if (fp) awaitingRef.current = awaitFromAnswer(awaitingRef.current, fp, r);
   }, [onChanged]);
 
   const form = (extra: Record<string, string>) => {

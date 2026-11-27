@@ -176,6 +176,23 @@ describe("a lost answer after the commit keeps the id: exactly one row", () => {
     expect(S.refunds.size).toBe(1);
   });
 
+  it("cash answer lost, then an UNRELATED refund appears and clears: the retry still reuses the id (no second row)", async () => {
+    mount(stateOf(ledgerOf([])));
+    await pick(/^Cash$/);
+    type(amountInput(), "50.00");
+    S.lose = true;
+    await click(button(/Record cash received/));
+    const pending = { id: "rf-9", amountCents: 1000, kind: "payment_reversal" as const, status: "pending_stripe" as const };
+    act(() => setState!(stateOf({ ...ledgerOf([]), refunds: [pending as never] })));
+    await flush();
+    act(() => setState!(stateOf(ledgerOf([]))));
+    await flush();
+    await click(button(/Record cash received/));
+    expect(S.sids).toHaveLength(2);
+    expect(S.sids[1]).toBe(S.sids[0]);
+    expect(S.cash.size).toBe(1);
+  });
+
   it("card prepare: the answer is lost after the attempt was created; the retry returns the same attempt", async () => {
     S.runOutcomes = ["succeeded"];
     mount(stateOf(ledgerOf([])));

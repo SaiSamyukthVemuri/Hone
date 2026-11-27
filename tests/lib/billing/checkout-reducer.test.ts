@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
-  idDisposition, SUCCESS_CODES, RELEASE_ANY_CODES, KEEP_CODES, awaitRefund, bindAttempt, releaseCardAttempt, releaseRefund, settleFromLedger, cardReduce, chargeFingerprint, reconcileRefundSelection, refundFingerprint, refundSendable, settleSubmission, submissionFor,
+  idDisposition, awaitFromAnswer, SUCCESS_CODES, RELEASE_ANY_CODES, KEEP_CODES, awaitRefund, bindAttempt, releaseCardAttempt, releaseRefund, settleFromLedger, cardReduce, chargeFingerprint, reconcileRefundSelection, refundFingerprint, refundSendable, settleSubmission, submissionFor,
   type CardEvent, type CardPhase, type Submissions,
 } from "@/lib/billing/visit-payments-core";
 
@@ -237,5 +237,14 @@ describe("every code the screen words is classified", () => {
     expect(codes.length).toBeGreaterThan(30);
     expect(codes.filter((c) => !listed.has(c))).toEqual([]);
     expect(SUCCESS_CODES.filter((c) => (KEEP_CODES as readonly string[]).includes(c))).toEqual([]);
+  });
+});
+
+describe("only a checking card refund waits for the ledger (Insurance P3)", () => {
+  it("a plain keep is never registered; a checking answer with its row is", () => {
+    expect(awaitFromAnswer([], "fp", { checking: false })).toEqual([]);
+    expect(awaitFromAnswer([], "fp", { checking: false, refundId: "rf-1" })).toEqual([]);
+    expect(awaitFromAnswer([], "fp", { checking: true })).toEqual([]);
+    expect(awaitFromAnswer([], "fp", { checking: true, refundId: "rf-1" })).toEqual([{ fp: "fp", refundId: "rf-1" }]);
   });
 });

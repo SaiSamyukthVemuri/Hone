@@ -324,6 +324,12 @@ export function releaseCardAttempt(subs: Submissions, bound: AttemptBindings, at
 export type Awaiting = ReadonlyArray<{ fp: string; refundId: string | null }>;
 export const awaitRefund = (awaiting: Awaiting, fp: string, refundId: string | null): Awaiting =>
   awaiting.some((a) => a.fp === fp) ? awaiting.map((a) => (a.fp === fp ? { fp, refundId: refundId ?? a.refundId } : a)) : [...awaiting, { fp, refundId }];
+/**
+ * ONLY a card refund still being checked (checking AND its row id) waits for the ledger. A plain keep (cash, transfer, external refund, price reduction, an unavailable
+ * answer) is never registered: nothing about an unrelated refund changing may release its id.
+ */
+export const awaitFromAnswer = (awaiting: Awaiting, fp: string, r: { checking?: boolean; refundId?: string | null }): Awaiting =>
+  r.checking && r.refundId ? awaitRefund(awaiting, fp, r.refundId) : awaiting;
 /** The refund rows now pending at Stripe: every remembered intent whose row is not among them has a definite outcome on the ledger and is released. A row-less intent waits for none pending. */
 export function settleFromLedger(subs: Submissions, awaiting: Awaiting, pendingRefundIds: readonly string[]): { subs: Submissions; awaiting: Awaiting } {
   const done = (a: { fp: string; refundId: string | null }) => (a.refundId ? !pendingRefundIds.includes(a.refundId) : pendingRefundIds.length === 0);
