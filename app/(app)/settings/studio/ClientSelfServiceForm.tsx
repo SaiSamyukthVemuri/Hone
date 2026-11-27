@@ -56,7 +56,7 @@ export function ClientSelfServiceForm({
         setState(state);
         return;
       }
-      setHint("Saved");
+      setHint("Client self-service settings saved.");
       window.setTimeout(() => setHint(null), 1500);
     });
   }

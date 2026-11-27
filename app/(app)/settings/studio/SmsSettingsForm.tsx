@@ -37,7 +37,7 @@ export function SmsSettingsForm({ initial }: Props) {
         setState(initial);
         return;
       }
-      setHint("Saved");
+      setHint("Text message settings saved.");
       window.setTimeout(() => setHint(null), 1500);
     });
   }

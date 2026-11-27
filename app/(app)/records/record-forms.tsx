@@ -668,8 +668,12 @@ export function AftercareExplainedToggle({
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  // HON-124 item 20: the write is unchanged. The result used to be ignored, so a refused or failed mark showed nothing and the button just
+  // stayed as it was. Now a failure is said, and the confirmation is shown only after the server returned ok (never before).
+  const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const explained = !!explainedAt;
   return (
+    <span className="inline-flex flex-col items-start gap-1">
     <button
       type="button"
       disabled={pending}
@@ -678,8 +682,20 @@ export function AftercareExplainedToggle({
         const fd = new FormData();
         fd.set("session_id", sessionId);
         fd.set("explained", explained ? "false" : "true");
+        const marking = !explained;
+        setMessage(null);
         startTransition(async () => {
-          await action(fd);
+          try {
+            const result = await action(fd);
+            if (!result.ok) {
+              setMessage({ kind: "error", text: "Could not update this aftercare mark. Reload the page to see its current state, then try again." });
+              return;
+            }
+            setMessage({ kind: "ok", text: marking ? "Marked: procedure risks explained and aftercare information provided." : "Mark removed. This procedure no longer shows risks explained and aftercare provided." });
+          } catch {
+            setMessage({ kind: "error", text: "Could not update this aftercare mark. Check your connection, reload the page to see its current state, then try again." });
+            return;
+          }
           router.refresh();
         });
       }}
@@ -693,6 +709,8 @@ export function AftercareExplainedToggle({
         ? "✓ Risks explained and aftercare provided"
         : "Mark: procedure risks explained and aftercare information provided"}
     </button>
+    <span role={message?.kind === "error" ? "alert" : "status"} className="text-xs text-neutral-600 empty:hidden dark:text-neutral-400">{message?.text ?? ""}</span>
+    </span>
   );
 }
 

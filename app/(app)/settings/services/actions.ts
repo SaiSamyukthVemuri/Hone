@@ -8,6 +8,7 @@ import { isMissingColumnError } from "@/lib/db/missing-column";
 import { isServiceMove, type ServiceMove } from "@/lib/booking/service-order";
 import { dbErrorCode } from "@/lib/logging/error-class";
 import { userFacingDbFailure } from "@/lib/logging/user-facing-db-failure";
+import { ACTION_OK, actionFailed, type ActionResult } from "@/lib/actions/action-result";
 
 function trimmed(value: FormDataEntryValue | null): string {
   return typeof value === "string" ? value.trim() : "";
@@ -17,12 +18,10 @@ function trimmed(value: FormDataEntryValue | null): string {
 // keys pass; rose/red, arbitrary CSS, or any unknown value is rejected. Absent ->
 // the safe default 'sky'. This is the authoritative guard; the DB CHECK
 // (0153, widened by 0161) is the backstop.
-function parseCalendarColor(value: FormDataEntryValue | null): string {
+function parseCalendarColor(value: FormDataEntryValue | null): string | null {
   const v = trimmed(value);
   if (v.length === 0) return "sky";
-  if (!isServiceColorKey(v)) {
-    throw new Error("Please choose a valid calendar color.");
-  }
+  if (!isServiceColorKey(v)) return null; // HON-124 item 20: the caller RETURNS a sentence; a thrown message is redacted in production
   return v;
 }
 
@@ -79,7 +78,7 @@ function parseSortOrder(value: FormDataEntryValue | null): number | null {
 // The error path deliberately does NOT fall back to a constant. Returning 100
 // on a transient read failure silently re-created a duplicate: the exact
 // condition the reorder RPC then had to repair.
-async function nextStudioSortOrder(studioId: string): Promise<number> {
+async function nextStudioSortOrder(studioId: string): Promise<{ ok: true; value: number } | { ok: false; error: string }> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("services")
@@ -89,34 +88,42 @@ async function nextStudioSortOrder(studioId: string): Promise<number> {
     .limit(1)
     .maybeSingle();
   if (error) {
-    throw new Error(`Failed to place the new service in the menu: ${dbErrorCode(error)}`);
+    return { ok: false, error: userFacingDbFailure("place the new service in your menu", error, "service_sort_order_read_failed") };
   }
-  return (data?.sort_order ?? 0) + 10;
+  return { ok: true, value: (data?.sort_order ?? 0) + 10 };
 }
 
-const OWNER_ONLY_MESSAGE = "Only studio owners can manage services.";
+const OWNER_ONLY_MESSAGE = "Only the studio owner can change services.";
 
-async function assertOwner(): Promise<{ studioId: string }> {
+// Returns the refusal instead of throwing it: production redacts a thrown message to a generic Next.js string.
+async function ownerOrFailure(): Promise<{ ok: true; studioId: string } | { ok: false; error: string }> {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
-  if (practitioner.role !== "owner") {
-    throw new Error(OWNER_ONLY_MESSAGE);
-  }
-  return { studioId: studio.id };
+  if (practitioner.role !== "owner") return { ok: false, error: OWNER_ONLY_MESSAGE };
+  return { ok: true, studioId: studio.id };
 }
 
-export async function createServiceAction(formData: FormData): Promise<void> {
-  const { studioId } = await assertOwner();
+const NAME_REQUIRED = "Enter the service name, then save again.";
+const DURATION_INVALID = "Enter a duration between 5 and 480 minutes, then save again.";
+const COLOR_INVALID = "Choose a calendar colour from the list, then save again.";
+
+export async function createServiceAction(formData: FormData): Promise<ActionResult> {
+  const owner = await ownerOrFailure();
+  if (!owner.ok) return owner;
+  const { studioId } = owner;
   const name = nullable(formData.get("name"));
-  if (!name) throw new Error("Service name is required.");
+  if (!name) return actionFailed(NAME_REQUIRED);
   const duration = parseDuration(formData.get("default_duration_minutes"));
-  if (duration == null) {
-    throw new Error("Duration must be between 5 and 480 minutes.");
-  }
+  if (duration == null) return actionFailed(DURATION_INVALID);
 
   const modality = parseModality(formData.get("modality"));
   const explicitSort = parseSortOrder(formData.get("sort_order"));
-  const sort_order =
-    explicitSort != null ? explicitSort : await nextStudioSortOrder(studioId);
+  let sort_order: number;
+  if (explicitSort != null) sort_order = explicitSort;
+  else {
+    const next = await nextStudioSortOrder(studioId);
+    if (!next.ok) return actionFailed(next.error);
+    sort_order = next.value;
+  }
 
   const supabase = await createClient();
   const base = {
@@ -131,27 +138,29 @@ export async function createServiceAction(formData: FormData): Promise<void> {
     pre_care_instructions: nullable(formData.get("pre_care_instructions")),
   };
   const calendar_color = parseCalendarColor(formData.get("calendar_color"));
+  if (calendar_color === null) return actionFailed(COLOR_INVALID);
   let { error } = await supabase.from("services").insert({ ...base, calendar_color });
   // Migration-order safety: if calendar_color does not exist YET (app deployed
   // before 0153), insert without it. Any other error is re-thrown.
   if (error && isMissingColumnError(error, "calendar_color")) {
     ({ error } = await supabase.from("services").insert(base));
   }
-  if (error) throw new Error(`Failed to add service: ${dbErrorCode(error)}`);
+  if (error) return actionFailed(userFacingDbFailure("add the service", error, "add_service_failed"));
   revalidatePath("/settings/services");
+  return ACTION_OK;
 }
 
-export async function updateServiceAction(formData: FormData): Promise<void> {
-  const { studioId } = await assertOwner();
+export async function updateServiceAction(formData: FormData): Promise<ActionResult> {
+  const owner = await ownerOrFailure();
+  if (!owner.ok) return owner;
+  const { studioId } = owner;
   const id = trimmed(formData.get("id"));
-  if (!id) throw new Error("Missing service id.");
+  if (!id) return actionFailed("Reload the page and try again.");
 
   const name = nullable(formData.get("name"));
-  if (!name) throw new Error("Service name is required.");
+  if (!name) return actionFailed(NAME_REQUIRED);
   const duration = parseDuration(formData.get("default_duration_minutes"));
-  if (duration == null) {
-    throw new Error("Duration must be between 5 and 480 minutes.");
-  }
+  if (duration == null) return actionFailed(DURATION_INVALID);
 
   const modality = parseModality(formData.get("modality"));
   const sort_order = parseSortOrder(formData.get("sort_order"));
@@ -168,6 +177,7 @@ export async function updateServiceAction(formData: FormData): Promise<void> {
   };
   if (sort_order != null) update.sort_order = sort_order;
   const calendar_color = parseCalendarColor(formData.get("calendar_color"));
+  if (calendar_color === null) return actionFailed(COLOR_INVALID);
 
   let { error } = await supabase
     .from("services")
@@ -182,8 +192,9 @@ export async function updateServiceAction(formData: FormData): Promise<void> {
       .eq("id", id)
       .eq("studio_id", studioId));
   }
-  if (error) throw new Error(`Failed to update service: ${dbErrorCode(error)}`);
+  if (error) return actionFailed(userFacingDbFailure("save the service", error, "update_service_failed"));
   revalidatePath("/settings/services");
+  return ACTION_OK;
 }
 
 // Move a service within the studio's VISIBLE service order.
@@ -225,19 +236,15 @@ export async function moveServiceAction(input: {
   move: ServiceMove;
   expectedPosition: number | null;
 }): Promise<{ ok: true; order: string[] } | { ok: false; error: string }> {
-  // assertOwner throws; catch it so a stale session surfaces as an in-place
+  // A lookup failure throws; catch it so a stale session surfaces as an in-place
   // message rather than an error boundary that discards the page state.
   let studioId: string;
   try {
-    ({ studioId } = await assertOwner());
-  } catch (err) {
-    return {
-      ok: false,
-      error:
-        err instanceof Error && err.message === OWNER_ONLY_MESSAGE
-          ? OWNER_ONLY_MESSAGE
-          : "Your session has expired. Reload the page and try again.",
-    };
+    const owner = await ownerOrFailure();
+    if (!owner.ok) return { ok: false, error: owner.error };
+    studioId = owner.studioId;
+  } catch {
+    return { ok: false, error: "Your session has expired. Reload the page and try again." };
   }
   if (!input.id) return { ok: false, error: "Missing service id." };
   if (!isServiceMove(input.move)) {
@@ -276,11 +283,13 @@ export async function moveServiceAction(input: {
 
 export async function toggleServiceActiveAction(
   formData: FormData,
-): Promise<void> {
-  const { studioId } = await assertOwner();
+): Promise<ActionResult> {
+  const owner = await ownerOrFailure();
+  if (!owner.ok) return owner;
+  const { studioId } = owner;
   const id = trimmed(formData.get("id"));
   const active = trimmed(formData.get("active")) === "true";
-  if (!id) throw new Error("Missing service id.");
+  if (!id) return actionFailed("Reload the page and try again.");
 
   const supabase = await createClient();
   if (active) {
@@ -292,15 +301,16 @@ export async function toggleServiceActiveAction(
       p_studio_id: studioId,
       p_service_id: id,
     });
-    if (error) throw new Error(`Failed to update service: ${dbErrorCode(error)}`);
+    if (error) return actionFailed(userFacingDbFailure("show the service", error, "show_service_failed"));
   } else {
     const { error } = await supabase
       .from("services")
       .update({ active, updated_at: new Date().toISOString() })
       .eq("id", id)
       .eq("studio_id", studioId);
-    if (error) throw new Error(`Failed to update service: ${dbErrorCode(error)}`);
+    if (error) return actionFailed(userFacingDbFailure("hide the service", error, "hide_service_failed"));
   }
   revalidatePath("/settings/services");
   revalidatePath("/calendar");
+  return ACTION_OK;
 }

@@ -10,7 +10,7 @@ import { isServiceColorKey } from "@/lib/calendar/service-colors";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { KNOWN_MODALITIES, type Service } from "@/lib/types/database";
 import { createServiceAction, toggleServiceActiveAction, updateServiceAction } from "./actions";
-import { CalendarColorField, DurationField, ToggleActiveSubmitButton } from "./ServiceFormControls";
+import { CalendarColorField, DurationField, ServiceVisibilityForm } from "./ServiceFormControls";
 import { ServiceOrderList, ServiceSaveForm } from "./ServiceOrderList";
 
 export default async function ServicesSettingsPage() {
@@ -43,11 +43,7 @@ export default async function ServicesSettingsPage() {
           colorKey: calendarColorAvailable && isServiceColorKey(service.calendar_color) ? service.calendar_color : null,
           editor: <ServiceForm service={service} calendarColorAvailable={calendarColorAvailable} timeFormat={timeFormat} />,
           visibility: (
-            <form action={toggleServiceActiveAction}>
-              <input type="hidden" name="id" value={service.id} />
-              <input type="hidden" name="active" value={service.active ? "false" : "true"} />
-              <ToggleActiveSubmitButton active={service.active} />
-            </form>
+            <ServiceVisibilityForm action={toggleServiceActiveAction} serviceId={service.id} serviceName={service.name} active={service.active} />
           ),
         }))}
         createEditor={<ServiceForm calendarColorAvailable={calendarColorAvailable} timeFormat={timeFormat} />}

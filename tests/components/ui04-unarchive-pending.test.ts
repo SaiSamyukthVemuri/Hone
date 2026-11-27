@@ -23,11 +23,14 @@ const code = (p: string) =>
 const EDIT = code("app/(app)/clients/[id]/edit/page.tsx");
 const LIST = code("app/(app)/clients/UnarchiveRowControl.tsx");
 const ARCHIVE = code("app/(app)/clients/[id]/edit/ArchiveClientControl.tsx");
+// HON-124 item 20: both consumers render ONE client form that owns the PendingButton and shows the action's returned refusal.
+const FORM = code("app/(app)/clients/UnarchiveClientForm.tsx");
 
 describe("UI-04: both unarchive controls report their own progress", () => {
   it("each uses PendingButton, and no raw submit survives", () => {
-    expect(EDIT).toMatch(/<PendingButton variant="secondary" busyLabel="Unarchiving…">/);
-    expect(LIST).toMatch(/<PendingButton variant="primary" size="sm">/);
+    expect(FORM).toMatch(/<PendingButton variant=\{variant\} size=\{size\} busyLabel=\{busyLabel\}>/);
+    expect(EDIT).toMatch(/<UnarchiveClientForm action=\{unarchiveClientAction\} clientId=\{id\} variant="secondary" busyLabel="Unarchiving…">/);
+    expect(LIST).toMatch(/<UnarchiveClientForm action=\{unarchiveClientAction\} clientId=\{client\.id\} variant="primary" size="sm">/);
     expect(EDIT).not.toContain('type="submit"');
     expect(LIST).not.toContain('type="submit"');
   });
@@ -56,9 +59,9 @@ describe("UI-04: both unarchive controls report their own progress", () => {
   // product defects — a test that fails on code it does not describe is as
   // wrong as one that passes on code it should reject.
   const controlRegion = (src: string) => {
-    const i = src.indexOf("<form action={unarchiveClientAction}>");
+    const i = src.indexOf("<UnarchiveClientForm");
     if (i < 0) throw new Error("unarchive form not found");
-    return src.slice(i, src.indexOf("</form>", i) + 7);
+    return src.slice(i, src.indexOf("</UnarchiveClientForm>", i) + 22);
   };
 
   it("the hand-rolled primary is gone from the list row's control", () => {
@@ -95,10 +98,9 @@ describe("UI-04: both unarchive controls report their own progress", () => {
   it("the server action and its payload are untouched", () => {
     // This is a presentation slice. The action, the hidden field and the
     // client id it carries are exactly as before.
-    expect(EDIT).toMatch(/<form action=\{unarchiveClientAction\}>/);
-    expect(LIST).toMatch(/<form action=\{unarchiveClientAction\}>/);
-    expect(EDIT).toMatch(/<input type="hidden" name="client_id" value=\{id\} \/>/);
-    expect(LIST).toMatch(/<input type="hidden" name="client_id" value=\{client\.id\} \/>/);
+    expect(EDIT).toContain("action={unarchiveClientAction}");
+    expect(LIST).toContain("action={unarchiveClientAction}");
+    expect(FORM).toMatch(/<input type="hidden" name="client_id" value=\{clientId\} \/>/);
   });
 
   it("both pages stay SERVER components — the island is PendingButton alone", () => {

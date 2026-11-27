@@ -155,7 +155,7 @@ export function PolicySettingsForm({ initial }: Props) {
         >
           {pending ? "Saving…" : "Save policies"}
         </button>
-        <SaveStatus state={feedback.state} />
+        <SaveStatus state={feedback.state} savedLabel="Cancellation and no-show policy saved." />
         {initial.policy_version && (
           <span className="text-xs text-neutral-500">
             Version: {initial.policy_version}

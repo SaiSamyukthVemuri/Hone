@@ -15,7 +15,8 @@ describe("service calendar color — settings server contract", () => {
   it("validates the color against the allowlist (isServiceColorKey), rejecting invalid/rose/red", () => {
     expect(src).toMatch(/import \{ isServiceColorKey \} from "@\/lib\/calendar\/service-colors"/);
     expect(src).toMatch(/if \(!isServiceColorKey\(v\)\)/);
-    expect(src).toMatch(/throw new Error\("Please choose a valid calendar color\."\)/);
+    expect(src).toMatch(/const COLOR_INVALID = "Choose a calendar colour from the list, then save again\."/); // HON-124 item 20: returned, not thrown
+    expect(src).toMatch(/if \(calendar_color === null\) return actionFailed\(COLOR_INVALID\)/);
   });
   it("persists calendar_color on both create and update (validated), update scoped to the authed studio", () => {
     expect((src.match(/const calendar_color = parseCalendarColor\(formData\.get\("calendar_color"\)\)/g) ?? []).length).toBeGreaterThanOrEqual(2);
@@ -23,7 +24,7 @@ describe("service calendar color — settings server contract", () => {
     expect(src).toMatch(/\.update\(\{ \.\.\.update, calendar_color \}\)/);
     expect(src).toMatch(/\.eq\("id", id\)/);
     expect(src).toMatch(/\.eq\("studio_id", studioId\)/);
-    expect(src).toMatch(/assertOwner\(\)/); // owner-only
+    expect(src).toMatch(/ownerOrFailure\(\)/); // owner-only
     // migration-order write fallback (retry without calendar_color when absent).
     expect(src).toMatch(/isMissingColumnError\(error, "calendar_color"\)/);
   });

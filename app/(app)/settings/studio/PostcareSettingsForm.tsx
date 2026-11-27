@@ -451,7 +451,7 @@ export function PostcareSettingsForm({ initial, studioOwnerEmail }: Props) {
         >
           {pending ? "Saving…" : "Save postcare settings"}
         </button>
-        <SaveStatus state={feedback.state} />
+        <SaveStatus state={feedback.state} savedLabel="Postcare settings saved." />
       </div>
     </form>
   );

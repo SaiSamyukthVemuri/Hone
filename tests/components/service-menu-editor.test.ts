@@ -34,6 +34,7 @@ function ServiceMenu({ save }: { save: (name: string) => Promise<string> }) {
       title: name, serviceId: String(i), saveAction: async (data: FormData) => {
         const result = await save(String(data.get("name")));
         setNames((stored) => stored.map((v, index) => index === i ? result : v));
+        return { ok: true as const };
       },
       children: [
         createElement(FormDirtyGuard, { key: "guard", name: `service-edit-${i}`, token: name }),

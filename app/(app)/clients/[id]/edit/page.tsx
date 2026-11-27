@@ -4,7 +4,6 @@ import {
   getClientById,
   requirePractitionerWithStudio,
 } from "@/lib/supabase/queries";
-import { PendingButton } from "@/components/pending-button";
 import { ClientForm, type ClientFormValues } from "@/components/client-form";
 import { baselineFromRow } from "@/lib/clients/profile-baseline";
 import { clientDisplayName, type WithPreferredName } from "@/lib/clients/identity";
@@ -13,6 +12,7 @@ import { LegalIdentityForm } from "@/components/legal-identity-form";
 import { createClient } from "@/lib/supabase/server";
 import { updateClientAction, unarchiveClientAction } from "../actions";
 import { ArchiveClientControl } from "./ArchiveClientControl";
+import { UnarchiveClientForm } from "../../UnarchiveClientForm";
 
 export default async function EditClientPage({
   params,
@@ -124,12 +124,9 @@ export default async function EditClientPage({
 
                 `secondary`, not `danger`: unarchiving restores a client, and
                 the solid-danger treatment belongs to the destructive half. */}
-            <form action={unarchiveClientAction}>
-              <input type="hidden" name="client_id" value={id} />
-              <PendingButton variant="secondary" busyLabel="Unarchiving…">
-                Unarchive client
-              </PendingButton>
-            </form>
+            <UnarchiveClientForm action={unarchiveClientAction} clientId={id} variant="secondary" busyLabel="Unarchiving…">
+              Unarchive client
+            </UnarchiveClientForm>
           </>
         ) : (
           <>

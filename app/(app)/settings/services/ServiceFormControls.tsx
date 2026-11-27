@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
+import { actionFailureMessage, isActionFailure, type ActionResult } from "@/lib/actions/action-result";
 import { FOCUS_RING } from "@/components/ui/control-base";
 import {
   SERVICE_COLOR_KEYS,
@@ -247,5 +248,41 @@ export function ToggleActiveSubmitButton({ active }: { active: boolean }) {
     <Button type="submit" pending={pending} busyLabel={busy}>
       {idle}
     </Button>
+  );
+}
+
+/**
+ * Show/Hide in booking. HON-124 item 20: the page used to re-render silently (or throw a redacted message). Now the action's result is read:
+ * a refusal shows its sentence and the button stays; a confirmation names the service and the booking effect ONLY after the server said ok.
+ * Source of the effect claim: toggleServiceActiveAction sets services.active, and the booking menu lists active services (page.tsx: `s.active`).
+ */
+export function ServiceVisibilityForm({ action, serviceId, serviceName, active }: {
+  action: (formData: FormData) => Promise<ActionResult>;
+  serviceId: string;
+  serviceName: string;
+  active: boolean;
+}) {
+  const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  return (
+    <form
+      action={async (formData) => {
+        setMessage(null);
+        try {
+          const result = await action(formData);
+          if (isActionFailure(result)) {
+            setMessage({ kind: "error", text: result.error });
+            return;
+          }
+          setMessage({ kind: "ok", text: active ? `${serviceName} is now hidden from booking.` : `${serviceName} is now shown in booking.` });
+        } catch (err) {
+          setMessage({ kind: "error", text: actionFailureMessage(err, "Could not change this service. Check your connection and try again.") });
+        }
+      }}
+    >
+      <input type="hidden" name="id" value={serviceId} />
+      <input type="hidden" name="active" value={active ? "false" : "true"} />
+      <ToggleActiveSubmitButton active={active} />
+      <p role={message?.kind === "error" ? "alert" : "status"} className="mt-1 text-xs text-fg-muted empty:hidden">{message?.text ?? ""}</p>
+    </form>
   );
 }
