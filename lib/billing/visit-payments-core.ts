@@ -204,6 +204,7 @@ export function commandNote(code: string, ctx: { collectableCents?: number; curr
     case "not_settled": return { tone: "info", message: "Stripe has not finished this refund yet. Check back shortly." };
     case "refund_pending": return { tone: "blocked", message: "A refund started here is still being completed by Stripe. Wait for it to finish, then confirm this one." };
     case "over_capacity": return { tone: "blocked", message: "This refund plus the others is more than the payment. It is left for support to review." };
+    case "fee_changed": return { tone: "blocked", message: "The price changed while checkout was open. Review the current fee, then split again." };
     case "invalid_input": return { tone: "blocked", message: "Check the amount and the details, then try again." };
     default: return { tone: "blocked", message: "That did not go through and nothing was changed. Reload the page and check before trying again." };
   }
@@ -298,7 +299,7 @@ export const RELEASE_ANY_CODES = ["refund_failed", "submission_reused"] as const
 export const KEEP_CODES = [
   "unavailable", "not_owner", "not_found", "split_payments_off", "invalid_input", "no_bill", "method_unavailable", "reserved_for_pending_transfer", "PY001",
   "exceeds_balance", "PY002", "exceeds_refundable", "exceeds_bill", "confirmed_is_final", "payment_not_refundable", "not_completed", "already_settled",
-  "card_attempt_prepared", "not_cancellable", "card_payment_exists", "price_missing", "review_open", "not_settled", "refund_pending", "over_capacity",
+  "card_attempt_prepared", "not_cancellable", "card_payment_exists", "price_missing", "fee_changed", "review_open", "not_settled", "refund_pending", "over_capacity",
 ] as const;
 export type KnownCommandCode = (typeof SUCCESS_CODES)[number] | (typeof RELEASE_ANY_CODES)[number] | (typeof KEEP_CODES)[number];
 const KNOWN = new Set<string>([...SUCCESS_CODES, ...RELEASE_ANY_CODES, ...KEEP_CODES]);
@@ -313,7 +314,7 @@ function dispositionOfKnown(code: KnownCommandCode, ok: boolean): "release" | "k
     case "unavailable": case "not_owner": case "not_found": case "split_payments_off": case "invalid_input": case "no_bill": case "method_unavailable":
     case "reserved_for_pending_transfer": case "PY001": case "exceeds_balance": case "PY002": case "exceeds_refundable": case "exceeds_bill": case "confirmed_is_final":
     case "payment_not_refundable": case "not_completed": case "already_settled": case "card_attempt_prepared": case "not_cancellable": case "card_payment_exists":
-    case "price_missing": case "review_open": case "not_settled": case "refund_pending": case "over_capacity":
+    case "price_missing": case "fee_changed": case "review_open": case "not_settled": case "refund_pending": case "over_capacity":
       return "keep";
     default: { const unlisted: never = code; void unlisted; return "keep"; } // a code added to the union without a case is a compile error here
   }

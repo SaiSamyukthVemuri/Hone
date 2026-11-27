@@ -19,7 +19,9 @@ const S = vi.hoisted(() => ({
   prior: null as null | Record<string, unknown>,
   refundCalls: [] as unknown[],
   refundOutcome: { outcome: "succeeded", message: "Refund recorded." } as { outcome: string; message: string },
+  quote: 10000 as number | null,
 }));
+vi.mock("@/lib/billing/appointment-settlement", () => ({ resolveAppointmentQuotedAmountCents: async () => S.quote }));
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/stripe/server", () => ({ inferStripeLivemode: () => false, getStripe: () => { S.stripeCalls += 1; throw new Error("Stripe must not be called"); } }));
@@ -389,17 +391,33 @@ describe("resolveRefundReviewAction (a refund made in the Stripe dashboard)", ()
 describe("the split bill is made at the reviewed fee (Codex P2)", () => {
   it("adjusts $100 to $80: the command gets 8000 and the reason, so the bill is $80", async () => {
     S.command = { result: "created", id: "b1", state: null };
-    const out = await startSplitBillAction(form({ appointment_id: APPT, final_amount_dollars: "80.00", adjustment_reason: "Loyalty discount" }));
+    const out = await startSplitBillAction(form({ appointment_id: APPT, reference_fee_cents: "10000", final_amount_dollars: "80.00", adjustment_reason: "Loyalty discount" }));
     expect(out.ok === true || out.code === "created" || out.code === "exists").toBe(true);
     expect(S.commandCalls[0][0]).toBe("ensure_visit_bill");
     expect(S.commandCalls[0][1]).toMatchObject({ p_final_cents: 8000, p_fee_adjustment_reason: "Loyalty discount" });
   });
   it("no adjustment: the booked price (null final), no reason", async () => {
-    await startSplitBillAction(form({ appointment_id: APPT }));
+    await startSplitBillAction(form({ appointment_id: APPT, reference_fee_cents: "10000" }));
     expect(S.commandCalls[0][1]).toMatchObject({ p_final_cents: null, p_fee_adjustment_reason: null });
   });
+  // Codex P2 on #1827: the price moved after checkout loaded. The bill must not be made at a price the owner never reviewed.
+  it("the reviewed fee no longer matches the current quote: refused as fee_changed, no command, nothing recorded", async () => {
+    S.quote = 12000;                                    // the service price went up to $120 while checkout showed $100
+    const out = await startSplitBillAction(form({ appointment_id: APPT, reference_fee_cents: "10000" }));
+    expect(out).toMatchObject({ ok: false, code: "fee_changed" });
+    expect(out.note.message).toMatch(/price changed/i);
+    expect(S.commandCalls).toEqual([]);
+    S.quote = 10000;
+  });
+  it("an unreadable current quote is refused too (never a blind bill); a post without the reviewed fee is refused", async () => {
+    S.quote = null;
+    expect(await startSplitBillAction(form({ appointment_id: APPT, reference_fee_cents: "10000" }))).toMatchObject({ ok: false, code: "fee_changed" });
+    S.quote = 10000;
+    expect(await startSplitBillAction(form({ appointment_id: APPT }))).toMatchObject({ ok: false, code: "invalid_input" });
+    expect(S.commandCalls).toEqual([]);
+  });
   it("a malformed fee is refused before any command", async () => {
-    const out = await startSplitBillAction(form({ appointment_id: APPT, final_amount_dollars: "eighty" }));
+    const out = await startSplitBillAction(form({ appointment_id: APPT, reference_fee_cents: "10000", final_amount_dollars: "eighty" }));
     expect(out).toMatchObject({ ok: false, code: "invalid_input" });
     expect(S.commandCalls).toEqual([]);
   });

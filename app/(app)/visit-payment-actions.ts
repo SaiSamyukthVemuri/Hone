@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { inferStripeLivemode } from "@/lib/stripe/server";
+import { resolveAppointmentQuotedAmountCents } from "@/lib/billing/appointment-settlement";
 import { callCommand, loadVisitLedger, readRefundRow, splitPaymentsEnabled } from "@/lib/billing/visit-payments";
 import {
   commandNote, parseDollarsToCents, visitBalance, type CommandNote, type ExternalMethod, type VisitBalance, type VisitLedger,
@@ -24,7 +25,7 @@ async function owner() {
   try {
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
     if (practitioner.role !== "owner") return null;
-    return { studioId: studio.id };
+    return { studioId: studio.id, timezone: studio.timezone };
   } catch {
     return null;
   }
@@ -55,6 +56,10 @@ export async function startSplitBillAction(formData: FormData): Promise<SplitAct
   if (!who) return refuse("not_owner");
   const appointmentId = str(formData.get("appointment_id"));
   if (!UUID.test(appointmentId)) return refuse("invalid_input");
+  // The fee the owner reviewed must still be the current quote: otherwise the bill would be made at a price they never saw (Codex P2). Required, so a bare post cannot skip it.
+  const seen = /^\d{1,7}$/.test(str(formData.get("reference_fee_cents"))) ? Number(str(formData.get("reference_fee_cents"))) : 0;
+  if (seen <= 0) return refuse("invalid_input");
+  if ((await resolveAppointmentQuotedAmountCents(who.studioId, appointmentId, who.timezone, true)) !== seen) return refuse("fee_changed");
   const finalRaw = str(formData.get("final_amount_dollars"));
   let finalCents: number | null = null;
   if (finalRaw !== "") {

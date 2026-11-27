@@ -6,15 +6,15 @@ describe("splitBillFeeFields", () => {
   const draft = (over: Partial<ReturnType<typeof createCheckoutFeeDraft>> = {}) => ({ ...createCheckoutFeeDraft(10000), ...over });
   it("adjusts $100 to $80 with a reason: sends 80.00 and the reason", () => {
     expect(splitBillFeeFields(draft({ finalFee: "80.00", reason: "  Loyalty discount " }), 10000))
-      .toEqual({ ok: true, fields: { final_amount_dollars: "80.00", adjustment_reason: "Loyalty discount" } });
+      .toEqual({ ok: true, fields: { reference_fee_cents: "10000", final_amount_dollars: "80.00", adjustment_reason: "Loyalty discount" } });
   });
   it("a waived fee ($0) with a reason is carried too", () => {
     expect(splitBillFeeFields(draft({ finalFee: "0", reason: "Comp" }), 10000))
-      .toEqual({ ok: true, fields: { final_amount_dollars: "0.00", adjustment_reason: "Comp" } });
+      .toEqual({ ok: true, fields: { reference_fee_cents: "10000", final_amount_dollars: "0.00", adjustment_reason: "Comp" } });
   });
-  it("an unchanged fee sends nothing (the booked price)", () => {
-    expect(splitBillFeeFields(draft(), 10000)).toEqual({ ok: true, fields: {} });
-    expect(splitBillFeeFields(undefined, 10000)).toEqual({ ok: true, fields: {} });
+  it("an unchanged fee still sends the fee the owner SAW, so the server can refuse a price that moved (Codex P2)", () => {
+    expect(splitBillFeeFields(draft(), 10000)).toEqual({ ok: true, fields: { reference_fee_cents: "10000" } });
+    expect(splitBillFeeFields(undefined, 10000)).toEqual({ ok: true, fields: { reference_fee_cents: "10000" } });
   });
   it("a changed fee with no reason is refused, never recorded blind", () => {
     expect(splitBillFeeFields(draft({ finalFee: "80.00", reason: "  " }), 10000)).toMatchObject({ ok: false });
