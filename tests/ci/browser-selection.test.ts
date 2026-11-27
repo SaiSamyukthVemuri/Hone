@@ -288,7 +288,8 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // above. It is REQUIRED, not opt-in. Cost, to be MEASURED on an owned stack and recorded in the pull request: three cases in the chromium project
     // (desktop, a 390px iPhone-sized emulation, and the rollout-off toggle check), each a seeded studio and a login; the iPhone WebKit case runs only in the
     // non-required `webkit-iphone-visit` project and skips everywhere else.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(72);
+    // Now 73 (was 72): calendar-feed-feedback.spec.ts (HON-124 item 7: hover, pressed and keyboard focus on the Settings > Profile calendar-feed card, never making or showing a feed link, and the 44px floor under a coarse pointer) joined `calendar`, the group a change to app/(app)/settings/profile/CalendarFeedCard.tsx selects. RECORDED AS A DECISION per the note above. It is REQUIRED, not opt-in. Cost, MEASURED on an owned stack and recorded in the pull request: five short cases in the chromium project (desktop, 390 px, a studio with no feed, and two touch-emulated height checks), each a seeded studio, a login and one profile page: about 2 minutes in all.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(73);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {
