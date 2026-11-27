@@ -860,12 +860,16 @@ export async function refundPaymentChargeAttemptAction(
   // Same rule as execute: the refund confirmation printed the persisted attempt
   // currency; refuse if it is unknown or differs from what the person saw.
   {
-    const { data: refundRow } = await createAdminClient()
+    const { data: refundRow, error: refundReadErr } = await createAdminClient()
       .from("payment_charge_attempts")
       .select("currency, visit_bill_id")
       .eq("id", attemptId)
       .eq("studio_id", studioId)
       .maybeSingle();
+    // A failed read cannot show whether this attempt is billed, so it refuses (fail closed) rather than skipping the billed check.
+    if (refundReadErr) {
+      return { ok: false, outcome: "amount_invalid", error: CURRENCY_UNVERIFIED_ERROR };
+    }
     // HON-123: a card payment on a split bill is refunded through the split refund command (it records the kind, the reason and the amount against that payment and
     // the visit's balance). This older whole-payment refund writes only the attempt's own columns, so it is refused here for a billed attempt.
     if (refundRow && (refundRow as { visit_bill_id?: unknown }).visit_bill_id) {

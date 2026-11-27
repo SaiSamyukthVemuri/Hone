@@ -123,6 +123,11 @@ describe("the client document judges a visit against its bill", () => {
     expect(v.paidCents).toBe(22500);
     expect(v.refundedCents).toBe(4000);
   });
+  it("a $0 bill with nothing received is no charge, not unpaid", async () => {
+    const v = await doc({ visit_bills: [{ appointment_id: A, total_cents: 0, currency: "cad" }], sessions: SESSIONS });
+    expect(v.state).toBe("no_charge");
+    expect(v.owedCents).toBeNull();
+  });
   it("a $100 bill with NOTHING received shows $100 due, not 'no payment record'", async () => {
     const v = await doc({ visit_bills: [{ appointment_id: A, total_cents: 10000, currency: "cad" }], sessions: SESSIONS });
     expect(v.state).toBe("confirmed_unpaid");
