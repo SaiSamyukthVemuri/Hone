@@ -41,11 +41,13 @@ describe("item 15: the shown revision date is a real, pinned constant", () => {
 
 describe("item 12: FAQ answers are plain text on the page", () => {
   it("the two new booking answers are in the pricing FAQ array (rendered as text, and in the page's FAQ structured data)", () => {
+    // The array now lives in the shared content module (the page, its JSON-LD and the site search read it).
+    const content = read("lib/marketing/content.ts");
     const src = read("app/pricing/page.tsx");
-    expect(src).toContain('q: "Can my clients book online?"');
-    expect(src).toContain('q: "Can clients change or cancel their own appointment?"');
-    expect(src).toMatch(/FAQ\.map/);
-    expect(src).toMatch(/faqPageLd\(FAQ\)/);
+    expect(content).toContain('q: "Can my clients book online?"');
+    expect(content).toContain('q: "Can clients change or cancel their own appointment?"');
+    expect(src).toMatch(/PRICING_FAQ\.map/);
+    expect(src).toMatch(/faqPageLd\(PRICING_FAQ\)/);
   });
 });
 
