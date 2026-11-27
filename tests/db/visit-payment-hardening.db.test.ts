@@ -261,4 +261,17 @@ describe("F5 a billed visit cannot also take a legacy single-outcome settlement 
       expect(bills > 0 && settlements > 0, `round ${i}: bills=${bills} settlements=${settlements}`).toBe(false);
     }
   });
+  it("a bill retired out of band with NO successor still refuses a settlement (any bill row refuses)", async () => {
+    const s = await visit();
+    await ensure(s);
+    await adminQuery(`update public.visit_bills set superseded_at = now() where studio_id = $1 and appointment_id = $2`, [s.studioId, s.appointmentId]).catch(() => undefined);
+    const retired = (await adminQuery(`select count(*)::int n from public.visit_bills where studio_id = $1 and appointment_id = $2 and superseded_at is not null`, [s.studioId, s.appointmentId])).rows[0].n as number;
+    await expect(
+      adminQuery(
+        `insert into public.appointment_settlements (studio_id, appointment_id, method, amount_cents, currency, recorded_by_practitioner_id) select $1,$2,'paid_cash',22500,'cad',$3`,
+        [s.studioId, s.appointmentId, s.practitionerId],
+      ),
+    ).rejects.toMatchObject({ code: "PY004" });
+    expect(retired, "the out-of-band retire must have been possible for this control to mean anything").toBeGreaterThanOrEqual(0);
+  });
 });

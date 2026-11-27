@@ -62,7 +62,7 @@ describe("0394 is shaped like a sealed migration", () => {
     const body = c.slice(at, end);
     expect(body.indexOf("pg_advisory_xact_lock(")).toBeGreaterThan(-1);
     expect(body.indexOf("pg_advisory_xact_lock(")).toBeLessThan(body.indexOf("from public.visit_bills"));
-    expect(body).toContain("b.superseded_at is null");
+    expect(body).not.toContain("superseded_at");            // ANY bill row refuses, live or superseded
     expect(body).toContain("errcode = 'PY004'");
     expect(c).toMatch(/create trigger appointment_settlements_visit_bill_guard_trg before insert on public\.appointment_settlements/);
     expect(c).toMatch(/revoke all privileges on function public\.appointment_settlements_visit_bill_guard\(\) from public, anon, authenticated, service_role/);

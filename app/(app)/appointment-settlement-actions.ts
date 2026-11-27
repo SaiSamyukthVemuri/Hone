@@ -39,6 +39,8 @@ const NOT_AUTHORIZED = "You are not authorized to do that.";
 // (payment_jurisdiction_missing). That is a setup gap, not a permission
 // failure, so it gets its own copy and its own ops event instead of
 // NOT_AUTHORIZED.
+const VISIT_BILLED =
+  "This visit is now paid through the visit bill. Reload to see its payments.";
 const JURISDICTION_MISSING =
   "This studio's payment country and currency have not been confirmed yet, so nothing was recorded. Contact Hone support to finish payment setup.";
 
@@ -46,7 +48,7 @@ export type SettlementActionResult =
   | { ok: true; code: SettlementResultCode; message: string; settlementId: string | null }
   | {
       ok: false;
-      code: SettlementResultCode | "unavailable" | "payment_jurisdiction_missing";
+      code: SettlementResultCode | "unavailable" | "payment_jurisdiction_missing" | "visit_billed";
       message: string;
     };
 
@@ -56,9 +58,12 @@ type SettlementAction = "record" | "waive" | "supersede";
 function classifyRpcError(error: { code?: string; message?: string }): {
   dbCode: string;
   jurisdictionMissing: boolean;
+  visitBilled: boolean;
 } {
   return {
     dbCode: dbErrorCode(error),
+    // 0394's settlement wall (PY004): the visit has a split-payments bill, so a single payment outcome can no longer be recorded for it.
+    visitBilled: error.code === "PY004" || (typeof error.message === "string" && error.message.startsWith("visit_is_billed:")),
     jurisdictionMissing:
       typeof error.message === "string" &&
       error.message.startsWith("payment_jurisdiction_missing:"),
@@ -67,8 +72,9 @@ function classifyRpcError(error: { code?: string; message?: string }): {
 
 function rpcFailure(
   action: SettlementAction,
-  failed: { dbCode: string; jurisdictionMissing: boolean },
+  failed: { dbCode: string; jurisdictionMissing: boolean; visitBilled: boolean },
 ): SettlementActionResult {
+  if (failed.visitBilled) return { ok: false, code: "visit_billed", message: VISIT_BILLED };
   if (failed.jurisdictionMissing) {
     // The message names the studio; only the action and a validated code are
     // logged, never the message.

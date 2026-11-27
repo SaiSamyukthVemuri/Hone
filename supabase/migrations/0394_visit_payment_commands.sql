@@ -169,7 +169,7 @@ create trigger payment_charge_attempts_visit_bill_guard_trg before insert on pub
 -- ---------------------------------------------------------------------------
 -- 4b. The settlement wall: once a visit has a LIVE bill, the older single-outcome settlement (0187) can no longer be written for it
 -- ---------------------------------------------------------------------------
--- The reverse of ensure_visit_bill's refusal (a visit with a settlement gets no bill). Both take the visit's advisory lock and then look at the other
+-- ANY bill row refuses, live or superseded: a bill that was retired out of band with no successor must not reopen the door. The reverse of ensure_visit_bill's refusal (a visit with a settlement gets no bill). Both take the visit's advisory lock and then look at the other
 -- side, so a settlement racing bill creation is either seen by the bill command (which refuses) or refused here. It is a trigger, not an edit of
 -- 0187/0254's commands, because those bodies are applied and frozen and three different commands write settlement rows. The application also hides the
 -- old controls for a billed visit; this is the wall behind that.
@@ -178,7 +178,7 @@ language plpgsql volatile security definer set search_path = pg_catalog, pg_temp
 as $$
 begin
   perform pg_advisory_xact_lock(public.appointment_settlement_lock_key(new.appointment_id));
-  if exists (select 1 from public.visit_bills b where b.studio_id = new.studio_id and b.appointment_id = new.appointment_id and b.superseded_at is null) then
+  if exists (select 1 from public.visit_bills b where b.studio_id = new.studio_id and b.appointment_id = new.appointment_id) then
     raise exception 'visit_is_billed: this visit is paid through split payments, so a single payment outcome cannot be recorded for it' using errcode = 'PY004';
   end if;
   return new;

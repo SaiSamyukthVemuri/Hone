@@ -174,3 +174,23 @@ describe("external checkout fee adjustment", () => {
     }));
   });
 });
+
+// 0394 (HON-123): a visit that gained a split-payments bill refuses a single-outcome settlement with PY004 visit_is_billed. A stale page gets a plain sentence, not NOT_AUTHORIZED.
+const BILLED = { code: "PY004", message: "visit_is_billed: this visit is paid through split payments, so a single payment outcome cannot be recorded for it" };
+describe.each(ACTIONS)("%s: visit_is_billed (PY004)", (action, run) => {
+  it("says the visit is paid through the visit bill and to reload, never NOT_AUTHORIZED", async () => {
+    rpc.mockResolvedValue({ data: null, error: BILLED });
+    const out = await run();
+    expect(out.ok, action).toBe(false);
+    if (!out.ok) {
+      expect(out.code).toBe("visit_billed");
+      expect(out.message).toBe("This visit is now paid through the visit bill. Reload to see its payments.");
+      expect(out.message).not.toBe(NOT_AUTHORIZED);
+    }
+  });
+  it("is recognised by the SQLSTATE alone too (a message that changes does not turn it back into a generic failure)", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "PY004", message: "x" } });
+    const out = await run();
+    expect(!out.ok && out.code).toBe("visit_billed");
+  });
+});
