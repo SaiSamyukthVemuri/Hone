@@ -131,7 +131,9 @@ export type FakeResendLedgerRecord = {
   t: string;
   pid: number;
   mode: FakeResendMode;
-  to: string;
+  // A string for every ordinary send; an ARRAY only for the operator critical-alert email (lib/ops/alert-email.ts), which sends one message to
+  // the whole OPS_ALERT_EMAILS list. One send is one ledger line.
+  to: string | string[];
   subject: string;
   text?: string;
   html?: string;
@@ -212,7 +214,8 @@ export type MinimalEmailTransport = {
   emails: {
     send: (args: {
       from: string;
-      to: string;
+      // An array only for the operator critical-alert email (HON-127); every other sender passes one address.
+      to: string | string[];
       subject: string;
       html: string;
       text: string;
@@ -250,7 +253,8 @@ export function createFakeResendTransport(): MinimalEmailTransport {
       // lane arms the SCH-001 ledger it appends recipient and subject only. The
       // onboarding outcome is asserted via studio_onboarding.welcome_email_status.
       send: async ({ to, subject, html, text }) => {
-        const mode = fakeResendModeForRecipient(to);
+        // The mode follows the FIRST recipient of a list (the operator alert's list is one class of address).
+        const mode = fakeResendModeForRecipient(Array.isArray(to) ? (to[0] ?? "") : to);
         const bodies = fakeResendLedgerBodiesEnabled()
           ? {
               // Bodies AND link targets only for a harness recipient: a real link can carry a bearer token.
@@ -290,8 +294,9 @@ export function createFakeResendTransport(): MinimalEmailTransport {
           };
         }
         if (mode === "failonce") {
-          if (!failedOnceRecipients.has(to)) {
-            failedOnceRecipients.add(to);
+          const onceKey = Array.isArray(to) ? to.join(",") : to;
+          if (!failedOnceRecipients.has(onceKey)) {
+            failedOnceRecipients.add(onceKey);
             throw new Error("fake resend network exception (first attempt)");
           }
           return { data: { id: FAKE_MESSAGE_ID }, error: null };
