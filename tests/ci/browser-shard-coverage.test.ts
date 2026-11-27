@@ -309,6 +309,8 @@ describe("the step that emits the matrix actually RUNS", () => {
     const evalIf = (expr: string, o: Record<string, string>) => {
       const js = expr
         .replace(/^\$\{\{\s*|\s*\}\}$/g, "")
+        // CI-COST-03: the validate gate, taken as passed (records-preflight.test.ts pins it).
+        .replace("!cancelled() && needs.changes.result == 'success' && needs.records-preflight.result == 'success' && (github.event_name != 'pull_request' || needs.validate.result == 'success')", "true")
         .replace(/github\.event\.pull_request\.draft != true/g, "true")
         .replace(/needs\.changes\.outputs\.(\w+) == '(\w+)'/g, (_, k, v) => String(o[k] === v))
         .replace(/contains\(needs\.changes\.outputs\.(\w+), '([^']+)'\)/g, (_, k, v) => String((o[k] ?? "").includes(v)));

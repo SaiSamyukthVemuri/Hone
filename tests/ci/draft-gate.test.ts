@@ -25,6 +25,10 @@ const HEAVY = [
   "webkit-hon-62",
 ];
 const UNGATED = ["changes", "validate", "canonical-record"];
+// CI-COST-03: the one prefix added in front of the draft gate since. Its meaning is
+// pinned in tests/ci/records-preflight.test.ts; here it only has to be exact.
+const VALIDATE_GATE =
+  "!cancelled() && needs.changes.result == 'success' && needs.records-preflight.result == 'success' && (github.event_name != 'pull_request' || needs.validate.result == 'success')";
 
 function jobBlock(src: string, job: string): string {
   const lines = src.split("\n");
@@ -79,7 +83,7 @@ describe("CI-DRAFT-01 job conditions", () => {
     expect(starters.sort()).toEqual([...HEAVY].sort());
   });
   for (const job of HEAVY) {
-    it(`${job}: condition is draft != true && ( <base condition, unchanged> )`, () => {
+    it(`${job}: condition is <validate gate> && draft != true && ( <base condition, unchanged> )`, () => {
       const was = ifLine(base, job);
       expect(was, `${job} had a condition at the base`).not.toBeNull();
       let inner = was!.match(/^\$\{\{ (.*) \}\}$/)![1];
@@ -87,7 +91,7 @@ describe("CI-DRAFT-01 job conditions", () => {
         expect(inner.split(EXTENDED_TERM).length - 1, `${job}: the base has exactly one extended term`).toBe(1);
         inner = LATER_EDITS[job](inner);
       }
-      expect(ifLine(CI, job)).toBe(`\${{ github.event.pull_request.draft != true && ( ${inner} ) }}`);
+      expect(ifLine(CI, job)).toBe(`\${{ ${VALIDATE_GATE} && github.event.pull_request.draft != true && ( ${inner} ) }}`);
     });
   }
   for (const job of UNGATED) {
