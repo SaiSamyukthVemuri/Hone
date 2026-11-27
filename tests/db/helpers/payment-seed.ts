@@ -413,6 +413,16 @@ export async function cleanupPaymentScenario(studioId: string): Promise<void> {
   // appointment_audit is append-only (no runtime DELETE) and its studio FK is
   // RESTRICT. Owner-only harness fixture; ships in no migration.
   await purgeAppointmentAudit(studioId);
+  // 0393: the split-payments ledger is append-only (a guard refuses DELETE) and points at attempts and appointments, so fixture teardown removes it first
+  // with triggers off for this one transaction. Test harness only; no runtime path can do this. A multi-statement query cannot take parameters, so the
+  // id (always a generated uuid) is checked and inlined.
+  if (!/^[0-9a-f-]{36}$/.test(studioId)) throw new Error("cleanupPaymentScenario: studio id is not a uuid");
+  await adminQuery(
+    `set local session_replication_role = replica;
+     delete from public.payment_refunds where studio_id='${studioId}';
+     delete from public.visit_external_payments where studio_id='${studioId}';
+     delete from public.visit_bills where studio_id='${studioId}'`,
+  );
   for (const sql of [
     `delete from public.payment_charge_attempts where studio_id=$1`,
     `delete from public.client_payment_methods where studio_id=$1`,
