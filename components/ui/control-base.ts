@@ -102,6 +102,12 @@ export const NAV_ROW_FEEDBACK = cx(
   NAV_ROW_FOCUS,
 );
 
+/** NAV_ROW_FEEDBACK for a row that sits on a DARK bar (the admin header): the same hover, pressed and focus steps, as lighter fills on the dark ground. The focus ring is the shared one. */
+export const NAV_ROW_FEEDBACK_ON_DARK = cx(
+  "hover:bg-neutral-800 hover:text-white active:bg-neutral-700 active:text-white",
+  NAV_ROW_FOCUS,
+);
+
 /** The same three steps for a small text link (a footer link): a hover underline as well as the colour, so the cue is not colour alone. */
 export const TEXT_LINK_FEEDBACK = cx(
   "rounded-sm hover:text-neutral-900 hover:underline active:text-neutral-950 dark:hover:text-neutral-100 dark:active:text-white",
