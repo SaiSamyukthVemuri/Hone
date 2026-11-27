@@ -70,7 +70,7 @@ test("opening the phone menu hides it: it is neither visible nor clickable and f
   expect(hit, "the button is not under that point").toBe(false);
   expect(await page.evaluate(() => !!document.activeElement?.closest("#site-navigation-dialog")), "focus is inside the dialog").toBe(true);
   await page.keyboard.press("Escape");
-  await expect(dialog).toBeHidden();
+  await expect(page.locator("#site-navigation-dialog"), "the menu is closed (inert while it fades out)").toHaveAttribute("inert", "");
   await expect(page.locator(BUTTON), "back once the menu is closed").toBeVisible();
 });
 
