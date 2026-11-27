@@ -56,8 +56,15 @@ async function openDrawer(page: Page): Promise<{ drawer: Locator; clientName: st
   // A day a week ahead: the seeded studio is open 06:00-22:00 every day, so every slot of it is in the future whatever time the run starts.
   const [{ day }] = await sql<{ day: string }>("select to_char((now() at time zone $1)::date + 7, 'YYYY-MM-DD') as day", [tz]);
   await loginAsOwner(page, seed);
-  await page.goto(`/calendar?view=week&layout=grid&week=${day}`);
-  await page.getByRole("button", { name: `Open quick-book draft for ${day}` }).click();
+  if ((page.viewportSize()?.width ?? 1280) < 768) {
+    // A phone has no day column to press: the "+" opens a chooser, and the day shown is the selected day.
+    await page.goto(`/calendar?view=week&layout=grid&day=${day}`);
+    await page.getByRole("button", { name: "Add appointment or block time" }).click();
+    await page.getByRole("dialog", { name: "Choose action for selected time" }).getByRole("button", { name: "Book appointment" }).click();
+  } else {
+    await page.goto(`/calendar?view=week&layout=grid&week=${day}`);
+    await page.getByRole("button", { name: `Open quick-book draft for ${day}` }).click();
+  }
   const drawer = page.getByRole("dialog", { name: "New appointment" });
   await expect(drawer).toBeVisible({ timeout: T });
   return { drawer, clientName: name, serviceId };
