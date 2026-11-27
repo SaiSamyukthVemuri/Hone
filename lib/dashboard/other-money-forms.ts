@@ -32,6 +32,7 @@ export const MONEY_FORMS: ReadonlyArray<{ table: string; form: string; handling:
   { table: "manual_fee_charge_attempts", form: "manual late-cancel or no-show fee (succeeded or pending)", handling: "unavailable", note: "a fee, not a credit toward the session price" },
   { table: "visit_bills", form: "split-payments bill (the visit's one live bill)", handling: "counted", note: "HON-123: the bill total replaces the quote; read by billedOutstanding" },
   { table: "visit_external_payments", form: "cash (confirmed) or transfer (confirmed)", handling: "counted", note: "HON-123: confirmed money; a pending transfer is reserved and still owed; a voided one is nothing" },
+  { table: "payment_refund_reviews", form: "a refund made in the Stripe dashboard on a billed visit, not yet confirmed by the owner", handling: "counted", note: "HON-122: while one is open the visit is unresolved (a refund in flight): the figure is unavailable, never paid" },
   { table: "payment_refunds", form: "refund or price reduction on a billed visit", handling: "counted", note: "HON-123: a succeeded refund is handed back; one pending at Stripe makes the figure unavailable" },
   { table: "appointment_settlements", form: "paid_cash, paid_e_transfer, paid_other_external", handling: "counted", note: "the amount collected; another currency is never summed" },
   { table: "appointment_settlements", form: "waived", handling: "counted", note: "owner-attested as owing nothing: the visit drops out" },

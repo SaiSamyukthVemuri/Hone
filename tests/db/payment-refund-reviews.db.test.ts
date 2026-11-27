@@ -237,7 +237,9 @@ describe("resolve_payment_refund_review: the owner acknowledges, no amount, once
     const { s, a } = await billed(10000);
     const f = await flag(a, { cents: 3000 });
     expect(await resolve(s, f.review_id as string)).toBe("resolved");
-    const rows = (await adminQuery(`select amount_cents, source, kind, status, stripe_refund_id, legacy from public.payment_refunds where attempt_id=$1`, [a])).rows;
+    const rows = (await adminQuery(`select amount_cents, source, kind, status, stripe_refund_id, legacy, reason from public.payment_refunds where attempt_id=$1`, [a])).rows;
+    // Privacy: the reason of an observed row is EXACTLY the fixed Hone sentence (equality, not a pattern).
+    expect(rows.map((r) => r.reason)).toEqual(["Refunded in the Stripe dashboard"]);
     expect(rows).toEqual([expect.objectContaining({ amount_cents: 3000, source: "stripe_dashboard", kind: "payment_reversal", status: "succeeded", legacy: false })]);
     expect(rows[0].stripe_refund_id).toBe((await reviews(a))[0].stripe_refund_id);
     expect((await reviews(a))[0]).toMatchObject({ closed_code: "acknowledged" });

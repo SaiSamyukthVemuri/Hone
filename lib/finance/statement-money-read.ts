@@ -3,6 +3,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { readInChunks } from "@/lib/dashboard/in-chunks";
+import { aggregateRefundGaps } from "@/lib/billing/visit-payments-core";
 
 import type { StatementCardRow, StatementLegacyFeeRow } from "./statement";
 import type { AssembleAppointment, AssembleSettlementRow } from "./statement-document-assemble";
@@ -112,7 +113,7 @@ export async function readMoneyForAppointments(supabase: SupabaseClient, studioI
 
   // HON-123 / HON-122: the split-payments ledger, read as settlement-shaped rows so every existing total, line and print follows without a second model.
   // The three reads fail closed together with the rest: a visit whose bill, cash/transfer or refund rows cannot be read is never shown without them.
-  const [bills, externals, refunds] = await Promise.all([
+  const [bills, externals, refunds, reviews] = await Promise.all([
     readInChunks<{ appointment_id: string; total_cents: number | null; currency: string | null }>(ids, (chunk) =>
       supabase.from("visit_bills").select("appointment_id, total_cents, currency").eq("studio_id", studioId).is("superseded_at", null).in("appointment_id", chunk),
     ),
@@ -122,8 +123,12 @@ export async function readMoneyForAppointments(supabase: SupabaseClient, studioI
     readInChunks<{ appointment_id: string | null; attempt_id: string | null; amount_cents: number | null; currency: string | null; status: string; legacy: boolean }>(ids, (chunk) =>
       supabase.from("payment_refunds").select("appointment_id, attempt_id, amount_cents, currency, status, legacy").eq("studio_id", studioId).in("appointment_id", chunk),
     ),
+    // OPEN reviews (a refund made in the Stripe dashboard that the owner has not confirmed): the visit is unresolved until then, never "paid".
+    readInChunks<{ appointment_id: string | null; amount_cents: number | null; currency: string | null }>(ids, (chunk) =>
+      supabase.from("payment_refund_reviews").select("appointment_id, amount_cents, currency").eq("studio_id", studioId).is("resolved_at", null).in("appointment_id", chunk),
+    ),
   ]);
-  if (!bills.ok || !externals.ok || !refunds.ok) return { ok: false };
+  if (!bills.ok || !externals.ok || !refunds.ok || !reviews.ok) return { ok: false };
   const ledgerRows: AssembleSettlementRow[] = [];
   for (const b of bills.rows) ledgerRows.push({ appointmentId: b.appointment_id, method: "bill_total", amountCents: null, currency: b.currency, quotedAmountCents: b.total_cents });
   for (const e of externals.rows) {
@@ -164,10 +169,25 @@ export async function readMoneyForAppointments(supabase: SupabaseClient, studioI
   ]);
   if (!feeCards.ok || !sessionCards.ok || !settlements.ok || !legacy.ok) return { ok: false };
 
+  for (const rv of reviews.rows) {
+    if (rv.appointment_id) ledgerRows.push({ appointmentId: rv.appointment_id, method: "refund_in_flight", amountCents: rv.amount_cents, currency: rv.currency, quotedAmountCents: null });
+  }
   const cardRows: StatementCardRow[] = [];
   for (const r of [...feeCards.rows, ...sessionCards.rows]) {
     const appointmentId = r.appointment_id ?? (r.session_id ? sessionToAppt.get(r.session_id) ?? null : null);
     if (!appointmentId) continue;
+    // The attempt's own refund columns are Stripe's CUMULATIVE statement of the whole payment (0078, 0240). Its split rows are shown through their own lines
+    // (above), but when the columns say MORE came back than those rows (the rest was refunded in the Stripe dashboard) the difference is one more line, so
+    // the statement reads the same money as payment_refund_money (0393): the greater of the two, never the sum.
+    if (splitRefundedAttempts.has(r.id) && r.status === "succeeded" && typeof r.amount_cents === "number") {
+      const mine = refunds.rows.filter((x) => x.attempt_id === r.id && !x.legacy);
+      const gap = aggregateRefundGaps(
+        { id: r.id, amountCents: r.amount_cents, refundStatus: r.refund_status, refundAmountCents: r.refund_amount_cents },
+        mine.filter((x) => x.status === "succeeded").reduce((n, x) => n + (x.amount_cents ?? 0), 0), mine.filter((x) => x.status === "pending_stripe").reduce((n, x) => n + (x.amount_cents ?? 0), 0),
+      );
+      if (gap.succeededGapCents > 0) ledgerRows.push({ appointmentId, method: "partial_refund", amountCents: gap.succeededGapCents, currency: r.currency, quotedAmountCents: null });
+      if (gap.pendingGapCents > 0) ledgerRows.push({ appointmentId, method: "refund_in_flight", amountCents: gap.pendingGapCents, currency: r.currency, quotedAmountCents: null });
+    }
     cardRows.push({
       appointmentId,
       chargeReason: r.charge_reason,

@@ -51,3 +51,26 @@ describe("a billed visit's roster read counts a legacy full-refund mirror of a b
     expect(r.ok && r.billed.get(A)?.refunds).toEqual([{ amountCents: 4000, status: "succeeded" }]);
   });
 });
+
+// v1 refund truth: the same money as payment_refund_money (0393), read in bulk. The attempt's own columns are Stripe's cumulative statement of the whole payment.
+describe("a billed visit's roster read: the dashboard refund of the rest, and an unconfirmed review", () => {
+  const withAttempt = (extra: Record<string, unknown>) => ({ ...base, payment_charge_attempts: [{ id: ATT, appointment_id: A, status: "succeeded", amount_cents: 10000, refund_status: null, refund_amount_cents: null, ...extra }] });
+  it("$40 refunded here, then the owner refunds the rest in the dashboard (attempt succeeded/100): returned is $100 (the greater, never the sum), the visit is not paid", async () => {
+    const r = await readBilledVisits(fake({ ...withAttempt({ refund_status: "succeeded", refund_amount_cents: 10000 }), payment_refunds: [{ appointment_id: A, attempt_id: ATT, amount_cents: 4000, status: "succeeded", legacy: false }] }), STUDIO, [A]);
+    expect(r.ok && r.billed.get(A)?.refunds).toEqual([{ amountCents: 4000, status: "succeeded" }, { amountCents: 6000, status: "succeeded" }]);
+    expect(r.ok && billedPaymentState(r.billed.get(A)!, card)).toBe("chargeable");
+  });
+  it("a whole-payment refund already in the rows is not counted twice", async () => {
+    const r = await readBilledVisits(fake({ ...withAttempt({ refund_status: "succeeded", refund_amount_cents: 10000 }), payment_refunds: [{ appointment_id: A, attempt_id: ATT, amount_cents: 10000, status: "succeeded", legacy: true }] }), STUDIO, [A]);
+    expect(r.ok && r.billed.get(A)?.refunds).toEqual([{ amountCents: 10000, status: "succeeded" }]);
+  });
+  it("an open review reads as a refund in flight: the figure is unavailable, never paid", async () => {
+    const r = await readBilledVisits(fake({ ...withAttempt({}), payment_refunds: [], payment_refund_reviews: [{ appointment_id: A, amount_cents: 3000 }] }), STUDIO, [A]);
+    expect(r.ok && r.billed.get(A)?.refunds).toEqual([{ amountCents: 3000, status: "pending_stripe" }]);
+    expect(r.ok && billedPaymentState(r.billed.get(A)!, card)).toBe("unavailable");
+  });
+  it("a failed read of the reviews fails the whole read (unknown is not 'no review')", async () => {
+    const failing = { from: (t: string) => { const q: Record<string, unknown> = {}; const self = () => q; Object.assign(q, { select: self, eq: self, is: self, not: self, in: self, order: self, range: self, limit: self, then: (res: (v: unknown) => unknown) => res({ data: t === "payment_refund_reviews" ? null : (({ ...base, payment_refunds: [] }) as Record<string, unknown[]>)[t] ?? [], error: t === "payment_refund_reviews" ? { code: "x" } : null }) }); return q; } } as never;
+    expect((await readBilledVisits(failing, STUDIO, [A])).ok).toBe(false);
+  });
+});

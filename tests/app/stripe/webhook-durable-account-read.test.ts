@@ -106,6 +106,8 @@ function makeAdmin(reads: Record<string, ReadResult[]>, rpcs: Record<string, Rea
       const result = rpcs[name];
       if (result instanceof Error) throw result;
       if (result) return result;
+      // A legacy visit: the billed-payment review flag answers not_billed and the older path runs unchanged.
+      if (name === "flag_payment_refund_review") return { data: [{ result: "not_billed" }], error: null };
       // Like the real 0214 RPC for a bound account: the observation persists.
       // A reply that stored nothing now fails the event (#1035 P2), so a
       // healthy-path test must not inherit a null reply by default.
@@ -1644,9 +1646,10 @@ describe("PINNED TODAY (HON-49): a partial refund recorded in Stripe is not reco
     return post(payload, webhooks.generateTestHeaderString({ payload, secret: "whsec_test" }));
   }
   const alerts = () => ADMIN.current!.opsRows.filter((r) => r.event === "charge_refunded_partial_out_of_band");
-  // The only database commands a partial refund may run: claim the event, then mark it processed. Any other command (a different
+  // The only database commands a partial refund may run: claim the event, ask the billed-payment review flag whether this is a split-payment visit
+  // (a READ of the visit's billing state that answers not_billed here and writes nothing), then mark it processed. Any other command (a different
   // one that writes the row, for example) fails the exact-list checks below.
-  const ONLY_CLAIM_AND_MARK = ["claim_stripe_event", "mark_stripe_event_processed"];
+  const ONLY_CLAIM_AND_MARK = ["claim_stripe_event", "flag_payment_refund_review", "mark_stripe_event_processed"];
 
   it("one signed partial refund (2000 of 5000): critical alert, no row change, only claim and mark commands, acknowledged", async () => {
     startDatabase(1);

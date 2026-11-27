@@ -8,7 +8,7 @@ import {
 } from "@/lib/billing/visit-payments-core";
 import {
   confirmTransferAction, sendSplitCardReceiptAction, prepareSplitCardPaymentAction, refundCardPaymentAction, recordExternalPaymentAction, refundExternalPaymentAction, runSplitCardPaymentAction,
-  voidTransferAction, cancelSplitCardAttemptAction, recheckCardRefundAction, type SplitActionResult, type SplitState,
+  voidTransferAction, cancelSplitCardAttemptAction, recheckCardRefundAction, resolveRefundReviewAction, type SplitActionResult, type SplitState,
 } from "@/app/(app)/visit-payment-actions";
 
 /** Free-text fields on money records are never shown to the client and are kept out of logs and messages, but they are still stored: keep names and health details out of them. */
@@ -148,7 +148,7 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
   const refundable = [
     ...ledger.cards.filter((c) => c.status === "succeeded").map((c) => ({ key: `card:${c.id}`, label: "Card", cents: stillRefundable((r) => r.attemptId === c.id, c.amountCents), id: c.id, card: true })),
     ...ledger.externals.filter((e) => e.state === "confirmed").map((e) => ({ key: `ext:${e.id}`, label: methodLabel(e.method), cents: stillRefundable((r) => r.externalPaymentId === e.id, e.amountCents), id: e.id, card: false })),
-  ].filter((r) => r.cents > 0);
+  ].filter((r) => r.cents > 0 && !ledger.reviewOpen);
   const tenderLabel = tender === "card" ? "Charge card" : tender === "paid_cash" ? "Record cash received" : "Record transfer";
   const submitLabel = cents ? `${tenderLabel} ${fmt(cents)}` : tenderLabel;
 
@@ -187,6 +187,23 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
           )}
         </div>
       )}
+
+      {(ledger.reviews ?? []).map((rv) => (
+        <div key={rv.id} role="status" data-testid="split-review" className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-700 dark:bg-amber-950">
+          <p className="font-semibold">A refund of {fmt(rv.amountCents)} was made in your Stripe dashboard</p>
+          <p className="mt-1">
+            {rv.settled
+              ? "Confirm it to count it on this visit. Until then this visit is not marked as settled and refunds for that payment are paused."
+              : "Stripe has not finished this refund yet. Until it does, this visit is not marked as settled and refunds for that payment are paused."}
+          </p>
+          {rv.settled && (
+            <button type="button" className={`${secondary} mt-2`} disabled={busy} data-testid="split-review-confirm"
+              onClick={async () => { setBusy(true); try { apply(await resolveRefundReviewAction(form({ review_id: rv.id }))); } finally { setBusy(false); } }}>
+              Confirm this refund
+            </button>
+          )}
+        </div>
+      ))}
 
       {transfers.map((t) => (
         <PendingTransfer key={t.id} id={t.id} label={methodLabel(t.method)} amount={fmt(t.amountCents)} busy={busy}

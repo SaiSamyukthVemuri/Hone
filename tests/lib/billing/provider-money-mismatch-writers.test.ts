@@ -228,6 +228,8 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       if (name === "reconcile_card_payment_succeeded") {
         return { data: [{ result: "reconciled", status_before: "pending_stripe" }], error: null };
       }
+      // A legacy visit: the billed-payment review flag answers not_billed and the older path runs unchanged.
+      if (name === "flag_payment_refund_review") return { data: [{ result: "not_billed" }], error: null };
       throw new Tripwire(`unexpected rpc ${name}`);
     },
   }),

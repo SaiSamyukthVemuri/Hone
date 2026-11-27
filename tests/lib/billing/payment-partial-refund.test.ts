@@ -5,10 +5,11 @@ vi.mock("server-only", () => ({}));
 const S = vi.hoisted(() => ({
   create: vi.fn(),
   list: vi.fn(),
+  retrieve: vi.fn(),
   finish: vi.fn(),
 }));
 vi.mock("@/lib/stripe/server", () => ({ inferStripeLivemode: () => false }));
-vi.mock("@/lib/stripe/session-payment-stripe", () => ({ getSessionPaymentStripe: () => ({ refunds: { create: S.create, list: S.list } }) }));
+vi.mock("@/lib/stripe/session-payment-stripe", () => ({ getSessionPaymentStripe: () => ({ refunds: { create: S.create, list: S.list, retrieve: S.retrieve } }) }));
 vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => ({
     from: () => ({ select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { id: "att-1", studio_id: "st-1", client_id: "c-1", status: "succeeded", stripe_charge_id: "ch_1", stripe_account_id: null, stripe_livemode: false, charge_reason: "session_payment" } }) }) }) }) }),
@@ -16,63 +17,120 @@ vi.mock("@/lib/supabase/admin-server", () => ({
   }),
 }));
 
-import { refundCardPaymentPartial, type PendingRefundRow } from "@/lib/billing/payment-partial-refund";
+import Stripe from "stripe";
+import { refundCardPaymentPartial, isDefinitiveRefundRefusal, DEFINITIVE_REFUND_REFUSAL_CODES, type PendingRefundRow } from "@/lib/billing/payment-partial-refund";
 
-// HON-122 P3(a): Stripe forgets an idempotency key after 24 hours. A retry of an unknown refund row after about 23 hours looks up the refund the row
-// already made (by the metadata every create carries) BEFORE it may create, so a late retry can never refund twice. Synthetic ids only.
+// HON-122 refund state machine (r4). Synthetic ids only.
+//   stored id => retrieve (never create); no id + recent => create (key = row id) then record_refund_sent; no id + older than the idempotency window =>
+//   list by metadata BEFORE create; terminal fail only for the explicit code allowlist, after ONE list; every other error is unknown.
 
 const now = Date.now();
-const row = (ageMs: number): PendingRefundRow => ({ id: "rf-1", studioId: "st-1", attemptId: "att-1", amountCents: 4000, status: "pending_stripe", source: "hone", requestedAt: new Date(now - ageMs).toISOString() });
-const made = { id: "re_1", status: "succeeded", metadata: { hone_payment_refund_id: "rf-1" } };
+const row = (ageMs: number, stripeRefundId: string | null = null): PendingRefundRow => ({ id: "rf-1", studioId: "st-1", attemptId: "att-1", amountCents: 4000, status: "pending_stripe", source: "hone", requestedAt: new Date(now - ageMs).toISOString(), stripeRefundId });
+const made = { id: "re_1", status: "succeeded", charge: "ch_1", metadata: { hone_payment_refund_id: "rf-1" } };
+const stripeErr = (code: string, type: "invalid_request_error" | "card_error" = "invalid_request_error", status = 400) =>
+  Stripe.errors.StripeError.generate({ type, code, message: "synthetic", statusCode: status } as never);
+const finishCalls = () => S.finish.mock.calls.filter((c) => c[0] === "finish_payment_refund").map((c) => c[1]);
+const sentCalls = () => S.finish.mock.calls.filter((c) => c[0] === "record_refund_sent").map((c) => c[1]);
 
-beforeEach(() => { S.create.mockReset(); S.list.mockReset(); S.finish.mockReset(); });
+beforeEach(() => { S.create.mockReset(); S.list.mockReset(); S.finish.mockReset(); S.retrieve.mockReset(); });
 
-describe("refundCardPaymentPartial on a retry", () => {
-  it("a first call finds nothing at Stripe, then creates once with the row id as the idempotency key", async () => {
-    S.list.mockResolvedValue({ data: [] });
+describe("refundCardPaymentPartial", () => {
+  it("a first call creates ONCE with the row id as key and no list call, stores the Stripe id, then settles", async () => {
     S.create.mockResolvedValue({ ...made });
     const out = await refundCardPaymentPartial({ row: row(60_000), feeReturnedCents: null });
-    expect(S.list).toHaveBeenCalledTimes(1);
+    expect(S.list).not.toHaveBeenCalled();
     expect(S.create).toHaveBeenCalledTimes(1);
     expect(S.create.mock.calls[0][1].idempotencyKey).toBe("hone:payment_refund:rf-1");
+    expect(sentCalls()).toEqual([{ p_refund_id: "rf-1", p_stripe_refund_id: "re_1" }]);
+    expect(finishCalls()[0]).toMatchObject({ p_outcome: "succeeded", p_stripe_refund_id: "re_1" });
     expect(out.outcome).toBe("succeeded");
   });
 
-  it("a RECENT recheck of a pending refund reads the live refund (not create's replayed pending) and settles the row", async () => {
-    // create's saved response is "pending" for 24 hours; the list read shows what Stripe has now.
-    S.create.mockResolvedValue({ ...made, status: "pending" });
-    S.list.mockResolvedValueOnce({ data: [] });
-    expect((await refundCardPaymentPartial({ row: row(60_000), feeReturnedCents: null })).outcome).toBe("unknown");
-    expect(S.finish).not.toHaveBeenCalled();
-    S.create.mockClear();
-    S.list.mockResolvedValueOnce({ data: [{ ...made, status: "succeeded" }] });
-    const out = await refundCardPaymentPartial({ row: row(120_000), feeReturnedCents: null });
+  it("a row with a STORED id retrieves it and never creates; a pending refund stays unknown, then settles when Stripe says succeeded", async () => {
+    S.retrieve.mockResolvedValueOnce({ ...made, status: "pending" });
+    expect((await refundCardPaymentPartial({ row: row(60_000, "re_1"), feeReturnedCents: null })).outcome).toBe("unknown");
+    expect(finishCalls()).toHaveLength(0);
+    S.retrieve.mockResolvedValueOnce({ ...made, status: "succeeded" });
+    expect((await refundCardPaymentPartial({ row: row(120_000, "re_1"), feeReturnedCents: null })).outcome).toBe("succeeded");
     expect(S.create).not.toHaveBeenCalled();
-    expect(S.finish.mock.calls[0][1]).toMatchObject({ p_refund_id: "rf-1", p_outcome: "succeeded", p_stripe_refund_id: "re_1" });
-    expect(out.outcome).toBe("succeeded");
+    expect(S.list).not.toHaveBeenCalled();
   });
 
-  it("an old row whose refund already exists at Stripe is settled from it: ZERO creates", async () => {
-    S.list.mockResolvedValue({ data: [{ id: "re_other", status: "succeeded", metadata: { hone_payment_refund_id: "rf-9" } }, made] });
+  it("a stored id that Stripe says failed or canceled settles the row failed; one on ANOTHER charge is not trusted", async () => {
+    S.retrieve.mockResolvedValueOnce({ ...made, status: "canceled" });
+    expect((await refundCardPaymentPartial({ row: row(1000, "re_1"), feeReturnedCents: null })).outcome).toBe("failed");
+    expect(finishCalls()[0]).toMatchObject({ p_outcome: "failed", p_stripe_refund_id: "re_1" });
+    S.finish.mockClear();
+    S.retrieve.mockResolvedValueOnce({ ...made, charge: "ch_other" });
+    expect((await refundCardPaymentPartial({ row: row(1000, "re_1"), feeReturnedCents: null })).outcome).toBe("unknown");
+    expect(finishCalls()).toHaveLength(0);
+  });
+
+  it("a retrieve error is unknown, never failed and never a create", async () => {
+    S.retrieve.mockRejectedValue(new Error("connection reset"));
+    expect((await refundCardPaymentPartial({ row: row(1000, "re_1"), feeReturnedCents: null })).outcome).toBe("unknown");
+    expect(S.create).not.toHaveBeenCalled();
+    expect(finishCalls()).toHaveLength(0);
+  });
+
+  it("an old row (past the idempotency window) whose refund exists at Stripe is settled from the list: ZERO creates", async () => {
+    S.list.mockResolvedValue({ data: [{ id: "re_other", status: "succeeded", metadata: { hone_payment_refund_id: "rf-9" } }, made], has_more: false });
     const out = await refundCardPaymentPartial({ row: row(24 * 3600 * 1000), feeReturnedCents: null });
     expect(S.create).not.toHaveBeenCalled();
-    expect(S.finish).toHaveBeenCalledTimes(1);
-    expect(S.finish.mock.calls[0][1]).toMatchObject({ p_refund_id: "rf-1", p_outcome: "succeeded", p_stripe_refund_id: "re_1" });
+    expect(finishCalls()[0]).toMatchObject({ p_refund_id: "rf-1", p_outcome: "succeeded", p_stripe_refund_id: "re_1" });
     expect(out.outcome).toBe("succeeded");
   });
 
-  it("an old row with no refund at Stripe creates exactly one", async () => {
-    S.list.mockResolvedValue({ data: [{ id: "re_other", status: "succeeded", metadata: { hone_payment_refund_id: "rf-9" } }] });
+  it("an old row with nothing at Stripe creates exactly one; a list that errors or has_more is unknown, never a blind create", async () => {
+    S.list.mockResolvedValue({ data: [], has_more: false });
     S.create.mockResolvedValue({ ...made });
     await refundCardPaymentPartial({ row: row(30 * 3600 * 1000), feeReturnedCents: null });
     expect(S.create).toHaveBeenCalledTimes(1);
+    S.create.mockClear();
+    S.list.mockRejectedValue(new Error("connection reset"));
+    expect((await refundCardPaymentPartial({ row: row(30 * 3600 * 1000), feeReturnedCents: null })).outcome).toBe("unknown");
+    S.list.mockResolvedValue({ data: [], has_more: true });
+    expect((await refundCardPaymentPartial({ row: row(30 * 3600 * 1000), feeReturnedCents: null })).outcome).toBe("unknown");
+    expect(S.create).not.toHaveBeenCalled();
   });
 
-  it("an old row when Stripe cannot be asked is UNKNOWN, never a blind create", async () => {
-    S.list.mockRejectedValue(new Error("connection reset"));
-    const out = await refundCardPaymentPartial({ row: row(30 * 3600 * 1000), feeReturnedCents: null });
-    expect(S.create).not.toHaveBeenCalled();
-    expect(S.finish).not.toHaveBeenCalled();
+  it("the allowlist is exactly the four documented codes", () => {
+    expect([...DEFINITIVE_REFUND_REFUSAL_CODES].sort()).toEqual(["amount_too_large", "charge_already_refunded", "charge_disputed", "refund_disputed_payment"]);
+  });
+
+  it.each([...DEFINITIVE_REFUND_REFUSAL_CODES])("%s after ONE list that finds nothing records a terminal fail", async (code) => {
+    S.create.mockRejectedValue(stripeErr(code));
+    S.list.mockResolvedValue({ data: [], has_more: false });
+    const out = await refundCardPaymentPartial({ row: row(1000), feeReturnedCents: null });
+    expect(S.list).toHaveBeenCalledTimes(1);
+    expect(out.outcome).toBe("failed");
+    expect(finishCalls()[0]).toMatchObject({ p_outcome: "failed", p_failure_code: code });
+  });
+
+  it("charge_already_refunded when the list FINDS this row's refund settles from it (not failed); a list error leaves the row pending", async () => {
+    S.create.mockRejectedValue(stripeErr("charge_already_refunded"));
+    S.list.mockResolvedValueOnce({ data: [made], has_more: false });
+    expect((await refundCardPaymentPartial({ row: row(1000), feeReturnedCents: null })).outcome).toBe("succeeded");
+    S.finish.mockClear();
+    S.list.mockRejectedValueOnce(new Error("boom"));
+    expect((await refundCardPaymentPartial({ row: row(1000), feeReturnedCents: null })).outcome).toBe("unknown");
+    expect(finishCalls()).toHaveLength(0);
+  });
+
+  it.each([
+    ["409 idempotency error", Stripe.errors.StripeError.generate({ type: "idempotency_error", message: "x", statusCode: 409 } as never)],
+    ["429 rate limit", stripeErr("rate_limit", "invalid_request_error", 429)],
+    ["5xx api error", Stripe.errors.StripeError.generate({ type: "api_error", message: "x", statusCode: 500 } as never)],
+    ["an unknown 4xx code", stripeErr("something_new")],
+    ["a card error", stripeErr("card_declined", "card_error", 402)],
+    ["a connection error", new Stripe.errors.StripeConnectionError({ message: "reset", type: "api_error" } as never)],
+    ["a plain error", new Error("boom")],
+  ])("%s is NOT definitive: the row stays pending, no terminal fail, no lookup", async (_n, err) => {
+    expect(isDefinitiveRefundRefusal(err)).toBe(false);
+    S.create.mockRejectedValue(err);
+    const out = await refundCardPaymentPartial({ row: row(1000), feeReturnedCents: null });
     expect(out.outcome).toBe("unknown");
+    expect(finishCalls()).toHaveLength(0);
+    expect(S.list).not.toHaveBeenCalled();
   });
 });

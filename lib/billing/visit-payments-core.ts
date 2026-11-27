@@ -40,8 +40,29 @@ export type LedgerExternal = {
 export type LedgerRefund = {
   id: string; amountCents: number; kind: "price_reduction" | "payment_reversal"; status: "pending_stripe" | "succeeded" | "failed";
   attemptId: string | null; externalPaymentId: string | null; reason: string; at: string; platformFeeReturnedCents: number | null;
+  /** Money returned in the Stripe dashboard (a fixed Hone sentence, never staff text): shown with a FIXED label, and its stored reason is never displayed. */
+  observed?: boolean;
 };
-export type VisitLedger = { bill: LedgerBill | null; cards: LedgerCard[]; externals: LedgerExternal[]; refunds: LedgerRefund[] };
+/** A refund Stripe reported that Hone did not make, waiting for the owner. Closed fields only. */
+export type LedgerReview = { id: string; amountCents: number; settled: boolean };
+export const OBSERVED_REFUND_LABEL = "Refunded in the Stripe dashboard";
+/** `reviewOpen`: a refund Stripe reported that Hone did not make is waiting for the owner (the payment is frozen and the visit is NOT settled). */
+export type VisitLedger = { bill: LedgerBill | null; cards: LedgerCard[]; externals: LedgerExternal[]; refunds: LedgerRefund[]; reviewOpen?: boolean; reviews?: LedgerReview[] };
+
+/**
+ * A billed attempt's OWN refund columns (0078 full only, 0240 full amount only) are Stripe's cumulative statement of the whole payment. When they say more
+ * came back than the ledger rows do (the owner refunded the rest in the Stripe dashboard), the difference is returned money with no row of its own. This
+ * is the same rule as payment_refund_money (0393): the greater of the two, never the sum. loadVisitLedger cross-checks the total against the database.
+ */
+export function aggregateRefundGaps(
+  attempt: { id: string; amountCents: number; refundStatus: string | null; refundAmountCents: number | null },
+  itemisedSucceededCents: number, itemisedPendingCents: number,
+): { succeededGapCents: number; pendingGapCents: number } {
+  const aggregate = Math.min(attempt.amountCents, attempt.refundAmountCents ?? attempt.amountCents);
+  if (attempt.refundStatus === "succeeded") return { succeededGapCents: Math.max(0, aggregate - itemisedSucceededCents), pendingGapCents: 0 };
+  if (attempt.refundStatus === "pending_stripe") return { succeededGapCents: 0, pendingGapCents: Math.max(0, aggregate - itemisedPendingCents) };
+  return { succeededGapCents: 0, pendingGapCents: 0 };
+}
 
 export type VisitBalance = {
   totalCents: number; confirmedCents: number; pendingCents: number; cardCents: number; refundedCents: number;
@@ -94,10 +115,10 @@ export function historyLines(l: VisitLedger): HistoryLine[] {
     });
   }
   for (const r of l.refunds) {
-    const what = r.kind === "price_reduction" ? "Price reduced, money returned" : "Payment returned";
+    const what = r.observed ? OBSERVED_REFUND_LABEL : r.kind === "price_reduction" ? "Price reduced, money returned" : "Payment returned";
     const from = r.attemptId ? "card" : "cash or transfer";
     lines.push({
-      key: `refund:${r.id}`, label: `${what} (${from})`, amountCents: r.amountCents, direction: "out", at: r.at,
+      key: `refund:${r.id}`, label: r.observed ? `${what} (card)` : `${what} (${from})`, amountCents: r.amountCents, direction: "out", at: r.at,
       status: r.status === "succeeded" ? "received" : r.status === "pending_stripe" ? "refund_in_progress" : "failed",
     });
   }
@@ -151,6 +172,12 @@ export function commandNote(code: string, ctx: { collectableCents?: number; curr
     case "not_owner": return { tone: "blocked", message: "Only the studio owner can do that." };
     case "not_found": return { tone: "blocked", message: "That was not found in this studio. Reload the page." };
     case "submission_reused": return { tone: "blocked", message: "That form was already used for a different amount. Reload the page and enter it again." };
+    case "review_open": return { tone: "blocked", message: "A refund made in your Stripe dashboard is waiting for you to confirm it. Confirm it first, then refund again." };
+    case "resolved": return { tone: "ok", message: "Recorded. This refund now counts on the visit." };
+    case "already_resolved": case "already_covered": return { tone: "info", message: "That refund was already recorded." };
+    case "not_settled": return { tone: "info", message: "Stripe has not finished this refund yet. Check back shortly." };
+    case "refund_pending": return { tone: "blocked", message: "A refund started here is still being completed by Stripe. Wait for it to finish, then confirm this one." };
+    case "over_capacity": return { tone: "blocked", message: "This refund plus the others is more than the payment. It is left for support to review." };
     case "invalid_input": return { tone: "blocked", message: "Check the amount and the details, then try again." };
     default: return { tone: "blocked", message: "That did not go through and nothing was changed. Reload the page and check before trying again." };
   }

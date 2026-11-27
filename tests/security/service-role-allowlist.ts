@@ -322,6 +322,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: '.eq("studio_id"',
   },
   {
+    path: "lib/billing/refund-review-flag.ts",
+    purpose: "Webhook refund-review flag for a split-payment card payment (HON-122).",
+    why: "Service-role calls flag_payment_refund_review (service_role only), called from the signed Stripe webhook after the event is bound to its attempt; the database derives the studio and currency from the ATTEMPT (never the caller) and decides under the visit lock.",
+    scopeGuard: "p_attempt_id",
+  },
+  {
     path: "app/(app)/settings/availability/actions.ts",
     purpose: "Authenticated practitioner server action/query.",
     why: "Service-role write/read-through after the caller's studio is resolved via getCurrentPractitionerWithStudio(); every query is scoped to that studio.id.",

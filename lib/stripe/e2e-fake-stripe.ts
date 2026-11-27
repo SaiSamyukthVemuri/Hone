@@ -31,7 +31,9 @@ export type FakeStripeMethod =
   | "pi_create"
   | "pi_retrieve"
   | "pi_cancel"
-  | "refund_create";
+  | "refund_create"
+  | "refund_retrieve"
+  | "refund_list";
 
 export type FakeStripeCall = {
   method: FakeStripeMethod;
@@ -68,6 +70,17 @@ function rememberMoney(run: string, id: string, money: FakeMoney): void {
   const m = moneyByIdByRun.get(run) ?? new Map<string, FakeMoney>();
   m.set(id, money);
   moneyByIdByRun.set(run, m);
+}
+// What a refund was created for (its charge and metadata), so a later retrieve or list states it back as real Stripe does.
+type FakeRefundMeta = { charge: string | null; metadata: Record<string, string> };
+const refundMetaByRun = new Map<string, Map<string, FakeRefundMeta>>();
+function rememberRefundMeta(run: string, id: string, meta: FakeRefundMeta): void {
+  const m = refundMetaByRun.get(run) ?? new Map<string, FakeRefundMeta>();
+  m.set(id, meta);
+  refundMetaByRun.set(run, m);
+}
+function recalledRefundMeta(run: string, id: string): FakeRefundMeta | null {
+  return refundMetaByRun.get(run)?.get(id) ?? null;
 }
 function recalledMoney(run: string, id: string | null | undefined): FakeMoney {
   if (!id) return { amount: null, currency: null };
@@ -487,6 +500,7 @@ export function createFakeStripe(): Stripe {
           charge?: string | null;
           amount?: number | null;
           currency?: string | null;
+          metadata?: Record<string, string> | null;
         },
         opts?: RequestOpts,
       ) => {
@@ -506,6 +520,7 @@ export function createFakeStripe(): Stripe {
         if (!existing) {
           rememberIdempotent(run, key, id);
           rememberMoney(run, id, money);
+          rememberRefundMeta(run, id, { charge: params?.charge ?? null, metadata: { ...(params?.metadata ?? {}) } });
         }
         // Record every refund invocation (replay flag), same invocation/effect
         // model as create, so a duplicate refund request can't be concealed.
@@ -524,6 +539,28 @@ export function createFakeStripe(): Stripe {
           amount: money.amount,
           currency: money.currency,
         };
+      },
+      retrieve: async (id: string, _params?: unknown, opts?: RequestOpts) => {
+        const run = runId();
+        const meta = recalledRefundMeta(run, id);
+        record(run, { method: "refund_retrieve", idempotencyKey: null, stripeAccount: opts?.stripeAccount ?? null, amountCents: null, currency: null, resultId: id, replay: false });
+        if (!meta) {
+          const err = new Error(`No such refund: '${id}'`) as Error & { type: string; code: string; statusCode: number };
+          err.type = "invalid_request_error";
+          err.code = "resource_missing";
+          err.statusCode = 404;
+          throw err;
+        }
+        const money = recalledMoney(run, id);
+        return { id, status: "succeeded", amount: money.amount, currency: money.currency, charge: meta.charge, metadata: meta.metadata };
+      },
+      list: async (params: { charge?: string | null }, opts?: RequestOpts) => {
+        const run = runId();
+        record(run, { method: "refund_list", idempotencyKey: null, stripeAccount: opts?.stripeAccount ?? null, amountCents: null, currency: null, resultId: "", replay: false });
+        const data = [...(refundMetaByRun.get(run)?.entries() ?? [])]
+          .filter(([, m]) => !params?.charge || m.charge === params.charge)
+          .map(([id, m]) => ({ id, status: "succeeded", amount: recalledMoney(run, id).amount, currency: recalledMoney(run, id).currency, charge: m.charge, metadata: m.metadata }));
+        return { data, has_more: false };
       },
     },
   };

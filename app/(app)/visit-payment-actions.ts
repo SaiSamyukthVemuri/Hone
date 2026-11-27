@@ -328,6 +328,19 @@ export async function recheckCardRefundAction(formData: FormData): Promise<CardR
 }
 
 // ---------------------------------------------------------------------------
+// A refund made in the Stripe dashboard: the owner confirms it (no amount is sent; the database records Stripe's own figure)
+// ---------------------------------------------------------------------------
+export async function resolveRefundReviewAction(formData: FormData): Promise<SplitActionResult> {
+  const who = await owner();
+  if (!who) return refuse("not_owner");
+  const appointmentId = str(formData.get("appointment_id"));
+  const reviewId = str(formData.get("review_id"));
+  if (!UUID.test(appointmentId) || !UUID.test(reviewId)) return refuse("invalid_input");
+  const row = await callCommand("resolve_payment_refund_review", { p_review_id: reviewId });
+  return finish(who.studioId, appointmentId, row.result);
+}
+
+// ---------------------------------------------------------------------------
 // Receipt for ONE card payment of a split visit
 // ---------------------------------------------------------------------------
 import { sendPaymentChargeReceiptAction } from "@/app/(app)/clients/[id]/sessions/[sessionId]/payment-actions";

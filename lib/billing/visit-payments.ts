@@ -1,9 +1,9 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
-import { keepsRefundForBilledVisit } from "@/lib/billing/visit-payments-core";
+import { aggregateRefundGaps, keepsRefundForBilledVisit } from "@/lib/billing/visit-payments-core";
 import type {
-  ExternalMethod, LedgerBill, LedgerCard, LedgerExternal, LedgerRefund, VisitCurrency, VisitLedger,
+  ExternalMethod, LedgerBill, LedgerCard, LedgerExternal, LedgerRefund, LedgerReview, VisitCurrency, VisitLedger,
 } from "@/lib/billing/visit-payments-core";
 
 // ===========================================================================
@@ -44,17 +44,22 @@ export type LedgerLoad = { ok: true; ledger: VisitLedger } | { ok: false };
 export async function loadVisitLedger(studioId: string, appointmentId: string): Promise<LedgerLoad> {
   try {
     const supabase = await createClient();
-    const [bills, externals, refunds, cards] = await Promise.all([
+    const [bills, externals, refunds, cards, position, openReviews] = await Promise.all([
       supabase.from("visit_bills").select("id, total_cents, currency, reference_fee_cents, fee_adjustment_reason, created_at")
         .eq("studio_id", studioId).eq("appointment_id", appointmentId).is("superseded_at", null).maybeSingle(),
       supabase.from("visit_external_payments").select("id, method, amount_cents, state, recorded_at, note")
         .eq("studio_id", studioId).eq("appointment_id", appointmentId).order("recorded_at"),
-      supabase.from("payment_refunds").select("id, amount_cents, kind, status, attempt_id, external_payment_id, reason, requested_at, platform_fee_returned_cents, legacy")
+      supabase.from("payment_refunds").select("id, amount_cents, kind, status, attempt_id, external_payment_id, requested_at, platform_fee_returned_cents, legacy, source")
         .eq("studio_id", studioId).eq("appointment_id", appointmentId).order("requested_at"),
-      createAdminClient().from("payment_charge_attempts").select("id, amount_cents, status, created_at, receipt_sent_at")
+      createAdminClient().from("payment_charge_attempts").select("id, amount_cents, status, created_at, receipt_sent_at, refund_status, refund_amount_cents")
         .eq("studio_id", studioId).eq("appointment_id", appointmentId).eq("charge_reason", "session_payment").not("visit_bill_id", "is", null).order("created_at"),
+      // The database's own answer (payment_refund_money, 0393): the money returned and whether a review is open. The rows above must AGREE with it.
+      supabase.rpc("get_visit_payment_position", { p_studio_id: studioId, p_appointment_id: appointmentId }),
+      // Open reviews: closed fields only (amount and whether Stripe has settled it). The owner reads them under RLS.
+      supabase.from("payment_refund_reviews").select("id, amount_cents, stripe_refund_status")
+        .eq("studio_id", studioId).eq("appointment_id", appointmentId).is("resolved_at", null).order("opened_at"),
     ]);
-    if (bills.error || externals.error || refunds.error || cards.error) return { ok: false };
+    if (bills.error || externals.error || refunds.error || cards.error || position.error || openReviews.error) return { ok: false };
 
     let bill: LedgerBill | null = null;
     if (bills.data) {
@@ -82,15 +87,38 @@ export async function loadVisitLedger(studioId: string, appointmentId: string): 
       refs.push({
         id: r.id, amountCents: r.amount_cents as number, kind: r.kind as LedgerRefund["kind"], status: r.status as LedgerRefund["status"],
         attemptId: typeof r.attempt_id === "string" ? r.attempt_id : null, externalPaymentId: typeof r.external_payment_id === "string" ? r.external_payment_id : null,
-        reason: String(r.reason ?? ""), at: String(r.requested_at), platformFeeReturnedCents: num(r.platform_fee_returned_cents),
+        reason: "", observed: r.source === "stripe_dashboard", at: String(r.requested_at), platformFeeReturnedCents: num(r.platform_fee_returned_cents),
       });
+    }
+    // Money the attempt's own columns say came back (a dashboard refund of the rest) that no row carries: a row of its own, so every reader sees it.
+    for (const c of (cards.data ?? []) as Record<string, unknown>[]) {
+      if (typeof c.id !== "string" || c.status !== "succeeded" || num(c.amount_cents) === null) continue;
+      const mine = refs.filter((r) => r.attemptId === c.id);
+      const gap = aggregateRefundGaps(
+        { id: c.id, amountCents: c.amount_cents as number, refundStatus: typeof c.refund_status === "string" ? c.refund_status : null, refundAmountCents: num(c.refund_amount_cents) },
+        mine.filter((r) => r.status === "succeeded").reduce((a, r) => a + r.amountCents, 0), mine.filter((r) => r.status === "pending_stripe").reduce((a, r) => a + r.amountCents, 0),
+      );
+      const at = String(c.created_at);
+      if (gap.succeededGapCents > 0) refs.push({ id: `${c.id}:stripe-total`, amountCents: gap.succeededGapCents, kind: "payment_reversal", status: "succeeded", attemptId: c.id, externalPaymentId: null, reason: "", observed: true, at, platformFeeReturnedCents: null });
+      if (gap.pendingGapCents > 0) refs.push({ id: `${c.id}:stripe-pending`, amountCents: gap.pendingGapCents, kind: "payment_reversal", status: "pending_stripe", attemptId: c.id, externalPaymentId: null, reason: "", at, platformFeeReturnedCents: null });
+    }
+    const pos = (Array.isArray(position.data) ? position.data[0] : position.data) as Record<string, unknown> | null | undefined;
+    if (bill) {
+      // Fail closed: if the screen's money does not equal the database's, the ledger is UNKNOWN (never a wrong "paid" or "refundable").
+      const returned = refs.filter((r) => r.status === "succeeded").reduce((a, r) => a + r.amountCents, 0);
+      if (!pos || num(pos.refunded_cents) !== returned) return { ok: false };
+    }
+    const reviews: LedgerReview[] = [];
+    for (const r of (openReviews.data ?? []) as Record<string, unknown>[]) {
+      if (typeof r.id !== "string" || num(r.amount_cents) === null) return { ok: false };
+      reviews.push({ id: r.id, amountCents: r.amount_cents as number, settled: r.stripe_refund_status === "succeeded" });
     }
     const cds: LedgerCard[] = [];
     for (const r of (cards.data ?? []) as Record<string, unknown>[]) {
       if (typeof r.id !== "string" || num(r.amount_cents) === null) return { ok: false };
       cds.push({ kind: "card", id: r.id, amountCents: r.amount_cents as number, status: String(r.status), at: String(r.created_at), platformFeeCents: null, receiptSent: typeof r.receipt_sent_at === "string" });
     }
-    return { ok: true, ledger: { bill, cards: cds, externals: ext, refunds: refs } };
+    return { ok: true, ledger: { bill, cards: cds, externals: ext, refunds: refs, reviewOpen: pos?.review_open === true, reviews } };
   } catch {
     return { ok: false };
   }
@@ -98,7 +126,7 @@ export async function loadVisitLedger(studioId: string, appointmentId: string): 
 
 export type CommandRow = { result: string; id: string | null; state: string | null };
 
-export type CommandName = "ensure_visit_bill" | "record_visit_external_payment" | "confirm_visit_external_payment" | "void_visit_external_payment" | "request_payment_refund" | "cancel_split_card_attempt";
+export type CommandName = "ensure_visit_bill" | "record_visit_external_payment" | "confirm_visit_external_payment" | "void_visit_external_payment" | "request_payment_refund" | "cancel_split_card_attempt" | "resolve_payment_refund_review";
 
 /** One staff command as the signed-in person. A transport or permission failure is `result: "unavailable"`; the database's own refusals come back as their code. */
 export async function callCommand(fn: CommandName, args: Record<string, unknown>): Promise<CommandRow> {
@@ -111,6 +139,7 @@ export async function callCommand(fn: CommandName, args: Record<string, unknown>
       : fn === "confirm_visit_external_payment" ? await supabase.rpc("confirm_visit_external_payment", args)
       : fn === "void_visit_external_payment" ? await supabase.rpc("void_visit_external_payment", args)
       : fn === "cancel_split_card_attempt" ? await supabase.rpc("cancel_split_card_attempt", args)
+      : fn === "resolve_payment_refund_review" ? await supabase.rpc("resolve_payment_refund_review", args)
       : await supabase.rpc("request_payment_refund", args);
     if (error) return { result: "unavailable", id: null, state: null };
     const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
@@ -126,9 +155,9 @@ export async function callCommand(fn: CommandName, args: Record<string, unknown>
 export async function readRefundRow(studioId: string, refundId: string): Promise<import("@/lib/billing/payment-partial-refund").PendingRefundRow | null> {
   try {
     const { data, error } = await (await createClient()).from("payment_refunds")
-      .select("id, studio_id, attempt_id, amount_cents, status, source, requested_at").eq("id", refundId).eq("studio_id", studioId).maybeSingle();
+      .select("id, studio_id, attempt_id, amount_cents, status, source, requested_at, stripe_refund_id").eq("id", refundId).eq("studio_id", studioId).maybeSingle();
     if (error || !data || typeof data.attempt_id !== "string") return null;
-    return { id: data.id as string, studioId: data.studio_id as string, attemptId: data.attempt_id, amountCents: data.amount_cents as number, status: String(data.status), requestedAt: String(data.requested_at ?? ""), source: String(data.source) };
+    return { id: data.id as string, studioId: data.studio_id as string, attemptId: data.attempt_id, amountCents: data.amount_cents as number, status: String(data.status), requestedAt: String(data.requested_at ?? ""), source: String(data.source), stripeRefundId: typeof data.stripe_refund_id === "string" ? data.stripe_refund_id : null };
   } catch {
     return null;
   }

@@ -3,7 +3,6 @@ import Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { getSessionPaymentStripe } from "@/lib/stripe/session-payment-stripe";
-import { isDefinitiveStripeRefusal } from "@/lib/billing/stripe-error-outcome";
 
 // Partial card refunds on a split visit (HON-122). request_payment_refund (0394) has already checked the owner, the amount and what is still
 // refundable under the visit's lock and made the pending_stripe row; this sends that ONE row to Stripe and records Stripe's answer once.
@@ -37,12 +36,32 @@ export type PartialCardRefundOutcome =
   | { outcome: "succeeded" | "failed" | "already_settled" | "unknown" | "blocked"; message: string };
 
 /**
- * Sends ONE pending_stripe payment_refunds row (made by request_payment_refund, which already enforced owner, amount and balance under the
- * visit lock) to Stripe and records Stripe's answer with finish_payment_refund. Safe to call again for the same row: the Stripe key is the row id,
- * and finish_payment_refund records an outcome once. A connection or server error is "unknown": the row stays pending_stripe and nothing is
- * recorded as failed (a retry gets the same Stripe refund back). `feeReturnedCents` is decided by the caller from the charge's platform fee.
+ * REFUND STATE MACHINE (r2/r4). A row is pending_stripe until Stripe's answer is recorded once with finish_payment_refund (succeeded | failed).
+ *   - a row with a STORED Stripe id is settled by RETRIEVING that refund (never created again);
+ *   - a row with no stored id, recent (inside Stripe's 24h idempotency window): create with the row id as key (a replay returns the first refund), then
+ *     record_refund_sent stores the id;
+ *   - the same row older than the window: ask Stripe for the refund this row already made (list by metadata) BEFORE any create;
+ *   - a terminal `failed` is recorded ONLY for an explicit allowlist of Stripe error codes that prove no refund exists. Everything else (409, 429, 5xx,
+ *     any other 4xx, a connection error, a failed lookup) leaves the row pending (unknown) and a retry is safe.
+ * The lookup and the create each have their own error handling: a failed lookup is never read as "nothing found".
  */
-export type PendingRefundRow = { id: string; studioId: string; attemptId: string; amountCents: number; status: string; source: string; requestedAt: string };
+export type PendingRefundRow = { id: string; studioId: string; attemptId: string; amountCents: number; status: string; source: string; requestedAt: string; stripeRefundId: string | null };
+
+/** 24h idempotency window, less a margin. */
+export const IDEMPOTENCY_SAFE_MS = 23 * 3600 * 1000;
+
+/**
+ * Stripe error codes (https://docs.stripe.com/error-codes, read 27 Nov 2026; the page shows no last-updated date) that say Stripe REFUSED the refund
+ * because the charge's own state forbids it, so no refund exists for this call: charge_already_refunded, amount_too_large, charge_disputed,
+ * refund_disputed_payment. A type (card, invalid request, rate limit...) is NOT enough: only the code. Rate limits and idempotency errors are excluded
+ * on purpose (they prove nothing about an earlier call).
+ */
+export const DEFINITIVE_REFUND_REFUSAL_CODES: ReadonlySet<string> = new Set(["charge_already_refunded", "amount_too_large", "charge_disputed", "refund_disputed_payment"]);
+export function isDefinitiveRefundRefusal(err: unknown): boolean {
+  return err instanceof Stripe.errors.StripeError && typeof err.code === "string" && DEFINITIVE_REFUND_REFUSAL_CODES.has(err.code);
+}
+
+const chargeIdOf = (c: string | Stripe.Charge | null | undefined) => (typeof c === "string" ? c : c?.id ?? null);
 
 /** The refund Stripe already made for this row, found by the metadata the call always carries; null when there is none. Throws when Stripe cannot be asked. */
 export async function findExistingStripeRefund(
@@ -50,6 +69,8 @@ export async function findExistingStripeRefund(
   a: { chargeId: string; accountId: string | null; refundRowId: string },
 ): Promise<Stripe.Refund | null> {
   const list = await stripe.refunds.list({ charge: a.chargeId, limit: 100 }, { stripeAccount: a.accountId ?? undefined });
+  // A list that does not show everything cannot prove "nothing found".
+  if (list.has_more) throw new Error("refund list incomplete");
   return list.data.find((r) => r.metadata?.hone_payment_refund_id === a.refundRowId) ?? null;
 }
 
@@ -59,6 +80,7 @@ export async function refundCardPaymentPartial(args: { row: PendingRefundRow; fe
   const admin = createAdminClient();
   const livemode = inferStripeLivemode();
   const row = args.row;
+  const UNKNOWN: PartialCardRefundOutcome = { outcome: "unknown", message: "Checking refund status" };
   if (row.source !== "hone") {
     logInternal("payment_partial_refund_blocked", { refundId: row.id, why: "not_hone_source" });
     return { outcome: "blocked", message: "This refund could not be found." };
@@ -76,6 +98,8 @@ export async function refundCardPaymentPartial(args: { row: PendingRefundRow; fe
     logInternal("payment_partial_refund_blocked", { refundId: row.id, why: "mode_mismatch" });
     return { outcome: "blocked", message: MODE_MISMATCH_MESSAGE };
   }
+  const chargeId = attempt.stripe_charge_id as string;
+  const accountId = (attempt.stripe_account_id as string | null) ?? null;
 
   const finish = async (outcome: "succeeded" | "failed", stripeRefundId: string | null, stripeStatus: string | null, code: string | null, fee: number | null) => {
     const { data, error: finErr } = await admin.rpc("finish_payment_refund", {
@@ -85,20 +109,56 @@ export async function refundCardPaymentPartial(args: { row: PendingRefundRow; fe
     const r = (Array.isArray(data) ? data[0] : data) as { result?: string } | null;
     return { ok: !finErr && !!r, result: r?.result ?? null };
   };
+  const lookup = async (): Promise<{ ok: true; refund: Stripe.Refund | null } | { ok: false }> => {
+    try {
+      return { ok: true, refund: await findExistingStripeRefund(getSessionPaymentStripe(), { chargeId, accountId, refundRowId: row.id }) };
+    } catch (err) {
+      logInternal("payment_partial_refund_lookup_failed", { refundId: row.id, errorName: err instanceof Error ? err.name : typeof err });
+      return { ok: false };
+    }
+  };
+  const settle = async (refund: Stripe.Refund): Promise<PartialCardRefundOutcome> => {
+    if (refund.status === "succeeded") {
+      const f = await finish("succeeded", refund.id, refund.status, null, args.feeReturnedCents);
+      return f.ok ? { outcome: f.result === "already_settled" ? "already_settled" : "succeeded", message: "Refund recorded." } : UNKNOWN;
+    }
+    if (refund.status === "failed" || refund.status === "canceled") {
+      const f = await finish("failed", refund.id, refund.status, sanitizeFailureCode(refund.failure_reason ?? refund.status), null);
+      return f.ok ? { outcome: "failed", message: "Stripe could not complete this refund. Nothing was returned." } : UNKNOWN;
+    }
+    // pending / requires_action: Stripe has it but has not finished. Not a recorded outcome yet.
+    return UNKNOWN;
+  };
 
+  // 1. A stored Stripe id: retrieve that refund, never create again.
+  if (row.stripeRefundId) {
+    let refund: Stripe.Refund;
+    try {
+      refund = await getSessionPaymentStripe().refunds.retrieve(row.stripeRefundId, undefined, { stripeAccount: accountId ?? undefined });
+    } catch (err) {
+      logInternal("payment_partial_refund_retrieve_failed", { refundId: row.id, errorName: err instanceof Error ? err.name : typeof err });
+      return UNKNOWN;
+    }
+    if (refund.id !== row.stripeRefundId || chargeIdOf(refund.charge) !== chargeId) {
+      logInternal("payment_partial_refund_blocked", { refundId: row.id, why: "stored_refund_mismatch" });
+      return UNKNOWN;
+    }
+    return settle(refund);
+  }
+
+  // 2. No stored id and the idempotency window may have closed: ask Stripe for the refund this row already made BEFORE any create.
+  const ageMs = Date.now() - Date.parse(row.requestedAt);
+  if (!Number.isFinite(ageMs) || ageMs >= IDEMPOTENCY_SAFE_MS) {
+    const found = await lookup();
+    if (!found.ok) return UNKNOWN;
+    if (found.refund) return settle(found.refund);
+  }
+
+  // 3. Create (the key is the row id: a replay inside the window returns the first refund).
   let refund: Stripe.Refund;
   try {
-    // ALWAYS look for the refund this row already made before creating. Re-calling create with the same idempotency key replays Stripe's SAVED first
-    // response (still "pending") for 24 hours, so a recheck through create could never see the refund settle. The list read returns the live object.
-    // The key stays on the create below as the guard against a second refund when nothing is found (a first call, or a list that has not caught up).
-    const existing = await findExistingStripeRefund(getSessionPaymentStripe(), {
-      chargeId: attempt.stripe_charge_id as string, accountId: (attempt.stripe_account_id as string | null) ?? null, refundRowId: row.id,
-    });
-    refund = existing ?? await createStripeRefund(getSessionPaymentStripe(), {
-      chargeId: attempt.stripe_charge_id as string,
-      amountCents: row.amountCents,
-      accountId: (attempt.stripe_account_id as string | null) ?? null,
-      idempotencyKey: buildPartialRefundIdempotencyKey(row.id),
+    refund = await createStripeRefund(getSessionPaymentStripe(), {
+      chargeId, amountCents: row.amountCents, accountId, idempotencyKey: buildPartialRefundIdempotencyKey(row.id),
       metadata: {
         hone_payment_refund_id: row.id,
         hone_payment_charge_attempt_id: attempt.id as string,
@@ -108,23 +168,21 @@ export async function refundCardPaymentPartial(args: { row: PendingRefundRow; fe
       },
     });
   } catch (err) {
-    if (err instanceof Stripe.errors.StripeError && isDefinitiveStripeRefusal(err)) {
-      const f = await finish("failed", null, null, sanitizeFailureCode(err.code ?? err.type), null);
-      return f.ok ? { outcome: "failed", message: "Stripe refused this refund. Nothing was returned." } : { outcome: "unknown", message: "Checking refund status" };
+    if (isDefinitiveRefundRefusal(err)) {
+      // One lookup before a terminal fail: a refusal like charge_already_refunded can mean THIS row's refund already exists.
+      const found = await lookup();
+      if (!found.ok) return UNKNOWN;
+      if (found.refund) return settle(found.refund);
+      const code = err instanceof Stripe.errors.StripeError ? err.code : null;
+      const f = await finish("failed", null, null, sanitizeFailureCode(code), null);
+      return f.ok ? { outcome: "failed", message: "Stripe refused this refund. Nothing was returned." } : UNKNOWN;
     }
-    // Connection or server error: Stripe may have refunded. Leave the row pending_stripe; checking again is safe.
+    // Connection error, 409, 429, 5xx or any other error: Stripe may have refunded. The row stays pending_stripe; checking again is safe.
     logInternal("payment_partial_refund_unknown_outcome", { refundId: row.id, errorName: err instanceof Error ? err.name : typeof err });
-    return { outcome: "unknown", message: "Checking refund status" };
+    return UNKNOWN;
   }
-
-  if (refund.status === "succeeded") {
-    const f = await finish("succeeded", refund.id, refund.status, null, args.feeReturnedCents);
-    return f.ok ? { outcome: f.result === "already_settled" ? "already_settled" : "succeeded", message: "Refund recorded." } : { outcome: "unknown", message: "Checking refund status" };
-  }
-  if (refund.status === "failed" || refund.status === "canceled") {
-    const f = await finish("failed", refund.id, refund.status, sanitizeFailureCode(refund.failure_reason ?? refund.status), null);
-    return f.ok ? { outcome: "failed", message: "Stripe could not complete this refund. Nothing was returned." } : { outcome: "unknown", message: "Checking refund status" };
-  }
-  // pending / requires_action: Stripe has it but has not finished. Not a recorded outcome yet.
-  return { outcome: "unknown", message: "Checking refund status" };
+  // Store Stripe's id now (before the outcome is known) so a retry retrieves it. Best effort: finish_payment_refund stores it too.
+  const sent = await admin.rpc("record_refund_sent", { p_refund_id: row.id, p_stripe_refund_id: refund.id });
+  if (sent.error) logInternal("payment_partial_refund_record_sent_failed", { refundId: row.id });
+  return settle(refund);
 }

@@ -59,7 +59,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
 
 import {
   confirmTransferAction, prepareSplitCardPaymentAction, recordExternalPaymentAction, refundExternalPaymentAction, runSplitCardPaymentAction,
-  startSplitBillAction, voidTransferAction, cancelSplitCardAttemptAction, refundCardPaymentAction, recheckCardRefundAction,
+  startSplitBillAction, voidTransferAction, cancelSplitCardAttemptAction, refundCardPaymentAction, recheckCardRefundAction, resolveRefundReviewAction,
 } from "@/app/(app)/visit-payment-actions";
 
 const APPT = "22222222-2222-4222-8222-222222222222";
@@ -304,5 +304,30 @@ describe("cancelling a prepared, unsent card payment (P3b)", () => {
     expect(S.commandCalls.at(-1)?.[0]).toBe("cancel_split_card_attempt");
     S.command = { result: "not_cancellable", id: PAY, state: "pending_stripe" };
     expect(await cancelSplitCardAttemptAction(form({ appointment_id: APPT, attempt_id: PAY }))).toMatchObject({ ok: false, code: "not_cancellable" });
+  });
+});
+
+describe("resolveRefundReviewAction (a refund made in the Stripe dashboard)", () => {
+  const REV = "55555555-5555-4555-8555-555555555555";
+  it("a non-owner is refused before the database is asked", async () => {
+    S.role = "staff";
+    const r = await resolveRefundReviewAction(form({ appointment_id: APPT, review_id: REV }));
+    expect(r.code).toBe("not_owner");
+    expect(S.commandCalls).toEqual([]);
+  });
+  it("sends ONLY the review id (no amount, no studio from the form), and maps the database's answer to plain copy", async () => {
+    S.role = "owner";
+    S.command = { result: "resolved", id: null, state: null };
+    const r = await resolveRefundReviewAction(form({ appointment_id: APPT, review_id: REV, amount_dollars: "999", studio_id: "x" }));
+    expect(S.commandCalls).toEqual([["resolve_payment_refund_review", { p_review_id: REV }]]);
+    expect(r.ok).toBe(true);
+    expect(r.note.message).toMatch(/Recorded/);
+    S.command = { result: "refund_pending", id: null, state: null };
+    expect((await resolveRefundReviewAction(form({ appointment_id: APPT, review_id: REV }))).ok).toBe(false);
+  });
+  it("malformed ids are refused", async () => {
+    S.role = "owner";
+    expect((await resolveRefundReviewAction(form({ appointment_id: "x", review_id: REV }))).code).toBe("invalid_input");
+    expect((await resolveRefundReviewAction(form({ appointment_id: APPT, review_id: "x" }))).code).toBe("invalid_input");
   });
 });
