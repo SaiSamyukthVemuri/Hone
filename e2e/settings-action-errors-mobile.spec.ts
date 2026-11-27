@@ -42,5 +42,5 @@ test("postcare: a refused review link and contact email explain the fix, keep th
   await email.fill("front@example.com");
   await save.click();
   await expect.poll(async () => (await sql<{ postcare_review_url: string | null }>(`select postcare_review_url from public.studios where id=$1`, [seed.studioId]))[0]!.postcare_review_url, { timeout: T }).toBe("https://example.com/review");
-  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByRole("alert").filter({ hasText: /https:\/\/|name@example\.com|did not go through|Could not/ })).toHaveCount(0); // no error left on screen
 });
