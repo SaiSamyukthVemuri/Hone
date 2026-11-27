@@ -70,7 +70,7 @@ export function WaitlistScreen({ read, capacity }: { read: Extract<WaitlistRead,
 
     <section aria-labelledby="wl-planning" className="space-y-3">
       <div className="flex flex-wrap items-end justify-between gap-4"><div className="space-y-1"><h2 id="wl-planning" className="text-xl font-semibold tracking-tight text-fg">Capacity to offer next</h2><p className="text-sm text-fg-muted">These controls change the capacity estimate only, not the 30-day invitation cohort.</p></div>
-        <PendingGetForm key={`${params.serviceId ?? ""}|${params.days}`} action="/financials/analytics/waitlist" className="flex flex-wrap items-end gap-2" aria-label="Consultation capacity">
+        <PendingGetForm action="/financials/analytics/waitlist" className="flex flex-wrap items-end gap-2" aria-label="Consultation capacity">
           <label className="flex flex-col gap-1 text-xs text-fg-muted">Consultation service<select name="service" defaultValue={params.serviceId ?? ""} className={INPUT} disabled={services.length === 0}><option value="" disabled>Choose a consultation</option>{services.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
           <label className="flex flex-col gap-1 text-xs text-fg-muted">Look ahead<select name="days" defaultValue={params.days} className={INPUT}>{WAITLIST_HORIZONS.map((days) => <option key={days} value={days}>Next {days} days</option>)}</select></label>
           <PendingButton variant="secondary" disabled={services.length === 0} busyLabel="Showing…">Show capacity</PendingButton>

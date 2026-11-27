@@ -385,9 +385,10 @@ describe("MSG-007 real ops alert sink preserves first-party lineage and scrubs e
     await expect(recordOpsAlert(input())).resolves.toBeUndefined();
     expect(sink.inserts).toEqual([{
       severity: "critical", event: "sms_delivery_failed", message: "Safe synthetic failure.",
-      studio_id: STUDIO, appointment_id: APPOINTMENT, client_id: CLIENT,
+      // HON-125: an alert that names a client is written operator-only (studio_id and client_id NULL, both kept in safe_details).
+      studio_id: null, appointment_id: APPOINTMENT, client_id: null,
       stripe_event_id: null, stripe_payment_intent_id: null, manual_fee_attempt_id: null,
-      route: "/api/cron/appointment-reminders", safe_details: { attempt_number: 3, record: APPOINTMENT },
+      route: "/api/cron/appointment-reminders", safe_details: { attempt_number: 3, record: APPOINTMENT, studio_id: STUDIO, client_id: CLIENT },
     }]);
     expect(sink.order).toEqual(["insert", "dispatch"]);
     expect(sink.dispatches).toEqual([{
