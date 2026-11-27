@@ -1,5 +1,6 @@
 "use server";
 
+import { waitUntilMinimumElapsed } from "@/lib/portal/login-timing";
 import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { sendEmailSafely } from "@/lib/email/send-appointment";
@@ -64,35 +65,6 @@ const GENERIC_SUCCESS =
   "If that email is on file, we sent a secure link.";
 
 const INVALID_EMAIL = "Please enter a valid email address.";
-
-// Timing-oracle floor for well-formed portal login requests. The
-// match branch does at least one DB insert, one DB select, and one
-// outbound HTTP send (the Resend call); the no-match branch returns
-// straight after the lookup. Without a floor, the wall-clock delta
-// is large enough to be measurable from a network client and is a
-// soft enumeration channel. We pad every post-rate-limit branch
-// (match, no-match, insert failure, email failure, multiple
-// matches) to the same floor so the visible response time is
-// uniform.
-//
-// 900 ms comfortably covers the slowest match path (DB insert +
-// studio lookup + Resend POST with default timeout headroom) on
-// production while still feeling responsive. The floor is applied
-// AFTER the email-syntax check and AFTER the rate-limit check;
-// those two paths return immediately on rejection because rejecting
-// them quickly is itself useful signal to the visitor (typo / over
-// the limit) and revealing nothing about client-record state.
-const MIN_PORTAL_LOGIN_RESPONSE_MS = 900;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitUntilMinimumElapsed(startedAt: number): Promise<void> {
-  const elapsed = Date.now() - startedAt;
-  const remaining = MIN_PORTAL_LOGIN_RESPONSE_MS - elapsed;
-  if (remaining > 0) await sleep(remaining);
-}
 
 export type RequestPortalLinkResult =
   | { ok: true; message: string }

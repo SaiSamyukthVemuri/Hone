@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import { redirect } from "next/navigation";
+import { getCurrentPortalSessionState } from "@/lib/portal/session";
+import { RequestNewLink } from "./RequestNewLink";
 import { MarketingFooter } from "@/app/_components/MarketingFooter";
 import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
 import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
@@ -20,32 +22,9 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-// Magic-link verify page. The GET request that lands here is now
-// NON-CONSUMING: it validates the token shape, checks the row is
-// known + unconsumed + unexpired + linked to an active client, and
-// either renders the Continue form (POST consumes via the server
-// action) or the generic unavailable surface. This split exists
-// because email scanners, security gateways, and link-preview bots
-// commonly fetch the magic-link URL before the human clicks; the
-// previous one-step verify burned the visitor's single-use token
-// against those bots.
-//
-// Single-use guarantee still holds: the POST action stamps
-// consumed_at via a conditional UPDATE keyed on consumed_at IS NULL,
-// so re-rendering this page (after a successful POST) sees the row
-// as consumed and renders the unavailable surface.
-//
-// What this page deliberately does NOT do:
-//   * No DB writes. No consumed_at stamp. No session creation. No
-//     cookie set. All three live in the POST action only.
-//   * No leaking of token state. Every failure branch renders the
-//     same generic surface; an attacker probing the URL space cannot
-//     distinguish "unknown token" from "expired" from "already
-//     consumed" from "client archived".
-
-const GENERIC_LINK_ERROR =
-  "This secure link can't be used right now. Please request a new link.";
-
+// GET never consumes a link, sends email, creates a session or touches last_seen_at.
+// Both identifiers must match an existing session before an old link can take
+// someone straight into the portal. Recovery only sends a new proof by POST.
 export default async function PortalVerifyPage({
   params,
 }: {
@@ -57,7 +36,7 @@ export default async function PortalVerifyPage({
   // any DB lookup; matches the public-collapse stance we use on
   // cancel / reschedule / manage.
   if (!token || token.length === 0) {
-    return <Unavailable />;
+    return <Recovery token={token} />;
   }
 
   const tokenHash = hashToken(token);
@@ -68,7 +47,7 @@ export default async function PortalVerifyPage({
   // lives on the POST action below.
   const { data: link, error: lookupErr } = await admin
     .from("client_portal_magic_links")
-    .select("id, studio_id, client_id, expires_at, consumed_at")
+    .select("id, studio_id, client_id, email_normalized, expires_at, consumed_at")
     .eq("token_hash", tokenHash)
     .maybeSingle();
   if (lookupErr) {
@@ -79,15 +58,16 @@ export default async function PortalVerifyPage({
         timestamp: new Date().toISOString(),
       }),
     );
-    return <Unavailable />;
+    return <Recovery token={token} />;
   }
-  if (!link) return <Unavailable />;
-  if (link.consumed_at != null) return <Unavailable />;
-
-  const nowIso = new Date().toISOString();
-  if (link.expires_at <= nowIso) {
-    return <Unavailable />;
-  }
+  if (!link) return <Recovery token={token} />;
+  const state = await getCurrentPortalSessionState({ recordVisit: false });
+  const sameSession =
+    state.kind === "active" &&
+    state.session.studioId === link.studio_id &&
+    state.session.clientId === link.client_id;
+  const canConsume = link.consumed_at == null && Date.parse(link.expires_at) > Date.now();
+  if (!sameSession && !canConsume) return <Recovery token={token} />;
 
   // Defense in depth: confirm the client is still active and
   // belongs to the same studio the link was minted for. An archive
@@ -95,12 +75,20 @@ export default async function PortalVerifyPage({
   // Continue button appear.
   const { data: clientRow } = await admin
     .from("clients")
-    .select("id, studio_id, archived_at")
+    .select("id, studio_id, archived_at, normalized_email")
     .eq("id", link.client_id)
     .eq("studio_id", link.studio_id)
     .maybeSingle();
   if (!clientRow || clientRow.archived_at != null) {
-    return <Unavailable />;
+    return <Recovery token={token} />;
+  }
+
+  // The active-session resolver has already checked this studio's policy.
+  if (sameSession) redirect("/portal");
+
+  // A fresh sign-in must still target the email on file when it was issued.
+  if (!clientRow.normalized_email || clientRow.normalized_email !== link.email_normalized) {
+    return <Recovery token={token} />;
   }
 
   // HON-47. A studio with client portal access off gets the explanation, and no
@@ -110,7 +98,7 @@ export default async function PortalVerifyPage({
     return portalAccess.studioName ? (
       <PortalOff message={clientPortalDisabledMessage(portalAccess.studioName)} />
     ) : (
-      <Unavailable />
+      <Recovery token={token} />
     );
   }
 
@@ -137,8 +125,7 @@ export default async function PortalVerifyPage({
               Continue to your portal
             </h1>
             <p className="mt-2 text-[13px]" style={{ color: "#6B6B6B" }}>
-              The link is single use; clicking Continue will sign you in
-              and the link can no longer be used.
+              Select Continue to sign in securely on this device.
             </p>
           </div>
           <ContinueToPortalForm token={token} />
@@ -149,44 +136,18 @@ export default async function PortalVerifyPage({
   );
 }
 
-function Unavailable() {
+function Recovery({ token }: { token: string }) {
   return (
-    <main
-      style={{
-        backgroundColor: PALETTE.bg,
-        color: PALETTE.ink,
-        fontFeatureSettings: '"cv11"',
-      }}
-      className="min-h-screen font-[var(--font-inter)]"
-    >
-      <section className="px-6 py-20 md:px-12 lg:px-16">
-        <div className="mx-auto max-w-[520px] flex flex-col gap-8">
-          <div>
-            <EyebrowCaption>Client portal</EyebrowCaption>
-            <h1
-              className="font-[var(--font-fraunces)] mt-8 text-[28px] font-bold leading-tight md:text-[36px]"
-              style={{ letterSpacing: "-0.02em" }}
-            >
-              {GENERIC_LINK_ERROR}
-            </h1>
-            <p className="mt-4 text-[16px] leading-relaxed text-[#0A0A0A]">
-              Secure links expire after 1 hour and can only be used
-              once. Request a new link from the sign-in page and try
-              again.
-            </p>
-          </div>
-          <Link
-            href="/portal/login"
-            className="self-start px-8 py-4 text-[14px] font-medium uppercase"
-            style={{
-              backgroundColor: "#0A0A0A",
-              color: "#FAFAF7",
-              letterSpacing: "0.1em",
-            }}
-          >
-            Request a new link
-          </Link>
-        </div>
+    <main className="min-h-screen font-[var(--font-inter)]" style={{ backgroundColor: PALETTE.bg, color: PALETTE.ink }}>
+      <section className="mx-auto max-w-[568px] px-6 py-20">
+        <EyebrowCaption>Client portal</EyebrowCaption>
+        <h1 className="mt-8 font-[var(--font-fraunces)] text-[36px] font-bold leading-tight tracking-tight">
+          Sign in to your portal
+        </h1>
+        <p className="mt-4 mb-6 text-base leading-relaxed">
+          Get a fresh sign-in link at the email address your studio has on file.
+        </p>
+        <RequestNewLink token={token} />
       </section>
       <MarketingFooter />
     </main>

@@ -88,6 +88,12 @@ Do NOT exercise this against production data.
 6. Sign out by clearing the cookie. Confirm `/portal/messages` redirects when anonymous.
 7. To verify the new 60-minute window: issue a magic link, wait ~35 minutes (well past the old 30-minute TTL), then click. The Continue page must render. A regression to the 30-minute TTL would surface the generic "this secure link can't be used right now" error.
 
+### Client portal pilot on an isolated deployment
+
+- Sign in from an original portal email, view a synthetic confirmed booking, reschedule it, and reopen that email in the same session. Verify one appointment at the new studio-local time, the old time absent, and the management link opens the replacement. Repeat for a staff calendar move. Simulate a failed read and retry before checking a genuinely empty calendar.
+- Sign out, reopen the used or expired email and request a new link. Verify exactly one captured email for the registered address, explicit Continue, and access only to the expected account and studio. Opening the original URL without pressing the button must send zero messages. Run the same-email, two-studio case with the other studio’s session active.
+- In the pilot studio, save a draft and verify clients still see the published view. Publish and inspect both a returning client and a first-time client with required paperwork. Verify unread messages, signed-form versions, an outstanding form and the saved-card summary. Check the secure replacement control without submitting a card or charging. In a second studio confirm the first studio’s copy and data are absent. Switch to classic and revisit the original link in the same browser.
+
 ## 3. Consent smoke (treatment + photo)
 
 1. As the studio owner in `/settings/consent`, create a `treatment_consent` template. PR #167: the new template lands as **Draft** with a **Draft** badge; it is NOT in the client portal yet. Verify the helper copy above the form reads `"New forms are saved as Draft. They are not shown to clients until you mark them Active and then Live in client portal."`
@@ -107,7 +113,7 @@ Do NOT exercise this against production data.
 
 ### 3a. Stale-form smoke — the ONLY lane that exercises the render→submit wiring
 
-No e2e spec drives `/portal`, so this is the only executable check that the
+The portal journey smoke covers navigation. This check specifically verifies that the
 render surface still supplies its comparands. Run it whenever the signing
 surface or `lib/consent/sign-consent-form.ts` changes.
 

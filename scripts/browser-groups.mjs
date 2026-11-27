@@ -200,6 +200,7 @@ export const BROWSER_GROUPS = {
       // PATH_TO_GROUP maps /portal/i here, so a diff to the rebooking action,
       // the card or the portal page actually runs it.
       "portal-rebook.spec.ts",
+      "portal-rollout.spec.ts",
       "personal-notes-bullets-mobile.spec.ts",
       "pinned-note-edit-mobile.spec.ts",
     ],

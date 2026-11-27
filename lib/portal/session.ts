@@ -45,7 +45,9 @@ export type PortalSessionState =
   | { kind: "disabled"; studioName: string | null }
   | { kind: "active"; session: PortalSession };
 
-export async function getCurrentPortalSessionState(): Promise<PortalSessionState> {
+export async function getCurrentPortalSessionState(
+  { recordVisit = true }: { recordVisit?: boolean } = {},
+): Promise<PortalSessionState> {
   const session = await readCurrentPortalSession();
   if (!session) return { kind: "none" };
   const policy = await loadClientSelfServicePolicy(
@@ -58,7 +60,7 @@ export async function getCurrentPortalSessionState(): Promise<PortalSessionState
   if (!policy.policy.portal) {
     return { kind: "disabled", studioName: policy.studioName };
   }
-  touchPortalSessionSeen({ id: session.id }, new Date().toISOString());
+  if (recordVisit) touchPortalSessionSeen({ id: session.id }, new Date().toISOString());
   return { kind: "active", session };
 }
 

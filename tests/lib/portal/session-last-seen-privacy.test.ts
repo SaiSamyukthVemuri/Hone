@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { destroyPortalSession, getCurrentPortalSession } from "@/lib/portal/session";
+import { destroyPortalSession, getCurrentPortalSessionState, getCurrentPortalSession } from "@/lib/portal/session";
 
 const mocks = vi.hoisted(() => ({ admin: vi.fn(), get: vi.fn(), hash: vi.fn(), set: vi.fn() }));
 vi.mock("next/headers", () => ({ cookies: async () => ({ get: mocks.get, set: mocks.set }) }));
@@ -49,6 +49,12 @@ async function lookup(mode: "error" | "reject" | "ok") {
 }
 
 describe("portal last-seen failures disclose only operational markers", () => {
+  it("checking a link against a current session is read-only", async () => {
+    const db = fixture("ok");
+    const session = await getCurrentPortalSessionState({ recordVisit: false });
+    expect(session.kind).toBe("active");
+    expect(db.update).not.toHaveBeenCalled();
+  });
   it.each(["error", "reject"] as const)("withholds identifiers and free text on %s without denying the session", async (mode) => {
     const log = await lookup(mode);
     expect(log).toHaveBeenCalledOnce();
