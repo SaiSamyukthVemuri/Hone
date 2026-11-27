@@ -1,7 +1,7 @@
 "use client";
 
 import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
-import { createContext, useContext, useTransition, type ComponentProps, type FormEvent, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, useTransition, type ComponentProps, type FormEvent, type ReactNode } from "react";
 
 import { spinnerClasses } from "@/components/ui/spinner";
 import { cx } from "@/components/ui/control-base";
@@ -33,18 +33,41 @@ export function usePendingGetForm(): boolean {
   return useContext(PendingGetFormContext);
 }
 
-type FormProps = Omit<ComponentProps<"form">, "action" | "method" | "onSubmit"> & { action: string; children: ReactNode };
+type FormProps = Omit<ComponentProps<"form">, "action" | "method" | "onSubmit"> & {
+  action: string;
+  children: ReactNode;
+  /**
+   * Keep the browser's own GET submission (a full document navigation) and only ADD the pending acknowledgement. Use it where the page's Back/Forward
+   * form restoration is part of the design (the Statements month picker, HON-100): the request, the history entry and the restore are exactly the
+   * browser's. The pending flag is set on submit and cleared if the page is restored from the back/forward cache.
+   */
+  native?: boolean;
+};
 
-export function PendingGetForm({ action, children, ...rest }: FormProps) {
+export function PendingGetForm({ action, children, native = false, ...rest }: FormProps) {
   // Read the router from its context rather than useRouter(): outside a mounted app router (a server-render test, a static export) this is null and the
   // form simply stays a native GET form, where useRouter() would throw.
   const router = useContext(AppRouterContext);
-  const [pending, start] = useTransition();
+  const [routerPending, start] = useTransition();
+  const [nativePending, setNativePending] = useState(false);
+  const pending = routerPending || nativePending;
+  useEffect(() => {
+    if (!native) return;
+    const restored = (e: PageTransitionEvent) => { if (e.persisted) setNativePending(false); };
+    window.addEventListener("pageshow", restored);
+    return () => window.removeEventListener("pageshow", restored);
+  }, [native]);
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
     // Anything the browser would do differently (a submitter with its own formaction/target, a modified click) stays a native submit.
     const submitter = (event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | HTMLInputElement | null;
     if (submitter && (submitter.hasAttribute("formaction") || submitter.hasAttribute("formtarget") || submitter.hasAttribute("formmethod"))) return;
+    if (native) {
+      // The browser submits; we only say so. A second press while it is in flight is swallowed.
+      if (pending) event.preventDefault();
+      else setNativePending(true);
+      return;
+    }
     if (!router) return;
     if (pending) {
       // A second press while the first navigation is in flight: do nothing (the control is also disabled while pending).

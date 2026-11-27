@@ -37,6 +37,16 @@ describe("HON-109 analytics controls acknowledge a press", () => {
     expect(src).not.toMatch(/setTimeout/);
   });
 
+  it("the Statements month picker acknowledges a press but keeps the browser's own GET submission (HON-100 Back/Forward restore)", () => {
+    const chrome = readFileSync(path.join(process.cwd(), "app/(app)/financials/statements/statements-chrome.tsx"), "utf8");
+    expect(chrome).toMatch(/<PendingGetForm native /);
+    expect(chrome).not.toMatch(/<form\b/);
+    const gf = readFileSync(path.join(process.cwd(), "components/pending-get-form.tsx"), "utf8");
+    // native mode never prevents the browser's submit unless a press is already in flight
+    expect(gf).toMatch(/if \(native\) \{[\s\S]*?if \(pending\) event\.preventDefault\(\);[\s\S]*?return;/);
+    expect(gf).toMatch(/pageshow/);
+  });
+
   it("PendingButton also reflects a GET form's pending state", () => {
     expect(readFileSync(path.join(process.cwd(), "components/pending-button.tsx"), "utf8")).toMatch(/usePendingGetForm\(\)/);
   });
