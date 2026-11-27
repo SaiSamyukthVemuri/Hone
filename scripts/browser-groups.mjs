@@ -259,6 +259,8 @@ export const BROWSER_GROUPS = {
       "settings-booking-copy-mobile.spec.ts",
       // Team settings: invite a receptionist, see it pending, cancel it; the front desk list and Deactivate.
       "team-invite-receptionist.spec.ts",
+      // HON-124 item 14: destructive staff actions (revoke an invitation, remove a team member, cancel an appointment) ask first through the confirm dialog.
+      "confirm-dialogs-mobile.spec.ts",
       // Receptionist onboarding across Team settings, acceptance and the desk (desktop and iPhone, about 6 minutes with the build). Kept out of the always-run
       // calendar lane on purpose: the targeted lane is already near its measured budget.
       "receptionist-onboarding-flow.spec.ts",
