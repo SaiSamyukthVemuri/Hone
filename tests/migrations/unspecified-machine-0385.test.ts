@@ -1,6 +1,5 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { isRepoMax } from "./helpers/migration-state";
 
 // 0385: SOURCE contract for the migration and its down file. Behaviour is the authority and is proved on a real database by
 // tests/db/unspecified-machine.db.test.ts; this file pins what a database run cannot see in a diff.
@@ -18,7 +17,8 @@ describe("0385 is shaped like a sealed migration", () => {
     expect(DOWN).toMatch(/^begin;$/m);
     expect(DOWN).toMatch(/^commit;$/m);
   });
-  it("is the repository's newest migration (this file is the current maximum's own test)", () => expect(isRepoMax("0385")).toBe(true));
+  // Not the repository maximum any more (0386 sits above it): only the current maximum's own test may pin that (CLAUDE.md section 2). It stays a sealed migration.
+  it("is a numbered migration file with a rollback beside it", () => expect(UP.length > 0 && DOWN.length > 0).toBe(true));
 });
 
 describe("ensure_unspecified_machine", () => {
