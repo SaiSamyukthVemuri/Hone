@@ -134,3 +134,30 @@ describe("refundCardPaymentPartial", () => {
     expect(S.list).not.toHaveBeenCalled();
   });
 });
+
+// Privacy (finish_payment_refund stores the caller's failure fields): only the fixed sentence and a code-shaped value ever reach it, never a Stripe message.
+describe("what is passed to finish_payment_refund as the failure fields", () => {
+  const HOSTILE = "Card ending 4242 for alice@example.com was refused, call +1 555 010 0000";
+  it("a definitive Stripe refusal stores the fixed sentence, not the Stripe message", async () => {
+    S.list.mockResolvedValue({ data: [], has_more: false });
+    S.create.mockRejectedValue(Stripe.errors.StripeError.generate({ type: "invalid_request_error", code: "charge_already_refunded", message: HOSTILE, statusCode: 400 } as never));
+    await refundCardPaymentPartial({ row: row(60_000), feeReturnedCents: null });
+    const f = finishCalls().filter((a) => (a as { p_outcome: string }).p_outcome === "failed") as Array<Record<string, unknown>>;
+    expect(f).toHaveLength(1);
+    expect(f[0].p_failure_message_safe).toBe("Stripe refused this refund.");
+    expect(f[0].p_failure_code).toBe("charge_already_refunded");
+    expect(JSON.stringify(f[0])).not.toMatch(/alice|4242|555/);
+  });
+  it("a failed refund whose Stripe failure_reason is not code-shaped is stored as 'unknown'; a code-shaped one is kept; a succeeded refund carries no message", async () => {
+    S.retrieve.mockResolvedValue({ ...made, status: "failed", failure_reason: HOSTILE });
+    await refundCardPaymentPartial({ row: row(60_000, "re_1"), feeReturnedCents: null });
+    S.retrieve.mockResolvedValue({ ...made, status: "failed", failure_reason: "lost_or_stolen_card" });
+    await refundCardPaymentPartial({ row: row(60_000, "re_1"), feeReturnedCents: null });
+    S.retrieve.mockResolvedValue({ ...made, status: "succeeded" });
+    await refundCardPaymentPartial({ row: row(60_000, "re_1"), feeReturnedCents: null });
+    const f = finishCalls() as Array<Record<string, unknown>>;
+    expect(f.map((a) => [a.p_outcome, a.p_failure_code, a.p_failure_message_safe])).toEqual([
+      ["failed", "unknown", "Stripe refused this refund."], ["failed", "lost_or_stolen_card", "Stripe refused this refund."], ["succeeded", null, null],
+    ]);
+  });
+});

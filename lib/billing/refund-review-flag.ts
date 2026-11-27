@@ -78,6 +78,15 @@ export async function noRow(attemptId: string, event: Stripe.Event, reason: (typ
   return { kind: "billed", failClosed: result === "billed" ? reason : "unplaceable_refund" };
 }
 
+/**
+ * A locked-command refusal that is NOT the refund-evidence one (identity_mismatch, invalid_input, terminal_refund_mismatch): learn only whether the payment is billed.
+ * Writes nothing and never flags: the caller keeps its durable alert, with no studio or client for a billed payment.
+ */
+export async function billedForRefusal(attemptId: string, event: Stripe.Event): Promise<"billed" | "not_billed"> {
+  const r = await noRow(attemptId, event, "refund_evidence_refused");
+  return r.kind === "billed" ? "billed" : "not_billed";
+}
+
 /** The one operator-only alert of a billed fail-closed case. Throws when it cannot be kept, so the route answers 500 and Stripe redelivers. */
 export async function recordBilledRefundOperatorAlert(attemptId: string, event: Stripe.Event, reason: RefundReviewFailClosedReason): Promise<void> {
   const kept = await recordOpsAlertDurably({

@@ -8,7 +8,10 @@ import { getSessionPaymentStripe } from "@/lib/stripe/session-payment-stripe";
 // refundable under the visit's lock and made the pending_stripe row; this sends that ONE row to Stripe and records Stripe's answer once.
 const FAILURE_CODE_MAX = 100;
 const MODE_MISMATCH_MESSAGE = "This payment's mode does not match the current deployment mode.";
-const sanitizeFailureCode = (raw: string | null | undefined) => (raw ? raw.slice(0, FAILURE_CODE_MAX) : null);
+// Privacy: finish_payment_refund stores what we pass. The message is ALWAYS the fixed sentence below (never a Stripe message), and the code is kept only when it has the
+// shape of a Stripe code (lowercase letters, digits, underscore); anything else (a sentence, an id, an address) is stored as "unknown".
+const FAILURE_MESSAGE_SAFE = "Stripe refused this refund.";
+const sanitizeFailureCode = (raw: string | null | undefined) => (raw ? (/^[a-z0-9_]{1,100}$/.test(raw) ? raw.slice(0, FAILURE_CODE_MAX) : "unknown") : null);
 function logInternal(event: string, detail: unknown) {
   try { console.error(JSON.stringify({ event, detail, timestamp: new Date().toISOString() })); } catch { console.error(event); }
 }
@@ -104,7 +107,7 @@ export async function refundCardPaymentPartial(args: { row: PendingRefundRow; fe
   const finish = async (outcome: "succeeded" | "failed", stripeRefundId: string | null, stripeStatus: string | null, code: string | null, fee: number | null) => {
     const { data, error: finErr } = await admin.rpc("finish_payment_refund", {
       p_refund_id: row.id, p_outcome: outcome, p_stripe_refund_id: stripeRefundId, p_stripe_refund_status: stripeStatus,
-      p_failure_code: code, p_failure_message_safe: outcome === "failed" ? "Stripe refused this refund." : null, p_platform_fee_returned_cents: fee,
+      p_failure_code: code, p_failure_message_safe: outcome === "failed" ? FAILURE_MESSAGE_SAFE : null, p_platform_fee_returned_cents: fee,
     });
     const r = (Array.isArray(data) ? data[0] : data) as { result?: string } | null;
     return { ok: !finErr && !!r, result: r?.result ?? null };

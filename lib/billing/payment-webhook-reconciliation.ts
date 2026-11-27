@@ -1,6 +1,6 @@
 import "server-only";
 import type Stripe from "stripe";
-import { flagChargeRefunds, flagStandaloneRefund, noRow, recordBilledRefundOperatorAlert } from "@/lib/billing/refund-review-flag";
+import { billedForRefusal, flagChargeRefunds, flagStandaloneRefund, noRow, recordBilledRefundOperatorAlert } from "@/lib/billing/refund-review-flag";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { recordOpsAlert, recordOpsAlertDurably } from "@/lib/ops/alerts";
@@ -593,11 +593,18 @@ async function reconcileBoundEvent(event: Stripe.Event, ctx: WebhookCtx, attempt
     // A refund event's refusal stays retryable until its alert is kept. Other
     // event types keep the best-effort writer (#1081's scope, not widened).
     if (isRefund || isStandaloneRefund) {
+      if (outcome?.result !== "refund_evidence_refused") {
+        // identity_mismatch, invalid_input, terminal_refund_mismatch: the event was refused, nothing is placed or flagged. A billed payment keeps a durable OPERATOR alert
+        // (no studio, client or visit); a legacy visit keeps the studio alert as before.
+        if ((await billedForRefusal(attempt.id, event)) === "billed") await recordBilledRefundOperatorAlert(attempt.id, event, "unplaceable_refund");
+        else if ((await recordOpsAlertDurably(alert)) !== true) throw new PaymentRefundRefusalUnrecordedError();
+      } else {
       // A refund on a BILLED payment is placed (or flagged) in the database and the studio-attributed alert is NOT written; only a legacy visit keeps it.
       const billed = isStandaloneRefund ? await flagStandaloneRefund(attempt.id, event, event.data.object as Stripe.Refund) : await flagChargeRefunds(attempt.id, event, event.data.object as Stripe.Charge);
       if (billed.kind === "billed") {
         if (billed.failClosed) await recordBilledRefundOperatorAlert(attempt.id, event, billed.failClosed);
       } else if ((await recordOpsAlertDurably(alert)) !== true) throw new PaymentRefundRefusalUnrecordedError();
+      }
     } else {
       await recordOpsAlert(alert);
     }

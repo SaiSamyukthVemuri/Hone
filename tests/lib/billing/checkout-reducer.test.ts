@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  cardReduce, chargeFingerprint, reconcileRefundSelection, refundFingerprint, refundSendable, settleSubmission, submissionFor,
+  answerSettles, awaitLedger, settleFromLedger, cardReduce, chargeFingerprint, reconcileRefundSelection, refundFingerprint, refundSendable, settleSubmission, submissionFor,
   type CardEvent, type CardPhase,
 } from "@/lib/billing/visit-payments-core";
 
@@ -120,5 +120,54 @@ describe("the refund selection follows the ledger", () => {
     expect(refundSendable(sel, null, "r")).toBe(false);
     expect(refundSendable(sel, 100, "  ")).toBe(false);
     expect(refundSendable(undefined, 100, "r")).toBe(false);
+  });
+});
+
+describe("a lost answer does not settle its submission id (Insurance F2)", () => {
+  it("only a definite answer settles: ok and not checking", () => {
+    expect(answerSettles({ ok: true })).toBe(true);
+    expect(answerSettles({ ok: true, checking: false })).toBe(true);
+    expect(answerSettles({ ok: true, checking: true })).toBe(false);
+    expect(answerSettles({ ok: false })).toBe(false);
+    expect(answerSettles({ ok: false, checking: true })).toBe(false);
+  });
+  it("lost answer, retry of the SAME refund: the same id; the id is released only when the ledger shows nothing pending", () => {
+    const fp = refundFingerprint({ paymentId: "p1", cents: 4000, kind: "payment_reversal", reason: "late" });
+    let n = 0; const mint = () => `id-${++n}`;
+    const first = submissionFor({}, fp, mint);
+    let awaiting = awaitLedger([], fp);
+    expect(awaitLedger(awaiting, fp)).toEqual([fp]); // remembered once
+    // the answer was lost (checking): nothing settles, a retry reuses the id
+    expect(submissionFor(first.next, fp, mint).id).toBe(first.id);
+    // the ledger still shows a refund pending at Stripe: still held
+    const still = settleFromLedger(first.next, awaiting, 1);
+    expect(still.subs).toEqual(first.next); expect(still.awaiting).toEqual([fp]);
+    // a refund pending at Stripe no longer (settled or failed on the ledger): released, the next ask is a new command
+    const done = settleFromLedger(still.subs, still.awaiting, 0);
+    expect(done.subs).toEqual({}); expect(done.awaiting).toEqual([]);
+    expect(submissionFor(done.subs, fp, mint).id).not.toBe(first.id);
+  });
+  it("settling from the ledger releases only the remembered intents, never another one that is in flight", () => {
+    const a = "refund|p1|4000|payment_reversal|late", b = "refund|p2|1000|payment_reversal|other";
+    let n = 0; const mint = () => `id-${++n}`;
+    const s1 = submissionFor({}, a, mint), s2 = submissionFor(s1.next, b, mint);
+    const r = settleFromLedger(s2.next, [a], 0);
+    expect(r.subs).toEqual({ [b]: s2.id });
+    expect(settleFromLedger(s2.next, [], 0).subs).toEqual(s2.next);
+  });
+});
+
+describe("the charge intent is fixed at the start (Insurance P3a)", () => {
+  it("an amount edited mid-check does not change which id the answer settles", () => {
+    let n = 0; const mint = () => `id-${++n}`;
+    const atStart = chargeFingerprint({ tender: "card", cents: 7500, currency: "cad" });
+    const first = submissionFor({}, atStart, mint);
+    // while checking, the owner types a different amount and starts forming a NEW intent
+    const edited = chargeFingerprint({ tender: "card", cents: 5000, currency: "cad" });
+    const both = submissionFor(first.next, edited, mint);
+    expect(edited).not.toBe(atStart);
+    // the answer for the first charge settles ITS fingerprint (captured at the start), leaving the edited intent's id alone
+    const after = settleSubmission(both.next, atStart);
+    expect(after).toEqual({ [edited]: both.id });
   });
 });

@@ -255,6 +255,22 @@ export function settleSubmission(subs: Submissions, fingerprint: string): Submis
   return next;
 }
 
+/**
+ * An answer settles its intent only when it is DEFINITE. A lost answer (checking) is not: the same intent must be asked again with the SAME id so Stripe and the
+ * database re-read the one refund instead of making another.
+ */
+export const answerSettles = (r: { ok: boolean; checking?: boolean }) => r.ok && !r.checking;
+
+/** Intents whose answer was lost, waiting for the ledger to say how they ended. */
+export type Awaiting = ReadonlyArray<string>;
+/** A lost answer is remembered (once) so it can be settled later by the ledger. */
+export const awaitLedger = (awaiting: Awaiting, fingerprint: string): Awaiting => (awaiting.includes(fingerprint) ? awaiting : [...awaiting, fingerprint]);
+/** The ledger result: once NO refund is pending at Stripe any more, every remembered intent has a definite outcome on the ledger and is settled (its id is released). */
+export function settleFromLedger(subs: Submissions, awaiting: Awaiting, pendingRefunds: number): { subs: Submissions; awaiting: Awaiting } {
+  if (pendingRefunds > 0 || awaiting.length === 0) return { subs, awaiting };
+  return { subs: awaiting.reduce((m, fp) => settleSubmission(m, fp), subs), awaiting: [] };
+}
+
 /** The payment chosen for a refund, kept while it is still refundable, else the first refundable one (never a stale id, "" when none). */
 export function reconcileRefundSelection(selected: string, options: ReadonlyArray<{ id: string; cents: number }>): string {
   if (options.some((o) => o.id === selected && o.cents > 0)) return selected;
