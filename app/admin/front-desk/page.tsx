@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
+import { PendingButton } from "@/components/pending-button";
 import { requirePlatformAdmin } from "@/lib/auth/require-platform-admin";
 import { createAdminClient } from "@/lib/supabase/admin-server";
-import { parseFrontDeskListing, REASON_MAX, SEAT_SOURCES } from "@/lib/rollouts/front-desk-admin";
+import { parseFrontDeskListing, REASON_MAX, safeNotice, SEAT_SOURCES } from "@/lib/rollouts/front-desk-admin";
 import { grantSeatsAction, revokeSeatsAction, setStudioFrontDeskAction, type FrontDeskActionResult } from "./actions";
 
 // Platform-admin control for the Front Desk: switch it on or off per studio and grant or revoke receptionist seats (0390). Admin-only: the layout
@@ -46,7 +47,7 @@ export default async function FrontDeskAdminPage({ searchParams }: { searchParam
         global setting still switches it off everywhere. Revoking seats never deletes a receptionist or an invitation; anyone beyond the new limit simply
         cannot use the front desk until seats are added again.
       </p>
-      {sp.notice ? <p role="status" className={`mt-4 rounded border px-3 py-2 text-sm ${sp.ok === "1" ? "border-green-600" : "border-red-600"}`}>{sp.notice.slice(0, 200)}</p> : null}
+      {sp.notice ? <p role="status" className={`mt-4 rounded border px-3 py-2 text-sm ${sp.ok === "1" ? "border-green-600" : "border-red-600"}`}>{safeNotice(sp.notice, sp.ok === "1")}</p> : null}
       <form method="get" className="mt-6 flex flex-wrap items-end gap-3">
         <label className="block min-w-0 max-w-full flex-1 text-sm">Studio
           <select name="studio" defaultValue={studio?.id ?? ""} className="mt-1 block w-full min-w-0 rounded border px-2 py-1">
@@ -108,7 +109,7 @@ export default async function FrontDeskAdminPage({ searchParams }: { searchParam
               <label className="w-full text-sm">Reason <span className="text-neutral-500">{reasonHelp}</span>
                 <input name="reason" required maxLength={REASON_MAX} autoComplete="off" className="mt-1 w-full rounded border px-2 py-1" />
               </label>
-              <button className="rounded bg-neutral-900 px-3 py-1.5 text-sm text-white">Grant seats</button>
+              <PendingButton className="rounded bg-neutral-900 px-3 py-1.5 text-sm text-white" busyLabel="Granting…">Grant seats</PendingButton>
             </form>
           </section>
         </>

@@ -16,3 +16,8 @@ export function seatRefusalMessage(error: { message?: string } | null | undefine
   if (m.includes(FRONT_DESK_NOT_ENABLED)) return FRONT_DESK_OFF_MESSAGE;
   return null;
 }
+
+/** The only codes the Team page accepts in `?seats=` (set by the reactivation action when the database refuses); anything else shows nothing. */
+export function seatsNoticeMessage(code: unknown): string | null {
+  return code === "off" ? FRONT_DESK_OFF_MESSAGE : code === "full" ? FRONT_DESK_FULL_MESSAGE : null;
+}

@@ -1,0 +1,8 @@
+{
+  "pr": 1820,
+  "runtime": true,
+  "migrations": [
+    "supabase/migrations/0390_front_desk_rollout_and_seats.sql"
+  ],
+  "release_receipt": "01-ops/1820-release-receipt.json"
+}

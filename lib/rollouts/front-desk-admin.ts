@@ -66,3 +66,76 @@ export function parseFrontDeskListing(data: unknown): FrontDeskListing | null {
   }
   return { switchOn: d.switch_on, seatLimit: d.seat_limit as number, seatsActive: d.seats_active as number, seatsReserved: d.seats_reserved as number, seatsOverLimit: d.seats_over_limit as number, seats };
 }
+
+/**
+ * The admin page shows the outcome of the last action from its own `notice` query parameter. That parameter is user-editable, so only the
+ * fixed sentences the actions can produce (and the one counted sentence) are rendered; anything else becomes a generic line. A crafted
+ * link therefore cannot put free text on the page.
+ */
+const FIXED_NOTICES: readonly string[] = [
+  "Not authorized.",
+  "Choose a studio from the list.",
+  "Choose on or off.",
+  "That was refused. Nothing changed.",
+  "The result is UNKNOWN: the change may or may not have been saved. Reload this page and check before trying again.",
+  "That studio was not found.",
+  "Already on.",
+  "Front desk switched on for this studio.",
+  "It was not on.",
+  "Front desk switched off for this studio.",
+  "Seats must be a whole number from 1 to 50.",
+  "Choose where the seats come from.",
+  `A reason of 1 to ${REASON_MAX} characters is required.`,
+  "Enter the expiry as a date.",
+  "The expiry must be in the future.",
+  "Seats granted.",
+  "Already granted.",
+  "Choose a grant from the list.",
+  "That grant was not found.",
+  "Already revoked.",
+  "Revoked.",
+];
+const OVER_LIMIT_NOTICE = /^Revoked\. [1-9]\d{0,2} receptionists? (is|are) now over the seat limit and cannot use the front desk\. Nothing was deleted\.$/;
+
+export function safeNotice(notice: unknown, ok: boolean): string | null {
+  if (typeof notice !== "string" || notice === "") return null;
+  if (FIXED_NOTICES.includes(notice) || OVER_LIMIT_NOTICE.test(notice)) return notice;
+  return ok ? "Done." : "That did not go through.";
+}
+
+/** A grant made this recently with the same seats, source, reason and expiry is the same click arriving twice. */
+export const DUPLICATE_GRANT_WINDOW_MS = 60_000;
+
+export function hasRecentIdenticalGrant(
+  listing: FrontDeskListing | null,
+  a: { seats: number; source: string; reason: string; expiresAt: string | null },
+  now: number = Date.now(),
+): boolean {
+  if (!listing) return false;
+  const day = (v: string | null) => (v ? v.slice(0, 10) : null);
+  return listing.seats.some(
+    (g) =>
+      g.state === "live" &&
+      g.seats === a.seats &&
+      g.source === a.source &&
+      g.reason === a.reason &&
+      day(g.expiresAt) === day(a.expiresAt) &&
+      now - Date.parse(g.grantedAt) >= 0 &&
+      now - Date.parse(g.grantedAt) < DUPLICATE_GRANT_WINDOW_MS,
+  );
+}
+
+/** Reads the studio's grants (service role) and answers whether this exact grant was just made. A read that fails answers false: the database still decides. */
+export async function grantAlreadyMade(
+  studioId: string,
+  a: { seats: number; source: string; reason: string; expiresAt: string | null },
+  rpc: RolloutRpc = defaultRpc,
+): Promise<boolean> {
+  try {
+    const { data, error } = await rpc("admin_list_front_desk", { p_studio_id: studioId });
+    if (error) return false;
+    return hasRecentIdenticalGrant(parseFrontDeskListing(data), a);
+  } catch {
+    return false;
+  }
+}

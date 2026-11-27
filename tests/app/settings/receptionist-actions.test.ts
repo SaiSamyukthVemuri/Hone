@@ -11,6 +11,11 @@ const ctx = vi.hoisted(() => ({
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("next/navigation", () => ({
+  redirect: (to: string) => {
+    throw new Error(`NEXT_REDIRECT:${to}`);
+  },
+}));
 vi.mock("@/lib/supabase/queries", () => ({
   getCurrentPractitionerWithStudio: async () => ({
     practitioner: { id: "owner-practitioner", role: ctx.role },
@@ -114,5 +119,20 @@ describe("setReceptionistActiveAction", () => {
   it("treats no_change as success", async () => {
     ctx.rpc.mockResolvedValue({ data: "no_change", error: null });
     await expect(setReceptionistActiveAction(form({ id: "rec-1", active: "true" }))).resolves.toBeUndefined();
+  });
+
+  // Next hides the message of a thrown server-action error in production, so the Front Desk refusals are NOT thrown: they redirect to a fixed code.
+  it("sends the owner back with a visible code when the database says the front desk is off or no seat is free", async () => {
+    for (const [data, code] of [["front_desk_off", "off"], ["seat_limit", "full"]] as const) {
+      ctx.rpc.mockResolvedValue({ data, error: null });
+      await expect(setReceptionistActiveAction(form({ id: "rec-1", active: "true" }))).rejects.toThrow(`NEXT_REDIRECT:/settings/team?seats=${code}`);
+    }
+  });
+
+  it("does the same for the raised refusals (a race that lands at the trigger)", async () => {
+    ctx.rpc.mockResolvedValue({ data: null, error: { code: "P0001", message: "front_desk_seat_limit_reached" } });
+    await expect(setReceptionistActiveAction(form({ id: "rec-1", active: "true" }))).rejects.toThrow("NEXT_REDIRECT:/settings/team?seats=full");
+    ctx.rpc.mockResolvedValue({ data: null, error: { code: "P0001", message: "front_desk_not_enabled" } });
+    await expect(setReceptionistActiveAction(form({ id: "rec-1", active: "true" }))).rejects.toThrow("NEXT_REDIRECT:/settings/team?seats=off");
   });
 });

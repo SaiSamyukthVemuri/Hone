@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { isAdmin } from "@/lib/admin";
 import {
-  disableFrontDeskForStudio, enableFrontDeskForStudio, grantFrontDeskSeats, revokeFrontDeskSeats, REASON_MAX, SEAT_SOURCES, setFrontDeskKeyPilot,
+  disableFrontDeskForStudio, enableFrontDeskForStudio, grantAlreadyMade, grantFrontDeskSeats, revokeFrontDeskSeats, REASON_MAX, SEAT_SOURCES, setFrontDeskKeyPilot,
   type SeatSource,
 } from "@/lib/rollouts/front-desk-admin";
 
@@ -85,6 +85,12 @@ export async function grantSeatsAction(formData: FormData): Promise<FrontDeskAct
     const t = Date.parse(`${exp}T23:59:59Z`);
     if (!Number.isFinite(t) || t <= Date.now()) return { ok: false, message: "The expiry must be in the future." };
     expiresAt = new Date(t).toISOString();
+  }
+  // The same click arriving twice (a double submit, a retry) must not grant twice: the pilot needs exactly the seats asked for. The button is also
+  // disabled while pending; this is the server's own check. It cannot close two truly simultaneous requests, which the sealed schema has no key to refuse.
+  if (await grantAlreadyMade(studioId, { seats, source, reason, expiresAt })) {
+    done("/admin/front-desk");
+    return { ok: true, message: "Already granted." };
   }
   const out = await grantFrontDeskSeats({ studioId, seats, source: source as SeatSource, reason, expiresAt }, auth.actor);
   if (out.kind === "refused") return { ok: false, message: REFUSED };

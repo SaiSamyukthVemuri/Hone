@@ -1,10 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { failureCode } from "@/lib/logging/error-class";
-import { seatRefusalMessage } from "@/lib/desk/seat-errors";
+import { FRONT_DESK_NOT_ENABLED, FRONT_DESK_SEAT_LIMIT } from "@/lib/desk/seat-errors";
 
 // An owner deactivates or reactivates a receptionist.
 //
@@ -39,11 +40,12 @@ export async function setReceptionistActiveAction(formData: FormData): Promise<v
     );
     if (data === "not_found") throw new Error("Receptionist not found in this studio.");
     if (data === "not_authorized") throw new Error("Only studio owners can manage the team.");
-    // The database refuses a reactivation when the Front Desk is off for the studio or every seat is taken (0390).
-    if (data === "front_desk_off") throw new Error("The front desk is not switched on for this studio.");
-    if (data === "seat_limit") throw new Error("There are no free front-desk seats. Remove a member first, or contact Hone about more seats.");
-    const refusal = seatRefusalMessage(error);
-    if (refusal) throw new Error(refusal);
+    // The database refuses a reactivation when the Front Desk is off for the studio or every seat is taken (0390). Next hides the message of a
+    // thrown server-action error in production, so these two are not thrown: they send the owner back to the Team page with a fixed code the page
+    // turns into a visible sentence (seatsNoticeMessage in lib/desk/seat-errors).
+    const message = error?.message ?? "";
+    if (data === "front_desk_off" || message.includes(FRONT_DESK_NOT_ENABLED)) redirect("/settings/team?seats=off");
+    if (data === "seat_limit" || message.includes(FRONT_DESK_SEAT_LIMIT)) redirect("/settings/team?seats=full");
     // The one-active-row-per-email index (a database rule) can refuse a reactivation.
     if (error?.code === "23505") {
       throw new Error("Another active front-desk member already uses this email.");

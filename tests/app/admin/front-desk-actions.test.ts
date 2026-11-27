@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 // The platform admin's Front Desk controls (0390). Admin identity comes from the authenticated session, never the request; a reason is required and is
 // never echoed back; the key can never be put in "all" mode from here.
 
-const S = vi.hoisted(() => ({ user: null as null | { id: string; email: string | null }, admins: ["op@example.invalid"], calls: [] as unknown[][] }));
+const S = vi.hoisted(() => ({ user: null as null | { id: string; email: string | null }, admins: ["op@example.invalid"], calls: [] as unknown[][], already: false }));
 vi.mock("server-only", () => ({}));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ auth: { getUser: async () => ({ data: { user: S.user } }) } }) }));
@@ -17,6 +17,7 @@ vi.mock("@/lib/rollouts/front-desk-admin", async (orig) => {
     setFrontDeskKeyPilot: vi.fn(async (...a: unknown[]) => { S.calls.push(["pilot", ...a]); return { kind: "ok", value: "changed" }; }),
     enableFrontDeskForStudio: vi.fn(async (...a: unknown[]) => { S.calls.push(["on", ...a]); return { kind: "ok", value: "added" }; }),
     disableFrontDeskForStudio: vi.fn(async (...a: unknown[]) => { S.calls.push(["off", ...a]); return { kind: "ok", value: "removed" }; }),
+    grantAlreadyMade: vi.fn(async () => S.already),
     grantFrontDeskSeats: vi.fn(async (...a: unknown[]) => { S.calls.push(["grant", ...a]); return { kind: "ok", value: "11111111-aaaa-4aaa-8aaa-111111111111" }; }),
     revokeFrontDeskSeats: vi.fn(async (...a: unknown[]) => { S.calls.push(["revoke", ...a]); return { kind: "ok", status: "revoked", seatsOverLimit: 2 }; }),
   };
@@ -30,7 +31,7 @@ const STUDIO = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const SEAT = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const SECRET = "synthetic-reason-text-that-must-not-travel";
 const future = () => new Date(Date.now() + 40 * 86400000).toISOString().slice(0, 10);
-beforeEach(() => { S.user = ADMIN; S.calls = []; });
+beforeEach(() => { S.user = ADMIN; S.calls = []; S.already = false; });
 
 describe("who may act", () => {
   it("a signed-in NON-admin, and no session at all: refused, and no command runs", async () => {
@@ -109,6 +110,18 @@ describe("seat grants", () => {
       await revokeSeatsAction(form({ seatId: SEAT, reason: SECRET })),
     ];
     for (const o of outcomes) expect(JSON.stringify(o)).not.toContain(SECRET);
+  });
+});
+
+describe("a grant that arrives twice", () => {
+  it("is answered as already granted and is NOT sent to the database a second time", async () => {
+    S.already = true;
+    const out = await grantSeatsAction(form({ studioId: STUDIO, seats: "1", source: "pilot", reason: "pilot seat" }));
+    expect(out).toEqual({ ok: true, message: "Already granted." });
+    expect(S.calls.map((c) => c[0])).not.toContain("grant");
+    S.already = false;
+    expect(await grantSeatsAction(form({ studioId: STUDIO, seats: "1", source: "pilot", reason: "pilot seat" }))).toMatchObject({ ok: true, message: "Seats granted." });
+    expect(S.calls.map((c) => c[0])).toContain("grant");
   });
 });
 

@@ -16,6 +16,7 @@ import {
 import { PendingButton } from "@/components/pending-button";
 import { setReceptionistActiveAction } from "./receptionist-actions";
 import { readFrontDeskSummary, type FrontDeskSummary } from "@/lib/desk/seats";
+import { seatsNoticeMessage } from "@/lib/desk/seat-errors";
 import { receptionistsOverLimit } from "@/lib/desk/seat-rank";
 
 type ReceptionistRow = { id: string; display_name: string; email: string | null; active: boolean; created_at: string };
@@ -69,7 +70,7 @@ async function getPendingInvitations(
   return (data ?? []) as PendingInvitation[];
 }
 
-export default async function TeamSettingsPage() {
+export default async function TeamSettingsPage({ searchParams }: { searchParams?: Promise<{ seats?: string }> } = {}) {
   const { practitioner, studio } = await requirePractitionerWithStudio();
 
   if (practitioner.role !== "owner") {
@@ -110,12 +111,12 @@ export default async function TeamSettingsPage() {
 
       <PendingInvitations invitations={invitations} />
 
-      <FrontDesk receptionists={receptionists} seats={seats} />
+      <FrontDesk receptionists={receptionists} seats={seats} notice={seatsNoticeMessage((await searchParams)?.seats)} />
     </div>
   );
 }
 
-function FrontDesk({ receptionists, seats }: { receptionists: ReceptionistRow[]; seats: FrontDeskSummary | null }) {
+function FrontDesk({ receptionists, seats, notice }: { receptionists: ReceptionistRow[]; seats: FrontDeskSummary | null; notice: string | null }) {
   const active = receptionists.filter((r) => r.active).length;
   const over = seats && seats.switchOn ? receptionistsOverLimit(receptionists, seats.seatLimit) : new Set<string>();
   // Reactivating needs the switch on and a free seat; the database decides, this only avoids offering a button that must refuse.
@@ -133,6 +134,9 @@ function FrontDesk({ receptionists, seats }: { receptionists: ReceptionistRow[];
           {receptionists.length === 0 ? " No receptionists yet." : ` ${active} active.`}
         </p>
       </div>
+      {notice && (
+        <p role="alert" className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">{notice}</p>
+      )}
       {seats && !seats.switchOn && (
         <p role="status" className="rounded-lg border border-neutral-200 px-4 py-3 text-sm text-neutral-600 dark:border-neutral-800 dark:text-neutral-300">
           The front desk is not switched on for your studio yet. Contact Hone to add it.

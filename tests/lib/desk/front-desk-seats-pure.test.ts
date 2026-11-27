@@ -53,3 +53,47 @@ describe("the admin listing parser", () => {
     expect(parseFrontDeskListing(null)).toBeNull();
   });
 });
+
+import { hasRecentIdenticalGrant, safeNotice } from "@/lib/rollouts/front-desk-admin";
+import { seatsNoticeMessage } from "@/lib/desk/seat-errors";
+
+describe("safeNotice: only the fixed outcome sentences reach the admin page", () => {
+  it("renders a known sentence and the counted over-limit sentence", () => {
+    expect(safeNotice("Seats granted.", true)).toBe("Seats granted.");
+    const counted = "Revoked. 2 receptionists are now over the seat limit and cannot use the front desk. Nothing was deleted.";
+    expect(safeNotice(counted, true)).toBe(counted);
+  });
+  it("replaces anything else with a generic line and shows nothing for no notice", () => {
+    expect(safeNotice("Call 555-0100 for Jane", true)).toBe("Done.");
+    expect(safeNotice("<b>x</b>", false)).toBe("That did not go through.");
+    expect(safeNotice("Revoked. 9999 receptionists are now over the seat limit and cannot use the front desk. Nothing was deleted.", true)).toBe("Done.");
+    expect(safeNotice(undefined, true)).toBeNull();
+    expect(safeNotice("", false)).toBeNull();
+  });
+});
+
+describe("the Team page's seats notice accepts only its two codes", () => {
+  it("maps off and full to the fixed sentences and anything else to nothing", () => {
+    expect(seatsNoticeMessage("off")).toBe(FRONT_DESK_OFF_MESSAGE);
+    expect(seatsNoticeMessage("full")).toBe(FRONT_DESK_FULL_MESSAGE);
+    expect(seatsNoticeMessage("<script>")).toBeNull();
+    expect(seatsNoticeMessage(undefined)).toBeNull();
+  });
+});
+
+describe("a grant that arrives twice is recognised", () => {
+  const now = Date.parse("2026-11-27T12:00:30Z");
+  const listing = (grantedAt: string, state: "live" | "revoked" = "live") => ({
+    switchOn: true, seatLimit: 1, seatsActive: 0, seatsReserved: 0, seatsOverLimit: 0,
+    seats: [{ id: "s1", seats: 1, source: "pilot", reason: "pilot seat", grantedAt, expiresAt: null, state }],
+  });
+  const ask = { seats: 1, source: "pilot", reason: "pilot seat", expiresAt: null };
+  it("is a duplicate only when seats, source, reason and expiry match and it was granted within the window", () => {
+    expect(hasRecentIdenticalGrant(listing("2026-11-27T12:00:00Z"), ask, now)).toBe(true);
+    expect(hasRecentIdenticalGrant(listing("2026-11-27T11:58:00Z"), ask, now)).toBe(false); // an old identical grant is a deliberate second one
+    expect(hasRecentIdenticalGrant(listing("2026-11-27T12:00:00Z", "revoked"), ask, now)).toBe(false);
+    expect(hasRecentIdenticalGrant(listing("2026-11-27T12:00:00Z"), { ...ask, seats: 2 }, now)).toBe(false);
+    expect(hasRecentIdenticalGrant(listing("2026-11-27T12:00:00Z"), { ...ask, reason: "other" }, now)).toBe(false);
+    expect(hasRecentIdenticalGrant(null, ask, now)).toBe(false);
+  });
+});
