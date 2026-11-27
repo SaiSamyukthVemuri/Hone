@@ -1,6 +1,8 @@
 "use client";
 
 import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
+import { PendingButton } from "@/components/pending-button";
+import { actionFailureMessage, type ActionResult } from "@/lib/actions/action-result";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import type {
   StudioAvailabilityDefault,
@@ -306,7 +308,11 @@ export function AvailabilityClient({
     }
     setSavingDow(editingDow);
     try {
-      await upsertDayDefaultAction(dayDefaultFormData(editingDow, draft));
+      const result = await upsertDayDefaultAction(dayDefaultFormData(editingDow, draft));
+      if (!result.ok) {
+        setError(result.error); // the editor stays open with the typed times
+        return;
+      }
       // Update local map so the grid refreshes instantly.
       setDays((m) => {
         const next = new Map(m);
@@ -321,7 +327,7 @@ export function AvailabilityClient({
       window.setTimeout(() => setSavedFor(null), 1500);
       closeEditor();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Save failed.");
+      setError(actionFailureMessage(e));
     } finally {
       setSavingDow(null);
     }
@@ -366,7 +372,12 @@ export function AvailabilityClient({
             fd.set(`close_time_${d.dow}`, d.close);
           }
         }
-        await saveWeeklyDefaultsAction(fd);
+        const result = await saveWeeklyDefaultsAction(fd);
+        if (!result.ok) {
+          setError(result.error); // the week on screen is unchanged
+          setPendingPreset((cur) => settlePendingPreset(cur, preset));
+          return;
+        }
         const next = new Map<number, DayState>();
         for (const d of preset.days) {
           next.set(d.dow, {
@@ -380,7 +391,7 @@ export function AvailabilityClient({
         // picked while this save was finishing must survive it.
         setPendingPreset((cur) => settlePendingPreset(cur, preset));
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Could not apply preset.");
+        setError(actionFailureMessage(e, "Could not apply this preset. Check your connection and try again."));
         setPendingPreset((cur) => settlePendingPreset(cur, preset));
       } finally {
         setApplyingPreset((cur) => settlePendingPreset(cur, preset));
@@ -852,6 +863,36 @@ function TimeField({
 // "Special hours" reads more clearly than "Overrides" for a
 // practitioner who is not a SaaS power user. Internal field names
 // (effective_date, upsertOverrideAction, etc.) are unchanged.
+// HON-124 item 19: Remove for one availability row. The server action RETURNS its failure, so it is shown here, in place, instead of
+// being thrown into a page-level error. PendingButton reads the form's pending state (a function action keeps useFormStatus working).
+function RemoveRowForm({ action, id }: { action: (fd: FormData) => Promise<ActionResult>; id: string }) {
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <form
+      action={async (fd: FormData) => {
+        setError(null);
+        try {
+          const result = await action(fd);
+          if (!result.ok) setError(result.error);
+        } catch (e) {
+          setError(actionFailureMessage(e));
+        }
+      }}
+      className="flex flex-col items-end gap-1"
+    >
+      <input type="hidden" name="id" value={id} />
+      <PendingButton variant="secondary" size="sm">
+        Remove
+      </PendingButton>
+      {error ? (
+        <span role="alert" className="max-w-[16rem] text-right text-xs text-red-700 dark:text-red-400">
+          {error}
+        </span>
+      ) : null}
+    </form>
+  );
+}
+
 function OverridesSection({
   overrides,
 }: {
@@ -906,15 +947,7 @@ function OverridesSection({
                   {o.note ? ` · ${o.note}` : ""}
                 </span>
               </div>
-              <form action={deleteOverrideAction}>
-                <input type="hidden" name="id" value={o.id} />
-                <button
-                  type="submit"
-                  className="rounded-md border border-neutral-300 px-2 py-1 text-xs hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-                >
-                  Remove
-                </button>
-              </form>
+              <RemoveRowForm action={deleteOverrideAction} id={o.id} />
             </li>
           ))}
         </ul>
@@ -965,10 +998,14 @@ function AddOverrideForm({ onDone }: { onDone: () => void }) {
     if (note) fd.set("note", note);
     startTransition(async () => {
       try {
-        await upsertOverrideAction(fd);
+        const result = await upsertOverrideAction(fd);
+        if (!result.ok) {
+          setError(result.error); // the form keeps what was typed
+          return;
+        }
         onDone();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Save failed.");
+        setError(actionFailureMessage(e));
       }
     });
   }
@@ -1103,15 +1140,7 @@ function BlockoutsSection({ blockouts }: { blockouts: StudioBlockout[] }) {
                   {b.reason ? ` · ${b.reason}` : ""}
                 </span>
               </div>
-              <form action={deleteBlockoutAction}>
-                <input type="hidden" name="id" value={b.id} />
-                <button
-                  type="submit"
-                  className="rounded-md border border-neutral-300 px-2 py-1 text-xs hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-                >
-                  Remove
-                </button>
-              </form>
+              <RemoveRowForm action={deleteBlockoutAction} id={b.id} />
             </li>
           ))}
         </ul>
@@ -1152,7 +1181,7 @@ function AddBlockoutForm({ onDone }: { onDone: () => void }) {
         }
         onDone();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Save failed.");
+        setError(actionFailureMessage(e));
       }
     });
   }

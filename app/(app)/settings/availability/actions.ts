@@ -17,6 +17,7 @@ import {
 import { maxPublicBookingHorizonDays } from "@/lib/booking/horizon";
 import type { Practitioner, Studio } from "@/lib/types/database";
 import { dbErrorCode, failureCode } from "@/lib/logging/error-class";
+import { ACTION_OK, actionFailed, type ActionResult } from "@/lib/actions/action-result";
 
 // Typed result used by every action that can hit the unified shadow's
 // gist exclusion (sqlstate 23P01). Owner-facing UI displays
@@ -203,14 +204,6 @@ function scopeGuardMessage(code: string | undefined): string | null {
   }
 }
 
-async function assertOwner(): Promise<{ studioId: string; practitionerId: string }> {
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
-  if (practitioner.role !== "owner") {
-    throw new Error("Only studio owners can change availability.");
-  }
-  return { studioId: studio.id, practitionerId: practitioner.id };
-}
-
 async function assertOwnerWithStudio(): Promise<{
   studio: Studio;
   practitioner: Practitioner;
@@ -222,16 +215,29 @@ async function assertOwnerWithStudio(): Promise<{
   return { studio, practitioner };
 }
 
+// HON-124 item 19: the owner gate as a RETURNED refusal (a thrown message is redacted in production), used by the actions that return ActionResult.
+async function ownerOrFailure(): Promise<
+  { ok: true; studioId: string; practitionerId: string } | { ok: false; error: string }
+> {
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  if (practitioner.role !== "owner") {
+    return { ok: false, error: "Only the studio owner can change availability." };
+  }
+  return { ok: true, studioId: studio.id, practitionerId: practitioner.id };
+}
+
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 // Upserts one day-of-week row. Lets the inline editor save a single day
 // without restating the other six. Returns nothing on success.
-export async function upsertDayDefaultAction(formData: FormData): Promise<void> {
-  const { studioId, practitionerId } = await assertOwner();
+export async function upsertDayDefaultAction(formData: FormData): Promise<ActionResult> {
+  const owner = await ownerOrFailure();
+  if (!owner.ok) return owner;
+  const { studioId, practitionerId } = owner;
   const dowRaw = trimmed(formData.get("day_of_week"));
   const dow = Number(dowRaw);
   if (!Number.isFinite(dow) || dow < 0 || dow > 6) {
-    throw new Error("Day of week must be 0–6.");
+    return actionFailed("Choose a day of the week, then save again.");
   }
   const isOpen = trimmed(formData.get("is_open")) === "true";
   const open = nullable(formData.get("open_time"));
@@ -239,11 +245,11 @@ export async function upsertDayDefaultAction(formData: FormData): Promise<void> 
 
   if (isOpen) {
     if (!open || !close)
-      throw new Error("Open and close times are required for open days.");
+      return actionFailed("Enter both an opening and a closing time, or mark the day closed.");
     if (!TIME_RE.test(open) || !TIME_RE.test(close))
-      throw new Error("Times must be in HH:MM format.");
+      return actionFailed("Enter the times as hours and minutes, for example 09:00.");
     if (open >= close)
-      throw new Error("Close time must be after open time.");
+      return actionFailed("The closing time must be after the opening time.");
   }
 
   // Part 4 Item 2: the single-row weekday write goes through the atomic,
@@ -261,14 +267,17 @@ export async function upsertDayDefaultAction(formData: FormData): Promise<void> 
   });
   if (error || data !== "ok") {
     logAvailabilityDbError("upsert_day_default", "rpc", failureCode(error, data));
-    throw new Error("Could not save these hours. Please try again.");
+    return actionFailed("Could not save these hours. Try again, and contact support if it keeps happening.");
   }
   revalidatePath("/settings/availability");
+  return ACTION_OK;
 }
 
 // Saves the weekly default in one round-trip. Form encodes seven rows.
-export async function saveWeeklyDefaultsAction(formData: FormData): Promise<void> {
-  const { studioId } = await assertOwner();
+export async function saveWeeklyDefaultsAction(formData: FormData): Promise<ActionResult> {
+  const owner = await ownerOrFailure();
+  if (!owner.ok) return owner;
+  const { studioId } = owner;
 
   const days: {
     day_of_week: number;
@@ -283,9 +292,9 @@ export async function saveWeeklyDefaultsAction(formData: FormData): Promise<void
     const close = nullable(formData.get(`close_time_${dow}`));
     if (isOpen) {
       if (!open || !close)
-        throw new Error("Open and close times are required for open days.");
+        return actionFailed("Enter both an opening and a closing time for every open day, or mark the day closed.");
       if (open >= close)
-        throw new Error("Close time must be after open time.");
+        return actionFailed("The closing time must be after the opening time on every open day.");
     }
     days.push({
       day_of_week: dow,
@@ -309,19 +318,22 @@ export async function saveWeeklyDefaultsAction(formData: FormData): Promise<void
   });
   if (error) {
     logAvailabilityDbError("save_weekly_defaults", "rpc", dbErrorCode(error));
-    throw new Error("Could not save these hours. Please try again.");
+    return actionFailed("Could not save these hours. Try again, and contact support if it keeps happening.");
   }
   if (data !== "ok") {
     logAvailabilityDbError("save_weekly_defaults", "result", typeof data === "string" ? data : "unknown");
-    throw new Error("Could not save these hours. Please try again.");
+    return actionFailed("Could not save these hours. Try again, and contact support if it keeps happening.");
   }
   revalidatePath("/settings/availability");
+  return ACTION_OK;
 }
 
-export async function upsertOverrideAction(formData: FormData): Promise<void> {
-  const { studioId, practitionerId } = await assertOwner();
+export async function upsertOverrideAction(formData: FormData): Promise<ActionResult> {
+  const owner = await ownerOrFailure();
+  if (!owner.ok) return owner;
+  const { studioId, practitionerId } = owner;
   const effectiveDate = trimmed(formData.get("effective_date"));
-  if (!effectiveDate) throw new Error("Date is required.");
+  if (!effectiveDate) return actionFailed("Choose the date, then save again.");
   const isOpen = trimmed(formData.get("is_open")) === "true";
   const open = nullable(formData.get("open_time"));
   const close = nullable(formData.get("close_time"));
@@ -329,9 +341,9 @@ export async function upsertOverrideAction(formData: FormData): Promise<void> {
 
   if (isOpen) {
     if (!open || !close)
-      throw new Error("Open and close times are required for open days.");
+      return actionFailed("Enter both an opening and a closing time, or mark the date closed.");
     if (open >= close)
-      throw new Error("Close time must be after open time.");
+      return actionFailed("The closing time must be after the opening time.");
   }
 
   // Part 4 Item 2: single-row date-override write through the locked command.
@@ -348,15 +360,18 @@ export async function upsertOverrideAction(formData: FormData): Promise<void> {
   });
   if (error || data !== "ok") {
     logAvailabilityDbError("upsert_override", "rpc", failureCode(error, data));
-    throw new Error("Could not save this date override. Please try again.");
+    return actionFailed("Could not save this date. Try again, and contact support if it keeps happening.");
   }
   revalidatePath("/settings/availability");
+  return ACTION_OK;
 }
 
-export async function deleteOverrideAction(formData: FormData): Promise<void> {
-  const { studioId, practitionerId } = await assertOwner();
+export async function deleteOverrideAction(formData: FormData): Promise<ActionResult> {
+  const owner = await ownerOrFailure();
+  if (!owner.ok) return owner;
+  const { studioId, practitionerId } = owner;
   const id = trimmed(formData.get("id"));
-  if (!id) throw new Error("Missing override id.");
+  if (!id) return actionFailed("That date could not be found. Reload the page and try again.");
   const admin = createAdminClient();
   const { data, error } = await admin.rpc("delete_availability_override_locked", {
     p_studio_id: studioId,
@@ -367,9 +382,10 @@ export async function deleteOverrideAction(formData: FormData): Promise<void> {
   });
   if (error || data !== "ok") {
     logAvailabilityDbError("delete_override", "rpc", failureCode(error, data));
-    throw new Error("Could not delete this date override. Please try again.");
+    return actionFailed("Could not remove this date. Try again, and contact support if it keeps happening.");
   }
   revalidatePath("/settings/availability");
+  return ACTION_OK;
 }
 
 // ===========================================================================
@@ -706,10 +722,12 @@ function addDaysToIso(dateStr: string, n: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-export async function deleteBlockoutAction(formData: FormData): Promise<void> {
-  const { studioId } = await assertOwner();
+export async function deleteBlockoutAction(formData: FormData): Promise<ActionResult> {
+  const owner = await ownerOrFailure();
+  if (!owner.ok) return owner;
+  const { studioId } = owner;
   const id = trimmed(formData.get("id"));
-  if (!id) throw new Error("Missing blockout id.");
+  if (!id) return actionFailed("That blockout could not be found. Reload the page and try again.");
   const supabase = await createClient();
   const { error } = await supabase
     .from("studio_blockouts")
@@ -718,9 +736,10 @@ export async function deleteBlockoutAction(formData: FormData): Promise<void> {
     .eq("studio_id", studioId);
   if (error) {
     logAvailabilityDbError("delete_blockout", "delete", dbErrorCode(error));
-    throw new Error("Could not delete this full-day blockout. Please try again.");
+    return actionFailed("Could not remove this blockout. Try again, and contact support if it keeps happening.");
   }
   revalidatePath("/settings/availability");
+  return ACTION_OK;
 }
 
 // -------------------------------------------------------------------------

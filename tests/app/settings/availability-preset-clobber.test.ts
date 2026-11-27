@@ -56,9 +56,9 @@ describe("AvailabilityClient routes both settle paths through it", () => {
     expect(confirm).not.toMatch(/setPendingPreset\(null\)/);
   });
 
-  it("clears it only if it is still the confirmed one, on success and on error", () => {
+  it("clears it only if it is still the confirmed one, on success, on a RETURNED failure, and on a thrown error", () => {
     const uses = confirm.match(/setPendingPreset\(\(cur\) => settlePendingPreset\(cur, preset\)\)/g) ?? [];
-    expect(uses).toHaveLength(2);
+    expect(uses).toHaveLength(3);
   });
 });
 
