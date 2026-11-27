@@ -1,5 +1,6 @@
 "use client";
 
+import { copyText } from "@/lib/clipboard/copy-text";
 import { useState, useTransition } from "react";
 import { PendingLink } from "@/components/pending-link";
 import { FormattedDateTime } from "@/components/formatted-date-time";
@@ -84,13 +85,12 @@ function IntakeHistoryRow({
 
   function copy() {
     if (!link) return;
-    void navigator.clipboard.writeText(link).then(
-      () => {
+    void copyText(link).then((ok) => {
+      if (ok) {
         setCopied(true);
         setTimeout(() => setCopied(false), 1500);
-      },
-      () => setError("Copy failed."),
-    );
+      } else setError("Copy failed. Select and copy the link manually.");
+    });
   }
 
   function resend() {

@@ -23,6 +23,7 @@ import {
 import { absorbTransportFailure } from "@/lib/reliability/server-action-transport";
 import { OnboardingModal } from "./OnboardingModal";
 import { Celebration } from "./Celebration";
+import { CopyButton } from "@/components/copy-button";
 import {
   acknowledgeWelcomeAction,
   markCelebrationShownAction,
@@ -64,24 +65,7 @@ function ProgressBar({
 }
 
 function CopyLinkButton({ url }: { url: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <button
-      type="button"
-      className={SECONDARY_BTN}
-      onClick={async () => {
-        try {
-          await navigator.clipboard.writeText(url);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1600);
-        } catch {
-          // Clipboard unavailable: the link is visible to copy manually.
-        }
-      }}
-    >
-      {copied ? "Copied" : "Copy link"}
-    </button>
-  );
+  return <CopyButton value={url} label="Copy link" copiedLabel="Copied" revealOnFail className={SECONDARY_BTN} />;
 }
 
 function StatusChip({ status }: { status: OnboardingStepState["status"] }) {
