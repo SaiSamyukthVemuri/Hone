@@ -9,17 +9,18 @@ import path from "node:path";
 // Behavioural canary (#828 G-24): the bare Resend client is replaced so the
 // exact email the operator would receive can be inspected. Nothing is sent.
 const sent: Array<{ to: string[]; subject: string; text: string }> = [];
-vi.mock("@/lib/email/client", () => ({
-  FROM_ADDRESS: "Hone <alerts@example.test>",
-  resend: {
+vi.mock("@/lib/email/client", () => {
+  // ONE transport object behind both names, so a spy on `resend.emails` also sees what getResendTransport() hands the module (HON-127).
+  const transport = {
     emails: {
       send: async (msg: { to: string[]; subject: string; text: string }) => {
         sent.push(msg);
         return { data: { id: "fake" }, error: null };
       },
     },
-  },
-}));
+  };
+  return { FROM_ADDRESS: "Hone <alerts@example.test>", resend: transport, getResendTransport: () => transport };
+});
 
 const SOURCE = readFileSync(
   path.resolve(__dirname, "../../../lib/ops/alert-email.ts"),
@@ -37,7 +38,7 @@ const CODE = codeOnly(SOURCE);
 describe("dependency-cycle posture", () => {
   it("imports only the bare Resend client, never the appointment email subsystem", () => {
     expect(SOURCE).toMatch(
-      /import \{ resend, FROM_ADDRESS \} from "@\/lib\/email\/client"/,
+      /import \{ getResendTransport, FROM_ADDRESS \} from "@\/lib\/email\/client"/,
     );
     expect(SOURCE).not.toMatch(/from "@\/lib\/email\/send-appointment"/);
     expect(CODE).not.toMatch(/sendEmailSafely/);
