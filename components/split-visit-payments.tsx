@@ -4,7 +4,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { formatMoney } from "@/lib/billing/payment-jurisdiction";
 import {
   canStartCharge, cardReduce, CHECKING_PAYMENT_STATUS, historyLines, methodLabel, parseDollarsToCents, showCheckingStatus,
-  STATUS_LABEL, unresolvedCardAttempt, chargeFingerprint, refundFingerprint, submissionFor, settleSubmission, answerSettles, awaitRefund, settleFromLedger, releaseRefund, bindAttempt, releaseCardAttempt, type Awaiting, type AttemptBindings, reconcileRefundSelection, refundSendable, type Submissions, type CardPhase, type ExternalMethod, type VisitCurrency,
+  STATUS_LABEL, unresolvedCardAttempt, chargeFingerprint, refundFingerprint, submissionFor, settleSubmission, idDisposition, awaitRefund, settleFromLedger, releaseRefund, bindAttempt, releaseCardAttempt, type Awaiting, type AttemptBindings, reconcileRefundSelection, refundSendable, type Submissions, type CardPhase, type ExternalMethod, type VisitCurrency,
 } from "@/lib/billing/visit-payments-core";
 import {
   confirmTransferAction, sendSplitCardReceiptAction, prepareSplitCardPaymentAction, refundCardPaymentAction, recordExternalPaymentAction, refundExternalPaymentAction, runSplitCardPaymentAction,
@@ -72,7 +72,7 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
     setNote(r.note);
     if (r.state) onChanged(r.state);
     // A definite answer ends this intent (the next ask is a new command). A refusal or a lost answer keeps the id and what was typed.
-    if (answerSettles(r)) { if (fp) settleSub(fp); if (r.ok) setAmount(""); }
+    if (idDisposition(r) === "release") { if (fp) settleSub(fp); if (r.ok) setAmount(""); }
     else if (fp) awaitingRef.current = awaitRefund(awaitingRef.current, fp, r.refundId ?? null);
   }, [onChanged]);
 
@@ -103,6 +103,8 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
       if (tries < POLL_MAX) await new Promise<void>((res) => setTimeout(res, POLL_MS)).then(attempt);
     };
     await attempt();
+    // Lint exemption, on purpose: `form`, `dispatch` and the id helpers (releaseAttempt) are re-created each render but only read refs and stable setters, so listing them would
+    // re-create runCard every render and restart the poll. The loop is guarded by pollRef, so a stale closure can never act on a newer check.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appointmentId, onChanged]);
 
@@ -139,6 +141,8 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
     try {
       const prep = await prepareSplitCardPaymentAction(form({ amount_dollars: amount, submission_id: subFor(fp), expected_currency: currency }));
       if (!prep.ok) {
+        // submission_reused releases the id (it is bound to another row); every other refusal keeps it (a retry is the same command).
+        if (idDisposition(prep) === "release") settleSub(fp);
         dispatch({ type: "prepare_refused", text: prep.note.message });
         setNote(prep.note);
         if (prep.state) onChanged(prep.state);
@@ -305,17 +309,20 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
             // One id per distinct refund (payment, amount, kind, reason): a lost answer keeps it, so asking again re-reads the one refund; a different refund never replays it.
             const fp = refundFingerprint({ paymentId: v.paymentId, cents: parseDollarsToCents(v.amount), kind: v.kind, reason: v.reason });
             const sid = subFor(fp);
+            let done = false; // the typed refund is cleared only when this intent is finished; a lost answer keeps what was typed so the retry is the same command
             try {
               if (v.card) {
                 const r = await refundCardPaymentAction(form({ attempt_id: v.paymentId, amount_dollars: v.amount, kind: v.kind, reason: v.reason, submission_id: sid }));
-                apply(r, fp);
+                apply(r, fp); done = r.ok && idDisposition(r) === "release";
                 if (r.checking) setNote({ tone: "info", message: "Checking refund status" });
               } else {
-                apply(await refundExternalPaymentAction(form({ payment_id: v.paymentId, amount_dollars: v.amount, kind: v.kind, reason: v.reason, submission_id: sid })), fp);
+                const r = await refundExternalPaymentAction(form({ payment_id: v.paymentId, amount_dollars: v.amount, kind: v.kind, reason: v.reason, submission_id: sid }));
+                apply(r, fp); done = r.ok && idDisposition(r) === "release";
               }
             } catch {
               setNote({ tone: "blocked", message: "Checking refund status. Do not refund again yet; reload and check this payment's history." });
             } finally { setBusy(false); }
+            return done;
           }} />
       )}
     </section>
@@ -349,7 +356,7 @@ function PendingTransfer(props: { id: string; label: string; amount: string; bus
 
 function RefundForm(props: {
   received: { key: string; label: string; cents: number; id: string; card: boolean }[]; fmt: (c: number) => string; busy: boolean;
-  onSubmit: (v: { paymentId: string; amount: string; kind: "price_reduction" | "payment_reversal"; reason: string; card: boolean }) => Promise<void>;
+  onSubmit: (v: { paymentId: string; amount: string; kind: "price_reduction" | "payment_reversal"; reason: string; card: boolean }) => Promise<boolean>;
 }) {
   const [open, setOpen] = useState(false);
   const [picked, setPicked] = useState(props.received[0]?.id ?? "");
@@ -386,7 +393,7 @@ function RefundForm(props: {
             <span id="split-refund-reason-help" className="mt-1 block text-xs font-normal text-neutral-600 dark:text-neutral-400">{REASON_HELP}</span>
           </label>
           <button type="button" className={primary} disabled={props.busy || !refundSendable(selected, cents, reason)}
-            onClick={() => void props.onSubmit({ paymentId, amount, kind, reason: reason.trim(), card: selected?.card ?? false }).then(() => { setAmount(""); setReason(""); })}>
+            onClick={() => void props.onSubmit({ paymentId, amount, kind, reason: reason.trim(), card: selected?.card ?? false }).then((done) => { if (done) { setAmount(""); setReason(""); } })}>
             {cents ? `Record ${props.fmt(cents)} ${kind === "price_reduction" ? "price reduction" : "refund"}` : "Record refund"}
           </button>
         </div>

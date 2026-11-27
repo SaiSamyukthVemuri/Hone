@@ -1,6 +1,7 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
-  answerSettles, awaitRefund, bindAttempt, releaseCardAttempt, releaseRefund, settleFromLedger, cardReduce, chargeFingerprint, reconcileRefundSelection, refundFingerprint, refundSendable, settleSubmission, submissionFor,
+  idDisposition, SUCCESS_CODES, RELEASE_ANY_CODES, KEEP_CODES, awaitRefund, bindAttempt, releaseCardAttempt, releaseRefund, settleFromLedger, cardReduce, chargeFingerprint, reconcileRefundSelection, refundFingerprint, refundSendable, settleSubmission, submissionFor,
   type CardEvent, type CardPhase, type Submissions,
 } from "@/lib/billing/visit-payments-core";
 
@@ -129,12 +130,23 @@ describe("the id mechanism: one rule for every path (Insurance F2, Codex P2)", (
   const card30 = chargeFingerprint({ tender: "card", cents: 3000, currency: "cad" });
   const cash50 = chargeFingerprint({ tender: "paid_cash", cents: 5000, currency: "cad" });
 
-  it("only an answer that is still being checked keeps its id", () => {
-    expect(answerSettles({})).toBe(true);
-    expect(answerSettles({ checking: false })).toBe(true);
-    expect(answerSettles({ checking: true })).toBe(false);
+  it("the disposition table: every code against its disposition", () => {
+    for (const code of SUCCESS_CODES) {
+      expect(idDisposition({ ok: true, code }), code).toBe("release");
+      expect(idDisposition({ ok: false, code }), `${code} with ok:false (a blocked card refund answers requested/ok:false)`).toBe("keep");
+      expect(idDisposition({ ok: true, code, checking: true }), `${code} while checking`).toBe("keep");
+    }
+    for (const code of RELEASE_ANY_CODES) expect(idDisposition({ ok: false, code }), code).toBe("release");
+    for (const code of KEEP_CODES) {
+      expect(idDisposition({ ok: false, code }), code).toBe("keep");
+      expect(idDisposition({ ok: true, code }), `${code} even with ok:true`).toBe("keep");
+    }
   });
-
+  it("an unlisted, empty or unreadable code keeps; a lost answer (checking) keeps", () => {
+    for (const code of ["brand_new_code", "", "RECORDED", "recorded ", undefined as unknown as string, null as unknown as string, 7 as unknown as string])
+      expect(idDisposition({ ok: true, code })).toBe("keep");
+    expect(idDisposition({ ok: true, code: "requested", checking: true })).toBe("keep");
+  });
   // ENTRY PATHS INTO A CARD ATTEMPT'S DEFINITE OUTCOME: first answer, recheck (manual status check), ledger-restore effect, ledger settle. All are the same event for the ids: releaseCardAttempt(attempt).
   it.each(["first answer", "manual status check (recheck)", "ledger-restore effect", "ledger settle (ledger_settled)"])(
     "card charge: %s releases exactly that attempt's id, so the next $50 is a NEW command (the $50 + $50 sequence)", (_path) => {
@@ -213,5 +225,17 @@ describe("the charge intent is fixed at the start (Insurance P3a)", () => {
     // the answer for the first charge settles ITS fingerprint (captured at the start), leaving the edited intent's id alone
     const after = settleSubmission(both.next, atStart);
     expect(after).toEqual({ [edited]: both.id });
+  });
+});
+
+describe("every code the screen words is classified", () => {
+  it("each case in commandNote is on exactly one list, so none falls to the off-union default by accident", () => {
+    const src = readFileSync("lib/billing/visit-payments-core.ts", "utf8");
+    const body = src.slice(src.indexOf("export function commandNote"), src.indexOf("default:", src.indexOf("export function commandNote")));
+    const codes = [...body.matchAll(/case "([A-Za-z0-9_]+)"/g)].map((m) => m[1]);
+    const listed = new Set<string>([...SUCCESS_CODES, ...RELEASE_ANY_CODES, ...KEEP_CODES]);
+    expect(codes.length).toBeGreaterThan(30);
+    expect(codes.filter((c) => !listed.has(c))).toEqual([]);
+    expect(SUCCESS_CODES.filter((c) => (KEEP_CODES as readonly string[]).includes(c))).toEqual([]);
   });
 });

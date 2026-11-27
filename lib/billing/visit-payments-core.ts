@@ -256,11 +256,48 @@ export function settleSubmission(subs: Submissions, fingerprint: string): Submis
 }
 
 /**
- * THE MECHANISM (one rule for every path). A submission id belongs to ONE intent and is released exactly when that intent has a DEFINITE outcome, whichever path learned it:
- * the first answer, a recheck, the ledger-restore effect, the manual status check, or the ledger itself. A LOST answer (checking) is not definite: the same intent is asked
- * again with the SAME id so the database and Stripe re-read the one payment or refund. A refusal that created nothing is definite too (nothing is bound to the id).
+ * THE MECHANISM (one rule for every path). A submission id is released ONLY when it is bound to a FINISHED row that a retry would replay, and keeping it is always safe
+ * (the same intent simply runs as the same command; a changed amount is a different fingerprint and a different id anyway). So `idDisposition` releases on exactly:
+ *   - ok AND a success code, read TOGETHER (a card refund the runner blocked answers code "requested" with ok:false: a pending row exists and Stripe was not asked, so it KEEPS);
+ *   - refund_failed (the row is failed; a retry would replay it);
+ *   - submission_reused (the id is bound to another row).
+ * Everything else keeps: checking, unavailable (the database may have committed before the answer was lost), unknown codes, thrown errors, malformed rows, and every refusal
+ * (not_owner, split_payments_off and not_found can come BEFORE the replay lookup, so they do not prove nothing was written under this id).
  */
-export const answerSettles = (r: { checking?: boolean }) => !r.checking;
+export const SUCCESS_CODES = [
+  "created", "exists", "recorded", "already_recorded", "confirmed", "already_confirmed", "voided", "already_voided",
+  "requested", "already_requested", "cancelled", "already_cancelled", "resolved", "already_resolved", "already_covered",
+] as const;
+export const RELEASE_ANY_CODES = ["refund_failed", "submission_reused"] as const;
+export const KEEP_CODES = [
+  "unavailable", "not_owner", "not_found", "split_payments_off", "invalid_input", "no_bill", "method_unavailable", "reserved_for_pending_transfer", "PY001",
+  "exceeds_balance", "PY002", "exceeds_refundable", "exceeds_bill", "confirmed_is_final", "payment_not_refundable", "not_completed", "already_settled",
+  "card_attempt_prepared", "not_cancellable", "card_payment_exists", "price_missing", "review_open", "not_settled", "refund_pending", "over_capacity",
+] as const;
+export type KnownCommandCode = (typeof SUCCESS_CODES)[number] | (typeof RELEASE_ANY_CODES)[number] | (typeof KEEP_CODES)[number];
+const KNOWN = new Set<string>([...SUCCESS_CODES, ...RELEASE_ANY_CODES, ...KEEP_CODES]);
+
+function dispositionOfKnown(code: KnownCommandCode, ok: boolean): "release" | "keep" {
+  switch (code) {
+    case "created": case "exists": case "recorded": case "already_recorded": case "confirmed": case "already_confirmed": case "voided": case "already_voided":
+    case "requested": case "already_requested": case "cancelled": case "already_cancelled": case "resolved": case "already_resolved": case "already_covered":
+      return ok ? "release" : "keep";
+    case "refund_failed": case "submission_reused":
+      return "release";
+    case "unavailable": case "not_owner": case "not_found": case "split_payments_off": case "invalid_input": case "no_bill": case "method_unavailable":
+    case "reserved_for_pending_transfer": case "PY001": case "exceeds_balance": case "PY002": case "exceeds_refundable": case "exceeds_bill": case "confirmed_is_final":
+    case "payment_not_refundable": case "not_completed": case "already_settled": case "card_attempt_prepared": case "not_cancellable": case "card_payment_exists":
+    case "price_missing": case "review_open": case "not_settled": case "refund_pending": case "over_capacity":
+      return "keep";
+    default: { const unlisted: never = code; void unlisted; return "keep"; } // a code added to the union without a case is a compile error here
+  }
+}
+/** The ONE decision, used by every path that holds a submission id. Off-union codes (and anything unreadable) keep. */
+export function idDisposition(r: { ok: boolean; code: string; checking?: boolean }): "release" | "keep" {
+  if (r.checking) return "keep";
+  if (typeof r.code !== "string" || !KNOWN.has(r.code)) return "keep";
+  return dispositionOfKnown(r.code as KnownCommandCode, r.ok === true);
+}
 
 // ---- card charges: the id is bound to the ATTEMPT it produced ----
 /** attempt id -> the charge fingerprint whose id produced it */

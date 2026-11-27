@@ -11,16 +11,35 @@ const S = {
   prepareIds: [] as string[],
   runOutcomes: [] as Array<"unknown" | "succeeded">,
   attempts: 0,
+  // A fake database keyed by (submission id): a command COMMITS its row, then (when `lose` is set) the answer is lost, as a dropped connection would.
+  lose: false,
+  cash: new Map<string, string>(), refunds: new Map<string, string>(), prepared: new Map<string, string>(), sids: [] as string[],
 };
+const answer = (code: string, ok: boolean) => ({ ok, code, note: { tone: ok ? "ok" : "blocked", message: code }, state: null, id: "row" });
 vi.mock("@/app/(app)/visit-payment-actions", () => ({
   prepareSplitCardPaymentAction: vi.fn(async (fd: FormData) => {
-    S.prepareIds.push(String(fd.get("submission_id")));
-    S.attempts += 1;
-    return { ok: true, attemptId: `att-${S.attempts}`, currency: "cad", amountCents: 5000 };
+    const sid = String(fd.get("submission_id"));
+    S.prepareIds.push(sid);
+    if (!S.prepared.has(sid)) { S.attempts += 1; S.prepared.set(sid, `att-${S.attempts}`); } // the retry of the SAME id returns the one attempt
+    if (S.lose) { S.lose = false; throw new Error("connection dropped after the commit"); }
+    return { ok: true, attemptId: S.prepared.get(sid)!, currency: "cad", amountCents: 5000 };
+  }),
+  recordExternalPaymentAction: vi.fn(async (fd: FormData) => {
+    const sid = String(fd.get("submission_id")); S.sids.push(sid);
+    const had = S.cash.has(sid); if (!had) S.cash.set(sid, String(fd.get("method")));
+    if (S.lose) { S.lose = false; return answer("unavailable", false); } // committed, answer lost
+    return answer(had ? "already_recorded" : "recorded", true);
+  }),
+  refundExternalPaymentAction: vi.fn(async (fd: FormData) => {
+    const sid = String(fd.get("submission_id")); S.sids.push(sid);
+    const had = S.refunds.has(sid); if (!had) S.refunds.set(sid, String(fd.get("kind")));
+    if (S.lose) { S.lose = false; return answer("unavailable", false); }
+    return answer(had ? "already_requested" : "requested", true);
   }),
   runSplitCardPaymentAction: vi.fn(async () => ({ outcome: S.runOutcomes.shift() ?? "succeeded", state: null })),
-  confirmTransferAction: vi.fn(), sendSplitCardReceiptAction: vi.fn(), refundCardPaymentAction: vi.fn(), recordExternalPaymentAction: vi.fn(),
-  refundExternalPaymentAction: vi.fn(), voidTransferAction: vi.fn(), cancelSplitCardAttemptAction: vi.fn(), recheckCardRefundAction: vi.fn(),
+  confirmTransferAction: vi.fn(), sendSplitCardReceiptAction: vi.fn(),
+  refundCardPaymentAction: vi.fn(async (fd: FormData) => { S.sids.push(String(fd.get("submission_id"))); return { ...answer("requested", false), refundId: "rf-1", checking: false }; }),
+  voidTransferAction: vi.fn(), cancelSplitCardAttemptAction: vi.fn(), recheckCardRefundAction: vi.fn(),
   resolveRefundReviewAction: vi.fn(),
 }));
 
@@ -63,7 +82,7 @@ async function chargeFifty() {
 
 beforeEach(() => {
   vi.useFakeTimers();
-  S.prepareIds = []; S.runOutcomes = []; S.attempts = 0;
+  S.prepareIds = []; S.runOutcomes = []; S.attempts = 0; S.lose = false; S.cash.clear(); S.refunds.clear(); S.prepared.clear(); S.sids = [];
 });
 afterEach(() => {
   act(() => root?.unmount()); host?.remove(); root = null; host = null; setState = null;
@@ -120,5 +139,66 @@ describe("the $50 + $50 sequence after an unknown outcome", () => {
     mount(stateOf(ledgerOf([])));
     await chargeFifty();
     expect(S.prepareIds).toHaveLength(1);
+  });
+});
+
+// Insurance F1 / OPS: a command whose answer is LOST may already have committed. The retry must reuse the SAME id so the database replays the one row (never a second).
+describe("a lost answer after the commit keeps the id: exactly one row", () => {
+  const click = async (el: Element) => { await act(async () => { el.dispatchEvent(new MouseEvent("click", { bubbles: true })); }); await flush(); };
+  const pick = async (label: RegExp) => { const l = [...host!.querySelectorAll("label")].find((x) => label.test(x.textContent ?? ""))!; await click(l.querySelector("input")!); };
+
+  it.each([["cash", /^Cash$/, /Record cash received/], ["transfer", /^E-transfer$/, /Record transfer/]] as const)("%s", async (_n, tenderLabel, submit) => {
+    mount(stateOf(ledgerOf([])));
+    await pick(tenderLabel);
+    type(amountInput(), "50.00");
+    S.lose = true;
+    await click(button(submit));
+    expect(S.cash.size).toBe(1);
+    await click(button(submit));
+    expect(S.sids).toHaveLength(2);
+    expect(S.sids[1]).toBe(S.sids[0]);
+    expect(S.cash.size).toBe(1);
+  });
+
+  it.each([["external refund", /Return the payment/], ["price reduction", /Reduce the price/]] as const)("%s", async (_n, kindLabel) => {
+    const ext = { kind: "external" as const, id: "ex-1", method: "paid_cash" as const, amountCents: 5000, state: "confirmed" as const, at: "2026-11-27T00:00:00Z", note: null };
+    mount(stateOf({ ...ledgerOf([]), externals: [ext] }));
+    await click(button(/Refund or reduce a payment/));
+    await pick(kindLabel);
+    const [refundAmount, reason] = [...host!.querySelectorAll<HTMLInputElement>('[data-testid="split-refund-form"] input:not([type="radio"])')];
+    type(refundAmount, "20.00"); type(reason, "Customer asked for it back");
+    S.lose = true;
+    await click(button(/Record \$20\.00/));
+    expect(S.refunds.size).toBe(1);
+    await click(button(/Record \$20\.00/));
+    expect(S.sids).toHaveLength(2);
+    expect(S.sids[1]).toBe(S.sids[0]);
+    expect(S.refunds.size).toBe(1);
+  });
+
+  it("card prepare: the answer is lost after the attempt was created; the retry returns the same attempt", async () => {
+    S.runOutcomes = ["succeeded"];
+    mount(stateOf(ledgerOf([])));
+    type(amountInput(), "50.00");
+    S.lose = true;
+    await act(async () => { button(/Charge card/).dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await flush();
+    expect(S.attempts).toBe(1);
+    await act(async () => { button(/Charge card/).dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await flush();
+    expect(S.prepareIds).toHaveLength(2);
+    expect(S.prepareIds[1]).toBe(S.prepareIds[0]);
+    expect(S.attempts).toBe(1);
+  });
+
+  it("a BLOCKED card refund (code requested, ok:false: a pending row exists, Stripe was not asked) keeps its id", async () => {
+    mount(stateOf(ledgerOf([card("att-1", "succeeded")])));
+    await click(button(/Refund or reduce a payment/));
+    const [refundAmount, reason] = [...host!.querySelectorAll<HTMLInputElement>('[data-testid="split-refund-form"] input:not([type="radio"])')];
+    type(refundAmount, "20.00"); type(reason, "Customer asked for it back");
+    await click(button(/Record \$20\.00/));
+    await click(button(/Record \$20\.00/));
+    expect(S.sids).toHaveLength(2);
+    expect(S.sids[1]).toBe(S.sids[0]);
   });
 });
