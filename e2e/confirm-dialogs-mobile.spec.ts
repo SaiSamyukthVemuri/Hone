@@ -86,6 +86,30 @@ test.describe("destructive actions ask first", () => {
     await expect.poll(active, { timeout: T }).toBe(false);
   });
 
+  test("keyboard only: Tab to Remove, Enter opens the dialog with focus inside, Escape closes it and focus returns to the trigger", async ({ page }) => {
+    const seed = await seedE2eStudio();
+    const member = await seedE2eMember(seed);
+    await loginAsOwner(page, seed);
+    await page.goto("/settings/team");
+    const label = `Remove ${member.displayName}`;
+    await expect(page.getByRole("button", { name: label })).toBeVisible({ timeout: T });
+    await page.locator("body").click({ position: { x: 1, y: 1 } });
+    let reached = false;
+    for (let i = 0; i < 120 && !reached; i++) {
+      await page.keyboard.press("Tab");
+      reached = await page.evaluate((l) => document.activeElement?.getAttribute("aria-label") === l, label);
+    }
+    expect(reached, "Tab reaches the Remove button").toBe(true);
+    await page.keyboard.press("Enter");
+    await expect(dialog(page)).toBeVisible({ timeout: T });
+    expect(await page.evaluate(() => document.activeElement?.closest('[role="alertdialog"]') != null)).toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(dialog(page)).toHaveCount(0);
+    await expect(page.getByRole("button", { name: label })).toBeFocused();
+    const active = (await sql<{ active: boolean }>(`select active from public.practitioners where id=$1`, [member.practitionerId]))[0]!.active;
+    expect(active).toBe(true); // Escape changed nothing
+  });
+
   test("cancel an appointment: Keep appointment changes nothing, Confirm cancels it", async ({ page }) => {
     const seed = await seedE2eStudio();
     const clientId = await getClientIdByEmail(seed.studioId, seed.clientEmail);
