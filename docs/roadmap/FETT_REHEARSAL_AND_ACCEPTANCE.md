@@ -1,0 +1,264 @@
+# Fett Derm — synthetic rehearsal and acceptance plan
+
+**Owner:** DB / WAIT lane (#824). **Target:** the Friday 2026-10-16 Fett meeting,
+rehearsed Thursday 2026-10-15.
+
+**This document is evidence and a plan, never authority.** It does not authorize
+a release, a production write, a studio activation or any claim to Fett. Where it
+reports what the product can do, the claim is tied to a file and line on the
+**0210** chain (repo max 0210 == hosted 0210 at the time of writing; re-derive
+with `npm run migration:state -- --json` before relying on it).
+
+**It labels only what this lane verified.** Rows owned by other lanes are marked
+*not verified here* and name the owner. A row this lane did not measure is not
+evidence, and must not be read as either a pass or a fail.
+
+---
+
+## 1. The rehearsal fixture
+
+`tests/db/helpers/fett-fixture.ts` (PR #853) seeds the synthetic studio:
+`America/Los_Angeles`, owner plus five treating practitioners, two electrolysis
+services, Mon–Fri availability, and — load-bearing — the **practitioner-capacity
+state**.
+
+```bash
+export HONE_LOCAL_DB_URL="postgresql://postgres:postgres@127.0.0.1:<port>/postgres"
+npx vitest run --config vitest.db.config.ts tests/db/fett-fixture.db.test.ts
+```
+
+Everything it seeds is recognizably synthetic — `SYNTH-FETT` names,
+`@synth.local` emails, run-unique ids. **No real tenant, no production, no
+patient data, no live message.**
+
+### The one thing a rehearsal must not get wrong
+
+`practitioner_capacity_enabled` and `practitioner_capacity_booking_enabled`
+(`0134`, `0136`) **both default false**, which is `LEGACY` — **one studio-wide
+resource**. Five practitioners in a LEGACY studio **cannot hold parallel
+appointments.** A rehearsal that forgets this does not demonstrate a
+five-practitioner studio; it demonstrates a single-chair studio with five names
+on it, and the second parallel booking is refused.
+
+| State | `capacity` | `booking` | Meaning |
+|---|---|---|---|
+| `LEGACY` | false | false | one studio-wide resource — **the default** |
+| `CAPACITY_READY_BOOKING_PAUSED` | true | false | configured, or paused, or draining |
+| `LIVE` | true | true | practitioner-aware bookings |
+
+`capacity=false + booking=true` is rejected by the CHECK at `0136:52`. The
+fixture defaults to `LIVE` and proves it by booking the **same instant for two
+different practitioners**, with the `LEGACY` refusal as its control.
+
+---
+
+## 2. Readiness for the ten capabilities #824 requires
+
+#824:175 requires the demo to show ten things. Verified status on the 0210 chain:
+
+| # | Required | Status on 0210 | Evidence |
+|---|---|---|---|
+| 1 | Five treating practitioners + owner | **Supported and proven**, but only in `LIVE` capacity state | `practitioners` (`0001:18`); `0134`/`0136` flags, default off; two same-instant bookings measured via `create_internal_appointment_v2` (§2.1) |
+| 2 | Restricted receptionist | **Absent on this chain** — the surface does not exist yet, and lands with #838/#850/#852 | A receptionist is a row in `public.studio_receptionists` (`0216:47`) created via `add_studio_receptionist` (`0216:407`). **Not** because of `practitioners.role` — see the correction below |
+| 3 | Simultaneous scheduling | **Works, and is proven.** Friday concurrency means **practitioners** | Concurrency is modelled as practitioner capacity (`0134`/`0136`) and demonstrated in §2.1: two practitioners booked at the same instant through the real command. There is no separate room/equipment *scheduling* resource, and none is required — see the correction below |
+| 4 | Intake / status | *Not verified by this lane* | Intake surfaces exist under `app/intake`; readiness owned by the ONB/intake lane |
+| 5 | Treatment recording | *Partly verified* — clinical records exist | `0119`, `0120` (finalization, corrections/amendments). Depth owned by the clinical lane |
+| 6 | Next-visit history | *Not verified by this lane* | Owned by the clinical/records lane |
+| 7 | Machine-first selection | **Modelled, and among the oldest parts of the product** — it is **treatment charting**, not scheduling | `electrolysis_entries` carries `apilus_modality`, `energy_level`, `machine_frequency`, `probe_type`, `probe_size`, `probe_lot_id`; `session_blocks` mirrors them with `probe_brand`; `laser_entries.equipment_params`; `services.modality`; and **`practitioners.default_machine_frequency`** — a per-practitioner machine default. All on the production chain (`0001`, `0002`, `0009`, `0011`, `0014`, `0016`, `0019`, `0020`, `0042`) and wired into the session pages. Fett's exact inventory and #829's revised catalogue remain unverified |
+| 8 | Operational administration | *Not verified by this lane* | Owned by the studio-readiness lane (#824 / #825) |
+| 9 | USD flows | **Not supported on this chain** | `currency` defaults to **`'cad'`** (`0073:113`, `0187:126`, `0064:141`); `services` has **no** currency column. Owned by the Audit/USD lane (#833 `0214` and stack) |
+| 10 | Messaging / failure visibility | *Not verified by this lane* | Owned by the delivery lanes (#832, #843, #846, #849) |
+
+### 2.1 Practitioner-aware concurrent scheduling already works — on the staff path
+
+**Measured on a real 0210 stack, not inferred.**
+`public.create_internal_appointment_v2` — the current internal booking command
+(`0142` → `0146` → `0147` → `0152`; only the `_v2` name exists at runtime) —
+takes **`p_target_practitioner_id`**. On a `LIVE` fixture studio it created
+**two appointments at the same instant for two different practitioners**, both
+returning `result = 'created'`, two distinct `practitioner_id` values.
+
+The control: on the same fixture seeded `LEGACY`, the second booking is
+**refused** by exclusion constraint
+`no_overlapping_appointments_studio_wide`, leaving one appointment.
+
+So Friday **can** demonstrate five-practitioner concurrent scheduling through
+real product code. Proven by `tests/db/fett-fixture.db.test.ts`, which books
+through that command rather than INSERTing, so the availability validator,
+duration authority and buffer rules are exercised too.
+
+Two details that bite anyone reproducing this:
+
+* the cancellation token hash must match `^[a-f0-9]{64}$`
+  (`0090_appointment_token_hash.sql:89`) — a readable placeholder is rejected
+  by the CHECK;
+* `node-postgres` returns `timestamptz` as a **Date**, so comparing two equal
+  instants with `toBe` fails on object identity. Compare `getTime()`.
+
+### Correction: machine selection is treatment charting, not a scheduling engine
+
+An earlier revision of this document reported that **"machine-first selection has
+no data model at all"** and treated the absence of a room/equipment table as a
+gap in *scheduling*. Both were wrong, and the second was the more misleading.
+
+**Friday concurrency means practitioners.** That is modelled (`0134`/`0136`) and
+proven in §2.1. No room or equipment *scheduling* resource is required, so its
+absence is not a gap — I was answering a question nobody had asked.
+
+**Machine selection is charting**, and it is one of the product's oldest and
+most developed areas, exactly as an electrolysis practice needs. On the
+**production** chain, verified against the live schema:
+
+| Surface | Fields |
+|---|---|
+| `electrolysis_entries` | `apilus_modality`, `energy_level`, `machine_frequency`, `probe_type`, `probe_size`, `probe_lot_id` |
+| `session_blocks` | `apilus_modality`, `energy_level`, `machine_frequency`, `probe_brand` |
+| `laser_entries` | `equipment_params` |
+| `services` | `modality` |
+| `practitioners` | **`default_machine_frequency`** — a per-practitioner machine default |
+| `imported_treatment_memories` | `method_or_machine`, `modality`, `probe_type`, `probe_size`, `probe_lot` |
+| `record_keeping_sterile_items` | `probe_key` |
+
+Introduced across `0001`, `0002`, `0009`, `0011`, `0014`, `0016`, `0019`, `0020`
+and `0042`, and wired into `app/(app)/clients/[id]/sessions/[sessionId]` and
+`app/features/charting-records`.
+
+**So the rehearsal can demonstrate machine/modality recording**, and `probe_lots`
+(`0001:65`) is the consumable-inventory side of the same story rather than a
+failed scheduling resource. What stays unverified is Fett's **exact device
+inventory** and #829's revised catalogue — a content question for the Monday
+inventory step, not a missing capability.
+
+**How I got it wrong**, recorded because it is a repeatable error: I enumerated
+tables looking for a *scheduling resource* noun, found none, and concluded the
+capability was absent — without asking which surface the capability actually
+belongs to. A capability search that only looks where you expect it will find
+nothing and call it evidence.
+
+### Correction: a receptionist is a separate table, not a practitioner role
+
+An earlier revision of this document said a restricted receptionist was
+**"schema-impossible"** on the 0210 chain because `practitioners.role` carries
+`check (role in ('owner','practitioner'))`. The RBAC lane corrected that, and
+they are right — verified here against `0216`/`0218` directly:
+
+* `practitioners.role` stays two-valued across `0216`, `0218` **and** `0220`,
+  **by design**. That unchanged CHECK is precisely what makes a receptionist
+  **denied by construction** as a treating practitioner. It is **not** evidence
+  that receptionists are unsupported.
+* `0218`'s three-valued `check (role in ('owner','practitioner','receptionist'))`
+  is on **`pending_invitations`** (`0218:55`) — the *invitation* role.
+
+The practical consequence, which is why this is recorded rather than quietly
+edited: **a capability probe must read `to_regclass('public.studio_receptionists')`
+and the `add_studio_receptionist` function, never the role CHECK.** A probe on
+the role answers `false` on every chain — including a chain with complete
+receptionist support — so it would report "unsupported" forever and hide the
+design. `tests/db/helpers/fett-fixture.ts` was fixed accordingly.
+
+### A gap in the ordinary booking path, owned by this lane
+
+`create_public_appointment` (`0170:636`) **takes no practitioner parameter**,
+and `public_booking_slot_candidates` (`0209:49`) takes none either. So public
+booking cannot select a practitioner — reproduced with a load-bearing control in
+PR #840.
+
+What it does instead is sharper than "it picks someone". Assignment is
+server-derived from the **active-owner count** (`0170:790-808`), deliberately:
+
+| Active owners | Assigned practitioner |
+|---|---|
+| 0 | `NULL` — the booking still succeeds |
+| 1 | **that owner** |
+| 2+ | `NULL` — no arbitrary winner is invented |
+
+The comment there is explicit that an earlier revision's `order by created_at
+asc limit 1` "silently invented a product rule" and was removed.
+
+**So for a Fett-shaped studio — one owner plus five electrologists — every
+ordinary public booking is attributed to the owner, and none to the five
+treating practitioners.** That decides appointment attribution, the
+notification recipient and the client-facing practitioner name. It is the
+single most visible gap between the current public path and a
+five-practitioner practice, and it is not a bug in the function: the function
+is behaving exactly as documented for a surface that has no practitioner
+concept yet.
+
+The implementation slice is **not blocked on design** — it is blocked on a
+migration number. DB/WAIT holds the **`0219` queue position** (see §4).
+
+---
+
+## 3. The Thursday rehearsal sequence
+
+Run in order. Each step names what it proves and what it must not be read as
+proving.
+
+1. **Seed** the fixture at `LIVE`. Proves: a five-practitioner LA studio exists
+   with real availability. Does **not** prove any production studio is
+   configured this way.
+2. **Parallel booking through the real command** — `bookFettInternal` →
+   `create_internal_appointment_v2`, same instant, two different
+   practitioners. Proves: genuinely concurrent practitioner scheduling on the
+   staff-facing path, through product code rather than a raw INSERT. The
+   `LEGACY` control in the suite is what makes this meaningful.
+3. **Capacity pause** — flip to `CAPACITY_READY_BOOKING_PAUSED`. Proves: the
+   emergency pause is instant and does not rematerialize existing parallel
+   appointments (`0136`'s stated reason for splitting the two flags).
+4. **Ordinary public booking** — demonstrate the path as it is, and **say
+   plainly** that practitioner selection is not available on it yet (§2).
+5. **Treatment recording with machine settings** against a seeded client —
+   modality, energy level, machine frequency and probe type/size/lot on an
+   `electrolysis_entries` row. Proves: machine-first charting on the production
+   chain. Label depth honestly; this lane verified the fields exist and are
+   app-wired, not that every workflow around them is complete.
+6. **Teardown** — `dropFettStudio`. Proves: nothing persists. Note the
+   `appointment_audit` RESTRICT discipline: a studio that has been booked
+   cannot be deleted until its trail is purged, and the suite proves a bare
+   delete is refused first.
+
+**Not in the rehearsal, because this chain does not carry the surface:**
+receptionist access (2) and USD (9). **Machine/modality charting (7) IS in the
+rehearsal** — see the correction above. Demonstrating a mock of any of these
+as though it were the product would be the one failure this document exists to
+prevent.
+
+---
+
+## 4. Schedule risk that is not a code problem
+
+The G1 implementation needs one forward migration, and DB/WAIT is **last in the
+queue** at `0219`. `tests/docs/canonical-production-facts.test.ts:568-578`
+requires the pending suffix to be **contiguous** from `hosted + 1`, admitting
+only permanently-skipped slots (`scripts/migration-state.mjs:43` skips exactly
+`0158`). So a `0219` migration **cannot go green on its own branch**: it needs
+`0211`–`0218` present, i.e. stacked on them or landed after them.
+
+Verified claims at the time of writing — read from each PR's own head, not from
+any list: `0211` #827, `0212` #832, `0213` #831, `0214` #833, `0215` #843,
+`0216` #838, `0217` #844, `0218` #850. **Re-census before claiming a number**;
+this list is historical the moment it is written.
+
+Consequence for Friday, stated precisely so it is not over-read:
+practitioner-aware **public** booking lands **after** eight other migrations,
+or not before the meeting. That is a sequencing fact to plan around, not a
+defect to fix in this lane.
+
+It does **not** mean multi-practitioner operation cannot be shown. §2.1 proves
+concurrent per-practitioner scheduling works today through the staff-facing
+command. What Friday cannot show is a **client** choosing their practitioner on
+the public booking page.
+
+---
+
+## 5. Labelling rules for the meeting
+
+1. **Name the chain.** "On the current production schema" is part of every
+   claim, because `0211`–`0218` are unmerged and change several rows above.
+2. **Synthetic is synthetic.** The studio, the practitioners and the client are
+   fixtures. Nothing shown is a Fett record or a patient record.
+3. **A gap is stated, not skipped.** Receptionist, machine selection and USD are
+   named as unavailable, with their owning lane.
+4. **No compliance claim.** Nothing here speaks to HIPAA, a BAA, or Fett's
+   covered-entity status; #828's evidence gate is separate and green CI does not
+   establish it.
