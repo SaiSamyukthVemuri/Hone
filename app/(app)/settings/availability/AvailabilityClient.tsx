@@ -17,6 +17,8 @@ import {
   upsertOverrideAction,
 } from "./actions";
 import { SectionLabel } from "@/components/ui/section-label";
+import { buttonClasses } from "@/components/ui/button";
+import { CONTROL_MIN_TOUCH, NAV_ROW_FEEDBACK, NAV_ROW_FOCUS, TEXT_LINK_FEEDBACK, cx } from "@/components/ui/control-base";
 import {
   presetConfirmControl,
   settlePendingPreset,
@@ -531,7 +533,7 @@ export function AvailabilityClient({
                 key={p.id}
                 type="button"
                 onClick={() => requestApplyPreset(p)}
-                className="rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-xs hover:border-neutral-500 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-950 dark:hover:bg-neutral-900"
+                className={buttonClasses({ variant: "secondary", size: "sm" })}
               >
                 {p.label}
               </button>
@@ -551,14 +553,14 @@ export function AvailabilityClient({
                   type="button"
                   onClick={confirmApplyPreset}
                   disabled={replaceControl.disabled}
-                  className="rounded-md bg-neutral-900 px-3 py-1 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+                  className={buttonClasses({ variant: "primary", size: "sm" })}
                 >
                   {replaceControl.label}
                 </button>
                 <button
                   type="button"
                   onClick={cancelPreset}
-                  className="rounded-md border border-amber-400 px-3 py-1 text-xs hover:bg-white/50 dark:border-amber-700 dark:hover:bg-amber-900/40"
+                  className={buttonClasses({ variant: "secondary", size: "sm" })}
                 >
                   Cancel
                 </button>
@@ -645,9 +647,7 @@ function WeeklyGrid({
                 style={{ height: GRID_HEIGHT }}
                 className={
                   "relative border-l border-neutral-200 text-left transition-colors dark:border-neutral-800 " +
-                  (isEditing
-                    ? "bg-neutral-100 dark:bg-neutral-900"
-                    : "hover:bg-neutral-50 dark:hover:bg-neutral-900")
+                  (isEditing ? "bg-neutral-100 dark:bg-neutral-900 " + NAV_ROW_FOCUS : NAV_ROW_FEEDBACK)
                 }
                 aria-label={`Edit ${DAY_NAMES_LONG[dow]}`}
               >
@@ -786,7 +786,7 @@ export function DayEditor({
           <button
             type="button"
             onClick={onCloseDay}
-            className="ml-auto self-end text-xs text-neutral-500 hover:text-neutral-900 hover:underline dark:hover:text-neutral-100"
+            className={cx(CONTROL_MIN_TOUCH, "ml-auto self-end text-xs text-neutral-500", TEXT_LINK_FEEDBACK)}
           >
             Close this day
           </button>
@@ -806,7 +806,7 @@ export function DayEditor({
           type="button"
           onClick={onSave}
           disabled={saving}
-          className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+          className={buttonClasses({ variant: "primary" })}
         >
           {saving ? "Saving…" : "Save"}
         </button>
@@ -814,7 +814,7 @@ export function DayEditor({
           type="button"
           onClick={onCancel}
           disabled={saving}
-          className="rounded-md border border-neutral-300 px-4 py-2 text-sm hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+          className={buttonClasses({ variant: "secondary" })}
         >
           Cancel
         </button>
@@ -876,7 +876,7 @@ function OverridesSection({
           <button
             type="button"
             onClick={() => setAdding(true)}
-            className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+            className={buttonClasses({ variant: "secondary" })}
           >
             + Add special hours
           </button>
@@ -1033,7 +1033,7 @@ function AddOverrideForm({ onDone }: { onDone: () => void }) {
         <button
           type="submit"
           disabled={pending}
-          className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+          className={buttonClasses({ variant: "primary" })}
         >
           {pending ? "Saving…" : "Save special hours"}
         </button>
@@ -1041,7 +1041,7 @@ function AddOverrideForm({ onDone }: { onDone: () => void }) {
           type="button"
           onClick={onDone}
           disabled={pending}
-          className="rounded-md border border-neutral-300 px-4 py-2 text-sm hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+          className={buttonClasses({ variant: "secondary" })}
         >
           Cancel
         </button>
@@ -1072,7 +1072,7 @@ function BlockoutsSection({ blockouts }: { blockouts: StudioBlockout[] }) {
           <button
             type="button"
             onClick={() => setAdding(true)}
-            className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+            className={buttonClasses({ variant: "secondary" })}
           >
             + Add blocked time
           </button>
@@ -1199,7 +1199,7 @@ function AddBlockoutForm({ onDone }: { onDone: () => void }) {
         <button
           type="submit"
           disabled={pending}
-          className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+          className={buttonClasses({ variant: "primary" })}
         >
           {pending ? "Saving…" : "Save blocked time"}
         </button>
@@ -1207,7 +1207,7 @@ function AddBlockoutForm({ onDone }: { onDone: () => void }) {
           type="button"
           onClick={onDone}
           disabled={pending}
-          className="rounded-md border border-neutral-300 px-4 py-2 text-sm hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+          className={buttonClasses({ variant: "secondary" })}
         >
           Cancel
         </button>
