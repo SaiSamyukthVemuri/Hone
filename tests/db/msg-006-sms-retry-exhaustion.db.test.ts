@@ -153,8 +153,13 @@ function sendOnce(f: Fixture) {
   });
 }
 
+// HON-125: this alert carries the provider's failure text (provider_error), so the writer stores it OPERATOR-ONLY: studio_id and client_id are
+// NULL (no studio member can read the row) and the studio travels in safe_details.studio_id. Find it there, never by the studio_id column.
 const alertsFor = async (studioId: string) =>
-  (await adminQuery(`select * from public.ops_alerts where studio_id = $1 and event = 'sms_send_failed' order by created_at`, [studioId])).rows;
+  (await adminQuery(`select * from public.ops_alerts where event = 'sms_send_failed' and safe_details->>'studio_id' = $1 order by created_at`, [studioId])).rows;
+// The member-readable view of the same studio: the alert must NOT be there.
+const memberVisibleAlertsFor = async (studioId: string) =>
+  (await adminQuery(`select id from public.ops_alerts where studio_id = $1 and event = 'sms_send_failed'`, [studioId])).rows;
 
 /** The alert insert is fire-and-forget; wait for it rather than sleeping a fixed time. */
 async function waitForAlerts(studioId: string, count: number, timeoutMs = 15_000) {
@@ -204,10 +209,13 @@ describe("MSG-006: exhausted SMS retries (pre-connection refusal, the default fa
     expect(alerts[0]).toMatchObject({
       severity: "warning",
       event: "sms_send_failed",
-      studio_id: f.studioId,
+      studio_id: null,
+      client_id: null,
       appointment_id: f.appointmentId,
       route: "lib/sms/send-appointment",
     });
+    expect(alerts[0].safe_details).toMatchObject({ studio_id: f.studioId });
+    expect(await memberVisibleAlertsFor(f.studioId), "no member-readable (studio_id set) copy of the alert").toEqual([]);
     // The failure CLASS and the attempt count, as safe structured details.
     expect(alerts[0].safe_details).toMatchObject({
       sms_type: "reminder_24h",
