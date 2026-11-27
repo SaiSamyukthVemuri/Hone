@@ -52,7 +52,7 @@ export default async function PortalVerifyPage({
         .select("id, studio_id, client_id, email_normalized, expires_at, consumed_at")
         .eq("token_hash", tokenHash)
         .maybeSingle(),
-    ).catch((error: unknown) => ({ data: null, error })),
+    ).catch((cause: unknown) => ({ data: null, error: { code: dbErrorCode(cause) } })),
     getCurrentPortalSessionState({ recordVisit: false }),
   ]);
   if (lookupErr) {
@@ -85,7 +85,7 @@ export default async function PortalVerifyPage({
       .eq("id", link.client_id)
       .eq("studio_id", link.studio_id)
       .maybeSingle(),
-  ).catch((error: unknown) => ({ data: null, error }));
+  ).catch(() => ({ data: null, error: true }));
   if (clientError) return <RetryOriginalLink />;
   if (!clientRow || clientRow.archived_at != null) {
     return <Recovery token={token} />;

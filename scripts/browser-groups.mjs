@@ -621,6 +621,7 @@ export const PUBLIC_BOOKING_SPECS = [
   "new-studio-wizard.spec.ts",
   "onboarding.spec.ts",
   "perceived-speed.spec.ts",
+  "portal-rollout.spec.ts",
   "public-booking-after-staff-change.spec.ts",
   "public-booking-error-containment.spec.ts",
   "public-booking-slot-read-failure.spec.ts",
