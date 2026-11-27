@@ -54,7 +54,7 @@ test.describe("HON-109 Analytics controls acknowledge a press", () => {
     // 2. the period form's Show button (PendingGetForm + PendingSubmit): aria-busy on the submit
     await page.goto("/financials/analytics");
     await armProbe(page, 'button[type="submit"][aria-busy="true"]');
-    await page.getByLabel("Period").selectOption("previous_month"); // a real Period option; a missing one must fail loudly, not hang or pass
+    await page.locator('select[name="period"]').selectOption("previous_month"); // a real Period option; a missing one must fail loudly, not hang or pass
     await page.getByRole("button", { name: "Show", exact: true }).click();
     await expect.poll(() => page.evaluate(() => (window as unknown as { __ack: number | null }).__ack), { timeout: 5000 }).not.toBeNull();
     const show = await page.evaluate(() => (window as unknown as { __ack: number }).__ack);
