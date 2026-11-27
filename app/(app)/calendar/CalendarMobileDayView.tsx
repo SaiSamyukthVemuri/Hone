@@ -4,6 +4,7 @@ import { withDashboardRebook } from "@/lib/calendar/dashboard-rebook";
 import { useDashboardRebook } from "./dashboard-rebook-context";
 
 import { useEffect, useRef, useState } from "react";
+import { useAppHeaderHeight } from "@/components/use-app-header-height";
 import { withSelection } from "@/lib/calendar/practitioner-selection";
 import { useRouter } from "next/navigation";
 import { MINI_PICK_EVENT } from "@/lib/calendar/mini-pick";
@@ -92,6 +93,7 @@ export function CalendarMobileDayView({
   timeGrid = false,
 }: Props) {
   const router = useRouter();
+  const appHeaderHeight = useAppHeaderHeight();
   const rebook = useDashboardRebook();
   const [selectedDate, setSelectedDate] = useState(initialDate);
   // The server's date changed (a mini-calendar pick, a toolbar step or a link keeps this component
@@ -188,8 +190,13 @@ export function CalendarMobileDayView({
     <div className="md:hidden">
       {/* Sticky mobile header: date + Today + prev/next + week strip. Kept
           within the app's page padding (no negative margin) so it never causes
-          horizontal page overflow. */}
-      <div className="sticky top-14 z-20 border-b border-neutral-200 bg-white/95 py-2 backdrop-blur dark:border-neutral-800 dark:bg-neutral-950/95">
+          horizontal page overflow. HON-124 item 5: it sticks at the MEASURED
+          app-header height (~69px at 390), not the 56px `top-14` fallback,
+          which left its top 13px under the header. */}
+      <div
+        data-testid="calendar-mobile-day-header"
+        style={appHeaderHeight > 0 ? { top: appHeaderHeight } : undefined}
+        className="sticky top-14 z-20 border-b border-neutral-200 bg-white/95 py-2 backdrop-blur dark:border-neutral-800 dark:bg-neutral-950/95">
         <div className="flex items-center justify-between gap-2">
           <div>
             <div className="text-base font-semibold">
