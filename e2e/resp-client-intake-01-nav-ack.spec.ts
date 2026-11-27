@@ -396,8 +396,9 @@ test.describe("RESP-CLIENT-INTAKE-01: the two raw anchors are soft navigations n
 test.describe("RESP-CLIENT-INTAKE-01: the proof discriminates", () => {
   test.setTimeout(T * 3);
 
-  // NEGATIVE CONTROL. `Edit` is deliberately NOT in this slice and is still a
-  // bare <Link>. Driving it through the SAME gate and the SAME oracle must
+  // NEGATIVE CONTROL. The profile's "← Clients" back link is deliberately NOT in this slice and is still a
+  // bare <Link>. (It used to be the Edit link; HON-109 measured Edit, converted it, and moved this control here: the control's job is unchanged.)
+  // Driving it through the SAME gate and the SAME oracle must
   // report NO acknowledgement. If this ever starts acknowledging, either the
   // slice grew silently or the oracle stopped discriminating — and in both
   // cases every positive assertion above is worth less than it looks.
@@ -408,12 +409,12 @@ test.describe("RESP-CLIENT-INTAKE-01: the proof discriminates", () => {
     await loginAsOwner(page, seed);
     await page.goto(`/clients/${clientId}`);
 
-    const edit = page.getByRole("link", { name: "Edit", exact: true }).first();
+    const edit = page.getByRole("link", { name: "← Clients", exact: true }).first();
     await expect(edit).toBeVisible();
 
     const gate = await holdNavigation(
       page,
-      (url) => url.pathname === `/clients/${clientId}/edit`,
+      (url) => url.pathname === "/clients",
       { holdPrefetch: true },
     );
     await edit.click();

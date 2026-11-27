@@ -6,6 +6,8 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("next/link", () => ({
   default: (p: { href: string; className?: string; children?: unknown }) =>
     createElement("a", { href: p.href, className: p.className }, p.children as never),
+  // PendingLink (HON-109 Records) reads the link's pending state; a static render is never pending.
+  useLinkStatus: () => ({ pending: false }),
 }));
 
 const { VisitSummary } = await import("@/app/(app)/clients/[id]/_profile/VisitSummary");
