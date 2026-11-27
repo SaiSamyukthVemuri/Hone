@@ -106,10 +106,24 @@ describe("source guards", () => {
     expect(view).not.toMatch(/<form\b|<button\b|<input\b|<textarea|<select|onSubmit|formAction/i);
     expect(view).toMatch(/<MonthControls base="\/financials\/statement"/);
     const chrome = read("app/(app)/financials/statements/statements-chrome.tsx");
-    expect(chrome.match(/<form\b/gi)?.length).toBe(1);
-    expect(chrome).toMatch(/<form method="get" action=\{base\}/);
-    expect(chrome.match(/<button\b/gi)?.length).toBe(1);
-    expect(chrome).toMatch(/<button type="submit"/);
+    // HON-109: the month picker is the shared PendingGetForm in NATIVE mode, which renders the same navigation-only GET form (the browser submits and
+    // the history entry is the browser's) and only adds a pending flag. The chrome itself must still hold exactly ONE form and ONE submit control, and
+    // neither may be a plain post: the form's markup is pinned in the component that renders it.
+    expect(chrome.match(/<form\b/gi)).toBeNull();
+    expect(chrome.match(/<PendingGetForm\b/g)?.length).toBe(1);
+    expect(chrome).toMatch(/<PendingGetForm native action=\{base\}/);
+    expect(chrome.match(/<button\b/gi)).toBeNull();
+    expect(chrome.match(/<PendingSubmit\b/g)?.length).toBe(1);
+    // Code only: the component's header comment talks about `<form method="get">` in prose.
+    const pendingForm = read("components/pending-get-form.tsx").split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+    expect(pendingForm.match(/<form\b/g)?.length).toBe(1);
+    expect(pendingForm).toMatch(/<form \{\.\.\.rest\} action=\{action\} method="get"/);
+    expect(pendingForm.match(/<button\b/g)?.length).toBe(1);
+    expect(pendingForm).toMatch(/<button type="submit"/);
+    expect(pendingForm).not.toMatch(/method="post"|"use server"|<input\b|<textarea|<select/i);
+    // `formaction` appears only as a read of the submitter (a submitter with its own formaction is left to the browser), never as a prop it sets.
+    expect(pendingForm.match(/formaction/gi)?.length).toBe(1);
+    expect(pendingForm).toMatch(/hasAttribute\("formaction"\)/);
     const picker = read("app/(app)/financials/statements/month-picker-input.tsx");
     expect(picker.match(/<input\b/gi)?.length).toBe(1);
     expect(picker).toMatch(/type="month"\s+name="month"/);
