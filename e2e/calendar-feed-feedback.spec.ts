@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { loginAsOwner } from "./helpers/flows";
 import { getOwnerPractitionerId, seedE2eStudio, sql } from "./helpers/seed";
@@ -62,7 +63,8 @@ async function expectNoFeedLink(page: Page) {
 async function openProfile(page: Page, withFeed: boolean): Promise<{ practitionerId: string; seededHash: string | null }> {
   const seed = await seedE2eStudio();
   const practitionerId = await getOwnerPractitionerId(seed.studioId);
-  const seededHash = withFeed ? `e2e-seeded-feed-hash-${seed.runId}` : null;
+  // The column only accepts a SHA-256 digest (64 lowercase hex), so the placeholder is the digest of a run-scoped string: a valid hash of nothing anyone holds.
+  const seededHash = withFeed ? createHash("sha256").update(`e2e-seeded-feed-${seed.runId}`).digest("hex") : null;
   if (seededHash) await sql("update public.practitioners set calendar_feed_token_hash = $2 where id = $1", [practitionerId, seededHash]);
   await loginAsOwner(page, seed);
   await page.goto("/settings/profile");
