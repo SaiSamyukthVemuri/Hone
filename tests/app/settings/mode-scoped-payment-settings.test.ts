@@ -27,7 +27,9 @@ function read(rel: string): string {
 // splits every count by the ROW's own stripe_livemode — mode-correct by
 // construction, so it is exempt from the per-block current-mode filter rule
 // below (its platform-summary read IS current-mode scoped).
-const BOTH_MODE_READERS = ["lib/payments/admin-payment-status.ts"];
+// lib/stripe/studio-platform.ts asks only WHETHER the studio has a connected account in any mode (HON-90): an account that predates jurisdiction
+// rows keeps resolving to the CA platform whichever mode it is in. It reads one id column, limit 1, and returns a boolean.
+const BOTH_MODE_READERS = ["lib/payments/admin-payment-status.ts", "lib/stripe/studio-platform.ts"];
 
 const TABLE_READERS = [
   "app/portal/payment-method-actions.ts",

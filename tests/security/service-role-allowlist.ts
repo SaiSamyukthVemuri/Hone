@@ -460,6 +460,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "isAuthorizedCronRequest",
   },
   {
+    path: "lib/stripe/studio-platform.ts",
+    purpose: "HON-90: resolves which Stripe platform account owns a studio (its jurisdiction row), and whether a studio with no row has an existing connected account.",
+    why: "Server-only helper called by trusted server code with a studio id the caller already resolved (a session studio, an attempt row, a verified event binding); never a request value. It reads one id column of one studio's settings and returns a boolean, and it reads the studio's jurisdiction through the one existing reader.",
+    scopeGuard: "studioHasConnectedAccount",
+  },
+  {
     path: "app/api/stripe/webhook/route.ts",
     purpose: "Stripe webhook handler.",
     why: "No user session; authenticated by Stripe signature verification (constructEvent). Rows are resolved by the verified event's ids.",
