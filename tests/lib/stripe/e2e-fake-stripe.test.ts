@@ -177,7 +177,7 @@ describe("production-path invariance (seam)", () => {
     // HON-90: a studio with no verified or configured platform is refused even under the fake.
     expect(SEAM).toMatch(/if \(isE2eFakeStripeEnabled\(\)\) \{\s*const route = await resolveStudioPlatform\(studioId\);\s*if \(!route\.ok\) throw new StripePlatformUnavailableError\(route\.reason\);\s*return createFakeStripe\(\);/);
     expect(SEAM).toMatch(/const stripe = await requireStripeForStudio\(studioId\);\s*return stripe;/);
-    expect(SEAM).not.toMatch(/\bgetStripe\(/);
+    expect(SEAM.split("\n").filter((l) => !/^\s*\/\//.test(l)).join("\n")).not.toMatch(/\bgetStripe\(/);
   });
   it("calls the fail-loud deployment guard before any fake branch", () => {
     expect(SEAM.indexOf("assertFakeStripeNotRequestedInDeployment")).toBeLessThan(
