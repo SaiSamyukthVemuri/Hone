@@ -43,6 +43,7 @@ test.describe("Team settings: receptionist invitations", () => {
 
     // Cancel it: the row goes away on the page and the invitation is revoked, so it can no longer be accepted.
     await row.getByRole("button", { name: /revoke/i }).click();
+    await page.getByTestId("confirm-dialog-confirm").click();
     await expect(page.locator("li", { hasText: invitee })).toHaveCount(0, { timeout: 30_000 });
     expect((await sql<{ status: string }>(`select status from public.pending_invitations where studio_id = $1 and lower(email) = $2`, [seed.studioId, invitee]))[0]?.status).toBe(
       "revoked",
@@ -61,6 +62,8 @@ test.describe("Team settings: receptionist invitations", () => {
     const row = page.locator("li", { hasText: "Desk Person" });
     await expect(row).toBeVisible({ timeout: T });
     await row.getByRole("button", { name: /deactivate/i }).click();
+    await expect(page.getByRole("alertdialog", { name: /Deactivate Desk Person/ })).toBeVisible({ timeout: T });
+    await page.getByTestId("confirm-dialog-confirm").click();
     await expect(row.getByText(/inactive/i)).toBeVisible({ timeout: 30_000 });
     expect((await sql<{ active: boolean }>(`select active from public.studio_receptionists where studio_id = $1 and user_id = $2`, [seed.studioId, userId]))[0]?.active).toBe(false);
   });
