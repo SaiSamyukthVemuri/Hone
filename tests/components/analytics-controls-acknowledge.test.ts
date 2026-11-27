@@ -34,7 +34,9 @@ describe("HON-109 analytics controls acknowledge a press", () => {
     const src = readFileSync(path.join(process.cwd(), "components/pending-get-form.tsx"), "utf8");
     expect(src).toMatch(/method="get"/);
     expect(src).toMatch(/useTransition/);
-    expect(src).not.toMatch(/setTimeout/);
+    // No delay is added to the navigation. The ONE timer is the native pending mark's recovery (a cancelled navigation must not lock the form).
+    expect(src.match(/setTimeout/g)).toHaveLength(1);
+    expect(src).toMatch(/window\.setTimeout\(clear, NATIVE_PENDING_MAX_MS\)/);
   });
 
   it("the Statements month picker acknowledges a press but keeps the browser's own GET submission (HON-100 Back/Forward restore)", () => {
@@ -43,7 +45,9 @@ describe("HON-109 analytics controls acknowledge a press", () => {
     expect(chrome).not.toMatch(/<form\b/);
     const gf = readFileSync(path.join(process.cwd(), "components/pending-get-form.tsx"), "utf8");
     // native mode never prevents the browser's submit unless a press is already in flight
-    expect(gf).toMatch(/if \(native\) \{[\s\S]*?if \(pending\) event\.preventDefault\(\);[\s\S]*?return;/);
+    // The browser submits; a second submit is NOT swallowed (a cancelled navigation must never lock the form).
+    expect(gf).toMatch(/if \(native\) \{[\s\S]*?setNativePending\(true\);[\s\S]*?return;/);
+    expect(gf).not.toMatch(/if \(native\) \{[\s\S]*?if \(pending\) event\.preventDefault\(\);[\s\S]*?return;/);
     expect(gf).toMatch(/pageshow/);
   });
 
@@ -51,9 +55,12 @@ describe("HON-109 analytics controls acknowledge a press", () => {
     expect(readFileSync(path.join(process.cwd(), "components/pending-button.tsx"), "utf8")).toMatch(/usePendingGetForm\(\)/);
   });
 
-  it("the uncontrolled filter forms are keyed on the applied params, so an unapplied choice cannot outlive a navigation (Codex P2)", () => {
-    expect(read("overview-screen.tsx")).toMatch(/<PendingGetForm key=\{\[params\.periodKind, selected, params\.from, params\.to, params\.compare, params\.series\]\.join\("\|"\)\}/);
-    expect(read("waitlist-screen.tsx")).toMatch(/<PendingGetForm key=\{`\$\{params\.serviceId \?\? ""\}\|\$\{params\.days\}`\}/);
+  it("the keying lives in ONE place: PendingGetForm keys its <form> on the full applied address, and no screen carries its own key (Codex P2 x2)", () => {
+    const form = readFileSync(path.join(process.cwd(), "components/pending-get-form.tsx"), "utf8");
+    expect(form).toMatch(/<form key=\{appliedAddress\}/);
+    expect(form).toMatch(/usePathname\(\)/);
+    expect(form).toMatch(/useSearchParams\(\)/);
+    for (const f of ["overview-screen.tsx", "waitlist-screen.tsx"]) expect(read(f), f).not.toMatch(/<PendingGetForm key=/);
   });
 
   it("the feedback e2e selects a Period option that exists and does not swallow the rejection (Codex P1)", () => {

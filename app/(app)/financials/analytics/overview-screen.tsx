@@ -139,11 +139,9 @@ export function Controls({ params, options, action = OVERVIEW_PATH, hidden = [] 
   // Compact controls: a period list and a team-member list. Choosing "Custom range" reveals the dates and the comparison, with no script: the form's own
   // :has() rule shows that group while the Custom option is selected. The submit button is always there, so every choice works without script, and the
   // submitted names and values are exactly the ones the loader's strict parser reads.
-  // KEYED ON THE APPLIED PARAMS (Codex P2, HON-109): the selects and date inputs below are uncontrolled (defaultValue), and a soft navigation that changes
-  // only the applied params (a series toggle, a tab) keeps this form mounted, so an unsubmitted choice would keep showing next to figures for another
-  // period. A new key remounts the form with the applied values; a choice that is not applied yet (the person is still choosing) does not change the key.
+  // The form remounts from the applied values on every navigation (PendingGetForm keys itself on the full applied address), so no per-screen key is needed here.
   return (
-    <PendingGetForm key={[params.periodKind, selected, params.from, params.to, params.compare, params.series].join("|")} action={action} className="group flex flex-wrap items-end justify-end gap-2" aria-label="Period and team member">
+    <PendingGetForm action={action} className="group flex flex-wrap items-end justify-end gap-2" aria-label="Period and team member">
       <label className="flex flex-col gap-1 text-xs text-fg-muted">
         <span className="sr-only">Period</span>
         <select name="period" defaultValue={params.periodKind} aria-label="Period" className={INPUT}>
