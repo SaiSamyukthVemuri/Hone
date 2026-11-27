@@ -89,7 +89,9 @@ beforeAll(async () => {
   await adminQuery(`insert into auth.users (id, email) values ($1, $2), ($3, $4)`, [
     desk, `desk-${desk.slice(0, 8)}@harness.local`, stranger, `stranger-${stranger.slice(0, 8)}@harness.local`,
   ]);
-  await adminQuery(`insert into public.studio_receptionists (studio_id, user_id, display_name, active) values ($1, $2, 'Desk', true)`, [studio.studioId, desk]);
+  // A fixture row: from 0390 on a front-desk seat gate (front_desk_not_enabled) guards the insert, and this file is about alert reads, not seats,
+  // so the seat triggers are skipped for this one statement.
+  await adminQuery(`begin; set local session_replication_role = replica; insert into public.studio_receptionists (studio_id, user_id, display_name, active) values ('${studio.studioId}', '${desk}', 'Desk', true); commit;`);
 });
 
 afterAll(async () => {
