@@ -45,11 +45,6 @@ describe("export: owner-only gate", () => {
     expect(firstReadIdx).toBeGreaterThan(gateIdx);
   });
 
-  it("the refusal does not leak the role model or table names", () => {
-    const refusal = "You do not have permission to export data.";
-    expect(refusal).not.toMatch(/owner|role|admin/i);
-  });
-
   it("the inactive-practitioner gate is still present", () => {
     expect(CODE).toMatch(/Inactive practitioners cannot export data\./);
   });

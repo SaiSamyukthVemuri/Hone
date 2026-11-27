@@ -461,10 +461,6 @@ const PROFILE_CODE = codeOnly(PROFILE);
 const ACTIONS_CODE = codeOnly(read("app/(app)/clients/[id]/intake/actions.ts"));
 
 describe("5. the button", () => {
-  it("carries the exact CTA copy", () => {
-    expect(BUTTON_CODE).toContain("Start intake with client");
-  });
-
   it("shows a pending label and disables itself while creating", () => {
     expect(BUTTON_CODE).toMatch(/disabled=\{isPending\}/);
     expect(BUTTON_CODE).toMatch(

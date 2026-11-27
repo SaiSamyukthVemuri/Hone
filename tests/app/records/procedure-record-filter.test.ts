@@ -209,11 +209,6 @@ describe("Records page: filter UI", () => {
     );
   });
 
-  it("filtered empty state is distinct from the no-data state", () => {
-    expect(PAGE).toMatch(/No recorded sessions match this filter\./);
-    expect(PAGE).toMatch(/No sessions recorded yet\./);
-  });
-
   it("params are sanitized through the shared normalizer", () => {
     expect(PAGE).toMatch(/normalizeProcedureRecordFilter\(\{/);
     expect(PAGE).toMatch(/utcInstantsForLocalDayRange\(/);

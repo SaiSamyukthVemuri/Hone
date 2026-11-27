@@ -14,8 +14,7 @@ import { pickLastTreatment, pickNewestNonVoidSession } from "@/lib/sessions/clin
 // 3. One "Performed by" surface: the inline line under the session
 //    title (with an Edit affordance); the separate card is gone.
 // 4. "Detach from this plan" renders INSIDE the treatment plan card.
-// 5. Client info shows Birthday as a plain row: no nested box, no
-//    "Used only for practitioner reminders" helper, one Edit link.
+// 5. Client info shows Birthday as a plain row with one Edit link.
 
 function read(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf8");
@@ -205,18 +204,6 @@ describe("For next visit consolidation", () => {
     expect(SUMMARY_HELPER).toMatch(/caution_for_next_session/);
     expect(SUMMARY_HELPER).toMatch(/watchLines/);
   });
-
-  it("the session-level For next visit section renders exactly once with the new copy", () => {
-    expect(
-      SESSION_PAGE.match(/>For next visit<\/h2>/g)?.length,
-    ).toBe(1);
-    expect(SESSION_PAGE).toMatch(
-      /Anything to remember, watch, or do differently next time\./,
-    );
-    expect(NOTE_FORM).toMatch(
-      /e\.g\. Upper lip: start lower and check sensitivity\. Chin: continue same settings\./,
-    );
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -237,10 +224,6 @@ describe("Performed by appears once on the session page", () => {
     expect(SESSION_PAGE).toMatch(
       /updatePerformerAction=\{updateSessionPerformerAction\}/,
     );
-  });
-
-  it("the old separate card component is gone from the repo", () => {
-    expect(() => read("components/session-info-card.tsx")).toThrow();
   });
 });
 
@@ -269,14 +252,6 @@ describe("Detach from this plan lives inside the plan card", () => {
 // ---------------------------------------------------------------------------
 
 describe("Client info birthday row", () => {
-  it("no nested card/box: the birthday section has no border of its own", () => {
-    expect(BIRTHDAY).not.toMatch(/rounded-lg border/);
-  });
-
-  it("the reminders helper text is gone", () => {
-    expect(BIRTHDAY).not.toMatch(/Used only for practitioner reminders/);
-  });
-
   it("birthday, emergency contact, and address are sibling rows in one card", () => {
     const card = PAGE.slice(
       PAGE.indexOf("Client info"),

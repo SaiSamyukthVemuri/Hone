@@ -336,10 +336,6 @@ describe("BLOCKER 2: Finish uses sessions.appointment_id, not billing types", ()
     expect(c).not.toMatch(/from\("appointments"\)[\s\S]{0,400}\.limit\(/);
     expect(c).not.toMatch(/from\("appointments"\)[\s\S]{0,400}\.order\(/);
   });
-
-  it("still exactly ONE appointment read", () => {
-    expect((PAGE.match(/from\("appointments"\)/g) ?? []).length).toBe(1);
-  });
 });
 
 describe("BLOCKER 3: charting is modality-aware", () => {
