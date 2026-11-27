@@ -490,6 +490,8 @@ export const BROWSER_GROUPS = {
     specs: [
       "marketing-homepage.spec.ts",
       "marketing-pages.spec.ts",
+      // HON-124 item 1. Public site search: by keyboard, at 390 px, and that no query leaves the page.
+      "marketing-site-search.spec.ts",
       "public-pages-contact-faq-mobile.spec.ts",
       // MKT-02B. The homepage film: lazy-until-asked, no autoplay under either
       // motion preference, and the poster being preloaded eagerly. Filed here

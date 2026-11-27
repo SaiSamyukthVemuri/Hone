@@ -209,8 +209,8 @@ describe("the FAQ answers what it asks", () => {
     // mutation control caught it: restoring the over-broad question still
     // passed. This file's own header says a rule a comment can satisfy is not
     // a rule, and the first draft was exactly that.
-    const raw = strip(read("app/pricing/page.tsx"));
-    const start = raw.indexOf("const FAQ:");
+    const raw = strip(read("lib/marketing/content.ts"));
+    const start = raw.indexOf("const PRICING_FAQ:");
     expect(start, "the FAQ array exists").toBeGreaterThan(-1);
     return raw.slice(start, raw.indexOf("\n];", start));
   })();

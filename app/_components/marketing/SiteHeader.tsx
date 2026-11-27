@@ -2,6 +2,7 @@ import Link from "next/link";
 import { PRIMARY_NAV, WALKTHROUGH, ANALYTICS_EVENTS } from "@/lib/marketing/content";
 import { Container, CTAButton } from "./primitives";
 import { MobileNav } from "./MobileNav";
+import { SiteSearch } from "./SiteSearch";
 import { ProductMenu } from "./ProductMenu";
 import { MK_FONT_DISPLAY } from "./tokens";
 
@@ -45,27 +46,30 @@ export function SiteHeader({ cta = true }: { cta?: boolean } = {}) {
             Hone
           </Link>
 
-          <nav className="hidden items-center gap-7 lg:flex" aria-label="Primary">
-            <ProductMenu />
+          <div className="flex items-center gap-2 lg:gap-5">
+            <nav className="hidden items-center gap-7 lg:flex" aria-label="Primary">
+              <ProductMenu />
 
-            {rest.map((item) => (
-              <Link key={item.href} href={item.href} className={NAV_LINK}>
-                {item.label}
-              </Link>
-            ))}
+              {rest.map((item) => (
+                <Link key={item.href} href={item.href} className={NAV_LINK}>
+                  {item.label}
+                </Link>
+              ))}
 
-            {cta ? (
-              <CTAButton
-                href={WALKTHROUGH.href}
-                variant="outline"
-                event={ANALYTICS_EVENTS.primaryCtaClick}
-              >
-                {WALKTHROUGH.primaryLabelShort}
-              </CTAButton>
-            ) : null}
-          </nav>
+              {cta ? (
+                <CTAButton
+                  href={WALKTHROUGH.href}
+                  variant="outline"
+                  event={ANALYTICS_EVENTS.primaryCtaClick}
+                >
+                  {WALKTHROUGH.primaryLabelShort}
+                </CTAButton>
+              ) : null}
+            </nav>
 
-          <MobileNav />
+            <SiteSearch />
+            <MobileNav />
+          </div>
         </div>
       </Container>
     </header>

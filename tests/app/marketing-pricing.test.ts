@@ -14,7 +14,10 @@ function stripComments(s: string): string {
   return s.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
 }
 
-const RAW = read("app/pricing/page.tsx");
+// The FAQ lives in the shared content module (the page, the FAQPage JSON-LD and the site search read it), so its copy is read with the page's.
+const CONTENT = read("lib/marketing/content.ts");
+const FAQ_SRC = CONTENT.slice(CONTENT.indexOf("export const PRICING_FAQ"), CONTENT.indexOf("\n];", CONTENT.indexOf("export const PRICING_FAQ")) + 3);
+const RAW = read("app/pricing/page.tsx") + "\n" + FAQ_SRC;
 const PAGE = stripComments(RAW).replace(/\s+/g, " ");
 
 describe("pricing: USD + three tiers", () => {

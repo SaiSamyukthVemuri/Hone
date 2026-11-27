@@ -26,6 +26,7 @@ import {
   WALKTHROUGH,
   CONTACT_EMAIL,
   ANALYTICS_EVENTS,
+  PRICING_FAQ,
 } from "@/lib/marketing/content";
 import { marketingMetadata } from "@/lib/marketing/metadata";
 
@@ -63,49 +64,6 @@ const INCLUDED: string[] = [
   // TRUTH-01A: "Full data export" overstated a named-subset export. See
   // lib/export/resource-registry.ts for the authoritative contents.
   "CSV data export at any time, with a list of what it includes",
-];
-
-const FAQ: { q: string; a: string }[] = [
-  {
-    q: "How much does Hone cost?",
-    a: "Solo is US$49/month for one practitioner. Studio is US$99/month for up to three practitioners. If your studio has more than three practitioners, contact us. All prices are in US dollars (USD).",
-  },
-  {
-    // NARROWED WITH ITS ANSWER. This asked "...or a contract?" and, once the
-    // contract half of the answer went, the page put a question to the visitor
-    // that it then declined to answer — and published that pairing as
-    // FAQPage structured data. A question is a promise to answer it.
-    q: "Is there a setup fee?",
-    a: "No. Setup is founder-led during onboarding, and you can cancel anytime.",
-  },
-  {
-    q: "What's included on each plan?",
-    a: "Every plan includes the full Hone workflow: booking, intake and consent, charting, treatment memory, photos and records, and client follow-up. Plans differ only by who they are for and how many practitioners they cover.",
-  },
-  {
-    q: "Can I bring my existing client history into Hone?",
-    a: "Yes. Standard client import is free and part of guided onboarding. We help bring history over from paper cards, spreadsheets or another tool.",
-  },
-  {
-    q: "How do payments work?",
-    a: "Hone connects to your own Stripe account, so payments and payouts go directly to you and card details never touch Hone's servers. Payments are enabled during guided onboarding.",
-  },
-  {
-    q: "Can my clients book online?",
-    a: "Yes. Each studio has its own public booking link on hone.care. A client chooses from the services and times the studio has published, and the studio's own availability and rules decide what is offered.",
-  },
-  {
-    q: "Can clients change or cancel their own appointment?",
-    a: "Where the studio's policy allows it, yes. A client's appointment emails carry private links to reschedule or cancel it.",
-  },
-  {
-    q: "How does the Studio plan work?",
-    a: "Studio covers up to three practitioners at US$99/month, and Studio setup is completed through guided onboarding. If your studio has more than three practitioners, get in touch and we'll set up a plan that fits.",
-  },
-  {
-    q: "Does Hone replace my other tools?",
-    a: REPLACES_STATEMENT,
-  },
 ];
 
 function PlanColumn({ plan }: { plan: (typeof PRICING_PLANS)[number] }) {
@@ -238,12 +196,12 @@ export default function PricingPage() {
         </Section>
 
         {/* FAQ */}
-        <Section tone="paper">
+        <Section tone="paper" id="faq">
           <Container className="grid gap-x-[clamp(2.5rem,5vw,5rem)] gap-y-6 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.7fr)]">
             <Title className="max-w-[14ch]">Pricing questions</Title>
             <div className="max-w-[64ch]">
               <dl className="border-t border-[color:var(--color-hairline-strong)]">
-                {FAQ.map((item) => (
+                {PRICING_FAQ.map((item) => (
                   <div key={item.q} className="border-b border-[color:var(--color-hairline)] py-5">
                     <dt>
                       <Subtitle as="h3">{item.q}</Subtitle>
@@ -298,7 +256,7 @@ export default function PricingPage() {
       </main>
       <SiteFooter />
       <SafeAnalytics />
-      <JsonLd data={faqPageLd(FAQ)} />
+      <JsonLd data={faqPageLd(PRICING_FAQ)} />
     </MarketingSurface>
   );
 }

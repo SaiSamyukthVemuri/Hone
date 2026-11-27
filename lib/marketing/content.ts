@@ -368,6 +368,51 @@ export const PAYMENT_QUALIFIER = "Payments are enabled during guided onboarding.
 export const REPLACES_STATEMENT =
   "Hone can replace a separate booking calendar, intake tool, treatment-notes system, and client portal for practices that fit Hone's current workflow." as const;
 
+// The pricing page's questions. One source for the visible list, the FAQPage
+// JSON-LD and the site search, so the three cannot drift.
+export const PRICING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
+  {
+    q: "How much does Hone cost?",
+    a: "Solo is US$49/month for one practitioner. Studio is US$99/month for up to three practitioners. If your studio has more than three practitioners, contact us. All prices are in US dollars (USD).",
+  },
+  {
+    // NARROWED WITH ITS ANSWER. This asked "...or a contract?" and, once the
+    // contract half of the answer went, the page put a question to the visitor
+    // that it then declined to answer — and published that pairing as
+    // FAQPage structured data. A question is a promise to answer it.
+    q: "Is there a setup fee?",
+    a: "No. Setup is founder-led during onboarding, and you can cancel anytime.",
+  },
+  {
+    q: "What's included on each plan?",
+    a: "Every plan includes the full Hone workflow: booking, intake and consent, charting, treatment memory, photos and records, and client follow-up. Plans differ only by who they are for and how many practitioners they cover.",
+  },
+  {
+    q: "Can I bring my existing client history into Hone?",
+    a: "Yes. Standard client import is free and part of guided onboarding. We help bring history over from paper cards, spreadsheets or another tool.",
+  },
+  {
+    q: "How do payments work?",
+    a: "Hone connects to your own Stripe account, so payments and payouts go directly to you and card details never touch Hone's servers. Payments are enabled during guided onboarding.",
+  },
+  {
+    q: "Can my clients book online?",
+    a: "Yes. Each studio has its own public booking link on hone.care. A client chooses from the services and times the studio has published, and the studio's own availability and rules decide what is offered.",
+  },
+  {
+    q: "Can clients change or cancel their own appointment?",
+    a: "Where the studio's policy allows it, yes. A client's appointment emails carry private links to reschedule or cancel it.",
+  },
+  {
+    q: "How does the Studio plan work?",
+    a: "Studio covers up to three practitioners at US$99/month, and Studio setup is completed through guided onboarding. If your studio has more than three practitioners, get in touch and we'll set up a plan that fits.",
+  },
+  {
+    q: "Does Hone replace my other tools?",
+    a: REPLACES_STATEMENT,
+  },
+];
+
 // ---------------------------------------------------------------------------
 // Public capability groups (prompt §7), broad, outcome-led, truthful labels.
 // ---------------------------------------------------------------------------

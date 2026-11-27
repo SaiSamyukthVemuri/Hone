@@ -120,7 +120,7 @@ export function articleLd(a: ResourceArticle) {
 }
 
 /** FAQPage, must be built from the SAME questions shown visibly on the page. */
-export function faqPageLd(faq: { q: string; a: string }[]) {
+export function faqPageLd(faq: ReadonlyArray<{ q: string; a: string }>) {
   return {
     "@context": "https://schema.org",
     "@type": "FAQPage",
