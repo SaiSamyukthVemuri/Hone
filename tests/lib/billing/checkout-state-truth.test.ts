@@ -197,3 +197,21 @@ describe("a billed visit is marked so the row can offer Manage payments (Codex P
     expect(isBilledVisit(plain, APPT)).toBe(false);
   });
 });
+
+// Codex P2 on #1827 (appointment-payment-state:445): a billed visit's card money is read BY APPOINTMENT, never through live charts. A soft-deleted chart still holds the real payment.
+describe("a billed visit whose chart was soft-deleted still reads paid (and a missing card still reads owed)", () => {
+  const billed = (cards: boolean) => {
+    scenario({ refundCents: null });
+    h.rows.sessions = [];                                   // the only chart is soft-deleted: no live session
+    h.rows.visit_bills = [{ appointment_id: APPT, studio_id: STUDIO, total_cents: CHARGED, currency: "cad", superseded_at: null }];
+    h.rows.payment_charge_attempts = cards ? [{ ...h.rows.payment_charge_attempts[0], appointment_id: APPT, visit_bill_id: "bill-1", currency: "cad" }] : [];
+  };
+  it("a succeeded split card payment on a deleted chart: paid, not owed", async () => {
+    billed(true);
+    expect(await state()).toBe("paid");
+  });
+  it("control: with no card payment at all the same visit is chargeable", async () => {
+    billed(false);
+    expect(await state()).toBe("chargeable");
+  });
+});

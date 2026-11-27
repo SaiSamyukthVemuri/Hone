@@ -56,4 +56,11 @@ describe("the statement read of a billed card payment refunded in two places", (
     const r = await readMoneyForAppointments(fake(tables({ stripe_livemode: true }, [{ appointment_id: A, attempt_id: ATT, amount_cents: 4000, currency: "cad", status: "succeeded", legacy: false, kind: "payment_reversal" }])), STUDIO, [A]);
     expect(moneyOf(r)).toEqual([["partial_refund", 4000]]);
   });
+  // Codex P2 on #1827 (statement-money-read:135): a price reduction on a TEST card payment is test money; it must not lower the bill the statement covers.
+  it("a succeeded price reduction on a test-mode card does not reduce the bill total; on a live card it does", async () => {
+    const reduction = [{ appointment_id: A, attempt_id: ATT, amount_cents: 3000, currency: "cad", status: "succeeded", legacy: false, kind: "price_reduction" }];
+    const reducedOf = (r: Awaited<ReturnType<typeof readMoneyForAppointments>>) => (r.ok ? r.settlementRows.find((x) => x.method === "bill_total")?.reducedCents : "failed");
+    for (const mode of [false, null]) expect(reducedOf(await readMoneyForAppointments(fake(tables({ stripe_livemode: mode }, reduction)), STUDIO, [A])), String(mode)).toBe(0);
+    expect(reducedOf(await readMoneyForAppointments(fake(tables({ stripe_livemode: true }, reduction)), STUDIO, [A]))).toBe(3000);
+  });
 });

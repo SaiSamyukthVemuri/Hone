@@ -130,9 +130,6 @@ export async function readMoneyForAppointments(supabase: SupabaseClient, studioI
   ]);
   if (!bills.ok || !externals.ok || !refunds.ok || !reviews.ok) return { ok: false };
   const ledgerRows: AssembleSettlementRow[] = [];
-  // Succeeded PRICE REDUCTIONS are already inside the bill total; a payment reversal is not (Sam, 27 Nov 2026: a reversal never reopens a balance, as visit_payment_position, 0394).
-  const reducedOf = (appointmentId: string) => refunds.rows.filter((r) => r.appointment_id === appointmentId && !r.legacy && r.kind === "price_reduction" && r.status === "succeeded").reduce((n, r) => n + (r.amount_cents ?? 0), 0);
-  for (const b of bills.rows) ledgerRows.push({ appointmentId: b.appointment_id, method: "bill_total", amountCents: null, currency: b.currency, quotedAmountCents: b.total_cents, reducedCents: reducedOf(b.appointment_id) });
   for (const e of externals.rows) {
     if (e.state === "voided") continue; // retracted before any money moved: nothing to show
     // Confirmed money is cash / e-transfer / other as the owner recorded it. A transfer still waiting for confirmation is owed, not received.
@@ -163,6 +160,10 @@ export async function readMoneyForAppointments(supabase: SupabaseClient, studioI
 
   // Only a LIVE card payment is real money. A refund row that points at an attempt is real only when that attempt is live (cash and transfer refunds have no attempt).
   const liveAttempt = new Set<string>([...feeCards.rows, ...sessionCards.rows].filter((r) => r.stripe_livemode === true).map((r) => r.id));
+  // Succeeded PRICE REDUCTIONS are already inside the bill total; a payment reversal is not (Sam, 27 Nov 2026: a reversal never reopens a balance, as visit_payment_position, 0394).
+  // A reduction on a TEST-mode (or unknown-mode) card payment is test money: that card is excluded from the statement, so the reduction must not lower the bill either (0394 studio_has_gone_live).
+  const reducedOf = (appointmentId: string) => refunds.rows.filter((r) => r.appointment_id === appointmentId && !r.legacy && !(r.attempt_id && !liveAttempt.has(r.attempt_id)) && r.kind === "price_reduction" && r.status === "succeeded").reduce((n, r) => n + (r.amount_cents ?? 0), 0);
+  for (const b of bills.rows) ledgerRows.push({ appointmentId: b.appointment_id, method: "bill_total", amountCents: null, currency: b.currency, quotedAmountCents: b.total_cents, reducedCents: reducedOf(b.appointment_id) });
   // An attempt that has its own split refunds is shown through THOSE rows. When the split refunds add up to the whole charge the webhook also marks the attempt itself
   // fully refunded (0240), and showing that full-refund line as well as each split refund would count the same money twice (two $50 refunds must read $100, not $200).
   const splitRefundedAttempts = new Set<string>();

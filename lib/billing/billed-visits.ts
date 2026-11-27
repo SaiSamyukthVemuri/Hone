@@ -27,8 +27,8 @@ export async function readBilledVisits(
     // and visit_payment_position counts it for a billed attempt. Dropping it left a refunded visit reading "paid".
     readInChunks<{ appointment_id: string; attempt_id: string | null; amount_cents: number; status: string; legacy: boolean; kind: string }>(ids, (chunk) =>
       supabase.from("payment_refunds").select("appointment_id, attempt_id, amount_cents, status, legacy, kind").eq("studio_id", studioId).in("appointment_id", chunk)),
-    readInChunks<{ id: string; appointment_id: string; status: string | null; amount_cents: number | null; refund_status: string | null; refund_amount_cents: number | null; stripe_livemode: boolean | null }>(ids, (chunk) =>
-      supabase.from("payment_charge_attempts").select("id, appointment_id, status, amount_cents, refund_status, refund_amount_cents, stripe_livemode").eq("studio_id", studioId).eq("charge_reason", "session_payment").not("visit_bill_id", "is", null).in("appointment_id", chunk)),
+    readInChunks<{ id: string; appointment_id: string; status: string | null; amount_cents: number | null; refund_status: string | null; refund_amount_cents: number | null; stripe_livemode: boolean | null; currency: string | null }>(ids, (chunk) =>
+      supabase.from("payment_charge_attempts").select("id, appointment_id, status, amount_cents, currency, refund_status, refund_amount_cents, stripe_livemode").eq("studio_id", studioId).eq("charge_reason", "session_payment").not("visit_bill_id", "is", null).in("appointment_id", chunk)),
     // A refund made in the Stripe dashboard that the owner has not confirmed: the visit is never "paid" while it is open (it reads as a refund in flight).
     readInChunks<{ appointment_id: string | null; amount_cents: number }>(ids, (chunk) =>
       supabase.from("payment_refund_reviews").select("appointment_id, amount_cents").eq("studio_id", studioId).is("resolved_at", null).in("appointment_id", chunk)),
@@ -44,6 +44,8 @@ export async function readBilledVisits(
     billed.set(b.appointment_id, {
       totalCents: b.total_cents,
       currency: b.currency,
+      // Card money by appointment, not through live charts. Once the studio has gone live (0394) a non-live card is not subtracted, so it is not listed.
+      cards: attempts.rows.filter((a) => a.appointment_id === b.appointment_id && !(studioLive && a.stripe_livemode !== true)).map((a) => ({ status: a.status, amountCents: a.amount_cents, currency: a.currency })),
       externals: ext.rows.filter((r) => r.appointment_id === b.appointment_id).map((r) => ({ amountCents: r.amount_cents, state: r.state })),
       refunds: [
         ...refs.rows.filter((r) => r.appointment_id === b.appointment_id && keepsRefundForBilledVisit({ legacy: r.legacy, attemptId: r.attempt_id }, billedAttempts)).map((r) => ({ amountCents: r.amount_cents, status: r.status, kind: r.kind, ...(studioLive && r.attempt_id && testAttempts.has(r.attempt_id) ? { uncounted: true } : {}) })),

@@ -442,7 +442,7 @@ export async function getAppointmentPaymentStates(
     }
     if (bill) {
       billedIds.add(apptId);
-      out.set(apptId, billedPaymentState(bill, attemptsByAppt.get(apptId) ?? []));
+      out.set(apptId, billedPaymentState(bill, bill.cards ? bill.cards.map((c) => ({ status: c.status, amount_cents: c.amountCents, currency: c.currency })) : (attemptsByAppt.get(apptId) ?? [])));
       continue;
     }
     const hasSession = apptHasSession.has(apptId);

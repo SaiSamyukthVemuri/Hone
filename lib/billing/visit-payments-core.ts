@@ -394,6 +394,8 @@ export type BilledVisitRows = {
   /** `kind` absent = a payment reversal (a refund read from the attempt's own columns, or a review): it never reopens a balance. */
   /** `uncounted`: a refund of a non-live card payment in a studio that has gone live (studio_has_gone_live, 0394): that card is not subtracted, so a reduction on it adds nothing back. */
   refunds: ReadonlyArray<{ amountCents: number; status: string; kind?: string; uncounted?: boolean }>;
+  /** The visit's billed card payments read BY APPOINTMENT (never through live charts: a soft-deleted chart still holds real money). Absent = the caller supplies them. */
+  cards?: ReadonlyArray<{ status: string | null; amountCents: number | null; currency: string | null }>;
 };
 
 export type BilledOutstanding =
