@@ -16,6 +16,14 @@ import {
 } from "./move-appointment-actions";
 import { moveConfirmState, parseCustomMoveTime } from "./move-confirm-state";
 import { isServerActionTransportFailure } from "@/lib/reliability/server-action-transport";
+import { buttonClasses } from "@/components/ui/button";
+import { CONTROL_MIN_TOUCH, FOCUS_RING, NAV_ROW_FEEDBACK, PRESS_TRANSITION, cx } from "@/components/ui/control-base";
+
+// The two selectable tiles (the available/custom toggle and the time slots) share one look: a chosen tile is the dark fill; an unchosen one is outlined and gains a
+// fill on hover and a darker one while pressed, so a mouse, a finger and a keyboard each see a different response.
+const TILE_SELECTED = "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900";
+const TILE_IDLE =
+  "border-neutral-300 hover:border-neutral-500 hover:bg-neutral-100 active:bg-neutral-200 dark:border-neutral-700 dark:hover:bg-neutral-800 dark:active:bg-neutral-700";
 
 // Practitioner Move appointment, ONE shared responsive dialog + state machine used by
 // mobile, tablet, and desktop (responsive by Tailwind; no separate mobile/desktop paths).
@@ -406,11 +414,7 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
   if (!open) return null;
 
   const segClass = (active: boolean) =>
-    `min-h-[44px] rounded-lg border px-3 py-2 text-sm font-medium transition ${
-      active
-        ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
-        : "border-neutral-300 hover:border-neutral-500 dark:border-neutral-700"
-    }`;
+    cx(CONTROL_MIN_TOUCH, FOCUS_RING, PRESS_TRANSITION, "rounded-lg border px-3 py-2 text-sm font-medium", active ? TILE_SELECTED : TILE_IDLE);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center" role="dialog" aria-modal="true" aria-label="Move appointment">
@@ -430,7 +434,7 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
             always painted; only the middle body scrolls. */}
         <div className="flex shrink-0 items-center justify-between border-b border-neutral-200 bg-white px-5 py-4 dark:border-neutral-800 dark:bg-neutral-950">
           <h2 className="font-serif text-lg font-semibold">Move appointment</h2>
-          <button type="button" onClick={() => { if (!submitting) onClose(); }} disabled={submitting} aria-label="Close" className="min-h-[44px] min-w-[44px] rounded-lg px-2 text-neutral-500 hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-900">✕</button>
+          <button type="button" onClick={() => { if (!submitting) onClose(); }} disabled={submitting} aria-label="Close" className={cx(CONTROL_MIN_TOUCH, "min-w-[44px] rounded-lg px-2 text-neutral-500 disabled:opacity-50", NAV_ROW_FEEDBACK)}>✕</button>
         </div>
 
         {/* Scrollable body: the ONLY scroll region. min-h-0 lets it shrink so the
@@ -533,7 +537,7 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
                         onClick={() => { setSelected(s); setMoveError(null); }}
                         disabled={submitting}
                         aria-pressed={isSel}
-                        className={`min-h-[44px] rounded-lg border px-2 py-2 text-sm transition ${isSel ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900" : "border-neutral-300 hover:border-neutral-500 dark:border-neutral-700"}`}
+                        className={cx(CONTROL_MIN_TOUCH, FOCUS_RING, PRESS_TRANSITION, "rounded-lg border px-2 py-2 text-sm", isSel ? TILE_SELECTED : TILE_IDLE)}
                       >
                         {s.label}
                       </button>
@@ -647,8 +651,8 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
             </p>
           )}
           <div className="flex items-center justify-end gap-3">
-            <button type="button" onClick={() => { if (!submitting) onClose(); }} disabled={submitting} className="min-h-[44px] rounded-lg px-4 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-100 disabled:opacity-50 dark:text-neutral-300 dark:hover:bg-neutral-900">Keep current time</button>
-            <button type="button" onClick={confirmMove} disabled={!canConfirm || submitting} aria-busy={submitting} aria-describedby={disabledReason ? "move-confirm-reason" : undefined} className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-lg bg-neutral-900 px-5 py-2 text-sm font-semibold text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900">
+            <button type="button" onClick={() => { if (!submitting) onClose(); }} disabled={submitting} className={buttonClasses({ variant: "quiet" })}>Keep current time</button>
+            <button type="button" onClick={confirmMove} disabled={!canConfirm || submitting} aria-busy={submitting} aria-describedby={disabledReason ? "move-confirm-reason" : undefined} className={buttonClasses({ variant: "primary" })}>
               {submitting && (
                 <span aria-hidden="true" className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white dark:border-neutral-900/40 dark:border-t-neutral-900" />
               )}
