@@ -126,7 +126,7 @@ export function EmailSettingsForm({ initial }: Props) {
         setState(initial);
         return;
       }
-      setHint("Saved");
+      setHint("Email settings saved.");
       window.setTimeout(() => setHint(null), 1500);
     });
   }

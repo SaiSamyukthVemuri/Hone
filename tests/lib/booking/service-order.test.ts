@@ -259,7 +259,7 @@ describe("every ordering surface uses the same canonical key", () => {
 
   it("a stale session surfaces in place instead of tripping an error boundary", () => {
     const actions = read("app/(app)/settings/services/actions.ts");
-    expect(actions).toMatch(/try \{\s*\(\{ studioId \} = await assertOwner\(\)\);\s*\} catch/);
+    expect(actions).toMatch(/try \{\s*const owner = await ownerOrFailure\(\);[\s\S]*?\} catch/); // HON-124 item 20: the refusal is returned by ownerOrFailure
     expect(actions).toMatch(/Your session has expired/);
   });
 
@@ -288,7 +288,7 @@ describe("every ordering surface uses the same canonical key", () => {
     expect(actions).not.toMatch(/nextSortOrderForModality/);
     expect(actions).not.toMatch(/query\.is\("modality", null\) : query\.eq\("modality", modality\)/);
     // And a transient read failure must NOT silently fall back to a constant.
-    expect(actions).toMatch(/Failed to place the new service in the menu/);
+    expect(actions).toMatch(/place the new service in your menu/); // HON-124 item 20: a returned sentence, still no constant fallback
   });
 
   it("the reorder controls are buttons with MEANINGFUL labels — no drag-only affordance", () => {

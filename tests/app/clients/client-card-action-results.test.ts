@@ -102,14 +102,14 @@ describe("source pins: every converted component reads result.ok before it clear
     ["components/session-performer-line.tsx", 'setState("saved")'],
   ])("%s", (file, clears) => {
     const s = read(file);
-    expect(s).toContain("if (!result.ok)");
-    expect(s.indexOf(clears)).toBeGreaterThan(s.indexOf("if (!result.ok)"));
+    expect(s).toMatch(/if \((?:!result\.ok|isActionFailure\(result\))\)/);
+    expect(s.indexOf(clears)).toBeGreaterThan(s.search(/if \((?:!result\.ok|isActionFailure\(result\))\)/));
     expect(s).not.toMatch(/\b(?:e|err|error)\.message\b/);
     expect(s).toContain("actionFailureMessage(");
   });
   it("DeleteSessionForm keeps the typed reason, treats a redirect as success, and prints no error text", () => {
     const s = read("app/(app)/clients/[id]/sessions/[sessionId]/DeleteSessionForm.tsx");
-    expect(s).toContain("if (!result.ok)");
+    expect(s).toMatch(/if \((?:!result\.ok|isActionFailure\(result\))\)/);
     expect(s).toContain("NEXT_REDIRECT");
     expect(s).not.toMatch(/\b(?:e|err|error)\.message\b/);
     expect(s).not.toContain('setReason("")\n      }'); // the reason is cleared only by Cancel

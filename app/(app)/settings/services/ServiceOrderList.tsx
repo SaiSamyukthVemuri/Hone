@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import type { ServiceColorKey } from "@/lib/calendar/service-colors";
 import { ServiceColorDot } from "./ServiceFormControls";
 import { moveServiceAction } from "./actions";
+import { actionFailureMessage, isActionFailure, type ActionResult } from "@/lib/actions/action-result";
 
 export type OrderRow = {
   id: string;
@@ -26,23 +27,23 @@ type MenuGroup = { label: string; ids: string[] };
 const CREATE = "new";
 // onSaved: the server accepted a save. setSaving: a save is in flight for that service, so its "Discard edits" must stay disabled until the request settles
 // (a discard would remount the form while the original save is still running; that save's onSaved would then erase a newer draft and close the mobile editor).
-const SavedServiceContext = createContext<{ onSaved: (id: string) => void; setSaving: (id: string, saving: boolean) => void }>({ onSaved: () => {}, setSaving: () => {} });
+const SavedServiceContext = createContext<{ onSaved: (id: string, name: string) => void; setSaving: (id: string, saving: boolean) => void }>({ onSaved: () => {}, setSaving: () => {} });
 
 export function ServiceSaveForm({ serviceId = CREATE, title, saveAction, children }: {
   serviceId?: string;
   title: string;
-  saveAction: (data: FormData) => Promise<void>;
+  saveAction: (data: FormData) => Promise<ActionResult>;
   children: React.ReactNode;
 }) {
   const { onSaved, setSaving } = useContext(SavedServiceContext);
   const submitting = useRef(false);
   const [pending, setPending] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
   const creating = serviceId === CREATE;
   return (
     <form
       aria-label={creating ? "New service" : `Edit ${title}`}
-      action={saveAction}
+      action={async (formData) => { await saveAction(formData); }} // no-JS fallback only; the capture handler below reads the result
       className="@container/editor"
       aria-busy={pending}
       onSubmitCapture={async (event) => {
@@ -54,12 +55,13 @@ export function ServiceSaveForm({ serviceId = CREATE, title, saveAction, childre
         submitting.current = true;
         setPending(true);
         setSaving(serviceId, true);
-        setFailed(false);
+        setFailed(null);
         try {
-          await saveAction(data);
-          onSaved(serviceId);
-        } catch {
-          setFailed(true);
+          const result = await saveAction(data);
+          if (isActionFailure(result)) setFailed(result.error); // the edits stay in the form
+          else onSaved(serviceId, String(data.get("name") ?? "").trim());
+        } catch (err) {
+          setFailed(actionFailureMessage(err, "Could not save this service. Your edits are still here. Check your connection and try again."));
         } finally {
           submitting.current = false;
           setPending(false);
@@ -77,7 +79,7 @@ export function ServiceSaveForm({ serviceId = CREATE, title, saveAction, childre
             {creating ? "Add service" : "Save changes"}
           </Button>
         </div>
-        {failed && <p role="alert" className="px-4 pt-3 text-sm text-danger-solid">Couldn’t save this service. Your edits are still here. Try again.</p>}
+        {failed && <p role="alert" className="px-4 pt-3 text-sm text-danger-solid">{failed}</p>}
         {children}
       </fieldset>
     </form>
@@ -284,12 +286,12 @@ export function ServiceOrderList({ rows, groups, createEditor }: {
             </div>
           ))}
         </section>
-        <SavedServiceContext.Provider value={{ setSaving: (id, on) => setSavingIds((ids) => (ids[id] === on || (!on && !ids[id]) ? ids : { ...ids, [id]: on })), onSaved: (id) => {
+        <SavedServiceContext.Provider value={{ setSaving: (id, on) => setSavingIds((ids) => (ids[id] === on || (!on && !ids[id]) ? ids : { ...ids, [id]: on })), onSaved: (id, name) => {
           const panel = document.getElementById(`service-editor-${id}`);
           const listHidden = !document.getElementById("service-order")?.getClientRects().length;
           const returnFocus = panel && !panel.hidden && listHidden;
           setFormKeys((keys) => ({ ...keys, [id]: (keys[id] ?? 0) + 1 }));
-          setNotice(id === CREATE ? "Service added to your booking menu." : "Service changes saved.");
+          setNotice(id === CREATE ? `Added ${name} to your booking menu.` : `Saved changes to ${name}.`);
           setMobileEditor((open) => open === id ? null : open);
           if (returnFocus) focusMenu(id);
         } }}>

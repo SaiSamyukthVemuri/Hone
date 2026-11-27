@@ -98,7 +98,7 @@ export function StudioSettingsForm({
         >
           {pending ? "Saving" : "Save"}
         </button>
-        <SaveStatus state={feedback.state} />
+        <SaveStatus state={feedback.state} savedLabel="Studio details saved." />
       </div>
     </form>
   );

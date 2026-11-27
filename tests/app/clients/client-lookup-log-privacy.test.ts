@@ -294,14 +294,18 @@ describe.each([
     const update = setup();
     update.is.mockResolvedValue({ error: { message: "synthetic update refusal" } });
     update.not.mockResolvedValue({ error: { message: "synthetic update refusal" } });
-    await expect(action(form())).rejects.toThrow(`Failed to ${name} client: unknown`);
+    // HON-124 item 20: unarchive RETURNS its refusal (a thrown message is redacted in production); archive still throws.
+    if (name === "unarchive") expect(await action(form())).toMatchObject({ ok: false, error: expect.stringMatching(/unarchive the client/) });
+    else await expect(action(form())).rejects.toThrow(`Failed to ${name} client: unknown`);
     expect(h.audit).not.toHaveBeenCalled(); expect(h.revalidate).not.toHaveBeenCalled(); expect(h.redirect).not.toHaveBeenCalled();
   });
   it.each(["auth", "visibility"])("preserves %s refusal before UPDATE or audit", async (mode) => {
     setup();
     if (mode === "auth") h.identity.mockRejectedValue(new Error("synthetic auth refusal"));
     else h.lookup.mockResolvedValue({ data: null, error: null });
-    await expect(action(form())).rejects.toThrow(mode === "auth" ? "synthetic auth refusal" : "Client not found.");
+    if (mode === "auth") await expect(action(form())).rejects.toThrow("synthetic auth refusal");
+    else if (name === "unarchive") expect(await action(form())).toEqual({ ok: false, error: "That client could not be found. Reload the page and try again." });
+    else await expect(action(form())).rejects.toThrow("Client not found.");
     if (mode === "auth") expect(h.lookup).not.toHaveBeenCalled();
     expect(h.writes).not.toHaveBeenCalled(); expect(h.audit).not.toHaveBeenCalled();
     expect(h.revalidate).not.toHaveBeenCalled(); expect(h.redirect).not.toHaveBeenCalled();

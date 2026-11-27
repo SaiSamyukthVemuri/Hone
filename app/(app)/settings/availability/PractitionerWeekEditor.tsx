@@ -122,7 +122,7 @@ export function PractitionerWeekEditor({
             close_time: draft.close,
           }),
         ),
-      "Saved.",
+      `Saved ${DAY_NAMES[dow]} hours for ${practitionerName}.`,
     );
   }
 

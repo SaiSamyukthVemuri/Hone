@@ -67,7 +67,7 @@ export function ColorPicker({ initialColor }: Props) {
       </div>
       <div className="mt-1 flex items-center gap-3 text-xs">
         {savedHint && (
-          <span className="text-green-600 dark:text-green-400">Saved</span>
+          <span className="text-green-600 dark:text-green-400">Calendar colour saved.</span>
         )}
         {error && (
           <span className="text-red-600 dark:text-red-400">{error}</span>

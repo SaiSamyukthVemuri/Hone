@@ -311,10 +311,12 @@ export const PATH_DECISIONS: Readonly<Record<string, Readonly<Record<string, str
     designateSelfAsCalendarOwnerAction: "owner?(requireOwnerConnectionContext)",
   },
   "app/(app)/settings/services/actions.ts": {
-    createServiceAction: "owner(assertOwner)",
-    updateServiceAction: "owner(assertOwner)",
-    moveServiceAction: "staff",
-    toggleServiceActiveAction: "owner(assertOwner)",
+    // HON-124 item 20: the refusal is now RETURNED by ownerOrFailure (not thrown by assertOwner). moveServiceAction was always owner-only: it used
+    // to catch assertOwner's throw and return ok:false, which the detector read as "staff"; recording it as the owner gate corrects the record, no behaviour change.
+    createServiceAction: "owner?(ownerOrFailure)",
+    updateServiceAction: "owner?(ownerOrFailure)",
+    moveServiceAction: "owner?(ownerOrFailure)",
+    toggleServiceActiveAction: "owner?(ownerOrFailure)",
   },
   "app/(app)/settings/studio/actions.ts": {
     setStudioManagedAppointmentsAction: "owner(self)",

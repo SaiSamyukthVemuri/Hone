@@ -50,7 +50,8 @@ export function useSaveFeedback() {
   return { state, saving, saved, failed, reset };
 }
 
-export function SaveStatus({ state }: { state: SaveFeedbackState }) {
+/** HON-124 item 20: `savedLabel` names WHAT was saved (shown only after the server returned ok). Default stays the bare "Saved". */
+export function SaveStatus({ state, savedLabel = "Saved" }: { state: SaveFeedbackState; savedLabel?: string }) {
   if (state.kind === "error") {
     return (
       <p role="alert" className="text-sm text-red-700 dark:text-red-400">
@@ -60,7 +61,7 @@ export function SaveStatus({ state }: { state: SaveFeedbackState }) {
   }
   return (
     <p role="status" aria-live="polite" className="min-h-5 text-sm text-neutral-600 dark:text-neutral-400">
-      {state.kind === "saving" ? "Saving…" : state.kind === "saved" ? "Saved" : ""}
+      {state.kind === "saving" ? "Saving…" : state.kind === "saved" ? savedLabel : ""}
     </p>
   );
 }

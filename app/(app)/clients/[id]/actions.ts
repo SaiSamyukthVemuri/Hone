@@ -436,14 +436,19 @@ export async function archiveClientAction(formData: FormData): Promise<void> {
 // the client returns to the active list. Safe to call any number of
 // times; the conditional WHERE in archiveClientAction prevents a
 // no-op archive from advancing the timestamp once it is already set.
-export async function unarchiveClientAction(formData: FormData): Promise<void> {
+// HON-124 item 20: a refusal is RETURNED (a thrown message is redacted in production); success still redirects to the client, which is the confirmation.
+export async function unarchiveClientAction(formData: FormData): Promise<ActionResult> {
   const clientId = formData.get("client_id");
   if (typeof clientId !== "string" || !clientId) {
-    throw new Error("Missing client id.");
+    return actionFailed("That client could not be found. Reload the page and try again.");
   }
 
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
-  await assertClientVisible(studio.id, clientId);
+  try {
+    await assertClientVisible(studio.id, clientId);
+  } catch {
+    return actionFailed("That client could not be found. Reload the page and try again.");
+  }
 
   const supabase = await createClient();
   const { error } = await supabase
@@ -456,7 +461,7 @@ export async function unarchiveClientAction(formData: FormData): Promise<void> {
     .eq("studio_id", studio.id)
     .not("archived_at", "is", null);
   if (error) {
-    throw new Error(`Failed to unarchive client: ${dbErrorCode(error)}`);
+    return actionFailed(userFacingDbFailure("unarchive the client", error, "unarchive_client_failed"));
   }
 
   const { error: auditErr } = await recordClientArchiveAudit({

@@ -134,7 +134,7 @@ export function StudioDisplayPreferencesForm({
         >
           {pending ? "Saving" : "Save"}
         </button>
-        <SaveStatus state={feedback.state} />
+        <SaveStatus state={feedback.state} savedLabel="Calendar display preferences saved." />
       </div>
     </form>
   );
