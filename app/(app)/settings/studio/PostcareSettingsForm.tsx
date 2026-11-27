@@ -9,6 +9,7 @@ import {
   PostcarePreviewButton,
 } from "./PostcareEditingHelpers";
 import { fieldControlClass } from "@/components/ui/field";
+import { actionFailureMessage } from "@/lib/actions/action-result";
 
 // Per-studio postcare content. Saved values are sent verbatim into the
 // postcare email after the practitioner clicks "Send postcare" on the
@@ -215,11 +216,15 @@ export function PostcareSettingsForm({ initial, studioOwnerEmail }: Props) {
     fd.set("postcare_delivery_mode", deliveryMode);
     startTransition(async () => {
       try {
-        await updateStudioPostcareAction(fd);
+        const result = await updateStudioPostcareAction(fd);
+        if (!result.ok) {
+          feedback.failed(result.error); // typed values stay in the fields
+          return;
+        }
         setSaved(snapshot());
         feedback.saved();
       } catch (err) {
-        feedback.failed(err instanceof Error ? err.message : "Failed to save.");
+        feedback.failed(actionFailureMessage(err));
       }
     });
   }

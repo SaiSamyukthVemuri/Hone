@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { PRACTITIONER_COLORS } from "@/lib/practitioner-colors";
 import { updatePractitionerColorAction } from "./actions";
+import { actionFailureMessage } from "@/lib/actions/action-result";
 
 type Props = {
   initialColor: string;
@@ -23,12 +24,17 @@ export function ColorPicker({ initialColor }: Props) {
     fd.set("color", token);
     startTransition(async () => {
       try {
-        await updatePractitionerColorAction(fd);
+        const result = await updatePractitionerColorAction(fd);
+        if (!result.ok) {
+          setSelected(previous);
+          setError(result.error);
+          return;
+        }
         setSavedHint(true);
         window.setTimeout(() => setSavedHint(false), 1500);
       } catch (err) {
         setSelected(previous);
-        setError(err instanceof Error ? err.message : "Failed to save.");
+        setError(actionFailureMessage(err));
       }
     });
   }

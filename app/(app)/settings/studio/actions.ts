@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import type { BirthdayReminderColor } from "@/lib/types/database";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { ACTION_OK, actionFailed, type ActionResult } from "@/lib/actions/action-result";
+import { userFacingDbFailure } from "@/lib/logging/user-facing-db-failure";
 import { parseClientSelfServiceForm } from "@/lib/booking/client-self-service-form";
 
 function nullableString(value: FormDataEntryValue | null): string | null {
@@ -37,15 +39,15 @@ function parseBirthdayColor(
 // updateStudioDisplayPreferencesAction below. This action must never read or
 // write them: it used to default both when absent (12h, purple), so a form that
 // merely omitted the fields would have reset a saved choice.
-export async function updateStudioAction(formData: FormData): Promise<void> {
+export async function updateStudioAction(formData: FormData): Promise<ActionResult> {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (practitioner.role !== "owner") {
-    throw new Error("Only studio owners can change studio settings.");
+    return actionFailed("Only the studio owner can change studio settings.");
   }
 
   const name = nullableString(formData.get("name"));
   if (!name) {
-    throw new Error("Studio name is required.");
+    return actionFailed("Enter a studio name, then save again.");
   }
 
   const supabase = await createClient();
@@ -58,12 +60,13 @@ export async function updateStudioAction(formData: FormData): Promise<void> {
     .eq("id", studio.id);
 
   if (error) {
-    throw new Error(`Failed to update studio: ${dbErrorCode(error)}`);
+    return actionFailed(userFacingDbFailure("save the studio details", error, "update_studio_failed"));
   }
 
   revalidatePath("/dashboard");
   revalidatePath("/settings/studio", "layout");
   revalidatePath("/settings/team");
+  return ACTION_OK;
 }
 
 export type StudioDisplayPreferencesResult =
@@ -266,10 +269,10 @@ const POSTCARE_REVIEW_URL_RE = /^https?:\/\/[^\s]+$/;
 
 export async function updateStudioPostcareAction(
   formData: FormData,
-): Promise<void> {
+): Promise<ActionResult> {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (practitioner.role !== "owner") {
-    throw new Error("Only studio owners can change postcare settings.");
+    return actionFailed("Only the studio owner can change postcare settings.");
   }
 
   const aftercare = nullableString(formData.get("postcare_aftercare_text"));
@@ -281,7 +284,7 @@ export async function updateStudioPostcareAction(
   );
   const reviewUrl = nullableString(formData.get("postcare_review_url"));
   if (reviewUrl && !POSTCARE_REVIEW_URL_RE.test(reviewUrl)) {
-    throw new Error("Review link must be a full https:// URL.");
+    return actionFailed("The review link must be a full web address starting with https://. Fix it, or clear the field.");
   }
   // Migration 0048: optional override for the review prompt wording.
   // Stored verbatim; rendered only when reviewUrl is set; no discount /
@@ -299,9 +302,7 @@ export async function updateStudioPostcareAction(
   if (contactEmail) {
     const looksLikeEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail);
     if (!looksLikeEmail) {
-      throw new Error(
-        "Postcare contact email must be a valid email address (or blank).",
-      );
+      return actionFailed("Enter a valid contact email address such as name@example.com, or clear the field.");
     }
   }
 
@@ -318,7 +319,7 @@ export async function updateStudioPostcareAction(
     })
     .eq("id", studio.id);
   if (error) {
-    throw new Error(`Failed to update postcare settings: ${dbErrorCode(error)}`);
+    return actionFailed(userFacingDbFailure("save the postcare settings", error, "update_studio_postcare_failed"));
   }
 
   // Migration 0110: postcare delivery mode (manual | auto_on_complete). Written
@@ -340,12 +341,13 @@ export async function updateStudioPostcareAction(
     modeError.code !== "PGRST204" &&
     modeError.code !== "42703"
   ) {
-    throw new Error(`Failed to update postcare delivery mode: ${dbErrorCode(modeError)}`);
+    return actionFailed(userFacingDbFailure("save the postcare delivery mode", modeError, "update_studio_postcare_mode_failed"));
   }
 
   // F4: the form is rendered on /settings/intake, so that page must refresh too.
   revalidatePath("/settings/studio", "layout");
   revalidatePath("/settings/forms", "layout");
+  return ACTION_OK;
 }
 
 // ---------------------------------------------------------------------------
@@ -369,10 +371,10 @@ export async function updateStudioPostcareAction(
 // ---------------------------------------------------------------------------
 export async function updateStudioPolicyAction(
   formData: FormData,
-): Promise<void> {
+): Promise<ActionResult> {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (practitioner.role !== "owner") {
-    throw new Error("Only studio owners can change studio policies.");
+    return actionFailed("Only the studio owner can change studio policies.");
   }
 
   const cancellation = nullableString(
@@ -390,9 +392,7 @@ export async function updateStudioPolicyAction(
     .eq("id", studio.id)
     .maybeSingle();
   if (readErr || !current) {
-    throw new Error(
-      `Could not load studio for policy update: ${readErr ? dbErrorCode(readErr) : "not_found"}`,
-    );
+    return actionFailed(userFacingDbFailure("load the current policies", readErr ?? { code: "not_found" }, "update_studio_policy_read_failed"));
   }
 
   const changed =
@@ -414,9 +414,10 @@ export async function updateStudioPolicyAction(
     .update(updates)
     .eq("id", studio.id);
   if (error) {
-    throw new Error(`Failed to update studio policy: ${dbErrorCode(error)}`);
+    return actionFailed(userFacingDbFailure("save the policies", error, "update_studio_policy_failed"));
   }
 
   revalidatePath("/settings/forms", "layout");
   revalidatePath("/settings/payments", "layout");
+  return ACTION_OK;
 }

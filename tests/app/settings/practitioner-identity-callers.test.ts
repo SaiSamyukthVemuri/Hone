@@ -59,8 +59,9 @@ describe("0178 — the practitioner direct writers are gone", () => {
     // This is the bug 0178 fixes: the owner-gated RLS silently updated nothing
     // for every non-owner, and the action still resolved happily.
     const code = codeOnly(PROFILE);
-    expect(code).toMatch(/if \(!updatedId\) \{\s*\n\s*throw new Error\("Failed to save your name/);
-    expect(code).toMatch(/if \(!updatedId\) \{\s*\n\s*throw new Error\("Failed to save your color/);
+    // HON-124 item 19: reported as a RETURNED failure (a throw is redacted in production), never as success.
+    expect(code).toMatch(/if \(!updatedId\) \{\s*\n\s*return actionFailed\("Your account is no longer active[^"]*so the change was not saved/);
+    expect(code.match(/if \(!updatedId\) \{\s*\n\s*return actionFailed\(/g)?.length).toBe(2);
     expect(code).toMatch(/if \(error \|\| !rotatedId\)/);
     expect(code).toMatch(/if \(error \|\| !clearedId\)/);
   });
