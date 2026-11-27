@@ -89,10 +89,10 @@ export type QuickCheckoutContext =
       // the modal can link to the existing charting workflow.
       reason: string;
       clientId: string | null;
+      retryable?: true;
       // PRESENT EVEN HERE. The card path being unavailable is not a reason to
       // withhold the honest alternative — it is the main reason to offer it.
-      // Null only when the appointment itself could not be resolved, in which
-      // case there is nothing to attest about.
+      // Null when the appointment or its current payment state could not be verified.
       settlement: AppointmentSettlementContext | null;
     };
 
@@ -112,7 +112,7 @@ export async function resolveQuickCheckoutContext(
 
   // 1) Appointment, studio-scoped (RLS + explicit .eq). No client-supplied
   //    studio/amount/status is trusted; everything is read from the row.
-  const { data: appt } = await supabase
+  const { data: appt, error: appointmentError } = await supabase
     .from("appointments")
     .select(
       "id, studio_id, status, starts_at, duration_minutes, client_id, service_id, client:clients(name), service:services(name, price_cents)",
@@ -121,6 +121,9 @@ export async function resolveQuickCheckoutContext(
     .eq("id", args.appointmentId)
     .maybeSingle();
 
+  if (appointmentError) {
+    return { ok: false, reason: "Could not load this appointment.", clientId: null, settlement: null, retryable: true };
+  }
   if (!appt) {
     return {
       ok: false,
@@ -157,15 +160,16 @@ export async function resolveQuickCheckoutContext(
     return {
       ok: false,
       reason:
-        "We could not load this appointment's payment status. Reload and try again.",
+        "We could not load this appointment's payment status.",
       clientId,
       settlement: null,
+      retryable: true,
     };
   }
   const live = settlements.byAppointmentId.get(args.appointmentId) ?? null;
   const apptStatus = (appt.status as string | null) ?? null;
   const settlement: AppointmentSettlementContext = {
-    appointmentId: args.appointmentId,
+    appointmentId: appt.id as string,
     // The UI's copy of the database's own rule (`not_completed`).
     canRecord: apptStatus === "completed",
     settledMethod: live?.method ?? null,
@@ -184,7 +188,7 @@ export async function resolveQuickCheckoutContext(
   //    session-scoped; if there is no session yet, card charging is genuinely
   //    unavailable and the practitioner is told why — but the settlement
   //    context above travels with the refusal, so cash is still recordable.
-  const { data: sessionRow } = await supabase
+  const { data: sessionRow, error: sessionError } = await supabase
     .from("sessions")
     .select("id")
     .eq("studio_id", args.studioId)
@@ -194,6 +198,9 @@ export async function resolveQuickCheckoutContext(
     .limit(1)
     .maybeSingle();
 
+  if (sessionError) {
+    return { ok: false, reason: "Could not verify this appointment’s treatment chart.", clientId, settlement: null, retryable: true };
+  }
   if (!sessionRow) {
     const jurisdiction = settlement.canRecord ? await getStudioPaymentJurisdiction(args.studioId) : null;
     return {

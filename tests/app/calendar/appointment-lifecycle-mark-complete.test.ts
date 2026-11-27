@@ -163,7 +163,7 @@ describe("AppointmentLifecycleActions: confirmation dialog (replaces window.conf
   });
 
   it("each dialog carries a distinct confirm label so the copy is action-specific", () => {
-    expect(COMPONENT).toContain('confirmLabel={checkout ? "Finish visit" : "Mark completed"}');
+    expect(COMPONENT).toContain('confirmLabel={checkout ? checkout.confirmLabel ?? "Finish visit" : "Mark completed"}');
     expect(CALENDAR).toMatch(/confirmLabel="Mark no-show"/);
     // Charting must never offer no-show: no button, no action, no dialog.
     const controlCode = COMPONENT.split("\n")

@@ -111,7 +111,7 @@ export function QuickCheckoutModal({
           // load surfaces an error.
           if (!silent) {
             setLoadError(
-              "Could not load checkout. Reload the page and try again.",
+              "Could not load checkout.",
             );
           }
         })
@@ -169,6 +169,11 @@ export function QuickCheckoutModal({
     !loading && !!ctx && !!split?.enabled && !splitBill && !!ctx.settlement?.canRecord && !ctx.settlement.settledMethod &&
     (ctx.settlement.quotedAmountCents ?? 0) > 0 &&
     !("eligibility" in ctx && ctx.eligibility.existingAttempts.some((a) => ["ready", "pending_stripe", "succeeded"].includes(a.status)));
+  const chartHref = ctx?.ok === false && ctx.clientId && ctx.settlement?.canRecord
+    && ctx.settlement.quotedAmountCents !== null && ctx.settlement.quotedAmountCents > 0
+    && (!ctx.settlement.settledMethod || ctx.settlement.settledMethod === "still_owes")
+    ? `/clients/${ctx.clientId}/sessions/new?appointment_id=${encodeURIComponent(ctx.settlement.appointmentId)}`
+    : null;
 
   return (
     <div
@@ -261,15 +266,22 @@ export function QuickCheckoutModal({
             <p className="text-sm text-neutral-700 dark:text-neutral-300">
               {ctx.settlement?.canRecord && ctx.settlement.quotedAmountCents === 0 && !ctx.settlement.settledMethod ? "No payment due for this visit." : ctx.reason}
             </p>
-            {ctx.clientId && (
+            {ctx.clientId && !ctx.retryable && (
               <Link
-                href={`/clients/${ctx.clientId}?tab=sessions`}
+                href={chartHref ?? `/clients/${ctx.clientId}?tab=sessions`}
                 className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-neutral-300 px-4 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
               >
-                Open the client&apos;s sessions
+                {chartHref ? "Open this appointment’s chart" : "Open the client’s sessions"}
               </Link>
             )}
           </div>
+        )}
+
+        {!loading && (loadError || (ctx?.ok === false && ctx.retryable)) && (
+          <button type="button" onClick={() => void fetchContext()}
+            className="mt-3 min-h-[44px] rounded-md border border-neutral-300 px-4 text-sm font-medium dark:border-neutral-700">
+            Retry checkout
+          </button>
         )}
 
         {!loading && ctx?.settlement && initialFeeDraft && ctx.settlement.quotedAmountCents !== initialFeeDraft.referenceCents && (

@@ -1,6 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { resolveQuickCheckoutContext } from "@/lib/billing/quick-checkout";
+import { createClient } from "@/lib/supabase/server";
+
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
+vi.mock("@/lib/billing/appointment-settlement", () => ({
+  getAppointmentSettlements: async () => ({ ok: true, byAppointmentId: new Map() }),
+  resolveAppointmentQuotedAmountCents: async () => 9000,
+}));
+vi.mock("@/lib/billing/payment-jurisdiction-server", () => ({
+  getStudioPaymentJurisdiction: async () => ({ ok: true, jurisdiction: { currency: "cad" } }),
+}));
 
 // Quick checkout — contract + security + reuse guards. The behaviour of the
 // underlying payment path is already covered by the session-payment action/UI
@@ -16,6 +28,26 @@ const ACTION = read("app/(app)/quick-checkout-actions.ts");
 const MODAL = read("components/quick-checkout-modal.tsx");
 const BUTTON = read("components/checkout-button.tsx");
 const CAL = read("app/(app)/calendar/[id]/page.tsx");
+
+it.each([true, false])("keeps settlement closed only when the chart lookup fails (failed: %s)", async failed => {
+  const appt = { id: "appointment", client_id: "client", status: "completed" };
+  vi.mocked(createClient).mockResolvedValue({
+    from(table: string) {
+      const query = {
+        select: () => query, eq: () => query, is: () => query, order: () => query, limit: () => query,
+        maybeSingle: async () => table === "appointments" ? { data: appt } : { data: null, error: failed ? { code: "timeout" } : null },
+      };
+      return query;
+    },
+  } as unknown as Awaited<ReturnType<typeof createClient>>);
+  const ctx = await resolveQuickCheckoutContext({ studioId: "studio", appointmentId: "appointment", studioTimezone: "America/Toronto", viewerIsOwner: true });
+  expect(ctx.ok).toBe(false);
+  if (failed) {
+    expect(ctx).toMatchObject({ retryable: true, settlement: null });
+  } else {
+    expect(ctx).toMatchObject({ clientId: "client", settlement: { appointmentId: "appointment", canRecord: true, quotedAmountCents: 9000 } });
+  }
+});
 
 describe("resolver reuses the existing eligibility + amount path (no duplicated payment logic)", () => {
   it("delegates to getSessionPaymentEligibility + the SHARED authoritative loader", () => {
