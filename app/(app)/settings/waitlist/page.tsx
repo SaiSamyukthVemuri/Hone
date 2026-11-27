@@ -1,4 +1,5 @@
 import { WAITLIST_ARCHIVED_PATH, WAITLIST_PATH, WAITLIST_RELEASED_PATH, WAITLIST_REPLIES_PATH } from "@/lib/waitlist/paths";
+import { LazyDetails } from "@/components/waitlist/lazy-details";
 import { InviteComposer } from "@/components/waitlist/invite-composer";
 import { allowanceHeadline } from "@/lib/waitlist/consultation-capacity";
 import { DEFAULT_BOOKING_WINDOW_DAYS } from "@/lib/waitlist/b4-invitation-draft";
@@ -1358,7 +1359,7 @@ export default async function WaitlistSettingsPage({
                         data-entry-status={row.status}
                         className="relative flex min-w-0 flex-col scroll-mt-20"
                       >
-                        <details className="peer/entry group/entry" data-testid="waitlist-entry-details">
+                        <LazyDetails className="peer/entry group/entry" data-testid="waitlist-entry-details" summary={
                           <summary className={`grid min-h-12 cursor-pointer list-none grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 px-4 py-3 text-sm hover:bg-surface-sunken focus-visible:outline-2 focus-visible:outline-inset [&::-webkit-details-marker]:hidden ${rowGrid}`}>
                             <span className="min-w-0 break-words font-medium [overflow-wrap:anywhere]">{row.name}</span>
                             <span className="col-start-1 row-start-2 min-w-0 text-xs text-fg-muted md:col-auto md:row-auto md:text-sm">
@@ -1380,6 +1381,7 @@ export default async function WaitlistSettingsPage({
                               <span aria-hidden="true" className="ml-1 inline-block text-lg leading-none group-open/entry:rotate-90">›</span>
                             </span>
                           </summary>
+                          }>
                           <div className="flex flex-col gap-3 border-t border-line bg-surface-sunken px-4 py-4 sm:flex-row sm:items-start sm:justify-between">
                         <div className="flex min-w-0 flex-1 flex-col gap-1">
                           <p className="text-sm break-all text-neutral-600 dark:text-neutral-400">
@@ -1633,7 +1635,7 @@ export default async function WaitlistSettingsPage({
                           )}
                         </div>
                         </div>
-                        </details>
+                        </LazyDetails>
                           {/* WAIT INTEGRATION-01 — THE REAL INVITE-TO-BOOK PATH.
                               #683 ships the composer and #685 ships `admit_`;
                               they are siblings off production, so this binding
@@ -1650,13 +1652,13 @@ export default async function WaitlistSettingsPage({
                               disabled state is about the DRAFT, not about
                               whether this person can be invited. */}
                           {INVITE_TO_BOOK_STATUSES.includes(row.status) && (
-                            <details
+                            <LazyDetails
                               // A composer the owner has OPENED stays on screen. The studio estimate only decides whether Invite sits beside the
                               // name; a Send answered by the question "invite anyway?" refreshes the page with an estimate of zero, and without
                               // `open:block` that refresh hid the question the owner had just been asked.
                               className={`w-full min-w-0 ${directInvite ? "" : "hidden peer-open/entry:block open:block"}`}
                               data-testid="row-invite"
-                            >
+                              summary={
                               <summary className={directInvite
                                 ? "absolute right-3 top-1 flex min-h-11 cursor-pointer list-none items-center rounded-md px-2 text-sm font-medium underline underline-offset-4 hover:bg-surface-sunken [&::-webkit-details-marker]:hidden"
                                 : "mx-4 mb-3 flex min-h-11 cursor-pointer list-none flex-wrap items-center gap-2 rounded-md border border-line px-3 py-2 text-sm font-medium [&::-webkit-details-marker]:hidden"}>
@@ -1669,6 +1671,8 @@ export default async function WaitlistSettingsPage({
                                   </span>
                                 )}
                               </summary>
+                              }
+                            >
                               <InviteComposer
                                 entryId={row.id}
                                 entryName={row.name}
@@ -1691,7 +1695,7 @@ export default async function WaitlistSettingsPage({
                                     : null
                                 }
                               />
-                            </details>
+                            </LazyDetails>
                           )}
                       </li>
                     );
