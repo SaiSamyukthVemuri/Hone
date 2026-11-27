@@ -13,7 +13,7 @@ import {
   removePractitionerAction,
   revokeInvitationAction,
 } from "./actions";
-import { PendingButton } from "@/components/pending-button";
+import { ReceptionistActiveForm } from "./ReceptionistActiveForm";
 import { setReceptionistActiveAction } from "./receptionist-actions";
 
 type ReceptionistRow = { id: string; display_name: string; email: string | null; active: boolean };
@@ -140,14 +140,7 @@ function FrontDesk({ receptionists }: { receptionists: ReceptionistRow[] }) {
                 </div>
                 {r.email && <div className="truncate text-xs text-neutral-500">{r.email}</div>}
               </div>
-              <form action={setReceptionistActiveAction}>
-                <input type="hidden" name="id" value={r.id} />
-                <input type="hidden" name="active" value={r.active ? "false" : "true"} />
-                {/* PendingButton: the press is acknowledged and the control is disabled while the action runs, so a slow connection cannot show nothing or submit twice. */}
-                <PendingButton variant="secondary" size="sm">
-                  {r.active ? "Deactivate" : "Reactivate"}
-                </PendingButton>
-              </form>
+              <ReceptionistActiveForm action={setReceptionistActiveAction} receptionistId={r.id} name={r.display_name} active={r.active} />
             </li>
           ))}
         </ul>

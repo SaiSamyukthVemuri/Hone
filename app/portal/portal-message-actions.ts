@@ -8,6 +8,7 @@ import { postcareContactEmail } from "@/lib/email/send-appointment";
 import { buildPortalReplyNotificationEmail } from "@/lib/email/templates/portal-reply-notification";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { ACTION_OK, actionFailed, type ActionResult } from "@/lib/actions/action-result";
 
 const REPLY_BODY_MIN = 1;
 const REPLY_BODY_MAX = 5000;
@@ -40,23 +41,19 @@ function shortReplyError(message: string | null | undefined): string {
 //   * Never trusts a client-supplied studio_id or client_id; both
 //     come from the resolved session.
 
-// Returns void: the action is bound directly to a server-side
-// <form action={...}> on the portal home, which Next.js types as
-// returning Promise<void>. On success the conditional UPDATE
-// flips client_reviewed_at and the revalidatePath below triggers
-// the portal home to re-render with the new "Reviewed" badge. On
-// failure the row stays unreviewed and the page re-renders with
-// the same Mark-as-reviewed button so the visitor can retry; we
-// do not surface an inline error string because the only error
-// path (DB failure) is rare and benign.
+// Returns an ActionResult (HON-124 item 20). The action is bound to the client form PortalReviewedForm on the portal home, which reads the
+// result: a refusal or database failure is RETURNED as a short sentence and shown inline, so the visitor is never left with an unchanged
+// button and no explanation (production redacts a thrown message, so the failure is returned, not thrown). On success the conditional UPDATE
+// flips client_reviewed_at and the revalidatePath below re-renders the portal home with the "Reviewed" badge, which is the confirmation.
 export async function markPortalMessageReviewedAction(
   formData: FormData,
-): Promise<void> {
+): Promise<ActionResult> {
+  // HON-124 item 20: a refusal is now RETURNED so the visitor is told (it used to return silently and leave an unchanged button).
   const messageId = (formData.get("message_id") ?? "").toString().trim();
-  if (!messageId) return;
+  if (!messageId) return actionFailed("Reload the page and try again.");
 
   const session = await getCurrentPortalSession();
-  if (!session) return;
+  if (!session) return actionFailed("Your session has ended. Reload the page and try again.");
 
   const admin = createAdminClient();
   const { error } = await admin
@@ -76,10 +73,11 @@ export async function markPortalMessageReviewedAction(
         timestamp: new Date().toISOString(),
       }),
     );
-    return;
+    return actionFailed("Could not mark this message as reviewed. Try again.");
   }
 
   revalidatePath("/portal");
+  return ACTION_OK;
 }
 
 // PR #129. Portal-side server action that lets the authenticated

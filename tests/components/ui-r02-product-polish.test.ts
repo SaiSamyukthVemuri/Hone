@@ -270,7 +270,9 @@ describe("UI-R02 applied surfaces", () => {
   it("notifications uses the primitives, and its raw button is gone", () => {
     expect(notifications).toContain("PageHeader");
     expect(notifications).toContain("EmptyState");
-    expect(notifications).toContain("PendingButton");
+    // HON-124 item 20: the control is MarkAllReadForm (a client form that shows the result) and still owns a PendingButton.
+    expect(notifications).toContain("MarkAllReadForm");
+    expect(readFileSync("app/(app)/notifications/MarkAllReadForm.tsx", "utf8")).toContain("PendingButton");
     // The raw <button> with no :active and no focus-visible.
     expect(notifications).not.toContain("<button");
   });

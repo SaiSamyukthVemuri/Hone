@@ -55,18 +55,17 @@ describe("setReceptionistActiveAction", () => {
 
   it("refuses a non-owner before any database call", async () => {
     ctx.role = "practitioner";
-    await expect(setReceptionistActiveAction(form({ id: "rec-1", active: "true" }))).rejects.toThrow(
-      /Only studio owners/,
-    );
+    // HON-124 item 20: refusals are RETURNED sentences (a thrown message is redacted in production).
+    expect(await setReceptionistActiveAction(form({ id: "rec-1", active: "true" }))).toEqual({ ok: false, error: "Only the studio owner can manage the team." });
     expect(ctx.rpc).not.toHaveBeenCalled();
   });
 
   it("never even CONSTRUCTS the admin client for a non-owner, or for a malformed request; the owner path constructs it exactly once", async () => {
     ctx.role = "practitioner";
-    await expect(setReceptionistActiveAction(form({ id: "rec-1", active: "true" }))).rejects.toThrow();
+    expect(await setReceptionistActiveAction(form({ id: "rec-1", active: "true" }))).toMatchObject({ ok: false });
     expect(ctx.adminCreated).not.toHaveBeenCalled();
     ctx.role = "owner";
-    await expect(setReceptionistActiveAction(form({ id: "rec-1", active: "yes" }))).rejects.toThrow();
+    expect(await setReceptionistActiveAction(form({ id: "rec-1", active: "yes" }))).toMatchObject({ ok: false });
     expect(ctx.adminCreated).not.toHaveBeenCalled();
     // POSITIVE CONTROL: the owner's valid call does construct it, once, so the zero above is not a broken counter.
     await setReceptionistActiveAction(form({ id: "rec-1", active: "false" }));
@@ -92,27 +91,23 @@ describe("setReceptionistActiveAction", () => {
   });
 
   it("refuses a malformed state or a missing id before any database call", async () => {
-    await expect(setReceptionistActiveAction(form({ id: "rec-1", active: "yes" }))).rejects.toThrow();
-    await expect(setReceptionistActiveAction(form({ active: "true" }))).rejects.toThrow();
+    expect(await setReceptionistActiveAction(form({ id: "rec-1", active: "yes" }))).toMatchObject({ ok: false });
+    expect(await setReceptionistActiveAction(form({ active: "true" }))).toMatchObject({ ok: false });
     expect(ctx.rpc).not.toHaveBeenCalled();
   });
 
   it("surfaces the database's refusal for another studio's receptionist", async () => {
     ctx.rpc.mockResolvedValue({ data: "not_found", error: null });
-    await expect(setReceptionistActiveAction(form({ id: "other-studio-rec", active: "false" }))).rejects.toThrow(
-      /not found in this studio/,
-    );
+    expect(await setReceptionistActiveAction(form({ id: "other-studio-rec", active: "false" }))).toMatchObject({ ok: false, error: expect.stringMatching(/could not be found/) });
   });
 
   it("names the one-active-row-per-email refusal (a database rule)", async () => {
     ctx.rpc.mockResolvedValue({ data: null, error: { code: "23505" } });
-    await expect(setReceptionistActiveAction(form({ id: "rec-1", active: "true" }))).rejects.toThrow(
-      /already uses this email/,
-    );
+    expect(await setReceptionistActiveAction(form({ id: "rec-1", active: "true" }))).toMatchObject({ ok: false, error: expect.stringMatching(/already uses this email/) });
   });
 
   it("treats no_change as success", async () => {
     ctx.rpc.mockResolvedValue({ data: "no_change", error: null });
-    await expect(setReceptionistActiveAction(form({ id: "rec-1", active: "true" }))).resolves.toBeUndefined();
+    await expect(setReceptionistActiveAction(form({ id: "rec-1", active: "true" }))).resolves.toEqual({ ok: true });
   });
 });

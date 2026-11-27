@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { failureCode } from "@/lib/logging/error-class";
+import { ACTION_OK, actionFailed, type ActionResult } from "@/lib/actions/action-result";
 
 // An owner deactivates or reactivates a receptionist.
 //
@@ -14,15 +15,16 @@ import { failureCode } from "@/lib/logging/error-class";
 // ('not_found'), so a forged id cannot reach across studios. The command is
 // service_role only, which is why the admin client calls it here, after this
 // owner check.
-export async function setReceptionistActiveAction(formData: FormData): Promise<void> {
+// HON-124 item 20: refusals are RETURNED (production redacts a thrown message); the DB command and its checks are unchanged.
+export async function setReceptionistActiveAction(formData: FormData): Promise<ActionResult> {
   const id = formData.get("id");
   const active = formData.get("active");
-  if (typeof id !== "string" || !id) throw new Error("Missing receptionist id.");
-  if (active !== "true" && active !== "false") throw new Error("Missing receptionist state.");
+  if (typeof id !== "string" || !id) return actionFailed("Reload the page and try again.");
+  if (active !== "true" && active !== "false") return actionFailed("Reload the page and try again.");
 
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (practitioner.role !== "owner") {
-    throw new Error("Only studio owners can manage the team.");
+    return actionFailed("Only the studio owner can manage the team.");
   }
 
   const admin = createAdminClient();
@@ -36,13 +38,14 @@ export async function setReceptionistActiveAction(formData: FormData): Promise<v
     console.error(
       `team_action_db_error:set_receptionist_active:${failureCode(error, data)}`,
     );
-    if (data === "not_found") throw new Error("Receptionist not found in this studio.");
-    if (data === "not_authorized") throw new Error("Only studio owners can manage the team.");
+    if (data === "not_found") return actionFailed("That front-desk member could not be found. Reload the page and try again.");
+    if (data === "not_authorized") return actionFailed("Only the studio owner can manage the team.");
     // The one-active-row-per-email index (a database rule) can refuse a reactivation.
     if (error?.code === "23505") {
-      throw new Error("Another active front-desk member already uses this email.");
+      return actionFailed("Another active front-desk member already uses this email.");
     }
-    throw new Error("Could not update the receptionist. Please try again.");
+    return actionFailed("Could not update this front-desk member. Try again, and contact support if it keeps happening.");
   }
   revalidatePath("/settings/team");
+  return ACTION_OK;
 }

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { PortalReviewedForm } from "./PortalReviewedForm";
 import { MarketingFooter } from "@/app/_components/MarketingFooter";
 import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
 import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
@@ -574,24 +575,7 @@ export default async function PortalHomePage() {
                               {m.body}
                             </p>
                             <div className="flex flex-wrap items-center justify-between gap-3">
-                              <form action={markPortalMessageReviewedAction}>
-                                <input
-                                  type="hidden"
-                                  name="message_id"
-                                  value={m.id}
-                                />
-                                <button
-                                  type="submit"
-                                  className="px-5 py-2 text-[12px] font-medium uppercase"
-                                  style={{
-                                    backgroundColor: "#0A0A0A",
-                                    color: "#FAFAF7",
-                                    letterSpacing: "0.1em",
-                                  }}
-                                >
-                                  Mark as reviewed
-                                </button>
-                              </form>
+                              <PortalReviewedForm action={markPortalMessageReviewedAction} messageId={m.id} />
                             </div>
 
                             {messageReplies.length > 0 && (
