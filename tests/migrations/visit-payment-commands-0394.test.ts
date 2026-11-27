@@ -73,7 +73,9 @@ describe("0394 is shaped like a sealed migration", () => {
   it("a pending transfer is counted as reserved, and the old one-attempt rule is kept only for visits without a bill", () => {
     const c = code(UP);
     expect(c).toContain("filter (where e.state = 'pending_confirmation')");
-    expect(c).toMatch(/b\.total_cents - x\.confirmed - x\.pending - c\.card \+ r\.refunded/);
+    // PRODUCT RULE (27 Nov 2026): only a succeeded price_reduction frees capacity; a payment_reversal never reopens a balance.
+    expect(c).toMatch(/greatest\(0, b\.total_cents - x\.confirmed - x\.pending - c\.card \+ d\.reduced\)/);
+    expect(c).toMatch(/kind = 'price_reduction'/);
     expect(c).toMatch(/and visit_bill_id is null;/);
   });
 

@@ -23,7 +23,7 @@
 --                           A confirmed payment is final: money returned later is a refund, not a void.
 --   payment_refunds         one row per refund event against ONE selected payment: a Stripe attempt or an external payment.
 --                           kind price_reduction (the bill drops with it, the balance is unchanged) or payment_reversal
---                           (the bill stays, the balance due rises: a mistaken payment). Failed rows consume nothing.
+--                           (the bill stays: a mistaken payment; as decided in 0394, returning money does not reopen a balance, only a price_reduction frees capacity). Failed rows consume nothing.
 --
 -- THE LEGACY REFUND. Every attempt that already carries a refund gets ONE payment_refunds row (legacy = true), inserted
 -- here, so there is a single source for "how much is still refundable". After this file an UPDATE of an attempt's refund
