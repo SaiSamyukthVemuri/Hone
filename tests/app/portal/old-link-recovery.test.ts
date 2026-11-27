@@ -17,6 +17,8 @@ const t = vi.hoisted(() => ({
   send: vi.fn(),
   createSession: vi.fn(),
   access: vi.fn(),
+  policy: vi.fn(),
+  dbFailures: {} as Record<string, "throw" | "error">,
   sleep: vi.fn(),
   reads: [] as string[],
   writes: [] as { table: string; row: Row }[],
@@ -32,6 +34,7 @@ vi.mock("@/lib/portal/session", () => ({
 }));
 vi.mock("@/lib/portal/login-timing", () => ({ waitUntilMinimumElapsed: t.sleep }));
 vi.mock("@/lib/rate-limit/public", () => ({ limitPortalLinkIp: t.ip, limitPortalLinkRecipient: t.recipient }));
+vi.mock("@/lib/booking/client-self-service-policy-store", () => ({ loadClientSelfServicePolicy: t.policy }));
 vi.mock("@/lib/portal/portal-access-gate", () => ({ studioPortalAccess: t.access }));
 vi.mock("@/lib/email/send-appointment", () => ({ sendEmailSafely: t.send }));
 vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: () => "https://preview.example.test" }));
@@ -51,8 +54,11 @@ vi.mock("@/lib/supabase/admin-server", () => ({
         eq: (key: string, value: string) => { rows = rows.filter(row => row[key] === value); return q; },
         is: (key: string, value: null) => { rows = rows.filter(row => row[key] === value); return q; },
         gt: (key: string, value: string) => { rows = rows.filter(row => Date.parse(row[key]!) > Date.parse(value)); return q; },
-        maybeSingle: () => {
+        maybeSingle: async () => {
           t.reads.push(table);
+          const error = { code: "42P01", message: "sensitive provider detail" };
+          if (t.dbFailures[table] === "throw") throw error;
+          if (t.dbFailures[table] === "error") return { data: null, error };
           return { data: rows[0] ?? null, error: null };
         },
         insert: (row: Row) => { t.writes.push({ table, row }); return { error: null }; },
@@ -62,7 +68,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
     },
   }),
 }));
-import VerifyPage from "@/app/portal/verify/[token]/page";
+import VerifyPage, { metadata } from "@/app/portal/verify/[token]/page";
 import { requestReplacementPortalLink, verifyPortalMagicLinkAction } from "@/app/portal/verify/[token]/actions";
 
 function form(token = TOKEN) {
@@ -91,11 +97,13 @@ beforeEach(() => {
     clients: [{ id: "client", studio_id: "studio", normalized_email: ADDRESS, archived_at: null }],
   };
   t.reads = [];
+  t.dbFailures = {};
   t.writes = [];
   t.state.mockImplementation(async () => t.session);
   t.ip.mockResolvedValue({ allowed: true });
   t.recipient.mockResolvedValue({ allowed: true });
   t.access.mockResolvedValue({ allowed: true, studioName: "Synthetic Studio" });
+  t.policy.mockResolvedValue({ ok: true, policy: { portal: true }, studioName: "Synthetic Studio" });
   t.send.mockResolvedValue({ ok: true });
 });
 
@@ -109,6 +117,50 @@ describe("the original emailed link", () => {
     expect(t.send).not.toHaveBeenCalled();
     expect(t.createSession).not.toHaveBeenCalled();
     expect(link().consumed_at).toBe(kind === "consumed" ? PAST : null);
+  });
+  it.each(["expired", "consumed"])("retry keeps the %s link and re-enters the recovered matching session", async (kind) => {
+    if (kind === "consumed") { link().expires_at = FUTURE; link().consumed_at = PAST; }
+    t.session = { kind: "unavailable" };
+    const result = await page();
+    expect(result).toMatch(/<form method="get"><button[^>]*>Try again<\/button><\/form>/);
+    expect(result).not.toMatch(/Email me a new link|Continue to portal|type="hidden"|registered@example/);
+    expect(result).not.toContain(TOKEN);
+    expect(metadata.referrer).toBe("no-referrer");
+    session("studio", "client");
+    await expect(page()).rejects.toThrow(/^redirect \/portal$/);
+    expect(t.state.mock.calls).toEqual([[{ recordVisit: false }], [{ recordVisit: false }]]);
+    expect(t.writes).toEqual([]);
+    expect(link().consumed_at).toBe(kind === "consumed" ? PAST : null);
+    expect(t.send).not.toHaveBeenCalled();
+    expect(t.createSession).not.toHaveBeenCalled();
+  });
+  it.each(["link-read", "client-read", "policy-read", "rejected-read"])("offers only a same-path retry during %s failure", async (failure) => {
+    link().expires_at = FUTURE;
+    if (failure === "link-read") t.dbFailures.client_portal_magic_links = "error";
+    if (failure === "client-read") t.dbFailures.clients = "error";
+    if (failure === "policy-read") t.policy.mockResolvedValue({ ok: false });
+    if (failure === "rejected-read") t.dbFailures.client_portal_magic_links = "throw";
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const result = await page();
+      expect(result).toContain("Try again");
+      expect(result).not.toMatch(/Email me a new link|Continue to portal|registered@example/);
+      expect(result).not.toContain(TOKEN);
+      expect(JSON.stringify(log.mock.calls)).not.toContain(TOKEN);
+      expect(JSON.stringify(log.mock.calls)).not.toMatch(/sensitive provider detail|registered@example/);
+      expect(t.writes).toEqual([]);
+      expect(link().consumed_at).toBeNull();
+      expect(t.send).not.toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+    }
+  });
+  it("an expressly disabled studio shows the access refusal", async () => {
+    link().expires_at = FUTURE;
+    t.policy.mockResolvedValue({ ok: true, policy: { portal: false }, studioName: null });
+    const result = await page();
+    expect(result).toMatch(/Online access isn/);
+    expect(result).not.toMatch(/Try again|Email me a new link|Continue to portal/);
   });
   it.each([["other-studio", "client"], ["studio", "other-client"]])("never enters an unrelated session (%s, %s)", async (studio, client) => {
     session(studio, client);

@@ -9,7 +9,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { hashToken } from "@/lib/portal/tokens";
 import { ContinueToPortalForm } from "./ContinueForm";
 import { dbErrorCode } from "@/lib/logging/error-class";
-import { studioPortalAccess } from "@/lib/portal/portal-access-gate";
+import { loadClientSelfServicePolicy } from "@/lib/booking/client-self-service-policy-store";
 import { clientPortalDisabledMessage } from "@/lib/booking/client-self-service-policy";
 
 // PR #142. Token-bearing route. Robots noindex/nofollow keeps the
@@ -20,6 +20,7 @@ import { clientPortalDisabledMessage } from "@/lib/booking/client-self-service-p
 // in via SafeAnalytics).
 export const metadata: Metadata = {
   robots: { index: false, follow: false },
+  referrer: "no-referrer",
 };
 
 // GET never consumes a link, sends email, creates a session or touches last_seen_at.
@@ -45,11 +46,11 @@ export default async function PortalVerifyPage({
   // Read-only lookup. The unique index on token_hash means at
   // most one row. NO conditional update; the consumed_at stamp
   // lives on the POST action below.
-  const { data: link, error: lookupErr } = await admin
+  const { data: link, error: lookupErr } = await Promise.resolve(admin
     .from("client_portal_magic_links")
     .select("id, studio_id, client_id, email_normalized, expires_at, consumed_at")
     .eq("token_hash", tokenHash)
-    .maybeSingle();
+    .maybeSingle()).catch((error: unknown) => ({ data: null, error }));
   if (lookupErr) {
     console.error(
       JSON.stringify({
@@ -58,10 +59,11 @@ export default async function PortalVerifyPage({
         timestamp: new Date().toISOString(),
       }),
     );
-    return <Recovery token={token} />;
+    return <RetryOriginalLink />;
   }
   if (!link) return <Recovery token={token} />;
   const state = await getCurrentPortalSessionState({ recordVisit: false });
+  if (state.kind === "unavailable") return <RetryOriginalLink />;
   const sameSession =
     state.kind === "active" &&
     state.session.studioId === link.studio_id &&
@@ -73,12 +75,13 @@ export default async function PortalVerifyPage({
   // belongs to the same studio the link was minted for. An archive
   // that happened between request and verify must not let the
   // Continue button appear.
-  const { data: clientRow } = await admin
+  const { data: clientRow, error: clientError } = await Promise.resolve(admin
     .from("clients")
     .select("id, studio_id, archived_at, normalized_email")
     .eq("id", link.client_id)
     .eq("studio_id", link.studio_id)
-    .maybeSingle();
+    .maybeSingle()).catch((error: unknown) => ({ data: null, error }));
+  if (clientError) return <RetryOriginalLink />;
   if (!clientRow || clientRow.archived_at != null) {
     return <Recovery token={token} />;
   }
@@ -91,15 +94,11 @@ export default async function PortalVerifyPage({
     return <Recovery token={token} />;
   }
 
-  // HON-47. A studio with client portal access off gets the explanation, and no
-  // Continue form. An unreadable policy fails closed to the generic surface.
-  const portalAccess = await studioPortalAccess(admin, link.studio_id);
-  if (!portalAccess.allowed) {
-    return portalAccess.studioName ? (
-      <PortalOff message={clientPortalDisabledMessage(portalAccess.studioName)} />
-    ) : (
-      <Recovery token={token} />
-    );
+  // Preserve the distinction between an explicit studio refusal and a failed read.
+  const policy = await loadClientSelfServicePolicy(admin, link.studio_id).catch(() => ({ ok: false as const }));
+  if (!policy.ok) return <RetryOriginalLink />;
+  if (!policy.policy.portal) {
+    return <PortalOff message={clientPortalDisabledMessage(policy.studioName)} />;
   }
 
   // Valid token. Render the Continue form. The form submits to the
@@ -130,6 +129,25 @@ export default async function PortalVerifyPage({
           </div>
           <ContinueToPortalForm token={token} />
         </div>
+      </section>
+      <MarketingFooter />
+    </main>
+  );
+}
+
+function RetryOriginalLink() {
+  return (
+    <main className="min-h-screen font-[var(--font-inter)]" style={{ backgroundColor: PALETTE.bg, color: PALETTE.ink }}>
+      <section className="mx-auto max-w-[568px] px-6 py-20">
+        <EyebrowCaption>Client portal</EyebrowCaption>
+        <h1 className="mt-8 font-[var(--font-fraunces)] text-[36px] font-bold leading-tight tracking-tight">
+          We couldn’t open your portal.
+        </h1>
+        <p className="mt-4 mb-6 text-base leading-relaxed">Please try again in a moment.</p>
+        {/* An ordinary GET with no action reloads this same path, even without JavaScript. */}
+        <form method="get">
+          <button type="submit" className="min-h-11 bg-[#0A0A0A] px-6 py-3 text-[#FAFAF7]">Try again</button>
+        </form>
       </section>
       <MarketingFooter />
     </main>
