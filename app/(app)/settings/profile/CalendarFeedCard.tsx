@@ -1,5 +1,6 @@
 "use client";
 
+import { copyText } from "@/lib/clipboard/copy-text";
 import { useState, useTransition } from "react";
 import {
   rotateCalendarFeedTokenAction,
@@ -88,15 +89,12 @@ export function CalendarFeedCard({ appOrigin, initialActive }: Props) {
 
   function copy() {
     if (!token) return;
-    void navigator.clipboard
-      .writeText(feedUrl(appOrigin, token))
-      .then(
-        () => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        },
-        () => setError("Copy failed. Select and copy the URL manually."),
-      );
+    void copyText(feedUrl(appOrigin, token)).then((ok) => {
+      if (ok) {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      } else setError("Copy failed. Select and copy the URL manually.");
+    });
   }
 
   return (
