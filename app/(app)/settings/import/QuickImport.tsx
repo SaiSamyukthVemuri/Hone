@@ -1,5 +1,6 @@
 "use client";
 
+import { copyText } from "@/lib/clipboard/copy-text";
 import { useState, useTransition } from "react";
 import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
 import Link from "next/link";
@@ -32,6 +33,7 @@ export function QuickImport({ template }: { template: string }) {
   const [summary, setSummary] = useState<ConfirmSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const [isPending, startTransition] = useTransition();
   // Pasted text that has not been imported yet is unsaved work.
   useUnsavedChangesGuard("quick-import", text.trim() !== "" && summary === null);
@@ -70,12 +72,13 @@ export function QuickImport({ template }: { template: string }) {
   }
 
   async function onCopyTemplate() {
-    try {
-      await navigator.clipboard.writeText(template);
+    if (await copyText(template)) {
+      setCopyFailed(false);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch {
+    } else {
       setCopied(false);
+      setCopyFailed(true);
     }
   }
 
@@ -104,6 +107,19 @@ export function QuickImport({ template }: { template: string }) {
           </select>
         </label>
       </div>
+      {copyFailed ? (
+        <div role="status" className="flex flex-col gap-2 text-sm">
+          <p className="text-neutral-600 dark:text-neutral-400">Couldn’t copy. Select the template below and copy it by hand.</p>
+          <textarea
+            readOnly
+            rows={6}
+            value={template}
+            aria-label="Import template"
+            onFocus={(e) => e.currentTarget.select()}
+            className="w-full rounded-md border border-neutral-300 bg-neutral-50 px-3 py-2 font-mono text-xs dark:border-neutral-700 dark:bg-neutral-900"
+          />
+        </div>
+      ) : null}
 
       <div>
         <label htmlFor="import-text" className="sr-only">
