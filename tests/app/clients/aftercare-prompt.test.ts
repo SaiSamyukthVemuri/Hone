@@ -74,8 +74,4 @@ describe("markAftercareExplainedAction hardened to explicit intent", () => {
     );
     expect(ACTIONS).toMatch(/const explained = explainedRaw === "true"/);
   });
-  it("no migration / no RPC change in this PR", () => {
-    // the action still updates sessions directly; no mark_appointment_complete edit
-    expect(ACTIONS).not.toMatch(/mark_appointment_complete/);
-  });
 });

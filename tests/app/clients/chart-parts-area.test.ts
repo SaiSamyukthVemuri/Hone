@@ -2,12 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-// PR #268. "Chart parts" / treatment-area context made visible across charting,
-// saved entries, and treatment memory — reusing the existing session_blocks
-// area fields (primary_area / side / custom_area_detail, migration 0039) and
-// the imported treatment_area_text. Display/labeling only: NO migration, NO
-// image storage / body-map / sketch / upload / OCR / AI, and NO copied Jane
-// assets. Source-grep, no DB/network.
+// PR #268 ("chart parts"): NO copied Jane assets. Source-grep, no DB/network.
 
 function read(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf8");

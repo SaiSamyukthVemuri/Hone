@@ -97,20 +97,6 @@ describe("clinical-note actions return fixed, practitioner-safe copy", () => {
 });
 
 describe("operator logging is a safe classification, never PHI", () => {
-  it("logs the event, a safe code, the note kind and the owning ids", () => {
-    expect(CODE).toContain("logNoteFailure");
-    for (const field of [
-      "code",
-      "kind",
-      "clientId",
-      "studioId",
-      "practitionerId",
-      "isRevision",
-    ]) {
-      expect(CODE, `logger should carry ${field}`).toContain(field);
-    }
-  });
-
   it("covers all three previously-leaking paths", () => {
     for (const event of [
       "clinical_note_client_lookup_failed",

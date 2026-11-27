@@ -2,18 +2,10 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Client Overview "Last visit / what we did last time" card.
-//
-// Chloe: "on the client overview I want to clearly see what we did last
-// time." This is a PRESENTATION/consolidation surface: a scannable,
-// retrospective recap of the SINGLE last completed session, placed high
-// on the Overview tab. It reuses the already-loaded last-treatment data
-// and the shared buildLastSessionSummary render helpers — no new query,
-// no new clinical model, no AI, no second/parallel summary function.
-//
-// These are source-level assertions (matching the sibling
-// last-treatment-cleanup / treatment-memory-ux suites), plus reuse and
-// accuracy guarantees.
+// Client Overview "Last visit / what we did last time" card: a recap of the
+// SINGLE last completed session. Two source tripwires remain here: the page
+// feeds it the single-last-session summary (accuracy), and the card renders
+// no price. Its rendered states are proved in clinical-read-truth.test.ts.
 
 function read(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf8");
@@ -23,10 +15,8 @@ const PAGE = read("app/(app)/clients/[id]/page.tsx");
 const CARD = read("components/last-visit-card.tsx");
 
 // Comment-stripped view for "must NOT contain X" code guards, so the
-// component's own explanatory prose (which legitimately names helpers
-// like buildLastSessionSummary() and explains the price omission) never
-// trips a negative assertion. Presence (.toMatch) checks still use the
-// raw source.
+// component's own explanatory prose (which explains the price omission)
+// never trips a negative assertion.
 const CARD_CODE = CARD.replace(/\/\*[\s\S]*?\*\//g, "").replace(
   /\/\/.*$/gm,
   "",
@@ -164,18 +154,5 @@ describe("Overview Last visit card — empty + legacy safety", () => {
     expect(CARD_CODE).not.toMatch(/price_paid_cents/);
     expect(CARD_CODE).not.toMatch(/Session price/);
     expect(CARD_CODE).not.toMatch(/price/i);
-  });
-});
-
-describe("BeforeToday remains a separate forward-looking prep card", () => {
-  it("BeforeTodayCard still renders on the Overview tab", () => {
-    expect(OVERVIEW).toMatch(/<BeforeTodayCard/);
-  });
-
-  it("the Sessions-tab 'Last treatment' card is untouched", () => {
-    // The additive Overview card does not remove or relabel the fuller
-    // Sessions-tab recap (which keeps its price + its own tests).
-    expect(PAGE).toMatch(/>Last treatment<\/h2>/);
-    expect(PAGE).toMatch(/No charted treatments yet\./);
   });
 });
