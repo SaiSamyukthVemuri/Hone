@@ -1018,12 +1018,12 @@ export default async function ClientCheatSheetPage({
                 View statement
               </Link>
             )}
-            <Link
+            <PendingLink
               href={`/clients/${client.id}/edit`}
               className="shrink-0 rounded-md border border-neutral-300 px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
             >
               Edit
-            </Link>
+            </PendingLink>
           </div>
         </div>
         <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -1262,12 +1262,12 @@ export default async function ClientCheatSheetPage({
               <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
                 Client info
               </h2>
-              <Link
+              <PendingLink
                 href={`/clients/${client.id}/edit`}
                 className="inline-flex items-center min-h-[44px] min-w-[44px] text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
               >
                 Edit
-              </Link>
+              </PendingLink>
             </div>
           {/* Birthday row (PR #199: plain row, no nested box, no
               helper text; edited via the card's single Edit link).
