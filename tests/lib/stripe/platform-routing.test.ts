@@ -168,3 +168,22 @@ describe("source guard: only the resolver and the client builder read a platform
     expect(offenders.sort()).toEqual(["lib/stripe/e2e-fake-stripe.ts"].filter((f) => offenders.includes(f)).sort());
   });
 });
+
+describe("source guard: no studio path takes the Canadian client by default", () => {
+  const ALLOWED_GETSTRIPE = new Set(["lib/stripe/server.ts", "lib/stripe/studio-platform.ts", "lib/stripe/webhook-platform.ts"]);
+  function walk(dir: string, out: string[] = []): string[] {
+    for (const name of readdirSync(dir)) {
+      const p = join(dir, name);
+      if (statSync(p).isDirectory()) walk(p, out);
+      else if (/\.(ts|tsx)$/.test(name)) out.push(p);
+    }
+    return out;
+  }
+  it("a bare getStripe() call exists only in the router's CA branches; every other caller resolves the studio's or the route's platform", () => {
+    const offenders = ["app", "lib", "components"].flatMap((d) => walk(d)).filter((f) => !ALLOWED_GETSTRIPE.has(f)).filter((f) => {
+      const code = readFileSync(f, "utf8").split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+      return /\bgetStripe\s*\(\s*\)/.test(code);
+    });
+    expect(offenders).toEqual([]);
+  });
+});
